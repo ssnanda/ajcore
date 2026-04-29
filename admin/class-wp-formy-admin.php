@@ -1080,7 +1080,7 @@ class WP_Formy_Admin {
 		);
 
 		add_submenu_page(
-			null,
+			'',
 			__( 'Check for Updates', 'wp-formy' ),
 			__( 'Check for Updates', 'wp-formy' ),
 			'manage_options',

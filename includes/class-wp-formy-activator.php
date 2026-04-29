@@ -47,5 +47,6 @@ class WP_Formy_Activator {
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+		update_option( 'wp_formy_version', WP_FORMY_VERSION, false );
 	}
 }

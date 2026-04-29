@@ -3,7 +3,7 @@
  * Plugin Name:       WP Formy
  * Plugin URI:        https://github.com/ssnanda/wp-formy
  * Description:       A custom WordPress form builder plugin for building forms, collecting entries, and managing workflows inside WordPress.
- * Version:           0.1.13
+ * Version:           0.1.14
  * Author:            itSpector
  * Author URI:        https://itspector.com
  * Update URI:        https://github.com/ssnanda/wp-formy
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'WP_FORMY_VERSION' ) ) {
-define( 'WP_FORMY_VERSION', '0.1.13' );
+	define( 'WP_FORMY_VERSION', '0.1.14' );
 }
 
 if ( ! defined( 'WP_FORMY_PLUGIN_DIR' ) ) {
@@ -166,6 +166,25 @@ function activate_wp_formy() {
 	WP_Formy_Activator::activate();
 }
 register_activation_hook( __FILE__, 'activate_wp_formy' );
+
+/**
+ * Ensure custom tables exist after regular plugin updates.
+ *
+ * WordPress does not run activation hooks when a plugin is updated from a zip
+ * or GitHub release, so table creation must also be checked at runtime.
+ */
+function wp_formy_maybe_upgrade() {
+	$installed_version = get_option( 'wp_formy_version', '' );
+
+	if ( WP_FORMY_VERSION === $installed_version ) {
+		return;
+	}
+
+	require_once WP_FORMY_PLUGIN_DIR . 'includes/class-wp-formy-activator.php';
+	WP_Formy_Activator::activate();
+	update_option( 'wp_formy_version', WP_FORMY_VERSION, false );
+}
+add_action( 'plugins_loaded', 'wp_formy_maybe_upgrade', 5 );
 
 /**
  * Begins execution of the plugin.
