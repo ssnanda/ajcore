@@ -94,6 +94,66 @@ class WP_Formy_Admin {
 		);
 	}
 
+	private function install_plugin_update() {
+		if ( ! current_user_can( 'update_plugins' ) ) {
+			return new WP_Error( 'insufficient_permissions', __( 'You do not have permission to update plugins.', 'wp-formy' ) );
+		}
+
+		$latest_release = $this->fetch_latest_release_info( true );
+		if ( is_wp_error( $latest_release ) ) {
+			return $latest_release;
+		}
+
+		// Get the download URL for the zip file
+		$download_url = 'https://github.com/ssnanda/wp-formy/releases/download/' . $latest_release['tag_name'] . '/wp-formy-' . $latest_release['version'] . '.zip';
+
+		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+		require_once ABSPATH . 'wp-admin/includes/plugin.php';
+
+		$plugin_slug = WP_FORMY_PLUGIN_BASENAME;
+		
+		// Use WordPress upgrader
+		$upgrader = new Plugin_Upgrader( new WP_Ajax_Upgrader_Skin() );
+		$result = $upgrader->install( $download_url, array( 'overwrite_package' => true ) );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		// Reactivate the plugin
+		activate_plugin( $plugin_slug );
+
+		return true;
+	}
+
+	private function handle_plugin_update_request() {
+		if ( ! current_user_can( 'update_plugins' ) ) {
+			return;
+		}
+
+		if ( ! isset( $_GET['wpf_update_plugin'], $_GET['_wpnonce'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'wpf_update_plugin' );
+
+		$result = $this->install_plugin_update();
+
+		$args = array(
+			'page' => 'wp-formy-updates',
+		);
+
+		if ( is_wp_error( $result ) ) {
+			$args['update-error'] = rawurlencode( $result->get_error_message() );
+		} else {
+			$args['update-success'] = '1';
+		}
+
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
 	private function handle_update_refresh_request() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -670,6 +730,7 @@ class WP_Formy_Admin {
 
 		if ( in_array( $page, array( 'wp-formy-updates', 'wp-formy-about' ), true ) ) {
 			$this->handle_update_refresh_request();
+			$this->handle_plugin_update_request();
 		}
 
 		if ( 'wp-formy' === $page ) {
@@ -1099,8 +1160,27 @@ class WP_Formy_Admin {
 	}
 
 	public function add_plugin_action_links( $links ) {
+		$update_status = $this->get_update_status();
+		$has_update = ! is_wp_error( $update_status ) && ! empty( $update_status['has_update'] );
+		
+		if ( $has_update ) {
+			$update_url = wp_nonce_url(
+				add_query_arg(
+					array(
+						'page'              => 'wp-formy-updates',
+						'wpf_update_plugin' => '1',
+					),
+					admin_url( 'admin.php' )
+				),
+				'wpf_update_plugin'
+			);
+			$update_link = '<a href="' . esc_url( $update_url ) . '" style="color:#d63638;font-weight:600;">' . esc_html__( 'Update Plugin', 'wp-formy' ) . '</a>';
+		} else {
+			$update_link = '<a href="' . esc_url( add_query_arg( array( 'page' => 'wp-formy-updates' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Check for Updates', 'wp-formy' ) . '</a>';
+		}
+		
 		$custom_links = array(
-			'updates' => '<a href="' . esc_url( add_query_arg( array( 'page' => 'wp-formy-updates' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Check for Updates', 'wp-formy' ) . '</a>',
+			'updates' => $update_link,
 			'about'   => '<a href="' . esc_url( add_query_arg( array( 'page' => 'wp-formy-about' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'About', 'wp-formy' ) . '</a>',
 		);
 
@@ -1884,7 +1964,7 @@ class WP_Formy_Admin {
 
 					<div class="wp-formy-about-actions">
 						<a class="button button-primary" href="<?php echo esc_url( $updates_page_url ); ?>"><?php esc_html_e( 'Check for Updates', 'wp-formy' ); ?></a>
-						<a class="button" href="<?php echo esc_url( $refresh_updates_url ); ?>"><?php esc_html_e( 'Refresh Update Status', 'wp-formy' ); ?></a>
+						<a class="button" href="<?php echo esc_url( $refresh_updates_url ); ?>"><?php esc_html_e( 'Check for Updates', 'wp-formy' ); ?></a>
 					</div>
 
 					<div class="wp-formy-about-meta">
@@ -1975,12 +2055,30 @@ class WP_Formy_Admin {
 					<?php if ( isset( $_GET['updates-checked'] ) ) : ?>
 						<div class="notice notice-success is-dismissible wp-formy-updates-notice"><p><?php esc_html_e( 'Update status refreshed.', 'wp-formy' ); ?></p></div>
 					<?php endif; ?>
+					<?php if ( isset( $_GET['update-success'] ) ) : ?>
+						<div class="notice notice-success is-dismissible wp-formy-updates-notice"><p><?php esc_html_e( 'Plugin updated successfully!', 'wp-formy' ); ?></p></div>
+					<?php endif; ?>
 					<?php if ( isset( $_GET['update-error'] ) ) : ?>
 						<div class="notice notice-error is-dismissible wp-formy-updates-notice"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['update-error'] ) ) ); ?></p></div>
 					<?php endif; ?>
 
 					<div class="wp-formy-updates-actions">
-						<a class="button button-primary" href="<?php echo esc_url( $refresh_url ); ?>"><?php esc_html_e( 'Refresh Update Status', 'wp-formy' ); ?></a>
+						<a class="button button-primary" href="<?php echo esc_url( $refresh_url ); ?>"><?php esc_html_e( 'Check for Updates', 'wp-formy' ); ?></a>
+						<?php if ( ! is_wp_error( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
+							<?php
+							$update_url = wp_nonce_url(
+								add_query_arg(
+									array(
+										'page'              => 'wp-formy-updates',
+										'wpf_update_plugin' => '1',
+									),
+									admin_url( 'admin.php' )
+								),
+								'wpf_update_plugin'
+							);
+							?>
+							<a class="button button-secondary" href="<?php echo esc_url( $update_url ); ?>"><?php esc_html_e( 'Update Plugin', 'wp-formy' ); ?></a>
+						<?php endif; ?>
 						<a class="button" href="<?php echo esc_url( $releases_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View GitHub Releases', 'wp-formy' ); ?></a>
 						<a class="button" href="<?php echo esc_url( $about_url ); ?>"><?php esc_html_e( 'About WP Formy', 'wp-formy' ); ?></a>
 					</div>
