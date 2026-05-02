@@ -1444,7 +1444,7 @@ class WP_Formy_Admin {
 										<div class="wp-formy-settings-field">
 											<label for="default_notification_subject"><?php esc_html_e( 'Default Notification Subject', 'wp-formy' ); ?></label>
 											<input name="default_notification_subject" id="default_notification_subject" type="text" value="<?php echo esc_attr( $settings['default_notification_subject'] ); ?>">
-											<div class="wp-formy-settings-help"><?php esc_html_e( 'Use {form_title} to insert the form name.', 'wp-formy' ); ?></div>
+											<div class="wp-formy-settings-help"><?php esc_html_e( 'Use {form_title} or field placeholders like {field_1}, {field_2}, etc.', 'wp-formy' ); ?></div>
 										</div>
 										<div class="wp-formy-settings-field">
 											<label for="default_from_name"><?php esc_html_e( 'From Name', 'wp-formy' ); ?></label>

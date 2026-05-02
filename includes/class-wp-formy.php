@@ -500,6 +500,34 @@ class WP_Formy {
 
 		return array_values( array_unique( $emails ) );
 	}
+	private function replace_template_tags( $template, $form, $lead_data ) {
+		$replacements = array(
+			'{form_title}'        => $form->title,
+			'{submission_count}'  => '1',
+		);
+
+		// Add {submission_fields} tag
+		$replacements['{submission_fields}'] = $this->build_submission_fields_text( $lead_data );
+
+		// Add individual field placeholders like {field_1}, {field_2}, etc.
+		foreach ( $lead_data as $field_id => $field ) {
+			if ( ! is_array( $field ) ) {
+				continue;
+			}
+
+			$value = isset( $field['value'] ) ? $this->format_lead_value_for_display( $field['value'] ) : '';
+			
+			if ( ! empty( $field['file_url'] ) ) {
+				$value = esc_url_raw( $field['file_url'] );
+			}
+
+			// Support {field_id} format
+			$replacements[ '{' . $field_id . '}' ] = $value;
+		}
+
+		return strtr( $template, $replacements );
+	}
+
 
 	private function get_reply_to_header( $lead_data ) {
 		foreach ( $lead_data as $field ) {
@@ -562,17 +590,11 @@ class WP_Formy {
 			$project_gid = sanitize_text_field( $plugin_settings['asana_project_gid'] );
 		}
 
-		$submission_fields = $this->build_submission_fields_text( $lead_data );
 		$task_name_template = ! empty( $settings['asana_task_name'] ) ? (string) $settings['asana_task_name'] : 'New form submission: {form_title}';
 		$task_notes_template = ! empty( $settings['asana_task_notes'] ) ? (string) $settings['asana_task_notes'] : "A new submission was received for {form_title}.\n\n{submission_fields}";
-		$replacements = array(
-			'{form_title}'        => $form->title,
-			'{submission_fields}' => $submission_fields,
-			'{submission_count}'  => '1',
-		);
 
-		$task_name = strtr( $task_name_template, $replacements );
-		$task_notes = strtr( $task_notes_template, $replacements );
+		$task_name = $this->replace_template_tags( $task_name_template, $form, $lead_data );
+		$task_notes = $this->replace_template_tags( $task_notes_template, $form, $lead_data );
 
 		$request_data = array(
 			'name'      => sanitize_text_field( $task_name ),
@@ -623,7 +645,7 @@ class WP_Formy {
 		}
 
 		$subject_template = ! empty( $settings['notification_subject'] ) ? (string) $settings['notification_subject'] : 'New submission for {form_title}';
-		$subject          = str_replace( '{form_title}', $form->title, $subject_template );
+		$subject          = $this->replace_template_tags( $subject_template, $form, $lead_data );
 		$subject          = sanitize_text_field( $subject );
 
 		$lines   = array();

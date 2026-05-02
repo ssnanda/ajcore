@@ -3,7 +3,7 @@
  * Plugin Name:       WP Formy
  * Plugin URI:        https://github.com/ssnanda/wp-formy
  * Description:       A custom WordPress form builder plugin for building forms, collecting entries, and managing workflows inside WordPress.
- * Version:           0.1.14
+ * Version:           0.1.15
  * Author:            itSpector
  * Author URI:        https://itspector.com
  * Update URI:        https://github.com/ssnanda/wp-formy
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'WP_FORMY_VERSION' ) ) {
-	define( 'WP_FORMY_VERSION', '0.1.14' );
+	define( 'WP_FORMY_VERSION', '0.1.15' );
 }
 
 if ( ! defined( 'WP_FORMY_PLUGIN_DIR' ) ) {
