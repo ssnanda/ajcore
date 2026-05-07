@@ -255,10 +255,10 @@
 .wpf-structure-item {
 	padding: 12px 14px;
 	border: 1px solid #dce3ea;
-	border-radius: 14px;
+	border-radius: 8px;
 	margin-bottom: 10px;
 	cursor: pointer;
-	background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+	background: #fff;
 }
 
 .wpf-structure-item.active {
@@ -266,16 +266,26 @@
 	background: #eff8ff;
 }
 
-.wpf-structure-title {
-	font-weight: 600;
-	font-size: 13px;
-	color: #1d2327;
+.wpf-structure-lines {
+	display: grid;
+	gap: 6px;
 }
 
-.wpf-structure-meta {
-	font-size: 11px;
-	color: #646970;
-	margin-top: 2px;
+.wpf-structure-line {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	font-size: 12px;
+	color: #64748b;
+}
+
+.wpf-structure-line strong {
+	color: #1d2327;
+	font-size: 13px;
+	font-weight: 700;
+	text-align: right;
+	overflow-wrap: anywhere;
 }
 
 .wpf-canvas-area {
@@ -536,22 +546,22 @@ body.wpf-is-resizing-field * {
 }
 
 #wpf-panel-field {
-	padding: 18px;
+	padding: 12px;
 	background: #f8fafc;
 }
 
 .wpf-field-settings-shell {
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
+	gap: 10px;
 }
 
 .wpf-field-settings-header {
-	padding: 18px 18px 4px;
+	padding: 8px 8px 2px;
 }
 
 .wpf-field-settings-kicker {
-	font-size: 11px;
+	font-size: 10px;
 	font-weight: 800;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -560,29 +570,29 @@ body.wpf-is-resizing-field * {
 }
 
 .wpf-field-settings-title {
-	font-size: 20px;
+	font-size: 17px;
 	line-height: 1.2;
 	font-weight: 800;
 	color: #0f172a;
 }
 
 .wpf-field-settings-meta {
-	margin-top: 6px;
-	font-size: 13px;
+	margin-top: 4px;
+	font-size: 12px;
 	color: #64748b;
 }
 
 .wpf-field-settings-card {
-	padding: 18px;
+	padding: 14px;
 	background: #fff;
 	border: 1px solid #e2e8f0;
-	border-radius: 18px;
-	box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+	border-radius: 8px;
+	box-shadow: none;
 }
 
 .wpf-field-settings-card-title {
-	margin-bottom: 14px;
-	font-size: 13px;
+	margin-bottom: 10px;
+	font-size: 12px;
 	font-weight: 800;
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
@@ -592,7 +602,8 @@ body.wpf-is-resizing-field * {
 .wpf-field-settings-grid {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 14px;
+	column-gap: 12px;
+	row-gap: 10px;
 }
 
 .wpf-inspector-subtabs {
@@ -670,12 +681,12 @@ body.wpf-is-resizing-field * {
 }
 
 .wpf-setting-row {
-	margin-bottom: 18px;
+	margin-bottom: 10px;
 }
 
 .wpf-setting-row label {
 	display: block;
-	margin-bottom: 8px;
+	margin-bottom: 6px;
 	font-weight: 600;
 	color: #1f2937;
 }
@@ -687,10 +698,11 @@ body.wpf-is-resizing-field * {
 .wpf-setting-row select {
 	width: 100%;
 	border: 1px solid #d7dce3;
-	border-radius: 12px;
-	padding: 11px 12px;
+	border-radius: 8px;
+	padding: 8px 10px;
 	box-sizing: border-box;
 	background: #fff;
+	min-height: 38px;
 }
 
 .wpf-setting-row textarea {
@@ -702,26 +714,19 @@ body.wpf-is-resizing-field * {
 	display: flex !important;
 	align-items: center;
 	justify-content: space-between;
-	gap: 16px;
+	gap: 12px;
 	margin-bottom: 0 !important;
-	padding: 14px 16px;
+	padding: 10px 12px;
 	border: 1px solid #e2e8f0;
-	border-radius: 16px;
+	border-radius: 8px;
 	background: #f8fafc;
 }
 
 .wpf-toggle-card strong {
 	display: block;
-	font-size: 14px;
+	font-size: 13px;
 	color: #0f172a;
-	margin-bottom: 4px;
-}
-
-.wpf-toggle-card small {
-	display: block;
-	font-size: 12px;
-	line-height: 1.5;
-	color: #64748b;
+	margin-bottom: 0;
 }
 
 .wpf-setting-row input[type="color"] {
@@ -736,10 +741,10 @@ body.wpf-is-resizing-field * {
 }
 
 .wpf-setting-help {
-	font-size: 12px;
-	line-height: 1.6;
+	font-size: 11px;
+	line-height: 1.4;
 	color: #6b7280;
-	margin: 8px 0 0;
+	margin: 6px 0 0;
 }
 
 .wpf-toggle-row {
@@ -844,12 +849,17 @@ body.wpf-is-resizing-field * {
 .wpf-option-row {
 	display: flex;
 	gap: 8px;
-	margin-bottom: 8px;
+	margin-bottom: 6px;
 	align-items: center;
 }
 
 .wpf-option-row input {
 	flex: 1;
+}
+
+#wpf-add-option {
+	min-height: 32px;
+	padding: 2px 10px;
 }
 
 .wpf-canvas-submit-preview {

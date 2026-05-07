@@ -84,6 +84,10 @@ function initAJFormsBuilder() {
             .slice(0, 60);
     }
 
+    function getOptionValue(label, fallbackIndex = 0) {
+        return slugifyFieldName(label) || `option_${fallbackIndex + 1}`;
+    }
+
     function getFieldNameBase(type) {
         const bases = {
             question: 'question',
@@ -825,9 +829,9 @@ function initAJFormsBuilder() {
 
         structureList.innerHTML = formSchema.fields.map((field, index) => `
             <div class="wpf-structure-item ${field.id === activeFieldId ? 'active' : ''}" data-id="${field.id}">
-                <div>
-                    <div class="wpf-structure-title">${escapeHtml(field.field_name || getFieldNameBase(field.type) + (index + 1))}</div>
-                    <div class="wpf-structure-meta">${escapeHtml(formatFieldTypeLabel(field.type))}${field.label ? ` - ${escapeHtml(field.label)}` : ''}</div>
+                <div class="wpf-structure-lines">
+                    <div class="wpf-structure-line"><span>Field Type</span><strong>${escapeHtml(field.type || 'field')}</strong></div>
+                    <div class="wpf-structure-line"><span>Field Name</span><strong>${escapeHtml(field.field_name || getFieldNameBase(field.type) + (index + 1))}</strong></div>
                 </div>
             </div>
         `).join('');
@@ -1003,7 +1007,6 @@ function initAJFormsBuilder() {
                     ${options.map((option, index) => `
                         <div class="wpf-option-row">
                             <input type="text" class="wpf-option-label" data-index="${index}" value="${escapeHtml(option.label)}" placeholder="Label">
-                            <input type="text" class="wpf-option-value" data-index="${index}" value="${escapeHtml(option.value)}" placeholder="Value">
                             <button type="button" class="button-link-delete wpf-option-delete" data-index="${index}">Remove</button>
                         </div>
                     `).join('')}
@@ -1019,9 +1022,10 @@ function initAJFormsBuilder() {
             addOptionBtn.addEventListener('click', () => {
                 pushHistory();
 
+                const label = `Option ${field.options.length + 1}`;
                 field.options.push({
-                    label: `Option ${field.options.length + 1}`,
-                    value: `option_${field.options.length + 1}`
+                    label: label,
+                    value: getOptionValue(label, field.options.length)
                 });
 
                 openFieldSettings(field);
@@ -1045,24 +1049,6 @@ function initAJFormsBuilder() {
                 const index = parseInt(e.target.dataset.index, 10);
                 field.options[index].label = e.target.value;
                 renderCanvas();
-            });
-        });
-
-        fieldSettingsPanel.querySelectorAll('.wpf-option-value').forEach((input) => {
-            let pushed = false;
-
-            input.addEventListener('focus', () => {
-                pushed = false;
-            });
-
-            input.addEventListener('input', (e) => {
-                if (!pushed) {
-                    pushHistory();
-                    pushed = true;
-                }
-
-                const index = parseInt(e.target.dataset.index, 10);
-                field.options[index].value = e.target.value;
             });
         });
 
@@ -1165,18 +1151,6 @@ function initAJFormsBuilder() {
                             <input type="text" class="wpf-live-input" data-key="field_name" value="${escapeHtml(field.field_name || '')}">
                             <p class="wpf-setting-help">Use this in messages as <code>{${escapeHtml(field.field_name || 'field_name')}}</code>.</p>
                         </div>
-                        <div class="wpf-setting-row">
-                            <label>Placeholder Text</label>
-                            <input type="text" class="wpf-live-input" data-key="placeholder" value="${escapeHtml(field.placeholder || '')}">
-                        </div>
-                        <div class="wpf-setting-row">
-                            <label>Help Text</label>
-                            <input type="text" class="wpf-live-input" data-key="help_text" value="${escapeHtml(field.help_text || '')}">
-                        </div>
-                        <div class="wpf-setting-row">
-                            <label>Default Value</label>
-                            <input type="text" class="wpf-live-input" data-key="default_value" value="${escapeHtml(field.default_value || '')}">
-                        </div>
                     </div>
                 </div>
 
@@ -1199,19 +1173,13 @@ function initAJFormsBuilder() {
                     </div>
                     <div class="wpf-setting-row">
                         <label class="wpf-toggle-card">
-                            <span>
-                                <strong>Required Field</strong>
-                                <small>Visitors must complete this field before submitting.</small>
-                            </span>
+                            <strong>Required Field</strong>
                             <input type="checkbox" class="wpf-live-checkbox" data-key="required" ${field.required ? 'checked' : ''}>
                         </label>
                     </div>
                     <div class="wpf-setting-row">
                         <label class="wpf-toggle-card">
-                            <span>
-                                <strong>Conversational Field</strong>
-                                <small>Show this field as one step in the conversation. Leave off for fields that belong on the final submit form.</small>
-                            </span>
+                            <strong>Conversational Field</strong>
                             <input type="checkbox" class="wpf-live-checkbox" data-key="conversational" ${field.conversational ? 'checked' : ''}>
                         </label>
                     </div>
