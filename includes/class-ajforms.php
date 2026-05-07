@@ -57,6 +57,10 @@ class AJForms {
 			'notifications_enabled' => isset( $plugin_settings['default_notifications_enabled'] ) ? '1' === (string) $plugin_settings['default_notifications_enabled'] : true,
 			'notification_email'    => isset( $plugin_settings['default_notification_email'] ) ? $plugin_settings['default_notification_email'] : get_option( 'admin_email' ),
 			'notification_subject'  => isset( $plugin_settings['default_notification_subject'] ) ? $plugin_settings['default_notification_subject'] : 'New submission for {form_title}',
+			'notification_body'     => "A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}",
+			'notification_from_name' => isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ),
+			'notification_from_email' => '',
+			'notification_reply_to' => '',
 			'button_alignment'      => 'left',
 			'form_description'      => '',
 			'success_message'       => isset( $plugin_settings['default_success_message'] ) ? $plugin_settings['default_success_message'] : 'Form submitted successfully.',
@@ -504,6 +508,7 @@ class AJForms {
 		$replacements = array(
 			'{form_title}'        => $form->title,
 			'{submission_count}'  => '1',
+			'{submitted_at}'      => current_time( 'mysql' ),
 		);
 
 		// Add {submission_fields} tag
@@ -552,6 +557,19 @@ class AJForms {
 		}
 
 		return '';
+	}
+
+	private function get_notification_reply_to_header( $settings, $form, $lead_data ) {
+		if ( ! empty( $settings['notification_reply_to'] ) ) {
+			$reply_to = $this->replace_template_tags( (string) $settings['notification_reply_to'], $form, $lead_data );
+			$reply_to = sanitize_email( $reply_to );
+
+			if ( '' !== $reply_to && is_email( $reply_to ) ) {
+				return 'Reply-To: ' . $reply_to;
+			}
+		}
+
+		return $this->get_reply_to_header( $lead_data );
 	}
 
 	private function build_submission_fields_text( $lead_data ) {
@@ -654,26 +672,13 @@ class AJForms {
 		$subject          = $this->replace_template_tags( $subject_template, $form, $lead_data );
 		$subject          = sanitize_text_field( $subject );
 
-		$lines   = array();
-		$lines[] = 'A new submission was received for "' . $form->title . '".';
-		$lines[] = '';
+		$body_template = ! empty( $settings['notification_body'] ) ? (string) $settings['notification_body'] : "A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}";
+		$body          = $this->replace_template_tags( $body_template, $form, $lead_data );
 
-		foreach ( $lead_data as $field_id => $field ) {
-			if ( ! is_array( $field ) ) {
-				continue;
-			}
-
-			$label = ! empty( $field['label'] ) ? sanitize_text_field( $field['label'] ) : sanitize_text_field( (string) $field_id );
-			$value = isset( $field['value'] ) ? $this->format_lead_value_for_display( $field['value'] ) : '';
-
-			$lines[] = $label . ': ' . ( '' !== $value ? $value : '-' );
-		}
-
-		$lines[] = '';
-		$lines[] = 'Submitted: ' . current_time( 'mysql' );
-
-		$headers = array( 'Content-Type: text/plain; charset=UTF-8' );
-		$reply_to = $this->get_reply_to_header( $lead_data );
+		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+		$from_name = ! empty( $settings['notification_from_name'] ) ? sanitize_text_field( $this->replace_template_tags( (string) $settings['notification_from_name'], $form, $lead_data ) ) : '';
+		$from_email = ! empty( $settings['notification_from_email'] ) ? sanitize_email( $settings['notification_from_email'] ) : '';
+		$reply_to = $this->get_notification_reply_to_header( $settings, $form, $lead_data );
 		$attachments = array();
 
 		foreach ( $lead_data as $field ) {
@@ -688,7 +693,11 @@ class AJForms {
 			$headers[] = $reply_to;
 		}
 
-		wp_mail( $recipients, $subject, implode( "\n", $lines ), $headers, $attachments );
+		if ( '' !== $from_email && is_email( $from_email ) ) {
+			$headers[] = 'From: ' . ( '' !== $from_name ? $from_name . ' ' : '' ) . '<' . $from_email . '>';
+		}
+
+		wp_mail( $recipients, $subject, wpautop( wp_kses_post( $body ) ), $headers, $attachments );
 	}
 
 	private function handle_form_submission( $form, $fields, $settings ) {

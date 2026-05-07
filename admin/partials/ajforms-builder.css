@@ -9,8 +9,6 @@
 }
 
 .wpf-toolbar {
-	position: sticky;
-	top: 32px;
 	z-index: 50;
 	flex: 0 0 auto;
 	display: flex;
@@ -787,6 +785,31 @@ body.wpf-is-resizing-field * {
 	line-height: 1.4;
 	color: #6b7280;
 	margin: 6px 0 0;
+}
+
+.wpf-variable-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 10px;
+	font-size: 12px;
+	color: #64748b;
+}
+
+.wpf-variable-list strong {
+	flex: 0 0 100%;
+	color: #1f2937;
+}
+
+.wpf-variable-list code {
+	padding: 4px 6px;
+	border-radius: 6px;
+	background: #f1f5f9;
+	color: #334155;
+}
+
+.wpf-setting-row .wp-editor-wrap {
+	margin-top: 6px;
 }
 
 .wpf-toggle-row {

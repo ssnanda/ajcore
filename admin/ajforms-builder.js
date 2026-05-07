@@ -29,6 +29,10 @@ function initAJFormsBuilder() {
             notifications_enabled: true,
             notification_email: '',
             notification_subject: 'New submission for {form_title}',
+            notification_body: 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}',
+            notification_from_name: '',
+            notification_from_email: '',
+            notification_reply_to: '',
             button_alignment: 'left',
             form_description: '',
             success_message: 'Form submitted successfully.',
@@ -351,6 +355,10 @@ function initAJFormsBuilder() {
                     notifications_enabled: true,
                     notification_email: '',
                     notification_subject: 'New submission for {form_title}',
+                    notification_body: 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}',
+                    notification_from_name: '',
+                    notification_from_email: '',
+                    notification_reply_to: '',
                     button_alignment: 'left',
                     form_description: '',
                     success_message: 'Form submitted successfully.',
@@ -393,6 +401,10 @@ function initAJFormsBuilder() {
                         notifications_enabled: true,
                         notification_email: '',
                         notification_subject: 'New submission for {form_title}',
+                        notification_body: 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}',
+                        notification_from_name: '',
+                        notification_from_email: '',
+                        notification_reply_to: '',
                         button_alignment: 'left',
                         form_description: '',
                         success_message: 'Form submitted successfully.',
@@ -435,6 +447,10 @@ function initAJFormsBuilder() {
                 notifications_enabled: true,
                 notification_email: '',
                 notification_subject: 'New submission for {form_title}',
+                notification_body: 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}',
+                notification_from_name: '',
+                notification_from_email: '',
+                notification_reply_to: '',
                 button_alignment: 'left',
                 form_description: '',
                 success_message: 'Form submitted successfully.',
@@ -642,6 +658,10 @@ function initAJFormsBuilder() {
         const notificationsInput = document.getElementById('wpf-form-notifications');
         const notificationEmailInput = document.getElementById('wpf-form-notification-email');
         const notificationSubjectInput = document.getElementById('wpf-form-notification-subject');
+        const notificationBodyInput = document.getElementById('wpf_form_notification_body');
+        const notificationFromNameInput = document.getElementById('wpf-form-notification-from-name');
+        const notificationFromEmailInput = document.getElementById('wpf-form-notification-from-email');
+        const notificationReplyToInput = document.getElementById('wpf-form-notification-reply-to');
         const descriptionInput = document.getElementById('wpf-form-description');
         const successMessageInput = document.getElementById('wpf-form-success-message');
         const buttonAlignmentInput = document.getElementById('wpf-form-button-alignment');
@@ -657,6 +677,18 @@ function initAJFormsBuilder() {
         }
         if (notificationSubjectInput) {
             notificationSubjectInput.value = formSchema.settings.notification_subject || 'New submission for {form_title}';
+        }
+        if (notificationBodyInput) {
+            notificationBodyInput.value = formSchema.settings.notification_body || 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}';
+        }
+        if (notificationFromNameInput) {
+            notificationFromNameInput.value = formSchema.settings.notification_from_name || '';
+        }
+        if (notificationFromEmailInput) {
+            notificationFromEmailInput.value = formSchema.settings.notification_from_email || '';
+        }
+        if (notificationReplyToInput) {
+            notificationReplyToInput.value = formSchema.settings.notification_reply_to || '';
         }
         if (descriptionInput) {
             descriptionInput.value = formSchema.settings.form_description || '';
@@ -863,6 +895,28 @@ function initAJFormsBuilder() {
         });
     }
 
+    function renderNotificationVariables() {
+        const variablesNode = document.getElementById('wpf-notification-variables');
+        if (!variablesNode) {
+            return;
+        }
+
+        const variables = [
+            '{form_title}',
+            '{submission_fields}',
+            '{submitted_at}'
+        ];
+
+        formSchema.fields.forEach((field, index) => {
+            variables.push(`{field_${index + 1}}`);
+            if (field.field_name) {
+                variables.push(`{${field.field_name}}`);
+            }
+        });
+
+        variablesNode.innerHTML = '<strong>Available variables</strong>' + variables.map((variable) => `<code>${escapeHtml(variable)}</code>`).join('');
+    }
+
     function renderCanvas() {
         applyCanvasTheme();
         canvas.querySelectorAll('.wpf-canvas-field').forEach((el) => el.remove());
@@ -1004,6 +1058,7 @@ function initAJFormsBuilder() {
         canvas.appendChild(submitPreview);
 
         renderStructureList();
+        renderNotificationVariables();
 
         if (currentDropIndex !== null) {
             applyDropIndicator(currentDropIndex);
@@ -1570,11 +1625,19 @@ function initAJFormsBuilder() {
     }
 
     function saveForm(status) {
+        if (window.tinyMCE && typeof window.tinyMCE.triggerSave === 'function') {
+            window.tinyMCE.triggerSave();
+        }
+
         const titleInput = document.getElementById('wpf-form-title');
         const submitTextInput = document.getElementById('wpf-form-submit-text');
         const notificationsInput = document.getElementById('wpf-form-notifications');
         const notificationEmailInput = document.getElementById('wpf-form-notification-email');
         const notificationSubjectInput = document.getElementById('wpf-form-notification-subject');
+        const notificationBodyInput = document.getElementById('wpf_form_notification_body');
+        const notificationFromNameInput = document.getElementById('wpf-form-notification-from-name');
+        const notificationFromEmailInput = document.getElementById('wpf-form-notification-from-email');
+        const notificationReplyToInput = document.getElementById('wpf-form-notification-reply-to');
         const descriptionInput = document.getElementById('wpf-form-description');
         const successMessageInput = document.getElementById('wpf-form-success-message');
         const buttonAlignmentInput = document.getElementById('wpf-form-button-alignment');
@@ -1613,6 +1676,10 @@ function initAJFormsBuilder() {
         formSchema.settings.notifications_enabled = notificationsInput ? !!notificationsInput.checked : true;
         formSchema.settings.notification_email = notificationEmailInput ? notificationEmailInput.value.trim() : '';
         formSchema.settings.notification_subject = notificationSubjectInput ? (notificationSubjectInput.value.trim() || 'New submission for {form_title}') : 'New submission for {form_title}';
+        formSchema.settings.notification_body = notificationBodyInput ? (notificationBodyInput.value.trim() || 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}') : 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}';
+        formSchema.settings.notification_from_name = notificationFromNameInput ? notificationFromNameInput.value.trim() : '';
+        formSchema.settings.notification_from_email = notificationFromEmailInput ? notificationFromEmailInput.value.trim() : '';
+        formSchema.settings.notification_reply_to = notificationReplyToInput ? notificationReplyToInput.value.trim() : '';
         formSchema.settings.form_description = descriptionInput ? descriptionInput.value.trim() : '';
         formSchema.settings.success_message = successMessageInput ? (successMessageInput.value.trim() || 'Form submitted successfully.') : 'Form submitted successfully.';
         formSchema.settings.button_alignment = buttonAlignmentInput ? (buttonAlignmentInput.value || 'left') : 'left';

@@ -9,10 +9,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $back_url = admin_url( 'admin.php?page=ajforms' );
 $form_id  = isset( $_GET['form_id'] ) ? intval( $_GET['form_id'] ) : 0;
+$default_notification_body = "A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}";
 $plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array(
 	'default_notification_email'    => get_option( 'admin_email' ),
 	'default_notification_subject'  => 'New submission for {form_title}',
 	'default_notifications_enabled' => '1',
+	'default_from_name'             => get_bloginfo( 'name' ),
 	'asana_enabled'                 => '0',
 	'asana_project_gid'             => '',
 	'stripe_publishable_key'        => '',
@@ -31,6 +33,10 @@ $initial_data = array(
 			'notifications_enabled' => '1' === (string) $plugin_settings['default_notifications_enabled'],
 			'notification_email'    => $plugin_settings['default_notification_email'],
 			'notification_subject'  => $plugin_settings['default_notification_subject'],
+			'notification_body'     => $default_notification_body,
+			'notification_from_name' => isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ),
+			'notification_from_email' => '',
+			'notification_reply_to' => '',
 			'button_alignment'      => 'left',
 			'form_description'      => '',
 			'success_message'       => 'Form submitted successfully.',
@@ -81,6 +87,10 @@ if ( $form_id ) {
 						'notifications_enabled' => '1' === (string) $plugin_settings['default_notifications_enabled'],
 						'notification_email'    => $plugin_settings['default_notification_email'],
 						'notification_subject'  => $plugin_settings['default_notification_subject'],
+						'notification_body'     => $default_notification_body,
+						'notification_from_name' => isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ),
+						'notification_from_email' => '',
+						'notification_reply_to' => '',
 						'button_alignment'      => 'left',
 						'form_description'      => '',
 						'success_message'       => 'Form submitted successfully.',
@@ -112,6 +122,10 @@ if ( $form_id ) {
 					'notifications_enabled' => '1' === (string) $plugin_settings['default_notifications_enabled'],
 					'notification_email'    => $plugin_settings['default_notification_email'],
 					'notification_subject'  => $plugin_settings['default_notification_subject'],
+					'notification_body'     => $default_notification_body,
+					'notification_from_name' => isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ),
+					'notification_from_email' => '',
+					'notification_reply_to' => '',
 					'button_alignment'      => 'left',
 					'form_description'      => '',
 					'success_message'       => 'Form submitted successfully.',
@@ -150,6 +164,10 @@ if ( $form_id ) {
 					'notifications_enabled' => '1' === (string) $plugin_settings['default_notifications_enabled'],
 					'notification_email'    => $plugin_settings['default_notification_email'],
 					'notification_subject'  => $plugin_settings['default_notification_subject'],
+					'notification_body'     => $default_notification_body,
+					'notification_from_name' => isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ),
+					'notification_from_email' => '',
+					'notification_reply_to' => '',
 					'button_alignment'      => 'left',
 					'form_description'      => '',
 					'success_message'       => 'Form submitted successfully.',
@@ -321,14 +339,60 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 								</label>
 							</div>
 							<div class="wpf-setting-row">
-								<label>Notification Email</label>
+								<label>Send Email To</label>
 								<input type="text" id="wpf-form-notification-email" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_email'] ) ? $initial_data['schema']['settings']['notification_email'] : $plugin_settings['default_notification_email'] ); ?>">
 								<p class="wpf-setting-help">Use one or more emails separated by commas.</p>
 							</div>
 							<div class="wpf-setting-row">
-								<label>Notification Subject</label>
+								<label>Subject</label>
 								<input type="text" id="wpf-form-notification-subject" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_subject'] ) ? $initial_data['schema']['settings']['notification_subject'] : $plugin_settings['default_notification_subject'] ); ?>">
-								<p class="wpf-setting-help">Use <code>{form_title}</code>, <code>{submission_fields}</code>, numbered tags like <code>{field_1}</code>, or custom field names like <code>{email}</code>.</p>
+							</div>
+							<div class="wpf-field-settings-grid">
+								<div class="wpf-setting-row">
+									<label>From Name</label>
+									<input type="text" id="wpf-form-notification-from-name" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_from_name'] ) ? $initial_data['schema']['settings']['notification_from_name'] : ( isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ) ) ); ?>">
+								</div>
+								<div class="wpf-setting-row">
+									<label>From Email</label>
+									<input type="text" id="wpf-form-notification-from-email" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_from_email'] ) ? $initial_data['schema']['settings']['notification_from_email'] : '' ); ?>">
+								</div>
+							</div>
+							<div class="wpf-setting-row">
+								<label>Reply to Address</label>
+								<input type="text" id="wpf-form-notification-reply-to" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_reply_to'] ) ? $initial_data['schema']['settings']['notification_reply_to'] : '' ); ?>">
+							</div>
+							<div class="wpf-setting-row">
+								<label>Message Body</label>
+								<?php
+								$notification_body = isset( $initial_data['schema']['settings']['notification_body'] ) ? $initial_data['schema']['settings']['notification_body'] : $default_notification_body;
+								wp_editor(
+									$notification_body,
+									'wpf_form_notification_body',
+									array(
+										'textarea_name' => 'wpf_form_notification_body',
+										'textarea_rows' => 8,
+										'media_buttons' => false,
+										'teeny'         => true,
+										'quicktags'     => true,
+									)
+								);
+								?>
+								<div class="wpf-variable-list" id="wpf-notification-variables">
+									<strong>Available variables</strong>
+									<code>{form_title}</code>
+									<code>{submission_fields}</code>
+									<code>{submitted_at}</code>
+									<?php foreach ( $initial_data['schema']['fields'] as $index => $field ) : ?>
+										<?php
+										if ( ! is_array( $field ) ) {
+											continue;
+										}
+										$field_name = ! empty( $field['field_name'] ) ? sanitize_key( $field['field_name'] ) : 'field_' . ( $index + 1 );
+										?>
+										<code>{field_<?php echo esc_html( $index + 1 ); ?>}</code>
+										<code>{<?php echo esc_html( $field_name ); ?>}</code>
+									<?php endforeach; ?>
+								</div>
 							</div>
 						</div>
 

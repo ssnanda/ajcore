@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Forms
  * Plugin URI:        https://github.com/ssnanda/ajforms
  * Description:       A custom WordPress form builder plugin for building forms, collecting entries, and managing workflows inside WordPress.
- * Version: 0.1.23
+ * Version: 0.1.24
  * Author:            itSpector
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJFORMS_VERSION' ) ) {
-	define( 'AJFORMS_VERSION', '0.1.23' );
+	define( 'AJFORMS_VERSION', '0.1.24' );
 }
 
 if ( ! defined( 'AJFORMS_PLUGIN_DIR' ) ) {
