@@ -4,7 +4,7 @@ if ( ! class_exists( 'WP_List_Table' ) ) {
 	require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php';
 }
 
-class WP_Formy_Forms_List_Table extends WP_List_Table {
+class AJForms_Forms_List_Table extends WP_List_Table {
 
 	private function get_status_header_markup() {
 		$selected_status = isset( $_GET['form_status'] ) ? sanitize_text_field( wp_unslash( $_GET['form_status'] ) ) : '';
@@ -12,12 +12,12 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 		ob_start();
 		?>
 		<label style="display:flex;align-items:center;gap:8px;font-weight:600;">
-			<span><?php esc_html_e( 'Status', 'wp-formy' ); ?></span>
-			<select class="wp-formy-status-filter" name="form_status">
-				<option value=""><?php esc_html_e( 'All', 'wp-formy' ); ?></option>
-				<option value="published" <?php selected( $selected_status, 'published' ); ?>><?php esc_html_e( 'Published', 'wp-formy' ); ?></option>
-				<option value="draft" <?php selected( $selected_status, 'draft' ); ?>><?php esc_html_e( 'Draft', 'wp-formy' ); ?></option>
-				<option value="deleted" <?php selected( $selected_status, 'deleted' ); ?>><?php esc_html_e( 'Deleted', 'wp-formy' ); ?></option>
+			<span><?php esc_html_e( 'Status', 'ajforms' ); ?></span>
+			<select class="ajforms-status-filter" name="form_status">
+				<option value=""><?php esc_html_e( 'All', 'ajforms' ); ?></option>
+				<option value="published" <?php selected( $selected_status, 'published' ); ?>><?php esc_html_e( 'Published', 'ajforms' ); ?></option>
+				<option value="draft" <?php selected( $selected_status, 'draft' ); ?>><?php esc_html_e( 'Draft', 'ajforms' ); ?></option>
+				<option value="deleted" <?php selected( $selected_status, 'deleted' ); ?>><?php esc_html_e( 'Deleted', 'ajforms' ); ?></option>
 			</select>
 		</label>
 		<?php
@@ -41,13 +41,13 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 			$form_ids = isset( $_POST['form_id'] ) ? array_map( 'intval', wp_unslash( $_POST['form_id'] ) ) : array();
 
 			if ( ! empty( $form_ids ) && current_user_can( 'manage_options' ) ) {
-				$admin = new WP_Formy_Admin();
+				$admin = new AJForms_Admin();
 				$admin->bulk_delete_forms( $form_ids );
 
 				wp_safe_redirect(
 					add_query_arg(
 						array(
-							'page'    => 'wp-formy',
+							'page'    => 'ajforms',
 							'deleted' => count( $form_ids ),
 						),
 						admin_url( 'admin.php' )
@@ -61,12 +61,12 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 	public function get_columns() {
 		return array(
 			'cb'        => '<input type="checkbox" />',
-			'title'     => __( 'Title', 'wp-formy' ),
-			'shortcode' => __( 'Shortcode', 'wp-formy' ),
-			'entries'   => __( 'Entries', 'wp-formy' ),
-			'date'      => __( 'Date & Time', 'wp-formy' ),
+			'title'     => __( 'Title', 'ajforms' ),
+			'shortcode' => __( 'Shortcode', 'ajforms' ),
+			'entries'   => __( 'Entries', 'ajforms' ),
+			'date'      => __( 'Date & Time', 'ajforms' ),
 			'status'    => $this->get_status_header_markup(),
-			'actions'   => __( 'Actions', 'wp-formy' ),
+			'actions'   => __( 'Actions', 'ajforms' ),
 		);
 	}
 
@@ -80,13 +80,13 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 	protected function column_default( $item, $column_name ) {
 		switch ( $column_name ) {
 			case 'shortcode':
-				return '<code class="wp-formy-shortcode-chip">[wp_formy id="' . absint( $item['id'] ) . '"]</code>';
+				return '<code class="ajforms-shortcode-chip">[ajforms id="' . absint( $item['id'] ) . '"]</code><br><code class="ajforms-shortcode-chip">[ajforms type="conversational" id="' . absint( $item['id'] ) . '"]</code>';
 
 			case 'entries':
 				$count = isset( $item['entries_count'] ) ? intval( $item['entries_count'] ) : 0;
 				$url   = add_query_arg(
 					array(
-						'page'    => 'wp-formy-leads',
+						'page'    => 'ajforms-leads',
 						'form_id' => absint( $item['id'] ),
 					),
 					admin_url( 'admin.php' )
@@ -104,7 +104,7 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 
 			case 'status':
 				$status = sanitize_text_field( $item['status'] );
-				return '<span class="wp-formy-status-badge ' . esc_attr( 'is-' . $status ) . '">' . esc_html( ucfirst( $status ) ) . '</span>';
+				return '<span class="ajforms-status-badge ' . esc_attr( 'is-' . $status ) . '">' . esc_html( ucfirst( $status ) ) . '</span>';
 
 			case 'actions':
 				return $this->render_actions_column( $item );
@@ -122,10 +122,10 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 	}
 
 	protected function column_title( $item ) {
-		$status_label = isset( $item['status'] ) ? sanitize_text_field( ucfirst( $item['status'] ) ) : __( 'Draft', 'wp-formy' );
+		$status_label = isset( $item['status'] ) ? sanitize_text_field( ucfirst( $item['status'] ) ) : __( 'Draft', 'ajforms' );
 
 		return sprintf(
-			'<div class="wp-formy-form-title-cell"><strong>%1$s</strong><span>%2$s</span></div>',
+			'<div class="ajforms-form-title-cell"><strong>%1$s</strong><span>%2$s</span></div>',
 			esc_html( $item['title'] ),
 			esc_html( $status_label )
 		);
@@ -136,14 +136,14 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 		$status   = isset( $item['status'] ) ? sanitize_text_field( $item['status'] ) : 'draft';
 		$edit_url = add_query_arg(
 			array(
-				'page'    => 'wp-formy',
+				'page'    => 'ajforms',
 				'action'  => 'edit',
 				'form_id' => $form_id,
 			),
 			admin_url( 'admin.php' )
 		);
 
-		$row_classes = array( 'wp-formy-form-row' );
+		$row_classes = array( 'ajforms-form-row' );
 		if ( 'deleted' === $status ) {
 			$row_classes[] = 'is-deleted';
 		}
@@ -158,12 +158,12 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 	}
 
 	private function render_actions_column( $item ) {
-		$admin      = new WP_Formy_Admin();
+		$admin      = new AJForms_Admin();
 		$form_id    = absint( $item['id'] );
 		$status     = isset( $item['status'] ) ? sanitize_text_field( $item['status'] ) : 'draft';
 		$edit_url   = add_query_arg(
 			array(
-				'page'    => 'wp-formy',
+				'page'    => 'ajforms',
 				'action'  => 'edit',
 				'form_id' => $form_id,
 			),
@@ -173,61 +173,61 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 		$duplicate_url = wp_nonce_url(
 			add_query_arg(
 				array(
-					'page'        => 'wp-formy',
+					'page'        => 'ajforms',
 					'form_action' => 'duplicate',
 					'form_id'     => $form_id,
 				),
 				admin_url( 'admin.php' )
 			),
-			'wpf_form_action_' . $form_id
+			'ajf_form_action_' . $form_id
 		);
 		$export_url = wp_nonce_url(
 			add_query_arg(
 				array(
-					'action'      => 'wpf_export_form',
+					'action'      => 'ajf_export_form',
 					'form_id'     => $form_id,
 				),
 				admin_url( 'admin-post.php' )
 			),
-			'wpf_export_form'
+			'ajf_export_form'
 		);
 
 		if ( 'deleted' === $status ) {
 			$restore_url = wp_nonce_url(
 				add_query_arg(
 					array(
-						'page'        => 'wp-formy',
+						'page'        => 'ajforms',
 						'form_action' => 'restore',
 						'form_id'     => $form_id,
 					),
 					admin_url( 'admin.php' )
 				),
-				'wpf_form_action_' . $form_id
+				'ajf_form_action_' . $form_id
 			);
 
-			return '<div class="wp-formy-inline-actions">'
-				. '<a class="button button-small" href="' . esc_url( $restore_url ) . '">' . esc_html__( 'Restore', 'wp-formy' ) . '</a>'
+			return '<div class="ajforms-inline-actions">'
+				. '<a class="button button-small" href="' . esc_url( $restore_url ) . '">' . esc_html__( 'Restore', 'ajforms' ) . '</a>'
 				. '</div>';
 		}
 
 		$delete_url = wp_nonce_url(
 			add_query_arg(
 				array(
-					'page'        => 'wp-formy',
+					'page'        => 'ajforms',
 					'form_action' => 'delete',
 					'form_id'     => $form_id,
 				),
 				admin_url( 'admin.php' )
 			),
-			'wpf_form_action_' . $form_id
+			'ajf_form_action_' . $form_id
 		);
 
-		return '<div class="wp-formy-inline-actions">'
-			. '<a class="button button-small" href="' . esc_url( $edit_url ) . '">' . esc_html__( 'Edit', 'wp-formy' ) . '</a>'
-			. '<a class="button button-small" href="' . esc_url( $preview_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Preview', 'wp-formy' ) . '</a>'
-			. '<a class="button button-small" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export', 'wp-formy' ) . '</a>'
-			. '<a class="button button-small" href="' . esc_url( $duplicate_url ) . '">' . esc_html__( 'Duplicate', 'wp-formy' ) . '</a>'
-			. '<a class="button button-small button-link-delete" href="' . esc_url( $delete_url ) . '" onclick="return confirm(\'Move this form to deleted?\');">' . esc_html__( 'Delete', 'wp-formy' ) . '</a>'
+		return '<div class="ajforms-inline-actions">'
+			. '<a class="button button-small" href="' . esc_url( $edit_url ) . '">' . esc_html__( 'Edit', 'ajforms' ) . '</a>'
+			. '<a class="button button-small" href="' . esc_url( $preview_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Preview', 'ajforms' ) . '</a>'
+			. '<a class="button button-small" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export', 'ajforms' ) . '</a>'
+			. '<a class="button button-small" href="' . esc_url( $duplicate_url ) . '">' . esc_html__( 'Duplicate', 'ajforms' ) . '</a>'
+			. '<a class="button button-small button-link-delete" href="' . esc_url( $delete_url ) . '" onclick="return confirm(\'Move this form to deleted?\');">' . esc_html__( 'Delete', 'ajforms' ) . '</a>'
 			. '</div>';
 	}
 
@@ -244,15 +244,15 @@ class WP_Formy_Forms_List_Table extends WP_List_Table {
 
 	public function get_bulk_actions() {
 		return array(
-			'bulk-delete' => __( 'Delete', 'wp-formy' ),
+			'bulk-delete' => __( 'Delete', 'ajforms' ),
 		);
 	}
 
 	public function prepare_items() {
 		global $wpdb;
 
-		$table_name = $wpdb->prefix . 'formy_forms';
-		$leads_table = $wpdb->prefix . 'formy_leads';
+		$table_name = $wpdb->prefix . 'ajforms_forms';
+		$leads_table = $wpdb->prefix . 'ajforms_leads';
 		$per_page   = 20;
 		$paged      = $this->get_pagenum();
 		$offset     = ( $paged - 1 ) * $per_page;

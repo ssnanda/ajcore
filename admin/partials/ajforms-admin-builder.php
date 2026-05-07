@@ -7,9 +7,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$back_url = admin_url( 'admin.php?page=wp-formy' );
+$back_url = admin_url( 'admin.php?page=ajforms' );
 $form_id  = isset( $_GET['form_id'] ) ? intval( $_GET['form_id'] ) : 0;
-$plugin_settings = function_exists( 'wp_formy_get_settings' ) ? wp_formy_get_settings() : array(
+$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array(
 	'default_notification_email'    => get_option( 'admin_email' ),
 	'default_notification_subject'  => 'New submission for {form_title}',
 	'default_notifications_enabled' => '1',
@@ -24,7 +24,7 @@ $initial_data = array(
 	'title'   => '',
 	'schema'  => array(
 		'version'   => 1,
-		'source'    => 'wp-formy',
+		'source'    => 'ajforms',
 		'fields'    => array(),
 		'settings'  => array(
 			'submit_text'           => 'Submit',
@@ -63,7 +63,7 @@ $initial_data = array(
 
 if ( $form_id ) {
 	global $wpdb;
-	$table = $wpdb->prefix . 'formy_forms';
+	$table = $wpdb->prefix . 'ajforms_forms';
 	$form  = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE id = %d", $form_id ) );
 
 	if ( $form ) {
@@ -72,7 +72,7 @@ if ( $form_id ) {
 		if ( isset( $decoded_schema['fields'] ) && is_array( $decoded_schema['fields'] ) ) {
 			$normalized_schema = array(
 				'version'   => isset( $decoded_schema['version'] ) ? intval( $decoded_schema['version'] ) : 1,
-				'source'    => isset( $decoded_schema['source'] ) ? sanitize_text_field( $decoded_schema['source'] ) : 'wp-formy',
+				'source'    => isset( $decoded_schema['source'] ) ? sanitize_text_field( $decoded_schema['source'] ) : 'ajforms',
 				'fields'    => $decoded_schema['fields'],
 				'settings'  => isset( $decoded_schema['settings'] ) && is_array( $decoded_schema['settings'] ) ? wp_parse_args(
 					$decoded_schema['settings'],
@@ -171,10 +171,10 @@ if ( $form_id ) {
 }
 ?>
 <script>
-window.wpFormyInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
+window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 </script>
 
-<div class="wp-formy-builder-wrap">
+<div class="ajforms-builder-wrap">
 	<div class="wpf-toolbar">
 		<div class="wpf-toolbar-left">
 			<button id="wpf-toggle-fields-btn" class="wpf-toolbar-icon-btn wpf-toolbar-icon-btn-primary" type="button" title="Add Field">+</button>
@@ -206,7 +206,7 @@ window.wpFormyInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 				</div>
 			</div>
 			<?php if ( $form_id ) : ?>
-				<a href="<?php echo esc_url( add_query_arg( array( 'wp_formy_preview' => $form_id ), home_url( '/' ) ) ); ?>" id="wpf-preview-form-link" class="wpf-btn wpf-btn-secondary" target="_blank" rel="noopener noreferrer">Preview</a>
+				<a href="<?php echo esc_url( add_query_arg( array( 'ajforms_preview' => $form_id ), home_url( '/' ) ) ); ?>" id="wpf-preview-form-link" class="wpf-btn wpf-btn-secondary" target="_blank" rel="noopener noreferrer">Preview</a>
 			<?php else : ?>
 				<button id="wpf-preview-form-link" class="wpf-btn wpf-btn-secondary" type="button" disabled>Preview</button>
 			<?php endif; ?>
@@ -357,7 +357,7 @@ window.wpFormyInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 									<span>Create Asana Task</span>
 									<input type="checkbox" id="wpf-form-asana-task-enabled" <?php checked( ! empty( $initial_data['schema']['settings']['asana_task_enabled'] ) ); ?> <?php disabled( empty( $plugin_settings['asana_enabled'] ) ); ?>>
 								</label>
-								<p class="wpf-setting-help"><?php echo ! empty( $plugin_settings['asana_enabled'] ) ? esc_html__( 'When enabled, each successful submission creates a new Asana task.', 'wp-formy' ) : esc_html__( 'Enable Asana globally on the Settings page first.', 'wp-formy' ); ?></p>
+								<p class="wpf-setting-help"><?php echo ! empty( $plugin_settings['asana_enabled'] ) ? esc_html__( 'When enabled, each successful submission creates a new Asana task.', 'ajforms' ) : esc_html__( 'Enable Asana globally on the Settings page first.', 'ajforms' ); ?></p>
 							</div>
 							<div class="wpf-setting-row">
 								<label>Asana Task Name</label>
@@ -379,7 +379,7 @@ window.wpFormyInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 									<span>Enable Stripe Payments</span>
 									<input type="checkbox" id="wpf-form-stripe-enabled" <?php checked( ! empty( $initial_data['schema']['settings']['stripe_enabled'] ) ); ?> <?php disabled( empty( $plugin_settings['stripe_publishable_key'] ) || empty( $plugin_settings['stripe_secret_key'] ) ); ?>>
 								</label>
-								<p class="wpf-setting-help"><?php echo ( ! empty( $plugin_settings['stripe_publishable_key'] ) && ! empty( $plugin_settings['stripe_secret_key'] ) ) ? esc_html__( 'Keys are connected globally. Turn this on only for forms that should collect payment.', 'wp-formy' ) : esc_html__( 'Add Stripe keys on the Stripe Payments settings page first.', 'wp-formy' ); ?></p>
+								<p class="wpf-setting-help"><?php echo ( ! empty( $plugin_settings['stripe_publishable_key'] ) && ! empty( $plugin_settings['stripe_secret_key'] ) ) ? esc_html__( 'Keys are connected globally. Turn this on only for forms that should collect payment.', 'ajforms' ) : esc_html__( 'Add Stripe keys on the Stripe Payments settings page first.', 'ajforms' ); ?></p>
 							</div>
 							<div class="wpf-setting-row">
 								<label>Payment Amount</label>

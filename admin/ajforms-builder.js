@@ -1,4 +1,4 @@
-function initWPFormyBuilder() {
+function initAJFormsBuilder() {
     const dropzone = document.getElementById('wpf-dropzone');
     const canvas = document.getElementById('wpf-canvas-fields');
     const emptyState = document.querySelector('.wpf-empty-state');
@@ -21,7 +21,7 @@ function initWPFormyBuilder() {
 
     let formSchema = {
         version: 1,
-        source: 'wp-formy',
+        source: 'ajforms',
         title: 'Untitled Form',
         fields: [],
         settings: {
@@ -186,6 +186,7 @@ function initWPFormyBuilder() {
                 width: 100,
                 help_text: '',
                 default_value: '',
+                conversation_step: 'question',
                 accepted_file_types: '.pdf,.jpg,.jpeg,.png,.gif,.webp'
             },
             field || {}
@@ -194,6 +195,10 @@ function initWPFormyBuilder() {
         normalized.width = parseInt(normalized.width, 10);
         if (![100, 50, 33, 25].includes(normalized.width)) {
             normalized.width = 100;
+        }
+
+        if (!['question', 'final_contact'].includes(normalized.conversation_step)) {
+            normalized.conversation_step = 'question';
         }
 
         if (
@@ -270,7 +275,7 @@ function initWPFormyBuilder() {
         if (initialSchema && Array.isArray(initialSchema.fields)) {
             return {
                 version: initialSchema.version || 1,
-                source: initialSchema.source || 'wp-formy',
+                source: initialSchema.source || 'ajforms',
                 fields: (initialSchema.fields || []).map(normalizeField),
                 settings: Object.assign(
                     {
@@ -312,7 +317,7 @@ function initWPFormyBuilder() {
 
         return {
             version: 1,
-            source: 'wp-formy',
+            source: 'ajforms',
             fields: [],
             settings: {
                 submit_text: 'Submit',
@@ -470,7 +475,7 @@ function initWPFormyBuilder() {
                 fieldSettingsPanel.innerHTML = '<p style="color:#646970;font-size:13px;">Select a field in the canvas to edit its settings.</p>';
             }
         } catch (error) {
-            console.error('WP Formy history restore failed', error);
+            console.error('AJ Forms history restore failed', error);
         } finally {
             isRestoringHistory = false;
             updateUndoRedoButtons();
@@ -495,11 +500,11 @@ function initWPFormyBuilder() {
         restoreState(redoStack.pop());
     }
 
-    if (window.wpFormyInitialData) {
-        formId = window.wpFormyInitialData.form_id || null;
-        formSchema.title = window.wpFormyInitialData.title || formSchema.title;
+    if (window.ajFormsInitialData) {
+        formId = window.ajFormsInitialData.form_id || null;
+        formSchema.title = window.ajFormsInitialData.title || formSchema.title;
 
-        const normalized = normalizeIncomingSchema(window.wpFormyInitialData.schema || {});
+        const normalized = normalizeIncomingSchema(window.ajFormsInitialData.schema || {});
         formSchema.version = normalized.version;
         formSchema.source = normalized.source;
         formSchema.fields = normalized.fields;
@@ -508,7 +513,7 @@ function initWPFormyBuilder() {
 
         const titleInput = document.getElementById('wpf-form-title');
         if (titleInput) {
-            titleInput.value = window.wpFormyInitialData.title || 'Untitled Form';
+            titleInput.value = window.ajFormsInitialData.title || 'Untitled Form';
         }
 
         const submitTextInput = document.getElementById('wpf-form-submit-text');
@@ -1019,6 +1024,13 @@ function initWPFormyBuilder() {
                                 <option value="25" ${parseInt(field.width, 10) === 25 ? 'selected' : ''}>25% - Quarter Width</option>
                             </select>
                         </div>
+                        <div class="wpf-setting-row">
+                            <label>Conversational Placement</label>
+                            <select class="wpf-live-select" data-key="conversation_step">
+                                <option value="question" ${(field.conversation_step || 'question') === 'question' ? 'selected' : ''}>Question step</option>
+                                <option value="final_contact" ${field.conversation_step === 'final_contact' ? 'selected' : ''}>Final contact step</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="wpf-setting-row">
                         <label class="wpf-toggle-card">
@@ -1090,7 +1102,7 @@ function initWPFormyBuilder() {
         fieldSettingsPanel.querySelectorAll('.wpf-live-select').forEach((input) => {
             input.addEventListener('change', (e) => {
                 pushHistory();
-                field[e.target.dataset.key] = parseInt(e.target.value, 10);
+                field[e.target.dataset.key] = e.target.dataset.key === 'width' ? parseInt(e.target.value, 10) : e.target.value;
                 renderCanvas();
             });
         });
@@ -1231,7 +1243,7 @@ function initWPFormyBuilder() {
                 addField(data.type, data.label, insertIndex);
             }
         } catch (error) {
-            console.error('WP Formy drop payload invalid', error);
+            console.error('AJ Forms drop payload invalid', error);
         }
     });
 
@@ -1455,8 +1467,8 @@ function initWPFormyBuilder() {
         formSchema.settings.border_radius = borderRadiusInput ? parseInt(borderRadiusInput.value || '16', 10) : 16;
 
         const payload = {
-            action: 'wpf_save_form',
-            nonce: window.wpFormyBuilder ? window.wpFormyBuilder.nonce_save : '',
+            action: 'ajf_save_form',
+            nonce: window.ajFormsBuilder ? window.ajFormsBuilder.nonce_save : '',
             form_id: formId,
             title: title,
             schema: JSON.stringify(formSchema),
@@ -1466,7 +1478,7 @@ function initWPFormyBuilder() {
         const formData = new FormData();
         Object.keys(payload).forEach((key) => formData.append(key, payload[key]));
 
-        fetch(window.wpFormyBuilder ? window.wpFormyBuilder.ajaxurl : ajaxurl, {
+        fetch(window.ajFormsBuilder ? window.ajFormsBuilder.ajaxurl : ajaxurl, {
             method: 'POST',
             body: formData
         })
@@ -1484,9 +1496,9 @@ function initWPFormyBuilder() {
                     window.alert(status === 'draft' ? 'Draft saved successfully.' : 'Form saved successfully.');
 
                     if (status !== 'draft') {
-                        const formsUrl = (window.wpFormyBuilder && window.wpFormyBuilder.formsUrl)
-                            ? window.wpFormyBuilder.formsUrl
-                            : '/wp-admin/admin.php?page=wp-formy';
+                        const formsUrl = (window.ajFormsBuilder && window.ajFormsBuilder.formsUrl)
+                            ? window.ajFormsBuilder.formsUrl
+                            : '/wp-admin/admin.php?page=ajforms';
                         window.location.href = formsUrl;
                     }
                 } else {
@@ -1510,7 +1522,7 @@ function initWPFormyBuilder() {
 }
 
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initWPFormyBuilder);
+    document.addEventListener('DOMContentLoaded', initAJFormsBuilder);
 } else {
-    initWPFormyBuilder();
+    initAJFormsBuilder();
 }

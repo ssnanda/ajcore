@@ -9,33 +9,33 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 global $wpdb;
 
-$forms_list_table = new WP_Formy_Forms_List_Table();
+$forms_list_table = new AJForms_Forms_List_Table();
 $forms_list_table->process_bulk_action();
 $forms_list_table->prepare_items();
 
 $add_new_url = add_query_arg(
 	array(
-		'page'   => 'wp-formy',
+		'page'   => 'ajforms',
 		'action' => 'add',
 	),
 	admin_url( 'admin.php' )
 );
 
 $stats = array(
-	'total'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}formy_forms WHERE status IN ('published','draft')" ),
-	'published'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}formy_forms WHERE status = 'published'" ),
-	'draft'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}formy_forms WHERE status = 'draft'" ),
-	'deleted'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}formy_forms WHERE status = 'deleted'" ),
+	'total'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ajforms_forms WHERE status IN ('published','draft')" ),
+	'published'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ajforms_forms WHERE status = 'published'" ),
+	'draft'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ajforms_forms WHERE status = 'draft'" ),
+	'deleted'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ajforms_forms WHERE status = 'deleted'" ),
 );
 ?>
 
 <div class="wrap">
 	<style>
-		.wp-formy-admin-shell {
+		.ajforms-admin-shell {
 			margin-top: 18px;
 		}
 
-		.wp-formy-admin-hero {
+		.ajforms-admin-hero {
 			display: flex;
 			align-items: flex-start;
 			justify-content: space-between;
@@ -47,13 +47,13 @@ $stats = array(
 			box-shadow: 0 22px 48px rgba(15, 23, 42, 0.06);
 		}
 
-		.wp-formy-admin-hero h1 {
+		.ajforms-admin-hero h1 {
 			margin: 0 0 10px;
 			font-size: 32px;
 			line-height: 1.1;
 		}
 
-		.wp-formy-admin-hero p {
+		.ajforms-admin-hero p {
 			margin: 0;
 			max-width: 700px;
 			color: #5f6b7a;
@@ -61,21 +61,21 @@ $stats = array(
 			line-height: 1.7;
 		}
 
-		.wp-formy-admin-actions {
+		.ajforms-admin-actions {
 			display: flex;
 			gap: 10px;
 			flex-wrap: wrap;
 			justify-content: flex-end;
 		}
 
-		.wp-formy-stats-grid {
+		.ajforms-stats-grid {
 			display: grid;
 			grid-template-columns: repeat(4, minmax(0, 1fr));
 			gap: 14px;
 			margin: 18px 0 22px;
 		}
 
-		.wp-formy-stat-card {
+		.ajforms-stat-card {
 			padding: 18px 20px;
 			background: #fff;
 			border: 1px solid #e4ebf3;
@@ -83,7 +83,7 @@ $stats = array(
 			box-shadow: 0 10px 26px rgba(15, 23, 42, 0.04);
 		}
 
-		.wp-formy-stat-card strong {
+		.ajforms-stat-card strong {
 			display: block;
 			font-size: 28px;
 			line-height: 1;
@@ -91,12 +91,12 @@ $stats = array(
 			margin-bottom: 8px;
 		}
 
-		.wp-formy-stat-card span {
+		.ajforms-stat-card span {
 			color: #64748b;
 			font-weight: 600;
 		}
 
-		.wp-formy-list-shell {
+		.ajforms-list-shell {
 			margin-top: 8px;
 			padding: 20px;
 			background: #fff;
@@ -139,7 +139,7 @@ $stats = array(
 			width: 28%;
 		}
 
-		#forms-filter .column-actions .wp-formy-inline-actions {
+		#forms-filter .column-actions .ajforms-inline-actions {
 			display: flex;
 			flex-wrap: wrap;
 			gap: 6px;
@@ -178,23 +178,23 @@ $stats = array(
 			background: #fbfdff;
 		}
 
-		.wp-formy-form-title-cell {
+		.ajforms-form-title-cell {
 			display: flex;
 			flex-direction: column;
 			gap: 4px;
 		}
 
-		.wp-formy-form-title-cell strong {
+		.ajforms-form-title-cell strong {
 			font-size: 15px;
 			color: #0f172a;
 		}
 
-		.wp-formy-form-title-cell span {
+		.ajforms-form-title-cell span {
 			font-size: 12px;
 			color: #64748b;
 		}
 
-		.wp-formy-shortcode-chip {
+		.ajforms-shortcode-chip {
 			display: inline-flex;
 			padding: 8px 10px;
 			border-radius: 10px;
@@ -203,7 +203,7 @@ $stats = array(
 			font-size: 12px;
 		}
 
-		.wp-formy-status-badge {
+		.ajforms-status-badge {
 			display: inline-flex;
 			align-items: center;
 			padding: 6px 10px;
@@ -212,26 +212,26 @@ $stats = array(
 			font-weight: 700;
 		}
 
-		.wp-formy-status-badge.is-published {
+		.ajforms-status-badge.is-published {
 			background: #ecfdf3;
 			color: #166534;
 		}
 
-		.wp-formy-status-badge.is-draft {
+		.ajforms-status-badge.is-draft {
 			background: #f1f5f9;
 			color: #475569;
 		}
 
-		.wp-formy-status-badge.is-deleted {
+		.ajforms-status-badge.is-deleted {
 			background: #fef2f2;
 			color: #b91c1c;
 		}
 
-		.wp-formy-form-row.is-deleted {
+		.ajforms-form-row.is-deleted {
 			opacity: 0.76;
 		}
 
-		.wp-formy-toolbar-note {
+		.ajforms-toolbar-note {
 			margin: 14px 0 0;
 			color: #64748b;
 			font-size: 13px;
@@ -248,54 +248,54 @@ $stats = array(
 		}
 
 		@media (max-width: 1100px) {
-			.wp-formy-admin-hero {
+			.ajforms-admin-hero {
 				flex-direction: column;
 			}
 
-			.wp-formy-stats-grid {
+			.ajforms-stats-grid {
 				grid-template-columns: repeat(2, minmax(0, 1fr));
 			}
 		}
 	</style>
 
-	<div class="wp-formy-admin-shell">
-		<div class="wp-formy-admin-hero">
+	<div class="ajforms-admin-shell">
+		<div class="ajforms-admin-hero">
 			<div>
-				<h1><?php esc_html_e( 'Forms', 'wp-formy' ); ?></h1>
-				<p><?php esc_html_e( 'Build, publish, preview, duplicate, export, and keep your form library organized from one place.', 'wp-formy' ); ?></p>
+				<h1><?php esc_html_e( 'Forms', 'ajforms' ); ?></h1>
+				<p><?php esc_html_e( 'Build, publish, preview, duplicate, export, and keep your form library organized from one place.', 'ajforms' ); ?></p>
 			</div>
-			<div class="wp-formy-admin-actions">
-				<a href="<?php echo esc_url( $add_new_url ); ?>" class="button button-primary"><?php esc_html_e( 'Add New Form', 'wp-formy' ); ?></a>
-				<a href="#" id="wpf-import-form-btn" class="button"><?php esc_html_e( 'Import Form', 'wp-formy' ); ?></a>
-				<a href="#" id="wpf-export-form-btn" class="button"><?php esc_html_e( 'Export Form', 'wp-formy' ); ?></a>
+			<div class="ajforms-admin-actions">
+				<a href="<?php echo esc_url( $add_new_url ); ?>" class="button button-primary"><?php esc_html_e( 'Add New Form', 'ajforms' ); ?></a>
+				<a href="#" id="wpf-import-form-btn" class="button"><?php esc_html_e( 'Import Form', 'ajforms' ); ?></a>
+				<a href="#" id="wpf-export-form-btn" class="button"><?php esc_html_e( 'Export Form', 'ajforms' ); ?></a>
 			</div>
 		</div>
-		<div class="wp-formy-stats-grid">
-			<div class="wp-formy-stat-card"><strong><?php echo esc_html( $stats['total'] ); ?></strong><span><?php esc_html_e( 'Active Forms', 'wp-formy' ); ?></span></div>
-			<div class="wp-formy-stat-card"><strong><?php echo esc_html( $stats['published'] ); ?></strong><span><?php esc_html_e( 'Published', 'wp-formy' ); ?></span></div>
-			<div class="wp-formy-stat-card"><strong><?php echo esc_html( $stats['draft'] ); ?></strong><span><?php esc_html_e( 'Drafts', 'wp-formy' ); ?></span></div>
-			<div class="wp-formy-stat-card"><strong><?php echo esc_html( $stats['deleted'] ); ?></strong><span><?php esc_html_e( 'Deleted', 'wp-formy' ); ?></span></div>
+		<div class="ajforms-stats-grid">
+			<div class="ajforms-stat-card"><strong><?php echo esc_html( $stats['total'] ); ?></strong><span><?php esc_html_e( 'Active Forms', 'ajforms' ); ?></span></div>
+			<div class="ajforms-stat-card"><strong><?php echo esc_html( $stats['published'] ); ?></strong><span><?php esc_html_e( 'Published', 'ajforms' ); ?></span></div>
+			<div class="ajforms-stat-card"><strong><?php echo esc_html( $stats['draft'] ); ?></strong><span><?php esc_html_e( 'Drafts', 'ajforms' ); ?></span></div>
+			<div class="ajforms-stat-card"><strong><?php echo esc_html( $stats['deleted'] ); ?></strong><span><?php esc_html_e( 'Deleted', 'ajforms' ); ?></span></div>
 		</div>
 		<input type="file" id="wpf-import-file" accept=".json" style="display:none;" />
 	</div>
 
 	<?php if ( isset( $_GET['trashed'] ) ) : ?>
-		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Form moved to deleted.', 'wp-formy' ); ?></p></div>
+		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Form moved to deleted.', 'ajforms' ); ?></p></div>
 	<?php endif; ?>
 
 	<?php if ( isset( $_GET['restored'] ) ) : ?>
-		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Form restored.', 'wp-formy' ); ?></p></div>
+		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Form restored.', 'ajforms' ); ?></p></div>
 	<?php endif; ?>
 
-	<div class="wp-formy-list-shell">
+	<div class="ajforms-list-shell">
 		<form id="forms-filter" method="get">
-			<input type="hidden" name="page" value="wp-formy" />
+			<input type="hidden" name="page" value="ajforms" />
 			<?php
-			$forms_list_table->search_box( __( 'Search Forms', 'wp-formy' ), 'search_id' );
+			$forms_list_table->search_box( __( 'Search Forms', 'ajforms' ), 'search_id' );
 			$forms_list_table->display();
 			?>
 		</form>
-		<p class="wp-formy-toolbar-note"><?php esc_html_e( 'Tip: click any active row to jump straight into the builder.', 'wp-formy' ); ?></p>
+		<p class="ajforms-toolbar-note"><?php esc_html_e( 'Tip: click any active row to jump straight into the builder.', 'ajforms' ); ?></p>
 	</div>
 </div>
 
@@ -304,11 +304,11 @@ $stats = array(
 	const importBtn = document.getElementById('wpf-import-form-btn');
 	const exportBtn = document.getElementById('wpf-export-form-btn');
 	const fileInput = document.getElementById('wpf-import-file');
-	const formRows = document.querySelectorAll('.wp-formy-form-row');
-	const statusFilters = document.querySelectorAll('.wp-formy-status-filter');
-	const nonce = '<?php echo esc_js( wp_create_nonce( 'wpf_import_form' ) ); ?>';
-	const exportNonce = '<?php echo esc_js( wp_create_nonce( 'wpf_export_form' ) ); ?>';
-	const exportBaseUrl = '<?php echo esc_js( admin_url( 'admin-post.php?action=wpf_export_form' ) ); ?>';
+	const formRows = document.querySelectorAll('.ajforms-form-row');
+	const statusFilters = document.querySelectorAll('.ajforms-status-filter');
+	const nonce = '<?php echo esc_js( wp_create_nonce( 'ajf_import_form' ) ); ?>';
+	const exportNonce = '<?php echo esc_js( wp_create_nonce( 'ajf_export_form' ) ); ?>';
+	const exportBaseUrl = '<?php echo esc_js( admin_url( 'admin-post.php?action=ajf_export_form' ) ); ?>';
 
 	function showAlert(message) {
 		window.alert(message);
@@ -316,7 +316,7 @@ $stats = array(
 
 	function importFormFromJson(json) {
 		const payload = {
-			action: 'wpf_import_form',
+			action: 'ajf_import_form',
 			nonce: nonce,
 			data: JSON.stringify(json)
 		};
@@ -331,7 +331,7 @@ $stats = array(
 			.then((res) => res.json())
 			.then((res) => {
 				if (!res.success) {
-					showAlert(res.data || '<?php echo esc_js( __( 'Import failed.', 'wp-formy' ) ); ?>');
+					showAlert(res.data || '<?php echo esc_js( __( 'Import failed.', 'ajforms' ) ); ?>');
 					return;
 				}
 
@@ -340,10 +340,10 @@ $stats = array(
 					return;
 				}
 
-				showAlert('<?php echo esc_js( __( 'Form imported successfully.', 'wp-formy' ) ); ?>');
+				showAlert('<?php echo esc_js( __( 'Form imported successfully.', 'ajforms' ) ); ?>');
 			})
 			.catch(() => {
-				showAlert('<?php echo esc_js( __( 'Import failed.', 'wp-formy' ) ); ?>');
+				showAlert('<?php echo esc_js( __( 'Import failed.', 'ajforms' ) ); ?>');
 			});
 	}
 
@@ -365,7 +365,7 @@ $stats = array(
 					const json = JSON.parse(event.target.result);
 					importFormFromJson(json);
 				} catch (err) {
-					showAlert('<?php echo esc_js( __( 'Invalid JSON file.', 'wp-formy' ) ); ?>');
+					showAlert('<?php echo esc_js( __( 'Invalid JSON file.', 'ajforms' ) ); ?>');
 				}
 			};
 			reader.readAsText(file);
@@ -378,7 +378,7 @@ $stats = array(
 
 			const checked = Array.from(document.querySelectorAll('input[name="form_id[]"]:checked'));
 			if (checked.length !== 1) {
-				showAlert('<?php echo esc_js( __( 'Select exactly one form to export.', 'wp-formy' ) ); ?>');
+				showAlert('<?php echo esc_js( __( 'Select exactly one form to export.', 'ajforms' ) ); ?>');
 				return;
 			}
 
@@ -391,7 +391,7 @@ $stats = array(
 		statusFilters.forEach(function(filter) {
 			filter.addEventListener('change', function() {
 				const url = new URL(window.location.href);
-				url.searchParams.set('page', 'wp-formy');
+				url.searchParams.set('page', 'ajforms');
 
 				if (this.value) {
 					url.searchParams.set('form_status', this.value);

@@ -1,15 +1,15 @@
 <?php
 /**
- * Plugin Name:       WP Formy
- * Plugin URI:        https://github.com/ssnanda/wp-formy
+ * Plugin Name:       AJ Forms
+ * Plugin URI:        https://github.com/ssnanda/ajforms
  * Description:       A custom WordPress form builder plugin for building forms, collecting entries, and managing workflows inside WordPress.
- * Version:           0.1.16
+ * Version: 0.1.17
  * Author:            itSpector
  * Author URI:        https://itspector.com
- * Update URI:        https://github.com/ssnanda/wp-formy
+ * Update URI:        https://github.com/ssnanda/ajforms
  * License:           GPL-2.0+
  * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
- * Text Domain:       wp-formy
+ * Text Domain:       ajforms
  * Domain Path:       /languages
  */
 
@@ -17,28 +17,28 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-if ( ! defined( 'WP_FORMY_VERSION' ) ) {
-	define( 'WP_FORMY_VERSION', '0.1.16' );
+if ( ! defined( 'AJFORMS_VERSION' ) ) {
+	define( 'AJFORMS_VERSION', '0.1.17' );
 }
 
-if ( ! defined( 'WP_FORMY_PLUGIN_DIR' ) ) {
-	define( 'WP_FORMY_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+if ( ! defined( 'AJFORMS_PLUGIN_DIR' ) ) {
+	define( 'AJFORMS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 }
 
-if ( ! defined( 'WP_FORMY_PLUGIN_URL' ) ) {
-	define( 'WP_FORMY_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+if ( ! defined( 'AJFORMS_PLUGIN_URL' ) ) {
+	define( 'AJFORMS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 }
 
-if ( ! defined( 'WP_FORMY_PLUGIN_BASENAME' ) ) {
-	define( 'WP_FORMY_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
+if ( ! defined( 'AJFORMS_PLUGIN_BASENAME' ) ) {
+	define( 'AJFORMS_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 }
 
-if ( ! defined( 'WP_FORMY_SYNCED_SETTINGS_FILE' ) ) {
-	define( 'WP_FORMY_SYNCED_SETTINGS_FILE', WP_FORMY_PLUGIN_DIR . 'config/synced-settings.json' );
+if ( ! defined( 'AJFORMS_SYNCED_SETTINGS_FILE' ) ) {
+	define( 'AJFORMS_SYNCED_SETTINGS_FILE', AJFORMS_PLUGIN_DIR . 'config/synced-settings.json' );
 }
 
-if ( ! function_exists( 'wp_formy_get_settings_defaults' ) ) {
-	function wp_formy_get_settings_defaults() {
+if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
+	function ajforms_get_settings_defaults() {
 		return array(
 			'default_notification_email'    => get_option( 'admin_email' ),
 			'default_notification_subject'  => 'New submission for {form_title}',
@@ -68,27 +68,27 @@ if ( ! function_exists( 'wp_formy_get_settings_defaults' ) ) {
 	}
 }
 
-if ( ! function_exists( 'wp_formy_get_settings' ) ) {
-	function wp_formy_get_settings() {
-		$saved_settings = get_option( 'wp_formy_settings', array() );
+if ( ! function_exists( 'ajforms_get_settings' ) ) {
+	function ajforms_get_settings() {
+		$saved_settings = get_option( 'ajforms_settings', array() );
 		if ( ! is_array( $saved_settings ) ) {
 			$saved_settings = array();
 		}
 
-		$file_settings = wp_formy_read_synced_settings_file();
+		$file_settings = ajforms_read_synced_settings_file();
 		if ( ! is_array( $file_settings ) ) {
 			$file_settings = array();
 		}
 
 		return wp_parse_args(
 			array_merge( $saved_settings, $file_settings ),
-			wp_formy_get_settings_defaults()
+			ajforms_get_settings_defaults()
 		);
 	}
 }
 
-if ( ! function_exists( 'wp_formy_get_synced_setting_keys' ) ) {
-	function wp_formy_get_synced_setting_keys() {
+if ( ! function_exists( 'ajforms_get_synced_setting_keys' ) ) {
+	function ajforms_get_synced_setting_keys() {
 		return array(
 			'honeypot_enabled',
 			'spam_challenge_provider',
@@ -104,13 +104,13 @@ if ( ! function_exists( 'wp_formy_get_synced_setting_keys' ) ) {
 	}
 }
 
-if ( ! function_exists( 'wp_formy_read_synced_settings_file' ) ) {
-	function wp_formy_read_synced_settings_file() {
-		if ( ! file_exists( WP_FORMY_SYNCED_SETTINGS_FILE ) || ! is_readable( WP_FORMY_SYNCED_SETTINGS_FILE ) ) {
+if ( ! function_exists( 'ajforms_read_synced_settings_file' ) ) {
+	function ajforms_read_synced_settings_file() {
+		if ( ! file_exists( AJFORMS_SYNCED_SETTINGS_FILE ) || ! is_readable( AJFORMS_SYNCED_SETTINGS_FILE ) ) {
 			return array();
 		}
 
-		$raw_settings = file_get_contents( WP_FORMY_SYNCED_SETTINGS_FILE );
+		$raw_settings = file_get_contents( AJFORMS_SYNCED_SETTINGS_FILE );
 		if ( false === $raw_settings || '' === trim( $raw_settings ) ) {
 			return array();
 		}
@@ -121,7 +121,7 @@ if ( ! function_exists( 'wp_formy_read_synced_settings_file' ) ) {
 		}
 
 		$synced = array();
-		foreach ( wp_formy_get_synced_setting_keys() as $key ) {
+		foreach ( ajforms_get_synced_setting_keys() as $key ) {
 			if ( array_key_exists( $key, $decoded ) ) {
 				$synced[ $key ] = $decoded[ $key ];
 			}
@@ -131,19 +131,19 @@ if ( ! function_exists( 'wp_formy_read_synced_settings_file' ) ) {
 	}
 }
 
-if ( ! function_exists( 'wp_formy_write_synced_settings_file' ) ) {
-	function wp_formy_write_synced_settings_file( $settings ) {
+if ( ! function_exists( 'ajforms_write_synced_settings_file' ) ) {
+	function ajforms_write_synced_settings_file( $settings ) {
 		if ( ! is_array( $settings ) ) {
 			return false;
 		}
 
-		$directory = dirname( WP_FORMY_SYNCED_SETTINGS_FILE );
+		$directory = dirname( AJFORMS_SYNCED_SETTINGS_FILE );
 		if ( ! file_exists( $directory ) ) {
 			wp_mkdir_p( $directory );
 		}
 
 		$synced_settings = array();
-		foreach ( wp_formy_get_synced_setting_keys() as $key ) {
+		foreach ( ajforms_get_synced_setting_keys() as $key ) {
 			if ( array_key_exists( $key, $settings ) ) {
 				$synced_settings[ $key ] = $settings[ $key ];
 			}
@@ -154,18 +154,18 @@ if ( ! function_exists( 'wp_formy_write_synced_settings_file' ) ) {
 			return false;
 		}
 
-		return false !== file_put_contents( WP_FORMY_SYNCED_SETTINGS_FILE, $encoded . PHP_EOL, LOCK_EX );
+		return false !== file_put_contents( AJFORMS_SYNCED_SETTINGS_FILE, $encoded . PHP_EOL, LOCK_EX );
 	}
 }
 
 /**
  * The code that runs during plugin activation.
  */
-function activate_wp_formy() {
-	require_once WP_FORMY_PLUGIN_DIR . 'includes/class-wp-formy-activator.php';
-	WP_Formy_Activator::activate();
+function activate_ajforms() {
+	require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+	AJForms_Activator::activate();
 }
-register_activation_hook( __FILE__, 'activate_wp_formy' );
+register_activation_hook( __FILE__, 'activate_ajforms' );
 
 /**
  * Ensure custom tables exist after regular plugin updates.
@@ -173,27 +173,27 @@ register_activation_hook( __FILE__, 'activate_wp_formy' );
  * WordPress does not run activation hooks when a plugin is updated from a zip
  * or GitHub release, so table creation must also be checked at runtime.
  */
-function wp_formy_maybe_upgrade() {
-	$installed_version = get_option( 'wp_formy_version', '' );
+function ajforms_maybe_upgrade() {
+	$installed_version = get_option( 'ajforms_version', '' );
 
-	if ( WP_FORMY_VERSION === $installed_version ) {
+	if ( AJFORMS_VERSION === $installed_version ) {
 		return;
 	}
 
-	require_once WP_FORMY_PLUGIN_DIR . 'includes/class-wp-formy-activator.php';
-	WP_Formy_Activator::activate();
-	update_option( 'wp_formy_version', WP_FORMY_VERSION, false );
+	require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+	AJForms_Activator::activate();
+	update_option( 'ajforms_version', AJFORMS_VERSION, false );
 }
-add_action( 'plugins_loaded', 'wp_formy_maybe_upgrade', 5 );
+add_action( 'plugins_loaded', 'ajforms_maybe_upgrade', 5 );
 
 /**
  * Begins execution of the plugin.
  */
-function run_wp_formy() {
-	require_once WP_FORMY_PLUGIN_DIR . 'includes/class-wp-formy.php';
+function run_ajforms() {
+	require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms.php';
 
-	$plugin = new WP_Formy();
+	$plugin = new AJForms();
 	$plugin->run();
 }
 
-run_wp_formy();
+run_ajforms();

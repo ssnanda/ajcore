@@ -1,15 +1,15 @@
 <?php
 
-class WP_Formy_Activator {
+class AJForms_Activator {
 
 	public static function activate() {
 		global $wpdb;
 
 		$charset_collate = $wpdb->get_charset_collate();
 
-		$table_forms      = $wpdb->prefix . 'formy_forms';
-		$table_leads      = $wpdb->prefix . 'formy_leads';
-		$table_lead_notes = $wpdb->prefix . 'formy_lead_notes';
+		$table_forms      = $wpdb->prefix . 'ajforms_forms';
+		$table_leads      = $wpdb->prefix . 'ajforms_leads';
+		$table_lead_notes = $wpdb->prefix . 'ajforms_lead_notes';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -47,6 +47,6 @@ class WP_Formy_Activator {
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
-		update_option( 'wp_formy_version', WP_FORMY_VERSION, false );
+		update_option( 'ajforms_version', AJFORMS_VERSION, false );
 	}
 }

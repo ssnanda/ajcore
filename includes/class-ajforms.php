@@ -1,13 +1,13 @@
 <?php
 
-class WP_Formy {
+class AJForms {
 
 	private $plugin_name;
 	private $version;
 
 	public function __construct() {
-		$this->plugin_name = 'wp-formy';
-		$this->version     = WP_FORMY_VERSION;
+		$this->plugin_name = 'ajforms';
+		$this->version     = AJFORMS_VERSION;
 
 		$this->load_dependencies();
 		$this->define_admin_hooks();
@@ -16,41 +16,41 @@ class WP_Formy {
 	}
 
 	private function load_dependencies() {
-		require_once WP_FORMY_PLUGIN_DIR . 'admin/class-wp-formy-admin.php';
+		require_once AJFORMS_PLUGIN_DIR . 'admin/class-ajforms-admin.php';
 	}
 
 	private function define_admin_hooks() {
-		$plugin_admin = new WP_Formy_Admin();
+		$plugin_admin = new AJForms_Admin();
 
 		add_action( 'admin_init', array( $plugin_admin, 'handle_admin_actions' ) );
-		add_action( 'admin_post_wpf_export_form', array( $plugin_admin, 'handle_export_form_request' ) );
+		add_action( 'admin_post_ajf_export_form', array( $plugin_admin, 'handle_export_form_request' ) );
 		add_action( 'admin_menu', array( $plugin_admin, 'add_plugin_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_styles' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_scripts' ) );
-		add_filter( 'plugin_action_links_' . WP_FORMY_PLUGIN_BASENAME, array( $plugin_admin, 'add_plugin_action_links' ) );
+		add_filter( 'plugin_action_links_' . AJFORMS_PLUGIN_BASENAME, array( $plugin_admin, 'add_plugin_action_links' ) );
 		add_filter( 'plugin_row_meta', array( $plugin_admin, 'add_plugin_row_meta_links' ), 10, 2 );
 
-		add_action( 'wp_ajax_wpf_save_form', array( $plugin_admin, 'ajax_save_form' ) );
-		add_action( 'wp_ajax_wpf_import_form', array( $plugin_admin, 'ajax_import_form' ) );
-		add_action( 'wp_ajax_wpf_sync_asana_reference_data', array( $plugin_admin, 'ajax_sync_asana_reference_data' ) );
-		add_action( 'wp_formy_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
+		add_action( 'wp_ajax_ajf_save_form', array( $plugin_admin, 'ajax_save_form' ) );
+		add_action( 'wp_ajax_ajf_import_form', array( $plugin_admin, 'ajax_import_form' ) );
+		add_action( 'wp_ajax_ajf_sync_asana_reference_data', array( $plugin_admin, 'ajax_sync_asana_reference_data' ) );
+		add_action( 'ajforms_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
 	}
 
 	public function schedule_recurring_events() {
-		if ( ! wp_next_scheduled( 'wp_formy_daily_asana_sync' ) ) {
-			wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'wp_formy_daily_asana_sync' );
+		if ( ! wp_next_scheduled( 'ajforms_daily_asana_sync' ) ) {
+			wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'ajforms_daily_asana_sync' );
 		}
 	}
 
 	private function define_public_hooks() {
-		add_shortcode( 'wp_formy', array( $this, 'render_form_shortcode' ) );
+		add_shortcode( 'ajforms', array( $this, 'render_form_shortcode' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
-		add_action( 'wp_ajax_wpf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
-		add_action( 'wp_ajax_nopriv_wpf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
+		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
+		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 	}
 
 	private function get_default_form_settings() {
-		$plugin_settings = function_exists( 'wp_formy_get_settings' ) ? wp_formy_get_settings() : array();
+		$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 
 		return array(
 			'submit_text'           => 'Submit',
@@ -86,13 +86,13 @@ class WP_Formy {
 	}
 
 	private function is_honeypot_enabled() {
-		$plugin_settings = function_exists( 'wp_formy_get_settings' ) ? wp_formy_get_settings() : array();
+		$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 
 		return ! empty( $plugin_settings['honeypot_enabled'] ) && '1' === (string) $plugin_settings['honeypot_enabled'];
 	}
 
 	private function get_spam_provider_config() {
-		$plugin_settings = function_exists( 'wp_formy_get_settings' ) ? wp_formy_get_settings() : array();
+		$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 		$provider        = ! empty( $plugin_settings['spam_challenge_provider'] ) ? sanitize_key( $plugin_settings['spam_challenge_provider'] ) : '';
 
 		$providers = array(
@@ -153,11 +153,11 @@ class WP_Formy {
 		$token       = isset( $_POST[ $token_field ] ) ? sanitize_text_field( wp_unslash( $_POST[ $token_field ] ) ) : '';
 		if ( '' === $token ) {
 			$messages = array(
-				'recaptcha' => __( 'Please complete the reCAPTCHA check before submitting.', 'wp-formy' ),
-				'hcaptcha'  => __( 'Please complete the hCaptcha check before submitting.', 'wp-formy' ),
-				'turnstile' => __( 'Please complete the Turnstile check before submitting.', 'wp-formy' ),
+				'recaptcha' => __( 'Please complete the reCAPTCHA check before submitting.', 'ajforms' ),
+				'hcaptcha'  => __( 'Please complete the hCaptcha check before submitting.', 'ajforms' ),
+				'turnstile' => __( 'Please complete the Turnstile check before submitting.', 'ajforms' ),
 			);
-			$message  = isset( $messages[ $config['provider'] ] ) ? $messages[ $config['provider'] ] : __( 'Please complete the challenge check before submitting.', 'wp-formy' );
+			$message  = isset( $messages[ $config['provider'] ] ) ? $messages[ $config['provider'] ] : __( 'Please complete the challenge check before submitting.', 'ajforms' );
 
 			return new WP_Error( 'challenge_missing_token', $message );
 		}
@@ -185,17 +185,17 @@ class WP_Formy {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			return new WP_Error( 'challenge_request_failed', __( 'Challenge verification could not be completed right now.', 'wp-formy' ) );
+			return new WP_Error( 'challenge_request_failed', __( 'Challenge verification could not be completed right now.', 'ajforms' ) );
 		}
 
 		$payload = json_decode( wp_remote_retrieve_body( $response ), true );
 		if ( empty( $payload['success'] ) ) {
 			$messages = array(
-				'recaptcha' => __( 'reCAPTCHA verification failed. Please try again.', 'wp-formy' ),
-				'hcaptcha'  => __( 'hCaptcha verification failed. Please try again.', 'wp-formy' ),
-				'turnstile' => __( 'Turnstile verification failed. Please try again.', 'wp-formy' ),
+				'recaptcha' => __( 'reCAPTCHA verification failed. Please try again.', 'ajforms' ),
+				'hcaptcha'  => __( 'hCaptcha verification failed. Please try again.', 'ajforms' ),
+				'turnstile' => __( 'Turnstile verification failed. Please try again.', 'ajforms' ),
 			);
-			$message  = isset( $messages[ $config['provider'] ] ) ? $messages[ $config['provider'] ] : __( 'Challenge verification failed. Please try again.', 'wp-formy' );
+			$message  = isset( $messages[ $config['provider'] ] ) ? $messages[ $config['provider'] ] : __( 'Challenge verification failed. Please try again.', 'ajforms' );
 
 			return new WP_Error( 'challenge_failed', $message );
 		}
@@ -204,11 +204,11 @@ class WP_Formy {
 	}
 
 	private function get_honeypot_field_name( $form_id ) {
-		return 'wpf_hp_' . absint( $form_id );
+		return 'ajf_hp_' . absint( $form_id );
 	}
 
 	private function get_stripe_settings() {
-		$plugin_settings = function_exists( 'wp_formy_get_settings' ) ? wp_formy_get_settings() : array();
+		$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 
 		return array(
 			'mode'            => ! empty( $plugin_settings['stripe_mode'] ) ? sanitize_key( $plugin_settings['stripe_mode'] ) : 'test',
@@ -270,7 +270,7 @@ class WP_Formy {
 		$code    = wp_remote_retrieve_response_code( $response );
 
 		if ( $code < 200 || $code >= 300 ) {
-			$message = isset( $payload['error']['message'] ) ? sanitize_text_field( (string) $payload['error']['message'] ) : __( 'Stripe request failed.', 'wp-formy' );
+			$message = isset( $payload['error']['message'] ) ? sanitize_text_field( (string) $payload['error']['message'] ) : __( 'Stripe request failed.', 'ajforms' );
 			return new WP_Error( 'stripe_request_failed', $message );
 		}
 
@@ -281,25 +281,25 @@ class WP_Formy {
 		$form_id = isset( $_POST['form_id'] ) ? absint( wp_unslash( $_POST['form_id'] ) ) : 0;
 		$nonce   = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
 
-		if ( ! $form_id || ! wp_verify_nonce( $nonce, 'wpf_stripe_payment_' . $form_id ) ) {
-			wp_send_json_error( __( 'Invalid payment request.', 'wp-formy' ), 400 );
+		if ( ! $form_id || ! wp_verify_nonce( $nonce, 'ajf_stripe_payment_' . $form_id ) ) {
+			wp_send_json_error( __( 'Invalid payment request.', 'ajforms' ), 400 );
 		}
 
 		$form = $this->get_form_by_id( $form_id );
 		if ( ! $form || 'deleted' === $form->status ) {
-			wp_send_json_error( __( 'Form not found.', 'wp-formy' ), 404 );
+			wp_send_json_error( __( 'Form not found.', 'ajforms' ), 404 );
 		}
 
 		$schema = json_decode( $form->form_schema, true );
 		if ( ! is_array( $schema ) ) {
-			wp_send_json_error( __( 'Form schema is invalid.', 'wp-formy' ), 400 );
+			wp_send_json_error( __( 'Form schema is invalid.', 'ajforms' ), 400 );
 		}
 
 		$normalized     = $this->normalize_schema( $schema );
 		$stripe_config  = $this->get_stripe_payment_config( $form, $normalized['settings'] );
 
 		if ( ! $stripe_config['enabled'] ) {
-			wp_send_json_error( __( 'Stripe payments are not enabled for this form.', 'wp-formy' ), 400 );
+			wp_send_json_error( __( 'Stripe payments are not enabled for this form.', 'ajforms' ), 400 );
 		}
 
 		$amount_minor = $this->convert_amount_to_minor_units( $stripe_config['amount'], $stripe_config['currency'] );
@@ -337,9 +337,9 @@ class WP_Formy {
 			return true;
 		}
 
-		$payment_intent_id = isset( $_POST['wpf_stripe_payment_intent'] ) ? sanitize_text_field( wp_unslash( $_POST['wpf_stripe_payment_intent'] ) ) : '';
+		$payment_intent_id = isset( $_POST['ajf_stripe_payment_intent'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_stripe_payment_intent'] ) ) : '';
 		if ( '' === $payment_intent_id ) {
-			return new WP_Error( 'stripe_missing_payment', __( 'Complete the Stripe payment before submitting the form.', 'wp-formy' ) );
+			return new WP_Error( 'stripe_missing_payment', __( 'Complete the Stripe payment before submitting the form.', 'ajforms' ) );
 		}
 
 		$payment_intent = $this->stripe_api_request(
@@ -360,11 +360,11 @@ class WP_Formy {
 		$form_meta_id    = isset( $payment_intent['metadata']['form_id'] ) ? absint( $payment_intent['metadata']['form_id'] ) : 0;
 
 		if ( 'succeeded' !== $actual_status ) {
-			return new WP_Error( 'stripe_not_paid', __( 'Stripe payment is not complete yet.', 'wp-formy' ) );
+			return new WP_Error( 'stripe_not_paid', __( 'Stripe payment is not complete yet.', 'ajforms' ) );
 		}
 
 		if ( $expected_amount !== $actual_amount || strtolower( $stripe_config['currency'] ) !== $actual_currency || absint( $form->id ) !== $form_meta_id ) {
-			return new WP_Error( 'stripe_payment_mismatch', __( 'Stripe payment details do not match this form submission.', 'wp-formy' ) );
+			return new WP_Error( 'stripe_payment_mismatch', __( 'Stripe payment details do not match this form submission.', 'ajforms' ) );
 		}
 
 		return array(
@@ -377,12 +377,12 @@ class WP_Formy {
 
 	private function get_forms_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'formy_forms';
+		return $wpdb->prefix . 'ajforms_forms';
 	}
 
 	private function get_leads_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'formy_leads';
+		return $wpdb->prefix . 'ajforms_leads';
 	}
 
 	private function get_form_by_id( $form_id ) {
@@ -431,18 +431,18 @@ class WP_Formy {
 	}
 
 	public function maybe_render_form_preview() {
-		$form_id = isset( $_GET['wp_formy_preview'] ) ? absint( wp_unslash( $_GET['wp_formy_preview'] ) ) : 0;
+		$form_id = isset( $_GET['ajforms_preview'] ) ? absint( wp_unslash( $_GET['ajforms_preview'] ) ) : 0;
 		if ( ! $form_id ) {
 			return;
 		}
 
 		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( esc_html__( 'You do not have permission to preview this form.', 'wp-formy' ), 403 );
+			wp_die( esc_html__( 'You do not have permission to preview this form.', 'ajforms' ), 403 );
 		}
 
 		$form = $this->get_form_by_id( $form_id );
 		if ( ! $form || 'deleted' === $form->status ) {
-			wp_die( esc_html__( 'Form not found.', 'wp-formy' ), 404 );
+			wp_die( esc_html__( 'Form not found.', 'ajforms' ), 404 );
 		}
 
 		nocache_headers();
@@ -456,9 +456,9 @@ class WP_Formy {
 			<title><?php echo esc_html( $form->title . ' Preview' ); ?></title>
 			<?php wp_head(); ?>
 		</head>
-		<body <?php body_class( 'wp-formy-preview-page' ); ?>>
+		<body <?php body_class( 'ajforms-preview-page' ); ?>>
 			<div style="max-width:760px;margin:40px auto;padding:32px;background:#fff;border:1px solid #dcdcde;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.05);">
-				<div style="margin-bottom:20px;color:#646970;font-size:14px;">WP Formy Preview</div>
+				<div style="margin-bottom:20px;color:#646970;font-size:14px;">AJ Forms Preview</div>
 				<?php echo $form_markup; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 			</div>
 			<?php wp_footer(); ?>
@@ -574,7 +574,7 @@ class WP_Formy {
 			return;
 		}
 
-		$plugin_settings = function_exists( 'wp_formy_get_settings' ) ? wp_formy_get_settings() : array();
+		$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 
 		if ( empty( $plugin_settings['asana_enabled'] ) || empty( $plugin_settings['asana_personal_access_token'] ) ) {
 			return;
@@ -624,13 +624,13 @@ class WP_Formy {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			error_log( 'WP Formy Asana task creation failed: ' . $response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( 'AJ Forms Asana task creation failed: ' . $response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			return;
 		}
 
 		$response_code = wp_remote_retrieve_response_code( $response );
 		if ( $response_code < 200 || $response_code >= 300 ) {
-			error_log( 'WP Formy Asana task creation failed with status ' . $response_code . ': ' . wp_remote_retrieve_body( $response ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( 'AJ Forms Asana task creation failed with status ' . $response_code . ': ' . wp_remote_retrieve_body( $response ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		}
 	}
 
@@ -695,7 +695,7 @@ class WP_Formy {
 		}
 
 		$form_id = absint( $form->id );
-		$posted_form_id = isset( $_POST['wpf_form_id'] ) ? absint( wp_unslash( $_POST['wpf_form_id'] ) ) : 0;
+		$posted_form_id = isset( $_POST['ajf_form_id'] ) ? absint( wp_unslash( $_POST['ajf_form_id'] ) ) : 0;
 		if ( $posted_form_id !== $form_id ) {
 			return array(
 				'submitted' => false,
@@ -704,8 +704,8 @@ class WP_Formy {
 			);
 		}
 
-		$nonce = isset( $_POST['wpf_form_nonce'] ) ? wp_unslash( $_POST['wpf_form_nonce'] ) : '';
-		if ( ! wp_verify_nonce( $nonce, 'wpf_submit_form_' . $form_id ) ) {
+		$nonce = isset( $_POST['ajf_form_nonce'] ) ? wp_unslash( $_POST['ajf_form_nonce'] ) : '';
+		if ( ! wp_verify_nonce( $nonce, 'ajf_submit_form_' . $form_id ) ) {
 			return array(
 				'submitted' => true,
 				'success'   => false,
@@ -721,7 +721,7 @@ class WP_Formy {
 				return array(
 					'submitted' => true,
 					'success'   => false,
-					'message'   => __( 'Spam check failed. Please try again.', 'wp-formy' ),
+					'message'   => __( 'Spam check failed. Please try again.', 'ajforms' ),
 				);
 			}
 		}
@@ -870,7 +870,7 @@ class WP_Formy {
 				'type'              => 'payment',
 				'value'             => sprintf(
 					/* translators: 1: amount 2: currency */
-					__( 'Paid %1$s %2$s', 'wp-formy' ),
+					__( 'Paid %1$s %2$s', 'ajforms' ),
 					number_format_i18n( (float) $stripe_payment_result['amount'], 2 ),
 					$stripe_payment_result['currency']
 				),
@@ -914,13 +914,314 @@ class WP_Formy {
 		);
 	}
 
+	private function get_frontend_field_data( $field ) {
+		$field_id            = ! empty( $field['id'] ) ? $field['id'] : 'field_' . wp_generate_uuid4();
+		$field_type          = ! empty( $field['type'] ) ? $field['type'] : 'text';
+		$field_label         = ! empty( $field['label'] ) ? $field['label'] : ucfirst( $field_type );
+		$default_value       = ! empty( $field['default_value'] ) ? $field['default_value'] : '';
+		$accepted_file_types = ! empty( $field['accepted_file_types'] ) ? $field['accepted_file_types'] : '.pdf,.jpg,.jpeg,.png,.gif,.webp';
+
+		return array(
+			'id'                  => $field_id,
+			'type'                => $field_type,
+			'label'               => $field_label,
+			'required'            => ! empty( $field['required'] ),
+			'placeholder'         => ! empty( $field['placeholder'] ) ? $field['placeholder'] : '',
+			'options'             => ! empty( $field['options'] ) && is_array( $field['options'] ) ? $field['options'] : array(),
+			'help_text'           => ! empty( $field['help_text'] ) ? $field['help_text'] : '',
+			'default_value'       => $default_value,
+			'css_class'           => ! empty( $field['css_class'] ) ? $field['css_class'] : '',
+			'conversation_step'   => ! empty( $field['conversation_step'] ) && 'final_contact' === $field['conversation_step'] ? 'final_contact' : 'question',
+			'accepted_file_types' => $accepted_file_types,
+			'posted_value'        => isset( $_POST[ $field_id ] ) ? wp_unslash( $_POST[ $field_id ] ) : $default_value,
+		);
+	}
+
+	private function render_frontend_field_control( $field_data ) {
+		$field_id            = $field_data['id'];
+		$field_type          = $field_data['type'];
+		$placeholder         = $field_data['placeholder'];
+		$required            = $field_data['required'];
+		$options             = $field_data['options'];
+		$posted_value        = $field_data['posted_value'];
+		$accepted_file_types = $field_data['accepted_file_types'];
+		$control_style       = 'width:100%; padding:10px;border-radius:calc(var(--ajforms-radius) - 4px);background:var(--ajforms-input-bg);border:1px solid var(--ajforms-input-border);color:var(--ajforms-text);';
+
+		ob_start();
+		if ( 'textarea' === $field_type ) :
+			?>
+			<textarea id="<?php echo esc_attr( $field_id ); ?>" name="<?php echo esc_attr( $field_id ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>" <?php echo $required ? 'required' : ''; ?> style="<?php echo esc_attr( $control_style ); ?>"><?php echo esc_textarea( is_string( $posted_value ) ? $posted_value : '' ); ?></textarea>
+			<?php
+		elseif ( 'select' === $field_type ) :
+			?>
+			<select id="<?php echo esc_attr( $field_id ); ?>" name="<?php echo esc_attr( $field_id ); ?>" <?php echo $required ? 'required' : ''; ?> style="<?php echo esc_attr( $control_style ); ?>">
+				<option value=""><?php echo esc_html( $placeholder ?: 'Select an option' ); ?></option>
+				<?php foreach ( $options as $option ) : ?>
+					<?php
+					$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
+					$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
+					?>
+					<option value="<?php echo esc_attr( $option_value ); ?>" <?php selected( $posted_value, $option_value ); ?>><?php echo esc_html( $option_label ); ?></option>
+				<?php endforeach; ?>
+			</select>
+			<?php
+		elseif ( 'checkboxes' === $field_type ) :
+			$posted_array = is_array( $posted_value ) ? $posted_value : array();
+			?>
+			<div id="<?php echo esc_attr( $field_id ); ?>">
+				<?php foreach ( $options as $option ) : ?>
+					<?php
+					$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
+					$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
+					?>
+					<label style="display:block; margin-bottom:6px;color:var(--ajforms-text);">
+						<input type="checkbox" name="<?php echo esc_attr( $field_id ); ?>[]" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( in_array( $option_value, $posted_array, true ) ); ?>>
+						<?php echo esc_html( $option_label ); ?>
+					</label>
+				<?php endforeach; ?>
+			</div>
+			<?php
+		elseif ( 'multiple_choice' === $field_type ) :
+			?>
+			<div id="<?php echo esc_attr( $field_id ); ?>">
+				<?php foreach ( $options as $option ) : ?>
+					<?php
+					$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
+					$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
+					?>
+					<label style="display:block; margin-bottom:6px;color:var(--ajforms-text);">
+						<input type="radio" name="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( $posted_value, $option_value ); ?> <?php echo $required ? 'required' : ''; ?>>
+						<?php echo esc_html( $option_label ); ?>
+					</label>
+				<?php endforeach; ?>
+			</div>
+			<?php
+		elseif ( 'separator' === $field_type ) :
+			?>
+			<hr>
+			<?php
+		elseif ( 'file' === $field_type ) :
+			?>
+			<input type="file" id="<?php echo esc_attr( $field_id ); ?>" name="<?php echo esc_attr( $field_id ); ?>" accept="<?php echo esc_attr( $accepted_file_types ); ?>" <?php echo $required ? 'required' : ''; ?> style="<?php echo esc_attr( $control_style ); ?>">
+			<?php
+		else :
+			$input_type_map = array(
+				'email'   => 'email',
+				'url'     => 'url',
+				'number'  => 'number',
+				'phone'   => 'tel',
+				'tel'     => 'tel',
+				'date'    => 'date',
+				'address' => 'text',
+				'text'    => 'text',
+			);
+			$input_type = isset( $input_type_map[ $field_type ] ) ? $input_type_map[ $field_type ] : 'text';
+			?>
+			<input type="<?php echo esc_attr( $input_type ); ?>" id="<?php echo esc_attr( $field_id ); ?>" name="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( is_string( $posted_value ) ? $posted_value : '' ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>" <?php echo $required ? 'required' : ''; ?> style="<?php echo esc_attr( $control_style ); ?>">
+			<?php
+		endif;
+
+		return ob_get_clean();
+	}
+
+	private function render_conversational_form( $form, $fields, $settings, $submission_result, $wrapper_style, $form_theme, $challenge_enabled, $challenge_config ) {
+		$answerable_fields = array_values(
+			array_filter(
+				$fields,
+				function ( $field ) {
+					return is_array( $field ) && ( empty( $field['type'] ) || 'separator' !== $field['type'] );
+				}
+			)
+		);
+		$question_fields = array_values(
+			array_filter(
+				$answerable_fields,
+				function ( $field ) {
+					return empty( $field['conversation_step'] ) || 'final_contact' !== $field['conversation_step'];
+				}
+			)
+		);
+		$contact_fields = array_values(
+			array_filter(
+				$answerable_fields,
+				function ( $field ) {
+					return ! empty( $field['conversation_step'] ) && 'final_contact' === $field['conversation_step'];
+				}
+			)
+		);
+
+		$total_steps = count( $answerable_fields );
+		if ( ! empty( $contact_fields ) ) {
+			$total_steps = count( $question_fields ) + 1;
+		}
+		if ( 0 === $total_steps ) {
+			return '<p>This form has no questions.</p>';
+		}
+
+		ob_start();
+		?>
+		<?php if ( $challenge_enabled ) : ?>
+			<script src="<?php echo esc_url( $challenge_config['script_url'] ); ?>" async defer></script>
+		<?php endif; ?>
+		<form class="ajforms-frontend-form ajforms-conversational-form ajforms-theme-<?php echo esc_attr( $form_theme ); ?>" method="post" enctype="multipart/form-data" style="<?php echo esc_attr( $wrapper_style ); ?>padding:28px;border-radius:var(--ajforms-radius);background:var(--ajforms-bg);border:1px solid #dfe6ee;box-shadow:0 20px 45px rgba(18,52,77,.08);">
+			<input type="hidden" name="ajf_form_id" value="<?php echo esc_attr( $form->id ); ?>">
+			<?php wp_nonce_field( 'ajf_submit_form_' . absint( $form->id ), 'ajf_form_nonce' ); ?>
+			<?php if ( $this->is_honeypot_enabled() ) : ?>
+				<?php $honeypot_field_name = $this->get_honeypot_field_name( $form->id ); ?>
+				<div class="ajforms-honeypot" aria-hidden="true" style="position:absolute !important;left:-9999px !important;top:auto !important;width:1px !important;height:1px !important;overflow:hidden !important;">
+					<label for="<?php echo esc_attr( $honeypot_field_name ); ?>"><?php esc_html_e( 'Leave this field empty', 'ajforms' ); ?></label>
+					<input type="text" id="<?php echo esc_attr( $honeypot_field_name ); ?>" name="<?php echo esc_attr( $honeypot_field_name ); ?>" value="" tabindex="-1" autocomplete="off">
+				</div>
+			<?php endif; ?>
+
+			<div class="ajforms-conversation-head" style="margin-bottom:22px;">
+				<div style="font-size:13px;font-weight:700;color:var(--ajforms-primary);text-transform:uppercase;letter-spacing:.08em;"><?php echo esc_html( $form->title ); ?></div>
+				<div class="ajforms-conversation-progress" style="height:6px;background:rgba(15,122,198,.16);border-radius:999px;margin-top:14px;overflow:hidden;">
+					<span style="display:block;width:<?php echo esc_attr( 100 / $total_steps ); ?>%;height:100%;background:var(--ajforms-primary);border-radius:999px;"></span>
+				</div>
+			</div>
+
+			<?php if ( $submission_result['submitted'] ) : ?>
+				<div class="ajforms-message <?php echo $submission_result['success'] ? 'success' : 'error'; ?>" style="margin-bottom:20px;padding:12px;border-radius:4px;<?php echo $submission_result['success'] ? 'background:#edfaef;color:#116329;' : 'background:#fcf0f1;color:#8a2424;'; ?>">
+					<?php echo esc_html( $submission_result['message'] ); ?>
+				</div>
+			<?php endif; ?>
+
+			<?php if ( ! $submission_result['success'] ) : ?>
+				<?php foreach ( $question_fields as $index => $field ) : ?>
+					<?php $field_data = $this->get_frontend_field_data( $field ); ?>
+					<section class="ajforms-conversation-step" data-step="<?php echo esc_attr( $index ); ?>" style="<?php echo 0 === $index ? '' : 'display:none;'; ?>">
+						<div style="font-size:14px;color:#64748b;margin-bottom:12px;"><?php echo esc_html( sprintf( 'Question %1$d of %2$d', $index + 1, $total_steps ) ); ?></div>
+						<label for="<?php echo esc_attr( $field_data['id'] ); ?>" style="display:block;font-size:24px;line-height:1.25;font-weight:800;color:var(--ajforms-text);margin-bottom:16px;">
+							<?php echo esc_html( $field_data['label'] ); ?>
+							<?php if ( $field_data['required'] ) : ?>
+								<span style="color:#d63638;">*</span>
+							<?php endif; ?>
+						</label>
+						<?php echo $this->render_frontend_field_control( $field_data ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+						<?php if ( '' !== $field_data['help_text'] ) : ?>
+							<p style="margin-top:10px;color:#646970;font-size:13px;"><?php echo esc_html( $field_data['help_text'] ); ?></p>
+						<?php endif; ?>
+					</section>
+				<?php endforeach; ?>
+				<?php if ( ! empty( $contact_fields ) ) : ?>
+					<section class="ajforms-conversation-step ajforms-conversation-contact-step" data-step="<?php echo esc_attr( count( $question_fields ) ); ?>" style="<?php echo empty( $question_fields ) ? '' : 'display:none;'; ?>">
+						<div style="font-size:14px;color:#64748b;margin-bottom:12px;"><?php echo esc_html( sprintf( 'Step %1$d of %2$d', $total_steps, $total_steps ) ); ?></div>
+						<div style="font-size:24px;line-height:1.25;font-weight:800;color:var(--ajforms-text);margin-bottom:8px;"><?php esc_html_e( 'How can we reach you?', 'ajforms' ); ?></div>
+						<p style="margin:0 0 18px;color:#64748b;"><?php esc_html_e( 'Share your contact details and we will follow up with the next step.', 'ajforms' ); ?></p>
+						<?php foreach ( $contact_fields as $field ) : ?>
+							<?php $field_data = $this->get_frontend_field_data( $field ); ?>
+							<div class="ajforms-field <?php echo esc_attr( $field_data['css_class'] ); ?>" style="margin-bottom:18px;">
+								<label for="<?php echo esc_attr( $field_data['id'] ); ?>" style="display:block;font-weight:700;color:var(--ajforms-text);margin-bottom:7px;">
+									<?php echo esc_html( $field_data['label'] ); ?>
+									<?php if ( $field_data['required'] ) : ?>
+										<span style="color:#d63638;">*</span>
+									<?php endif; ?>
+								</label>
+								<?php echo $this->render_frontend_field_control( $field_data ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<?php if ( '' !== $field_data['help_text'] ) : ?>
+									<p style="margin-top:8px;color:#646970;font-size:13px;"><?php echo esc_html( $field_data['help_text'] ); ?></p>
+								<?php endif; ?>
+							</div>
+						<?php endforeach; ?>
+					</section>
+				<?php endif; ?>
+
+				<?php if ( $challenge_enabled ) : ?>
+					<div class="ajforms-challenge-wrap ajforms-challenge-<?php echo esc_attr( $challenge_config['provider'] ); ?>" style="margin:20px 0 0;display:none;">
+						<div class="<?php echo esc_attr( $challenge_config['container_class'] ); ?>" data-sitekey="<?php echo esc_attr( $challenge_config['site_key'] ); ?>"></div>
+					</div>
+				<?php endif; ?>
+
+				<div class="ajforms-conversation-actions" style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:24px;">
+					<button type="button" class="ajforms-conversation-prev" style="display:none;background:#fff;color:var(--ajforms-text);border:1px solid var(--ajforms-input-border);border-radius:calc(var(--ajforms-radius) - 4px);padding:11px 16px;font-weight:700;"><?php esc_html_e( 'Back', 'ajforms' ); ?></button>
+					<button type="button" class="ajforms-conversation-next" style="margin-left:auto;background:var(--ajforms-primary);color:#fff;border:0;border-radius:calc(var(--ajforms-radius) - 4px);padding:12px 20px;font-weight:800;"><?php esc_html_e( 'Next', 'ajforms' ); ?></button>
+					<button type="submit" class="ajforms-conversation-submit" style="display:none;margin-left:auto;background:var(--ajforms-primary);color:#fff;border:0;border-radius:calc(var(--ajforms-radius) - 4px);padding:12px 20px;font-weight:800;"><?php echo esc_html( ! empty( $settings['submit_text'] ) ? $settings['submit_text'] : 'Submit' ); ?></button>
+				</div>
+			<?php endif; ?>
+		</form>
+		<script>
+		(function() {
+			const form = document.currentScript.previousElementSibling;
+			if (!form) {
+				return;
+			}
+
+			const steps = Array.from(form.querySelectorAll('.ajforms-conversation-step'));
+			const progress = form.querySelector('.ajforms-conversation-progress span');
+			const previousButton = form.querySelector('.ajforms-conversation-prev');
+			const nextButton = form.querySelector('.ajforms-conversation-next');
+			const submitButton = form.querySelector('.ajforms-conversation-submit');
+			const challenge = form.querySelector('.ajforms-challenge-wrap');
+			let currentStep = 0;
+
+			function setStep(nextStep) {
+				currentStep = Math.max(0, Math.min(nextStep, steps.length - 1));
+
+				steps.forEach(function(step, index) {
+					step.style.display = index === currentStep ? '' : 'none';
+				});
+
+				if (progress) {
+					progress.style.width = (((currentStep + 1) / steps.length) * 100) + '%';
+				}
+
+				if (previousButton) {
+					previousButton.style.display = currentStep > 0 ? '' : 'none';
+				}
+
+				const isLastStep = currentStep === steps.length - 1;
+				if (nextButton) {
+					nextButton.style.display = isLastStep ? 'none' : '';
+				}
+				if (submitButton) {
+					submitButton.style.display = isLastStep ? '' : 'none';
+				}
+				if (challenge) {
+					challenge.style.display = isLastStep ? '' : 'none';
+				}
+			}
+
+			function currentStepIsValid() {
+				const controls = Array.from(steps[currentStep].querySelectorAll('input, select, textarea'));
+				for (const control of controls) {
+					if (typeof control.reportValidity === 'function' && !control.reportValidity()) {
+						return false;
+					}
+				}
+				return true;
+			}
+
+			if (previousButton) {
+				previousButton.addEventListener('click', function() {
+					setStep(currentStep - 1);
+				});
+			}
+
+			if (nextButton) {
+				nextButton.addEventListener('click', function() {
+					if (currentStepIsValid()) {
+						setStep(currentStep + 1);
+					}
+				});
+			}
+
+			setStep(0);
+		})();
+		</script>
+		<?php
+
+		return ob_get_clean();
+	}
+
 	public function render_form_shortcode( $atts ) {
 		$atts = shortcode_atts(
 			array(
 				'id' => 0,
+				'type' => '',
 			),
 			$atts,
-			'wp_formy'
+			'ajforms'
 		);
 
 		$form_id = absint( $atts['id'] );
@@ -950,7 +1251,7 @@ class WP_Formy {
 			: ( ! empty( $settings['background_color'] ) ? $settings['background_color'] : '#ffffff' );
 		$form_theme = ! empty( $settings['form_theme'] ) ? $settings['form_theme'] : 'clean';
 		$wrapper_style = sprintf(
-			'--wp-formy-primary:%1$s;--wp-formy-text:%2$s;--wp-formy-input-bg:%3$s;--wp-formy-input-border:%4$s;--wp-formy-radius:%5$dpx;--wp-formy-bg:%6$s;',
+			'--ajforms-primary:%1$s;--ajforms-text:%2$s;--ajforms-input-bg:%3$s;--ajforms-input-border:%4$s;--ajforms-radius:%5$dpx;--ajforms-bg:%6$s;',
 			! empty( $settings['primary_color'] ) ? $settings['primary_color'] : '#0f7ac6',
 			! empty( $settings['text_color'] ) ? $settings['text_color'] : '#1f2937',
 			! empty( $settings['input_background'] ) ? $settings['input_background'] : '#ffffff',
@@ -967,9 +1268,12 @@ class WP_Formy {
 		$challenge_config  = $this->get_spam_provider_config();
 		$stripe_config     = $this->get_stripe_payment_config( $form, $settings );
 		$stripe_enabled    = ! empty( $stripe_config['enabled'] );
-		$stripe_nonce      = wp_create_nonce( 'wpf_stripe_payment_' . $form_id );
+		$stripe_nonce      = wp_create_nonce( 'ajf_stripe_payment_' . $form_id );
 
 		$submission_result = $this->handle_form_submission( $form, $fields, $settings );
+		if ( 'conversational' === sanitize_key( $atts['type'] ) ) {
+			return $this->render_conversational_form( $form, $fields, $settings, $submission_result, $wrapper_style, $form_theme, $challenge_enabled, $challenge_config );
+		}
 
 		ob_start();
 		?>
@@ -979,14 +1283,14 @@ class WP_Formy {
 		<?php if ( $stripe_enabled ) : ?>
 			<script src="https://js.stripe.com/v3/"></script>
 		<?php endif; ?>
-		<form class="wp-formy-frontend-form wp-formy-theme-<?php echo esc_attr( $form_theme ); ?>" method="post" enctype="multipart/form-data" style="<?php echo esc_attr( $wrapper_style ); ?>padding:24px;border-radius:var(--wp-formy-radius);background:var(--wp-formy-bg);border:1px solid #dfe6ee;box-shadow:0 20px 45px rgba(18,52,77,.08);">
-			<input type="hidden" name="wpf_form_id" value="<?php echo esc_attr( $form_id ); ?>">
-			<input type="hidden" name="wpf_stripe_payment_intent" value="">
-			<?php wp_nonce_field( 'wpf_submit_form_' . $form_id, 'wpf_form_nonce' ); ?>
+		<form class="ajforms-frontend-form ajforms-theme-<?php echo esc_attr( $form_theme ); ?>" method="post" enctype="multipart/form-data" style="<?php echo esc_attr( $wrapper_style ); ?>padding:24px;border-radius:var(--ajforms-radius);background:var(--ajforms-bg);border:1px solid #dfe6ee;box-shadow:0 20px 45px rgba(18,52,77,.08);">
+			<input type="hidden" name="ajf_form_id" value="<?php echo esc_attr( $form_id ); ?>">
+			<input type="hidden" name="ajf_stripe_payment_intent" value="">
+			<?php wp_nonce_field( 'ajf_submit_form_' . $form_id, 'ajf_form_nonce' ); ?>
 			<?php if ( $this->is_honeypot_enabled() ) : ?>
 				<?php $honeypot_field_name = $this->get_honeypot_field_name( $form_id ); ?>
-				<div class="wp-formy-honeypot" aria-hidden="true" style="position:absolute !important;left:-9999px !important;top:auto !important;width:1px !important;height:1px !important;overflow:hidden !important;">
-					<label for="<?php echo esc_attr( $honeypot_field_name ); ?>"><?php esc_html_e( 'Leave this field empty', 'wp-formy' ); ?></label>
+				<div class="ajforms-honeypot" aria-hidden="true" style="position:absolute !important;left:-9999px !important;top:auto !important;width:1px !important;height:1px !important;overflow:hidden !important;">
+					<label for="<?php echo esc_attr( $honeypot_field_name ); ?>"><?php esc_html_e( 'Leave this field empty', 'ajforms' ); ?></label>
 					<input
 						type="text"
 						id="<?php echo esc_attr( $honeypot_field_name ); ?>"
@@ -998,7 +1302,7 @@ class WP_Formy {
 				</div>
 			<?php endif; ?>
 
-			<div class="wp-formy-form-title">
+			<div class="ajforms-form-title">
 				<h3><?php echo esc_html( $form->title ); ?></h3>
 				<?php if ( ! empty( $settings['form_description'] ) ) : ?>
 					<p><?php echo esc_html( $settings['form_description'] ); ?></p>
@@ -1006,14 +1310,14 @@ class WP_Formy {
 			</div>
 
 			<?php if ( $submission_result['submitted'] ) : ?>
-				<div class="wp-formy-message <?php echo $submission_result['success'] ? 'success' : 'error'; ?>" style="margin-bottom:20px;padding:12px;border-radius:4px;<?php echo $submission_result['success'] ? 'background:#edfaef;color:#116329;' : 'background:#fcf0f1;color:#8a2424;'; ?>">
+				<div class="ajforms-message <?php echo $submission_result['success'] ? 'success' : 'error'; ?>" style="margin-bottom:20px;padding:12px;border-radius:4px;<?php echo $submission_result['success'] ? 'background:#edfaef;color:#116329;' : 'background:#fcf0f1;color:#8a2424;'; ?>">
 					<?php echo esc_html( $submission_result['message'] ); ?>
 				</div>
 			<?php endif; ?>
 
 			<?php if ( ! $submission_result['success'] ) : ?>
 				<?php if ( $challenge_enabled ) : ?>
-					<div class="wp-formy-challenge-wrap wp-formy-challenge-<?php echo esc_attr( $challenge_config['provider'] ); ?>" style="margin:0 0 24px;">
+					<div class="ajforms-challenge-wrap ajforms-challenge-<?php echo esc_attr( $challenge_config['provider'] ); ?>" style="margin:0 0 24px;">
 						<div class="<?php echo esc_attr( $challenge_config['container_class'] ); ?>" data-sitekey="<?php echo esc_attr( $challenge_config['site_key'] ); ?>"></div>
 					</div>
 				<?php endif; ?>
@@ -1037,9 +1341,9 @@ class WP_Formy {
 
 					$posted_value = isset( $_POST[ $field_id ] ) ? wp_unslash( $_POST[ $field_id ] ) : $default_value;
 					?>
-					<div class="wp-formy-field <?php echo esc_attr( $css_class ); ?>" style="margin-bottom:20px;">
+					<div class="ajforms-field <?php echo esc_attr( $css_class ); ?>" style="margin-bottom:20px;">
 						<?php if ( 'separator' !== $field_type ) : ?>
-							<label for="<?php echo esc_attr( $field_id ); ?>" style="display:block; font-weight:600; margin-bottom:6px;color:var(--wp-formy-text);">
+							<label for="<?php echo esc_attr( $field_id ); ?>" style="display:block; font-weight:600; margin-bottom:6px;color:var(--ajforms-text);">
 								<?php echo esc_html( $field_label ); ?>
 								<?php if ( $required ) : ?>
 									<span style="color:#d63638;">*</span>
@@ -1053,7 +1357,7 @@ class WP_Formy {
 								name="<?php echo esc_attr( $field_id ); ?>"
 								placeholder="<?php echo esc_attr( $placeholder ); ?>"
 								<?php echo $required ? 'required' : ''; ?>
-								style="width:100%; padding:10px;border-radius:calc(var(--wp-formy-radius) - 4px);background:var(--wp-formy-input-bg);border:1px solid var(--wp-formy-input-border);color:var(--wp-formy-text);"
+								style="width:100%; padding:10px;border-radius:calc(var(--ajforms-radius) - 4px);background:var(--ajforms-input-bg);border:1px solid var(--ajforms-input-border);color:var(--ajforms-text);"
 							><?php echo esc_textarea( is_string( $posted_value ) ? $posted_value : '' ); ?></textarea>
 
 						<?php elseif ( 'select' === $field_type ) : ?>
@@ -1061,7 +1365,7 @@ class WP_Formy {
 								id="<?php echo esc_attr( $field_id ); ?>"
 								name="<?php echo esc_attr( $field_id ); ?>"
 								<?php echo $required ? 'required' : ''; ?>
-								style="width:100%; padding:10px;border-radius:calc(var(--wp-formy-radius) - 4px);background:var(--wp-formy-input-bg);border:1px solid var(--wp-formy-input-border);color:var(--wp-formy-text);"
+								style="width:100%; padding:10px;border-radius:calc(var(--ajforms-radius) - 4px);background:var(--ajforms-input-bg);border:1px solid var(--ajforms-input-border);color:var(--ajforms-text);"
 							>
 								<option value=""><?php echo esc_html( $placeholder ?: 'Select an option' ); ?></option>
 								<?php foreach ( $options as $option ) : ?>
@@ -1083,7 +1387,7 @@ class WP_Formy {
 									$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
 									$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
 									?>
-									<label style="display:block; margin-bottom:6px;color:var(--wp-formy-text);">
+									<label style="display:block; margin-bottom:6px;color:var(--ajforms-text);">
 										<input type="checkbox" name="<?php echo esc_attr( $field_id ); ?>[]" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( in_array( $option_value, $posted_array, true ) ); ?>>
 										<?php echo esc_html( $option_label ); ?>
 									</label>
@@ -1097,7 +1401,7 @@ class WP_Formy {
 									$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
 									$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
 									?>
-									<label style="display:block; margin-bottom:6px;color:var(--wp-formy-text);">
+									<label style="display:block; margin-bottom:6px;color:var(--ajforms-text);">
 										<input type="radio" name="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( $posted_value, $option_value ); ?> <?php echo $required ? 'required' : ''; ?>>
 										<?php echo esc_html( $option_label ); ?>
 									</label>
@@ -1114,7 +1418,7 @@ class WP_Formy {
 								name="<?php echo esc_attr( $field_id ); ?>"
 								accept="<?php echo esc_attr( $accepted_file_types ); ?>"
 								<?php echo $required ? 'required' : ''; ?>
-								style="width:100%; padding:10px;border-radius:calc(var(--wp-formy-radius) - 4px);background:var(--wp-formy-input-bg);border:1px solid var(--wp-formy-input-border);color:var(--wp-formy-text);"
+								style="width:100%; padding:10px;border-radius:calc(var(--ajforms-radius) - 4px);background:var(--ajforms-input-bg);border:1px solid var(--ajforms-input-border);color:var(--ajforms-text);"
 							>
 
 						<?php else : ?>
@@ -1139,7 +1443,7 @@ class WP_Formy {
 								value="<?php echo esc_attr( is_string( $posted_value ) ? $posted_value : '' ); ?>"
 								placeholder="<?php echo esc_attr( $placeholder ); ?>"
 								<?php echo $required ? 'required' : ''; ?>
-								style="width:100%; padding:10px;border-radius:calc(var(--wp-formy-radius) - 4px);background:var(--wp-formy-input-bg);border:1px solid var(--wp-formy-input-border);color:var(--wp-formy-text);"
+								style="width:100%; padding:10px;border-radius:calc(var(--ajforms-radius) - 4px);background:var(--ajforms-input-bg);border:1px solid var(--ajforms-input-border);color:var(--ajforms-text);"
 							>
 						<?php endif; ?>
 
@@ -1150,23 +1454,23 @@ class WP_Formy {
 				<?php endforeach; ?>
 
 				<?php if ( $stripe_enabled ) : ?>
-					<div class="wp-formy-stripe-payment" data-form-id="<?php echo esc_attr( $form_id ); ?>" data-publishable-key="<?php echo esc_attr( $stripe_config['publishable_key'] ); ?>" data-payment-nonce="<?php echo esc_attr( $stripe_nonce ); ?>">
-						<div style="margin:24px 0 16px;padding:18px;border:1px solid #dfe6ee;border-radius:calc(var(--wp-formy-radius) - 4px);background:#fff;">
-							<div style="font-size:16px;font-weight:700;color:var(--wp-formy-text);margin-bottom:6px;"><?php esc_html_e( 'Payment', 'wp-formy' ); ?></div>
+					<div class="ajforms-stripe-payment" data-form-id="<?php echo esc_attr( $form_id ); ?>" data-publishable-key="<?php echo esc_attr( $stripe_config['publishable_key'] ); ?>" data-payment-nonce="<?php echo esc_attr( $stripe_nonce ); ?>">
+						<div style="margin:24px 0 16px;padding:18px;border:1px solid #dfe6ee;border-radius:calc(var(--ajforms-radius) - 4px);background:#fff;">
+							<div style="font-size:16px;font-weight:700;color:var(--ajforms-text);margin-bottom:6px;"><?php esc_html_e( 'Payment', 'ajforms' ); ?></div>
 							<div style="font-size:14px;color:#4b5563;margin-bottom:14px;">
 								<?php echo esc_html( $stripe_config['description'] ); ?>
 							</div>
-							<div style="font-size:22px;font-weight:800;color:var(--wp-formy-text);margin-bottom:16px;">
+							<div style="font-size:22px;font-weight:800;color:var(--ajforms-text);margin-bottom:16px;">
 								<?php echo esc_html( strtoupper( $stripe_config['currency'] ) . ' ' . number_format_i18n( (float) $stripe_config['amount'], 2 ) ); ?>
 							</div>
-							<div class="wpf-stripe-payment-element" id="wpf-stripe-payment-element-<?php echo esc_attr( $form_id ); ?>"></div>
-							<p class="wpf-stripe-payment-message" style="display:none;margin:12px 0 0;color:#b32d2e;"></p>
+							<div class="ajforms-stripe-payment-element" id="ajforms-stripe-payment-element-<?php echo esc_attr( $form_id ); ?>"></div>
+							<p class="ajforms-stripe-payment-message" style="display:none;margin:12px 0 0;color:#b32d2e;"></p>
 						</div>
 					</div>
 				<?php endif; ?>
 
-				<div class="wp-formy-submit" style="text-align:<?php echo esc_attr( ! empty( $settings['button_alignment'] ) ? $settings['button_alignment'] : 'left' ); ?>;">
-					<button type="submit" style="background:var(--wp-formy-primary);color:#fff;border:0;border-radius:calc(var(--wp-formy-radius) - 4px);padding:12px 20px;font-weight:700;"><?php echo esc_html( $submit_text ); ?></button>
+				<div class="ajforms-submit" style="text-align:<?php echo esc_attr( ! empty( $settings['button_alignment'] ) ? $settings['button_alignment'] : 'left' ); ?>;">
+					<button type="submit" style="background:var(--ajforms-primary);color:#fff;border:0;border-radius:calc(var(--ajforms-radius) - 4px);padding:12px 20px;font-weight:700;"><?php echo esc_html( $submit_text ); ?></button>
 				</div>
 			<?php endif; ?>
 		</form>
@@ -1178,10 +1482,10 @@ class WP_Formy {
 					return;
 				}
 
-				const paymentWrap = form.querySelector('.wp-formy-stripe-payment');
-				const paymentElementNode = form.querySelector('.wpf-stripe-payment-element');
-				const paymentMessage = form.querySelector('.wpf-stripe-payment-message');
-				const paymentIntentInput = form.querySelector('input[name="wpf_stripe_payment_intent"]');
+				const paymentWrap = form.querySelector('.ajforms-stripe-payment');
+				const paymentElementNode = form.querySelector('.ajforms-stripe-payment-element');
+				const paymentMessage = form.querySelector('.ajforms-stripe-payment-message');
+				const paymentIntentInput = form.querySelector('input[name="ajf_stripe_payment_intent"]');
 				const submitButton = form.querySelector('button[type="submit"]');
 
 				if (!paymentWrap || !paymentElementNode || !paymentIntentInput || !submitButton) {
@@ -1204,7 +1508,7 @@ class WP_Formy {
 
 				async function createPaymentIntent() {
 					const formData = new FormData();
-					formData.append('action', 'wpf_create_stripe_payment_intent');
+					formData.append('action', 'ajf_create_stripe_payment_intent');
 					formData.append('form_id', paymentWrap.dataset.formId);
 					formData.append('nonce', paymentWrap.dataset.paymentNonce);
 

@@ -4,7 +4,7 @@ if ( ! class_exists( 'WP_List_Table' ) ) {
 	require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php';
 }
 
-class WP_Formy_Leads_List_Table extends WP_List_Table {
+class AJForms_Leads_List_Table extends WP_List_Table {
 
 	public function __construct() {
 		parent::__construct(
@@ -19,12 +19,12 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 	public function get_columns() {
 		return array(
 			'cb'           => '<input type="checkbox" />',
-			'id'           => __( 'Entry ID', 'wp-formy' ),
-			'form_title'   => __( 'Form Name', 'wp-formy' ),
-			'summary'      => __( 'Basic Info', 'wp-formy' ),
-			'status'       => __( 'Status', 'wp-formy' ),
-			'created_at'   => __( 'Date & Time', 'wp-formy' ),
-			'actions'      => __( 'Actions', 'wp-formy' ),
+			'id'           => __( 'Entry ID', 'ajforms' ),
+			'form_title'   => __( 'Form Name', 'ajforms' ),
+			'summary'      => __( 'Basic Info', 'ajforms' ),
+			'status'       => __( 'Status', 'ajforms' ),
+			'created_at'   => __( 'Date & Time', 'ajforms' ),
+			'actions'      => __( 'Actions', 'ajforms' ),
 		);
 	}
 
@@ -46,7 +46,7 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 	public function single_row( $item ) {
 		$detail_url = add_query_arg(
 			array(
-				'page'    => 'wp-formy-leads',
+				'page'    => 'ajforms-leads',
 				'view'    => 'detail',
 				'lead_id' => absint( $item['id'] ),
 			),
@@ -55,7 +55,7 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 
 		printf(
 			'<tr class="%1$s" data-detail-url="%2$s">',
-			esc_attr( 'wp-formy-lead-row' ),
+			esc_attr( 'ajforms-lead-row' ),
 			esc_url( $detail_url )
 		);
 		$this->single_row_columns( $item );
@@ -64,9 +64,9 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 
 	public function get_bulk_actions() {
 		return array(
-			'mark_read'   => __( 'Mark as Read', 'wp-formy' ),
-			'mark_unread' => __( 'Mark as Unread', 'wp-formy' ),
-			'delete'      => __( 'Delete', 'wp-formy' ),
+			'mark_read'   => __( 'Mark as Read', 'ajforms' ),
+			'mark_unread' => __( 'Mark as Unread', 'ajforms' ),
+			'delete'      => __( 'Delete', 'ajforms' ),
 		);
 	}
 
@@ -85,8 +85,8 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 		check_admin_referer( 'bulk-' . $this->_args['plural'] );
 
 		global $wpdb;
-		$leads_table      = $wpdb->prefix . 'formy_leads';
-		$lead_notes_table = $wpdb->prefix . 'formy_lead_notes';
+		$leads_table      = $wpdb->prefix . 'ajforms_leads';
+		$lead_notes_table = $wpdb->prefix . 'ajforms_lead_notes';
 		$placeholders     = implode( ',', array_fill( 0, count( $lead_ids ), '%d' ) );
 
 		if ( 'delete' === $action ) {
@@ -148,10 +148,10 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 	protected function column_default( $item, $column_name ) {
 		switch ( $column_name ) {
 			case 'id':
-				return '<span class="wp-formy-entry-id-chip">#' . absint( $item['id'] ) . '</span>';
+				return '<span class="ajforms-entry-id-chip">#' . absint( $item['id'] ) . '</span>';
 
 			case 'form_title':
-				return '<div class="wp-formy-form-title-cell"><strong>' . esc_html( $item['form_title'] ? $item['form_title'] : __( '(Form deleted)', 'wp-formy' ) ) . '</strong><span>' . esc_html__( 'Source form', 'wp-formy' ) . '</span></div>';
+				return '<div class="ajforms-form-title-cell"><strong>' . esc_html( $item['form_title'] ? $item['form_title'] : __( '(Form deleted)', 'ajforms' ) ) . '</strong><span>' . esc_html__( 'Source form', 'ajforms' ) . '</span></div>';
 
 			case 'summary':
 				$data  = json_decode( $item['lead_data'], true );
@@ -159,7 +159,7 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 				$email = $this->get_summary_value( $data, array( 'email' ) );
 				$phone = $this->get_summary_value( $data, array( 'phone', 'mobile', 'tel' ) );
 
-				$out = '<div class="wp-formy-summary-line">';
+				$out = '<div class="ajforms-summary-line">';
 				if ( '' !== $name ) {
 					$out .= '<strong>' . esc_html( $name ) . '</strong>';
 				} elseif ( '' !== $email ) {
@@ -167,21 +167,21 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 				} elseif ( '' !== $phone ) {
 					$out .= '<strong>' . esc_html( $phone ) . '</strong>';
 				} else {
-					$out .= '<strong>' . esc_html__( 'View details', 'wp-formy' ) . '</strong>';
+					$out .= '<strong>' . esc_html__( 'View details', 'ajforms' ) . '</strong>';
 				}
 				$out .= '</div>';
 
 				if ( '' !== $email ) {
-					$out .= '<div class="wp-formy-summary-line">' . esc_html( $email ) . '</div>';
+					$out .= '<div class="ajforms-summary-line">' . esc_html( $email ) . '</div>';
 				} elseif ( '' !== $phone ) {
-					$out .= '<div class="wp-formy-summary-line">' . esc_html( $phone ) . '</div>';
+					$out .= '<div class="ajforms-summary-line">' . esc_html( $phone ) . '</div>';
 				}
 
 				return $out;
 
 			case 'status':
 				$status = sanitize_text_field( $item['status'] );
-				return '<span class="wp-formy-status-badge ' . esc_attr( $status ) . '">' . esc_html( ucfirst( $status ) ) . '</span>';
+				return '<span class="ajforms-status-badge ' . esc_attr( $status ) . '">' . esc_html( ucfirst( $status ) ) . '</span>';
 
 			case 'created_at':
 				return esc_html(
@@ -194,7 +194,7 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 			case 'actions':
 				$detail_url = add_query_arg(
 					array(
-						'page'    => 'wp-formy-leads',
+						'page'    => 'ajforms-leads',
 						'view'    => 'detail',
 						'lead_id' => absint( $item['id'] ),
 					),
@@ -202,20 +202,20 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 				);
 
 				$toggle_action = ( 'unread' === $item['status'] ) ? 'mark_read' : 'mark_unread';
-				$toggle_label  = ( 'unread' === $item['status'] ) ? __( 'Mark Read', 'wp-formy' ) : __( 'Mark Unread', 'wp-formy' );
+				$toggle_label  = ( 'unread' === $item['status'] ) ? __( 'Mark Read', 'ajforms' ) : __( 'Mark Unread', 'ajforms' );
 				$toggle_url    = wp_nonce_url(
 					add_query_arg(
 						array(
-							'page'        => 'wp-formy-leads',
+							'page'        => 'ajforms-leads',
 							'lead_action' => $toggle_action,
 							'lead_id'     => absint( $item['id'] ),
 						),
 						admin_url( 'admin.php' )
 					),
-					'wpf_lead_action_' . absint( $item['id'] )
+					'ajf_lead_action_' . absint( $item['id'] )
 				);
 
-				return '<div class="wp-formy-inline-actions"><a class="button button-small" href="' . esc_url( $detail_url ) . '">' . esc_html__( 'Open', 'wp-formy' ) . '</a><a class="button button-small" href="' . esc_url( $toggle_url ) . '">' . esc_html( $toggle_label ) . '</a></div>';
+				return '<div class="ajforms-inline-actions"><a class="button button-small" href="' . esc_url( $detail_url ) . '">' . esc_html__( 'Open', 'ajforms' ) . '</a><a class="button button-small" href="' . esc_url( $toggle_url ) . '">' . esc_html( $toggle_label ) . '</a></div>';
 		}
 
 		return '';
@@ -224,8 +224,8 @@ class WP_Formy_Leads_List_Table extends WP_List_Table {
 	public function prepare_items() {
 		global $wpdb;
 
-		$leads_table = $wpdb->prefix . 'formy_leads';
-		$forms_table = $wpdb->prefix . 'formy_forms';
+		$leads_table = $wpdb->prefix . 'ajforms_leads';
+		$forms_table = $wpdb->prefix . 'ajforms_forms';
 
 		$per_page = 20;
 		$paged    = $this->get_pagenum();

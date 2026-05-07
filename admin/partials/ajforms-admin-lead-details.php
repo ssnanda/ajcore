@@ -6,10 +6,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 global $wpdb;
 
 $lead_id          = isset( $_GET['lead_id'] ) ? absint( wp_unslash( $_GET['lead_id'] ) ) : 0;
-$leads_table      = $wpdb->prefix . 'formy_leads';
-$forms_table      = $wpdb->prefix . 'formy_forms';
-$lead_notes_table = $wpdb->prefix . 'formy_lead_notes';
-$admin            = new WP_Formy_Admin();
+$leads_table      = $wpdb->prefix . 'ajforms_leads';
+$forms_table      = $wpdb->prefix . 'ajforms_forms';
+$lead_notes_table = $wpdb->prefix . 'ajforms_lead_notes';
+$admin            = new AJForms_Admin();
 
 $lead = $wpdb->get_row(
 	$wpdb->prepare(
@@ -22,7 +22,7 @@ $lead = $wpdb->get_row(
 );
 
 if ( ! $lead ) {
-	echo '<div class="wrap"><h1>' . esc_html__( 'Lead not found.', 'wp-formy' ) . '</h1></div>';
+	echo '<div class="wrap"><h1>' . esc_html__( 'Lead not found.', 'ajforms' ) . '</h1></div>';
 	return;
 }
 
@@ -54,10 +54,10 @@ foreach ( $data as $field_key => $field_value ) {
 	}
 }
 
-$back_url = admin_url( 'admin.php?page=wp-formy-leads' );
+$back_url = admin_url( 'admin.php?page=ajforms-leads' );
 $form_edit_url = $form ? add_query_arg(
 	array(
-		'page'    => 'wp-formy',
+		'page'    => 'ajforms',
 		'action'  => 'edit',
 		'form_id' => absint( $form->id ),
 	),
@@ -65,40 +65,40 @@ $form_edit_url = $form ? add_query_arg(
 ) : '';
 
 $toggle_action = ( 'unread' === $lead->status ) ? 'mark_read' : 'mark_unread';
-$toggle_label  = ( 'unread' === $lead->status ) ? __( 'Mark as Read', 'wp-formy' ) : __( 'Mark as Unread', 'wp-formy' );
+$toggle_label  = ( 'unread' === $lead->status ) ? __( 'Mark as Read', 'ajforms' ) : __( 'Mark as Unread', 'ajforms' );
 $toggle_url    = wp_nonce_url(
 	add_query_arg(
 		array(
-			'page'        => 'wp-formy-leads',
+			'page'        => 'ajforms-leads',
 			'view'        => 'detail',
 			'lead_action' => $toggle_action,
 			'lead_id'     => $lead_id,
 		),
 		admin_url( 'admin.php' )
 	),
-	'wpf_lead_action_' . $lead_id
+	'ajf_lead_action_' . $lead_id
 );
 
 $delete_url = wp_nonce_url(
 	add_query_arg(
 		array(
-			'page'        => 'wp-formy-leads',
+			'page'        => 'ajforms-leads',
 			'lead_action' => 'delete',
 			'lead_id'     => $lead_id,
 		),
 		admin_url( 'admin.php' )
 	),
-	'wpf_lead_action_' . $lead_id
+	'ajf_lead_action_' . $lead_id
 );
 ?>
 
 <div class="wrap">
 	<style>
-		.wp-formy-entry-shell {
+		.ajforms-entry-shell {
 			margin-top: 18px;
 		}
 
-		.wp-formy-entry-hero {
+		.ajforms-entry-hero {
 			display: flex;
 			align-items: flex-start;
 			justify-content: space-between;
@@ -111,7 +111,7 @@ $delete_url = wp_nonce_url(
 			margin-bottom: 18px;
 		}
 
-		.wp-formy-entry-backlink {
+		.ajforms-entry-backlink {
 			display: inline-flex;
 			align-items: center;
 			gap: 8px;
@@ -120,13 +120,13 @@ $delete_url = wp_nonce_url(
 			font-weight: 600;
 		}
 
-		.wp-formy-entry-hero h1 {
+		.ajforms-entry-hero h1 {
 			margin: 14px 0 8px;
 			font-size: 30px;
 			line-height: 1.1;
 		}
 
-		.wp-formy-entry-hero p {
+		.ajforms-entry-hero p {
 			margin: 0;
 			color: #64748b;
 			max-width: 740px;
@@ -134,26 +134,26 @@ $delete_url = wp_nonce_url(
 			line-height: 1.7;
 		}
 
-		.wp-formy-entry-hero-actions {
+		.ajforms-entry-hero-actions {
 			display: flex;
 			flex-wrap: wrap;
 			justify-content: flex-end;
 			gap: 10px;
 		}
 
-		.wp-formy-entry-layout {
+		.ajforms-entry-layout {
 			display: grid;
 			grid-template-columns: minmax(0, 1.65fr) minmax(320px, .85fr);
 			gap: 18px;
 		}
 
-		.wp-formy-entry-secondary {
+		.ajforms-entry-secondary {
 			display: flex;
 			flex-direction: column;
 			gap: 18px;
 		}
 
-		.wp-formy-lead-card {
+		.ajforms-lead-card {
 			background: #fff;
 			border: 1px solid #e4ebf3;
 			border-radius: 24px;
@@ -161,42 +161,42 @@ $delete_url = wp_nonce_url(
 			box-shadow: 0 18px 42px rgba(15, 23, 42, 0.05);
 		}
 
-		.wp-formy-lead-card h2,
-		.wp-formy-lead-card h3 {
+		.ajforms-lead-card h2,
+		.ajforms-lead-card h3 {
 			margin-top: 0;
 		}
 
-		.wp-formy-lead-meta-table {
+		.ajforms-lead-meta-table {
 			width: 100%;
 			border-collapse: collapse;
 		}
 
-		.wp-formy-lead-meta-table th,
-		.wp-formy-lead-meta-table td {
+		.ajforms-lead-meta-table th,
+		.ajforms-lead-meta-table td {
 			padding: 16px 0;
 			border-bottom: 1px solid #eef2f7;
 			vertical-align: top;
 		}
 
-		.wp-formy-lead-meta-table tr:last-child th,
-		.wp-formy-lead-meta-table tr:last-child td {
+		.ajforms-lead-meta-table tr:last-child th,
+		.ajforms-lead-meta-table tr:last-child td {
 			border-bottom: 0;
 		}
 
-		.wp-formy-lead-meta-table th {
+		.ajforms-lead-meta-table th {
 			color: #334155;
 			font-weight: 700;
 		}
 
-		.wp-formy-lead-meta-table td input[type="text"],
-		.wp-formy-lead-meta-table td input[type="email"],
-		.wp-formy-lead-meta-table td input[type="url"],
-		.wp-formy-lead-meta-table td input[type="number"],
-		.wp-formy-lead-meta-table td input[type="tel"],
-		.wp-formy-lead-meta-table td input[type="date"],
-		.wp-formy-lead-meta-table td input[type="file"],
-		.wp-formy-lead-meta-table td textarea,
-		.wp-formy-lead-meta-table td select {
+		.ajforms-lead-meta-table td input[type="text"],
+		.ajforms-lead-meta-table td input[type="email"],
+		.ajforms-lead-meta-table td input[type="url"],
+		.ajforms-lead-meta-table td input[type="number"],
+		.ajforms-lead-meta-table td input[type="tel"],
+		.ajforms-lead-meta-table td input[type="date"],
+		.ajforms-lead-meta-table td input[type="file"],
+		.ajforms-lead-meta-table td textarea,
+		.ajforms-lead-meta-table td select {
 			width: 100%;
 			border: 1px solid #d5dee8;
 			border-radius: 14px;
@@ -205,12 +205,12 @@ $delete_url = wp_nonce_url(
 			box-sizing: border-box;
 		}
 
-		.wp-formy-lead-meta-table td textarea {
+		.ajforms-lead-meta-table td textarea {
 			min-height: 120px;
 			resize: vertical;
 		}
 
-		.wp-formy-entry-status-row {
+		.ajforms-entry-status-row {
 			display: flex;
 			align-items: center;
 			gap: 10px;
@@ -218,7 +218,7 @@ $delete_url = wp_nonce_url(
 			margin-top: 10px;
 		}
 
-		.wp-formy-status-badge {
+		.ajforms-status-badge {
 			display: inline-flex;
 			align-items: center;
 			padding: 6px 10px;
@@ -227,23 +227,23 @@ $delete_url = wp_nonce_url(
 			font-weight: 700;
 		}
 
-		.wp-formy-status-badge.read {
+		.ajforms-status-badge.read {
 			background: #eff6ff;
 			color: #1d4ed8;
 		}
 
-		.wp-formy-status-badge.unread {
+		.ajforms-status-badge.unread {
 			background: #fef3c7;
 			color: #92400e;
 		}
 
-		.wp-formy-entry-note {
+		.ajforms-entry-note {
 			color: #64748b;
 			font-size: 14px;
 			line-height: 1.6;
 		}
 
-		.wp-formy-note-form textarea {
+		.ajforms-note-form textarea {
 			width: 100%;
 			min-height: 110px;
 			border: 1px solid #d5dee8;
@@ -253,27 +253,27 @@ $delete_url = wp_nonce_url(
 			resize: vertical;
 		}
 
-		.wp-formy-note-list {
+		.ajforms-note-list {
 			display: flex;
 			flex-direction: column;
 			gap: 12px;
 			margin-top: 18px;
 		}
 
-		.wp-formy-note-item {
+		.ajforms-note-item {
 			padding: 16px 18px;
 			border: 1px solid #e5edf5;
 			border-radius: 18px;
 			background: #fbfdff;
 		}
 
-		.wp-formy-note-item strong {
+		.ajforms-note-item strong {
 			display: block;
 			margin-bottom: 6px;
 			color: #0f172a;
 		}
 
-		.wp-formy-note-item span {
+		.ajforms-note-item span {
 			display: block;
 			margin-top: 8px;
 			color: #64748b;
@@ -281,33 +281,33 @@ $delete_url = wp_nonce_url(
 		}
 
 		@media (max-width: 1100px) {
-			.wp-formy-entry-hero {
+			.ajforms-entry-hero {
 				flex-direction: column;
 			}
 
-			.wp-formy-entry-layout {
+			.ajforms-entry-layout {
 				grid-template-columns: 1fr;
 			}
 		}
 	</style>
 
-	<div class="wp-formy-entry-shell">
-		<div class="wp-formy-entry-hero">
+	<div class="ajforms-entry-shell">
+		<div class="ajforms-entry-hero">
 			<div>
-				<a class="wp-formy-entry-backlink" href="<?php echo esc_url( $back_url ); ?>">&larr; <?php esc_html_e( 'Back to Entries', 'wp-formy' ); ?></a>
+				<a class="ajforms-entry-backlink" href="<?php echo esc_url( $back_url ); ?>">&larr; <?php esc_html_e( 'Back to Entries', 'ajforms' ); ?></a>
 				<h1><?php echo esc_html( 'Entry #' . $lead_id ); ?></h1>
-				<p><?php esc_html_e( 'Update saved values, replace uploaded files, review the submission context, and leave internal notes without losing track of the linked form.', 'wp-formy' ); ?></p>
-				<div class="wp-formy-entry-status-row">
-					<span class="wp-formy-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( ucfirst( $lead->status ) ); ?></span>
-					<span class="wp-formy-entry-note"><?php echo esc_html( $lead->form_title ? $lead->form_title : __( '(Form deleted)', 'wp-formy' ) ); ?></span>
+				<p><?php esc_html_e( 'Update saved values, replace uploaded files, review the submission context, and leave internal notes without losing track of the linked form.', 'ajforms' ); ?></p>
+				<div class="ajforms-entry-status-row">
+					<span class="ajforms-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( ucfirst( $lead->status ) ); ?></span>
+					<span class="ajforms-entry-note"><?php echo esc_html( $lead->form_title ? $lead->form_title : __( '(Form deleted)', 'ajforms' ) ); ?></span>
 				</div>
 			</div>
-			<div class="wp-formy-entry-hero-actions">
+			<div class="ajforms-entry-hero-actions">
 				<a class="button" href="<?php echo esc_url( $toggle_url ); ?>"><?php echo esc_html( $toggle_label ); ?></a>
 				<?php if ( $form_edit_url ) : ?>
-					<a class="button" href="<?php echo esc_url( $form_edit_url ); ?>"><?php esc_html_e( 'Edit Form', 'wp-formy' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $form_edit_url ); ?>"><?php esc_html_e( 'Edit Form', 'ajforms' ); ?></a>
 				<?php endif; ?>
-				<a class="button button-link-delete" href="<?php echo esc_url( $delete_url ); ?>" onclick="return confirm('Delete this lead?');"><?php esc_html_e( 'Delete', 'wp-formy' ); ?></a>
+				<a class="button button-link-delete" href="<?php echo esc_url( $delete_url ); ?>" onclick="return confirm('Delete this lead?');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 			</div>
 		</div>
 	</div>
@@ -327,31 +327,31 @@ $delete_url = wp_nonce_url(
 	<?php endif; ?>
 
 	<?php if ( ! $form ) : ?>
-		<div class="notice notice-error"><p><?php esc_html_e( 'This entry is linked to a form that no longer exists, so it cannot be edited safely.', 'wp-formy' ); ?></p></div>
+		<div class="notice notice-error"><p><?php esc_html_e( 'This entry is linked to a form that no longer exists, so it cannot be edited safely.', 'ajforms' ); ?></p></div>
 	<?php endif; ?>
 
 	<?php if ( ! empty( $orphan_fields ) ) : ?>
 		<div class="notice notice-warning">
 			<p>
-				<?php esc_html_e( 'This entry still contains data for fields that are no longer present on the form.', 'wp-formy' ); ?>
+				<?php esc_html_e( 'This entry still contains data for fields that are no longer present on the form.', 'ajforms' ); ?>
 				<?php if ( $form_edit_url ) : ?>
-					<a href="<?php echo esc_url( $form_edit_url ); ?>"><?php esc_html_e( 'Open the form editor to correct the schema.', 'wp-formy' ); ?></a>
+					<a href="<?php echo esc_url( $form_edit_url ); ?>"><?php esc_html_e( 'Open the form editor to correct the schema.', 'ajforms' ); ?></a>
 				<?php endif; ?>
 			</p>
 		</div>
 	<?php endif; ?>
 
-	<div class="wp-formy-entry-layout">
+	<div class="ajforms-entry-layout">
 		<div>
-			<div class="wp-formy-lead-card">
-				<h2><?php esc_html_e( 'Entry Data', 'wp-formy' ); ?></h2>
+			<div class="ajforms-lead-card">
+				<h2><?php esc_html_e( 'Entry Data', 'ajforms' ); ?></h2>
 
 				<?php if ( $form ) : ?>
 					<form method="post" enctype="multipart/form-data">
-						<?php wp_nonce_field( 'wpf_update_lead_' . $lead_id, 'wpf_update_lead_nonce' ); ?>
-						<input type="hidden" name="wpf_update_lead_id" value="<?php echo esc_attr( $lead_id ); ?>">
+						<?php wp_nonce_field( 'ajf_update_lead_' . $lead_id, 'ajf_update_lead_nonce' ); ?>
+						<input type="hidden" name="ajf_update_lead_id" value="<?php echo esc_attr( $lead_id ); ?>">
 
-						<table class="wp-formy-lead-meta-table">
+						<table class="ajforms-lead-meta-table">
 							<tbody>
 								<?php foreach ( $form_fields as $field ) : ?>
 									<?php
@@ -386,7 +386,7 @@ $delete_url = wp_nonce_url(
 												<textarea name="<?php echo esc_attr( $field_id ); ?>" rows="4" style="width:100%;"><?php echo esc_textarea( is_string( $value ) ? $value : '' ); ?></textarea>
 											<?php elseif ( 'select' === $field_type ) : ?>
 												<select name="<?php echo esc_attr( $field_id ); ?>" style="width:100%;">
-													<option value=""><?php echo esc_html( $placeholder ?: __( 'Select an option', 'wp-formy' ) ); ?></option>
+													<option value=""><?php echo esc_html( $placeholder ?: __( 'Select an option', 'ajforms' ) ); ?></option>
 													<?php foreach ( $options as $option ) : ?>
 														<?php
 														$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
@@ -425,7 +425,7 @@ $delete_url = wp_nonce_url(
 													</div>
 												<?php endif; ?>
 												<input type="file" name="<?php echo esc_attr( $field_id ); ?>" style="width:100%;">
-												<p class="description" style="margin-top:6px;"><?php esc_html_e( 'Upload a new file to replace the current one, or leave empty to keep the existing file.', 'wp-formy' ); ?></p>
+												<p class="description" style="margin-top:6px;"><?php esc_html_e( 'Upload a new file to replace the current one, or leave empty to keep the existing file.', 'ajforms' ); ?></p>
 											<?php else : ?>
 												<?php
 												$input_type_map = array(
@@ -454,9 +454,9 @@ $delete_url = wp_nonce_url(
 
 						<?php if ( ! empty( $orphan_fields ) ) : ?>
 							<div style="margin-top:24px;">
-								<h3><?php esc_html_e( 'Removed / Legacy Fields', 'wp-formy' ); ?></h3>
-								<p class="description"><?php esc_html_e( 'These values are still stored on the entry, but their fields no longer exist on the current form schema.', 'wp-formy' ); ?></p>
-								<table class="wp-formy-lead-meta-table">
+								<h3><?php esc_html_e( 'Removed / Legacy Fields', 'ajforms' ); ?></h3>
+								<p class="description"><?php esc_html_e( 'These values are still stored on the entry, but their fields no longer exist on the current form schema.', 'ajforms' ); ?></p>
+								<table class="ajforms-lead-meta-table">
 									<tbody>
 										<?php foreach ( $orphan_fields as $field_key => $field ) : ?>
 											<?php
@@ -477,32 +477,32 @@ $delete_url = wp_nonce_url(
 						<?php endif; ?>
 
 						<p style="margin-top:18px;">
-							<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Entry', 'wp-formy' ); ?></button>
+							<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Entry', 'ajforms' ); ?></button>
 						</p>
 					</form>
 				<?php else : ?>
-					<p><?php esc_html_e( 'The linked form no longer exists, so this entry cannot be edited safely.', 'wp-formy' ); ?></p>
+					<p><?php esc_html_e( 'The linked form no longer exists, so this entry cannot be edited safely.', 'ajforms' ); ?></p>
 				<?php endif; ?>
 			</div>
 
-			<div class="wp-formy-lead-card">
-				<h2><?php esc_html_e( 'Entry Info', 'wp-formy' ); ?></h2>
-				<table class="wp-formy-lead-meta-table">
+			<div class="ajforms-lead-card">
+				<h2><?php esc_html_e( 'Entry Info', 'ajforms' ); ?></h2>
+				<table class="ajforms-lead-meta-table">
 					<tbody>
 						<tr>
-							<th><?php esc_html_e( 'Entry', 'wp-formy' ); ?></th>
+							<th><?php esc_html_e( 'Entry', 'ajforms' ); ?></th>
 							<td><?php echo esc_html( '#' . $lead_id ); ?></td>
 						</tr>
 						<tr>
-							<th><?php esc_html_e( 'Form name', 'wp-formy' ); ?></th>
-							<td><?php echo esc_html( $lead->form_title ? $lead->form_title : __( '(Form deleted)', 'wp-formy' ) ); ?></td>
+							<th><?php esc_html_e( 'Form name', 'ajforms' ); ?></th>
+							<td><?php echo esc_html( $lead->form_title ? $lead->form_title : __( '(Form deleted)', 'ajforms' ) ); ?></td>
 						</tr>
 						<tr>
-							<th><?php esc_html_e( 'IP', 'wp-formy' ); ?></th>
+							<th><?php esc_html_e( 'IP', 'ajforms' ); ?></th>
 							<td><?php echo esc_html( $lead->ip_address ); ?></td>
 						</tr>
 						<tr>
-							<th><?php esc_html_e( 'URL', 'wp-formy' ); ?></th>
+							<th><?php esc_html_e( 'URL', 'ajforms' ); ?></th>
 							<td>
 								<?php if ( ! empty( $lead->source_url ) ) : ?>
 									<a href="<?php echo esc_url( $lead->source_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $lead->source_url ); ?></a>
@@ -510,15 +510,15 @@ $delete_url = wp_nonce_url(
 							</td>
 						</tr>
 						<tr>
-							<th><?php esc_html_e( 'Browser / Device', 'wp-formy' ); ?></th>
+							<th><?php esc_html_e( 'Browser / Device', 'ajforms' ); ?></th>
 							<td><?php echo esc_html( $lead->user_agent ); ?></td>
 						</tr>
 						<tr>
-							<th><?php esc_html_e( 'Status', 'wp-formy' ); ?></th>
-							<td><span class="wp-formy-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( ucfirst( $lead->status ) ); ?></span></td>
+							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+							<td><span class="ajforms-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( ucfirst( $lead->status ) ); ?></span></td>
 						</tr>
 						<tr>
-							<th><?php esc_html_e( 'Submitted on', 'wp-formy' ); ?></th>
+							<th><?php esc_html_e( 'Submitted on', 'ajforms' ); ?></th>
 							<td>
 								<?php
 								echo esc_html(
@@ -535,26 +535,26 @@ $delete_url = wp_nonce_url(
 			</div>
 		</div>
 
-		<div class="wp-formy-entry-secondary">
-			<div class="wp-formy-lead-card">
-				<h2><?php esc_html_e( 'Internal Notes', 'wp-formy' ); ?></h2>
-				<p class="wp-formy-entry-note"><?php esc_html_e( 'Use notes for follow-ups, handoff context, or anything you do not want mixed into the customer-facing form data.', 'wp-formy' ); ?></p>
+		<div class="ajforms-entry-secondary">
+			<div class="ajforms-lead-card">
+				<h2><?php esc_html_e( 'Internal Notes', 'ajforms' ); ?></h2>
+				<p class="ajforms-entry-note"><?php esc_html_e( 'Use notes for follow-ups, handoff context, or anything you do not want mixed into the customer-facing form data.', 'ajforms' ); ?></p>
 
-				<form method="post" class="wp-formy-note-form" style="margin-bottom:16px;">
-					<?php wp_nonce_field( 'wpf_add_lead_note_' . $lead_id ); ?>
-					<input type="hidden" name="wpf_add_note_lead_id" value="<?php echo esc_attr( $lead_id ); ?>" />
-					<textarea name="wpf_lead_note" rows="4" placeholder="<?php esc_attr_e( 'Add an internal note...', 'wp-formy' ); ?>"></textarea>
+				<form method="post" class="ajforms-note-form" style="margin-bottom:16px;">
+					<?php wp_nonce_field( 'ajf_add_lead_note_' . $lead_id ); ?>
+					<input type="hidden" name="ajf_add_note_lead_id" value="<?php echo esc_attr( $lead_id ); ?>" />
+					<textarea name="ajf_lead_note" rows="4" placeholder="<?php esc_attr_e( 'Add an internal note...', 'ajforms' ); ?>"></textarea>
 					<p style="margin-top:10px;">
-						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Note', 'wp-formy' ); ?></button>
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Note', 'ajforms' ); ?></button>
 					</p>
 				</form>
 
 				<?php if ( empty( $notes ) ) : ?>
-					<p class="wp-formy-entry-note"><?php esc_html_e( 'No notes yet.', 'wp-formy' ); ?></p>
+					<p class="ajforms-entry-note"><?php esc_html_e( 'No notes yet.', 'ajforms' ); ?></p>
 				<?php else : ?>
-					<div class="wp-formy-note-list">
+					<div class="ajforms-note-list">
 						<?php foreach ( $notes as $note ) : ?>
-							<div class="wp-formy-note-item">
+							<div class="ajforms-note-item">
 								<strong><?php echo nl2br( esc_html( $note->note ) ); ?></strong>
 								<span>
 									<?php
