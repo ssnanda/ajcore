@@ -84,6 +84,48 @@ function initAJFormsBuilder() {
             .slice(0, 60);
     }
 
+    function getFieldNameBase(type) {
+        const bases = {
+            question: 'question',
+            text: 'text',
+            email: 'email',
+            url: 'url',
+            textarea: 'textarea',
+            select: 'dropdown',
+            checkboxes: 'checkboxes',
+            multiple_choice: 'choice',
+            number: 'number',
+            phone: 'phone',
+            tel: 'phone',
+            address: 'address',
+            date: 'date',
+            file: 'file',
+            separator: 'separator'
+        };
+
+        return bases[type] || 'field';
+    }
+
+    function getUniqueFieldName(type, excludeFieldId = null) {
+        const base = getFieldNameBase(type);
+        const usedNames = new Set(
+            formSchema.fields
+                .filter((field) => field.id !== excludeFieldId)
+                .map((field) => slugifyFieldName(field.field_name))
+                .filter(Boolean)
+        );
+
+        let index = 1;
+        let candidate = `${base}${index}`;
+
+        while (usedNames.has(candidate)) {
+            index += 1;
+            candidate = `${base}${index}`;
+        }
+
+        return candidate;
+    }
+
     function getActiveFieldIndex() {
         if (!activeFieldId) {
             return -1;
@@ -210,7 +252,7 @@ function initAJFormsBuilder() {
             normalized.width = 100;
         }
 
-        normalized.field_name = slugifyFieldName(normalized.field_name || normalized.label || normalized.id);
+        normalized.field_name = slugifyFieldName(normalized.field_name || '');
 
         if (normalized.conversational === null || typeof normalized.conversational === 'undefined') {
             normalized.conversational = normalized.conversation_step
@@ -261,12 +303,44 @@ function initAJFormsBuilder() {
         return normalized;
     }
 
+    function normalizeFieldNames(fields) {
+        const usedNames = new Set();
+        const counters = {};
+
+        return fields.map((field) => {
+            const normalized = Object.assign({}, field);
+            const base = getFieldNameBase(normalized.type);
+            const currentName = slugifyFieldName(normalized.field_name || '');
+            const shouldGenerateName = !currentName || currentName === base || usedNames.has(currentName);
+
+            if (!shouldGenerateName) {
+                normalized.field_name = currentName;
+                usedNames.add(currentName);
+                return normalized;
+            }
+
+            counters[base] = counters[base] || 1;
+
+            let generatedName = `${base}${counters[base]}`;
+            while (usedNames.has(generatedName)) {
+                counters[base] += 1;
+                generatedName = `${base}${counters[base]}`;
+            }
+
+            normalized.field_name = generatedName;
+            usedNames.add(generatedName);
+            counters[base] += 1;
+
+            return normalized;
+        });
+    }
+
     function normalizeIncomingSchema(initialSchema) {
         if (Array.isArray(initialSchema)) {
             return {
                 version: 1,
                 source: 'legacy',
-                fields: initialSchema.map(normalizeField),
+                fields: normalizeFieldNames(initialSchema.map(normalizeField)),
                 settings: {
                     submit_text: 'Submit',
                     notifications_enabled: true,
@@ -306,7 +380,7 @@ function initAJFormsBuilder() {
             return {
                 version: initialSchema.version || 1,
                 source: initialSchema.source || 'ajforms',
-                fields: (initialSchema.fields || []).map(normalizeField),
+                fields: normalizeFieldNames((initialSchema.fields || []).map(normalizeField)),
                 settings: Object.assign(
                     {
                         submit_text: 'Submit',
@@ -441,6 +515,7 @@ function initAJFormsBuilder() {
             id: 'field_' + Math.random().toString(36).slice(2, 11),
             type: type,
             label: defaultLabel,
+            field_name: getUniqueFieldName(type),
             placeholder: '',
             required: false,
             css_class: '',
@@ -751,8 +826,8 @@ function initAJFormsBuilder() {
         structureList.innerHTML = formSchema.fields.map((field, index) => `
             <div class="wpf-structure-item ${field.id === activeFieldId ? 'active' : ''}" data-id="${field.id}">
                 <div>
-                    <div class="wpf-structure-title">${escapeHtml(formatFieldTypeLabel(field.type))}</div>
-                    <div class="wpf-structure-meta">Field #${index + 1}</div>
+                    <div class="wpf-structure-title">${escapeHtml(field.field_name || getFieldNameBase(field.type) + (index + 1))}</div>
+                    <div class="wpf-structure-meta">${escapeHtml(formatFieldTypeLabel(field.type))}${field.label ? ` - ${escapeHtml(field.label)}` : ''}</div>
                 </div>
             </div>
         `).join('');
@@ -839,6 +914,7 @@ function initAJFormsBuilder() {
 
                     const duplicated = cloneDeep(field);
                     duplicated.id = 'field_' + Math.random().toString(36).slice(2, 11);
+                    duplicated.field_name = getUniqueFieldName(duplicated.type);
 
                     const index = formSchema.fields.findIndex((entry) => entry.id === field.id);
                     formSchema.fields.splice(index + 1, 0, duplicated);
@@ -1277,12 +1353,10 @@ function initAJFormsBuilder() {
     if (toggleFieldsBtn && fieldsSidebar) {
         toggleFieldsBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            fieldsSidebar.classList.toggle('is-collapsed');
-            if (!fieldsSidebar.classList.contains('is-collapsed')) {
-                const fieldsTab = document.querySelector('.wpf-sidebar-toggle-tab[data-drawer-panel="fields"]');
-                if (fieldsTab) {
-                    fieldsTab.click();
-                }
+            fieldsSidebar.classList.remove('is-collapsed');
+            const fieldsTab = document.querySelector('.wpf-sidebar-toggle-tab[data-drawer-panel="fields"]');
+            if (fieldsTab) {
+                fieldsTab.click();
             }
         });
     }

@@ -216,15 +216,15 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 	</div>
 
 	<div class="wpf-body">
-		<div class="wpf-sidebar-left is-collapsed" id="wpf-fields-sidebar">
+		<div class="wpf-sidebar-left" id="wpf-fields-sidebar">
 			<div class="wpf-sidebar-header">
-				<span>Add Fields</span>
+				<span>Form Builder</span>
 				<div class="wpf-sidebar-toggle-tabs">
-					<button class="wpf-sidebar-toggle-tab is-active" type="button" data-drawer-panel="fields">Fields</button>
-					<button class="wpf-sidebar-toggle-tab" type="button" data-drawer-panel="structure">Structure</button>
+					<button class="wpf-sidebar-toggle-tab" type="button" data-drawer-panel="fields">Fields</button>
+					<button class="wpf-sidebar-toggle-tab is-active" type="button" data-drawer-panel="structure">Structure</button>
 				</div>
 			</div>
-			<div class="wpf-drawer-panel is-active" data-drawer-panel-content="fields">
+			<div class="wpf-drawer-panel" data-drawer-panel-content="fields">
 			<div class="wpf-fields-library" id="wpf-fields-library">
 			<div class="wpf-fields-search">
 				<input type="text" placeholder="Search fields...">
@@ -255,7 +255,7 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 			</div>
 			</div>
 			</div>
-			<div class="wpf-drawer-panel" data-drawer-panel-content="structure">
+			<div class="wpf-drawer-panel is-active" data-drawer-panel-content="structure">
 				<div class="wpf-structure-drawer">
 					<div id="wpf-structure-list" class="wpf-structure-list">
 						<p class="wpf-structure-empty">No fields added yet.</p>
