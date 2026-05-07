@@ -1,13 +1,18 @@
 .ajforms-builder-wrap {
 	background: linear-gradient(180deg, #f7f8fb 0%, #eef2f7 100%);
-	min-height: calc(100vh - 32px);
+	height: calc(100vh - 32px);
 	margin: 20px 0 0 -20px;
 	display: flex;
 	flex-direction: column;
 	font-family: "Helvetica Neue", Arial, sans-serif;
+	overflow: hidden;
 }
 
 .wpf-toolbar {
+	position: sticky;
+	top: 32px;
+	z-index: 50;
+	flex: 0 0 auto;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -116,6 +121,7 @@
 .wpf-body {
 	display: flex;
 	flex: 1;
+	min-height: 0;
 	overflow: hidden;
 }
 
@@ -123,10 +129,12 @@
 .wpf-sidebar-right {
 	background: #fff;
 	overflow-y: auto;
+	min-height: 0;
 }
 
 .wpf-sidebar-left {
 	width: 320px;
+	flex: 0 0 320px;
 	border-right: 1px solid #e7ebf0;
 	display: flex;
 	flex-direction: column;
@@ -136,6 +144,7 @@
 
 .wpf-sidebar-left.is-collapsed {
 	width: 0;
+	flex-basis: 0;
 	opacity: 0;
 	border-right: none;
 	overflow: hidden;
@@ -149,11 +158,16 @@
 
 .wpf-sidebar-right {
 	width: 420px;
+	flex: 0 0 420px;
 	border-left: 1px solid #e7ebf0;
 	box-shadow: -12px 0 30px rgba(15, 23, 42, 0.04);
 }
 
 .wpf-sidebar-header {
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	background: #fff;
 	padding: 18px 20px;
 	border-bottom: 1px solid #eef2f6;
 	font-weight: 600;
@@ -192,6 +206,7 @@
 	display: none;
 	min-height: 0;
 	flex: 1;
+	overflow-y: auto;
 }
 
 .wpf-drawer-panel.is-active {
@@ -288,8 +303,35 @@
 	overflow-wrap: anywhere;
 }
 
+.wpf-structure-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 4px;
+}
+
+.wpf-structure-badges span {
+	display: inline-flex;
+	align-items: center;
+	min-height: 22px;
+	padding: 2px 7px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 700;
+	border: 1px solid #d8e1ea;
+	background: #f8fafc;
+	color: #64748b;
+}
+
+.wpf-structure-badges span.is-on {
+	border-color: #bfdbfe;
+	background: #eff6ff;
+	color: #0f5f9d;
+}
+
 .wpf-canvas-area {
 	flex: 1;
+	min-width: 0;
 	overflow-y: auto;
 	padding: 44px;
 	display: flex;

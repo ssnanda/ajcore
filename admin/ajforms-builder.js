@@ -35,6 +35,7 @@ function initAJFormsBuilder() {
             confirmation_type: 'message',
             redirect_url: '',
             use_label_placeholders: false,
+            required_defaults_applied: false,
             custom_css: '',
             asana_task_enabled: false,
             asana_task_name: 'New form submission: {form_title}',
@@ -238,7 +239,7 @@ function initAJFormsBuilder() {
                 label: 'Text',
                 field_name: '',
                 placeholder: '',
-                required: false,
+                required: true,
                 css_class: '',
                 width: 100,
                 help_text: '',
@@ -356,6 +357,7 @@ function initAJFormsBuilder() {
                     confirmation_type: 'message',
                     redirect_url: '',
                     use_label_placeholders: false,
+                    required_defaults_applied: false,
                     custom_css: '',
                     asana_task_enabled: false,
                     asana_task_name: 'New form submission: {form_title}',
@@ -397,6 +399,7 @@ function initAJFormsBuilder() {
                         confirmation_type: 'message',
                         redirect_url: '',
                         use_label_placeholders: false,
+                        required_defaults_applied: false,
                         custom_css: '',
                         asana_task_enabled: false,
                         asana_task_name: 'New form submission: {form_title}',
@@ -438,6 +441,7 @@ function initAJFormsBuilder() {
                 confirmation_type: 'message',
                 redirect_url: '',
                 use_label_placeholders: false,
+                required_defaults_applied: false,
                 custom_css: '',
                 asana_task_enabled: false,
                 asana_task_name: 'New form submission: {form_title}',
@@ -521,7 +525,7 @@ function initAJFormsBuilder() {
             label: defaultLabel,
             field_name: getUniqueFieldName(type),
             placeholder: '',
-            required: false,
+            required: true,
             css_class: '',
             width: 100
         });
@@ -619,6 +623,11 @@ function initAJFormsBuilder() {
         formSchema.fields = normalized.fields;
         formSchema.settings = normalized.settings;
         formSchema.sureforms = normalized.sureforms;
+
+        if (!formSchema.settings.required_defaults_applied) {
+            formSchema.fields = formSchema.fields.map((field) => Object.assign({}, field, { required: true }));
+            formSchema.settings.required_defaults_applied = true;
+        }
 
         const titleInput = document.getElementById('wpf-form-title');
         if (titleInput) {
@@ -832,6 +841,10 @@ function initAJFormsBuilder() {
                 <div class="wpf-structure-lines">
                     <div class="wpf-structure-line"><span>Field Type</span><strong>${escapeHtml(field.type || 'field')}</strong></div>
                     <div class="wpf-structure-line"><span>Field Name</span><strong>${escapeHtml(field.field_name || getFieldNameBase(field.type) + (index + 1))}</strong></div>
+                    <div class="wpf-structure-badges">
+                        <span class="${field.required ? 'is-on' : 'is-off'}">Req ${field.required ? 'Yes' : 'No'}</span>
+                        <span class="${field.conversational ? 'is-on' : 'is-off'}">Conv ${field.conversational ? 'Yes' : 'No'}</span>
+                    </div>
                 </div>
             </div>
         `).join('');
