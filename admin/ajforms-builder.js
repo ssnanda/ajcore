@@ -197,7 +197,8 @@ function initAJFormsBuilder() {
                 width: 100,
                 help_text: '',
                 default_value: '',
-                conversation_step: 'question',
+                conversational: null,
+                conversation_step: '',
                 branch_map: {},
                 accepted_file_types: '.pdf,.jpg,.jpeg,.png,.gif,.webp'
             },
@@ -211,9 +212,14 @@ function initAJFormsBuilder() {
 
         normalized.field_name = slugifyFieldName(normalized.field_name || normalized.label || normalized.id);
 
-        if (!['question', 'final_contact'].includes(normalized.conversation_step)) {
-            normalized.conversation_step = 'question';
+        if (normalized.conversational === null || typeof normalized.conversational === 'undefined') {
+            normalized.conversational = normalized.conversation_step
+                ? normalized.conversation_step !== 'final_contact'
+                : normalized.type === 'question';
         }
+
+        normalized.conversational = !!normalized.conversational;
+        normalized.conversation_step = normalized.conversational ? 'question' : 'final_contact';
 
         if (
             normalized.type === 'question' ||
@@ -1004,7 +1010,7 @@ function initAJFormsBuilder() {
         ];
 
         formSchema.fields.forEach((candidate) => {
-            if (!candidate || candidate.id === currentField.id || candidate.conversation_step === 'final_contact' || candidate.type === 'separator') {
+            if (!candidate || candidate.id === currentField.id || !candidate.conversational || candidate.type === 'separator') {
                 return;
             }
 
@@ -1114,13 +1120,6 @@ function initAJFormsBuilder() {
                                 <option value="25" ${parseInt(field.width, 10) === 25 ? 'selected' : ''}>25% - Quarter Width</option>
                             </select>
                         </div>
-                        <div class="wpf-setting-row">
-                            <label>Conversational Placement</label>
-                            <select class="wpf-live-select" data-key="conversation_step">
-                                <option value="question" ${(field.conversation_step || 'question') === 'question' ? 'selected' : ''}>Question step</option>
-                                <option value="final_contact" ${field.conversation_step === 'final_contact' ? 'selected' : ''}>Final contact step</option>
-                            </select>
-                        </div>
                     </div>
                     <div class="wpf-setting-row">
                         <label class="wpf-toggle-card">
@@ -1129,6 +1128,15 @@ function initAJFormsBuilder() {
                                 <small>Visitors must complete this field before submitting.</small>
                             </span>
                             <input type="checkbox" class="wpf-live-checkbox" data-key="required" ${field.required ? 'checked' : ''}>
+                        </label>
+                    </div>
+                    <div class="wpf-setting-row">
+                        <label class="wpf-toggle-card">
+                            <span>
+                                <strong>Conversational Field</strong>
+                                <small>Show this field as one step in the conversation. Leave off for fields that belong on the final submit form.</small>
+                            </span>
+                            <input type="checkbox" class="wpf-live-checkbox" data-key="conversational" ${field.conversational ? 'checked' : ''}>
                         </label>
                     </div>
                 </div>
@@ -1198,6 +1206,9 @@ function initAJFormsBuilder() {
             input.addEventListener('change', (e) => {
                 pushHistory();
                 field[e.target.dataset.key] = !!e.target.checked;
+                if (e.target.dataset.key === 'conversational') {
+                    field.conversation_step = field.conversational ? 'question' : 'final_contact';
+                }
                 renderCanvas();
             });
         });

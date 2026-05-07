@@ -80,7 +80,7 @@ class AJForms_Forms_List_Table extends WP_List_Table {
 	protected function column_default( $item, $column_name ) {
 		switch ( $column_name ) {
 			case 'shortcode':
-				return '<code class="ajforms-shortcode-chip">[ajforms id="' . absint( $item['id'] ) . '"]</code><br><code class="ajforms-shortcode-chip">[ajforms type="conversational" id="' . absint( $item['id'] ) . '"]</code>';
+				return '<code class="ajforms-shortcode-chip">[ajforms id="' . absint( $item['id'] ) . '"]</code>';
 
 			case 'entries':
 				$count = isset( $item['entries_count'] ) ? intval( $item['entries_count'] ) : 0;

@@ -955,7 +955,7 @@ class AJForms {
 			'help_text'           => ! empty( $field['help_text'] ) ? $field['help_text'] : '',
 			'default_value'       => $default_value,
 			'css_class'           => ! empty( $field['css_class'] ) ? $field['css_class'] : '',
-			'conversation_step'   => ! empty( $field['conversation_step'] ) && 'final_contact' === $field['conversation_step'] ? 'final_contact' : 'question',
+			'conversational'      => array_key_exists( 'conversational', $field ) ? ! empty( $field['conversational'] ) : ( ! empty( $field['conversation_step'] ) ? 'final_contact' !== $field['conversation_step'] : 'question' === $field_type ),
 			'accepted_file_types' => $accepted_file_types,
 			'posted_value'        => isset( $_POST[ $field_id ] ) ? wp_unslash( $_POST[ $field_id ] ) : $default_value,
 		);
@@ -1061,7 +1061,7 @@ class AJForms {
 			array_filter(
 				$answerable_fields,
 				function ( $field ) {
-					return empty( $field['conversation_step'] ) || 'final_contact' !== $field['conversation_step'];
+					return array_key_exists( 'conversational', $field ) ? ! empty( $field['conversational'] ) : ( empty( $field['conversation_step'] ) || 'final_contact' !== $field['conversation_step'] );
 				}
 			)
 		);
@@ -1069,7 +1069,7 @@ class AJForms {
 			array_filter(
 				$answerable_fields,
 				function ( $field ) {
-					return ! empty( $field['conversation_step'] ) && 'final_contact' === $field['conversation_step'];
+					return array_key_exists( 'conversational', $field ) ? empty( $field['conversational'] ) : ( ! empty( $field['conversation_step'] ) && 'final_contact' === $field['conversation_step'] );
 				}
 			)
 		);
@@ -1361,7 +1361,6 @@ class AJForms {
 		$atts = shortcode_atts(
 			array(
 				'id' => 0,
-				'type' => '',
 			),
 			$atts,
 			'ajforms'
@@ -1414,7 +1413,16 @@ class AJForms {
 		$stripe_nonce      = wp_create_nonce( 'ajf_stripe_payment_' . $form_id );
 
 		$submission_result = $this->handle_form_submission( $form, $fields, $settings );
-		if ( 'conversational' === sanitize_key( $atts['type'] ) ) {
+		$has_conversational_fields = ! empty(
+			array_filter(
+				$fields,
+				function ( $field ) {
+					return is_array( $field ) && ( array_key_exists( 'conversational', $field ) ? ! empty( $field['conversational'] ) : ( ! empty( $field['conversation_step'] ) ? 'final_contact' !== $field['conversation_step'] : ( ! empty( $field['type'] ) && 'question' === $field['type'] ) ) );
+				}
+			)
+		);
+
+		if ( $has_conversational_fields ) {
 			return $this->render_conversational_form( $form, $fields, $settings, $submission_result, $wrapper_style, $form_theme, $challenge_enabled, $challenge_config );
 		}
 
