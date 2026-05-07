@@ -155,6 +155,7 @@ function initAJFormsBuilder() {
 
     function formatFieldTypeLabel(type) {
         const labels = {
+            question: 'Question',
             text: 'Text Field',
             email: 'Email Field',
             url: 'URL Field',
@@ -187,6 +188,7 @@ function initAJFormsBuilder() {
                 help_text: '',
                 default_value: '',
                 conversation_step: 'question',
+                branch_map: {},
                 accepted_file_types: '.pdf,.jpg,.jpeg,.png,.gif,.webp'
             },
             field || {}
@@ -202,15 +204,21 @@ function initAJFormsBuilder() {
         }
 
         if (
+            normalized.type === 'question' ||
             normalized.type === 'select' ||
             normalized.type === 'checkboxes' ||
             normalized.type === 'multiple_choice'
         ) {
             if (!Array.isArray(normalized.options) || !normalized.options.length) {
-                normalized.options = [
-                    { label: 'Option 1', value: 'option_1' },
-                    { label: 'Option 2', value: 'option_2' }
-                ];
+                normalized.options = normalized.type === 'question'
+                    ? [
+                        { label: 'Yes', value: 'yes' },
+                        { label: 'No', value: 'no' }
+                    ]
+                    : [
+                        { label: 'Option 1', value: 'option_1' },
+                        { label: 'Option 2', value: 'option_2' }
+                    ];
             } else {
                 normalized.options = normalized.options.map((option, index) => {
                     if (typeof option === 'object' && option !== null) {
@@ -226,6 +234,10 @@ function initAJFormsBuilder() {
                     };
                 });
             }
+        }
+
+        if (typeof normalized.branch_map !== 'object' || normalized.branch_map === null || Array.isArray(normalized.branch_map)) {
+            normalized.branch_map = {};
         }
 
         return normalized;
@@ -657,7 +669,7 @@ function initAJFormsBuilder() {
             `;
         }
 
-        if (field.type === 'checkboxes' || field.type === 'multiple_choice') {
+        if (field.type === 'question' || field.type === 'checkboxes' || field.type === 'multiple_choice') {
             const options = Array.isArray(field.options) ? field.options : [];
             const renderedOptions = options.map((option) => {
                 return `
@@ -972,6 +984,67 @@ function initAJFormsBuilder() {
         });
     }
 
+    function getBranchTargetOptions(currentField) {
+        const choices = [
+            '<option value="">Next question in order</option>',
+            '<option value="__contact">Final contact step</option>',
+            '<option value="__end">End flow / submit step</option>'
+        ];
+
+        formSchema.fields.forEach((candidate) => {
+            if (!candidate || candidate.id === currentField.id || candidate.conversation_step === 'final_contact' || candidate.type === 'separator') {
+                return;
+            }
+
+            choices.push(`<option value="${escapeHtml(candidate.id)}">${escapeHtml(candidate.label || formatFieldTypeLabel(candidate.type))}</option>`);
+        });
+
+        return choices.join('');
+    }
+
+    function renderBranchEditor(field) {
+        const options = Array.isArray(field.options) ? field.options : [];
+        const targetOptions = getBranchTargetOptions(field);
+
+        return `
+            <div class="wpf-options-editor">
+                ${options.map((option) => {
+                    const value = option.value || '';
+                    const selectedValue = field.branch_map && field.branch_map[value] ? field.branch_map[value] : '';
+                    return `
+                        <div class="wpf-setting-row">
+                            <label>After "${escapeHtml(option.label || value)}"</label>
+                            <select class="wpf-branch-target" data-option-value="${escapeHtml(value)}">
+                                ${targetOptions}
+                            </select>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    }
+
+    function bindBranchEditor(field) {
+        fieldSettingsPanel.querySelectorAll('.wpf-branch-target').forEach((select) => {
+            const optionValue = select.dataset.optionValue || '';
+            select.value = field.branch_map && field.branch_map[optionValue] ? field.branch_map[optionValue] : '';
+
+            select.addEventListener('change', (event) => {
+                pushHistory();
+
+                if (!field.branch_map || typeof field.branch_map !== 'object') {
+                    field.branch_map = {};
+                }
+
+                if (event.target.value) {
+                    field.branch_map[optionValue] = event.target.value;
+                } else {
+                    delete field.branch_map[optionValue];
+                }
+            });
+        });
+    }
+
     function openFieldSettings(field) {
         const fieldTab = document.querySelector('.wpf-tab[data-target="field"]');
         if (fieldTab) {
@@ -1058,11 +1131,21 @@ function initAJFormsBuilder() {
             `;
         }
 
-        if (field.type === 'select' || field.type === 'checkboxes' || field.type === 'multiple_choice') {
+        if (field.type === 'question' || field.type === 'select' || field.type === 'checkboxes' || field.type === 'multiple_choice') {
             html += `
                 <div class="wpf-field-settings-card">
                     <div class="wpf-field-settings-card-title">Options</div>
                     ${renderOptionsEditor(field)}
+                </div>
+            `;
+        }
+
+        if (field.type === 'question') {
+            html += `
+                <div class="wpf-field-settings-card">
+                    <div class="wpf-field-settings-card-title">Flow Branching</div>
+                    <p class="wpf-setting-help">Choose where the conversation goes after each answer.</p>
+                    ${renderBranchEditor(field)}
                 </div>
             `;
         }
@@ -1107,8 +1190,12 @@ function initAJFormsBuilder() {
             });
         });
 
-        if (field.type === 'select' || field.type === 'checkboxes' || field.type === 'multiple_choice') {
+        if (field.type === 'question' || field.type === 'select' || field.type === 'checkboxes' || field.type === 'multiple_choice') {
             bindOptionsEditor(field);
+        }
+
+        if (field.type === 'question') {
+            bindBranchEditor(field);
         }
     }
 

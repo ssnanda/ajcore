@@ -416,6 +416,7 @@ class AJForms_Admin {
 			'help_text'   => isset( $field['help_text'] ) ? sanitize_text_field( $field['help_text'] ) : '',
 			'default_value' => isset( $field['default_value'] ) ? sanitize_text_field( $field['default_value'] ) : '',
 			'conversation_step' => isset( $field['conversation_step'] ) && 'final_contact' === sanitize_key( $field['conversation_step'] ) ? 'final_contact' : 'question',
+			'branch_map'   => array(),
 			'accepted_file_types' => isset( $field['accepted_file_types'] ) ? sanitize_text_field( $field['accepted_file_types'] ) : '.pdf,.jpg,.jpeg,.png,.gif,.webp',
 		);
 
@@ -427,7 +428,18 @@ class AJForms_Admin {
 			$normalized['width'] = 100;
 		}
 
-		if ( in_array( $normalized['type'], array( 'select', 'checkboxes', 'multiple_choice' ), true ) ) {
+		if ( isset( $field['branch_map'] ) && is_array( $field['branch_map'] ) ) {
+			foreach ( $field['branch_map'] as $option_value => $target_id ) {
+				$option_value = sanitize_text_field( (string) $option_value );
+				$target_id    = sanitize_text_field( (string) $target_id );
+
+				if ( '' !== $option_value && '' !== $target_id ) {
+					$normalized['branch_map'][ $option_value ] = $target_id;
+				}
+			}
+		}
+
+		if ( in_array( $normalized['type'], array( 'question', 'select', 'checkboxes', 'multiple_choice' ), true ) ) {
 			$normalized['options'] = array();
 
 			if ( isset( $field['options'] ) && is_array( $field['options'] ) ) {
@@ -452,6 +464,19 @@ class AJForms_Admin {
 						'value' => '' !== $value ? $value : $label,
 					);
 				}
+			}
+
+			if ( 'question' === $normalized['type'] && empty( $normalized['options'] ) ) {
+				$normalized['options'] = array(
+					array(
+						'label' => 'Yes',
+						'value' => 'yes',
+					),
+					array(
+						'label' => 'No',
+						'value' => 'no',
+					),
+				);
 			}
 		}
 

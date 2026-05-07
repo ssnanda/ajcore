@@ -232,6 +232,7 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 			<div class="wpf-fields-grid">
 				<?php
 				$fields = array(
+					'Question'        => 'question',
 					'Text'            => 'text',
 					'Email'           => 'email',
 					'URL'             => 'url',

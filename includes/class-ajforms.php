@@ -920,6 +920,20 @@ class AJForms {
 		$field_label         = ! empty( $field['label'] ) ? $field['label'] : ucfirst( $field_type );
 		$default_value       = ! empty( $field['default_value'] ) ? $field['default_value'] : '';
 		$accepted_file_types = ! empty( $field['accepted_file_types'] ) ? $field['accepted_file_types'] : '.pdf,.jpg,.jpeg,.png,.gif,.webp';
+		$options             = ! empty( $field['options'] ) && is_array( $field['options'] ) ? $field['options'] : array();
+
+		if ( 'question' === $field_type && empty( $options ) ) {
+			$options = array(
+				array(
+					'label' => 'Yes',
+					'value' => 'yes',
+				),
+				array(
+					'label' => 'No',
+					'value' => 'no',
+				),
+			);
+		}
 
 		return array(
 			'id'                  => $field_id,
@@ -927,7 +941,7 @@ class AJForms {
 			'label'               => $field_label,
 			'required'            => ! empty( $field['required'] ),
 			'placeholder'         => ! empty( $field['placeholder'] ) ? $field['placeholder'] : '',
-			'options'             => ! empty( $field['options'] ) && is_array( $field['options'] ) ? $field['options'] : array(),
+			'options'             => $options,
 			'help_text'           => ! empty( $field['help_text'] ) ? $field['help_text'] : '',
 			'default_value'       => $default_value,
 			'css_class'           => ! empty( $field['css_class'] ) ? $field['css_class'] : '',
@@ -981,7 +995,7 @@ class AJForms {
 				<?php endforeach; ?>
 			</div>
 			<?php
-		elseif ( 'multiple_choice' === $field_type ) :
+		elseif ( 'question' === $field_type || 'multiple_choice' === $field_type ) :
 			?>
 			<div id="<?php echo esc_attr( $field_id ); ?>">
 				<?php foreach ( $options as $option ) : ?>
@@ -1058,6 +1072,8 @@ class AJForms {
 			return '<p>This form has no questions.</p>';
 		}
 
+		$step_counter = 0;
+
 		ob_start();
 		?>
 		<?php if ( $challenge_enabled ) : ?>
@@ -1088,10 +1104,16 @@ class AJForms {
 			<?php endif; ?>
 
 			<?php if ( ! $submission_result['success'] ) : ?>
-				<?php foreach ( $question_fields as $index => $field ) : ?>
+				<?php foreach ( $question_fields as $field ) : ?>
 					<?php $field_data = $this->get_frontend_field_data( $field ); ?>
-					<section class="ajforms-conversation-step" data-step="<?php echo esc_attr( $index ); ?>" style="<?php echo 0 === $index ? '' : 'display:none;'; ?>">
-						<div style="font-size:14px;color:#64748b;margin-bottom:12px;"><?php echo esc_html( sprintf( 'Question %1$d of %2$d', $index + 1, $total_steps ) ); ?></div>
+					<section
+						class="ajforms-conversation-step"
+						data-step="<?php echo esc_attr( $step_counter ); ?>"
+						data-field-id="<?php echo esc_attr( $field_data['id'] ); ?>"
+						data-branch-map="<?php echo esc_attr( wp_json_encode( ! empty( $field['branch_map'] ) && is_array( $field['branch_map'] ) ? $field['branch_map'] : array() ) ); ?>"
+						style="<?php echo 0 === $step_counter ? '' : 'display:none;'; ?>"
+					>
+						<div style="font-size:14px;color:#64748b;margin-bottom:12px;"><?php echo esc_html( sprintf( 'Question %1$d of %2$d', $step_counter + 1, $total_steps ) ); ?></div>
 						<label for="<?php echo esc_attr( $field_data['id'] ); ?>" style="display:block;font-size:24px;line-height:1.25;font-weight:800;color:var(--ajforms-text);margin-bottom:16px;">
 							<?php echo esc_html( $field_data['label'] ); ?>
 							<?php if ( $field_data['required'] ) : ?>
@@ -1103,9 +1125,10 @@ class AJForms {
 							<p style="margin-top:10px;color:#646970;font-size:13px;"><?php echo esc_html( $field_data['help_text'] ); ?></p>
 						<?php endif; ?>
 					</section>
+					<?php $step_counter++; ?>
 				<?php endforeach; ?>
 				<?php if ( ! empty( $contact_fields ) ) : ?>
-					<section class="ajforms-conversation-step ajforms-conversation-contact-step" data-step="<?php echo esc_attr( count( $question_fields ) ); ?>" style="<?php echo empty( $question_fields ) ? '' : 'display:none;'; ?>">
+					<section class="ajforms-conversation-step ajforms-conversation-contact-step" data-step="<?php echo esc_attr( $step_counter ); ?>" data-field-id="__contact" style="<?php echo empty( $question_fields ) ? '' : 'display:none;'; ?>">
 						<div style="font-size:14px;color:#64748b;margin-bottom:12px;"><?php echo esc_html( sprintf( 'Step %1$d of %2$d', $total_steps, $total_steps ) ); ?></div>
 						<div style="font-size:24px;line-height:1.25;font-weight:800;color:var(--ajforms-text);margin-bottom:8px;"><?php esc_html_e( 'How can we reach you?', 'ajforms' ); ?></div>
 						<p style="margin:0 0 18px;color:#64748b;"><?php esc_html_e( 'Share your contact details and we will follow up with the next step.', 'ajforms' ); ?></p>
@@ -1153,14 +1176,87 @@ class AJForms {
 			const nextButton = form.querySelector('.ajforms-conversation-next');
 			const submitButton = form.querySelector('.ajforms-conversation-submit');
 			const challenge = form.querySelector('.ajforms-challenge-wrap');
+			const stepIndexByFieldId = {};
+			const visitedSteps = new Set();
+			const history = [];
 			let currentStep = 0;
+
+			steps.forEach(function(step, index) {
+				if (step.dataset.fieldId) {
+					stepIndexByFieldId[step.dataset.fieldId] = index;
+				}
+			});
+
+			function getStepControls(step) {
+				return Array.from(step.querySelectorAll('input, select, textarea, button'));
+			}
+
+			function syncEnabledControls() {
+				steps.forEach(function(step, index) {
+					const enabled = index === currentStep || visitedSteps.has(index);
+					getStepControls(step).forEach(function(control) {
+						control.disabled = !enabled;
+					});
+				});
+			}
+
+			function resetVisitedFromHistory() {
+				visitedSteps.clear();
+				history.forEach(function(stepIndex) {
+					visitedSteps.add(stepIndex);
+				});
+			}
+
+			function getSelectedBranchValue(step) {
+				const checked = step.querySelector('input[type="radio"]:checked');
+				if (checked) {
+					return checked.value;
+				}
+
+				const select = step.querySelector('select');
+				if (select && select.value) {
+					return select.value;
+				}
+
+				return '';
+			}
+
+			function getNextStepFromBranch() {
+				const step = steps[currentStep];
+				let branchMap = {};
+
+				try {
+					branchMap = step.dataset.branchMap ? JSON.parse(step.dataset.branchMap) : {};
+				} catch (error) {
+					branchMap = {};
+				}
+
+				const branchValue = getSelectedBranchValue(step);
+				const target = branchValue && branchMap[branchValue] ? branchMap[branchValue] : '';
+
+				if (target === '__contact' && Object.prototype.hasOwnProperty.call(stepIndexByFieldId, '__contact')) {
+					return stepIndexByFieldId.__contact;
+				}
+
+				if (target === '__end') {
+					return steps.length - 1;
+				}
+
+				if (target && Object.prototype.hasOwnProperty.call(stepIndexByFieldId, target)) {
+					return stepIndexByFieldId[target];
+				}
+
+				return currentStep + 1;
+			}
 
 			function setStep(nextStep) {
 				currentStep = Math.max(0, Math.min(nextStep, steps.length - 1));
+				visitedSteps.add(currentStep);
 
 				steps.forEach(function(step, index) {
 					step.style.display = index === currentStep ? '' : 'none';
 				});
+				syncEnabledControls();
 
 				if (progress) {
 					progress.style.width = (((currentStep + 1) / steps.length) * 100) + '%';
@@ -1194,14 +1290,19 @@ class AJForms {
 
 			if (previousButton) {
 				previousButton.addEventListener('click', function() {
-					setStep(currentStep - 1);
+					const previousStep = history.length ? history.pop() : currentStep - 1;
+					resetVisitedFromHistory();
+					setStep(previousStep);
 				});
 			}
 
 			if (nextButton) {
 				nextButton.addEventListener('click', function() {
 					if (currentStepIsValid()) {
-						setStep(currentStep + 1);
+						const nextStep = getNextStepFromBranch();
+						history.push(currentStep);
+						resetVisitedFromHistory();
+						setStep(nextStep);
 					}
 				});
 			}
@@ -1394,7 +1495,7 @@ class AJForms {
 								<?php endforeach; ?>
 							</div>
 
-						<?php elseif ( 'multiple_choice' === $field_type ) : ?>
+						<?php elseif ( 'question' === $field_type || 'multiple_choice' === $field_type ) : ?>
 							<div id="<?php echo esc_attr( $field_id ); ?>">
 								<?php foreach ( $options as $option ) : ?>
 									<?php
