@@ -328,7 +328,7 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 							<div class="wpf-setting-row">
 								<label>Notification Subject</label>
 								<input type="text" id="wpf-form-notification-subject" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_subject'] ) ? $initial_data['schema']['settings']['notification_subject'] : $plugin_settings['default_notification_subject'] ); ?>">
-								<p class="wpf-setting-help">You can use <code>{form_title}</code>, <code>{field_1}</code>, <code>{field_2}</code>, etc. to insert field values.</p>
+								<p class="wpf-setting-help">Use <code>{form_title}</code>, <code>{submission_fields}</code>, numbered tags like <code>{field_1}</code>, or custom field names like <code>{email}</code>.</p>
 							</div>
 						</div>
 
@@ -363,12 +363,12 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 							<div class="wpf-setting-row">
 								<label>Asana Task Name</label>
 								<input type="text" id="wpf-form-asana-task-name" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['asana_task_name'] ) ? $initial_data['schema']['settings']['asana_task_name'] : 'New form submission: {form_title}' ); ?>">
-								<p class="wpf-setting-help">Use <code>{form_title}</code>, <code>{submission_count}</code>, or field placeholders like <code>{field_1}</code>.</p>
+								<p class="wpf-setting-help">Use <code>{form_title}</code>, <code>{submission_count}</code>, numbered tags like <code>{field_1}</code>, or custom field names like <code>{email}</code>.</p>
 							</div>
 							<div class="wpf-setting-row">
 								<label>Asana Task Notes</label>
 								<textarea id="wpf-form-asana-task-notes" rows="5"><?php echo esc_textarea( isset( $initial_data['schema']['settings']['asana_task_notes'] ) ? $initial_data['schema']['settings']['asana_task_notes'] : "A new submission was received for {form_title}.\n\n{submission_fields}" ); ?></textarea>
-								<p class="wpf-setting-help">Use <code>{form_title}</code>, <code>{submission_fields}</code>, or field placeholders like <code>{field_1}</code>.</p>
+								<p class="wpf-setting-help">Use <code>{form_title}</code>, <code>{submission_fields}</code>, numbered tags like <code>{field_1}</code>, or custom field names like <code>{email}</code>.</p>
 							</div>
 							<div class="wpf-setting-row">
 								<label>Project GID Override</label>
@@ -397,7 +397,7 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 							<div class="wpf-setting-row">
 								<label>Payment Description</label>
 								<input type="text" id="wpf-form-stripe-description" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['stripe_description'] ) ? $initial_data['schema']['settings']['stripe_description'] : 'Payment for {form_title}' ); ?>">
-								<p class="wpf-setting-help">Use <code>{form_title}</code> or field placeholders like <code>{field_1}</code>.</p>
+								<p class="wpf-setting-help">Use <code>{form_title}</code>, numbered tags like <code>{field_1}</code>, or custom field names like <code>{email}</code>.</p>
 							</div>
 						</div>
 

@@ -509,7 +509,7 @@ class AJForms {
 		// Add {submission_fields} tag
 		$replacements['{submission_fields}'] = $this->build_submission_fields_text( $lead_data );
 
-		// Add individual field placeholders like {field_1}, {field_2}, etc.
+		$field_index = 1;
 		foreach ( $lead_data as $field_id => $field ) {
 			if ( ! is_array( $field ) ) {
 				continue;
@@ -521,8 +521,14 @@ class AJForms {
 				$value = esc_url_raw( $field['file_url'] );
 			}
 
-			// Support {field_id} format
+			$replacements[ '{field_' . $field_index . '}' ] = $value;
 			$replacements[ '{' . $field_id . '}' ] = $value;
+
+			if ( ! empty( $field['field_name'] ) ) {
+				$replacements[ '{' . sanitize_key( $field['field_name'] ) . '}' ] = $value;
+			}
+
+			$field_index++;
 		}
 
 		return strtr( $template, $replacements );
@@ -758,6 +764,7 @@ class AJForms {
 			$field_id    = ! empty( $field['id'] ) ? $field['id'] : '';
 			$field_type  = ! empty( $field['type'] ) ? $field['type'] : 'text';
 			$field_label = ! empty( $field['label'] ) ? $field['label'] : $field_id;
+			$field_name  = ! empty( $field['field_name'] ) ? sanitize_key( $field['field_name'] ) : sanitize_key( $field_label );
 			$required    = ! empty( $field['required'] );
 
 			if ( ! $field_id || 'separator' === $field_type ) {
@@ -810,6 +817,7 @@ class AJForms {
 
 					$lead_data[ $field_id ] = array(
 						'label'         => $field_label,
+						'field_name'    => $field_name,
 						'type'          => $field_type,
 						'value'         => $file_url,
 						'file_name'     => $file_name,
@@ -850,9 +858,10 @@ class AJForms {
 			}
 
 			$lead_data[ $field_id ] = array(
-				'label' => $field_label,
-				'type'  => $field_type,
-				'value' => $clean_value,
+				'label'      => $field_label,
+				'field_name' => $field_name,
+				'type'       => $field_type,
+				'value'      => $clean_value,
 			);
 		}
 
@@ -939,6 +948,7 @@ class AJForms {
 			'id'                  => $field_id,
 			'type'                => $field_type,
 			'label'               => $field_label,
+			'field_name'          => ! empty( $field['field_name'] ) ? sanitize_key( $field['field_name'] ) : sanitize_key( $field_label ),
 			'required'            => ! empty( $field['required'] ),
 			'placeholder'         => ! empty( $field['placeholder'] ) ? $field['placeholder'] : '',
 			'options'             => $options,
@@ -997,13 +1007,13 @@ class AJForms {
 			<?php
 		elseif ( 'question' === $field_type || 'multiple_choice' === $field_type ) :
 			?>
-			<div id="<?php echo esc_attr( $field_id ); ?>">
+			<div id="<?php echo esc_attr( $field_id ); ?>" class="<?php echo 'question' === $field_type ? 'ajforms-question-options' : ''; ?>" style="<?php echo 'question' === $field_type ? 'display:grid;gap:14px;' : ''; ?>">
 				<?php foreach ( $options as $option ) : ?>
 					<?php
 					$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
 					$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
 					?>
-					<label style="display:block; margin-bottom:6px;color:var(--ajforms-text);">
+					<label class="<?php echo 'question' === $field_type ? 'ajforms-question-option' : ''; ?>" style="<?php echo 'question' === $field_type ? 'display:flex;align-items:center;gap:16px;padding:24px 26px;border:2px solid var(--ajforms-input-border);border-radius:calc(var(--ajforms-radius) + 6px);background:var(--ajforms-input-bg);color:var(--ajforms-text);font-size:28px;line-height:1.15;font-weight:800;cursor:pointer;' : 'display:block; margin-bottom:6px;color:var(--ajforms-text);'; ?>">
 						<input type="radio" name="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( $posted_value, $option_value ); ?> <?php echo $required ? 'required' : ''; ?>>
 						<?php echo esc_html( $option_label ); ?>
 					</label>
@@ -1080,6 +1090,10 @@ class AJForms {
 			<script src="<?php echo esc_url( $challenge_config['script_url'] ); ?>" async defer></script>
 		<?php endif; ?>
 		<form class="ajforms-frontend-form ajforms-conversational-form ajforms-theme-<?php echo esc_attr( $form_theme ); ?>" method="post" enctype="multipart/form-data" style="<?php echo esc_attr( $wrapper_style ); ?>padding:28px;border-radius:var(--ajforms-radius);background:var(--ajforms-bg);border:1px solid #dfe6ee;box-shadow:0 20px 45px rgba(18,52,77,.08);">
+			<style>
+				.ajforms-conversational-form .ajforms-question-option input[type="radio"]{width:28px;height:28px;flex:0 0 auto;accent-color:var(--ajforms-primary)}
+				.ajforms-conversational-form .ajforms-question-option:has(input:checked){border-color:var(--ajforms-primary);box-shadow:0 0 0 4px rgba(15,122,198,.14)}
+			</style>
 			<input type="hidden" name="ajf_form_id" value="<?php echo esc_attr( $form->id ); ?>">
 			<?php wp_nonce_field( 'ajf_submit_form_' . absint( $form->id ), 'ajf_form_nonce' ); ?>
 			<?php if ( $this->is_honeypot_enabled() ) : ?>
@@ -1107,10 +1121,12 @@ class AJForms {
 				<?php foreach ( $question_fields as $field ) : ?>
 					<?php $field_data = $this->get_frontend_field_data( $field ); ?>
 					<section
-						class="ajforms-conversation-step"
+						class="ajforms-conversation-step <?php echo 'question' === $field_data['type'] ? 'ajforms-question-step' : ''; ?>"
 						data-step="<?php echo esc_attr( $step_counter ); ?>"
 						data-field-id="<?php echo esc_attr( $field_data['id'] ); ?>"
+						data-field-type="<?php echo esc_attr( $field_data['type'] ); ?>"
 						data-branch-map="<?php echo esc_attr( wp_json_encode( ! empty( $field['branch_map'] ) && is_array( $field['branch_map'] ) ? $field['branch_map'] : array() ) ); ?>"
+						<?php echo 'question' === $field_data['type'] ? 'data-auto-advance="1"' : ''; ?>
 						style="<?php echo 0 === $step_counter ? '' : 'display:none;'; ?>"
 					>
 						<div style="font-size:14px;color:#64748b;margin-bottom:12px;"><?php echo esc_html( sprintf( 'Question %1$d of %2$d', $step_counter + 1, $total_steps ) ); ?></div>
@@ -1239,7 +1255,7 @@ class AJForms {
 				}
 
 				if (target === '__end') {
-					return steps.length - 1;
+					return '__submit';
 				}
 
 				if (target && Object.prototype.hasOwnProperty.call(stepIndexByFieldId, target)) {
@@ -1267,8 +1283,9 @@ class AJForms {
 				}
 
 				const isLastStep = currentStep === steps.length - 1;
+				const isAutoAdvanceStep = steps[currentStep] && steps[currentStep].dataset.autoAdvance === '1';
 				if (nextButton) {
-					nextButton.style.display = isLastStep ? 'none' : '';
+					nextButton.style.display = isLastStep || isAutoAdvanceStep ? 'none' : '';
 				}
 				if (submitButton) {
 					submitButton.style.display = isLastStep ? '' : 'none';
@@ -1298,14 +1315,39 @@ class AJForms {
 
 			if (nextButton) {
 				nextButton.addEventListener('click', function() {
-					if (currentStepIsValid()) {
-						const nextStep = getNextStepFromBranch();
-						history.push(currentStep);
-						resetVisitedFromHistory();
-						setStep(nextStep);
-					}
+					advanceCurrentStep();
 				});
 			}
+
+			function advanceCurrentStep() {
+				if (currentStepIsValid()) {
+					const nextStep = getNextStepFromBranch();
+					if (nextStep === '__submit' || nextStep === currentStep || nextStep >= steps.length) {
+						if (typeof form.requestSubmit === 'function') {
+							form.requestSubmit();
+						} else {
+							form.submit();
+						}
+						return;
+					}
+
+					history.push(currentStep);
+					resetVisitedFromHistory();
+					setStep(nextStep);
+				}
+			}
+
+			steps.forEach(function(step) {
+				if (step.dataset.autoAdvance !== '1') {
+					return;
+				}
+
+				step.querySelectorAll('input[type="radio"]').forEach(function(input) {
+					input.addEventListener('change', function() {
+						window.setTimeout(advanceCurrentStep, 140);
+					});
+				});
+			});
 
 			setStep(0);
 		})();

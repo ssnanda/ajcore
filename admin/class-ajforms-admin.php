@@ -154,6 +154,47 @@ class AJForms_Admin {
 		exit;
 	}
 
+	private function handle_check_and_update_request() {
+		if ( ! current_user_can( 'update_plugins' ) ) {
+			return;
+		}
+
+		if ( ! isset( $_GET['ajf_check_update'], $_GET['_wpnonce'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajf_check_update' );
+
+		$redirect_page = isset( $_GET['redirect_page'] ) ? sanitize_key( wp_unslash( $_GET['redirect_page'] ) ) : 'ajforms-about';
+		if ( ! in_array( $redirect_page, array( 'ajforms-about', 'ajforms-updates' ), true ) ) {
+			$redirect_page = 'ajforms-about';
+		}
+
+		$this->clear_update_cache();
+		$update_status = $this->get_update_status( true );
+		$args          = array(
+			'page'            => $redirect_page,
+			'updates-checked' => '1',
+		);
+
+		if ( is_wp_error( $update_status ) ) {
+			$args['update-error'] = rawurlencode( $update_status->get_error_message() );
+		} elseif ( ! empty( $update_status['has_update'] ) ) {
+			$result = $this->install_plugin_update();
+
+			if ( is_wp_error( $result ) ) {
+				$args['update-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['update-success'] = '1';
+			}
+		} else {
+			$args['already-current'] = '1';
+		}
+
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
 	private function handle_update_refresh_request() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -185,6 +226,20 @@ class AJForms_Admin {
 			)
 		);
 		exit;
+	}
+
+	private function get_check_and_update_url( $redirect_page = 'ajforms-about' ) {
+		return wp_nonce_url(
+			add_query_arg(
+				array(
+					'page'             => $redirect_page,
+					'ajf_check_update' => '1',
+					'redirect_page'    => $redirect_page,
+				),
+				admin_url( 'admin.php' )
+			),
+			'ajf_check_update'
+		);
 	}
 
 	private function get_asana_reference_cache() {
@@ -409,6 +464,7 @@ class AJForms_Admin {
 			'id'          => isset( $field['id'] ) ? sanitize_key( $field['id'] ) : '',
 			'type'        => isset( $field['type'] ) ? sanitize_key( $field['type'] ) : 'text',
 			'label'       => isset( $field['label'] ) ? sanitize_text_field( $field['label'] ) : '',
+			'field_name'  => isset( $field['field_name'] ) ? sanitize_key( $field['field_name'] ) : '',
 			'placeholder' => isset( $field['placeholder'] ) ? sanitize_text_field( $field['placeholder'] ) : '',
 			'required'    => ! empty( $field['required'] ),
 			'css_class'   => isset( $field['css_class'] ) ? sanitize_html_class( $field['css_class'] ) : '',
@@ -422,6 +478,10 @@ class AJForms_Admin {
 
 		if ( '' === $normalized['id'] ) {
 			$normalized['id'] = 'field_' . wp_generate_password( 8, false, false );
+		}
+
+		if ( '' === $normalized['field_name'] ) {
+			$normalized['field_name'] = sanitize_key( $normalized['label'] ? $normalized['label'] : $normalized['id'] );
 		}
 
 		if ( ! in_array( $normalized['width'], array( 100, 50, 33, 25 ), true ) ) {
@@ -755,6 +815,7 @@ class AJForms_Admin {
 		$page = isset( $_GET['page'] ) ? sanitize_text_field( wp_unslash( $_GET['page'] ) ) : '';
 
 		if ( in_array( $page, array( 'ajforms-updates', 'ajforms-about' ), true ) ) {
+			$this->handle_check_and_update_request();
 			$this->handle_update_refresh_request();
 			$this->handle_plugin_update_request();
 		}
@@ -1167,7 +1228,7 @@ class AJForms_Admin {
 		);
 
 		add_submenu_page(
-			'',
+			'ajforms',
 			__( 'Check for Updates', 'ajforms' ),
 			__( 'Check for Updates', 'ajforms' ),
 			'manage_options',
@@ -1183,6 +1244,16 @@ class AJForms_Admin {
 			'ajforms-about',
 			array( $this, 'display_about_page' )
 		);
+
+		global $submenu;
+		if ( isset( $submenu['ajforms'] ) && is_array( $submenu['ajforms'] ) ) {
+			foreach ( $submenu['ajforms'] as &$submenu_item ) {
+				if ( isset( $submenu_item[2] ) && 'ajforms-updates' === $submenu_item[2] ) {
+					$submenu_item[2] = str_replace( admin_url(), '', $this->get_check_and_update_url( 'ajforms-updates' ) );
+				}
+			}
+			unset( $submenu_item );
+		}
 	}
 
 	public function add_plugin_action_links( $links ) {
@@ -1190,19 +1261,10 @@ class AJForms_Admin {
 		$has_update = ! is_wp_error( $update_status ) && ! empty( $update_status['has_update'] );
 		
 		if ( $has_update ) {
-			$update_url = wp_nonce_url(
-				add_query_arg(
-					array(
-						'page'              => 'ajforms-updates',
-						'ajf_update_plugin' => '1',
-					),
-					admin_url( 'admin.php' )
-				),
-				'ajf_update_plugin'
-			);
+			$update_url = $this->get_check_and_update_url( 'ajforms-updates' );
 			$update_link = '<a href="' . esc_url( $update_url ) . '" style="color:#d63638;font-weight:600;">' . esc_html__( 'Update Plugin', 'ajforms' ) . '</a>';
 		} else {
-			$update_link = '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-updates' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Check for Updates', 'ajforms' ) . '</a>';
+			$update_link = '<a href="' . esc_url( $this->get_check_and_update_url( 'ajforms-updates' ) ) . '">' . esc_html__( 'Check for Updates', 'ajforms' ) . '</a>';
 		}
 		
 		$custom_links = array(
@@ -1218,7 +1280,7 @@ class AJForms_Admin {
 			return $links;
 		}
 
-		$links[] = '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-updates' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Check for Updates', 'ajforms' ) . '</a>';
+		$links[] = '<a href="' . esc_url( $this->get_check_and_update_url( 'ajforms-updates' ) ) . '">' . esc_html__( 'Check for Updates', 'ajforms' ) . '</a>';
 		$links[] = '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-about' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'About', 'ajforms' ) . '</a>';
 
 		return $links;
@@ -1550,7 +1612,7 @@ class AJForms_Admin {
 										<div class="ajforms-settings-field">
 											<label for="default_notification_subject"><?php esc_html_e( 'Default Notification Subject', 'ajforms' ); ?></label>
 											<input name="default_notification_subject" id="default_notification_subject" type="text" value="<?php echo esc_attr( $settings['default_notification_subject'] ); ?>">
-											<div class="ajforms-settings-help"><?php esc_html_e( 'Use {form_title} or field placeholders like {field_1}, {field_2}, etc.', 'ajforms' ); ?></div>
+											<div class="ajforms-settings-help"><?php esc_html_e( 'Use {form_title}, {submission_fields}, numbered tags like {field_1}, or custom field names like {email}.', 'ajforms' ); ?></div>
 										</div>
 										<div class="ajforms-settings-field">
 											<label for="default_from_name"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
@@ -1930,92 +1992,67 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		$updates_page_url = add_query_arg(
-			array(
-				'page' => 'ajforms-updates',
-			),
-			admin_url( 'admin.php' )
-		);
-		$refresh_updates_url = wp_nonce_url(
-			add_query_arg(
-				array(
-					'page'                => 'ajforms-about',
-					'ajf_refresh_updates' => '1',
-				),
-				admin_url( 'admin.php' )
-			),
-			'ajf_refresh_updates'
-		);
+		$this->clear_update_cache();
+		$update_status = $this->get_update_status( true );
+		$action_url    = $this->get_check_and_update_url( 'ajforms-about' );
 		?>
 		<div class="wrap">
 			<style>
-				.ajforms-about-shell{max-width:980px;margin-top:20px;background:linear-gradient(180deg,#fff 0%,#f8fafc 100%);border:1px solid #e5e7eb;border-radius:28px;overflow:hidden;box-shadow:0 22px 48px rgba(15,23,42,.06)}
-				.ajforms-about-hero{padding:40px 44px;background:linear-gradient(135deg,#f97316 0%,#ea580c 60%,#fb923c 100%);color:#fff}
-				.ajforms-about-badge{display:inline-flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:16px;background:rgba(255,255,255,.16);font-size:28px;font-weight:800;letter-spacing:.04em}
-				.ajforms-about-hero h1{margin:18px 0 10px;font-size:36px;line-height:1.1;color:#fff}
-				.ajforms-about-hero p{margin:0;max-width:720px;font-size:17px;line-height:1.6;color:rgba(255,255,255,.92)}
-				.ajforms-about-body{padding:34px 44px}
-				.ajforms-about-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
-				.ajforms-about-card{padding:24px;border:1px solid #e5e7eb;border-radius:22px;background:#fff}
-				.ajforms-about-card h2{margin:0 0 10px;font-size:20px;color:#111827}
-				.ajforms-about-card p{margin:0;color:#4b5563;line-height:1.7}
-				.ajforms-about-actions{margin-top:22px;display:flex;gap:12px;flex-wrap:wrap}
-				.ajforms-about-meta{margin-top:24px;padding:24px;border:1px solid #e5e7eb;border-radius:22px;background:#fff}
-				.ajforms-about-meta table{width:100%;border-collapse:collapse}
-				.ajforms-about-meta th,.ajforms-about-meta td{padding:12px 0;border-bottom:1px solid #f1f5f9;text-align:left;vertical-align:top}
-				.ajforms-about-meta tr:last-child th,.ajforms-about-meta tr:last-child td{border-bottom:0}
-				.ajforms-about-meta th{width:180px;color:#6b7280;font-weight:600}
-				.ajforms-about-meta a{text-decoration:none}
-				@media (max-width: 900px){.ajforms-about-grid{grid-template-columns:1fr}.ajforms-about-hero,.ajforms-about-body{padding:26px}}
+				.ajforms-about-shell{max-width:760px;margin-top:20px;background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:24px}
+				.ajforms-about-shell h1{margin:0 0 8px;font-size:28px;line-height:1.2}
+				.ajforms-about-shell p{font-size:14px;line-height:1.6;color:#50575e}
+				.ajforms-about-status{margin:20px 0;padding:16px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
+				.ajforms-about-status strong{display:block;margin-bottom:6px;color:#1d2327}
+				.ajforms-about-meta{margin-top:18px;width:100%;border-collapse:collapse}
+				.ajforms-about-meta th,.ajforms-about-meta td{padding:10px 0;border-bottom:1px solid #f0f0f1;text-align:left}
+				.ajforms-about-meta th{width:160px;color:#646970;font-weight:600}
 			</style>
 
 			<div class="ajforms-about-shell">
-				<div class="ajforms-about-hero">
-					<div class="ajforms-about-badge">F</div>
-					<h1><?php esc_html_e( 'About AJ Forms', 'ajforms' ); ?></h1>
-					<p><?php esc_html_e( 'AJ Forms is a WordPress form builder focused on practical workflows: clean form creation, editable entries, notifications, integrations, and a builder experience you can keep shaping to match your process.', 'ajforms' ); ?></p>
+				<h1><?php esc_html_e( 'AJ Forms', 'ajforms' ); ?></h1>
+				<p><?php esc_html_e( 'A WordPress form builder for conversational flows, contact capture, entries, notifications, and practical workflow integrations.', 'ajforms' ); ?></p>
+
+				<?php if ( isset( $_GET['update-success'] ) ) : ?>
+					<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'AJ Forms updated successfully.', 'ajforms' ); ?></p></div>
+				<?php endif; ?>
+				<?php if ( isset( $_GET['already-current'] ) ) : ?>
+					<div class="notice notice-info is-dismissible"><p><?php esc_html_e( 'AJ Forms is already up to date.', 'ajforms' ); ?></p></div>
+				<?php endif; ?>
+				<?php if ( isset( $_GET['update-error'] ) ) : ?>
+					<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['update-error'] ) ) ); ?></p></div>
+				<?php endif; ?>
+
+				<div class="ajforms-about-status">
+					<?php if ( is_wp_error( $update_status ) ) : ?>
+						<strong><?php esc_html_e( 'Update check failed', 'ajforms' ); ?></strong>
+						<p><?php echo esc_html( $update_status->get_error_message() ); ?></p>
+					<?php elseif ( ! empty( $update_status['has_update'] ) ) : ?>
+						<strong><?php esc_html_e( 'Update available', 'ajforms' ); ?></strong>
+						<p><?php echo esc_html( sprintf( __( 'Installed version %1$s. Latest version %2$s.', 'ajforms' ), $update_status['current_version'], $update_status['latest_version'] ) ); ?></p>
+					<?php else : ?>
+						<strong><?php esc_html_e( 'AJ Forms is up to date', 'ajforms' ); ?></strong>
+						<p><?php echo esc_html( sprintf( __( 'Installed version %s is the latest available release.', 'ajforms' ), AJFORMS_VERSION ) ); ?></p>
+					<?php endif; ?>
 				</div>
 
-				<div class="ajforms-about-body">
-					<div class="ajforms-about-grid">
-						<div class="ajforms-about-card">
-							<h2><?php esc_html_e( 'What It Handles', 'ajforms' ); ?></h2>
-							<p><?php esc_html_e( 'Build forms visually, collect entries, edit submissions later, send email notifications, export and import forms, and plug submission workflows into tools like Asana.', 'ajforms' ); ?></p>
-						</div>
-						<div class="ajforms-about-card">
-							<h2><?php esc_html_e( 'Who Built It', 'ajforms' ); ?></h2>
-							<p><?php esc_html_e( 'AJ Forms is developed by itSpector. The plugin is intended to stay useful, flexible, and grounded in real client work instead of being shaped around a paid upsell funnel.', 'ajforms' ); ?></p>
-						</div>
-					</div>
+				<p>
+					<a class="button button-primary" href="<?php echo esc_url( $action_url ); ?>">
+						<?php echo esc_html( ! is_wp_error( $update_status ) && ! empty( $update_status['has_update'] ) ? __( 'Update AJ Forms', 'ajforms' ) : __( 'Check for Updates', 'ajforms' ) ); ?>
+					</a>
+				</p>
 
-					<div class="ajforms-about-actions">
-						<a class="button button-primary" href="<?php echo esc_url( $updates_page_url ); ?>"><?php esc_html_e( 'Check for Updates', 'ajforms' ); ?></a>
-						<a class="button" href="<?php echo esc_url( $refresh_updates_url ); ?>"><?php esc_html_e( 'Check for Updates', 'ajforms' ); ?></a>
-					</div>
-
-					<div class="ajforms-about-meta">
-						<table>
-							<tbody>
-								<tr>
-									<th><?php esc_html_e( 'Plugin', 'ajforms' ); ?></th>
-									<td><?php echo esc_html( 'AJ Forms ' . AJFORMS_VERSION ); ?></td>
-								</tr>
-								<tr>
-									<th><?php esc_html_e( 'Developer', 'ajforms' ); ?></th>
-									<td><a href="https://itspector.com" target="_blank" rel="noopener noreferrer">itSpector</a></td>
-								</tr>
-								<tr>
-									<th><?php esc_html_e( 'Repository', 'ajforms' ); ?></th>
-									<td><a href="https://github.com/ssnanda/ajforms" target="_blank" rel="noopener noreferrer">github.com/ssnanda/ajforms</a></td>
-								</tr>
-								<tr>
-									<th><?php esc_html_e( 'Update URI', 'ajforms' ); ?></th>
-									<td><code>https://github.com/ssnanda/ajforms</code></td>
-								</tr>
-							</tbody>
-						</table>
-					</div>
-				</div>
+				<table class="ajforms-about-meta">
+					<tbody>
+						<tr>
+							<th><?php esc_html_e( 'Plugin', 'ajforms' ); ?></th>
+							<td><?php echo esc_html( 'AJ Forms ' . AJFORMS_VERSION ); ?></td>
+						</tr>
+						<tr>
+							<th><?php esc_html_e( 'Developer', 'ajforms' ); ?></th>
+							<td>itSpector</td>
+						</tr>
+					</tbody>
+				</table>
 			</div>
 		</div>
 		<?php
@@ -2026,24 +2063,9 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		$update_status = $this->get_update_status();
-		$refresh_url   = wp_nonce_url(
-			add_query_arg(
-				array(
-					'page'                => 'ajforms-updates',
-					'ajf_refresh_updates' => '1',
-				),
-				admin_url( 'admin.php' )
-			),
-			'ajf_refresh_updates'
-		);
-		$about_url     = add_query_arg(
-			array(
-				'page' => 'ajforms-about',
-			),
-			admin_url( 'admin.php' )
-		);
-		$releases_url  = $this->get_releases_url();
+		$this->clear_update_cache();
+		$update_status = $this->get_update_status( true );
+		$action_url    = $this->get_check_and_update_url( 'ajforms-updates' );
 		?>
 		<div class="wrap">
 			<style>
@@ -2089,24 +2111,9 @@ class AJForms_Admin {
 					<?php endif; ?>
 
 					<div class="ajforms-updates-actions">
-						<a class="button button-primary" href="<?php echo esc_url( $refresh_url ); ?>"><?php esc_html_e( 'Check for Updates', 'ajforms' ); ?></a>
-						<?php if ( ! is_wp_error( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
-							<?php
-							$update_url = wp_nonce_url(
-								add_query_arg(
-									array(
-										'page'              => 'ajforms-updates',
-										'ajf_update_plugin' => '1',
-									),
-									admin_url( 'admin.php' )
-								),
-								'ajf_update_plugin'
-							);
-							?>
-							<a class="button button-secondary" href="<?php echo esc_url( $update_url ); ?>"><?php esc_html_e( 'Update Plugin', 'ajforms' ); ?></a>
-						<?php endif; ?>
-						<a class="button" href="<?php echo esc_url( $releases_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View GitHub Releases', 'ajforms' ); ?></a>
-						<a class="button" href="<?php echo esc_url( $about_url ); ?>"><?php esc_html_e( 'About AJ Forms', 'ajforms' ); ?></a>
+						<a class="button button-primary" href="<?php echo esc_url( $action_url ); ?>">
+							<?php echo esc_html( ! is_wp_error( $update_status ) && ! empty( $update_status['has_update'] ) ? __( 'Update AJ Forms', 'ajforms' ) : __( 'Check for Updates', 'ajforms' ) ); ?>
+						</a>
 					</div>
 
 					<?php if ( is_wp_error( $update_status ) ) : ?>
@@ -2143,10 +2150,6 @@ class AJForms_Admin {
 									<tr>
 										<th><?php esc_html_e( 'Published', 'ajforms' ); ?></th>
 										<td><?php echo esc_html( ! empty( $release['published_at'] ) ? wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $release['published_at'] ) ) : __( 'Unknown', 'ajforms' ) ); ?></td>
-									</tr>
-									<tr>
-										<th><?php esc_html_e( 'Repository', 'ajforms' ); ?></th>
-										<td><a href="<?php echo esc_url( $this->get_repository_url() ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $this->get_repository_url() ); ?></a></td>
 									</tr>
 								</tbody>
 							</table>

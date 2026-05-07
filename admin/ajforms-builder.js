@@ -75,6 +75,15 @@ function initAJFormsBuilder() {
         return JSON.parse(JSON.stringify(value));
     }
 
+    function slugifyFieldName(value) {
+        return String(value || '')
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '')
+            .slice(0, 60);
+    }
+
     function getActiveFieldIndex() {
         if (!activeFieldId) {
             return -1;
@@ -181,6 +190,7 @@ function initAJFormsBuilder() {
                 id: 'field_' + Math.random().toString(36).slice(2, 11),
                 type: 'text',
                 label: 'Text',
+                field_name: '',
                 placeholder: '',
                 required: false,
                 css_class: '',
@@ -198,6 +208,8 @@ function initAJFormsBuilder() {
         if (![100, 50, 33, 25].includes(normalized.width)) {
             normalized.width = 100;
         }
+
+        normalized.field_name = slugifyFieldName(normalized.field_name || normalized.label || normalized.id);
 
         if (!['question', 'final_contact'].includes(normalized.conversation_step)) {
             normalized.conversation_step = 'question';
@@ -1067,6 +1079,11 @@ function initAJFormsBuilder() {
                             <input type="text" class="wpf-live-input" data-key="label" value="${escapeHtml(field.label || '')}">
                         </div>
                         <div class="wpf-setting-row">
+                            <label>Field Name</label>
+                            <input type="text" class="wpf-live-input" data-key="field_name" value="${escapeHtml(field.field_name || '')}">
+                            <p class="wpf-setting-help">Use this in messages as <code>{${escapeHtml(field.field_name || 'field_name')}}</code>.</p>
+                        </div>
+                        <div class="wpf-setting-row">
                             <label>Placeholder Text</label>
                             <input type="text" class="wpf-live-input" data-key="placeholder" value="${escapeHtml(field.placeholder || '')}">
                         </div>
@@ -1165,7 +1182,10 @@ function initAJFormsBuilder() {
                     pushed = true;
                 }
 
-                field[e.target.dataset.key] = e.target.value;
+                field[e.target.dataset.key] = e.target.dataset.key === 'field_name' ? slugifyFieldName(e.target.value) : e.target.value;
+                if (e.target.dataset.key === 'field_name') {
+                    e.target.value = field.field_name;
+                }
                 renderCanvas();
                 const titleNode = fieldSettingsPanel.querySelector('.wpf-field-settings-title');
                 if (titleNode && e.target.dataset.key === 'label') {
