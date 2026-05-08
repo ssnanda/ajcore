@@ -186,6 +186,7 @@ class AJForms_Admin {
 				'updated_at'   => '',
 				'workspaces'   => array(),
 				'projects'     => array(),
+				'users'        => array(),
 				'workspace_gid'=> '',
 			)
 		);
@@ -194,6 +195,7 @@ class AJForms_Admin {
 			'updated_at'    => '',
 			'workspaces'    => array(),
 			'projects'      => array(),
+			'users'         => array(),
 			'workspace_gid' => '',
 		);
 	}
@@ -264,6 +266,7 @@ class AJForms_Admin {
 		}
 
 		$projects = array();
+		$users    = array();
 		if ( '' !== $selected_workspace_gid ) {
 			$workspace_projects = $this->asana_api_get(
 				'workspaces/' . rawurlencode( $selected_workspace_gid ) . '/projects',
@@ -289,12 +292,38 @@ class AJForms_Admin {
 					'name' => sanitize_text_field( (string) $project['name'] ),
 				);
 			}
+
+			$workspace_users = $this->asana_api_get(
+				'workspaces/' . rawurlencode( $selected_workspace_gid ) . '/users',
+				$token,
+				array(
+					'limit'  => 100,
+					'opt_fields' => 'gid,name,email',
+				)
+			);
+
+			if ( is_wp_error( $workspace_users ) ) {
+				return $workspace_users;
+			}
+
+			foreach ( $workspace_users as $user ) {
+				if ( empty( $user['gid'] ) || empty( $user['name'] ) ) {
+					continue;
+				}
+
+				$users[] = array(
+					'gid'   => sanitize_text_field( (string) $user['gid'] ),
+					'name'  => sanitize_text_field( (string) $user['name'] ),
+					'email' => isset( $user['email'] ) ? sanitize_email( (string) $user['email'] ) : '',
+				);
+			}
 		}
 
 		$cache = array(
 			'updated_at'    => current_time( 'mysql' ),
 			'workspaces'    => $formatted_workspaces,
 			'projects'      => $projects,
+			'users'         => $users,
 			'workspace_gid' => $selected_workspace_gid,
 		);
 
@@ -502,7 +531,7 @@ class AJForms_Admin {
 				'notifications_enabled' => isset( $normalized['settings']['notifications_enabled'] ) ? (bool) $normalized['settings']['notifications_enabled'] : true,
 				'notification_email'    => isset( $normalized['settings']['notification_email'] ) ? sanitize_text_field( $normalized['settings']['notification_email'] ) : $plugin_settings['default_notification_email'],
 				'notification_subject'  => isset( $normalized['settings']['notification_subject'] ) ? sanitize_text_field( $normalized['settings']['notification_subject'] ) : $plugin_settings['default_notification_subject'],
-				'notification_body'     => isset( $normalized['settings']['notification_body'] ) ? wp_kses_post( $normalized['settings']['notification_body'] ) : "A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}",
+				'notification_body'     => isset( $normalized['settings']['notification_body'] ) ? wp_kses_post( $normalized['settings']['notification_body'] ) : "<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}",
 				'notification_from_name' => isset( $normalized['settings']['notification_from_name'] ) ? sanitize_text_field( $normalized['settings']['notification_from_name'] ) : ( isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ) ),
 				'notification_from_email' => isset( $normalized['settings']['notification_from_email'] ) ? sanitize_email( $normalized['settings']['notification_from_email'] ) : '',
 				'notification_reply_to' => isset( $normalized['settings']['notification_reply_to'] ) ? sanitize_text_field( $normalized['settings']['notification_reply_to'] ) : '',
@@ -515,8 +544,10 @@ class AJForms_Admin {
 				'custom_css'            => isset( $normalized['settings']['custom_css'] ) ? wp_strip_all_tags( $normalized['settings']['custom_css'] ) : '',
 				'asana_task_enabled'    => ! empty( $normalized['settings']['asana_task_enabled'] ),
 				'asana_task_name'       => isset( $normalized['settings']['asana_task_name'] ) ? sanitize_text_field( $normalized['settings']['asana_task_name'] ) : 'New form submission: {form_title}',
-				'asana_task_notes'      => isset( $normalized['settings']['asana_task_notes'] ) ? sanitize_textarea_field( $normalized['settings']['asana_task_notes'] ) : "A new submission was received for {form_title}.\n\n{submission_fields}",
+				'asana_task_notes'      => isset( $normalized['settings']['asana_task_notes'] ) ? sanitize_textarea_field( $normalized['settings']['asana_task_notes'] ) : "Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}",
 				'asana_project_gid'     => isset( $normalized['settings']['asana_project_gid'] ) ? sanitize_text_field( $normalized['settings']['asana_project_gid'] ) : '',
+				'asana_assignee_gid'    => isset( $normalized['settings']['asana_assignee_gid'] ) ? sanitize_text_field( $normalized['settings']['asana_assignee_gid'] ) : '',
+				'asana_due_date'        => isset( $normalized['settings']['asana_due_date'] ) && in_array( sanitize_key( $normalized['settings']['asana_due_date'] ), array( 'none', 'today' ), true ) ? sanitize_key( $normalized['settings']['asana_due_date'] ) : 'today',
 				'stripe_enabled'        => ! empty( $normalized['settings']['stripe_enabled'] ),
 				'stripe_amount'         => isset( $normalized['settings']['stripe_amount'] ) ? max( 0, round( (float) $normalized['settings']['stripe_amount'], 2 ) ) : 0,
 				'stripe_currency'       => isset( $normalized['settings']['stripe_currency'] ) ? sanitize_key( $normalized['settings']['stripe_currency'] ) : 'usd',

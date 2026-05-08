@@ -57,7 +57,7 @@ class AJForms {
 			'notifications_enabled' => isset( $plugin_settings['default_notifications_enabled'] ) ? '1' === (string) $plugin_settings['default_notifications_enabled'] : true,
 			'notification_email'    => isset( $plugin_settings['default_notification_email'] ) ? $plugin_settings['default_notification_email'] : get_option( 'admin_email' ),
 			'notification_subject'  => isset( $plugin_settings['default_notification_subject'] ) ? $plugin_settings['default_notification_subject'] : 'New submission for {form_title}',
-			'notification_body'     => "A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}",
+			'notification_body'     => "<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}",
 			'notification_from_name' => isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ),
 			'notification_from_email' => '',
 			'notification_reply_to' => '',
@@ -70,8 +70,10 @@ class AJForms {
 			'custom_css'            => '',
 			'asana_task_enabled'    => false,
 			'asana_task_name'       => 'New form submission: {form_title}',
-			'asana_task_notes'      => "A new submission was received for {form_title}.\n\n{submission_fields}",
+			'asana_task_notes'      => "Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}",
 			'asana_project_gid'     => isset( $plugin_settings['asana_project_gid'] ) ? $plugin_settings['asana_project_gid'] : '',
+			'asana_assignee_gid'    => '',
+			'asana_due_date'        => 'today',
 			'stripe_enabled'        => false,
 			'stripe_amount'         => '',
 			'stripe_currency'       => 'usd',
@@ -481,6 +483,135 @@ class AJForms {
 		return sanitize_text_field( (string) $value );
 	}
 
+	private function get_client_ip_address() {
+		$keys = array( 'HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'REMOTE_ADDR' );
+
+		foreach ( $keys as $key ) {
+			if ( empty( $_SERVER[ $key ] ) ) {
+				continue;
+			}
+
+			$value = sanitize_text_field( wp_unslash( $_SERVER[ $key ] ) );
+			$parts = array_map( 'trim', explode( ',', $value ) );
+
+			foreach ( $parts as $part ) {
+				if ( filter_var( $part, FILTER_VALIDATE_IP ) ) {
+					return $part;
+				}
+			}
+		}
+
+		return '';
+	}
+
+	private function parse_user_agent( $user_agent ) {
+		$user_agent = (string) $user_agent;
+		$browser    = 'Unknown';
+		$os         = 'Unknown';
+		$device     = 'Desktop';
+
+		if ( preg_match( '/Edg\//i', $user_agent ) ) {
+			$browser = 'Edge';
+		} elseif ( preg_match( '/Chrome\//i', $user_agent ) && ! preg_match( '/Chromium|OPR\//i', $user_agent ) ) {
+			$browser = 'Chrome';
+		} elseif ( preg_match( '/Safari\//i', $user_agent ) && ! preg_match( '/Chrome\//i', $user_agent ) ) {
+			$browser = 'Safari';
+		} elseif ( preg_match( '/Firefox\//i', $user_agent ) ) {
+			$browser = 'Firefox';
+		}
+
+		if ( preg_match( '/Windows NT/i', $user_agent ) ) {
+			$os = 'Windows';
+		} elseif ( preg_match( '/Mac OS X/i', $user_agent ) && ! preg_match( '/iPhone|iPad/i', $user_agent ) ) {
+			$os = 'macOS';
+		} elseif ( preg_match( '/iPhone|iPad/i', $user_agent ) ) {
+			$os = 'iOS';
+		} elseif ( preg_match( '/Android/i', $user_agent ) ) {
+			$os = 'Android';
+		} elseif ( preg_match( '/Linux/i', $user_agent ) ) {
+			$os = 'Linux';
+		}
+
+		if ( preg_match( '/iPad|Tablet/i', $user_agent ) ) {
+			$device = 'Tablet';
+		} elseif ( preg_match( '/Mobile|iPhone|Android/i', $user_agent ) ) {
+			$device = 'Mobile';
+		}
+
+		return array(
+			'device_type' => $device,
+			'browser'     => $browser,
+			'os'          => $os,
+		);
+	}
+
+	private function get_submission_meta() {
+		$user_agent = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_textarea_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
+		$parsed     = $this->parse_user_agent( $user_agent );
+
+		return array(
+			'label'       => 'Submission Details',
+			'type'        => 'meta',
+			'ip_address'  => $this->get_client_ip_address(),
+			'device_type' => $parsed['device_type'],
+			'browser'     => $parsed['browser'],
+			'os'          => $parsed['os'],
+			'user_agent'  => $user_agent,
+			'page_url'    => isset( $_POST['ajf_page_url'] ) ? esc_url_raw( wp_unslash( $_POST['ajf_page_url'] ) ) : ( isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( home_url( wp_unslash( $_SERVER['REQUEST_URI'] ) ) ) : '' ),
+			'referrer'    => isset( $_POST['ajf_referrer'] ) ? esc_url_raw( wp_unslash( $_POST['ajf_referrer'] ) ) : ( isset( $_SERVER['HTTP_REFERER'] ) ? esc_url_raw( wp_unslash( $_SERVER['HTTP_REFERER'] ) ) : '' ),
+			'utm_source'  => isset( $_POST['ajf_utm_source'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_utm_source'] ) ) : '',
+			'utm_medium'  => isset( $_POST['ajf_utm_medium'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_utm_medium'] ) ) : '',
+			'utm_campaign'=> isset( $_POST['ajf_utm_campaign'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_utm_campaign'] ) ) : '',
+			'screen_size' => isset( $_POST['ajf_screen_size'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_screen_size'] ) ) : '',
+			'timezone'    => isset( $_POST['ajf_timezone'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_timezone'] ) ) : '',
+			'language'    => isset( $_POST['ajf_language'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_language'] ) ) : '',
+			'submitted_at'=> current_time( 'mysql' ),
+		);
+	}
+
+	private function render_tracking_inputs() {
+		ob_start();
+		?>
+		<input type="hidden" name="ajf_page_url" value="">
+		<input type="hidden" name="ajf_referrer" value="">
+		<input type="hidden" name="ajf_utm_source" value="">
+		<input type="hidden" name="ajf_utm_medium" value="">
+		<input type="hidden" name="ajf_utm_campaign" value="">
+		<input type="hidden" name="ajf_screen_size" value="">
+		<input type="hidden" name="ajf_timezone" value="">
+		<input type="hidden" name="ajf_language" value="">
+		<script>
+		(function(){
+			function fillTracking(form){
+				if (!form || form.dataset.ajformsTrackingReady) {
+					return;
+				}
+				form.dataset.ajformsTrackingReady = '1';
+				var params = new URLSearchParams(window.location.search || '');
+				var values = {
+					ajf_page_url: window.location.href || '',
+					ajf_referrer: document.referrer || '',
+					ajf_utm_source: params.get('utm_source') || '',
+					ajf_utm_medium: params.get('utm_medium') || '',
+					ajf_utm_campaign: params.get('utm_campaign') || '',
+					ajf_screen_size: window.screen ? window.screen.width + 'x' + window.screen.height : '',
+					ajf_timezone: Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone || '' : '',
+					ajf_language: navigator.language || ''
+				};
+				Object.keys(values).forEach(function(name){
+					var input = form.querySelector('input[name="' + name + '"]');
+					if (input) {
+						input.value = values[name];
+					}
+				});
+			}
+			document.querySelectorAll('form.ajforms-frontend-form').forEach(fillTracking);
+		})();
+		</script>
+		<?php
+		return ob_get_clean();
+	}
+
 	private function get_notification_recipients( $settings ) {
 		$recipient_string = isset( $settings['notification_email'] ) ? (string) $settings['notification_email'] : '';
 		$pieces           = preg_split( '/[\s,]+/', $recipient_string );
@@ -508,15 +639,22 @@ class AJForms {
 		$replacements = array(
 			'{form_title}'        => $form->title,
 			'{submission_count}'  => '1',
-			'{submitted_at}'      => current_time( 'mysql' ),
+			'{submitted_at}'      => isset( $lead_data['_meta']['submitted_at'] ) ? $lead_data['_meta']['submitted_at'] : current_time( 'mysql' ),
 		);
 
 		// Add {submission_fields} tag
 		$replacements['{submission_fields}'] = $this->build_submission_fields_text( $lead_data );
+		$replacements['{submission_details}'] = $this->build_submission_meta_text( $lead_data );
+		$replacements['{submission_table}'] = $this->build_submission_table_html( $lead_data );
+		$replacements['{submission_details_table}'] = $this->build_submission_meta_table_html( $lead_data );
 
 		$field_index = 1;
 		foreach ( $lead_data as $field_id => $field ) {
 			if ( ! is_array( $field ) ) {
+				continue;
+			}
+
+			if ( 0 === strpos( (string) $field_id, '_' ) ) {
 				continue;
 			}
 
@@ -543,6 +681,10 @@ class AJForms {
 	private function get_reply_to_header( $lead_data ) {
 		foreach ( $lead_data as $field ) {
 			if ( ! is_array( $field ) ) {
+				continue;
+			}
+
+			if ( 0 === strpos( (string) $field_id, '_' ) ) {
 				continue;
 			}
 
@@ -593,6 +735,97 @@ class AJForms {
 		return implode( "\n", $lines );
 	}
 
+	private function build_submission_meta_text( $lead_data ) {
+		$meta = isset( $lead_data['_meta'] ) && is_array( $lead_data['_meta'] ) ? $lead_data['_meta'] : array();
+		if ( empty( $meta ) ) {
+			return '';
+		}
+
+		$labels = array(
+			'ip_address'   => 'IP Address',
+			'device_type'  => 'Device',
+			'browser'      => 'Browser',
+			'os'           => 'Operating System',
+			'page_url'     => 'Page URL',
+			'referrer'     => 'Referrer',
+			'utm_source'   => 'UTM Source',
+			'utm_medium'   => 'UTM Medium',
+			'utm_campaign' => 'UTM Campaign',
+			'screen_size'  => 'Screen Size',
+			'timezone'     => 'Timezone',
+			'language'     => 'Language',
+			'submitted_at' => 'Submitted',
+			'user_agent'   => 'User Agent',
+		);
+
+		$lines = array();
+		foreach ( $labels as $key => $label ) {
+			if ( empty( $meta[ $key ] ) ) {
+				continue;
+			}
+
+			$lines[] = $label . ': ' . sanitize_text_field( (string) $meta[ $key ] );
+		}
+
+		return implode( "\n", $lines );
+	}
+
+	private function build_submission_table_html( $lead_data ) {
+		$rows = '';
+
+		foreach ( $lead_data as $field_id => $field ) {
+			if ( ! is_array( $field ) || 0 === strpos( (string) $field_id, '_' ) ) {
+				continue;
+			}
+
+			$label = ! empty( $field['label'] ) ? sanitize_text_field( $field['label'] ) : sanitize_text_field( (string) $field_id );
+			$value = isset( $field['value'] ) ? $this->format_lead_value_for_display( $field['value'] ) : '';
+
+			if ( ! empty( $field['file_url'] ) ) {
+				$value = esc_url_raw( $field['file_url'] );
+			}
+
+			$rows .= '<tr><th style="text-align:left;vertical-align:top;padding:10px;border:1px solid #d9e2ec;background:#f8fafc;width:38%;">' . esc_html( $label ) . '</th><td style="padding:10px;border:1px solid #d9e2ec;">' . esc_html( '' !== $value ? $value : '-' ) . '</td></tr>';
+		}
+
+		return '<table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:14px 0;">' . $rows . '</table>';
+	}
+
+	private function build_submission_meta_table_html( $lead_data ) {
+		$meta = isset( $lead_data['_meta'] ) && is_array( $lead_data['_meta'] ) ? $lead_data['_meta'] : array();
+		if ( empty( $meta ) ) {
+			return '';
+		}
+
+		$labels = array(
+			'ip_address'   => 'IP Address',
+			'device_type'  => 'Device',
+			'browser'      => 'Browser',
+			'os'           => 'Operating System',
+			'page_url'     => 'Page URL',
+			'referrer'     => 'Referrer',
+			'utm_source'   => 'UTM Source',
+			'utm_medium'   => 'UTM Medium',
+			'utm_campaign' => 'UTM Campaign',
+			'screen_size'  => 'Screen Size',
+			'timezone'     => 'Timezone',
+			'language'     => 'Language',
+			'submitted_at' => 'Submitted',
+			'user_agent'   => 'User Agent',
+		);
+
+		$rows = '';
+		foreach ( $labels as $key => $label ) {
+			if ( empty( $meta[ $key ] ) ) {
+				continue;
+			}
+
+			$rows .= '<tr><th style="text-align:left;vertical-align:top;padding:8px;border:1px solid #d9e2ec;background:#f8fafc;width:38%;">' . esc_html( $label ) . '</th><td style="padding:8px;border:1px solid #d9e2ec;">' . esc_html( sanitize_text_field( (string) $meta[ $key ] ) ) . '</td></tr>';
+		}
+
+		return '' === $rows ? '' : '<h3 style="margin:22px 0 8px;">Submission Details</h3><table role="presentation" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:8px 0;">' . $rows . '</table>';
+	}
+
 	private function maybe_create_asana_task( $form, $lead_data, $settings ) {
 		if ( empty( $settings['asana_task_enabled'] ) ) {
 			return;
@@ -615,7 +848,7 @@ class AJForms {
 		}
 
 		$task_name_template = ! empty( $settings['asana_task_name'] ) ? (string) $settings['asana_task_name'] : 'New form submission: {form_title}';
-		$task_notes_template = ! empty( $settings['asana_task_notes'] ) ? (string) $settings['asana_task_notes'] : "A new submission was received for {form_title}.\n\n{submission_fields}";
+		$task_notes_template = ! empty( $settings['asana_task_notes'] ) ? (string) $settings['asana_task_notes'] : "Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}";
 
 		$task_name = $this->replace_template_tags( $task_name_template, $form, $lead_data );
 		$task_notes = $this->replace_template_tags( $task_notes_template, $form, $lead_data );
@@ -625,6 +858,14 @@ class AJForms {
 			'notes'     => $task_notes,
 			'workspace' => $workspace_gid,
 		);
+
+		if ( ! empty( $settings['asana_assignee_gid'] ) ) {
+			$request_data['assignee'] = sanitize_text_field( $settings['asana_assignee_gid'] );
+		}
+
+		if ( ! empty( $settings['asana_due_date'] ) && 'today' === $settings['asana_due_date'] ) {
+			$request_data['due_on'] = current_time( 'Y-m-d' );
+		}
 
 		if ( '' !== $project_gid ) {
 			$request_data['projects'] = array( $project_gid );
@@ -672,7 +913,7 @@ class AJForms {
 		$subject          = $this->replace_template_tags( $subject_template, $form, $lead_data );
 		$subject          = sanitize_text_field( $subject );
 
-		$body_template = ! empty( $settings['notification_body'] ) ? (string) $settings['notification_body'] : "A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}";
+		$body_template = ! empty( $settings['notification_body'] ) ? (string) $settings['notification_body'] : "<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}";
 		$body          = $this->replace_template_tags( $body_template, $form, $lead_data );
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
@@ -697,7 +938,7 @@ class AJForms {
 			$headers[] = 'From: ' . ( '' !== $from_name ? $from_name . ' ' : '' ) . '<' . $from_email . '>';
 		}
 
-		wp_mail( $recipients, $subject, wpautop( wp_kses_post( $body ) ), $headers, $attachments );
+		wp_mail( $recipients, $subject, wp_kses_post( $body ), $headers, $attachments );
 	}
 
 	private function handle_form_submission( $form, $fields, $settings ) {
@@ -897,6 +1138,9 @@ class AJForms {
 			);
 		}
 
+		$submission_meta = $this->get_submission_meta();
+		$lead_data['_meta'] = $submission_meta;
+
 		global $wpdb;
 		$leads_table = $this->get_leads_table();
 
@@ -906,9 +1150,9 @@ class AJForms {
 				'form_id'    => $form_id,
 				'lead_data'  => wp_json_encode( $lead_data ),
 				'status'     => 'unread',
-				'ip_address' => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '',
-				'source_url' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( home_url( wp_unslash( $_SERVER['REQUEST_URI'] ) ) ) : '',
-				'user_agent' => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_textarea_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
+				'ip_address' => isset( $submission_meta['ip_address'] ) ? $submission_meta['ip_address'] : '',
+				'source_url' => isset( $submission_meta['page_url'] ) ? $submission_meta['page_url'] : '',
+				'user_agent' => isset( $submission_meta['user_agent'] ) ? $submission_meta['user_agent'] : '',
 				'created_at' => current_time( 'mysql' ),
 			),
 			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
@@ -1105,6 +1349,7 @@ class AJForms {
 			</style>
 			<input type="hidden" name="ajf_form_id" value="<?php echo esc_attr( $form->id ); ?>">
 			<?php wp_nonce_field( 'ajf_submit_form_' . absint( $form->id ), 'ajf_form_nonce' ); ?>
+			<?php echo $this->render_tracking_inputs(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 			<?php if ( $this->is_honeypot_enabled() ) : ?>
 				<?php $honeypot_field_name = $this->get_honeypot_field_name( $form->id ); ?>
 				<div class="ajforms-honeypot" aria-hidden="true" style="position:absolute !important;left:-9999px !important;top:auto !important;width:1px !important;height:1px !important;overflow:hidden !important;">
@@ -1447,6 +1692,7 @@ class AJForms {
 			<input type="hidden" name="ajf_form_id" value="<?php echo esc_attr( $form_id ); ?>">
 			<input type="hidden" name="ajf_stripe_payment_intent" value="">
 			<?php wp_nonce_field( 'ajf_submit_form_' . $form_id, 'ajf_form_nonce' ); ?>
+			<?php echo $this->render_tracking_inputs(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 			<?php if ( $this->is_honeypot_enabled() ) : ?>
 				<?php $honeypot_field_name = $this->get_honeypot_field_name( $form_id ); ?>
 				<div class="ajforms-honeypot" aria-hidden="true" style="position:absolute !important;left:-9999px !important;top:auto !important;width:1px !important;height:1px !important;overflow:hidden !important;">

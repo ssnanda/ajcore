@@ -29,7 +29,7 @@ function initAJFormsBuilder() {
             notifications_enabled: true,
             notification_email: '',
             notification_subject: 'New submission for {form_title}',
-            notification_body: 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}',
+            notification_body: '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}',
             notification_from_name: '',
             notification_from_email: '',
             notification_reply_to: '',
@@ -43,8 +43,10 @@ function initAJFormsBuilder() {
             custom_css: '',
             asana_task_enabled: false,
             asana_task_name: 'New form submission: {form_title}',
-            asana_task_notes: 'A new submission was received for {form_title}.\n\n{submission_fields}',
+            asana_task_notes: 'Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}',
             asana_project_gid: '',
+            asana_assignee_gid: '',
+            asana_due_date: 'today',
             form_theme: 'clean',
             background_mode: 'solid',
             background_color: '#ffffff',
@@ -355,7 +357,7 @@ function initAJFormsBuilder() {
                     notifications_enabled: true,
                     notification_email: '',
                     notification_subject: 'New submission for {form_title}',
-                    notification_body: 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}',
+                    notification_body: '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}',
                     notification_from_name: '',
                     notification_from_email: '',
                     notification_reply_to: '',
@@ -369,8 +371,10 @@ function initAJFormsBuilder() {
                     custom_css: '',
                     asana_task_enabled: false,
                     asana_task_name: 'New form submission: {form_title}',
-                    asana_task_notes: 'A new submission was received for {form_title}.\n\n{submission_fields}',
+                    asana_task_notes: 'Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}',
                     asana_project_gid: '',
+                    asana_assignee_gid: '',
+                    asana_due_date: 'today',
                     stripe_enabled: false,
                     stripe_amount: '',
                     stripe_currency: 'usd',
@@ -401,7 +405,7 @@ function initAJFormsBuilder() {
                         notifications_enabled: true,
                         notification_email: '',
                         notification_subject: 'New submission for {form_title}',
-                        notification_body: 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}',
+                        notification_body: '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}',
                         notification_from_name: '',
                         notification_from_email: '',
                         notification_reply_to: '',
@@ -415,8 +419,10 @@ function initAJFormsBuilder() {
                         custom_css: '',
                         asana_task_enabled: false,
                         asana_task_name: 'New form submission: {form_title}',
-                        asana_task_notes: 'A new submission was received for {form_title}.\n\n{submission_fields}',
+                        asana_task_notes: 'Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}',
                         asana_project_gid: '',
+                        asana_assignee_gid: '',
+                        asana_due_date: 'today',
                         stripe_enabled: false,
                         stripe_amount: '',
                         stripe_currency: 'usd',
@@ -447,7 +453,7 @@ function initAJFormsBuilder() {
                 notifications_enabled: true,
                 notification_email: '',
                 notification_subject: 'New submission for {form_title}',
-                notification_body: 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}',
+                notification_body: '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}',
                 notification_from_name: '',
                 notification_from_email: '',
                 notification_reply_to: '',
@@ -461,8 +467,10 @@ function initAJFormsBuilder() {
                 custom_css: '',
                 asana_task_enabled: false,
                 asana_task_name: 'New form submission: {form_title}',
-                asana_task_notes: 'A new submission was received for {form_title}.\n\n{submission_fields}',
+                asana_task_notes: 'Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}',
                 asana_project_gid: '',
+                asana_assignee_gid: '',
+                asana_due_date: 'today',
                 stripe_enabled: false,
                 stripe_amount: '',
                 stripe_currency: 'usd',
@@ -679,7 +687,7 @@ function initAJFormsBuilder() {
             notificationSubjectInput.value = formSchema.settings.notification_subject || 'New submission for {form_title}';
         }
         if (notificationBodyInput) {
-            notificationBodyInput.value = formSchema.settings.notification_body || 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}';
+            notificationBodyInput.value = formSchema.settings.notification_body || '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}';
         }
         if (notificationFromNameInput) {
             notificationFromNameInput.value = formSchema.settings.notification_from_name || '';
@@ -726,6 +734,8 @@ function initAJFormsBuilder() {
         const asanaTaskNameInput = document.getElementById('wpf-form-asana-task-name');
         const asanaTaskNotesInput = document.getElementById('wpf-form-asana-task-notes');
         const asanaProjectGidInput = document.getElementById('wpf-form-asana-project-gid');
+        const asanaAssigneeGidInput = document.getElementById('wpf-form-asana-assignee-gid');
+        const asanaDueDateInput = document.getElementById('wpf-form-asana-due-date');
         if (formThemeInput) {
             formThemeInput.value = formSchema.settings.form_theme || 'clean';
         }
@@ -766,10 +776,16 @@ function initAJFormsBuilder() {
             asanaTaskNameInput.value = formSchema.settings.asana_task_name || 'New form submission: {form_title}';
         }
         if (asanaTaskNotesInput) {
-            asanaTaskNotesInput.value = formSchema.settings.asana_task_notes || 'A new submission was received for {form_title}.\n\n{submission_fields}';
+            asanaTaskNotesInput.value = formSchema.settings.asana_task_notes || 'Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}';
         }
         if (asanaProjectGidInput) {
             asanaProjectGidInput.value = formSchema.settings.asana_project_gid || '';
+        }
+        if (asanaAssigneeGidInput) {
+            asanaAssigneeGidInput.value = formSchema.settings.asana_assignee_gid || '';
+        }
+        if (asanaDueDateInput) {
+            asanaDueDateInput.value = formSchema.settings.asana_due_date || 'today';
         }
 
         if (formSchema.fields.length) {
@@ -1649,6 +1665,8 @@ function initAJFormsBuilder() {
         const asanaTaskNameInput = document.getElementById('wpf-form-asana-task-name');
         const asanaTaskNotesInput = document.getElementById('wpf-form-asana-task-notes');
         const asanaProjectGidInput = document.getElementById('wpf-form-asana-project-gid');
+        const asanaAssigneeGidInput = document.getElementById('wpf-form-asana-assignee-gid');
+        const asanaDueDateInput = document.getElementById('wpf-form-asana-due-date');
         const stripeEnabledInput = document.getElementById('wpf-form-stripe-enabled');
         const stripeAmountInput = document.getElementById('wpf-form-stripe-amount');
         const stripeCurrencyInput = document.getElementById('wpf-form-stripe-currency');
@@ -1676,7 +1694,7 @@ function initAJFormsBuilder() {
         formSchema.settings.notifications_enabled = notificationsInput ? !!notificationsInput.checked : true;
         formSchema.settings.notification_email = notificationEmailInput ? notificationEmailInput.value.trim() : '';
         formSchema.settings.notification_subject = notificationSubjectInput ? (notificationSubjectInput.value.trim() || 'New submission for {form_title}') : 'New submission for {form_title}';
-        formSchema.settings.notification_body = notificationBodyInput ? (notificationBodyInput.value.trim() || 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}') : 'A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}';
+        formSchema.settings.notification_body = notificationBodyInput ? (notificationBodyInput.value.trim() || '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}') : '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}';
         formSchema.settings.notification_from_name = notificationFromNameInput ? notificationFromNameInput.value.trim() : '';
         formSchema.settings.notification_from_email = notificationFromEmailInput ? notificationFromEmailInput.value.trim() : '';
         formSchema.settings.notification_reply_to = notificationReplyToInput ? notificationReplyToInput.value.trim() : '';
@@ -1689,8 +1707,10 @@ function initAJFormsBuilder() {
         formSchema.settings.custom_css = customCssInput ? customCssInput.value.trim() : '';
         formSchema.settings.asana_task_enabled = asanaTaskEnabledInput ? !!asanaTaskEnabledInput.checked : false;
         formSchema.settings.asana_task_name = asanaTaskNameInput ? (asanaTaskNameInput.value.trim() || 'New form submission: {form_title}') : 'New form submission: {form_title}';
-        formSchema.settings.asana_task_notes = asanaTaskNotesInput ? (asanaTaskNotesInput.value.trim() || 'A new submission was received for {form_title}.\n\n{submission_fields}') : 'A new submission was received for {form_title}.\n\n{submission_fields}';
+        formSchema.settings.asana_task_notes = asanaTaskNotesInput ? (asanaTaskNotesInput.value.trim() || 'Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}') : 'Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}';
         formSchema.settings.asana_project_gid = asanaProjectGidInput ? asanaProjectGidInput.value.trim() : '';
+        formSchema.settings.asana_assignee_gid = asanaAssigneeGidInput ? asanaAssigneeGidInput.value.trim() : '';
+        formSchema.settings.asana_due_date = asanaDueDateInput ? (asanaDueDateInput.value || 'today') : 'today';
         formSchema.settings.stripe_enabled = stripeEnabledInput ? !!stripeEnabledInput.checked : false;
         formSchema.settings.stripe_amount = stripeAmountInput ? (stripeAmountInput.value || '') : '';
         formSchema.settings.stripe_currency = stripeCurrencyInput ? (stripeCurrencyInput.value || 'usd') : 'usd';

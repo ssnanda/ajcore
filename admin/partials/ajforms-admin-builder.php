@@ -9,7 +9,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $back_url = admin_url( 'admin.php?page=ajforms' );
 $form_id  = isset( $_GET['form_id'] ) ? intval( $_GET['form_id'] ) : 0;
-$default_notification_body = "A new submission was received for {form_title}.\n\n{submission_fields}\n\nSubmitted: {submitted_at}";
+$default_notification_body = "<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}";
+$default_asana_notes = "Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}";
+$asana_cache = get_option(
+	'ajforms_asana_reference_cache',
+	array(
+		'workspaces' => array(),
+		'projects'   => array(),
+		'users'      => array(),
+	)
+);
+$asana_cache = is_array( $asana_cache ) ? wp_parse_args( $asana_cache, array( 'users' => array() ) ) : array( 'users' => array() );
 $plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array(
 	'default_notification_email'    => get_option( 'admin_email' ),
 	'default_notification_subject'  => 'New submission for {form_title}',
@@ -46,8 +56,10 @@ $initial_data = array(
 			'custom_css'            => '',
 			'asana_task_enabled'    => false,
 			'asana_task_name'       => 'New form submission: {form_title}',
-			'asana_task_notes'      => "A new submission was received for {form_title}.\n\n{submission_fields}",
+			'asana_task_notes'      => $default_asana_notes,
 			'asana_project_gid'     => $plugin_settings['asana_project_gid'],
+			'asana_assignee_gid'    => '',
+			'asana_due_date'        => 'today',
 			'stripe_enabled'        => false,
 			'stripe_amount'         => '',
 			'stripe_currency'       => 'usd',
@@ -100,8 +112,10 @@ if ( $form_id ) {
 						'custom_css'            => '',
 						'asana_task_enabled'    => false,
 						'asana_task_name'       => 'New form submission: {form_title}',
-						'asana_task_notes'      => "A new submission was received for {form_title}.\n\n{submission_fields}",
+						'asana_task_notes'      => $default_asana_notes,
 						'asana_project_gid'     => $plugin_settings['asana_project_gid'],
+						'asana_assignee_gid'    => '',
+						'asana_due_date'        => 'today',
 						'stripe_enabled'        => false,
 						'stripe_amount'         => '',
 						'stripe_currency'       => 'usd',
@@ -135,8 +149,10 @@ if ( $form_id ) {
 					'custom_css'            => '',
 					'asana_task_enabled'    => false,
 					'asana_task_name'       => 'New form submission: {form_title}',
-					'asana_task_notes'      => "A new submission was received for {form_title}.\n\n{submission_fields}",
+					'asana_task_notes'      => $default_asana_notes,
 					'asana_project_gid'     => $plugin_settings['asana_project_gid'],
+					'asana_assignee_gid'    => '',
+					'asana_due_date'        => 'today',
 					'stripe_enabled'        => false,
 					'stripe_amount'         => '',
 					'stripe_currency'       => 'usd',
@@ -431,8 +447,32 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 							</div>
 							<div class="wpf-setting-row">
 								<label>Asana Task Notes</label>
-								<textarea id="wpf-form-asana-task-notes" rows="5"><?php echo esc_textarea( isset( $initial_data['schema']['settings']['asana_task_notes'] ) ? $initial_data['schema']['settings']['asana_task_notes'] : "A new submission was received for {form_title}.\n\n{submission_fields}" ); ?></textarea>
-								<p class="wpf-setting-help">Use <code>{form_title}</code>, <code>{submission_fields}</code>, numbered tags like <code>{field_1}</code>, or custom field names like <code>{email}</code>.</p>
+								<textarea id="wpf-form-asana-task-notes" rows="8"><?php echo esc_textarea( isset( $initial_data['schema']['settings']['asana_task_notes'] ) ? $initial_data['schema']['settings']['asana_task_notes'] : $default_asana_notes ); ?></textarea>
+								<p class="wpf-setting-help">Use <code>{form_title}</code>, <code>{submission_fields}</code>, <code>{submission_details}</code>, numbered tags like <code>{field_1}</code>, or custom field names like <code>{email}</code>.</p>
+							</div>
+							<div class="wpf-field-settings-grid">
+								<div class="wpf-setting-row">
+									<label>Assignee</label>
+									<select id="wpf-form-asana-assignee-gid">
+										<option value=""><?php esc_html_e( 'No assignee', 'ajforms' ); ?></option>
+										<?php foreach ( $asana_cache['users'] as $user ) : ?>
+											<?php
+											if ( empty( $user['gid'] ) || empty( $user['name'] ) ) {
+												continue;
+											}
+											$user_label = $user['name'] . ( ! empty( $user['email'] ) ? ' (' . $user['email'] . ')' : '' );
+											?>
+											<option value="<?php echo esc_attr( $user['gid'] ); ?>" <?php selected( isset( $initial_data['schema']['settings']['asana_assignee_gid'] ) ? $initial_data['schema']['settings']['asana_assignee_gid'] : '', $user['gid'] ); ?>><?php echo esc_html( $user_label ); ?></option>
+										<?php endforeach; ?>
+									</select>
+								</div>
+								<div class="wpf-setting-row">
+									<label>Due Date</label>
+									<select id="wpf-form-asana-due-date">
+										<option value="today" <?php selected( isset( $initial_data['schema']['settings']['asana_due_date'] ) ? $initial_data['schema']['settings']['asana_due_date'] : 'today', 'today' ); ?>><?php esc_html_e( 'Today', 'ajforms' ); ?></option>
+										<option value="none" <?php selected( isset( $initial_data['schema']['settings']['asana_due_date'] ) ? $initial_data['schema']['settings']['asana_due_date'] : 'today', 'none' ); ?>><?php esc_html_e( 'No due date', 'ajforms' ); ?></option>
+									</select>
+								</div>
 							</div>
 							<div class="wpf-setting-row">
 								<label>Project GID Override</label>
