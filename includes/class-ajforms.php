@@ -1222,12 +1222,12 @@ class AJForms {
 		$options             = $field_data['options'];
 		$posted_value        = $field_data['posted_value'];
 		$accepted_file_types = $field_data['accepted_file_types'];
-		$control_style       = 'width:100%; padding:10px;border-radius:calc(var(--ajforms-radius) - 4px);background:var(--ajforms-input-bg);border:1px solid var(--ajforms-input-border);color:var(--ajforms-text);';
+		$control_style       = 'width:100%;max-width:780px;min-height:54px;padding:14px 16px;border-radius:calc(var(--ajforms-radius) - 6px);background:var(--ajforms-input-bg);border:2px solid var(--ajforms-input-border);color:var(--ajforms-text);font-size:18px;line-height:1.35;box-sizing:border-box;';
 
 		ob_start();
 		if ( 'textarea' === $field_type ) :
 			?>
-			<textarea id="<?php echo esc_attr( $field_id ); ?>" name="<?php echo esc_attr( $field_id ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>" <?php echo $required ? 'required' : ''; ?> style="<?php echo esc_attr( $control_style ); ?>"><?php echo esc_textarea( is_string( $posted_value ) ? $posted_value : '' ); ?></textarea>
+			<textarea id="<?php echo esc_attr( $field_id ); ?>" name="<?php echo esc_attr( $field_id ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>" <?php echo $required ? 'required' : ''; ?> style="<?php echo esc_attr( $control_style ); ?>min-height:110px;"><?php echo esc_textarea( is_string( $posted_value ) ? $posted_value : '' ); ?></textarea>
 			<?php
 		elseif ( 'select' === $field_type ) :
 			?>
@@ -1245,15 +1245,15 @@ class AJForms {
 		elseif ( 'checkboxes' === $field_type ) :
 			$posted_array = is_array( $posted_value ) ? $posted_value : array();
 			?>
-			<div id="<?php echo esc_attr( $field_id ); ?>">
+			<div id="<?php echo esc_attr( $field_id ); ?>" class="ajforms-choice-list ajforms-checkbox-list" style="display:grid;gap:10px;max-width:900px;">
 				<?php foreach ( $options as $option ) : ?>
 					<?php
 					$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
 					$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
 					?>
-					<label style="display:block; margin-bottom:6px;color:var(--ajforms-text);">
-						<input type="checkbox" name="<?php echo esc_attr( $field_id ); ?>[]" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( in_array( $option_value, $posted_array, true ) ); ?>>
-						<?php echo esc_html( $option_label ); ?>
+					<label style="display:flex;align-items:center;gap:12px;color:var(--ajforms-text);font-size:18px;line-height:1.35;font-weight:600;cursor:pointer;">
+						<input type="checkbox" name="<?php echo esc_attr( $field_id ); ?>[]" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( in_array( $option_value, $posted_array, true ) ); ?> style="width:22px;height:22px;flex:0 0 auto;accent-color:var(--ajforms-primary);">
+						<span><?php echo esc_html( $option_label ); ?></span>
 					</label>
 				<?php endforeach; ?>
 			</div>
@@ -1266,9 +1266,9 @@ class AJForms {
 					$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
 					$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
 					?>
-					<label class="<?php echo 'question' === $field_type ? 'ajforms-question-option' : ''; ?>" style="<?php echo 'question' === $field_type ? 'display:flex;align-items:center;gap:16px;padding:24px 26px;border:2px solid var(--ajforms-input-border);border-radius:calc(var(--ajforms-radius) + 6px);background:var(--ajforms-input-bg);color:var(--ajforms-text);font-size:28px;line-height:1.15;font-weight:800;cursor:pointer;' : 'display:block; margin-bottom:6px;color:var(--ajforms-text);'; ?>">
-						<input type="radio" name="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( $posted_value, $option_value ); ?> <?php echo $required ? 'required' : ''; ?>>
-						<?php echo esc_html( $option_label ); ?>
+					<label class="<?php echo 'question' === $field_type ? 'ajforms-question-option' : ''; ?>" style="<?php echo 'question' === $field_type ? 'display:flex;align-items:center;gap:16px;padding:24px 26px;border:2px solid var(--ajforms-input-border);border-radius:calc(var(--ajforms-radius) + 6px);background:var(--ajforms-input-bg);color:var(--ajforms-text);font-size:28px;line-height:1.15;font-weight:800;cursor:pointer;' : 'display:flex;align-items:center;gap:12px;margin-bottom:10px;color:var(--ajforms-text);font-size:18px;font-weight:600;cursor:pointer;'; ?>">
+						<input type="radio" name="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( $posted_value, $option_value ); ?> <?php echo $required ? 'required' : ''; ?> style="<?php echo 'question' === $field_type ? '' : 'width:22px;height:22px;flex:0 0 auto;accent-color:var(--ajforms-primary);'; ?>">
+						<span><?php echo esc_html( $option_label ); ?></span>
 					</label>
 				<?php endforeach; ?>
 			</div>
@@ -1342,10 +1342,16 @@ class AJForms {
 		<?php if ( $challenge_enabled ) : ?>
 			<script src="<?php echo esc_url( $challenge_config['script_url'] ); ?>" async defer></script>
 		<?php endif; ?>
-		<form class="ajforms-frontend-form ajforms-conversational-form ajforms-theme-<?php echo esc_attr( $form_theme ); ?>" method="post" enctype="multipart/form-data" style="<?php echo esc_attr( $wrapper_style ); ?>padding:28px;border-radius:var(--ajforms-radius);background:var(--ajforms-bg);border:1px solid #dfe6ee;box-shadow:0 20px 45px rgba(18,52,77,.08);">
+		<form class="ajforms-frontend-form ajforms-conversational-form ajforms-theme-<?php echo esc_attr( $form_theme ); ?>" method="post" enctype="multipart/form-data" style="<?php echo esc_attr( $wrapper_style ); ?>margin:0 auto;padding:28px;border-radius:var(--ajforms-radius);background:var(--ajforms-bg);border:1px solid #dfe6ee;box-shadow:0 20px 45px rgba(18,52,77,.08);">
 			<style>
+				.ajforms-frontend-form{margin-top:0!important}
+				.ajforms-frontend-form input:focus,.ajforms-frontend-form textarea:focus,.ajforms-frontend-form select:focus{outline:0;border-color:var(--ajforms-primary)!important;box-shadow:0 0 0 4px rgba(15,122,198,.12)}
 				.ajforms-conversational-form .ajforms-question-option input[type="radio"]{width:28px;height:28px;flex:0 0 auto;accent-color:var(--ajforms-primary)}
 				.ajforms-conversational-form .ajforms-question-option:has(input:checked){border-color:var(--ajforms-primary);box-shadow:0 0 0 4px rgba(15,122,198,.14)}
+				.ajforms-conversational-form .ajforms-conversation-contact-step .ajforms-field{margin-bottom:16px!important}
+				.ajforms-conversational-form .ajforms-conversation-contact-step label{font-size:16px!important}
+				.ajforms-conversational-form .ajforms-checkbox-list label:hover{color:var(--ajforms-primary)}
+				.ajforms-conversational-form .ajforms-choice-list input:checked + span{color:var(--ajforms-primary)}
 			</style>
 			<input type="hidden" name="ajf_form_id" value="<?php echo esc_attr( $form->id ); ?>">
 			<?php wp_nonce_field( 'ajf_submit_form_' . absint( $form->id ), 'ajf_form_nonce' ); ?>
@@ -1426,10 +1432,10 @@ class AJForms {
 					</div>
 				<?php endif; ?>
 
-				<div class="ajforms-conversation-actions" style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:24px;">
-					<button type="button" class="ajforms-conversation-prev" style="display:none;background:#fff;color:var(--ajforms-text);border:1px solid var(--ajforms-input-border);border-radius:calc(var(--ajforms-radius) - 4px);padding:11px 16px;font-weight:700;"><?php esc_html_e( 'Back', 'ajforms' ); ?></button>
-					<button type="button" class="ajforms-conversation-next" style="margin-left:auto;background:var(--ajforms-primary);color:#fff;border:0;border-radius:calc(var(--ajforms-radius) - 4px);padding:12px 20px;font-weight:800;"><?php esc_html_e( 'Next', 'ajforms' ); ?></button>
-					<button type="submit" class="ajforms-conversation-submit" style="display:none;margin-left:auto;background:var(--ajforms-primary);color:#fff;border:0;border-radius:calc(var(--ajforms-radius) - 4px);padding:12px 20px;font-weight:800;"><?php echo esc_html( ! empty( $settings['submit_text'] ) ? $settings['submit_text'] : 'Submit' ); ?></button>
+				<div class="ajforms-conversation-actions" style="display:flex;gap:14px;align-items:center;justify-content:space-between;margin-top:26px;">
+					<button type="button" class="ajforms-conversation-prev" style="display:none;background:#fff;color:var(--ajforms-text);border:2px solid var(--ajforms-input-border);border-radius:calc(var(--ajforms-radius) - 4px);padding:14px 22px;font-size:17px;font-weight:800;min-height:54px;cursor:pointer;"><?php esc_html_e( 'Back', 'ajforms' ); ?></button>
+					<button type="button" class="ajforms-conversation-next" style="margin-left:auto;background:var(--ajforms-primary);color:#fff;border:0;border-radius:calc(var(--ajforms-radius) - 4px);padding:15px 24px;font-size:17px;font-weight:800;min-height:54px;cursor:pointer;"><?php esc_html_e( 'Next', 'ajforms' ); ?></button>
+					<button type="submit" class="ajforms-conversation-submit" style="display:none;margin-left:auto;background:var(--ajforms-primary);color:#fff;border:0;border-radius:calc(var(--ajforms-radius) - 4px);padding:15px 24px;font-size:17px;font-weight:800;min-height:54px;cursor:pointer;"><?php echo esc_html( ! empty( $settings['submit_text'] ) ? $settings['submit_text'] : 'Submit' ); ?></button>
 				</div>
 			<?php endif; ?>
 		</form>
