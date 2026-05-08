@@ -29,7 +29,7 @@ function initAJFormsBuilder() {
             notifications_enabled: true,
             notification_email: '',
             notification_subject: 'New submission for {form_title}',
-            notification_body: '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}',
+            notification_body: '{submission_table}{submission_details_table}',
             notification_from_name: '',
             notification_from_email: '',
             notification_reply_to: '',
@@ -357,7 +357,7 @@ function initAJFormsBuilder() {
                     notifications_enabled: true,
                     notification_email: '',
                     notification_subject: 'New submission for {form_title}',
-                    notification_body: '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}',
+                    notification_body: '{submission_table}{submission_details_table}',
                     notification_from_name: '',
                     notification_from_email: '',
                     notification_reply_to: '',
@@ -405,7 +405,7 @@ function initAJFormsBuilder() {
                         notifications_enabled: true,
                         notification_email: '',
                         notification_subject: 'New submission for {form_title}',
-                        notification_body: '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}',
+                        notification_body: '{submission_table}{submission_details_table}',
                         notification_from_name: '',
                         notification_from_email: '',
                         notification_reply_to: '',
@@ -453,7 +453,7 @@ function initAJFormsBuilder() {
                 notifications_enabled: true,
                 notification_email: '',
                 notification_subject: 'New submission for {form_title}',
-                notification_body: '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}',
+                notification_body: '{submission_table}{submission_details_table}',
                 notification_from_name: '',
                 notification_from_email: '',
                 notification_reply_to: '',
@@ -687,7 +687,7 @@ function initAJFormsBuilder() {
             notificationSubjectInput.value = formSchema.settings.notification_subject || 'New submission for {form_title}';
         }
         if (notificationBodyInput) {
-            notificationBodyInput.value = formSchema.settings.notification_body || '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}';
+            notificationBodyInput.value = formSchema.settings.notification_body || '{submission_table}{submission_details_table}';
         }
         if (notificationFromNameInput) {
             notificationFromNameInput.value = formSchema.settings.notification_from_name || '';
@@ -920,6 +920,9 @@ function initAJFormsBuilder() {
         const variables = [
             '{form_title}',
             '{submission_fields}',
+            '{submission_table}',
+            '{submission_details}',
+            '{submission_details_table}',
             '{submitted_at}'
         ];
 
@@ -1694,7 +1697,7 @@ function initAJFormsBuilder() {
         formSchema.settings.notifications_enabled = notificationsInput ? !!notificationsInput.checked : true;
         formSchema.settings.notification_email = notificationEmailInput ? notificationEmailInput.value.trim() : '';
         formSchema.settings.notification_subject = notificationSubjectInput ? (notificationSubjectInput.value.trim() || 'New submission for {form_title}') : 'New submission for {form_title}';
-        formSchema.settings.notification_body = notificationBodyInput ? (notificationBodyInput.value.trim() || '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}') : '<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}';
+        formSchema.settings.notification_body = notificationBodyInput ? (notificationBodyInput.value.trim() || '{submission_table}{submission_details_table}') : '{submission_table}{submission_details_table}';
         formSchema.settings.notification_from_name = notificationFromNameInput ? notificationFromNameInput.value.trim() : '';
         formSchema.settings.notification_from_email = notificationFromEmailInput ? notificationFromEmailInput.value.trim() : '';
         formSchema.settings.notification_reply_to = notificationReplyToInput ? notificationReplyToInput.value.trim() : '';

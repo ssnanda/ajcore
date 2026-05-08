@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $back_url = admin_url( 'admin.php?page=ajforms' );
 $form_id  = isset( $_GET['form_id'] ) ? intval( $_GET['form_id'] ) : 0;
-$default_notification_body = "<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}";
+$default_notification_body = "{submission_table}{submission_details_table}";
 $default_asana_notes = "Form Submission\n\n{submission_fields}\n\nSubmission Details\n\n{submission_details}";
 $asana_cache = get_option(
 	'ajforms_asana_reference_cache',
@@ -397,6 +397,9 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 									<strong>Available variables</strong>
 									<code>{form_title}</code>
 									<code>{submission_fields}</code>
+									<code>{submission_table}</code>
+									<code>{submission_details}</code>
+									<code>{submission_details_table}</code>
 									<code>{submitted_at}</code>
 									<?php foreach ( $initial_data['schema']['fields'] as $index => $field ) : ?>
 										<?php

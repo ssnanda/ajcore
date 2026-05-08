@@ -57,7 +57,7 @@ class AJForms {
 			'notifications_enabled' => isset( $plugin_settings['default_notifications_enabled'] ) ? '1' === (string) $plugin_settings['default_notifications_enabled'] : true,
 			'notification_email'    => isset( $plugin_settings['default_notification_email'] ) ? $plugin_settings['default_notification_email'] : get_option( 'admin_email' ),
 			'notification_subject'  => isset( $plugin_settings['default_notification_subject'] ) ? $plugin_settings['default_notification_subject'] : 'New submission for {form_title}',
-			'notification_body'     => "<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}",
+			'notification_body'     => "{submission_table}{submission_details_table}",
 			'notification_from_name' => isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ),
 			'notification_from_email' => '',
 			'notification_reply_to' => '',
@@ -913,7 +913,7 @@ class AJForms {
 		$subject          = $this->replace_template_tags( $subject_template, $form, $lead_data );
 		$subject          = sanitize_text_field( $subject );
 
-		$body_template = ! empty( $settings['notification_body'] ) ? (string) $settings['notification_body'] : "<p>A new submission was received for <strong>{form_title}</strong>.</p>{submission_table}{submission_details_table}";
+		$body_template = ! empty( $settings['notification_body'] ) ? (string) $settings['notification_body'] : "{submission_table}{submission_details_table}";
 		$body          = $this->replace_template_tags( $body_template, $form, $lead_data );
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
