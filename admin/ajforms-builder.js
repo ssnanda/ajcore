@@ -1191,6 +1191,18 @@ function initAJFormsBuilder() {
                 return;
             }
 
+            ruleEl.addEventListener('toggle', () => {
+                if (!ruleEl.open) {
+                    return;
+                }
+
+                node.querySelectorAll('.wpf-confirmation-rule').forEach((otherRuleEl) => {
+                    if (otherRuleEl !== ruleEl) {
+                        otherRuleEl.open = false;
+                    }
+                });
+            });
+
             ruleEl.querySelectorAll('.wpf-rule-input, .wpf-rule-select').forEach((input) => {
                 input.addEventListener('change', () => {
                     rule[input.dataset.key] = input.dataset.key === 'priority' ? parseInt(input.value || '0', 10) : input.value;
