@@ -1095,7 +1095,7 @@ function initAJFormsBuilder() {
                     <span>Priority ${escapeHtml(rule.priority)}</span>
                 </summary>
                 <div class="wpf-rule-body">
-                <div class="wpf-field-settings-grid">
+                <div class="wpf-rule-meta-grid">
                     <div class="wpf-setting-row">
                         <label>Rule Name</label>
                         <input type="text" class="wpf-rule-input" data-key="name" value="${escapeHtml(rule.name || ('Rule ' + (ruleIndex + 1)))}">
@@ -1105,7 +1105,7 @@ function initAJFormsBuilder() {
                         <input type="number" class="wpf-rule-input" data-key="priority" value="${escapeHtml(rule.priority)}">
                     </div>
                 </div>
-                <div class="wpf-field-settings-grid">
+                <div class="wpf-rule-toggle-grid">
                     <label class="wpf-toggle-card">
                         <strong>Enabled</strong>
                         <input type="checkbox" class="wpf-rule-checkbox" data-key="enabled" ${rule.enabled ? 'checked' : ''}>
@@ -1124,7 +1124,7 @@ function initAJFormsBuilder() {
                 </div>
                 <div class="wpf-setting-row">
                     <label>Conditions</label>
-                    <div class="wpf-options-editor">
+                    <div class="wpf-rule-list">
                         ${rule.conditions.map((condition, conditionIndex) => `
                             <div class="wpf-rule-condition" data-condition-index="${conditionIndex}">
                                 <select class="wpf-rule-condition-field">${getRuleFieldOptions(condition.field)}</select>
@@ -1145,7 +1145,7 @@ function initAJFormsBuilder() {
                 </div>
                 <div class="wpf-setting-row">
                     <label>Actions</label>
-                    <div class="wpf-options-editor">
+                    <div class="wpf-rule-list">
                         ${rule.actions.map((action, actionIndex) => `
                             <div class="wpf-rule-action" data-action-index="${actionIndex}">
                                 <select class="wpf-rule-action-type">

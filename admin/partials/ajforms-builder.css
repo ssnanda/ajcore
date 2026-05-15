@@ -155,8 +155,8 @@
 }
 
 .wpf-sidebar-right {
-	width: 420px;
-	flex: 0 0 420px;
+	width: 560px;
+	flex: 0 0 560px;
 	border-left: 1px solid #e7ebf0;
 	box-shadow: -12px 0 30px rgba(15, 23, 42, 0.04);
 }
@@ -623,10 +623,10 @@ body.wpf-is-resizing-field * {
 }
 
 .wpf-field-settings-card {
-	padding: 14px;
+	padding: 16px;
 	background: #fff;
 	border: 1px solid #e2e8f0;
-	border-radius: 8px;
+	border-radius: 12px;
 	box-shadow: none;
 }
 
@@ -643,6 +643,7 @@ body.wpf-is-resizing-field * {
 	margin-top: 12px;
 	padding: 0;
 	overflow: hidden;
+	border-color: #d9e2ec;
 }
 
 .wpf-confirmation-rule > summary {
@@ -670,10 +671,12 @@ body.wpf-is-resizing-field * {
 	align-items: center;
 	gap: 10px;
 	cursor: pointer;
-	padding: 12px 14px;
+	padding: 14px 16px;
+	background: #fff;
 }
 
 .wpf-rule-summary span:first-of-type {
+	font-size: 15px;
 	font-weight: 800;
 	color: #111827;
 	overflow: hidden;
@@ -683,31 +686,59 @@ body.wpf-is-resizing-field * {
 
 .wpf-rule-summary span:last-of-type {
 	font-size: 12px;
+	font-weight: 700;
 	color: #64748b;
 	white-space: nowrap;
 }
 
 .wpf-rule-body {
-	padding: 2px 14px 14px;
+	padding: 4px 16px 16px;
+	border-top: 1px solid #eef2f6;
+	background: #fbfdff;
+}
+
+.wpf-rule-meta-grid,
+.wpf-rule-toggle-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1.3fr) minmax(110px, .7fr);
+	column-gap: 12px;
+	row-gap: 10px;
+}
+
+.wpf-rule-toggle-grid {
+	margin-bottom: 10px;
 }
 
 .wpf-rule-condition,
 .wpf-rule-action {
 	display: grid;
-	gap: 8px;
+	gap: 10px;
 	align-items: center;
-	margin-bottom: 8px;
+	padding: 10px;
+	margin-bottom: 10px;
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
+	background: #fff;
 }
 
 .wpf-rule-condition {
-	grid-template-columns: minmax(0, 1fr) 118px;
+	grid-template-columns: minmax(0, 1fr) 112px;
 	grid-template-areas:
 		"field operator"
 		"value remove";
 }
 
 .wpf-rule-action {
-	grid-template-columns: minmax(130px, .9fr) minmax(150px, 1.4fr) auto;
+	grid-template-columns: minmax(130px, .8fr) minmax(0, 1.2fr) auto;
+}
+
+.wpf-rule-action-type {
+	max-width: 170px;
+}
+
+.wpf-rule-action-url,
+.wpf-rule-action-message {
+	min-width: 0;
 }
 
 .wpf-rule-condition-field {
@@ -733,6 +764,15 @@ body.wpf-is-resizing-field * {
 	min-height: 34px;
 	padding: 6px 10px;
 	justify-self: start;
+}
+
+.wpf-rule-condition select,
+.wpf-rule-condition input,
+.wpf-rule-action select,
+.wpf-rule-action input,
+.wpf-rule-action textarea {
+	min-height: 38px;
+	font-size: 13px;
 }
 
 .wpf-field-settings-grid {
@@ -1058,7 +1098,8 @@ body.wpf-is-resizing-field * {
 
 @media (max-width: 1240px) {
 	.wpf-sidebar-right {
-		width: 360px;
+		width: 440px;
+		flex: 0 0 440px;
 	}
 
 	.wpf-field-settings-grid {

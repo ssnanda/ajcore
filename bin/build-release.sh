@@ -12,6 +12,9 @@ TAG_PREFIX="v"
 GITHUB_RELEASE="ask"
 GIT_COMMIT="ask"
 GIT_PUSH="ask"
+RELEASE_BRANCH="ask"
+USE_CURRENT_BRANCH="false"
+CREATE_BRANCH="false"
 
 usage() {
   cat <<'USAGE'
@@ -20,10 +23,11 @@ Usage:
 
 Interactive flow:
   1. Choose version bump
-  2. Build releases/<slug>-<version>.zip
-  3. Ask whether to commit to git
-  4. Ask whether to push to GitHub
-  5. Ask whether to create/upload GitHub Release asset
+  2. Choose release branch, default main
+  3. Build releases/<slug>-<version>.zip
+  4. Ask whether to commit to git
+  5. Ask whether to push to GitHub
+  6. Ask whether to create/upload GitHub Release asset
 
 Options are still supported:
   --version X.Y.Z
@@ -32,6 +36,9 @@ Options are still supported:
   --slug NAME
   --root PATH
   --repo OWNER/REPO
+  --branch NAME
+  --new-branch NAME
+  --current-branch
   --github-release
   --no-github-release
   --git-commit
@@ -63,6 +70,20 @@ ask_yes_no() {
     y|Y|yes|YES|Yes) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+ask_text() {
+  local prompt="$1"
+  local default="${2:-}"
+  local answer=""
+
+  if [[ -n "$default" ]]; then
+    read -r -p "$prompt [$default]: " answer
+    echo "${answer:-$default}"
+  else
+    read -r -p "$prompt: " answer
+    echo "$answer"
+  fi
 }
 
 get_version() {
@@ -114,6 +135,101 @@ require_git() {
     echo "Error: $ROOT_DIR is not a git repository" >&2
     exit 1
   }
+}
+
+git_worktree_dirty() {
+  require_git
+  cd "$ROOT_DIR"
+  [[ -n "$(git status --porcelain)" ]]
+}
+
+git_branch_exists() {
+  local branch="$1"
+  git -C "$ROOT_DIR" show-ref --verify --quiet "refs/heads/$branch"
+}
+
+git_remote_branch_exists() {
+  local branch="$1"
+  git -C "$ROOT_DIR" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1
+}
+
+choose_release_branch() {
+  require_git
+
+  if [[ "$USE_CURRENT_BRANCH" == "true" ]]; then
+    git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD
+    return 0
+  fi
+
+  if [[ "$CREATE_BRANCH" == "true" ]]; then
+    echo "$RELEASE_BRANCH"
+    return 0
+  fi
+
+  if [[ -n "$RELEASE_BRANCH" && "$RELEASE_BRANCH" != "ask" ]]; then
+    echo "$RELEASE_BRANCH"
+    return 0
+  fi
+
+  local answer
+  answer="$(ask_text "Release branch. Use main, an existing branch, or type +new-branch" "main")"
+
+  if [[ "$answer" == +* ]]; then
+    CREATE_BRANCH="true"
+    answer="${answer#+}"
+  fi
+
+  [[ -n "$answer" ]] || answer="main"
+  echo "$answer"
+}
+
+prepare_release_branch() {
+  require_git
+  cd "$ROOT_DIR"
+
+  local target_branch="$1"
+  local current_branch
+  current_branch="$(git rev-parse --abbrev-ref HEAD)"
+
+  [[ -n "$target_branch" ]] || { echo "Error: release branch cannot be empty" >&2; exit 1; }
+
+  if [[ "$target_branch" == "$current_branch" ]]; then
+    echo "Git: using current branch $current_branch"
+    return 0
+  fi
+
+  if git_worktree_dirty; then
+    echo "Error: cannot switch from $current_branch to $target_branch with uncommitted changes." >&2
+    echo "Commit/stash your changes first, or run with --current-branch to keep using $current_branch." >&2
+    exit 1
+  fi
+
+  if [[ "$CREATE_BRANCH" == "true" ]]; then
+    if git_branch_exists "$target_branch" || git_remote_branch_exists "$target_branch"; then
+      echo "Error: branch already exists: $target_branch" >&2
+      exit 1
+    fi
+
+    git switch -c "$target_branch"
+    echo "Git: created and switched to branch $target_branch"
+    return 0
+  fi
+
+  if git_branch_exists "$target_branch"; then
+    git switch "$target_branch"
+    echo "Git: switched to branch $target_branch"
+    return 0
+  fi
+
+  if git_remote_branch_exists "$target_branch"; then
+    git switch --track "origin/$target_branch"
+    echo "Git: checked out tracking branch $target_branch"
+    return 0
+  fi
+
+  echo "Error: branch does not exist: $target_branch" >&2
+  echo "Use --new-branch $target_branch to create it." >&2
+  exit 1
 }
 
 require_gh() {
@@ -253,7 +369,7 @@ git_push_release() {
   local current_branch
   current_branch="$(git rev-parse --abbrev-ref HEAD)"
 
-  git push origin "$current_branch"
+  git push -u origin "$current_branch"
   git push origin "$TAG_PREFIX$VERSION"
 }
 
@@ -292,6 +408,9 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --repo) GITHUB_REPO="${2:-}"; shift 2 ;;
+    --branch) RELEASE_BRANCH="${2:-}"; USE_CURRENT_BRANCH="false"; CREATE_BRANCH="false"; shift 2 ;;
+    --new-branch) RELEASE_BRANCH="${2:-}"; USE_CURRENT_BRANCH="false"; CREATE_BRANCH="true"; shift 2 ;;
+    --current-branch) USE_CURRENT_BRANCH="true"; CREATE_BRANCH="false"; shift ;;
     --github-release) GITHUB_RELEASE="true"; shift ;;
     --no-github-release) GITHUB_RELEASE="false"; shift ;;
     --git-commit) GIT_COMMIT="true"; shift ;;
@@ -305,8 +424,13 @@ done
 
 [[ -n "$PLUGIN_SLUG" ]] || { echo "Error: plugin slug cannot be empty" >&2; exit 1; }
 [[ -n "$GITHUB_REPO" ]] || { echo "Error: GitHub repo cannot be empty" >&2; exit 1; }
+[[ -n "$RELEASE_BRANCH" ]] || { echo "Error: release branch cannot be empty" >&2; exit 1; }
 
 require_files
+require_git
+
+RELEASE_BRANCH="$(choose_release_branch)"
+prepare_release_branch "$RELEASE_BRANCH"
 
 CURRENT_VERSION="$(get_version)"
 validate_version "$CURRENT_VERSION"
@@ -390,6 +514,7 @@ fi
 
 echo "Current version: $CURRENT_VERSION"
 echo "New version: $VERSION"
+echo "Release branch: $(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
 echo "Updated: $PLUGIN_FILE"
 echo "Built: $VERSIONED_ZIP"
 echo "Built: $LATEST_ZIP"
