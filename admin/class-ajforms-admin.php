@@ -139,6 +139,32 @@ class AJForms_Admin {
 			return;
 		}
 
+		if (
+			! isset( $_GET['ajf_about_act'] )
+			&& ! isset( $_GET['update-error'] )
+			&& ! isset( $_GET['update-success'] )
+			&& ! isset( $_GET['already-current'] )
+		) {
+			$args   = array( 'page' => 'ajforms-about' );
+			$status = $this->get_update_status( true );
+
+			if ( is_wp_error( $status ) ) {
+				$args['update-error'] = rawurlencode( $status->get_error_message() );
+			} elseif ( ! empty( $status['has_update'] ) ) {
+				$result = $this->install_plugin_update();
+				if ( is_wp_error( $result ) ) {
+					$args['update-error'] = rawurlencode( $result->get_error_message() );
+				} else {
+					$args['update-success'] = '1';
+				}
+			} else {
+				$args['already-current'] = '1';
+			}
+
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( ! isset( $_GET['ajf_about_act'], $_GET['_wpnonce'] ) ) {
 			return;
 		}
@@ -631,6 +657,7 @@ class AJForms_Admin {
 				'button_alignment'      => isset( $normalized['settings']['button_alignment'] ) ? sanitize_key( $normalized['settings']['button_alignment'] ) : 'left',
 				'form_description'      => isset( $normalized['settings']['form_description'] ) ? sanitize_textarea_field( $normalized['settings']['form_description'] ) : '',
 				'success_message'       => isset( $normalized['settings']['success_message'] ) ? sanitize_textarea_field( $normalized['settings']['success_message'] ) : ( isset( $plugin_settings['default_success_message'] ) ? $plugin_settings['default_success_message'] : 'Form submitted successfully.' ),
+				'confirmation_mode'     => isset( $normalized['settings']['confirmation_mode'] ) && in_array( sanitize_key( $normalized['settings']['confirmation_mode'] ), array( 'default', 'conditional' ), true ) ? sanitize_key( $normalized['settings']['confirmation_mode'] ) : ( ! empty( $normalized['settings']['confirmation_rules'] ) ? 'conditional' : 'default' ),
 				'confirmation_type'     => isset( $normalized['settings']['confirmation_type'] ) && in_array( sanitize_key( $normalized['settings']['confirmation_type'] ), array( 'message', 'redirect' ), true ) ? sanitize_key( $normalized['settings']['confirmation_type'] ) : 'message',
 				'redirect_url'          => isset( $normalized['settings']['redirect_url'] ) ? esc_url_raw( $normalized['settings']['redirect_url'] ) : '',
 				'confirmation_rules'    => isset( $normalized['settings']['confirmation_rules'] ) && is_array( $normalized['settings']['confirmation_rules'] ) ? $this->sanitize_rules_for_storage( $normalized['settings']['confirmation_rules'], 'confirmation' ) : array(),
@@ -1292,8 +1319,8 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
-			__( 'About', 'ajforms' ),
-			__( 'About', 'ajforms' ),
+			__( 'Update AJ Forms', 'ajforms' ),
+			__( 'Update AJ Forms', 'ajforms' ),
 			'manage_options',
 			'ajforms-about',
 			array( $this, 'display_about_page' )
@@ -1303,7 +1330,7 @@ class AJForms_Admin {
 
 	public function add_plugin_action_links( $links ) {
 		$custom_links = array(
-			'about'   => '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-about' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'About', 'ajforms' ) . '</a>',
+			'update'   => '<a href="' . esc_url( $this->get_about_update_url( 'update' ) ) . '">' . esc_html__( 'Update AJ Forms', 'ajforms' ) . '</a>',
 		);
 
 		return array_merge( $custom_links, $links );
@@ -1314,7 +1341,8 @@ class AJForms_Admin {
 			return $links;
 		}
 
-		$links[] = '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-about' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'About', 'ajforms' ) . '</a>';
+		$links[] = '<a href="' . esc_url( 'https://itspector.com/' ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'IT Spector LLC', 'ajforms' ) . '</a>';
+		$links[] = '<a href="' . esc_url( $this->get_about_update_url( 'update' ) ) . '">' . esc_html__( 'Update AJ Forms', 'ajforms' ) . '</a>';
 
 		return $links;
 	}
@@ -1978,9 +2006,8 @@ class AJForms_Admin {
 									<div class="ajforms-settings-field">
 										<label for="webhook_url"><?php esc_html_e( 'Default Webhook URL', 'ajforms' ); ?></label>
 										<input name="webhook_url" id="webhook_url" type="url" value="<?php echo esc_attr( $settings['webhook_url'] ); ?>">
-										<div class="ajforms-settings-help"><?php esc_html_e( 'Not active yet, but saved now so we can wire delivery into submissions next.', 'ajforms' ); ?></div>
+										<div class="ajforms-settings-help"><?php esc_html_e( 'Used by conditional confirmation webhook actions when a rule supplies this URL.', 'ajforms' ); ?></div>
 									</div>
-									<div class="ajforms-settings-note"><?php esc_html_e( 'Future-friendly direction: webhook, CRM sync, and automation providers can all live here without changing the main settings structure again.', 'ajforms' ); ?></div>
 								</div>
 							<?php elseif ( 'payments' === $section ) : ?>
 								<div class="ajforms-settings-card">
@@ -2025,31 +2052,27 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		$update_status = null;
-		if (
-			current_user_can( 'update_plugins' )
-			&& ( isset( $_GET['update-available'] ) || isset( $_GET['already-current'] ) )
-		) {
-			$update_status = $this->get_update_status();
-		}
+		$update_status = current_user_can( 'update_plugins' ) ? $this->get_update_status() : null;
 
 		?>
 		<div class="wrap">
 			<style>
-				.ajforms-about-shell{max-width:760px;margin-top:20px;background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:24px}
-				.ajforms-about-shell h1{margin:0 0 8px;font-size:28px;line-height:1.2}
-				.ajforms-about-shell p{font-size:14px;line-height:1.6;color:#50575e}
-				.ajforms-about-status{margin:20px 0 0;padding:16px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
-				.ajforms-about-status strong{display:block;margin-bottom:6px;color:#1d2327}
+				.ajforms-about-shell{max-width:760px;margin-top:20px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:28px;box-shadow:0 12px 30px rgba(15,23,42,.06)}
+				.ajforms-about-shell h1{margin:0 0 8px;font-size:28px;line-height:1.2;color:#111827}
+				.ajforms-about-shell p{font-size:14px;line-height:1.6;color:#4b5563;margin:0}
+				.ajforms-about-status{margin:22px 0 0;padding:18px;border:1px solid #dbeafe;border-radius:12px;background:#eff6ff;color:#1e3a8a}
+				.ajforms-about-status.is-ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
+				.ajforms-about-status.is-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+				.ajforms-about-status strong{display:block;margin-bottom:6px;color:inherit;font-size:15px}
 				.ajforms-about-actions{margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-				.ajforms-about-meta{margin-top:18px;width:100%;border-collapse:collapse}
-				.ajforms-about-meta th,.ajforms-about-meta td{padding:10px 0;border-bottom:1px solid #f0f0f1;text-align:left}
-				.ajforms-about-meta th{width:160px;color:#646970;font-weight:600}
+				.ajforms-about-meta{margin-top:22px;width:100%;border-collapse:collapse}
+				.ajforms-about-meta th,.ajforms-about-meta td{padding:11px 0;border-bottom:1px solid #f3f4f6;text-align:left}
+				.ajforms-about-meta th{width:160px;color:#6b7280;font-weight:600}
 			</style>
 
 			<div class="ajforms-about-shell">
-				<h1><?php esc_html_e( 'AJ Forms', 'ajforms' ); ?></h1>
-				<p><?php esc_html_e( 'A WordPress form builder for conversational flows, contact capture, entries, notifications, and practical workflow integrations.', 'ajforms' ); ?></p>
+				<h1><?php esc_html_e( 'Update AJ Forms', 'ajforms' ); ?></h1>
+				<p><?php esc_html_e( 'Install the latest AJ Forms release when one is available.', 'ajforms' ); ?></p>
 
 				<table class="ajforms-about-meta">
 					<tbody>
@@ -2059,25 +2082,26 @@ class AJForms_Admin {
 						</tr>
 						<tr>
 							<th><?php esc_html_e( 'Developer', 'ajforms' ); ?></th>
-							<td>itSpector</td>
+							<td><a href="https://itspector.com/" target="_blank" rel="noopener noreferrer">IT Spector LLC</a></td>
 						</tr>
 					</tbody>
 				</table>
 
 				<?php if ( current_user_can( 'update_plugins' ) ) : ?>
-					<div class="ajforms-about-actions">
-						<a class="button button-secondary" href="<?php echo esc_url( $this->get_about_update_url( 'check' ) ); ?>"><?php esc_html_e( 'Check for Updates', 'ajforms' ); ?></a>
-					</div>
-
 					<?php if ( isset( $_GET['update-error'] ) ) : ?>
-						<div class="ajforms-about-status">
-							<strong><?php esc_html_e( 'Update check failed.', 'ajforms' ); ?></strong>
+						<div class="ajforms-about-status is-error">
+							<strong><?php esc_html_e( 'Update failed.', 'ajforms' ); ?></strong>
 							<?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['update-error'] ) ) ); ?>
 						</div>
 					<?php elseif ( isset( $_GET['update-success'] ) ) : ?>
-						<div class="ajforms-about-status">
+						<div class="ajforms-about-status is-ok">
 							<strong><?php esc_html_e( 'AJ Forms was updated.', 'ajforms' ); ?></strong>
 							<?php esc_html_e( 'The plugin update completed successfully.', 'ajforms' ); ?>
+						</div>
+					<?php elseif ( is_wp_error( $update_status ) ) : ?>
+						<div class="ajforms-about-status is-error">
+							<strong><?php esc_html_e( 'Unable to check updates.', 'ajforms' ); ?></strong>
+							<?php echo esc_html( $update_status->get_error_message() ); ?>
 						</div>
 					<?php elseif ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
 						<div class="ajforms-about-status">
@@ -2094,7 +2118,7 @@ class AJForms_Admin {
 							</div>
 						</div>
 					<?php elseif ( is_array( $update_status ) ) : ?>
-						<div class="ajforms-about-status">
+						<div class="ajforms-about-status is-ok">
 							<strong><?php esc_html_e( 'AJ Forms is up to date.', 'ajforms' ); ?></strong>
 							<?php
 							printf(

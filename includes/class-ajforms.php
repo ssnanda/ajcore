@@ -64,6 +64,7 @@ class AJForms {
 			'button_alignment'      => 'left',
 			'form_description'      => '',
 			'success_message'       => isset( $plugin_settings['default_success_message'] ) ? $plugin_settings['default_success_message'] : 'Form submitted successfully.',
+			'confirmation_mode'     => 'default',
 			'confirmation_type'     => 'message',
 			'redirect_url'          => '',
 			'confirmation_rules'    => array(),
@@ -415,12 +416,15 @@ class AJForms {
 
 	private function normalize_schema( $schema ) {
 		if ( isset( $schema['fields'] ) && is_array( $schema['fields'] ) ) {
+			$raw_settings = isset( $schema['settings'] ) && is_array( $schema['settings'] ) ? $schema['settings'] : array();
+			$settings     = wp_parse_args( $raw_settings, $this->get_default_form_settings() );
+			if ( ! isset( $raw_settings['confirmation_mode'] ) && ! empty( $raw_settings['confirmation_rules'] ) ) {
+				$settings['confirmation_mode'] = 'conditional';
+			}
+
 			return array(
 				'fields'   => $schema['fields'],
-				'settings' => wp_parse_args(
-					isset( $schema['settings'] ) && is_array( $schema['settings'] ) ? $schema['settings'] : array(),
-					$this->get_default_form_settings()
-				),
+				'settings' => $settings,
 			);
 		}
 
@@ -1078,6 +1082,10 @@ class AJForms {
 	}
 
 	private function evaluate_confirmation_rules( $form, $lead_data, $settings ) {
+		if ( isset( $settings['confirmation_mode'] ) && 'conditional' !== $settings['confirmation_mode'] ) {
+			return $this->get_default_confirmation_result( $settings );
+		}
+
 		$result = array(
 			'message'      => ! empty( $settings['success_message'] ) ? $settings['success_message'] : 'Form submitted successfully.',
 			'redirect_url' => '',
@@ -1108,8 +1116,10 @@ class AJForms {
 				} elseif ( 'redirect' === $action['type'] ) {
 					$result['redirect_url'] = ! empty( $action['url'] ) ? esc_url_raw( $this->replace_template_tags( (string) $action['url'], $form, $lead_data ) ) : $result['redirect_url'];
 					$result['message']      = __( 'Redirecting...', 'ajforms' );
-				} elseif ( 'webhook' === $action['type'] && ! empty( $action['url'] ) ) {
-					$this->trigger_rule_webhook( $this->replace_template_tags( (string) $action['url'], $form, $lead_data ), $form, $lead_data );
+				} elseif ( 'webhook' === $action['type'] ) {
+					$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+					$webhook_url     = ! empty( $action['url'] ) ? (string) $action['url'] : ( isset( $plugin_settings['webhook_url'] ) ? (string) $plugin_settings['webhook_url'] : '' );
+					$this->trigger_rule_webhook( $this->replace_template_tags( $webhook_url, $form, $lead_data ), $form, $lead_data );
 				}
 			}
 

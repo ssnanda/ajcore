@@ -36,6 +36,7 @@ function initAJFormsBuilder() {
             button_alignment: 'left',
             form_description: '',
             success_message: 'Form submitted successfully.',
+            confirmation_mode: 'default',
             confirmation_type: 'message',
             redirect_url: '',
             confirmation_rules: [],
@@ -459,6 +460,7 @@ function initAJFormsBuilder() {
                     button_alignment: 'left',
                     form_description: '',
                     success_message: 'Form submitted successfully.',
+                    confirmation_mode: 'default',
                     confirmation_type: 'message',
                     redirect_url: '',
                     confirmation_rules: [],
@@ -508,6 +510,7 @@ function initAJFormsBuilder() {
                         button_alignment: 'left',
                         form_description: '',
                         success_message: 'Form submitted successfully.',
+                        confirmation_mode: 'default',
                         confirmation_type: 'message',
                         redirect_url: '',
                         confirmation_rules: [],
@@ -557,6 +560,7 @@ function initAJFormsBuilder() {
                 button_alignment: 'left',
                 form_description: '',
                 success_message: 'Form submitted successfully.',
+                confirmation_mode: 'default',
                 confirmation_type: 'message',
                 redirect_url: '',
                 confirmation_rules: [],
@@ -773,6 +777,7 @@ function initAJFormsBuilder() {
         const descriptionInput = document.getElementById('wpf-form-description');
         const successMessageInput = document.getElementById('wpf-form-success-message');
         const buttonAlignmentInput = document.getElementById('wpf-form-button-alignment');
+        const confirmationModeInput = document.getElementById('wpf-form-confirmation-mode');
         const confirmationTypeInput = document.getElementById('wpf-form-confirmation-type');
         const redirectUrlInput = document.getElementById('wpf-form-redirect-url');
         const useLabelsAsPlaceholdersInput = document.getElementById('wpf-form-use-label-placeholders');
@@ -806,6 +811,9 @@ function initAJFormsBuilder() {
         }
         if (buttonAlignmentInput) {
             buttonAlignmentInput.value = formSchema.settings.button_alignment || 'left';
+        }
+        if (confirmationModeInput) {
+            confirmationModeInput.value = formSchema.settings.confirmation_mode || 'default';
         }
         if (confirmationTypeInput) {
             confirmationTypeInput.value = formSchema.settings.confirmation_type || 'message';
@@ -1076,12 +1084,17 @@ function initAJFormsBuilder() {
         formSchema.settings.confirmation_rules = rules;
 
         if (!rules.length) {
-            node.innerHTML = '<p class="wpf-setting-help">No conditional rules yet.</p>';
+            node.innerHTML = '<p class="wpf-setting-help">No rules yet.</p>';
             return;
         }
 
         node.innerHTML = rules.map((rule, ruleIndex) => `
-            <div class="wpf-field-settings-card wpf-confirmation-rule" data-rule-index="${ruleIndex}">
+            <details class="wpf-field-settings-card wpf-confirmation-rule" data-rule-index="${ruleIndex}" ${ruleIndex === 0 ? 'open' : ''}>
+                <summary style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;">
+                    <span style="font-weight:800;color:#111827;">${escapeHtml(rule.name || ('Rule ' + (ruleIndex + 1)))}</span>
+                    <span style="font-size:12px;color:#64748b;">Priority ${escapeHtml(rule.priority)}</span>
+                </summary>
+                <div style="margin-top:16px;">
                 <div class="wpf-field-settings-grid">
                     <div class="wpf-setting-row">
                         <label>Rule Name</label>
@@ -1151,10 +1164,18 @@ function initAJFormsBuilder() {
                     <button type="button" class="wpf-btn wpf-btn-secondary wpf-rule-add-action">Add Action</button>
                 </div>
                 <button type="button" class="wpf-option-delete wpf-rule-remove-rule">Delete Rule</button>
-            </div>
+                </div>
+            </details>
         `).join('');
 
         bindConfirmationRules();
+    }
+
+    function updateConfirmationModePanels() {
+        const mode = document.getElementById('wpf-form-confirmation-mode')?.value || 'default';
+        document.querySelectorAll('[data-confirmation-mode-panel]').forEach((panel) => {
+            panel.style.display = panel.dataset.confirmationModePanel === mode ? '' : 'none';
+        });
     }
 
     function bindConfirmationRules() {
@@ -1959,6 +1980,14 @@ function initAJFormsBuilder() {
         });
     });
 
+    const confirmationModeInput = document.getElementById('wpf-form-confirmation-mode');
+    if (confirmationModeInput) {
+        confirmationModeInput.addEventListener('change', () => {
+            formSchema.settings.confirmation_mode = confirmationModeInput.value || 'default';
+            updateConfirmationModePanels();
+        });
+    }
+
     const addConfirmationRuleBtn = document.getElementById('wpf-add-confirmation-rule');
     if (addConfirmationRuleBtn) {
         addConfirmationRuleBtn.addEventListener('click', () => {
@@ -1970,6 +1999,7 @@ function initAJFormsBuilder() {
 
     activateFormSettingsSection('basics');
     renderConfirmationRules();
+    updateConfirmationModePanels();
 
     if (undoBtn) {
         undoBtn.addEventListener('click', (e) => {
@@ -2037,6 +2067,7 @@ function initAJFormsBuilder() {
         const descriptionInput = document.getElementById('wpf-form-description');
         const successMessageInput = document.getElementById('wpf-form-success-message');
         const buttonAlignmentInput = document.getElementById('wpf-form-button-alignment');
+        const confirmationModeInput = document.getElementById('wpf-form-confirmation-mode');
         const confirmationTypeInput = document.getElementById('wpf-form-confirmation-type');
         const redirectUrlInput = document.getElementById('wpf-form-redirect-url');
         const useLabelsAsPlaceholdersInput = document.getElementById('wpf-form-use-label-placeholders');
@@ -2081,6 +2112,7 @@ function initAJFormsBuilder() {
         formSchema.settings.form_description = descriptionInput ? descriptionInput.value.trim() : '';
         formSchema.settings.success_message = successMessageInput ? (successMessageInput.value.trim() || 'Form submitted successfully.') : 'Form submitted successfully.';
         formSchema.settings.button_alignment = buttonAlignmentInput ? (buttonAlignmentInput.value || 'left') : 'left';
+        formSchema.settings.confirmation_mode = confirmationModeInput ? (confirmationModeInput.value || 'default') : 'default';
         formSchema.settings.confirmation_type = confirmationTypeInput ? (confirmationTypeInput.value || 'message') : 'message';
         formSchema.settings.redirect_url = redirectUrlInput ? redirectUrlInput.value.trim() : '';
         formSchema.settings.confirmation_rules = collectConfirmationRulesFromDom();

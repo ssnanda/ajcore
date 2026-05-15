@@ -50,6 +50,7 @@ $initial_data = array(
 			'button_alignment'      => 'left',
 			'form_description'      => '',
 			'success_message'       => 'Form submitted successfully.',
+			'confirmation_mode'     => 'default',
 			'confirmation_type'     => 'message',
 			'redirect_url'          => '',
 			'confirmation_rules'    => array(),
@@ -107,6 +108,7 @@ if ( $form_id ) {
 						'button_alignment'      => 'left',
 						'form_description'      => '',
 						'success_message'       => 'Form submitted successfully.',
+						'confirmation_mode'     => 'default',
 						'confirmation_type'     => 'message',
 						'redirect_url'          => '',
 						'confirmation_rules'    => array(),
@@ -145,6 +147,7 @@ if ( $form_id ) {
 					'button_alignment'      => 'left',
 					'form_description'      => '',
 					'success_message'       => 'Form submitted successfully.',
+					'confirmation_mode'     => 'default',
 					'confirmation_type'     => 'message',
 					'redirect_url'          => '',
 					'confirmation_rules'    => array(),
@@ -190,6 +193,7 @@ if ( $form_id ) {
 					'button_alignment'      => 'left',
 					'form_description'      => '',
 					'success_message'       => 'Form submitted successfully.',
+					'confirmation_mode'     => 'default',
 					'confirmation_type'     => 'message',
 					'redirect_url'          => '',
 					'use_label_placeholders' => false,
@@ -199,6 +203,15 @@ if ( $form_id ) {
 			);
 		} else {
 			$normalized_schema = $initial_data['schema'];
+		}
+
+		if (
+			isset( $normalized_schema['settings'] )
+			&& is_array( $normalized_schema['settings'] )
+			&& empty( $decoded_schema['settings']['confirmation_mode'] )
+			&& ! empty( $normalized_schema['settings']['confirmation_rules'] )
+		) {
+			$normalized_schema['settings']['confirmation_mode'] = 'conditional';
 		}
 
 		$initial_data['form_id'] = $form_id;
@@ -420,9 +433,16 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 
 						<div class="wpf-inspector-section" data-settings-section="confirmation">
 							<div class="wpf-inspector-section-title">Form Confirmation</div>
-							<p class="wpf-setting-help">Default confirmation runs when no conditional rule matches.</p>
 							<div class="wpf-setting-row">
-								<label>Default Confirmation Type</label>
+								<label>Confirmation Mode</label>
+								<select id="wpf-form-confirmation-mode">
+									<option value="default" <?php selected( isset( $initial_data['schema']['settings']['confirmation_mode'] ) ? $initial_data['schema']['settings']['confirmation_mode'] : 'default', 'default' ); ?>>Default confirmation</option>
+									<option value="conditional" <?php selected( isset( $initial_data['schema']['settings']['confirmation_mode'] ) ? $initial_data['schema']['settings']['confirmation_mode'] : 'default', 'conditional' ); ?>>Conditional rules</option>
+								</select>
+							</div>
+							<div class="wpf-confirmation-mode-panel" data-confirmation-mode-panel="default">
+							<div class="wpf-setting-row">
+								<label>Type</label>
 								<select id="wpf-form-confirmation-type">
 									<option value="message" <?php selected( isset( $initial_data['schema']['settings']['confirmation_type'] ) ? $initial_data['schema']['settings']['confirmation_type'] : 'message', 'message' ); ?>>Show Success Message</option>
 									<option value="redirect" <?php selected( isset( $initial_data['schema']['settings']['confirmation_type'] ) ? $initial_data['schema']['settings']['confirmation_type'] : 'message', 'redirect' ); ?>>Redirect to URL</option>
@@ -436,11 +456,13 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 								<label>Redirect URL</label>
 								<input type="text" id="wpf-form-redirect-url" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['redirect_url'] ) ? $initial_data['schema']['settings']['redirect_url'] : '' ); ?>">
 							</div>
-							<div class="wpf-field-settings-card" style="margin-top:18px;">
-								<div class="wpf-field-settings-card-title">Conditional Confirmation Rules</div>
-								<p class="wpf-setting-help">Rules run after a successful submission. Matching rules can show a message, redirect, trigger a webhook, or continue to the next rule.</p>
+							</div>
+							<div class="wpf-confirmation-mode-panel" data-confirmation-mode-panel="conditional">
+							<div class="wpf-field-settings-card" style="margin-top:12px;">
+								<div class="wpf-field-settings-card-title">Rules</div>
 								<div id="wpf-confirmation-rules"></div>
 								<button type="button" class="wpf-btn wpf-btn-secondary" id="wpf-add-confirmation-rule" style="margin-top:12px;">Add Rule</button>
+							</div>
 							</div>
 						</div>
 
