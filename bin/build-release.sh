@@ -15,6 +15,7 @@ GIT_PUSH="ask"
 RELEASE_BRANCH="ask"
 USE_CURRENT_BRANCH="false"
 CREATE_BRANCH="false"
+MAIN_RELEASE_BRANCH="main"
 
 usage() {
   cat <<'USAGE'
@@ -39,6 +40,7 @@ Options are still supported:
   --branch NAME
   --new-branch NAME
   --current-branch
+  --main-branch NAME
   --github-release
   --no-github-release
   --git-commit
@@ -350,9 +352,10 @@ git_commit_release_files() {
 }
 
 git_create_tag() {
-  require_git
-  cd "$ROOT_DIR"
-  local tag="$TAG_PREFIX$VERSION"
+ require_git
+ cd "$ROOT_DIR"
+  local tag
+  tag="$(get_release_tag)"
 
   if git rev-parse "$tag" >/dev/null 2>&1; then
     echo "Git: tag already exists: $tag"
@@ -370,23 +373,57 @@ git_push_release() {
   current_branch="$(git rev-parse --abbrev-ref HEAD)"
 
   git push -u origin "$current_branch"
-  git push origin "$TAG_PREFIX$VERSION"
+  git push origin "$(get_release_tag)"
+}
+
+sanitize_branch_for_tag() {
+  local branch="$1"
+  echo "$branch" | tr '/[:space:]' '--' | tr -cd '[:alnum:]._-'
+}
+
+is_main_release_branch() {
+  local current_branch
+  current_branch="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
+  [[ "$current_branch" == "$MAIN_RELEASE_BRANCH" ]]
+}
+
+get_release_tag() {
+  local current_branch suffix
+  current_branch="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
+
+  if [[ "$current_branch" == "$MAIN_RELEASE_BRANCH" ]]; then
+    echo "$TAG_PREFIX$VERSION"
+    return 0
+  fi
+
+  suffix="$(sanitize_branch_for_tag "$current_branch")"
+  echo "$TAG_PREFIX$VERSION-dev-$suffix"
 }
 
 publish_github_release() {
   require_gh
 
-  local tag="$TAG_PREFIX$VERSION"
-  local title="AJ Forms $VERSION"
+  local tag title notes
+  tag="$(get_release_tag)"
+
+  if is_main_release_branch; then
+    title="AJ Forms $VERSION"
+    notes="AJ Forms WordPress plugin release $VERSION"
+  else
+    title="AJ Forms $VERSION Developer Build ($(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD))"
+    notes="Developer update build from branch $(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD). Enable developer updates in AJ Forms to install this prerelease."
+  fi
 
   if gh release view "$tag" --repo "$GITHUB_REPO" >/dev/null 2>&1; then
     gh release upload "$tag" "$VERSIONED_ZIP" --repo "$GITHUB_REPO" --clobber
     echo "GitHub: uploaded asset to existing release $tag"
   else
-    gh release create "$tag" "$VERSIONED_ZIP" \
-      --repo "$GITHUB_REPO" \
-      --title "$title" \
-      --notes "AJ Forms WordPress plugin release $VERSION"
+    local release_args=(release create "$tag" "$VERSIONED_ZIP" --repo "$GITHUB_REPO" --title "$title" --notes "$notes")
+    if ! is_main_release_branch; then
+      release_args+=(--prerelease)
+    fi
+
+    gh "${release_args[@]}"
     echo "GitHub: created release $tag and uploaded asset"
   fi
 }
@@ -411,6 +448,7 @@ while [[ $# -gt 0 ]]; do
     --branch) RELEASE_BRANCH="${2:-}"; USE_CURRENT_BRANCH="false"; CREATE_BRANCH="false"; shift 2 ;;
     --new-branch) RELEASE_BRANCH="${2:-}"; USE_CURRENT_BRANCH="false"; CREATE_BRANCH="true"; shift 2 ;;
     --current-branch) USE_CURRENT_BRANCH="true"; CREATE_BRANCH="false"; shift ;;
+    --main-branch) MAIN_RELEASE_BRANCH="${2:-}"; shift 2 ;;
     --github-release) GITHUB_RELEASE="true"; shift ;;
     --no-github-release) GITHUB_RELEASE="false"; shift ;;
     --git-commit) GIT_COMMIT="true"; shift ;;
@@ -515,6 +553,8 @@ fi
 echo "Current version: $CURRENT_VERSION"
 echo "New version: $VERSION"
 echo "Release branch: $(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
+echo "Release channel: $(is_main_release_branch && echo "normal" || echo "developer")"
+echo "Release tag: $(get_release_tag)"
 echo "Updated: $PLUGIN_FILE"
 echo "Built: $VERSIONED_ZIP"
 echo "Built: $LATEST_ZIP"

@@ -6,8 +6,73 @@ class AJForms_Admin {
 		return 'https://api.github.com/repos/ssnanda/ajforms/releases/latest';
 	}
 
+	private function get_releases_api_url() {
+		return 'https://api.github.com/repos/ssnanda/ajforms/releases';
+	}
+
 	private function get_update_cache_key() {
-		return 'ajforms_latest_release_info';
+		return $this->developer_updates_enabled() ? 'ajforms_latest_developer_release_info' : 'ajforms_latest_release_info';
+	}
+
+	private function developer_updates_enabled() {
+		return '1' === (string) get_option( 'ajforms_developer_updates_enabled', '0' );
+	}
+
+	private function set_developer_updates_enabled( $enabled ) {
+		update_option( 'ajforms_developer_updates_enabled', $enabled ? '1' : '0' );
+		delete_transient( 'ajforms_latest_release_info' );
+		delete_transient( 'ajforms_latest_developer_release_info' );
+	}
+
+	private function extract_release_version( $release ) {
+		$candidates = array();
+		if ( isset( $release['tag_name'] ) ) {
+			$candidates[] = (string) $release['tag_name'];
+		}
+		if ( isset( $release['name'] ) ) {
+			$candidates[] = (string) $release['name'];
+		}
+
+		foreach ( $candidates as $candidate ) {
+			if ( preg_match( '/([0-9]+\.[0-9]+\.[0-9]+)/', $candidate, $matches ) ) {
+				return $matches[1];
+			}
+		}
+
+		return '';
+	}
+
+	private function normalize_release_info( $release ) {
+		$tag_name = isset( $release['tag_name'] ) ? sanitize_text_field( (string) $release['tag_name'] ) : '';
+		$version  = $this->extract_release_version( $release );
+
+		if ( '' === $version ) {
+			return new WP_Error( 'ajforms_update_invalid', __( 'The latest release did not include a valid version tag.', 'ajforms' ) );
+		}
+
+		$download_url = '';
+		if ( ! empty( $release['assets'] ) && is_array( $release['assets'] ) ) {
+			foreach ( $release['assets'] as $asset ) {
+				$asset_name = isset( $asset['name'] ) ? (string) $asset['name'] : '';
+				if ( preg_match( '/^ajforms.*\.zip$/i', $asset_name ) && ! empty( $asset['browser_download_url'] ) ) {
+					$download_url = esc_url_raw( (string) $asset['browser_download_url'] );
+					break;
+				}
+			}
+		}
+
+		if ( '' === $download_url ) {
+			$download_url = 'https://github.com/ssnanda/ajforms/releases/download/' . rawurlencode( $tag_name ) . '/ajforms-' . rawurlencode( $version ) . '.zip';
+		}
+
+		return array(
+			'version'      => $version,
+			'tag_name'     => $tag_name,
+			'name'         => isset( $release['name'] ) ? sanitize_text_field( (string) $release['name'] ) : $tag_name,
+			'download_url' => $download_url,
+			'prerelease'   => ! empty( $release['prerelease'] ),
+			'checked_at'   => current_time( 'mysql' ),
+		);
 	}
 
 	private function fetch_latest_release_info( $force_refresh = false ) {
@@ -21,7 +86,7 @@ class AJForms_Admin {
 		}
 
 		$response = wp_remote_get(
-			$this->get_latest_release_api_url(),
+			$this->developer_updates_enabled() ? $this->get_releases_api_url() : $this->get_latest_release_api_url(),
 			array(
 				'timeout' => 15,
 				'headers' => array(
@@ -42,35 +107,35 @@ class AJForms_Admin {
 			return new WP_Error( 'ajforms_update_lookup_failed', __( 'Unable to reach the latest AJ Forms release right now.', 'ajforms' ) );
 		}
 
-		$tag_name = isset( $body['tag_name'] ) ? sanitize_text_field( (string) $body['tag_name'] ) : '';
-		$version  = ltrim( $tag_name, 'vV' );
-
-		if ( '' === $version ) {
-			return new WP_Error( 'ajforms_update_invalid', __( 'The latest release did not include a valid version tag.', 'ajforms' ) );
-		}
-
-		$download_url = '';
-		if ( ! empty( $body['assets'] ) && is_array( $body['assets'] ) ) {
-			foreach ( $body['assets'] as $asset ) {
-				$asset_name = isset( $asset['name'] ) ? (string) $asset['name'] : '';
-				if ( preg_match( '/^ajforms.*\.zip$/i', $asset_name ) && ! empty( $asset['browser_download_url'] ) ) {
-					$download_url = esc_url_raw( (string) $asset['browser_download_url'] );
-					break;
+		if ( $this->developer_updates_enabled() ) {
+			$best_release = null;
+			$best_version = '';
+			foreach ( $body as $release ) {
+				if ( ! is_array( $release ) || ! empty( $release['draft'] ) ) {
+					continue;
+				}
+				$release_version = $this->extract_release_version( $release );
+				if ( '' === $release_version ) {
+					continue;
+				}
+				if ( null === $best_release || version_compare( $release_version, $best_version, '>' ) ) {
+					$best_release = $release;
+					$best_version = $release_version;
 				}
 			}
+
+			if ( null === $best_release ) {
+				return new WP_Error( 'ajforms_update_invalid', __( 'No usable AJ Forms releases were found.', 'ajforms' ) );
+			}
+
+			$release_info = $this->normalize_release_info( $best_release );
+		} else {
+			$release_info = $this->normalize_release_info( $body );
 		}
 
-		if ( '' === $download_url ) {
-			$download_url = 'https://github.com/ssnanda/ajforms/releases/download/' . rawurlencode( $tag_name ) . '/ajforms-' . rawurlencode( $version ) . '.zip';
+		if ( is_wp_error( $release_info ) ) {
+			return $release_info;
 		}
-
-		$release_info = array(
-			'version'      => $version,
-			'tag_name'     => $tag_name,
-			'name'         => isset( $body['name'] ) ? sanitize_text_field( (string) $body['name'] ) : $tag_name,
-			'download_url' => $download_url,
-			'checked_at'   => current_time( 'mysql' ),
-		);
 
 		set_transient( $cache_key, $release_info, 6 * HOUR_IN_SECONDS );
 
@@ -91,6 +156,7 @@ class AJForms_Admin {
 			'current_version' => $current_version,
 			'latest_version'  => $latest_version,
 			'has_update'      => version_compare( $latest_version, $current_version, '>' ),
+			'developer'       => ! empty( $latest_release['prerelease'] ),
 			'release'         => $latest_release,
 		);
 	}
@@ -139,11 +205,28 @@ class AJForms_Admin {
 			return;
 		}
 
+		if ( isset( $_GET['ajf_dev_updates'], $_GET['_wpnonce'] ) ) {
+			check_admin_referer( 'ajf_toggle_developer_updates' );
+			$this->set_developer_updates_enabled( '1' === (string) sanitize_text_field( wp_unslash( $_GET['ajf_dev_updates'] ) ) );
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'                => 'ajforms-about',
+						'developer-updates'   => 'saved',
+						'already-current'     => '1',
+					),
+					admin_url( 'admin.php' )
+				)
+			);
+			exit;
+		}
+
 		if (
 			! isset( $_GET['ajf_about_act'] )
 			&& ! isset( $_GET['update-error'] )
 			&& ! isset( $_GET['update-success'] )
 			&& ! isset( $_GET['already-current'] )
+			&& ! isset( $_GET['developer-updates'] )
 		) {
 			$args   = array( 'page' => 'ajforms-about' );
 			$status = $this->get_update_status( true );
@@ -2052,7 +2135,18 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		$update_status = current_user_can( 'update_plugins' ) ? $this->get_update_status() : null;
+		$developer_updates_enabled = $this->developer_updates_enabled();
+		$developer_toggle_url      = wp_nonce_url(
+			add_query_arg(
+				array(
+					'page'            => 'ajforms-about',
+					'ajf_dev_updates' => $developer_updates_enabled ? '0' : '1',
+				),
+				admin_url( 'admin.php' )
+			),
+			'ajf_toggle_developer_updates'
+		);
+		$update_status             = current_user_can( 'update_plugins' ) ? $this->get_update_status() : null;
 
 		?>
 		<div class="wrap">
@@ -2065,6 +2159,9 @@ class AJForms_Admin {
 				.ajforms-about-status.is-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
 				.ajforms-about-status strong{display:block;margin-bottom:6px;color:inherit;font-size:15px}
 				.ajforms-about-actions{margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+				.ajforms-about-toggle{margin-top:22px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb}
+				.ajforms-about-toggle label{display:flex;align-items:flex-start;gap:10px;font-weight:700;color:#111827}
+				.ajforms-about-toggle span{display:block;margin-top:3px;color:#6b7280;font-weight:400;font-size:13px;line-height:1.4}
 				.ajforms-about-meta{margin-top:22px;width:100%;border-collapse:collapse}
 				.ajforms-about-meta th,.ajforms-about-meta td{padding:11px 0;border-bottom:1px solid #f3f4f6;text-align:left}
 				.ajforms-about-meta th{width:160px;color:#6b7280;font-weight:600}
@@ -2088,6 +2185,16 @@ class AJForms_Admin {
 				</table>
 
 				<?php if ( current_user_can( 'update_plugins' ) ) : ?>
+					<div class="ajforms-about-toggle">
+						<label>
+							<input type="checkbox" <?php checked( $developer_updates_enabled ); ?> onchange="window.location.href='<?php echo esc_url( $developer_toggle_url ); ?>';">
+							<span>
+								<?php esc_html_e( 'Enable developer updates', 'ajforms' ); ?>
+								<span><?php esc_html_e( 'Developer updates include prerelease builds from non-main branches. Leave this off for normal main-branch updates.', 'ajforms' ); ?></span>
+							</span>
+						</label>
+					</div>
+
 					<?php if ( isset( $_GET['update-error'] ) ) : ?>
 						<div class="ajforms-about-status is-error">
 							<strong><?php esc_html_e( 'Update failed.', 'ajforms' ); ?></strong>
@@ -2105,7 +2212,7 @@ class AJForms_Admin {
 						</div>
 					<?php elseif ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
 						<div class="ajforms-about-status">
-							<strong><?php esc_html_e( 'An AJ Forms update is available.', 'ajforms' ); ?></strong>
+							<strong><?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'An AJ Forms developer update is available.', 'ajforms' ) : esc_html__( 'An AJ Forms update is available.', 'ajforms' ); ?></strong>
 							<?php
 							printf(
 								esc_html__( 'Installed: %1$s. Latest: %2$s.', 'ajforms' ),
