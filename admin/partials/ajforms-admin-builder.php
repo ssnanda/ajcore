@@ -52,6 +52,7 @@ $initial_data = array(
 			'success_message'       => 'Form submitted successfully.',
 			'confirmation_type'     => 'message',
 			'redirect_url'          => '',
+			'confirmation_rules'    => array(),
 			'use_label_placeholders' => false,
 			'custom_css'            => '',
 			'asana_task_enabled'    => false,
@@ -108,6 +109,7 @@ if ( $form_id ) {
 						'success_message'       => 'Form submitted successfully.',
 						'confirmation_type'     => 'message',
 						'redirect_url'          => '',
+						'confirmation_rules'    => array(),
 						'use_label_placeholders' => false,
 						'custom_css'            => '',
 						'asana_task_enabled'    => false,
@@ -145,6 +147,7 @@ if ( $form_id ) {
 					'success_message'       => 'Form submitted successfully.',
 					'confirmation_type'     => 'message',
 					'redirect_url'          => '',
+					'confirmation_rules'    => array(),
 					'use_label_placeholders' => false,
 					'custom_css'            => '',
 					'asana_task_enabled'    => false,
@@ -417,8 +420,9 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 
 						<div class="wpf-inspector-section" data-settings-section="confirmation">
 							<div class="wpf-inspector-section-title">Form Confirmation</div>
+							<p class="wpf-setting-help">Default confirmation runs when no conditional rule matches.</p>
 							<div class="wpf-setting-row">
-								<label>Confirmation Type</label>
+								<label>Default Confirmation Type</label>
 								<select id="wpf-form-confirmation-type">
 									<option value="message" <?php selected( isset( $initial_data['schema']['settings']['confirmation_type'] ) ? $initial_data['schema']['settings']['confirmation_type'] : 'message', 'message' ); ?>>Show Success Message</option>
 									<option value="redirect" <?php selected( isset( $initial_data['schema']['settings']['confirmation_type'] ) ? $initial_data['schema']['settings']['confirmation_type'] : 'message', 'redirect' ); ?>>Redirect to URL</option>
@@ -431,6 +435,12 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 							<div class="wpf-setting-row">
 								<label>Redirect URL</label>
 								<input type="text" id="wpf-form-redirect-url" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['redirect_url'] ) ? $initial_data['schema']['settings']['redirect_url'] : '' ); ?>">
+							</div>
+							<div class="wpf-field-settings-card" style="margin-top:18px;">
+								<div class="wpf-field-settings-card-title">Conditional Confirmation Rules</div>
+								<p class="wpf-setting-help">Rules run after a successful submission. Matching rules can show a message, redirect, trigger a webhook, or continue to the next rule.</p>
+								<div id="wpf-confirmation-rules"></div>
+								<button type="button" class="wpf-btn wpf-btn-secondary" id="wpf-add-confirmation-rule" style="margin-top:12px;">Add Rule</button>
 							</div>
 						</div>
 

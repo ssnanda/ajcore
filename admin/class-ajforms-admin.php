@@ -439,6 +439,7 @@ class AJForms_Admin {
 			'default_value' => isset( $field['default_value'] ) ? sanitize_text_field( $field['default_value'] ) : '',
 			'conversational' => array_key_exists( 'conversational', $field ) ? ! empty( $field['conversational'] ) : ( isset( $field['conversation_step'] ) ? 'final_contact' !== sanitize_key( $field['conversation_step'] ) : ( isset( $field['type'] ) && 'question' === sanitize_key( $field['type'] ) ) ),
 			'branch_map'   => array(),
+			'flow_rules'   => array(),
 			'accepted_file_types' => isset( $field['accepted_file_types'] ) ? sanitize_text_field( $field['accepted_file_types'] ) : '.pdf,.jpg,.jpeg,.png,.gif,.webp',
 		);
 		$normalized['conversation_step'] = $normalized['conversational'] ? 'question' : 'final_contact';
@@ -464,6 +465,10 @@ class AJForms_Admin {
 					$normalized['branch_map'][ $option_value ] = $target_id;
 				}
 			}
+		}
+
+		if ( isset( $field['flow_rules'] ) && is_array( $field['flow_rules'] ) ) {
+			$normalized['flow_rules'] = $this->sanitize_rules_for_storage( $field['flow_rules'], 'flow' );
 		}
 
 		if ( in_array( $normalized['type'], array( 'question', 'select', 'checkboxes', 'multiple_choice' ), true ) ) {
@@ -510,6 +515,94 @@ class AJForms_Admin {
 		return $normalized;
 	}
 
+	private function sanitize_rules_for_storage( $rules, $context = 'confirmation' ) {
+		$sanitized = array();
+
+		foreach ( (array) $rules as $index => $rule ) {
+			if ( ! is_array( $rule ) ) {
+				continue;
+			}
+
+			$conditions = array();
+			if ( isset( $rule['conditions'] ) && is_array( $rule['conditions'] ) ) {
+				foreach ( $rule['conditions'] as $condition ) {
+					if ( ! is_array( $condition ) ) {
+						continue;
+					}
+
+					$field    = isset( $condition['field'] ) ? sanitize_key( $condition['field'] ) : '';
+					$operator = isset( $condition['operator'] ) ? sanitize_key( $condition['operator'] ) : 'equals';
+					$value    = isset( $condition['value'] ) ? sanitize_text_field( (string) $condition['value'] ) : '';
+
+					if ( '' === $field || ! in_array( $operator, array( 'equals', 'not_equals', 'contains', 'not_contains', 'is_empty', 'is_not_empty' ), true ) ) {
+						continue;
+					}
+
+					$conditions[] = array(
+						'field'    => $field,
+						'operator' => $operator,
+						'value'    => $value,
+					);
+				}
+			}
+
+			$actions = array();
+			if ( isset( $rule['actions'] ) && is_array( $rule['actions'] ) ) {
+				foreach ( $rule['actions'] as $action ) {
+					if ( ! is_array( $action ) ) {
+						continue;
+					}
+
+					$type = isset( $action['type'] ) ? sanitize_key( $action['type'] ) : '';
+					if ( 'flow' === $context ) {
+						if ( ! in_array( $type, array( 'next', 'jump', 'end', 'action' ), true ) ) {
+							continue;
+						}
+
+						$actions[] = array(
+							'type'   => $type,
+							'target' => isset( $action['target'] ) ? sanitize_text_field( (string) $action['target'] ) : '',
+						);
+					} else {
+						if ( ! in_array( $type, array( 'show_message', 'redirect', 'webhook' ), true ) ) {
+							continue;
+						}
+
+						$actions[] = array(
+							'type'    => $type,
+							'message' => isset( $action['message'] ) ? wp_kses_post( (string) $action['message'] ) : '',
+							'url'     => isset( $action['url'] ) ? esc_url_raw( (string) $action['url'] ) : '',
+						);
+					}
+				}
+			}
+
+			if ( empty( $conditions ) || empty( $actions ) ) {
+				continue;
+			}
+
+			$sanitized[] = array(
+				'id'              => isset( $rule['id'] ) ? sanitize_key( $rule['id'] ) : 'rule_' . ( $index + 1 ),
+				'name'            => isset( $rule['name'] ) ? sanitize_text_field( (string) $rule['name'] ) : '',
+				'enabled'         => ! array_key_exists( 'enabled', $rule ) || ! empty( $rule['enabled'] ),
+				'priority'        => isset( $rule['priority'] ) ? intval( $rule['priority'] ) : ( $index + 1 ) * 10,
+				'logic'           => isset( $rule['logic'] ) && 'OR' === strtoupper( (string) $rule['logic'] ) ? 'OR' : 'AND',
+				'conditions'      => $conditions,
+				'actions'         => $actions,
+				'stop_processing' => ! empty( $rule['stop_processing'] ),
+			);
+		}
+
+		usort(
+			$sanitized,
+			function ( $a, $b ) {
+				return intval( $a['priority'] ) <=> intval( $b['priority'] );
+			}
+		);
+
+		return $sanitized;
+	}
+
 	private function sanitize_schema_for_storage( $schema ) {
 		$normalized = $this->normalize_imported_schema( $schema );
 		$fields     = array();
@@ -540,6 +633,7 @@ class AJForms_Admin {
 				'success_message'       => isset( $normalized['settings']['success_message'] ) ? sanitize_textarea_field( $normalized['settings']['success_message'] ) : ( isset( $plugin_settings['default_success_message'] ) ? $plugin_settings['default_success_message'] : 'Form submitted successfully.' ),
 				'confirmation_type'     => isset( $normalized['settings']['confirmation_type'] ) && in_array( sanitize_key( $normalized['settings']['confirmation_type'] ), array( 'message', 'redirect' ), true ) ? sanitize_key( $normalized['settings']['confirmation_type'] ) : 'message',
 				'redirect_url'          => isset( $normalized['settings']['redirect_url'] ) ? esc_url_raw( $normalized['settings']['redirect_url'] ) : '',
+				'confirmation_rules'    => isset( $normalized['settings']['confirmation_rules'] ) && is_array( $normalized['settings']['confirmation_rules'] ) ? $this->sanitize_rules_for_storage( $normalized['settings']['confirmation_rules'], 'confirmation' ) : array(),
 				'use_label_placeholders' => ! empty( $normalized['settings']['use_label_placeholders'] ),
 				'custom_css'            => isset( $normalized['settings']['custom_css'] ) ? wp_strip_all_tags( $normalized['settings']['custom_css'] ) : '',
 				'asana_task_enabled'    => ! empty( $normalized['settings']['asana_task_enabled'] ),

@@ -38,6 +38,7 @@ function initAJFormsBuilder() {
             success_message: 'Form submitted successfully.',
             confirmation_type: 'message',
             redirect_url: '',
+            confirmation_rules: [],
             use_label_placeholders: false,
             required_defaults_applied: false,
             custom_css: '',
@@ -80,6 +81,73 @@ function initAJFormsBuilder() {
 
     function cloneDeep(value) {
         return JSON.parse(JSON.stringify(value));
+    }
+
+    function createDefaultRuleAction(type = 'show_message') {
+        return {
+            type: type,
+            message: type === 'show_message' ? 'Form submitted successfully.' : '',
+            url: ''
+        };
+    }
+
+    function createDefaultRuleCondition(fieldId = '') {
+        return {
+            field: fieldId,
+            operator: 'equals',
+            value: ''
+        };
+    }
+
+    function createDefaultConfirmationRule() {
+        return {
+            id: 'rule_' + Math.random().toString(36).slice(2, 11),
+            enabled: true,
+            priority: ((formSchema.settings.confirmation_rules || []).length + 1) * 10,
+            logic: 'AND',
+            conditions: [createDefaultRuleCondition(formSchema.fields[0] ? formSchema.fields[0].id : '')],
+            actions: [createDefaultRuleAction('show_message')],
+            stop_processing: true
+        };
+    }
+
+    function normalizeRuleAction(action) {
+        const normalized = Object.assign(createDefaultRuleAction(), action || {});
+        const allowedTypes = ['show_message', 'redirect', 'webhook'];
+        normalized.type = allowedTypes.includes(normalized.type) ? normalized.type : 'show_message';
+        normalized.message = String(normalized.message || '');
+        normalized.url = String(normalized.url || '');
+        return normalized;
+    }
+
+    function normalizeRuleCondition(condition) {
+        const normalized = Object.assign(createDefaultRuleCondition(), condition || {});
+        const allowedOperators = ['equals', 'not_equals', 'contains', 'not_contains', 'is_empty', 'is_not_empty'];
+        normalized.field = String(normalized.field || '');
+        normalized.operator = allowedOperators.includes(normalized.operator) ? normalized.operator : 'equals';
+        normalized.value = String(normalized.value || '');
+        return normalized;
+    }
+
+    function normalizeConfirmationRule(rule, index = 0) {
+        const normalized = Object.assign(createDefaultConfirmationRule(), rule || {});
+        normalized.id = normalized.id || ('rule_' + Math.random().toString(36).slice(2, 11));
+        normalized.enabled = normalized.enabled !== false;
+        normalized.priority = parseInt(normalized.priority, 10);
+        normalized.priority = Number.isFinite(normalized.priority) ? normalized.priority : (index + 1) * 10;
+        normalized.logic = String(normalized.logic || 'AND').toUpperCase() === 'OR' ? 'OR' : 'AND';
+        normalized.conditions = Array.isArray(normalized.conditions) && normalized.conditions.length
+            ? normalized.conditions.map(normalizeRuleCondition)
+            : [createDefaultRuleCondition(formSchema.fields[0] ? formSchema.fields[0].id : '')];
+        normalized.actions = Array.isArray(normalized.actions) && normalized.actions.length
+            ? normalized.actions.map(normalizeRuleAction)
+            : [createDefaultRuleAction('show_message')];
+        normalized.stop_processing = normalized.stop_processing !== false;
+        return normalized;
+    }
+
+    function normalizeConfirmationRules(rules) {
+        return Array.isArray(rules) ? rules.map(normalizeConfirmationRule) : [];
     }
 
     function slugifyFieldName(value) {
@@ -253,6 +321,7 @@ function initAJFormsBuilder() {
                 conversational: null,
                 conversation_step: '',
                 branch_map: {},
+                flow_rules: [],
                 accepted_file_types: '.pdf,.jpg,.jpeg,.png,.gif,.webp'
             },
             field || {}
@@ -311,6 +380,32 @@ function initAJFormsBuilder() {
             normalized.branch_map = {};
         }
 
+        if (!Array.isArray(normalized.flow_rules)) {
+            normalized.flow_rules = Object.keys(normalized.branch_map).map((optionValue, index) => {
+                const target = normalized.branch_map[optionValue];
+                const actionType = target === '__end' ? 'end' : (target === '__action' ? 'action' : (target ? 'jump' : 'next'));
+                return {
+                    id: 'flow_' + normalized.id + '_' + index,
+                    priority: (index + 1) * 10,
+                    logic: 'AND',
+                    conditions: [
+                        {
+                            field: normalized.id,
+                            operator: 'equals',
+                            value: optionValue
+                        }
+                    ],
+                    actions: [
+                        {
+                            type: actionType,
+                            target: actionType === 'jump' ? target : ''
+                        }
+                    ],
+                    stop_processing: true
+                };
+            });
+        }
+
         return normalized;
     }
 
@@ -366,6 +461,7 @@ function initAJFormsBuilder() {
                     success_message: 'Form submitted successfully.',
                     confirmation_type: 'message',
                     redirect_url: '',
+                    confirmation_rules: [],
                     use_label_placeholders: false,
                     required_defaults_applied: false,
                     custom_css: '',
@@ -414,6 +510,7 @@ function initAJFormsBuilder() {
                         success_message: 'Form submitted successfully.',
                         confirmation_type: 'message',
                         redirect_url: '',
+                        confirmation_rules: [],
                         use_label_placeholders: false,
                         required_defaults_applied: false,
                         custom_css: '',
@@ -462,6 +559,7 @@ function initAJFormsBuilder() {
                 success_message: 'Form submitted successfully.',
                 confirmation_type: 'message',
                 redirect_url: '',
+                confirmation_rules: [],
                 use_label_placeholders: false,
                 required_defaults_applied: false,
                 custom_css: '',
@@ -595,6 +693,7 @@ function initAJFormsBuilder() {
 
             const parsed = JSON.parse(snapshot);
             formSchema = normalizeIncomingSchema(parsed.formSchema || {});
+            formSchema.settings.confirmation_rules = normalizeConfirmationRules(formSchema.settings.confirmation_rules || []);
             activeFieldId = parsed.activeFieldId || null;
 
             if (activeFieldId && !formSchema.fields.find((field) => field.id === activeFieldId)) {
@@ -646,6 +745,7 @@ function initAJFormsBuilder() {
         formSchema.source = normalized.source;
         formSchema.fields = normalized.fields;
         formSchema.settings = normalized.settings;
+        formSchema.settings.confirmation_rules = normalizeConfirmationRules(formSchema.settings.confirmation_rules || []);
         formSchema.sureforms = normalized.sureforms;
 
         if (!formSchema.settings.required_defaults_applied) {
@@ -936,6 +1036,255 @@ function initAJFormsBuilder() {
         variablesNode.innerHTML = '<strong>Available variables</strong>' + variables.map((variable) => `<code>${escapeHtml(variable)}</code>`).join('');
     }
 
+    function getRuleFieldOptions(selectedFieldId = '') {
+        return formSchema.fields
+            .filter((field) => field && field.type !== 'separator')
+            .map((field) => `<option value="${escapeHtml(field.id)}" ${field.id === selectedFieldId ? 'selected' : ''}>${escapeHtml(field.label || field.field_name || formatFieldTypeLabel(field.type))}</option>`)
+            .join('');
+    }
+
+    function getConditionValueInput(condition) {
+        const field = formSchema.fields.find((item) => item.id === condition.field);
+        const operator = condition.operator || 'equals';
+
+        if (operator === 'is_empty' || operator === 'is_not_empty') {
+            return '<input type="text" class="wpf-rule-condition-value" value="" disabled placeholder="No value needed">';
+        }
+
+        if (field && Array.isArray(field.options) && field.options.length) {
+            return `
+                <select class="wpf-rule-condition-value">
+                    <option value="">Choose value</option>
+                    ${field.options.map((option) => {
+                        const label = option.label || option.value || '';
+                        return `<option value="${escapeHtml(label)}" ${condition.value === label ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+                    }).join('')}
+                </select>
+            `;
+        }
+
+        return `<input type="text" class="wpf-rule-condition-value" value="${escapeHtml(condition.value || '')}" placeholder="Value">`;
+    }
+
+    function renderConfirmationRules() {
+        const node = document.getElementById('wpf-confirmation-rules');
+        if (!node) {
+            return;
+        }
+
+        const rules = normalizeConfirmationRules(formSchema.settings.confirmation_rules || []);
+        formSchema.settings.confirmation_rules = rules;
+
+        if (!rules.length) {
+            node.innerHTML = '<p class="wpf-setting-help">No conditional rules yet.</p>';
+            return;
+        }
+
+        node.innerHTML = rules.map((rule, ruleIndex) => `
+            <div class="wpf-field-settings-card wpf-confirmation-rule" data-rule-index="${ruleIndex}">
+                <div class="wpf-field-settings-grid">
+                    <div class="wpf-setting-row">
+                        <label>Rule Name</label>
+                        <input type="text" class="wpf-rule-input" data-key="name" value="${escapeHtml(rule.name || ('Rule ' + (ruleIndex + 1)))}">
+                    </div>
+                    <div class="wpf-setting-row">
+                        <label>Priority</label>
+                        <input type="number" class="wpf-rule-input" data-key="priority" value="${escapeHtml(rule.priority)}">
+                    </div>
+                </div>
+                <div class="wpf-field-settings-grid">
+                    <label class="wpf-toggle-card">
+                        <strong>Enabled</strong>
+                        <input type="checkbox" class="wpf-rule-checkbox" data-key="enabled" ${rule.enabled ? 'checked' : ''}>
+                    </label>
+                    <label class="wpf-toggle-card">
+                        <strong>Stop Processing</strong>
+                        <input type="checkbox" class="wpf-rule-checkbox" data-key="stop_processing" ${rule.stop_processing ? 'checked' : ''}>
+                    </label>
+                </div>
+                <div class="wpf-setting-row">
+                    <label>Condition Logic</label>
+                    <select class="wpf-rule-select" data-key="logic">
+                        <option value="AND" ${rule.logic === 'AND' ? 'selected' : ''}>All conditions match</option>
+                        <option value="OR" ${rule.logic === 'OR' ? 'selected' : ''}>Any condition matches</option>
+                    </select>
+                </div>
+                <div class="wpf-setting-row">
+                    <label>Conditions</label>
+                    <div class="wpf-options-editor">
+                        ${rule.conditions.map((condition, conditionIndex) => `
+                            <div class="wpf-setting-row wpf-rule-condition" data-condition-index="${conditionIndex}">
+                                <select class="wpf-rule-condition-field">${getRuleFieldOptions(condition.field)}</select>
+                                <select class="wpf-rule-condition-operator">
+                                    <option value="equals" ${condition.operator === 'equals' ? 'selected' : ''}>equals</option>
+                                    <option value="not_equals" ${condition.operator === 'not_equals' ? 'selected' : ''}>does not equal</option>
+                                    <option value="contains" ${condition.operator === 'contains' ? 'selected' : ''}>contains</option>
+                                    <option value="not_contains" ${condition.operator === 'not_contains' ? 'selected' : ''}>does not contain</option>
+                                    <option value="is_empty" ${condition.operator === 'is_empty' ? 'selected' : ''}>is empty</option>
+                                    <option value="is_not_empty" ${condition.operator === 'is_not_empty' ? 'selected' : ''}>is not empty</option>
+                                </select>
+                                ${getConditionValueInput(condition)}
+                                <button type="button" class="wpf-option-delete wpf-rule-remove-condition">Remove</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button type="button" class="wpf-btn wpf-btn-secondary wpf-rule-add-condition">Add Condition</button>
+                </div>
+                <div class="wpf-setting-row">
+                    <label>Actions</label>
+                    <div class="wpf-options-editor">
+                        ${rule.actions.map((action, actionIndex) => `
+                            <div class="wpf-setting-row wpf-rule-action" data-action-index="${actionIndex}">
+                                <select class="wpf-rule-action-type">
+                                    <option value="show_message" ${action.type === 'show_message' ? 'selected' : ''}>Show message</option>
+                                    <option value="redirect" ${action.type === 'redirect' ? 'selected' : ''}>Redirect to URL</option>
+                                    <option value="webhook" ${action.type === 'webhook' ? 'selected' : ''}>Trigger webhook</option>
+                                </select>
+                                ${action.type === 'show_message'
+                                    ? `<textarea class="wpf-rule-action-message" rows="2" placeholder="Message">${escapeHtml(action.message || '')}</textarea>`
+                                    : `<input type="text" class="wpf-rule-action-url" value="${escapeHtml(action.url || '')}" placeholder="${action.type === 'webhook' ? 'Webhook URL' : 'Redirect URL'}">`
+                                }
+                                <button type="button" class="wpf-option-delete wpf-rule-remove-action">Remove</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button type="button" class="wpf-btn wpf-btn-secondary wpf-rule-add-action">Add Action</button>
+                </div>
+                <button type="button" class="wpf-option-delete wpf-rule-remove-rule">Delete Rule</button>
+            </div>
+        `).join('');
+
+        bindConfirmationRules();
+    }
+
+    function bindConfirmationRules() {
+        const node = document.getElementById('wpf-confirmation-rules');
+        if (!node) {
+            return;
+        }
+
+        node.querySelectorAll('.wpf-confirmation-rule').forEach((ruleEl) => {
+            const ruleIndex = parseInt(ruleEl.dataset.ruleIndex, 10);
+            const rule = formSchema.settings.confirmation_rules[ruleIndex];
+            if (!rule) {
+                return;
+            }
+
+            ruleEl.querySelectorAll('.wpf-rule-input, .wpf-rule-select').forEach((input) => {
+                input.addEventListener('change', () => {
+                    rule[input.dataset.key] = input.dataset.key === 'priority' ? parseInt(input.value || '0', 10) : input.value;
+                    renderConfirmationRules();
+                });
+            });
+
+            ruleEl.querySelectorAll('.wpf-rule-checkbox').forEach((input) => {
+                input.addEventListener('change', () => {
+                    rule[input.dataset.key] = !!input.checked;
+                });
+            });
+
+            ruleEl.querySelectorAll('.wpf-rule-condition').forEach((conditionEl) => {
+                const conditionIndex = parseInt(conditionEl.dataset.conditionIndex, 10);
+                const condition = rule.conditions[conditionIndex];
+
+                conditionEl.querySelectorAll('.wpf-rule-condition-field, .wpf-rule-condition-operator, .wpf-rule-condition-value').forEach((input) => {
+                    input.addEventListener('change', () => {
+                        condition.field = conditionEl.querySelector('.wpf-rule-condition-field')?.value || '';
+                        condition.operator = conditionEl.querySelector('.wpf-rule-condition-operator')?.value || 'equals';
+                        condition.value = conditionEl.querySelector('.wpf-rule-condition-value')?.value || '';
+                        renderConfirmationRules();
+                    });
+                });
+
+                conditionEl.querySelector('.wpf-rule-remove-condition')?.addEventListener('click', () => {
+                    rule.conditions.splice(conditionIndex, 1);
+                    if (!rule.conditions.length) {
+                        rule.conditions.push(createDefaultRuleCondition(formSchema.fields[0] ? formSchema.fields[0].id : ''));
+                    }
+                    renderConfirmationRules();
+                });
+            });
+
+            ruleEl.querySelector('.wpf-rule-add-condition')?.addEventListener('click', () => {
+                rule.conditions.push(createDefaultRuleCondition(formSchema.fields[0] ? formSchema.fields[0].id : ''));
+                renderConfirmationRules();
+            });
+
+            ruleEl.querySelectorAll('.wpf-rule-action').forEach((actionEl) => {
+                const actionIndex = parseInt(actionEl.dataset.actionIndex, 10);
+                const action = rule.actions[actionIndex];
+
+                actionEl.querySelectorAll('.wpf-rule-action-type, .wpf-rule-action-message, .wpf-rule-action-url').forEach((input) => {
+                    input.addEventListener('change', () => {
+                        action.type = actionEl.querySelector('.wpf-rule-action-type')?.value || 'show_message';
+                        action.message = actionEl.querySelector('.wpf-rule-action-message')?.value || '';
+                        action.url = actionEl.querySelector('.wpf-rule-action-url')?.value || '';
+                        renderConfirmationRules();
+                    });
+                });
+
+                actionEl.querySelector('.wpf-rule-remove-action')?.addEventListener('click', () => {
+                    rule.actions.splice(actionIndex, 1);
+                    if (!rule.actions.length) {
+                        rule.actions.push(createDefaultRuleAction());
+                    }
+                    renderConfirmationRules();
+                });
+            });
+
+            ruleEl.querySelector('.wpf-rule-add-action')?.addEventListener('click', () => {
+                rule.actions.push(createDefaultRuleAction('show_message'));
+                renderConfirmationRules();
+            });
+
+            ruleEl.querySelector('.wpf-rule-remove-rule')?.addEventListener('click', () => {
+                formSchema.settings.confirmation_rules.splice(ruleIndex, 1);
+                renderConfirmationRules();
+            });
+        });
+    }
+
+    function collectConfirmationRulesFromDom() {
+        const node = document.getElementById('wpf-confirmation-rules');
+        if (!node) {
+            return normalizeConfirmationRules(formSchema.settings.confirmation_rules || []);
+        }
+
+        const rules = [];
+        node.querySelectorAll('.wpf-confirmation-rule').forEach((ruleEl) => {
+            const conditions = [];
+            ruleEl.querySelectorAll('.wpf-rule-condition').forEach((conditionEl) => {
+                conditions.push({
+                    field: conditionEl.querySelector('.wpf-rule-condition-field')?.value || '',
+                    operator: conditionEl.querySelector('.wpf-rule-condition-operator')?.value || 'equals',
+                    value: conditionEl.querySelector('.wpf-rule-condition-value')?.value || ''
+                });
+            });
+
+            const actions = [];
+            ruleEl.querySelectorAll('.wpf-rule-action').forEach((actionEl) => {
+                actions.push({
+                    type: actionEl.querySelector('.wpf-rule-action-type')?.value || 'show_message',
+                    message: actionEl.querySelector('.wpf-rule-action-message')?.value || '',
+                    url: actionEl.querySelector('.wpf-rule-action-url')?.value || ''
+                });
+            });
+
+            rules.push({
+                id: formSchema.settings.confirmation_rules[parseInt(ruleEl.dataset.ruleIndex, 10)]?.id || '',
+                name: ruleEl.querySelector('.wpf-rule-input[data-key="name"]')?.value || '',
+                priority: parseInt(ruleEl.querySelector('.wpf-rule-input[data-key="priority"]')?.value || '0', 10),
+                enabled: !!ruleEl.querySelector('.wpf-rule-checkbox[data-key="enabled"]')?.checked,
+                stop_processing: !!ruleEl.querySelector('.wpf-rule-checkbox[data-key="stop_processing"]')?.checked,
+                logic: ruleEl.querySelector('.wpf-rule-select[data-key="logic"]')?.value || 'AND',
+                conditions: conditions,
+                actions: actions
+            });
+        });
+
+        return normalizeConfirmationRules(rules);
+    }
+
     function renderCanvas() {
         applyCanvasTheme();
         canvas.querySelectorAll('.wpf-canvas-field').forEach((el) => el.remove());
@@ -1213,6 +1562,19 @@ function initAJFormsBuilder() {
                 } else {
                     delete field.branch_map[optionValue];
                 }
+
+                field.flow_rules = Object.keys(field.branch_map).map((value, index) => {
+                    const target = field.branch_map[value];
+                    const actionType = target === '__end' ? 'end' : (target === '__action' ? 'action' : (target ? 'jump' : 'next'));
+                    return {
+                        id: 'flow_' + field.id + '_' + index,
+                        priority: (index + 1) * 10,
+                        logic: 'AND',
+                        conditions: [{ field: field.id, operator: 'equals', value: value }],
+                        actions: [{ type: actionType, target: actionType === 'jump' ? target : '' }],
+                        stop_processing: true
+                    };
+                });
             });
         });
     }
@@ -1597,7 +1959,17 @@ function initAJFormsBuilder() {
         });
     });
 
+    const addConfirmationRuleBtn = document.getElementById('wpf-add-confirmation-rule');
+    if (addConfirmationRuleBtn) {
+        addConfirmationRuleBtn.addEventListener('click', () => {
+            formSchema.settings.confirmation_rules = normalizeConfirmationRules(formSchema.settings.confirmation_rules || []);
+            formSchema.settings.confirmation_rules.push(createDefaultConfirmationRule());
+            renderConfirmationRules();
+        });
+    }
+
     activateFormSettingsSection('basics');
+    renderConfirmationRules();
 
     if (undoBtn) {
         undoBtn.addEventListener('click', (e) => {
@@ -1711,6 +2083,7 @@ function initAJFormsBuilder() {
         formSchema.settings.button_alignment = buttonAlignmentInput ? (buttonAlignmentInput.value || 'left') : 'left';
         formSchema.settings.confirmation_type = confirmationTypeInput ? (confirmationTypeInput.value || 'message') : 'message';
         formSchema.settings.redirect_url = redirectUrlInput ? redirectUrlInput.value.trim() : '';
+        formSchema.settings.confirmation_rules = collectConfirmationRulesFromDom();
         formSchema.settings.use_label_placeholders = useLabelsAsPlaceholdersInput ? !!useLabelsAsPlaceholdersInput.checked : false;
         formSchema.settings.custom_css = customCssInput ? customCssInput.value.trim() : '';
         formSchema.settings.asana_task_enabled = asanaTaskEnabledInput ? !!asanaTaskEnabledInput.checked : false;

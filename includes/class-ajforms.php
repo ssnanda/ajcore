@@ -66,6 +66,7 @@ class AJForms {
 			'success_message'       => isset( $plugin_settings['default_success_message'] ) ? $plugin_settings['default_success_message'] : 'Form submitted successfully.',
 			'confirmation_type'     => 'message',
 			'redirect_url'          => '',
+			'confirmation_rules'    => array(),
 			'use_label_placeholders' => false,
 			'custom_css'            => '',
 			'asana_task_enabled'    => false,
@@ -966,6 +967,160 @@ class AJForms {
 		wp_mail( $recipients, $subject, wp_kses_post( $body ), $headers, $attachments );
 	}
 
+	private function get_rule_field_value( $field_key, $lead_data ) {
+		foreach ( $lead_data as $field_id => $field ) {
+			if ( 0 === strpos( (string) $field_id, '_' ) || ! is_array( $field ) ) {
+				continue;
+			}
+
+			$field_name = isset( $field['field_name'] ) ? sanitize_key( $field['field_name'] ) : '';
+			if ( $field_key === $field_id || $field_key === $field_name ) {
+				return isset( $field['value'] ) ? $field['value'] : '';
+			}
+		}
+
+		return '';
+	}
+
+	private function rule_value_matches_condition( $value, $condition ) {
+		$operator = isset( $condition['operator'] ) ? sanitize_key( $condition['operator'] ) : 'equals';
+		$expected = isset( $condition['value'] ) ? sanitize_text_field( (string) $condition['value'] ) : '';
+		$values   = is_array( $value ) ? array_map( 'sanitize_text_field', $value ) : array( sanitize_text_field( (string) $value ) );
+		$joined   = implode( ', ', array_filter( $values, 'strlen' ) );
+		$is_empty = '' === $joined;
+
+		switch ( $operator ) {
+			case 'not_equals':
+				return ! in_array( $expected, $values, true );
+			case 'contains':
+				foreach ( $values as $single_value ) {
+					if ( false !== stripos( $single_value, $expected ) ) {
+						return true;
+					}
+				}
+				return false;
+			case 'not_contains':
+				foreach ( $values as $single_value ) {
+					if ( false !== stripos( $single_value, $expected ) ) {
+						return false;
+					}
+				}
+				return true;
+			case 'is_empty':
+				return $is_empty;
+			case 'is_not_empty':
+				return ! $is_empty;
+			case 'equals':
+			default:
+				return in_array( $expected, $values, true );
+		}
+	}
+
+	private function evaluate_rule_conditions( $rule, $lead_data ) {
+		if ( ( array_key_exists( 'enabled', $rule ) && empty( $rule['enabled'] ) ) || empty( $rule['conditions'] ) || ! is_array( $rule['conditions'] ) ) {
+			return false;
+		}
+
+		$logic   = isset( $rule['logic'] ) && 'OR' === strtoupper( (string) $rule['logic'] ) ? 'OR' : 'AND';
+		$matches = array();
+
+		foreach ( $rule['conditions'] as $condition ) {
+			if ( ! is_array( $condition ) || empty( $condition['field'] ) ) {
+				continue;
+			}
+
+			$value     = $this->get_rule_field_value( sanitize_key( $condition['field'] ), $lead_data );
+			$matches[] = $this->rule_value_matches_condition( $value, $condition );
+		}
+
+		if ( empty( $matches ) ) {
+			return false;
+		}
+
+		return 'OR' === $logic ? in_array( true, $matches, true ) : ! in_array( false, $matches, true );
+	}
+
+	private function trigger_rule_webhook( $url, $form, $lead_data ) {
+		$url = esc_url_raw( $url );
+		if ( '' === $url ) {
+			return;
+		}
+
+		wp_remote_post(
+			$url,
+			array(
+				'timeout' => 8,
+				'headers' => array(
+					'Content-Type' => 'application/json',
+				),
+				'body'    => wp_json_encode(
+					array(
+						'form_id'    => absint( $form->id ),
+						'form_title' => $form->title,
+						'lead_data'  => $lead_data,
+						'submitted_at' => current_time( 'mysql' ),
+					)
+				),
+			)
+		);
+	}
+
+	private function get_default_confirmation_result( $settings ) {
+		$redirect_url = '';
+		if ( ! empty( $settings['confirmation_type'] ) && 'redirect' === $settings['confirmation_type'] && ! empty( $settings['redirect_url'] ) ) {
+			$redirect_url = esc_url_raw( $settings['redirect_url'] );
+		}
+
+		return array(
+			'message'      => '' !== $redirect_url ? __( 'Redirecting...', 'ajforms' ) : ( ! empty( $settings['success_message'] ) ? $settings['success_message'] : 'Form submitted successfully.' ),
+			'redirect_url' => $redirect_url,
+		);
+	}
+
+	private function evaluate_confirmation_rules( $form, $lead_data, $settings ) {
+		$result = array(
+			'message'      => ! empty( $settings['success_message'] ) ? $settings['success_message'] : 'Form submitted successfully.',
+			'redirect_url' => '',
+		);
+		$rules  = ! empty( $settings['confirmation_rules'] ) && is_array( $settings['confirmation_rules'] ) ? $settings['confirmation_rules'] : array();
+
+		usort(
+			$rules,
+			function ( $a, $b ) {
+				return intval( isset( $a['priority'] ) ? $a['priority'] : 0 ) <=> intval( isset( $b['priority'] ) ? $b['priority'] : 0 );
+			}
+		);
+
+		$matched = false;
+		foreach ( $rules as $rule ) {
+			if ( ! $this->evaluate_rule_conditions( $rule, $lead_data ) ) {
+				continue;
+			}
+
+			$matched = true;
+			foreach ( isset( $rule['actions'] ) && is_array( $rule['actions'] ) ? $rule['actions'] : array() as $action ) {
+				if ( ! is_array( $action ) || empty( $action['type'] ) ) {
+					continue;
+				}
+
+				if ( 'show_message' === $action['type'] ) {
+					$result['message'] = ! empty( $action['message'] ) ? $this->replace_template_tags( (string) $action['message'], $form, $lead_data ) : $result['message'];
+				} elseif ( 'redirect' === $action['type'] ) {
+					$result['redirect_url'] = ! empty( $action['url'] ) ? esc_url_raw( $this->replace_template_tags( (string) $action['url'], $form, $lead_data ) ) : $result['redirect_url'];
+					$result['message']      = __( 'Redirecting...', 'ajforms' );
+				} elseif ( 'webhook' === $action['type'] && ! empty( $action['url'] ) ) {
+					$this->trigger_rule_webhook( $this->replace_template_tags( (string) $action['url'], $form, $lead_data ), $form, $lead_data );
+				}
+			}
+
+			if ( ! empty( $rule['stop_processing'] ) ) {
+				break;
+			}
+		}
+
+		return $matched ? $result : $this->get_default_confirmation_result( $settings );
+	}
+
 	private function handle_form_submission( $form, $fields, $settings ) {
 		if ( 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
 			return array(
@@ -1206,10 +1361,8 @@ class AJForms {
 		$this->send_form_notification( $form, $lead_data, $settings );
 		$this->maybe_create_asana_task( $form, $lead_data, $settings );
 
-		$redirect_url = '';
-		if ( ! empty( $settings['confirmation_type'] ) && 'redirect' === $settings['confirmation_type'] && ! empty( $settings['redirect_url'] ) ) {
-			$redirect_url = esc_url_raw( $settings['redirect_url'] );
-		}
+		$confirmation_result = $this->evaluate_confirmation_rules( $form, $lead_data, $settings );
+		$redirect_url        = ! empty( $confirmation_result['redirect_url'] ) ? esc_url_raw( $confirmation_result['redirect_url'] ) : '';
 
 		if ( '' !== $redirect_url && ! headers_sent() ) {
 			wp_redirect( $redirect_url ); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
@@ -1219,7 +1372,7 @@ class AJForms {
 		return array(
 			'submitted'    => true,
 			'success'      => true,
-			'message'      => '' !== $redirect_url ? __( 'Redirecting...', 'ajforms' ) : ( ! empty( $settings['success_message'] ) ? $settings['success_message'] : 'Form submitted successfully.' ),
+			'message'      => ! empty( $confirmation_result['message'] ) ? $confirmation_result['message'] : 'Form submitted successfully.',
 			'redirect_url' => $redirect_url,
 		);
 	}
@@ -1456,6 +1609,7 @@ class AJForms {
 						data-field-id="<?php echo esc_attr( $field_data['id'] ); ?>"
 						data-field-type="<?php echo esc_attr( $field_data['type'] ); ?>"
 						data-branch-map="<?php echo esc_attr( wp_json_encode( ! empty( $field['branch_map'] ) && is_array( $field['branch_map'] ) ? $field['branch_map'] : array() ) ); ?>"
+						data-flow-rules="<?php echo esc_attr( wp_json_encode( ! empty( $field['flow_rules'] ) && is_array( $field['flow_rules'] ) ? $field['flow_rules'] : array() ) ); ?>"
 						<?php echo 'question' === $field_data['type'] ? 'data-auto-advance="1"' : ''; ?>
 						style="<?php echo 0 === $step_counter ? '' : 'display:none;'; ?>"
 					>
@@ -1588,6 +1742,75 @@ class AJForms {
 				form.dispatchEvent(event);
 			}
 
+			function flowConditionMatches(condition, values) {
+				const operator = condition.operator || 'equals';
+				const expected = condition.value || '';
+				const hasValue = values.length > 0 && values.join('').length > 0;
+
+				if (operator === 'is_empty') {
+					return !hasValue;
+				}
+
+				if (operator === 'is_not_empty') {
+					return hasValue;
+				}
+
+				if (operator === 'not_equals') {
+					return !values.includes(expected);
+				}
+
+				if (operator === 'contains') {
+					return values.some(function(value) {
+						return String(value).includes(expected);
+					});
+				}
+
+				if (operator === 'not_contains') {
+					return !values.some(function(value) {
+						return String(value).includes(expected);
+					});
+				}
+
+				return values.includes(expected);
+			}
+
+			function evaluateFlowRules(step, values) {
+				let rules = [];
+
+				try {
+					rules = step.dataset.flowRules ? JSON.parse(step.dataset.flowRules) : [];
+				} catch (error) {
+					rules = [];
+				}
+
+				if (!Array.isArray(rules) || !rules.length) {
+					return null;
+				}
+
+				rules.sort(function(a, b) {
+					return parseInt(a.priority || 0, 10) - parseInt(b.priority || 0, 10);
+				});
+
+				for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex += 1) {
+					const rule = rules[ruleIndex];
+					if (rule.enabled === false) {
+						continue;
+					}
+					const conditions = Array.isArray(rule.conditions) ? rule.conditions : [];
+					const logic = String(rule.logic || 'AND').toUpperCase() === 'OR' ? 'OR' : 'AND';
+					const matches = conditions.map(function(condition) {
+						return flowConditionMatches(condition, values);
+					});
+					const isMatch = logic === 'OR' ? matches.includes(true) : matches.length > 0 && !matches.includes(false);
+
+					if (isMatch && Array.isArray(rule.actions) && rule.actions.length) {
+						return rule.actions[0];
+					}
+				}
+
+				return null;
+			}
+
 			function getNextStepFromBranch() {
 				const step = steps[currentStep];
 				let branchMap = {};
@@ -1599,6 +1822,24 @@ class AJForms {
 				}
 
 				const branchValues = getSelectedBranchValues(step);
+				const flowAction = evaluateFlowRules(step, branchValues);
+				if (flowAction) {
+					if (flowAction.type === 'end') {
+						return '__submit';
+					}
+
+					if (flowAction.type === 'action') {
+						dispatchFlowAction(step, branchValues[0] || '');
+						return currentStep + 1;
+					}
+
+					if (flowAction.type === 'jump' && flowAction.target && Object.prototype.hasOwnProperty.call(stepIndexByFieldId, flowAction.target)) {
+						return stepIndexByFieldId[flowAction.target];
+					}
+
+					return currentStep + 1;
+				}
+
 				let branchValue = '';
 				let target = '';
 
