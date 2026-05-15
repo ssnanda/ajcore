@@ -103,8 +103,8 @@ function initAJFormsBuilder() {
             url: 'url',
             textarea: 'textarea',
             select: 'dropdown',
-            checkboxes: 'checkboxes',
-            multiple_choice: 'choice',
+            checkboxes: 'multiple_choice',
+            multiple_choice: 'single_choice',
             number: 'number',
             phone: 'phone',
             tel: 'phone',
@@ -223,8 +223,8 @@ function initAJFormsBuilder() {
             url: 'URL Field',
             textarea: 'Textarea Field',
             select: 'Dropdown Field',
-            checkboxes: 'Checkboxes Field',
-            multiple_choice: 'Multiple Choice Field',
+            checkboxes: 'Multiple Choice',
+            multiple_choice: 'Single Choice',
             number: 'Number Field',
             phone: 'Phone Field',
             tel: 'Phone Field',
@@ -887,7 +887,7 @@ function initAJFormsBuilder() {
         structureList.innerHTML = formSchema.fields.map((field, index) => `
             <div class="wpf-structure-item ${field.id === activeFieldId ? 'active' : ''}" data-id="${field.id}">
                 <div class="wpf-structure-lines">
-                    <div class="wpf-structure-line"><span>Field Type</span><strong>${escapeHtml(field.type || 'field')}</strong></div>
+                    <div class="wpf-structure-line"><span>Field Type</span><strong>${escapeHtml(formatFieldTypeLabel(field.type))}</strong></div>
                     <div class="wpf-structure-line"><span>Field Name</span><strong>${escapeHtml(field.field_name || getFieldNameBase(field.type) + (index + 1))}</strong></div>
                     <div class="wpf-structure-badges">
                         <span class="${field.required ? 'is-on' : 'is-off'}">Req ${field.required ? 'Yes' : 'No'}</span>
@@ -1155,7 +1155,8 @@ function initAJFormsBuilder() {
         const choices = [
             '<option value="">Next question in order</option>',
             '<option value="__contact">Final contact step</option>',
-            '<option value="__end">End flow / submit step</option>'
+            '<option value="__end">End form / submit</option>',
+            '<option value="__action">Action hook, then next</option>'
         ];
 
         formSchema.fields.forEach((candidate) => {
@@ -1172,9 +1173,13 @@ function initAJFormsBuilder() {
     function renderBranchEditor(field) {
         const options = Array.isArray(field.options) ? field.options : [];
         const targetOptions = getBranchTargetOptions(field);
+        const checkboxHelp = field.type === 'checkboxes'
+            ? '<p class="wpf-setting-help">If visitors choose more than one option, the first selected option with a flow rule is used.</p>'
+            : '';
 
         return `
             <div class="wpf-options-editor">
+                ${checkboxHelp}
                 ${options.map((option) => {
                     const value = option.value || '';
                     const selectedValue = field.branch_map && field.branch_map[value] ? field.branch_map[value] : '';
@@ -1296,11 +1301,11 @@ function initAJFormsBuilder() {
             `;
         }
 
-        if (field.type === 'question') {
+        if (field.type === 'question' || field.type === 'select' || field.type === 'checkboxes' || field.type === 'multiple_choice') {
             html += `
                 <div class="wpf-field-settings-card">
                     <div class="wpf-field-settings-card-title">Flow Branching</div>
-                    <p class="wpf-setting-help">Choose where the conversation goes after each answer.</p>
+                    <p class="wpf-setting-help">Choose where the conversation goes after each answer. Branching applies when this field is part of the conversational flow.</p>
                     ${renderBranchEditor(field)}
                 </div>
             `;
@@ -1356,7 +1361,7 @@ function initAJFormsBuilder() {
             bindOptionsEditor(field);
         }
 
-        if (field.type === 'question') {
+        if (field.type === 'question' || field.type === 'select' || field.type === 'checkboxes' || field.type === 'multiple_choice') {
             bindBranchEditor(field);
         }
     }

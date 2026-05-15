@@ -1553,18 +1553,39 @@ class AJForms {
 				});
 			}
 
-			function getSelectedBranchValue(step) {
+			function getSelectedBranchValues(step) {
 				const checked = step.querySelector('input[type="radio"]:checked');
 				if (checked) {
-					return checked.value;
+					return [checked.value];
+				}
+
+				const checkedBoxes = Array.from(step.querySelectorAll('input[type="checkbox"]:checked'));
+				if (checkedBoxes.length) {
+					return checkedBoxes.map(function(input) {
+						return input.value;
+					});
 				}
 
 				const select = step.querySelector('select');
 				if (select && select.value) {
-					return select.value;
+					return [select.value];
 				}
 
-				return '';
+				return [];
+			}
+
+			function dispatchFlowAction(step, branchValue) {
+				const event = new CustomEvent('ajforms:flowAction', {
+					detail: {
+						form: form,
+						step: step,
+						fieldId: step.dataset.fieldId || '',
+						value: branchValue || '',
+						values: getSelectedBranchValues(step)
+					}
+				});
+
+				form.dispatchEvent(event);
 			}
 
 			function getNextStepFromBranch() {
@@ -1577,8 +1598,17 @@ class AJForms {
 					branchMap = {};
 				}
 
-				const branchValue = getSelectedBranchValue(step);
-				const target = branchValue && branchMap[branchValue] ? branchMap[branchValue] : '';
+				const branchValues = getSelectedBranchValues(step);
+				let branchValue = '';
+				let target = '';
+
+				for (let index = 0; index < branchValues.length; index += 1) {
+					if (branchMap[branchValues[index]]) {
+						branchValue = branchValues[index];
+						target = branchMap[branchValue];
+						break;
+					}
+				}
 
 				if (target === '__contact' && Object.prototype.hasOwnProperty.call(stepIndexByFieldId, '__contact')) {
 					return stepIndexByFieldId.__contact;
@@ -1586,6 +1616,11 @@ class AJForms {
 
 				if (target === '__end') {
 					return '__submit';
+				}
+
+				if (target === '__action') {
+					dispatchFlowAction(step, branchValue);
+					return currentStep + 1;
 				}
 
 				if (target && Object.prototype.hasOwnProperty.call(stepIndexByFieldId, target)) {
