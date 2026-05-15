@@ -641,6 +641,8 @@ body.wpf-is-resizing-field * {
 
 .wpf-confirmation-rule {
 	margin-top: 12px;
+	padding: 0;
+	overflow: hidden;
 }
 
 .wpf-confirmation-rule > summary {
@@ -655,11 +657,82 @@ body.wpf-is-resizing-field * {
 	content: "▸";
 	color: #64748b;
 	font-size: 12px;
-	margin-right: 8px;
+	margin-right: 0;
 }
 
 .wpf-confirmation-rule[open] > summary::before {
 	content: "▾";
+}
+
+.wpf-rule-summary {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 10px;
+	cursor: pointer;
+	padding: 12px 14px;
+}
+
+.wpf-rule-summary span:first-of-type {
+	font-weight: 800;
+	color: #111827;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wpf-rule-summary span:last-of-type {
+	font-size: 12px;
+	color: #64748b;
+	white-space: nowrap;
+}
+
+.wpf-rule-body {
+	padding: 2px 14px 14px;
+}
+
+.wpf-rule-condition,
+.wpf-rule-action {
+	display: grid;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 8px;
+}
+
+.wpf-rule-condition {
+	grid-template-columns: minmax(0, 1fr) 118px;
+	grid-template-areas:
+		"field operator"
+		"value remove";
+}
+
+.wpf-rule-action {
+	grid-template-columns: minmax(130px, .9fr) minmax(150px, 1.4fr) auto;
+}
+
+.wpf-rule-condition-field {
+	grid-area: field;
+}
+
+.wpf-rule-condition-operator {
+	grid-area: operator;
+}
+
+.wpf-rule-condition-value {
+	grid-area: value;
+}
+
+.wpf-rule-remove-condition {
+	grid-area: remove;
+}
+
+.wpf-rule-condition .wpf-option-delete,
+.wpf-rule-action .wpf-option-delete,
+.wpf-rule-remove-rule {
+	width: auto;
+	min-height: 34px;
+	padding: 6px 10px;
+	justify-self: start;
 }
 
 .wpf-field-settings-grid {

@@ -1074,7 +1074,7 @@ function initAJFormsBuilder() {
         return `<input type="text" class="wpf-rule-condition-value" value="${escapeHtml(condition.value || '')}" placeholder="Value">`;
     }
 
-    function renderConfirmationRules() {
+    function renderConfirmationRules(openRuleId = '') {
         const node = document.getElementById('wpf-confirmation-rules');
         if (!node) {
             return;
@@ -1089,12 +1089,12 @@ function initAJFormsBuilder() {
         }
 
         node.innerHTML = rules.map((rule, ruleIndex) => `
-            <details class="wpf-field-settings-card wpf-confirmation-rule" data-rule-index="${ruleIndex}" ${ruleIndex === 0 ? 'open' : ''}>
-                <summary style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;">
-                    <span style="font-weight:800;color:#111827;">${escapeHtml(rule.name || ('Rule ' + (ruleIndex + 1)))}</span>
-                    <span style="font-size:12px;color:#64748b;">Priority ${escapeHtml(rule.priority)}</span>
+            <details class="wpf-field-settings-card wpf-confirmation-rule" data-rule-index="${ruleIndex}" ${openRuleId && rule.id === openRuleId ? 'open' : ''}>
+                <summary class="wpf-rule-summary">
+                    <span>${escapeHtml(rule.name || ('Rule ' + (ruleIndex + 1)))}</span>
+                    <span>Priority ${escapeHtml(rule.priority)}</span>
                 </summary>
-                <div style="margin-top:16px;">
+                <div class="wpf-rule-body">
                 <div class="wpf-field-settings-grid">
                     <div class="wpf-setting-row">
                         <label>Rule Name</label>
@@ -1126,7 +1126,7 @@ function initAJFormsBuilder() {
                     <label>Conditions</label>
                     <div class="wpf-options-editor">
                         ${rule.conditions.map((condition, conditionIndex) => `
-                            <div class="wpf-setting-row wpf-rule-condition" data-condition-index="${conditionIndex}">
+                            <div class="wpf-rule-condition" data-condition-index="${conditionIndex}">
                                 <select class="wpf-rule-condition-field">${getRuleFieldOptions(condition.field)}</select>
                                 <select class="wpf-rule-condition-operator">
                                     <option value="equals" ${condition.operator === 'equals' ? 'selected' : ''}>equals</option>
@@ -1147,7 +1147,7 @@ function initAJFormsBuilder() {
                     <label>Actions</label>
                     <div class="wpf-options-editor">
                         ${rule.actions.map((action, actionIndex) => `
-                            <div class="wpf-setting-row wpf-rule-action" data-action-index="${actionIndex}">
+                            <div class="wpf-rule-action" data-action-index="${actionIndex}">
                                 <select class="wpf-rule-action-type">
                                     <option value="show_message" ${action.type === 'show_message' ? 'selected' : ''}>Show message</option>
                                     <option value="redirect" ${action.type === 'redirect' ? 'selected' : ''}>Redirect to URL</option>
@@ -1194,7 +1194,7 @@ function initAJFormsBuilder() {
             ruleEl.querySelectorAll('.wpf-rule-input, .wpf-rule-select').forEach((input) => {
                 input.addEventListener('change', () => {
                     rule[input.dataset.key] = input.dataset.key === 'priority' ? parseInt(input.value || '0', 10) : input.value;
-                    renderConfirmationRules();
+                    renderConfirmationRules(rule.id);
                 });
             });
 
@@ -1213,7 +1213,7 @@ function initAJFormsBuilder() {
                         condition.field = conditionEl.querySelector('.wpf-rule-condition-field')?.value || '';
                         condition.operator = conditionEl.querySelector('.wpf-rule-condition-operator')?.value || 'equals';
                         condition.value = conditionEl.querySelector('.wpf-rule-condition-value')?.value || '';
-                        renderConfirmationRules();
+                        renderConfirmationRules(rule.id);
                     });
                 });
 
@@ -1222,13 +1222,13 @@ function initAJFormsBuilder() {
                     if (!rule.conditions.length) {
                         rule.conditions.push(createDefaultRuleCondition(formSchema.fields[0] ? formSchema.fields[0].id : ''));
                     }
-                    renderConfirmationRules();
+                    renderConfirmationRules(rule.id);
                 });
             });
 
             ruleEl.querySelector('.wpf-rule-add-condition')?.addEventListener('click', () => {
                 rule.conditions.push(createDefaultRuleCondition(formSchema.fields[0] ? formSchema.fields[0].id : ''));
-                renderConfirmationRules();
+                renderConfirmationRules(rule.id);
             });
 
             ruleEl.querySelectorAll('.wpf-rule-action').forEach((actionEl) => {
@@ -1240,7 +1240,7 @@ function initAJFormsBuilder() {
                         action.type = actionEl.querySelector('.wpf-rule-action-type')?.value || 'show_message';
                         action.message = actionEl.querySelector('.wpf-rule-action-message')?.value || '';
                         action.url = actionEl.querySelector('.wpf-rule-action-url')?.value || '';
-                        renderConfirmationRules();
+                        renderConfirmationRules(rule.id);
                     });
                 });
 
@@ -1249,13 +1249,13 @@ function initAJFormsBuilder() {
                     if (!rule.actions.length) {
                         rule.actions.push(createDefaultRuleAction());
                     }
-                    renderConfirmationRules();
+                    renderConfirmationRules(rule.id);
                 });
             });
 
             ruleEl.querySelector('.wpf-rule-add-action')?.addEventListener('click', () => {
                 rule.actions.push(createDefaultRuleAction('show_message'));
-                renderConfirmationRules();
+                renderConfirmationRules(rule.id);
             });
 
             ruleEl.querySelector('.wpf-rule-remove-rule')?.addEventListener('click', () => {
@@ -1992,8 +1992,9 @@ function initAJFormsBuilder() {
     if (addConfirmationRuleBtn) {
         addConfirmationRuleBtn.addEventListener('click', () => {
             formSchema.settings.confirmation_rules = normalizeConfirmationRules(formSchema.settings.confirmation_rules || []);
-            formSchema.settings.confirmation_rules.push(createDefaultConfirmationRule());
-            renderConfirmationRules();
+            const newRule = createDefaultConfirmationRule();
+            formSchema.settings.confirmation_rules.push(newRule);
+            renderConfirmationRules(newRule.id);
         });
     }
 
