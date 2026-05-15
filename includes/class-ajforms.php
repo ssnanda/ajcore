@@ -483,6 +483,31 @@ class AJForms {
 		return sanitize_text_field( (string) $value );
 	}
 
+	private function get_field_option_label_map( $field ) {
+		$options = ! empty( $field['options'] ) && is_array( $field['options'] ) ? $field['options'] : array();
+		$map     = array();
+
+		foreach ( $options as $option ) {
+			$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
+			$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
+
+			$map[ sanitize_text_field( (string) $option_value ) ] = sanitize_text_field( (string) $option_label );
+		}
+
+		return $map;
+	}
+
+	private function map_option_value_to_label( $value, $field ) {
+		$option_map = $this->get_field_option_label_map( $field );
+		$value      = sanitize_text_field( (string) $value );
+
+		return isset( $option_map[ $value ] ) ? $option_map[ $value ] : $value;
+	}
+
+	private function field_type_uses_options( $field_type ) {
+		return in_array( $field_type, array( 'checkboxes', 'multiple_choice', 'question', 'select' ), true );
+	}
+
 	private function get_client_ip_address() {
 		$keys = array( 'HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'REMOTE_ADDR' );
 
@@ -1082,7 +1107,15 @@ class AJForms {
 			$value = isset( $_POST[ $field_id ] ) ? wp_unslash( $_POST[ $field_id ] ) : null;
 
 			if ( is_array( $value ) ) {
-				$clean_value = array_map( 'sanitize_text_field', $value );
+				$clean_value = array_values( array_filter( array_map( 'sanitize_text_field', $value ), 'strlen' ) );
+				if ( $this->field_type_uses_options( $field_type ) ) {
+					$clean_value = array_map(
+						function ( $selected_value ) use ( $field ) {
+							return $this->map_option_value_to_label( $selected_value, $field );
+						},
+						$clean_value
+					);
+				}
 				$is_empty    = empty( $clean_value );
 			} else {
 				switch ( $field_type ) {
@@ -1098,6 +1131,10 @@ class AJForms {
 					default:
 						$clean_value = sanitize_text_field( $value );
 						break;
+				}
+
+				if ( '' !== $clean_value && $this->field_type_uses_options( $field_type ) ) {
+					$clean_value = $this->map_option_value_to_label( $clean_value, $field );
 				}
 
 				$is_empty = '' === $clean_value;
@@ -1169,11 +1206,42 @@ class AJForms {
 		$this->send_form_notification( $form, $lead_data, $settings );
 		$this->maybe_create_asana_task( $form, $lead_data, $settings );
 
+		$redirect_url = '';
+		if ( ! empty( $settings['confirmation_type'] ) && 'redirect' === $settings['confirmation_type'] && ! empty( $settings['redirect_url'] ) ) {
+			$redirect_url = esc_url_raw( $settings['redirect_url'] );
+		}
+
+		if ( '' !== $redirect_url && ! headers_sent() ) {
+			wp_redirect( $redirect_url ); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
+			exit;
+		}
+
 		return array(
-			'submitted' => true,
-			'success'   => true,
-			'message'   => ! empty( $settings['success_message'] ) ? $settings['success_message'] : 'Form submitted successfully.',
+			'submitted'    => true,
+			'success'      => true,
+			'message'      => '' !== $redirect_url ? __( 'Redirecting...', 'ajforms' ) : ( ! empty( $settings['success_message'] ) ? $settings['success_message'] : 'Form submitted successfully.' ),
+			'redirect_url' => $redirect_url,
 		);
+	}
+
+	private function render_submission_redirect( $submission_result ) {
+		if ( empty( $submission_result['success'] ) || empty( $submission_result['redirect_url'] ) ) {
+			return '';
+		}
+
+		$redirect_url = esc_url_raw( $submission_result['redirect_url'] );
+
+		ob_start();
+		?>
+		<script>
+		window.location.replace(<?php echo wp_json_encode( $redirect_url ); ?>);
+		</script>
+		<noscript>
+			<p><a href="<?php echo esc_url( $redirect_url ); ?>"><?php esc_html_e( 'Continue', 'ajforms' ); ?></a></p>
+		</noscript>
+		<?php
+
+		return ob_get_clean();
 	}
 
 	private function get_frontend_field_data( $field ) {
@@ -1370,6 +1438,8 @@ class AJForms {
 					<span style="display:block;width:<?php echo esc_attr( 100 / $total_steps ); ?>%;height:100%;background:var(--ajforms-primary);border-radius:999px;"></span>
 				</div>
 			</div>
+
+			<?php echo $this->render_submission_redirect( $submission_result ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<?php if ( $submission_result['submitted'] ) : ?>
 				<div class="ajforms-message <?php echo $submission_result['success'] ? 'success' : 'error'; ?>" style="margin-bottom:20px;padding:12px;border-radius:4px;<?php echo $submission_result['success'] ? 'background:#edfaef;color:#116329;' : 'background:#fcf0f1;color:#8a2424;'; ?>">
@@ -1720,6 +1790,8 @@ class AJForms {
 					<p><?php echo esc_html( $settings['form_description'] ); ?></p>
 				<?php endif; ?>
 			</div>
+
+			<?php echo $this->render_submission_redirect( $submission_result ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<?php if ( $submission_result['submitted'] ) : ?>
 				<div class="ajforms-message <?php echo $submission_result['success'] ? 'success' : 'error'; ?>" style="margin-bottom:20px;padding:12px;border-radius:4px;<?php echo $submission_result['success'] ? 'background:#edfaef;color:#116329;' : 'background:#fcf0f1;color:#8a2424;'; ?>">
