@@ -47,6 +47,10 @@ $available_stripe_prices = array_filter(
 			return false;
 		}
 
+		if ( empty( $price['product_active'] ) || empty( $price['price_active'] ) ) {
+			return false;
+		}
+
 		return 'selected' !== ( isset( $plugin_settings['stripe_products_mode'] ) ? $plugin_settings['stripe_products_mode'] : 'all' ) || in_array( $price['id'], $selected_stripe_prices, true );
 	}
 );

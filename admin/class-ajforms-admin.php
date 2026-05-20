@@ -392,7 +392,6 @@ class AJForms_Admin {
 			'prices',
 			$secret_key,
 			array(
-				'active'                 => 'true',
 				'limit'                  => 100,
 				'expand[]'               => 'data.product',
 			)
@@ -411,6 +410,9 @@ class AJForms_Admin {
 			$product      = isset( $price['product'] ) && is_array( $price['product'] ) ? $price['product'] : array();
 			$product_id   = ! empty( $product['id'] ) ? sanitize_text_field( (string) $product['id'] ) : sanitize_text_field( (string) $price['product'] );
 			$product_name = ! empty( $product['name'] ) ? sanitize_text_field( (string) $product['name'] ) : __( 'Stripe product', 'ajforms' );
+			$product_description = ! empty( $product['description'] ) ? sanitize_textarea_field( (string) $product['description'] ) : '';
+			$product_active = ! isset( $product['active'] ) || ! empty( $product['active'] );
+			$price_active   = ! isset( $price['active'] ) || ! empty( $price['active'] );
 			$unit_amount  = isset( $price['unit_amount'] ) ? absint( $price['unit_amount'] ) : 0;
 			$currency     = isset( $price['currency'] ) ? strtolower( sanitize_key( $price['currency'] ) ) : 'usd';
 			$amount       = in_array( $currency, array( 'jpy', 'krw', 'vnd' ), true ) ? $unit_amount : $unit_amount / 100;
@@ -423,6 +425,9 @@ class AJForms_Admin {
 				'id'           => sanitize_text_field( (string) $price['id'] ),
 				'product_id'   => $product_id,
 				'product_name' => $product_name,
+				'product_description' => $product_description,
+				'product_active' => $product_active,
+				'price_active'   => $price_active,
 				'nickname'     => ! empty( $price['nickname'] ) ? sanitize_text_field( (string) $price['nickname'] ) : '',
 				'amount'       => $amount,
 				'currency'     => $currency,
@@ -1676,6 +1681,15 @@ class AJForms_Admin {
 		$settings = $this->get_plugin_settings();
 		$cache    = $this->get_stripe_products_cache();
 		$prices   = isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array();
+		$active_count = 0;
+		$archived_count = 0;
+		foreach ( $prices as $price ) {
+			if ( ! empty( $price['product_active'] ) && ! empty( $price['price_active'] ) ) {
+				$active_count++;
+			} else {
+				$archived_count++;
+			}
+		}
 		$sync_url = wp_nonce_url(
 			add_query_arg(
 				array(
@@ -1696,6 +1710,22 @@ class AJForms_Admin {
 				.ajcore-products-notice{margin:0 0 18px;padding:12px 14px;border-radius:10px}
 				.ajcore-products-notice.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
 				.ajcore-products-notice.error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+				.ajcore-shortcode-builder{margin-bottom:18px;padding:22px 24px;border:1px solid #dbe3ec;border-radius:14px;background:#fff;box-shadow:0 12px 30px rgba(15,23,42,.05)}
+				.ajcore-builder-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}
+				.ajcore-builder-head h2{margin:0 0 6px;font-size:21px}
+				.ajcore-builder-head p{margin:0;color:#64748b}
+				.ajcore-builder-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:18px}
+				.ajcore-builder-field{padding:14px;border:1px solid #edf2f7;border-radius:12px;background:#f8fafc}
+				.ajcore-builder-field strong{display:block;margin-bottom:10px;color:#111827}
+				.ajcore-builder-checks{display:grid;gap:8px}
+				.ajcore-builder-checks label{display:flex;align-items:center;gap:8px;margin:0;color:#334155}
+				.ajcore-product-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px;margin-bottom:16px}
+				.ajcore-product-choice{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+				.ajcore-product-choice.is-archived{background:#f8fafc;color:#64748b}
+				.ajcore-product-choice strong{display:block;color:#111827}
+				.ajcore-product-choice span{display:block;margin-top:4px;color:#64748b;font-size:12px}
+				.ajcore-generated-shortcode{display:flex;gap:10px;align-items:center;margin-top:14px}
+				.ajcore-generated-shortcode input{width:100%;font-family:monospace;min-height:42px;border:1px solid #cbd5e1;border-radius:10px;padding:8px 10px}
 				.ajcore-products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
 				.ajcore-product-card{padding:18px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
 				.ajcore-product-card h2{margin:0 0 8px;font-size:17px}
@@ -1703,6 +1733,7 @@ class AJForms_Admin {
 				.ajcore-product-meta{display:grid;gap:5px;color:#64748b;font-size:13px}
 				.ajcore-shortcode{display:inline-block;margin-top:12px;padding:6px 8px;border-radius:8px;background:#f1f5f9;color:#334155}
 				.ajcore-products-empty{padding:24px;border:1px dashed #cbd5e1;border-radius:12px;background:#fff;color:#64748b}
+				@media (max-width: 960px){.ajcore-builder-controls{grid-template-columns:1fr}}
 			</style>
 
 			<div class="ajcore-products-shell">
@@ -1738,10 +1769,76 @@ class AJForms_Admin {
 				<?php if ( empty( $prices ) ) : ?>
 					<div class="ajcore-products-empty"><?php esc_html_e( 'No synced one-time Stripe prices yet.', 'ajforms' ); ?></div>
 				<?php else : ?>
+					<div class="ajcore-shortcode-builder" id="ajcore-shortcode-builder">
+						<div class="ajcore-builder-head">
+							<div>
+								<h2><?php esc_html_e( 'Build a Product Shortcode', 'ajforms' ); ?></h2>
+								<p><?php esc_html_e( 'Filter, select products, choose what to show, then generate a shortcode for any page.', 'ajforms' ); ?></p>
+							</div>
+							<button type="button" class="button" id="ajcore-select-visible-products"><?php esc_html_e( 'Select Visible', 'ajforms' ); ?></button>
+						</div>
+
+						<div class="ajcore-builder-controls">
+							<div class="ajcore-builder-field">
+								<strong><?php esc_html_e( 'Filter products', 'ajforms' ); ?></strong>
+								<div class="ajcore-builder-checks">
+									<label><input type="checkbox" class="ajcore-status-filter" value="active" checked> <?php echo esc_html( sprintf( __( 'Active (%d)', 'ajforms' ), $active_count ) ); ?></label>
+									<label><input type="checkbox" class="ajcore-status-filter" value="archived"> <?php echo esc_html( sprintf( __( 'Archived / inactive (%d)', 'ajforms' ), $archived_count ) ); ?></label>
+								</div>
+							</div>
+							<div class="ajcore-builder-field">
+								<strong><?php esc_html_e( 'Display mode', 'ajforms' ); ?></strong>
+								<div class="ajcore-builder-checks">
+									<label><input type="radio" name="ajcore_shortcode_mode" value="buy" checked> <?php esc_html_e( 'Buy Now', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_mode" value="cart"> <?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></label>
+								</div>
+							</div>
+							<div class="ajcore-builder-field">
+								<strong><?php esc_html_e( 'Fields to show', 'ajforms' ); ?></strong>
+								<div class="ajcore-builder-checks">
+									<label><input type="checkbox" class="ajcore-display-field" value="title" checked> <?php esc_html_e( 'Product name', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" value="description" checked> <?php esc_html_e( 'Description', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" value="price" checked> <?php esc_html_e( 'Price', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" value="button" checked> <?php esc_html_e( 'Button', 'ajforms' ); ?></label>
+								</div>
+							</div>
+						</div>
+
+						<div class="ajcore-product-picker">
+							<?php foreach ( $prices as $price ) : ?>
+								<?php
+								$is_active = ! empty( $price['product_active'] ) && ! empty( $price['price_active'] );
+								$state     = $is_active ? 'active' : 'archived';
+								?>
+								<label class="ajcore-product-choice <?php echo $is_active ? 'is-active' : 'is-archived'; ?>" data-status="<?php echo esc_attr( $state ); ?>">
+									<input type="checkbox" class="ajcore-product-select" value="<?php echo esc_attr( $price['id'] ); ?>">
+									<span>
+										<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ) ); ?></strong>
+										<span><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . ' - ' . $price['id'] ); ?></span>
+										<?php if ( ! empty( $price['product_description'] ) ) : ?>
+											<span><?php echo esc_html( wp_trim_words( $price['product_description'], 16 ) ); ?></span>
+										<?php endif; ?>
+									</span>
+								</label>
+							<?php endforeach; ?>
+						</div>
+
+						<div class="ajcore-generated-shortcode">
+							<input type="text" id="ajcore-generated-shortcode" readonly value="[ajcore_products]">
+							<button type="button" class="button button-primary" id="ajcore-copy-shortcode"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
+						</div>
+					</div>
+
 					<div class="ajcore-products-grid">
 						<?php foreach ( $prices as $price ) : ?>
 							<div class="ajcore-product-card">
 								<h2><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ) ); ?></h2>
+								<?php if ( empty( $price['product_active'] ) || empty( $price['price_active'] ) ) : ?>
+									<p style="margin:0 0 8px;color:#b45309;font-weight:700;"><?php esc_html_e( 'Archived / inactive', 'ajforms' ); ?></p>
+								<?php endif; ?>
+								<?php if ( ! empty( $price['product_description'] ) ) : ?>
+									<p style="margin:0 0 10px;color:#64748b;"><?php echo esc_html( $price['product_description'] ); ?></p>
+								<?php endif; ?>
 								<div class="ajcore-product-price"><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) ); ?></div>
 								<div class="ajcore-product-meta">
 									<span><?php echo esc_html( 'Price: ' . $price['id'] ); ?></span>
@@ -1751,6 +1848,83 @@ class AJForms_Admin {
 							</div>
 						<?php endforeach; ?>
 					</div>
+					<script>
+					(function() {
+						const builder = document.getElementById('ajcore-shortcode-builder');
+						if (!builder) {
+							return;
+						}
+						const statusFilters = Array.from(builder.querySelectorAll('.ajcore-status-filter'));
+						const productChoices = Array.from(builder.querySelectorAll('.ajcore-product-choice'));
+						const productInputs = Array.from(builder.querySelectorAll('.ajcore-product-select'));
+						const displayInputs = Array.from(builder.querySelectorAll('.ajcore-display-field'));
+						const output = document.getElementById('ajcore-generated-shortcode');
+						const copyButton = document.getElementById('ajcore-copy-shortcode');
+						const selectVisibleButton = document.getElementById('ajcore-select-visible-products');
+
+						function selectedStatuses() {
+							return statusFilters.filter((input) => input.checked).map((input) => input.value);
+						}
+
+						function updateVisibility() {
+							const statuses = selectedStatuses();
+							productChoices.forEach((choice) => {
+								const visible = statuses.includes(choice.dataset.status);
+								choice.style.display = visible ? 'flex' : 'none';
+								if (!visible) {
+									const input = choice.querySelector('.ajcore-product-select');
+									if (input) {
+										input.checked = false;
+									}
+								}
+							});
+							updateShortcode();
+						}
+
+						function updateShortcode() {
+							const modeInput = builder.querySelector('input[name="ajcore_shortcode_mode"]:checked');
+							const mode = modeInput ? modeInput.value : 'buy';
+							const priceIds = productInputs.filter((input) => input.checked).map((input) => input.value);
+							const fields = displayInputs.filter((input) => input.checked).map((input) => input.value);
+							const includeArchived = selectedStatuses().includes('archived') ? 'yes' : '';
+							const attrs = [];
+							if (mode !== 'buy') {
+								attrs.push('mode="' + mode + '"');
+							}
+							if (priceIds.length) {
+								attrs.push('price_ids="' + priceIds.join(',') + '"');
+							}
+							if (fields.length && fields.join(',') !== 'title,description,price,button') {
+								attrs.push('show="' + fields.join(',') + '"');
+							}
+							if (includeArchived) {
+								attrs.push('include_archived="yes"');
+							}
+							output.value = '[ajcore_products' + (attrs.length ? ' ' + attrs.join(' ') : '') + ']';
+						}
+
+						statusFilters.forEach((input) => input.addEventListener('change', updateVisibility));
+						productInputs.forEach((input) => input.addEventListener('change', updateShortcode));
+						displayInputs.forEach((input) => input.addEventListener('change', updateShortcode));
+						builder.querySelectorAll('input[name="ajcore_shortcode_mode"]').forEach((input) => input.addEventListener('change', updateShortcode));
+						selectVisibleButton.addEventListener('click', function() {
+							productChoices.forEach((choice) => {
+								if (choice.style.display !== 'none') {
+									const input = choice.querySelector('.ajcore-product-select');
+									if (input) {
+										input.checked = true;
+									}
+								}
+							});
+							updateShortcode();
+						});
+						copyButton.addEventListener('click', function() {
+							output.select();
+							document.execCommand('copy');
+						});
+						updateVisibility();
+					})();
+					</script>
 				<?php endif; ?>
 			</div>
 		</div>

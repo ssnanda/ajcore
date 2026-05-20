@@ -284,7 +284,7 @@ class AJForms {
 		return null;
 	}
 
-	private function get_public_stripe_prices( $requested_price_ids = array() ) {
+	private function get_public_stripe_prices( $requested_price_ids = array(), $include_archived = false ) {
 		$settings       = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 		$mode           = isset( $settings['stripe_products_mode'] ) ? sanitize_key( $settings['stripe_products_mode'] ) : 'all';
 		$selected       = isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? array_map( 'sanitize_text_field', $settings['stripe_selected_prices'] ) : array();
@@ -295,6 +295,10 @@ class AJForms {
 
 		foreach ( $prices as $price ) {
 			if ( ! is_array( $price ) || empty( $price['id'] ) ) {
+				continue;
+			}
+
+			if ( ! $include_archived && ( empty( $price['product_active'] ) || empty( $price['price_active'] ) ) ) {
 				continue;
 			}
 
@@ -414,6 +418,7 @@ class AJForms {
 		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
 		$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
 		$items    = isset( $_POST['items'] ) ? json_decode( wp_unslash( $_POST['items'] ), true ) : null; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$include_archived = isset( $_POST['include_archived'] ) && in_array( strtolower( sanitize_text_field( wp_unslash( $_POST['include_archived'] ) ) ), array( '1', 'true', 'yes' ), true );
 
 		if ( is_array( $items ) ) {
 			if ( ! wp_verify_nonce( $nonce, 'ajcore_cart_checkout' ) ) {
@@ -430,7 +435,7 @@ class AJForms {
 			$items
 		) : array( $price_id );
 		$requested_price_ids = array_filter( $requested_price_ids );
-		$allowed_prices      = $this->get_public_stripe_prices( $requested_price_ids );
+		$allowed_prices      = $this->get_public_stripe_prices( $requested_price_ids, $include_archived );
 		$allowed_price_map   = array();
 
 		foreach ( $allowed_prices as $allowed_price ) {
@@ -570,13 +575,16 @@ class AJForms {
 				'mode'      => 'buy',
 				'display'   => '',
 				'cart'      => '',
+				'show'      => 'title,description,price,button',
+				'include_archived' => 'no',
 			),
 			$atts,
 			'ajcore_products'
 		);
 
 		$requested_price_ids = array_filter( array_map( 'trim', explode( ',', (string) $atts['price_ids'] ) ) );
-		$prices              = $this->get_public_stripe_prices( $requested_price_ids );
+		$include_archived    = in_array( strtolower( (string) $atts['include_archived'] ), array( '1', 'true', 'yes' ), true );
+		$prices              = $this->get_public_stripe_prices( $requested_price_ids, $include_archived );
 		$stripe_settings     = $this->get_stripe_settings();
 		$columns             = min( 4, max( 1, absint( $atts['columns'] ) ) );
 		$requested_mode      = '' !== (string) $atts['display'] ? sanitize_key( $atts['display'] ) : sanitize_key( $atts['mode'] );
@@ -585,6 +593,11 @@ class AJForms {
 			$mode = 'cart';
 		}
 		$is_cart_mode        = 'cart' === $mode;
+		$show_fields         = array_filter( array_map( 'sanitize_key', array_map( 'trim', explode( ',', (string) $atts['show'] ) ) ) );
+		$show_title          = in_array( 'title', $show_fields, true );
+		$show_description    = in_array( 'description', $show_fields, true );
+		$show_price          = in_array( 'price', $show_fields, true );
+		$show_button         = in_array( 'button', $show_fields, true );
 
 		if ( empty( $prices ) ) {
 			return '';
@@ -596,6 +609,7 @@ class AJForms {
 			class="ajcore-products-wrap <?php echo $is_cart_mode ? 'ajcore-products-wrap-cart' : 'ajcore-products-wrap-buy'; ?>"
 			data-mode="<?php echo esc_attr( $mode ); ?>"
 			data-cart-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_cart_checkout' ) ); ?>"
+			data-include-archived="<?php echo $include_archived ? 'yes' : 'no'; ?>"
 		>
 			<div class="ajcore-products-list" style="display:grid;grid-template-columns:repeat(<?php echo esc_attr( $columns ); ?>,minmax(0,1fr));gap:18px;">
 				<?php foreach ( $prices as $price ) : ?>
@@ -612,14 +626,20 @@ class AJForms {
 						data-currency="<?php echo esc_attr( strtolower( $price['currency'] ) ); ?>"
 						style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);"
 					>
-						<h3 style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php echo esc_html( $price['product_name'] ); ?></h3>
-						<?php if ( ! empty( $price['nickname'] ) ) : ?>
+						<?php if ( $show_title ) : ?>
+							<h3 style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php echo esc_html( $price['product_name'] ); ?></h3>
+						<?php endif; ?>
+						<?php if ( $show_description && ! empty( $price['product_description'] ) ) : ?>
+							<div style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['product_description'] ); ?></div>
+						<?php elseif ( $show_description && ! empty( $price['nickname'] ) ) : ?>
 							<div style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['nickname'] ); ?></div>
 						<?php endif; ?>
-						<div style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
-							<?php echo esc_html( $price_label ); ?>
-						</div>
-						<?php if ( $is_cart_mode ) : ?>
+						<?php if ( $show_price ) : ?>
+							<div style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
+								<?php echo esc_html( $price_label ); ?>
+							</div>
+						<?php endif; ?>
+						<?php if ( $show_button && $is_cart_mode ) : ?>
 							<div class="ajcore-product-cart-controls" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
 								<label style="display:flex;align-items:center;gap:8px;margin:0;color:#334155;font-weight:700;">
 									<?php esc_html_e( 'Qty', 'ajforms' ); ?>
@@ -632,7 +652,7 @@ class AJForms {
 									style="background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer;"
 								><?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></button>
 							</div>
-						<?php else : ?>
+						<?php elseif ( $show_button ) : ?>
 							<button
 								type="button"
 								class="ajcore-product-buy"
@@ -776,6 +796,7 @@ class AJForms {
 				formData.append('action', 'ajcore_create_checkout_session');
 				formData.append('price_id', button.dataset.priceId);
 				formData.append('nonce', button.dataset.nonce);
+				formData.append('include_archived', root.dataset.includeArchived || 'no');
 				formData.append('current_url', window.location.href);
 				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 					method: 'POST',
@@ -812,6 +833,7 @@ class AJForms {
 					formData.append('action', 'ajcore_create_checkout_session');
 					formData.append('items', JSON.stringify(items));
 					formData.append('nonce', root.dataset.cartNonce);
+					formData.append('include_archived', root.dataset.includeArchived || 'no');
 					formData.append('current_url', window.location.href);
 					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 						method: 'POST',
