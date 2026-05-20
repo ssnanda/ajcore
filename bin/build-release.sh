@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PLUGIN_SLUG="ajforms"
+PLUGIN_SLUG="ajcore"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASES_DIR="$ROOT_DIR/releases"
-PLUGIN_FILE="$ROOT_DIR/ajforms.php"
+PLUGIN_FILE="$ROOT_DIR/ajcore.php"
 
-GITHUB_REPO="ssnanda/ajforms"
+GITHUB_REPO="ssnanda/ajcore"
 TAG_PREFIX="v"
 
 GITHUB_RELEASE="ask"
@@ -16,6 +16,7 @@ RELEASE_BRANCH="ask"
 USE_CURRENT_BRANCH="false"
 CREATE_BRANCH="false"
 MAIN_RELEASE_BRANCH="main"
+MERGE_TO_MAIN="ask"
 
 usage() {
   cat <<'USAGE'
@@ -29,6 +30,7 @@ Interactive flow:
   4. Ask whether to commit to git
   5. Ask whether to push to GitHub
   6. Ask whether to create/upload GitHub Release asset
+  7. For non-main branches, optionally merge back to main
 
 Options are still supported:
   --version X.Y.Z
@@ -41,6 +43,8 @@ Options are still supported:
   --new-branch NAME
   --current-branch
   --main-branch NAME
+  --merge-main
+  --no-merge-main
   --github-release
   --no-github-release
   --git-commit
@@ -121,7 +125,7 @@ set_version() {
   validate_version "$version"
 
   perl -0pi -e "s/Version:\s*[0-9]+\.[0-9]+\.[0-9]+/Version: $version/" "$PLUGIN_FILE"
-  perl -0pi -e "s/define\(\s*'AJFORMS_VERSION'\s*,\s*'[^']+'\s*\);/define( 'AJFORMS_VERSION', '$version' );/" "$PLUGIN_FILE"
+  perl -0pi -e "s/define\(\s*'AJCORE_VERSION'\s*,\s*'[^']+'\s*\);/define( 'AJCORE_VERSION', '$version' );/" "$PLUGIN_FILE"
 }
 
 require_files() {
@@ -200,12 +204,6 @@ prepare_release_branch() {
     return 0
   fi
 
-  if git_worktree_dirty; then
-    echo "Error: cannot switch from $current_branch to $target_branch with uncommitted changes." >&2
-    echo "Commit/stash your changes first, or run with --current-branch to keep using $current_branch." >&2
-    exit 1
-  fi
-
   if [[ "$CREATE_BRANCH" == "true" ]]; then
     if git_branch_exists "$target_branch" || git_remote_branch_exists "$target_branch"; then
       echo "Error: branch already exists: $target_branch" >&2
@@ -214,7 +212,16 @@ prepare_release_branch() {
 
     git switch -c "$target_branch"
     echo "Git: created and switched to branch $target_branch"
+    if git_worktree_dirty; then
+      echo "Git: carried your uncommitted changes onto $target_branch"
+    fi
     return 0
+  fi
+
+  if git_worktree_dirty; then
+    echo "Error: cannot switch from $current_branch to existing branch $target_branch with uncommitted changes." >&2
+    echo "Commit/stash your changes first, use --new-branch $target_branch to create a branch around these changes, or run with --current-branch." >&2
+    exit 1
   fi
 
   if git_branch_exists "$target_branch"; then
@@ -323,8 +330,8 @@ verify_zip() {
     exit 1
   fi
 
-  if ! unzip -l "$zip_file" | awk '{print $4}' | grep -q "^$PLUGIN_SLUG/ajforms.php$"; then
-    echo "Error: zip is missing $PLUGIN_SLUG/ajforms.php" >&2
+  if ! unzip -l "$zip_file" | awk '{print $4}' | grep -q "^$PLUGIN_SLUG/ajcore.php$"; then
+    echo "Error: zip is missing $PLUGIN_SLUG/ajcore.php" >&2
     unzip -l "$zip_file" | head >&2
     exit 1
   fi
@@ -348,12 +355,12 @@ git_commit_release_files() {
     return 0
   fi
 
-  git commit -m "Release AJ Forms $VERSION"
+  git commit -m "Release AJ Core $VERSION"
 }
 
 git_create_tag() {
- require_git
- cd "$ROOT_DIR"
+  require_git
+  cd "$ROOT_DIR"
   local tag
   tag="$(get_release_tag)"
 
@@ -363,6 +370,39 @@ git_create_tag() {
     git tag "$tag"
     echo "Git: created tag $tag"
   fi
+}
+
+merge_release_branch_to_main() {
+  require_git
+  cd "$ROOT_DIR"
+
+  local source_branch
+  source_branch="$(git rev-parse --abbrev-ref HEAD)"
+
+  if [[ "$source_branch" == "$MAIN_RELEASE_BRANCH" ]]; then
+    echo "Git: already on $MAIN_RELEASE_BRANCH; merge skipped"
+    return 0
+  fi
+
+  if git_worktree_dirty; then
+    echo "Error: cannot merge $source_branch into $MAIN_RELEASE_BRANCH with uncommitted changes." >&2
+    echo "Commit or stash changes first, then rerun with --merge-main." >&2
+    exit 1
+  fi
+
+  if ! git_branch_exists "$MAIN_RELEASE_BRANCH"; then
+    if git_remote_branch_exists "$MAIN_RELEASE_BRANCH"; then
+      git switch --track "origin/$MAIN_RELEASE_BRANCH"
+    else
+      echo "Error: main branch does not exist: $MAIN_RELEASE_BRANCH" >&2
+      exit 1
+    fi
+  else
+    git switch "$MAIN_RELEASE_BRANCH"
+  fi
+
+  git merge --no-ff "$source_branch" -m "Merge $source_branch into $MAIN_RELEASE_BRANCH"
+  echo "Git: merged $source_branch into $MAIN_RELEASE_BRANCH"
 }
 
 git_push_release() {
@@ -407,11 +447,11 @@ publish_github_release() {
   tag="$(get_release_tag)"
 
   if is_main_release_branch; then
-    title="AJ Forms $VERSION"
-    notes="AJ Forms WordPress plugin release $VERSION"
+    title="AJ Core $VERSION"
+    notes="AJ Core WordPress plugin release $VERSION"
   else
-    title="AJ Forms $VERSION Developer Build ($(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD))"
-    notes="Developer update build from branch $(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD). Enable developer updates in AJ Forms to install this prerelease."
+    title="AJ Core $VERSION Developer Build ($(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD))"
+    notes="Developer update build from branch $(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD). Enable developer updates in AJ Core to install this prerelease."
   fi
 
   if gh release view "$tag" --repo "$GITHUB_REPO" >/dev/null 2>&1; then
@@ -441,7 +481,7 @@ while [[ $# -gt 0 ]]; do
     --root)
       ROOT_DIR="$(cd "${2:-}" && pwd)"
       RELEASES_DIR="$ROOT_DIR/releases"
-      PLUGIN_FILE="$ROOT_DIR/ajforms.php"
+      PLUGIN_FILE="$ROOT_DIR/ajcore.php"
       shift 2
       ;;
     --repo) GITHUB_REPO="${2:-}"; shift 2 ;;
@@ -449,6 +489,8 @@ while [[ $# -gt 0 ]]; do
     --new-branch) RELEASE_BRANCH="${2:-}"; USE_CURRENT_BRANCH="false"; CREATE_BRANCH="true"; shift 2 ;;
     --current-branch) USE_CURRENT_BRANCH="true"; CREATE_BRANCH="false"; shift ;;
     --main-branch) MAIN_RELEASE_BRANCH="${2:-}"; shift 2 ;;
+    --merge-main) MERGE_TO_MAIN="true"; shift ;;
+    --no-merge-main) MERGE_TO_MAIN="false"; shift ;;
     --github-release) GITHUB_RELEASE="true"; shift ;;
     --no-github-release) GITHUB_RELEASE="false"; shift ;;
     --git-commit) GIT_COMMIT="true"; shift ;;
@@ -550,18 +592,41 @@ if [[ "$GITHUB_RELEASE" == "true" ]]; then
   publish_github_release
 fi
 
+BUILT_RELEASE_BRANCH="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
+BUILT_RELEASE_TAG="$(get_release_tag)"
+if is_main_release_branch; then
+  BUILT_RELEASE_CHANNEL="normal"
+else
+  BUILT_RELEASE_CHANNEL="developer"
+fi
+
+if ! is_main_release_branch; then
+  if [[ "$MERGE_TO_MAIN" == "ask" ]]; then
+    if ask_yes_no "Merge this branch into $MAIN_RELEASE_BRANCH now?" "n"; then
+      MERGE_TO_MAIN="true"
+    else
+      MERGE_TO_MAIN="false"
+    fi
+  fi
+
+  if [[ "$MERGE_TO_MAIN" == "true" ]]; then
+    merge_release_branch_to_main
+  fi
+fi
+
 echo "Current version: $CURRENT_VERSION"
 echo "New version: $VERSION"
-echo "Release branch: $(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
-echo "Release channel: $(is_main_release_branch && echo "normal" || echo "developer")"
-echo "Release tag: $(get_release_tag)"
+echo "Current branch: $(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)"
+echo "Release branch: $BUILT_RELEASE_BRANCH"
+echo "Release channel: $BUILT_RELEASE_CHANNEL"
+echo "Release tag: $BUILT_RELEASE_TAG"
 echo "Updated: $PLUGIN_FILE"
 echo "Built: $VERSIONED_ZIP"
 echo "Built: $LATEST_ZIP"
 echo ""
 echo "Verified:"
 echo "  $PLUGIN_SLUG/"
-echo "  $PLUGIN_SLUG/ajforms.php"
+echo "  $PLUGIN_SLUG/ajcore.php"
 echo ""
 echo "Verify manually with:"
 echo "  unzip -l \"$VERSIONED_ZIP\" | head"

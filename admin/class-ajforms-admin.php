@@ -3,11 +3,11 @@
 class AJForms_Admin {
 
 	private function get_latest_release_api_url() {
-		return 'https://api.github.com/repos/ssnanda/ajforms/releases/latest';
+		return 'https://api.github.com/repos/ssnanda/ajcore/releases/latest';
 	}
 
 	private function get_releases_api_url() {
-		return 'https://api.github.com/repos/ssnanda/ajforms/releases';
+		return 'https://api.github.com/repos/ssnanda/ajcore/releases';
 	}
 
 	private function get_update_cache_key() {
@@ -54,7 +54,7 @@ class AJForms_Admin {
 		if ( ! empty( $release['assets'] ) && is_array( $release['assets'] ) ) {
 			foreach ( $release['assets'] as $asset ) {
 				$asset_name = isset( $asset['name'] ) ? (string) $asset['name'] : '';
-				if ( preg_match( '/^ajforms.*\.zip$/i', $asset_name ) && ! empty( $asset['browser_download_url'] ) ) {
+				if ( preg_match( '/^(ajcore|ajforms).*\.zip$/i', $asset_name ) && ! empty( $asset['browser_download_url'] ) ) {
 					$download_url = esc_url_raw( (string) $asset['browser_download_url'] );
 					break;
 				}
@@ -62,7 +62,7 @@ class AJForms_Admin {
 		}
 
 		if ( '' === $download_url ) {
-			$download_url = 'https://github.com/ssnanda/ajforms/releases/download/' . rawurlencode( $tag_name ) . '/ajforms-' . rawurlencode( $version ) . '.zip';
+			$download_url = 'https://github.com/ssnanda/ajcore/releases/download/' . rawurlencode( $tag_name ) . '/ajcore-' . rawurlencode( $version ) . '.zip';
 		}
 
 		return array(
@@ -91,7 +91,7 @@ class AJForms_Admin {
 				'timeout' => 15,
 				'headers' => array(
 					'Accept'     => 'application/vnd.github+json',
-					'User-Agent' => 'AJForms/' . AJFORMS_VERSION . '; ' . home_url( '/' ),
+					'User-Agent' => 'AJCore/' . AJFORMS_VERSION . '; ' . home_url( '/' ),
 				),
 			)
 		);
@@ -104,7 +104,7 @@ class AJForms_Admin {
 		$body          = json_decode( wp_remote_retrieve_body( $response ), true );
 
 		if ( 200 !== (int) $response_code || ! is_array( $body ) ) {
-			return new WP_Error( 'ajforms_update_lookup_failed', __( 'Unable to reach the latest AJ Forms release right now.', 'ajforms' ) );
+			return new WP_Error( 'ajforms_update_lookup_failed', __( 'Unable to reach the latest AJ Core release right now.', 'ajforms' ) );
 		}
 
 		if ( $this->developer_updates_enabled() ) {
@@ -125,7 +125,7 @@ class AJForms_Admin {
 			}
 
 			if ( null === $best_release ) {
-				return new WP_Error( 'ajforms_update_invalid', __( 'No usable AJ Forms releases were found.', 'ajforms' ) );
+				return new WP_Error( 'ajforms_update_invalid', __( 'No usable AJ Core releases were found.', 'ajforms' ) );
 			}
 
 			$release_info = $this->normalize_release_info( $best_release );
@@ -172,7 +172,7 @@ class AJForms_Admin {
 		}
 
 		if ( empty( $latest_release['download_url'] ) ) {
-			return new WP_Error( 'missing_download_url', __( 'The latest AJ Forms release does not include a downloadable zip.', 'ajforms' ) );
+			return new WP_Error( 'missing_download_url', __( 'The latest AJ Core release does not include a downloadable zip.', 'ajforms' ) );
 		}
 
 		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
@@ -186,7 +186,10 @@ class AJForms_Admin {
 			return $result;
 		}
 
-		activate_plugin( AJFORMS_PLUGIN_BASENAME );
+		$activation_result = activate_plugin( AJCORE_PLUGIN_BASENAME );
+		if ( is_wp_error( $activation_result ) && AJFORMS_PLUGIN_BASENAME !== AJCORE_PLUGIN_BASENAME ) {
+			activate_plugin( AJFORMS_PLUGIN_BASENAME );
+		}
 
 		return true;
 	}
@@ -1364,8 +1367,8 @@ class AJForms_Admin {
 
 	public function add_plugin_admin_menu() {
 		add_menu_page(
-			__( 'AJ Forms', 'ajforms' ),
-			__( 'AJ Forms', 'ajforms' ),
+			__( 'AJ Core', 'ajforms' ),
+			__( 'AJ Core', 'ajforms' ),
 			'manage_options',
 			'ajforms',
 			array( $this, 'display_forms_page' ),
@@ -1402,8 +1405,8 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
-			__( 'Update AJ Forms', 'ajforms' ),
-			__( 'Update AJ Forms', 'ajforms' ),
+			__( 'Update AJ Core', 'ajforms' ),
+			__( 'Update AJ Core', 'ajforms' ),
 			'manage_options',
 			'ajforms-about',
 			array( $this, 'display_about_page' )
@@ -1413,7 +1416,7 @@ class AJForms_Admin {
 
 	public function add_plugin_action_links( $links ) {
 		$custom_links = array(
-			'update'   => '<a href="' . esc_url( $this->get_about_update_url( 'update' ) ) . '">' . esc_html__( 'Update AJ Forms', 'ajforms' ) . '</a>',
+			'update'   => '<a href="' . esc_url( $this->get_about_update_url( 'update' ) ) . '">' . esc_html__( 'Update AJ Core', 'ajforms' ) . '</a>',
 		);
 
 		return array_merge( $custom_links, $links );
@@ -1425,7 +1428,7 @@ class AJForms_Admin {
 		}
 
 		$links[] = '<a href="' . esc_url( 'https://itspector.com/' ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'IT Spector LLC', 'ajforms' ) . '</a>';
-		$links[] = '<a href="' . esc_url( $this->get_about_update_url( 'update' ) ) . '">' . esc_html__( 'Update AJ Forms', 'ajforms' ) . '</a>';
+		$links[] = '<a href="' . esc_url( $this->get_about_update_url( 'update' ) ) . '">' . esc_html__( 'Update AJ Core', 'ajforms' ) . '</a>';
 
 		return $links;
 	}
@@ -1729,7 +1732,7 @@ class AJForms_Admin {
 							<div class="ajforms-settings-head">
 								<?php if ( 'general' === $section ) : ?>
 									<h2><?php esc_html_e( 'General Settings', 'ajforms' ); ?></h2>
-									<p><?php esc_html_e( 'Set the defaults AJ Forms should use for notifications, reply behavior, and submission feedback across your forms.', 'ajforms' ); ?></p>
+									<p><?php esc_html_e( 'Set the defaults AJ Core should use for notifications, reply behavior, and submission feedback across your forms.', 'ajforms' ); ?></p>
 								<?php elseif ( 'spam' === $section ) : ?>
 									<h2><?php esc_html_e( 'Spam Protection', 'ajforms' ); ?></h2>
 									<p><?php esc_html_e( 'Manage the site-wide spam defaults and whichever one challenge provider you want ready to use.', 'ajforms' ); ?></p>
@@ -1943,7 +1946,7 @@ class AJForms_Admin {
 										<div class="ajforms-settings-field">
 											<label for="asana_personal_access_token"><?php esc_html_e( 'Personal Access Token', 'ajforms' ); ?></label>
 											<input name="asana_personal_access_token" id="asana_personal_access_token" type="text" value="<?php echo esc_attr( $settings['asana_personal_access_token'] ); ?>">
-											<div class="ajforms-settings-help"><?php esc_html_e( 'Create this in Asana and keep it private. AJ Forms uses it to create tasks through the Asana API.', 'ajforms' ); ?></div>
+											<div class="ajforms-settings-help"><?php esc_html_e( 'Create this in Asana and keep it private. AJ Core uses it to create tasks through the Asana API.', 'ajforms' ); ?></div>
 											<div class="ajforms-settings-inline-actions">
 												<button type="button" class="button" id="wpf-refresh-asana-data"><?php esc_html_e( 'Refresh from Asana', 'ajforms' ); ?></button>
 												<span id="wpf-asana-sync-status" class="ajforms-settings-help">
@@ -2096,7 +2099,7 @@ class AJForms_Admin {
 								<div class="ajforms-settings-card">
 									<span class="ajforms-settings-pill"><?php esc_html_e( 'Stripe Payments', 'ajforms' ); ?></span>
 									<h3><?php esc_html_e( 'Stripe connection', 'ajforms' ); ?></h3>
-									<p><?php esc_html_e( 'These keys connect AJ Forms to Stripe site-wide, but they do not turn payments on for every form. You choose payment-enabled forms individually in the builder.', 'ajforms' ); ?></p>
+									<p><?php esc_html_e( 'These keys connect AJ Core to Stripe site-wide, but they do not turn payments on for every form. You choose payment-enabled forms individually in the builder.', 'ajforms' ); ?></p>
 									<div class="ajforms-settings-field" style="max-width:280px;margin-bottom:22px;">
 										<label for="stripe_mode"><?php esc_html_e( 'Stripe Mode', 'ajforms' ); ?></label>
 										<select name="stripe_mode" id="stripe_mode">
@@ -2120,7 +2123,7 @@ class AJForms_Admin {
 
 							<div class="ajforms-settings-actions">
 								<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
-								<span style="color:#6b7280;"><?php esc_html_e( 'Changes are stored site-wide for AJ Forms.', 'ajforms' ); ?></span>
+								<span style="color:#6b7280;"><?php esc_html_e( 'Changes are stored site-wide for AJ Core.', 'ajforms' ); ?></span>
 							</div>
 						</form>
 					</div>
@@ -2168,14 +2171,14 @@ class AJForms_Admin {
 			</style>
 
 			<div class="ajforms-about-shell">
-				<h1><?php esc_html_e( 'Update AJ Forms', 'ajforms' ); ?></h1>
-				<p><?php esc_html_e( 'Install the latest AJ Forms release when one is available.', 'ajforms' ); ?></p>
+				<h1><?php esc_html_e( 'Update AJ Core', 'ajforms' ); ?></h1>
+				<p><?php esc_html_e( 'Install the latest AJ Core release when one is available.', 'ajforms' ); ?></p>
 
 				<table class="ajforms-about-meta">
 					<tbody>
 						<tr>
 							<th><?php esc_html_e( 'Plugin', 'ajforms' ); ?></th>
-							<td><?php echo esc_html( 'AJ Forms ' . AJFORMS_VERSION ); ?></td>
+							<td><?php echo esc_html( 'AJ Core ' . AJFORMS_VERSION ); ?></td>
 						</tr>
 						<tr>
 							<th><?php esc_html_e( 'Developer', 'ajforms' ); ?></th>
@@ -2202,7 +2205,7 @@ class AJForms_Admin {
 						</div>
 					<?php elseif ( isset( $_GET['update-success'] ) ) : ?>
 						<div class="ajforms-about-status is-ok">
-							<strong><?php esc_html_e( 'AJ Forms was updated.', 'ajforms' ); ?></strong>
+							<strong><?php esc_html_e( 'AJ Core was updated.', 'ajforms' ); ?></strong>
 							<?php esc_html_e( 'The plugin update completed successfully.', 'ajforms' ); ?>
 						</div>
 					<?php elseif ( is_wp_error( $update_status ) ) : ?>
@@ -2212,7 +2215,7 @@ class AJForms_Admin {
 						</div>
 					<?php elseif ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
 						<div class="ajforms-about-status">
-							<strong><?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'An AJ Forms developer update is available.', 'ajforms' ) : esc_html__( 'An AJ Forms update is available.', 'ajforms' ); ?></strong>
+							<strong><?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'An AJ Core developer update is available.', 'ajforms' ) : esc_html__( 'An AJ Core update is available.', 'ajforms' ); ?></strong>
 							<?php
 							printf(
 								esc_html__( 'Installed: %1$s. Latest: %2$s.', 'ajforms' ),
@@ -2221,12 +2224,12 @@ class AJForms_Admin {
 							);
 							?>
 							<div class="ajforms-about-actions">
-								<a class="button button-primary" href="<?php echo esc_url( $this->get_about_update_url( 'update' ) ); ?>"><?php esc_html_e( 'Update AJ Forms', 'ajforms' ); ?></a>
+								<a class="button button-primary" href="<?php echo esc_url( $this->get_about_update_url( 'update' ) ); ?>"><?php esc_html_e( 'Update AJ Core', 'ajforms' ); ?></a>
 							</div>
 						</div>
 					<?php elseif ( is_array( $update_status ) ) : ?>
 						<div class="ajforms-about-status is-ok">
-							<strong><?php esc_html_e( 'AJ Forms is up to date.', 'ajforms' ); ?></strong>
+							<strong><?php esc_html_e( 'AJ Core is up to date.', 'ajforms' ); ?></strong>
 							<?php
 							printf(
 								esc_html__( 'Installed version: %s.', 'ajforms' ),

@@ -715,7 +715,7 @@ function initAJFormsBuilder() {
                 fieldSettingsPanel.innerHTML = '<p style="color:#646970;font-size:13px;">Select a field in the canvas to edit its settings.</p>';
             }
         } catch (error) {
-            console.error('AJ Forms history restore failed', error);
+            console.error('AJ Core history restore failed', error);
         } finally {
             isRestoringHistory = false;
             updateUndoRedoButtons();
@@ -1890,7 +1890,7 @@ function initAJFormsBuilder() {
                 addField(data.type, data.label, insertIndex);
             }
         } catch (error) {
-            console.error('AJ Forms drop payload invalid', error);
+            console.error('AJ Core drop payload invalid', error);
         }
     });
 

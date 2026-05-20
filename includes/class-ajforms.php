@@ -469,7 +469,7 @@ class AJForms {
 		</head>
 		<body <?php body_class( 'ajforms-preview-page' ); ?>>
 			<div style="max-width:760px;margin:40px auto;padding:32px;background:#fff;border:1px solid #dcdcde;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.05);">
-				<div style="margin-bottom:20px;color:#646970;font-size:14px;">AJ Forms Preview</div>
+				<div style="margin-bottom:20px;color:#646970;font-size:14px;">AJ Core Preview</div>
 				<?php echo $form_markup; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 			</div>
 			<?php wp_footer(); ?>
@@ -919,13 +919,13 @@ class AJForms {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			error_log( 'AJ Forms Asana task creation failed: ' . $response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( 'AJ Core Asana task creation failed: ' . $response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			return;
 		}
 
 		$response_code = wp_remote_retrieve_response_code( $response );
 		if ( $response_code < 200 || $response_code >= 300 ) {
-			error_log( 'AJ Forms Asana task creation failed with status ' . $response_code . ': ' . wp_remote_retrieve_body( $response ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( 'AJ Core Asana task creation failed with status ' . $response_code . ': ' . wp_remote_retrieve_body( $response ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		}
 	}
 

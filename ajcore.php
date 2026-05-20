@@ -1,15 +1,15 @@
 <?php
 /**
- * Plugin Name:       AJ Forms
- * Plugin URI:        https://github.com/ssnanda/ajforms
- * Description:       A custom WordPress form builder plugin for building forms, collecting entries, and managing workflows inside WordPress.
- * Version: 0.1.37
+ * Plugin Name:       AJ Core
+ * Plugin URI:        https://github.com/ssnanda/ajcore
+ * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
+ * Version: 0.1.38
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
  * License:           GPL-2.0+
  * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt
- * Text Domain:       ajforms
+ * Text Domain:       ajcore
  * Domain Path:       /languages
  */
 
@@ -17,24 +17,44 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
+if ( ! defined( 'AJCORE_VERSION' ) ) {
+	define( 'AJCORE_VERSION', '0.1.38' );
+}
+
+if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
+	define( 'AJCORE_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+}
+
+if ( ! defined( 'AJCORE_PLUGIN_URL' ) ) {
+	define( 'AJCORE_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+}
+
+if ( ! defined( 'AJCORE_PLUGIN_BASENAME' ) ) {
+	define( 'AJCORE_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
+}
+
+if ( ! defined( 'AJCORE_SYNCED_SETTINGS_FILE' ) ) {
+	define( 'AJCORE_SYNCED_SETTINGS_FILE', AJCORE_PLUGIN_DIR . 'config/synced-settings.json' );
+}
+
 if ( ! defined( 'AJFORMS_VERSION' ) ) {
-	define( 'AJFORMS_VERSION', '0.1.37' );
+	define( 'AJFORMS_VERSION', AJCORE_VERSION );
 }
 
 if ( ! defined( 'AJFORMS_PLUGIN_DIR' ) ) {
-	define( 'AJFORMS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
+	define( 'AJFORMS_PLUGIN_DIR', AJCORE_PLUGIN_DIR );
 }
 
 if ( ! defined( 'AJFORMS_PLUGIN_URL' ) ) {
-	define( 'AJFORMS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+	define( 'AJFORMS_PLUGIN_URL', AJCORE_PLUGIN_URL );
 }
 
 if ( ! defined( 'AJFORMS_PLUGIN_BASENAME' ) ) {
-	define( 'AJFORMS_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
+	define( 'AJFORMS_PLUGIN_BASENAME', AJCORE_PLUGIN_BASENAME );
 }
 
 if ( ! defined( 'AJFORMS_SYNCED_SETTINGS_FILE' ) ) {
-	define( 'AJFORMS_SYNCED_SETTINGS_FILE', AJFORMS_PLUGIN_DIR . 'config/synced-settings.json' );
+	define( 'AJFORMS_SYNCED_SETTINGS_FILE', AJCORE_SYNCED_SETTINGS_FILE );
 }
 
 if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
