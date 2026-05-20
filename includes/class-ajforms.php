@@ -413,13 +413,33 @@ class AJForms {
 	public function ajax_create_checkout_session() {
 		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
 		$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		$items    = isset( $_POST['items'] ) ? json_decode( wp_unslash( $_POST['items'] ), true ) : null; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 
-		if ( '' === $price_id || ! wp_verify_nonce( $nonce, 'ajcore_buy_product_' . $price_id ) ) {
+		if ( is_array( $items ) ) {
+			if ( ! wp_verify_nonce( $nonce, 'ajcore_cart_checkout' ) ) {
+				wp_send_json_error( __( 'Invalid cart request.', 'ajforms' ), 400 );
+			}
+		} elseif ( '' === $price_id || ! wp_verify_nonce( $nonce, 'ajcore_buy_product_' . $price_id ) ) {
 			wp_send_json_error( __( 'Invalid product request.', 'ajforms' ), 400 );
 		}
 
-		$allowed_prices = $this->get_public_stripe_prices( array( $price_id ) );
-		if ( empty( $allowed_prices[0] ) ) {
+		$requested_price_ids = is_array( $items ) ? array_map(
+			function ( $item ) {
+				return is_array( $item ) && isset( $item['price_id'] ) ? sanitize_text_field( (string) $item['price_id'] ) : '';
+			},
+			$items
+		) : array( $price_id );
+		$requested_price_ids = array_filter( $requested_price_ids );
+		$allowed_prices      = $this->get_public_stripe_prices( $requested_price_ids );
+		$allowed_price_map   = array();
+
+		foreach ( $allowed_prices as $allowed_price ) {
+			if ( is_array( $allowed_price ) && ! empty( $allowed_price['id'] ) ) {
+				$allowed_price_map[ $allowed_price['id'] ] = $allowed_price;
+			}
+		}
+
+		if ( empty( $allowed_price_map ) ) {
 			wp_send_json_error( __( 'Product is not available.', 'ajforms' ), 404 );
 		}
 
@@ -431,21 +451,49 @@ class AJForms {
 		$current_url = isset( $_POST['current_url'] ) ? esc_url_raw( wp_unslash( $_POST['current_url'] ) ) : home_url( '/' );
 		$success_url = add_query_arg( 'ajcore_checkout', 'success', $current_url );
 		$cancel_url  = add_query_arg( 'ajcore_checkout', 'cancelled', $current_url );
-		$price       = $allowed_prices[0];
+		$body        = array(
+			'mode'        => 'payment',
+			'success_url' => $success_url,
+			'cancel_url'  => $cancel_url,
+		);
+
+		if ( is_array( $items ) ) {
+			$line_index = 0;
+			foreach ( $items as $item ) {
+				if ( ! is_array( $item ) || empty( $item['price_id'] ) ) {
+					continue;
+				}
+
+				$item_price_id = sanitize_text_field( (string) $item['price_id'] );
+				$quantity      = isset( $item['quantity'] ) ? max( 1, min( 99, absint( $item['quantity'] ) ) ) : 1;
+
+				if ( empty( $allowed_price_map[ $item_price_id ] ) ) {
+					continue;
+				}
+
+				$body[ 'line_items[' . $line_index . '][price]' ]    = $item_price_id;
+				$body[ 'line_items[' . $line_index . '][quantity]' ] = $quantity;
+				$line_index++;
+			}
+
+			if ( 0 === $line_index ) {
+				wp_send_json_error( __( 'Your cart is empty.', 'ajforms' ), 400 );
+			}
+
+			$body['metadata[source]'] = 'ajcore_products_cart';
+		} else {
+			$price = reset( $allowed_price_map );
+			$body['line_items[0][price]']    = $price_id;
+			$body['line_items[0][quantity]'] = 1;
+			$body['metadata[price_id]']      = $price_id;
+			$body['metadata[product_id]']    = isset( $price['product_id'] ) ? $price['product_id'] : '';
+			$body['metadata[source]']        = 'ajcore_products';
+		}
 
 		$response = $this->stripe_api_request(
 			'checkout/sessions',
 			$stripe_settings['secret_key'],
-			array(
-				'mode'                  => 'payment',
-				'line_items[0][price]'  => $price_id,
-				'line_items[0][quantity]' => 1,
-				'success_url'           => $success_url,
-				'cancel_url'            => $cancel_url,
-				'metadata[price_id]'    => $price_id,
-				'metadata[product_id]'  => isset( $price['product_id'] ) ? $price['product_id'] : '',
-				'metadata[source]'      => 'ajcore_products',
-			)
+			$body
 		);
 
 		if ( is_wp_error( $response ) ) {
@@ -519,6 +567,9 @@ class AJForms {
 				'price_ids' => '',
 				'columns'   => '3',
 				'button'    => __( 'Buy Now', 'ajforms' ),
+				'mode'      => 'buy',
+				'display'   => '',
+				'cart'      => '',
 			),
 			$atts,
 			'ajcore_products'
@@ -528,6 +579,12 @@ class AJForms {
 		$prices              = $this->get_public_stripe_prices( $requested_price_ids );
 		$stripe_settings     = $this->get_stripe_settings();
 		$columns             = min( 4, max( 1, absint( $atts['columns'] ) ) );
+		$requested_mode      = '' !== (string) $atts['display'] ? sanitize_key( $atts['display'] ) : sanitize_key( $atts['mode'] );
+		$mode                = in_array( $requested_mode, array( 'buy', 'cart' ), true ) ? $requested_mode : 'buy';
+		if ( in_array( strtolower( (string) $atts['cart'] ), array( '1', 'true', 'yes' ), true ) ) {
+			$mode = 'cart';
+		}
+		$is_cart_mode        = 'cart' === $mode;
 
 		if ( empty( $prices ) ) {
 			return '';
@@ -535,26 +592,72 @@ class AJForms {
 
 		ob_start();
 		?>
-		<div class="ajcore-products-list" style="display:grid;grid-template-columns:repeat(<?php echo esc_attr( $columns ); ?>,minmax(0,1fr));gap:18px;">
-			<?php foreach ( $prices as $price ) : ?>
-				<div class="ajcore-product" style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);">
-					<h3 style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php echo esc_html( $price['product_name'] ); ?></h3>
-					<?php if ( ! empty( $price['nickname'] ) ) : ?>
-						<div style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['nickname'] ); ?></div>
-					<?php endif; ?>
-					<div style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
-						<?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) ); ?>
-					</div>
-					<button
-						type="button"
-						class="ajcore-product-buy"
+		<div
+			class="ajcore-products-wrap <?php echo $is_cart_mode ? 'ajcore-products-wrap-cart' : 'ajcore-products-wrap-buy'; ?>"
+			data-mode="<?php echo esc_attr( $mode ); ?>"
+			data-cart-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_cart_checkout' ) ); ?>"
+		>
+			<div class="ajcore-products-list" style="display:grid;grid-template-columns:repeat(<?php echo esc_attr( $columns ); ?>,minmax(0,1fr));gap:18px;">
+				<?php foreach ( $prices as $price ) : ?>
+					<?php
+					$price_amount   = (float) $price['amount'];
+					$price_currency = strtoupper( $price['currency'] );
+					$price_label    = $price_currency . ' ' . number_format_i18n( $price_amount, 2 );
+					?>
+					<div
+						class="ajcore-product"
 						data-price-id="<?php echo esc_attr( $price['id'] ); ?>"
-						data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_buy_product_' . $price['id'] ) ); ?>"
-						<?php disabled( empty( $stripe_settings['secret_key'] ) ); ?>
-						style="background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer;"
-					><?php echo esc_html( $atts['button'] ); ?></button>
-				</div>
-			<?php endforeach; ?>
+						data-product-name="<?php echo esc_attr( $price['product_name'] ); ?>"
+						data-amount="<?php echo esc_attr( $price_amount ); ?>"
+						data-currency="<?php echo esc_attr( strtolower( $price['currency'] ) ); ?>"
+						style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);"
+					>
+						<h3 style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php echo esc_html( $price['product_name'] ); ?></h3>
+						<?php if ( ! empty( $price['nickname'] ) ) : ?>
+							<div style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['nickname'] ); ?></div>
+						<?php endif; ?>
+						<div style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
+							<?php echo esc_html( $price_label ); ?>
+						</div>
+						<?php if ( $is_cart_mode ) : ?>
+							<div class="ajcore-product-cart-controls" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+								<label style="display:flex;align-items:center;gap:8px;margin:0;color:#334155;font-weight:700;">
+									<?php esc_html_e( 'Qty', 'ajforms' ); ?>
+									<input class="ajcore-product-quantity" type="number" min="1" max="99" step="1" value="1" style="width:76px;min-height:42px;border:1px solid #d1d5db;border-radius:10px;padding:8px 10px;">
+								</label>
+								<button
+									type="button"
+									class="ajcore-product-add"
+									<?php disabled( empty( $stripe_settings['secret_key'] ) ); ?>
+									style="background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer;"
+								><?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></button>
+							</div>
+						<?php else : ?>
+							<button
+								type="button"
+								class="ajcore-product-buy"
+								data-price-id="<?php echo esc_attr( $price['id'] ); ?>"
+								data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_buy_product_' . $price['id'] ) ); ?>"
+								<?php disabled( empty( $stripe_settings['secret_key'] ) ); ?>
+								style="background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer;"
+							><?php echo esc_html( $atts['button'] ); ?></button>
+						<?php endif; ?>
+					</div>
+				<?php endforeach; ?>
+			</div>
+			<?php if ( $is_cart_mode ) : ?>
+				<aside class="ajcore-cart" style="margin-top:22px;border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);">
+					<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;">
+						<h3 style="margin:0;font-size:22px;line-height:1.2;"><?php esc_html_e( 'Cart', 'ajforms' ); ?></h3>
+						<button type="button" class="ajcore-cart-clear" style="background:transparent;color:#64748b;border:0;padding:0;font-weight:700;cursor:pointer;"><?php esc_html_e( 'Clear', 'ajforms' ); ?></button>
+					</div>
+					<div class="ajcore-cart-empty" style="color:#64748b;"><?php esc_html_e( 'No products selected yet.', 'ajforms' ); ?></div>
+					<div class="ajcore-cart-items" style="display:grid;gap:10px;"></div>
+					<div class="ajcore-cart-total" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:22px;font-weight:800;color:#111827;"></div>
+					<button type="button" class="ajcore-cart-checkout" disabled style="margin-top:16px;background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:13px 20px;font-weight:800;cursor:pointer;"><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
+					<p class="ajcore-cart-message" style="display:none;margin:12px 0 0;color:#b32d2e;"></p>
+				</aside>
+			<?php endif; ?>
 		</div>
 		<script>
 		(function() {
@@ -563,7 +666,105 @@ class AJForms {
 				return;
 			}
 			root.dataset.ajcoreProductsReady = '1';
+			const isCartMode = root.dataset.mode === 'cart';
+			const cart = {};
+			const cartItems = root.querySelector('.ajcore-cart-items');
+			const cartEmpty = root.querySelector('.ajcore-cart-empty');
+			const cartTotal = root.querySelector('.ajcore-cart-total');
+			const checkoutButton = root.querySelector('.ajcore-cart-checkout');
+			const cartMessage = root.querySelector('.ajcore-cart-message');
+
+			function formatCurrency(amount, currency) {
+				try {
+					return new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() }).format(amount);
+				} catch (error) {
+					return (currency || 'USD').toUpperCase() + ' ' + amount.toFixed(2);
+				}
+			}
+
+			function setCartMessage(message) {
+				if (!cartMessage) {
+					return;
+				}
+
+				cartMessage.textContent = message || '';
+				cartMessage.style.display = message ? 'block' : 'none';
+			}
+
+			function renderCart() {
+				if (!isCartMode || !cartItems || !cartEmpty || !cartTotal || !checkoutButton) {
+					return;
+				}
+
+				const items = Object.values(cart);
+				cartItems.innerHTML = '';
+				cartEmpty.style.display = items.length ? 'none' : 'block';
+				checkoutButton.disabled = items.length === 0;
+				let total = 0;
+				let currency = 'usd';
+				items.forEach(function(item) {
+					total += item.amount * item.quantity;
+					currency = item.currency;
+					const row = document.createElement('div');
+					row.className = 'ajcore-cart-row';
+					row.style.cssText = 'display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9;';
+					row.innerHTML = '<div><strong></strong><div></div></div><input type="number" min="1" max="99" step="1"><button type="button">Remove</button>';
+					row.querySelector('strong').textContent = item.name;
+					row.querySelector('div div').textContent = formatCurrency(item.amount, item.currency);
+					const quantityInput = row.querySelector('input');
+					quantityInput.value = item.quantity;
+					quantityInput.style.cssText = 'width:72px;min-height:38px;border:1px solid #d1d5db;border-radius:9px;padding:7px 9px;';
+					quantityInput.addEventListener('change', function() {
+						item.quantity = Math.max(1, Math.min(99, parseInt(quantityInput.value, 10) || 1));
+						renderCart();
+					});
+					const removeButton = row.querySelector('button');
+					removeButton.style.cssText = 'background:#fff;color:#b32d2e;border:1px solid #fecaca;border-radius:9px;padding:8px 10px;font-weight:700;cursor:pointer;';
+					removeButton.addEventListener('click', function() {
+						delete cart[item.price_id];
+						renderCart();
+					});
+					cartItems.appendChild(row);
+				});
+				cartTotal.style.display = items.length ? 'block' : 'none';
+				cartTotal.textContent = items.length ? 'Total: ' + formatCurrency(total, currency) : '';
+			}
+
 			root.addEventListener('click', function(event) {
+				const addButton = event.target.closest('.ajcore-product-add');
+				if (addButton) {
+					const product = addButton.closest('.ajcore-product');
+					if (!product) {
+						return;
+					}
+					const quantityInput = product.querySelector('.ajcore-product-quantity');
+					const priceId = product.dataset.priceId;
+					const quantity = Math.max(1, Math.min(99, parseInt(quantityInput ? quantityInput.value : '1', 10) || 1));
+					if (!cart[priceId]) {
+						cart[priceId] = {
+							price_id: priceId,
+							name: product.dataset.productName || 'Product',
+							amount: parseFloat(product.dataset.amount || '0') || 0,
+							currency: product.dataset.currency || 'usd',
+							quantity: 0
+						};
+					}
+					cart[priceId].quantity = Math.min(99, cart[priceId].quantity + quantity);
+					setCartMessage('');
+					renderCart();
+					return;
+				}
+
+				const clearButton = event.target.closest('.ajcore-cart-clear');
+				if (clearButton) {
+					Object.keys(cart).forEach(function(priceId) {
+						delete cart[priceId];
+					});
+					setCartMessage('');
+					renderCart();
+					return;
+				}
+
 				const button = event.target.closest('.ajcore-product-buy');
 				if (!button || button.disabled) {
 					return;
@@ -594,10 +795,51 @@ class AJForms {
 						window.alert(error.message || 'Unable to start checkout.');
 					});
 			});
+
+			if (checkoutButton) {
+				checkoutButton.addEventListener('click', function() {
+					const items = Object.values(cart).map(function(item) {
+						return { price_id: item.price_id, quantity: item.quantity };
+					});
+					if (!items.length) {
+						return;
+					}
+					checkoutButton.disabled = true;
+					const originalText = checkoutButton.textContent;
+					checkoutButton.textContent = 'Loading...';
+					setCartMessage('');
+					const formData = new FormData();
+					formData.append('action', 'ajcore_create_checkout_session');
+					formData.append('items', JSON.stringify(items));
+					formData.append('nonce', root.dataset.cartNonce);
+					formData.append('current_url', window.location.href);
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+						method: 'POST',
+						credentials: 'same-origin',
+						body: formData
+					})
+						.then(function(response) { return response.json(); })
+						.then(function(payload) {
+							if (!payload || !payload.success || !payload.data || !payload.data.url) {
+								throw new Error((payload && payload.data) || 'Unable to start checkout.');
+							}
+							window.location.href = payload.data.url;
+						})
+						.catch(function(error) {
+							checkoutButton.disabled = false;
+							checkoutButton.textContent = originalText;
+							setCartMessage(error.message || 'Unable to start checkout.');
+						});
+				});
+			}
 		})();
 		</script>
 		<style>
+			.ajcore-products-wrap-cart{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:22px;align-items:start}
+			.ajcore-products-wrap-cart .ajcore-products-list{grid-column:1}
+			.ajcore-products-wrap-cart .ajcore-cart{grid-column:2;grid-row:1;position:sticky;top:24px}
 			@media (max-width: 800px){.ajcore-products-list{grid-template-columns:1fr!important}}
+			@media (max-width: 980px){.ajcore-products-wrap-cart{grid-template-columns:1fr}.ajcore-products-wrap-cart .ajcore-cart{grid-column:auto;grid-row:auto;position:static}}
 		</style>
 		<?php
 		return ob_get_clean();

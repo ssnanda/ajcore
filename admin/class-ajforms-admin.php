@@ -1729,7 +1729,11 @@ class AJForms_Admin {
 					</div>
 				<?php endif; ?>
 
-				<p><strong><?php esc_html_e( 'Page shortcode:', 'ajforms' ); ?></strong> <code>[ajcore_products]</code></p>
+				<p>
+					<strong><?php esc_html_e( 'Page shortcodes:', 'ajforms' ); ?></strong>
+					<code>[ajcore_products]</code>
+					<code>[ajcore_products mode="cart"]</code>
+				</p>
 
 				<?php if ( empty( $prices ) ) : ?>
 					<div class="ajcore-products-empty"><?php esc_html_e( 'No synced one-time Stripe prices yet.', 'ajforms' ); ?></div>
