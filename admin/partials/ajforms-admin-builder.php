@@ -20,6 +20,13 @@ $asana_cache = get_option(
 	)
 );
 $asana_cache = is_array( $asana_cache ) ? wp_parse_args( $asana_cache, array( 'users' => array() ) ) : array( 'users' => array() );
+$stripe_cache = get_option(
+	'ajforms_stripe_products_cache',
+	array(
+		'prices' => array(),
+	)
+);
+$stripe_prices = is_array( $stripe_cache ) && isset( $stripe_cache['prices'] ) && is_array( $stripe_cache['prices'] ) ? $stripe_cache['prices'] : array();
 $plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array(
 	'default_notification_email'    => get_option( 'admin_email' ),
 	'default_notification_subject'  => 'New submission for {form_title}',
@@ -29,6 +36,19 @@ $plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_setti
 	'asana_project_gid'             => '',
 	'stripe_publishable_key'        => '',
 	'stripe_secret_key'             => '',
+	'stripe_products_mode'          => 'all',
+	'stripe_selected_prices'        => array(),
+);
+$selected_stripe_prices = isset( $plugin_settings['stripe_selected_prices'] ) && is_array( $plugin_settings['stripe_selected_prices'] ) ? $plugin_settings['stripe_selected_prices'] : array();
+$available_stripe_prices = array_filter(
+	$stripe_prices,
+	function ( $price ) use ( $plugin_settings, $selected_stripe_prices ) {
+		if ( ! is_array( $price ) || empty( $price['id'] ) ) {
+			return false;
+		}
+
+		return 'selected' !== ( isset( $plugin_settings['stripe_products_mode'] ) ? $plugin_settings['stripe_products_mode'] : 'all' ) || in_array( $price['id'], $selected_stripe_prices, true );
+	}
 );
 
 $initial_data = array(
@@ -63,6 +83,8 @@ $initial_data = array(
 			'asana_assignee_gid'    => '',
 			'asana_due_date'        => 'today',
 			'stripe_enabled'        => false,
+			'stripe_price_id'       => '',
+			'stripe_price_label'    => '',
 			'stripe_amount'         => '',
 			'stripe_currency'       => 'usd',
 			'stripe_description'    => 'Payment for {form_title}',
@@ -121,6 +143,8 @@ if ( $form_id ) {
 						'asana_assignee_gid'    => '',
 						'asana_due_date'        => 'today',
 						'stripe_enabled'        => false,
+						'stripe_price_id'       => '',
+						'stripe_price_label'    => '',
 						'stripe_amount'         => '',
 						'stripe_currency'       => 'usd',
 						'stripe_description'    => 'Payment for {form_title}',
@@ -160,6 +184,8 @@ if ( $form_id ) {
 					'asana_assignee_gid'    => '',
 					'asana_due_date'        => 'today',
 					'stripe_enabled'        => false,
+					'stripe_price_id'       => '',
+					'stripe_price_label'    => '',
 					'stripe_amount'         => '',
 					'stripe_currency'       => 'usd',
 					'stripe_description'    => 'Payment for {form_title}',
@@ -522,7 +548,32 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 								<p class="wpf-setting-help"><?php echo ( ! empty( $plugin_settings['stripe_publishable_key'] ) && ! empty( $plugin_settings['stripe_secret_key'] ) ) ? esc_html__( 'Keys are connected globally. Turn this on only for forms that should collect payment.', 'ajforms' ) : esc_html__( 'Add Stripe keys on the Stripe Payments settings page first.', 'ajforms' ); ?></p>
 							</div>
 							<div class="wpf-setting-row">
-								<label>Payment Amount</label>
+								<label>Stripe Product</label>
+								<select id="wpf-form-stripe-price-id">
+									<option value=""><?php esc_html_e( 'Custom amount', 'ajforms' ); ?></option>
+									<?php foreach ( $available_stripe_prices as $price ) : ?>
+										<?php
+										$price_label = sprintf(
+											'%1$s - %2$s %3$s',
+											isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ),
+											strtoupper( isset( $price['currency'] ) ? $price['currency'] : 'usd' ),
+											number_format_i18n( isset( $price['amount'] ) ? (float) $price['amount'] : 0, 2 )
+										);
+										?>
+										<option
+											value="<?php echo esc_attr( $price['id'] ); ?>"
+											data-label="<?php echo esc_attr( $price_label ); ?>"
+											data-amount="<?php echo esc_attr( isset( $price['amount'] ) ? $price['amount'] : '' ); ?>"
+											data-currency="<?php echo esc_attr( isset( $price['currency'] ) ? $price['currency'] : 'usd' ); ?>"
+											<?php selected( isset( $initial_data['schema']['settings']['stripe_price_id'] ) ? $initial_data['schema']['settings']['stripe_price_id'] : '', $price['id'] ); ?>
+										><?php echo esc_html( $price_label ); ?></option>
+									<?php endforeach; ?>
+								</select>
+								<p class="wpf-setting-help"><?php esc_html_e( 'Synced from AJ Core > Products. Choose Custom amount if this form should use a manual amount.', 'ajforms' ); ?></p>
+							</div>
+							<input type="hidden" id="wpf-form-stripe-price-label" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['stripe_price_label'] ) ? $initial_data['schema']['settings']['stripe_price_label'] : '' ); ?>">
+							<div class="wpf-setting-row">
+								<label>Custom Payment Amount</label>
 								<input type="number" id="wpf-form-stripe-amount" min="0" step="0.01" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['stripe_amount'] ) ? $initial_data['schema']['settings']['stripe_amount'] : '' ); ?>">
 							</div>
 							<div class="wpf-setting-row">

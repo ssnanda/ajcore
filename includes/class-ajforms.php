@@ -44,9 +44,12 @@ class AJForms {
 
 	private function define_public_hooks() {
 		add_shortcode( 'ajforms', array( $this, 'render_form_shortcode' ) );
+		add_shortcode( 'ajcore_products', array( $this, 'render_products_shortcode' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
 		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
+		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
+		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 	}
 
 	private function get_default_form_settings() {
@@ -228,18 +231,85 @@ class AJForms {
 	private function get_stripe_payment_config( $form, $settings ) {
 		$stripe_settings = $this->get_stripe_settings();
 		$enabled         = ! empty( $settings['stripe_enabled'] );
-		$amount          = isset( $settings['stripe_amount'] ) ? floatval( $settings['stripe_amount'] ) : 0;
-		$currency        = isset( $settings['stripe_currency'] ) ? strtolower( sanitize_key( $settings['stripe_currency'] ) ) : 'usd';
-		$description     = isset( $settings['stripe_description'] ) ? sanitize_text_field( $settings['stripe_description'] ) : 'Payment for {form_title}';
+		$price_id        = isset( $settings['stripe_price_id'] ) ? sanitize_text_field( $settings['stripe_price_id'] ) : '';
+		$price           = '' !== $price_id ? $this->get_stripe_price_from_cache( $price_id ) : null;
+		$amount          = $price ? (float) $price['amount'] : ( isset( $settings['stripe_amount'] ) ? floatval( $settings['stripe_amount'] ) : 0 );
+		$currency        = $price ? strtolower( sanitize_key( $price['currency'] ) ) : ( isset( $settings['stripe_currency'] ) ? strtolower( sanitize_key( $settings['stripe_currency'] ) ) : 'usd' );
+		$description     = $price ? $price['product_name'] : ( isset( $settings['stripe_description'] ) ? sanitize_text_field( $settings['stripe_description'] ) : 'Payment for {form_title}' );
 
 		return array(
 			'enabled'         => $enabled && '' !== $stripe_settings['publishable_key'] && '' !== $stripe_settings['secret_key'] && $amount > 0,
 			'publishable_key' => $stripe_settings['publishable_key'],
 			'secret_key'      => $stripe_settings['secret_key'],
+			'price_id'        => $price_id,
+			'product_id'      => $price && isset( $price['product_id'] ) ? $price['product_id'] : '',
 			'amount'          => $amount,
 			'currency'        => in_array( $currency, array( 'usd', 'eur', 'gbp', 'cad', 'aud' ), true ) ? $currency : 'usd',
 			'description'     => str_replace( '{form_title}', $form->title, $description ),
 		);
+	}
+
+	private function get_stripe_products_cache() {
+		$cache = get_option(
+			'ajforms_stripe_products_cache',
+			array(
+				'updated_at' => '',
+				'prices'     => array(),
+			)
+		);
+
+		return is_array( $cache ) ? wp_parse_args(
+			$cache,
+			array(
+				'updated_at' => '',
+				'prices'     => array(),
+			)
+		) : array(
+			'updated_at' => '',
+			'prices'     => array(),
+		);
+	}
+
+	private function get_stripe_price_from_cache( $price_id ) {
+		$price_id = sanitize_text_field( (string) $price_id );
+		$cache    = $this->get_stripe_products_cache();
+		$prices   = isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array();
+
+		foreach ( $prices as $price ) {
+			if ( is_array( $price ) && isset( $price['id'] ) && $price_id === $price['id'] ) {
+				return $price;
+			}
+		}
+
+		return null;
+	}
+
+	private function get_public_stripe_prices( $requested_price_ids = array() ) {
+		$settings       = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$mode           = isset( $settings['stripe_products_mode'] ) ? sanitize_key( $settings['stripe_products_mode'] ) : 'all';
+		$selected       = isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? array_map( 'sanitize_text_field', $settings['stripe_selected_prices'] ) : array();
+		$requested      = array_filter( array_map( 'sanitize_text_field', (array) $requested_price_ids ) );
+		$cache          = $this->get_stripe_products_cache();
+		$prices         = isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array();
+		$allowed_prices = array();
+
+		foreach ( $prices as $price ) {
+			if ( ! is_array( $price ) || empty( $price['id'] ) ) {
+				continue;
+			}
+
+			if ( 'selected' === $mode && ! in_array( $price['id'], $selected, true ) ) {
+				continue;
+			}
+
+			if ( ! empty( $requested ) && ! in_array( $price['id'], $requested, true ) ) {
+				continue;
+			}
+
+			$allowed_prices[] = $price;
+		}
+
+		return $allowed_prices;
 	}
 
 	private function convert_amount_to_minor_units( $amount, $currency ) {
@@ -321,6 +391,8 @@ class AJForms {
 				'payment_method_types[]' => 'card',
 				'metadata[form_id]'      => (string) $form_id,
 				'metadata[form_title]'   => sanitize_text_field( $form->title ),
+				'metadata[price_id]'     => $stripe_config['price_id'],
+				'metadata[product_id]'   => $stripe_config['product_id'],
 			)
 		);
 
@@ -334,6 +406,55 @@ class AJForms {
 				'amount'        => $stripe_config['amount'],
 				'currency'      => strtoupper( $stripe_config['currency'] ),
 				'description'   => $stripe_config['description'],
+			)
+		);
+	}
+
+	public function ajax_create_checkout_session() {
+		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
+		$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+
+		if ( '' === $price_id || ! wp_verify_nonce( $nonce, 'ajcore_buy_product_' . $price_id ) ) {
+			wp_send_json_error( __( 'Invalid product request.', 'ajforms' ), 400 );
+		}
+
+		$allowed_prices = $this->get_public_stripe_prices( array( $price_id ) );
+		if ( empty( $allowed_prices[0] ) ) {
+			wp_send_json_error( __( 'Product is not available.', 'ajforms' ), 404 );
+		}
+
+		$stripe_settings = $this->get_stripe_settings();
+		if ( empty( $stripe_settings['secret_key'] ) ) {
+			wp_send_json_error( __( 'Stripe is not connected.', 'ajforms' ), 400 );
+		}
+
+		$current_url = isset( $_POST['current_url'] ) ? esc_url_raw( wp_unslash( $_POST['current_url'] ) ) : home_url( '/' );
+		$success_url = add_query_arg( 'ajcore_checkout', 'success', $current_url );
+		$cancel_url  = add_query_arg( 'ajcore_checkout', 'cancelled', $current_url );
+		$price       = $allowed_prices[0];
+
+		$response = $this->stripe_api_request(
+			'checkout/sessions',
+			$stripe_settings['secret_key'],
+			array(
+				'mode'                  => 'payment',
+				'line_items[0][price]'  => $price_id,
+				'line_items[0][quantity]' => 1,
+				'success_url'           => $success_url,
+				'cancel_url'            => $cancel_url,
+				'metadata[price_id]'    => $price_id,
+				'metadata[product_id]'  => isset( $price['product_id'] ) ? $price['product_id'] : '',
+				'metadata[source]'      => 'ajcore_products',
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( $response->get_error_message(), 400 );
+		}
+
+		wp_send_json_success(
+			array(
+				'url' => isset( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
 			)
 		);
 	}
@@ -371,7 +492,9 @@ class AJForms {
 			return new WP_Error( 'stripe_not_paid', __( 'Stripe payment is not complete yet.', 'ajforms' ) );
 		}
 
-		if ( $expected_amount !== $actual_amount || strtolower( $stripe_config['currency'] ) !== $actual_currency || absint( $form->id ) !== $form_meta_id ) {
+		$actual_price_id = isset( $payment_intent['metadata']['price_id'] ) ? sanitize_text_field( (string) $payment_intent['metadata']['price_id'] ) : '';
+
+		if ( $expected_amount !== $actual_amount || strtolower( $stripe_config['currency'] ) !== $actual_currency || absint( $form->id ) !== $form_meta_id || ( '' !== $stripe_config['price_id'] && $stripe_config['price_id'] !== $actual_price_id ) ) {
 			return new WP_Error( 'stripe_payment_mismatch', __( 'Stripe payment details do not match this form submission.', 'ajforms' ) );
 		}
 
@@ -380,12 +503,104 @@ class AJForms {
 			'amount'            => $stripe_config['amount'],
 			'currency'          => strtoupper( $stripe_config['currency'] ),
 			'description'       => $stripe_config['description'],
+			'price_id'          => $stripe_config['price_id'],
+			'product_id'        => $stripe_config['product_id'],
 		);
 	}
 
 	private function get_forms_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'ajforms_forms';
+	}
+
+	public function render_products_shortcode( $atts ) {
+		$atts = shortcode_atts(
+			array(
+				'price_ids' => '',
+				'columns'   => '3',
+				'button'    => __( 'Buy Now', 'ajforms' ),
+			),
+			$atts,
+			'ajcore_products'
+		);
+
+		$requested_price_ids = array_filter( array_map( 'trim', explode( ',', (string) $atts['price_ids'] ) ) );
+		$prices              = $this->get_public_stripe_prices( $requested_price_ids );
+		$stripe_settings     = $this->get_stripe_settings();
+		$columns             = min( 4, max( 1, absint( $atts['columns'] ) ) );
+
+		if ( empty( $prices ) ) {
+			return '';
+		}
+
+		ob_start();
+		?>
+		<div class="ajcore-products-list" style="display:grid;grid-template-columns:repeat(<?php echo esc_attr( $columns ); ?>,minmax(0,1fr));gap:18px;">
+			<?php foreach ( $prices as $price ) : ?>
+				<div class="ajcore-product" style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);">
+					<h3 style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php echo esc_html( $price['product_name'] ); ?></h3>
+					<?php if ( ! empty( $price['nickname'] ) ) : ?>
+						<div style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['nickname'] ); ?></div>
+					<?php endif; ?>
+					<div style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
+						<?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) ); ?>
+					</div>
+					<button
+						type="button"
+						class="ajcore-product-buy"
+						data-price-id="<?php echo esc_attr( $price['id'] ); ?>"
+						data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_buy_product_' . $price['id'] ) ); ?>"
+						<?php disabled( empty( $stripe_settings['secret_key'] ) ); ?>
+						style="background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer;"
+					><?php echo esc_html( $atts['button'] ); ?></button>
+				</div>
+			<?php endforeach; ?>
+		</div>
+		<script>
+		(function() {
+			const root = document.currentScript.previousElementSibling;
+			if (!root || root.dataset.ajcoreProductsReady) {
+				return;
+			}
+			root.dataset.ajcoreProductsReady = '1';
+			root.addEventListener('click', function(event) {
+				const button = event.target.closest('.ajcore-product-buy');
+				if (!button || button.disabled) {
+					return;
+				}
+				button.disabled = true;
+				const originalText = button.textContent;
+				button.textContent = 'Loading...';
+				const formData = new FormData();
+				formData.append('action', 'ajcore_create_checkout_session');
+				formData.append('price_id', button.dataset.priceId);
+				formData.append('nonce', button.dataset.nonce);
+				formData.append('current_url', window.location.href);
+				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+					method: 'POST',
+					credentials: 'same-origin',
+					body: formData
+				})
+					.then(function(response) { return response.json(); })
+					.then(function(payload) {
+						if (!payload || !payload.success || !payload.data || !payload.data.url) {
+							throw new Error((payload && payload.data) || 'Unable to start checkout.');
+						}
+						window.location.href = payload.data.url;
+					})
+					.catch(function(error) {
+						button.disabled = false;
+						button.textContent = originalText;
+						window.alert(error.message || 'Unable to start checkout.');
+					});
+			});
+		})();
+		</script>
+		<style>
+			@media (max-width: 800px){.ajcore-products-list{grid-template-columns:1fr!important}}
+		</style>
+		<?php
+		return ob_get_clean();
 	}
 
 	private function get_leads_table() {
@@ -1337,6 +1552,8 @@ class AJForms {
 				),
 				'payment_intent_id' => $stripe_payment_result['payment_intent_id'],
 				'description'       => $stripe_payment_result['description'],
+				'price_id'          => $stripe_payment_result['price_id'],
+				'product_id'        => $stripe_payment_result['product_id'],
 			);
 		}
 

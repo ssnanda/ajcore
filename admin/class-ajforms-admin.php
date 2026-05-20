@@ -316,6 +316,135 @@ class AJForms_Admin {
 		update_option( 'ajforms_asana_reference_cache', $cache );
 	}
 
+	private function get_stripe_products_cache() {
+		$cache = get_option(
+			'ajforms_stripe_products_cache',
+			array(
+				'updated_at' => '',
+				'prices'     => array(),
+			)
+		);
+
+		return is_array( $cache ) ? wp_parse_args(
+			$cache,
+			array(
+				'updated_at' => '',
+				'prices'     => array(),
+			)
+		) : array(
+			'updated_at' => '',
+			'prices'     => array(),
+		);
+	}
+
+	private function update_stripe_products_cache( $cache ) {
+		update_option( 'ajforms_stripe_products_cache', $cache );
+	}
+
+	private function stripe_api_get( $path, $secret_key, $query_args = array() ) {
+		$url = add_query_arg( $query_args, 'https://api.stripe.com/v1/' . ltrim( $path, '/' ) );
+
+		$response = wp_remote_get(
+			$url,
+			array(
+				'timeout' => 20,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $secret_key,
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( $code < 200 || $code >= 300 ) {
+			$message = isset( $body['error']['message'] ) ? sanitize_text_field( (string) $body['error']['message'] ) : __( 'Stripe request failed.', 'ajforms' );
+			return new WP_Error( 'stripe_api_error', $message );
+		}
+
+		return is_array( $body ) ? $body : array();
+	}
+
+	private function format_stripe_price_label( $price ) {
+		$product_name = isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' );
+		$amount       = isset( $price['amount'] ) ? (float) $price['amount'] : 0;
+		$currency     = isset( $price['currency'] ) ? strtoupper( $price['currency'] ) : 'USD';
+
+		return sprintf(
+			'%1$s - %2$s %3$s',
+			$product_name,
+			$currency,
+			number_format_i18n( $amount, 2 )
+		);
+	}
+
+	private function fetch_stripe_product_prices( $secret_key ) {
+		$secret_key = sanitize_text_field( (string) $secret_key );
+		if ( '' === $secret_key ) {
+			return new WP_Error( 'missing_stripe_secret_key', __( 'Stripe secret key is required to sync products.', 'ajforms' ) );
+		}
+
+		$response = $this->stripe_api_get(
+			'prices',
+			$secret_key,
+			array(
+				'active'                 => 'true',
+				'limit'                  => 100,
+				'expand[]'               => 'data.product',
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$prices = array();
+		foreach ( isset( $response['data'] ) && is_array( $response['data'] ) ? $response['data'] : array() as $price ) {
+			if ( ! is_array( $price ) || empty( $price['id'] ) || ! empty( $price['recurring'] ) ) {
+				continue;
+			}
+
+			$product      = isset( $price['product'] ) && is_array( $price['product'] ) ? $price['product'] : array();
+			$product_id   = ! empty( $product['id'] ) ? sanitize_text_field( (string) $product['id'] ) : sanitize_text_field( (string) $price['product'] );
+			$product_name = ! empty( $product['name'] ) ? sanitize_text_field( (string) $product['name'] ) : __( 'Stripe product', 'ajforms' );
+			$unit_amount  = isset( $price['unit_amount'] ) ? absint( $price['unit_amount'] ) : 0;
+			$currency     = isset( $price['currency'] ) ? strtolower( sanitize_key( $price['currency'] ) ) : 'usd';
+			$amount       = in_array( $currency, array( 'jpy', 'krw', 'vnd' ), true ) ? $unit_amount : $unit_amount / 100;
+
+			if ( $unit_amount <= 0 ) {
+				continue;
+			}
+
+			$prices[] = array(
+				'id'           => sanitize_text_field( (string) $price['id'] ),
+				'product_id'   => $product_id,
+				'product_name' => $product_name,
+				'nickname'     => ! empty( $price['nickname'] ) ? sanitize_text_field( (string) $price['nickname'] ) : '',
+				'amount'       => $amount,
+				'currency'     => $currency,
+			);
+		}
+
+		usort(
+			$prices,
+			function ( $a, $b ) {
+				return strcasecmp( $a['product_name'], $b['product_name'] );
+			}
+		);
+
+		$cache = array(
+			'updated_at' => current_time( 'mysql' ),
+			'prices'     => $prices,
+		);
+		$this->update_stripe_products_cache( $cache );
+
+		return $cache;
+	}
+
 	private function asana_api_get( $path, $token, $query_args = array() ) {
 		$url = 'https://app.asana.com/api/1.0/' . ltrim( $path, '/' );
 
@@ -500,6 +629,8 @@ class AJForms_Admin {
 			'stripe_mode'                    => 'test',
 			'stripe_publishable_key'         => '',
 			'stripe_secret_key'              => '',
+			'stripe_products_mode'           => 'all',
+			'stripe_selected_prices'         => array(),
 		);
 	}
 
@@ -755,10 +886,12 @@ class AJForms_Admin {
 				'asana_project_gid'     => isset( $normalized['settings']['asana_project_gid'] ) ? sanitize_text_field( $normalized['settings']['asana_project_gid'] ) : '',
 				'asana_assignee_gid'    => isset( $normalized['settings']['asana_assignee_gid'] ) ? sanitize_text_field( $normalized['settings']['asana_assignee_gid'] ) : '',
 				'asana_due_date'        => isset( $normalized['settings']['asana_due_date'] ) && in_array( sanitize_key( $normalized['settings']['asana_due_date'] ), array( 'none', 'today' ), true ) ? sanitize_key( $normalized['settings']['asana_due_date'] ) : 'today',
-				'stripe_enabled'        => ! empty( $normalized['settings']['stripe_enabled'] ),
-				'stripe_amount'         => isset( $normalized['settings']['stripe_amount'] ) ? max( 0, round( (float) $normalized['settings']['stripe_amount'], 2 ) ) : 0,
-				'stripe_currency'       => isset( $normalized['settings']['stripe_currency'] ) ? sanitize_key( $normalized['settings']['stripe_currency'] ) : 'usd',
-				'stripe_description'    => isset( $normalized['settings']['stripe_description'] ) ? sanitize_text_field( $normalized['settings']['stripe_description'] ) : 'Payment for {form_title}',
+			'stripe_enabled'        => ! empty( $normalized['settings']['stripe_enabled'] ),
+			'stripe_price_id'       => isset( $normalized['settings']['stripe_price_id'] ) ? sanitize_text_field( $normalized['settings']['stripe_price_id'] ) : '',
+			'stripe_price_label'    => isset( $normalized['settings']['stripe_price_label'] ) ? sanitize_text_field( $normalized['settings']['stripe_price_label'] ) : '',
+			'stripe_amount'         => isset( $normalized['settings']['stripe_amount'] ) ? max( 0, round( (float) $normalized['settings']['stripe_amount'], 2 ) ) : 0,
+			'stripe_currency'       => isset( $normalized['settings']['stripe_currency'] ) ? sanitize_key( $normalized['settings']['stripe_currency'] ) : 'usd',
+			'stripe_description'    => isset( $normalized['settings']['stripe_description'] ) ? sanitize_text_field( $normalized['settings']['stripe_description'] ) : 'Payment for {form_title}',
 				'form_theme'            => isset( $normalized['settings']['form_theme'] ) && in_array( sanitize_key( $normalized['settings']['form_theme'] ), array( 'clean', 'soft', 'contrast' ), true ) ? sanitize_key( $normalized['settings']['form_theme'] ) : 'clean',
 				'background_mode'       => isset( $normalized['settings']['background_mode'] ) && in_array( sanitize_key( $normalized['settings']['background_mode'] ), array( 'solid', 'gradient' ), true ) ? sanitize_key( $normalized['settings']['background_mode'] ) : 'solid',
 				'background_color'      => isset( $normalized['settings']['background_color'] ) ? sanitize_hex_color( $normalized['settings']['background_color'] ) : '#ffffff',
@@ -1000,6 +1133,8 @@ class AJForms_Admin {
 			$this->handle_lead_actions();
 		} elseif ( 'ajforms-settings' === $page ) {
 			$this->handle_settings_save();
+		} elseif ( 'ajforms-products' === $page ) {
+			$this->handle_products_action();
 		} elseif ( 'ajforms-about' === $page ) {
 			$this->handle_about_update_action();
 		}
@@ -1018,6 +1153,7 @@ class AJForms_Admin {
 
 		$section    = isset( $_GET['section'] ) ? sanitize_key( wp_unslash( $_GET['section'] ) ) : 'general';
 		$subsection = isset( $_GET['subsection'] ) ? sanitize_key( wp_unslash( $_GET['subsection'] ) ) : '';
+		$current_settings = $this->get_plugin_settings();
 
 		$settings = array(
 			'default_notification_email'     => isset( $_POST['default_notification_email'] ) ? sanitize_text_field( wp_unslash( $_POST['default_notification_email'] ) ) : get_option( 'admin_email' ),
@@ -1044,7 +1180,28 @@ class AJForms_Admin {
 			'stripe_mode'                    => isset( $_POST['stripe_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ), array( 'test', 'live' ), true ) ? sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ) : 'test',
 			'stripe_publishable_key'         => isset( $_POST['stripe_publishable_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_publishable_key'] ) ) : '',
 			'stripe_secret_key'              => isset( $_POST['stripe_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_secret_key'] ) ) : '',
+			'stripe_products_mode'           => isset( $_POST['stripe_products_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['stripe_products_mode'] ) ), array( 'all', 'selected' ), true ) ? sanitize_key( wp_unslash( $_POST['stripe_products_mode'] ) ) : 'all',
+			'stripe_selected_prices'         => isset( $_POST['stripe_selected_prices'] ) && is_array( $_POST['stripe_selected_prices'] ) ? array_values( array_unique( array_map( 'sanitize_text_field', wp_unslash( $_POST['stripe_selected_prices'] ) ) ) ) : array(),
 		);
+
+		$section_keys = array(
+			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
+			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
+			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
+			'payments'     => array( 'stripe_mode', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices' ),
+		);
+
+		foreach ( $section_keys as $section_key => $keys ) {
+			if ( $section_key === $section ) {
+				continue;
+			}
+
+			foreach ( $keys as $key ) {
+				if ( array_key_exists( $key, $current_settings ) ) {
+					$settings[ $key ] = $current_settings[ $key ];
+				}
+			}
+		}
 
 		update_option( 'ajforms_settings', $settings );
 		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
@@ -1058,17 +1215,55 @@ class AJForms_Admin {
 			);
 		}
 
-		wp_safe_redirect(
-			add_query_arg(
-				array(
-					'page'             => 'ajforms-settings',
-					'section'          => $section,
-					'subsection'       => $subsection,
-					'settings-updated' => 'true',
-				),
-				admin_url( 'admin.php' )
-			)
+		$redirect_args = array(
+			'page'             => 'ajforms-settings',
+			'section'          => $section,
+			'subsection'       => $subsection,
+			'settings-updated' => 'true',
 		);
+
+		if ( 'payments' === $section && ! empty( $settings['stripe_secret_key'] ) && isset( $_POST['ajf_sync_stripe_products'] ) ) {
+			$stripe_sync = $this->fetch_stripe_product_prices( $settings['stripe_secret_key'] );
+			if ( is_wp_error( $stripe_sync ) ) {
+				$redirect_args['stripe-sync-error'] = rawurlencode( $stripe_sync->get_error_message() );
+			} else {
+				$redirect_args['stripe-synced'] = count( $stripe_sync['prices'] );
+			}
+		}
+
+		wp_safe_redirect(
+			add_query_arg( $redirect_args, admin_url( 'admin.php' ) )
+		);
+		exit;
+	}
+
+	private function handle_products_action() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		if ( ! isset( $_GET['ajf_products_action'], $_GET['_wpnonce'] ) ) {
+			return;
+		}
+
+		$action = sanitize_key( wp_unslash( $_GET['ajf_products_action'] ) );
+		if ( 'sync' !== $action ) {
+			return;
+		}
+
+		check_admin_referer( 'ajf_sync_stripe_products' );
+
+		$settings = $this->get_plugin_settings();
+		$args     = array( 'page' => 'ajforms-products' );
+
+		$result = $this->fetch_stripe_product_prices( isset( $settings['stripe_secret_key'] ) ? $settings['stripe_secret_key'] : '' );
+		if ( is_wp_error( $result ) ) {
+			$args['stripe-sync-error'] = rawurlencode( $result->get_error_message() );
+		} else {
+			$args['stripe-synced'] = count( $result['prices'] );
+		}
+
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -1396,6 +1591,15 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
+			__( 'Products', 'ajforms' ),
+			__( 'Products', 'ajforms' ),
+			'manage_options',
+			'ajforms-products',
+			array( $this, 'display_products_page' )
+		);
+
+		add_submenu_page(
+			'ajforms',
 			__( 'Settings', 'ajforms' ),
 			__( 'Settings', 'ajforms' ),
 			'manage_options',
@@ -1462,6 +1666,91 @@ class AJForms_Admin {
 
 		require_once AJFORMS_PLUGIN_DIR . 'admin/class-ajforms-leads-list-table.php';
 		require_once AJFORMS_PLUGIN_DIR . 'admin/partials/ajforms-admin-leads.php';
+	}
+
+	public function display_products_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings = $this->get_plugin_settings();
+		$cache    = $this->get_stripe_products_cache();
+		$prices   = isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array();
+		$sync_url = wp_nonce_url(
+			add_query_arg(
+				array(
+					'page'                => 'ajforms-products',
+					'ajf_products_action' => 'sync',
+				),
+				admin_url( 'admin.php' )
+			),
+			'ajf_sync_stripe_products'
+		);
+		?>
+		<div class="wrap">
+			<style>
+				.ajcore-products-shell{max-width:1180px;margin-top:20px}
+				.ajcore-products-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px;padding:22px 24px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}
+				.ajcore-products-hero h1{margin:0 0 8px;font-size:28px;line-height:1.2}
+				.ajcore-products-hero p{margin:0;color:#64748b;max-width:760px}
+				.ajcore-products-notice{margin:0 0 18px;padding:12px 14px;border-radius:10px}
+				.ajcore-products-notice.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+				.ajcore-products-notice.error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+				.ajcore-products-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+				.ajcore-product-card{padding:18px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+				.ajcore-product-card h2{margin:0 0 8px;font-size:17px}
+				.ajcore-product-price{font-size:24px;font-weight:800;color:#111827;margin:10px 0}
+				.ajcore-product-meta{display:grid;gap:5px;color:#64748b;font-size:13px}
+				.ajcore-shortcode{display:inline-block;margin-top:12px;padding:6px 8px;border-radius:8px;background:#f1f5f9;color:#334155}
+				.ajcore-products-empty{padding:24px;border:1px dashed #cbd5e1;border-radius:12px;background:#fff;color:#64748b}
+			</style>
+
+			<div class="ajcore-products-shell">
+				<div class="ajcore-products-hero">
+					<div>
+						<h1><?php esc_html_e( 'Products', 'ajforms' ); ?></h1>
+						<p><?php esc_html_e( 'Sync one-time Stripe Prices here, then place products on any page with the shortcode. Product payments use Stripe Checkout.', 'ajforms' ); ?></p>
+					</div>
+					<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
+				</div>
+
+				<?php if ( empty( $settings['stripe_secret_key'] ) ) : ?>
+					<div class="ajcore-products-notice error"><?php esc_html_e( 'Add your Stripe secret key in Settings > Stripe Payments before syncing products.', 'ajforms' ); ?></div>
+				<?php elseif ( isset( $_GET['stripe-sync-error'] ) ) : ?>
+					<div class="ajcore-products-notice error"><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['stripe-sync-error'] ) ) ); ?></div>
+				<?php elseif ( isset( $_GET['stripe-synced'] ) ) : ?>
+					<div class="ajcore-products-notice ok">
+						<?php
+						printf(
+							esc_html__( 'Synced %d Stripe prices.', 'ajforms' ),
+							absint( wp_unslash( $_GET['stripe-synced'] ) )
+						);
+						?>
+					</div>
+				<?php endif; ?>
+
+				<p><strong><?php esc_html_e( 'Page shortcode:', 'ajforms' ); ?></strong> <code>[ajcore_products]</code></p>
+
+				<?php if ( empty( $prices ) ) : ?>
+					<div class="ajcore-products-empty"><?php esc_html_e( 'No synced one-time Stripe prices yet.', 'ajforms' ); ?></div>
+				<?php else : ?>
+					<div class="ajcore-products-grid">
+						<?php foreach ( $prices as $price ) : ?>
+							<div class="ajcore-product-card">
+								<h2><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ) ); ?></h2>
+								<div class="ajcore-product-price"><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) ); ?></div>
+								<div class="ajcore-product-meta">
+									<span><?php echo esc_html( 'Price: ' . $price['id'] ); ?></span>
+									<span><?php echo esc_html( 'Product: ' . $price['product_id'] ); ?></span>
+								</div>
+								<code class="ajcore-shortcode">[ajcore_products price_ids="<?php echo esc_attr( $price['id'] ); ?>"]</code>
+							</div>
+						<?php endforeach; ?>
+					</div>
+				<?php endif; ?>
+			</div>
+		</div>
+		<?php
 	}
 
 	private function handle_lead_actions() {
@@ -1584,6 +1873,9 @@ class AJForms_Admin {
 
 		$settings = $this->get_plugin_settings();
 		$asana_cache = $this->get_asana_reference_cache();
+		$stripe_cache = $this->get_stripe_products_cache();
+		$stripe_prices = isset( $stripe_cache['prices'] ) && is_array( $stripe_cache['prices'] ) ? $stripe_cache['prices'] : array();
+		$selected_stripe_prices = isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? $settings['stripe_selected_prices'] : array();
 		$sections = array(
 			'general'      => array(
 				'label' => __( 'General Settings', 'ajforms' ),
@@ -2099,7 +2391,7 @@ class AJForms_Admin {
 								<div class="ajforms-settings-card">
 									<span class="ajforms-settings-pill"><?php esc_html_e( 'Stripe Payments', 'ajforms' ); ?></span>
 									<h3><?php esc_html_e( 'Stripe connection', 'ajforms' ); ?></h3>
-									<p><?php esc_html_e( 'These keys connect AJ Core to Stripe site-wide, but they do not turn payments on for every form. You choose payment-enabled forms individually in the builder.', 'ajforms' ); ?></p>
+									<p><?php esc_html_e( 'These keys connect AJ Core to Stripe site-wide. Products sync from Stripe Prices and can be used in forms or on pages.', 'ajforms' ); ?></p>
 									<div class="ajforms-settings-field" style="max-width:280px;margin-bottom:22px;">
 										<label for="stripe_mode"><?php esc_html_e( 'Stripe Mode', 'ajforms' ); ?></label>
 										<select name="stripe_mode" id="stripe_mode">
@@ -2117,7 +2409,57 @@ class AJForms_Admin {
 											<input name="stripe_secret_key" id="stripe_secret_key" type="text" value="<?php echo esc_attr( $settings['stripe_secret_key'] ); ?>">
 										</div>
 									</div>
-									<div class="ajforms-settings-note"><?php esc_html_e( 'Stripe can now be marked per form in the builder. Live payment field rendering and charge collection still need their own implementation pass.', 'ajforms' ); ?></div>
+									<div class="ajforms-settings-actions" style="margin-top:18px;">
+										<button type="submit" class="button" name="ajf_sync_stripe_products" value="1"><?php esc_html_e( 'Save and Sync Products', 'ajforms' ); ?></button>
+										<span class="ajforms-settings-help">
+											<?php
+											if ( ! empty( $stripe_cache['updated_at'] ) ) {
+												printf(
+													esc_html__( 'Last synced: %s.', 'ajforms' ),
+													esc_html( $stripe_cache['updated_at'] )
+												);
+											} else {
+												esc_html_e( 'Products have not been synced yet.', 'ajforms' );
+											}
+											?>
+										</span>
+									</div>
+								</div>
+
+								<div class="ajforms-settings-card">
+									<span class="ajforms-settings-pill"><?php esc_html_e( 'Products', 'ajforms' ); ?></span>
+									<h3><?php esc_html_e( 'Product availability', 'ajforms' ); ?></h3>
+									<p><?php esc_html_e( 'Choose which synced Stripe prices can appear in forms and product shortcodes.', 'ajforms' ); ?></p>
+
+									<?php if ( isset( $_GET['stripe-sync-error'] ) ) : ?>
+										<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['stripe-sync-error'] ) ) ); ?></p></div>
+									<?php elseif ( isset( $_GET['stripe-synced'] ) ) : ?>
+										<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe prices.', 'ajforms' ), absint( wp_unslash( $_GET['stripe-synced'] ) ) ) ); ?></p></div>
+									<?php endif; ?>
+
+									<div class="ajforms-settings-field" style="max-width:360px;margin-bottom:18px;">
+										<label for="stripe_products_mode"><?php esc_html_e( 'Products to show', 'ajforms' ); ?></label>
+										<select name="stripe_products_mode" id="stripe_products_mode">
+											<option value="all" <?php selected( isset( $settings['stripe_products_mode'] ) ? $settings['stripe_products_mode'] : 'all', 'all' ); ?>><?php esc_html_e( 'All synced products', 'ajforms' ); ?></option>
+											<option value="selected" <?php selected( isset( $settings['stripe_products_mode'] ) ? $settings['stripe_products_mode'] : 'all', 'selected' ); ?>><?php esc_html_e( 'Only selected products', 'ajforms' ); ?></option>
+										</select>
+									</div>
+
+									<?php if ( empty( $stripe_prices ) ) : ?>
+										<div class="ajforms-settings-note"><?php esc_html_e( 'No synced products yet. Save your Stripe keys, then click Save and Sync Products.', 'ajforms' ); ?></div>
+									<?php else : ?>
+										<div style="display:grid;gap:10px;">
+											<?php foreach ( $stripe_prices as $price ) : ?>
+												<label class="ajforms-settings-checkbox">
+													<input type="checkbox" name="stripe_selected_prices[]" value="<?php echo esc_attr( $price['id'] ); ?>" <?php checked( in_array( $price['id'], $selected_stripe_prices, true ) ); ?>>
+													<span>
+														<strong><?php echo esc_html( $this->format_stripe_price_label( $price ) ); ?></strong>
+														<span><?php echo esc_html( $price['id'] ); ?></span>
+													</span>
+												</label>
+											<?php endforeach; ?>
+										</div>
+									<?php endif; ?>
 								</div>
 							<?php endif; ?>
 

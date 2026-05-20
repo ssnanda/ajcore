@@ -474,6 +474,8 @@ function initAJFormsBuilder() {
                     asana_assignee_gid: '',
                     asana_due_date: 'today',
                     stripe_enabled: false,
+                    stripe_price_id: '',
+                    stripe_price_label: '',
                     stripe_amount: '',
                     stripe_currency: 'usd',
                     stripe_description: 'Payment for {form_title}',
@@ -524,7 +526,9 @@ function initAJFormsBuilder() {
                         asana_assignee_gid: '',
                         asana_due_date: 'today',
                         stripe_enabled: false,
-                        stripe_amount: '',
+                    stripe_price_id: '',
+                    stripe_price_label: '',
+                    stripe_amount: '',
                         stripe_currency: 'usd',
                         stripe_description: 'Payment for {form_title}',
                         form_theme: 'clean',
@@ -574,7 +578,9 @@ function initAJFormsBuilder() {
                 asana_assignee_gid: '',
                 asana_due_date: 'today',
                 stripe_enabled: false,
-                stripe_amount: '',
+                    stripe_price_id: '',
+                    stripe_price_label: '',
+                    stripe_amount: '',
                 stripe_currency: 'usd',
                 stripe_description: 'Payment for {form_title}',
                 form_theme: 'clean',
@@ -2092,6 +2098,8 @@ function initAJFormsBuilder() {
         const asanaAssigneeGidInput = document.getElementById('wpf-form-asana-assignee-gid');
         const asanaDueDateInput = document.getElementById('wpf-form-asana-due-date');
         const stripeEnabledInput = document.getElementById('wpf-form-stripe-enabled');
+        const stripePriceIdInput = document.getElementById('wpf-form-stripe-price-id');
+        const stripePriceLabelInput = document.getElementById('wpf-form-stripe-price-label');
         const stripeAmountInput = document.getElementById('wpf-form-stripe-amount');
         const stripeCurrencyInput = document.getElementById('wpf-form-stripe-currency');
         const stripeDescriptionInput = document.getElementById('wpf-form-stripe-description');
@@ -2138,6 +2146,8 @@ function initAJFormsBuilder() {
         formSchema.settings.asana_assignee_gid = asanaAssigneeGidInput ? asanaAssigneeGidInput.value.trim() : '';
         formSchema.settings.asana_due_date = asanaDueDateInput ? (asanaDueDateInput.value || 'today') : 'today';
         formSchema.settings.stripe_enabled = stripeEnabledInput ? !!stripeEnabledInput.checked : false;
+        formSchema.settings.stripe_price_id = stripePriceIdInput ? (stripePriceIdInput.value || '') : '';
+        formSchema.settings.stripe_price_label = stripePriceIdInput && stripePriceIdInput.selectedOptions[0] ? (stripePriceIdInput.selectedOptions[0].dataset.label || '') : (stripePriceLabelInput ? stripePriceLabelInput.value.trim() : '');
         formSchema.settings.stripe_amount = stripeAmountInput ? (stripeAmountInput.value || '') : '';
         formSchema.settings.stripe_currency = stripeCurrencyInput ? (stripeCurrencyInput.value || 'usd') : 'usd';
         formSchema.settings.stripe_description = stripeDescriptionInput ? (stripeDescriptionInput.value.trim() || 'Payment for {form_title}') : 'Payment for {form_title}';
