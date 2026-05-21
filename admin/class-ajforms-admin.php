@@ -1561,6 +1561,56 @@ class AJForms_Admin {
 		return (int) $query->get_total();
 	}
 
+	private function get_ajcore_managed_roles() {
+		$roles = get_option( 'ajcore_managed_roles', array() );
+
+		return is_array( $roles ) ? array_values( array_unique( array_map( 'sanitize_key', $roles ) ) ) : array();
+	}
+
+	private function mark_ajcore_managed_role( $role_key ) {
+		$roles   = $this->get_ajcore_managed_roles();
+		$roles[] = sanitize_key( $role_key );
+
+		update_option( 'ajcore_managed_roles', array_values( array_unique( $roles ) ), false );
+	}
+
+	private function unmark_ajcore_managed_role( $role_key ) {
+		$role_key = sanitize_key( $role_key );
+		$roles    = array_values(
+			array_filter(
+				$this->get_ajcore_managed_roles(),
+				function ( $managed_role ) use ( $role_key ) {
+					return $managed_role !== $role_key;
+				}
+			)
+		);
+
+		update_option( 'ajcore_managed_roles', $roles, false );
+	}
+
+	private function get_role_type_info( $role_key ) {
+		$role_key = sanitize_key( $role_key );
+
+		if ( in_array( $role_key, array( 'subscriber', 'contributor', 'author', 'editor', 'administrator' ), true ) ) {
+			return array(
+				'label' => __( 'WordPress Default', 'ajforms' ),
+				'class' => 'wordpress',
+			);
+		}
+
+		if ( in_array( $role_key, $this->get_ajcore_managed_roles(), true ) || 0 === strpos( $role_key, 'ajcore_' ) || 0 === strpos( $role_key, 'aj_' ) ) {
+			return array(
+				'label' => __( 'AJ Core', 'ajforms' ),
+				'class' => 'ajcore',
+			);
+		}
+
+		return array(
+			'label' => __( 'Custom / Plugin', 'ajforms' ),
+			'class' => 'custom',
+		);
+	}
+
 	private function update_role_display_name( $role_key, $role_label ) {
 		global $wp_roles;
 
@@ -1620,6 +1670,7 @@ class AJForms_Admin {
 				$args['role-error'] = 'role-has-users';
 			} elseif ( get_role( $role_key ) ) {
 				remove_role( $role_key );
+				$this->unmark_ajcore_managed_role( $role_key );
 				$args['role-deleted'] = 1;
 			}
 
@@ -1657,6 +1708,7 @@ class AJForms_Admin {
 				}
 
 				add_role( $role_key, $role_label, $cap_map );
+				$this->mark_ajcore_managed_role( $role_key );
 				$args['role-saved'] = 1;
 			}
 		} elseif ( 'edit' === $action && get_role( $role_key ) ) {
@@ -2392,6 +2444,10 @@ class AJForms_Admin {
 				.ajcore-role-panel h2{margin:0 0 16px;font-size:18px}
 				.ajcore-role-panel-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}
 				.ajcore-role-panel-head h2{margin:0}
+				.ajcore-role-type-badge{display:inline-flex;align-items:center;padding:4px 9px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap}
+				.ajcore-role-type-badge.wordpress{background:#eef2ff;color:#3730a3}
+				.ajcore-role-type-badge.ajcore{background:#ecfdf3;color:#027a48}
+				.ajcore-role-type-badge.custom{background:#fff7ed;color:#c2410c}
 				.ajcore-role-field{margin-bottom:16px}
 				.ajcore-role-field label{display:block;font-weight:700;margin-bottom:7px}
 				.ajcore-role-field input[type="text"],.ajcore-role-field textarea{width:100%;max-width:100%}
@@ -2457,6 +2513,7 @@ class AJForms_Admin {
 						<thead>
 							<tr>
 								<th><?php esc_html_e( 'Role', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Role Type', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Users', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 							</tr>
@@ -2465,11 +2522,15 @@ class AJForms_Admin {
 							<?php foreach ( $roles as $role_key => $role ) : ?>
 								<?php
 								$user_count = $this->get_role_user_count( $role_key );
+								$role_type  = $this->get_role_type_info( $role_key );
 								?>
 								<tr>
 									<td>
 										<strong><?php echo esc_html( $role['name'] ); ?></strong><br>
 										<code><?php echo esc_html( $role_key ); ?></code>
+									</td>
+									<td>
+										<span class="ajcore-role-type-badge <?php echo esc_attr( $role_type['class'] ); ?>"><?php echo esc_html( $role_type['label'] ); ?></span>
 									</td>
 									<td><?php echo esc_html( number_format_i18n( $user_count ) ); ?></td>
 									<td>
