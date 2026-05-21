@@ -45,11 +45,201 @@ class AJForms {
 	private function define_public_hooks() {
 		add_shortcode( 'ajforms', array( $this, 'render_form_shortcode' ) );
 		add_shortcode( 'ajcore_products', array( $this, 'render_products_shortcode' ) );
+		add_shortcode( 'aj_customer_portal', array( $this, 'render_customer_portal_shortcode' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
+		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
 		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
+	}
+
+	private function get_portal_files_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_files';
+	}
+
+	private function get_portal_file_users_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_file_users';
+	}
+
+	private function get_portal_file_record( $file_id ) {
+		global $wpdb;
+
+		return $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_files_table()} WHERE id = %d",
+				absint( $file_id )
+			)
+		);
+	}
+
+	private function current_user_can_access_portal_file( $file_id ) {
+		if ( ! is_user_logged_in() ) {
+			return false;
+		}
+
+		global $wpdb;
+
+		$user       = wp_get_current_user();
+		$user_id    = get_current_user_id();
+		$user_email = strtolower( (string) $user->user_email );
+
+		$count = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$this->get_portal_file_users_table()} WHERE file_id = %d AND (user_id = %d OR LOWER(user_email) = %s)",
+				absint( $file_id ),
+				$user_id,
+				$user_email
+			)
+		);
+
+		return (int) $count > 0;
+	}
+
+	private function get_current_user_portal_files() {
+		if ( ! is_user_logged_in() ) {
+			return array();
+		}
+
+		global $wpdb;
+
+		$user       = wp_get_current_user();
+		$user_email = strtolower( (string) $user->user_email );
+
+		return $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT DISTINCT f.* FROM {$this->get_portal_files_table()} f
+				INNER JOIN {$this->get_portal_file_users_table()} fu ON fu.file_id = f.id
+				WHERE fu.user_id = %d OR LOWER(fu.user_email) = %s
+				ORDER BY f.category ASC, f.created_at DESC",
+				get_current_user_id(),
+				$user_email
+			)
+		);
+	}
+
+	public function render_customer_portal_shortcode() {
+		if ( ! is_user_logged_in() ) {
+			$login_url    = wp_login_url( get_permalink() );
+			$register_url = get_option( 'users_can_register' ) ? wp_registration_url() : '';
+
+			ob_start();
+			?>
+			<div class="aj-customer-portal aj-customer-portal-login">
+				<p><?php esc_html_e( 'Please log in to view your files.', 'ajforms' ); ?></p>
+				<p>
+					<a class="button" href="<?php echo esc_url( $login_url ); ?>"><?php esc_html_e( 'Log In', 'ajforms' ); ?></a>
+					<?php if ( $register_url ) : ?>
+						<a class="button" href="<?php echo esc_url( $register_url ); ?>"><?php esc_html_e( 'Register', 'ajforms' ); ?></a>
+					<?php endif; ?>
+				</p>
+			</div>
+			<?php
+			return ob_get_clean();
+		}
+
+		$files = $this->get_current_user_portal_files();
+
+		ob_start();
+		?>
+		<div class="aj-customer-portal">
+			<style>
+				.aj-customer-portal{max-width:960px;margin:0 auto}
+				.aj-customer-portal h2{margin:0 0 18px}
+				.aj-customer-file-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+				.aj-customer-file{border:1px solid #dfe6ee;border-radius:12px;padding:18px;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.06)}
+				.aj-customer-file-category{display:inline-block;margin-bottom:10px;color:#0f7ac6;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+				.aj-customer-file h3{margin:0 0 8px;font-size:20px;line-height:1.25}
+				.aj-customer-file p{margin:0 0 14px;color:#52616f}
+				.aj-customer-file .button{display:inline-block;text-decoration:none}
+			</style>
+			<h2><?php esc_html_e( 'File Library', 'ajforms' ); ?></h2>
+
+			<?php if ( empty( $files ) ) : ?>
+				<p><?php esc_html_e( 'No files have been shared with you yet.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div class="aj-customer-file-grid">
+					<?php foreach ( $files as $file ) : ?>
+						<?php
+						$download_url = wp_nonce_url(
+							add_query_arg(
+								array(
+									'aj_portal_download' => (int) $file->id,
+								),
+								home_url( '/' )
+							),
+							'aj_portal_download_' . (int) $file->id
+						);
+						?>
+						<div class="aj-customer-file">
+							<?php if ( '' !== (string) $file->category ) : ?>
+								<div class="aj-customer-file-category"><?php echo esc_html( $file->category ); ?></div>
+							<?php endif; ?>
+							<h3><?php echo esc_html( $file->title ); ?></h3>
+							<?php if ( '' !== (string) $file->description ) : ?>
+								<p><?php echo esc_html( $file->description ); ?></p>
+							<?php endif; ?>
+							<a class="button" href="<?php echo esc_url( $download_url ); ?>"><?php esc_html_e( 'Download', 'ajforms' ); ?></a>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+		return ob_get_clean();
+	}
+
+	public function maybe_handle_portal_file_download() {
+		if ( empty( $_GET['aj_portal_download'] ) ) {
+			return;
+		}
+
+		$file_id = absint( $_GET['aj_portal_download'] );
+
+		if ( ! is_user_logged_in() ) {
+			auth_redirect();
+			exit;
+		}
+
+		if ( ! isset( $_GET['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'aj_portal_download_' . $file_id ) ) {
+			wp_die( esc_html__( 'Invalid download link.', 'ajforms' ), '', array( 'response' => 403 ) );
+		}
+
+		if ( ! $this->current_user_can_access_portal_file( $file_id ) ) {
+			wp_die( esc_html__( 'You do not have permission to download this file.', 'ajforms' ), '', array( 'response' => 403 ) );
+		}
+
+		$file = $this->get_portal_file_record( $file_id );
+		if ( ! $file ) {
+			wp_die( esc_html__( 'File not found.', 'ajforms' ), '', array( 'response' => 404 ) );
+		}
+
+		$file_path = get_attached_file( (int) $file->attachment_id );
+		$real_path = $file_path ? realpath( $file_path ) : false;
+		$uploads   = wp_get_upload_dir();
+		$uploads_base = ! empty( $uploads['basedir'] ) ? realpath( $uploads['basedir'] ) : false;
+
+		if ( ! $real_path || ! $uploads_base || 0 !== strpos( $real_path, trailingslashit( $uploads_base ) ) || ! is_file( $real_path ) || ! is_readable( $real_path ) ) {
+			wp_die( esc_html__( 'File is not available.', 'ajforms' ), '', array( 'response' => 404 ) );
+		}
+
+		$mime_type = get_post_mime_type( (int) $file->attachment_id );
+		if ( ! $mime_type ) {
+			$mime_type = 'application/octet-stream';
+		}
+
+		$download_name = basename( $real_path );
+
+		nocache_headers();
+		header( 'Content-Type: ' . $mime_type );
+		header( 'Content-Disposition: attachment; filename="' . sanitize_file_name( $download_name ) . '"' );
+		header( 'Content-Length: ' . filesize( $real_path ) );
+		header( 'X-Content-Type-Options: nosniff' );
+
+		readfile( $real_path );
+		exit;
 	}
 
 	private function get_default_form_settings() {

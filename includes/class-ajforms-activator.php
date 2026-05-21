@@ -10,6 +10,8 @@ class AJForms_Activator {
 		$table_forms      = $wpdb->prefix . 'ajforms_forms';
 		$table_leads      = $wpdb->prefix . 'ajforms_leads';
 		$table_lead_notes = $wpdb->prefix . 'ajforms_lead_notes';
+		$table_portal_files      = $wpdb->prefix . 'aj_portal_files';
+		$table_portal_file_users = $wpdb->prefix . 'aj_portal_file_users';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -43,10 +45,37 @@ class AJForms_Activator {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			KEY lead_id (lead_id)
+		) $charset_collate;
+
+		CREATE TABLE $table_portal_files (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			attachment_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			title varchar(255) NOT NULL,
+			description longtext NULL,
+			category varchar(100) DEFAULT '' NOT NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY attachment_id (attachment_id),
+			KEY category (category)
+		) $charset_collate;
+
+		CREATE TABLE $table_portal_file_users (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			file_id bigint(20) unsigned NOT NULL,
+			user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			user_email varchar(190) DEFAULT '' NOT NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY file_id (file_id),
+			KEY user_id (user_id),
+			KEY user_email (user_email)
 		) $charset_collate;";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
+		update_option( 'ajforms_portal_schema_version', '1', false );
 	}
 }
