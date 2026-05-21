@@ -566,6 +566,80 @@ class AJForms {
 		return $wpdb->prefix . 'ajforms_forms';
 	}
 
+	private function render_product_rich_text( $text ) {
+		$text = trim( (string) $text );
+		if ( '' === $text ) {
+			return '';
+		}
+
+		if ( $text !== wp_strip_all_tags( $text ) ) {
+			return wp_kses_post( wpautop( $text ) );
+		}
+
+		$lines          = preg_split( '/\r\n|\r|\n/', $text );
+		$html           = '';
+		$paragraph      = array();
+		$list_is_open   = false;
+
+		$flush_paragraph = function () use ( &$html, &$paragraph ) {
+			if ( empty( $paragraph ) ) {
+				return;
+			}
+
+			$html     .= '<p>' . esc_html( implode( ' ', $paragraph ) ) . '</p>';
+			$paragraph = array();
+		};
+
+		$close_list = function () use ( &$html, &$list_is_open ) {
+			if ( $list_is_open ) {
+				$html        .= '</ul>';
+				$list_is_open = false;
+			}
+		};
+
+		foreach ( $lines as $line ) {
+			$line = trim( $line );
+
+			if ( '' === $line ) {
+				$flush_paragraph();
+				$close_list();
+				continue;
+			}
+
+			if ( preg_match( '/^###\s+(.+)$/', $line, $matches ) ) {
+				$flush_paragraph();
+				$close_list();
+				$html .= '<h4>' . esc_html( $matches[1] ) . '</h4>';
+				continue;
+			}
+
+			if ( preg_match( '/^##?\s+(.+)$/', $line, $matches ) ) {
+				$flush_paragraph();
+				$close_list();
+				$html .= '<h3>' . esc_html( $matches[1] ) . '</h3>';
+				continue;
+			}
+
+			if ( preg_match( '/^[-*]\s+(.+)$/', $line, $matches ) ) {
+				$flush_paragraph();
+				if ( ! $list_is_open ) {
+					$html        .= '<ul>';
+					$list_is_open = true;
+				}
+				$html .= '<li>' . esc_html( $matches[1] ) . '</li>';
+				continue;
+			}
+
+			$close_list();
+			$paragraph[] = $line;
+		}
+
+		$flush_paragraph();
+		$close_list();
+
+		return wp_kses_post( $html );
+	}
+
 	public function render_products_shortcode( $atts ) {
 		$atts = shortcode_atts(
 			array(
@@ -575,7 +649,9 @@ class AJForms {
 				'mode'      => 'buy',
 				'display'   => '',
 				'cart'      => '',
-				'show'      => 'title,description,price,button',
+				'show'      => '',
+				'template'  => 'default',
+				'details'   => 'none',
 				'include_archived' => 'no',
 			),
 			$atts,
@@ -593,9 +669,13 @@ class AJForms {
 			$mode = 'cart';
 		}
 		$is_cart_mode        = 'cart' === $mode;
-		$show_fields         = array_filter( array_map( 'sanitize_key', array_map( 'trim', explode( ',', (string) $atts['show'] ) ) ) );
+		$template            = in_array( sanitize_key( $atts['template'] ), array( 'default', 'compact' ), true ) ? sanitize_key( $atts['template'] ) : 'default';
+		$details_mode        = in_array( sanitize_key( $atts['details'] ), array( 'none', 'expand' ), true ) ? sanitize_key( $atts['details'] ) : 'none';
+		$default_show        = 'compact' === $template ? 'title,summary,price,button' : 'title,description,price,button';
+		$show_fields         = array_filter( array_map( 'sanitize_key', array_map( 'trim', explode( ',', '' !== (string) $atts['show'] ? (string) $atts['show'] : $default_show ) ) ) );
 		$show_title          = in_array( 'title', $show_fields, true );
 		$show_description    = in_array( 'description', $show_fields, true );
+		$show_summary        = in_array( 'summary', $show_fields, true );
 		$show_price          = in_array( 'price', $show_fields, true );
 		$show_button         = in_array( 'button', $show_fields, true );
 
@@ -606,7 +686,7 @@ class AJForms {
 		ob_start();
 		?>
 		<div
-			class="ajcore-products-wrap <?php echo $is_cart_mode ? 'ajcore-products-wrap-cart' : 'ajcore-products-wrap-buy'; ?>"
+			class="ajcore-products-wrap <?php echo $is_cart_mode ? 'ajcore-products-wrap-cart' : 'ajcore-products-wrap-buy'; ?> ajcore-products-template-<?php echo esc_attr( $template ); ?>"
 			data-mode="<?php echo esc_attr( $mode ); ?>"
 			data-cart-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_cart_checkout' ) ); ?>"
 			data-include-archived="<?php echo $include_archived ? 'yes' : 'no'; ?>"
@@ -617,6 +697,9 @@ class AJForms {
 					$price_amount   = (float) $price['amount'];
 					$price_currency = strtoupper( $price['currency'] );
 					$price_label    = $price_currency . ' ' . number_format_i18n( $price_amount, 2 );
+					$description    = isset( $price['product_description'] ) ? (string) $price['product_description'] : '';
+					$rich_description = ! empty( $price['product_rich_description'] ) ? (string) $price['product_rich_description'] : $description;
+					$summary        = ! empty( $price['product_summary'] ) ? (string) $price['product_summary'] : wp_trim_words( $description, 16 );
 					?>
 					<div
 						class="ajcore-product"
@@ -627,15 +710,28 @@ class AJForms {
 						style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);"
 					>
 						<?php if ( $show_title ) : ?>
-							<h3 style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php echo esc_html( $price['product_name'] ); ?></h3>
+							<h3 class="ajcore-product-title" style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php echo esc_html( $price['product_name'] ); ?></h3>
 						<?php endif; ?>
-						<?php if ( $show_description && ! empty( $price['product_description'] ) ) : ?>
-							<div style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['product_description'] ); ?></div>
+						<?php if ( $show_summary && '' !== $summary ) : ?>
+							<div class="ajcore-product-summary" style="margin-bottom:12px;color:#64748b;line-height:1.45;"><?php echo esc_html( $summary ); ?></div>
+						<?php endif; ?>
+						<?php if ( $show_description && '' !== $rich_description ) : ?>
+							<div class="ajcore-product-description" style="margin-bottom:10px;color:#64748b;">
+								<?php echo $this->render_product_rich_text( $rich_description ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							</div>
 						<?php elseif ( $show_description && ! empty( $price['nickname'] ) ) : ?>
-							<div style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['nickname'] ); ?></div>
+							<div class="ajcore-product-description" style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['nickname'] ); ?></div>
+						<?php endif; ?>
+						<?php if ( 'expand' === $details_mode && '' !== $rich_description && ! $show_description ) : ?>
+							<details class="ajcore-product-details" style="margin:0 0 14px;color:#64748b;">
+								<summary style="cursor:pointer;color:#0f7ac6;font-weight:700;"><?php esc_html_e( 'View details', 'ajforms' ); ?></summary>
+								<div style="margin-top:8px;line-height:1.45;">
+									<?php echo $this->render_product_rich_text( $rich_description ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								</div>
+							</details>
 						<?php endif; ?>
 						<?php if ( $show_price ) : ?>
-							<div style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
+							<div class="ajcore-product-price" style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
 								<?php echo esc_html( $price_label ); ?>
 							</div>
 						<?php endif; ?>
@@ -860,6 +956,15 @@ class AJForms {
 			.ajcore-products-wrap-cart{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:22px;align-items:start}
 			.ajcore-products-wrap-cart .ajcore-products-list{grid-column:1}
 			.ajcore-products-wrap-cart .ajcore-cart{grid-column:2;grid-row:1;position:sticky;top:24px}
+			.ajcore-product-description :is(h3,h4){margin:10px 0 6px;color:#111827;line-height:1.2}
+			.ajcore-product-description h3{font-size:18px}
+			.ajcore-product-description h4{font-size:16px}
+			.ajcore-product-description p{margin:0 0 10px}
+			.ajcore-product-description ul{margin:8px 0 12px 20px;padding:0}
+			.ajcore-product-description li{margin:4px 0}
+			.ajcore-product-details :is(h3,h4){margin:10px 0 6px;color:#111827;line-height:1.2}
+			.ajcore-product-details p{margin:0 0 10px}
+			.ajcore-product-details ul{margin:8px 0 12px 20px;padding:0}
 			@media (max-width: 800px){.ajcore-products-list{grid-template-columns:1fr!important}}
 			@media (max-width: 980px){.ajcore-products-wrap-cart{grid-template-columns:1fr}.ajcore-products-wrap-cart .ajcore-cart{grid-column:auto;grid-row:auto;position:static}}
 		</style>

@@ -411,6 +411,20 @@ class AJForms_Admin {
 			$product_id   = ! empty( $product['id'] ) ? sanitize_text_field( (string) $product['id'] ) : sanitize_text_field( (string) $price['product'] );
 			$product_name = ! empty( $product['name'] ) ? sanitize_text_field( (string) $product['name'] ) : __( 'Stripe product', 'ajforms' );
 			$product_description = ! empty( $product['description'] ) ? sanitize_textarea_field( (string) $product['description'] ) : '';
+			$product_rich_description = '';
+			$product_summary = '';
+			if ( ! empty( $product['metadata'] ) && is_array( $product['metadata'] ) ) {
+				if ( ! empty( $product['metadata']['summary'] ) ) {
+					$product_summary = sanitize_text_field( (string) $product['metadata']['summary'] );
+				} elseif ( ! empty( $product['metadata']['short_description'] ) ) {
+					$product_summary = sanitize_text_field( (string) $product['metadata']['short_description'] );
+				}
+				if ( ! empty( $product['metadata']['rich_description'] ) ) {
+					$product_rich_description = wp_kses_post( (string) $product['metadata']['rich_description'] );
+				} elseif ( ! empty( $product['metadata']['description_html'] ) ) {
+					$product_rich_description = wp_kses_post( (string) $product['metadata']['description_html'] );
+				}
+			}
 			$product_active = ! isset( $product['active'] ) || ! empty( $product['active'] );
 			$price_active   = ! isset( $price['active'] ) || ! empty( $price['active'] );
 			$unit_amount  = isset( $price['unit_amount'] ) ? absint( $price['unit_amount'] ) : 0;
@@ -426,6 +440,8 @@ class AJForms_Admin {
 				'product_id'   => $product_id,
 				'product_name' => $product_name,
 				'product_description' => $product_description,
+				'product_rich_description' => $product_rich_description,
+				'product_summary' => $product_summary,
 				'product_active' => $product_active,
 				'price_active'   => $price_active,
 				'nickname'     => ! empty( $price['nickname'] ) ? sanitize_text_field( (string) $price['nickname'] ) : '',
@@ -1798,8 +1814,26 @@ class AJForms_Admin {
 								<div class="ajcore-builder-checks">
 									<label><input type="checkbox" class="ajcore-display-field" value="title" checked> <?php esc_html_e( 'Product name', 'ajforms' ); ?></label>
 									<label><input type="checkbox" class="ajcore-display-field" value="description" checked> <?php esc_html_e( 'Description', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" value="summary"> <?php esc_html_e( 'Short summary', 'ajforms' ); ?></label>
 									<label><input type="checkbox" class="ajcore-display-field" value="price" checked> <?php esc_html_e( 'Price', 'ajforms' ); ?></label>
 									<label><input type="checkbox" class="ajcore-display-field" value="button" checked> <?php esc_html_e( 'Button', 'ajforms' ); ?></label>
+								</div>
+							</div>
+						</div>
+
+						<div class="ajcore-builder-controls">
+							<div class="ajcore-builder-field">
+								<strong><?php esc_html_e( 'Template', 'ajforms' ); ?></strong>
+								<div class="ajcore-builder-checks">
+									<label><input type="radio" name="ajcore_shortcode_template" value="default" checked> <?php esc_html_e( 'Default', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_template" value="compact"> <?php esc_html_e( 'Compact', 'ajforms' ); ?></label>
+								</div>
+							</div>
+							<div class="ajcore-builder-field">
+								<strong><?php esc_html_e( 'Details', 'ajforms' ); ?></strong>
+								<div class="ajcore-builder-checks">
+									<label><input type="radio" name="ajcore_shortcode_details" value="none" checked> <?php esc_html_e( 'No expandable details', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_details" value="expand"> <?php esc_html_e( 'Expandable details', 'ajforms' ); ?></label>
 								</div>
 							</div>
 						</div>
@@ -1883,13 +1917,23 @@ class AJForms_Admin {
 
 						function updateShortcode() {
 							const modeInput = builder.querySelector('input[name="ajcore_shortcode_mode"]:checked');
+							const templateInput = builder.querySelector('input[name="ajcore_shortcode_template"]:checked');
+							const detailsInput = builder.querySelector('input[name="ajcore_shortcode_details"]:checked');
 							const mode = modeInput ? modeInput.value : 'buy';
+							const template = templateInput ? templateInput.value : 'default';
+							const details = detailsInput ? detailsInput.value : 'none';
 							const priceIds = productInputs.filter((input) => input.checked).map((input) => input.value);
 							const fields = displayInputs.filter((input) => input.checked).map((input) => input.value);
 							const includeArchived = selectedStatuses().includes('archived') ? 'yes' : '';
 							const attrs = [];
 							if (mode !== 'buy') {
 								attrs.push('mode="' + mode + '"');
+							}
+							if (template !== 'default') {
+								attrs.push('template="' + template + '"');
+							}
+							if (details !== 'none') {
+								attrs.push('details="' + details + '"');
 							}
 							if (priceIds.length) {
 								attrs.push('price_ids="' + priceIds.join(',') + '"');
@@ -1907,6 +1951,8 @@ class AJForms_Admin {
 						productInputs.forEach((input) => input.addEventListener('change', updateShortcode));
 						displayInputs.forEach((input) => input.addEventListener('change', updateShortcode));
 						builder.querySelectorAll('input[name="ajcore_shortcode_mode"]').forEach((input) => input.addEventListener('change', updateShortcode));
+						builder.querySelectorAll('input[name="ajcore_shortcode_template"]').forEach((input) => input.addEventListener('change', updateShortcode));
+						builder.querySelectorAll('input[name="ajcore_shortcode_details"]').forEach((input) => input.addEventListener('change', updateShortcode));
 						selectVisibleButton.addEventListener('click', function() {
 							productChoices.forEach((choice) => {
 								if (choice.style.display !== 'none') {
