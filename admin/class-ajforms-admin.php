@@ -1153,7 +1153,12 @@ class AJForms_Admin {
 		} elseif ( 'ajforms-leads' === $page ) {
 			$this->handle_lead_actions();
 		} elseif ( 'ajforms-settings' === $page ) {
-			$this->handle_settings_save();
+			$section = isset( $_GET['section'] ) ? sanitize_key( wp_unslash( $_GET['section'] ) ) : '';
+			if ( 'role-manager' === $section || isset( $_GET['role_manager_action'] ) || isset( $_POST['role_manager_action'] ) ) {
+				$this->handle_role_manager_actions();
+			} else {
+				$this->handle_settings_save();
+			}
 		} elseif ( 'ajforms-products' === $page ) {
 			$this->handle_products_action();
 		} elseif ( 'ajforms-file-library' === $page ) {
@@ -1607,7 +1612,7 @@ class AJForms_Admin {
 			$role_key = sanitize_key( wp_unslash( $_GET['role'] ) );
 			check_admin_referer( 'ajcore_delete_role_' . $role_key );
 
-			$args = array( 'page' => 'ajforms-role-manager' );
+			$args = array( 'page' => 'ajforms-settings', 'section' => 'role-manager' );
 
 			if ( 'administrator' === $role_key ) {
 				$args['role-error'] = 'administrator-delete';
@@ -1634,7 +1639,7 @@ class AJForms_Admin {
 		$selected_caps       = isset( $_POST['role_capabilities'] ) && is_array( $_POST['role_capabilities'] ) ? $_POST['role_capabilities'] : array();
 		$custom_capabilities = isset( $_POST['custom_capabilities'] ) ? wp_unslash( $_POST['custom_capabilities'] ) : '';
 		$capabilities        = $this->sanitize_role_capability_list( $selected_caps, $custom_capabilities );
-		$args                = array( 'page' => 'ajforms-role-manager' );
+		$args                = array( 'page' => 'ajforms-settings', 'section' => 'role-manager' );
 
 		if ( '' === $role_key || '' === $role_label ) {
 			$args['role-error'] = 'missing-fields';
@@ -2039,15 +2044,6 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
-			__( 'Role Manager', 'ajforms' ),
-			__( 'Role Manager', 'ajforms' ),
-			'manage_options',
-			'ajforms-role-manager',
-			array( $this, 'display_role_manager_page' )
-		);
-
-		add_submenu_page(
-			'ajforms',
 			__( 'Settings', 'ajforms' ),
 			__( 'Settings', 'ajforms' ),
 			'manage_options',
@@ -2341,7 +2337,7 @@ class AJForms_Admin {
 		<?php
 	}
 
-	public function display_role_manager_page() {
+	public function display_role_manager_page( $embedded = false ) {
 		if ( ! $this->current_user_can_manage_ajcore_roles() ) {
 			wp_die( esc_html__( 'Only Administrators can manage roles.', 'ajforms' ) );
 		}
@@ -2359,10 +2355,14 @@ class AJForms_Admin {
 		$is_editing   = null !== $editing_role;
 		$form_role    = $is_editing ? $edit_role : '';
 		$form_label   = $is_editing ? $editing_role['name'] : '';
+		$is_adding    = isset( $_GET['role_manager_action'] ) && 'add' === sanitize_key( wp_unslash( $_GET['role_manager_action'] ) );
 		$form_caps    = $is_editing && ! empty( $editing_role['capabilities'] ) && is_array( $editing_role['capabilities'] ) ? array_keys( array_filter( $editing_role['capabilities'] ) ) : array( 'read' );
+		$base_url     = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'role-manager' ), admin_url( 'admin.php' ) );
 		?>
-		<div class="wrap ajcore-role-manager">
-			<h1><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h1>
+		<div class="<?php echo $embedded ? 'ajcore-role-manager' : 'wrap ajcore-role-manager'; ?>">
+			<?php if ( ! $embedded ) : ?>
+				<h1><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h1>
+			<?php endif; ?>
 
 			<?php if ( isset( $_GET['role-saved'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Role saved.', 'ajforms' ); ?></p></div>
@@ -2387,9 +2387,11 @@ class AJForms_Admin {
 			<?php endif; ?>
 
 			<style>
-				.ajcore-role-manager-grid{display:grid;grid-template-columns:minmax(360px,520px) minmax(560px,1fr);gap:24px;align-items:start;margin-top:18px}
+				.ajcore-role-manager-grid{display:grid;gap:18px;align-items:start;margin-top:18px}
 				.ajcore-role-panel{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
 				.ajcore-role-panel h2{margin:0 0 16px;font-size:18px}
+				.ajcore-role-panel-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}
+				.ajcore-role-panel-head h2{margin:0}
 				.ajcore-role-field{margin-bottom:16px}
 				.ajcore-role-field label{display:block;font-weight:700;margin-bottom:7px}
 				.ajcore-role-field input[type="text"],.ajcore-role-field textarea{width:100%;max-width:100%}
@@ -2397,66 +2399,65 @@ class AJForms_Admin {
 				.ajcore-capability-list label{display:block;margin:0;padding:7px 8px;border-radius:6px;background:#fff;font-weight:500;word-break:break-word}
 				.ajcore-capability-list label:hover{background:#eef6ff}
 				.ajcore-role-table td{vertical-align:top}
-				.ajcore-role-caps{max-width:620px;color:#50575e}
-				.ajcore-role-badge{display:inline-block;margin:0 4px 4px 0;padding:2px 7px;border-radius:999px;background:#eef2f7;color:#344054;font-size:12px}
-				@media (max-width:1200px){.ajcore-role-manager-grid{grid-template-columns:1fr}}
 			</style>
 
 			<div class="ajcore-role-manager-grid">
-				<form class="ajcore-role-panel" method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-role-manager' ) ); ?>">
-					<h2><?php echo $is_editing ? esc_html__( 'Edit Role', 'ajforms' ) : esc_html__( 'Add Role', 'ajforms' ); ?></h2>
-					<?php wp_nonce_field( 'ajcore_save_role', 'ajcore_role_manager_nonce' ); ?>
-					<input type="hidden" name="role_manager_action" value="<?php echo esc_attr( $is_editing ? 'edit' : 'add' ); ?>">
+				<?php if ( $is_editing || $is_adding ) : ?>
+					<form class="ajcore-role-panel" method="post" action="<?php echo esc_url( $base_url ); ?>">
+						<h2><?php echo $is_editing ? esc_html__( 'Edit Role', 'ajforms' ) : esc_html__( 'Add Role', 'ajforms' ); ?></h2>
+						<?php wp_nonce_field( 'ajcore_save_role', 'ajcore_role_manager_nonce' ); ?>
+						<input type="hidden" name="role_manager_action" value="<?php echo esc_attr( $is_editing ? 'edit' : 'add' ); ?>">
 
-					<div class="ajcore-role-field">
-						<label for="role_key"><?php esc_html_e( 'Role Key', 'ajforms' ); ?></label>
-						<input type="text" id="role_key" name="role_key" value="<?php echo esc_attr( $form_role ); ?>" <?php disabled( $is_editing ); ?>>
-						<?php if ( $is_editing ) : ?>
-							<input type="hidden" name="role_key" value="<?php echo esc_attr( $form_role ); ?>">
-						<?php endif; ?>
-					</div>
-
-					<div class="ajcore-role-field">
-						<label for="role_label"><?php esc_html_e( 'Role Label', 'ajforms' ); ?></label>
-						<input type="text" id="role_label" name="role_label" value="<?php echo esc_attr( $form_label ); ?>">
-					</div>
-
-					<div class="ajcore-role-field">
-						<label><?php esc_html_e( 'Capabilities', 'ajforms' ); ?></label>
-						<?php if ( 'administrator' === $form_role ) : ?>
-							<p class="description"><?php esc_html_e( 'Existing Administrator capabilities are protected and cannot be removed here.', 'ajforms' ); ?></p>
-						<?php endif; ?>
-						<div class="ajcore-capability-list">
-							<?php foreach ( $all_caps as $capability ) : ?>
-								<label>
-									<input type="checkbox" name="role_capabilities[]" value="<?php echo esc_attr( $capability ); ?>" <?php checked( in_array( $capability, $form_caps, true ) ); ?>>
-									<?php echo esc_html( $capability ); ?>
-								</label>
-							<?php endforeach; ?>
+						<div class="ajcore-role-field">
+							<label for="role_key"><?php esc_html_e( 'Role Key', 'ajforms' ); ?></label>
+							<input type="text" id="role_key" name="role_key" value="<?php echo esc_attr( $form_role ); ?>" <?php disabled( $is_editing ); ?>>
+							<?php if ( $is_editing ) : ?>
+								<input type="hidden" name="role_key" value="<?php echo esc_attr( $form_role ); ?>">
+							<?php endif; ?>
 						</div>
-					</div>
 
-					<div class="ajcore-role-field">
-						<label for="custom_capabilities"><?php esc_html_e( 'Additional Capabilities', 'ajforms' ); ?></label>
-						<textarea id="custom_capabilities" name="custom_capabilities" rows="3" placeholder="<?php esc_attr_e( 'custom_capability, another_capability', 'ajforms' ); ?>"></textarea>
-					</div>
+						<div class="ajcore-role-field">
+							<label for="role_label"><?php esc_html_e( 'Role Label', 'ajforms' ); ?></label>
+							<input type="text" id="role_label" name="role_label" value="<?php echo esc_attr( $form_label ); ?>">
+						</div>
 
-					<p>
-						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Role', 'ajforms' ); ?></button>
-						<?php if ( $is_editing ) : ?>
-							<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-role-manager' ) ); ?>"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></a>
-						<?php endif; ?>
-					</p>
-				</form>
+						<div class="ajcore-role-field">
+							<label><?php esc_html_e( 'Capabilities', 'ajforms' ); ?></label>
+							<?php if ( 'administrator' === $form_role ) : ?>
+								<p class="description"><?php esc_html_e( 'Existing Administrator capabilities are protected and cannot be removed here.', 'ajforms' ); ?></p>
+							<?php endif; ?>
+							<div class="ajcore-capability-list">
+								<?php foreach ( $all_caps as $capability ) : ?>
+									<label>
+										<input type="checkbox" name="role_capabilities[]" value="<?php echo esc_attr( $capability ); ?>" <?php checked( in_array( $capability, $form_caps, true ) ); ?>>
+										<?php echo esc_html( $capability ); ?>
+									</label>
+								<?php endforeach; ?>
+							</div>
+						</div>
+
+						<div class="ajcore-role-field">
+							<label for="custom_capabilities"><?php esc_html_e( 'Additional Capabilities', 'ajforms' ); ?></label>
+							<textarea id="custom_capabilities" name="custom_capabilities" rows="3" placeholder="<?php esc_attr_e( 'custom_capability, another_capability', 'ajforms' ); ?>"></textarea>
+						</div>
+
+						<p>
+							<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Role', 'ajforms' ); ?></button>
+							<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></a>
+						</p>
+					</form>
+				<?php endif; ?>
 
 				<div class="ajcore-role-panel">
-					<h2><?php esc_html_e( 'WordPress Roles', 'ajforms' ); ?></h2>
+					<div class="ajcore-role-panel-head">
+						<h2><?php esc_html_e( 'WordPress Roles', 'ajforms' ); ?></h2>
+						<a class="button button-primary" href="<?php echo esc_url( add_query_arg( 'role_manager_action', 'add', $base_url ) ); ?>"><?php esc_html_e( 'Add Role', 'ajforms' ); ?></a>
+					</div>
 					<table class="widefat striped ajcore-role-table">
 						<thead>
 							<tr>
 								<th><?php esc_html_e( 'Role', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Users', 'ajforms' ); ?></th>
-								<th><?php esc_html_e( 'Capabilities', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 							</tr>
 						</thead>
@@ -2464,8 +2465,6 @@ class AJForms_Admin {
 							<?php foreach ( $roles as $role_key => $role ) : ?>
 								<?php
 								$user_count = $this->get_role_user_count( $role_key );
-								$role_caps  = ! empty( $role['capabilities'] ) && is_array( $role['capabilities'] ) ? array_keys( array_filter( $role['capabilities'] ) ) : array();
-								sort( $role_caps );
 								?>
 								<tr>
 									<td>
@@ -2473,23 +2472,14 @@ class AJForms_Admin {
 										<code><?php echo esc_html( $role_key ); ?></code>
 									</td>
 									<td><?php echo esc_html( number_format_i18n( $user_count ) ); ?></td>
-									<td class="ajcore-role-caps">
-										<?php if ( empty( $role_caps ) ) : ?>
-											<span class="description"><?php esc_html_e( 'No capabilities.', 'ajforms' ); ?></span>
-										<?php else : ?>
-											<?php foreach ( $role_caps as $capability ) : ?>
-												<span class="ajcore-role-badge"><?php echo esc_html( $capability ); ?></span>
-											<?php endforeach; ?>
-										<?php endif; ?>
-									</td>
 									<td>
-										<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-role-manager', 'edit_role' => $role_key ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+										<a href="<?php echo esc_url( add_query_arg( 'edit_role', $role_key, $base_url ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
 										<?php if ( 'administrator' !== $role_key ) : ?>
 											|
 											<?php if ( $user_count > 0 ) : ?>
 												<span class="description"><?php esc_html_e( 'Reassign users before delete', 'ajforms' ); ?></span>
 											<?php else : ?>
-												<a class="submitdelete" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-role-manager', 'role_manager_action' => 'delete', 'role' => $role_key ), admin_url( 'admin.php' ) ), 'ajcore_delete_role_' . $role_key ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this role?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
+												<a class="submitdelete" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'role_manager_action' => 'delete', 'role' => $role_key ), $base_url ), 'ajcore_delete_role_' . $role_key ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this role?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 											<?php endif; ?>
 										<?php endif; ?>
 									</td>
@@ -2931,6 +2921,10 @@ class AJForms_Admin {
 				'label' => __( 'Stripe Payments', 'ajforms' ),
 				'icon'  => 'cart',
 			),
+			'role-manager' => array(
+				'label' => __( 'Role Manager', 'ajforms' ),
+				'icon'  => 'admin-users',
+			),
 		);
 
 		if ( ! isset( $sections[ $section ] ) ) {
@@ -3057,6 +3051,13 @@ class AJForms_Admin {
 					</aside>
 
 					<div class="ajforms-settings-content">
+						<?php if ( 'role-manager' === $section ) : ?>
+							<div class="ajforms-settings-head">
+								<h2><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h2>
+								<p><?php esc_html_e( 'View, add, edit, and delete WordPress roles used by AJ Core and the rest of the site.', 'ajforms' ); ?></p>
+							</div>
+							<?php $this->display_role_manager_page( true ); ?>
+						<?php else : ?>
 						<form method="post">
 				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 							<div class="ajforms-settings-head">
@@ -3506,6 +3507,7 @@ class AJForms_Admin {
 								<span style="color:#6b7280;"><?php esc_html_e( 'Changes are stored site-wide for AJ Core.', 'ajforms' ); ?></span>
 							</div>
 						</form>
+						<?php endif; ?>
 					</div>
 				</div>
 			</div>
