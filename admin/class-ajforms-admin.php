@@ -1158,9 +1158,17 @@ class AJForms_Admin {
 			$this->handle_products_action();
 		} elseif ( 'ajforms-file-library' === $page ) {
 			$this->handle_file_library_actions();
+		} elseif ( 'ajforms-role-manager' === $page ) {
+			$this->handle_role_manager_actions();
 		} elseif ( 'ajforms-about' === $page ) {
 			$this->handle_about_update_action();
 		}
+	}
+
+	private function current_user_can_manage_ajcore_roles() {
+		$user = wp_get_current_user();
+
+		return is_super_admin() || ( $user && in_array( 'administrator', (array) $user->roles, true ) );
 	}
 
 	private function handle_settings_save() {
@@ -1477,6 +1485,201 @@ class AJForms_Admin {
 				admin_url( 'admin.php' )
 			)
 		);
+		exit;
+	}
+
+	private function get_all_role_capabilities() {
+		global $wp_roles;
+
+		if ( ! isset( $wp_roles ) || ! $wp_roles instanceof WP_Roles ) {
+			$wp_roles = wp_roles();
+		}
+
+		$capabilities = array();
+		foreach ( $wp_roles->roles as $role ) {
+			if ( empty( $role['capabilities'] ) || ! is_array( $role['capabilities'] ) ) {
+				continue;
+			}
+
+			foreach ( $role['capabilities'] as $capability => $enabled ) {
+				$capabilities[ $capability ] = true;
+			}
+		}
+
+		$core_caps = array(
+			'read',
+			'edit_posts',
+			'delete_posts',
+			'publish_posts',
+			'upload_files',
+			'edit_pages',
+			'publish_pages',
+			'delete_pages',
+			'edit_others_posts',
+			'delete_others_posts',
+			'manage_categories',
+			'moderate_comments',
+			'manage_options',
+			'list_users',
+			'edit_users',
+			'create_users',
+			'delete_users',
+			'promote_users',
+			'activate_plugins',
+			'install_plugins',
+			'update_plugins',
+			'delete_plugins',
+			'switch_themes',
+			'edit_theme_options',
+			'update_core',
+		);
+
+		foreach ( $core_caps as $capability ) {
+			$capabilities[ $capability ] = true;
+		}
+
+		$capabilities = array_keys( $capabilities );
+		sort( $capabilities );
+
+		return $capabilities;
+	}
+
+	private function get_role_user_count( $role_key ) {
+		$query = new WP_User_Query(
+			array(
+				'role'   => $role_key,
+				'fields' => 'ID',
+				'number' => 1,
+			)
+		);
+
+		return (int) $query->get_total();
+	}
+
+	private function update_role_display_name( $role_key, $role_label ) {
+		global $wp_roles;
+
+		if ( ! isset( $wp_roles ) || ! $wp_roles instanceof WP_Roles ) {
+			$wp_roles = wp_roles();
+		}
+
+		if ( empty( $wp_roles->roles[ $role_key ] ) ) {
+			return;
+		}
+
+		$wp_roles->roles[ $role_key ]['name'] = $role_label;
+		$wp_roles->role_names[ $role_key ]    = $role_label;
+
+		if ( ! empty( $wp_roles->use_db ) ) {
+			update_option( $wp_roles->role_key, $wp_roles->roles );
+		}
+	}
+
+	private function sanitize_role_capability_list( $capabilities, $custom_capabilities = '' ) {
+		$clean = array();
+
+		if ( is_array( $capabilities ) ) {
+			foreach ( $capabilities as $capability ) {
+				$capability = sanitize_key( wp_unslash( $capability ) );
+				if ( '' !== $capability ) {
+					$clean[] = $capability;
+				}
+			}
+		}
+
+		$custom_items = preg_split( '/[\s,;]+/', (string) $custom_capabilities );
+		foreach ( $custom_items as $capability ) {
+			$capability = sanitize_key( $capability );
+			if ( '' !== $capability ) {
+				$clean[] = $capability;
+			}
+		}
+
+		return array_values( array_unique( $clean ) );
+	}
+
+	private function handle_role_manager_actions() {
+		if ( ! $this->current_user_can_manage_ajcore_roles() ) {
+			return;
+		}
+
+		if ( isset( $_GET['role_manager_action'], $_GET['role'], $_GET['_wpnonce'] ) && 'delete' === sanitize_key( wp_unslash( $_GET['role_manager_action'] ) ) ) {
+			$role_key = sanitize_key( wp_unslash( $_GET['role'] ) );
+			check_admin_referer( 'ajcore_delete_role_' . $role_key );
+
+			$args = array( 'page' => 'ajforms-role-manager' );
+
+			if ( 'administrator' === $role_key ) {
+				$args['role-error'] = 'administrator-delete';
+			} elseif ( $this->get_role_user_count( $role_key ) > 0 ) {
+				$args['role-error'] = 'role-has-users';
+			} elseif ( get_role( $role_key ) ) {
+				remove_role( $role_key );
+				$args['role-deleted'] = 1;
+			}
+
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( ! isset( $_POST['ajcore_role_manager_nonce'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_save_role', 'ajcore_role_manager_nonce' );
+
+		$action              = isset( $_POST['role_manager_action'] ) ? sanitize_key( wp_unslash( $_POST['role_manager_action'] ) ) : '';
+		$role_key            = isset( $_POST['role_key'] ) ? sanitize_key( wp_unslash( $_POST['role_key'] ) ) : '';
+		$role_label          = isset( $_POST['role_label'] ) ? sanitize_text_field( wp_unslash( $_POST['role_label'] ) ) : '';
+		$selected_caps       = isset( $_POST['role_capabilities'] ) && is_array( $_POST['role_capabilities'] ) ? $_POST['role_capabilities'] : array();
+		$custom_capabilities = isset( $_POST['custom_capabilities'] ) ? wp_unslash( $_POST['custom_capabilities'] ) : '';
+		$capabilities        = $this->sanitize_role_capability_list( $selected_caps, $custom_capabilities );
+		$args                = array( 'page' => 'ajforms-role-manager' );
+
+		if ( '' === $role_key || '' === $role_label ) {
+			$args['role-error'] = 'missing-fields';
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( 'add' === $action ) {
+			if ( get_role( $role_key ) ) {
+				$args['role-error'] = 'role-exists';
+			} else {
+				$cap_map = array();
+				foreach ( $capabilities as $capability ) {
+					$cap_map[ $capability ] = true;
+				}
+
+				add_role( $role_key, $role_label, $cap_map );
+				$args['role-saved'] = 1;
+			}
+		} elseif ( 'edit' === $action && get_role( $role_key ) ) {
+			$role = get_role( $role_key );
+			$this->update_role_display_name( $role_key, $role_label );
+
+			if ( 'administrator' === $role_key ) {
+				$capabilities = array_values( array_unique( array_merge( array_keys( $role->capabilities ), $capabilities ) ) );
+			}
+
+			foreach ( array_keys( $role->capabilities ) as $capability ) {
+				if ( 'administrator' === $role_key ) {
+					continue;
+				}
+
+				if ( ! in_array( $capability, $capabilities, true ) ) {
+					$role->remove_cap( $capability );
+				}
+			}
+
+			foreach ( $capabilities as $capability ) {
+				$role->add_cap( $capability );
+			}
+
+			$args['role-saved'] = 1;
+		}
+
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -1836,6 +2039,15 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
+			__( 'Role Manager', 'ajforms' ),
+			__( 'Role Manager', 'ajforms' ),
+			'manage_options',
+			'ajforms-role-manager',
+			array( $this, 'display_role_manager_page' )
+		);
+
+		add_submenu_page(
+			'ajforms',
 			__( 'Settings', 'ajforms' ),
 			__( 'Settings', 'ajforms' ),
 			'manage_options',
@@ -2126,6 +2338,168 @@ class AJForms_Admin {
 			});
 		})(jQuery);
 		</script>
+		<?php
+	}
+
+	public function display_role_manager_page() {
+		if ( ! $this->current_user_can_manage_ajcore_roles() ) {
+			wp_die( esc_html__( 'Only Administrators can manage roles.', 'ajforms' ) );
+		}
+
+		global $wp_roles;
+
+		if ( ! isset( $wp_roles ) || ! $wp_roles instanceof WP_Roles ) {
+			$wp_roles = wp_roles();
+		}
+
+		$roles        = $wp_roles->roles;
+		$all_caps     = $this->get_all_role_capabilities();
+		$edit_role    = isset( $_GET['edit_role'] ) ? sanitize_key( wp_unslash( $_GET['edit_role'] ) ) : '';
+		$editing_role = ( $edit_role && isset( $roles[ $edit_role ] ) ) ? $roles[ $edit_role ] : null;
+		$is_editing   = null !== $editing_role;
+		$form_role    = $is_editing ? $edit_role : '';
+		$form_label   = $is_editing ? $editing_role['name'] : '';
+		$form_caps    = $is_editing && ! empty( $editing_role['capabilities'] ) && is_array( $editing_role['capabilities'] ) ? array_keys( array_filter( $editing_role['capabilities'] ) ) : array( 'read' );
+		?>
+		<div class="wrap ajcore-role-manager">
+			<h1><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h1>
+
+			<?php if ( isset( $_GET['role-saved'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Role saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<?php if ( isset( $_GET['role-deleted'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Role deleted.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<?php if ( isset( $_GET['role-error'] ) ) : ?>
+				<?php
+				$error_key = sanitize_key( wp_unslash( $_GET['role-error'] ) );
+				$messages  = array(
+					'administrator-delete' => __( 'Administrator cannot be deleted.', 'ajforms' ),
+					'role-has-users'       => __( 'This role has assigned users. Reassign those users before deleting the role.', 'ajforms' ),
+					'missing-fields'       => __( 'Role key and label are required.', 'ajforms' ),
+					'role-exists'          => __( 'A role with that key already exists.', 'ajforms' ),
+				);
+				$message = isset( $messages[ $error_key ] ) ? $messages[ $error_key ] : __( 'Role action could not be completed.', 'ajforms' );
+				?>
+				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( $message ); ?></p></div>
+			<?php endif; ?>
+
+			<style>
+				.ajcore-role-manager-grid{display:grid;grid-template-columns:minmax(360px,520px) minmax(560px,1fr);gap:24px;align-items:start;margin-top:18px}
+				.ajcore-role-panel{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+				.ajcore-role-panel h2{margin:0 0 16px;font-size:18px}
+				.ajcore-role-field{margin-bottom:16px}
+				.ajcore-role-field label{display:block;font-weight:700;margin-bottom:7px}
+				.ajcore-role-field input[type="text"],.ajcore-role-field textarea{width:100%;max-width:100%}
+				.ajcore-capability-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;max-height:420px;overflow:auto;padding:10px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
+				.ajcore-capability-list label{display:block;margin:0;padding:7px 8px;border-radius:6px;background:#fff;font-weight:500;word-break:break-word}
+				.ajcore-capability-list label:hover{background:#eef6ff}
+				.ajcore-role-table td{vertical-align:top}
+				.ajcore-role-caps{max-width:620px;color:#50575e}
+				.ajcore-role-badge{display:inline-block;margin:0 4px 4px 0;padding:2px 7px;border-radius:999px;background:#eef2f7;color:#344054;font-size:12px}
+				@media (max-width:1200px){.ajcore-role-manager-grid{grid-template-columns:1fr}}
+			</style>
+
+			<div class="ajcore-role-manager-grid">
+				<form class="ajcore-role-panel" method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-role-manager' ) ); ?>">
+					<h2><?php echo $is_editing ? esc_html__( 'Edit Role', 'ajforms' ) : esc_html__( 'Add Role', 'ajforms' ); ?></h2>
+					<?php wp_nonce_field( 'ajcore_save_role', 'ajcore_role_manager_nonce' ); ?>
+					<input type="hidden" name="role_manager_action" value="<?php echo esc_attr( $is_editing ? 'edit' : 'add' ); ?>">
+
+					<div class="ajcore-role-field">
+						<label for="role_key"><?php esc_html_e( 'Role Key', 'ajforms' ); ?></label>
+						<input type="text" id="role_key" name="role_key" value="<?php echo esc_attr( $form_role ); ?>" <?php disabled( $is_editing ); ?>>
+						<?php if ( $is_editing ) : ?>
+							<input type="hidden" name="role_key" value="<?php echo esc_attr( $form_role ); ?>">
+						<?php endif; ?>
+					</div>
+
+					<div class="ajcore-role-field">
+						<label for="role_label"><?php esc_html_e( 'Role Label', 'ajforms' ); ?></label>
+						<input type="text" id="role_label" name="role_label" value="<?php echo esc_attr( $form_label ); ?>">
+					</div>
+
+					<div class="ajcore-role-field">
+						<label><?php esc_html_e( 'Capabilities', 'ajforms' ); ?></label>
+						<?php if ( 'administrator' === $form_role ) : ?>
+							<p class="description"><?php esc_html_e( 'Existing Administrator capabilities are protected and cannot be removed here.', 'ajforms' ); ?></p>
+						<?php endif; ?>
+						<div class="ajcore-capability-list">
+							<?php foreach ( $all_caps as $capability ) : ?>
+								<label>
+									<input type="checkbox" name="role_capabilities[]" value="<?php echo esc_attr( $capability ); ?>" <?php checked( in_array( $capability, $form_caps, true ) ); ?>>
+									<?php echo esc_html( $capability ); ?>
+								</label>
+							<?php endforeach; ?>
+						</div>
+					</div>
+
+					<div class="ajcore-role-field">
+						<label for="custom_capabilities"><?php esc_html_e( 'Additional Capabilities', 'ajforms' ); ?></label>
+						<textarea id="custom_capabilities" name="custom_capabilities" rows="3" placeholder="<?php esc_attr_e( 'custom_capability, another_capability', 'ajforms' ); ?>"></textarea>
+					</div>
+
+					<p>
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Role', 'ajforms' ); ?></button>
+						<?php if ( $is_editing ) : ?>
+							<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-role-manager' ) ); ?>"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></a>
+						<?php endif; ?>
+					</p>
+				</form>
+
+				<div class="ajcore-role-panel">
+					<h2><?php esc_html_e( 'WordPress Roles', 'ajforms' ); ?></h2>
+					<table class="widefat striped ajcore-role-table">
+						<thead>
+							<tr>
+								<th><?php esc_html_e( 'Role', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Users', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Capabilities', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $roles as $role_key => $role ) : ?>
+								<?php
+								$user_count = $this->get_role_user_count( $role_key );
+								$role_caps  = ! empty( $role['capabilities'] ) && is_array( $role['capabilities'] ) ? array_keys( array_filter( $role['capabilities'] ) ) : array();
+								sort( $role_caps );
+								?>
+								<tr>
+									<td>
+										<strong><?php echo esc_html( $role['name'] ); ?></strong><br>
+										<code><?php echo esc_html( $role_key ); ?></code>
+									</td>
+									<td><?php echo esc_html( number_format_i18n( $user_count ) ); ?></td>
+									<td class="ajcore-role-caps">
+										<?php if ( empty( $role_caps ) ) : ?>
+											<span class="description"><?php esc_html_e( 'No capabilities.', 'ajforms' ); ?></span>
+										<?php else : ?>
+											<?php foreach ( $role_caps as $capability ) : ?>
+												<span class="ajcore-role-badge"><?php echo esc_html( $capability ); ?></span>
+											<?php endforeach; ?>
+										<?php endif; ?>
+									</td>
+									<td>
+										<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-role-manager', 'edit_role' => $role_key ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+										<?php if ( 'administrator' !== $role_key ) : ?>
+											|
+											<?php if ( $user_count > 0 ) : ?>
+												<span class="description"><?php esc_html_e( 'Reassign users before delete', 'ajforms' ); ?></span>
+											<?php else : ?>
+												<a class="submitdelete" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-role-manager', 'role_manager_action' => 'delete', 'role' => $role_key ), admin_url( 'admin.php' ) ), 'ajcore_delete_role_' . $role_key ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this role?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
+											<?php endif; ?>
+										<?php endif; ?>
+									</td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
 		<?php
 	}
 
