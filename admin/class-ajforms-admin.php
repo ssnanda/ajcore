@@ -1664,8 +1664,8 @@ class AJForms_Admin {
 
 			$args = array( 'page' => 'ajforms-settings', 'section' => 'role-manager' );
 
-			if ( 'administrator' === $role_key ) {
-				$args['role-error'] = 'administrator-delete';
+			if ( in_array( $role_key, array( 'subscriber', 'contributor', 'author', 'editor', 'administrator' ), true ) ) {
+				$args['role-error'] = 'wordpress-default-delete';
 			} elseif ( $this->get_role_user_count( $role_key ) > 0 ) {
 				$args['role-error'] = 'role-has-users';
 			} elseif ( get_role( $role_key ) ) {
@@ -2429,6 +2429,7 @@ class AJForms_Admin {
 				$error_key = sanitize_key( wp_unslash( $_GET['role-error'] ) );
 				$messages  = array(
 					'administrator-delete' => __( 'Administrator cannot be deleted.', 'ajforms' ),
+					'wordpress-default-delete' => __( 'WordPress default roles cannot be deleted.', 'ajforms' ),
 					'role-has-users'       => __( 'This role has assigned users. Reassign those users before deleting the role.', 'ajforms' ),
 					'missing-fields'       => __( 'Role key and label are required.', 'ajforms' ),
 					'role-exists'          => __( 'A role with that key already exists.', 'ajforms' ),
@@ -2448,6 +2449,13 @@ class AJForms_Admin {
 				.ajcore-role-type-badge.wordpress{background:#eef2ff;color:#3730a3}
 				.ajcore-role-type-badge.ajcore{background:#ecfdf3;color:#027a48}
 				.ajcore-role-type-badge.custom{background:#fff7ed;color:#c2410c}
+				.ajcore-selected-capabilities{margin:14px 0 18px;padding:14px;border:1px solid #dbe3ec;border-radius:10px;background:#f8fafc}
+				.ajcore-selected-capabilities h3{margin:0 0 10px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:#344054}
+				.ajcore-selected-capability-list{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+				.ajcore-selected-capability-list.is-empty:before{content:attr(data-empty);color:#667085}
+				.ajcore-selected-capability-badge{display:inline-flex;align-items:center;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:700;font-size:12px;padding:4px 8px}
+				.ajcore-capability-tools{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:12px;align-items:center;margin-bottom:10px}
+				.ajcore-capability-tools input[type="search"]{width:100%;min-height:38px;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px}
 				.ajcore-role-field{margin-bottom:16px}
 				.ajcore-role-field label{display:block;font-weight:700;margin-bottom:7px}
 				.ajcore-role-field input[type="text"],.ajcore-role-field textarea{width:100%;max-width:100%}
@@ -2477,14 +2485,28 @@ class AJForms_Admin {
 							<input type="text" id="role_label" name="role_label" value="<?php echo esc_attr( $form_label ); ?>">
 						</div>
 
+						<div class="ajcore-selected-capabilities">
+							<h3><?php esc_html_e( 'Selected Capabilities', 'ajforms' ); ?></h3>
+							<div class="ajcore-selected-capability-list" data-empty="<?php esc_attr_e( 'No capabilities selected.', 'ajforms' ); ?>"></div>
+							<p class="description"><?php esc_html_e( 'read = basic WordPress admin/login access. It does not grant access to all private AJ Core files.', 'ajforms' ); ?></p>
+							<p class="description"><?php esc_html_e( 'level_0 through level_9 are legacy WordPress capability levels and should generally not be used for new AJ Core access logic.', 'ajforms' ); ?></p>
+						</div>
+
 						<div class="ajcore-role-field">
 							<label><?php esc_html_e( 'Capabilities', 'ajforms' ); ?></label>
 							<?php if ( 'administrator' === $form_role ) : ?>
 								<p class="description"><?php esc_html_e( 'Existing Administrator capabilities are protected and cannot be removed here.', 'ajforms' ); ?></p>
 							<?php endif; ?>
+							<div class="ajcore-capability-tools">
+								<input type="search" class="ajcore-capability-search" placeholder="<?php esc_attr_e( 'Search capabilities...', 'ajforms' ); ?>" aria-label="<?php esc_attr_e( 'Search capabilities', 'ajforms' ); ?>">
+								<label style="display:flex;align-items:center;gap:7px;margin:0;font-weight:600;">
+									<input type="checkbox" class="ajcore-show-selected-only">
+									<?php esc_html_e( 'Show selected only', 'ajforms' ); ?>
+								</label>
+							</div>
 							<div class="ajcore-capability-list">
 								<?php foreach ( $all_caps as $capability ) : ?>
-									<label>
+									<label data-capability="<?php echo esc_attr( $capability ); ?>">
 										<input type="checkbox" name="role_capabilities[]" value="<?php echo esc_attr( $capability ); ?>" <?php checked( in_array( $capability, $form_caps, true ) ); ?>>
 										<?php echo esc_html( $capability ); ?>
 									</label>
@@ -2535,7 +2557,7 @@ class AJForms_Admin {
 									<td><?php echo esc_html( number_format_i18n( $user_count ) ); ?></td>
 									<td>
 										<a href="<?php echo esc_url( add_query_arg( 'edit_role', $role_key, $base_url ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
-										<?php if ( 'administrator' !== $role_key ) : ?>
+										<?php if ( ! in_array( $role_key, array( 'subscriber', 'contributor', 'author', 'editor', 'administrator' ), true ) ) : ?>
 											|
 											<?php if ( $user_count > 0 ) : ?>
 												<span class="description"><?php esc_html_e( 'Reassign users before delete', 'ajforms' ); ?></span>
@@ -2550,6 +2572,79 @@ class AJForms_Admin {
 					</table>
 				</div>
 			</div>
+			<script>
+			(function() {
+				const root = document.querySelector('.ajcore-role-manager');
+				if (!root) {
+					return;
+				}
+
+				const capabilityLabels = Array.from(root.querySelectorAll('.ajcore-capability-list label[data-capability]'));
+				const searchInput = root.querySelector('.ajcore-capability-search');
+				const selectedOnlyInput = root.querySelector('.ajcore-show-selected-only');
+				const selectedList = root.querySelector('.ajcore-selected-capability-list');
+
+				function updateSelectedSummary() {
+					if (!selectedList) {
+						return;
+					}
+
+					const selected = capabilityLabels
+						.map((label) => label.querySelector('input[type="checkbox"]'))
+						.filter((input) => input && input.checked)
+						.map((input) => input.value)
+						.sort();
+
+					selectedList.innerHTML = '';
+					selectedList.classList.toggle('is-empty', selected.length === 0);
+
+					selected.forEach((capability) => {
+						const badge = document.createElement('span');
+						badge.className = 'ajcore-selected-capability-badge';
+						badge.textContent = capability;
+						selectedList.appendChild(badge);
+					});
+				}
+
+				function applyCapabilityFilter() {
+					const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+					const selectedOnly = selectedOnlyInput ? selectedOnlyInput.checked : false;
+
+					capabilityLabels.forEach((label) => {
+						const capability = (label.dataset.capability || '').toLowerCase();
+						const checkbox = label.querySelector('input[type="checkbox"]');
+						const isSelected = checkbox && checkbox.checked;
+						const matchesSearch = !query || capability.includes(query);
+						const matchesSelected = !selectedOnly || isSelected;
+
+						label.style.display = matchesSearch && matchesSelected ? '' : 'none';
+					});
+				}
+
+				capabilityLabels.forEach((label) => {
+					const checkbox = label.querySelector('input[type="checkbox"]');
+					if (!checkbox) {
+						return;
+					}
+
+					checkbox.addEventListener('change', function() {
+						updateSelectedSummary();
+						applyCapabilityFilter();
+					});
+				});
+
+				if (searchInput) {
+					searchInput.addEventListener('input', applyCapabilityFilter);
+				}
+
+				if (selectedOnlyInput) {
+					selectedOnlyInput.addEventListener('change', applyCapabilityFilter);
+				}
+
+				updateSelectedSummary();
+				applyCapabilityFilter();
+			})();
+			</script>
 		</div>
 		<?php
 	}
