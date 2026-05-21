@@ -657,7 +657,7 @@ class AJForms_Admin {
 	private function sync_portal_stripe_transactions( $secret_key, $stripe_customer_id = '' ) {
 		global $wpdb;
 
-		$invoice_args = array( 'status' => 'all' );
+		$invoice_args = array();
 		if ( '' !== $stripe_customer_id ) {
 			$invoice_args['customer'] = sanitize_text_field( $stripe_customer_id );
 		}
