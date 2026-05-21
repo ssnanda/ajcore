@@ -1857,7 +1857,7 @@ class AJForms_Admin {
 			$this->handle_file_library_actions();
 		} elseif ( 'ajforms-client-portal' === $page ) {
 			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'file-library';
-			if ( 'menu' === $tab ) {
+			if ( in_array( $tab, array( 'menu', 'portal-users', 'products-services' ), true ) ) {
 				$this->handle_client_portal_settings_save();
 			} elseif ( 'customer' === $tab ) {
 				$this->handle_portal_customer_detail_actions();
@@ -1927,7 +1927,9 @@ class AJForms_Admin {
 		if ( isset( $_GET['portal_action'], $_GET['_wpnonce'] ) ) {
 			$action     = sanitize_key( wp_unslash( $_GET['portal_action'] ) );
 			$secret_key = $this->get_stripe_secret_key_for_portal();
-			$args       = array( 'page' => 'ajforms-client-portal', 'tab' => 'menu' );
+			$current_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'menu';
+			$current_tab = in_array( $current_tab, array( 'menu', 'portal-users', 'products-services' ), true ) ? $current_tab : 'menu';
+			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
 
 			if ( '' === $secret_key ) {
 				$args['portal-error'] = rawurlencode( __( 'Stripe secret key is required.', 'ajforms' ) );
@@ -1961,7 +1963,9 @@ class AJForms_Admin {
 		if ( isset( $_POST['ajcore_enable_portal_customer_nonce'], $_POST['stripe_customer_id'] ) ) {
 			check_admin_referer( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' );
 			$result = $this->enable_stripe_customer_as_portal_user( sanitize_text_field( wp_unslash( $_POST['stripe_customer_id'] ) ) );
-			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'menu' );
+			$redirect_tab = isset( $_POST['redirect_tab'] ) ? sanitize_key( wp_unslash( $_POST['redirect_tab'] ) ) : 'portal-users';
+			$redirect_tab = in_array( $redirect_tab, array( 'menu', 'portal-users', 'products-services' ), true ) ? $redirect_tab : 'portal-users';
+			$args         = array( 'page' => 'ajforms-client-portal', 'tab' => $redirect_tab );
 			if ( is_wp_error( $result ) ) {
 				$args['portal-error'] = rawurlencode( $result->get_error_message() );
 			} else {
@@ -3145,20 +3149,30 @@ class AJForms_Admin {
 		}
 
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'file-library';
-		$tab      = in_array( $tab, array( 'file-library', 'menu', 'customer' ), true ) ? $tab : 'file-library';
+		$tab      = in_array( $tab, array( 'file-library', 'menu', 'portal-users', 'products-services', 'customer' ), true ) ? $tab : 'file-library';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-client-portal-admin">
+			<style>
+				.ajforms-client-portal-admin .ajcore-status-pill{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;background:#f0f6fc;color:#0969da}
+				.ajforms-client-portal-admin .ajcore-status-pill.off{background:#f6f7f7;color:#646970}
+			</style>
 			<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
 			<?php if ( 'customer' !== $tab ) : ?>
 				<h2 class="nav-tab-wrapper">
 					<a class="nav-tab <?php echo 'file-library' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'file-library', $base_url ) ); ?>"><?php esc_html_e( 'File Library', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'menu' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'menu', $base_url ) ); ?>"><?php esc_html_e( 'Menu', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'products-services' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'products-services', $base_url ) ); ?>"><?php esc_html_e( 'Products / Services', 'ajforms' ); ?></a>
 				</h2>
 			<?php endif; ?>
 			<?php
 			if ( 'customer' === $tab ) {
 				$this->display_portal_customer_detail_page();
+			} elseif ( 'portal-users' === $tab ) {
+				$this->display_portal_users_tab();
+			} elseif ( 'products-services' === $tab ) {
+				$this->display_portal_products_services_tab();
 			} elseif ( 'menu' === $tab ) {
 				$this->display_client_portal_settings_tab( 'menu', true );
 			} else {
@@ -3488,6 +3502,184 @@ class AJForms_Admin {
 				<?php endforeach; ?>
 			</tbody>
 		</table>
+		<?php
+	}
+
+	private function display_portal_users_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		global $wpdb;
+
+		$customers = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT c.*, m.user_id, m.customer_email AS mapped_email, m.updated_at AS mapped_at FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id ORDER BY c.enabled_portal DESC, c.name ASC, c.email ASC LIMIT %d",
+				300
+			)
+		);
+
+		$total_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()}" );
+		$enabled_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_user_mappings_table()}" );
+		?>
+		<div class="ajforms-settings-card">
+			<h2><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'Portal users are WordPress users linked to synced Stripe Customers. Stripe remains the customer source of truth.', 'ajforms' ); ?></p>
+
+			<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled as a portal user.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
+				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
+			<?php endif; ?>
+
+			<div class="ajforms-settings-inline-actions">
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d synced customers', 'ajforms' ), $total_customers ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users', 'ajforms' ), $enabled_count ) ); ?></span>
+				<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'portal_action' => 'sync_customers' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_customers' ) ); ?>"><?php esc_html_e( 'Sync Stripe Customers', 'ajforms' ); ?></a>
+			</div>
+
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Stripe Customer', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'WordPress User', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( empty( $customers ) ) : ?>
+						<tr><td colspan="6"><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $customers as $customer ) : ?>
+							<?php $user = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : null; ?>
+							<tr>
+								<td>
+									<strong><?php echo esc_html( ! empty( $customer->name ) ? $customer->name : __( 'Unnamed customer', 'ajforms' ) ); ?></strong><br>
+									<code><?php echo esc_html( $customer->stripe_customer_id ); ?></code>
+								</td>
+								<td><?php echo esc_html( $customer->email ); ?></td>
+								<td>
+									<?php if ( ! empty( $customer->enabled_portal ) && $user ) : ?>
+										<span class="ajcore-status-pill"><?php esc_html_e( 'Enabled', 'ajforms' ); ?></span>
+									<?php else : ?>
+										<span class="ajcore-status-pill off"><?php esc_html_e( 'Not enabled', 'ajforms' ); ?></span>
+									<?php endif; ?>
+								</td>
+								<td>
+									<?php
+									if ( $user ) {
+										echo esc_html( $user->display_name . ' #' . $user->ID );
+										echo '<br><span class="description">' . esc_html( $user->user_email ) . '</span>';
+									} elseif ( ! empty( $customer->user_id ) ) {
+										esc_html_e( 'Linked user missing', 'ajforms' );
+									} else {
+										esc_html_e( '-', 'ajforms' );
+									}
+									?>
+								</td>
+								<td><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></td>
+								<td>
+									<p style="margin:0 0 6px;">
+										<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View Portal Customer', 'ajforms' ); ?></a>
+									</p>
+									<?php if ( empty( $customer->user_id ) ) : ?>
+										<form method="post" style="margin:0;">
+											<?php wp_nonce_field( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' ); ?>
+											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+											<input type="hidden" name="redirect_tab" value="portal-users">
+											<button type="submit" class="button"><?php esc_html_e( 'Enable Portal User', 'ajforms' ); ?></button>
+										</form>
+									<?php endif; ?>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
+	}
+
+	private function display_portal_products_services_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		global $wpdb;
+
+		$products = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_stripe_products_table()} ORDER BY active DESC, sort_order ASC, name ASC LIMIT %d",
+				300
+			)
+		);
+		$active_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1" );
+		$total_count  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" );
+		?>
+		<div class="ajforms-settings-card">
+			<h2><?php esc_html_e( 'Products / Services', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'This is the Client Portal service catalog cache synced from Stripe Products and Prices. The public shortcode builder remains under AJ Core > Products.', 'ajforms' ); ?></p>
+
+			<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
+				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
+			<?php endif; ?>
+
+			<div class="ajforms-settings-inline-actions">
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d active', 'ajforms' ), $active_count ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
+				<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services', 'portal_action' => 'sync_products' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_products' ) ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
+			</div>
+
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Product / Service', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Billing', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Stripe IDs', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( empty( $products ) ) : ?>
+						<tr><td colspan="6"><?php esc_html_e( 'No synced Stripe products yet.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $products as $product ) : ?>
+							<tr>
+								<td>
+									<strong><?php echo esc_html( $product->custom_label ? $product->custom_label : $product->name ); ?></strong>
+									<?php if ( ! empty( $product->description_override ) || ! empty( $product->description ) ) : ?>
+										<br><span class="description"><?php echo esc_html( wp_trim_words( wp_strip_all_tags( $product->description_override ? $product->description_override : $product->description ), 22 ) ); ?></span>
+									<?php endif; ?>
+								</td>
+								<td><?php echo esc_html( $this->format_portal_money( $product->price_amount, $product->currency ) ); ?></td>
+								<td><?php echo ! empty( $product->recurring_interval ) ? esc_html( ucfirst( $product->recurring_interval ) ) : esc_html__( 'One-time', 'ajforms' ); ?></td>
+								<td>
+									<?php if ( ! empty( $product->active ) ) : ?>
+										<span class="ajcore-status-pill"><?php esc_html_e( 'Active', 'ajforms' ); ?></span>
+									<?php else : ?>
+										<span class="ajcore-status-pill off"><?php esc_html_e( 'Archived', 'ajforms' ); ?></span>
+									<?php endif; ?>
+								</td>
+								<td>
+									<code><?php echo esc_html( $product->stripe_product_id ); ?></code><br>
+									<code><?php echo esc_html( $product->stripe_price_id ); ?></code>
+								</td>
+								<td><?php echo esc_html( $this->format_portal_date( $product->synced_at ) ); ?></td>
+							</tr>
+						<?php endforeach; ?>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
 		<?php
 	}
 
@@ -4082,67 +4274,6 @@ class AJForms_Admin {
 				</div>
 			</form>
 
-			<div class="ajforms-settings-card">
-				<h3><?php esc_html_e( 'Enable Stripe Customers as Portal Users', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'Customers are matched by email first. If no WordPress user exists, AJ Core creates one and links it to the Stripe Customer ID.', 'ajforms' ); ?></p>
-				<?php
-				global $wpdb;
-				$customers = $wpdb->get_results(
-					$wpdb->prepare(
-						"SELECT c.*, m.user_id FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id ORDER BY c.name ASC, c.email ASC LIMIT %d",
-						100
-					)
-				);
-				?>
-				<table class="widefat striped">
-					<thead>
-						<tr>
-							<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Stripe ID', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Portal User', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Action', 'ajforms' ); ?></th>
-						</tr>
-					</thead>
-					<tbody>
-						<?php if ( empty( $customers ) ) : ?>
-							<tr><td colspan="5"><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></td></tr>
-						<?php else : ?>
-							<?php foreach ( $customers as $customer ) : ?>
-								<tr>
-									<td><?php echo esc_html( $customer->name ); ?></td>
-									<td><?php echo esc_html( $customer->email ); ?></td>
-									<td><code><?php echo esc_html( $customer->stripe_customer_id ); ?></code></td>
-									<td>
-										<?php
-										if ( ! empty( $customer->user_id ) ) {
-											$user = get_userdata( (int) $customer->user_id );
-											echo $user ? esc_html( $user->display_name . ' #' . $user->ID ) : esc_html__( 'Linked user missing', 'ajforms' );
-										} else {
-											esc_html_e( 'Not enabled', 'ajforms' );
-										}
-										?>
-									</td>
-									<td>
-										<p style="margin:0 0 6px;">
-											<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View Portal Customer', 'ajforms' ); ?></a>
-										</p>
-										<?php if ( empty( $customer->user_id ) ) : ?>
-											<form method="post" style="margin:0;">
-												<?php wp_nonce_field( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' ); ?>
-												<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
-												<button type="submit" class="button"><?php esc_html_e( 'Enable Portal User', 'ajforms' ); ?></button>
-											</form>
-										<?php else : ?>
-											<span class="description"><?php esc_html_e( 'Enabled', 'ajforms' ); ?></span>
-										<?php endif; ?>
-									</td>
-								</tr>
-							<?php endforeach; ?>
-						<?php endif; ?>
-					</tbody>
-				</table>
-			</div>
 		<?php endif; ?>
 		<?php
 	}
