@@ -23,6 +23,7 @@ class AJForms {
 		$plugin_admin = new AJForms_Admin();
 
 		add_action( 'admin_init', array( $plugin_admin, 'handle_admin_actions' ) );
+		add_action( 'admin_init', array( $this, 'redirect_frontend_portal_users_from_admin' ), 1 );
 		add_action( 'admin_post_ajf_export_form', array( $plugin_admin, 'handle_export_form_request' ) );
 		add_action( 'admin_menu', array( $plugin_admin, 'add_plugin_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_styles' ) );
@@ -46,12 +47,114 @@ class AJForms {
 		add_shortcode( 'ajforms', array( $this, 'render_form_shortcode' ) );
 		add_shortcode( 'ajcore_products', array( $this, 'render_products_shortcode' ) );
 		add_shortcode( 'aj_customer_portal', array( $this, 'render_customer_portal_shortcode' ) );
+		add_filter( 'login_redirect', array( $this, 'filter_login_redirect' ), 10, 3 );
+		add_filter( 'show_admin_bar', array( $this, 'filter_show_admin_bar' ) );
+		add_filter( 'wp_nav_menu_items', array( $this, 'add_customer_portal_nav_item' ), 10, 2 );
+		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
 		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
+	}
+
+	private function is_frontend_portal_user() {
+		return is_user_logged_in() && ! current_user_can( 'edit_posts' ) && ! current_user_can( 'manage_options' );
+	}
+
+	private function get_customer_portal_page_id() {
+		$page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
+		if ( $page_id && 'trash' !== get_post_status( $page_id ) ) {
+			return $page_id;
+		}
+
+		$page = get_page_by_path( 'file-library' );
+		if ( $page && 'trash' !== get_post_status( $page ) ) {
+			update_option( 'ajcore_customer_portal_page_id', (int) $page->ID, false );
+			return (int) $page->ID;
+		}
+
+		return 0;
+	}
+
+	private function get_customer_portal_url() {
+		$page_id = $this->get_customer_portal_page_id();
+		if ( $page_id ) {
+			return get_permalink( $page_id );
+		}
+
+		return home_url( '/' );
+	}
+
+	public function maybe_create_customer_portal_page() {
+		if ( get_option( 'ajcore_customer_portal_page_created', '' ) ) {
+			return;
+		}
+
+		$page_id = $this->get_customer_portal_page_id();
+		if ( ! $page_id && current_user_can( 'manage_options' ) ) {
+			$page_id = wp_insert_post(
+				array(
+					'post_title'   => __( 'File Library', 'ajforms' ),
+					'post_name'    => 'file-library',
+					'post_content' => '[aj_customer_portal]',
+					'post_status'  => 'publish',
+					'post_type'    => 'page',
+				),
+				true
+			);
+
+			if ( ! is_wp_error( $page_id ) && $page_id ) {
+				update_option( 'ajcore_customer_portal_page_id', (int) $page_id, false );
+			}
+		}
+
+		update_option( 'ajcore_customer_portal_page_created', '1', false );
+	}
+
+	public function filter_login_redirect( $redirect_to, $requested_redirect_to, $user ) {
+		if ( is_wp_error( $user ) || ! $user instanceof WP_User ) {
+			return $redirect_to;
+		}
+
+		if ( ! user_can( $user, 'edit_posts' ) && ! user_can( $user, 'manage_options' ) ) {
+			return $this->get_customer_portal_url();
+		}
+
+		return $redirect_to;
+	}
+
+	public function redirect_frontend_portal_users_from_admin() {
+		if ( wp_doing_ajax() || ! $this->is_frontend_portal_user() ) {
+			return;
+		}
+
+		wp_safe_redirect( $this->get_customer_portal_url() );
+		exit;
+	}
+
+	public function filter_show_admin_bar( $show ) {
+		if ( $this->is_frontend_portal_user() ) {
+			return false;
+		}
+
+		return $show;
+	}
+
+	public function add_customer_portal_nav_item( $items, $args ) {
+		if ( ! $this->is_frontend_portal_user() ) {
+			return $items;
+		}
+
+		$portal_url = $this->get_customer_portal_url();
+		if ( ! $portal_url ) {
+			return $items;
+		}
+
+		$items .= '<li class="menu-item ajcore-customer-portal-menu-item"><a href="' . esc_url( $portal_url ) . '">' . esc_html__( 'File Library', 'ajforms' ) . '</a></li>';
+
+		return $items;
 	}
 
 	private function get_portal_files_table() {
