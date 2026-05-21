@@ -369,6 +369,370 @@ class AJForms_Admin {
 		return is_array( $body ) ? $body : array();
 	}
 
+	private function stripe_api_get_all( $path, $secret_key, $query_args = array(), $limit_pages = 10 ) {
+		$items       = array();
+		$starting_after = '';
+		$page_count  = 0;
+
+		do {
+			$args = array_merge( array( 'limit' => 100 ), $query_args );
+			if ( '' !== $starting_after ) {
+				$args['starting_after'] = $starting_after;
+			}
+
+			$response = $this->stripe_api_get( $path, $secret_key, $args );
+			if ( is_wp_error( $response ) ) {
+				return $response;
+			}
+
+			$data = isset( $response['data'] ) && is_array( $response['data'] ) ? $response['data'] : array();
+			foreach ( $data as $item ) {
+				if ( is_array( $item ) ) {
+					$items[] = $item;
+				}
+			}
+
+			$page_count++;
+			$has_more = ! empty( $response['has_more'] ) && ! empty( $data );
+			$last     = end( $data );
+			$starting_after = is_array( $last ) && ! empty( $last['id'] ) ? (string) $last['id'] : '';
+		} while ( $has_more && '' !== $starting_after && $page_count < $limit_pages );
+
+		return $items;
+	}
+
+	private function stripe_amount_to_decimal( $amount, $currency ) {
+		$amount   = intval( $amount );
+		$currency = strtolower( sanitize_key( $currency ) );
+
+		return in_array( $currency, array( 'jpy', 'krw', 'vnd' ), true ) ? (float) $amount : (float) $amount / 100;
+	}
+
+	private function stripe_timestamp_to_mysql( $timestamp ) {
+		$timestamp = absint( $timestamp );
+
+		return $timestamp ? gmdate( 'Y-m-d H:i:s', $timestamp ) : null;
+	}
+
+	private function get_stripe_secret_key_for_portal() {
+		$settings = $this->get_plugin_settings();
+
+		return ! empty( $settings['stripe_secret_key'] ) ? sanitize_text_field( $settings['stripe_secret_key'] ) : '';
+	}
+
+	private function upsert_portal_record( $table, $data, $formats, $unique_key ) {
+		global $wpdb;
+
+		$existing_id = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id FROM {$table} WHERE {$unique_key} = %s LIMIT 1",
+				$data[ $unique_key ]
+			)
+		);
+
+		if ( $existing_id ) {
+			$wpdb->update( $table, $data, array( 'id' => absint( $existing_id ) ), $formats, array( '%d' ) );
+			return absint( $existing_id );
+		}
+
+		$wpdb->insert( $table, $data, $formats );
+		return (int) $wpdb->insert_id;
+	}
+
+	private function sync_portal_stripe_products( $secret_key ) {
+		global $wpdb;
+
+		$products = $this->stripe_api_get_all( 'prices', $secret_key, array( 'expand[]' => 'data.product' ) );
+		if ( is_wp_error( $products ) ) {
+			return $products;
+		}
+
+		$count = 0;
+		foreach ( $products as $price ) {
+			if ( empty( $price['id'] ) ) {
+				continue;
+			}
+
+			$product  = isset( $price['product'] ) && is_array( $price['product'] ) ? $price['product'] : array();
+			$currency = isset( $price['currency'] ) ? strtolower( sanitize_key( $price['currency'] ) ) : 'usd';
+			$recurring = isset( $price['recurring'] ) && is_array( $price['recurring'] ) ? $price['recurring'] : array();
+
+			$this->upsert_portal_record(
+				$this->get_portal_stripe_products_table(),
+				array(
+					'stripe_product_id'    => ! empty( $product['id'] ) ? sanitize_text_field( (string) $product['id'] ) : sanitize_text_field( (string) $price['product'] ),
+					'stripe_price_id'      => sanitize_text_field( (string) $price['id'] ),
+					'name'                 => ! empty( $product['name'] ) ? sanitize_text_field( (string) $product['name'] ) : __( 'Stripe product', 'ajforms' ),
+					'description'          => ! empty( $product['description'] ) ? sanitize_textarea_field( (string) $product['description'] ) : '',
+					'price_amount'         => $this->stripe_amount_to_decimal( isset( $price['unit_amount'] ) ? $price['unit_amount'] : 0, $currency ),
+					'currency'             => $currency,
+					'recurring_interval'   => ! empty( $recurring['interval'] ) ? sanitize_key( (string) $recurring['interval'] ) : '',
+					'active'               => ( ! isset( $price['active'] ) || ! empty( $price['active'] ) ) && ( empty( $product ) || ! isset( $product['active'] ) || ! empty( $product['active'] ) ) ? 1 : 0,
+					'metadata'             => ! empty( $product['metadata'] ) ? wp_json_encode( $product['metadata'] ) : '',
+					'raw_data'             => wp_json_encode( $price ),
+					'synced_at'            => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s', '%s' ),
+				'stripe_price_id'
+			);
+			$count++;
+		}
+
+		$product_cache = $this->fetch_stripe_product_prices( $secret_key );
+		if ( is_wp_error( $product_cache ) ) {
+			// The portal product cache above supports recurring prices; keep going if the older public-product cache rejects some data.
+		}
+
+		return $count;
+	}
+
+	private function sync_portal_stripe_customers( $secret_key ) {
+		$customers = $this->stripe_api_get_all( 'customers', $secret_key );
+		if ( is_wp_error( $customers ) ) {
+			return $customers;
+		}
+
+		$count = 0;
+		foreach ( $customers as $customer ) {
+			if ( empty( $customer['id'] ) || ! empty( $customer['deleted'] ) ) {
+				continue;
+			}
+
+			$this->upsert_portal_record(
+				$this->get_portal_stripe_customers_table(),
+				array(
+					'stripe_customer_id' => sanitize_text_field( (string) $customer['id'] ),
+					'email'              => ! empty( $customer['email'] ) ? sanitize_email( (string) $customer['email'] ) : '',
+					'name'               => ! empty( $customer['name'] ) ? sanitize_text_field( (string) $customer['name'] ) : '',
+					'phone'              => ! empty( $customer['phone'] ) ? sanitize_text_field( (string) $customer['phone'] ) : '',
+					'address'            => ! empty( $customer['address'] ) ? wp_json_encode( $customer['address'] ) : '',
+					'metadata'           => ! empty( $customer['metadata'] ) ? wp_json_encode( $customer['metadata'] ) : '',
+					'raw_data'           => wp_json_encode( $customer ),
+					'livemode'           => ! empty( $customer['livemode'] ) ? 1 : 0,
+					'created_at'         => ! empty( $customer['created'] ) ? $this->stripe_timestamp_to_mysql( $customer['created'] ) : null,
+					'synced_at'          => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ),
+				'stripe_customer_id'
+			);
+			$count++;
+		}
+
+		return $count;
+	}
+
+	private function sync_portal_stripe_subscriptions( $secret_key ) {
+		$subscriptions = $this->stripe_api_get_all( 'subscriptions', $secret_key, array( 'status' => 'all', 'expand[]' => 'data.items.data.price.product' ) );
+		if ( is_wp_error( $subscriptions ) ) {
+			return $subscriptions;
+		}
+
+		$count = 0;
+		foreach ( $subscriptions as $subscription ) {
+			if ( empty( $subscription['id'] ) || empty( $subscription['customer'] ) ) {
+				continue;
+			}
+
+			$this->upsert_portal_record(
+				$this->get_portal_stripe_subscriptions_table(),
+				array(
+					'stripe_subscription_id' => sanitize_text_field( (string) $subscription['id'] ),
+					'stripe_customer_id'     => sanitize_text_field( (string) $subscription['customer'] ),
+					'status'                 => ! empty( $subscription['status'] ) ? sanitize_key( (string) $subscription['status'] ) : '',
+					'current_period_end'     => ! empty( $subscription['current_period_end'] ) ? $this->stripe_timestamp_to_mysql( $subscription['current_period_end'] ) : null,
+					'cancel_at_period_end'   => ! empty( $subscription['cancel_at_period_end'] ) ? 1 : 0,
+					'items'                  => ! empty( $subscription['items']['data'] ) ? wp_json_encode( $subscription['items']['data'] ) : '',
+					'raw_data'               => wp_json_encode( $subscription ),
+					'synced_at'              => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' ),
+				'stripe_subscription_id'
+			);
+			$count++;
+		}
+
+		return $count;
+	}
+
+	private function sync_portal_stripe_transactions( $secret_key ) {
+		$invoices = $this->stripe_api_get_all( 'invoices', $secret_key, array( 'status' => 'all' ) );
+		if ( is_wp_error( $invoices ) ) {
+			return $invoices;
+		}
+
+		$count = 0;
+		foreach ( $invoices as $invoice ) {
+			if ( empty( $invoice['id'] ) || empty( $invoice['customer'] ) ) {
+				continue;
+			}
+
+			$currency = isset( $invoice['currency'] ) ? strtolower( sanitize_key( $invoice['currency'] ) ) : 'usd';
+			$data = array(
+				'stripe_object_id'   => sanitize_text_field( (string) $invoice['id'] ),
+				'object_type'        => 'invoice',
+				'stripe_customer_id' => sanitize_text_field( (string) $invoice['customer'] ),
+				'invoice_id'         => sanitize_text_field( (string) $invoice['id'] ),
+				'payment_intent_id'  => ! empty( $invoice['payment_intent'] ) ? sanitize_text_field( (string) $invoice['payment_intent'] ) : '',
+				'charge_id'          => ! empty( $invoice['charge'] ) ? sanitize_text_field( (string) $invoice['charge'] ) : '',
+				'description'        => ! empty( $invoice['description'] ) ? sanitize_text_field( (string) $invoice['description'] ) : sprintf( __( 'Invoice %s', 'ajforms' ), $invoice['id'] ),
+				'amount'             => $this->stripe_amount_to_decimal( isset( $invoice['amount_due'] ) ? $invoice['amount_due'] : 0, $currency ),
+				'currency'           => $currency,
+				'status'             => ! empty( $invoice['status'] ) ? sanitize_key( (string) $invoice['status'] ) : '',
+				'transaction_date'   => ! empty( $invoice['created'] ) ? $this->stripe_timestamp_to_mysql( $invoice['created'] ) : null,
+				'due_date'           => ! empty( $invoice['due_date'] ) ? $this->stripe_timestamp_to_mysql( $invoice['due_date'] ) : null,
+				'raw_data'           => wp_json_encode( $invoice ),
+				'synced_at'          => current_time( 'mysql' ),
+			);
+
+			$this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ), 'stripe_object_id' );
+			$this->upsert_portal_record(
+				$this->get_portal_ledger_table(),
+				array(
+					'stripe_customer_id' => $data['stripe_customer_id'],
+					'source_object_id'   => $data['stripe_object_id'],
+					'source_type'        => 'invoice',
+					'ledger_date'        => $data['transaction_date'],
+					'description'        => $data['description'],
+					'amount'             => $data['amount'],
+					'currency'           => $data['currency'],
+					'status'             => $data['status'],
+					'invoice_id'         => $data['invoice_id'],
+					'payment_intent_id'  => $data['payment_intent_id'],
+					'charge_id'          => $data['charge_id'],
+					'metadata'           => '',
+					'created_at'         => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+				'source_object_id'
+			);
+			$count++;
+		}
+
+		$charges = $this->stripe_api_get_all( 'charges', $secret_key );
+		if ( is_wp_error( $charges ) ) {
+			return $charges;
+		}
+
+		foreach ( $charges as $charge ) {
+			if ( empty( $charge['id'] ) || empty( $charge['customer'] ) ) {
+				continue;
+			}
+
+			$currency = isset( $charge['currency'] ) ? strtolower( sanitize_key( $charge['currency'] ) ) : 'usd';
+			$data = array(
+				'stripe_object_id'   => sanitize_text_field( (string) $charge['id'] ),
+				'object_type'        => 'charge',
+				'stripe_customer_id' => sanitize_text_field( (string) $charge['customer'] ),
+				'invoice_id'         => ! empty( $charge['invoice'] ) ? sanitize_text_field( (string) $charge['invoice'] ) : '',
+				'payment_intent_id'  => ! empty( $charge['payment_intent'] ) ? sanitize_text_field( (string) $charge['payment_intent'] ) : '',
+				'charge_id'          => sanitize_text_field( (string) $charge['id'] ),
+				'description'        => ! empty( $charge['description'] ) ? sanitize_text_field( (string) $charge['description'] ) : sprintf( __( 'Charge %s', 'ajforms' ), $charge['id'] ),
+				'amount'             => $this->stripe_amount_to_decimal( isset( $charge['amount'] ) ? $charge['amount'] : 0, $currency ),
+				'currency'           => $currency,
+				'status'             => ! empty( $charge['status'] ) ? sanitize_key( (string) $charge['status'] ) : '',
+				'transaction_date'   => ! empty( $charge['created'] ) ? $this->stripe_timestamp_to_mysql( $charge['created'] ) : null,
+				'due_date'           => null,
+				'raw_data'           => wp_json_encode( $charge ),
+				'synced_at'          => current_time( 'mysql' ),
+			);
+
+			$this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ), 'stripe_object_id' );
+			$this->upsert_portal_record(
+				$this->get_portal_ledger_table(),
+				array(
+					'stripe_customer_id' => $data['stripe_customer_id'],
+					'source_object_id'   => $data['stripe_object_id'],
+					'source_type'        => 'charge',
+					'ledger_date'        => $data['transaction_date'],
+					'description'        => $data['description'],
+					'amount'             => $data['amount'],
+					'currency'           => $data['currency'],
+					'status'             => $data['status'],
+					'invoice_id'         => $data['invoice_id'],
+					'payment_intent_id'  => $data['payment_intent_id'],
+					'charge_id'          => $data['charge_id'],
+					'metadata'           => '',
+					'created_at'         => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+				'source_object_id'
+			);
+			$count++;
+		}
+
+		return $count;
+	}
+
+	private function enable_stripe_customer_as_portal_user( $stripe_customer_id ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		if ( '' === $stripe_customer_id ) {
+			return new WP_Error( 'missing_customer', __( 'Stripe customer ID is required.', 'ajforms' ) );
+		}
+
+		$customer = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s",
+				$stripe_customer_id
+			)
+		);
+
+		if ( ! $customer || empty( $customer->email ) || ! is_email( $customer->email ) ) {
+			return new WP_Error( 'missing_customer_email', __( 'This Stripe customer needs a valid email before it can be enabled as a portal user.', 'ajforms' ) );
+		}
+
+		$user = get_user_by( 'email', $customer->email );
+		if ( ! $user ) {
+			$user_id = wp_create_user(
+				sanitize_user( current( explode( '@', $customer->email ) ), true ) . wp_rand( 1000, 9999 ),
+				wp_generate_password( 24, true, true ),
+				$customer->email
+			);
+
+			if ( is_wp_error( $user_id ) ) {
+				return $user_id;
+			}
+
+			$user = get_user_by( 'id', $user_id );
+			wp_update_user(
+				array(
+					'ID'           => $user_id,
+					'display_name' => ! empty( $customer->name ) ? $customer->name : $customer->email,
+					'first_name'   => ! empty( $customer->name ) ? $customer->name : '',
+				)
+			);
+		}
+
+		if ( ! $user ) {
+			return new WP_Error( 'user_create_failed', __( 'Unable to create or load the portal user.', 'ajforms' ) );
+		}
+
+		$user->set_role( 'aj_portal_user' );
+
+		$wpdb->update(
+			$this->get_portal_stripe_customers_table(),
+			array( 'enabled_portal' => 1 ),
+			array( 'stripe_customer_id' => $stripe_customer_id ),
+			array( '%d' ),
+			array( '%s' )
+		);
+
+		$this->upsert_portal_record(
+			$this->get_portal_user_mappings_table(),
+			array(
+				'user_id'            => (int) $user->ID,
+				'stripe_customer_id' => $stripe_customer_id,
+				'customer_email'     => sanitize_email( $customer->email ),
+				'updated_at'         => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%s', '%s' ),
+			'stripe_customer_id'
+		);
+
+		return (int) $user->ID;
+	}
+
 	private function format_stripe_price_label( $price ) {
 		$product_name = isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' );
 		$amount       = isset( $price['amount'] ) ? (float) $price['amount'] : 0;
@@ -1191,6 +1555,13 @@ class AJForms_Admin {
 
 		$default_items = array(
 			array(
+				'id'      => 'overview',
+				'label'   => __( 'Overview', 'ajforms' ),
+				'type'    => 'built_in',
+				'url'     => '',
+				'enabled' => true,
+			),
+			array(
 				'id'      => 'file-library',
 				'label'   => __( 'File Library', 'ajforms' ),
 				'type'    => 'built_in',
@@ -1219,7 +1590,58 @@ class AJForms_Admin {
 	}
 
 	private function handle_client_portal_settings_save() {
-		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_client_portal_nonce'] ) ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		if ( isset( $_GET['portal_action'], $_GET['_wpnonce'] ) ) {
+			$action     = sanitize_key( wp_unslash( $_GET['portal_action'] ) );
+			$secret_key = $this->get_stripe_secret_key_for_portal();
+			$args       = array( 'page' => 'ajforms-client-portal', 'tab' => 'menu' );
+
+			if ( '' === $secret_key ) {
+				$args['portal-error'] = rawurlencode( __( 'Stripe secret key is required.', 'ajforms' ) );
+				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			check_admin_referer( 'ajcore_portal_' . $action );
+
+			$result = null;
+			if ( 'sync_products' === $action ) {
+				$result = $this->sync_portal_stripe_products( $secret_key );
+			} elseif ( 'sync_customers' === $action ) {
+				$result = $this->sync_portal_stripe_customers( $secret_key );
+			} elseif ( 'sync_subscriptions' === $action ) {
+				$result = $this->sync_portal_stripe_subscriptions( $secret_key );
+			} elseif ( 'sync_transactions' === $action ) {
+				$result = $this->sync_portal_stripe_transactions( $secret_key );
+			}
+
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['portal-synced'] = absint( $result );
+			}
+
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_enable_portal_customer_nonce'], $_POST['stripe_customer_id'] ) ) {
+			check_admin_referer( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' );
+			$result = $this->enable_stripe_customer_as_portal_user( sanitize_text_field( wp_unslash( $_POST['stripe_customer_id'] ) ) );
+			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'menu' );
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['portal-user-enabled'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( ! isset( $_POST['ajcore_client_portal_nonce'] ) ) {
 			return;
 		}
 
@@ -1948,6 +2370,41 @@ class AJForms_Admin {
 	private function get_portal_file_users_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_file_users';
+	}
+
+	private function get_portal_stripe_customers_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_stripe_customers';
+	}
+
+	private function get_portal_stripe_products_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_stripe_products';
+	}
+
+	private function get_portal_stripe_subscriptions_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_stripe_subscriptions';
+	}
+
+	private function get_portal_stripe_transactions_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_stripe_transactions';
+	}
+
+	private function get_portal_user_mappings_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_user_mappings';
+	}
+
+	private function get_portal_entity_mappings_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_entity_mappings';
+	}
+
+	private function get_portal_ledger_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_ledger';
 	}
 
 	public function get_form_record( $form_id ) {
@@ -2790,6 +3247,7 @@ class AJForms_Admin {
 		$portal_page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
 		$portal_url     = $portal_page_id ? get_permalink( $portal_page_id ) : '';
 		$menu_items     = $this->get_customer_portal_menu_items();
+		$stripe_enabled = '' !== $this->get_stripe_secret_key_for_portal();
 		?>
 		<?php if ( ! $embedded ) : ?>
 			<div class="ajforms-settings-head">
@@ -2800,6 +3258,15 @@ class AJForms_Admin {
 
 		<?php if ( isset( $_GET['portal-updated'] ) ) : ?>
 			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Client Portal settings saved.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+		<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
+		<?php endif; ?>
+		<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled as a portal user.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+		<?php if ( isset( $_GET['portal-error'] ) ) : ?>
+			<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 		<?php endif; ?>
 
 		<?php if ( 'file-library' === $subsection ) : ?>
@@ -2814,6 +3281,20 @@ class AJForms_Admin {
 				</div>
 			</div>
 		<?php else : ?>
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Stripe Portal Sync', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'Stripe is the source of truth. These buttons refresh local portal cache records only.', 'ajforms' ); ?></p>
+				<?php if ( ! $stripe_enabled ) : ?>
+					<div class="notice notice-warning inline"><p><?php esc_html_e( 'Add your Stripe secret key under Settings > Stripe Payments before syncing portal data.', 'ajforms' ); ?></p></div>
+				<?php endif; ?>
+				<div class="ajforms-settings-inline-actions">
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu', 'portal_action' => 'sync_products' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_products' ) ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu', 'portal_action' => 'sync_customers' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_customers' ) ); ?>"><?php esc_html_e( 'Sync Stripe Customers', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu', 'portal_action' => 'sync_subscriptions' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_subscriptions' ) ); ?>"><?php esc_html_e( 'Sync Stripe Subscriptions', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu', 'portal_action' => 'sync_transactions' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_transactions' ) ); ?>"><?php esc_html_e( 'Sync Stripe Invoices / Charges', 'ajforms' ); ?></a>
+				</div>
+			</div>
+
 			<form method="post">
 				<?php wp_nonce_field( 'ajcore_save_client_portal', 'ajcore_client_portal_nonce' ); ?>
 				<div class="ajforms-settings-card">
@@ -2864,6 +3345,65 @@ class AJForms_Admin {
 					</div>
 				</div>
 			</form>
+
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Enable Stripe Customers as Portal Users', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'Customers are matched by email first. If no WordPress user exists, AJ Core creates one and links it to the Stripe Customer ID.', 'ajforms' ); ?></p>
+				<?php
+				global $wpdb;
+				$customers = $wpdb->get_results(
+					$wpdb->prepare(
+						"SELECT c.*, m.user_id FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id ORDER BY c.name ASC, c.email ASC LIMIT %d",
+						100
+					)
+				);
+				?>
+				<table class="widefat striped">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Stripe ID', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Portal User', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Action', 'ajforms' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php if ( empty( $customers ) ) : ?>
+							<tr><td colspan="5"><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></td></tr>
+						<?php else : ?>
+							<?php foreach ( $customers as $customer ) : ?>
+								<tr>
+									<td><?php echo esc_html( $customer->name ); ?></td>
+									<td><?php echo esc_html( $customer->email ); ?></td>
+									<td><code><?php echo esc_html( $customer->stripe_customer_id ); ?></code></td>
+									<td>
+										<?php
+										if ( ! empty( $customer->user_id ) ) {
+											$user = get_userdata( (int) $customer->user_id );
+											echo $user ? esc_html( $user->display_name . ' #' . $user->ID ) : esc_html__( 'Linked user missing', 'ajforms' );
+										} else {
+											esc_html_e( 'Not enabled', 'ajforms' );
+										}
+										?>
+									</td>
+									<td>
+										<?php if ( empty( $customer->user_id ) ) : ?>
+											<form method="post" style="margin:0;">
+												<?php wp_nonce_field( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' ); ?>
+												<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+												<button type="submit" class="button"><?php esc_html_e( 'Enable Portal User', 'ajforms' ); ?></button>
+											</form>
+										<?php else : ?>
+											<span class="description"><?php esc_html_e( 'Enabled', 'ajforms' ); ?></span>
+										<?php endif; ?>
+									</td>
+								</tr>
+							<?php endforeach; ?>
+						<?php endif; ?>
+					</tbody>
+				</table>
+			</div>
 		<?php endif; ?>
 		<?php
 	}
