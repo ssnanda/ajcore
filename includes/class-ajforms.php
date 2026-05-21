@@ -69,6 +69,12 @@ class AJForms {
 			return $page_id;
 		}
 
+		$page = get_page_by_path( 'client-portal' );
+		if ( $page && 'trash' !== get_post_status( $page ) ) {
+			update_option( 'ajcore_customer_portal_page_id', (int) $page->ID, false );
+			return (int) $page->ID;
+		}
+
 		$page = get_page_by_path( 'file-library' );
 		if ( $page && 'trash' !== get_post_status( $page ) ) {
 			update_option( 'ajcore_customer_portal_page_id', (int) $page->ID, false );
@@ -96,8 +102,8 @@ class AJForms {
 		if ( ! $page_id && current_user_can( 'manage_options' ) ) {
 			$page_id = wp_insert_post(
 				array(
-					'post_title'   => __( 'File Library', 'ajforms' ),
-					'post_name'    => 'file-library',
+					'post_title'   => __( 'Client Portal', 'ajforms' ),
+					'post_name'    => 'client-portal',
 					'post_content' => '[aj_customer_portal]',
 					'post_status'  => 'publish',
 					'post_type'    => 'page',
@@ -152,9 +158,86 @@ class AJForms {
 			return $items;
 		}
 
-		$items .= '<li class="menu-item ajcore-customer-portal-menu-item"><a href="' . esc_url( $portal_url ) . '">' . esc_html__( 'File Library', 'ajforms' ) . '</a></li>';
+		$items .= '<li class="menu-item ajcore-customer-portal-menu-item"><a href="' . esc_url( $portal_url ) . '">' . esc_html__( 'Client Portal', 'ajforms' ) . '</a></li>';
 
 		return $items;
+	}
+
+	private function get_customer_portal_menu_items() {
+		$items = get_option( 'ajcore_customer_portal_menu_items', array() );
+		if ( ! is_array( $items ) ) {
+			$items = array();
+		}
+
+		$default_items = array(
+			array(
+				'id'      => 'file-library',
+				'label'   => __( 'File Library', 'ajforms' ),
+				'type'    => 'built_in',
+				'url'     => '',
+				'enabled' => true,
+			),
+		);
+
+		$normalized = array();
+		foreach ( array_merge( $default_items, $items ) as $item ) {
+			if ( empty( $item['id'] ) ) {
+				continue;
+			}
+
+			$id = sanitize_key( $item['id'] );
+			$normalized[ $id ] = array(
+				'id'      => $id,
+				'label'   => ! empty( $item['label'] ) ? sanitize_text_field( $item['label'] ) : $id,
+				'type'    => ! empty( $item['type'] ) && 'custom' === $item['type'] ? 'custom' : 'built_in',
+				'url'     => ! empty( $item['url'] ) ? esc_url_raw( $item['url'] ) : '',
+				'enabled' => ! isset( $item['enabled'] ) || (bool) $item['enabled'],
+			);
+		}
+
+		return array_values( $normalized );
+	}
+
+	private function render_customer_portal_file_library_tab() {
+		$files = $this->get_current_user_portal_files();
+
+		ob_start();
+		?>
+		<section class="aj-customer-portal-panel">
+			<h2><?php esc_html_e( 'File Library', 'ajforms' ); ?></h2>
+
+			<?php if ( empty( $files ) ) : ?>
+				<p><?php esc_html_e( 'No files have been shared with you yet.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div class="aj-customer-file-grid">
+					<?php foreach ( $files as $file ) : ?>
+						<?php
+						$download_url = wp_nonce_url(
+							add_query_arg(
+								array(
+									'aj_portal_download' => (int) $file->id,
+								),
+								home_url( '/' )
+							),
+							'aj_portal_download_' . (int) $file->id
+						);
+						?>
+						<div class="aj-customer-file">
+							<?php if ( '' !== (string) $file->category ) : ?>
+								<div class="aj-customer-file-category"><?php echo esc_html( $file->category ); ?></div>
+							<?php endif; ?>
+							<h3><?php echo esc_html( $file->title ); ?></h3>
+							<?php if ( '' !== (string) $file->description ) : ?>
+								<p><?php echo esc_html( $file->description ); ?></p>
+							<?php endif; ?>
+							<a class="button" href="<?php echo esc_url( $download_url ); ?>"><?php esc_html_e( 'Download', 'ajforms' ); ?></a>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+		</section>
+		<?php
+		return ob_get_clean();
 	}
 
 	private function get_portal_files_table() {
@@ -243,14 +326,30 @@ class AJForms {
 			return ob_get_clean();
 		}
 
-		$files = $this->get_current_user_portal_files();
+		$portal_items = array_values(
+			array_filter(
+				$this->get_customer_portal_menu_items(),
+				function ( $item ) {
+					return ! empty( $item['enabled'] );
+				}
+			)
+		);
+		$active_tab = isset( $_GET['portal_tab'] ) ? sanitize_key( wp_unslash( $_GET['portal_tab'] ) ) : 'file-library';
+		$active_ids = wp_list_pluck( $portal_items, 'id' );
+		if ( ! in_array( $active_tab, $active_ids, true ) ) {
+			$active_tab = 'file-library';
+		}
 
 		ob_start();
 		?>
 		<div class="aj-customer-portal">
 			<style>
 				.aj-customer-portal{max-width:960px;margin:0 auto}
+				.aj-customer-portal h1{margin:0 0 18px}
 				.aj-customer-portal h2{margin:0 0 18px}
+				.aj-customer-portal-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 22px;border-bottom:1px solid #dfe6ee}
+				.aj-customer-portal-tab{display:inline-flex;align-items:center;padding:10px 14px;margin-bottom:-1px;border:1px solid transparent;border-radius:10px 10px 0 0;color:#52616f;text-decoration:none;font-weight:700}
+				.aj-customer-portal-tab.is-active{background:#fff;border-color:#dfe6ee;border-bottom-color:#fff;color:#0f7ac6}
 				.aj-customer-file-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
 				.aj-customer-file{border:1px solid #dfe6ee;border-radius:12px;padding:18px;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.06)}
 				.aj-customer-file-category{display:inline-block;margin-bottom:10px;color:#0f7ac6;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
@@ -258,37 +357,24 @@ class AJForms {
 				.aj-customer-file p{margin:0 0 14px;color:#52616f}
 				.aj-customer-file .button{display:inline-block;text-decoration:none}
 			</style>
-			<h2><?php esc_html_e( 'File Library', 'ajforms' ); ?></h2>
+			<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
+			<nav class="aj-customer-portal-tabs" aria-label="<?php esc_attr_e( 'Client Portal', 'ajforms' ); ?>">
+				<?php foreach ( $portal_items as $item ) : ?>
+					<?php
+					$is_active = $active_tab === $item['id'];
+					$item_url  = 'custom' === $item['type'] && ! empty( $item['url'] )
+						? $item['url']
+						: add_query_arg( 'portal_tab', $item['id'], $this->get_customer_portal_url() );
+					?>
+					<a class="aj-customer-portal-tab <?php echo $is_active ? 'is-active' : ''; ?>" href="<?php echo esc_url( $item_url ); ?>"><?php echo esc_html( $item['label'] ); ?></a>
+				<?php endforeach; ?>
+			</nav>
 
-			<?php if ( empty( $files ) ) : ?>
-				<p><?php esc_html_e( 'No files have been shared with you yet.', 'ajforms' ); ?></p>
-			<?php else : ?>
-				<div class="aj-customer-file-grid">
-					<?php foreach ( $files as $file ) : ?>
-						<?php
-						$download_url = wp_nonce_url(
-							add_query_arg(
-								array(
-									'aj_portal_download' => (int) $file->id,
-								),
-								home_url( '/' )
-							),
-							'aj_portal_download_' . (int) $file->id
-						);
-						?>
-						<div class="aj-customer-file">
-							<?php if ( '' !== (string) $file->category ) : ?>
-								<div class="aj-customer-file-category"><?php echo esc_html( $file->category ); ?></div>
-							<?php endif; ?>
-							<h3><?php echo esc_html( $file->title ); ?></h3>
-							<?php if ( '' !== (string) $file->description ) : ?>
-								<p><?php echo esc_html( $file->description ); ?></p>
-							<?php endif; ?>
-							<a class="button" href="<?php echo esc_url( $download_url ); ?>"><?php esc_html_e( 'Download', 'ajforms' ); ?></a>
-						</div>
-					<?php endforeach; ?>
-				</div>
-			<?php endif; ?>
+			<?php
+			if ( 'file-library' === $active_tab ) {
+				echo $this->render_customer_portal_file_library_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			}
+			?>
 		</div>
 		<?php
 		return ob_get_clean();

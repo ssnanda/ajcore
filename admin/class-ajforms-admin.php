@@ -1163,6 +1163,13 @@ class AJForms_Admin {
 			$this->handle_products_action();
 		} elseif ( 'ajforms-file-library' === $page ) {
 			$this->handle_file_library_actions();
+		} elseif ( 'ajforms-client-portal' === $page ) {
+			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'file-library';
+			if ( 'menu' === $tab ) {
+				$this->handle_client_portal_settings_save();
+			} else {
+				$this->handle_file_library_actions();
+			}
 		} elseif ( 'ajforms-role-manager' === $page ) {
 			$this->handle_role_manager_actions();
 		} elseif ( 'ajforms-about' === $page ) {
@@ -1174,6 +1181,100 @@ class AJForms_Admin {
 		$user = wp_get_current_user();
 
 		return is_super_admin() || ( $user && in_array( 'administrator', (array) $user->roles, true ) );
+	}
+
+	private function get_customer_portal_menu_items() {
+		$items = get_option( 'ajcore_customer_portal_menu_items', array() );
+		if ( ! is_array( $items ) ) {
+			$items = array();
+		}
+
+		$default_items = array(
+			array(
+				'id'      => 'file-library',
+				'label'   => __( 'File Library', 'ajforms' ),
+				'type'    => 'built_in',
+				'url'     => '',
+				'enabled' => true,
+			),
+		);
+
+		$normalized = array();
+		foreach ( array_merge( $default_items, $items ) as $item ) {
+			if ( empty( $item['id'] ) ) {
+				continue;
+			}
+
+			$id = sanitize_key( $item['id'] );
+			$normalized[ $id ] = array(
+				'id'      => $id,
+				'label'   => ! empty( $item['label'] ) ? sanitize_text_field( $item['label'] ) : $id,
+				'type'    => ! empty( $item['type'] ) && 'custom' === $item['type'] ? 'custom' : 'built_in',
+				'url'     => ! empty( $item['url'] ) ? esc_url_raw( $item['url'] ) : '',
+				'enabled' => ! isset( $item['enabled'] ) || (bool) $item['enabled'],
+			);
+		}
+
+		return array_values( $normalized );
+	}
+
+	private function handle_client_portal_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_client_portal_nonce'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_save_client_portal', 'ajcore_client_portal_nonce' );
+
+		$labels  = isset( $_POST['portal_menu_label'] ) && is_array( $_POST['portal_menu_label'] ) ? wp_unslash( $_POST['portal_menu_label'] ) : array();
+		$urls    = isset( $_POST['portal_menu_url'] ) && is_array( $_POST['portal_menu_url'] ) ? wp_unslash( $_POST['portal_menu_url'] ) : array();
+		$types   = isset( $_POST['portal_menu_type'] ) && is_array( $_POST['portal_menu_type'] ) ? wp_unslash( $_POST['portal_menu_type'] ) : array();
+		$enabled = isset( $_POST['portal_menu_enabled'] ) && is_array( $_POST['portal_menu_enabled'] ) ? array_map( 'sanitize_key', wp_unslash( $_POST['portal_menu_enabled'] ) ) : array();
+
+		$items = array();
+		foreach ( $labels as $id => $label ) {
+			$id    = sanitize_key( $id );
+			$label = sanitize_text_field( $label );
+			$type  = isset( $types[ $id ] ) && 'custom' === sanitize_key( $types[ $id ] ) ? 'custom' : 'built_in';
+			$url   = isset( $urls[ $id ] ) ? esc_url_raw( $urls[ $id ] ) : '';
+
+			if ( '' === $id || '' === $label ) {
+				continue;
+			}
+
+			$items[] = array(
+				'id'      => $id,
+				'label'   => $label,
+				'type'    => $type,
+				'url'     => $url,
+				'enabled' => in_array( $id, $enabled, true ),
+			);
+		}
+
+		$new_label = isset( $_POST['new_portal_menu_label'] ) ? sanitize_text_field( wp_unslash( $_POST['new_portal_menu_label'] ) ) : '';
+		$new_url   = isset( $_POST['new_portal_menu_url'] ) ? esc_url_raw( wp_unslash( $_POST['new_portal_menu_url'] ) ) : '';
+		if ( '' !== $new_label && '' !== $new_url ) {
+			$items[] = array(
+				'id'      => 'custom-' . wp_generate_uuid4(),
+				'label'   => $new_label,
+				'type'    => 'custom',
+				'url'     => $new_url,
+				'enabled' => true,
+			);
+		}
+
+		update_option( 'ajcore_customer_portal_menu_items', $items, false );
+
+		wp_safe_redirect(
+			add_query_arg(
+				array(
+					'page'           => 'ajforms-client-portal',
+					'tab'            => 'menu',
+					'portal-updated' => 1,
+				),
+				admin_url( 'admin.php' )
+			)
+		);
+		exit;
 	}
 
 	private function handle_settings_save() {
@@ -1376,7 +1477,8 @@ class AJForms_Admin {
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'    => 'ajforms-file-library',
+						'page'    => 'ajforms-client-portal',
+						'tab'     => 'file-library',
 						'deleted' => 1,
 					),
 					admin_url( 'admin.php' )
@@ -1403,7 +1505,8 @@ class AJForms_Admin {
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'  => 'ajforms-file-library',
+						'page'  => 'ajforms-client-portal',
+						'tab'   => 'file-library',
 						'error' => 'missing-file',
 					),
 					admin_url( 'admin.php' )
@@ -1484,7 +1587,8 @@ class AJForms_Admin {
 		wp_safe_redirect(
 			add_query_arg(
 				array(
-					'page'  => 'ajforms-file-library',
+					'page'  => 'ajforms-client-portal',
+					'tab'   => 'file-library',
 					'saved' => 1,
 				),
 				admin_url( 'admin.php' )
@@ -1815,6 +1919,10 @@ class AJForms_Admin {
 		if ( isset( $_GET['page'] ) && 'ajforms-file-library' === sanitize_key( wp_unslash( $_GET['page'] ) ) ) {
 			wp_enqueue_media();
 		}
+
+		if ( isset( $_GET['page'] ) && 'ajforms-client-portal' === sanitize_key( wp_unslash( $_GET['page'] ) ) ) {
+			wp_enqueue_media();
+		}
 	}
 
 	private function get_forms_table() {
@@ -2087,11 +2195,11 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
-			__( 'File Library', 'ajforms' ),
-			__( 'File Library', 'ajforms' ),
+			__( 'Client Portal', 'ajforms' ),
+			__( 'Client Portal', 'ajforms' ),
 			'manage_options',
-			'ajforms-file-library',
-			array( $this, 'display_file_library_page' )
+			'ajforms-client-portal',
+			array( $this, 'display_client_portal_page' )
 		);
 
 		add_submenu_page(
@@ -2164,7 +2272,33 @@ class AJForms_Admin {
 		require_once AJFORMS_PLUGIN_DIR . 'admin/partials/ajforms-admin-leads.php';
 	}
 
-	public function display_file_library_page() {
+	public function display_client_portal_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'file-library';
+		$tab      = in_array( $tab, array( 'file-library', 'menu' ), true ) ? $tab : 'file-library';
+		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
+		?>
+		<div class="wrap ajforms-client-portal-admin">
+			<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
+			<h2 class="nav-tab-wrapper">
+				<a class="nav-tab <?php echo 'file-library' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'file-library', $base_url ) ); ?>"><?php esc_html_e( 'File Library', 'ajforms' ); ?></a>
+				<a class="nav-tab <?php echo 'menu' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'menu', $base_url ) ); ?>"><?php esc_html_e( 'Menu', 'ajforms' ); ?></a>
+			</h2>
+			<?php
+			if ( 'menu' === $tab ) {
+				$this->display_client_portal_settings_tab( 'menu', true );
+			} else {
+				$this->display_file_library_page( true );
+			}
+			?>
+		</div>
+		<?php
+	}
+
+	public function display_file_library_page( $embedded = false ) {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
@@ -2207,8 +2341,10 @@ class AJForms_Admin {
 			)
 		);
 		?>
-		<div class="wrap ajforms-file-library">
-			<h1><?php esc_html_e( 'File Library', 'ajforms' ); ?></h1>
+		<div class="<?php echo $embedded ? 'ajforms-file-library' : 'wrap ajforms-file-library'; ?>">
+			<?php if ( ! $embedded ) : ?>
+				<h1><?php esc_html_e( 'File Library', 'ajforms' ); ?></h1>
+			<?php endif; ?>
 
 			<?php if ( isset( $_GET['saved'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'File saved.', 'ajforms' ); ?></p></div>
@@ -2240,7 +2376,7 @@ class AJForms_Admin {
 			</style>
 
 			<div class="ajforms-file-library-grid">
-				<form class="ajforms-file-card" method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-file-library' ) ); ?>">
+				<form class="ajforms-file-card" method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-client-portal&tab=file-library' ) ); ?>">
 					<h2><?php echo $editing_file ? esc_html__( 'Edit File', 'ajforms' ) : esc_html__( 'Add File', 'ajforms' ); ?></h2>
 					<?php wp_nonce_field( 'ajf_save_portal_file', 'ajf_portal_file_nonce' ); ?>
 					<input type="hidden" name="portal_file_id" value="<?php echo esc_attr( $editing_file ? (int) $editing_file->id : 0 ); ?>">
@@ -2292,7 +2428,7 @@ class AJForms_Admin {
 					<p>
 						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save File', 'ajforms' ); ?></button>
 						<?php if ( $editing_file ) : ?>
-							<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-file-library' ) ); ?>"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></a>
+							<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-client-portal&tab=file-library' ) ); ?>"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></a>
 						<?php endif; ?>
 					</p>
 				</form>
@@ -2334,9 +2470,9 @@ class AJForms_Admin {
 											<?php endif; ?>
 										</td>
 										<td>
-											<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-file-library', 'edit_file_id' => (int) $file->id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+											<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'edit_file_id' => (int) $file->id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
 											|
-											<a class="submitdelete" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-file-library', 'portal_file_action' => 'delete', 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_delete_portal_file_' . (int) $file->id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this file record?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
+											<a class="submitdelete" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => 'delete', 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_delete_portal_file_' . (int) $file->id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this file record?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 										</td>
 									</tr>
 								<?php endforeach; ?>
@@ -2646,6 +2782,89 @@ class AJForms_Admin {
 			})();
 			</script>
 		</div>
+		<?php
+	}
+
+	private function display_client_portal_settings_tab( $subsection, $embedded = false ) {
+		$subsection = in_array( $subsection, array( 'file-library', 'menu' ), true ) ? $subsection : 'file-library';
+		$portal_page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
+		$portal_url     = $portal_page_id ? get_permalink( $portal_page_id ) : '';
+		$menu_items     = $this->get_customer_portal_menu_items();
+		?>
+		<?php if ( ! $embedded ) : ?>
+			<div class="ajforms-settings-head">
+				<h2><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h2>
+				<p><?php esc_html_e( 'Control the customer-facing portal page and the menu tabs customers see after login.', 'ajforms' ); ?></p>
+			</div>
+		<?php endif; ?>
+
+		<?php if ( isset( $_GET['portal-updated'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Client Portal settings saved.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+
+		<?php if ( 'file-library' === $subsection ) : ?>
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'File Library', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'File Library is the first built-in Client Portal tab. It displays files assigned to the logged-in user.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-note">
+					<p><strong><?php esc_html_e( 'Shortcode', 'ajforms' ); ?></strong>: <code>[aj_customer_portal]</code></p>
+					<?php if ( $portal_url ) : ?>
+						<p><strong><?php esc_html_e( 'Portal Page', 'ajforms' ); ?></strong>: <a href="<?php echo esc_url( $portal_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $portal_url ); ?></a></p>
+					<?php endif; ?>
+				</div>
+			</div>
+		<?php else : ?>
+			<form method="post">
+				<?php wp_nonce_field( 'ajcore_save_client_portal', 'ajcore_client_portal_nonce' ); ?>
+				<div class="ajforms-settings-card">
+					<h3><?php esc_html_e( 'Client Portal Menu', 'ajforms' ); ?></h3>
+					<p><?php esc_html_e( 'These items appear as tabs inside the Client Portal. File Library is built in; custom items can link to other public pages.', 'ajforms' ); ?></p>
+
+					<style>
+						.ajcore-portal-menu-table input[type="text"],.ajcore-portal-menu-table input[type="url"]{width:100%}
+						.ajcore-portal-menu-table td{vertical-align:middle}
+					</style>
+
+					<table class="widefat striped ajcore-portal-menu-table">
+						<thead>
+							<tr>
+								<th><?php esc_html_e( 'Enabled', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Label', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Type', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'URL', 'ajforms' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $menu_items as $item ) : ?>
+								<tr>
+									<td>
+										<input type="checkbox" name="portal_menu_enabled[]" value="<?php echo esc_attr( $item['id'] ); ?>" <?php checked( ! empty( $item['enabled'] ) ); ?>>
+										<input type="hidden" name="portal_menu_type[<?php echo esc_attr( $item['id'] ); ?>]" value="<?php echo esc_attr( $item['type'] ); ?>">
+									</td>
+									<td>
+										<input type="text" name="portal_menu_label[<?php echo esc_attr( $item['id'] ); ?>]" value="<?php echo esc_attr( $item['label'] ); ?>">
+									</td>
+									<td><?php echo 'built_in' === $item['type'] ? esc_html__( 'Built in', 'ajforms' ) : esc_html__( 'Custom Link', 'ajforms' ); ?></td>
+									<td>
+										<input type="url" name="portal_menu_url[<?php echo esc_attr( $item['id'] ); ?>]" value="<?php echo esc_attr( $item['url'] ); ?>" <?php disabled( 'built_in' === $item['type'] ); ?>>
+									</td>
+								</tr>
+							<?php endforeach; ?>
+							<tr>
+								<td><?php esc_html_e( 'New', 'ajforms' ); ?></td>
+								<td><input type="text" name="new_portal_menu_label" placeholder="<?php esc_attr_e( 'Billing', 'ajforms' ); ?>"></td>
+								<td><?php esc_html_e( 'Custom Link', 'ajforms' ); ?></td>
+								<td><input type="url" name="new_portal_menu_url" placeholder="<?php echo esc_attr( home_url( '/billing/' ) ); ?>"></td>
+							</tr>
+						</tbody>
+					</table>
+
+					<div class="ajforms-settings-actions">
+						<?php submit_button( __( 'Save Client Portal Menu', 'ajforms' ), 'primary', 'submit', false ); ?>
+					</div>
+				</div>
+			</form>
+		<?php endif; ?>
 		<?php
 	}
 
