@@ -1007,9 +1007,10 @@ class AJForms {
 		$success_url = add_query_arg( 'ajcore_checkout', 'success', $current_url );
 		$cancel_url  = add_query_arg( 'ajcore_checkout', 'cancelled', $current_url );
 		$body        = array(
-			'mode'        => 'payment',
-			'success_url' => $success_url,
-			'cancel_url'  => $cancel_url,
+			'mode'              => 'payment',
+			'customer_creation' => 'always',
+			'success_url'       => $success_url,
+			'cancel_url'        => $cancel_url,
 		);
 
 		if ( is_array( $items ) ) {

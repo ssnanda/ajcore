@@ -439,6 +439,69 @@ class AJForms_Admin {
 		return (int) $wpdb->insert_id;
 	}
 
+	private function get_guest_portal_customer_id( $email ) {
+		$email = strtolower( sanitize_email( (string) $email ) );
+
+		return is_email( $email ) ? 'guest_' . md5( $email ) : '';
+	}
+
+	private function get_payment_customer_id( $payment ) {
+		if ( ! empty( $payment['customer'] ) && is_string( $payment['customer'] ) ) {
+			return sanitize_text_field( (string) $payment['customer'] );
+		}
+
+		$email = '';
+		if ( ! empty( $payment['customer_details']['email'] ) ) {
+			$email = (string) $payment['customer_details']['email'];
+		} elseif ( ! empty( $payment['customer_email'] ) ) {
+			$email = (string) $payment['customer_email'];
+		} elseif ( ! empty( $payment['billing_details']['email'] ) ) {
+			$email = (string) $payment['billing_details']['email'];
+		}
+
+		return $this->get_guest_portal_customer_id( $email );
+	}
+
+	private function upsert_guest_portal_customer_from_payment( $payment, $source ) {
+		$customer_id = $this->get_payment_customer_id( $payment );
+		if ( '' === $customer_id || 0 === strpos( $customer_id, 'cus_' ) ) {
+			return 0;
+		}
+
+		$details = array();
+		if ( ! empty( $payment['customer_details'] ) && is_array( $payment['customer_details'] ) ) {
+			$details = $payment['customer_details'];
+		} elseif ( ! empty( $payment['billing_details'] ) && is_array( $payment['billing_details'] ) ) {
+			$details = $payment['billing_details'];
+		}
+
+		$email = ! empty( $details['email'] ) ? sanitize_email( (string) $details['email'] ) : '';
+		$name  = ! empty( $details['name'] ) ? sanitize_text_field( (string) $details['name'] ) : '';
+		$phone = ! empty( $details['phone'] ) ? sanitize_text_field( (string) $details['phone'] ) : '';
+
+		if ( '' === $email ) {
+			return 0;
+		}
+
+		return $this->upsert_portal_record(
+			$this->get_portal_stripe_customers_table(),
+			array(
+				'stripe_customer_id' => $customer_id,
+				'email'              => $email,
+				'name'               => $name,
+				'phone'              => $phone,
+				'address'            => ! empty( $details['address'] ) ? wp_json_encode( $details['address'] ) : '',
+				'metadata'           => wp_json_encode( array( 'source' => sanitize_key( $source ), 'guest' => true ) ),
+				'raw_data'           => wp_json_encode( $payment ),
+				'livemode'           => ! empty( $payment['livemode'] ) ? 1 : 0,
+				'created_at'         => ! empty( $payment['created'] ) ? $this->stripe_timestamp_to_mysql( $payment['created'] ) : null,
+				'synced_at'          => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ),
+			'stripe_customer_id'
+		);
+	}
+
 	private function sync_portal_stripe_products( $secret_key ) {
 		global $wpdb;
 
@@ -518,6 +581,38 @@ class AJForms_Admin {
 			$count++;
 		}
 
+		$sessions = $this->stripe_api_get_all( 'checkout/sessions', $secret_key );
+		if ( is_wp_error( $sessions ) ) {
+			return $sessions;
+		}
+
+		foreach ( $sessions as $session ) {
+			if ( empty( $session['id'] ) ) {
+				continue;
+			}
+
+			$inserted = $this->upsert_guest_portal_customer_from_payment( $session, 'checkout_session' );
+			if ( $inserted ) {
+				$count++;
+			}
+		}
+
+		$charges = $this->stripe_api_get_all( 'charges', $secret_key );
+		if ( is_wp_error( $charges ) ) {
+			return $charges;
+		}
+
+		foreach ( $charges as $charge ) {
+			if ( empty( $charge['id'] ) ) {
+				continue;
+			}
+
+			$inserted = $this->upsert_guest_portal_customer_from_payment( $charge, 'charge' );
+			if ( $inserted ) {
+				$count++;
+			}
+		}
+
 		return $count;
 	}
 
@@ -560,6 +655,8 @@ class AJForms_Admin {
 	}
 
 	private function sync_portal_stripe_transactions( $secret_key, $stripe_customer_id = '' ) {
+		global $wpdb;
+
 		$invoice_args = array( 'status' => 'all' );
 		if ( '' !== $stripe_customer_id ) {
 			$invoice_args['customer'] = sanitize_text_field( $stripe_customer_id );
@@ -629,15 +726,22 @@ class AJForms_Admin {
 		}
 
 		foreach ( $charges as $charge ) {
-			if ( empty( $charge['id'] ) || empty( $charge['customer'] ) ) {
+			if ( empty( $charge['id'] ) ) {
 				continue;
 			}
+
+			$customer_id = $this->get_payment_customer_id( $charge );
+			if ( '' === $customer_id ) {
+				continue;
+			}
+
+			$this->upsert_guest_portal_customer_from_payment( $charge, 'charge' );
 
 			$currency = isset( $charge['currency'] ) ? strtolower( sanitize_key( $charge['currency'] ) ) : 'usd';
 			$data = array(
 				'stripe_object_id'   => sanitize_text_field( (string) $charge['id'] ),
 				'object_type'        => 'charge',
-				'stripe_customer_id' => sanitize_text_field( (string) $charge['customer'] ),
+				'stripe_customer_id' => $customer_id,
 				'invoice_id'         => ! empty( $charge['invoice'] ) ? sanitize_text_field( (string) $charge['invoice'] ) : '',
 				'payment_intent_id'  => ! empty( $charge['payment_intent'] ) ? sanitize_text_field( (string) $charge['payment_intent'] ) : '',
 				'charge_id'          => sanitize_text_field( (string) $charge['id'] ),
@@ -675,6 +779,79 @@ class AJForms_Admin {
 			$count++;
 		}
 
+		$sessions = $this->stripe_api_get_all( 'checkout/sessions', $secret_key );
+		if ( is_wp_error( $sessions ) ) {
+			return $sessions;
+		}
+
+		foreach ( $sessions as $session ) {
+			if ( empty( $session['id'] ) ) {
+				continue;
+			}
+
+			$customer_id = $this->get_payment_customer_id( $session );
+			if ( '' === $customer_id ) {
+				continue;
+			}
+
+			$this->upsert_guest_portal_customer_from_payment( $session, 'checkout_session' );
+
+			$payment_intent_id = ! empty( $session['payment_intent'] ) ? sanitize_text_field( (string) $session['payment_intent'] ) : '';
+			if ( '' !== $payment_intent_id ) {
+				$existing_payment = $wpdb->get_var(
+					$wpdb->prepare(
+						"SELECT id FROM {$this->get_portal_stripe_transactions_table()} WHERE payment_intent_id = %s LIMIT 1",
+						$payment_intent_id
+					)
+				);
+				if ( $existing_payment ) {
+					continue;
+				}
+			}
+
+			$currency = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : 'usd';
+			$status   = ! empty( $session['payment_status'] ) ? sanitize_key( (string) $session['payment_status'] ) : '';
+			$data     = array(
+				'stripe_object_id'   => sanitize_text_field( (string) $session['id'] ),
+				'object_type'        => 'checkout_session',
+				'stripe_customer_id' => $customer_id,
+				'invoice_id'         => ! empty( $session['invoice'] ) ? sanitize_text_field( (string) $session['invoice'] ) : '',
+				'payment_intent_id'  => $payment_intent_id,
+				'charge_id'          => '',
+				'description'        => ! empty( $session['metadata']['source'] ) ? sanitize_text_field( (string) $session['metadata']['source'] ) : sprintf( __( 'Checkout session %s', 'ajforms' ), $session['id'] ),
+				'amount'             => $this->stripe_amount_to_decimal( isset( $session['amount_total'] ) ? $session['amount_total'] : 0, $currency ),
+				'currency'           => $currency,
+				'status'             => $status,
+				'transaction_date'   => ! empty( $session['created'] ) ? $this->stripe_timestamp_to_mysql( $session['created'] ) : null,
+				'due_date'           => null,
+				'raw_data'           => wp_json_encode( $session ),
+				'synced_at'          => current_time( 'mysql' ),
+			);
+
+			$this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ), 'stripe_object_id' );
+			$this->upsert_portal_record(
+				$this->get_portal_ledger_table(),
+				array(
+					'stripe_customer_id' => $data['stripe_customer_id'],
+					'source_object_id'   => $data['stripe_object_id'],
+					'source_type'        => 'checkout_session',
+					'ledger_date'        => $data['transaction_date'],
+					'description'        => $data['description'],
+					'amount'             => $data['amount'],
+					'currency'           => $data['currency'],
+					'status'             => $data['status'],
+					'invoice_id'         => $data['invoice_id'],
+					'payment_intent_id'  => $data['payment_intent_id'],
+					'charge_id'          => $data['charge_id'],
+					'metadata'           => '',
+					'created_at'         => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+				'source_object_id'
+			);
+			$count++;
+		}
+
 		return $count;
 	}
 
@@ -682,6 +859,21 @@ class AJForms_Admin {
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		if ( '' === $stripe_customer_id ) {
 			return new WP_Error( 'missing_customer', __( 'Stripe customer ID is required.', 'ajforms' ) );
+		}
+
+		if ( 0 === strpos( $stripe_customer_id, 'guest_' ) ) {
+			$customer_count    = $this->sync_portal_stripe_customers( $secret_key );
+			$transaction_count = $this->sync_portal_stripe_transactions( $secret_key );
+
+			if ( is_wp_error( $customer_count ) ) {
+				return $customer_count;
+			}
+
+			if ( is_wp_error( $transaction_count ) ) {
+				return $transaction_count;
+			}
+
+			return absint( $customer_count ) + absint( $transaction_count );
 		}
 
 		$customer = $this->stripe_api_get( 'customers/' . rawurlencode( $stripe_customer_id ), $secret_key );
@@ -3552,7 +3744,15 @@ class AJForms_Admin {
 				</thead>
 				<tbody>
 					<?php if ( empty( $customers ) ) : ?>
-						<tr><td colspan="6"><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></td></tr>
+						<tr>
+							<td colspan="6">
+								<p><strong><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></strong></p>
+								<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customers and guest Checkout/Charge buyer records from the connected Stripe account.', 'ajforms' ); ?></p>
+								<p>
+									<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'portal_action' => 'sync_customers' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_customers' ) ); ?>"><?php esc_html_e( 'Sync Stripe Customers', 'ajforms' ); ?></a>
+								</p>
+							</td>
+						</tr>
 					<?php else : ?>
 						<?php foreach ( $customers as $customer ) : ?>
 							<?php $user = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : null; ?>
