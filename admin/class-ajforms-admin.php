@@ -1183,6 +1183,100 @@ class AJForms_Admin {
 		return date_i18n( get_option( 'date_format' ), $timestamp );
 	}
 
+	private function get_portal_customer_display_fields() {
+		$fields = get_option( 'ajcore_portal_customer_display_fields', array( 'name', 'email', 'created', 'livemode' ) );
+		if ( ! is_array( $fields ) ) {
+			return array();
+		}
+
+		return array_values( array_filter( array_map( 'sanitize_text_field', $fields ) ) );
+	}
+
+	private function discover_portal_customer_scalar_fields( $customers ) {
+		$fields = array();
+
+		foreach ( $customers as $customer ) {
+			$raw = ! empty( $customer->raw_data ) ? json_decode( (string) $customer->raw_data, true ) : array();
+			if ( is_array( $raw ) ) {
+				$fields = array_merge( $fields, $this->flatten_scalar_field_paths( $raw ) );
+			}
+		}
+
+		$fields = array_values( array_unique( $fields ) );
+		sort( $fields, SORT_NATURAL | SORT_FLAG_CASE );
+
+		return $fields;
+	}
+
+	private function flatten_scalar_field_paths( $data, $prefix = '', $depth = 0 ) {
+		if ( $depth > 4 || ! is_array( $data ) ) {
+			return array();
+		}
+
+		$fields = array();
+		foreach ( $data as $key => $value ) {
+			if ( is_int( $key ) ) {
+				continue;
+			}
+
+			$key  = sanitize_key( (string) $key );
+			$path = '' === $prefix ? $key : $prefix . '.' . $key;
+
+			if ( is_scalar( $value ) ) {
+				$fields[] = $path;
+			} elseif ( is_array( $value ) && $this->is_assoc_array( $value ) ) {
+				$fields = array_merge( $fields, $this->flatten_scalar_field_paths( $value, $path, $depth + 1 ) );
+			}
+		}
+
+		return $fields;
+	}
+
+	private function is_assoc_array( $array ) {
+		if ( array() === $array ) {
+			return false;
+		}
+
+		return array_keys( $array ) !== range( 0, count( $array ) - 1 );
+	}
+
+	private function get_nested_raw_value( $data, $path ) {
+		$parts = explode( '.', (string) $path );
+		$value = $data;
+
+		foreach ( $parts as $part ) {
+			if ( ! is_array( $value ) || ! array_key_exists( $part, $value ) ) {
+				return null;
+			}
+			$value = $value[ $part ];
+		}
+
+		return is_scalar( $value ) ? $value : null;
+	}
+
+	private function get_portal_customer_display_value( $customer, $field ) {
+		$raw   = ! empty( $customer->raw_data ) ? json_decode( (string) $customer->raw_data, true ) : array();
+		$value = is_array( $raw ) ? $this->get_nested_raw_value( $raw, $field ) : null;
+
+		if ( null === $value && isset( $customer->{$field} ) ) {
+			$value = $customer->{$field};
+		}
+
+		if ( is_bool( $value ) ) {
+			return $value ? __( 'Yes', 'ajforms' ) : __( 'No', 'ajforms' );
+		}
+
+		if ( is_numeric( $value ) && in_array( $field, array( 'created', 'created_at', 'synced_at' ), true ) ) {
+			return date_i18n( get_option( 'date_format' ), (int) $value );
+		}
+
+		return null === $value || '' === $value ? '-' : sanitize_text_field( (string) $value );
+	}
+
+	private function format_portal_customer_field_label( $field ) {
+		return ucwords( str_replace( array( '.', '_' ), ' ', sanitize_text_field( (string) $field ) ) );
+	}
+
 	private function enable_stripe_customer_as_portal_user( $stripe_customer_id ) {
 		global $wpdb;
 
@@ -2164,6 +2258,37 @@ class AJForms_Admin {
 				$args['portal-user-enabled'] = 1;
 			}
 			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_portal_customer_fields_nonce'] ) ) {
+			check_admin_referer( 'ajcore_save_portal_customer_fields', 'ajcore_portal_customer_fields_nonce' );
+
+			$fields = isset( $_POST['portal_customer_display_fields'] ) && is_array( $_POST['portal_customer_display_fields'] ) ? wp_unslash( $_POST['portal_customer_display_fields'] ) : array();
+			$fields = array_values(
+				array_filter(
+					array_unique(
+						array_map(
+							function ( $field ) {
+								return preg_replace( '/[^a-zA-Z0-9_.-]/', '', sanitize_text_field( (string) $field ) );
+							},
+							$fields
+						)
+					)
+				)
+			);
+
+			update_option( 'ajcore_portal_customer_display_fields', array_slice( $fields, 0, 12 ), false );
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'                  => 'ajforms-client-portal',
+						'tab'                   => 'portal-users',
+						'portal-fields-updated' => 1,
+					),
+					admin_url( 'admin.php' )
+				)
+			);
 			exit;
 		}
 
@@ -3713,6 +3838,11 @@ class AJForms_Admin {
 
 		$total_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()}" );
 		$enabled_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_user_mappings_table()}" );
+		$available_fields = $this->discover_portal_customer_scalar_fields( $customers );
+		$display_fields   = array_values( array_intersect( $this->get_portal_customer_display_fields(), $available_fields ) );
+		if ( empty( $display_fields ) && ! empty( $available_fields ) ) {
+			$display_fields = array_slice( array_values( array_intersect( array( 'name', 'email', 'customer_details.name', 'customer_details.email', 'created', 'livemode' ), $available_fields ) ), 0, 6 );
+		}
 		?>
 		<div class="ajforms-settings-card">
 			<h2><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></h2>
@@ -3720,6 +3850,9 @@ class AJForms_Admin {
 
 			<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled as a portal user.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-fields-updated'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer display fields saved.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
@@ -3731,11 +3864,31 @@ class AJForms_Admin {
 				<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'portal_action' => 'sync_customers' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_customers' ) ); ?>"><?php esc_html_e( 'Sync Stripe Customers', 'ajforms' ); ?></a>
 			</div>
 
+			<?php if ( ! empty( $available_fields ) ) : ?>
+				<form method="post" class="ajcore-customer-field-picker">
+					<?php wp_nonce_field( 'ajcore_save_portal_customer_fields', 'ajcore_portal_customer_fields_nonce' ); ?>
+					<h3><?php esc_html_e( 'Customer Fields to Display', 'ajforms' ); ?></h3>
+					<p><?php esc_html_e( 'AJ Core discovered these scalar fields from stored Stripe raw_data. Select up to 12 columns for this Portal Users table.', 'ajforms' ); ?></p>
+					<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 14px;margin:12px 0;">
+						<?php foreach ( $available_fields as $field ) : ?>
+							<label>
+								<input type="checkbox" name="portal_customer_display_fields[]" value="<?php echo esc_attr( $field ); ?>" <?php checked( in_array( $field, $display_fields, true ) ); ?>>
+								<code><?php echo esc_html( $field ); ?></code>
+							</label>
+						<?php endforeach; ?>
+					</div>
+					<?php submit_button( __( 'Save Display Fields', 'ajforms' ), 'secondary', 'submit', false ); ?>
+				</form>
+			<?php endif; ?>
+
 			<table class="widefat striped">
 				<thead>
 					<tr>
 						<th><?php esc_html_e( 'Stripe Customer', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
+						<?php foreach ( $display_fields as $field ) : ?>
+							<th><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></th>
+						<?php endforeach; ?>
 						<th><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'WordPress User', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
@@ -3745,7 +3898,7 @@ class AJForms_Admin {
 				<tbody>
 					<?php if ( empty( $customers ) ) : ?>
 						<tr>
-							<td colspan="6">
+							<td colspan="<?php echo esc_attr( 6 + count( $display_fields ) ); ?>">
 								<p><strong><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></strong></p>
 								<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customers and guest Checkout/Charge buyer records from the connected Stripe account.', 'ajforms' ); ?></p>
 								<p>
@@ -3762,6 +3915,9 @@ class AJForms_Admin {
 									<code><?php echo esc_html( $customer->stripe_customer_id ); ?></code>
 								</td>
 								<td><?php echo esc_html( $customer->email ); ?></td>
+								<?php foreach ( $display_fields as $field ) : ?>
+									<td><?php echo esc_html( $this->get_portal_customer_display_value( $customer, $field ) ); ?></td>
+								<?php endforeach; ?>
 								<td>
 									<?php if ( ! empty( $customer->enabled_portal ) && $user ) : ?>
 										<span class="ajcore-status-pill"><?php esc_html_e( 'Enabled', 'ajforms' ); ?></span>
