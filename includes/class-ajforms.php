@@ -530,18 +530,18 @@ class AJForms {
 			<?php if ( empty( $subscriptions ) ) : ?>
 				<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
 			<?php else : ?>
-				<div class="aj-customer-file-grid">
+				<div class="aj-portal-profile">
 					<?php foreach ( $subscriptions as $subscription ) : ?>
 						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
-						<div class="aj-customer-file">
-							<h3><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h3>
-							<p style="margin:0 0 12px;color:#52616f;font-size:14px;">
-								<strong><?php esc_html_e( 'Business Name:', 'ajforms' ); ?></strong> <?php echo esc_html( $business_name ? $business_name : '-' ); ?><br>
-								<strong><?php esc_html_e( 'Status:', 'ajforms' ); ?></strong> <?php echo esc_html( ucfirst( $subscription->status ) ); ?><br>
-								<strong><?php esc_html_e( 'Service Period:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?><br>
-								<strong><?php esc_html_e( 'Next Billing Date:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?><br>
-								<strong><?php esc_html_e( 'Amount:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?>
-							</p>
+						<div style="grid-column:span 2;border:1px solid #dfe6ee;border-radius:12px;padding:18px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,.04)">
+							<h4 style="margin:0 0 14px;font-size:18px;color:#1f2937"><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
+							<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span style="color:#1f2937"><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span style="color:#1f2937"><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
+								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span style="color:#1f2937"><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span style="color:#1f2937"><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span style="color:#1f2937;font-weight:700"><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
+							</div>
 						</div>
 					<?php endforeach; ?>
 				</div>
