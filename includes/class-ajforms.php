@@ -530,23 +530,20 @@ class AJForms {
 			<?php if ( empty( $subscriptions ) ) : ?>
 				<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
 			<?php else : ?>
-				<div class="aj-portal-table-wrap">
-					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'Service Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Business Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th><th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th></tr></thead>
-						<tbody>
-							<?php foreach ( $subscriptions as $subscription ) : ?>
-								<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
-								<tr>
-									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
-									<td><?php echo esc_html( $business_name ? $business_name : '-' ); ?></td>
-									<td><?php echo esc_html( ucfirst( $subscription->status ) ); ?></td>
-									<td><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></td>
-									<td><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
-									<td><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
-								</tr>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
+				<div class="aj-customer-file-grid">
+					<?php foreach ( $subscriptions as $subscription ) : ?>
+						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
+						<div class="aj-customer-file">
+							<h3><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h3>
+							<p style="margin:0 0 12px;color:#52616f;font-size:14px;">
+								<strong><?php esc_html_e( 'Business Name:', 'ajforms' ); ?></strong> <?php echo esc_html( $business_name ? $business_name : '-' ); ?><br>
+								<strong><?php esc_html_e( 'Status:', 'ajforms' ); ?></strong> <?php echo esc_html( ucfirst( $subscription->status ) ); ?><br>
+								<strong><?php esc_html_e( 'Service Period:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?><br>
+								<strong><?php esc_html_e( 'Next Billing Date:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?><br>
+								<strong><?php esc_html_e( 'Amount:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?>
+							</p>
+						</div>
+					<?php endforeach; ?>
 				</div>
 			<?php endif; ?>
 
@@ -785,7 +782,15 @@ class AJForms {
 		);
 	}
 
-	public function render_customer_portal_shortcode() {
+	public function render_customer_portal_shortcode( $atts ) {
+		$atts = shortcode_atts(
+			array(
+				'show_title' => 'yes',
+			),
+			$atts,
+			'aj_customer_portal'
+		);
+
 		if ( ! is_user_logged_in() ) {
 			$login_url    = wp_login_url( get_permalink() );
 			$register_url = get_option( 'users_can_register' ) ? wp_registration_url() : '';
@@ -849,7 +854,9 @@ class AJForms {
 				.aj-customer-file p{margin:0 0 14px;color:#52616f}
 				.aj-customer-file .button{display:inline-block;text-decoration:none}
 			</style>
-			<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
+			<?php if ( 'yes' === $atts['show_title'] ) : ?>
+				<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
+			<?php endif; ?>
 			<nav class="aj-customer-portal-tabs" aria-label="<?php esc_attr_e( 'Client Portal', 'ajforms' ); ?>">
 				<?php foreach ( $portal_items as $item ) : ?>
 					<?php
