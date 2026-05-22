@@ -1218,6 +1218,35 @@ class AJForms_Admin {
 		return array_values( array_filter( array_map( 'sanitize_text_field', $fields ) ) );
 	}
 
+	private function sanitize_portal_display_fields( $fields ) {
+		if ( ! is_array( $fields ) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_unique(
+					array_map(
+						function ( $field ) {
+							return preg_replace( '/[^a-zA-Z0-9_.-]/', '', sanitize_text_field( (string) $field ) );
+						},
+						$fields
+					)
+				)
+			)
+		);
+	}
+
+	private function get_portal_detail_display_fields( $section, $defaults = array() ) {
+		$section = sanitize_key( $section );
+		$fields  = get_option( 'ajcore_portal_detail_display_fields_' . $section, $defaults );
+		if ( ! is_array( $fields ) ) {
+			return array();
+		}
+
+		return array_values( array_filter( array_map( 'sanitize_text_field', $fields ) ) );
+	}
+
 	private function discover_portal_customer_scalar_fields( $customers ) {
 		$fields = array();
 
@@ -1225,6 +1254,31 @@ class AJForms_Admin {
 			$raw = ! empty( $customer->raw_data ) ? json_decode( (string) $customer->raw_data, true ) : array();
 			if ( is_array( $raw ) ) {
 				$fields = array_merge( $fields, $this->flatten_scalar_field_paths( $raw ) );
+			}
+		}
+
+		$fields = array_values( array_unique( $fields ) );
+		sort( $fields, SORT_NATURAL | SORT_FLAG_CASE );
+
+		return $fields;
+	}
+
+	private function discover_portal_row_scalar_fields( $rows ) {
+		$fields = array();
+
+		foreach ( $rows as $row ) {
+			$data = is_array( $row ) ? $row : get_object_vars( $row );
+			foreach ( $data as $key => $value ) {
+				if ( is_scalar( $value ) && ! in_array( $key, array( 'raw_data' ), true ) ) {
+					$fields[] = sanitize_key( (string) $key );
+				}
+			}
+
+			if ( ! empty( $data['raw_data'] ) ) {
+				$raw = json_decode( (string) $data['raw_data'], true );
+				if ( is_array( $raw ) ) {
+					$fields = array_merge( $fields, $this->flatten_scalar_field_paths( $raw ) );
+				}
 			}
 		}
 
@@ -1294,6 +1348,42 @@ class AJForms_Admin {
 
 		if ( is_numeric( $value ) && in_array( $field, array( 'created', 'created_at', 'synced_at' ), true ) ) {
 			return date_i18n( get_option( 'date_format' ), (int) $value );
+		}
+
+		return null === $value || '' === $value ? '-' : sanitize_text_field( (string) $value );
+	}
+
+	private function get_portal_row_display_value( $row, $field ) {
+		$data  = is_array( $row ) ? $row : get_object_vars( $row );
+		$value = null;
+
+		if ( ! empty( $data['raw_data'] ) ) {
+			$raw = json_decode( (string) $data['raw_data'], true );
+			if ( is_array( $raw ) ) {
+				$value = $this->get_nested_raw_value( $raw, $field );
+			}
+		}
+
+		if ( null === $value && array_key_exists( $field, $data ) ) {
+			$value = $data[ $field ];
+		}
+
+		if ( is_bool( $value ) ) {
+			return $value ? __( 'Yes', 'ajforms' ) : __( 'No', 'ajforms' );
+		}
+
+		if ( is_numeric( $value ) && preg_match( '/(^created$|_at$|_date$|date$)/', (string) $field ) ) {
+			$timestamp = (int) $value;
+			if ( $timestamp > 1000000000 ) {
+				return date_i18n( get_option( 'date_format' ), $timestamp );
+			}
+		}
+
+		if ( is_string( $value ) && preg_match( '/(^created_at$|_at$|_date$|date$)/', (string) $field ) ) {
+			$formatted = $this->format_portal_date( $value );
+			if ( '' !== $formatted ) {
+				return $formatted;
+			}
 		}
 
 		return null === $value || '' === $value ? '-' : sanitize_text_field( (string) $value );
@@ -2327,18 +2417,7 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_save_portal_customer_fields', 'ajcore_portal_customer_fields_nonce' );
 
 			$fields = isset( $_POST['portal_customer_display_fields'] ) && is_array( $_POST['portal_customer_display_fields'] ) ? wp_unslash( $_POST['portal_customer_display_fields'] ) : array();
-			$fields = array_values(
-				array_filter(
-					array_unique(
-						array_map(
-							function ( $field ) {
-								return preg_replace( '/[^a-zA-Z0-9_.-]/', '', sanitize_text_field( (string) $field ) );
-							},
-							$fields
-						)
-					)
-				)
-			);
+			$fields = $this->sanitize_portal_display_fields( $fields );
 
 			update_option( 'ajcore_portal_customer_display_fields', $fields, false );
 			wp_safe_redirect(
@@ -2487,6 +2566,22 @@ class AJForms_Admin {
 				$redirect_args['portal-updated'] = 1;
 			}
 
+			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_portal_detail_fields_nonce'], $_POST['detail_field_section'] ) ) {
+			$section = sanitize_key( wp_unslash( $_POST['detail_field_section'] ) );
+			if ( ! in_array( $section, array( 'subscriptions', 'products', 'ledger', 'upcoming' ), true ) ) {
+				return;
+			}
+
+			check_admin_referer( 'ajcore_save_portal_detail_fields_' . $section, 'ajcore_portal_detail_fields_nonce' );
+
+			$fields = isset( $_POST['portal_detail_display_fields'] ) && is_array( $_POST['portal_detail_display_fields'] ) ? wp_unslash( $_POST['portal_detail_display_fields'] ) : array();
+			update_option( 'ajcore_portal_detail_display_fields_' . $section, $this->sanitize_portal_display_fields( $fields ), false );
+
+			$redirect_args['portal-fields-updated'] = 1;
 			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
 			exit;
 		}
@@ -3624,6 +3719,9 @@ class AJForms_Admin {
 		<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 			<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 		<?php endif; ?>
+		<?php if ( isset( $_GET['portal-fields-updated'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Display fields saved.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
 
 		<div class="ajcore-customer-head">
 			<div>
@@ -3683,22 +3781,54 @@ class AJForms_Admin {
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'Active Subscriptions', 'ajforms' ); ?></h3>
-				<?php $this->render_portal_customer_subscriptions_table( $detail['active_subs'] ); ?>
+				<?php
+				$this->render_portal_dataset_section(
+					'subscriptions',
+					__( 'Active Subscriptions', 'ajforms' ),
+					$detail['active_subs'],
+					array( 'stripe_subscription_id', 'status', 'current_period_end', 'cancel_at_period_end' ),
+					__( 'No matching subscriptions.', 'ajforms' )
+				);
+				?>
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'Purchased Products / Services', 'ajforms' ); ?></h3>
-				<?php $this->render_portal_customer_products_table( $detail['purchased_products'] ); ?>
+				<?php
+				$this->render_portal_dataset_section(
+					'products',
+					__( 'Purchased Products / Services', 'ajforms' ),
+					$detail['purchased_products'],
+					array( 'name', 'source', 'stripe_price_id', 'stripe_product_id' ),
+					__( 'No purchased products or services found in the synced cache.', 'ajforms' )
+				);
+				?>
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'Recent Invoices / Charges Ledger', 'ajforms' ); ?></h3>
-				<?php $this->render_portal_customer_ledger_table( $detail['ledger'] ); ?>
+				<?php
+				$this->render_portal_dataset_section(
+					'ledger',
+					__( 'Recent Invoices / Charges Ledger', 'ajforms' ),
+					$detail['ledger'],
+					array( 'ledger_date', 'description', 'amount', 'currency', 'status', 'invoice_id', 'charge_id' ),
+					__( 'No recent ledger records.', 'ajforms' )
+				);
+				?>
 			</div>
 
 			<div class="ajcore-customer-card">
 				<h3><?php esc_html_e( 'Upcoming Payment', 'ajforms' ); ?></h3>
-				<?php $this->render_portal_customer_subscriptions_table( $detail['upcoming_payments'] ); ?>
+				<?php
+				$this->render_portal_dataset_section(
+					'upcoming',
+					__( 'Upcoming Payment', 'ajforms' ),
+					$detail['upcoming_payments'],
+					array( 'stripe_subscription_id', 'status', 'current_period_end' ),
+					__( 'No upcoming payment within the next 30 days.', 'ajforms' )
+				);
+				?>
 			</div>
 
 			<div class="ajcore-customer-card">
@@ -3716,6 +3846,7 @@ class AJForms_Admin {
 				<p><?php esc_html_e( 'No portal task records are synced yet.', 'ajforms' ); ?></p>
 			</div>
 		</div>
+		<?php $this->render_portal_field_picker_script(); ?>
 		<?php
 	}
 
@@ -3741,6 +3872,218 @@ class AJForms_Admin {
 						<td><?php echo esc_html( $subscription->status ); ?></td>
 						<td><?php echo esc_html( $this->format_portal_date( $subscription->current_period_end ) ); ?></td>
 						<td><?php echo ! empty( $subscription->cancel_at_period_end ) ? esc_html__( 'Yes', 'ajforms' ) : esc_html__( 'No', 'ajforms' ); ?></td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+		<?php
+	}
+
+	private function render_portal_field_display_picker( $args ) {
+		$section       = isset( $args['section'] ) ? sanitize_key( $args['section'] ) : '';
+		$title         = isset( $args['title'] ) ? sanitize_text_field( $args['title'] ) : __( 'Fields to Display', 'ajforms' );
+		$available     = isset( $args['available'] ) && is_array( $args['available'] ) ? $args['available'] : array();
+		$selected      = isset( $args['selected'] ) && is_array( $args['selected'] ) ? $args['selected'] : array();
+		$field_name    = isset( $args['field_name'] ) ? sanitize_key( $args['field_name'] ) : 'portal_detail_display_fields';
+		$nonce_action  = isset( $args['nonce_action'] ) ? sanitize_text_field( $args['nonce_action'] ) : '';
+		$nonce_name    = isset( $args['nonce_name'] ) ? sanitize_key( $args['nonce_name'] ) : '';
+		$hidden_inputs = isset( $args['hidden_inputs'] ) && is_array( $args['hidden_inputs'] ) ? $args['hidden_inputs'] : array();
+
+		if ( empty( $available ) || '' === $nonce_action || '' === $nonce_name ) {
+			return;
+		}
+
+		$selected = array_values( array_intersect( $selected, $available ) );
+		$unselected = array_values( array_diff( $available, $selected ) );
+		?>
+		<details class="ajcore-field-picker" data-ajcore-field-picker>
+			<summary><strong><?php echo esc_html( $title ); ?></strong></summary>
+			<form method="post">
+				<?php wp_nonce_field( $nonce_action, $nonce_name ); ?>
+				<?php foreach ( $hidden_inputs as $name => $value ) : ?>
+					<input type="hidden" name="<?php echo esc_attr( $name ); ?>" value="<?php echo esc_attr( $value ); ?>">
+				<?php endforeach; ?>
+				<p><?php esc_html_e( 'Select fields, then drag the selected display columns into the order you want.', 'ajforms' ); ?></p>
+				<p>
+					<button type="button" class="button" data-ajcore-select-all-fields><?php esc_html_e( 'Select All', 'ajforms' ); ?></button>
+					<button type="button" class="button" data-ajcore-clear-fields><?php esc_html_e( 'Clear', 'ajforms' ); ?></button>
+				</p>
+				<h4><?php esc_html_e( 'Display Columns', 'ajforms' ); ?></h4>
+				<ul class="ajcore-selected-field-list" data-ajcore-selected-fields style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 16px;min-height:44px;padding:8px;border:1px dashed #c3c4c7;background:#f6f7f7;">
+					<?php foreach ( $selected as $field ) : ?>
+						<li draggable="true" style="display:flex;gap:6px;align-items:center;border:1px solid #dcdcde;border-radius:999px;padding:6px 10px;background:#fff;cursor:grab;">
+							<label>
+								<input type="checkbox" name="<?php echo esc_attr( $field_name ); ?>[]" value="<?php echo esc_attr( $field ); ?>" checked>
+								<code><?php echo esc_html( $field ); ?></code>
+							</label>
+						</li>
+					<?php endforeach; ?>
+				</ul>
+				<h4><?php esc_html_e( 'Available Fields', 'ajforms' ); ?></h4>
+				<ul class="ajcore-available-field-list" data-ajcore-available-fields style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 14px;margin:10px 0 16px;">
+					<?php foreach ( $unselected as $field ) : ?>
+						<li style="display:flex;gap:6px;align-items:center;border:1px solid #dcdcde;border-radius:6px;padding:6px;background:#fff;">
+							<label>
+								<input type="checkbox" name="<?php echo esc_attr( $field_name ); ?>[]" value="<?php echo esc_attr( $field ); ?>">
+								<code><?php echo esc_html( $field ); ?></code>
+							</label>
+						</li>
+					<?php endforeach; ?>
+				</ul>
+				<?php submit_button( __( 'Save Display Fields', 'ajforms' ), 'secondary', 'submit', false ); ?>
+			</form>
+		</details>
+		<?php
+	}
+
+	private function render_portal_field_picker_script() {
+		static $printed = false;
+		if ( $printed ) {
+			return;
+		}
+		$printed = true;
+		?>
+		<script>
+		(function() {
+			function moveToSelected(item, picker) {
+				const selected = picker.querySelector('[data-ajcore-selected-fields]');
+				const input = item ? item.querySelector('input[type="checkbox"]') : null;
+				if (!item || !selected || !input) {
+					return;
+				}
+				input.checked = true;
+				item.draggable = true;
+				item.style.borderRadius = '999px';
+				item.style.cursor = 'grab';
+				selected.appendChild(item);
+			}
+
+			function moveToAvailable(item, picker) {
+				const available = picker.querySelector('[data-ajcore-available-fields]');
+				const input = item ? item.querySelector('input[type="checkbox"]') : null;
+				if (!item || !available || !input) {
+					return;
+				}
+				input.checked = false;
+				item.draggable = false;
+				item.style.borderRadius = '6px';
+				item.style.cursor = '';
+				available.appendChild(item);
+			}
+
+			document.querySelectorAll('[data-ajcore-field-picker]').forEach(function(picker) {
+				const selected = picker.querySelector('[data-ajcore-selected-fields]');
+				const available = picker.querySelector('[data-ajcore-available-fields]');
+				let dragged = null;
+
+				picker.addEventListener('change', function(event) {
+					if (!event.target.matches('input[type="checkbox"]')) {
+						return;
+					}
+					const item = event.target.closest('li');
+					if (event.target.checked) {
+						moveToSelected(item, picker);
+					} else {
+						moveToAvailable(item, picker);
+					}
+				});
+
+				const selectAll = picker.querySelector('[data-ajcore-select-all-fields]');
+				if (selectAll) {
+					selectAll.addEventListener('click', function() {
+						Array.from(picker.querySelectorAll('li')).forEach(function(item) {
+							moveToSelected(item, picker);
+						});
+					});
+				}
+
+				const clear = picker.querySelector('[data-ajcore-clear-fields]');
+				if (clear) {
+					clear.addEventListener('click', function() {
+						Array.from(picker.querySelectorAll('li')).forEach(function(item) {
+							moveToAvailable(item, picker);
+						});
+					});
+				}
+
+				if (!selected) {
+					return;
+				}
+
+				selected.addEventListener('dragstart', function(event) {
+					dragged = event.target.closest('li');
+					if (dragged) {
+						event.dataTransfer.effectAllowed = 'move';
+					}
+				});
+
+				selected.addEventListener('dragover', function(event) {
+					const target = event.target.closest('li');
+					if (!dragged || !target || dragged === target || !selected.contains(target)) {
+						return;
+					}
+					event.preventDefault();
+					const rect = target.getBoundingClientRect();
+					const after = event.clientX > rect.left + rect.width / 2 || event.clientY > rect.top + rect.height / 2;
+					selected.insertBefore(dragged, after ? target.nextSibling : target);
+				});
+
+				selected.addEventListener('dragend', function() {
+					dragged = null;
+				});
+			});
+		})();
+		</script>
+		<?php
+	}
+
+	private function render_portal_dataset_section( $section, $title, $rows, $defaults, $empty_message ) {
+		$section    = sanitize_key( $section );
+		$available  = $this->discover_portal_row_scalar_fields( $rows );
+		$selected   = array_values( array_intersect( $this->get_portal_detail_display_fields( $section, $defaults ), $available ) );
+		if ( empty( $selected ) && ! empty( $available ) ) {
+			$selected = array_slice( array_values( array_intersect( $defaults, $available ) ), 0, 8 );
+		}
+
+		$this->render_portal_field_display_picker(
+			array(
+				'section'       => $section,
+				'title'         => sprintf( __( '%s Fields to Display', 'ajforms' ), $title ),
+				'available'     => $available,
+				'selected'      => $selected,
+				'field_name'    => 'portal_detail_display_fields',
+				'nonce_action'  => 'ajcore_save_portal_detail_fields_' . $section,
+				'nonce_name'    => 'ajcore_portal_detail_fields_nonce',
+				'hidden_inputs' => array(
+					'detail_field_section' => $section,
+				),
+			)
+		);
+
+		if ( empty( $rows ) ) {
+			echo '<p>' . esc_html( $empty_message ) . '</p>';
+			return;
+		}
+
+		if ( empty( $selected ) ) {
+			echo '<p>' . esc_html__( 'No display fields selected.', 'ajforms' ) . '</p>';
+			return;
+		}
+		?>
+		<table class="widefat striped">
+			<thead>
+				<tr>
+					<?php foreach ( $selected as $field ) : ?>
+						<th><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></th>
+					<?php endforeach; ?>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $rows as $row ) : ?>
+					<tr>
+						<?php foreach ( $selected as $field ) : ?>
+							<td><?php echo esc_html( $this->get_portal_row_display_value( $row, $field ) ); ?></td>
+						<?php endforeach; ?>
 					</tr>
 				<?php endforeach; ?>
 			</tbody>
@@ -3937,36 +4280,19 @@ class AJForms_Admin {
 			</div>
 
 			<?php if ( ! empty( $available_fields ) ) : ?>
-				<details class="ajcore-customer-field-picker">
-					<summary><strong><?php esc_html_e( 'Customer Fields to Display', 'ajforms' ); ?></strong></summary>
-					<form method="post">
-						<?php wp_nonce_field( 'ajcore_save_portal_customer_fields', 'ajcore_portal_customer_fields_nonce' ); ?>
-						<p><?php esc_html_e( 'AJ Core discovered these scalar fields from stored Stripe raw_data. Select fields and drag or use Move Up / Move Down to control column order.', 'ajforms' ); ?></p>
-						<p>
-							<button type="button" class="button" data-ajcore-select-all-fields><?php esc_html_e( 'Select All', 'ajforms' ); ?></button>
-							<button type="button" class="button" data-ajcore-clear-fields><?php esc_html_e( 'Clear', 'ajforms' ); ?></button>
-						</p>
-						<ul class="ajcore-field-order-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px 14px;margin:12px 0;">
-							<?php
-							$ordered_fields = array_values( array_unique( array_merge( $display_fields, $available_fields ) ) );
-							foreach ( $ordered_fields as $field ) :
-								if ( ! in_array( $field, $available_fields, true ) ) {
-									continue;
-								}
-								?>
-								<li draggable="true" style="display:flex;gap:6px;align-items:center;border:1px solid #dcdcde;border-radius:6px;padding:6px;background:#fff;">
-									<label style="flex:1;">
-										<input type="checkbox" name="portal_customer_display_fields[]" value="<?php echo esc_attr( $field ); ?>" <?php checked( in_array( $field, $display_fields, true ) ); ?>>
-										<code><?php echo esc_html( $field ); ?></code>
-									</label>
-									<button type="button" class="button button-small" data-ajcore-field-up><?php esc_html_e( 'Up', 'ajforms' ); ?></button>
-									<button type="button" class="button button-small" data-ajcore-field-down><?php esc_html_e( 'Down', 'ajforms' ); ?></button>
-								</li>
-							<?php endforeach; ?>
-						</ul>
-						<?php submit_button( __( 'Save Display Fields', 'ajforms' ), 'secondary', 'submit', false ); ?>
-					</form>
-				</details>
+				<?php
+				$this->render_portal_field_display_picker(
+					array(
+						'section'      => 'customers',
+						'title'        => __( 'Customer Fields to Display', 'ajforms' ),
+						'available'    => $available_fields,
+						'selected'     => $display_fields,
+						'field_name'   => 'portal_customer_display_fields',
+						'nonce_action' => 'ajcore_save_portal_customer_fields',
+						'nonce_name'   => 'ajcore_portal_customer_fields_nonce',
+					)
+				);
+				?>
 			<?php endif; ?>
 
 			<table class="widefat striped">
@@ -4057,83 +4383,7 @@ class AJForms_Admin {
 					<?php endif; ?>
 				</tbody>
 			</table>
-			<script>
-			(function() {
-				const picker = document.querySelector('.ajcore-customer-field-picker');
-				if (!picker) {
-					return;
-				}
-
-				const list = picker.querySelector('.ajcore-field-order-list');
-				const selectAll = picker.querySelector('[data-ajcore-select-all-fields]');
-				const clear = picker.querySelector('[data-ajcore-clear-fields]');
-				let dragged = null;
-
-				function moveItem(item, direction) {
-					if (!item || !list) {
-						return;
-					}
-
-					if (direction < 0 && item.previousElementSibling) {
-						list.insertBefore(item, item.previousElementSibling);
-					} else if (direction > 0 && item.nextElementSibling) {
-						list.insertBefore(item.nextElementSibling, item);
-					}
-				}
-
-				if (selectAll) {
-					selectAll.addEventListener('click', function() {
-						picker.querySelectorAll('input[type="checkbox"]').forEach((input) => {
-							input.checked = true;
-						});
-					});
-				}
-
-				if (clear) {
-					clear.addEventListener('click', function() {
-						picker.querySelectorAll('input[type="checkbox"]').forEach((input) => {
-							input.checked = false;
-						});
-					});
-				}
-
-				picker.addEventListener('click', function(event) {
-					if (event.target.matches('[data-ajcore-field-up]')) {
-						moveItem(event.target.closest('li'), -1);
-					}
-					if (event.target.matches('[data-ajcore-field-down]')) {
-						moveItem(event.target.closest('li'), 1);
-					}
-				});
-
-				if (!list) {
-					return;
-				}
-
-				list.addEventListener('dragstart', function(event) {
-					dragged = event.target.closest('li');
-					if (dragged) {
-						event.dataTransfer.effectAllowed = 'move';
-					}
-				});
-
-				list.addEventListener('dragover', function(event) {
-					const target = event.target.closest('li');
-					if (!dragged || !target || dragged === target) {
-						return;
-					}
-
-					event.preventDefault();
-					const rect = target.getBoundingClientRect();
-					const after = event.clientY > rect.top + rect.height / 2;
-					list.insertBefore(dragged, after ? target.nextSibling : target);
-				});
-
-				list.addEventListener('dragend', function() {
-					dragged = null;
-				});
-			})();
-			</script>
+			<?php $this->render_portal_field_picker_script(); ?>
 		</div>
 		<?php
 	}
