@@ -184,6 +184,13 @@ class AJForms {
 				'url'     => '',
 				'enabled' => true,
 			),
+			array(
+				'id'      => 'profile',
+				'label'   => __( 'Profile', 'ajforms' ),
+				'type'    => 'built_in',
+				'url'     => '',
+				'enabled' => true,
+			),
 		);
 
 		$normalized = array();
@@ -242,6 +249,50 @@ class AJForms {
 					<?php endforeach; ?>
 				</div>
 			<?php endif; ?>
+		</section>
+		<?php
+		return ob_get_clean();
+	}
+
+	private function render_customer_portal_profile_tab() {
+		$customer = $this->get_current_user_portal_customer();
+
+		if ( ! $customer ) {
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Profile', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+		}
+
+		$business_name    = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
+		$business_address = $this->get_customer_business_address( $customer );
+		$display_name     = $customer->name ? $customer->name : $customer->email;
+
+		ob_start();
+		?>
+		<section class="aj-customer-portal-panel">
+			<h2><?php esc_html_e( 'Profile', 'ajforms' ); ?></h2>
+
+			<div class="aj-portal-profile-block">
+				<div class="aj-portal-profile-main"><?php echo esc_html( $display_name ); ?></div>
+
+				<div class="aj-portal-profile-details">
+					<?php if ( $business_name ) : ?>
+						<div><?php echo esc_html( $business_name ); ?></div>
+					<?php endif; ?>
+					<?php if ( $customer->email ) : ?>
+						<div><a href="<?php echo esc_url( 'mailto:' . $customer->email ); ?>"><?php echo esc_html( $customer->email ); ?></a></div>
+					<?php endif; ?>
+					<?php if ( $customer->phone ) : ?>
+						<div><?php echo esc_html( $customer->phone ); ?></div>
+					<?php endif; ?>
+					<?php if ( $business_address ) : ?>
+						<div><?php echo esc_html( $business_address ); ?></div>
+					<?php endif; ?>
+				</div>
+
+				<div class="aj-portal-profile-actions">
+					<a class="button" href="<?php echo esc_url( wp_lostpassword_url( $this->get_customer_portal_url() ) ); ?>"><?php esc_html_e( 'Change Password', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( wp_logout_url( home_url( '/' ) ) ); ?>"><?php esc_html_e( 'Logout', 'ajforms' ); ?></a>
+				</div>
+			</div>
 		</section>
 		<?php
 		return ob_get_clean();
@@ -487,7 +538,7 @@ class AJForms {
 			}
 		);
 		$business_name = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
-		$business_address = $this->get_customer_business_address( $customer );
+		$display_name = $customer->name ? $customer->name : $customer->email;
 		$invoice_url = $this->get_latest_invoice_url( $ledger );
 		$file_library_url = add_query_arg( 'portal_tab', 'file-library', $this->get_customer_portal_url() );
 		$products_url = home_url( '/products/' );
@@ -496,16 +547,7 @@ class AJForms {
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
-			<h2><?php esc_html_e( 'Overview', 'ajforms' ); ?></h2>
-
-			<div class="aj-portal-profile">
-				<div><strong><?php esc_html_e( 'Customer Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $customer->name ? $customer->name : $customer->email ); ?></span></div>
-				<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
-				<div><strong><?php esc_html_e( 'Email Address', 'ajforms' ); ?></strong><span><?php echo esc_html( $customer->email ); ?></span></div>
-				<div><strong><?php esc_html_e( 'Phone Number', 'ajforms' ); ?></strong><span><?php echo esc_html( $customer->phone ? $customer->phone : '-' ); ?></span></div>
-				<div><strong><?php esc_html_e( 'Business Address', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_address ? $business_address : '-' ); ?></span></div>
-				<div><strong><?php esc_html_e( 'Change Password', 'ajforms' ); ?></strong><span><a href="<?php echo esc_url( wp_lostpassword_url( $this->get_customer_portal_url() ) ); ?>"><?php esc_html_e( 'Change Password', 'ajforms' ); ?></a></span></div>
-			</div>
+			<h2><?php echo esc_html( sprintf( __( 'Welcome, %s', 'ajforms' ), $display_name ) ); ?></h2>
 
 			<div class="aj-portal-summary-grid">
 				<div class="aj-portal-summary-card">
@@ -847,6 +889,10 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-profile strong{font-size:13px;color:#52616f}
 				.ajcore-portal-shell .aj-portal-profile span{font-weight:700;color:#1f2937;font-size:14px}
 				.ajcore-portal-shell .aj-portal-profile-compact{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+				.ajcore-portal-shell .aj-portal-profile-block{border:1px solid #dfe6ee;border-radius:12px;background:#fff;padding:22px;max-width:720px}
+				.ajcore-portal-shell .aj-portal-profile-main{font-size:22px;line-height:1.25;font-weight:800;color:#111827;margin:0 0 14px}
+				.ajcore-portal-shell .aj-portal-profile-details{display:grid;gap:8px;color:#1f2937;font-size:15px;line-height:1.45;margin:0 0 18px}
+				.ajcore-portal-shell .aj-portal-profile-actions{display:flex;gap:10px;flex-wrap:wrap}
 				.ajcore-portal-shell .aj-portal-table-wrap{overflow:auto;margin:0 0 20px}
 				.ajcore-portal-shell .aj-portal-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #dfe6ee;font-size:14px}
 				.ajcore-portal-shell .aj-portal-table th,.ajcore-portal-shell .aj-portal-table td{padding:10px 12px;border-bottom:1px solid #dfe6ee;text-align:left;vertical-align:top}
@@ -879,6 +925,8 @@ class AJForms {
 				echo $this->render_customer_portal_overview_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'file-library' === $active_tab ) {
 				echo $this->render_customer_portal_file_library_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			} elseif ( 'profile' === $active_tab ) {
+				echo $this->render_customer_portal_profile_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
 			?>
 		</div>
