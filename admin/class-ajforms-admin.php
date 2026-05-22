@@ -468,6 +468,8 @@ class AJForms_Admin {
 			'service_period_start' => '',
 			'service_period_end'   => '',
 			'service_period'       => '',
+			'invoice_pdf'          => ! empty( $invoice['invoice_pdf'] ) ? esc_url_raw( (string) $invoice['invoice_pdf'] ) : '',
+			'hosted_invoice_url'   => ! empty( $invoice['hosted_invoice_url'] ) ? esc_url_raw( (string) $invoice['hosted_invoice_url'] ) : '',
 		);
 
 		$lines = ! empty( $invoice['lines']['data'] ) && is_array( $invoice['lines']['data'] ) ? $invoice['lines']['data'] : array();
