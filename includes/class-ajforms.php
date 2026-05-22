@@ -828,7 +828,7 @@ class AJForms {
 		?>
 		<div class="ajcore-portal-shell">
 			<style>
-				.ajcore-portal-shell{max-width:1150px;margin:32px auto 0;padding:0 24px}
+				.ajcore-portal-shell{max-width:1150px;margin:0 auto;padding:0 24px}
 				.ajcore-portal-shell h1{margin:0 0 18px;padding:0;font-size:28px;line-height:1.2}
 				.ajcore-portal-shell h2{margin:0 0 24px;padding:0;font-size:24px;line-height:1.3}
 				.ajcore-portal-shell h3{margin:28px 0 14px;padding:0;font-size:18px;line-height:1.4}
