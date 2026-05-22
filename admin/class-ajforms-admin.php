@@ -465,6 +465,8 @@ class AJForms_Admin {
 	private function get_invoice_line_summary( $invoice ) {
 		$summary = array(
 			'description'          => '',
+			'invoice_number'       => ! empty( $invoice['number'] ) ? sanitize_text_field( (string) $invoice['number'] ) : '',
+			'subscription_id'      => ! empty( $invoice['subscription'] ) ? sanitize_text_field( (string) $invoice['subscription'] ) : '',
 			'service_period_start' => '',
 			'service_period_end'   => '',
 			'service_period'       => '',
@@ -480,6 +482,10 @@ class AJForms_Admin {
 
 			if ( '' === $summary['description'] && ! empty( $line['description'] ) ) {
 				$summary['description'] = sanitize_text_field( (string) $line['description'] );
+			}
+
+			if ( '' === $summary['subscription_id'] && ! empty( $line['subscription'] ) ) {
+				$summary['subscription_id'] = sanitize_text_field( (string) $line['subscription'] );
 			}
 
 			if ( ! empty( $line['period']['start'] ) && ! empty( $line['period']['end'] ) ) {
@@ -712,6 +718,7 @@ class AJForms_Admin {
 
 			$currency = isset( $invoice['currency'] ) ? strtolower( sanitize_key( $invoice['currency'] ) ) : 'usd';
 			$line_summary = $this->get_invoice_line_summary( $invoice );
+			$invoice_amount = isset( $invoice['total'] ) ? $invoice['total'] : ( isset( $invoice['amount_paid'] ) ? $invoice['amount_paid'] : ( isset( $invoice['amount_due'] ) ? $invoice['amount_due'] : 0 ) );
 			$data = array(
 				'stripe_object_id'   => sanitize_text_field( (string) $invoice['id'] ),
 				'object_type'        => 'invoice',
@@ -720,7 +727,7 @@ class AJForms_Admin {
 				'payment_intent_id'  => ! empty( $invoice['payment_intent'] ) ? sanitize_text_field( (string) $invoice['payment_intent'] ) : '',
 				'charge_id'          => ! empty( $invoice['charge'] ) ? sanitize_text_field( (string) $invoice['charge'] ) : '',
 				'description'        => ! empty( $invoice['description'] ) ? sanitize_text_field( (string) $invoice['description'] ) : ( ! empty( $line_summary['description'] ) ? $line_summary['description'] : sprintf( __( 'Invoice %s', 'ajforms' ), $invoice['id'] ) ),
-				'amount'             => $this->stripe_amount_to_decimal( isset( $invoice['amount_due'] ) ? $invoice['amount_due'] : 0, $currency ),
+				'amount'             => $this->stripe_amount_to_decimal( $invoice_amount, $currency ),
 				'currency'           => $currency,
 				'status'             => ! empty( $invoice['status'] ) ? sanitize_key( (string) $invoice['status'] ) : '',
 				'transaction_date'   => ! empty( $invoice['created'] ) ? $this->stripe_timestamp_to_mysql( $invoice['created'] ) : null,

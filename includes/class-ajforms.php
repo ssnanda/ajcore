@@ -306,18 +306,60 @@ class AJForms {
 		return isset( $metadata[ $key ] ) && is_scalar( $metadata[ $key ] ) ? sanitize_text_field( (string) $metadata[ $key ] ) : '';
 	}
 
-	private function get_subscription_service_name( $subscription ) {
+	private function clean_stripe_line_service_name( $description ) {
+		$description = sanitize_text_field( (string) $description );
+		$description = preg_replace( '/^\s*\d+\s*(?:x|\x{00D7})\s*/iu', '', $description );
+		$description = preg_replace( '/\s*\(at\s+.*?\)\s*$/i', '', $description );
+
+		return trim( $description );
+	}
+
+	private function get_subscription_ledger_entry( $subscription, $ledger ) {
+		$subscription_id = isset( $subscription->stripe_subscription_id ) ? sanitize_text_field( (string) $subscription->stripe_subscription_id ) : '';
+		$fallback        = null;
+
+		foreach ( $ledger as $entry ) {
+			$metadata_subscription_id = $this->get_ledger_metadata_value( $entry, 'subscription_id' );
+			if ( $subscription_id && $metadata_subscription_id && $subscription_id === $metadata_subscription_id ) {
+				return $entry;
+			}
+
+			if ( null === $fallback && ( $this->get_ledger_metadata_value( $entry, 'description' ) || $this->get_ledger_metadata_value( $entry, 'service_period' ) ) ) {
+				$fallback = $entry;
+			}
+		}
+
+		return $fallback;
+	}
+
+	private function get_subscription_service_name( $subscription, $ledger_entry = null ) {
+		if ( $ledger_entry ) {
+			$description = $this->get_ledger_metadata_value( $ledger_entry, 'description' );
+			if ( ! $description && ! empty( $ledger_entry->description ) ) {
+				$description = $ledger_entry->description;
+			}
+
+			$service_name = $this->clean_stripe_line_service_name( $description );
+			if ( $service_name ) {
+				return $service_name;
+			}
+		}
+
 		$items = $this->decode_portal_json( isset( $subscription->items ) ? $subscription->items : '' );
 		foreach ( $items as $item ) {
+			if ( ! empty( $item['description'] ) ) {
+				$service_name = $this->clean_stripe_line_service_name( $item['description'] );
+				if ( $service_name ) {
+					return $service_name;
+				}
+			}
+
 			$price = isset( $item['price'] ) && is_array( $item['price'] ) ? $item['price'] : array();
 			if ( ! empty( $price['nickname'] ) ) {
 				return sanitize_text_field( (string) $price['nickname'] );
 			}
-			if ( ! empty( $price['product'] ) && is_string( $price['product'] ) ) {
-				return sanitize_text_field( (string) $price['product'] );
-			}
-			if ( ! empty( $item['description'] ) ) {
-				return sanitize_text_field( (string) $item['description'] );
+			if ( ! empty( $price['product'] ) && is_array( $price['product'] ) && ! empty( $price['product']['name'] ) ) {
+				return sanitize_text_field( (string) $price['product']['name'] );
 			}
 		}
 
@@ -375,7 +417,14 @@ class AJForms {
 		return $this->format_portal_address( $address );
 	}
 
-	private function get_subscription_service_period( $subscription ) {
+	private function get_subscription_service_period( $subscription, $ledger_entry = null ) {
+		if ( $ledger_entry ) {
+			$service_period = $this->get_ledger_metadata_value( $ledger_entry, 'service_period' );
+			if ( $service_period ) {
+				return $service_period;
+			}
+		}
+
 		$raw   = $this->decode_portal_json( isset( $subscription->raw_data ) ? $subscription->raw_data : '' );
 		$start = ! empty( $raw['current_period_start'] ) ? (int) $raw['current_period_start'] : 0;
 		$end   = ! empty( $raw['current_period_end'] ) ? (int) $raw['current_period_end'] : 0;
@@ -385,6 +434,17 @@ class AJForms {
 		}
 
 		return ! empty( $subscription->current_period_end ) ? __( 'Through ', 'ajforms' ) . $this->format_portal_date( $subscription->current_period_end ) : '-';
+	}
+
+	private function get_subscription_next_billing_date( $subscription, $ledger_entry = null ) {
+		if ( $ledger_entry ) {
+			$service_period_end = $this->get_ledger_metadata_value( $ledger_entry, 'service_period_end' );
+			if ( $service_period_end ) {
+				return $this->format_portal_date( $service_period_end );
+			}
+		}
+
+		return ! empty( $subscription->current_period_end ) ? $this->format_portal_date( $subscription->current_period_end ) : '-';
 	}
 
 	private function render_customer_portal_overview_tab() {
@@ -475,12 +535,13 @@ class AJForms {
 						<thead><tr><th><?php esc_html_e( 'Service Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Business Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th><th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
 							<?php foreach ( $subscriptions as $subscription ) : ?>
+								<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
 								<tr>
-									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription ) ); ?></td>
+									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
 									<td><?php echo esc_html( $business_name ? $business_name : '-' ); ?></td>
 									<td><?php echo esc_html( ucfirst( $subscription->status ) ); ?></td>
-									<td><?php echo esc_html( $this->get_subscription_service_period( $subscription ) ); ?></td>
-									<td><?php echo esc_html( $subscription->current_period_end ? $this->format_portal_date( $subscription->current_period_end ) : '-' ); ?></td>
+									<td><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></td>
+									<td><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
 									<td><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
 								</tr>
 							<?php endforeach; ?>
@@ -499,6 +560,7 @@ class AJForms {
 						<tbody>
 							<?php foreach ( $ledger as $entry ) : ?>
 								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) : $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' ); ?>
+								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'Download', 'ajforms' ); ?>
 								<tr>
 									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
 									<td><?php echo esc_html( $entry->description ); ?></td>
@@ -506,7 +568,7 @@ class AJForms {
 									<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
 									<td>
 										<?php if ( $entry_invoice_url ) : ?>
-											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Download', 'ajforms' ); ?></a>
+											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
 										<?php else : ?>
 											<?php esc_html_e( '-', 'ajforms' ); ?>
 										<?php endif; ?>
@@ -527,9 +589,10 @@ class AJForms {
 						<thead><tr><th><?php esc_html_e( 'Service Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
 							<?php foreach ( $upcoming as $subscription ) : ?>
+								<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
 								<tr>
-									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription ) ); ?></td>
-									<td><?php echo esc_html( $this->format_portal_date( $subscription->current_period_end ) ); ?></td>
+									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
+									<td><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
 									<td><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
 								</tr>
 							<?php endforeach; ?>
