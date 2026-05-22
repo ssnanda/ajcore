@@ -462,6 +462,41 @@ class AJForms_Admin {
 		return $this->get_guest_portal_customer_id( $email );
 	}
 
+	private function get_invoice_line_summary( $invoice ) {
+		$summary = array(
+			'description'          => '',
+			'service_period_start' => '',
+			'service_period_end'   => '',
+			'service_period'       => '',
+		);
+
+		$lines = ! empty( $invoice['lines']['data'] ) && is_array( $invoice['lines']['data'] ) ? $invoice['lines']['data'] : array();
+		foreach ( $lines as $line ) {
+			if ( ! is_array( $line ) ) {
+				continue;
+			}
+
+			if ( '' === $summary['description'] && ! empty( $line['description'] ) ) {
+				$summary['description'] = sanitize_text_field( (string) $line['description'] );
+			}
+
+			if ( ! empty( $line['period']['start'] ) && ! empty( $line['period']['end'] ) ) {
+				$start_timestamp = absint( $line['period']['start'] );
+				$end_timestamp   = absint( $line['period']['end'] );
+				$summary['service_period_start'] = $this->stripe_timestamp_to_mysql( $start_timestamp );
+				$summary['service_period_end']   = $this->stripe_timestamp_to_mysql( $end_timestamp );
+				$summary['service_period']       = sprintf(
+					'%1$s - %2$s',
+					date_i18n( get_option( 'date_format' ), $start_timestamp ),
+					date_i18n( get_option( 'date_format' ), $end_timestamp )
+				);
+				break;
+			}
+		}
+
+		return $summary;
+	}
+
 	private function upsert_guest_portal_customer_from_payment( $payment, $source ) {
 		$customer_id = $this->get_payment_customer_id( $payment );
 		if ( '' === $customer_id || 0 === strpos( $customer_id, 'cus_' ) ) {
@@ -674,6 +709,7 @@ class AJForms_Admin {
 			}
 
 			$currency = isset( $invoice['currency'] ) ? strtolower( sanitize_key( $invoice['currency'] ) ) : 'usd';
+			$line_summary = $this->get_invoice_line_summary( $invoice );
 			$data = array(
 				'stripe_object_id'   => sanitize_text_field( (string) $invoice['id'] ),
 				'object_type'        => 'invoice',
@@ -681,7 +717,7 @@ class AJForms_Admin {
 				'invoice_id'         => sanitize_text_field( (string) $invoice['id'] ),
 				'payment_intent_id'  => ! empty( $invoice['payment_intent'] ) ? sanitize_text_field( (string) $invoice['payment_intent'] ) : '',
 				'charge_id'          => ! empty( $invoice['charge'] ) ? sanitize_text_field( (string) $invoice['charge'] ) : '',
-				'description'        => ! empty( $invoice['description'] ) ? sanitize_text_field( (string) $invoice['description'] ) : sprintf( __( 'Invoice %s', 'ajforms' ), $invoice['id'] ),
+				'description'        => ! empty( $invoice['description'] ) ? sanitize_text_field( (string) $invoice['description'] ) : ( ! empty( $line_summary['description'] ) ? $line_summary['description'] : sprintf( __( 'Invoice %s', 'ajforms' ), $invoice['id'] ) ),
 				'amount'             => $this->stripe_amount_to_decimal( isset( $invoice['amount_due'] ) ? $invoice['amount_due'] : 0, $currency ),
 				'currency'           => $currency,
 				'status'             => ! empty( $invoice['status'] ) ? sanitize_key( (string) $invoice['status'] ) : '',
@@ -706,7 +742,7 @@ class AJForms_Admin {
 					'invoice_id'         => $data['invoice_id'],
 					'payment_intent_id'  => $data['payment_intent_id'],
 					'charge_id'          => $data['charge_id'],
-					'metadata'           => '',
+					'metadata'           => wp_json_encode( $line_summary ),
 					'created_at'         => current_time( 'mysql' ),
 				),
 				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
@@ -1280,6 +1316,13 @@ class AJForms_Admin {
 					$fields = array_merge( $fields, $this->flatten_scalar_field_paths( $raw ) );
 				}
 			}
+
+			if ( ! empty( $data['metadata'] ) ) {
+				$metadata = json_decode( (string) $data['metadata'], true );
+				if ( is_array( $metadata ) ) {
+					$fields = array_merge( $fields, $this->flatten_scalar_field_paths( $metadata, 'metadata' ) );
+				}
+			}
 		}
 
 		$fields = array_values( array_unique( $fields ) );
@@ -1361,6 +1404,13 @@ class AJForms_Admin {
 			$raw = json_decode( (string) $data['raw_data'], true );
 			if ( is_array( $raw ) ) {
 				$value = $this->get_nested_raw_value( $raw, $field );
+			}
+		}
+
+		if ( null === $value && 0 === strpos( (string) $field, 'metadata.' ) && ! empty( $data['metadata'] ) ) {
+			$metadata = json_decode( (string) $data['metadata'], true );
+			if ( is_array( $metadata ) ) {
+				$value = $this->get_nested_raw_value( array( 'metadata' => $metadata ), $field );
 			}
 		}
 
@@ -3812,7 +3862,7 @@ class AJForms_Admin {
 					'ledger',
 					__( 'Recent Invoices / Charges Ledger', 'ajforms' ),
 					$detail['ledger'],
-					array( 'ledger_date', 'description', 'amount', 'currency', 'status', 'invoice_id', 'charge_id' ),
+					array( 'ledger_date', 'description', 'metadata.service_period', 'amount', 'currency', 'status', 'invoice_id', 'charge_id' ),
 					__( 'No recent ledger records.', 'ajforms' )
 				);
 				?>
