@@ -946,6 +946,32 @@ class AJForms_Admin {
 		return true;
 	}
 
+	private function send_portal_user_password_reset( $user_id ) {
+		$user = get_userdata( absint( $user_id ) );
+		if ( ! $user ) {
+			return new WP_Error( 'missing_user', __( 'WordPress user was not found.', 'ajforms' ) );
+		}
+
+		$key = get_password_reset_key( $user );
+		if ( is_wp_error( $key ) ) {
+			return $key;
+		}
+
+		$reset_url = network_site_url(
+			'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user->user_login ),
+			'login'
+		);
+		$subject = sprintf( __( 'Password reset for %s', 'ajforms' ), wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
+		$message = sprintf(
+			/* translators: 1: user display name, 2: password reset URL */
+			__( "Hi %1\$s,\n\nUse this link to set a new password:\n\n%2\$s", 'ajforms' ),
+			$user->display_name,
+			$reset_url
+		);
+
+		return wp_mail( $user->user_email, $subject, $message );
+	}
+
 	private function relink_stripe_customer_to_user_email( $stripe_customer_id, $email ) {
 		global $wpdb;
 
@@ -2261,6 +2287,42 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_portal_user_action_nonce'], $_POST['stripe_customer_id'], $_POST['portal_user_action'] ) ) {
+			$stripe_customer_id = sanitize_text_field( wp_unslash( $_POST['stripe_customer_id'] ) );
+			check_admin_referer( 'ajcore_portal_user_action_' . $stripe_customer_id, 'ajcore_portal_user_action_nonce' );
+
+			$action = sanitize_key( wp_unslash( $_POST['portal_user_action'] ) );
+			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
+
+			if ( 'disable' === $action ) {
+				$result = $this->disable_stripe_customer_portal_access( $stripe_customer_id );
+				if ( is_wp_error( $result ) ) {
+					$args['portal-error'] = rawurlencode( $result->get_error_message() );
+				} else {
+					$args['portal-user-disabled'] = 1;
+				}
+			} elseif ( 'reset_password' === $action ) {
+				global $wpdb;
+				$user_id = (int) $wpdb->get_var(
+					$wpdb->prepare(
+						"SELECT user_id FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s LIMIT 1",
+						$stripe_customer_id
+					)
+				);
+				$result = $this->send_portal_user_password_reset( $user_id );
+				if ( is_wp_error( $result ) ) {
+					$args['portal-error'] = rawurlencode( $result->get_error_message() );
+				} elseif ( ! $result ) {
+					$args['portal-error'] = rawurlencode( __( 'Password reset email could not be sent.', 'ajforms' ) );
+				} else {
+					$args['portal-password-reset'] = 1;
+				}
+			}
+
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_portal_customer_fields_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_portal_customer_fields', 'ajcore_portal_customer_fields_nonce' );
 
@@ -2278,7 +2340,7 @@ class AJForms_Admin {
 				)
 			);
 
-			update_option( 'ajcore_portal_customer_display_fields', array_slice( $fields, 0, 12 ), false );
+			update_option( 'ajcore_portal_customer_display_fields', $fields, false );
 			wp_safe_redirect(
 				add_query_arg(
 					array(
@@ -3520,6 +3582,7 @@ class AJForms_Admin {
 		$customer     = $detail['customer'];
 		$user         = $detail['user'];
 		$portal_on    = ! empty( $customer->enabled_portal ) && $user;
+		$display_fields = $this->get_portal_customer_display_fields();
 		$sync_url     = wp_nonce_url(
 			add_query_arg(
 				array(
@@ -3589,6 +3652,9 @@ class AJForms_Admin {
 					<dt><?php esc_html_e( 'Mode', 'ajforms' ); ?></dt><dd><?php echo ! empty( $customer->livemode ) ? esc_html__( 'Live', 'ajforms' ) : esc_html__( 'Test', 'ajforms' ); ?></dd>
 					<dt><?php esc_html_e( 'Created', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->created_at ) ); ?></dd>
 					<dt><?php esc_html_e( 'Last Synced', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></dd>
+					<?php foreach ( $display_fields as $field ) : ?>
+						<dt><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></dt><dd><?php echo esc_html( $this->get_portal_customer_display_value( $customer, $field ) ); ?></dd>
+					<?php endforeach; ?>
 				</dl>
 			</div>
 
@@ -3851,6 +3917,12 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled as a portal user.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-user-disabled'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Portal user disabled.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-password-reset'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Password reset email sent.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-fields-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer display fields saved.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -3865,25 +3937,42 @@ class AJForms_Admin {
 			</div>
 
 			<?php if ( ! empty( $available_fields ) ) : ?>
-				<form method="post" class="ajcore-customer-field-picker">
-					<?php wp_nonce_field( 'ajcore_save_portal_customer_fields', 'ajcore_portal_customer_fields_nonce' ); ?>
-					<h3><?php esc_html_e( 'Customer Fields to Display', 'ajforms' ); ?></h3>
-					<p><?php esc_html_e( 'AJ Core discovered these scalar fields from stored Stripe raw_data. Select up to 12 columns for this Portal Users table.', 'ajforms' ); ?></p>
-					<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px 14px;margin:12px 0;">
-						<?php foreach ( $available_fields as $field ) : ?>
-							<label>
-								<input type="checkbox" name="portal_customer_display_fields[]" value="<?php echo esc_attr( $field ); ?>" <?php checked( in_array( $field, $display_fields, true ) ); ?>>
-								<code><?php echo esc_html( $field ); ?></code>
-							</label>
-						<?php endforeach; ?>
-					</div>
-					<?php submit_button( __( 'Save Display Fields', 'ajforms' ), 'secondary', 'submit', false ); ?>
-				</form>
+				<details class="ajcore-customer-field-picker">
+					<summary><strong><?php esc_html_e( 'Customer Fields to Display', 'ajforms' ); ?></strong></summary>
+					<form method="post">
+						<?php wp_nonce_field( 'ajcore_save_portal_customer_fields', 'ajcore_portal_customer_fields_nonce' ); ?>
+						<p><?php esc_html_e( 'AJ Core discovered these scalar fields from stored Stripe raw_data. Select fields and drag or use Move Up / Move Down to control column order.', 'ajforms' ); ?></p>
+						<p>
+							<button type="button" class="button" data-ajcore-select-all-fields><?php esc_html_e( 'Select All', 'ajforms' ); ?></button>
+							<button type="button" class="button" data-ajcore-clear-fields><?php esc_html_e( 'Clear', 'ajforms' ); ?></button>
+						</p>
+						<ul class="ajcore-field-order-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px 14px;margin:12px 0;">
+							<?php
+							$ordered_fields = array_values( array_unique( array_merge( $display_fields, $available_fields ) ) );
+							foreach ( $ordered_fields as $field ) :
+								if ( ! in_array( $field, $available_fields, true ) ) {
+									continue;
+								}
+								?>
+								<li draggable="true" style="display:flex;gap:6px;align-items:center;border:1px solid #dcdcde;border-radius:6px;padding:6px;background:#fff;">
+									<label style="flex:1;">
+										<input type="checkbox" name="portal_customer_display_fields[]" value="<?php echo esc_attr( $field ); ?>" <?php checked( in_array( $field, $display_fields, true ) ); ?>>
+										<code><?php echo esc_html( $field ); ?></code>
+									</label>
+									<button type="button" class="button button-small" data-ajcore-field-up><?php esc_html_e( 'Up', 'ajforms' ); ?></button>
+									<button type="button" class="button button-small" data-ajcore-field-down><?php esc_html_e( 'Down', 'ajforms' ); ?></button>
+								</li>
+							<?php endforeach; ?>
+						</ul>
+						<?php submit_button( __( 'Save Display Fields', 'ajforms' ), 'secondary', 'submit', false ); ?>
+					</form>
+				</details>
 			<?php endif; ?>
 
 			<table class="widefat striped">
 				<thead>
 					<tr>
+						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Stripe Customer', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
 						<?php foreach ( $display_fields as $field ) : ?>
@@ -3892,7 +3981,6 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'WordPress User', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -3910,6 +3998,32 @@ class AJForms_Admin {
 						<?php foreach ( $customers as $customer ) : ?>
 							<?php $user = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : null; ?>
 							<tr>
+								<td>
+									<p style="margin:0 0 6px;">
+										<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
+									</p>
+									<?php if ( empty( $customer->user_id ) ) : ?>
+										<form method="post" style="margin:0 0 6px;">
+											<?php wp_nonce_field( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' ); ?>
+											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+											<input type="hidden" name="redirect_tab" value="portal-users">
+											<button type="submit" class="button"><?php esc_html_e( 'Enable', 'ajforms' ); ?></button>
+										</form>
+									<?php else : ?>
+										<form method="post" style="margin:0 0 6px;">
+											<?php wp_nonce_field( 'ajcore_portal_user_action_' . $customer->stripe_customer_id, 'ajcore_portal_user_action_nonce' ); ?>
+											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+											<input type="hidden" name="portal_user_action" value="disable">
+											<button type="submit" class="button"><?php esc_html_e( 'Disable', 'ajforms' ); ?></button>
+										</form>
+										<form method="post" style="margin:0;">
+											<?php wp_nonce_field( 'ajcore_portal_user_action_' . $customer->stripe_customer_id, 'ajcore_portal_user_action_nonce' ); ?>
+											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+											<input type="hidden" name="portal_user_action" value="reset_password">
+											<button type="submit" class="button"><?php esc_html_e( 'Reset Password', 'ajforms' ); ?></button>
+										</form>
+									<?php endif; ?>
+								</td>
 								<td>
 									<strong><?php echo esc_html( ! empty( $customer->name ) ? $customer->name : __( 'Unnamed customer', 'ajforms' ) ); ?></strong><br>
 									<code><?php echo esc_html( $customer->stripe_customer_id ); ?></code>
@@ -3938,24 +4052,88 @@ class AJForms_Admin {
 									?>
 								</td>
 								<td><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></td>
-								<td>
-									<p style="margin:0 0 6px;">
-										<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View Portal Customer', 'ajforms' ); ?></a>
-									</p>
-									<?php if ( empty( $customer->user_id ) ) : ?>
-										<form method="post" style="margin:0;">
-											<?php wp_nonce_field( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' ); ?>
-											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
-											<input type="hidden" name="redirect_tab" value="portal-users">
-											<button type="submit" class="button"><?php esc_html_e( 'Enable Portal User', 'ajforms' ); ?></button>
-										</form>
-									<?php endif; ?>
-								</td>
 							</tr>
 						<?php endforeach; ?>
 					<?php endif; ?>
 				</tbody>
 			</table>
+			<script>
+			(function() {
+				const picker = document.querySelector('.ajcore-customer-field-picker');
+				if (!picker) {
+					return;
+				}
+
+				const list = picker.querySelector('.ajcore-field-order-list');
+				const selectAll = picker.querySelector('[data-ajcore-select-all-fields]');
+				const clear = picker.querySelector('[data-ajcore-clear-fields]');
+				let dragged = null;
+
+				function moveItem(item, direction) {
+					if (!item || !list) {
+						return;
+					}
+
+					if (direction < 0 && item.previousElementSibling) {
+						list.insertBefore(item, item.previousElementSibling);
+					} else if (direction > 0 && item.nextElementSibling) {
+						list.insertBefore(item.nextElementSibling, item);
+					}
+				}
+
+				if (selectAll) {
+					selectAll.addEventListener('click', function() {
+						picker.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+							input.checked = true;
+						});
+					});
+				}
+
+				if (clear) {
+					clear.addEventListener('click', function() {
+						picker.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+							input.checked = false;
+						});
+					});
+				}
+
+				picker.addEventListener('click', function(event) {
+					if (event.target.matches('[data-ajcore-field-up]')) {
+						moveItem(event.target.closest('li'), -1);
+					}
+					if (event.target.matches('[data-ajcore-field-down]')) {
+						moveItem(event.target.closest('li'), 1);
+					}
+				});
+
+				if (!list) {
+					return;
+				}
+
+				list.addEventListener('dragstart', function(event) {
+					dragged = event.target.closest('li');
+					if (dragged) {
+						event.dataTransfer.effectAllowed = 'move';
+					}
+				});
+
+				list.addEventListener('dragover', function(event) {
+					const target = event.target.closest('li');
+					if (!dragged || !target || dragged === target) {
+						return;
+					}
+
+					event.preventDefault();
+					const rect = target.getBoundingClientRect();
+					const after = event.clientY > rect.top + rect.height / 2;
+					list.insertBefore(dragged, after ? target.nextSibling : target);
+				});
+
+				list.addEventListener('dragend', function() {
+					dragged = null;
+				});
+			})();
+			</script>
 		</div>
 		<?php
 	}
