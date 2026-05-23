@@ -1479,6 +1479,8 @@ class AJForms {
 								window.alert(error.message || '<?php echo esc_js( __( 'Unable to start checkout.', 'ajforms' ) ); ?>');
 							}
 						});
+				});
+
 				shell.addEventListener('click', function(event) {
 					const button = event.target.closest('.aj-portal-cancel-service-request');
 					if (!button || button.disabled) {
