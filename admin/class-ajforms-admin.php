@@ -2446,6 +2446,59 @@ class AJForms_Admin {
 		return array_values( $normalized );
 	}
 
+	private function get_customer_portal_tab_content_settings() {
+		$settings = get_option( 'ajcore_customer_portal_tab_content', array() );
+		if ( ! is_array( $settings ) ) {
+			$settings = array();
+		}
+
+		$defaults = array(
+			'overview'     => array( 'label' => __( 'Overview', 'ajforms' ), 'heading' => __( 'Welcome, {customer_name}', 'ajforms' ), 'intro' => '', 'before_content' => '', 'after_content' => '' ),
+			'services'     => array( 'label' => __( 'My Services', 'ajforms' ), 'heading' => __( 'My Services', 'ajforms' ), 'intro' => __( 'Review your active services and add eligible services to your account.', 'ajforms' ), 'before_content' => '', 'after_content' => '' ),
+			'billing'      => array( 'label' => __( 'Billing', 'ajforms' ), 'heading' => __( 'Billing', 'ajforms' ), 'intro' => __( 'View upcoming payments, invoices, and service requests.', 'ajforms' ), 'before_content' => '', 'after_content' => '' ),
+			'file-library' => array( 'label' => __( 'File Library', 'ajforms' ), 'heading' => __( 'File Library', 'ajforms' ), 'intro' => __( 'Download documents shared with your portal account.', 'ajforms' ), 'before_content' => '', 'after_content' => '' ),
+			'profile'      => array( 'label' => __( 'Profile', 'ajforms' ), 'heading' => __( 'Profile', 'ajforms' ), 'intro' => __( 'View your contact information and account access links.', 'ajforms' ), 'before_content' => '', 'after_content' => '' ),
+		);
+
+		$normalized = array();
+		foreach ( $defaults as $tab_id => $default ) {
+			$saved = isset( $settings[ $tab_id ] ) && is_array( $settings[ $tab_id ] ) ? $settings[ $tab_id ] : array();
+			$normalized[ $tab_id ] = array(
+				'label'          => $default['label'],
+				'heading'        => isset( $saved['heading'] ) && '' !== trim( (string) $saved['heading'] ) ? sanitize_text_field( (string) $saved['heading'] ) : $default['heading'],
+				'intro'          => isset( $saved['intro'] ) ? sanitize_textarea_field( (string) $saved['intro'] ) : $default['intro'],
+				'before_content' => isset( $saved['before_content'] ) ? wp_kses_post( (string) $saved['before_content'] ) : $default['before_content'],
+				'after_content'  => isset( $saved['after_content'] ) ? wp_kses_post( (string) $saved['after_content'] ) : $default['after_content'],
+			);
+		}
+
+		return $normalized;
+	}
+
+	private function get_customer_portal_services_display_settings() {
+		$settings = get_option( 'ajcore_customer_portal_services_display', array() );
+		if ( ! is_array( $settings ) ) {
+			$settings = array();
+		}
+
+		$selected_price_ids = isset( $settings['selected_price_ids'] ) && is_array( $settings['selected_price_ids'] ) ? array_map( 'sanitize_text_field', $settings['selected_price_ids'] ) : array();
+
+		return array(
+			'show_current_services' => ! isset( $settings['show_current_services'] ) || (bool) $settings['show_current_services'],
+			'show_add_services'     => ! isset( $settings['show_add_services'] ) || (bool) $settings['show_add_services'],
+			'product_mode'          => isset( $settings['product_mode'] ) && 'selected' === $settings['product_mode'] ? 'selected' : 'all',
+			'selected_price_ids'    => array_values( array_filter( array_unique( $selected_price_ids ) ) ),
+		);
+	}
+
+	private function get_portal_stripe_products_for_settings() {
+		global $wpdb;
+
+		$this->ensure_portal_schema();
+
+		return $wpdb->get_results( "SELECT * FROM {$this->get_portal_stripe_products_table()} ORDER BY sort_order ASC, name ASC" );
+	}
+
 	private function handle_client_portal_settings_save() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -2654,6 +2707,29 @@ class AJForms_Admin {
 
 		check_admin_referer( 'ajcore_save_client_portal', 'ajcore_client_portal_nonce' );
 
+		if ( isset( $_POST['portal_tab_content'] ) && is_array( $_POST['portal_tab_content'] ) ) {
+			$posted_tab_content = wp_unslash( $_POST['portal_tab_content'] );
+			$tab_content        = array();
+			foreach ( $this->get_customer_portal_tab_content_settings() as $tab_id => $tab_defaults ) {
+				$row = isset( $posted_tab_content[ $tab_id ] ) && is_array( $posted_tab_content[ $tab_id ] ) ? $posted_tab_content[ $tab_id ] : array();
+				$tab_content[ $tab_id ] = array(
+					'heading'        => isset( $row['heading'] ) ? sanitize_text_field( $row['heading'] ) : $tab_defaults['heading'],
+					'intro'          => isset( $row['intro'] ) ? sanitize_textarea_field( $row['intro'] ) : '',
+					'before_content' => isset( $row['before_content'] ) ? wp_kses_post( $row['before_content'] ) : '',
+					'after_content'  => isset( $row['after_content'] ) ? wp_kses_post( $row['after_content'] ) : '',
+				);
+			}
+			update_option( 'ajcore_customer_portal_tab_content', $tab_content, false );
+		}
+
+		$services_display = array(
+			'show_current_services' => isset( $_POST['portal_services_show_current'] ),
+			'show_add_services'     => isset( $_POST['portal_services_show_add'] ),
+			'product_mode'          => isset( $_POST['portal_services_product_mode'] ) && 'selected' === sanitize_key( wp_unslash( $_POST['portal_services_product_mode'] ) ) ? 'selected' : 'all',
+			'selected_price_ids'    => isset( $_POST['portal_services_selected_prices'] ) && is_array( $_POST['portal_services_selected_prices'] ) ? array_values( array_filter( array_map( 'sanitize_text_field', wp_unslash( $_POST['portal_services_selected_prices'] ) ) ) ) : array(),
+		);
+		update_option( 'ajcore_customer_portal_services_display', $services_display, false );
+
 		$labels  = isset( $_POST['portal_menu_label'] ) && is_array( $_POST['portal_menu_label'] ) ? wp_unslash( $_POST['portal_menu_label'] ) : array();
 		$urls    = isset( $_POST['portal_menu_url'] ) && is_array( $_POST['portal_menu_url'] ) ? wp_unslash( $_POST['portal_menu_url'] ) : array();
 		$types   = isset( $_POST['portal_menu_type'] ) && is_array( $_POST['portal_menu_type'] ) ? wp_unslash( $_POST['portal_menu_type'] ) : array();
@@ -2693,17 +2769,6 @@ class AJForms_Admin {
 		}
 
 		update_option( 'ajcore_customer_portal_menu_items', $items, false );
-
-		$tab_headings = isset( $_POST['portal_tab_heading'] ) && is_array( $_POST['portal_tab_heading'] ) ? wp_unslash( $_POST['portal_tab_heading'] ) : array();
-		$tab_intros   = isset( $_POST['portal_tab_intro'] ) && is_array( $_POST['portal_tab_intro'] ) ? wp_unslash( $_POST['portal_tab_intro'] ) : array();
-		$tab_content  = array();
-		foreach ( array( 'overview', 'services', 'billing', 'file-library', 'profile' ) as $tab_id ) {
-			$tab_content[ $tab_id ] = array(
-				'heading' => isset( $tab_headings[ $tab_id ] ) ? sanitize_text_field( $tab_headings[ $tab_id ] ) : '',
-				'intro'   => isset( $tab_intros[ $tab_id ] ) ? sanitize_textarea_field( $tab_intros[ $tab_id ] ) : '',
-			);
-		}
-		update_option( 'ajcore_customer_portal_tab_content', $tab_content, false );
 
 		wp_safe_redirect(
 			add_query_arg(
@@ -5265,21 +5330,13 @@ class AJForms_Admin {
 		$subsection = in_array( $subsection, array( 'file-library', 'menu' ), true ) ? $subsection : 'file-library';
 		$portal_page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
 		$portal_url     = $portal_page_id ? get_permalink( $portal_page_id ) : '';
-		$menu_items     = $this->get_customer_portal_menu_items();
-		$stripe_enabled = '' !== $this->get_stripe_secret_key_for_portal();
+		$menu_items        = $this->get_customer_portal_menu_items();
+		$tab_content       = $this->get_customer_portal_tab_content_settings();
+		$service_settings  = $this->get_customer_portal_services_display_settings();
+		$service_products  = $this->get_portal_stripe_products_for_settings();
+		$stripe_enabled    = '' !== $this->get_stripe_secret_key_for_portal();
 		$cache_counts   = $this->get_portal_cache_counts();
 		$last_db_error  = get_option( 'ajforms_last_portal_db_error', '' );
-		$tab_content    = get_option(
-			'ajcore_customer_portal_tab_content',
-			array(
-				'overview'     => array( 'heading' => __( 'Welcome, {customer_name}', 'ajforms' ), 'intro' => '' ),
-				'services'     => array( 'heading' => __( 'My Services', 'ajforms' ), 'intro' => __( 'Review your active services and add eligible services to your account.', 'ajforms' ) ),
-				'billing'      => array( 'heading' => __( 'Billing', 'ajforms' ), 'intro' => __( 'View upcoming payments, invoices, and service requests.', 'ajforms' ) ),
-				'file-library' => array( 'heading' => __( 'File Library', 'ajforms' ), 'intro' => __( 'Download documents shared with your portal account.', 'ajforms' ) ),
-				'profile'      => array( 'heading' => __( 'Profile', 'ajforms' ), 'intro' => __( 'View your contact information and account access links.', 'ajforms' ) ),
-			)
-		);
-		$tab_content    = is_array( $tab_content ) ? $tab_content : array();
 		?>
 		<?php if ( ! $embedded ) : ?>
 			<div class="ajforms-settings-head">
@@ -5344,7 +5401,7 @@ class AJForms_Admin {
 					<p><?php esc_html_e( 'These items appear as tabs inside the Client Portal. File Library is built in; custom items can link to other public pages.', 'ajforms' ); ?></p>
 
 					<style>
-						.ajcore-portal-menu-table input[type="text"],.ajcore-portal-menu-table input[type="url"],.ajcore-portal-menu-table textarea{width:100%}
+						.ajcore-portal-menu-table input[type="text"],.ajcore-portal-menu-table input[type="url"]{width:100%}
 						.ajcore-portal-menu-table td{vertical-align:middle}
 					</style>
 
@@ -5382,34 +5439,83 @@ class AJForms_Admin {
 						</tbody>
 					</table>
 
-					<h3><?php esc_html_e( 'Built-in Tab Page Content', 'ajforms' ); ?></h3>
-					<p><?php esc_html_e( 'Customize the customer-facing heading and short intro text for each built-in portal tab. Use {customer_name} in the Overview heading if you want a personalized greeting.', 'ajforms' ); ?></p>
+					<div class="ajforms-settings-card" style="margin-top:18px;">
+						<h3><?php esc_html_e( 'Built-in Page Content', 'ajforms' ); ?></h3>
+						<p><?php esc_html_e( 'Customize each built-in portal tab without editing code. Content fields accept basic HTML and shortcodes.', 'ajforms' ); ?></p>
 
-					<table class="widefat striped ajcore-portal-menu-table">
-						<thead>
-							<tr>
-								<th><?php esc_html_e( 'Tab', 'ajforms' ); ?></th>
-								<th><?php esc_html_e( 'Page Heading', 'ajforms' ); ?></th>
-								<th><?php esc_html_e( 'Intro Text', 'ajforms' ); ?></th>
-							</tr>
-						</thead>
-						<tbody>
-							<?php foreach ( $menu_items as $item ) : ?>
-								<?php if ( 'built_in' !== $item['type'] ) { continue; } ?>
-								<?php
-								$tab_id      = sanitize_key( $item['id'] );
-								$tab_heading = isset( $tab_content[ $tab_id ]['heading'] ) ? $tab_content[ $tab_id ]['heading'] : $item['label'];
-								$tab_intro   = isset( $tab_content[ $tab_id ]['intro'] ) ? $tab_content[ $tab_id ]['intro'] : '';
-								?>
+						<style>
+							.ajcore-tab-content-table input[type="text"],.ajcore-tab-content-table textarea{width:100%}
+							.ajcore-tab-content-table textarea{min-height:82px}
+							.ajcore-service-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:14px}
+							.ajcore-service-control-box{padding:14px;border:1px solid #dcdcde;background:#fff;border-radius:8px}
+							.ajcore-service-products{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;max-height:360px;overflow:auto;padding:6px}
+							.ajcore-service-product-choice{display:flex;gap:8px;align-items:flex-start;padding:10px;border:1px solid #dcdcde;border-radius:8px;background:#fff}
+							.ajcore-service-product-choice strong{display:block}.ajcore-service-product-choice span{display:block;color:#646970;font-size:12px;margin-top:3px}
+							@media (max-width: 960px){.ajcore-service-controls{grid-template-columns:1fr}}
+						</style>
+
+						<table class="widefat striped ajcore-tab-content-table">
+							<thead>
 								<tr>
-									<td><strong><?php echo esc_html( $item['label'] ); ?></strong><br><code><?php echo esc_html( $tab_id ); ?></code></td>
-									<td><input type="text" name="portal_tab_heading[<?php echo esc_attr( $tab_id ); ?>]" value="<?php echo esc_attr( $tab_heading ); ?>"></td>
-									<td><textarea name="portal_tab_intro[<?php echo esc_attr( $tab_id ); ?>]" rows="2" style="width:100%;"><?php echo esc_textarea( $tab_intro ); ?></textarea></td>
+									<th style="width:12%;"><?php esc_html_e( 'Page', 'ajforms' ); ?></th>
+									<th style="width:18%;"><?php esc_html_e( 'Heading', 'ajforms' ); ?></th>
+									<th style="width:20%;"><?php esc_html_e( 'Intro Text', 'ajforms' ); ?></th>
+									<th style="width:25%;"><?php esc_html_e( 'Content Above Built-in Area', 'ajforms' ); ?></th>
+									<th style="width:25%;"><?php esc_html_e( 'Content Below Built-in Area', 'ajforms' ); ?></th>
 								</tr>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
+							</thead>
+							<tbody>
+								<?php foreach ( $tab_content as $tab_id => $content ) : ?>
+									<tr>
+										<td><strong><?php echo esc_html( $content['label'] ); ?></strong><br><code><?php echo esc_html( $tab_id ); ?></code></td>
+										<td><input type="text" name="portal_tab_content[<?php echo esc_attr( $tab_id ); ?>][heading]" value="<?php echo esc_attr( $content['heading'] ); ?>"></td>
+										<td><textarea name="portal_tab_content[<?php echo esc_attr( $tab_id ); ?>][intro]"><?php echo esc_textarea( $content['intro'] ); ?></textarea></td>
+										<td><textarea name="portal_tab_content[<?php echo esc_attr( $tab_id ); ?>][before_content]" placeholder="<?php esc_attr_e( 'Optional message, HTML, or shortcode.', 'ajforms' ); ?>"><?php echo esc_textarea( $content['before_content'] ); ?></textarea></td>
+										<td><textarea name="portal_tab_content[<?php echo esc_attr( $tab_id ); ?>][after_content]" placeholder="<?php esc_attr_e( 'Optional message, HTML, or shortcode.', 'ajforms' ); ?>"><?php echo esc_textarea( $content['after_content'] ); ?></textarea></td>
+									</tr>
+								<?php endforeach; ?>
+							</tbody>
+						</table>
+					</div>
 
+					<div class="ajforms-settings-card" style="margin-top:18px;">
+						<h3><?php esc_html_e( 'My Services Page Controls', 'ajforms' ); ?></h3>
+						<p><?php esc_html_e( 'Choose what appears on the customer-facing My Services page, including which Stripe products customers can add.', 'ajforms' ); ?></p>
+
+						<div class="ajcore-service-controls">
+							<div class="ajcore-service-control-box">
+								<h4><?php esc_html_e( 'Sections', 'ajforms' ); ?></h4>
+								<label><input type="checkbox" name="portal_services_show_current" value="1" <?php checked( ! empty( $service_settings['show_current_services'] ) ); ?>> <?php esc_html_e( 'Show Current Services', 'ajforms' ); ?></label><br>
+								<label><input type="checkbox" name="portal_services_show_add" value="1" <?php checked( ! empty( $service_settings['show_add_services'] ) ); ?>> <?php esc_html_e( 'Show Add Services', 'ajforms' ); ?></label>
+							</div>
+							<div class="ajcore-service-control-box">
+								<h4><?php esc_html_e( 'Add Services Product Mode', 'ajforms' ); ?></h4>
+								<label><input type="radio" name="portal_services_product_mode" value="all" <?php checked( 'all', $service_settings['product_mode'] ); ?>> <?php esc_html_e( 'Show all visible synced products', 'ajforms' ); ?></label><br>
+								<label><input type="radio" name="portal_services_product_mode" value="selected" <?php checked( 'selected', $service_settings['product_mode'] ); ?>> <?php esc_html_e( 'Only show selected products below', 'ajforms' ); ?></label>
+							</div>
+						</div>
+
+						<h4><?php esc_html_e( 'Selectable Add Services Products', 'ajforms' ); ?></h4>
+						<?php if ( empty( $service_products ) ) : ?>
+							<p><?php esc_html_e( 'No synced Stripe products found yet. Sync Stripe Products first.', 'ajforms' ); ?></p>
+						<?php else : ?>
+							<div class="ajcore-service-products">
+								<?php foreach ( $service_products as $product ) : ?>
+									<?php
+									$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+									if ( '' === $price_id ) {
+										continue;
+									}
+									$product_label = ! empty( $product->custom_label ) ? $product->custom_label : $product->name;
+									?>
+									<label class="ajcore-service-product-choice">
+										<input type="checkbox" name="portal_services_selected_prices[]" value="<?php echo esc_attr( $price_id ); ?>" <?php checked( in_array( $price_id, $service_settings['selected_price_ids'], true ) ); ?>>
+										<span><strong><?php echo esc_html( $product_label ); ?></strong><span><?php echo esc_html( strtoupper( $product->currency ) . ' ' . number_format_i18n( (float) $product->price_amount, 2 ) . ( $product->recurring_interval ? '/' . $product->recurring_interval : '' ) ); ?> · <?php echo esc_html( $price_id ); ?> · <?php echo ! empty( $product->active ) ? esc_html__( 'Active', 'ajforms' ) : esc_html__( 'Inactive', 'ajforms' ); ?> · <?php echo esc_html( $product->visibility ); ?></span></span>
+									</label>
+								<?php endforeach; ?>
+							</div>
+						<?php endif; ?>
+					</div>
 					<div class="ajforms-settings-actions">
 						<?php submit_button( __( 'Save Client Portal Menu', 'ajforms' ), 'primary', 'submit', false ); ?>
 					</div>

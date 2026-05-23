@@ -237,7 +237,6 @@ class AJForms {
 		return array_values( $normalized );
 	}
 
-
 	private function get_customer_portal_tab_content_settings() {
 		$settings = get_option( 'ajcore_customer_portal_tab_content', array() );
 		if ( ! is_array( $settings ) ) {
@@ -246,24 +245,34 @@ class AJForms {
 
 		$defaults = array(
 			'overview' => array(
-				'heading' => __( 'Welcome, {customer_name}', 'ajforms' ),
-				'intro'   => '',
+				'heading'        => __( 'Welcome, {customer_name}', 'ajforms' ),
+				'intro'          => '',
+				'before_content' => '',
+				'after_content'  => '',
 			),
 			'services' => array(
-				'heading' => __( 'My Services', 'ajforms' ),
-				'intro'   => __( 'Review your active services and add eligible services to your account.', 'ajforms' ),
+				'heading'        => __( 'My Services', 'ajforms' ),
+				'intro'          => __( 'Review your active services and add eligible services to your account.', 'ajforms' ),
+				'before_content' => '',
+				'after_content'  => '',
 			),
 			'billing' => array(
-				'heading' => __( 'Billing', 'ajforms' ),
-				'intro'   => __( 'View upcoming payments, invoices, and service requests.', 'ajforms' ),
+				'heading'        => __( 'Billing', 'ajforms' ),
+				'intro'          => __( 'View upcoming payments, invoices, and service requests.', 'ajforms' ),
+				'before_content' => '',
+				'after_content'  => '',
 			),
 			'file-library' => array(
-				'heading' => __( 'File Library', 'ajforms' ),
-				'intro'   => __( 'Download documents shared with your portal account.', 'ajforms' ),
+				'heading'        => __( 'File Library', 'ajforms' ),
+				'intro'          => __( 'Download documents shared with your portal account.', 'ajforms' ),
+				'before_content' => '',
+				'after_content'  => '',
 			),
 			'profile' => array(
-				'heading' => __( 'Profile', 'ajforms' ),
-				'intro'   => __( 'View your contact information and account access links.', 'ajforms' ),
+				'heading'        => __( 'Profile', 'ajforms' ),
+				'intro'          => __( 'View your contact information and account access links.', 'ajforms' ),
+				'before_content' => '',
+				'after_content'  => '',
 			),
 		);
 
@@ -271,8 +280,10 @@ class AJForms {
 		foreach ( $defaults as $tab_id => $default ) {
 			$saved = isset( $settings[ $tab_id ] ) && is_array( $settings[ $tab_id ] ) ? $settings[ $tab_id ] : array();
 			$normalized[ $tab_id ] = array(
-				'heading' => isset( $saved['heading'] ) && '' !== trim( (string) $saved['heading'] ) ? sanitize_text_field( (string) $saved['heading'] ) : $default['heading'],
-				'intro'   => isset( $saved['intro'] ) ? sanitize_textarea_field( (string) $saved['intro'] ) : $default['intro'],
+				'heading'        => isset( $saved['heading'] ) && '' !== trim( (string) $saved['heading'] ) ? sanitize_text_field( (string) $saved['heading'] ) : $default['heading'],
+				'intro'          => isset( $saved['intro'] ) ? sanitize_textarea_field( (string) $saved['intro'] ) : $default['intro'],
+				'before_content' => isset( $saved['before_content'] ) ? wp_kses_post( (string) $saved['before_content'] ) : $default['before_content'],
+				'after_content'  => isset( $saved['after_content'] ) ? wp_kses_post( (string) $saved['after_content'] ) : $default['after_content'],
 			);
 		}
 
@@ -296,11 +307,37 @@ class AJForms {
 		$settings = $this->get_customer_portal_tab_content_settings();
 		$intro    = isset( $settings[ $tab_id ]['intro'] ) ? trim( (string) $settings[ $tab_id ]['intro'] ) : '';
 
-		if ( '' === $intro ) {
+		return '' === $intro ? '' : '<p class="aj-portal-tab-intro">' . esc_html( $intro ) . '</p>';
+	}
+
+	private function render_customer_portal_custom_content( $tab_id, $position ) {
+		$tab_id   = sanitize_key( (string) $tab_id );
+		$position = 'before' === $position ? 'before_content' : 'after_content';
+		$settings = $this->get_customer_portal_tab_content_settings();
+		$content  = isset( $settings[ $tab_id ][ $position ] ) ? trim( (string) $settings[ $tab_id ][ $position ] ) : '';
+
+		if ( '' === $content ) {
 			return '';
 		}
 
-		return '<p class="aj-portal-tab-intro">' . esc_html( $intro ) . '</p>';
+		return '<div class="aj-portal-custom-content">' . do_shortcode( wpautop( wp_kses_post( $content ) ) ) . '</div>';
+	}
+
+	private function get_customer_portal_services_display_settings() {
+		$settings = get_option( 'ajcore_customer_portal_services_display', array() );
+		if ( ! is_array( $settings ) ) {
+			$settings = array();
+		}
+
+		$selected_price_ids = isset( $settings['selected_price_ids'] ) && is_array( $settings['selected_price_ids'] ) ? array_map( 'sanitize_text_field', $settings['selected_price_ids'] ) : array();
+		$selected_price_ids = array_values( array_filter( array_unique( $selected_price_ids ) ) );
+
+		return array(
+			'show_current_services' => ! isset( $settings['show_current_services'] ) || (bool) $settings['show_current_services'],
+			'show_add_services'     => ! isset( $settings['show_add_services'] ) || (bool) $settings['show_add_services'],
+			'product_mode'          => isset( $settings['product_mode'] ) && 'selected' === $settings['product_mode'] ? 'selected' : 'all',
+			'selected_price_ids'    => $selected_price_ids,
+		);
 	}
 
 	private function render_customer_portal_file_library_tab() {
@@ -311,6 +348,7 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php echo esc_html( $this->get_customer_portal_tab_heading( 'file-library' ) ); ?></h2>
 			<?php echo $this->render_customer_portal_tab_intro( 'file-library' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			<?php echo $this->render_customer_portal_custom_content( 'file-library', 'before' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<?php if ( empty( $files ) ) : ?>
 				<p><?php esc_html_e( 'No files have been shared with you yet.', 'ajforms' ); ?></p>
@@ -341,6 +379,7 @@ class AJForms {
 					<?php endforeach; ?>
 				</div>
 			<?php endif; ?>
+			<?php echo $this->render_customer_portal_custom_content( 'file-library', 'after' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 		</section>
 		<?php
 		return ob_get_clean();
@@ -362,6 +401,7 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php echo esc_html( $this->get_customer_portal_tab_heading( 'profile' ) ); ?></h2>
 			<?php echo $this->render_customer_portal_tab_intro( 'profile' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			<?php echo $this->render_customer_portal_custom_content( 'profile', 'before' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<div class="aj-portal-profile-block">
 				<div class="aj-portal-profile-main"><?php echo esc_html( $display_name ); ?></div>
@@ -386,6 +426,7 @@ class AJForms {
 					<a class="button" href="<?php echo esc_url( wp_logout_url( home_url( '/' ) ) ); ?>"><?php esc_html_e( 'Logout', 'ajforms' ); ?></a>
 				</div>
 			</div>
+			<?php echo $this->render_customer_portal_custom_content( 'profile', 'after' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 		</section>
 		<?php
 		return ob_get_clean();
@@ -661,6 +702,8 @@ class AJForms {
 
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
+		$display_settings      = $this->get_customer_portal_services_display_settings();
+		$selected_price_ids    = $display_settings['selected_price_ids'];
 
 		$products = $wpdb->get_results(
 			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden' ORDER BY sort_order ASC, name ASC"
@@ -669,11 +712,19 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids ) {
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $display_settings, $selected_price_ids ) {
 					$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 
-					if ( '' !== $price_id && in_array( $price_id, $purchased_price_ids, true ) ) {
+					if ( '' === $price_id ) {
+						return false;
+					}
+
+					if ( 'selected' === $display_settings['product_mode'] && ! in_array( $price_id, $selected_price_ids, true ) ) {
+						return false;
+					}
+
+					if ( in_array( $price_id, $purchased_price_ids, true ) ) {
 						return false;
 					}
 
@@ -681,7 +732,7 @@ class AJForms {
 						return false;
 					}
 
-					return '' !== $price_id;
+					return true;
 				}
 			)
 		);
@@ -772,12 +823,13 @@ class AJForms {
 		$customer = $context['customer'];
 
 		if ( '' === $context['stripe_customer_id'] || ! $customer ) {
-			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'My Services', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html( $this->get_customer_portal_tab_heading( 'services' ) ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
 		}
 
 		$subscriptions      = $context['subscriptions'];
 		$ledger             = $context['ledger'];
-		$available_products = $this->get_portal_available_service_products( $subscriptions );
+		$display_settings   = $this->get_customer_portal_services_display_settings();
+		$available_products = $display_settings['show_add_services'] ? $this->get_portal_available_service_products( $subscriptions ) : array();
 		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
 
 		ob_start();
@@ -785,56 +837,63 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php echo esc_html( $this->get_customer_portal_tab_heading( 'services' ) ); ?></h2>
 			<?php echo $this->render_customer_portal_tab_intro( 'services' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			<?php echo $this->render_customer_portal_custom_content( 'services', 'before' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
-			<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
-			<?php if ( empty( $subscriptions ) ) : ?>
-				<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
-			<?php else : ?>
-				<div class="aj-portal-services-list">
-					<?php foreach ( $subscriptions as $subscription ) : ?>
-						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
-						<div class="aj-portal-service-card">
-							<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
-							<div class="aj-portal-service-card-grid">
-								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
+			<?php if ( ! empty( $display_settings['show_current_services'] ) ) : ?>
+				<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
+				<?php if ( empty( $subscriptions ) ) : ?>
+					<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
+				<?php else : ?>
+					<div class="aj-portal-services-list">
+						<?php foreach ( $subscriptions as $subscription ) : ?>
+							<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
+							<div class="aj-portal-service-card">
+								<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
+								<div class="aj-portal-service-card-grid">
+									<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
+								</div>
 							</div>
-						</div>
-					<?php endforeach; ?>
-				</div>
+						<?php endforeach; ?>
+					</div>
+				<?php endif; ?>
 			<?php endif; ?>
 
-			<h3><?php esc_html_e( 'Add Services', 'ajforms' ); ?></h3>
-			<?php if ( empty( $available_products ) ) : ?>
-				<p><?php esc_html_e( 'No additional services are currently available for this account.', 'ajforms' ); ?></p>
-			<?php else : ?>
-				<div class="aj-portal-add-service-grid">
-					<?php foreach ( $available_products as $product ) : ?>
-						<?php
-						$product_name        = ! empty( $product->custom_label ) ? $product->custom_label : $product->name;
-						$product_description = ! empty( $product->description_override ) ? $product->description_override : $product->description;
-						$price_id            = sanitize_text_field( (string) $product->stripe_price_id );
-						?>
-						<div class="aj-portal-add-service-card">
-							<h4><?php echo esc_html( $product_name ); ?></h4>
-							<?php if ( $product_description ) : ?>
-								<p><?php echo esc_html( wp_trim_words( $product_description, 28 ) ); ?></p>
-							<?php endif; ?>
-							<div class="aj-portal-add-service-price"><?php echo esc_html( $this->get_portal_product_amount_label( $product ) ); ?></div>
-							<button
-								type="button"
-								class="button aj-portal-add-service-button"
-								data-price-id="<?php echo esc_attr( $price_id ); ?>"
-								data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_portal_add_service_' . $price_id ) ); ?>"
-							><?php esc_html_e( 'Add to My Services', 'ajforms' ); ?></button>
-						</div>
-					<?php endforeach; ?>
-				</div>
-				<p class="aj-portal-add-service-message" style="display:none;"></p>
+			<?php if ( ! empty( $display_settings['show_add_services'] ) ) : ?>
+				<h3><?php esc_html_e( 'Add Services', 'ajforms' ); ?></h3>
+				<?php if ( empty( $available_products ) ) : ?>
+					<p><?php esc_html_e( 'No additional services are currently available for this account.', 'ajforms' ); ?></p>
+				<?php else : ?>
+					<div class="aj-portal-add-service-grid">
+						<?php foreach ( $available_products as $product ) : ?>
+							<?php
+							$product_name        = ! empty( $product->custom_label ) ? $product->custom_label : $product->name;
+							$product_description = ! empty( $product->description_override ) ? $product->description_override : $product->description;
+							$price_id            = sanitize_text_field( (string) $product->stripe_price_id );
+							?>
+							<div class="aj-portal-add-service-card">
+								<h4><?php echo esc_html( $product_name ); ?></h4>
+								<?php if ( $product_description ) : ?>
+									<p><?php echo esc_html( wp_trim_words( $product_description, 28 ) ); ?></p>
+								<?php endif; ?>
+								<div class="aj-portal-add-service-price"><?php echo esc_html( $this->get_portal_product_amount_label( $product ) ); ?></div>
+								<button
+									type="button"
+									class="button aj-portal-add-service-button"
+									data-price-id="<?php echo esc_attr( $price_id ); ?>"
+									data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_portal_add_service_' . $price_id ) ); ?>"
+								><?php esc_html_e( 'Add to My Services', 'ajforms' ); ?></button>
+							</div>
+						<?php endforeach; ?>
+					</div>
+					<p class="aj-portal-add-service-message" style="display:none;"></p>
+				<?php endif; ?>
 			<?php endif; ?>
+
+			<?php echo $this->render_customer_portal_custom_content( 'services', 'after' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 		</section>
 		<?php
 		return ob_get_clean();
@@ -856,6 +915,7 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php echo esc_html( $this->get_customer_portal_tab_heading( 'billing' ) ); ?></h2>
 			<?php echo $this->render_customer_portal_tab_intro( 'billing' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			<?php echo $this->render_customer_portal_custom_content( 'billing', 'before' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<h3><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></h3>
 			<?php if ( empty( $upcoming ) ) : ?>
@@ -1039,6 +1099,7 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php echo esc_html( $this->get_customer_portal_tab_heading( 'overview', array( 'customer_name' => $display_name ) ) ); ?></h2>
 			<?php echo $this->render_customer_portal_tab_intro( 'overview' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			<?php echo $this->render_customer_portal_custom_content( 'overview', 'before' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<div class="aj-portal-summary-grid">
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $services_url ); ?>">
@@ -1330,8 +1391,7 @@ class AJForms {
 					box-shadow:0 14px 28px rgba(37,99,235,.24);
 				}
 				.ajcore-portal-shell .aj-customer-portal-panel{position:relative;margin:0;padding:0}
-				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 12px}
-				.ajcore-portal-shell .aj-portal-tab-intro{max-width:760px;margin:0 0 26px;color:var(--ajp-muted);font-size:16px;line-height:1.65}
+				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 26px}
 				.ajcore-portal-shell .aj-portal-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:0 0 28px}
 				.ajcore-portal-shell .aj-portal-summary-card{
 					position:relative;
