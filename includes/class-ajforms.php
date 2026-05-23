@@ -12,7 +12,6 @@ class AJForms {
 		$this->load_dependencies();
 		$this->define_admin_hooks();
 		$this->define_public_hooks();
-		add_filter( 'cron_schedules', array( $this, 'add_ajcore_cron_schedules' ) );
 		add_action( 'init', array( $this, 'schedule_recurring_events' ) );
 	}
 
@@ -36,58 +35,11 @@ class AJForms {
 		add_action( 'wp_ajax_ajf_import_form', array( $plugin_admin, 'ajax_import_form' ) );
 		add_action( 'wp_ajax_ajf_sync_asana_reference_data', array( $plugin_admin, 'ajax_sync_asana_reference_data' ) );
 		add_action( 'ajforms_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
-		add_action( 'ajcore_portal_stripe_sync', array( $plugin_admin, 'run_scheduled_portal_sync_job' ) );
-	}
-
-	public function add_ajcore_cron_schedules( $schedules ) {
-		$schedules['ajcore_every_15_minutes'] = array(
-			'interval' => 15 * MINUTE_IN_SECONDS,
-			'display'  => __( 'Every 15 minutes', 'ajforms' ),
-		);
-		$schedules['ajcore_every_30_minutes'] = array(
-			'interval' => 30 * MINUTE_IN_SECONDS,
-			'display'  => __( 'Every 30 minutes', 'ajforms' ),
-		);
-		$schedules['ajcore_every_6_hours'] = array(
-			'interval' => 6 * HOUR_IN_SECONDS,
-			'display'  => __( 'Every 6 hours', 'ajforms' ),
-		);
-		$schedules['ajcore_weekly'] = array(
-			'interval' => WEEK_IN_SECONDS,
-			'display'  => __( 'Weekly', 'ajforms' ),
-		);
-
-		return $schedules;
 	}
 
 	public function schedule_recurring_events() {
 		if ( ! wp_next_scheduled( 'ajforms_daily_asana_sync' ) ) {
 			wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'ajforms_daily_asana_sync' );
-		}
-
-		$settings = get_option( 'ajcore_portal_sync_settings', array() );
-		$settings = is_array( $settings ) ? $settings : array();
-		$enabled  = ! empty( $settings['enabled'] );
-		$frequency = ! empty( $settings['frequency'] ) ? sanitize_key( (string) $settings['frequency'] ) : 'daily';
-		$allowed = array( 'hourly', 'twicedaily', 'daily', 'ajcore_every_6_hours', 'ajcore_weekly', 'ajcore_every_30_minutes', 'ajcore_every_15_minutes' );
-		if ( ! in_array( $frequency, $allowed, true ) ) {
-			$frequency = 'daily';
-		}
-
-		$scheduled = wp_get_schedule( 'ajcore_portal_stripe_sync' );
-		if ( ! $enabled ) {
-			if ( wp_next_scheduled( 'ajcore_portal_stripe_sync' ) ) {
-				wp_clear_scheduled_hook( 'ajcore_portal_stripe_sync' );
-			}
-			return;
-		}
-
-		if ( $scheduled && $scheduled !== $frequency ) {
-			wp_clear_scheduled_hook( 'ajcore_portal_stripe_sync' );
-		}
-
-		if ( ! wp_next_scheduled( 'ajcore_portal_stripe_sync' ) ) {
-			wp_schedule_event( time() + 10 * MINUTE_IN_SECONDS, $frequency, 'ajcore_portal_stripe_sync' );
 		}
 	}
 
@@ -109,6 +61,7 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
+		add_action( 'wp_ajax_ajcore_request_additional_entity_pricing', array( $this, 'ajax_request_additional_entity_pricing' ) );
 	}
 
 	private function is_portal_user_account( $user = null ) {
@@ -724,11 +677,241 @@ class AJForms {
 		return array_values( array_unique( array_filter( $product_ids ) ) );
 	}
 
-	private function get_portal_available_service_products( $subscriptions ) {
+
+	private function get_portal_service_family_from_text( $text ) {
+		$text = strtolower( sanitize_text_field( (string) $text ) );
+		$text = preg_replace( '/[^a-z0-9]+/', ' ', $text );
+		$text = trim( preg_replace( '/\s+/', ' ', $text ) );
+
+		if ( '' === $text ) {
+			return '';
+		}
+
+		if ( false !== strpos( $text, 'virtual office' ) || false !== strpos( $text, 'full virtual office' ) ) {
+			return 'virtual_office';
+		}
+
+		if ( false !== strpos( $text, 'registered agent' ) ) {
+			return 'registered_agent';
+		}
+
+		return '';
+	}
+
+	private function get_portal_service_family_label( $family ) {
+		$family = sanitize_key( (string) $family );
+
+		if ( 'virtual_office' === $family ) {
+			return __( 'Virtual Office', 'ajforms' );
+		}
+
+		if ( 'registered_agent' === $family ) {
+			return __( 'Registered Agent', 'ajforms' );
+		}
+
+		return __( 'Service', 'ajforms' );
+	}
+
+	private function get_portal_product_service_family( $product ) {
+		$candidates = array();
+
+		foreach ( array( 'custom_label', 'name', 'description_override', 'description' ) as $property ) {
+			if ( isset( $product->{$property} ) && '' !== (string) $product->{$property} ) {
+				$candidates[] = (string) $product->{$property};
+			}
+		}
+
+		foreach ( array( 'metadata', 'raw_data' ) as $json_property ) {
+			if ( empty( $product->{$json_property} ) ) {
+				continue;
+			}
+
+			$decoded = $this->decode_portal_json( $product->{$json_property} );
+			foreach ( array( 'service_family', 'service_type', 'name', 'description' ) as $key ) {
+				$value = $this->get_portal_nested_value( $decoded, $key );
+				if ( '' !== $value ) {
+					$candidates[] = $value;
+				}
+			}
+
+			$product_name = $this->get_portal_nested_value( $decoded, 'product.name' );
+			if ( '' !== $product_name ) {
+				$candidates[] = $product_name;
+			}
+		}
+
+		foreach ( $candidates as $candidate ) {
+			$family = $this->get_portal_service_family_from_text( $candidate );
+			if ( '' !== $family ) {
+				return $family;
+			}
+		}
+
+		return '';
+	}
+
+	private function get_portal_subscription_service_family( $subscription, $ledger_entry = null ) {
+		$candidates = array();
+
+		if ( $ledger_entry ) {
+			$candidates[] = $this->get_subscription_service_name( $subscription, $ledger_entry );
+			$candidates[] = isset( $ledger_entry->description ) ? (string) $ledger_entry->description : '';
+			$metadata = $this->decode_portal_json( isset( $ledger_entry->metadata ) ? $ledger_entry->metadata : '' );
+			foreach ( array( 'service_family', 'product_name', 'description' ) as $key ) {
+				if ( ! empty( $metadata[ $key ] ) && is_scalar( $metadata[ $key ] ) ) {
+					$candidates[] = (string) $metadata[ $key ];
+				}
+			}
+		}
+
+		$items = $this->decode_portal_json( isset( $subscription->items ) ? $subscription->items : '' );
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+
+			if ( ! empty( $item['description'] ) ) {
+				$candidates[] = (string) $item['description'];
+			}
+
+			$price = isset( $item['price'] ) && is_array( $item['price'] ) ? $item['price'] : array();
+			if ( ! empty( $price['nickname'] ) ) {
+				$candidates[] = (string) $price['nickname'];
+			}
+			if ( ! empty( $price['product'] ) && is_array( $price['product'] ) && ! empty( $price['product']['name'] ) ) {
+				$candidates[] = (string) $price['product']['name'];
+			}
+		}
+
+		foreach ( $candidates as $candidate ) {
+			$family = $this->get_portal_service_family_from_text( $candidate );
+			if ( '' !== $family ) {
+				return $family;
+			}
+		}
+
+		return '';
+	}
+
+	private function get_customer_portal_service_families( $subscriptions, $ledger = array() ) {
+		$families = array();
+
+		foreach ( (array) $subscriptions as $subscription ) {
+			$status = isset( $subscription->status ) ? sanitize_key( (string) $subscription->status ) : '';
+			if ( ! in_array( $status, array( 'active', 'trialing', 'past_due', 'unpaid' ), true ) ) {
+				continue;
+			}
+
+			$ledger_entry = $this->get_subscription_ledger_entry( $subscription, (array) $ledger );
+			$family       = $this->get_portal_subscription_service_family( $subscription, $ledger_entry );
+			if ( '' !== $family ) {
+				$families[ $family ] = true;
+			}
+		}
+
+		foreach ( (array) $ledger as $entry ) {
+			$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+			if ( in_array( $status, array( 'cancelled', 'canceled', 'failed', 'void', 'voided', 'removed' ), true ) ) {
+				continue;
+			}
+
+			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+			if ( ! in_array( $source_type, array( 'checkout_session', 'service_quote_request' ), true ) ) {
+				continue;
+			}
+
+			$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+			$family   = '';
+			if ( ! empty( $metadata['service_family'] ) && is_scalar( $metadata['service_family'] ) ) {
+				$family = sanitize_key( (string) $metadata['service_family'] );
+			}
+			if ( '' === $family && ! empty( $metadata['product_name'] ) ) {
+				$family = $this->get_portal_service_family_from_text( $metadata['product_name'] );
+			}
+			if ( '' === $family && ! empty( $entry->description ) ) {
+				$family = $this->get_portal_service_family_from_text( $entry->description );
+			}
+
+			if ( in_array( $family, array( 'virtual_office', 'registered_agent' ), true ) ) {
+				$families[ $family ] = true;
+			}
+		}
+
+		return array_keys( $families );
+	}
+
+	private function get_portal_additional_entity_request_status( $stripe_customer_id, $family ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$family             = sanitize_key( (string) $family );
+		if ( '' === $stripe_customer_id || '' === $family ) {
+			return '';
+		}
+
+		$entries = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_type = %s ORDER BY id DESC LIMIT 25",
+				$stripe_customer_id,
+				'service_quote_request'
+			)
+		);
+
+		foreach ( $entries as $entry ) {
+			$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+			if ( empty( $metadata['service_family'] ) || $family !== sanitize_key( (string) $metadata['service_family'] ) ) {
+				continue;
+			}
+
+			$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+			if ( ! in_array( $status, array( 'cancelled', 'canceled', 'failed', 'removed', 'completed' ), true ) ) {
+				return $status ? $status : 'admin_review_required';
+			}
+		}
+
+		return '';
+	}
+
+	private function render_portal_additional_entity_notice( $stripe_customer_id, $service_families ) {
+		$service_families = array_values( array_intersect( (array) $service_families, array( 'virtual_office', 'registered_agent' ) ) );
+		if ( empty( $service_families ) ) {
+			return '';
+		}
+
+		ob_start();
+		?>
+		<div class="aj-portal-add-service-card aj-portal-additional-entity-card">
+			<h4><?php esc_html_e( 'Need coverage for another LLC or business entity?', 'ajforms' ); ?></h4>
+			<p><?php esc_html_e( 'Additional entities may qualify for discounted custom pricing. Request a quote and our team will review your account.', 'ajforms' ); ?></p>
+			<div class="aj-portal-add-service-grid">
+				<?php foreach ( $service_families as $family ) : ?>
+					<?php $existing_status = $this->get_portal_additional_entity_request_status( $stripe_customer_id, $family ); ?>
+					<div class="aj-portal-add-service-card">
+						<h4><?php echo esc_html( sprintf( __( 'Additional %s Entity', 'ajforms' ), $this->get_portal_service_family_label( $family ) ) ); ?></h4>
+						<?php if ( $existing_status ) : ?>
+							<p><strong><?php esc_html_e( 'Request already submitted.', 'ajforms' ); ?></strong> <?php echo esc_html( sprintf( __( 'Current status: %s', 'ajforms' ), ucwords( str_replace( '_', ' ', $existing_status ) ) ) ); ?></p>
+						<?php else : ?>
+							<button
+								type="button"
+								class="button aj-portal-additional-entity-button"
+								data-service-family="<?php echo esc_attr( $family ); ?>"
+								data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_request_additional_entity_' . $family ) ); ?>"
+							><?php esc_html_e( 'Request Additional Entity Pricing', 'ajforms' ); ?></button>
+						<?php endif; ?>
+					</div>
+				<?php endforeach; ?>
+			</div>
+		</div>
+		<?php
+		return ob_get_clean();
+	}
+
+	private function get_portal_available_service_products( $subscriptions, $ledger = array() ) {
 		global $wpdb;
 
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
+		$owned_service_families = $this->get_customer_portal_service_families( $subscriptions, $ledger );
 		$service_settings      = get_option( 'ajcore_customer_portal_services_display', array() );
 		$service_settings      = is_array( $service_settings ) ? $service_settings : array();
 		$product_mode          = isset( $service_settings['product_mode'] ) && 'selected' === $service_settings['product_mode'] ? 'selected' : 'all';
@@ -741,7 +924,7 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $product_mode, $selected_price_ids ) {
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $owned_service_families, $product_mode, $selected_price_ids ) {
 					$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 
@@ -758,6 +941,11 @@ class AJForms {
 					}
 
 					if ( '' !== $product_id && in_array( $product_id, $purchased_product_ids, true ) ) {
+						return false;
+					}
+
+					$service_family = $this->get_portal_product_service_family( $product );
+					if ( '' !== $service_family && in_array( $service_family, $owned_service_families, true ) ) {
 						return false;
 					}
 
@@ -861,7 +1049,8 @@ class AJForms {
 		$service_settings   = is_array( $service_settings ) ? $service_settings : array();
 		$show_current       = ! isset( $service_settings['show_current_services'] ) || (bool) $service_settings['show_current_services'];
 		$show_add           = ! isset( $service_settings['show_add_services'] ) || (bool) $service_settings['show_add_services'];
-		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions ) : array();
+		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions, $ledger ) : array();
+		$owned_service_families = $this->get_customer_portal_service_families( $subscriptions, $ledger );
 		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
 
 		ob_start();
@@ -894,6 +1083,7 @@ class AJForms {
 
 			<?php if ( $show_add ) : ?>
 			<h3><?php esc_html_e( 'Add Services', 'ajforms' ); ?></h3>
+			<?php echo $this->render_portal_additional_entity_notice( $context['stripe_customer_id'], $owned_service_families ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 			<?php if ( empty( $available_products ) ) : ?>
 				<p><?php esc_html_e( 'No additional services are currently available for this account.', 'ajforms' ); ?></p>
 			<?php else : ?>
@@ -1282,6 +1472,10 @@ class AJForms {
 	private function get_portal_service_request_actions( $entry ) {
 		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
 		$status   = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+
+		if ( 'service_quote_request' === (string) $entry->source_type ) {
+			return '<span class="aj-portal-status-chip">' . esc_html__( 'Under Review', 'ajforms' ) . '</span>';
+		}
 
 		if ( 'checkout_session' !== (string) $entry->source_type || ! in_array( $status, array( 'unpaid', 'open', 'cancelled' ), true ) ) {
 			return '';
@@ -1994,6 +2188,59 @@ class AJForms {
 						});
 				});
 
+
+				shell.addEventListener('click', function(event) {
+					const button = event.target.closest('.aj-portal-additional-entity-button');
+					if (!button || button.disabled) {
+						return;
+					}
+
+					const message = shell.querySelector('.aj-portal-add-service-message');
+					const originalText = button.textContent;
+					button.disabled = true;
+					button.textContent = '<?php echo esc_js( __( 'Submitting...', 'ajforms' ) ); ?>';
+
+					if (message) {
+						message.textContent = '';
+						message.className = 'aj-portal-add-service-message';
+						message.style.display = 'none';
+					}
+
+					const formData = new FormData();
+					formData.append('action', 'ajcore_request_additional_entity_pricing');
+					formData.append('service_family', button.dataset.serviceFamily || '');
+					formData.append('nonce', button.dataset.nonce || '');
+
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+						method: 'POST',
+						credentials: 'same-origin',
+						body: formData
+					})
+						.then(parseJsonResponse)
+						.then(function(payload) {
+							if (!payload || !payload.success) {
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>');
+							}
+							if (message) {
+								message.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Request submitted for admin review.', 'ajforms' ) ); ?>';
+								message.className = 'aj-portal-add-service-message is-success';
+								message.style.display = 'block';
+							}
+							window.setTimeout(function() { window.location.reload(); }, 900);
+						})
+						.catch(function(error) {
+							button.disabled = false;
+							button.textContent = originalText;
+							if (message) {
+								message.textContent = error.message || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>';
+								message.className = 'aj-portal-add-service-message is-error';
+								message.style.display = 'block';
+							} else {
+								window.alert(error.message || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>');
+							}
+						});
+				});
+
 				shell.addEventListener('click', function(event) {
 					const button = event.target.closest('.aj-portal-cancel-service-request');
 					if (!button || button.disabled) {
@@ -2639,6 +2886,73 @@ class AJForms {
 				'amount'        => $stripe_config['amount'],
 				'currency'      => strtoupper( $stripe_config['currency'] ),
 				'description'   => $stripe_config['description'],
+			)
+		);
+	}
+
+
+	public function ajax_request_additional_entity_pricing() {
+		$family = isset( $_POST['service_family'] ) ? sanitize_key( wp_unslash( $_POST['service_family'] ) ) : '';
+		$nonce  = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+
+		if ( ! is_user_logged_in() || ! in_array( $family, array( 'virtual_office', 'registered_agent' ), true ) || ! wp_verify_nonce( $nonce, 'ajcore_request_additional_entity_' . $family ) ) {
+			wp_send_json_error( __( 'Invalid additional entity pricing request.', 'ajforms' ), 400 );
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			wp_send_json_error( __( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ), 400 );
+		}
+
+		$status = $this->get_portal_additional_entity_request_status( $stripe_customer_id, $family );
+		if ( $status ) {
+			wp_send_json_success(
+				array(
+					'message' => __( 'You already have an additional entity pricing request under review.', 'ajforms' ),
+					'status'  => $status,
+				)
+			);
+		}
+
+		global $wpdb;
+		$service_label    = $this->get_portal_service_family_label( $family );
+		$source_object_id = 'quote_' . get_current_user_id() . '_' . time() . '_' . wp_generate_password( 6, false, false );
+		$metadata         = array(
+			'source'         => 'portal_additional_entity_pricing',
+			'service_family' => $family,
+			'service_label'  => $service_label,
+			'user_id'        => get_current_user_id(),
+			'note'           => 'Client requested custom pricing for an additional entity.',
+		);
+
+		$inserted = $wpdb->insert(
+			$this->get_portal_ledger_table(),
+			array(
+				'stripe_customer_id' => $stripe_customer_id,
+				'source_object_id'   => $source_object_id,
+				'source_type'        => 'service_quote_request',
+				'ledger_date'        => current_time( 'mysql' ),
+				'description'        => sprintf( __( 'Additional entity pricing request: %s', 'ajforms' ), $service_label ),
+				'amount'             => 0,
+				'currency'           => 'usd',
+				'status'             => 'admin_review_required',
+				'invoice_id'         => '',
+				'payment_intent_id'  => '',
+				'charge_id'          => '',
+				'metadata'           => wp_json_encode( $metadata ),
+				'created_at'         => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+
+		if ( false === $inserted ) {
+			wp_send_json_error( __( 'Unable to save the request. Please contact support.', 'ajforms' ), 500 );
+		}
+
+		wp_send_json_success(
+			array(
+				'message' => __( 'Your additional entity pricing request was submitted for admin review.', 'ajforms' ),
+				'status'  => 'admin_review_required',
 			)
 		);
 	}
