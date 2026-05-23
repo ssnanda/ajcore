@@ -2417,17 +2417,27 @@ class AJForms_Admin {
 			array( 'id' => 'profile', 'label' => __( 'Profile', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 		);
 
+		$built_in_ids    = wp_list_pluck( $default_items, 'id' );
+		$built_in_labels = array_map( 'strtolower', wp_list_pluck( $default_items, 'label' ) );
+
 		$normalized = array();
 		foreach ( array_merge( $default_items, $items ) as $item ) {
 			if ( empty( $item['id'] ) ) {
 				continue;
 			}
 
-			$id = sanitize_key( $item['id'] );
+			$id    = sanitize_key( $item['id'] );
+			$type  = ! empty( $item['type'] ) && 'custom' === $item['type'] ? 'custom' : 'built_in';
+			$label = ! empty( $item['label'] ) ? sanitize_text_field( $item['label'] ) : $id;
+
+			if ( 'custom' === $type && ( in_array( $id, $built_in_ids, true ) || in_array( strtolower( $label ), $built_in_labels, true ) ) ) {
+				continue;
+			}
+
 			$normalized[ $id ] = array(
 				'id'      => $id,
-				'label'   => ! empty( $item['label'] ) ? sanitize_text_field( $item['label'] ) : $id,
-				'type'    => ! empty( $item['type'] ) && 'custom' === $item['type'] ? 'custom' : 'built_in',
+				'label'   => $label,
+				'type'    => $type,
 				'url'     => ! empty( $item['url'] ) ? esc_url_raw( $item['url'] ) : '',
 				'enabled' => ! isset( $item['enabled'] ) || (bool) $item['enabled'],
 			);
@@ -2669,9 +2679,10 @@ class AJForms_Admin {
 			);
 		}
 
-		$new_label = isset( $_POST['new_portal_menu_label'] ) ? sanitize_text_field( wp_unslash( $_POST['new_portal_menu_label'] ) ) : '';
-		$new_url   = isset( $_POST['new_portal_menu_url'] ) ? esc_url_raw( wp_unslash( $_POST['new_portal_menu_url'] ) ) : '';
-		if ( '' !== $new_label && '' !== $new_url ) {
+		$new_label       = isset( $_POST['new_portal_menu_label'] ) ? sanitize_text_field( wp_unslash( $_POST['new_portal_menu_label'] ) ) : '';
+		$new_url         = isset( $_POST['new_portal_menu_url'] ) ? esc_url_raw( wp_unslash( $_POST['new_portal_menu_url'] ) ) : '';
+		$built_in_labels = array( 'overview', 'my services', 'billing', 'file library', 'profile' );
+		if ( '' !== $new_label && '' !== $new_url && ! in_array( strtolower( $new_label ), $built_in_labels, true ) ) {
 			$items[] = array(
 				'id'      => 'custom-' . wp_generate_uuid4(),
 				'label'   => $new_label,
@@ -5342,9 +5353,9 @@ class AJForms_Admin {
 							<?php endforeach; ?>
 							<tr>
 								<td><?php esc_html_e( 'New', 'ajforms' ); ?></td>
-								<td><input type="text" name="new_portal_menu_label" placeholder="<?php esc_attr_e( 'Billing', 'ajforms' ); ?>"></td>
+								<td><input type="text" name="new_portal_menu_label" placeholder="<?php esc_attr_e( 'Custom tab label', 'ajforms' ); ?>"></td>
 								<td><?php esc_html_e( 'Custom Link', 'ajforms' ); ?></td>
-								<td><input type="url" name="new_portal_menu_url" placeholder="<?php echo esc_attr( home_url( '/billing/' ) ); ?>"></td>
+								<td><input type="url" name="new_portal_menu_url" placeholder="<?php echo esc_attr( home_url( '/your-page/' ) ); ?>"></td>
 							</tr>
 						</tbody>
 					</table>

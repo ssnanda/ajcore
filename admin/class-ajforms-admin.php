@@ -2694,6 +2694,17 @@ class AJForms_Admin {
 
 		update_option( 'ajcore_customer_portal_menu_items', $items, false );
 
+		$tab_headings = isset( $_POST['portal_tab_heading'] ) && is_array( $_POST['portal_tab_heading'] ) ? wp_unslash( $_POST['portal_tab_heading'] ) : array();
+		$tab_intros   = isset( $_POST['portal_tab_intro'] ) && is_array( $_POST['portal_tab_intro'] ) ? wp_unslash( $_POST['portal_tab_intro'] ) : array();
+		$tab_content  = array();
+		foreach ( array( 'overview', 'services', 'billing', 'file-library', 'profile' ) as $tab_id ) {
+			$tab_content[ $tab_id ] = array(
+				'heading' => isset( $tab_headings[ $tab_id ] ) ? sanitize_text_field( $tab_headings[ $tab_id ] ) : '',
+				'intro'   => isset( $tab_intros[ $tab_id ] ) ? sanitize_textarea_field( $tab_intros[ $tab_id ] ) : '',
+			);
+		}
+		update_option( 'ajcore_customer_portal_tab_content', $tab_content, false );
+
 		wp_safe_redirect(
 			add_query_arg(
 				array(
@@ -5258,6 +5269,17 @@ class AJForms_Admin {
 		$stripe_enabled = '' !== $this->get_stripe_secret_key_for_portal();
 		$cache_counts   = $this->get_portal_cache_counts();
 		$last_db_error  = get_option( 'ajforms_last_portal_db_error', '' );
+		$tab_content    = get_option(
+			'ajcore_customer_portal_tab_content',
+			array(
+				'overview'     => array( 'heading' => __( 'Welcome, {customer_name}', 'ajforms' ), 'intro' => '' ),
+				'services'     => array( 'heading' => __( 'My Services', 'ajforms' ), 'intro' => __( 'Review your active services and add eligible services to your account.', 'ajforms' ) ),
+				'billing'      => array( 'heading' => __( 'Billing', 'ajforms' ), 'intro' => __( 'View upcoming payments, invoices, and service requests.', 'ajforms' ) ),
+				'file-library' => array( 'heading' => __( 'File Library', 'ajforms' ), 'intro' => __( 'Download documents shared with your portal account.', 'ajforms' ) ),
+				'profile'      => array( 'heading' => __( 'Profile', 'ajforms' ), 'intro' => __( 'View your contact information and account access links.', 'ajforms' ) ),
+			)
+		);
+		$tab_content    = is_array( $tab_content ) ? $tab_content : array();
 		?>
 		<?php if ( ! $embedded ) : ?>
 			<div class="ajforms-settings-head">
@@ -5322,7 +5344,7 @@ class AJForms_Admin {
 					<p><?php esc_html_e( 'These items appear as tabs inside the Client Portal. File Library is built in; custom items can link to other public pages.', 'ajforms' ); ?></p>
 
 					<style>
-						.ajcore-portal-menu-table input[type="text"],.ajcore-portal-menu-table input[type="url"]{width:100%}
+						.ajcore-portal-menu-table input[type="text"],.ajcore-portal-menu-table input[type="url"],.ajcore-portal-menu-table textarea{width:100%}
 						.ajcore-portal-menu-table td{vertical-align:middle}
 					</style>
 
@@ -5357,6 +5379,34 @@ class AJForms_Admin {
 								<td><?php esc_html_e( 'Custom Link', 'ajforms' ); ?></td>
 								<td><input type="url" name="new_portal_menu_url" placeholder="<?php echo esc_attr( home_url( '/your-page/' ) ); ?>"></td>
 							</tr>
+						</tbody>
+					</table>
+
+					<h3><?php esc_html_e( 'Built-in Tab Page Content', 'ajforms' ); ?></h3>
+					<p><?php esc_html_e( 'Customize the customer-facing heading and short intro text for each built-in portal tab. Use {customer_name} in the Overview heading if you want a personalized greeting.', 'ajforms' ); ?></p>
+
+					<table class="widefat striped ajcore-portal-menu-table">
+						<thead>
+							<tr>
+								<th><?php esc_html_e( 'Tab', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Page Heading', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Intro Text', 'ajforms' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $menu_items as $item ) : ?>
+								<?php if ( 'built_in' !== $item['type'] ) { continue; } ?>
+								<?php
+								$tab_id      = sanitize_key( $item['id'] );
+								$tab_heading = isset( $tab_content[ $tab_id ]['heading'] ) ? $tab_content[ $tab_id ]['heading'] : $item['label'];
+								$tab_intro   = isset( $tab_content[ $tab_id ]['intro'] ) ? $tab_content[ $tab_id ]['intro'] : '';
+								?>
+								<tr>
+									<td><strong><?php echo esc_html( $item['label'] ); ?></strong><br><code><?php echo esc_html( $tab_id ); ?></code></td>
+									<td><input type="text" name="portal_tab_heading[<?php echo esc_attr( $tab_id ); ?>]" value="<?php echo esc_attr( $tab_heading ); ?>"></td>
+									<td><textarea name="portal_tab_intro[<?php echo esc_attr( $tab_id ); ?>]" rows="2" style="width:100%;"><?php echo esc_textarea( $tab_intro ); ?></textarea></td>
+								</tr>
+							<?php endforeach; ?>
 						</tbody>
 					</table>
 
