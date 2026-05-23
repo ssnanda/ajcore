@@ -52,6 +52,7 @@ class AJForms {
 		add_filter( 'wp_nav_menu_items', array( $this, 'add_customer_portal_nav_item' ), 10, 2 );
 		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
+		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_upload' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_service_request_remove' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_task_action' ) );
@@ -280,17 +281,49 @@ class AJForms {
 	}
 
 	private function render_customer_portal_file_library_tab() {
-		$files = $this->get_current_user_portal_files();
+		$files  = $this->get_current_user_portal_files();
+		$notice = isset( $_GET['portal_notice'] ) ? sanitize_key( wp_unslash( $_GET['portal_notice'] ) ) : '';
+
+		$notice_message = '';
+		$notice_class   = '';
+		if ( 'file-uploaded' === $notice ) {
+			$notice_message = __( 'Your document was uploaded and added to your File Library.', 'ajforms' );
+			$notice_class   = 'is-success';
+		} elseif ( 'file-upload-error' === $notice ) {
+			$notice_message = __( 'Unable to upload the file. Please use a PDF, Word document, or image file.', 'ajforms' );
+			$notice_class   = 'is-error';
+		} elseif ( 'file-upload-invalid' === $notice ) {
+			$notice_message = __( 'The upload request was invalid. Please try again.', 'ajforms' );
+			$notice_class   = 'is-error';
+		}
 
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'File Library', 'ajforms' ); ?></h2>
 
+			<?php if ( $notice_message ) : ?>
+				<div class="aj-portal-notice <?php echo esc_attr( $notice_class ); ?>"><?php echo esc_html( $notice_message ); ?></div>
+			<?php endif; ?>
+
+			<div class="aj-portal-upload-card">
+				<div>
+					<h3><?php esc_html_e( 'Upload a Document', 'ajforms' ); ?></h3>
+					<p><?php esc_html_e( 'Share PDFs, Word documents, and images with our team. Uploaded files will stay in your File Library.', 'ajforms' ); ?></p>
+				</div>
+				<form method="post" enctype="multipart/form-data" class="aj-portal-upload-form">
+					<?php wp_nonce_field( 'ajcore_portal_file_upload', 'ajcore_portal_file_upload_nonce' ); ?>
+					<input type="hidden" name="ajcore_portal_file_upload" value="1">
+					<input type="text" name="portal_file_title" placeholder="<?php echo esc_attr__( 'Optional file title', 'ajforms' ); ?>">
+					<input type="file" name="portal_file_upload" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" required>
+					<button type="submit" class="button"><?php esc_html_e( 'Upload File', 'ajforms' ); ?></button>
+				</form>
+			</div>
+
 			<?php if ( empty( $files ) ) : ?>
 				<div class="aj-portal-empty-state">
 					<strong><?php esc_html_e( 'No shared files yet', 'ajforms' ); ?></strong>
-					<p><?php esc_html_e( 'Documents shared with your portal account will appear here.', 'ajforms' ); ?></p>
+					<p><?php esc_html_e( 'Documents shared with your portal account will appear here. You can also upload documents above.', 'ajforms' ); ?></p>
 				</div>
 			<?php else : ?>
 				<div class="aj-customer-file-grid">
@@ -1697,6 +1730,15 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-empty-state:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
 				.ajcore-portal-shell .aj-portal-empty-state strong{display:block;margin:0 0 8px;font-size:22px;letter-spacing:-.035em;color:#111827}
 				.ajcore-portal-shell .aj-portal-empty-state p{margin:0;color:#526173}
+				.ajcore-portal-shell .aj-portal-notice{margin:0 0 18px;padding:14px 16px;border-radius:18px;font-weight:800;border:1px solid rgba(219,231,243,.95);background:#fff;box-shadow:0 12px 28px rgba(15,23,42,.045)}
+				.ajcore-portal-shell .aj-portal-notice.is-success{color:#166534;background:#ecfdf5;border-color:#bbf7d0}
+				.ajcore-portal-shell .aj-portal-notice.is-error{color:#991b1b;background:#fef2f2;border-color:#fecaca}
+				.ajcore-portal-shell .aj-portal-upload-card{display:grid;grid-template-columns:minmax(280px,.9fr) minmax(360px,1.1fr);gap:22px;align-items:end;margin:0 0 24px;padding:26px;border:1px solid rgba(219,231,243,.95);border-radius:28px;background:linear-gradient(135deg,rgba(255,255,255,.94) 0%,rgba(248,251,255,.92) 100%);box-shadow:var(--ajp-shadow-soft);position:relative;overflow:hidden}
+				.ajcore-portal-shell .aj-portal-upload-card:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
+				.ajcore-portal-shell .aj-portal-upload-card h3{margin:0 0 8px;font-size:24px;line-height:1.1;letter-spacing:-.04em}
+				.ajcore-portal-shell .aj-portal-upload-card p{margin:0;color:#526173;line-height:1.55}
+				.ajcore-portal-shell .aj-portal-upload-form{display:grid;grid-template-columns:1fr;gap:12px}
+				.ajcore-portal-shell .aj-portal-upload-form input[type="text"],.ajcore-portal-shell .aj-portal-upload-form input[type="file"]{width:100%;border:1px solid #dbe7f3;border-radius:16px;padding:12px 14px;background:#fff;color:#0f172a;font-weight:700}
 
 				.ajcore-portal-shell .aj-portal-tab-intro{margin:-8px 0 24px;color:#475569;font-size:clamp(16px,1.3vw,19px);line-height:1.7;max-width:880px}
 				.ajcore-portal-shell .aj-portal-account-summary{margin:30px 0 0;padding:28px 32px;border:1px solid rgba(191,219,254,.9);border-radius:28px;background:linear-gradient(135deg,rgba(255,255,255,.96),rgba(239,246,255,.72));box-shadow:0 22px 60px rgba(15,23,42,.07)}
@@ -1779,6 +1821,7 @@ class AJForms {
 					.ajcore-portal-shell .aj-portal-table tr:last-child{border-bottom:0}
 					.ajcore-portal-shell .aj-portal-table td{border:0;padding:8px 18px}
 					.ajcore-portal-shell .aj-portal-table td:first-child{font-weight:900;color:#0f172a}
+					.ajcore-portal-shell .aj-portal-upload-card{grid-template-columns:1fr;padding:22px;border-radius:24px}
 					.ajcore-portal-shell .aj-portal-quick-actions-heading,.ajcore-portal-shell .aj-portal-quick-actions{display:none}
 				}
 				@media (max-width:380px){
@@ -1981,6 +2024,141 @@ class AJForms {
 
 		$notice = false === $deleted ? 'remove-error' : 'removed';
 		wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => $notice ), $this->get_customer_portal_url() ) );
+		exit;
+	}
+
+	public function maybe_handle_portal_file_upload() {
+		if ( empty( $_POST['ajcore_portal_file_upload'] ) ) {
+			return;
+		}
+
+		if ( ! is_user_logged_in() ) {
+			auth_redirect();
+			exit;
+		}
+
+		$portal_url = add_query_arg( 'portal_tab', 'file-library', $this->get_customer_portal_url() );
+
+		if ( ! isset( $_POST['ajcore_portal_file_upload_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajcore_portal_file_upload_nonce'] ) ), 'ajcore_portal_file_upload' ) ) {
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'file-upload-invalid', $portal_url ) );
+			exit;
+		}
+
+		if ( empty( $_FILES['portal_file_upload'] ) || empty( $_FILES['portal_file_upload']['name'] ) ) {
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'file-upload-error', $portal_url ) );
+			exit;
+		}
+
+		$file = $_FILES['portal_file_upload'];
+		$max_size = 20 * MB_IN_BYTES;
+		if ( ! empty( $file['size'] ) && (int) $file['size'] > $max_size ) {
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'file-upload-error', $portal_url ) );
+			exit;
+		}
+
+		$allowed_mimes = array(
+			'pdf'  => 'application/pdf',
+			'doc'  => 'application/msword',
+			'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+			'jpg'  => 'image/jpeg',
+			'jpeg' => 'image/jpeg',
+			'png'  => 'image/png',
+			'gif'  => 'image/gif',
+			'webp' => 'image/webp',
+			'heic' => 'image/heic',
+			'heif' => 'image/heif',
+		);
+
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+		require_once ABSPATH . 'wp-admin/includes/media.php';
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+
+		$uploaded = wp_handle_upload(
+			$file,
+			array(
+				'test_form' => false,
+				'mimes'     => $allowed_mimes,
+			)
+		);
+
+		if ( empty( $uploaded['file'] ) || ! empty( $uploaded['error'] ) ) {
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'file-upload-error', $portal_url ) );
+			exit;
+		}
+
+		$file_path = $uploaded['file'];
+		$file_type = wp_check_filetype( basename( $file_path ), $allowed_mimes );
+		if ( empty( $file_type['type'] ) ) {
+			@unlink( $file_path );
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'file-upload-error', $portal_url ) );
+			exit;
+		}
+
+		$title = isset( $_POST['portal_file_title'] ) ? sanitize_text_field( wp_unslash( $_POST['portal_file_title'] ) ) : '';
+		if ( '' === $title ) {
+			$title = preg_replace( '/\.[^.]+$/', '', basename( $file_path ) );
+		}
+
+		$attachment_id = wp_insert_attachment(
+			array(
+				'guid'           => isset( $uploaded['url'] ) ? esc_url_raw( $uploaded['url'] ) : '',
+				'post_mime_type' => $file_type['type'],
+				'post_title'     => $title,
+				'post_content'   => '',
+				'post_status'    => 'inherit',
+			),
+			$file_path
+		);
+
+		if ( is_wp_error( $attachment_id ) || ! $attachment_id ) {
+			@unlink( $file_path );
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'file-upload-error', $portal_url ) );
+			exit;
+		}
+
+		$metadata = wp_generate_attachment_metadata( (int) $attachment_id, $file_path );
+		if ( is_array( $metadata ) ) {
+			wp_update_attachment_metadata( (int) $attachment_id, $metadata );
+		}
+
+		global $wpdb;
+		$user = wp_get_current_user();
+		$user_email = strtolower( sanitize_email( (string) $user->user_email ) );
+		$now = current_time( 'mysql' );
+
+		$inserted = $wpdb->insert(
+			$this->get_portal_files_table(),
+			array(
+				'attachment_id' => (int) $attachment_id,
+				'title'         => $title,
+				'description'   => sprintf( __( 'Uploaded by %s from the Client Portal.', 'ajforms' ), $user_email ),
+				'category'      => __( 'Client Upload', 'ajforms' ),
+				'created_by'    => get_current_user_id(),
+				'created_at'    => $now,
+				'updated_at'    => $now,
+			),
+			array( '%d', '%s', '%s', '%s', '%d', '%s', '%s' )
+		);
+
+		if ( false === $inserted ) {
+			wp_delete_attachment( (int) $attachment_id, true );
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'file-upload-error', $portal_url ) );
+			exit;
+		}
+
+		$file_id = (int) $wpdb->insert_id;
+		$wpdb->insert(
+			$this->get_portal_file_users_table(),
+			array(
+				'file_id'    => $file_id,
+				'user_id'    => get_current_user_id(),
+				'user_email' => $user_email,
+				'created_at' => $now,
+			),
+			array( '%d', '%d', '%s', '%s' )
+		);
+
+		wp_safe_redirect( add_query_arg( 'portal_notice', 'file-uploaded', $portal_url ) );
 		exit;
 	}
 
