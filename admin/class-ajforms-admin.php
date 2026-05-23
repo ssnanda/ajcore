@@ -4128,6 +4128,187 @@ class AJForms_Admin {
 		return isset( $labels[ $status ] ) ? $status : 'draft';
 	}
 
+
+	private function get_portal_service_request_raw_data( $request ) {
+		$raw = isset( $request->raw_data ) ? json_decode( (string) $request->raw_data, true ) : array();
+
+		return is_array( $raw ) ? $raw : array();
+	}
+
+	private function get_portal_service_request_meta_value( $request, $key ) {
+		$raw = $this->get_portal_service_request_raw_data( $request );
+
+		return isset( $raw[ $key ] ) && is_scalar( $raw[ $key ] ) ? sanitize_text_field( (string) $raw[ $key ] ) : '';
+	}
+
+	private function sync_portal_service_request_to_ledger( $request, $data = array() ) {
+		global $wpdb;
+
+		if ( ! $request ) {
+			return false;
+		}
+
+		$ledger_update = array();
+		$ledger_formats = array();
+
+		if ( array_key_exists( 'amount', $data ) ) {
+			$ledger_update['amount'] = (float) $data['amount'];
+			$ledger_formats[] = '%f';
+		}
+		if ( array_key_exists( 'currency', $data ) ) {
+			$ledger_update['currency'] = sanitize_key( (string) $data['currency'] );
+			$ledger_formats[] = '%s';
+		}
+		if ( array_key_exists( 'status', $data ) ) {
+			$ledger_update['status'] = sanitize_key( (string) $data['status'] );
+			$ledger_formats[] = '%s';
+		}
+
+		$ledger = null;
+		if ( ! empty( $request->ledger_id ) ) {
+			$ledger = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT * FROM {$this->get_portal_ledger_table()} WHERE id = %d LIMIT 1",
+					(int) $request->ledger_id
+				)
+			);
+		}
+
+		if ( ! $ledger && ! empty( $request->source_object_id ) ) {
+			$ledger = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_object_id = %s LIMIT 1",
+					sanitize_text_field( (string) $request->stripe_customer_id ),
+					sanitize_text_field( (string) $request->source_object_id )
+				)
+			);
+		}
+
+		if ( ! $ledger ) {
+			return false;
+		}
+
+		$metadata = ! empty( $ledger->metadata ) ? json_decode( (string) $ledger->metadata, true ) : array();
+		$metadata = is_array( $metadata ) ? $metadata : array();
+
+		foreach ( array( 'payment_url', 'payment_reference', 'client_notes', 'request_id' ) as $meta_key ) {
+			if ( array_key_exists( $meta_key, $data ) ) {
+				$metadata[ $meta_key ] = is_scalar( $data[ $meta_key ] ) ? (string) $data[ $meta_key ] : '';
+			}
+		}
+		$metadata['request_status_updated_at'] = current_time( 'mysql' );
+
+		$ledger_update['metadata'] = wp_json_encode( $metadata );
+		$ledger_formats[] = '%s';
+
+		if ( empty( $ledger_update ) ) {
+			return true;
+		}
+
+		$updated = $wpdb->update(
+			$this->get_portal_ledger_table(),
+			$ledger_update,
+			array( 'id' => (int) $ledger->id ),
+			$ledger_formats,
+			array( '%d' )
+		);
+
+		return false !== $updated;
+	}
+
+	private function handle_portal_service_request_details_save() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		if ( ! isset( $_POST['service_request_action'] ) || 'save_details' !== sanitize_key( wp_unslash( $_POST['service_request_action'] ) ) ) {
+			return;
+		}
+
+		$request_id = isset( $_POST['request_id'] ) ? absint( wp_unslash( $_POST['request_id'] ) ) : 0;
+		if ( ! $request_id ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_service_request_details_' . $request_id );
+
+		global $wpdb;
+		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
+		if ( ! $request ) {
+			return;
+		}
+
+		$amount = (float) $request->amount;
+		if ( isset( $_POST['request_amount'] ) ) {
+			$raw_amount = wp_unslash( $_POST['request_amount'] );
+			if ( function_exists( 'wc_format_decimal' ) ) {
+				$amount = (float) wc_format_decimal( $raw_amount );
+			} else {
+				$amount = (float) preg_replace( '/[^0-9.\-]/', '', (string) $raw_amount );
+			}
+		}
+		$currency = isset( $_POST['request_currency'] ) ? sanitize_key( wp_unslash( $_POST['request_currency'] ) ) : sanitize_key( (string) $request->currency );
+		if ( '' === $currency ) {
+			$currency = 'usd';
+		}
+
+		$client_notes = isset( $_POST['client_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['client_notes'] ) ) : '';
+		$admin_notes  = isset( $_POST['admin_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['admin_notes'] ) ) : '';
+		$payment_url  = isset( $_POST['payment_url'] ) ? esc_url_raw( wp_unslash( $_POST['payment_url'] ) ) : '';
+		$payment_reference = isset( $_POST['payment_reference'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_reference'] ) ) : '';
+		$after_save_status = isset( $_POST['after_save_status'] ) ? sanitize_key( wp_unslash( $_POST['after_save_status'] ) ) : '';
+
+		$status = sanitize_key( (string) $request->status );
+		if ( '' !== $after_save_status && isset( $this->get_portal_service_request_status_labels()[ $after_save_status ] ) ) {
+			$status = $after_save_status;
+		}
+
+		$raw_data = $this->get_portal_service_request_raw_data( $request );
+		$raw_data['payment_url'] = $payment_url;
+		$raw_data['payment_reference'] = $payment_reference;
+		$raw_data['details_updated_at'] = current_time( 'mysql' );
+		$raw_data['details_updated_by'] = get_current_user_id();
+
+		$wpdb->update(
+			$this->get_portal_service_requests_table(),
+			array(
+				'amount'       => $amount,
+				'currency'     => $currency,
+				'status'       => $status,
+				'admin_notes'  => $admin_notes,
+				'client_notes' => $client_notes,
+				'raw_data'     => wp_json_encode( $raw_data ),
+				'updated_at'   => current_time( 'mysql' ),
+			),
+			array( 'id' => $request_id ),
+			array( '%f', '%s', '%s', '%s', '%s', '%s', '%s' ),
+			array( '%d' )
+		);
+
+		$request->amount = $amount;
+		$request->currency = $currency;
+		$request->status = $status;
+		$request->client_notes = $client_notes;
+		$request->admin_notes = $admin_notes;
+		$request->raw_data = wp_json_encode( $raw_data );
+
+		$this->sync_portal_service_request_to_ledger(
+			$request,
+			array(
+				'amount'            => $amount,
+				'currency'          => $currency,
+				'status'            => $status,
+				'payment_url'       => $payment_url,
+				'payment_reference' => $payment_reference,
+				'client_notes'      => $client_notes,
+				'request_id'        => $request_id,
+			)
+		);
+
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
 	private function backfill_portal_service_requests_from_ledger() {
 		global $wpdb;
 
@@ -4226,6 +4407,7 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
+		$this->handle_portal_service_request_details_save();
 
 		if ( ! isset( $_GET['service_request_action'], $_GET['request_id'], $_GET['_wpnonce'] ) ) {
 			return;
@@ -4260,28 +4442,13 @@ class AJForms_Admin {
 			);
 
 			$ledger_status = 'pending_payment' === $status ? 'unpaid' : $status;
-			if ( ! empty( $request->ledger_id ) ) {
-				$wpdb->update(
-					$this->get_portal_ledger_table(),
-					array( 'status' => $ledger_status ),
-					array( 'id' => (int) $request->ledger_id ),
-					array( '%s' ),
-					array( '%d' )
-				);
-			}
-
-			if ( empty( $request->ledger_id ) && ! empty( $request->source_object_id ) ) {
-				$wpdb->update(
-					$this->get_portal_ledger_table(),
-					array( 'status' => $ledger_status ),
-					array(
-						'stripe_customer_id' => sanitize_text_field( (string) $request->stripe_customer_id ),
-						'source_object_id'   => sanitize_text_field( (string) $request->source_object_id ),
-					),
-					array( '%s' ),
-					array( '%s', '%s' )
-				);
-			}
+			$request->status = $status;
+			$this->sync_portal_service_request_to_ledger(
+				$request,
+				array(
+					'status' => $ledger_status,
+				)
+			);
 		}
 
 		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
@@ -4638,6 +4805,9 @@ class AJForms_Admin {
 							'cancel'       => __( 'Cancel', 'ajforms' ),
 							'failed'       => __( 'Failed', 'ajforms' ),
 						);
+						$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
+						$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
+						$save_details_nonce = wp_create_nonce( 'ajcore_service_request_details_' . (int) $request->id );
 						?>
 						<tr>
 							<td>
@@ -4670,6 +4840,24 @@ class AJForms_Admin {
 									?>
 									<a class="button button-small" href="<?php echo esc_url( $action_url ); ?>"><?php echo esc_html( $action_label ); ?></a>
 								<?php endforeach; ?>
+
+								<details style="margin-top:8px;max-width:420px;">
+									<summary><?php esc_html_e( 'Payment / Fulfillment Details', 'ajforms' ); ?></summary>
+									<form method="post" style="margin-top:8px;display:grid;gap:6px;">
+										<input type="hidden" name="page" value="ajforms-client-portal">
+										<input type="hidden" name="tab" value="service-requests">
+										<input type="hidden" name="service_request_action" value="save_details">
+										<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
+										<input type="hidden" name="_wpnonce" value="<?php echo esc_attr( $save_details_nonce ); ?>">
+										<label><?php esc_html_e( 'Amount', 'ajforms' ); ?><br><input type="number" step="0.01" name="request_amount" value="<?php echo esc_attr( number_format( (float) $request->amount, 2, '.', '' ) ); ?>" style="width:120px;"> <input type="text" name="request_currency" value="<?php echo esc_attr( strtolower( (string) $request->currency ) ); ?>" style="width:70px;"></label>
+										<label><?php esc_html_e( 'Payment URL', 'ajforms' ); ?><br><input type="url" name="payment_url" value="<?php echo esc_attr( $payment_url ); ?>" placeholder="https://" style="width:100%;"></label>
+										<label><?php esc_html_e( 'Payment / Invoice Reference', 'ajforms' ); ?><br><input type="text" name="payment_reference" value="<?php echo esc_attr( $payment_reference ); ?>" style="width:100%;"></label>
+										<label><?php esc_html_e( 'Client-facing Note', 'ajforms' ); ?><br><textarea name="client_notes" rows="2" style="width:100%;"><?php echo esc_textarea( (string) $request->client_notes ); ?></textarea></label>
+										<label><?php esc_html_e( 'Internal Admin Notes', 'ajforms' ); ?><br><textarea name="admin_notes" rows="2" style="width:100%;"><?php echo esc_textarea( (string) $request->admin_notes ); ?></textarea></label>
+										<label><?php esc_html_e( 'After Save Status', 'ajforms' ); ?><br><select name="after_save_status"><option value=""><?php esc_html_e( 'Keep current status', 'ajforms' ); ?></option><option value="awaiting_payment"><?php esc_html_e( 'Awaiting Payment', 'ajforms' ); ?></option><option value="paid"><?php esc_html_e( 'Paid', 'ajforms' ); ?></option><option value="completed"><?php esc_html_e( 'Completed', 'ajforms' ); ?></option></select></label>
+										<button class="button button-small button-primary" type="submit"><?php esc_html_e( 'Save Details', 'ajforms' ); ?></button>
+									</form>
+								</details>
 							</td>
 						</tr>
 					<?php endforeach; ?>

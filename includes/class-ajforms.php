@@ -1369,10 +1369,13 @@ class AJForms {
 						<tbody>
 							<?php foreach ( $ledger as $entry ) : ?>
 								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) : $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' ); ?>
-								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'Download', 'ajforms' ); ?>
+								<?php $entry_payment_url = $this->get_ledger_metadata_value( $entry, 'payment_url' ); ?>
+								<?php if ( ! $entry_invoice_url && $entry_payment_url ) { $entry_invoice_url = $entry_payment_url; } ?>
+								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : ( $entry_payment_url ? __( 'Pay / View', 'ajforms' ) : __( 'Download', 'ajforms' ) ); ?>
+								<?php $entry_client_note = $this->get_ledger_metadata_value( $entry, 'client_notes' ); ?>
 								<tr>
 									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
-									<td><?php echo esc_html( $entry->description ); ?></td>
+									<td><?php echo esc_html( $entry->description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
 									<td><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
 									<td>
