@@ -9,8 +9,8 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 	public function __construct() {
 		parent::__construct(
 			array(
-				'singular' => 'lead',
-				'plural'   => 'leads',
+				'singular' => 'crm_record',
+				'plural'   => 'crm_records',
 				'ajax'     => false,
 			)
 		);
@@ -19,9 +19,9 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 	public function get_columns() {
 		return array(
 			'cb'           => '<input type="checkbox" />',
-			'id'           => __( 'Entry ID', 'ajforms' ),
+			'id'           => __( 'Record ID', 'ajforms' ),
 			'form_title'   => __( 'Form Name', 'ajforms' ),
-			'summary'      => __( 'Basic Info', 'ajforms' ),
+			'summary'      => __( 'Contact / Summary', 'ajforms' ),
 			'status'       => __( 'Status', 'ajforms' ),
 			'created_at'   => __( 'Date & Time', 'ajforms' ),
 			'actions'      => __( 'Actions', 'ajforms' ),

@@ -205,13 +205,13 @@ $lead_stats = array(
 	<div class="ajforms-admin-shell">
 		<div class="ajforms-admin-hero">
 			<div>
-				<h1><?php esc_html_e( 'Entries', 'ajforms' ); ?></h1>
-				<p><?php esc_html_e( 'Review submissions, jump straight into editable entry details, and keep unread leads visible without losing context.', 'ajforms' ); ?></p>
+				<h1><?php esc_html_e( 'CRM', 'ajforms' ); ?></h1>
+				<p><?php esc_html_e( 'Turn form submissions into customer records. Review contacts, source forms, entry status, notes, and follow-up activity from one place.', 'ajforms' ); ?></p>
 			</div>
 		</div>
 
 		<div class="ajforms-stats-grid">
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['total'] ); ?></strong><span><?php esc_html_e( 'Total Entries', 'ajforms' ); ?></span></div>
+			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['total'] ); ?></strong><span><?php esc_html_e( 'CRM Records', 'ajforms' ); ?></span></div>
 			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['unread'] ); ?></strong><span><?php esc_html_e( 'Unread', 'ajforms' ); ?></span></div>
 			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['read'] ); ?></strong><span><?php esc_html_e( 'Read', 'ajforms' ); ?></span></div>
 		</div>

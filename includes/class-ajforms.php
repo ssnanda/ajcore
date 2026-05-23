@@ -61,6 +61,11 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 	}
 
+	private function get_auth_settings() {
+		$settings = get_option( 'ajcore_auth_settings', array() );
+		return is_array( $settings ) ? wp_parse_args( $settings, array( 'redirect_frontend_users' => '1', 'hide_admin_bar' => '1' ) ) : array( 'redirect_frontend_users' => '1', 'hide_admin_bar' => '1' );
+	}
+
 	private function is_frontend_portal_user() {
 		return is_user_logged_in() && ! current_user_can( 'edit_posts' ) && ! current_user_can( 'manage_options' );
 	}
@@ -134,7 +139,8 @@ class AJForms {
 	}
 
 	public function redirect_frontend_portal_users_from_admin() {
-		if ( wp_doing_ajax() || ! $this->is_frontend_portal_user() ) {
+		$auth_settings = $this->get_auth_settings();
+		if ( '1' !== (string) $auth_settings['redirect_frontend_users'] || wp_doing_ajax() || ! $this->is_frontend_portal_user() ) {
 			return;
 		}
 
@@ -143,7 +149,8 @@ class AJForms {
 	}
 
 	public function filter_show_admin_bar( $show ) {
-		if ( $this->is_frontend_portal_user() ) {
+		$auth_settings = $this->get_auth_settings();
+		if ( '1' === (string) $auth_settings['hide_admin_bar'] && $this->is_frontend_portal_user() ) {
 			return false;
 		}
 
@@ -3425,6 +3432,70 @@ class AJForms {
 		return $matched ? $result : $this->get_default_confirmation_result( $settings );
 	}
 
+
+	private function get_automation_rules_for_trigger( $trigger ) {
+		$rules = get_option( 'ajcore_automation_rules', array() );
+		if ( ! is_array( $rules ) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				$rules,
+				function ( $rule ) use ( $trigger ) {
+					return ! empty( $rule['enabled'] ) && ! empty( $rule['trigger'] ) && $rule['trigger'] === $trigger;
+				}
+			)
+		);
+	}
+
+	private function run_automation_rules( $trigger, $form, $lead_data, $lead_id = 0 ) {
+		$rules = $this->get_automation_rules_for_trigger( $trigger );
+		if ( empty( $rules ) ) {
+			return;
+		}
+
+		global $wpdb;
+		$form_id = isset( $form->id ) ? absint( $form->id ) : 0;
+		foreach ( $rules as $rule ) {
+			$rule_form_id = ! empty( $rule['form_id'] ) ? absint( $rule['form_id'] ) : 0;
+			if ( $rule_form_id && $form_id !== $rule_form_id ) {
+				continue;
+			}
+
+			$action = ! empty( $rule['action'] ) ? sanitize_key( $rule['action'] ) : '';
+			$message = ! empty( $rule['message'] ) ? $this->replace_template_tags( (string) $rule['message'], $form, $lead_data ) : sprintf( 'Automation ran for %s.', isset( $form->title ) ? $form->title : 'form' );
+			$target = ! empty( $rule['target'] ) ? (string) $rule['target'] : '';
+
+			if ( 'add_note' === $action && $lead_id ) {
+				$wpdb->insert(
+					$wpdb->prefix . 'ajforms_lead_notes',
+					array(
+						'lead_id'    => absint( $lead_id ),
+						'note'       => $message,
+						'created_by' => get_current_user_id(),
+						'created_at' => current_time( 'mysql' ),
+					),
+					array( '%d', '%s', '%d', '%s' )
+				);
+			} elseif ( 'mark_read' === $action && $lead_id ) {
+				$wpdb->update( $this->get_leads_table(), array( 'status' => 'read' ), array( 'id' => absint( $lead_id ) ), array( '%s' ), array( '%d' ) );
+			} elseif ( 'email_admin' === $action ) {
+				$recipient = is_email( $target ) ? sanitize_email( $target ) : get_option( 'admin_email' );
+				wp_mail( $recipient, sprintf( 'AJ Core automation: %s', ! empty( $rule['name'] ) ? $rule['name'] : 'Automation' ), $message );
+			} elseif ( 'webhook' === $action && filter_var( $target, FILTER_VALIDATE_URL ) ) {
+				wp_remote_post(
+					esc_url_raw( $target ),
+					array(
+						'timeout' => 12,
+						'headers' => array( 'Content-Type' => 'application/json' ),
+						'body'    => wp_json_encode( array( 'trigger' => $trigger, 'form_id' => $form_id, 'lead_id' => absint( $lead_id ), 'message' => $message, 'lead_data' => $lead_data ) ),
+					)
+				);
+			}
+		}
+	}
+
 	private function handle_form_submission( $form, $fields, $settings ) {
 		if ( 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
 			return array(
@@ -3664,8 +3735,10 @@ class AJForms {
 			);
 		}
 
+		$lead_id = (int) $wpdb->insert_id;
 		$this->send_form_notification( $form, $lead_data, $settings );
 		$this->maybe_create_asana_task( $form, $lead_data, $settings );
+		$this->run_automation_rules( 'form_submission', $form, $lead_data, $lead_id );
 
 		$confirmation_result = $this->evaluate_confirmation_rules( $form, $lead_data, $settings );
 		$redirect_url        = ! empty( $confirmation_result['redirect_url'] ) ? esc_url_raw( $confirmation_result['redirect_url'] ) : '';
