@@ -1064,7 +1064,7 @@ class AJForms {
 			$actions[] = '<a class="button" href="' . esc_url( $metadata['checkout_url'] ) . '">' . esc_html__( 'Resume', 'ajforms' ) . '</a>';
 		}
 
-		$actions[] = '<button type="button" class="button aj-portal-cancel-service-request" data-ledger-id="' . esc_attr( (int) $entry->id ) . '" data-nonce="' . esc_attr( wp_create_nonce( 'ajcore_cancel_portal_service_request_' . (int) $entry->id ) ) . '">' . esc_html__( 'Cancel', 'ajforms' ) . '</button>';
+		$actions[] = '<button type="button" class="button aj-portal-cancel-service-request" data-ledger-id="' . esc_attr( (int) $entry->id ) . '" data-nonce="' . esc_attr( wp_create_nonce( 'ajcore_cancel_portal_service_request_' . (int) $entry->id ) ) . '">' . esc_html__( 'Remove', 'ajforms' ) . '</button>';
 
 		return '<span class="aj-portal-inline-actions">' . implode( ' ', $actions ) . '</span>';
 	}
@@ -1569,7 +1569,7 @@ class AJForms {
 					if (!button || button.disabled) {
 						return;
 					}
-					if (!window.confirm('<?php echo esc_js( __( 'Cancel this pending service request?', 'ajforms' ) ); ?>')) {
+					if (!window.confirm('<?php echo esc_js( __( 'Remove this pending service request from your billing history?', 'ajforms' ) ); ?>')) {
 						return;
 					}
 					button.disabled = true;
@@ -1582,16 +1582,31 @@ class AJForms {
 						credentials: 'same-origin',
 						body: formData
 					})
-						.then(function(response) { return response.json(); })
+						.then(function(response) {
+							return response.text().then(function(text) {
+								let payload = null;
+								try {
+									payload = JSON.parse(text);
+								} catch (error) {
+									throw new Error('<?php echo esc_js( __( 'Unable to remove request. The server returned an invalid response.', 'ajforms' ) ); ?>');
+								}
+								return payload;
+							});
+						})
 						.then(function(payload) {
 							if (!payload || !payload.success) {
-								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to remove request.', 'ajforms' ) ); ?>');
 							}
-							window.location.reload();
+							const row = button.closest('tr');
+							if (row) {
+								row.remove();
+							} else {
+								window.location.reload();
+							}
 						})
 						.catch(function(error) {
 							button.disabled = false;
-							window.alert(error.message || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+							window.alert(error.message || '<?php echo esc_js( __( 'Unable to remove request.', 'ajforms' ) ); ?>');
 						});
 				});
 			})();
@@ -2044,45 +2059,44 @@ class AJForms {
 			wp_send_json_error( __( 'Service request was not found.', 'ajforms' ), 404 );
 		}
 
-		if ( in_array( (string) $ledger->status, array( 'unpaid', 'open' ), true ) && 0 === strpos( (string) $ledger->source_object_id, 'cs_' ) ) {
+		if ( ! in_array( (string) $ledger->status, array( 'unpaid', 'open', 'cancelled' ), true ) ) {
+			wp_send_json_error( __( 'Only pending service requests can be removed.', 'ajforms' ), 400 );
+		}
+
+		if ( 0 === strpos( (string) $ledger->source_object_id, 'cs_' ) ) {
 			$stripe_settings = $this->get_stripe_settings();
 			if ( ! empty( $stripe_settings['secret_key'] ) ) {
-				$expire_result = $this->stripe_api_request( 'checkout/sessions/' . rawurlencode( (string) $ledger->source_object_id ) . '/expire', $stripe_settings['secret_key'] );
-				if ( is_wp_error( $expire_result ) ) {
-					$message = $expire_result->get_error_message();
-					if ( false === stripos( $message, 'already expired' ) && false === stripos( $message, 'cannot be expired' ) && false === stripos( $message, 'not open' ) ) {
-						wp_send_json_error( $message, 400 );
-					}
-				}
+				// Best effort only. The local portal request should still be removable even if Stripe
+				// refuses to expire an already-completed/expired session.
+				$this->stripe_api_request( 'checkout/sessions/' . rawurlencode( (string) $ledger->source_object_id ) . '/expire', $stripe_settings['secret_key'] );
 			}
 		}
 
-		$updated = $wpdb->update(
-			$this->get_portal_ledger_table(),
-			array( 'status' => 'cancelled' ),
-			array( 'id' => $ledger_id ),
-			array( '%s' ),
-			array( '%d' )
-		);
-
-		if ( false === $updated ) {
-			wp_send_json_error( __( 'Unable to cancel request.', 'ajforms' ), 500 );
-		}
-
 		if ( ! empty( $ledger->source_object_id ) ) {
-			$wpdb->update(
+			$wpdb->delete(
 				$this->get_portal_stripe_transactions_table(),
-				array( 'status' => 'cancelled' ),
 				array(
 					'stripe_object_id'   => (string) $ledger->source_object_id,
 					'stripe_customer_id' => $stripe_customer_id,
 				),
-				array( '%s' ),
 				array( '%s', '%s' )
 			);
 		}
 
-		wp_send_json_success( array( 'status' => 'cancelled' ) );
+		$deleted = $wpdb->delete(
+			$this->get_portal_ledger_table(),
+			array(
+				'id'                 => $ledger_id,
+				'stripe_customer_id' => $stripe_customer_id,
+			),
+			array( '%d', '%s' )
+		);
+
+		if ( false === $deleted ) {
+			wp_send_json_error( __( 'Unable to remove request.', 'ajforms' ), 500 );
+		}
+
+		wp_send_json_success( array( 'status' => 'removed' ) );
 	}
 
 	public function ajax_create_checkout_session() {
@@ -4719,7 +4733,7 @@ class AJForms {
 					if (!button || button.disabled) {
 						return;
 					}
-					if (!window.confirm('<?php echo esc_js( __( 'Cancel this pending service request?', 'ajforms' ) ); ?>')) {
+					if (!window.confirm('<?php echo esc_js( __( 'Remove this pending service request from your billing history?', 'ajforms' ) ); ?>')) {
 						return;
 					}
 					button.disabled = true;
@@ -4732,16 +4746,31 @@ class AJForms {
 						credentials: 'same-origin',
 						body: formData
 					})
-						.then(function(response) { return response.json(); })
+						.then(function(response) {
+							return response.text().then(function(text) {
+								let payload = null;
+								try {
+									payload = JSON.parse(text);
+								} catch (error) {
+									throw new Error('<?php echo esc_js( __( 'Unable to remove request. The server returned an invalid response.', 'ajforms' ) ); ?>');
+								}
+								return payload;
+							});
+						})
 						.then(function(payload) {
 							if (!payload || !payload.success) {
-								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to remove request.', 'ajforms' ) ); ?>');
 							}
-							window.location.reload();
+							const row = button.closest('tr');
+							if (row) {
+								row.remove();
+							} else {
+								window.location.reload();
+							}
 						})
 						.catch(function(error) {
 							button.disabled = false;
-							window.alert(error.message || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+							window.alert(error.message || '<?php echo esc_js( __( 'Unable to remove request.', 'ajforms' ) ); ?>');
 						});
 				});
 			})();

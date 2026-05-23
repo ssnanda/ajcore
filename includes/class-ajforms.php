@@ -1055,16 +1055,19 @@ class AJForms {
 
 	private function get_portal_service_request_actions( $entry ) {
 		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
-		if ( 'checkout_session' !== (string) $entry->source_type || ! in_array( (string) $entry->status, array( 'unpaid', 'open' ), true ) ) {
+		$status   = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+
+		if ( 'checkout_session' !== (string) $entry->source_type || ! in_array( $status, array( 'unpaid', 'open', 'cancelled', 'canceled', 'expired', 'incomplete' ), true ) ) {
 			return '';
 		}
 
 		$actions = array();
-		if ( ! empty( $metadata['checkout_url'] ) ) {
-			$actions[] = '<a class="button" href="' . esc_url( $metadata['checkout_url'] ) . '">' . esc_html__( 'Resume', 'ajforms' ) . '</a>';
+		if ( in_array( $status, array( 'unpaid', 'open', 'incomplete' ), true ) && ! empty( $metadata['checkout_url'] ) ) {
+			$actions[] = '<a class="button aj-portal-action-resume" href="' . esc_url( $metadata['checkout_url'] ) . '">' . esc_html__( 'Resume', 'ajforms' ) . '</a>';
 		}
 
-		$actions[] = '<button type="button" class="button aj-portal-cancel-service-request" data-ledger-id="' . esc_attr( (int) $entry->id ) . '" data-nonce="' . esc_attr( wp_create_nonce( 'ajcore_cancel_portal_service_request_' . (int) $entry->id ) ) . '">' . esc_html__( 'Remove', 'ajforms' ) . '</button>';
+		$button_label = in_array( $status, array( 'unpaid', 'open', 'incomplete' ), true ) ? __( 'Cancel', 'ajforms' ) : __( 'Remove', 'ajforms' );
+		$actions[] = '<button type="button" class="button aj-portal-action-cancel aj-portal-cancel-service-request" data-ledger-id="' . esc_attr( (int) $entry->id ) . '" data-nonce="' . esc_attr( wp_create_nonce( 'ajcore_cancel_portal_service_request_' . (int) $entry->id ) ) . '">' . esc_html( $button_label ) . '</button>';
 
 		return '<span class="aj-portal-inline-actions">' . implode( ' ', $actions ) . '</span>';
 	}
@@ -1469,8 +1472,11 @@ class AJForms {
 				.ajcore-portal-shell .aj-customer-file p{margin:0 0 18px;color:#52616f}
 				.ajcore-portal-shell .aj-customer-file .button{display:inline-flex;text-decoration:none}
 				.ajcore-portal-shell .aj-portal-quick-actions{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 18px}
-				.ajcore-portal-shell .aj-portal-inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-				.ajcore-portal-shell .aj-portal-inline-actions .button{margin:0;background:#fee2e2;color:#991b1b!important;box-shadow:none;border:1px solid #fecaca}
+				.ajcore-portal-shell .aj-portal-inline-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+				.ajcore-portal-shell .aj-portal-inline-actions .button{margin:0;text-decoration:none;border-radius:999px;font-weight:900;line-height:1;box-shadow:none;transition:transform .15s ease,box-shadow .15s ease}
+				.ajcore-portal-shell .aj-portal-inline-actions .button:hover{transform:translateY(-1px)}
+				.ajcore-portal-shell .aj-portal-action-resume{background:#16a34a!important;border:1px solid #16a34a!important;color:#fff!important;padding:13px 22px;font-size:15px;box-shadow:0 12px 24px rgba(22,163,74,.20)!important}
+				.ajcore-portal-shell .aj-portal-action-cancel{background:#fee2e2!important;border:1px solid #fecaca!important;color:#991b1b!important;padding:10px 16px;font-size:14px}
 				@media (max-width:1050px){
 					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -1569,7 +1575,7 @@ class AJForms {
 					if (!button || button.disabled) {
 						return;
 					}
-					if (!window.confirm('<?php echo esc_js( __( 'Remove this pending service request from your billing history?', 'ajforms' ) ); ?>')) {
+					if (!window.confirm('<?php echo esc_js( __( 'Cancel/remove this service request from your billing history?', 'ajforms' ) ); ?>')) {
 						return;
 					}
 					button.disabled = true;
@@ -2059,8 +2065,8 @@ class AJForms {
 			wp_send_json_error( __( 'Service request was not found.', 'ajforms' ), 404 );
 		}
 
-		if ( ! in_array( (string) $ledger->status, array( 'unpaid', 'open', 'cancelled' ), true ) ) {
-			wp_send_json_error( __( 'Only pending service requests can be removed.', 'ajforms' ), 400 );
+		if ( ! in_array( (string) $ledger->status, array( 'unpaid', 'open', 'cancelled', 'canceled', 'expired', 'incomplete' ), true ) ) {
+			wp_send_json_error( __( 'Only service requests that are pending or cancelled can be removed.', 'ajforms' ), 400 );
 		}
 
 		if ( 0 === strpos( (string) $ledger->source_object_id, 'cs_' ) ) {
@@ -4733,7 +4739,7 @@ class AJForms {
 					if (!button || button.disabled) {
 						return;
 					}
-					if (!window.confirm('<?php echo esc_js( __( 'Remove this pending service request from your billing history?', 'ajforms' ) ); ?>')) {
+					if (!window.confirm('<?php echo esc_js( __( 'Cancel/remove this service request from your billing history?', 'ajforms' ) ); ?>')) {
 						return;
 					}
 					button.disabled = true;
