@@ -1008,11 +1008,10 @@ class AJForms {
 		$source_object_id = $this->get_portal_custom_request_source_object_id( $stripe_customer_id, $price_id );
 		$service_request = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE stripe_customer_id = %s AND source_object_id = %s AND request_type = %s AND status = %s LIMIT 1",
+				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE stripe_customer_id = %s AND source_object_id = %s AND request_type = %s AND status IN ('draft','pending_payment','awaiting_payment','paid','admin_review_required') LIMIT 1",
 				$stripe_customer_id,
 				$source_object_id,
-				'custom_request',
-				'admin_review_required'
+				'custom_request'
 			)
 		);
 		if ( $service_request ) {
@@ -1021,11 +1020,10 @@ class AJForms {
 
 		return $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_object_id = %s AND source_type = %s AND status = %s LIMIT 1",
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_object_id = %s AND source_type = %s AND status IN ('draft','pending_payment','awaiting_payment','paid','admin_review_required') LIMIT 1",
 				$stripe_customer_id,
 				$source_object_id,
-				'custom_service_request',
-				'admin_review_required'
+				'custom_service_request'
 			)
 		);
 	}
@@ -1033,7 +1031,7 @@ class AJForms {
 
 	private function normalize_portal_service_request_status( $status ) {
 		$status = sanitize_key( (string) $status );
-		$allowed = array( 'draft', 'pending_payment', 'paid', 'cancelled', 'failed', 'admin_review_required', 'completed' );
+		$allowed = array( 'draft', 'pending_payment', 'awaiting_payment', 'paid', 'cancelled', 'failed', 'admin_review_required', 'completed' );
 
 		return in_array( $status, $allowed, true ) ? $status : 'draft';
 	}
@@ -1113,7 +1111,7 @@ class AJForms {
 			return null;
 		}
 
-		$open_statuses = array( 'draft', 'pending_payment', 'paid', 'admin_review_required' );
+		$open_statuses = array( 'draft', 'pending_payment', 'awaiting_payment', 'paid', 'admin_review_required' );
 		$status_placeholders = implode( ',', array_fill( 0, count( $open_statuses ), '%s' ) );
 		$params = array_merge( array( $stripe_customer_id ), $open_statuses );
 		$where = "stripe_customer_id = %s AND status IN ({$status_placeholders})";

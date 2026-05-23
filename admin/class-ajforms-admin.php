@@ -4112,6 +4112,7 @@ class AJForms_Admin {
 		return array(
 			'draft'                 => __( 'Draft', 'ajforms' ),
 			'pending_payment'       => __( 'Pending Payment', 'ajforms' ),
+			'awaiting_payment'      => __( 'Awaiting Payment', 'ajforms' ),
 			'paid'                  => __( 'Paid', 'ajforms' ),
 			'cancelled'             => __( 'Cancelled', 'ajforms' ),
 			'failed'                => __( 'Failed', 'ajforms' ),
@@ -4235,8 +4236,9 @@ class AJForms_Admin {
 		check_admin_referer( 'ajcore_service_request_' . $request_id );
 
 		$action_status_map = array(
-			'under_review' => 'admin_review_required',
-			'paid'         => 'paid',
+			'under_review'     => 'admin_review_required',
+			'await_payment'    => 'awaiting_payment',
+			'paid'             => 'paid',
 			'complete'     => 'completed',
 			'cancel'       => 'cancelled',
 			'failed'       => 'failed',
@@ -4300,10 +4302,16 @@ class AJForms_Admin {
 		$labels        = $this->get_portal_service_request_status_labels();
 		$where         = array( '1=1' );
 		$params        = array();
+		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'failed' );
+		$show_actionable_default = '' === $status_filter && '' === $search;
 
-		if ( '' !== $status_filter && isset( $labels[ $status_filter ] ) ) {
+		if ( 'all' === $status_filter ) {
+			$status_filter = 'all';
+		} elseif ( '' !== $status_filter && isset( $labels[ $status_filter ] ) ) {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
+		} elseif ( $show_actionable_default ) {
+			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','failed')";
 		}
 
 		if ( '' !== $search ) {
@@ -4331,7 +4339,8 @@ class AJForms_Admin {
 			<p><?php esc_html_e( 'Review client add-service checkout attempts and custom upgrade requests from one place.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
-				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'All', 'ajforms' ); ?></a></li>
+				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
+				<li> | <a href="<?php echo esc_url( add_query_arg( 'request_status', 'all', $base_url ) ); ?>" class="<?php echo 'all' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'All', 'ajforms' ); ?></a></li>
 				<?php foreach ( $labels as $status_key => $status_label ) : ?>
 					<?php $count = isset( $counts[ $status_key ] ) ? (int) $counts[ $status_key ]->total : 0; ?>
 					<li> | <a href="<?php echo esc_url( add_query_arg( 'request_status', $status_key, $base_url ) ); ?>" class="<?php echo $status_filter === $status_key ? 'current' : ''; ?>"><?php echo esc_html( $status_label . ' (' . $count . ')' ); ?></a></li>
@@ -4366,8 +4375,9 @@ class AJForms_Admin {
 						$customer_label = $request->customer_name ? $request->customer_name : ( $request->customer_email ? $request->customer_email : $request->stripe_customer_id );
 						$status_label = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
 						$actions = array(
-							'under_review' => __( 'Under Review', 'ajforms' ),
-							'paid'         => __( 'Paid', 'ajforms' ),
+							'under_review'  => __( 'Under Review', 'ajforms' ),
+							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
+							'paid'          => __( 'Paid', 'ajforms' ),
 							'complete'     => __( 'Complete', 'ajforms' ),
 							'cancel'       => __( 'Cancel', 'ajforms' ),
 							'failed'       => __( 'Failed', 'ajforms' ),
@@ -4547,10 +4557,16 @@ class AJForms_Admin {
 		$labels        = $this->get_portal_service_request_status_labels();
 		$where         = array( '1=1' );
 		$params        = array();
+		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'failed' );
+		$show_actionable_default = '' === $status_filter && '' === $search;
 
-		if ( '' !== $status_filter && isset( $labels[ $status_filter ] ) ) {
+		if ( 'all' === $status_filter ) {
+			$status_filter = 'all';
+		} elseif ( '' !== $status_filter && isset( $labels[ $status_filter ] ) ) {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
+		} elseif ( $show_actionable_default ) {
+			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','failed')";
 		}
 
 		if ( '' !== $search ) {
@@ -4578,7 +4594,8 @@ class AJForms_Admin {
 			<p><?php esc_html_e( 'Review client checkout attempts, custom pricing requests, and other service-related items that need an admin decision.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
-				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'All', 'ajforms' ); ?></a></li>
+				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
+				<li> | <a href="<?php echo esc_url( add_query_arg( 'request_status', 'all', $base_url ) ); ?>" class="<?php echo 'all' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'All', 'ajforms' ); ?></a></li>
 				<?php foreach ( $labels as $status_key => $status_label ) : ?>
 					<?php $count = isset( $counts[ $status_key ] ) ? (int) $counts[ $status_key ]->total : 0; ?>
 					<li> | <a href="<?php echo esc_url( add_query_arg( 'request_status', $status_key, $base_url ) ); ?>" class="<?php echo $status_filter === $status_key ? 'current' : ''; ?>"><?php echo esc_html( $status_label . ' (' . $count . ')' ); ?></a></li>
@@ -4614,8 +4631,9 @@ class AJForms_Admin {
 						$customer_label = $request->customer_name ? $request->customer_name : ( $request->customer_email ? $request->customer_email : $request->stripe_customer_id );
 						$status_label   = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
 						$actions        = array(
-							'under_review' => __( 'Under Review', 'ajforms' ),
-							'paid'         => __( 'Paid', 'ajforms' ),
+							'under_review'  => __( 'Under Review', 'ajforms' ),
+							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
+							'paid'          => __( 'Paid', 'ajforms' ),
 							'complete'     => __( 'Complete', 'ajforms' ),
 							'cancel'       => __( 'Cancel', 'ajforms' ),
 							'failed'       => __( 'Failed', 'ajforms' ),
