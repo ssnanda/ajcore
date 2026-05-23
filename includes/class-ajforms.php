@@ -1282,9 +1282,9 @@ class AJForms {
 					--ajp-shadow-soft:0 18px 48px rgba(15,23,42,.075);
 					position:relative;
 					isolation:isolate;
-					width:min(1360px,calc(100vw - 48px));
+					width:calc(100vw - 48px);
 					max-width:none;
-					margin:28px auto 0;
+					margin:28px 0 0 calc(50% - 50vw + 24px);
 					padding:0 0 72px;
 					font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 					color:var(--ajp-ink);
@@ -1475,7 +1475,7 @@ class AJForms {
 					.ajcore-portal-shell .aj-portal-summary-grid{max-width:none}
 				}
 				@media (min-width:1536px){
-					.ajcore-portal-shell{width:min(1420px,calc(100vw - 80px))}
+					.ajcore-portal-shell{width:calc(100vw - 64px);margin-left:calc(50% - 50vw + 32px)}
 				}
 				.ajcore-portal-shell .aj-customer-portal-panel>p:only-child,
 				.ajcore-portal-shell .aj-customer-portal-panel>p:nth-child(2):last-child{
