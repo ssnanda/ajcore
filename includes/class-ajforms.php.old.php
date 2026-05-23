@@ -1562,6 +1562,8 @@ class AJForms {
 								window.alert(error.message || '<?php echo esc_js( __( 'Unable to start checkout.', 'ajforms' ) ); ?>');
 							}
 						});
+				});
+
 				shell.addEventListener('click', function(event) {
 					const button = event.target.closest('.aj-portal-cancel-service-request');
 					if (!button || button.disabled) {
@@ -2029,20 +2031,55 @@ class AJForms {
 		}
 
 		global $wpdb;
+		$ledger = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE id = %d AND stripe_customer_id = %s AND source_type = %s LIMIT 1",
+				$ledger_id,
+				$stripe_customer_id,
+				'checkout_session'
+			)
+		);
+
+		if ( ! $ledger ) {
+			wp_send_json_error( __( 'Service request was not found.', 'ajforms' ), 404 );
+		}
+
+		if ( in_array( (string) $ledger->status, array( 'unpaid', 'open' ), true ) && 0 === strpos( (string) $ledger->source_object_id, 'cs_' ) ) {
+			$stripe_settings = $this->get_stripe_settings();
+			if ( ! empty( $stripe_settings['secret_key'] ) ) {
+				$expire_result = $this->stripe_api_request( 'checkout/sessions/' . rawurlencode( (string) $ledger->source_object_id ) . '/expire', $stripe_settings['secret_key'] );
+				if ( is_wp_error( $expire_result ) ) {
+					$message = $expire_result->get_error_message();
+					if ( false === stripos( $message, 'already expired' ) && false === stripos( $message, 'cannot be expired' ) && false === stripos( $message, 'not open' ) ) {
+						wp_send_json_error( $message, 400 );
+					}
+				}
+			}
+		}
+
 		$updated = $wpdb->update(
 			$this->get_portal_ledger_table(),
 			array( 'status' => 'cancelled' ),
-			array(
-				'id'                 => $ledger_id,
-				'stripe_customer_id' => $stripe_customer_id,
-				'source_type'        => 'checkout_session',
-			),
+			array( 'id' => $ledger_id ),
 			array( '%s' ),
-			array( '%d', '%s', '%s' )
+			array( '%d' )
 		);
 
 		if ( false === $updated ) {
 			wp_send_json_error( __( 'Unable to cancel request.', 'ajforms' ), 500 );
+		}
+
+		if ( ! empty( $ledger->source_object_id ) ) {
+			$wpdb->update(
+				$this->get_portal_stripe_transactions_table(),
+				array( 'status' => 'cancelled' ),
+				array(
+					'stripe_object_id'   => (string) $ledger->source_object_id,
+					'stripe_customer_id' => $stripe_customer_id,
+				),
+				array( '%s' ),
+				array( '%s', '%s' )
+			);
 		}
 
 		wp_send_json_success( array( 'status' => 'cancelled' ) );
@@ -2119,10 +2156,26 @@ class AJForms {
 		);
 
 		$mapped_stripe_customer_id = is_user_logged_in() ? $this->get_current_user_stripe_customer_id() : '';
+		$portal_customer           = $portal_add_service ? $this->get_current_user_portal_customer() : null;
+		$portal_customer_email     = $portal_customer && ! empty( $portal_customer->email ) ? sanitize_email( (string) $portal_customer->email ) : '';
+		$portal_customer_name      = $portal_customer && ! empty( $portal_customer->name ) ? sanitize_text_field( (string) $portal_customer->name ) : '';
+		$portal_business_name      = $portal_customer ? $this->get_portal_customer_meta_value( $portal_customer, array( 'business_name', 'business', 'company', 'company_name' ) ) : '';
+
 		if ( 0 === strpos( $mapped_stripe_customer_id, 'cus_' ) ) {
 			$body['customer'] = $mapped_stripe_customer_id;
+		} elseif ( $portal_add_service && is_email( $portal_customer_email ) ) {
+			$body['customer_email'] = $portal_customer_email;
 		} elseif ( 'payment' === $checkout_mode ) {
 			$body['customer_creation'] = 'always';
+		}
+
+		if ( $portal_add_service ) {
+			$body['billing_address_collection'] = 'auto';
+			$body['phone_number_collection[enabled]'] = 'true';
+			if ( 0 === strpos( $mapped_stripe_customer_id, 'cus_' ) ) {
+				$body['customer_update[name]'] = 'auto';
+				$body['customer_update[address]'] = 'auto';
+			}
 		}
 
 		if ( is_array( $items ) ) {
@@ -2156,8 +2209,33 @@ class AJForms {
 			$body['metadata[price_id]']      = $price_id;
 			$body['metadata[product_id]']    = isset( $price['product_id'] ) ? $price['product_id'] : '';
 			$body['metadata[source]']        = $portal_add_service ? 'ajcore_portal_add_service' : 'ajcore_products';
-			if ( $portal_add_service && '' !== $mapped_stripe_customer_id ) {
-				$body['metadata[stripe_customer_id]'] = $mapped_stripe_customer_id;
+			if ( $portal_add_service ) {
+				if ( '' !== $mapped_stripe_customer_id ) {
+					$body['metadata[stripe_customer_id]'] = $mapped_stripe_customer_id;
+				}
+				if ( '' !== $portal_customer_email ) {
+					$body['metadata[portal_customer_email]'] = $portal_customer_email;
+				}
+				if ( '' !== $portal_customer_name ) {
+					$body['metadata[portal_customer_name]'] = $portal_customer_name;
+				}
+				if ( '' !== $portal_business_name ) {
+					$body['metadata[portal_business_name]'] = $portal_business_name;
+				}
+
+				if ( 'subscription' === $checkout_mode ) {
+					$body['subscription_data[metadata][source]'] = 'ajcore_portal_add_service';
+					$body['subscription_data[metadata][stripe_customer_id]'] = $mapped_stripe_customer_id;
+					$body['subscription_data[metadata][portal_customer_email]'] = $portal_customer_email;
+					$body['subscription_data[metadata][portal_customer_name]'] = $portal_customer_name;
+					$body['subscription_data[metadata][portal_business_name]'] = $portal_business_name;
+				} else {
+					$body['payment_intent_data[metadata][source]'] = 'ajcore_portal_add_service';
+					$body['payment_intent_data[metadata][stripe_customer_id]'] = $mapped_stripe_customer_id;
+					$body['payment_intent_data[metadata][portal_customer_email]'] = $portal_customer_email;
+					$body['payment_intent_data[metadata][portal_customer_name]'] = $portal_customer_name;
+					$body['payment_intent_data[metadata][portal_business_name]'] = $portal_business_name;
+				}
 			}
 		}
 
@@ -2177,11 +2255,14 @@ class AJForms {
 			$product_description = sprintf( __( 'Service request: %s', 'ajforms' ), $product_name );
 			$checkout_url = ! empty( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '';
 			$metadata = array(
-				'checkout_url' => $checkout_url,
-				'price_id'     => $price_id,
-				'product_id'   => isset( $allowed_price_map[ $price_id ]['product_id'] ) ? $allowed_price_map[ $price_id ]['product_id'] : '',
-				'product_name' => $product_name,
-				'source'       => 'portal_add_service',
+				'checkout_url'          => $checkout_url,
+				'price_id'              => $price_id,
+				'product_id'            => isset( $allowed_price_map[ $price_id ]['product_id'] ) ? $allowed_price_map[ $price_id ]['product_id'] : '',
+				'product_name'          => $product_name,
+				'portal_customer_email' => $portal_customer_email,
+				'portal_customer_name'  => $portal_customer_name,
+				'portal_business_name'  => $portal_business_name,
+				'source'                => 'portal_add_service',
 			);
 
 			$wpdb->replace(
