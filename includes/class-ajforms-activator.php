@@ -20,6 +20,8 @@ class AJForms_Activator {
 		$table_entity_mappings      = $wpdb->prefix . 'aj_portal_entity_mappings';
 		$table_ledger               = $wpdb->prefix . 'aj_portal_ledger';
 		$table_tasks                = $wpdb->prefix . 'aj_portal_tasks';
+		$table_task_statuses        = $wpdb->prefix . 'aj_portal_task_statuses';
+		$table_task_comments        = $wpdb->prefix . 'aj_portal_task_comments';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -192,7 +194,9 @@ class AJForms_Activator {
 
 		CREATE TABLE $table_tasks (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-			stripe_customer_id varchar(100) NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			task_scope varchar(50) DEFAULT 'client' NOT NULL,
+			task_frequency varchar(50) DEFAULT 'one_time' NOT NULL,
 			title varchar(255) NOT NULL,
 			status varchar(50) DEFAULT 'open' NOT NULL,
 			due_date date NULL,
@@ -203,9 +207,41 @@ class AJForms_Activator {
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			KEY stripe_customer_id (stripe_customer_id),
+			KEY task_scope (task_scope),
+			KEY task_frequency (task_frequency),
 			KEY status (status),
 			KEY due_date (due_date),
 			KEY client_visible (client_visible)
+		) $charset_collate;
+
+		CREATE TABLE $table_task_statuses (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			task_id bigint(20) unsigned NOT NULL,
+			stripe_customer_id varchar(100) NOT NULL,
+			status varchar(50) DEFAULT 'open' NOT NULL,
+			completed_at datetime NULL,
+			updated_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY task_customer (task_id, stripe_customer_id),
+			KEY task_id (task_id),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY status (status)
+		) $charset_collate;
+
+		CREATE TABLE $table_task_comments (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			task_id bigint(20) unsigned NOT NULL,
+			stripe_customer_id varchar(100) NOT NULL,
+			comment longtext NOT NULL,
+			is_client tinyint(1) NOT NULL DEFAULT 1,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY task_id (task_id),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY created_at (created_at)
 		) $charset_collate;
 
 		CREATE TABLE $table_ledger (
@@ -232,6 +268,70 @@ class AJForms_Activator {
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+
+		$current_year = (int) current_time( 'Y' );
+		$march_15 = strtotime( $current_year . '-03-15 00:00:00' ) < current_time( 'timestamp' ) ? ( $current_year + 1 ) . '-03-15' : $current_year . '-03-15';
+		$april_15 = strtotime( $current_year . '-04-15 00:00:00' ) < current_time( 'timestamp' ) ? ( $current_year + 1 ) . '-04-15' : $current_year . '-04-15';
+
+		$default_tasks = array(
+			array(
+				'title'           => 'BOI Report',
+				'status'          => 'open',
+				'due_date'        => null,
+				'action_required' => 'Confirm whether BOI reporting is required and mark completed when filed.',
+				'task_frequency'  => 'one_time',
+			),
+			array(
+				'title'           => 'Annual Report',
+				'status'          => 'upcoming',
+				'due_date'        => $april_15,
+				'action_required' => 'File the annual report with the state if not already completed.',
+				'task_frequency'  => 'recurring',
+			),
+			array(
+				'title'           => 'Tax Return for Multi-Member LLCs / K-1s',
+				'status'          => 'upcoming',
+				'due_date'        => $march_15,
+				'action_required' => 'Prepare partnership return and issue K-1s if applicable.',
+				'task_frequency'  => 'recurring',
+			),
+			array(
+				'title'           => 'Tax Return for Pass-Through LLCs',
+				'status'          => 'upcoming',
+				'due_date'        => $april_15,
+				'action_required' => 'Prepare pass-through LLC tax filing if applicable.',
+				'task_frequency'  => 'recurring',
+			),
+		);
+
+		foreach ( $default_tasks as $default_task ) {
+			$existing_task_id = $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT id FROM $table_tasks WHERE task_scope = %s AND title = %s LIMIT 1",
+					'global',
+					$default_task['title']
+				)
+			);
+
+			if ( ! $existing_task_id ) {
+				$wpdb->insert(
+					$table_tasks,
+					array(
+						'stripe_customer_id' => '',
+						'task_scope'         => 'global',
+						'task_frequency'     => $default_task['task_frequency'],
+						'title'              => $default_task['title'],
+						'status'             => $default_task['status'],
+						'due_date'           => $default_task['due_date'],
+						'action_required'    => $default_task['action_required'],
+						'client_visible'     => 1,
+						'created_by'         => 0,
+					),
+					array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d' )
+				);
+			}
+		}
+
 		add_role(
 			'aj_portal_user',
 			__( 'AJ Portal User', 'ajforms' ),
@@ -240,6 +340,6 @@ class AJForms_Activator {
 			)
 		);
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '3', false );
+		update_option( 'ajforms_portal_schema_version', '4', false );
 	}
 }

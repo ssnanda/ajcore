@@ -54,6 +54,7 @@ class AJForms {
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_service_request_remove' ) );
+		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_task_action' ) );
 		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
@@ -914,9 +915,16 @@ class AJForms {
 		}
 
 		global $wpdb;
+
 		return $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_tasks_table()} WHERE stripe_customer_id = %s AND client_visible = 1 ORDER BY FIELD(status, 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled'), due_date IS NULL, due_date ASC, id DESC",
+				"SELECT t.*, COALESCE(ts.status, t.status) AS portal_status, ts.completed_at AS portal_completed_at, ts.updated_at AS portal_status_updated_at
+				FROM {$this->get_portal_tasks_table()} t
+				LEFT JOIN {$this->get_portal_task_statuses_table()} ts ON ts.task_id = t.id AND ts.stripe_customer_id = %s
+				WHERE t.client_visible = 1
+				AND (t.task_scope = 'global' OR t.stripe_customer_id = %s)
+				ORDER BY FIELD(COALESCE(ts.status, t.status), 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled'), t.due_date IS NULL, t.due_date ASC, t.id DESC",
+				$stripe_customer_id,
 				$stripe_customer_id
 			)
 		);
@@ -925,7 +933,7 @@ class AJForms {
 	private function get_open_portal_tasks_count( $tasks ) {
 		$count = 0;
 		foreach ( (array) $tasks as $task ) {
-			$status = isset( $task->status ) ? sanitize_key( (string) $task->status ) : '';
+			$status = isset( $task->portal_status ) && '' !== (string) $task->portal_status ? sanitize_key( (string) $task->portal_status ) : ( isset( $task->status ) ? sanitize_key( (string) $task->status ) : '' );
 			if ( ! in_array( $status, array( 'completed', 'cancelled', 'closed' ), true ) ) {
 				$count++;
 			}
@@ -934,51 +942,186 @@ class AJForms {
 		return $count;
 	}
 
+	private function get_portal_task_comments_by_task_ids( $task_ids, $stripe_customer_id ) {
+		$task_ids = array_values( array_filter( array_map( 'absint', (array) $task_ids ) ) );
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+
+		if ( empty( $task_ids ) || '' === $stripe_customer_id ) {
+			return array();
+		}
+
+		global $wpdb;
+		$placeholders = implode( ',', array_fill( 0, count( $task_ids ), '%d' ) );
+		$params       = array_merge( $task_ids, array( $stripe_customer_id ) );
+		$comments     = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_task_comments_table()} WHERE task_id IN ({$placeholders}) AND stripe_customer_id = %s ORDER BY created_at ASC, id ASC",
+				$params
+			)
+		);
+
+		$grouped = array();
+		foreach ( $comments as $comment ) {
+			$task_id = isset( $comment->task_id ) ? absint( $comment->task_id ) : 0;
+			if ( ! isset( $grouped[ $task_id ] ) ) {
+				$grouped[ $task_id ] = array();
+			}
+			$grouped[ $task_id ][] = $comment;
+		}
+
+		return $grouped;
+	}
+
+	private function user_can_access_portal_task( $task_id, $stripe_customer_id ) {
+		global $wpdb;
+
+		$task_id            = absint( $task_id );
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+
+		if ( ! $task_id || '' === $stripe_customer_id ) {
+			return false;
+		}
+
+		$task = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_tasks_table()} WHERE id = %d AND client_visible = 1 AND (task_scope = 'global' OR stripe_customer_id = %s) LIMIT 1",
+				$task_id,
+				$stripe_customer_id
+			)
+		);
+
+		return $task ? $task : false;
+	}
+
+	public function maybe_handle_portal_task_action() {
+		if ( empty( $_POST['ajcore_portal_task_action'] ) || ! is_user_logged_in() ) {
+			return;
+		}
+
+		$task_id = isset( $_POST['portal_task_id'] ) ? absint( wp_unslash( $_POST['portal_task_id'] ) ) : 0;
+		$action  = sanitize_key( wp_unslash( $_POST['ajcore_portal_task_action'] ) );
+
+		if ( ! $task_id || ! in_array( $action, array( 'add_comment', 'mark_complete' ), true ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_portal_task_action_' . $task_id, 'ajcore_portal_task_nonce' );
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$task               = $this->user_can_access_portal_task( $task_id, $stripe_customer_id );
+		if ( ! $task ) {
+			wp_safe_redirect( add_query_arg( 'portal_tab', 'tasks', $this->get_customer_portal_url() ) );
+			exit;
+		}
+
+		global $wpdb;
+		$user_id = get_current_user_id();
+		$comment = isset( $_POST['portal_task_comment'] ) ? sanitize_textarea_field( wp_unslash( $_POST['portal_task_comment'] ) ) : '';
+
+		if ( 'mark_complete' === $action ) {
+			$existing_status_id = $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT id FROM {$this->get_portal_task_statuses_table()} WHERE task_id = %d AND stripe_customer_id = %s LIMIT 1",
+					$task_id,
+					$stripe_customer_id
+				)
+			);
+
+			$status_data = array(
+				'task_id'            => $task_id,
+				'stripe_customer_id' => $stripe_customer_id,
+				'status'             => 'completed',
+				'completed_at'       => current_time( 'mysql' ),
+				'updated_by'         => $user_id,
+			);
+			$status_formats = array( '%d', '%s', '%s', '%s', '%d' );
+
+			if ( $existing_status_id ) {
+				$wpdb->update( $this->get_portal_task_statuses_table(), $status_data, array( 'id' => absint( $existing_status_id ) ), $status_formats, array( '%d' ) );
+			} else {
+				$wpdb->insert( $this->get_portal_task_statuses_table(), $status_data, $status_formats );
+			}
+
+			$auto_note = __( 'Marked complete by customer.', 'ajforms' );
+			$comment   = '' !== $comment ? $auto_note . "\n\n" . $comment : $auto_note;
+		}
+
+		if ( '' !== $comment ) {
+			$wpdb->insert(
+				$this->get_portal_task_comments_table(),
+				array(
+					'task_id'            => $task_id,
+					'stripe_customer_id' => $stripe_customer_id,
+					'comment'            => $comment,
+					'is_client'          => 1,
+					'created_by'         => $user_id,
+					'created_at'         => current_time( 'mysql' ),
+				),
+				array( '%d', '%s', '%s', '%d', '%d', '%s' )
+			);
+		}
+
+		wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'tasks', 'task-updated' => '1' ), $this->get_customer_portal_url() ) );
+		exit;
+	}
+
 	private function render_customer_portal_tasks_table( $tasks, $include_default_deadlines = true ) {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$task_ids           = wp_list_pluck( (array) $tasks, 'id' );
+		$comments_by_task   = $this->get_portal_task_comments_by_task_ids( $task_ids, $stripe_customer_id );
+
 		ob_start();
 		?>
-		<div class="aj-portal-table-wrap">
-			<table class="aj-portal-table">
-				<thead><tr><th><?php esc_html_e( 'Task', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Action Required', 'ajforms' ); ?></th></tr></thead>
+		<div class="aj-portal-table-wrap aj-portal-tasks-wrap">
+			<table class="aj-portal-table aj-portal-tasks-table">
+				<thead><tr><th><?php esc_html_e( 'Task', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Action Required', 'ajforms' ); ?></th><th><?php esc_html_e( 'Comments / Update', 'ajforms' ); ?></th></tr></thead>
 				<tbody>
-					<?php if ( ! empty( $tasks ) ) : ?>
+					<?php if ( empty( $tasks ) ) : ?>
+						<tr><td colspan="5"><?php esc_html_e( 'No open tasks are available yet.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
 						<?php foreach ( $tasks as $task ) : ?>
-							<tr>
-								<td><?php echo esc_html( $task->title ); ?></td>
-								<td><?php echo esc_html( ucwords( str_replace( '_', ' ', $task->status ) ) ); ?></td>
+							<?php
+							$task_id      = absint( $task->id );
+							$status       = isset( $task->portal_status ) && '' !== (string) $task->portal_status ? sanitize_key( (string) $task->portal_status ) : sanitize_key( (string) $task->status );
+							$is_complete  = in_array( $status, array( 'completed', 'cancelled', 'closed' ), true );
+							$scope_label  = isset( $task->task_scope ) && 'global' === $task->task_scope ? __( 'All clients', 'ajforms' ) : __( 'Client-specific', 'ajforms' );
+							$freq_label   = isset( $task->task_frequency ) && 'recurring' === $task->task_frequency ? __( 'Recurring', 'ajforms' ) : __( 'One-time', 'ajforms' );
+							$comments     = isset( $comments_by_task[ $task_id ] ) ? $comments_by_task[ $task_id ] : array();
+							?>
+							<tr class="aj-portal-task-row is-<?php echo esc_attr( $status ); ?>">
+								<td>
+									<strong><?php echo esc_html( $task->title ); ?></strong>
+									<div class="aj-portal-task-meta"><?php echo esc_html( $scope_label . ' · ' . $freq_label ); ?></div>
+								</td>
+								<td><span class="aj-portal-task-status aj-portal-task-status-<?php echo esc_attr( $status ); ?>"><?php echo esc_html( ucwords( str_replace( '_', ' ', $status ) ) ); ?></span></td>
 								<td><?php echo esc_html( ! empty( $task->due_date ) ? $this->format_portal_date( $task->due_date ) : '-' ); ?></td>
 								<td><?php echo esc_html( ! empty( $task->action_required ) ? $task->action_required : '-' ); ?></td>
+								<td>
+									<?php if ( ! empty( $comments ) ) : ?>
+										<div class="aj-portal-task-comments">
+											<?php foreach ( $comments as $comment ) : ?>
+												<div class="aj-portal-task-comment">
+													<?php echo esc_html( $comment->comment ); ?>
+													<span><?php echo esc_html( $this->format_portal_date( $comment->created_at ) ); ?></span>
+												</div>
+											<?php endforeach; ?>
+										</div>
+									<?php endif; ?>
+
+									<form class="aj-portal-task-form" method="post">
+										<?php wp_nonce_field( 'ajcore_portal_task_action_' . $task_id, 'ajcore_portal_task_nonce' ); ?>
+										<input type="hidden" name="portal_task_id" value="<?php echo esc_attr( $task_id ); ?>">
+										<textarea name="portal_task_comment" rows="2" placeholder="<?php esc_attr_e( 'Add a comment for our team...', 'ajforms' ); ?>"></textarea>
+										<div class="aj-portal-task-actions">
+											<button type="submit" class="button aj-portal-task-comment-button" name="ajcore_portal_task_action" value="add_comment"><?php esc_html_e( 'Add Comment', 'ajforms' ); ?></button>
+											<?php if ( ! $is_complete ) : ?>
+												<button type="submit" class="button aj-portal-task-complete-button" name="ajcore_portal_task_action" value="mark_complete"><?php esc_html_e( 'Mark Complete', 'ajforms' ); ?></button>
+											<?php endif; ?>
+										</div>
+									</form>
+								</td>
 							</tr>
 						<?php endforeach; ?>
-					<?php elseif ( ! $include_default_deadlines ) : ?>
-						<tr><td colspan="4"><?php esc_html_e( 'No open tasks are available yet.', 'ajforms' ); ?></td></tr>
-					<?php endif; ?>
-
-					<?php if ( $include_default_deadlines ) : ?>
-						<tr>
-							<td><?php esc_html_e( 'BOI Report', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'Confirm Status', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'Confirm deadline', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'Confirm whether BOI reporting is required and mark completed when filed.', 'ajforms' ); ?></td>
-						</tr>
-						<tr>
-							<td><?php esc_html_e( 'Annual Report', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'Upcoming', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'April 15', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'File the annual report with the state if not already completed.', 'ajforms' ); ?></td>
-						</tr>
-						<tr>
-							<td><?php esc_html_e( 'Tax Return for Multi-Member LLCs / K-1s', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'Upcoming', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'March 15', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'Prepare partnership return and issue K-1s if applicable.', 'ajforms' ); ?></td>
-						</tr>
-						<tr>
-							<td><?php esc_html_e( 'Tax Return for Pass-Through LLCs', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'Upcoming', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'April 15', 'ajforms' ); ?></td>
-							<td><?php esc_html_e( 'Prepare pass-through LLC tax filing if applicable.', 'ajforms' ); ?></td>
-						</tr>
 					<?php endif; ?>
 				</tbody>
 			</table>
@@ -1036,6 +1179,9 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h2>
 			<p class="aj-portal-intro-text"><?php esc_html_e( 'Review action items and important compliance dates for your account.', 'ajforms' ); ?></p>
+			<?php if ( isset( $_GET['task-updated'] ) ) : ?>
+				<div class="aj-portal-add-service-message is-success"><?php esc_html_e( 'Task updated.', 'ajforms' ); ?></div>
+			<?php endif; ?>
 			<?php echo $this->render_customer_portal_tasks_table( $tasks, true ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 		</section>
 		<?php
@@ -1171,6 +1317,16 @@ class AJForms {
 	private function get_portal_tasks_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_tasks';
+	}
+
+	private function get_portal_task_statuses_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_task_statuses';
+	}
+
+	private function get_portal_task_comments_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_task_comments';
 	}
 
 	private function get_portal_user_mappings_table() {
@@ -1506,6 +1662,18 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-table td{color:#0f172a;line-height:1.55}
 				.ajcore-portal-shell .aj-portal-table tbody tr{transition:background .16s ease}
 				.ajcore-portal-shell .aj-portal-table tbody tr:hover{background:rgba(248,251,255,.72)}
+				.ajcore-portal-shell .aj-portal-task-meta{margin-top:6px;color:#64748b;font-size:12px;font-weight:850;text-transform:uppercase;letter-spacing:.055em}
+				.ajcore-portal-shell .aj-portal-task-status{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;background:#eff6ff;color:#1d4ed8}
+				.ajcore-portal-shell .aj-portal-task-status-completed{background:#dcfce7;color:#166534}
+				.ajcore-portal-shell .aj-portal-task-status-cancelled,.ajcore-portal-shell .aj-portal-task-status-closed{background:#fee2e2;color:#991b1b}
+				.ajcore-portal-shell .aj-portal-task-comments{display:grid;gap:8px;margin:0 0 10px}
+				.ajcore-portal-shell .aj-portal-task-comment{border:1px solid #e8eef6;border-radius:14px;background:#fff;padding:10px 12px;font-size:13px;line-height:1.45;color:#1f2937}
+				.ajcore-portal-shell .aj-portal-task-comment span{display:block;margin-top:6px;color:#64748b;font-size:11px;font-weight:800}
+				.ajcore-portal-shell .aj-portal-task-form{display:grid;gap:9px;min-width:260px}
+				.ajcore-portal-shell .aj-portal-task-form textarea{width:100%;border:1px solid #dbe7f3;border-radius:14px;padding:10px 12px;background:#fff;min-height:72px;font:inherit;color:#0f172a}
+				.ajcore-portal-shell .aj-portal-task-actions{display:flex;gap:8px;flex-wrap:wrap}
+				.ajcore-portal-shell .aj-portal-task-comment-button{min-height:38px;padding:9px 15px;font-size:13px;background:linear-gradient(135deg,#2563eb 0%,#4f46e5 100%)}
+				.ajcore-portal-shell .aj-portal-task-complete-button{min-height:38px;padding:9px 15px;font-size:13px;background:linear-gradient(135deg,#16a34a 0%,#10b981 100%)}
 
 				.ajcore-portal-shell .aj-portal-profile-block{border:1px solid rgba(219,231,243,.95);border-radius:28px;background:radial-gradient(circle at 100% 0%,rgba(37,99,235,.12),transparent 34%),linear-gradient(180deg,#fff 0%,#f8fbff 100%);padding:30px;width:min(860px,100%);box-shadow:0 22px 54px rgba(15,23,42,.08)}
 				.ajcore-portal-shell .aj-portal-profile-main{font-size:clamp(30px,4vw,42px);line-height:1.02;font-weight:950;color:#111827;margin:0 0 20px;letter-spacing:-.06em}
