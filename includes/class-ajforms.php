@@ -777,7 +777,7 @@ class AJForms {
 		return $smaller_count > 0 && ( count( $shared ) / $smaller_count ) >= 0.75;
 	}
 
-	private function is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions = array() ) {
+	private function is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions = array(), $ledger = array() ) {
 		$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 		$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 
@@ -827,6 +827,31 @@ class AJForms {
 			}
 		}
 
+		foreach ( (array) $ledger as $entry ) {
+			$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+			if ( ! in_array( $status, array( 'paid', 'succeeded', 'active' ), true ) ) {
+				continue;
+			}
+
+			$candidates = array();
+			if ( ! empty( $entry->description ) ) {
+				$candidates[] = $entry->description;
+			}
+
+			$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+			foreach ( array( 'description', 'service_name', 'product_name' ) as $metadata_key ) {
+				if ( ! empty( $metadata[ $metadata_key ] ) && is_scalar( $metadata[ $metadata_key ] ) ) {
+					$candidates[] = (string) $metadata[ $metadata_key ];
+				}
+			}
+
+			foreach ( $candidates as $candidate ) {
+				if ( $this->portal_service_token_sets_match( $product_tokens, $this->get_portal_service_identity_tokens( $candidate ) ) ) {
+					return true;
+				}
+			}
+		}
+
 		return false;
 	}
 
@@ -858,7 +883,7 @@ class AJForms {
 		);
 	}
 
-	private function get_portal_available_service_products( $subscriptions ) {
+	private function get_portal_available_service_products( $subscriptions, $ledger = array() ) {
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
 		$products              = $this->get_portal_filtered_service_products( $subscriptions );
@@ -867,8 +892,8 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $stripe_customer_id, $subscriptions ) {
-					$is_owned = $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions );
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger, $stripe_customer_id ) {
+					$is_owned = $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger );
 					$behavior = $this->get_portal_product_duplicate_behavior( $product );
 					$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
@@ -884,20 +909,87 @@ class AJForms {
 		);
 	}
 
-	private function get_portal_custom_request_products( $subscriptions ) {
+	private function get_portal_custom_request_products( $subscriptions, $ledger = array() ) {
+		global $wpdb;
+
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
 		$products              = $this->get_portal_filtered_service_products( $subscriptions );
+		$available_products    = $this->get_portal_available_service_products( $subscriptions, $ledger );
+		$available_price_ids   = array();
+		$custom_products       = array();
+		$custom_price_ids      = array();
+		$custom_request_keys   = array();
 
-		return array_values(
-			array_filter(
-				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $subscriptions ) {
-					return 'custom_request' === $this->get_portal_product_duplicate_behavior( $product )
-						&& $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions );
+		foreach ( $available_products as $available_product ) {
+			$available_price_id = isset( $available_product->stripe_price_id ) ? sanitize_text_field( (string) $available_product->stripe_price_id ) : '';
+			if ( '' !== $available_price_id ) {
+				$available_price_ids[] = $available_price_id;
+			}
+		}
+
+		$has_service_context = ! empty( $subscriptions );
+		if ( ! $has_service_context ) {
+			foreach ( (array) $ledger as $entry ) {
+				$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+				if ( in_array( $status, array( 'paid', 'succeeded', 'active' ), true ) ) {
+					$has_service_context = true;
+					break;
 				}
-			)
+			}
+		}
+
+		$maybe_add_custom_product = function ( $product ) use ( &$custom_products, &$custom_price_ids, &$custom_request_keys, $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger, $available_price_ids, $has_service_context ) {
+			if ( 'custom_request' !== $this->get_portal_product_duplicate_behavior( $product ) ) {
+				return;
+			}
+
+			$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+			if ( '' === $price_id || in_array( $price_id, $custom_price_ids, true ) ) {
+				return;
+			}
+
+			$request_title   = ! empty( $product->custom_request_title ) ? sanitize_text_field( (string) $product->custom_request_title ) : '';
+			$request_message = ! empty( $product->custom_request_message ) ? sanitize_textarea_field( (string) $product->custom_request_message ) : '';
+			$request_button  = ! empty( $product->custom_request_button_label ) ? sanitize_text_field( (string) $product->custom_request_button_label ) : '';
+			$request_key_source = trim( $request_title . '|' . $request_message . '|' . $request_button, '|' );
+			$request_key = '' !== $request_key_source ? md5( strtolower( $request_key_source ) ) : 'price:' . $price_id;
+			if ( isset( $custom_request_keys[ $request_key ] ) ) {
+				return;
+			}
+
+			if ( $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger ) ) {
+				$custom_products[]  = $product;
+				$custom_price_ids[] = $price_id;
+				$custom_request_keys[ $request_key ] = true;
+				return;
+			}
+
+			// Last-resort generic fallback: if this product has been configured for custom requests,
+			// is not available as a normal Add Service card, and the customer has active/paid service
+			// context, show the configured custom request card. This avoids hardcoding service names
+			// while still honoring the admin product behavior setting.
+			if ( $has_service_context && ! in_array( $price_id, $available_price_ids, true ) ) {
+				$custom_products[]  = $product;
+				$custom_price_ids[] = $price_id;
+				$custom_request_keys[ $request_key ] = true;
+			}
+		};
+
+		foreach ( $products as $product ) {
+			$maybe_add_custom_product( $product );
+		}
+
+		// Do not let product-mode selection hide an already-configured custom-request upsell.
+		// The admin explicitly controls this using each product's duplicate_behavior setting.
+		$fallback_products = $wpdb->get_results(
+			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden' AND duplicate_behavior = 'custom_request' ORDER BY sort_order ASC, name ASC"
 		);
+		foreach ( $fallback_products as $product ) {
+			$maybe_add_custom_product( $product );
+		}
+
+		return $custom_products;
 	}
 
 	private function get_portal_custom_request_source_object_id( $stripe_customer_id, $price_id ) {
@@ -1134,8 +1226,8 @@ class AJForms {
 		$service_settings   = is_array( $service_settings ) ? $service_settings : array();
 		$show_current       = ! isset( $service_settings['show_current_services'] ) || (bool) $service_settings['show_current_services'];
 		$show_add           = ! isset( $service_settings['show_add_services'] ) || (bool) $service_settings['show_add_services'];
-		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions ) : array();
-		$custom_request_products = $show_add ? $this->get_portal_custom_request_products( $subscriptions ) : array();
+		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions, $ledger ) : array();
+		$custom_request_products = $show_add ? $this->get_portal_custom_request_products( $subscriptions, $ledger ) : array();
 		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
 
 		ob_start();
@@ -3077,8 +3169,30 @@ class AJForms {
 		$context = $this->get_current_user_portal_billing_context();
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $context['subscriptions'] );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $context['subscriptions'] );
-		if ( ! $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $context['subscriptions'] ) ) {
-			wp_send_json_error( __( 'This custom request is available after the base service is active on your account.', 'ajforms' ), 400 );
+		$is_owned_for_custom_request = $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $context['subscriptions'], $context['ledger'] );
+		if ( ! $is_owned_for_custom_request ) {
+			$available_products_for_custom_request = $this->get_portal_available_service_products( $context['subscriptions'], $context['ledger'] );
+			$available_price_ids_for_custom_request = array();
+			foreach ( $available_products_for_custom_request as $available_product_for_custom_request ) {
+				$available_price_id_for_custom_request = isset( $available_product_for_custom_request->stripe_price_id ) ? sanitize_text_field( (string) $available_product_for_custom_request->stripe_price_id ) : '';
+				if ( '' !== $available_price_id_for_custom_request ) {
+					$available_price_ids_for_custom_request[] = $available_price_id_for_custom_request;
+				}
+			}
+			$has_service_context_for_custom_request = ! empty( $context['subscriptions'] );
+			if ( ! $has_service_context_for_custom_request ) {
+				foreach ( (array) $context['ledger'] as $ledger_entry_for_custom_request ) {
+					$ledger_status_for_custom_request = isset( $ledger_entry_for_custom_request->status ) ? sanitize_key( (string) $ledger_entry_for_custom_request->status ) : '';
+					if ( in_array( $ledger_status_for_custom_request, array( 'paid', 'succeeded', 'active' ), true ) ) {
+						$has_service_context_for_custom_request = true;
+						break;
+					}
+				}
+			}
+			$is_custom_request_fallback_allowed = $has_service_context_for_custom_request && ! in_array( $price_id, $available_price_ids_for_custom_request, true );
+			if ( ! $is_custom_request_fallback_allowed ) {
+				wp_send_json_error( __( 'This custom request is available after the base service is active on your account.', 'ajforms' ), 400 );
+			}
 		}
 
 		$existing_request = $this->get_open_custom_service_request( $stripe_customer_id, $price_id );
