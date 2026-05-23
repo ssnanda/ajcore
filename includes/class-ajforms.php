@@ -589,11 +589,30 @@ class AJForms {
 		return array_values( array_unique( array_filter( $product_ids ) ) );
 	}
 
+	private function get_customer_portal_services_display_settings() {
+		$settings = get_option( 'ajcore_customer_portal_services_display', array() );
+		if ( ! is_array( $settings ) ) {
+			$settings = array();
+		}
+
+		$selected_price_ids = isset( $settings['selected_price_ids'] ) && is_array( $settings['selected_price_ids'] ) ? array_map( 'sanitize_text_field', $settings['selected_price_ids'] ) : array();
+		$selected_price_ids = array_values( array_filter( array_unique( $selected_price_ids ) ) );
+
+		return array(
+			'show_current_services' => ! isset( $settings['show_current_services'] ) || (bool) $settings['show_current_services'],
+			'show_add_services'     => ! isset( $settings['show_add_services'] ) || (bool) $settings['show_add_services'],
+			'product_mode'          => isset( $settings['product_mode'] ) && 'selected' === $settings['product_mode'] ? 'selected' : 'all',
+			'selected_price_ids'    => $selected_price_ids,
+		);
+	}
+
 	private function get_portal_available_service_products( $subscriptions ) {
 		global $wpdb;
 
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
+		$display_settings      = $this->get_customer_portal_services_display_settings();
+		$selected_price_ids    = $display_settings['selected_price_ids'];
 
 		$products = $wpdb->get_results(
 			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden' ORDER BY sort_order ASC, name ASC"
@@ -602,11 +621,19 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids ) {
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $display_settings, $selected_price_ids ) {
 					$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 
-					if ( '' !== $price_id && in_array( $price_id, $purchased_price_ids, true ) ) {
+					if ( '' === $price_id ) {
+						return false;
+					}
+
+					if ( 'selected' === $display_settings['product_mode'] && ! in_array( $price_id, $selected_price_ids, true ) ) {
+						return false;
+					}
+
+					if ( in_array( $price_id, $purchased_price_ids, true ) ) {
 						return false;
 					}
 
@@ -614,7 +641,7 @@ class AJForms {
 						return false;
 					}
 
-					return '' !== $price_id;
+					return true;
 				}
 			)
 		);
@@ -710,7 +737,8 @@ class AJForms {
 
 		$subscriptions      = $context['subscriptions'];
 		$ledger             = $context['ledger'];
-		$available_products = $this->get_portal_available_service_products( $subscriptions );
+		$display_settings   = $this->get_customer_portal_services_display_settings();
+		$available_products = $display_settings['show_add_services'] ? $this->get_portal_available_service_products( $subscriptions ) : array();
 		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
 
 		ob_start();
@@ -718,27 +746,30 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'My Services', 'ajforms' ); ?></h2>
 
-			<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
-			<?php if ( empty( $subscriptions ) ) : ?>
-				<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
-			<?php else : ?>
-				<div class="aj-portal-services-list">
-					<?php foreach ( $subscriptions as $subscription ) : ?>
-						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
-						<div class="aj-portal-service-card">
-							<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
-							<div class="aj-portal-service-card-grid">
-								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
+			<?php if ( ! empty( $display_settings['show_current_services'] ) ) : ?>
+				<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
+				<?php if ( empty( $subscriptions ) ) : ?>
+					<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
+				<?php else : ?>
+					<div class="aj-portal-services-list">
+						<?php foreach ( $subscriptions as $subscription ) : ?>
+							<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
+							<div class="aj-portal-service-card">
+								<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
+								<div class="aj-portal-service-card-grid">
+									<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
+								</div>
 							</div>
-						</div>
-					<?php endforeach; ?>
-				</div>
+						<?php endforeach; ?>
+					</div>
+				<?php endif; ?>
 			<?php endif; ?>
 
+			<?php if ( ! empty( $display_settings['show_add_services'] ) ) : ?>
 			<h3><?php esc_html_e( 'Add Services', 'ajforms' ); ?></h3>
 			<?php if ( empty( $available_products ) ) : ?>
 				<p><?php esc_html_e( 'No additional services are currently available for this account.', 'ajforms' ); ?></p>
@@ -766,6 +797,7 @@ class AJForms {
 					<?php endforeach; ?>
 				</div>
 				<p class="aj-portal-add-service-message" style="display:none;"></p>
+			<?php endif; ?>
 			<?php endif; ?>
 		</section>
 		<?php
