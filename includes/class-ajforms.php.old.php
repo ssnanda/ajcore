@@ -57,6 +57,7 @@ class AJForms {
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
+		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 	}
 
 	private function is_frontend_portal_user() {
@@ -817,7 +818,7 @@ class AJForms {
 										<?php if ( $entry_invoice_url ) : ?>
 											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
 										<?php else : ?>
-											<?php esc_html_e( '-', 'ajforms' ); ?>
+											<?php echo $this->get_portal_service_request_actions( $entry ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 										<?php endif; ?>
 									</td>
 								</tr>
@@ -831,67 +832,65 @@ class AJForms {
 		return ob_get_clean();
 	}
 
-	private function render_customer_portal_overview_tab() {
-		$context = $this->get_current_user_portal_billing_context();
-		$customer = $context['customer'];
 
-		if ( '' === $context['stripe_customer_id'] || ! $customer ) {
-			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Overview', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+	private function get_current_user_portal_tasks() {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return array();
 		}
 
-		$subscriptions        = $context['subscriptions'];
-		$ledger               = $context['ledger'];
-		$upcoming             = $context['upcoming'];
-		$active_subscriptions = $context['active_subscriptions'];
-		$files                = $this->get_current_user_portal_files();
-		$business_name        = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
-		$display_name         = $customer->name ? $customer->name : $customer->email;
-		$billing_url          = add_query_arg( 'portal_tab', 'billing', $this->get_customer_portal_url() );
-		$file_library_url     = add_query_arg( 'portal_tab', 'file-library', $this->get_customer_portal_url() );
-		$services_url         = add_query_arg( 'portal_tab', 'services', $this->get_customer_portal_url() );
-		$support_email        = get_option( 'admin_email' );
-		$annual_report_due    = $this->get_portal_customer_meta_value( $customer, array( 'annual_report_due', 'annual_report_due_date' ) );
-		$boi_status           = $this->get_portal_customer_meta_value( $customer, array( 'boi_filing_status', 'boi_status' ) );
+		global $wpdb;
+		return $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_tasks_table()} WHERE stripe_customer_id = %s AND client_visible = 1 ORDER BY FIELD(status, 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled'), due_date IS NULL, due_date ASC, id DESC",
+				$stripe_customer_id
+			)
+		);
+	}
 
+	private function get_open_portal_tasks_count( $tasks ) {
+		$count = 0;
+		foreach ( (array) $tasks as $task ) {
+			$status = isset( $task->status ) ? sanitize_key( (string) $task->status ) : '';
+			if ( ! in_array( $status, array( 'completed', 'cancelled', 'closed' ), true ) ) {
+				$count++;
+			}
+		}
+
+		return $count;
+	}
+
+	private function render_customer_portal_tasks_table( $tasks, $include_default_deadlines = true ) {
 		ob_start();
 		?>
-		<section class="aj-customer-portal-panel">
-			<h2><?php echo esc_html( sprintf( __( 'Welcome, %s', 'ajforms' ), $display_name ) ); ?></h2>
+		<div class="aj-portal-table-wrap">
+			<table class="aj-portal-table">
+				<thead><tr><th><?php esc_html_e( 'Task', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Action Required', 'ajforms' ); ?></th></tr></thead>
+				<tbody>
+					<?php if ( ! empty( $tasks ) ) : ?>
+						<?php foreach ( $tasks as $task ) : ?>
+							<tr>
+								<td><?php echo esc_html( $task->title ); ?></td>
+								<td><?php echo esc_html( ucwords( str_replace( '_', ' ', $task->status ) ) ); ?></td>
+								<td><?php echo esc_html( ! empty( $task->due_date ) ? $this->format_portal_date( $task->due_date ) : '-' ); ?></td>
+								<td><?php echo esc_html( ! empty( $task->action_required ) ? $task->action_required : '-' ); ?></td>
+							</tr>
+						<?php endforeach; ?>
+					<?php elseif ( ! $include_default_deadlines ) : ?>
+						<tr><td colspan="4"><?php esc_html_e( 'No open tasks are available yet.', 'ajforms' ); ?></td></tr>
+					<?php endif; ?>
 
-			<div class="aj-portal-summary-grid">
-				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $services_url ); ?>">
-					<strong><?php esc_html_e( 'Active Services', 'ajforms' ); ?></strong>
-					<span><?php echo esc_html( number_format_i18n( count( $active_subscriptions ) ) ); ?></span>
-				</a>
-				<div class="aj-portal-summary-card">
-					<strong><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></strong>
-					<span><?php echo esc_html( number_format_i18n( count( $upcoming ) ) ); ?></span>
-				</div>
-				<div class="aj-portal-summary-card">
-					<strong><?php esc_html_e( 'Open Tasks', 'ajforms' ); ?></strong>
-					<span><?php echo esc_html( number_format_i18n( 0 ) ); ?></span>
-				</div>
-				<div class="aj-portal-summary-card">
-					<strong><?php esc_html_e( 'Available Files', 'ajforms' ); ?></strong>
-					<span><?php echo esc_html( number_format_i18n( count( $files ) ) ); ?></span>
-				</div>
-			</div>
-
-			<h3><?php esc_html_e( 'Tasks / Action Items', 'ajforms' ); ?></h3>
-			<div class="aj-portal-table-wrap">
-				<table class="aj-portal-table">
-					<thead><tr><th><?php esc_html_e( 'Task', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Action Required', 'ajforms' ); ?></th></tr></thead>
-					<tbody>
+					<?php if ( $include_default_deadlines ) : ?>
 						<tr>
 							<td><?php esc_html_e( 'BOI Report', 'ajforms' ); ?></td>
-							<td><?php echo esc_html( $boi_status ? $boi_status : __( 'Check status', 'ajforms' ) ); ?></td>
+							<td><?php esc_html_e( 'Confirm Status', 'ajforms' ); ?></td>
 							<td><?php esc_html_e( 'Confirm deadline', 'ajforms' ); ?></td>
 							<td><?php esc_html_e( 'Confirm whether BOI reporting is required and mark completed when filed.', 'ajforms' ); ?></td>
 						</tr>
 						<tr>
 							<td><?php esc_html_e( 'Annual Report', 'ajforms' ); ?></td>
 							<td><?php esc_html_e( 'Upcoming', 'ajforms' ); ?></td>
-							<td><?php echo esc_html( $annual_report_due ? $annual_report_due : __( 'April 15', 'ajforms' ) ); ?></td>
+							<td><?php esc_html_e( 'April 15', 'ajforms' ); ?></td>
 							<td><?php esc_html_e( 'File the annual report with the state if not already completed.', 'ajforms' ); ?></td>
 						</tr>
 						<tr>
@@ -906,9 +905,81 @@ class AJForms {
 							<td><?php esc_html_e( 'April 15', 'ajforms' ); ?></td>
 							<td><?php esc_html_e( 'Prepare pass-through LLC tax filing if applicable.', 'ajforms' ); ?></td>
 						</tr>
-					</tbody>
-				</table>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
+		return ob_get_clean();
+	}
+
+	private function get_portal_service_request_actions( $entry ) {
+		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+		if ( 'checkout_session' !== (string) $entry->source_type || ! in_array( (string) $entry->status, array( 'unpaid', 'open' ), true ) ) {
+			return '';
+		}
+
+		$actions = array();
+		if ( ! empty( $metadata['checkout_url'] ) ) {
+			$actions[] = '<a class="button" href="' . esc_url( $metadata['checkout_url'] ) . '">' . esc_html__( 'Resume', 'ajforms' ) . '</a>';
+		}
+
+		$actions[] = '<button type="button" class="button aj-portal-cancel-service-request" data-ledger-id="' . esc_attr( (int) $entry->id ) . '" data-nonce="' . esc_attr( wp_create_nonce( 'ajcore_cancel_portal_service_request_' . (int) $entry->id ) ) . '">' . esc_html__( 'Cancel', 'ajforms' ) . '</button>';
+
+		return '<span class="aj-portal-inline-actions">' . implode( ' ', $actions ) . '</span>';
+	}
+
+	private function render_customer_portal_overview_tab() {
+		$context = $this->get_current_user_portal_billing_context();
+		$customer = $context['customer'];
+
+		if ( '' === $context['stripe_customer_id'] || ! $customer ) {
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Overview', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+		}
+
+		$upcoming             = $context['upcoming'];
+		$active_subscriptions = $context['active_subscriptions'];
+		$files                = $this->get_current_user_portal_files();
+		$tasks                = $this->get_current_user_portal_tasks();
+		$display_name         = $customer->name ? $customer->name : $customer->email;
+		$billing_url          = add_query_arg( 'portal_tab', 'billing', $this->get_customer_portal_url() );
+		$file_library_url     = add_query_arg( 'portal_tab', 'file-library', $this->get_customer_portal_url() );
+		$services_url         = add_query_arg( 'portal_tab', 'services', $this->get_customer_portal_url() );
+		$email_us_url         = home_url( '/email-us/' );
+		$business_name        = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
+		$text_message         = sprintf(
+			__( 'Hi, I am an existing customer and my business name is: %1$s. My name is: %2$s. I need help with ', 'ajforms' ),
+			$business_name ? $business_name : '-',
+			$display_name ? $display_name : '-'
+		);
+		$text_url             = 'sms:+17043072135?body=' . rawurlencode( $text_message );
+
+		ob_start();
+		?>
+		<section class="aj-customer-portal-panel">
+			<h2><?php echo esc_html( sprintf( __( 'Welcome, %s', 'ajforms' ), $display_name ) ); ?></h2>
+
+			<div class="aj-portal-summary-grid">
+				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $services_url ); ?>">
+					<strong><?php esc_html_e( 'Active Services', 'ajforms' ); ?></strong>
+					<span><?php echo esc_html( number_format_i18n( count( $active_subscriptions ) ) ); ?></span>
+				</a>
+				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $billing_url ); ?>">
+					<strong><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></strong>
+					<span><?php echo esc_html( number_format_i18n( count( $upcoming ) ) ); ?></span>
+				</a>
+				<div class="aj-portal-summary-card">
+					<strong><?php esc_html_e( 'Open Tasks', 'ajforms' ); ?></strong>
+					<span><?php echo esc_html( number_format_i18n( $this->get_open_portal_tasks_count( $tasks ) ) ); ?></span>
+				</div>
+				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $file_library_url ); ?>">
+					<strong><?php esc_html_e( 'Available Files', 'ajforms' ); ?></strong>
+					<span><?php echo esc_html( number_format_i18n( count( $files ) ) ); ?></span>
+				</a>
 			</div>
+
+			<h3><?php esc_html_e( 'Tasks / Action Items', 'ajforms' ); ?></h3>
+			<?php echo $this->render_customer_portal_tasks_table( $tasks, true ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<h3><?php esc_html_e( 'Quick Actions', 'ajforms' ); ?></h3>
 			<div class="aj-portal-quick-actions">
@@ -916,7 +987,8 @@ class AJForms {
 				<a class="button" href="<?php echo esc_url( $billing_url ); ?>"><?php esc_html_e( 'View Billing', 'ajforms' ); ?></a>
 				<span class="button disabled"><?php esc_html_e( 'Update Payment Method', 'ajforms' ); ?></span>
 				<a class="button" href="<?php echo esc_url( $services_url ); ?>"><?php esc_html_e( 'Add Services', 'ajforms' ); ?></a>
-				<a class="button" href="<?php echo esc_url( 'mailto:' . $support_email ); ?>"><?php esc_html_e( 'Contact Support', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( $email_us_url ); ?>"><?php esc_html_e( 'Email Us', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( $text_url ); ?>"><?php esc_html_e( 'Text Us', 'ajforms' ); ?></a>
 			</div>
 		</section>
 		<?php
@@ -951,6 +1023,11 @@ class AJForms {
 	private function get_portal_ledger_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_ledger';
+	}
+
+	private function get_portal_tasks_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_tasks';
 	}
 
 	private function get_portal_user_mappings_table() {
@@ -1139,6 +1216,8 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-table th{font-size:13px;font-weight:700;color:#52616f}
 				.ajcore-portal-shell .aj-portal-quick-actions{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 18px}
 				.ajcore-portal-shell .aj-portal-quick-actions .button.disabled{opacity:.55;pointer-events:none}
+				.ajcore-portal-shell .aj-portal-inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+				.ajcore-portal-shell .aj-portal-inline-actions .button{margin:0}
 				.ajcore-portal-shell .aj-customer-file{border:1px solid #dfe6ee;border-radius:12px;padding:20px;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.06)}
 				.ajcore-portal-shell .aj-customer-file-category{display:inline-block;margin-bottom:10px;color:#0f7ac6;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
 				.ajcore-portal-shell .aj-customer-file h3{margin:0 0 8px;font-size:20px;line-height:1.25}
@@ -1222,6 +1301,35 @@ class AJForms {
 							} else {
 								window.alert(error.message || '<?php echo esc_js( __( 'Unable to start checkout.', 'ajforms' ) ); ?>');
 							}
+						});
+				shell.addEventListener('click', function(event) {
+					const button = event.target.closest('.aj-portal-cancel-service-request');
+					if (!button || button.disabled) {
+						return;
+					}
+					if (!window.confirm('<?php echo esc_js( __( 'Cancel this pending service request?', 'ajforms' ) ); ?>')) {
+						return;
+					}
+					button.disabled = true;
+					const formData = new FormData();
+					formData.append('action', 'ajcore_cancel_portal_service_request');
+					formData.append('ledger_id', button.dataset.ledgerId || '');
+					formData.append('nonce', button.dataset.nonce || '');
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+						method: 'POST',
+						credentials: 'same-origin',
+						body: formData
+					})
+						.then(function(response) { return response.json(); })
+						.then(function(payload) {
+							if (!payload || !payload.success) {
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+							}
+							window.location.reload();
+						})
+						.catch(function(error) {
+							button.disabled = false;
+							window.alert(error.message || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
 						});
 				});
 			})();
@@ -1644,6 +1752,42 @@ class AJForms {
 		);
 	}
 
+	public function ajax_cancel_portal_service_request() {
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( __( 'Login required.', 'ajforms' ), 401 );
+		}
+
+		$ledger_id = isset( $_POST['ledger_id'] ) ? absint( wp_unslash( $_POST['ledger_id'] ) ) : 0;
+		$nonce     = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		if ( ! $ledger_id || ! wp_verify_nonce( $nonce, 'ajcore_cancel_portal_service_request_' . $ledger_id ) ) {
+			wp_send_json_error( __( 'Invalid request.', 'ajforms' ), 400 );
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			wp_send_json_error( __( 'Portal account is not linked.', 'ajforms' ), 403 );
+		}
+
+		global $wpdb;
+		$updated = $wpdb->update(
+			$this->get_portal_ledger_table(),
+			array( 'status' => 'cancelled' ),
+			array(
+				'id'                 => $ledger_id,
+				'stripe_customer_id' => $stripe_customer_id,
+				'source_type'        => 'checkout_session',
+			),
+			array( '%s' ),
+			array( '%d', '%s', '%s' )
+		);
+
+		if ( false === $updated ) {
+			wp_send_json_error( __( 'Unable to cancel request.', 'ajforms' ), 500 );
+		}
+
+		wp_send_json_success( array( 'status' => 'cancelled' ) );
+	}
+
 	public function ajax_create_checkout_session() {
 		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
 		$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
@@ -1765,6 +1909,40 @@ class AJForms {
 
 		if ( is_wp_error( $response ) ) {
 			wp_send_json_error( $response->get_error_message(), 400 );
+		}
+
+		if ( $portal_add_service && ! empty( $response['id'] ) && '' !== $mapped_stripe_customer_id ) {
+			global $wpdb;
+			$product_name = $portal_product && ! empty( $portal_product->custom_label ) ? $portal_product->custom_label : ( $portal_product && ! empty( $portal_product->name ) ? $portal_product->name : __( 'Additional service request', 'ajforms' ) );
+			$product_description = sprintf( __( 'Service request: %s', 'ajforms' ), $product_name );
+			$checkout_url = ! empty( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '';
+			$metadata = array(
+				'checkout_url' => $checkout_url,
+				'price_id'     => $price_id,
+				'product_id'   => isset( $allowed_price_map[ $price_id ]['product_id'] ) ? $allowed_price_map[ $price_id ]['product_id'] : '',
+				'product_name' => $product_name,
+				'source'       => 'portal_add_service',
+			);
+
+			$wpdb->replace(
+				$this->get_portal_ledger_table(),
+				array(
+					'stripe_customer_id' => $mapped_stripe_customer_id,
+					'source_object_id'   => sanitize_text_field( (string) $response['id'] ),
+					'source_type'        => 'checkout_session',
+					'ledger_date'        => current_time( 'mysql' ),
+					'description'        => $product_description,
+					'amount'             => $portal_product ? (float) $portal_product->price_amount : 0,
+					'currency'           => $portal_product ? sanitize_key( (string) $portal_product->currency ) : 'usd',
+					'status'             => 'unpaid',
+					'invoice_id'         => '',
+					'payment_intent_id'  => '',
+					'charge_id'          => '',
+					'metadata'           => wp_json_encode( $metadata ),
+					'created_at'         => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			);
 		}
 
 		wp_send_json_success(
@@ -4195,6 +4373,35 @@ class AJForms {
 						submitButton.disabled = false;
 						isSubmitting = false;
 					}
+				shell.addEventListener('click', function(event) {
+					const button = event.target.closest('.aj-portal-cancel-service-request');
+					if (!button || button.disabled) {
+						return;
+					}
+					if (!window.confirm('<?php echo esc_js( __( 'Cancel this pending service request?', 'ajforms' ) ); ?>')) {
+						return;
+					}
+					button.disabled = true;
+					const formData = new FormData();
+					formData.append('action', 'ajcore_cancel_portal_service_request');
+					formData.append('ledger_id', button.dataset.ledgerId || '');
+					formData.append('nonce', button.dataset.nonce || '');
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+						method: 'POST',
+						credentials: 'same-origin',
+						body: formData
+					})
+						.then(function(response) { return response.json(); })
+						.then(function(payload) {
+							if (!payload || !payload.success) {
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+							}
+							window.location.reload();
+						})
+						.catch(function(error) {
+							button.disabled = false;
+							window.alert(error.message || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+						});
 				});
 			})();
 			</script>
