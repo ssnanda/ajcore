@@ -2434,6 +2434,10 @@ class AJForms_Admin {
 			} else {
 				$this->handle_file_library_actions();
 			}
+		} elseif ( 'ajforms-auth' === $page ) {
+			$this->handle_auth_settings_save();
+		} elseif ( 'ajforms-automations' === $page ) {
+			$this->handle_automations_settings_save();
 		} elseif ( 'ajforms-role-manager' === $page ) {
 			$this->handle_role_manager_actions();
 		} elseif ( 'ajforms-about' === $page ) {
@@ -3821,8 +3825,8 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
-			__( 'Leads', 'ajforms' ),
-			__( 'Leads', 'ajforms' ),
+			__( 'CRM', 'ajforms' ),
+			__( 'CRM', 'ajforms' ),
 			'manage_options',
 			'ajforms-leads',
 			array( $this, 'display_leads_page' )
@@ -3844,6 +3848,24 @@ class AJForms_Admin {
 			'manage_options',
 			'ajforms-client-portal',
 			array( $this, 'display_client_portal_page' )
+		);
+
+		add_submenu_page(
+			'ajforms',
+			__( 'Auth', 'ajforms' ),
+			__( 'Auth', 'ajforms' ),
+			'manage_options',
+			'ajforms-auth',
+			array( $this, 'display_auth_page' )
+		);
+
+		add_submenu_page(
+			'ajforms',
+			__( 'Automations', 'ajforms' ),
+			__( 'Automations', 'ajforms' ),
+			'manage_options',
+			'ajforms-automations',
+			array( $this, 'display_automations_page' )
 		);
 
 		add_submenu_page(
@@ -5887,6 +5909,131 @@ class AJForms_Admin {
 			wp_safe_redirect( $redirect );
 			exit;
 		}
+	}
+
+
+	private function handle_auth_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_auth_nonce'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_save_auth_settings', 'ajcore_auth_nonce' );
+
+		$settings = array(
+			'customer_role'       => isset( $_POST['customer_role'] ) ? sanitize_key( wp_unslash( $_POST['customer_role'] ) ) : 'aj_portal_user',
+			'block_wp_admin'      => isset( $_POST['block_wp_admin'] ) ? '1' : '0',
+			'hide_admin_bar'      => isset( $_POST['hide_admin_bar'] ) ? '1' : '0',
+			'login_redirect_mode' => isset( $_POST['login_redirect_mode'] ) && 'portal' === sanitize_key( wp_unslash( $_POST['login_redirect_mode'] ) ) ? 'portal' : 'default',
+		);
+
+		update_option( 'ajcore_auth_settings', $settings, false );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-auth', 'settings-updated' => 1 ), admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	public function display_auth_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings = get_option( 'ajcore_auth_settings', array() );
+		$settings = is_array( $settings ) ? wp_parse_args(
+			$settings,
+			array(
+				'customer_role'       => 'aj_portal_user',
+				'block_wp_admin'      => '1',
+				'hide_admin_bar'      => '1',
+				'login_redirect_mode' => 'portal',
+			)
+		) : array(
+			'customer_role'       => 'aj_portal_user',
+			'block_wp_admin'      => '1',
+			'hide_admin_bar'      => '1',
+			'login_redirect_mode' => 'portal',
+		);
+		$roles = wp_roles()->roles;
+		?>
+		<div class="wrap ajforms-admin-shell">
+			<div class="ajforms-admin-hero" style="margin:18px 0;">
+				<div>
+					<h1><?php esc_html_e( 'Auth', 'ajforms' ); ?></h1>
+					<p><?php esc_html_e( 'Control the customer role and portal login behavior used by AJ Core.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Auth settings saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<form method="post">
+				<?php wp_nonce_field( 'ajcore_save_auth_settings', 'ajcore_auth_nonce' ); ?>
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row"><label for="customer_role"><?php esc_html_e( 'Customer Portal Role', 'ajforms' ); ?></label></th>
+						<td><select name="customer_role" id="customer_role">
+							<?php foreach ( $roles as $role_key => $role ) : ?>
+								<option value="<?php echo esc_attr( $role_key ); ?>" <?php selected( $settings['customer_role'], $role_key ); ?>><?php echo esc_html( translate_user_role( $role['name'] ) . ' (' . $role_key . ')' ); ?></option>
+							<?php endforeach; ?>
+						</select></td>
+					</tr>
+					<tr><th scope="row"><?php esc_html_e( 'Portal User Protection', 'ajforms' ); ?></th><td>
+						<label><input type="checkbox" name="block_wp_admin" value="1" <?php checked( '1', $settings['block_wp_admin'] ); ?>> <?php esc_html_e( 'Redirect portal users away from wp-admin', 'ajforms' ); ?></label><br>
+						<label><input type="checkbox" name="hide_admin_bar" value="1" <?php checked( '1', $settings['hide_admin_bar'] ); ?>> <?php esc_html_e( 'Hide admin bar for portal users', 'ajforms' ); ?></label>
+					</td></tr>
+					<tr><th scope="row"><?php esc_html_e( 'Login Redirect', 'ajforms' ); ?></th><td>
+						<label><input type="radio" name="login_redirect_mode" value="portal" <?php checked( 'portal', $settings['login_redirect_mode'] ); ?>> <?php esc_html_e( 'Send portal users to Client Portal', 'ajforms' ); ?></label><br>
+						<label><input type="radio" name="login_redirect_mode" value="default" <?php checked( 'default', $settings['login_redirect_mode'] ); ?>> <?php esc_html_e( 'Use WordPress default redirect', 'ajforms' ); ?></label>
+					</td></tr>
+				</table>
+				<?php submit_button( __( 'Save Auth Settings', 'ajforms' ) ); ?>
+			</form>
+		</div>
+		<?php
+	}
+
+	private function handle_automations_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_automations_nonce'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_save_automations_settings', 'ajcore_automations_nonce' );
+		$settings = array(
+			'enabled'              => isset( $_POST['automations_enabled'] ) ? '1' : '0',
+			'portal_task_defaults' => isset( $_POST['portal_task_defaults'] ) ? '1' : '0',
+			'notes'                => isset( $_POST['automation_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['automation_notes'] ) ) : '',
+		);
+		update_option( 'ajcore_automations_settings', $settings, false );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-automations', 'settings-updated' => 1 ), admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	public function display_automations_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings = get_option( 'ajcore_automations_settings', array() );
+		$settings = is_array( $settings ) ? wp_parse_args( $settings, array( 'enabled' => '1', 'portal_task_defaults' => '1', 'notes' => '' ) ) : array( 'enabled' => '1', 'portal_task_defaults' => '1', 'notes' => '' );
+		?>
+		<div class="wrap ajforms-admin-shell">
+			<div class="ajforms-admin-hero" style="margin:18px 0;">
+				<div>
+					<h1><?php esc_html_e( 'Automations', 'ajforms' ); ?></h1>
+					<p><?php esc_html_e( 'Manage lightweight workflow settings for portal tasks and future automated actions.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Automation settings saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<form method="post">
+				<?php wp_nonce_field( 'ajcore_save_automations_settings', 'ajcore_automations_nonce' ); ?>
+				<table class="form-table" role="presentation">
+					<tr><th scope="row"><?php esc_html_e( 'Automation Engine', 'ajforms' ); ?></th><td><label><input type="checkbox" name="automations_enabled" value="1" <?php checked( '1', $settings['enabled'] ); ?>> <?php esc_html_e( 'Enable AJ Core automations', 'ajforms' ); ?></label></td></tr>
+					<tr><th scope="row"><?php esc_html_e( 'Portal Task Defaults', 'ajforms' ); ?></th><td><label><input type="checkbox" name="portal_task_defaults" value="1" <?php checked( '1', $settings['portal_task_defaults'] ); ?>> <?php esc_html_e( 'Show default compliance reminders when no custom task replaces them', 'ajforms' ); ?></label></td></tr>
+					<tr><th scope="row"><label for="automation_notes"><?php esc_html_e( 'Internal Notes', 'ajforms' ); ?></label></th><td><textarea id="automation_notes" name="automation_notes" class="large-text" rows="6"><?php echo esc_textarea( $settings['notes'] ); ?></textarea></td></tr>
+				</table>
+				<?php submit_button( __( 'Save Automation Settings', 'ajforms' ) ); ?>
+			</form>
+		</div>
+		<?php
 	}
 
 	public function display_settings_page() {

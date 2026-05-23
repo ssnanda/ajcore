@@ -987,6 +987,61 @@ class AJForms {
 		return ob_get_clean();
 	}
 
+
+	private function render_customer_portal_service_summary( $active_subscriptions, $ledger, $business_name ) {
+		if ( empty( $active_subscriptions ) ) {
+			return '<div class="aj-portal-account-summary"><h3>' . esc_html__( 'Account Summary', 'ajforms' ) . '</h3><p>' . esc_html__( 'No active services are synced to your portal yet.', 'ajforms' ) . '</p></div>';
+		}
+
+		$lines = array();
+		foreach ( $active_subscriptions as $subscription ) {
+			$ledger_entry   = $this->get_subscription_ledger_entry( $subscription, $ledger );
+			$service_name   = $this->get_subscription_service_name( $subscription, $ledger_entry );
+			$service_period = $this->get_subscription_service_period( $subscription, $ledger_entry );
+			$entity_label    = $business_name ? $business_name : __( 'your business entity', 'ajforms' );
+
+			$lines[] = sprintf(
+				/* translators: 1: service name, 2: business/entity name, 3: service period */
+				__( 'You currently have %1$s for %2$s with NC LLC Agents Inc from %3$s.', 'ajforms' ),
+				$service_name,
+				$entity_label,
+				$service_period
+			);
+		}
+
+		ob_start();
+		?>
+		<div class="aj-portal-account-summary">
+			<h3><?php esc_html_e( 'Account Summary', 'ajforms' ); ?></h3>
+			<?php foreach ( $lines as $line ) : ?>
+				<p><?php echo esc_html( $line ); ?></p>
+			<?php endforeach; ?>
+		</div>
+		<?php
+		return ob_get_clean();
+	}
+
+	private function render_customer_portal_tasks_tab() {
+		$context = $this->get_current_user_portal_billing_context();
+		$customer = $context['customer'];
+
+		if ( '' === $context['stripe_customer_id'] || ! $customer ) {
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Tasks', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+		}
+
+		$tasks = $this->get_current_user_portal_tasks();
+
+		ob_start();
+		?>
+		<section class="aj-customer-portal-panel">
+			<h2><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h2>
+			<p class="aj-portal-intro-text"><?php esc_html_e( 'Review action items and important compliance dates for your account.', 'ajforms' ); ?></p>
+			<?php echo $this->render_customer_portal_tasks_table( $tasks, true ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+		</section>
+		<?php
+		return ob_get_clean();
+	}
+
 	private function get_portal_service_request_actions( $entry ) {
 		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
 		$status   = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
