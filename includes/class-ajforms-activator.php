@@ -23,6 +23,7 @@ class AJForms_Activator {
 		$table_task_statuses        = $wpdb->prefix . 'aj_portal_task_statuses';
 		$table_task_comments        = $wpdb->prefix . 'aj_portal_task_comments';
 		$table_sync_logs            = $wpdb->prefix . 'aj_portal_sync_logs';
+		$table_service_requests     = $wpdb->prefix . 'aj_portal_service_requests';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -288,6 +289,39 @@ class AJForms_Activator {
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY status (status),
 			KEY ledger_date (ledger_date)
+		) $charset_collate;
+
+		CREATE TABLE $table_service_requests (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			stripe_customer_id varchar(100) NOT NULL,
+			stripe_price_id varchar(100) DEFAULT '' NOT NULL,
+			stripe_product_id varchar(100) DEFAULT '' NOT NULL,
+			service_name varchar(255) DEFAULT '' NOT NULL,
+			request_type varchar(100) DEFAULT 'add_service' NOT NULL,
+			status varchar(50) DEFAULT 'draft' NOT NULL,
+			amount decimal(12,2) DEFAULT 0 NOT NULL,
+			currency varchar(12) DEFAULT 'usd' NOT NULL,
+			source_object_id varchar(100) DEFAULT '' NOT NULL,
+			source_type varchar(50) DEFAULT '' NOT NULL,
+			ledger_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			admin_notes longtext NULL,
+			client_notes longtext NULL,
+			source varchar(50) DEFAULT 'system' NOT NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			raw_data longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY wp_user_id (wp_user_id),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY stripe_price_id (stripe_price_id),
+			KEY stripe_product_id (stripe_product_id),
+			KEY request_type (request_type),
+			KEY status (status),
+			KEY source_object_id (source_object_id),
+			KEY ledger_id (ledger_id),
+			KEY created_at (created_at)
 		) $charset_collate;";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -364,6 +398,6 @@ class AJForms_Activator {
 			)
 		);
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '6', false );
+		update_option( 'ajforms_portal_schema_version', '7', false );
 	}
 }
