@@ -306,27 +306,30 @@ class AJForms {
 				<div class="aj-portal-notice <?php echo esc_attr( $notice_class ); ?>"><?php echo esc_html( $notice_message ); ?></div>
 			<?php endif; ?>
 
-			<div class="aj-portal-upload-card">
-				<div>
-					<h3><?php esc_html_e( 'Upload a Document', 'ajforms' ); ?></h3>
-					<p><?php esc_html_e( 'Share PDFs, Word documents, and images with our team. Uploaded files will stay in your File Library.', 'ajforms' ); ?></p>
+			<details class="aj-portal-upload-drawer">
+				<summary class="aj-portal-upload-toggle"><?php esc_html_e( 'Upload File', 'ajforms' ); ?></summary>
+				<div class="aj-portal-upload-card">
+					<div>
+						<h3><?php esc_html_e( 'Upload a Document', 'ajforms' ); ?></h3>
+						<p><?php esc_html_e( 'Share PDFs, Word documents, and images with our team. Uploaded files will stay in your File Library.', 'ajforms' ); ?></p>
+					</div>
+					<form method="post" enctype="multipart/form-data" class="aj-portal-upload-form">
+						<?php wp_nonce_field( 'ajcore_portal_file_upload', 'ajcore_portal_file_upload_nonce' ); ?>
+						<input type="hidden" name="ajcore_portal_file_upload" value="1">
+						<input type="text" name="portal_file_title" placeholder="<?php echo esc_attr__( 'Optional file title', 'ajforms' ); ?>">
+						<input type="file" name="portal_file_upload" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" required>
+						<button type="submit" class="button"><?php esc_html_e( 'Upload File', 'ajforms' ); ?></button>
+					</form>
 				</div>
-				<form method="post" enctype="multipart/form-data" class="aj-portal-upload-form">
-					<?php wp_nonce_field( 'ajcore_portal_file_upload', 'ajcore_portal_file_upload_nonce' ); ?>
-					<input type="hidden" name="ajcore_portal_file_upload" value="1">
-					<input type="text" name="portal_file_title" placeholder="<?php echo esc_attr__( 'Optional file title', 'ajforms' ); ?>">
-					<input type="file" name="portal_file_upload" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" required>
-					<button type="submit" class="button"><?php esc_html_e( 'Upload File', 'ajforms' ); ?></button>
-				</form>
-			</div>
+			</details>
 
 			<?php if ( empty( $files ) ) : ?>
 				<div class="aj-portal-empty-state">
-					<strong><?php esc_html_e( 'No shared files yet', 'ajforms' ); ?></strong>
-					<p><?php esc_html_e( 'Documents shared with your portal account will appear here. You can also upload documents above.', 'ajforms' ); ?></p>
+					<strong><?php esc_html_e( 'No files yet', 'ajforms' ); ?></strong>
+					<p><?php esc_html_e( 'Documents shared with your portal account and documents you upload will appear here.', 'ajforms' ); ?></p>
 				</div>
 			<?php else : ?>
-				<div class="aj-customer-file-grid">
+				<div class="aj-customer-file-list" role="list">
 					<?php foreach ( $files as $file ) : ?>
 						<?php
 						$download_url = wp_nonce_url(
@@ -338,16 +341,23 @@ class AJForms {
 							),
 							'aj_portal_download_' . (int) $file->id
 						);
+						$file_category = '' !== (string) $file->category ? (string) $file->category : __( 'File', 'ajforms' );
+						$file_date     = ! empty( $file->created_at ) ? $this->format_portal_date( $file->created_at ) : '';
 						?>
-						<div class="aj-customer-file">
-							<?php if ( '' !== (string) $file->category ) : ?>
-								<div class="aj-customer-file-category"><?php echo esc_html( $file->category ); ?></div>
-							<?php endif; ?>
-							<h3><?php echo esc_html( $file->title ); ?></h3>
-							<?php if ( '' !== (string) $file->description ) : ?>
-								<p><?php echo esc_html( $file->description ); ?></p>
-							<?php endif; ?>
-							<a class="button" href="<?php echo esc_url( $download_url ); ?>"><?php esc_html_e( 'Download', 'ajforms' ); ?></a>
+						<div class="aj-customer-file-row" role="listitem">
+							<div class="aj-customer-file-main">
+								<div class="aj-customer-file-title"><?php echo esc_html( $file->title ); ?></div>
+								<div class="aj-customer-file-meta">
+									<span><?php echo esc_html( $file_category ); ?></span>
+									<?php if ( $file_date ) : ?><span><?php echo esc_html( $file_date ); ?></span><?php endif; ?>
+								</div>
+								<?php if ( '' !== (string) $file->description ) : ?>
+									<p><?php echo esc_html( $file->description ); ?></p>
+								<?php endif; ?>
+							</div>
+							<div class="aj-customer-file-actions">
+								<a class="button" href="<?php echo esc_url( $download_url ); ?>"><?php esc_html_e( 'Download', 'ajforms' ); ?></a>
+							</div>
 						</div>
 					<?php endforeach; ?>
 				</div>
@@ -1713,12 +1723,16 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-profile-details{display:grid;gap:12px;color:#1f2937;font-size:17px;line-height:1.5;margin:0 0 26px}
 				.ajcore-portal-shell .aj-portal-profile-actions{display:flex;gap:12px;flex-wrap:wrap}
 
-				.ajcore-portal-shell .aj-customer-file-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}
-				.ajcore-portal-shell .aj-customer-file{position:relative;overflow:hidden;border:1px solid rgba(219,231,243,.95);border-radius:28px;padding:28px;background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);box-shadow:var(--ajp-shadow)}
-				.ajcore-portal-shell .aj-customer-file:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
-				.ajcore-portal-shell .aj-customer-file-category{display:inline-flex;margin-bottom:14px;color:#2563eb;font-size:12px;font-weight:950;letter-spacing:.075em;text-transform:uppercase}
-				.ajcore-portal-shell .aj-customer-file h3{margin:0 0 16px;font-size:25px;line-height:1.12;letter-spacing:-.04em}
-				.ajcore-portal-shell .aj-customer-file p{margin:0 0 18px;color:#52616f}
+				.ajcore-portal-shell .aj-customer-file-list{overflow:hidden;border:1px solid rgba(219,231,243,.95);border-radius:28px;background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);box-shadow:var(--ajp-shadow);position:relative}
+				.ajcore-portal-shell .aj-customer-file-list:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
+				.ajcore-portal-shell .aj-customer-file-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;align-items:center;padding:22px 26px;border-top:1px solid #e8eef6}
+				.ajcore-portal-shell .aj-customer-file-row:first-child{border-top:0;padding-top:28px}
+				.ajcore-portal-shell .aj-customer-file-row:hover{background:rgba(248,251,255,.9)}
+				.ajcore-portal-shell .aj-customer-file-title{font-size:clamp(18px,1.5vw,24px);line-height:1.15;font-weight:950;letter-spacing:-.04em;color:#111827;overflow-wrap:anywhere}
+				.ajcore-portal-shell .aj-customer-file-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.065em}
+				.ajcore-portal-shell .aj-customer-file-meta span{display:inline-flex;align-items:center;border:1px solid #dbe7f3;background:#f8fbff;border-radius:999px;padding:5px 9px}
+				.ajcore-portal-shell .aj-customer-file-main p{margin:10px 0 0;color:#52616f}
+				.ajcore-portal-shell .aj-customer-file-actions{display:flex;justify-content:flex-end;align-items:center;gap:10px}
 
 				.ajcore-portal-shell .aj-portal-quick-actions{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 18px}
 				.ajcore-portal-shell .aj-portal-inline-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -1733,7 +1747,11 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-notice{margin:0 0 18px;padding:14px 16px;border-radius:18px;font-weight:800;border:1px solid rgba(219,231,243,.95);background:#fff;box-shadow:0 12px 28px rgba(15,23,42,.045)}
 				.ajcore-portal-shell .aj-portal-notice.is-success{color:#166534;background:#ecfdf5;border-color:#bbf7d0}
 				.ajcore-portal-shell .aj-portal-notice.is-error{color:#991b1b;background:#fef2f2;border-color:#fecaca}
-				.ajcore-portal-shell .aj-portal-upload-card{display:grid;grid-template-columns:minmax(280px,.9fr) minmax(360px,1.1fr);gap:22px;align-items:end;margin:0 0 24px;padding:26px;border:1px solid rgba(219,231,243,.95);border-radius:28px;background:linear-gradient(135deg,rgba(255,255,255,.94) 0%,rgba(248,251,255,.92) 100%);box-shadow:var(--ajp-shadow-soft);position:relative;overflow:hidden}
+				.ajcore-portal-shell .aj-portal-upload-drawer{margin:0 0 22px}
+				.ajcore-portal-shell .aj-portal-upload-drawer[open]{margin-bottom:24px}
+				.ajcore-portal-shell .aj-portal-upload-toggle{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:13px 22px;border-radius:999px;background:linear-gradient(135deg,#2563eb 0%,#7c3aed 100%);color:#fff;font-weight:950;cursor:pointer;box-shadow:0 18px 38px rgba(79,70,229,.22);list-style:none}
+				.ajcore-portal-shell .aj-portal-upload-toggle::-webkit-details-marker{display:none}
+				.ajcore-portal-shell .aj-portal-upload-card{display:grid;grid-template-columns:minmax(280px,.9fr) minmax(360px,1.1fr);gap:22px;align-items:end;margin:18px 0 0;padding:26px;border:1px solid rgba(219,231,243,.95);border-radius:28px;background:linear-gradient(135deg,rgba(255,255,255,.94) 0%,rgba(248,251,255,.92) 100%);box-shadow:var(--ajp-shadow-soft);position:relative;overflow:hidden}
 				.ajcore-portal-shell .aj-portal-upload-card:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
 				.ajcore-portal-shell .aj-portal-upload-card h3{margin:0 0 8px;font-size:24px;line-height:1.1;letter-spacing:-.04em}
 				.ajcore-portal-shell .aj-portal-upload-card p{margin:0;color:#526173;line-height:1.55}
@@ -1810,7 +1828,7 @@ class AJForms {
 					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 					.ajcore-portal-shell .aj-portal-summary-card{min-height:104px;border-radius:22px;padding:20px 18px}
 					.ajcore-portal-shell .aj-portal-summary-card span{font-size:30px}
-					.ajcore-portal-shell .aj-portal-service-card,.ajcore-portal-shell .aj-portal-add-service-card,.ajcore-portal-shell .aj-customer-file,.ajcore-portal-shell .aj-portal-profile-block{border-radius:24px;padding:22px}
+					.ajcore-portal-shell .aj-portal-service-card,.ajcore-portal-shell .aj-portal-add-service-card,.ajcore-portal-shell .aj-portal-profile-block{border-radius:24px;padding:22px}
 					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:1fr;gap:16px}
 					.ajcore-portal-shell .aj-portal-add-service-grid{grid-template-columns:1fr}
 					.ajcore-portal-shell .aj-portal-table-wrap{border-radius:24px}
@@ -1822,6 +1840,8 @@ class AJForms {
 					.ajcore-portal-shell .aj-portal-table td{border:0;padding:8px 18px}
 					.ajcore-portal-shell .aj-portal-table td:first-child{font-weight:900;color:#0f172a}
 					.ajcore-portal-shell .aj-portal-upload-card{grid-template-columns:1fr;padding:22px;border-radius:24px}
+					.ajcore-portal-shell .aj-customer-file-row{grid-template-columns:1fr;gap:14px;padding:18px}
+					.ajcore-portal-shell .aj-customer-file-actions{justify-content:flex-start}
 					.ajcore-portal-shell .aj-portal-quick-actions-heading,.ajcore-portal-shell .aj-portal-quick-actions{display:none}
 				}
 				@media (max-width:380px){
