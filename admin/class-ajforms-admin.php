@@ -2579,12 +2579,14 @@ class AJForms_Admin {
 		} elseif ( 'ajforms-service-requests' === $page ) {
 			$this->handle_service_requests_actions();
 		} elseif ( 'ajforms-client-portal' === $page ) {
-			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'file-library';
-			if ( in_array( $tab, array( 'sync', 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ) {
+			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'service-requests';
+			if ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
+				$this->handle_service_requests_actions();
+			} elseif ( in_array( $tab, array( 'sync', 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ) {
 				$this->handle_client_portal_settings_save();
 			} elseif ( 'customer' === $tab ) {
 				$this->handle_portal_customer_detail_actions();
-			} else {
+			} elseif ( 'file-library' === $tab ) {
 				$this->handle_file_library_actions();
 			}
 		} elseif ( 'ajforms-auth' === $page ) {
@@ -4129,12 +4131,17 @@ class AJForms_Admin {
 		global $wpdb;
 
 		$this->ensure_portal_schema();
+		$actionable_source_types = array( 'custom_service_request', 'service_quote_request', 'custom_request', 'service_request', 'checkout_session' );
+		$source_placeholders = implode( ',', array_fill( 0, count( $actionable_source_types ), '%s' ) );
 		$ledger_rows = $wpdb->get_results(
-			"SELECT l.*, c.email AS customer_email, c.name AS customer_name
-			FROM {$this->get_portal_ledger_table()} l
-			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = l.stripe_customer_id
-			WHERE l.source_type IN ('custom_service_request','checkout_session')
-			ORDER BY l.id ASC"
+			$wpdb->prepare(
+				"SELECT l.*, c.email AS customer_email, c.name AS customer_name
+				FROM {$this->get_portal_ledger_table()} l
+				LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = l.stripe_customer_id
+				WHERE l.source_type IN ({$source_placeholders})
+				ORDER BY l.id ASC",
+				$actionable_source_types
+			)
 		);
 
 		foreach ( $ledger_rows as $entry ) {
@@ -4158,9 +4165,11 @@ class AJForms_Admin {
 					$stripe_customer_id
 				)
 			);
-			$request_type = 'custom_service_request' === $entry->source_type ? 'custom_request' : 'add_service';
+			$source_type = sanitize_key( (string) $entry->source_type );
+			$is_checkout_request = 'checkout_session' === $source_type;
+			$request_type = $is_checkout_request ? 'add_service' : 'custom_request';
 			$status = 'admin_review_required';
-			if ( 'checkout_session' === $entry->source_type ) {
+			if ( $is_checkout_request ) {
 				$status = 'paid' === $entry->status ? 'paid' : ( 'failed' === $entry->status ? 'failed' : 'pending_payment' );
 			} elseif ( ! empty( $entry->status ) ) {
 				$status = $this->normalize_portal_service_request_status( $entry->status );
@@ -4248,14 +4257,27 @@ class AJForms_Admin {
 				array( '%d' )
 			);
 
+			$ledger_status = 'pending_payment' === $status ? 'unpaid' : $status;
 			if ( ! empty( $request->ledger_id ) ) {
-				$ledger_status = 'pending_payment' === $status ? 'unpaid' : $status;
 				$wpdb->update(
 					$this->get_portal_ledger_table(),
 					array( 'status' => $ledger_status ),
 					array( 'id' => (int) $request->ledger_id ),
 					array( '%s' ),
 					array( '%d' )
+				);
+			}
+
+			if ( empty( $request->ledger_id ) && ! empty( $request->source_object_id ) ) {
+				$wpdb->update(
+					$this->get_portal_ledger_table(),
+					array( 'status' => $ledger_status ),
+					array(
+						'stripe_customer_id' => sanitize_text_field( (string) $request->stripe_customer_id ),
+						'source_object_id'   => sanitize_text_field( (string) $request->source_object_id ),
+					),
+					array( '%s' ),
+					array( '%s', '%s' )
 				);
 			}
 		}
@@ -4337,7 +4359,7 @@ class AJForms_Admin {
 				</thead>
 				<tbody>
 				<?php if ( empty( $requests ) ) : ?>
-					<tr><td colspan="7"><?php esc_html_e( 'No service requests found.', 'ajforms' ); ?></td></tr>
+					<tr><td colspan="7"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $requests as $request ) : ?>
 						<?php
@@ -4549,11 +4571,11 @@ class AJForms_Admin {
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="ajcore-admin-panel">
-			<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
+			<h2><?php esc_html_e( 'Requests', 'ajforms' ); ?></h2>
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
-			<p><?php esc_html_e( 'Review client add-service checkout attempts and custom upgrade requests. Product behavior stays generic and is driven by each product/service setting.', 'ajforms' ); ?></p>
+			<p><?php esc_html_e( 'Review client checkout attempts, custom pricing requests, and other service-related items that need an admin decision.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
 				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'All', 'ajforms' ); ?></a></li>
@@ -4585,7 +4607,7 @@ class AJForms_Admin {
 				</thead>
 				<tbody>
 				<?php if ( empty( $requests ) ) : ?>
-					<tr><td colspan="7"><?php esc_html_e( 'No service requests found.', 'ajforms' ); ?></td></tr>
+					<tr><td colspan="7"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $requests as $request ) : ?>
 						<?php
@@ -4737,8 +4759,8 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 
-		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'file-library';
-		$tab      = in_array( $tab, array( 'file-library', 'sync', 'menu', 'portal-users', 'products-services', 'billing', 'service-requests', 'tasks', 'customer' ), true ) ? $tab : 'file-library';
+		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'service-requests';
+		$tab      = in_array( $tab, array( 'file-library', 'sync', 'menu', 'portal-users', 'products-services', 'billing', 'service-requests', 'tasks', 'customer' ), true ) ? $tab : 'service-requests';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-client-portal-admin">
@@ -4749,14 +4771,14 @@ class AJForms_Admin {
 			<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
 			<?php if ( 'customer' !== $tab ) : ?>
 				<h2 class="nav-tab-wrapper">
+					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'billing' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'billing', $base_url ) ); ?>"><?php esc_html_e( 'Billing', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'products-services' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'products-services', $base_url ) ); ?>"><?php esc_html_e( 'Products / Services', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'tasks' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'tasks', $base_url ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'file-library' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'file-library', $base_url ) ); ?>"><?php esc_html_e( 'File Library', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'sync' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sync', $base_url ) ); ?>"><?php esc_html_e( 'Sync', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'menu' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'menu', $base_url ) ); ?>"><?php esc_html_e( 'Menu', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'products-services' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'products-services', $base_url ) ); ?>"><?php esc_html_e( 'Products / Services', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'billing' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'billing', $base_url ) ); ?>"><?php esc_html_e( 'Billing', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'tasks' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'tasks', $base_url ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
 				</h2>
 			<?php endif; ?>
 			<?php
