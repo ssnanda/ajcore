@@ -19,7 +19,6 @@ class AJForms_Activator {
 		$table_user_mappings        = $wpdb->prefix . 'aj_portal_user_mappings';
 		$table_entity_mappings      = $wpdb->prefix . 'aj_portal_entity_mappings';
 		$table_ledger               = $wpdb->prefix . 'aj_portal_ledger';
-		$table_tasks                = $wpdb->prefix . 'aj_portal_tasks';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -190,24 +189,6 @@ class AJForms_Activator {
 			KEY stripe_customer_id (stripe_customer_id)
 		) $charset_collate;
 
-		CREATE TABLE $table_tasks (
-			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-			stripe_customer_id varchar(100) NOT NULL,
-			title varchar(255) NOT NULL,
-			status varchar(50) DEFAULT 'open' NOT NULL,
-			due_date date NULL,
-			action_required longtext NULL,
-			client_visible tinyint(1) NOT NULL DEFAULT 1,
-			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
-			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
-			PRIMARY KEY  (id),
-			KEY stripe_customer_id (stripe_customer_id),
-			KEY status (status),
-			KEY due_date (due_date),
-			KEY client_visible (client_visible)
-		) $charset_collate;
-
 		CREATE TABLE $table_ledger (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			stripe_customer_id varchar(100) NOT NULL,
@@ -240,6 +221,6 @@ class AJForms_Activator {
 			)
 		);
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '3', false );
+		update_option( 'ajforms_portal_schema_version', '2', false );
 	}
 }
