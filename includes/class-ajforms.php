@@ -867,7 +867,7 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $stripe_customer_id ) {
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $stripe_customer_id, $subscriptions ) {
 					$is_owned = $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions );
 					$behavior = $this->get_portal_product_duplicate_behavior( $product );
 					$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
@@ -892,7 +892,7 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids ) {
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $subscriptions ) {
 					return 'custom_request' === $this->get_portal_product_duplicate_behavior( $product )
 						&& $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions );
 				}
