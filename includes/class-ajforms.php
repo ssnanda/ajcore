@@ -3039,7 +3039,14 @@ class AJForms {
 			wp_send_json_error( __( 'Unable to submit the request.', 'ajforms' ), 500 );
 		}
 
-		$this->upsert_portal_service_request(
+		$ledger_id = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id FROM {$this->get_portal_ledger_table()} WHERE source_object_id = %s LIMIT 1",
+				$source_object_id
+			)
+		);
+
+		$service_request_id = $this->upsert_portal_service_request(
 			array(
 				'wp_user_id'         => get_current_user_id(),
 				'stripe_customer_id' => $stripe_customer_id,
@@ -3052,12 +3059,16 @@ class AJForms {
 				'currency'           => ! empty( $product->currency ) ? sanitize_key( (string) $product->currency ) : 'usd',
 				'source_object_id'   => $source_object_id,
 				'source_type'        => 'custom_service_request',
-				'ledger_id'          => (int) $wpdb->insert_id,
+				'ledger_id'          => $ledger_id,
 				'source'             => 'client_portal',
 				'created_by'         => get_current_user_id(),
 				'raw_data'           => $metadata,
 			)
 		);
+
+		if ( ! $service_request_id ) {
+			wp_send_json_error( __( 'The request was added to billing, but the service request queue could not be updated.', 'ajforms' ), 500 );
+		}
 
 		wp_send_json_success(
 			array(
