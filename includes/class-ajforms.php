@@ -777,7 +777,7 @@ class AJForms {
 		return $smaller_count > 0 && ( count( $shared ) / $smaller_count ) >= 0.75;
 	}
 
-	private function is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions = array(), $ledger = array() ) {
+	private function is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions = array() ) {
 		$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 		$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 
@@ -827,25 +827,6 @@ class AJForms {
 			}
 		}
 
-		foreach ( (array) $ledger as $entry ) {
-			$candidates = array();
-
-			if ( ! empty( $entry->description ) ) {
-				$candidates[] = $entry->description;
-			}
-
-			$metadata_description = $this->get_ledger_metadata_value( $entry, 'description' );
-			if ( $metadata_description ) {
-				$candidates[] = $metadata_description;
-			}
-
-			foreach ( $candidates as $candidate ) {
-				if ( $this->portal_service_token_sets_match( $product_tokens, $this->get_portal_service_identity_tokens( $candidate ) ) ) {
-					return true;
-				}
-			}
-		}
-
 		return false;
 	}
 
@@ -877,7 +858,7 @@ class AJForms {
 		);
 	}
 
-	private function get_portal_available_service_products( $subscriptions, $ledger = array() ) {
+	private function get_portal_available_service_products( $subscriptions ) {
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
 		$products              = $this->get_portal_filtered_service_products( $subscriptions );
@@ -886,8 +867,8 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $stripe_customer_id, $ledger ) {
-					$is_owned = $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger );
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $stripe_customer_id, $subscriptions ) {
+					$is_owned = $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions );
 					$behavior = $this->get_portal_product_duplicate_behavior( $product );
 					$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
@@ -903,7 +884,7 @@ class AJForms {
 		);
 	}
 
-	private function get_portal_custom_request_products( $subscriptions, $ledger = array() ) {
+	private function get_portal_custom_request_products( $subscriptions ) {
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
 		$products              = $this->get_portal_filtered_service_products( $subscriptions );
@@ -911,9 +892,9 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger ) {
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $subscriptions ) {
 					return 'custom_request' === $this->get_portal_product_duplicate_behavior( $product )
-						&& $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger );
+						&& $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions );
 				}
 			)
 		);
@@ -1153,8 +1134,8 @@ class AJForms {
 		$service_settings   = is_array( $service_settings ) ? $service_settings : array();
 		$show_current       = ! isset( $service_settings['show_current_services'] ) || (bool) $service_settings['show_current_services'];
 		$show_add           = ! isset( $service_settings['show_add_services'] ) || (bool) $service_settings['show_add_services'];
-		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions, $ledger ) : array();
-		$custom_request_products = $show_add ? $this->get_portal_custom_request_products( $subscriptions, $ledger ) : array();
+		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions ) : array();
+		$custom_request_products = $show_add ? $this->get_portal_custom_request_products( $subscriptions ) : array();
 		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
 
 		ob_start();
