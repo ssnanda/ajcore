@@ -2490,6 +2490,31 @@ class AJForms_Admin {
 		return array_values( $normalized );
 	}
 
+
+	private function get_customer_portal_services_display_settings() {
+		$settings = get_option( 'ajcore_customer_portal_services_display', array() );
+		if ( ! is_array( $settings ) ) {
+			$settings = array();
+		}
+
+		$selected_price_ids = isset( $settings['selected_price_ids'] ) && is_array( $settings['selected_price_ids'] ) ? array_map( 'sanitize_text_field', $settings['selected_price_ids'] ) : array();
+
+		return array(
+			'show_current_services' => ! isset( $settings['show_current_services'] ) || (bool) $settings['show_current_services'],
+			'show_add_services'     => ! isset( $settings['show_add_services'] ) || (bool) $settings['show_add_services'],
+			'product_mode'          => isset( $settings['product_mode'] ) && 'selected' === $settings['product_mode'] ? 'selected' : 'all',
+			'selected_price_ids'    => array_values( array_filter( array_unique( $selected_price_ids ) ) ),
+		);
+	}
+
+	private function get_portal_stripe_products_for_settings() {
+		global $wpdb;
+
+		$this->ensure_portal_schema();
+
+		return $wpdb->get_results( "SELECT * FROM {$this->get_portal_stripe_products_table()} ORDER BY sort_order ASC, name ASC" );
+	}
+
 	private function handle_client_portal_settings_save() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -2697,6 +2722,14 @@ class AJForms_Admin {
 		}
 
 		check_admin_referer( 'ajcore_save_client_portal', 'ajcore_client_portal_nonce' );
+
+		$services_display = array(
+			'show_current_services' => isset( $_POST['portal_services_show_current'] ),
+			'show_add_services'     => isset( $_POST['portal_services_show_add'] ),
+			'product_mode'          => isset( $_POST['portal_services_product_mode'] ) && 'selected' === sanitize_key( wp_unslash( $_POST['portal_services_product_mode'] ) ) ? 'selected' : 'all',
+			'selected_price_ids'    => isset( $_POST['portal_services_selected_prices'] ) && is_array( $_POST['portal_services_selected_prices'] ) ? array_values( array_filter( array_map( 'sanitize_text_field', wp_unslash( $_POST['portal_services_selected_prices'] ) ) ) ) : array(),
+		);
+		update_option( 'ajcore_customer_portal_services_display', $services_display, false );
 
 		$labels  = isset( $_POST['portal_menu_label'] ) && is_array( $_POST['portal_menu_label'] ) ? wp_unslash( $_POST['portal_menu_label'] ) : array();
 		$urls    = isset( $_POST['portal_menu_url'] ) && is_array( $_POST['portal_menu_url'] ) ? wp_unslash( $_POST['portal_menu_url'] ) : array();
@@ -5300,8 +5333,10 @@ class AJForms_Admin {
 		$portal_url     = $portal_page_id ? get_permalink( $portal_page_id ) : '';
 		$menu_items     = $this->get_customer_portal_menu_items();
 		$stripe_enabled = '' !== $this->get_stripe_secret_key_for_portal();
-		$cache_counts   = $this->get_portal_cache_counts();
-		$last_db_error  = get_option( 'ajforms_last_portal_db_error', '' );
+		$cache_counts      = $this->get_portal_cache_counts();
+		$service_settings = $this->get_customer_portal_services_display_settings();
+		$service_products = $this->get_portal_stripe_products_for_settings();
+		$last_db_error     = get_option( 'ajforms_last_portal_db_error', '' );
 		?>
 		<?php if ( ! $embedded ) : ?>
 			<div class="ajforms-settings-head">
@@ -5403,6 +5438,47 @@ class AJForms_Admin {
 							</tr>
 						</tbody>
 					</table>
+
+
+					<div class="ajforms-settings-card" style="margin-top:18px;">
+						<h3><?php esc_html_e( 'My Services Page Controls', 'ajforms' ); ?></h3>
+						<p><?php esc_html_e( 'Choose what appears on the customer-facing My Services page, including which Stripe products customers can add.', 'ajforms' ); ?></p>
+
+						<div class="ajcore-service-controls" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px;">
+							<div class="ajcore-service-control-box">
+								<h4><?php esc_html_e( 'Sections', 'ajforms' ); ?></h4>
+								<label><input type="checkbox" name="portal_services_show_current" value="1" <?php checked( ! empty( $service_settings['show_current_services'] ) ); ?>> <?php esc_html_e( 'Show Current Services', 'ajforms' ); ?></label><br>
+								<label><input type="checkbox" name="portal_services_show_add" value="1" <?php checked( ! empty( $service_settings['show_add_services'] ) ); ?>> <?php esc_html_e( 'Show Add Services', 'ajforms' ); ?></label>
+							</div>
+							<div class="ajcore-service-control-box">
+								<h4><?php esc_html_e( 'Add Services Product Mode', 'ajforms' ); ?></h4>
+								<label><input type="radio" name="portal_services_product_mode" value="all" <?php checked( 'all', $service_settings['product_mode'] ); ?>> <?php esc_html_e( 'Show all visible synced products', 'ajforms' ); ?></label><br>
+								<label><input type="radio" name="portal_services_product_mode" value="selected" <?php checked( 'selected', $service_settings['product_mode'] ); ?>> <?php esc_html_e( 'Only show selected products below', 'ajforms' ); ?></label>
+							</div>
+						</div>
+
+						<h4><?php esc_html_e( 'Selectable Add Services Products', 'ajforms' ); ?></h4>
+						<?php if ( empty( $service_products ) ) : ?>
+							<p><?php esc_html_e( 'No synced Stripe products found yet. Sync Stripe Products first.', 'ajforms' ); ?></p>
+						<?php else : ?>
+							<div class="ajcore-service-products" style="display:grid;gap:10px;max-height:360px;overflow:auto;border:1px solid #dcdcde;border-radius:10px;padding:12px;background:#fff;">
+								<?php foreach ( $service_products as $product ) : ?>
+									<?php
+									$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+									if ( '' === $price_id ) {
+										continue;
+									}
+									$product_label = ! empty( $product->custom_label ) ? $product->custom_label : $product->name;
+									$amount_label  = strtoupper( $product->currency ) . ' ' . number_format_i18n( (float) $product->price_amount, 2 ) . ( $product->recurring_interval ? '/' . $product->recurring_interval : '' );
+									?>
+									<label class="ajcore-service-product-choice" style="display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid #eef2f7;border-radius:10px;background:#f8fafc;">
+										<input type="checkbox" name="portal_services_selected_prices[]" value="<?php echo esc_attr( $price_id ); ?>" <?php checked( in_array( $price_id, $service_settings['selected_price_ids'], true ) ); ?>>
+										<span><strong><?php echo esc_html( $product_label ); ?></strong><br><span><?php echo esc_html( $amount_label ); ?> · <?php echo esc_html( $price_id ); ?> · <?php echo ! empty( $product->active ) ? esc_html__( 'Active', 'ajforms' ) : esc_html__( 'Inactive', 'ajforms' ); ?> · <?php echo esc_html( $product->visibility ); ?></span></span>
+									</label>
+								<?php endforeach; ?>
+							</div>
+						<?php endif; ?>
+					</div>
 
 					<div class="ajforms-settings-actions">
 						<?php submit_button( __( 'Save Client Portal Menu', 'ajforms' ), 'primary', 'submit', false ); ?>
