@@ -53,17 +53,11 @@ class AJForms {
 		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
-		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_service_request_remove' ) );
 		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
-	}
-
-	private function get_auth_settings() {
-		$settings = get_option( 'ajcore_auth_settings', array() );
-		return is_array( $settings ) ? wp_parse_args( $settings, array( 'redirect_frontend_users' => '1', 'hide_admin_bar' => '1' ) ) : array( 'redirect_frontend_users' => '1', 'hide_admin_bar' => '1' );
 	}
 
 	private function is_frontend_portal_user() {
@@ -139,8 +133,7 @@ class AJForms {
 	}
 
 	public function redirect_frontend_portal_users_from_admin() {
-		$auth_settings = $this->get_auth_settings();
-		if ( '1' !== (string) $auth_settings['redirect_frontend_users'] || wp_doing_ajax() || ! $this->is_frontend_portal_user() ) {
+		if ( wp_doing_ajax() || ! $this->is_frontend_portal_user() ) {
 			return;
 		}
 
@@ -149,8 +142,7 @@ class AJForms {
 	}
 
 	public function filter_show_admin_bar( $show ) {
-		$auth_settings = $this->get_auth_settings();
-		if ( '1' === (string) $auth_settings['hide_admin_bar'] && $this->is_frontend_portal_user() ) {
+		if ( $this->is_frontend_portal_user() ) {
 			return false;
 		}
 
@@ -596,30 +588,11 @@ class AJForms {
 		return array_values( array_unique( array_filter( $product_ids ) ) );
 	}
 
-	private function get_customer_portal_services_display_settings() {
-		$settings = get_option( 'ajcore_customer_portal_services_display', array() );
-		if ( ! is_array( $settings ) ) {
-			$settings = array();
-		}
-
-		$selected_price_ids = isset( $settings['selected_price_ids'] ) && is_array( $settings['selected_price_ids'] ) ? array_map( 'sanitize_text_field', $settings['selected_price_ids'] ) : array();
-		$selected_price_ids = array_values( array_filter( array_unique( $selected_price_ids ) ) );
-
-		return array(
-			'show_current_services' => ! isset( $settings['show_current_services'] ) || (bool) $settings['show_current_services'],
-			'show_add_services'     => ! isset( $settings['show_add_services'] ) || (bool) $settings['show_add_services'],
-			'product_mode'          => isset( $settings['product_mode'] ) && 'selected' === $settings['product_mode'] ? 'selected' : 'all',
-			'selected_price_ids'    => $selected_price_ids,
-		);
-	}
-
 	private function get_portal_available_service_products( $subscriptions ) {
 		global $wpdb;
 
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
-		$display_settings      = $this->get_customer_portal_services_display_settings();
-		$selected_price_ids    = $display_settings['selected_price_ids'];
 
 		$products = $wpdb->get_results(
 			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden' ORDER BY sort_order ASC, name ASC"
@@ -628,19 +601,11 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $display_settings, $selected_price_ids ) {
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids ) {
 					$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 
-					if ( '' === $price_id ) {
-						return false;
-					}
-
-					if ( 'selected' === $display_settings['product_mode'] && ! in_array( $price_id, $selected_price_ids, true ) ) {
-						return false;
-					}
-
-					if ( in_array( $price_id, $purchased_price_ids, true ) ) {
+					if ( '' !== $price_id && in_array( $price_id, $purchased_price_ids, true ) ) {
 						return false;
 					}
 
@@ -648,7 +613,7 @@ class AJForms {
 						return false;
 					}
 
-					return true;
+					return '' !== $price_id;
 				}
 			)
 		);
@@ -744,8 +709,7 @@ class AJForms {
 
 		$subscriptions      = $context['subscriptions'];
 		$ledger             = $context['ledger'];
-		$display_settings   = $this->get_customer_portal_services_display_settings();
-		$available_products = $display_settings['show_add_services'] ? $this->get_portal_available_service_products( $subscriptions ) : array();
+		$available_products = $this->get_portal_available_service_products( $subscriptions );
 		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
 
 		ob_start();
@@ -753,30 +717,27 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'My Services', 'ajforms' ); ?></h2>
 
-			<?php if ( ! empty( $display_settings['show_current_services'] ) ) : ?>
-				<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
-				<?php if ( empty( $subscriptions ) ) : ?>
-					<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
-				<?php else : ?>
-					<div class="aj-portal-services-list">
-						<?php foreach ( $subscriptions as $subscription ) : ?>
-							<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
-							<div class="aj-portal-service-card">
-								<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
-								<div class="aj-portal-service-card-grid">
-									<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
-									<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
-									<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
-									<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
-									<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
-								</div>
+			<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
+			<?php if ( empty( $subscriptions ) ) : ?>
+				<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div class="aj-portal-services-list">
+					<?php foreach ( $subscriptions as $subscription ) : ?>
+						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
+						<div class="aj-portal-service-card">
+							<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
+							<div class="aj-portal-service-card-grid">
+								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
 							</div>
-						<?php endforeach; ?>
-					</div>
-				<?php endif; ?>
+						</div>
+					<?php endforeach; ?>
+				</div>
 			<?php endif; ?>
 
-			<?php if ( ! empty( $display_settings['show_add_services'] ) ) : ?>
 			<h3><?php esc_html_e( 'Add Services', 'ajforms' ); ?></h3>
 			<?php if ( empty( $available_products ) ) : ?>
 				<p><?php esc_html_e( 'No additional services are currently available for this account.', 'ajforms' ); ?></p>
@@ -804,7 +765,6 @@ class AJForms {
 					<?php endforeach; ?>
 				</div>
 				<p class="aj-portal-add-service-message" style="display:none;"></p>
-			<?php endif; ?>
 			<?php endif; ?>
 		</section>
 		<?php
@@ -965,30 +925,16 @@ class AJForms {
 
 	private function get_portal_service_request_actions( $entry ) {
 		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
-		$status   = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
-
-		if ( 'checkout_session' !== (string) $entry->source_type || ! in_array( $status, array( 'unpaid', 'open', 'cancelled' ), true ) ) {
+		if ( 'checkout_session' !== (string) $entry->source_type || ! in_array( (string) $entry->status, array( 'unpaid', 'open' ), true ) ) {
 			return '';
 		}
 
 		$actions = array();
-		if ( in_array( $status, array( 'unpaid', 'open' ), true ) && ! empty( $metadata['checkout_url'] ) ) {
-			$actions[] = '<a class="button aj-portal-action-resume" href="' . esc_url( $metadata['checkout_url'] ) . '">' . esc_html__( 'Resume', 'ajforms' ) . '</a>';
+		if ( ! empty( $metadata['checkout_url'] ) ) {
+			$actions[] = '<a class="button aj-portal-action-button aj-portal-action-resume" href="' . esc_url( $metadata['checkout_url'] ) . '">' . esc_html__( 'Resume', 'ajforms' ) . '</a>';
 		}
 
-		$button_label = in_array( $status, array( 'unpaid', 'open' ), true ) ? __( 'Cancel', 'ajforms' ) : __( 'Remove', 'ajforms' );
-		$remove_url   = wp_nonce_url(
-			add_query_arg(
-				array(
-					'portal_tab'                         => 'billing',
-					'ajcore_remove_service_request'      => (int) $entry->id,
-				),
-				$this->get_customer_portal_url()
-			),
-			'ajcore_remove_service_request_' . (int) $entry->id
-		);
-		$confirm_text = esc_attr__( 'Remove this pending service request from your billing history?', 'ajforms' );
-		$actions[]    = '<a class="button aj-portal-action-cancel" href="' . esc_url( $remove_url ) . '" onclick="return window.confirm(\'' . $confirm_text . '\');">' . esc_html( $button_label ) . '</a>';
+		$actions[] = '<button type="button" class="button aj-portal-action-button aj-portal-action-cancel aj-portal-cancel-service-request" data-ledger-id="' . esc_attr( (int) $entry->id ) . '" data-nonce="' . esc_attr( wp_create_nonce( 'ajcore_cancel_portal_service_request_' . (int) $entry->id ) ) . '">' . esc_html__( 'Cancel', 'ajforms' ) . '</button>';
 
 		return '<span class="aj-portal-inline-actions">' . implode( ' ', $actions ) . '</span>';
 	}
@@ -1235,177 +1181,226 @@ class AJForms {
 		<div class="ajcore-portal-shell">
 			<style>
 				.ajcore-portal-shell{
-					--ajp-bg:#f8fbff;
-					--ajp-card:#ffffff;
-					--ajp-ink:#0f172a;
-					--ajp-muted:#64748b;
-					--ajp-border:#dbe7f3;
-					--ajp-blue:#2563eb;
-					--ajp-blue-2:#7c3aed;
+					--ajp-ink:#081225;
+					--ajp-muted:#526173;
+					--ajp-line:rgba(148,163,184,.24);
+					--ajp-card:rgba(255,255,255,.84);
+					--ajp-glass:rgba(255,255,255,.72);
+					--ajp-primary:#3157ff;
+					--ajp-primary-2:#7c3aed;
 					--ajp-cyan:#06b6d4;
-					--ajp-green:#16a34a;
+					--ajp-green:#10b981;
+					--ajp-red:#ef4444;
+					--ajp-shadow:0 30px 85px rgba(15,23,42,.10);
+					--ajp-shadow-soft:0 18px 48px rgba(15,23,42,.075);
+					position:relative;
+					isolation:isolate;
 					max-width:1180px;
-					margin:0 auto;
-					padding:0 24px 32px;
+					margin:-20px auto 0;
+					padding:0 24px 44px;
+					font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 					color:var(--ajp-ink);
 				}
+				.ajcore-portal-shell:before{
+					content:"";
+					position:absolute;
+					z-index:-1;
+					inset:-80px -36px auto;
+					height:380px;
+					background:
+						radial-gradient(circle at 18% 22%,rgba(49,87,255,.18),transparent 30%),
+						radial-gradient(circle at 82% 8%,rgba(124,58,237,.17),transparent 28%),
+						radial-gradient(circle at 50% 64%,rgba(6,182,212,.11),transparent 35%);
+					filter:blur(8px);
+					pointer-events:none;
+				}
 				.ajcore-portal-shell *{box-sizing:border-box}
-				.ajcore-portal-shell h1{margin:0 0 18px;padding:0;font-size:30px;line-height:1.15;letter-spacing:-.03em;color:var(--ajp-ink)}
-				.ajcore-portal-shell h2{margin:0 0 26px;padding:0;font-size:32px;line-height:1.1;letter-spacing:-.04em;background:linear-gradient(135deg,#2563eb 0%,#7c3aed 92%);-webkit-background-clip:text;background-clip:text;color:transparent}
-				.ajcore-portal-shell h3{margin:34px 0 16px;padding:0;font-size:21px;line-height:1.25;letter-spacing:-.025em;color:var(--ajp-ink)}
+				.ajcore-portal-shell h1{margin:0 0 18px;padding:0;font-size:32px;line-height:1.08;letter-spacing:-.04em;color:var(--ajp-ink)}
+				.ajcore-portal-shell h2{margin:0 0 26px;padding:0;font-size:clamp(32px,4vw,46px);line-height:.98;letter-spacing:-.06em;background:linear-gradient(135deg,#1d4ed8 0%,#3157ff 42%,#7c3aed 100%);-webkit-background-clip:text;background-clip:text;color:transparent;text-wrap:balance}
+				.ajcore-portal-shell h3{margin:34px 0 16px;padding:0;font-size:23px;line-height:1.16;letter-spacing:-.04em;color:var(--ajp-ink)}
 				.ajcore-portal-shell h3:first-of-type{margin-top:0}
-				.ajcore-portal-shell p{color:#334155;line-height:1.62}
+				.ajcore-portal-shell p{color:#334155;line-height:1.65;font-size:16px}
+				.ajcore-portal-shell a{color:#2563eb;text-decoration:none;font-weight:800}
+				.ajcore-portal-shell a:hover{text-decoration:none;color:#1d4ed8}
 				.ajcore-portal-shell .button,
 				.ajcore-portal-shell button.button{
+					appearance:none;
 					display:inline-flex;
 					align-items:center;
 					justify-content:center;
-					min-height:38px;
-					padding:9px 15px;
+					min-height:44px;
+					padding:12px 19px;
 					border:0;
 					border-radius:999px;
-					background:linear-gradient(135deg,#2563eb 0%,#7c3aed 100%);
+					background:linear-gradient(135deg,#3157ff 0%,#6d3df2 100%);
 					color:#fff!important;
-					font-weight:800;
-					font-size:13px;
-					line-height:1.2;
+					font-weight:900;
+					letter-spacing:-.015em;
 					text-decoration:none;
-					box-shadow:0 12px 24px rgba(37,99,235,.20);
 					cursor:pointer;
-					transition:transform .16s ease,box-shadow .16s ease,opacity .16s ease;
+					box-shadow:0 18px 38px rgba(49,87,255,.24);
+					transition:transform .18s ease,box-shadow .18s ease,filter .18s ease,opacity .18s ease;
 				}
 				.ajcore-portal-shell .button:hover,
-				.ajcore-portal-shell button.button:hover{transform:translateY(-1px);box-shadow:0 16px 32px rgba(37,99,235,.26)}
-				.ajcore-portal-shell .button.disabled{background:#e5e7eb;color:#94a3b8!important;box-shadow:none;pointer-events:none}
-				.ajcore-portal-shell a{color:#2563eb;text-decoration:none;font-weight:700}
-				.ajcore-portal-shell a:hover{text-decoration:none;color:#1d4ed8}
+				.ajcore-portal-shell button.button:hover{transform:translateY(-2px);box-shadow:0 24px 52px rgba(49,87,255,.28);filter:saturate(1.05)}
+				.ajcore-portal-shell .button.disabled,
+				.ajcore-portal-shell button.button:disabled{background:#e5e7eb!important;color:#94a3b8!important;box-shadow:none;cursor:not-allowed;transform:none;opacity:1}
 				.ajcore-portal-shell .aj-customer-portal-tabs{
 					display:flex;
-					gap:10px;
-					flex-wrap:wrap;
 					align-items:center;
-					margin:0 0 30px;
+					gap:8px;
+					margin:0 0 32px;
 					padding:8px;
+					overflow-x:auto;
+					-webkit-overflow-scrolling:touch;
+					scrollbar-width:none;
 					border:1px solid rgba(219,231,243,.9);
-					border-radius:22px;
-					background:rgba(255,255,255,.72);
-					box-shadow:0 18px 48px rgba(15,23,42,.07);
-					backdrop-filter:blur(14px);
+					border-radius:26px;
+					background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(255,255,255,.78));
+					box-shadow:var(--ajp-shadow-soft);
+					backdrop-filter:blur(18px);
 				}
+				.ajcore-portal-shell .aj-customer-portal-tabs::-webkit-scrollbar{display:none}
 				.ajcore-portal-shell .aj-customer-portal-tab{
+					position:relative;
+					flex:0 0 auto;
 					display:inline-flex;
 					align-items:center;
 					justify-content:center;
-					min-height:46px;
-					padding:12px 18px;
-					border-radius:16px;
+					min-height:50px;
+					padding:13px 18px;
+					border-radius:19px;
 					color:#475569;
-					text-decoration:none;
-					font-weight:850;
 					font-size:15px;
-					letter-spacing:-.015em;
-					transition:background .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;
+					font-weight:950;
+					letter-spacing:-.02em;
+					text-decoration:none;
+					transition:background .18s ease,color .18s ease,transform .18s ease,box-shadow .18s ease;
 				}
-				.ajcore-portal-shell .aj-customer-portal-tab:hover{background:#f1f5ff;color:#1d4ed8;transform:translateY(-1px)}
-				.ajcore-portal-shell .aj-customer-portal-tab.is-active{
-					background:linear-gradient(135deg,#2563eb 0%,#7c3aed 100%);
-					color:#fff;
-					box-shadow:0 14px 28px rgba(37,99,235,.24);
-				}
-				.ajcore-portal-shell .aj-customer-portal-panel{position:relative;margin:0;padding:0}
+				.ajcore-portal-shell .aj-customer-portal-tab:hover{background:#eef4ff;color:#1d4ed8;transform:translateY(-1px)}
+				.ajcore-portal-shell .aj-customer-portal-tab.is-active{background:linear-gradient(135deg,#3157ff 0%,#713df2 100%);color:#fff;box-shadow:0 16px 36px rgba(49,87,255,.26)}
+				.ajcore-portal-shell .aj-customer-portal-panel{position:relative;margin:0;padding:0;animation:ajp-fade-up .28s ease both}
 				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 26px}
-				.ajcore-portal-shell .aj-portal-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:0 0 28px}
+				@keyframes ajp-fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+				.ajcore-portal-shell .aj-portal-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:0 0 30px}
 				.ajcore-portal-shell .aj-portal-summary-card{
 					position:relative;
 					overflow:hidden;
+					display:flex;
+					min-height:122px;
+					flex-direction:column;
+					justify-content:space-between;
+					gap:18px;
+					padding:24px 22px;
 					border:1px solid rgba(219,231,243,.92);
-					border-radius:24px;
-					padding:22px 22px 20px;
-					background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);
-					box-shadow:0 18px 42px rgba(15,23,42,.06);
-					display:grid;
-					gap:10px;
-					min-height:124px;
+					border-radius:26px;
+					background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(248,251,255,.88));
+					box-shadow:0 22px 58px rgba(15,23,42,.075);
+					backdrop-filter:blur(12px);
 				}
-				.ajcore-portal-shell .aj-portal-summary-card:before{content:"";position:absolute;inset:0 auto auto 0;width:100%;height:5px;background:linear-gradient(90deg,#2563eb,#7c3aed,#06b6d4)}
+				.ajcore-portal-shell .aj-portal-summary-card:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#3157ff,#7c3aed,#06b6d4)}
+				.ajcore-portal-shell .aj-portal-summary-card:after{content:"";position:absolute;right:-32px;bottom:-44px;width:122px;height:122px;border-radius:999px;background:radial-gradient(circle,rgba(49,87,255,.10),transparent 68%)}
 				.ajcore-portal-shell a.aj-portal-summary-card{text-decoration:none;color:inherit;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
-				.ajcore-portal-shell a.aj-portal-summary-card:hover{border-color:#93c5fd;box-shadow:0 22px 52px rgba(37,99,235,.14);transform:translateY(-3px)}
-				.ajcore-portal-shell .aj-portal-summary-card strong{color:#475569;font-size:14px;font-weight:850}
-				.ajcore-portal-shell .aj-portal-summary-card span{font-size:30px;line-height:1;font-weight:900;letter-spacing:-.04em;color:var(--ajp-ink)}
-				.ajcore-portal-shell .aj-portal-services-list{display:grid;gap:18px;margin:0 0 30px}
+				.ajcore-portal-shell a.aj-portal-summary-card:hover{border-color:#93c5fd;box-shadow:0 30px 70px rgba(37,99,235,.16);transform:translateY(-4px)}
+				.ajcore-portal-shell .aj-portal-summary-card strong{position:relative;z-index:1;color:#475569;font-size:14px;font-weight:900}
+				.ajcore-portal-shell .aj-portal-summary-card span{position:relative;z-index:1;font-size:34px;line-height:1;font-weight:950;letter-spacing:-.055em;color:var(--ajp-ink)}
+
+				.ajcore-portal-shell .aj-portal-services-list{display:grid;gap:20px;margin:0 0 34px}
 				.ajcore-portal-shell .aj-portal-service-card{
 					position:relative;
 					overflow:hidden;
-					grid-column:1/-1;
 					border:1px solid rgba(219,231,243,.95);
-					border-radius:28px;
-					padding:26px;
-					background:radial-gradient(circle at 100% 0%,rgba(124,58,237,.10),transparent 34%),linear-gradient(180deg,#fff 0%,#f8fbff 100%);
-					box-shadow:0 24px 58px rgba(15,23,42,.08);
+					border-radius:30px;
+					background:radial-gradient(circle at 100% 0%,rgba(124,58,237,.14),transparent 28%),linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
+					padding:28px;
+					box-shadow:var(--ajp-shadow);
 				}
-				.ajcore-portal-shell .aj-portal-service-card h4{margin:0 0 20px;font-size:22px;line-height:1.2;letter-spacing:-.035em;color:#111827}
-				.ajcore-portal-shell .aj-portal-service-card-grid{display:grid;grid-template-columns:1.4fr .7fr 1.15fr 1fr .75fr;gap:18px;align-items:start}
+				.ajcore-portal-shell .aj-portal-service-card:before{content:"";position:absolute;left:0;right:0;top:0;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
+				.ajcore-portal-shell .aj-portal-service-card h4{margin:0 0 22px;font-size:23px;line-height:1.14;letter-spacing:-.045em;color:#111827;text-wrap:balance}
+				.ajcore-portal-shell .aj-portal-service-card-grid{display:grid;grid-template-columns:1.35fr .65fr 1.1fr 1fr .75fr;gap:18px;align-items:start}
 				.ajcore-portal-shell .aj-portal-service-card-grid div{min-width:0}
-				.ajcore-portal-shell .aj-portal-service-card-grid strong{display:block;font-size:12px;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em}
-				.ajcore-portal-shell .aj-portal-service-card-grid span{display:block;color:#0f172a;font-weight:850;font-size:16px;line-height:1.45;overflow-wrap:anywhere}
-				.ajcore-portal-shell .aj-portal-add-service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin:0 0 20px}
+				.ajcore-portal-shell .aj-portal-service-card-grid strong{display:block;font-size:12px;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:.075em;font-weight:950}
+				.ajcore-portal-shell .aj-portal-service-card-grid span{display:block;color:#0f172a;font-weight:900;font-size:16px;line-height:1.46;overflow-wrap:anywhere}
+
+				.ajcore-portal-shell .aj-portal-add-service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px;margin:0 0 20px}
 				.ajcore-portal-shell .aj-portal-add-service-card{
 					position:relative;
 					overflow:hidden;
+					min-height:250px;
+					display:flex;
+					flex-direction:column;
+					gap:16px;
 					border:1px solid rgba(219,231,243,.95);
 					border-radius:28px;
 					padding:26px;
-					background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);
-					box-shadow:0 20px 44px rgba(15,23,42,.07);
-					display:flex;
-					flex-direction:column;
-					gap:14px;
-					min-height:280px;
+					background:linear-gradient(180deg,rgba(255,255,255,.96) 0%,rgba(248,251,255,.92) 100%);
+					box-shadow:0 26px 66px rgba(15,23,42,.07);
 					transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
 				}
-				.ajcore-portal-shell .aj-portal-add-service-card:hover{transform:translateY(-4px);border-color:#bfdbfe;box-shadow:0 28px 62px rgba(37,99,235,.13)}
-				.ajcore-portal-shell .aj-portal-add-service-card h4{margin:0;font-size:21px;line-height:1.18;letter-spacing:-.035em;color:#111827}
-				.ajcore-portal-shell .aj-portal-add-service-card p{margin:0;color:#475569;line-height:1.55;font-size:15px}
-				.ajcore-portal-shell .aj-portal-add-service-price{margin-top:auto;font-weight:900;color:#111827;font-size:18px;letter-spacing:-.02em}
-				.ajcore-portal-shell .aj-portal-add-service-card .button{align-self:flex-start}
-				.ajcore-portal-shell .aj-portal-add-service-message{border:1px solid #dbe7f3;border-radius:16px;padding:14px 16px;background:#fff;color:#1f2937;box-shadow:0 10px 24px rgba(15,23,42,.05)}
+				.ajcore-portal-shell .aj-portal-add-service-card:after{content:"";position:absolute;right:-64px;top:-76px;width:178px;height:178px;border-radius:999px;background:radial-gradient(circle,rgba(124,58,237,.13),transparent 70%)}
+				.ajcore-portal-shell .aj-portal-add-service-card:hover{transform:translateY(-5px);border-color:#bfdbfe;box-shadow:0 32px 72px rgba(37,99,235,.14)}
+				.ajcore-portal-shell .aj-portal-add-service-card h4{position:relative;z-index:1;margin:0;font-size:22px;line-height:1.15;letter-spacing:-.04em;color:#111827;text-wrap:balance}
+				.ajcore-portal-shell .aj-portal-add-service-card p{position:relative;z-index:1;margin:0;color:#475569;line-height:1.6;font-size:15px}
+				.ajcore-portal-shell .aj-portal-add-service-price{position:relative;z-index:1;margin-top:auto;font-weight:950;color:#111827;font-size:19px;letter-spacing:-.025em}
+				.ajcore-portal-shell .aj-portal-add-service-card .button{position:relative;z-index:1;align-self:flex-start}
+				.ajcore-portal-shell .aj-portal-add-service-message{border:1px solid #dbe7f3;border-radius:18px;padding:15px 16px;background:#fff;color:#1f2937;box-shadow:0 10px 24px rgba(15,23,42,.05)}
 				.ajcore-portal-shell .aj-portal-add-service-message.is-error{border-color:#fecaca;color:#b91c1c;background:#fff7f7}
 				.ajcore-portal-shell .aj-portal-add-service-message.is-success{border-color:#bbf7d0;color:#166534;background:#f0fdf4}
-				.ajcore-portal-shell .aj-portal-table-wrap{overflow:auto;margin:0 0 30px;border-radius:22px;border:1px solid rgba(219,231,243,.95);background:#fff;box-shadow:0 18px 42px rgba(15,23,42,.06)}
-				.ajcore-portal-shell .aj-portal-table{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:0;font-size:15px;min-width:760px}
-				.ajcore-portal-shell .aj-portal-table th,.ajcore-portal-shell .aj-portal-table td{padding:18px 20px;border-bottom:1px solid #e8eef6;text-align:left;vertical-align:top}
+
+				.ajcore-portal-shell .aj-portal-table-wrap{overflow:auto;margin:0 0 32px;border-radius:28px;border:1px solid rgba(219,231,243,.95);background:rgba(255,255,255,.88);box-shadow:var(--ajp-shadow);backdrop-filter:blur(12px)}
+				.ajcore-portal-shell .aj-portal-table{width:100%;border-collapse:separate;border-spacing:0;background:transparent;border:0;font-size:16px;min-width:760px}
+				.ajcore-portal-shell .aj-portal-table th,.ajcore-portal-shell .aj-portal-table td{padding:20px 22px;border-bottom:1px solid #e8eef6;text-align:left;vertical-align:top}
 				.ajcore-portal-shell .aj-portal-table tr:last-child td{border-bottom:0}
-				.ajcore-portal-shell .aj-portal-table th{font-size:13px;font-weight:900;color:#475569;background:#f8fbff;text-transform:uppercase;letter-spacing:.05em}
-				.ajcore-portal-shell .aj-portal-table td{color:#0f172a;line-height:1.5}
+				.ajcore-portal-shell .aj-portal-table th{font-size:13px;font-weight:950;color:#475569;background:#f8fbff;text-transform:uppercase;letter-spacing:.065em}
+				.ajcore-portal-shell .aj-portal-table td{color:#0f172a;line-height:1.55}
 				.ajcore-portal-shell .aj-portal-table tbody tr{transition:background .16s ease}
-				.ajcore-portal-shell .aj-portal-table tbody tr:hover{background:#fbfdff}
-				.ajcore-portal-shell .aj-portal-profile-block{border:1px solid rgba(219,231,243,.95);border-radius:30px;background:radial-gradient(circle at 100% 0%,rgba(37,99,235,.10),transparent 32%),#fff;padding:32px;max-width:820px;box-shadow:0 24px 58px rgba(15,23,42,.08)}
-				.ajcore-portal-shell .aj-portal-profile-main{font-size:30px;line-height:1.15;font-weight:900;color:#111827;margin:0 0 18px;letter-spacing:-.04em}
-				.ajcore-portal-shell .aj-portal-profile-details{display:grid;gap:11px;color:#1f2937;font-size:17px;line-height:1.45;margin:0 0 24px}
+				.ajcore-portal-shell .aj-portal-table tbody tr:hover{background:rgba(248,251,255,.72)}
+
+				.ajcore-portal-shell .aj-portal-profile-block{border:1px solid rgba(219,231,243,.95);border-radius:32px;background:radial-gradient(circle at 100% 0%,rgba(37,99,235,.12),transparent 34%),linear-gradient(180deg,#fff 0%,#f8fbff 100%);padding:34px;max-width:860px;box-shadow:var(--ajp-shadow)}
+				.ajcore-portal-shell .aj-portal-profile-main{font-size:clamp(30px,4vw,42px);line-height:1.02;font-weight:950;color:#111827;margin:0 0 20px;letter-spacing:-.06em}
+				.ajcore-portal-shell .aj-portal-profile-details{display:grid;gap:12px;color:#1f2937;font-size:17px;line-height:1.5;margin:0 0 26px}
 				.ajcore-portal-shell .aj-portal-profile-actions{display:flex;gap:12px;flex-wrap:wrap}
-				.ajcore-portal-shell .aj-customer-file-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
-				.ajcore-portal-shell .aj-customer-file{position:relative;overflow:hidden;border:1px solid rgba(219,231,243,.95);border-radius:28px;padding:28px;background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);box-shadow:0 24px 58px rgba(15,23,42,.08)}
-				.ajcore-portal-shell .aj-customer-file:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#06b6d4,#2563eb,#7c3aed)}
-				.ajcore-portal-shell .aj-customer-file-category{display:inline-flex;margin-bottom:14px;color:#2563eb;font-size:12px;font-weight:900;letter-spacing:.07em;text-transform:uppercase}
-				.ajcore-portal-shell .aj-customer-file h3{margin:0 0 12px;font-size:24px;line-height:1.18;letter-spacing:-.035em}
+
+				.ajcore-portal-shell .aj-customer-file-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}
+				.ajcore-portal-shell .aj-customer-file{position:relative;overflow:hidden;border:1px solid rgba(219,231,243,.95);border-radius:30px;padding:30px;background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);box-shadow:var(--ajp-shadow)}
+				.ajcore-portal-shell .aj-customer-file:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
+				.ajcore-portal-shell .aj-customer-file-category{display:inline-flex;margin-bottom:14px;color:#2563eb;font-size:12px;font-weight:950;letter-spacing:.075em;text-transform:uppercase}
+				.ajcore-portal-shell .aj-customer-file h3{margin:0 0 16px;font-size:25px;line-height:1.12;letter-spacing:-.04em}
 				.ajcore-portal-shell .aj-customer-file p{margin:0 0 18px;color:#52616f}
-				.ajcore-portal-shell .aj-customer-file .button{display:inline-flex;text-decoration:none}
+
 				.ajcore-portal-shell .aj-portal-quick-actions{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 18px}
 				.ajcore-portal-shell .aj-portal-inline-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-				.ajcore-portal-shell .aj-portal-inline-actions .button{margin:0;box-shadow:none;text-decoration:none}
-				.ajcore-portal-shell .aj-portal-action-resume{background:linear-gradient(135deg,#16a34a,#22c55e)!important;color:#fff!important;border:0!important;border-radius:999px!important;padding:14px 24px!important;font-weight:900!important;box-shadow:0 12px 24px rgba(34,197,94,.28)!important}
-				.ajcore-portal-shell .aj-portal-action-cancel{background:#fee2e2!important;color:#991b1b!important;border:1px solid #fecaca!important;border-radius:999px!important;padding:9px 18px!important;font-weight:800!important}
+				.ajcore-portal-shell .aj-portal-action-button{min-height:38px;padding:10px 17px;font-size:14px;box-shadow:none}
+				.ajcore-portal-shell .aj-portal-action-resume{min-height:48px;padding:13px 24px;background:linear-gradient(135deg,#16a34a 0%,#10b981 100%)!important;color:#fff!important;box-shadow:0 18px 36px rgba(16,185,129,.24)!important}
+				.ajcore-portal-shell .aj-portal-action-cancel{min-height:38px;padding:9px 16px;background:#fee2e2!important;color:#991b1b!important;border:1px solid #fecaca!important;box-shadow:none!important}
+
 				@media (max-width:1050px){
 					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 				}
-				@media (max-width:680px){
-					.ajcore-portal-shell{padding:0 16px 28px}
-					.ajcore-portal-shell h2{font-size:27px}
-					.ajcore-portal-shell .aj-customer-portal-tabs{gap:6px;border-radius:18px}
-					.ajcore-portal-shell .aj-customer-portal-tab{min-height:40px;padding:10px 12px;font-size:14px}
-					.ajcore-portal-shell .aj-portal-summary-grid,.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:1fr}
-					.ajcore-portal-shell .aj-portal-service-card,.ajcore-portal-shell .aj-portal-add-service-card,.ajcore-portal-shell .aj-customer-file,.ajcore-portal-shell .aj-portal-profile-block{border-radius:22px;padding:22px}
+				@media (max-width:760px){
+					.ajcore-portal-shell{margin:-12px auto 0;padding:0 14px 32px}
+					.ajcore-portal-shell:before{inset:-44px -20px auto;height:260px}
+					.ajcore-portal-shell h2{font-size:34px;margin-bottom:20px}
+					.ajcore-portal-shell h3{font-size:22px;margin:28px 0 14px}
+					.ajcore-portal-shell .aj-customer-portal-tabs{position:sticky;top:8px;z-index:20;gap:6px;margin:0 -2px 26px;border-radius:22px;padding:7px}
+					.ajcore-portal-shell .aj-customer-portal-tab{min-height:42px;padding:10px 13px;font-size:14px;border-radius:16px}
+					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+					.ajcore-portal-shell .aj-portal-summary-card{min-height:104px;border-radius:22px;padding:20px 18px}
+					.ajcore-portal-shell .aj-portal-summary-card span{font-size:30px}
+					.ajcore-portal-shell .aj-portal-service-card,.ajcore-portal-shell .aj-portal-add-service-card,.ajcore-portal-shell .aj-customer-file,.ajcore-portal-shell .aj-portal-profile-block{border-radius:24px;padding:22px}
+					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:1fr;gap:16px}
+					.ajcore-portal-shell .aj-portal-add-service-grid{grid-template-columns:1fr}
+					.ajcore-portal-shell .aj-portal-table-wrap{border-radius:24px}
+					.ajcore-portal-shell .aj-portal-table{min-width:0;font-size:15px}
+					.ajcore-portal-shell .aj-portal-table thead{display:none}
+					.ajcore-portal-shell .aj-portal-table tbody,.ajcore-portal-shell .aj-portal-table tr,.ajcore-portal-shell .aj-portal-table td{display:block;width:100%}
+					.ajcore-portal-shell .aj-portal-table tr{border-bottom:1px solid #e8eef6;padding:14px 0}
+					.ajcore-portal-shell .aj-portal-table tr:last-child{border-bottom:0}
+					.ajcore-portal-shell .aj-portal-table td{border:0;padding:8px 18px}
+					.ajcore-portal-shell .aj-portal-table td:first-child{font-weight:900;color:#0f172a}
+					.ajcore-portal-shell .aj-portal-quick-actions .button{width:100%}
 				}
 			</style>
 			<?php if ( 'yes' === $atts['show_title'] ) : ?>
@@ -1443,32 +1438,47 @@ class AJForms {
 					return;
 				}
 				shell.dataset.ajcorePortalReady = '1';
+
+				function parseJsonResponse(response) {
+					return response.text().then(function(text) {
+						try {
+							return JSON.parse(text);
+						} catch (error) {
+							throw new Error('<?php echo esc_js( __( 'The server returned an invalid response.', 'ajforms' ) ); ?>');
+						}
+					});
+				}
+
 				shell.addEventListener('click', function(event) {
 					const button = event.target.closest('.aj-portal-add-service-button');
 					if (!button || button.disabled) {
 						return;
 					}
+
 					const message = shell.querySelector('.aj-portal-add-service-message');
 					const originalText = button.textContent;
 					button.disabled = true;
 					button.textContent = '<?php echo esc_js( __( 'Loading...', 'ajforms' ) ); ?>';
+
 					if (message) {
 						message.textContent = '';
 						message.className = 'aj-portal-add-service-message';
 						message.style.display = 'none';
 					}
+
 					const formData = new FormData();
 					formData.append('action', 'ajcore_create_checkout_session');
 					formData.append('portal_add_service', '1');
 					formData.append('price_id', button.dataset.priceId || '');
 					formData.append('nonce', button.dataset.nonce || '');
 					formData.append('current_url', window.location.href);
+
 					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 						method: 'POST',
 						credentials: 'same-origin',
 						body: formData
 					})
-						.then(function(response) { return response.json(); })
+						.then(parseJsonResponse)
 						.then(function(payload) {
 							if (!payload || !payload.success || !payload.data || !payload.data.url) {
 								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to start checkout.', 'ajforms' ) ); ?>');
@@ -1493,42 +1503,35 @@ class AJForms {
 					if (!button || button.disabled) {
 						return;
 					}
-					if (!window.confirm('<?php echo esc_js( __( 'Remove this pending service request from your billing history?', 'ajforms' ) ); ?>')) {
+					if (!window.confirm('<?php echo esc_js( __( 'Cancel this pending service request?', 'ajforms' ) ); ?>')) {
 						return;
 					}
+
+					const originalText = button.textContent;
 					button.disabled = true;
+					button.textContent = '<?php echo esc_js( __( 'Cancelling...', 'ajforms' ) ); ?>';
+
 					const formData = new FormData();
 					formData.append('action', 'ajcore_cancel_portal_service_request');
 					formData.append('ledger_id', button.dataset.ledgerId || '');
 					formData.append('nonce', button.dataset.nonce || '');
+
 					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 						method: 'POST',
 						credentials: 'same-origin',
 						body: formData
 					})
-						.then(function(response) {
-							return response.text().then(function(text) {
-								let payload = null;
-								try {
-									payload = JSON.parse(text);
-								} catch (error) {
-									console.error('AJ Core cancel/remove invalid response:', text);
-									throw new Error('<?php echo esc_js( __( 'Unable to remove request. The server returned an invalid response. Check the browser console or PHP error log for details.', 'ajforms' ) ); ?>');
-								}
-
-								if (!response.ok || !payload || !payload.success) {
-									throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to remove request.', 'ajforms' ) ); ?>');
-								}
-
-								return payload;
-							});
-						})
-						.then(function() {
+						.then(parseJsonResponse)
+						.then(function(payload) {
+							if (!payload || !payload.success) {
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+							}
 							window.location.reload();
 						})
 						.catch(function(error) {
 							button.disabled = false;
-							window.alert(error.message || '<?php echo esc_js( __( 'Unable to remove request.', 'ajforms' ) ); ?>');
+							button.textContent = originalText;
+							window.alert(error.message || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
 						});
 				});
 			})();
@@ -1536,64 +1539,6 @@ class AJForms {
 		</div>
 		<?php
 		return ob_get_clean();
-	}
-
-	public function maybe_handle_portal_service_request_remove() {
-		if ( empty( $_GET['ajcore_remove_service_request'] ) ) {
-			return;
-		}
-
-		if ( ! is_user_logged_in() ) {
-			wp_safe_redirect( wp_login_url( $this->get_customer_portal_url() ) );
-			exit;
-		}
-
-		$ledger_id = absint( wp_unslash( $_GET['ajcore_remove_service_request'] ) );
-		if ( ! $ledger_id || ! isset( $_GET['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'ajcore_remove_service_request_' . $ledger_id ) ) {
-			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-invalid' ), $this->get_customer_portal_url() ) );
-			exit;
-		}
-
-		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
-		if ( '' === $stripe_customer_id ) {
-			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-unlinked' ), $this->get_customer_portal_url() ) );
-			exit;
-		}
-
-		global $wpdb;
-		$table = $this->get_portal_ledger_table();
-		$entry = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT * FROM {$table} WHERE id = %d AND stripe_customer_id = %s LIMIT 1",
-				$ledger_id,
-				$stripe_customer_id
-			)
-		);
-
-		if ( ! $entry || 'checkout_session' !== (string) $entry->source_type ) {
-			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-not-found' ), $this->get_customer_portal_url() ) );
-			exit;
-		}
-
-		$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
-		if ( ! in_array( $status, array( 'unpaid', 'open', 'cancelled' ), true ) ) {
-			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-not-allowed' ), $this->get_customer_portal_url() ) );
-			exit;
-		}
-
-		$deleted = $wpdb->delete(
-			$table,
-			array(
-				'id'                 => $ledger_id,
-				'stripe_customer_id' => $stripe_customer_id,
-				'source_type'        => 'checkout_session',
-			),
-			array( '%d', '%s', '%s' )
-		);
-
-		$notice = false === $deleted ? 'remove-error' : 'removed';
-		wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => $notice ), $this->get_customer_portal_url() ) );
-		exit;
 	}
 
 	public function maybe_handle_portal_file_download() {
@@ -2010,10 +1955,6 @@ class AJForms {
 	}
 
 	public function ajax_cancel_portal_service_request() {
-		while ( ob_get_level() ) {
-			ob_end_clean();
-		}
-
 		if ( ! is_user_logged_in() ) {
 			wp_send_json_error( __( 'Login required.', 'ajforms' ), 401 );
 		}
@@ -2030,39 +1971,23 @@ class AJForms {
 		}
 
 		global $wpdb;
-		$table = $this->get_portal_ledger_table();
-		$entry = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT * FROM {$table} WHERE id = %d AND stripe_customer_id = %s LIMIT 1",
-				$ledger_id,
-				$stripe_customer_id
-			)
-		);
-
-		if ( ! $entry || 'checkout_session' !== (string) $entry->source_type ) {
-			wp_send_json_error( __( 'Service request was not found.', 'ajforms' ), 404 );
-		}
-
-		$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
-		if ( ! in_array( $status, array( 'unpaid', 'open', 'cancelled' ), true ) ) {
-			wp_send_json_error( __( 'This billing item cannot be removed from the portal.', 'ajforms' ), 400 );
-		}
-
-		$deleted = $wpdb->delete(
-			$table,
+		$updated = $wpdb->update(
+			$this->get_portal_ledger_table(),
+			array( 'status' => 'cancelled' ),
 			array(
 				'id'                 => $ledger_id,
 				'stripe_customer_id' => $stripe_customer_id,
 				'source_type'        => 'checkout_session',
 			),
+			array( '%s' ),
 			array( '%d', '%s', '%s' )
 		);
 
-		if ( false === $deleted ) {
-			wp_send_json_error( __( 'Unable to remove request.', 'ajforms' ), 500 );
+		if ( false === $updated ) {
+			wp_send_json_error( __( 'Unable to cancel request.', 'ajforms' ), 500 );
 		}
 
-		wp_send_json_success( array( 'removed' => true, 'ledger_id' => $ledger_id ) );
+		wp_send_json_success( array( 'status' => 'cancelled' ) );
 	}
 
 	public function ajax_create_checkout_session() {
@@ -3432,70 +3357,6 @@ class AJForms {
 		return $matched ? $result : $this->get_default_confirmation_result( $settings );
 	}
 
-
-	private function get_automation_rules_for_trigger( $trigger ) {
-		$rules = get_option( 'ajcore_automation_rules', array() );
-		if ( ! is_array( $rules ) ) {
-			return array();
-		}
-
-		return array_values(
-			array_filter(
-				$rules,
-				function ( $rule ) use ( $trigger ) {
-					return ! empty( $rule['enabled'] ) && ! empty( $rule['trigger'] ) && $rule['trigger'] === $trigger;
-				}
-			)
-		);
-	}
-
-	private function run_automation_rules( $trigger, $form, $lead_data, $lead_id = 0 ) {
-		$rules = $this->get_automation_rules_for_trigger( $trigger );
-		if ( empty( $rules ) ) {
-			return;
-		}
-
-		global $wpdb;
-		$form_id = isset( $form->id ) ? absint( $form->id ) : 0;
-		foreach ( $rules as $rule ) {
-			$rule_form_id = ! empty( $rule['form_id'] ) ? absint( $rule['form_id'] ) : 0;
-			if ( $rule_form_id && $form_id !== $rule_form_id ) {
-				continue;
-			}
-
-			$action = ! empty( $rule['action'] ) ? sanitize_key( $rule['action'] ) : '';
-			$message = ! empty( $rule['message'] ) ? $this->replace_template_tags( (string) $rule['message'], $form, $lead_data ) : sprintf( 'Automation ran for %s.', isset( $form->title ) ? $form->title : 'form' );
-			$target = ! empty( $rule['target'] ) ? (string) $rule['target'] : '';
-
-			if ( 'add_note' === $action && $lead_id ) {
-				$wpdb->insert(
-					$wpdb->prefix . 'ajforms_lead_notes',
-					array(
-						'lead_id'    => absint( $lead_id ),
-						'note'       => $message,
-						'created_by' => get_current_user_id(),
-						'created_at' => current_time( 'mysql' ),
-					),
-					array( '%d', '%s', '%d', '%s' )
-				);
-			} elseif ( 'mark_read' === $action && $lead_id ) {
-				$wpdb->update( $this->get_leads_table(), array( 'status' => 'read' ), array( 'id' => absint( $lead_id ) ), array( '%s' ), array( '%d' ) );
-			} elseif ( 'email_admin' === $action ) {
-				$recipient = is_email( $target ) ? sanitize_email( $target ) : get_option( 'admin_email' );
-				wp_mail( $recipient, sprintf( 'AJ Core automation: %s', ! empty( $rule['name'] ) ? $rule['name'] : 'Automation' ), $message );
-			} elseif ( 'webhook' === $action && filter_var( $target, FILTER_VALIDATE_URL ) ) {
-				wp_remote_post(
-					esc_url_raw( $target ),
-					array(
-						'timeout' => 12,
-						'headers' => array( 'Content-Type' => 'application/json' ),
-						'body'    => wp_json_encode( array( 'trigger' => $trigger, 'form_id' => $form_id, 'lead_id' => absint( $lead_id ), 'message' => $message, 'lead_data' => $lead_data ) ),
-					)
-				);
-			}
-		}
-	}
-
 	private function handle_form_submission( $form, $fields, $settings ) {
 		if ( 'POST' !== $_SERVER['REQUEST_METHOD'] ) {
 			return array(
@@ -3735,10 +3596,8 @@ class AJForms {
 			);
 		}
 
-		$lead_id = (int) $wpdb->insert_id;
 		$this->send_form_notification( $form, $lead_data, $settings );
 		$this->maybe_create_asana_task( $form, $lead_data, $settings );
-		$this->run_automation_rules( 'form_submission', $form, $lead_data, $lead_id );
 
 		$confirmation_result = $this->evaluate_confirmation_rules( $form, $lead_data, $settings );
 		$redirect_url        = ! empty( $confirmation_result['redirect_url'] ) ? esc_url_raw( $confirmation_result['redirect_url'] ) : '';
@@ -4721,7 +4580,7 @@ class AJForms {
 					if (!button || button.disabled) {
 						return;
 					}
-					if (!window.confirm('<?php echo esc_js( __( 'Remove this pending service request from your billing history?', 'ajforms' ) ); ?>')) {
+					if (!window.confirm('<?php echo esc_js( __( 'Cancel this pending service request?', 'ajforms' ) ); ?>')) {
 						return;
 					}
 					button.disabled = true;
@@ -4734,29 +4593,16 @@ class AJForms {
 						credentials: 'same-origin',
 						body: formData
 					})
-						.then(function(response) {
-							return response.text().then(function(text) {
-								let payload = null;
-								try {
-									payload = JSON.parse(text);
-								} catch (error) {
-									console.error('AJ Core cancel/remove invalid response:', text);
-									throw new Error('<?php echo esc_js( __( 'Unable to remove request. The server returned an invalid response. Check the browser console or PHP error log for details.', 'ajforms' ) ); ?>');
-								}
-
-								if (!response.ok || !payload || !payload.success) {
-									throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to remove request.', 'ajforms' ) ); ?>');
-								}
-
-								return payload;
-							});
-						})
-						.then(function() {
+						.then(function(response) { return response.json(); })
+						.then(function(payload) {
+							if (!payload || !payload.success) {
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
+							}
 							window.location.reload();
 						})
 						.catch(function(error) {
 							button.disabled = false;
-							window.alert(error.message || '<?php echo esc_js( __( 'Unable to remove request.', 'ajforms' ) ); ?>');
+							window.alert(error.message || '<?php echo esc_js( __( 'Unable to cancel request.', 'ajforms' ) ); ?>');
 						});
 				});
 			})();
