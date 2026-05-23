@@ -47,7 +47,7 @@ class AJForms {
 		add_shortcode( 'ajforms', array( $this, 'render_form_shortcode' ) );
 		add_shortcode( 'ajcore_products', array( $this, 'render_products_shortcode' ) );
 		add_shortcode( 'aj_customer_portal', array( $this, 'render_customer_portal_shortcode' ) );
-		add_filter( 'login_redirect', array( $this, 'filter_login_redirect' ), 10, 3 );
+		add_filter( 'login_redirect', array( $this, 'filter_login_redirect' ), 999999, 3 );
 		add_filter( 'show_admin_bar', array( $this, 'filter_show_admin_bar' ) );
 		add_filter( 'wp_nav_menu_items', array( $this, 'add_customer_portal_nav_item' ), 10, 2 );
 		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
@@ -60,8 +60,36 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 	}
 
+	private function is_portal_user_account( $user = null ) {
+		if ( null === $user ) {
+			if ( ! is_user_logged_in() ) {
+				return false;
+			}
+
+			$user = wp_get_current_user();
+		}
+
+		if ( is_wp_error( $user ) || ! $user instanceof WP_User ) {
+			return false;
+		}
+
+		if ( user_can( $user, 'manage_options' ) ) {
+			return false;
+		}
+
+		$roles = array_map( 'sanitize_key', (array) $user->roles );
+		$auth_settings = get_option( 'ajcore_auth_settings', array() );
+		$customer_role = is_array( $auth_settings ) && ! empty( $auth_settings['customer_role'] ) ? sanitize_key( (string) $auth_settings['customer_role'] ) : 'aj_portal_user';
+
+		if ( in_array( 'aj_portal_user', $roles, true ) || ( $customer_role && in_array( $customer_role, $roles, true ) ) ) {
+			return true;
+		}
+
+		return ! user_can( $user, 'edit_posts' );
+	}
+
 	private function is_frontend_portal_user() {
-		return is_user_logged_in() && ! current_user_can( 'edit_posts' ) && ! current_user_can( 'manage_options' );
+		return $this->is_portal_user_account();
 	}
 
 	private function get_customer_portal_page_id() {
@@ -125,7 +153,7 @@ class AJForms {
 			return $redirect_to;
 		}
 
-		if ( ! user_can( $user, 'edit_posts' ) && ! user_can( $user, 'manage_options' ) ) {
+		if ( $this->is_portal_user_account( $user ) ) {
 			return $this->get_customer_portal_url();
 		}
 
@@ -137,8 +165,13 @@ class AJForms {
 			return;
 		}
 
-		wp_safe_redirect( $this->get_customer_portal_url() );
-		exit;
+		$portal_url = $this->get_customer_portal_url();
+		$current_url = set_url_scheme( 'http://' . ( isset( $_SERVER['HTTP_HOST'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) : '' ) . ( isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '' ) );
+
+		if ( $portal_url && untrailingslashit( $current_url ) !== untrailingslashit( $portal_url ) ) {
+			wp_safe_redirect( $portal_url );
+			exit;
+		}
 	}
 
 	public function filter_show_admin_bar( $show ) {
