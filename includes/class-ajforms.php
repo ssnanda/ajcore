@@ -1078,26 +1078,42 @@ class AJForms {
 		return $wpdb->prefix . 'aj_portal_user_mappings';
 	}
 
-	private function get_current_user_stripe_customer_id() {
+	private function get_current_user_portal_mapping() {
 		if ( ! is_user_logged_in() ) {
-			return '';
+			return null;
 		}
 
 		global $wpdb;
 
-		$stripe_customer_id = $wpdb->get_var(
+		$user_id = get_current_user_id();
+		if ( ! $user_id ) {
+			return null;
+		}
+
+		return $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT stripe_customer_id FROM {$this->get_portal_user_mappings_table()} WHERE user_id = %d LIMIT 1",
-				get_current_user_id()
+				"SELECT m.*
+				FROM {$this->get_portal_user_mappings_table()} m
+				INNER JOIN {$this->get_portal_stripe_customers_table()} c
+					ON c.stripe_customer_id = m.stripe_customer_id
+				WHERE m.user_id = %d
+					AND c.enabled_portal = 1
+				ORDER BY m.updated_at DESC, m.id DESC
+				LIMIT 1",
+				$user_id
 			)
 		);
+	}
 
-		return $stripe_customer_id ? sanitize_text_field( $stripe_customer_id ) : '';
+	private function get_current_user_stripe_customer_id() {
+		$mapping = $this->get_current_user_portal_mapping();
+
+		return $mapping && ! empty( $mapping->stripe_customer_id ) ? sanitize_text_field( $mapping->stripe_customer_id ) : '';
 	}
 
 	private function get_current_user_portal_customer() {
-		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
-		if ( '' === $stripe_customer_id ) {
+		$mapping = $this->get_current_user_portal_mapping();
+		if ( ! $mapping || empty( $mapping->stripe_customer_id ) ) {
 			return null;
 		}
 
@@ -1105,8 +1121,8 @@ class AJForms {
 
 		return $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s",
-				$stripe_customer_id
+				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s AND enabled_portal = 1",
+				sanitize_text_field( $mapping->stripe_customer_id )
 			)
 		);
 	}
