@@ -178,6 +178,13 @@ class AJForms {
 				'enabled' => true,
 			),
 			array(
+				'id'      => 'billing',
+				'label'   => __( 'Billing', 'ajforms' ),
+				'type'    => 'built_in',
+				'url'     => '',
+				'enabled' => true,
+			),
+			array(
 				'id'      => 'file-library',
 				'label'   => __( 'File Library', 'ajforms' ),
 				'type'    => 'built_in',
@@ -498,14 +505,21 @@ class AJForms {
 		return ! empty( $subscription->current_period_end ) ? $this->format_portal_date( $subscription->current_period_end ) : '-';
 	}
 
-	private function render_customer_portal_overview_tab() {
+	private function get_current_user_portal_billing_context() {
 		global $wpdb;
 
 		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
 		$customer           = $this->get_current_user_portal_customer();
 
 		if ( '' === $stripe_customer_id || ! $customer ) {
-			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Overview', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+			return array(
+				'stripe_customer_id'  => '',
+				'customer'            => null,
+				'subscriptions'       => array(),
+				'ledger'              => array(),
+				'upcoming'            => array(),
+				'active_subscriptions'=> array(),
+			);
 		}
 
 		$subscriptions = $wpdb->get_results(
@@ -520,7 +534,6 @@ class AJForms {
 				$stripe_customer_id
 			)
 		);
-		$files = $this->get_current_user_portal_files();
 		$upcoming = array_filter(
 			$subscriptions,
 			function ( $subscription ) {
@@ -537,12 +550,109 @@ class AJForms {
 				return 'active' === $subscription->status || 'trialing' === $subscription->status;
 			}
 		);
-		$business_name = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
-		$display_name = $customer->name ? $customer->name : $customer->email;
-		$invoice_url = $this->get_latest_invoice_url( $ledger );
-		$file_library_url = add_query_arg( 'portal_tab', 'file-library', $this->get_customer_portal_url() );
-		$products_url = home_url( '/products/' );
-		$support_email = get_option( 'admin_email' );
+
+		return array(
+			'stripe_customer_id'   => $stripe_customer_id,
+			'customer'             => $customer,
+			'subscriptions'        => $subscriptions,
+			'ledger'               => $ledger,
+			'upcoming'             => $upcoming,
+			'active_subscriptions' => $active_subscriptions,
+		);
+	}
+
+	private function render_customer_portal_billing_tab() {
+		$context = $this->get_current_user_portal_billing_context();
+
+		if ( '' === $context['stripe_customer_id'] || ! $context['customer'] ) {
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Billing', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+		}
+
+		$ledger        = $context['ledger'];
+		$upcoming      = $context['upcoming'];
+		$subscriptions = $context['subscriptions'];
+
+		ob_start();
+		?>
+		<section class="aj-customer-portal-panel">
+			<h2><?php esc_html_e( 'Billing', 'ajforms' ); ?></h2>
+
+			<h3><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></h3>
+			<?php if ( empty( $upcoming ) ) : ?>
+				<p><?php esc_html_e( 'No upcoming payment is due within the next 30 days.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div class="aj-portal-table-wrap">
+					<table class="aj-portal-table">
+						<thead><tr><th><?php esc_html_e( 'Service Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th></tr></thead>
+						<tbody>
+							<?php foreach ( $upcoming as $subscription ) : ?>
+								<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
+								<tr>
+									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
+									<td><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
+									<td><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php endif; ?>
+
+			<h3><?php esc_html_e( 'Billing History', 'ajforms' ); ?></h3>
+			<?php if ( empty( $ledger ) ) : ?>
+				<p><?php esc_html_e( 'No Stripe invoices or charges are synced yet.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div class="aj-portal-table-wrap">
+					<table class="aj-portal-table">
+						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
+						<tbody>
+							<?php foreach ( $ledger as $entry ) : ?>
+								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) : $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' ); ?>
+								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'Download', 'ajforms' ); ?>
+								<tr>
+									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
+									<td><?php echo esc_html( $entry->description ); ?></td>
+									<td><?php echo esc_html( ucfirst( $entry->status ) ); ?></td>
+									<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
+									<td>
+										<?php if ( $entry_invoice_url ) : ?>
+											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
+										<?php else : ?>
+											<?php esc_html_e( '-', 'ajforms' ); ?>
+										<?php endif; ?>
+									</td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php endif; ?>
+		</section>
+		<?php
+		return ob_get_clean();
+	}
+
+	private function render_customer_portal_overview_tab() {
+		$context = $this->get_current_user_portal_billing_context();
+		$customer = $context['customer'];
+
+		if ( '' === $context['stripe_customer_id'] || ! $customer ) {
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Overview', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+		}
+
+		$subscriptions        = $context['subscriptions'];
+		$ledger               = $context['ledger'];
+		$upcoming             = $context['upcoming'];
+		$active_subscriptions = $context['active_subscriptions'];
+		$files                = $this->get_current_user_portal_files();
+		$business_name        = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
+		$display_name         = $customer->name ? $customer->name : $customer->email;
+		$billing_url          = add_query_arg( 'portal_tab', 'billing', $this->get_customer_portal_url() );
+		$file_library_url     = add_query_arg( 'portal_tab', 'file-library', $this->get_customer_portal_url() );
+		$products_url         = home_url( '/products/' );
+		$support_email        = get_option( 'admin_email' );
+		$annual_report_due    = $this->get_portal_customer_meta_value( $customer, array( 'annual_report_due', 'annual_report_due_date' ) );
+		$boi_status           = $this->get_portal_customer_meta_value( $customer, array( 'boi_filing_status', 'boi_status' ) );
 
 		ob_start();
 		?>
@@ -568,6 +678,39 @@ class AJForms {
 				</div>
 			</div>
 
+			<h3><?php esc_html_e( 'Tasks / Action Items', 'ajforms' ); ?></h3>
+			<div class="aj-portal-table-wrap">
+				<table class="aj-portal-table">
+					<thead><tr><th><?php esc_html_e( 'Task', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Action Required', 'ajforms' ); ?></th></tr></thead>
+					<tbody>
+						<tr>
+							<td><?php esc_html_e( 'BOI Report', 'ajforms' ); ?></td>
+							<td><?php echo esc_html( $boi_status ? $boi_status : __( 'Check status', 'ajforms' ) ); ?></td>
+							<td><?php esc_html_e( 'Confirm deadline', 'ajforms' ); ?></td>
+							<td><?php esc_html_e( 'Confirm whether BOI reporting is required and mark completed when filed.', 'ajforms' ); ?></td>
+						</tr>
+						<tr>
+							<td><?php esc_html_e( 'Annual Report', 'ajforms' ); ?></td>
+							<td><?php esc_html_e( 'Upcoming', 'ajforms' ); ?></td>
+							<td><?php echo esc_html( $annual_report_due ? $annual_report_due : __( 'April 15', 'ajforms' ) ); ?></td>
+							<td><?php esc_html_e( 'File the annual report with the state if not already completed.', 'ajforms' ); ?></td>
+						</tr>
+						<tr>
+							<td><?php esc_html_e( 'Tax Return for Multi-Member LLCs / K-1s', 'ajforms' ); ?></td>
+							<td><?php esc_html_e( 'Upcoming', 'ajforms' ); ?></td>
+							<td><?php esc_html_e( 'March 15', 'ajforms' ); ?></td>
+							<td><?php esc_html_e( 'Prepare partnership return and issue K-1s if applicable.', 'ajforms' ); ?></td>
+						</tr>
+						<tr>
+							<td><?php esc_html_e( 'Tax Return for Pass-Through LLCs', 'ajforms' ); ?></td>
+							<td><?php esc_html_e( 'Upcoming', 'ajforms' ); ?></td>
+							<td><?php esc_html_e( 'April 15', 'ajforms' ); ?></td>
+							<td><?php esc_html_e( 'Prepare pass-through LLC tax filing if applicable.', 'ajforms' ); ?></td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
+
 			<h3><?php esc_html_e( 'My Services', 'ajforms' ); ?></h3>
 			<?php if ( empty( $subscriptions ) ) : ?>
 				<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
@@ -575,122 +718,24 @@ class AJForms {
 				<div class="aj-portal-profile">
 					<?php foreach ( $subscriptions as $subscription ) : ?>
 						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
-						<div style="grid-column:span 2;border:1px solid #dfe6ee;border-radius:12px;padding:18px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,.04)">
-							<h4 style="margin:0 0 14px;font-size:18px;color:#1f2937"><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
-							<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
-								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span style="color:#1f2937"><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
-								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span style="color:#1f2937"><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
-								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span style="color:#1f2937"><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
-								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span style="color:#1f2937"><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
-								<div><strong style="display:block;font-size:12px;color:#52616f;margin-bottom:4px"><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span style="color:#1f2937;font-weight:700"><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
+						<div class="aj-portal-service-card">
+							<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
+							<div class="aj-portal-service-card-grid">
+								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
 							</div>
 						</div>
 					<?php endforeach; ?>
 				</div>
 			<?php endif; ?>
 
-			<h3><?php esc_html_e( 'Billing History', 'ajforms' ); ?></h3>
-			<?php if ( empty( $ledger ) ) : ?>
-				<p><?php esc_html_e( 'No Stripe invoices or charges are synced yet.', 'ajforms' ); ?></p>
-			<?php else : ?>
-				<div class="aj-portal-table-wrap">
-					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th><th><?php esc_html_e( 'Download Invoice', 'ajforms' ); ?></th></tr></thead>
-						<tbody>
-							<?php foreach ( $ledger as $entry ) : ?>
-								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) : $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' ); ?>
-								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'Download', 'ajforms' ); ?>
-								<tr>
-									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
-									<td><?php echo esc_html( $entry->description ); ?></td>
-									<td><?php echo esc_html( ucfirst( $entry->status ) ); ?></td>
-									<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
-									<td>
-										<?php if ( $entry_invoice_url ) : ?>
-											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
-										<?php else : ?>
-											<?php esc_html_e( '-', 'ajforms' ); ?>
-										<?php endif; ?>
-									</td>
-								</tr>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
-				</div>
-			<?php endif; ?>
-
-			<h3><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></h3>
-			<?php if ( empty( $upcoming ) ) : ?>
-				<p><?php esc_html_e( 'No upcoming payment is due within the next 30 days.', 'ajforms' ); ?></p>
-			<?php else : ?>
-				<div class="aj-portal-table-wrap">
-					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'Service Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th></tr></thead>
-						<tbody>
-							<?php foreach ( $upcoming as $subscription ) : ?>
-								<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
-								<tr>
-									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
-									<td><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
-									<td><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
-								</tr>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
-				</div>
-			<?php endif; ?>
-
-			<h3><?php esc_html_e( 'Important Dates', 'ajforms' ); ?></h3>
-			<div class="aj-portal-profile aj-portal-profile-compact">
-				<div><strong><?php esc_html_e( 'Annual Report Due', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_portal_customer_meta_value( $customer, array( 'annual_report_due', 'annual_report_due_date' ) ) ?: '-' ); ?></span></div>
-				<div><strong><?php esc_html_e( 'Registered Agent Renewal', 'ajforms' ); ?></strong><span><?php echo esc_html( ! empty( $subscriptions ) ? $this->format_portal_date( reset( $subscriptions )->current_period_end ) : '-' ); ?></span></div>
-				<div><strong><?php esc_html_e( 'BOI Filing Status', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_portal_customer_meta_value( $customer, array( 'boi_filing_status', 'boi_status' ) ) ?: '-' ); ?></span></div>
-			</div>
-
-			<h3><?php esc_html_e( 'My Files', 'ajforms' ); ?></h3>
-			<?php if ( empty( $files ) ) : ?>
-				<p><?php esc_html_e( 'No files have been shared with you yet.', 'ajforms' ); ?></p>
-			<?php else : ?>
-				<div class="aj-portal-table-wrap">
-					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'File Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Category', 'ajforms' ); ?></th><th><?php esc_html_e( 'Business Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Upload Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Download', 'ajforms' ); ?></th></tr></thead>
-						<tbody>
-							<?php foreach ( $files as $file ) : ?>
-								<?php
-								$download_url = wp_nonce_url(
-									add_query_arg( array( 'aj_portal_download' => (int) $file->id ), home_url( '/' ) ),
-									'aj_portal_download_' . (int) $file->id
-								);
-								?>
-								<tr>
-									<td><?php echo esc_html( $file->title ); ?></td>
-									<td><?php echo esc_html( $file->category ? $file->category : '-' ); ?></td>
-									<td><?php echo esc_html( $business_name ? $business_name : '-' ); ?></td>
-									<td><?php echo esc_html( $this->format_portal_date( $file->created_at ) ); ?></td>
-									<td><a href="<?php echo esc_url( $download_url ); ?>"><?php esc_html_e( 'Download', 'ajforms' ); ?></a></td>
-								</tr>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
-				</div>
-			<?php endif; ?>
-
-			<h3><?php esc_html_e( 'Tasks / Action Items', 'ajforms' ); ?></h3>
-			<div class="aj-portal-table-wrap">
-				<table class="aj-portal-table">
-					<thead><tr><th><?php esc_html_e( 'Task', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Action Required', 'ajforms' ); ?></th></tr></thead>
-					<tbody><tr><td colspan="4"><?php esc_html_e( 'No open tasks are available yet.', 'ajforms' ); ?></td></tr></tbody>
-				</table>
-			</div>
-
 			<h3><?php esc_html_e( 'Quick Actions', 'ajforms' ); ?></h3>
 			<div class="aj-portal-quick-actions">
 				<a class="button" href="<?php echo esc_url( $file_library_url ); ?>"><?php esc_html_e( 'Upload Document', 'ajforms' ); ?></a>
-				<?php if ( $invoice_url ) : ?>
-					<a class="button" href="<?php echo esc_url( $invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Download Invoice', 'ajforms' ); ?></a>
-				<?php else : ?>
-					<span class="button disabled"><?php esc_html_e( 'Download Invoice', 'ajforms' ); ?></span>
-				<?php endif; ?>
+				<a class="button" href="<?php echo esc_url( $billing_url ); ?>"><?php esc_html_e( 'View Billing', 'ajforms' ); ?></a>
 				<span class="button disabled"><?php esc_html_e( 'Update Payment Method', 'ajforms' ); ?></span>
 				<a class="button" href="<?php echo esc_url( $products_url ); ?>"><?php esc_html_e( 'Order Additional Services', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( 'mailto:' . $support_email ); ?>"><?php esc_html_e( 'Contact Support', 'ajforms' ); ?></a>
@@ -889,6 +934,11 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-profile strong{font-size:13px;color:#52616f}
 				.ajcore-portal-shell .aj-portal-profile span{font-weight:700;color:#1f2937;font-size:14px}
 				.ajcore-portal-shell .aj-portal-profile-compact{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+				.ajcore-portal-shell .aj-portal-service-card{grid-column:1/-1;border:1px solid #dfe6ee;border-radius:12px;padding:18px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,.04)}
+				.ajcore-portal-shell .aj-portal-service-card h4{margin:0 0 14px;font-size:18px;color:#1f2937}
+				.ajcore-portal-shell .aj-portal-service-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+				.ajcore-portal-shell .aj-portal-service-card-grid strong{display:block;font-size:12px;color:#52616f;margin-bottom:4px}
+				.ajcore-portal-shell .aj-portal-service-card-grid span{color:#1f2937;font-weight:700}
 				.ajcore-portal-shell .aj-portal-profile-block{border:1px solid #dfe6ee;border-radius:12px;background:#fff;padding:22px;max-width:720px}
 				.ajcore-portal-shell .aj-portal-profile-main{font-size:22px;line-height:1.25;font-weight:800;color:#111827;margin:0 0 14px}
 				.ajcore-portal-shell .aj-portal-profile-details{display:grid;gap:8px;color:#1f2937;font-size:15px;line-height:1.45;margin:0 0 18px}
@@ -923,6 +973,8 @@ class AJForms {
 			<?php
 			if ( 'overview' === $active_tab ) {
 				echo $this->render_customer_portal_overview_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			} elseif ( 'billing' === $active_tab ) {
+				echo $this->render_customer_portal_billing_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'file-library' === $active_tab ) {
 				echo $this->render_customer_portal_file_library_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'profile' === $active_tab ) {
