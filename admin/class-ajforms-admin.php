@@ -4302,7 +4302,7 @@ class AJForms_Admin {
 		$labels        = $this->get_portal_service_request_status_labels();
 		$where         = array( '1=1' );
 		$params        = array();
-		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'failed' );
+		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'paid', 'failed' );
 		$show_actionable_default = '' === $status_filter && '' === $search;
 
 		if ( 'all' === $status_filter ) {
@@ -4311,7 +4311,7 @@ class AJForms_Admin {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
 		} elseif ( $show_actionable_default ) {
-			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','failed')";
+			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed')";
 		}
 
 		if ( '' !== $search ) {
@@ -4336,7 +4336,7 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
-			<p><?php esc_html_e( 'Review client add-service checkout attempts and custom upgrade requests from one place.', 'ajforms' ); ?></p>
+			<p><?php esc_html_e( 'Review client add-service checkout attempts, paid purchases, and custom upgrade requests from one place.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
 				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
@@ -4557,7 +4557,7 @@ class AJForms_Admin {
 		$labels        = $this->get_portal_service_request_status_labels();
 		$where         = array( '1=1' );
 		$params        = array();
-		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'failed' );
+		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'paid', 'failed' );
 		$show_actionable_default = '' === $status_filter && '' === $search;
 
 		if ( 'all' === $status_filter ) {
@@ -4566,7 +4566,7 @@ class AJForms_Admin {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
 		} elseif ( $show_actionable_default ) {
-			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','failed')";
+			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed')";
 		}
 
 		if ( '' !== $search ) {
@@ -4591,7 +4591,7 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
-			<p><?php esc_html_e( 'Review client checkout attempts, custom pricing requests, and other service-related items that need an admin decision.', 'ajforms' ); ?></p>
+			<p><?php esc_html_e( 'Review client checkout attempts, custom pricing requests, paid purchases, and other service-related items that need an admin decision.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
 				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
