@@ -53,6 +53,7 @@ class AJForms {
 		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
+		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_service_request_remove' ) );
 		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
@@ -937,7 +938,18 @@ class AJForms {
 		}
 
 		$button_label = in_array( $status, array( 'unpaid', 'open' ), true ) ? __( 'Cancel', 'ajforms' ) : __( 'Remove', 'ajforms' );
-		$actions[] = '<button type="button" class="button aj-portal-action-cancel aj-portal-cancel-service-request" data-ledger-id="' . esc_attr( (int) $entry->id ) . '" data-nonce="' . esc_attr( wp_create_nonce( 'ajcore_cancel_portal_service_request_' . (int) $entry->id ) ) . '">' . esc_html( $button_label ) . '</button>';
+		$remove_url   = wp_nonce_url(
+			add_query_arg(
+				array(
+					'portal_tab'                         => 'billing',
+					'ajcore_remove_service_request'      => (int) $entry->id,
+				),
+				$this->get_customer_portal_url()
+			),
+			'ajcore_remove_service_request_' . (int) $entry->id
+		);
+		$confirm_text = esc_attr__( 'Remove this pending service request from your billing history?', 'ajforms' );
+		$actions[]    = '<a class="button aj-portal-action-cancel" href="' . esc_url( $remove_url ) . '" onclick="return window.confirm(\'' . $confirm_text . '\');">' . esc_html( $button_label ) . '</a>';
 
 		return '<span class="aj-portal-inline-actions">' . implode( ' ', $actions ) . '</span>';
 	}
@@ -1340,8 +1352,10 @@ class AJForms {
 				.ajcore-portal-shell .aj-customer-file p{margin:0 0 18px;color:#52616f}
 				.ajcore-portal-shell .aj-customer-file .button{display:inline-flex;text-decoration:none}
 				.ajcore-portal-shell .aj-portal-quick-actions{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 18px}
-				.ajcore-portal-shell .aj-portal-inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-				.ajcore-portal-shell .aj-portal-inline-actions .button{margin:0;background:#fee2e2;color:#991b1b!important;box-shadow:none;border:1px solid #fecaca}
+				.ajcore-portal-shell .aj-portal-inline-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+				.ajcore-portal-shell .aj-portal-inline-actions .button{margin:0;box-shadow:none;text-decoration:none}
+				.ajcore-portal-shell .aj-portal-action-resume{background:linear-gradient(135deg,#16a34a,#22c55e)!important;color:#fff!important;border:0!important;border-radius:999px!important;padding:14px 24px!important;font-weight:900!important;box-shadow:0 12px 24px rgba(34,197,94,.28)!important}
+				.ajcore-portal-shell .aj-portal-action-cancel{background:#fee2e2!important;color:#991b1b!important;border:1px solid #fecaca!important;border-radius:999px!important;padding:9px 18px!important;font-weight:800!important}
 				@media (max-width:1050px){
 					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -1481,6 +1495,64 @@ class AJForms {
 		</div>
 		<?php
 		return ob_get_clean();
+	}
+
+	public function maybe_handle_portal_service_request_remove() {
+		if ( empty( $_GET['ajcore_remove_service_request'] ) ) {
+			return;
+		}
+
+		if ( ! is_user_logged_in() ) {
+			wp_safe_redirect( wp_login_url( $this->get_customer_portal_url() ) );
+			exit;
+		}
+
+		$ledger_id = absint( wp_unslash( $_GET['ajcore_remove_service_request'] ) );
+		if ( ! $ledger_id || ! isset( $_GET['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'ajcore_remove_service_request_' . $ledger_id ) ) {
+			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-invalid' ), $this->get_customer_portal_url() ) );
+			exit;
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-unlinked' ), $this->get_customer_portal_url() ) );
+			exit;
+		}
+
+		global $wpdb;
+		$table = $this->get_portal_ledger_table();
+		$entry = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$table} WHERE id = %d AND stripe_customer_id = %s LIMIT 1",
+				$ledger_id,
+				$stripe_customer_id
+			)
+		);
+
+		if ( ! $entry || 'checkout_session' !== (string) $entry->source_type ) {
+			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-not-found' ), $this->get_customer_portal_url() ) );
+			exit;
+		}
+
+		$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+		if ( ! in_array( $status, array( 'unpaid', 'open', 'cancelled' ), true ) ) {
+			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-not-allowed' ), $this->get_customer_portal_url() ) );
+			exit;
+		}
+
+		$deleted = $wpdb->delete(
+			$table,
+			array(
+				'id'                 => $ledger_id,
+				'stripe_customer_id' => $stripe_customer_id,
+				'source_type'        => 'checkout_session',
+			),
+			array( '%d', '%s', '%s' )
+		);
+
+		$notice = false === $deleted ? 'remove-error' : 'removed';
+		wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => $notice ), $this->get_customer_portal_url() ) );
+		exit;
 	}
 
 	public function maybe_handle_portal_file_download() {
