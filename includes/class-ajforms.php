@@ -108,6 +108,7 @@ class AJForms {
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
+		add_action( 'wp_ajax_ajcore_create_custom_service_request', array( $this, 'ajax_create_custom_service_request' ) );
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 	}
 
@@ -724,15 +725,31 @@ class AJForms {
 		return array_values( array_unique( array_filter( $product_ids ) ) );
 	}
 
-	private function get_portal_available_service_products( $subscriptions ) {
+	private function get_portal_product_duplicate_behavior( $product ) {
+		$behavior = isset( $product->duplicate_behavior ) ? sanitize_key( (string) $product->duplicate_behavior ) : 'no_duplicates';
+		$allowed  = array( 'no_duplicates', 'allow_duplicate', 'custom_request' );
+
+		return in_array( $behavior, $allowed, true ) ? $behavior : 'no_duplicates';
+	}
+
+	private function is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids ) {
+		$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+		$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
+
+		if ( '' !== $price_id && in_array( $price_id, $purchased_price_ids, true ) ) {
+			return true;
+		}
+
+		return '' !== $product_id && in_array( $product_id, $purchased_product_ids, true );
+	}
+
+	private function get_portal_filtered_service_products( $subscriptions ) {
 		global $wpdb;
 
-		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
-		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
-		$service_settings      = get_option( 'ajcore_customer_portal_services_display', array() );
-		$service_settings      = is_array( $service_settings ) ? $service_settings : array();
-		$product_mode          = isset( $service_settings['product_mode'] ) && 'selected' === $service_settings['product_mode'] ? 'selected' : 'all';
-		$selected_price_ids    = isset( $service_settings['selected_price_ids'] ) && is_array( $service_settings['selected_price_ids'] ) ? array_values( array_filter( array_map( 'sanitize_text_field', $service_settings['selected_price_ids'] ) ) ) : array();
+		$service_settings   = get_option( 'ajcore_customer_portal_services_display', array() );
+		$service_settings   = is_array( $service_settings ) ? $service_settings : array();
+		$product_mode       = isset( $service_settings['product_mode'] ) && 'selected' === $service_settings['product_mode'] ? 'selected' : 'all';
+		$selected_price_ids = isset( $service_settings['selected_price_ids'] ) && is_array( $service_settings['selected_price_ids'] ) ? array_values( array_filter( array_map( 'sanitize_text_field', $service_settings['selected_price_ids'] ) ) ) : array();
 
 		$products = $wpdb->get_results(
 			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden' ORDER BY sort_order ASC, name ASC"
@@ -741,31 +758,83 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $product_mode, $selected_price_ids ) {
-					$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
-					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
+				function ( $product ) use ( $product_mode, $selected_price_ids ) {
+					$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 
 					if ( '' === $price_id ) {
 						return false;
 					}
 
-					if ( 'selected' === $product_mode && ! in_array( $price_id, $selected_price_ids, true ) ) {
-						return false;
-					}
-
-					if ( in_array( $price_id, $purchased_price_ids, true ) ) {
-						return false;
-					}
-
-					if ( '' !== $product_id && in_array( $product_id, $purchased_product_ids, true ) ) {
-						return false;
-					}
-
-					return true;
+					return 'selected' !== $product_mode || in_array( $price_id, $selected_price_ids, true );
 				}
 			)
 		);
 	}
+
+	private function get_portal_available_service_products( $subscriptions ) {
+		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
+		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
+		$products              = $this->get_portal_filtered_service_products( $subscriptions );
+
+		return array_values(
+			array_filter(
+				$products,
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids ) {
+					$is_owned = $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids );
+					$behavior = $this->get_portal_product_duplicate_behavior( $product );
+
+					if ( ! $is_owned ) {
+						return true;
+					}
+
+					return 'allow_duplicate' === $behavior;
+				}
+			)
+		);
+	}
+
+	private function get_portal_custom_request_products( $subscriptions ) {
+		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
+		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
+		$products              = $this->get_portal_filtered_service_products( $subscriptions );
+
+		return array_values(
+			array_filter(
+				$products,
+				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids ) {
+					return 'custom_request' === $this->get_portal_product_duplicate_behavior( $product )
+						&& $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids );
+				}
+			)
+		);
+	}
+
+	private function get_portal_custom_request_source_object_id( $stripe_customer_id, $price_id ) {
+		return 'custom_request_' . md5( sanitize_text_field( (string) $stripe_customer_id ) . '|' . sanitize_text_field( (string) $price_id ) );
+	}
+
+	private function get_open_custom_service_request( $stripe_customer_id, $price_id ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$price_id           = sanitize_text_field( (string) $price_id );
+		if ( '' === $stripe_customer_id || '' === $price_id ) {
+			return null;
+		}
+
+		$source_object_id = $this->get_portal_custom_request_source_object_id( $stripe_customer_id, $price_id );
+
+		return $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_object_id = %s AND source_type = %s AND status = %s LIMIT 1",
+				$stripe_customer_id,
+				$source_object_id,
+				'custom_service_request',
+				'admin_review_required'
+			)
+		);
+	}
+
 
 	private function get_portal_product_amount_label( $product ) {
 		$amount   = isset( $product->price_amount ) ? (float) $product->price_amount : 0;
@@ -862,6 +931,7 @@ class AJForms {
 		$show_current       = ! isset( $service_settings['show_current_services'] ) || (bool) $service_settings['show_current_services'];
 		$show_add           = ! isset( $service_settings['show_add_services'] ) || (bool) $service_settings['show_add_services'];
 		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions ) : array();
+		$custom_request_products = $show_add ? $this->get_portal_custom_request_products( $subscriptions ) : array();
 		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
 
 		ob_start();
@@ -894,8 +964,39 @@ class AJForms {
 
 			<?php if ( $show_add ) : ?>
 			<h3><?php esc_html_e( 'Add Services', 'ajforms' ); ?></h3>
+			<?php if ( ! empty( $custom_request_products ) ) : ?>
+				<div class="aj-portal-add-service-grid aj-portal-custom-request-grid">
+					<?php foreach ( $custom_request_products as $product ) : ?>
+						<?php
+						$product_name = ! empty( $product->custom_label ) ? $product->custom_label : $product->name;
+						$price_id     = sanitize_text_field( (string) $product->stripe_price_id );
+						$request_title = ! empty( $product->custom_request_title ) ? $product->custom_request_title : sprintf( __( 'Need another %s?', 'ajforms' ), $product_name );
+						$request_message = ! empty( $product->custom_request_message ) ? $product->custom_request_message : __( 'Request custom pricing and our team will review your account.', 'ajforms' );
+						$request_button = ! empty( $product->custom_request_button_label ) ? $product->custom_request_button_label : __( 'Request Custom Pricing', 'ajforms' );
+						$existing_request = $this->get_open_custom_service_request( $context['stripe_customer_id'], $price_id );
+						?>
+						<div class="aj-portal-add-service-card aj-portal-custom-request-card">
+							<h4><?php echo esc_html( $request_title ); ?></h4>
+							<p><?php echo esc_html( $request_message ); ?></p>
+							<?php if ( $existing_request ) : ?>
+								<div class="aj-portal-add-service-price"><?php esc_html_e( 'Under Review', 'ajforms' ); ?></div>
+								<button type="button" class="button" disabled><?php esc_html_e( 'Request Submitted', 'ajforms' ); ?></button>
+							<?php else : ?>
+								<button
+									type="button"
+									class="button aj-portal-custom-service-request-button"
+									data-price-id="<?php echo esc_attr( $price_id ); ?>"
+									data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_portal_custom_request_' . $price_id ) ); ?>"
+								><?php echo esc_html( $request_button ); ?></button>
+							<?php endif; ?>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
 			<?php if ( empty( $available_products ) ) : ?>
-				<p><?php esc_html_e( 'No additional services are currently available for this account.', 'ajforms' ); ?></p>
+				<?php if ( empty( $custom_request_products ) ) : ?>
+					<p><?php esc_html_e( 'No additional services are currently available for this account.', 'ajforms' ); ?></p>
+				<?php endif; ?>
 			<?php else : ?>
 				<div class="aj-portal-add-service-grid">
 					<?php foreach ( $available_products as $product ) : ?>
@@ -919,8 +1020,8 @@ class AJForms {
 						</div>
 					<?php endforeach; ?>
 				</div>
-				<p class="aj-portal-add-service-message" style="display:none;"></p>
 			<?php endif; ?>
+			<p class="aj-portal-add-service-message" style="display:none;"></p>
 			<?php endif; ?>
 		</section>
 		<?php
@@ -978,7 +1079,7 @@ class AJForms {
 								<tr>
 									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
 									<td><?php echo esc_html( $entry->description ); ?></td>
-									<td><?php echo esc_html( ucfirst( $entry->status ) ); ?></td>
+									<td><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
 									<td>
 										<?php if ( $entry_invoice_url ) : ?>
@@ -1994,6 +2095,60 @@ class AJForms {
 						});
 				});
 
+
+				shell.addEventListener('click', function(event) {
+					const button = event.target.closest('.aj-portal-custom-service-request-button');
+					if (!button || button.disabled) {
+						return;
+					}
+
+					const message = shell.querySelector('.aj-portal-add-service-message');
+					const originalText = button.textContent;
+					button.disabled = true;
+					button.textContent = '<?php echo esc_js( __( 'Submitting...', 'ajforms' ) ); ?>';
+
+					if (message) {
+						message.textContent = '';
+						message.className = 'aj-portal-add-service-message';
+						message.style.display = 'none';
+					}
+
+					const formData = new FormData();
+					formData.append('action', 'ajcore_create_custom_service_request');
+					formData.append('price_id', button.dataset.priceId || '');
+					formData.append('nonce', button.dataset.nonce || '');
+
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+						method: 'POST',
+						credentials: 'same-origin',
+						body: formData
+					})
+						.then(parseJsonResponse)
+						.then(function(payload) {
+							if (!payload || !payload.success) {
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>');
+							}
+							if (message) {
+								message.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Your request was submitted and is now under review.', 'ajforms' ) ); ?>';
+								message.className = 'aj-portal-add-service-message is-success';
+								message.style.display = 'block';
+							}
+							button.textContent = '<?php echo esc_js( __( 'Request Submitted', 'ajforms' ) ); ?>';
+							setTimeout(function() { window.location.reload(); }, 800);
+						})
+						.catch(function(error) {
+							button.disabled = false;
+							button.textContent = originalText;
+							if (message) {
+								message.textContent = error.message || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>';
+								message.className = 'aj-portal-add-service-message is-error';
+								message.style.display = 'block';
+							} else {
+								window.alert(error.message || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>');
+							}
+						});
+				});
+
 				shell.addEventListener('click', function(event) {
 					const button = event.target.closest('.aj-portal-cancel-service-request');
 					if (!button || button.disabled) {
@@ -2069,13 +2224,13 @@ class AJForms {
 			)
 		);
 
-		if ( ! $entry || 'checkout_session' !== (string) $entry->source_type ) {
+		if ( ! $entry || ! in_array( (string) $entry->source_type, array( 'checkout_session', 'custom_service_request' ), true ) ) {
 			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-not-found' ), $this->get_customer_portal_url() ) );
 			exit;
 		}
 
 		$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
-		if ( ! in_array( $status, array( 'unpaid', 'open', 'cancelled' ), true ) ) {
+		if ( ! in_array( $status, array( 'unpaid', 'open', 'cancelled', 'admin_review_required' ), true ) ) {
 			wp_safe_redirect( add_query_arg( array( 'portal_tab' => 'billing', 'portal_notice' => 'remove-not-allowed' ), $this->get_customer_portal_url() ) );
 			exit;
 		}
@@ -2085,7 +2240,7 @@ class AJForms {
 			array(
 				'id'                 => $ledger_id,
 				'stripe_customer_id' => $stripe_customer_id,
-				'source_type'        => 'checkout_session',
+				'source_type'        => (string) $entry->source_type,
 			),
 			array( '%d', '%s', '%s' )
 		);
@@ -2660,12 +2815,24 @@ class AJForms {
 		}
 
 		global $wpdb;
+		$entry = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE id = %d AND stripe_customer_id = %s LIMIT 1",
+				$ledger_id,
+				$stripe_customer_id
+			)
+		);
+
+		if ( ! $entry || ! in_array( (string) $entry->source_type, array( 'checkout_session', 'custom_service_request' ), true ) ) {
+			wp_send_json_error( __( 'Request was not found.', 'ajforms' ), 404 );
+		}
+
 		$deleted = $wpdb->delete(
 			$this->get_portal_ledger_table(),
 			array(
 				'id'                 => $ledger_id,
 				'stripe_customer_id' => $stripe_customer_id,
-				'source_type'        => 'checkout_session',
+				'source_type'        => (string) $entry->source_type,
 			),
 			array( '%d', '%s', '%s' )
 		);
@@ -2675,6 +2842,86 @@ class AJForms {
 		}
 
 		wp_send_json_success( array( 'removed' => true, 'ledger_id' => $ledger_id ) );
+	}
+
+	public function ajax_create_custom_service_request() {
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( __( 'Login required.', 'ajforms' ), 401 );
+		}
+
+		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
+		$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		if ( '' === $price_id || ! wp_verify_nonce( $nonce, 'ajcore_portal_custom_request_' . $price_id ) ) {
+			wp_send_json_error( __( 'Invalid custom service request.', 'ajforms' ), 400 );
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			wp_send_json_error( __( 'Portal account is not linked.', 'ajforms' ), 403 );
+		}
+
+		$product = $this->get_portal_product_by_price_id( $price_id );
+		if ( ! $product || 'custom_request' !== $this->get_portal_product_duplicate_behavior( $product ) ) {
+			wp_send_json_error( __( 'This service is not available for custom requests.', 'ajforms' ), 404 );
+		}
+
+		$context = $this->get_current_user_portal_billing_context();
+		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $context['subscriptions'] );
+		$purchased_product_ids = $this->get_customer_purchased_product_ids( $context['subscriptions'] );
+		if ( ! $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids ) ) {
+			wp_send_json_error( __( 'This custom request is available after the base service is active on your account.', 'ajforms' ), 400 );
+		}
+
+		$existing_request = $this->get_open_custom_service_request( $stripe_customer_id, $price_id );
+		if ( $existing_request ) {
+			wp_send_json_success(
+				array(
+					'message'   => __( 'Your request is already under review.', 'ajforms' ),
+					'ledger_id' => (int) $existing_request->id,
+				)
+			);
+		}
+
+		$product_name = ! empty( $product->custom_label ) ? $product->custom_label : ( ! empty( $product->name ) ? $product->name : __( 'Service', 'ajforms' ) );
+		$request_title = ! empty( $product->custom_request_title ) ? $product->custom_request_title : sprintf( __( 'Custom request for %s', 'ajforms' ), $product_name );
+		$source_object_id = $this->get_portal_custom_request_source_object_id( $stripe_customer_id, $price_id );
+		$metadata = array(
+			'price_id'     => $price_id,
+			'product_id'   => isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '',
+			'product_name' => $product_name,
+			'source'       => 'portal_custom_request',
+		);
+
+		global $wpdb;
+		$inserted = $wpdb->replace(
+			$this->get_portal_ledger_table(),
+			array(
+				'stripe_customer_id' => $stripe_customer_id,
+				'source_object_id'   => $source_object_id,
+				'source_type'        => 'custom_service_request',
+				'ledger_date'        => current_time( 'mysql' ),
+				'description'        => $request_title,
+				'amount'             => 0,
+				'currency'           => ! empty( $product->currency ) ? sanitize_key( (string) $product->currency ) : 'usd',
+				'status'             => 'admin_review_required',
+				'invoice_id'         => '',
+				'payment_intent_id'  => '',
+				'charge_id'          => '',
+				'metadata'           => wp_json_encode( $metadata ),
+				'created_at'         => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+
+		if ( false === $inserted ) {
+			wp_send_json_error( __( 'Unable to submit the request.', 'ajforms' ), 500 );
+		}
+
+		wp_send_json_success(
+			array(
+				'message' => __( 'Your request was submitted and is now under review.', 'ajforms' ),
+			)
+		);
 	}
 
 	public function ajax_create_checkout_session() {
@@ -5262,6 +5509,60 @@ class AJForms {
 						submitButton.disabled = false;
 						isSubmitting = false;
 					}
+
+				shell.addEventListener('click', function(event) {
+					const button = event.target.closest('.aj-portal-custom-service-request-button');
+					if (!button || button.disabled) {
+						return;
+					}
+
+					const message = shell.querySelector('.aj-portal-add-service-message');
+					const originalText = button.textContent;
+					button.disabled = true;
+					button.textContent = '<?php echo esc_js( __( 'Submitting...', 'ajforms' ) ); ?>';
+
+					if (message) {
+						message.textContent = '';
+						message.className = 'aj-portal-add-service-message';
+						message.style.display = 'none';
+					}
+
+					const formData = new FormData();
+					formData.append('action', 'ajcore_create_custom_service_request');
+					formData.append('price_id', button.dataset.priceId || '');
+					formData.append('nonce', button.dataset.nonce || '');
+
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+						method: 'POST',
+						credentials: 'same-origin',
+						body: formData
+					})
+						.then(parseJsonResponse)
+						.then(function(payload) {
+							if (!payload || !payload.success) {
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>');
+							}
+							if (message) {
+								message.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Your request was submitted and is now under review.', 'ajforms' ) ); ?>';
+								message.className = 'aj-portal-add-service-message is-success';
+								message.style.display = 'block';
+							}
+							button.textContent = '<?php echo esc_js( __( 'Request Submitted', 'ajforms' ) ); ?>';
+							setTimeout(function() { window.location.reload(); }, 800);
+						})
+						.catch(function(error) {
+							button.disabled = false;
+							button.textContent = originalText;
+							if (message) {
+								message.textContent = error.message || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>';
+								message.className = 'aj-portal-add-service-message is-error';
+								message.style.display = 'block';
+							} else {
+								window.alert(error.message || '<?php echo esc_js( __( 'Unable to submit request.', 'ajforms' ) ); ?>');
+							}
+						});
+				});
+
 				shell.addEventListener('click', function(event) {
 					const button = event.target.closest('.aj-portal-cancel-service-request');
 					if (!button || button.disabled) {

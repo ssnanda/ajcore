@@ -119,6 +119,10 @@ class AJForms_Activator {
 			custom_label varchar(255) DEFAULT '' NOT NULL,
 			sort_order int(11) DEFAULT 0 NOT NULL,
 			description_override longtext NULL,
+			duplicate_behavior varchar(50) DEFAULT 'no_duplicates' NOT NULL,
+			custom_request_title varchar(255) DEFAULT '' NOT NULL,
+			custom_request_message longtext NULL,
+			custom_request_button_label varchar(255) DEFAULT '' NOT NULL,
 			synced_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_price_id (stripe_price_id),
@@ -360,6 +364,6 @@ class AJForms_Activator {
 			)
 		);
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '5', false );
+		update_option( 'ajforms_portal_schema_version', '6', false );
 	}
 }
