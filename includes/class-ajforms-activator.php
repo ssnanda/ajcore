@@ -22,6 +22,7 @@ class AJForms_Activator {
 		$table_tasks                = $wpdb->prefix . 'aj_portal_tasks';
 		$table_task_statuses        = $wpdb->prefix . 'aj_portal_task_statuses';
 		$table_task_comments        = $wpdb->prefix . 'aj_portal_task_comments';
+		$table_sync_logs            = $wpdb->prefix . 'aj_portal_sync_logs';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -118,12 +119,6 @@ class AJForms_Activator {
 			custom_label varchar(255) DEFAULT '' NOT NULL,
 			sort_order int(11) DEFAULT 0 NOT NULL,
 			description_override longtext NULL,
-			duplicate_behavior varchar(50) DEFAULT 'hide_if_owned' NOT NULL,
-			custom_request_title varchar(255) DEFAULT '' NOT NULL,
-			custom_request_message longtext NULL,
-			custom_request_button_label varchar(255) DEFAULT '' NOT NULL,
-			custom_request_status varchar(50) DEFAULT 'admin_review_required' NOT NULL,
-			custom_request_type varchar(100) DEFAULT 'custom_pricing_request' NOT NULL,
 			synced_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_price_id (stripe_price_id),
@@ -248,6 +243,25 @@ class AJForms_Activator {
 			KEY task_id (task_id),
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY created_at (created_at)
+		) $charset_collate;
+
+		CREATE TABLE $table_sync_logs (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			run_key varchar(64) NOT NULL,
+			source varchar(50) DEFAULT 'manual' NOT NULL,
+			job_name varchar(100) DEFAULT 'all' NOT NULL,
+			status varchar(50) DEFAULT 'started' NOT NULL,
+			records_synced int(11) NOT NULL DEFAULT 0,
+			message longtext NULL,
+			started_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			finished_at datetime NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			PRIMARY KEY  (id),
+			KEY run_key (run_key),
+			KEY source (source),
+			KEY job_name (job_name),
+			KEY status (status),
+			KEY started_at (started_at)
 		) $charset_collate;
 
 		CREATE TABLE $table_ledger (
