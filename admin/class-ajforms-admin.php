@@ -2456,6 +2456,7 @@ class AJForms_Admin {
 		$default_items = array(
 			array( 'id' => 'overview', 'label' => __( 'Overview', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'services', 'label' => __( 'My Services', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
+			array( 'id' => 'tasks', 'label' => __( 'Tasks', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'billing', 'label' => __( 'Billing', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'file-library', 'label' => __( 'File Library', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'profile', 'label' => __( 'Profile', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
@@ -2758,7 +2759,7 @@ class AJForms_Admin {
 
 		$new_label       = isset( $_POST['new_portal_menu_label'] ) ? sanitize_text_field( wp_unslash( $_POST['new_portal_menu_label'] ) ) : '';
 		$new_url         = isset( $_POST['new_portal_menu_url'] ) ? esc_url_raw( wp_unslash( $_POST['new_portal_menu_url'] ) ) : '';
-		$built_in_labels = array( 'overview', 'my services', 'billing', 'file library', 'profile' );
+		$built_in_labels = array( 'overview', 'my services', 'tasks', 'billing', 'file library', 'profile' );
 		if ( '' !== $new_label && '' !== $new_url && ! in_array( strtolower( $new_label ), $built_in_labels, true ) ) {
 			$items[] = array(
 				'id'      => 'custom-' . wp_generate_uuid4(),

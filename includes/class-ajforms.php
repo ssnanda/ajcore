@@ -220,6 +220,13 @@ class AJForms {
 				'enabled' => true,
 			),
 			array(
+				'id'      => 'tasks',
+				'label'   => __( 'Tasks', 'ajforms' ),
+				'type'    => 'built_in',
+				'url'     => '',
+				'enabled' => true,
+			),
+			array(
 				'id'      => 'billing',
 				'label'   => __( 'Billing', 'ajforms' ),
 				'type'    => 'built_in',
@@ -1026,6 +1033,7 @@ class AJForms {
 		$billing_url          = add_query_arg( 'portal_tab', 'billing', $this->get_customer_portal_url() );
 		$file_library_url     = add_query_arg( 'portal_tab', 'file-library', $this->get_customer_portal_url() );
 		$services_url         = add_query_arg( 'portal_tab', 'services', $this->get_customer_portal_url() );
+		$tasks_url            = add_query_arg( 'portal_tab', 'tasks', $this->get_customer_portal_url() );
 		$email_us_url         = home_url( '/email-us/' );
 		$business_name        = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
 		$text_message         = sprintf(
@@ -1049,18 +1057,17 @@ class AJForms {
 					<strong><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></strong>
 					<span><?php echo esc_html( number_format_i18n( count( $upcoming ) ) ); ?></span>
 				</a>
-				<div class="aj-portal-summary-card">
+				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $tasks_url ); ?>">
 					<strong><?php esc_html_e( 'Open Tasks', 'ajforms' ); ?></strong>
 					<span><?php echo esc_html( number_format_i18n( $this->get_open_portal_tasks_count( $tasks ) ) ); ?></span>
-				</div>
+				</a>
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $file_library_url ); ?>">
 					<strong><?php esc_html_e( 'Available Files', 'ajforms' ); ?></strong>
 					<span><?php echo esc_html( number_format_i18n( count( $files ) ) ); ?></span>
 				</a>
 			</div>
 
-			<h3><?php esc_html_e( 'Tasks / Action Items', 'ajforms' ); ?></h3>
-			<?php echo $this->render_customer_portal_tasks_table( $tasks, true ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			<?php echo $this->render_customer_portal_service_summary( $active_subscriptions, $context['ledger'], $business_name ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<h3 class="aj-portal-quick-actions-heading"><?php esc_html_e( 'Quick Actions', 'ajforms' ); ?></h3>
 			<div class="aj-portal-quick-actions">
@@ -1468,6 +1475,11 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-empty-state strong{display:block;margin:0 0 8px;font-size:22px;letter-spacing:-.035em;color:#111827}
 				.ajcore-portal-shell .aj-portal-empty-state p{margin:0;color:#526173}
 
+				.ajcore-portal-shell .aj-portal-tab-intro{margin:-8px 0 24px;color:#475569;font-size:clamp(16px,1.3vw,19px);line-height:1.7;max-width:880px}
+				.ajcore-portal-shell .aj-portal-account-summary{margin:30px 0 0;padding:28px 32px;border:1px solid rgba(191,219,254,.9);border-radius:28px;background:linear-gradient(135deg,rgba(255,255,255,.96),rgba(239,246,255,.72));box-shadow:0 22px 60px rgba(15,23,42,.07)}
+				.ajcore-portal-shell .aj-portal-account-summary h3{margin:0 0 12px;color:#0f172a;font-size:clamp(22px,1.8vw,30px)}
+				.ajcore-portal-shell .aj-portal-account-summary p{margin:10px 0 0;color:#172033;font-size:clamp(16px,1.25vw,19px);line-height:1.75}
+
 
 				@media (min-width:1280px){
 					.ajcore-portal-shell .aj-customer-portal-tabs{width:100%;max-width:none;margin-left:0;margin-right:0}
@@ -1571,6 +1583,8 @@ class AJForms {
 				echo $this->render_customer_portal_overview_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'services' === $active_tab ) {
 				echo $this->render_customer_portal_services_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			} elseif ( 'tasks' === $active_tab ) {
+				echo $this->render_customer_portal_tasks_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'billing' === $active_tab ) {
 				echo $this->render_customer_portal_billing_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'file-library' === $active_tab ) {
