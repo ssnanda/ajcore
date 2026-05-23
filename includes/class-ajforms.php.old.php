@@ -2052,9 +2052,12 @@ class AJForms {
 		}
 
 		global $wpdb;
+		$ledger_table       = $this->get_portal_ledger_table();
+		$transactions_table = $this->get_portal_stripe_transactions_table();
+
 		$ledger = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE id = %d AND stripe_customer_id = %s AND source_type = %s LIMIT 1",
+				"SELECT * FROM {$ledger_table} WHERE id = %d AND stripe_customer_id = %s AND source_type = %s LIMIT 1",
 				$ledger_id,
 				$stripe_customer_id,
 				'checkout_session'
@@ -2065,44 +2068,61 @@ class AJForms {
 			wp_send_json_error( __( 'Service request was not found.', 'ajforms' ), 404 );
 		}
 
-		if ( ! in_array( (string) $ledger->status, array( 'unpaid', 'open', 'cancelled', 'canceled', 'expired', 'incomplete' ), true ) ) {
-			wp_send_json_error( __( 'Only service requests that are pending or cancelled can be removed.', 'ajforms' ), 400 );
+		$status = isset( $ledger->status ) ? sanitize_key( (string) $ledger->status ) : '';
+		if ( ! in_array( $status, array( 'unpaid', 'open', 'cancelled', 'canceled', 'expired', 'incomplete' ), true ) ) {
+			wp_send_json_error( __( 'Only pending or cancelled service requests can be removed.', 'ajforms' ), 400 );
 		}
 
-		if ( 0 === strpos( (string) $ledger->source_object_id, 'cs_' ) ) {
-			$stripe_settings = $this->get_stripe_settings();
-			if ( ! empty( $stripe_settings['secret_key'] ) ) {
-				// Best effort only. The local portal request should still be removable even if Stripe
-				// refuses to expire an already-completed/expired session.
-				$this->stripe_api_request( 'checkout/sessions/' . rawurlencode( (string) $ledger->source_object_id ) . '/expire', $stripe_settings['secret_key'] );
-			}
-		}
+		$source_object_id = ! empty( $ledger->source_object_id ) ? sanitize_text_field( (string) $ledger->source_object_id ) : '';
 
-		if ( ! empty( $ledger->source_object_id ) ) {
+		// Local portal cleanup only. Do not call Stripe here; Stripe expiration failures or warnings must not
+		// prevent a customer from removing an abandoned portal request from their billing view.
+		if ( '' !== $source_object_id ) {
 			$wpdb->delete(
-				$this->get_portal_stripe_transactions_table(),
+				$transactions_table,
 				array(
-					'stripe_object_id'   => (string) $ledger->source_object_id,
+					'stripe_object_id'   => $source_object_id,
 					'stripe_customer_id' => $stripe_customer_id,
 				),
 				array( '%s', '%s' )
 			);
-		}
 
-		$deleted = $wpdb->delete(
-			$this->get_portal_ledger_table(),
-			array(
-				'id'                 => $ledger_id,
-				'stripe_customer_id' => $stripe_customer_id,
-			),
-			array( '%d', '%s' )
-		);
+			$deleted = $wpdb->query(
+				$wpdb->prepare(
+					"DELETE FROM {$ledger_table} WHERE stripe_customer_id = %s AND source_type = %s AND ( id = %d OR source_object_id = %s ) AND status IN ('unpaid','open','cancelled','canceled','expired','incomplete')",
+					$stripe_customer_id,
+					'checkout_session',
+					$ledger_id,
+					$source_object_id
+				)
+			);
+		} else {
+			$deleted = $wpdb->delete(
+				$ledger_table,
+				array(
+					'id'                 => $ledger_id,
+					'stripe_customer_id' => $stripe_customer_id,
+					'source_type'        => 'checkout_session',
+				),
+				array( '%d', '%s', '%s' )
+			);
+		}
 
 		if ( false === $deleted ) {
 			wp_send_json_error( __( 'Unable to remove request.', 'ajforms' ), 500 );
 		}
 
-		wp_send_json_success( array( 'status' => 'removed' ) );
+		// Defensive cleanup: ensure AJAX returns valid JSON even if another hook printed a notice.
+		while ( ob_get_level() > 0 ) {
+			ob_end_clean();
+		}
+
+		wp_send_json_success(
+			array(
+				'status'  => 'removed',
+				'removed' => absint( $deleted ),
+			)
+		);
 	}
 
 	public function ajax_create_checkout_session() {
