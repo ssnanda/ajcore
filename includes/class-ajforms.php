@@ -12,6 +12,7 @@ class AJForms {
 		$this->load_dependencies();
 		$this->define_admin_hooks();
 		$this->define_public_hooks();
+		add_filter( 'cron_schedules', array( $this, 'add_ajcore_cron_schedules' ) );
 		add_action( 'init', array( $this, 'schedule_recurring_events' ) );
 	}
 
@@ -35,11 +36,58 @@ class AJForms {
 		add_action( 'wp_ajax_ajf_import_form', array( $plugin_admin, 'ajax_import_form' ) );
 		add_action( 'wp_ajax_ajf_sync_asana_reference_data', array( $plugin_admin, 'ajax_sync_asana_reference_data' ) );
 		add_action( 'ajforms_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
+		add_action( 'ajcore_portal_stripe_sync', array( $plugin_admin, 'run_scheduled_portal_sync_job' ) );
+	}
+
+	public function add_ajcore_cron_schedules( $schedules ) {
+		$schedules['ajcore_every_15_minutes'] = array(
+			'interval' => 15 * MINUTE_IN_SECONDS,
+			'display'  => __( 'Every 15 minutes', 'ajforms' ),
+		);
+		$schedules['ajcore_every_30_minutes'] = array(
+			'interval' => 30 * MINUTE_IN_SECONDS,
+			'display'  => __( 'Every 30 minutes', 'ajforms' ),
+		);
+		$schedules['ajcore_every_6_hours'] = array(
+			'interval' => 6 * HOUR_IN_SECONDS,
+			'display'  => __( 'Every 6 hours', 'ajforms' ),
+		);
+		$schedules['ajcore_weekly'] = array(
+			'interval' => WEEK_IN_SECONDS,
+			'display'  => __( 'Weekly', 'ajforms' ),
+		);
+
+		return $schedules;
 	}
 
 	public function schedule_recurring_events() {
 		if ( ! wp_next_scheduled( 'ajforms_daily_asana_sync' ) ) {
 			wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'ajforms_daily_asana_sync' );
+		}
+
+		$settings = get_option( 'ajcore_portal_sync_settings', array() );
+		$settings = is_array( $settings ) ? $settings : array();
+		$enabled  = ! empty( $settings['enabled'] );
+		$frequency = ! empty( $settings['frequency'] ) ? sanitize_key( (string) $settings['frequency'] ) : 'daily';
+		$allowed = array( 'hourly', 'twicedaily', 'daily', 'ajcore_every_6_hours', 'ajcore_weekly', 'ajcore_every_30_minutes', 'ajcore_every_15_minutes' );
+		if ( ! in_array( $frequency, $allowed, true ) ) {
+			$frequency = 'daily';
+		}
+
+		$scheduled = wp_get_schedule( 'ajcore_portal_stripe_sync' );
+		if ( ! $enabled ) {
+			if ( wp_next_scheduled( 'ajcore_portal_stripe_sync' ) ) {
+				wp_clear_scheduled_hook( 'ajcore_portal_stripe_sync' );
+			}
+			return;
+		}
+
+		if ( $scheduled && $scheduled !== $frequency ) {
+			wp_clear_scheduled_hook( 'ajcore_portal_stripe_sync' );
+		}
+
+		if ( ! wp_next_scheduled( 'ajcore_portal_stripe_sync' ) ) {
+			wp_schedule_event( time() + 10 * MINUTE_IN_SECONDS, $frequency, 'ajcore_portal_stripe_sync' );
 		}
 	}
 

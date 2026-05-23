@@ -22,6 +22,7 @@ class AJForms_Activator {
 		$table_tasks                = $wpdb->prefix . 'aj_portal_tasks';
 		$table_task_statuses        = $wpdb->prefix . 'aj_portal_task_statuses';
 		$table_task_comments        = $wpdb->prefix . 'aj_portal_task_comments';
+		$table_sync_logs            = $wpdb->prefix . 'aj_portal_sync_logs';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -244,6 +245,25 @@ class AJForms_Activator {
 			KEY created_at (created_at)
 		) $charset_collate;
 
+		CREATE TABLE $table_sync_logs (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			run_key varchar(64) NOT NULL,
+			source varchar(50) DEFAULT 'manual' NOT NULL,
+			job_name varchar(100) DEFAULT 'all' NOT NULL,
+			status varchar(50) DEFAULT 'started' NOT NULL,
+			records_synced int(11) NOT NULL DEFAULT 0,
+			message longtext NULL,
+			started_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			finished_at datetime NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			PRIMARY KEY  (id),
+			KEY run_key (run_key),
+			KEY source (source),
+			KEY job_name (job_name),
+			KEY status (status),
+			KEY started_at (started_at)
+		) $charset_collate;
+
 		CREATE TABLE $table_ledger (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			stripe_customer_id varchar(100) NOT NULL,
@@ -340,6 +360,6 @@ class AJForms_Activator {
 			)
 		);
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '4', false );
+		update_option( 'ajforms_portal_schema_version', '5', false );
 	}
 }

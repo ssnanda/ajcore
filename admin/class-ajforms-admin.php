@@ -436,6 +436,7 @@ class AJForms_Admin {
 			$this->get_portal_tasks_table(),
 			$this->get_portal_task_statuses_table(),
 			$this->get_portal_task_comments_table(),
+			$this->get_portal_sync_logs_table(),
 		);
 
 		foreach ( $required_tables as $table ) {
@@ -461,6 +462,7 @@ class AJForms_Admin {
 			'ledger'        => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_ledger_table()}" ),
 			'mappings'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_user_mappings_table()}" ),
 			'tasks'         => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_tasks_table()}" ),
+			'sync_logs'     => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_sync_logs_table()}" ),
 		);
 	}
 
@@ -965,6 +967,152 @@ class AJForms_Admin {
 		}
 
 		return $this->portal_db_error ? new WP_Error( 'portal_db_error', $this->portal_db_error ) : $count;
+	}
+
+
+	private function get_portal_sync_jobs() {
+		return array(
+			'products'      => __( 'Stripe Products', 'ajforms' ),
+			'customers'     => __( 'Stripe Customers', 'ajforms' ),
+			'subscriptions' => __( 'Stripe Subscriptions', 'ajforms' ),
+			'transactions'  => __( 'Stripe Invoices / Charges', 'ajforms' ),
+		);
+	}
+
+	private function get_portal_sync_settings() {
+		$settings = get_option( 'ajcore_portal_sync_settings', array() );
+		$settings = is_array( $settings ) ? $settings : array();
+		$jobs     = $this->get_portal_sync_jobs();
+		$selected = isset( $settings['jobs'] ) && is_array( $settings['jobs'] ) ? array_map( 'sanitize_key', $settings['jobs'] ) : array_keys( $jobs );
+		$selected = array_values( array_intersect( $selected, array_keys( $jobs ) ) );
+		if ( empty( $selected ) ) {
+			$selected = array_keys( $jobs );
+		}
+
+		$frequency = ! empty( $settings['frequency'] ) ? sanitize_key( (string) $settings['frequency'] ) : 'daily';
+		$allowed   = array( 'ajcore_every_15_minutes', 'ajcore_every_30_minutes', 'hourly', 'ajcore_every_6_hours', 'twicedaily', 'daily', 'ajcore_weekly' );
+		if ( ! in_array( $frequency, $allowed, true ) ) {
+			$frequency = 'daily';
+		}
+
+		return array(
+			'enabled'   => ! empty( $settings['enabled'] ),
+			'frequency' => $frequency,
+			'jobs'      => $selected,
+		);
+	}
+
+	private function get_portal_sync_frequency_labels() {
+		return array(
+			'ajcore_every_15_minutes' => __( 'Every 15 minutes', 'ajforms' ),
+			'ajcore_every_30_minutes' => __( 'Every 30 minutes', 'ajforms' ),
+			'hourly'                  => __( 'Hourly', 'ajforms' ),
+			'ajcore_every_6_hours'    => __( 'Every 6 hours', 'ajforms' ),
+			'twicedaily'              => __( 'Twice daily', 'ajforms' ),
+			'daily'                   => __( 'Daily', 'ajforms' ),
+			'ajcore_weekly'           => __( 'Weekly', 'ajforms' ),
+		);
+	}
+
+	private function get_portal_sync_next_run_label() {
+		$timestamp = wp_next_scheduled( 'ajcore_portal_stripe_sync' );
+		if ( ! $timestamp ) {
+			return __( 'Not scheduled', 'ajforms' );
+		}
+
+		return date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $timestamp );
+	}
+
+	private function write_portal_sync_log( $run_key, $source, $job_name, $status, $records_synced = 0, $message = '', $log_id = 0 ) {
+		global $wpdb;
+
+		$data = array(
+			'run_key'        => sanitize_text_field( (string) $run_key ),
+			'source'         => sanitize_key( (string) $source ),
+			'job_name'       => sanitize_key( (string) $job_name ),
+			'status'         => sanitize_key( (string) $status ),
+			'records_synced' => absint( $records_synced ),
+			'message'        => sanitize_textarea_field( (string) $message ),
+			'created_by'     => get_current_user_id(),
+		);
+		$formats = array( '%s', '%s', '%s', '%s', '%d', '%s', '%d' );
+
+		if ( $log_id ) {
+			$data['finished_at'] = current_time( 'mysql' );
+			$formats[] = '%s';
+			$wpdb->update( $this->get_portal_sync_logs_table(), $data, array( 'id' => absint( $log_id ) ), $formats, array( '%d' ) );
+			return absint( $log_id );
+		}
+
+		$data['started_at'] = current_time( 'mysql' );
+		$formats[] = '%s';
+		$wpdb->insert( $this->get_portal_sync_logs_table(), $data, $formats );
+
+		return (int) $wpdb->insert_id;
+	}
+
+	public function run_portal_sync_job( $source = 'manual', $requested_jobs = array() ) {
+		$this->ensure_portal_schema();
+
+		$secret_key = $this->get_stripe_secret_key_for_portal();
+		if ( '' === $secret_key ) {
+			return new WP_Error( 'missing_stripe_key', __( 'Stripe secret key is required.', 'ajforms' ) );
+		}
+
+		$available_jobs = $this->get_portal_sync_jobs();
+		$sync_settings = $this->get_portal_sync_settings();
+		$jobs = ! empty( $requested_jobs ) ? array_values( array_intersect( array_map( 'sanitize_key', (array) $requested_jobs ), array_keys( $available_jobs ) ) ) : $sync_settings['jobs'];
+		if ( empty( $jobs ) ) {
+			$jobs = array_keys( $available_jobs );
+		}
+
+		$run_key = wp_generate_uuid4();
+		$total   = 0;
+		$errors  = array();
+
+		foreach ( $jobs as $job ) {
+			$label  = isset( $available_jobs[ $job ] ) ? $available_jobs[ $job ] : $job;
+			$log_id = $this->write_portal_sync_log( $run_key, $source, $job, 'started', 0, sprintf( __( '%s sync started.', 'ajforms' ), $label ) );
+			$result = null;
+
+			if ( 'products' === $job ) {
+				$result = $this->sync_portal_stripe_products( $secret_key );
+			} elseif ( 'customers' === $job ) {
+				$result = $this->sync_portal_stripe_customers( $secret_key );
+			} elseif ( 'subscriptions' === $job ) {
+				$result = $this->sync_portal_stripe_subscriptions( $secret_key );
+			} elseif ( 'transactions' === $job ) {
+				$result = $this->sync_portal_stripe_transactions( $secret_key );
+			}
+
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $label . ': ' . $result->get_error_message();
+				$this->write_portal_sync_log( $run_key, $source, $job, 'failed', 0, $result->get_error_message(), $log_id );
+				continue;
+			}
+
+			$count = absint( $result );
+			$total += $count;
+			$this->write_portal_sync_log( $run_key, $source, $job, 'success', $count, sprintf( __( '%1$s sync completed. %2$d records refreshed.', 'ajforms' ), $label, $count ), $log_id );
+		}
+
+		if ( ! empty( $errors ) ) {
+			return new WP_Error( 'portal_sync_failed', implode( ' | ', $errors ) );
+		}
+
+		update_option( 'ajcore_portal_sync_last_run', current_time( 'mysql' ), false );
+		delete_option( 'ajforms_last_portal_db_error' );
+
+		return $total;
+	}
+
+	public function run_scheduled_portal_sync_job() {
+		$settings = $this->get_portal_sync_settings();
+		if ( empty( $settings['enabled'] ) ) {
+			return;
+		}
+
+		$this->run_portal_sync_job( 'cron', $settings['jobs'] );
 	}
 
 	private function sync_single_portal_stripe_customer( $secret_key, $stripe_customer_id ) {
@@ -2429,7 +2577,7 @@ class AJForms_Admin {
 			$this->handle_file_library_actions();
 		} elseif ( 'ajforms-client-portal' === $page ) {
 			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'file-library';
-			if ( in_array( $tab, array( 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ) {
+			if ( in_array( $tab, array( 'sync', 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ) {
 				$this->handle_client_portal_settings_save();
 			} elseif ( 'customer' === $tab ) {
 				$this->handle_portal_customer_detail_actions();
@@ -2529,11 +2677,45 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 
+		if ( isset( $_POST['ajcore_portal_sync_settings_nonce'] ) ) {
+			check_admin_referer( 'ajcore_save_portal_sync_settings', 'ajcore_portal_sync_settings_nonce' );
+			$jobs = isset( $_POST['sync_jobs'] ) && is_array( $_POST['sync_jobs'] ) ? array_map( 'sanitize_key', wp_unslash( $_POST['sync_jobs'] ) ) : array();
+			$available_jobs = array_keys( $this->get_portal_sync_jobs() );
+			$jobs = array_values( array_intersect( $jobs, $available_jobs ) );
+			if ( empty( $jobs ) ) {
+				$jobs = $available_jobs;
+			}
+
+			$frequencies = array_keys( $this->get_portal_sync_frequency_labels() );
+			$frequency = isset( $_POST['sync_frequency'] ) ? sanitize_key( wp_unslash( $_POST['sync_frequency'] ) ) : 'daily';
+			if ( ! in_array( $frequency, $frequencies, true ) ) {
+				$frequency = 'daily';
+			}
+
+			update_option(
+				'ajcore_portal_sync_settings',
+				array(
+					'enabled'   => ! empty( $_POST['sync_enabled'] ) ? 1 : 0,
+					'frequency' => $frequency,
+					'jobs'      => $jobs,
+				),
+				false
+			);
+
+			wp_clear_scheduled_hook( 'ajcore_portal_stripe_sync' );
+			if ( ! empty( $_POST['sync_enabled'] ) ) {
+				wp_schedule_event( time() + 10 * MINUTE_IN_SECONDS, $frequency, 'ajcore_portal_stripe_sync' );
+			}
+
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal-sync-settings' => 'saved' ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( isset( $_GET['portal_action'], $_GET['_wpnonce'] ) ) {
 			$action     = sanitize_key( wp_unslash( $_GET['portal_action'] ) );
 			$secret_key = $this->get_stripe_secret_key_for_portal();
 			$current_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'menu';
-			$current_tab = in_array( $current_tab, array( 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ? $current_tab : 'menu';
+			$current_tab = in_array( $current_tab, array( 'sync', 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ? $current_tab : 'menu';
 			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
 
 			if ( '' === $secret_key ) {
@@ -2545,14 +2727,16 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_portal_' . $action );
 
 			$result = null;
-			if ( 'sync_products' === $action ) {
-				$result = $this->sync_portal_stripe_products( $secret_key );
+			if ( 'sync_all' === $action ) {
+				$result = $this->run_portal_sync_job( 'manual' );
+			} elseif ( 'sync_products' === $action ) {
+				$result = $this->run_portal_sync_job( 'manual', array( 'products' ) );
 			} elseif ( 'sync_customers' === $action ) {
-				$result = $this->sync_portal_stripe_customers( $secret_key );
+				$result = $this->run_portal_sync_job( 'manual', array( 'customers' ) );
 			} elseif ( 'sync_subscriptions' === $action ) {
-				$result = $this->sync_portal_stripe_subscriptions( $secret_key );
+				$result = $this->run_portal_sync_job( 'manual', array( 'subscriptions' ) );
 			} elseif ( 'sync_transactions' === $action ) {
-				$result = $this->sync_portal_stripe_transactions( $secret_key );
+				$result = $this->run_portal_sync_job( 'manual', array( 'transactions' ) );
 			}
 
 			if ( is_wp_error( $result ) ) {
@@ -2570,7 +2754,7 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' );
 			$result = $this->enable_stripe_customer_as_portal_user( sanitize_text_field( wp_unslash( $_POST['stripe_customer_id'] ) ) );
 			$redirect_tab = isset( $_POST['redirect_tab'] ) ? sanitize_key( wp_unslash( $_POST['redirect_tab'] ) ) : 'portal-users';
-			$redirect_tab = in_array( $redirect_tab, array( 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ? $redirect_tab : 'portal-users';
+			$redirect_tab = in_array( $redirect_tab, array( 'sync', 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ? $redirect_tab : 'portal-users';
 			$args         = array( 'page' => 'ajforms-client-portal', 'tab' => $redirect_tab );
 			if ( is_wp_error( $result ) ) {
 				$args['portal-error'] = rawurlencode( $result->get_error_message() );
@@ -3685,6 +3869,11 @@ class AJForms_Admin {
 		return $wpdb->prefix . 'aj_portal_task_comments';
 	}
 
+	private function get_portal_sync_logs_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_sync_logs';
+	}
+
 	public function get_form_record( $form_id ) {
 		global $wpdb;
 
@@ -4033,7 +4222,7 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'file-library';
-		$tab      = in_array( $tab, array( 'file-library', 'menu', 'portal-users', 'products-services', 'tasks', 'customer' ), true ) ? $tab : 'file-library';
+		$tab      = in_array( $tab, array( 'file-library', 'sync', 'menu', 'portal-users', 'products-services', 'tasks', 'customer' ), true ) ? $tab : 'file-library';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-client-portal-admin">
@@ -4045,6 +4234,7 @@ class AJForms_Admin {
 			<?php if ( 'customer' !== $tab ) : ?>
 				<h2 class="nav-tab-wrapper">
 					<a class="nav-tab <?php echo 'file-library' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'file-library', $base_url ) ); ?>"><?php esc_html_e( 'File Library', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'sync' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sync', $base_url ) ); ?>"><?php esc_html_e( 'Sync', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'menu' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'menu', $base_url ) ); ?>"><?php esc_html_e( 'Menu', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'products-services' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'products-services', $base_url ) ); ?>"><?php esc_html_e( 'Products / Services', 'ajforms' ); ?></a>
@@ -4054,6 +4244,8 @@ class AJForms_Admin {
 			<?php
 			if ( 'customer' === $tab ) {
 				$this->display_portal_customer_detail_page();
+			} elseif ( 'sync' === $tab ) {
+				$this->display_portal_sync_tab();
 			} elseif ( 'portal-users' === $tab ) {
 				$this->display_portal_users_tab();
 			} elseif ( 'products-services' === $tab ) {
@@ -4644,6 +4836,117 @@ class AJForms_Admin {
 		<?php
 	}
 
+
+	private function display_portal_sync_tab() {
+		global $wpdb;
+
+		$this->ensure_portal_schema();
+
+		$cache_counts = $this->get_portal_cache_counts();
+		$settings     = $this->get_portal_sync_settings();
+		$jobs         = $this->get_portal_sync_jobs();
+		$frequencies  = $this->get_portal_sync_frequency_labels();
+		$logs         = $wpdb->get_results( "SELECT * FROM {$this->get_portal_sync_logs_table()} ORDER BY started_at DESC, id DESC LIMIT 80" );
+		$last_run     = get_option( 'ajcore_portal_sync_last_run', '' );
+		$sync_url     = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
+		?>
+		<div class="ajforms-settings-card">
+			<h3><?php esc_html_e( 'Stripe Sync Center', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'Use this tab as the single place to sync Stripe portal data, schedule recurring syncs, and review sync history.', 'ajforms' ); ?></p>
+
+			<?php if ( isset( $_GET['portal-sync-settings'] ) ) : ?>
+				<div class="notice notice-success inline"><p><?php esc_html_e( 'Sync schedule saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
+				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
+				<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
+			<?php endif; ?>
+
+			<div class="ajforms-settings-inline-actions">
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d customers cached', 'ajforms' ), $cache_counts['customers'] ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d products cached', 'ajforms' ), $cache_counts['products'] ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d subscriptions cached', 'ajforms' ), $cache_counts['subscriptions'] ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d billing records cached', 'ajforms' ), $cache_counts['ledger'] ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users linked', 'ajforms' ), $cache_counts['mappings'] ) ); ?></span>
+			</div>
+
+			<div class="ajforms-settings-inline-actions" style="margin-top:12px;">
+				<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Run Selected Sync Now', 'ajforms' ); ?></a>
+				<?php foreach ( $jobs as $job_key => $job_label ) : ?>
+					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_' . $job_key ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_' . $job_key ) ); ?>"><?php echo esc_html( sprintf( __( 'Sync %s', 'ajforms' ), $job_label ) ); ?></a>
+				<?php endforeach; ?>
+			</div>
+		</div>
+
+		<form method="post" class="ajforms-settings-card">
+			<?php wp_nonce_field( 'ajcore_save_portal_sync_settings', 'ajcore_portal_sync_settings_nonce' ); ?>
+			<h3><?php esc_html_e( 'Schedule Syncs', 'ajforms' ); ?></h3>
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Enable schedule', 'ajforms' ); ?></th>
+					<td><label><input type="checkbox" name="sync_enabled" value="1" <?php checked( ! empty( $settings['enabled'] ) ); ?>> <?php esc_html_e( 'Run selected syncs automatically with WP-Cron.', 'ajforms' ); ?></label></td>
+				</tr>
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Frequency', 'ajforms' ); ?></th>
+					<td>
+						<select name="sync_frequency">
+							<?php foreach ( $frequencies as $frequency_key => $frequency_label ) : ?>
+								<option value="<?php echo esc_attr( $frequency_key ); ?>" <?php selected( $settings['frequency'], $frequency_key ); ?>><?php echo esc_html( $frequency_label ); ?></option>
+							<?php endforeach; ?>
+						</select>
+						<p class="description"><?php echo esc_html( sprintf( __( 'Next scheduled run: %s', 'ajforms' ), $this->get_portal_sync_next_run_label() ) ); ?></p>
+						<?php if ( $last_run ) : ?><p class="description"><?php echo esc_html( sprintf( __( 'Last completed run: %s', 'ajforms' ), $last_run ) ); ?></p><?php endif; ?>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Sync jobs', 'ajforms' ); ?></th>
+					<td>
+						<?php foreach ( $jobs as $job_key => $job_label ) : ?>
+							<label style="display:block;margin:0 0 8px;"><input type="checkbox" name="sync_jobs[]" value="<?php echo esc_attr( $job_key ); ?>" <?php checked( in_array( $job_key, $settings['jobs'], true ) ); ?>> <?php echo esc_html( $job_label ); ?></label>
+						<?php endforeach; ?>
+						<p class="description"><?php esc_html_e( 'Recommended order is Products, Customers, Subscriptions, then Invoices / Charges. The automatic run uses this same order.', 'ajforms' ); ?></p>
+					</td>
+				</tr>
+			</table>
+			<?php submit_button( __( 'Save Sync Schedule', 'ajforms' ) ); ?>
+		</form>
+
+		<div class="ajforms-settings-card">
+			<h3><?php esc_html_e( 'Sync History', 'ajforms' ); ?></h3>
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Started', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Job', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Records', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Message / Log', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( empty( $logs ) ) : ?>
+						<tr><td colspan="6"><?php esc_html_e( 'No sync history yet.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $logs as $log ) : ?>
+							<tr>
+								<td><?php echo esc_html( $log->started_at ? wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $log->started_at ) ) : '-' ); ?></td>
+								<td><?php echo esc_html( ucfirst( (string) $log->source ) ); ?></td>
+								<td><?php echo esc_html( isset( $jobs[ $log->job_name ] ) ? $jobs[ $log->job_name ] : $log->job_name ); ?></td>
+								<td><span class="ajcore-status-pill <?php echo 'success' === $log->status ? '' : 'off'; ?>"><?php echo esc_html( ucfirst( (string) $log->status ) ); ?></span></td>
+								<td><?php echo esc_html( absint( $log->records_synced ) ); ?></td>
+								<td><?php echo esc_html( (string) $log->message ); ?></td>
+							</tr>
+						<?php endforeach; ?>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
+	}
+
 	private function display_portal_users_tab() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
@@ -4689,7 +4992,7 @@ class AJForms_Admin {
 			<div class="ajforms-settings-inline-actions">
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d synced customers', 'ajforms' ), $total_customers ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users', 'ajforms' ), $enabled_count ) ); ?></span>
-				<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'portal_action' => 'sync_customers' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_customers' ) ); ?>"><?php esc_html_e( 'Sync Stripe Customers', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
 
 			<?php if ( ! empty( $available_fields ) ) : ?>
@@ -4729,7 +5032,7 @@ class AJForms_Admin {
 								<p><strong><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></strong></p>
 								<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customers and guest Checkout/Charge buyer records from the connected Stripe account.', 'ajforms' ); ?></p>
 								<p>
-									<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'portal_action' => 'sync_customers' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_customers' ) ); ?>"><?php esc_html_e( 'Sync Stripe Customers', 'ajforms' ); ?></a>
+									<a class="button button-primary" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 								</p>
 							</td>
 						</tr>
@@ -4836,7 +5139,7 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d active', 'ajforms' ), $active_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d visible in Add Services', 'ajforms' ), $visible_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
-				<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services', 'portal_action' => 'sync_products' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_products' ) ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
 
 			<form method="post">
@@ -5710,10 +6013,7 @@ class AJForms_Admin {
 					<div class="notice notice-warning inline"><p><?php esc_html_e( 'Add your Stripe secret key under Settings > Stripe Payments before syncing portal data.', 'ajforms' ); ?></p></div>
 				<?php endif; ?>
 				<div class="ajforms-settings-inline-actions">
-					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu', 'portal_action' => 'sync_products' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_products' ) ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
-					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu', 'portal_action' => 'sync_customers' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_customers' ) ); ?>"><?php esc_html_e( 'Sync Stripe Customers', 'ajforms' ); ?></a>
-					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu', 'portal_action' => 'sync_subscriptions' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_subscriptions' ) ); ?>"><?php esc_html_e( 'Sync Stripe Subscriptions', 'ajforms' ); ?></a>
-					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu', 'portal_action' => 'sync_transactions' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_transactions' ) ); ?>"><?php esc_html_e( 'Sync Stripe Invoices / Charges', 'ajforms' ); ?></a>
+					<a class="button button-primary" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 				</div>
 			</div>
 
