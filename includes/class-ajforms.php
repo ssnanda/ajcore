@@ -1024,7 +1024,7 @@ class AJForms {
 			<h3><?php esc_html_e( 'Tasks / Action Items', 'ajforms' ); ?></h3>
 			<?php echo $this->render_customer_portal_tasks_table( $tasks, true ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
-			<h3><?php esc_html_e( 'Quick Actions', 'ajforms' ); ?></h3>
+			<h3 class="aj-portal-quick-actions-heading"><?php esc_html_e( 'Quick Actions', 'ajforms' ); ?></h3>
 			<div class="aj-portal-quick-actions">
 				<a class="button" href="<?php echo esc_url( $file_library_url ); ?>"><?php esc_html_e( 'Upload Document', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( $billing_url ); ?>"><?php esc_html_e( 'View Billing', 'ajforms' ); ?></a>
@@ -1417,8 +1417,28 @@ class AJForms {
 					.ajcore-portal-shell:before{inset:-44px -20px auto;height:260px}
 					.ajcore-portal-shell h2{font-size:34px;margin-bottom:20px}
 					.ajcore-portal-shell h3{font-size:22px;margin:28px 0 14px}
-					.ajcore-portal-shell .aj-customer-portal-tabs{position:sticky;top:8px;z-index:20;gap:6px;margin:0 -2px 26px;border-radius:22px;padding:7px}
-					.ajcore-portal-shell .aj-customer-portal-tab{min-height:42px;padding:10px 13px;font-size:14px;border-radius:16px}
+					.ajcore-portal-shell .aj-customer-portal-tabs{
+						position:sticky;
+						top:8px;
+						z-index:20;
+						display:grid;
+						grid-template-columns:repeat(2,minmax(0,1fr));
+						gap:8px;
+						margin:0 -2px 26px;
+						border-radius:24px;
+						padding:8px;
+						overflow:visible;
+					}
+					.ajcore-portal-shell .aj-customer-portal-tab{
+						width:100%;
+						min-height:44px;
+						padding:10px 10px;
+						font-size:14px;
+						border-radius:17px;
+						white-space:normal;
+						text-align:center;
+					}
+					.ajcore-portal-shell .aj-customer-portal-tab:last-child:nth-child(odd){grid-column:1 / -1}
 					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 					.ajcore-portal-shell .aj-portal-summary-card{min-height:104px;border-radius:22px;padding:20px 18px}
 					.ajcore-portal-shell .aj-portal-summary-card span{font-size:30px}
@@ -1433,7 +1453,11 @@ class AJForms {
 					.ajcore-portal-shell .aj-portal-table tr:last-child{border-bottom:0}
 					.ajcore-portal-shell .aj-portal-table td{border:0;padding:8px 18px}
 					.ajcore-portal-shell .aj-portal-table td:first-child{font-weight:900;color:#0f172a}
-					.ajcore-portal-shell .aj-portal-quick-actions .button{width:100%}
+					.ajcore-portal-shell .aj-portal-quick-actions-heading,.ajcore-portal-shell .aj-portal-quick-actions{display:none}
+				}
+				@media (max-width:380px){
+					.ajcore-portal-shell .aj-customer-portal-tabs{grid-template-columns:1fr}
+					.ajcore-portal-shell .aj-customer-portal-tab:last-child:nth-child(odd){grid-column:auto}
 				}
 			</style>
 			<?php if ( 'yes' === $atts['show_title'] ) : ?>
