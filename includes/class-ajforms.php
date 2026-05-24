@@ -3650,6 +3650,17 @@ class AJForms {
 			data-cart-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_cart_checkout' ) ); ?>"
 			data-include-archived="<?php echo $include_archived ? 'yes' : 'no'; ?>"
 		>
+			<?php if ( $is_cart_mode ) : ?>
+				<div class="ajcore-cart-mini" aria-live="polite">
+					<button type="button" class="ajcore-cart-mini-button" aria-label="<?php echo esc_attr__( 'View selected products in cart', 'ajforms' ); ?>">
+						<span class="ajcore-cart-mini-icon" aria-hidden="true">🛒</span>
+						<span class="ajcore-cart-mini-label"><?php esc_html_e( 'Cart', 'ajforms' ); ?></span>
+						<span class="ajcore-cart-mini-count">0</span>
+					</button>
+					<div class="ajcore-cart-mini-status"><?php esc_html_e( 'No products selected', 'ajforms' ); ?></div>
+					<button type="button" class="ajcore-cart-mini-checkout" disabled><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
+				</div>
+			<?php endif; ?>
 			<div class="ajcore-products-list" style="display:grid;grid-template-columns:repeat(<?php echo esc_attr( $columns ); ?>,minmax(0,1fr));gap:18px;">
 				<?php foreach ( $prices as $price ) : ?>
 					<?php
@@ -3757,6 +3768,10 @@ class AJForms {
 			const cartMessage = root.querySelector('.ajcore-cart-message');
 			const floatingCartButton = root.querySelector('.ajcore-floating-cart');
 			const floatingCartCount = root.querySelector('.ajcore-floating-cart-count');
+			const miniCartButton = root.querySelector('.ajcore-cart-mini-button');
+			const miniCartCount = root.querySelector('.ajcore-cart-mini-count');
+			const miniCartStatus = root.querySelector('.ajcore-cart-mini-status');
+			const miniCheckoutButton = root.querySelector('.ajcore-cart-mini-checkout');
 
 			function formatCurrency(amount, currency) {
 				try {
@@ -3790,6 +3805,15 @@ class AJForms {
 				if (floatingCartButton) {
 					floatingCartButton.classList.toggle('has-items', itemCount > 0);
 				}
+				if (miniCartCount) {
+					miniCartCount.textContent = String(itemCount);
+				}
+				if (miniCartStatus) {
+					miniCartStatus.textContent = itemCount ? (itemCount + ' selected') : 'No products selected';
+				}
+				if (miniCheckoutButton) {
+					miniCheckoutButton.disabled = itemCount === 0;
+				}
 				cartItems.innerHTML = '';
 				cartEmpty.style.display = items.length ? 'none' : 'block';
 				checkoutButton.disabled = items.length === 0;
@@ -3821,18 +3845,34 @@ class AJForms {
 				});
 				cartTotal.style.display = items.length ? 'block' : 'none';
 				cartTotal.textContent = items.length ? 'Total: ' + formatCurrency(total, currency) : '';
+				if (miniCartStatus && items.length) {
+					miniCartStatus.textContent = itemCount + ' selected · ' + formatCurrency(total, currency);
+				}
+			}
+
+			function scrollToCartPanel() {
+				const cartPanel = root.querySelector('.ajcore-cart');
+				if (!cartPanel) {
+					return;
+				}
+				root.classList.add('ajcore-cart-highlight');
+				cartPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				window.setTimeout(function() {
+					root.classList.remove('ajcore-cart-highlight');
+				}, 1200);
 			}
 
 			if (floatingCartButton) {
-				floatingCartButton.addEventListener('click', function() {
-					if (!cartItems) {
-						return;
+				floatingCartButton.addEventListener('click', scrollToCartPanel);
+			}
+			if (miniCartButton) {
+				miniCartButton.addEventListener('click', scrollToCartPanel);
+			}
+			if (miniCheckoutButton) {
+				miniCheckoutButton.addEventListener('click', function() {
+					if (checkoutButton && !checkoutButton.disabled) {
+						checkoutButton.click();
 					}
-					root.classList.add('ajcore-cart-highlight');
-					root.querySelector('.ajcore-cart').scrollIntoView({ behavior: 'smooth', block: 'start' });
-					window.setTimeout(function() {
-						root.classList.remove('ajcore-cart-highlight');
-					}, 1200);
 				});
 			}
 
@@ -3858,6 +3898,12 @@ class AJForms {
 					cart[priceId].quantity = Math.min(99, cart[priceId].quantity + quantity);
 					setCartMessage('');
 					renderCart();
+					addButton.classList.add('ajcore-added');
+					addButton.textContent = 'Added';
+					window.setTimeout(function() {
+						addButton.classList.remove('ajcore-added');
+						addButton.textContent = 'Add to Cart';
+					}, 800);
 					return;
 				}
 
@@ -3960,13 +4006,20 @@ class AJForms {
 			.ajcore-product-details :is(h3,h4){margin:10px 0 6px;color:#111827;line-height:1.2}
 			.ajcore-product-details p{margin:0 0 10px}
 			.ajcore-product-details ul{margin:8px 0 12px 20px;padding:0}
+			.ajcore-cart-mini{grid-column:1 / -1;position:sticky;top:0;z-index:9998;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;padding:12px 14px;border:1px solid #dbeafe;border-radius:16px;background:rgba(255,255,255,.96);box-shadow:0 12px 32px rgba(15,23,42,.10);backdrop-filter:blur(10px)}
+			.ajcore-cart-mini-button{display:inline-flex;align-items:center;gap:9px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:10px 14px;font-weight:900;cursor:pointer}
+			.ajcore-cart-mini-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
+			.ajcore-cart-mini-status{flex:1;color:#475569;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+			.ajcore-cart-mini-checkout{border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:10px 14px;font-weight:900;cursor:pointer}
+			.ajcore-cart-mini-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
+			.ajcore-product-add.ajcore-added{background:#16a34a!important}
 			.ajcore-floating-cart{position:fixed;right:22px;bottom:22px;z-index:99999;display:inline-flex;align-items:center;gap:10px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:12px 15px;box-shadow:0 18px 40px rgba(15,122,198,.28);font-weight:800;cursor:pointer;line-height:1}
 			.ajcore-floating-cart:hover,.ajcore-floating-cart:focus{background:#0869ab;color:#fff;outline:0;box-shadow:0 0 0 4px rgba(15,122,198,.18),0 18px 40px rgba(15,122,198,.28)}
 			.ajcore-floating-cart-icon{font-size:20px;line-height:1}
 			.ajcore-floating-cart-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
 			.ajcore-floating-cart.has-items{animation:ajcoreCartPulse .28s ease}
 			@keyframes ajcoreCartPulse{0%{transform:scale(1)}50%{transform:scale(1.06)}100%{transform:scale(1)}}
-			@media (max-width: 800px){.ajcore-products-list{grid-template-columns:1fr!important}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
+			@media (max-width: 800px){.ajcore-products-list{grid-template-columns:1fr!important}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{top:0;margin:0 0 14px;padding:10px;border-radius:14px}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
 			@media (max-width: 980px){.ajcore-products-wrap-cart{grid-template-columns:1fr}.ajcore-products-wrap-cart .ajcore-cart{grid-column:auto;grid-row:auto;position:static}}
 		</style>
 		<?php
