@@ -3393,6 +3393,31 @@ class AJForms {
 		);
 	}
 
+	private function get_public_cart_recurring_interval_conflict( $items, $allowed_price_map ) {
+		$intervals = array();
+
+		foreach ( (array) $items as $item ) {
+			if ( ! is_array( $item ) || empty( $item['price_id'] ) ) {
+				continue;
+			}
+
+			$price_id = sanitize_text_field( (string) $item['price_id'] );
+			if ( empty( $allowed_price_map[ $price_id ] ) || empty( $allowed_price_map[ $price_id ]['recurring_interval'] ) ) {
+				continue;
+			}
+
+			$interval = sanitize_key( (string) $allowed_price_map[ $price_id ]['recurring_interval'] );
+			if ( '' !== $interval ) {
+				$intervals[ $interval ] = true;
+			}
+		}
+
+		$intervals = array_keys( $intervals );
+
+		return count( $intervals ) > 1 ? $intervals : array();
+	}
+
+
 	public function ajax_create_checkout_session() {
 		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
 		$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
@@ -3447,14 +3472,7 @@ class AJForms {
 			}
 		}
 
-		if ( ! $portal_add_service ) {
-			foreach ( $allowed_price_map as $allowed_price ) {
-				if ( is_array( $allowed_price ) && ! empty( $allowed_price['recurring_interval'] ) ) {
-					$checkout_mode = 'subscription';
-					break;
-				}
-			}
-		}
+		// For public carts, checkout mode is decided from the selected line items after dependencies are normalized.
 
 		if ( empty( $allowed_price_map ) || ( ! is_array( $items ) && ! $portal_add_service && empty( $allowed_price_map[ $price_id ] ) ) ) {
 			wp_send_json_error( __( 'Product is not available.', 'ajforms' ), 404 );
@@ -3462,6 +3480,19 @@ class AJForms {
 
 		if ( is_array( $items ) ) {
 			$items = $this->normalize_public_cart_items_with_dependencies( $items, $allowed_price_map );
+			$interval_conflict = $this->get_public_cart_recurring_interval_conflict( $items, $allowed_price_map );
+			if ( ! empty( $interval_conflict ) ) {
+				wp_send_json_error( __( 'Checkout does not support multiple subscription billing intervals in the same cart. Please checkout monthly and yearly subscriptions separately.', 'ajforms' ), 400 );
+			}
+
+			$checkout_mode = 'payment';
+			foreach ( $items as $normalized_item ) {
+				$normalized_price_id = is_array( $normalized_item ) && ! empty( $normalized_item['price_id'] ) ? sanitize_text_field( (string) $normalized_item['price_id'] ) : '';
+				if ( $normalized_price_id && ! empty( $allowed_price_map[ $normalized_price_id ]['recurring_interval'] ) ) {
+					$checkout_mode = 'subscription';
+					break;
+				}
+			}
 		} elseif ( ! $portal_add_service && ! empty( $allowed_price_map[ $price_id ] ) ) {
 			$required_price_id = $this->get_public_price_required_price_id( $allowed_price_map[ $price_id ], $allowed_price_map );
 			if ( '' !== $required_price_id ) {
@@ -3469,6 +3500,19 @@ class AJForms {
 					array( 'price_id' => $required_price_id, 'quantity' => 1 ),
 					array( 'price_id' => $price_id, 'quantity' => 1 ),
 				);
+			}
+		}
+
+		if ( ! $portal_add_service && ! is_array( $items ) && ! empty( $allowed_price_map[ $price_id ]['recurring_interval'] ) ) {
+			$checkout_mode = 'subscription';
+		} elseif ( ! $portal_add_service && is_array( $items ) ) {
+			$checkout_mode = 'payment';
+			foreach ( $items as $normalized_item ) {
+				$normalized_price_id = is_array( $normalized_item ) && ! empty( $normalized_item['price_id'] ) ? sanitize_text_field( (string) $normalized_item['price_id'] ) : '';
+				if ( $normalized_price_id && ! empty( $allowed_price_map[ $normalized_price_id ]['recurring_interval'] ) ) {
+					$checkout_mode = 'subscription';
+					break;
+				}
 			}
 		}
 
@@ -3826,6 +3870,7 @@ class AJForms {
 						data-amount="<?php echo esc_attr( $price_amount ); ?>"
 						data-currency="<?php echo esc_attr( strtolower( $price['currency'] ) ); ?>"
 						data-recurring-interval="<?php echo esc_attr( ! empty( $price['recurring_interval'] ) ? sanitize_key( (string) $price['recurring_interval'] ) : '' ); ?>"
+						data-price-label="<?php echo esc_attr( $price_currency . ' ' . number_format_i18n( $price_amount, 2 ) . ( ! empty( $price['recurring_interval'] ) ? ' ' . sprintf( __( 'Per %s', 'ajforms' ), sanitize_key( (string) $price['recurring_interval'] ) ) : '' ) ); ?>"
 						data-required-price-id="<?php echo esc_attr( $required_price_id ); ?>"
 						data-required-product-name="<?php echo esc_attr( $required_product_name ); ?>"
 						data-dependency-note="<?php echo esc_attr( $dependency_note ); ?>"
@@ -4094,6 +4139,9 @@ class AJForms {
 							name: item.name || 'Product',
 							amount: parseFloat(item.amount || '0') || 0,
 							currency: item.currency || 'usd',
+							recurring_interval: item.recurring_interval || '',
+							price_label: item.price_label || '',
+							required_price_id: item.required_price_id || '',
 							quantity: 1,
 							locked: item.locked || ''
 						};
@@ -4125,6 +4173,68 @@ class AJForms {
 				return null;
 			}
 
+			function getIntervalLabel(interval) {
+				interval = String(interval || '').toLowerCase();
+				if (!interval) {
+					return '';
+				}
+				if (interval === 'month') {
+					return 'Per Month';
+				}
+				if (interval === 'year') {
+					return 'Per Year';
+				}
+				if (interval === 'week') {
+					return 'Per Week';
+				}
+				if (interval === 'day') {
+					return 'Per Day';
+				}
+				return 'Per ' + interval;
+			}
+
+			function getProductPriceLabel(product) {
+				if (!product || !product.dataset) {
+					return '';
+				}
+				if (product.dataset.priceLabel) {
+					return product.dataset.priceLabel;
+				}
+				const amount = parseFloat(product.dataset.amount || '0') || 0;
+				const currency = product.dataset.currency || 'usd';
+				const intervalLabel = getIntervalLabel(product.dataset.recurringInterval || '');
+				return formatCurrency(amount, currency) + (intervalLabel ? ' ' + intervalLabel : '');
+			}
+
+			function getCartItemPriceLabel(item) {
+				if (item && item.price_label) {
+					return item.price_label;
+				}
+				const intervalLabel = getIntervalLabel(item && item.recurring_interval ? item.recurring_interval : '');
+				return formatCurrency(item.amount, item.currency) + (intervalLabel ? ' ' + intervalLabel : '');
+			}
+
+			function getProductsRecurringIntervalConflict(productsToAdd) {
+				const intervals = {};
+				Object.values(cart).forEach(function(item) {
+					const interval = item && item.recurring_interval ? String(item.recurring_interval) : '';
+					if (interval) {
+						intervals[interval] = true;
+					}
+				});
+				(productsToAdd || []).forEach(function(product) {
+					if (!product || !product.dataset) {
+						return;
+					}
+					const interval = product.dataset.recurringInterval || '';
+					if (interval) {
+						intervals[interval] = true;
+					}
+				});
+				const intervalList = Object.keys(intervals);
+				return intervalList.length > 1 ? intervalList : [];
+			}
+
 			function upsertCartProduct(product, lockedReason) {
 				if (!product) {
 					return false;
@@ -4138,6 +4248,9 @@ class AJForms {
 					name: product.dataset.productName || 'Product',
 					amount: parseFloat(product.dataset.amount || '0') || 0,
 					currency: product.dataset.currency || 'usd',
+					recurring_interval: product.dataset.recurringInterval || '',
+					price_label: getProductPriceLabel(product),
+					required_price_id: product.dataset.requiredPriceId || '',
 					quantity: 1,
 					locked: lockedReason || ''
 				};
@@ -4206,7 +4319,7 @@ class AJForms {
 					row.style.cssText = 'display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9;';
 					row.innerHTML = '<div><strong></strong><div></div><small class="ajcore-cart-row-note"></small></div><span class="ajcore-cart-row-qty">Qty 1</span><button type="button">Remove</button>';
 					row.querySelector('strong').textContent = item.name;
-					row.querySelector('div div').textContent = formatCurrency(item.amount, item.currency);
+					row.querySelector('div div').textContent = getCartItemPriceLabel(item);
 					const rowNote = row.querySelector('.ajcore-cart-row-note');
 					if (rowNote) {
 						rowNote.textContent = item.locked ? item.locked : '';
@@ -4241,7 +4354,7 @@ class AJForms {
 						modalRow.className = 'ajcore-cart-modal-row';
 						modalRow.innerHTML = '<div class="ajcore-cart-modal-row-main"><strong></strong><span></span><small></small></div><span class="ajcore-cart-modal-row-qty">Qty 1</span><button type="button">Remove</button>';
 						modalRow.querySelector('strong').textContent = item.name;
-						modalRow.querySelector('span').textContent = formatCurrency(item.amount, item.currency);
+						modalRow.querySelector('span').textContent = getCartItemPriceLabel(item);
 						const modalNote = modalRow.querySelector('small');
 						modalNote.textContent = item.locked ? item.locked : '';
 						modalNote.style.display = item.locked ? 'block' : 'none';
@@ -4338,6 +4451,18 @@ class AJForms {
 						return;
 					}
 					const priceId = product.dataset.priceId;
+					const productsToAdd = [product];
+					const requiredPriceId = product.dataset.requiredPriceId || '';
+					const requiredProductForConflict = requiredPriceId ? getProductByPriceId(requiredPriceId) : null;
+					if (requiredProductForConflict && !cart[requiredPriceId]) {
+						productsToAdd.push(requiredProductForConflict);
+					}
+					const recurringConflict = getProductsRecurringIntervalConflict(productsToAdd);
+					if (recurringConflict.length > 1) {
+						setCartMessage('This cart already includes a ' + getIntervalLabel(recurringConflict[0]) + ' subscription. Please checkout ' + getIntervalLabel(recurringConflict[1]) + ' subscriptions separately.');
+						openCartModal();
+						return;
+					}
 					const dependencyResult = addRequiredProductIfNeeded(product);
 					upsertCartProduct(product, '');
 					setCartMessage(dependencyResult && dependencyResult.note ? dependencyResult.note : '');
