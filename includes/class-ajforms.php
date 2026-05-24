@@ -3739,7 +3739,7 @@ class AJForms {
 					<span class="ajcore-floating-cart-text"><?php esc_html_e( 'Cart', 'ajforms' ); ?></span>
 					<span class="ajcore-floating-cart-count">0</span>
 				</button>
-				<aside class="ajcore-cart" style="margin-top:22px;border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);">
+				<aside class="ajcore-cart" aria-hidden="true" style="display:none;margin-top:22px;border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);">
 					<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;">
 						<h3 style="margin:0;font-size:22px;line-height:1.2;"><?php esc_html_e( 'Cart', 'ajforms' ); ?></h3>
 						<button type="button" class="ajcore-cart-clear" style="background:transparent;color:#64748b;border:0;padding:0;font-weight:700;cursor:pointer;"><?php esc_html_e( 'Clear', 'ajforms' ); ?></button>
@@ -3851,7 +3851,7 @@ class AJForms {
 			}
 
 			function scrollToCartPanel() {
-				const cartPanel = root.querySelector('.ajcore-cart');
+				const cartPanel = root.querySelector('.ajcore-cart-mini') || root.querySelector('.ajcore-cart');
 				if (!cartPanel) {
 					return;
 				}
@@ -3990,10 +3990,10 @@ class AJForms {
 		})();
 		</script>
 		<style>
-			.ajcore-products-wrap-cart{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:22px;align-items:start}
-			.ajcore-products-wrap-cart .ajcore-products-list{grid-column:1}
-			.ajcore-products-wrap-cart .ajcore-cart{grid-column:2;grid-row:1;position:sticky;top:24px;transition:box-shadow .2s ease,transform .2s ease}
-			.ajcore-products-wrap-cart.ajcore-cart-highlight .ajcore-cart{box-shadow:0 0 0 4px rgba(15,122,198,.16),0 18px 44px rgba(15,23,42,.12)!important;transform:translateY(-2px)}
+			.ajcore-products-wrap-cart{display:block}
+			.ajcore-products-wrap-cart .ajcore-products-list{grid-column:auto}
+			.ajcore-products-wrap-cart .ajcore-cart{display:none!important}
+			.ajcore-products-wrap-cart.ajcore-cart-highlight .ajcore-cart-mini{box-shadow:0 0 0 4px rgba(15,122,198,.16),0 18px 44px rgba(15,23,42,.12)!important;transform:translateY(-2px)}
 			.ajcore-products-wrap .ajcore-product{display:flex;flex-direction:column;min-height:360px;box-sizing:border-box}
 			.ajcore-products-wrap .ajcore-product-title{font-size:clamp(20px,2vw,24px)!important;line-height:1.12!important;letter-spacing:-.02em;min-height:2.28em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 			.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{font-size:16px;line-height:1.45;color:#64748b;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;min-height:7.25em}
@@ -4013,7 +4013,7 @@ class AJForms {
 			.ajcore-cart-mini-checkout{border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:10px 14px;font-weight:900;cursor:pointer}
 			.ajcore-cart-mini-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
 			.ajcore-product-add.ajcore-added{background:#16a34a!important}
-			.ajcore-floating-cart{position:fixed;right:22px;bottom:22px;z-index:99999;display:inline-flex;align-items:center;gap:10px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:12px 15px;box-shadow:0 18px 40px rgba(15,122,198,.28);font-weight:800;cursor:pointer;line-height:1}
+			.ajcore-floating-cart{position:fixed;right:22px;bottom:22px;z-index:99999;display:none!important;align-items:center;gap:10px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:12px 15px;box-shadow:0 18px 40px rgba(15,122,198,.28);font-weight:800;cursor:pointer;line-height:1}
 			.ajcore-floating-cart:hover,.ajcore-floating-cart:focus{background:#0869ab;color:#fff;outline:0;box-shadow:0 0 0 4px rgba(15,122,198,.18),0 18px 40px rgba(15,122,198,.28)}
 			.ajcore-floating-cart-icon{font-size:20px;line-height:1}
 			.ajcore-floating-cart-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
