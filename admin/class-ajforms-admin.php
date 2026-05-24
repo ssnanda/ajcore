@@ -4384,6 +4384,48 @@ class AJForms_Admin {
 		return isset( $labels[ $status ] ) ? $status : 'draft';
 	}
 
+	private function should_show_portal_billing_change_preview( $request ) {
+		$request_type = isset( $request->request_type ) ? sanitize_key( (string) $request->request_type ) : '';
+		$source       = isset( $request->source ) ? sanitize_key( (string) $request->source ) : '';
+		$source_type  = isset( $request->source_type ) ? sanitize_key( (string) $request->source_type ) : '';
+
+		$allowed_request_types = array( 'custom_request', 'service_request', 'quote_request', 'upgrade_request', 'billing_change' );
+		$allowed_sources       = array( 'portal_custom_request', 'portal_additional_entity_pricing', 'custom_request', 'service_quote_request', 'custom_service_request', 'service_request' );
+		$allowed_source_types  = array( 'custom_service_request', 'service_quote_request', 'custom_request', 'service_request' );
+
+		return in_array( $request_type, $allowed_request_types, true )
+			|| in_array( $source, $allowed_sources, true )
+			|| in_array( $source_type, $allowed_source_types, true );
+	}
+
+	private function should_delete_linked_ledger_for_service_request( $request ) {
+		$status       = isset( $request->status ) ? sanitize_key( (string) $request->status ) : '';
+		$request_type = isset( $request->request_type ) ? sanitize_key( (string) $request->request_type ) : '';
+		$source       = isset( $request->source ) ? sanitize_key( (string) $request->source ) : '';
+		$source_type  = isset( $request->source_type ) ? sanitize_key( (string) $request->source_type ) : '';
+
+		if ( ! in_array( $status, array( 'draft', 'pending_payment', 'cancelled', 'failed' ), true ) ) {
+			return false;
+		}
+
+		return 'add_service' === $request_type
+			&& ( 'ledger_backfill' === $source || 'checkout_session' === $source_type );
+	}
+
+	private function cleanup_stale_portal_checkout_request_attempts() {
+		global $wpdb;
+
+		$this->ensure_portal_schema();
+
+		$wpdb->query(
+			"DELETE FROM {$this->get_portal_service_requests_table()}
+			WHERE request_type = 'add_service'
+			AND source = 'ledger_backfill'
+			AND source_type = 'checkout_session'
+			AND status = 'pending_payment'"
+		);
+	}
+
 
 	private function get_portal_service_request_raw_data( $request ) {
 		$raw = isset( $request->raw_data ) ? json_decode( (string) $request->raw_data, true ) : array();
@@ -4960,6 +5002,9 @@ class AJForms_Admin {
 			$status = 'admin_review_required';
 			if ( $is_checkout_request ) {
 				$status = 'paid' === $entry->status ? 'paid' : ( 'failed' === $entry->status ? 'failed' : 'pending_payment' );
+				if ( 'paid' !== $status ) {
+					continue;
+				}
 			} elseif ( ! empty( $entry->status ) ) {
 				$status = $this->normalize_portal_service_request_status( $entry->status );
 			}
@@ -5014,6 +5059,7 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
+		$this->cleanup_stale_portal_checkout_request_attempts();
 		$this->handle_portal_service_request_details_save();
 		$this->handle_portal_service_request_billing_preview_save();
 
@@ -5026,20 +5072,34 @@ class AJForms_Admin {
 		check_admin_referer( 'ajcore_service_request_' . $request_id );
 
 		$action_status_map = array(
-			'under_review'     => 'admin_review_required',
-			'await_payment'    => 'awaiting_payment',
-			'paid'             => 'paid',
-			'complete'     => 'completed',
-			'cancel'       => 'cancelled',
-			'failed'       => 'failed',
+			'under_review'  => 'admin_review_required',
+			'await_payment' => 'awaiting_payment',
+			'paid'          => 'paid',
+			'complete'      => 'completed',
+			'cancel'        => 'cancelled',
+			'failed'        => 'failed',
 		);
+
+		global $wpdb;
+		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
+
+		if ( 'delete' === $action ) {
+			if ( $request ) {
+				if ( ! empty( $request->ledger_id ) && $this->should_delete_linked_ledger_for_service_request( $request ) ) {
+					$wpdb->delete( $this->get_portal_ledger_table(), array( 'id' => (int) $request->ledger_id ), array( '%d' ) );
+				}
+				$wpdb->delete( $this->get_portal_service_requests_table(), array( 'id' => $request_id ), array( '%d' ) );
+			}
+
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( ! isset( $action_status_map[ $action ] ) ) {
 			return;
 		}
 
-		global $wpdb;
 		$status = $action_status_map[ $action ];
-		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
 		if ( $request ) {
 			$wpdb->update(
 				$this->get_portal_service_requests_table(),
@@ -5071,6 +5131,7 @@ class AJForms_Admin {
 		global $wpdb;
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
+		$this->cleanup_stale_portal_checkout_request_attempts();
 
 		$status_filter = isset( $_GET['request_status'] ) ? sanitize_key( wp_unslash( $_GET['request_status'] ) ) : '';
 		$search        = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
@@ -5156,9 +5217,10 @@ class AJForms_Admin {
 							'under_review'  => __( 'Under Review', 'ajforms' ),
 							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
 							'paid'          => __( 'Paid', 'ajforms' ),
-							'complete'     => __( 'Complete', 'ajforms' ),
-							'cancel'       => __( 'Cancel', 'ajforms' ),
-							'failed'       => __( 'Failed', 'ajforms' ),
+							'complete'      => __( 'Complete', 'ajforms' ),
+							'cancel'        => __( 'Cancel', 'ajforms' ),
+							'failed'        => __( 'Failed', 'ajforms' ),
+							'delete'        => __( 'Delete', 'ajforms' ),
 						);
 						?>
 						<tr>
@@ -5329,6 +5391,7 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
+		$this->cleanup_stale_portal_checkout_request_attempts();
 
 		$status_filter = isset( $_GET['request_status'] ) ? sanitize_key( wp_unslash( $_GET['request_status'] ) ) : '';
 		$search        = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
@@ -5415,9 +5478,10 @@ class AJForms_Admin {
 							'under_review'  => __( 'Under Review', 'ajforms' ),
 							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
 							'paid'          => __( 'Paid', 'ajforms' ),
-							'complete'     => __( 'Complete', 'ajforms' ),
-							'cancel'       => __( 'Cancel', 'ajforms' ),
-							'failed'       => __( 'Failed', 'ajforms' ),
+							'complete'      => __( 'Complete', 'ajforms' ),
+							'cancel'        => __( 'Cancel', 'ajforms' ),
+							'failed'        => __( 'Failed', 'ajforms' ),
+							'delete'        => __( 'Delete', 'ajforms' ),
 						);
 						$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
 						$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
@@ -5456,7 +5520,7 @@ class AJForms_Admin {
 										'ajcore_service_request_' . (int) $request->id
 									);
 									?>
-									<a class="button button-small" href="<?php echo esc_url( $action_url ); ?>"><?php echo esc_html( $action_label ); ?></a>
+									<a class="button button-small<?php echo 'delete' === $action_key ? ' button-link-delete' : ''; ?>" href="<?php echo esc_url( $action_url ); ?>"<?php echo 'delete' === $action_key ? ' onclick="return confirm(\'' . esc_js( __( 'Delete this request? Pending checkout attempts will also be removed from the client billing list when safely linked.', 'ajforms' ) ) . '\');"' : ''; ?>><?php echo esc_html( $action_label ); ?></a>
 								<?php endforeach; ?>
 
 								<details style="margin-top:8px;max-width:420px;">
@@ -5477,6 +5541,7 @@ class AJForms_Admin {
 									</form>
 								</details>
 
+								<?php if ( $this->should_show_portal_billing_change_preview( $request ) ) : ?>
 								<details style="margin-top:8px;max-width:520px;">
 									<summary><?php esc_html_e( 'Billing Change Preview', 'ajforms' ); ?></summary>
 									<p style="margin:8px 0;color:#646970;"><?php esc_html_e( 'Estimate credit, new charge, and net amount due before changing anything in Stripe. This preview does not update Stripe.', 'ajforms' ); ?></p>
@@ -5503,7 +5568,7 @@ class AJForms_Admin {
 											</select>
 										</label>
 										<label><?php esc_html_e( 'Effective date', 'ajforms' ); ?><br><input type="date" name="preview_effective_date" value="<?php echo esc_attr( ! empty( $billing_preview['effective_date'] ) ? $billing_preview['effective_date'] : current_time( 'Y-m-d' ) ); ?>"></label>
-										<button class="button button-small button-primary" type="submit"><?php esc_html_e( 'Save Preview', 'ajforms' ); ?></button>
+										<button class="button button-small button-primary" type="submit"><?php esc_html_e( 'Save Billing Preview', 'ajforms' ); ?></button>
 									</form>
 
 									<?php if ( ! empty( $billing_preview ) ) : ?>
@@ -5529,6 +5594,7 @@ class AJForms_Admin {
 										</div>
 									<?php endif; ?>
 								</details>
+								<?php endif; ?>
 							</td>
 						</tr>
 					<?php endforeach; ?>
