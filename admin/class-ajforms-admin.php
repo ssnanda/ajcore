@@ -601,6 +601,92 @@ class AJForms_Admin {
 		return $this->get_guest_portal_customer_id( $email );
 	}
 
+	private function extract_checkout_custom_fields( $payment ) {
+		$fields = array();
+
+		if ( empty( $payment['custom_fields'] ) || ! is_array( $payment['custom_fields'] ) ) {
+			return $fields;
+		}
+
+		foreach ( $payment['custom_fields'] as $field ) {
+			if ( ! is_array( $field ) || empty( $field['key'] ) ) {
+				continue;
+			}
+
+			$key   = sanitize_key( (string) $field['key'] );
+			$value = '';
+			$type  = ! empty( $field['type'] ) ? sanitize_key( (string) $field['type'] ) : '';
+
+			if ( 'text' === $type && isset( $field['text']['value'] ) ) {
+				$value = sanitize_text_field( (string) $field['text']['value'] );
+			} elseif ( 'numeric' === $type && isset( $field['numeric']['value'] ) ) {
+				$value = sanitize_text_field( (string) $field['numeric']['value'] );
+			} elseif ( 'dropdown' === $type && isset( $field['dropdown']['value'] ) ) {
+				$value = sanitize_text_field( (string) $field['dropdown']['value'] );
+			}
+
+			if ( '' !== $key && '' !== $value ) {
+				$fields[ $key ] = $value;
+			}
+		}
+
+		return $fields;
+	}
+
+	private function get_checkout_custom_field_value( $payment, $key ) {
+		$fields = $this->extract_checkout_custom_fields( $payment );
+		$key    = sanitize_key( (string) $key );
+
+		return isset( $fields[ $key ] ) ? sanitize_text_field( (string) $fields[ $key ] ) : '';
+	}
+
+	private function update_portal_customer_checkout_custom_fields( $stripe_customer_id, $payment ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$custom_fields      = $this->extract_checkout_custom_fields( $payment );
+
+		if ( '' === $stripe_customer_id || empty( $custom_fields ) ) {
+			return false;
+		}
+
+		$table = $this->get_portal_stripe_customers_table();
+		$row   = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT id, metadata FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+
+		if ( ! $row ) {
+			return false;
+		}
+
+		$metadata = ! empty( $row->metadata ) ? json_decode( (string) $row->metadata, true ) : array();
+		if ( ! is_array( $metadata ) ) {
+			$metadata = array();
+		}
+
+		foreach ( $custom_fields as $field_key => $field_value ) {
+			$metadata[ $field_key ] = $field_value;
+		}
+
+		if ( ! empty( $custom_fields['business_name'] ) ) {
+			$metadata['business_name'] = sanitize_text_field( (string) $custom_fields['business_name'] );
+		}
+
+		return false !== $wpdb->update(
+			$table,
+			array(
+				'metadata'  => wp_json_encode( $metadata ),
+				'synced_at' => current_time( 'mysql' ),
+			),
+			array( 'id' => absint( $row->id ) ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+	}
+
 	private function get_invoice_line_summary( $invoice ) {
 		$summary = array(
 			'description'          => '',
@@ -660,9 +746,22 @@ class AJForms_Admin {
 		$email = ! empty( $details['email'] ) ? sanitize_email( (string) $details['email'] ) : '';
 		$name  = ! empty( $details['name'] ) ? sanitize_text_field( (string) $details['name'] ) : '';
 		$phone = ! empty( $details['phone'] ) ? sanitize_text_field( (string) $details['phone'] ) : '';
+		$checkout_custom_fields = $this->extract_checkout_custom_fields( $payment );
+		$business_name = ! empty( $checkout_custom_fields['business_name'] ) ? sanitize_text_field( (string) $checkout_custom_fields['business_name'] ) : '';
 
 		if ( '' === $email ) {
 			return 0;
+		}
+
+		$customer_metadata = array(
+			'source' => sanitize_key( $source ),
+			'guest'  => true,
+		);
+		foreach ( $checkout_custom_fields as $field_key => $field_value ) {
+			$customer_metadata[ $field_key ] = $field_value;
+		}
+		if ( '' !== $business_name ) {
+			$customer_metadata['business_name'] = $business_name;
 		}
 
 		return $this->upsert_portal_record(
@@ -673,7 +772,7 @@ class AJForms_Admin {
 				'name'               => $name,
 				'phone'              => $phone,
 				'address'            => ! empty( $details['address'] ) ? wp_json_encode( $details['address'] ) : '',
-				'metadata'           => wp_json_encode( array( 'source' => sanitize_key( $source ), 'guest' => true ) ),
+				'metadata'           => wp_json_encode( $customer_metadata ),
 				'raw_data'           => wp_json_encode( $payment ),
 				'livemode'           => ! empty( $payment['livemode'] ) ? 1 : 0,
 				'created_at'         => ! empty( $payment['created'] ) ? $this->stripe_timestamp_to_mysql( $payment['created'] ) : null,
@@ -778,6 +877,10 @@ class AJForms_Admin {
 			}
 
 			$inserted = $this->upsert_guest_portal_customer_from_payment( $session, 'checkout_session' );
+			$customer_id = $this->get_payment_customer_id( $session );
+			if ( '' !== $customer_id ) {
+				$this->update_portal_customer_checkout_custom_fields( $customer_id, $session );
+			}
 			if ( $inserted ) {
 				$count++;
 			}
@@ -962,7 +1065,7 @@ class AJForms_Admin {
 					'invoice_id'         => $data['invoice_id'],
 					'payment_intent_id'  => $data['payment_intent_id'],
 					'charge_id'          => $data['charge_id'],
-					'metadata'           => '',
+					'metadata'           => ! empty( $session_ledger_metadata ) ? wp_json_encode( $session_ledger_metadata ) : '',
 					'created_at'         => current_time( 'mysql' ),
 				),
 				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
@@ -989,6 +1092,8 @@ class AJForms_Admin {
 			}
 
 			$this->upsert_guest_portal_customer_from_payment( $session, 'checkout_session' );
+			$this->update_portal_customer_checkout_custom_fields( $customer_id, $session );
+			$checkout_custom_fields = $this->extract_checkout_custom_fields( $session );
 
 			$payment_intent_id = ! empty( $session['payment_intent'] ) ? sanitize_text_field( (string) $session['payment_intent'] ) : '';
 			if ( '' !== $payment_intent_id ) {
@@ -1005,6 +1110,13 @@ class AJForms_Admin {
 
 			$currency = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : 'usd';
 			$status   = ! empty( $session['payment_status'] ) ? sanitize_key( (string) $session['payment_status'] ) : '';
+			$session_ledger_metadata = array();
+			if ( ! empty( $checkout_custom_fields ) ) {
+				$session_ledger_metadata['checkout_custom_fields'] = $checkout_custom_fields;
+				foreach ( $checkout_custom_fields as $field_key => $field_value ) {
+					$session_ledger_metadata[ $field_key ] = $field_value;
+				}
+			}
 			$data     = array(
 				'stripe_object_id'   => sanitize_text_field( (string) $session['id'] ),
 				'object_type'        => 'checkout_session',
@@ -1037,7 +1149,7 @@ class AJForms_Admin {
 					'invoice_id'         => $data['invoice_id'],
 					'payment_intent_id'  => $data['payment_intent_id'],
 					'charge_id'          => $data['charge_id'],
-					'metadata'           => '',
+					'metadata'           => ! empty( $session_ledger_metadata ) ? wp_json_encode( $session_ledger_metadata ) : '',
 					'created_at'         => current_time( 'mysql' ),
 				),
 				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),

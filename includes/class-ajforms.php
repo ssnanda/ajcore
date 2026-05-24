@@ -3530,6 +3530,14 @@ class AJForms {
 			'cancel_url'  => $cancel_url,
 		);
 
+		if ( ! $portal_add_service ) {
+			$body['custom_fields[0][key]']           = 'business_name';
+			$body['custom_fields[0][label][type]']  = 'custom';
+			$body['custom_fields[0][label][custom]'] = __( 'Business Name', 'ajforms' );
+			$body['custom_fields[0][type]']          = 'text';
+			$body['custom_fields[0][optional]']      = 'false';
+		}
+
 		$mapped_stripe_customer_id = is_user_logged_in() ? $this->get_current_user_stripe_customer_id() : '';
 		if ( 0 === strpos( $mapped_stripe_customer_id, 'cus_' ) ) {
 			$body['customer'] = $mapped_stripe_customer_id;
