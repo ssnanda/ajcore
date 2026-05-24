@@ -1816,7 +1816,7 @@ class AJForms_Admin {
 
 		$prices = array();
 		foreach ( isset( $response['data'] ) && is_array( $response['data'] ) ? $response['data'] : array() as $price ) {
-			if ( ! is_array( $price ) || empty( $price['id'] ) || ! empty( $price['recurring'] ) ) {
+			if ( ! is_array( $price ) || empty( $price['id'] ) ) {
 				continue;
 			}
 
@@ -1843,6 +1843,9 @@ class AJForms_Admin {
 			$unit_amount  = isset( $price['unit_amount'] ) ? absint( $price['unit_amount'] ) : 0;
 			$currency     = isset( $price['currency'] ) ? strtolower( sanitize_key( $price['currency'] ) ) : 'usd';
 			$amount       = in_array( $currency, array( 'jpy', 'krw', 'vnd' ), true ) ? $unit_amount : $unit_amount / 100;
+			$recurring    = isset( $price['recurring'] ) && is_array( $price['recurring'] ) ? $price['recurring'] : array();
+			$recurring_interval = ! empty( $recurring['interval'] ) ? sanitize_key( (string) $recurring['interval'] ) : '';
+			$recurring_interval_count = ! empty( $recurring['interval_count'] ) ? absint( $recurring['interval_count'] ) : 1;
 
 			if ( $unit_amount <= 0 ) {
 				continue;
@@ -1860,6 +1863,8 @@ class AJForms_Admin {
 				'nickname'     => ! empty( $price['nickname'] ) ? sanitize_text_field( (string) $price['nickname'] ) : '',
 				'amount'       => $amount,
 				'currency'     => $currency,
+				'recurring_interval' => $recurring_interval,
+				'recurring_interval_count' => $recurring_interval_count,
 			);
 		}
 
@@ -6943,7 +6948,7 @@ class AJForms_Admin {
 				<div class="ajcore-products-hero">
 					<div>
 						<h1><?php esc_html_e( 'Products', 'ajforms' ); ?></h1>
-						<p><?php esc_html_e( 'Sync one-time Stripe Prices here, then place products on any page with the shortcode. Product payments use Stripe Checkout.', 'ajforms' ); ?></p>
+						<p><?php esc_html_e( 'Sync Stripe Prices here, then place products on any page with the shortcode. One-time and recurring prices can use Stripe Checkout.', 'ajforms' ); ?></p>
 					</div>
 					<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
 				</div>
@@ -6970,7 +6975,7 @@ class AJForms_Admin {
 				</p>
 
 				<?php if ( empty( $prices ) ) : ?>
-					<div class="ajcore-products-empty"><?php esc_html_e( 'No synced one-time Stripe prices yet.', 'ajforms' ); ?></div>
+					<div class="ajcore-products-empty"><?php esc_html_e( 'No synced Stripe prices yet.', 'ajforms' ); ?></div>
 				<?php else : ?>
 					<div class="ajcore-shortcode-builder" id="ajcore-shortcode-builder">
 						<div class="ajcore-builder-head">
@@ -7035,7 +7040,10 @@ class AJForms_Admin {
 									<input type="checkbox" class="ajcore-product-select" value="<?php echo esc_attr( $price['id'] ); ?>">
 									<span>
 										<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ) ); ?></strong>
-										<span><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . ' - ' . $price['id'] ); ?></span>
+										<?php
+										$price_interval = ! empty( $price['recurring_interval'] ) ? '/' . sanitize_key( (string) $price['recurring_interval'] ) : '';
+										?>
+										<span><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $price_interval . ' - ' . $price['id'] ); ?></span>
 										<?php if ( ! empty( $price['product_description'] ) ) : ?>
 											<span><?php echo esc_html( wp_trim_words( $price['product_description'], 16 ) ); ?></span>
 										<?php endif; ?>
@@ -7060,7 +7068,8 @@ class AJForms_Admin {
 								<?php if ( ! empty( $price['product_description'] ) ) : ?>
 									<p style="margin:0 0 10px;color:#64748b;"><?php echo esc_html( $price['product_description'] ); ?></p>
 								<?php endif; ?>
-								<div class="ajcore-product-price"><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) ); ?></div>
+								<?php $price_interval = ! empty( $price['recurring_interval'] ) ? '/' . sanitize_key( (string) $price['recurring_interval'] ) : ''; ?>
+								<div class="ajcore-product-price"><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $price_interval ); ?></div>
 								<div class="ajcore-product-meta">
 									<span><?php echo esc_html( 'Price: ' . $price['id'] ); ?></span>
 									<span><?php echo esc_html( 'Product: ' . $price['product_id'] ); ?></span>

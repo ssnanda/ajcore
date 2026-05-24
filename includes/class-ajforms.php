@@ -3331,6 +3331,15 @@ class AJForms {
 			}
 		}
 
+		if ( ! $portal_add_service ) {
+			foreach ( $allowed_price_map as $allowed_price ) {
+				if ( is_array( $allowed_price ) && ! empty( $allowed_price['recurring_interval'] ) ) {
+					$checkout_mode = 'subscription';
+					break;
+				}
+			}
+		}
+
 		if ( empty( $allowed_price_map ) ) {
 			wp_send_json_error( __( 'Product is not available.', 'ajforms' ), 404 );
 		}
@@ -3646,7 +3655,8 @@ class AJForms {
 					<?php
 					$price_amount   = (float) $price['amount'];
 					$price_currency = strtoupper( $price['currency'] );
-					$price_label    = $price_currency . ' ' . number_format_i18n( $price_amount, 2 );
+					$price_interval = ! empty( $price['recurring_interval'] ) ? '/' . sanitize_key( (string) $price['recurring_interval'] ) : '';
+					$price_label    = $price_currency . ' ' . number_format_i18n( $price_amount, 2 ) . $price_interval;
 					$description    = isset( $price['product_description'] ) ? (string) $price['product_description'] : '';
 					$rich_description = ! empty( $price['product_rich_description'] ) ? (string) $price['product_rich_description'] : $description;
 					$summary        = ! empty( $price['product_summary'] ) ? (string) $price['product_summary'] : wp_trim_words( $description, 16 );
@@ -3657,6 +3667,7 @@ class AJForms {
 						data-product-name="<?php echo esc_attr( $price['product_name'] ); ?>"
 						data-amount="<?php echo esc_attr( $price_amount ); ?>"
 						data-currency="<?php echo esc_attr( strtolower( $price['currency'] ) ); ?>"
+						data-recurring-interval="<?php echo esc_attr( ! empty( $price['recurring_interval'] ) ? sanitize_key( (string) $price['recurring_interval'] ) : '' ); ?>"
 						style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);"
 					>
 						<?php if ( $show_title ) : ?>
