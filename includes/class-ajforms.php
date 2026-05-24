@@ -3530,12 +3530,15 @@ class AJForms {
 			'cancel_url'  => $cancel_url,
 		);
 
+		/*
+		 * Collect Business Name directly in Stripe Checkout as Stripe's native customer
+		 * business_name field, instead of using a custom field that only lives on the
+		 * Checkout Session. This keeps Stripe Dashboard's Customer > More options >
+		 * Business name populated when Checkout creates/updates the customer.
+		 */
 		if ( ! $portal_add_service ) {
-			$body['custom_fields[0][key]']           = 'business_name';
-			$body['custom_fields[0][label][type]']  = 'custom';
-			$body['custom_fields[0][label][custom]'] = __( 'Business Name', 'ajforms' );
-			$body['custom_fields[0][type]']          = 'text';
-			$body['custom_fields[0][optional]']      = 'false';
+			$body['name_collection[business][enabled]']  = 'true';
+			$body['name_collection[business][optional]'] = 'false';
 		}
 
 		$mapped_stripe_customer_id = is_user_logged_in() ? $this->get_current_user_stripe_customer_id() : '';
