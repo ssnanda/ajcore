@@ -2970,6 +2970,60 @@ class AJForms {
 		return null;
 	}
 
+
+	private function get_public_product_dependency_settings() {
+		$settings = get_option( 'ajcore_public_product_dependencies', array() );
+		if ( ! is_array( $settings ) ) {
+			return array();
+		}
+
+		$normalized = array();
+		foreach ( $settings as $price_id => $dependency ) {
+			$price_id = sanitize_text_field( (string) $price_id );
+			if ( '' === $price_id || ! is_array( $dependency ) ) {
+				continue;
+			}
+
+			$required_price_id = isset( $dependency['requires_price_id'] ) ? sanitize_text_field( (string) $dependency['requires_price_id'] ) : '';
+			$dependency_note   = isset( $dependency['dependency_note'] ) ? sanitize_textarea_field( (string) $dependency['dependency_note'] ) : '';
+
+			$normalized[ $price_id ] = array(
+				'requires_price_id' => $required_price_id,
+				'dependency_note'   => $dependency_note,
+			);
+		}
+
+		return $normalized;
+	}
+
+	private function apply_public_product_dependency_settings_to_prices( $prices ) {
+		$dependency_settings = $this->get_public_product_dependency_settings();
+		if ( empty( $dependency_settings ) || ! is_array( $prices ) ) {
+			return $prices;
+		}
+
+		foreach ( $prices as $index => $price ) {
+			if ( ! is_array( $price ) || empty( $price['id'] ) ) {
+				continue;
+			}
+
+			$price_id = sanitize_text_field( (string) $price['id'] );
+			if ( empty( $dependency_settings[ $price_id ] ) ) {
+				continue;
+			}
+
+			$dependency = $dependency_settings[ $price_id ];
+			if ( ! empty( $dependency['requires_price_id'] ) ) {
+				$prices[ $index ]['requires_price_id'] = sanitize_text_field( (string) $dependency['requires_price_id'] );
+			}
+			if ( ! empty( $dependency['dependency_note'] ) ) {
+				$prices[ $index ]['dependency_note'] = sanitize_textarea_field( (string) $dependency['dependency_note'] );
+			}
+		}
+
+		return $prices;
+	}
+
 	private function get_public_stripe_prices( $requested_price_ids = array(), $include_archived = false ) {
 		$settings       = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 		$mode           = isset( $settings['stripe_products_mode'] ) ? sanitize_key( $settings['stripe_products_mode'] ) : 'all';
@@ -2999,7 +3053,7 @@ class AJForms {
 			$allowed_prices[] = $price;
 		}
 
-		return $allowed_prices;
+		return $this->apply_public_product_dependency_settings_to_prices( $allowed_prices );
 	}
 
 
@@ -3382,7 +3436,9 @@ class AJForms {
 			);
 			$checkout_mode = ! empty( $allowed_price_map[ $price_id ]['recurring_interval'] ) ? 'subscription' : 'payment';
 		} else {
-			$allowed_prices = $this->get_public_stripe_prices( $requested_price_ids, $include_archived );
+			// Load the full public price set for public checkout so dependency rules can add required products
+			// even when the required price was not part of the original submitted cart.
+			$allowed_prices = $this->get_public_stripe_prices( array(), $include_archived );
 
 			foreach ( $allowed_prices as $allowed_price ) {
 				if ( is_array( $allowed_price ) && ! empty( $allowed_price['id'] ) ) {
@@ -3400,7 +3456,7 @@ class AJForms {
 			}
 		}
 
-		if ( empty( $allowed_price_map ) ) {
+		if ( empty( $allowed_price_map ) || ( ! is_array( $items ) && ! $portal_add_service && empty( $allowed_price_map[ $price_id ] ) ) ) {
 			wp_send_json_error( __( 'Product is not available.', 'ajforms' ), 404 );
 		}
 
@@ -3462,7 +3518,7 @@ class AJForms {
 
 			$body['metadata[source]'] = 'ajcore_products_cart';
 		} else {
-			$price = reset( $allowed_price_map );
+			$price = isset( $allowed_price_map[ $price_id ] ) ? $allowed_price_map[ $price_id ] : reset( $allowed_price_map );
 			$body['line_items[0][price]']    = $price_id;
 			$body['line_items[0][quantity]'] = 1;
 			$body['metadata[price_id]']      = $price_id;
@@ -3758,6 +3814,10 @@ class AJForms {
 					} elseif ( ! empty( $price['requires_product_name'] ) ) {
 						$required_product_name = sanitize_text_field( (string) $price['requires_product_name'] );
 					}
+					$dependency_note = ! empty( $price['dependency_note'] ) ? sanitize_textarea_field( (string) $price['dependency_note'] ) : '';
+					if ( '' === $dependency_note && '' !== $required_product_name ) {
+						$dependency_note = sprintf( __( 'This product requires %s. It will be added to your cart automatically.', 'ajforms' ), $required_product_name );
+					}
 					?>
 					<div
 						class="ajcore-product"
@@ -3768,6 +3828,7 @@ class AJForms {
 						data-recurring-interval="<?php echo esc_attr( ! empty( $price['recurring_interval'] ) ? sanitize_key( (string) $price['recurring_interval'] ) : '' ); ?>"
 						data-required-price-id="<?php echo esc_attr( $required_price_id ); ?>"
 						data-required-product-name="<?php echo esc_attr( $required_product_name ); ?>"
+						data-dependency-note="<?php echo esc_attr( $dependency_note ); ?>"
 						style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);"
 					>
 						<?php if ( $show_title ) : ?>
@@ -3796,6 +3857,10 @@ class AJForms {
 								<?php echo esc_html( sprintf( __( 'Includes required setup: %s', 'ajforms' ), $required_product_name ) ); ?>
 							</div>
 						<?php endif; ?>
+						<?php if ( $dependency_note ) : ?>
+							<div class="ajcore-product-dependency-note" style="margin:12px 0 14px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#1e40af;font-size:13px;font-weight:700;line-height:1.4;"><?php echo esc_html( $dependency_note ); ?></div>
+						<?php endif; ?>
+
 						<?php if ( $show_price ) : ?>
 							<div class="ajcore-product-price" style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
 								<?php echo esc_html( $price_label ); ?>
@@ -3947,12 +4012,21 @@ class AJForms {
 			}
 
 			function setCartMessage(message) {
-				if (!cartMessage) {
-					return;
+				if (cartMessage) {
+					cartMessage.textContent = message || '';
+					cartMessage.style.display = message ? 'block' : 'none';
 				}
 
-				cartMessage.textContent = message || '';
-				cartMessage.style.display = message ? 'block' : 'none';
+				let miniNotice = miniCart ? miniCart.querySelector('.ajcore-cart-mini-notice') : null;
+				if (miniCart && !miniNotice) {
+					miniNotice = document.createElement('div');
+					miniNotice.className = 'ajcore-cart-mini-notice';
+					miniCart.appendChild(miniNotice);
+				}
+				if (miniNotice) {
+					miniNotice.textContent = message || '';
+					miniNotice.style.display = message ? 'block' : 'none';
+				}
 			}
 
 			const cartStorageKey = 'ajcoreProductsCart:' + window.location.pathname + ':' + (root.dataset.includeArchived || 'no');
@@ -4035,17 +4109,24 @@ class AJForms {
 
 			function addRequiredProductIfNeeded(product) {
 				const requiredPriceId = product && product.dataset ? (product.dataset.requiredPriceId || '') : '';
-				if (!requiredPriceId || cart[requiredPriceId]) {
-					return '';
+				if (!requiredPriceId) {
+					return { added: false, name: '', note: '' };
 				}
 
 				const requiredProduct = getProductByPriceId(requiredPriceId);
 				if (!requiredProduct) {
-					return '';
+					return { added: false, name: '', note: product.dataset.dependencyNote || '' };
 				}
 
-				upsertCartProduct(requiredProduct, 'required');
-				return requiredProduct.dataset.productName || 'Required setup';
+				const requiredName = requiredProduct.dataset.productName || 'Required product';
+				const dependencyNote = product.dataset.dependencyNote || ('This product requires ' + requiredName + '. It was added to your cart automatically.');
+
+				if (!cart[requiredPriceId]) {
+					upsertCartProduct(requiredProduct, dependencyNote);
+					return { added: true, name: requiredName, note: dependencyNote };
+				}
+
+				return { added: false, name: requiredName, note: dependencyNote };
 			}
 
 			function renderCart() {
@@ -4091,7 +4172,7 @@ class AJForms {
 					row.querySelector('div div').textContent = formatCurrency(item.amount, item.currency);
 					const rowNote = row.querySelector('.ajcore-cart-row-note');
 					if (rowNote) {
-						rowNote.textContent = item.locked ? 'Required setup item' : '';
+						rowNote.textContent = item.locked ? item.locked : '';
 						rowNote.style.cssText = 'display:block;margin-top:3px;color:#64748b;font-size:12px;font-weight:700;';
 					}
 					const quantityBadge = row.querySelector('.ajcore-cart-row-qty');
@@ -4159,9 +4240,9 @@ class AJForms {
 						return;
 					}
 					const priceId = product.dataset.priceId;
-					const requiredName = addRequiredProductIfNeeded(product);
+					const dependencyResult = addRequiredProductIfNeeded(product);
 					upsertCartProduct(product, '');
-					setCartMessage(requiredName ? ('Added required setup: ' + requiredName) : '');
+					setCartMessage(dependencyResult && dependencyResult.note ? dependencyResult.note : '');
 					renderCart();
 					addButton.classList.add('ajcore-added');
 					addButton.textContent = 'Added';
@@ -4276,6 +4357,7 @@ class AJForms {
 			.ajcore-cart-mini-clear:disabled{opacity:.45;cursor:not-allowed}
 			.ajcore-cart-mini-checkout{border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:10px 14px;font-weight:900;cursor:pointer}
 			.ajcore-cart-mini-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
+			.ajcore-cart-mini-notice{flex:0 0 100%;display:none;margin-top:6px;padding:8px 10px;border-radius:10px;background:#fff7ed;color:#9a3412;font-size:12px;font-weight:800;line-height:1.35;border:1px solid #fed7aa}
 			.ajcore-product-add.ajcore-added{background:#16a34a!important}
 			.ajcore-floating-cart{position:fixed;right:22px;bottom:22px;z-index:99999;display:none!important;align-items:center;gap:10px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:12px 15px;box-shadow:0 18px 40px rgba(15,122,198,.28);font-weight:800;cursor:pointer;line-height:1}
 			.ajcore-floating-cart:hover,.ajcore-floating-cart:focus{background:#0869ab;color:#fff;outline:0;box-shadow:0 0 0 4px rgba(15,122,198,.18),0 18px 40px rgba(15,122,198,.28)}

@@ -343,6 +343,87 @@ class AJForms_Admin {
 		update_option( 'ajforms_stripe_products_cache', $cache );
 	}
 
+
+	private function get_public_product_dependency_settings() {
+		$settings = get_option( 'ajcore_public_product_dependencies', array() );
+		if ( ! is_array( $settings ) ) {
+			return array();
+		}
+
+		$normalized = array();
+		foreach ( $settings as $price_id => $dependency ) {
+			$price_id = sanitize_text_field( (string) $price_id );
+			if ( '' === $price_id || ! is_array( $dependency ) ) {
+				continue;
+			}
+
+			$normalized[ $price_id ] = array(
+				'requires_price_id' => isset( $dependency['requires_price_id'] ) ? sanitize_text_field( (string) $dependency['requires_price_id'] ) : '',
+				'dependency_note'   => isset( $dependency['dependency_note'] ) ? sanitize_textarea_field( (string) $dependency['dependency_note'] ) : '',
+			);
+		}
+
+		return $normalized;
+	}
+
+	private function save_public_product_dependency_settings( $raw_settings ) {
+		$raw_settings = is_array( $raw_settings ) ? $raw_settings : array();
+		$normalized   = array();
+
+		foreach ( $raw_settings as $price_id => $dependency ) {
+			$price_id = sanitize_text_field( (string) $price_id );
+			if ( '' === $price_id || ! is_array( $dependency ) ) {
+				continue;
+			}
+
+			$required_price_id = isset( $dependency['requires_price_id'] ) ? sanitize_text_field( (string) $dependency['requires_price_id'] ) : '';
+			$dependency_note   = isset( $dependency['dependency_note'] ) ? sanitize_textarea_field( (string) $dependency['dependency_note'] ) : '';
+
+			if ( $required_price_id === $price_id ) {
+				$required_price_id = '';
+			}
+
+			if ( '' === $required_price_id && '' === $dependency_note ) {
+				continue;
+			}
+
+			$normalized[ $price_id ] = array(
+				'requires_price_id' => $required_price_id,
+				'dependency_note'   => $dependency_note,
+			);
+		}
+
+		update_option( 'ajcore_public_product_dependencies', $normalized, false );
+		$this->merge_public_product_dependency_settings_into_cache();
+
+		return $normalized;
+	}
+
+	private function merge_public_product_dependency_settings_into_cache() {
+		$dependency_settings = $this->get_public_product_dependency_settings();
+		$cache               = $this->get_stripe_products_cache();
+		$prices              = isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array();
+
+		foreach ( $prices as $index => $price ) {
+			if ( ! is_array( $price ) || empty( $price['id'] ) ) {
+				continue;
+			}
+
+			$price_id = sanitize_text_field( (string) $price['id'] );
+			$dependency = isset( $dependency_settings[ $price_id ] ) ? $dependency_settings[ $price_id ] : array();
+
+			if ( ! empty( $dependency['requires_price_id'] ) ) {
+				$prices[ $index ]['requires_price_id'] = sanitize_text_field( (string) $dependency['requires_price_id'] );
+			}
+			if ( ! empty( $dependency['dependency_note'] ) ) {
+				$prices[ $index ]['dependency_note'] = sanitize_textarea_field( (string) $dependency['dependency_note'] );
+			}
+		}
+
+		$cache['prices'] = $prices;
+		$this->update_stripe_products_cache( $cache );
+	}
+
 	private function stripe_api_get( $path, $secret_key, $query_args = array() ) {
 		$url = add_query_arg( $query_args, 'https://api.stripe.com/v1/' . ltrim( $path, '/' ) );
 
@@ -1858,6 +1939,15 @@ class AJForms_Admin {
 					$required_product_name = sanitize_text_field( (string) $product_metadata[ $dependency_key ] );
 				}
 			}
+			$dependency_note = '';
+			foreach ( array( 'ajcore_dependency_note', 'dependency_note', 'required_product_note' ) as $dependency_note_key ) {
+				if ( '' === $dependency_note && ! empty( $price_metadata[ $dependency_note_key ] ) ) {
+					$dependency_note = sanitize_textarea_field( (string) $price_metadata[ $dependency_note_key ] );
+				}
+				if ( '' === $dependency_note && ! empty( $product_metadata[ $dependency_note_key ] ) ) {
+					$dependency_note = sanitize_textarea_field( (string) $product_metadata[ $dependency_note_key ] );
+				}
+			}
 			$product_active = ! isset( $product['active'] ) || ! empty( $product['active'] );
 			$price_active   = ! isset( $price['active'] ) || ! empty( $price['active'] );
 			$unit_amount  = isset( $price['unit_amount'] ) ? absint( $price['unit_amount'] ) : 0;
@@ -1882,6 +1972,7 @@ class AJForms_Admin {
 				'price_metadata' => $price_metadata,
 				'requires_price_id' => $required_price_id,
 				'requires_product_name' => $required_product_name,
+				'dependency_note' => isset( $dependency_note ) ? $dependency_note : '',
 				'product_active' => $product_active,
 				'price_active'   => $price_active,
 				'nickname'     => ! empty( $price['nickname'] ) ? sanitize_text_field( (string) $price['nickname'] ) : '',
@@ -1898,6 +1989,22 @@ class AJForms_Admin {
 				return strcasecmp( $a['product_name'], $b['product_name'] );
 			}
 		);
+
+		$dependency_settings = $this->get_public_product_dependency_settings();
+		if ( ! empty( $dependency_settings ) ) {
+			foreach ( $prices as $index => $price ) {
+				if ( ! is_array( $price ) || empty( $price['id'] ) || empty( $dependency_settings[ $price['id'] ] ) ) {
+					continue;
+				}
+				$dependency = $dependency_settings[ $price['id'] ];
+				if ( ! empty( $dependency['requires_price_id'] ) ) {
+					$prices[ $index ]['requires_price_id'] = $dependency['requires_price_id'];
+				}
+				if ( ! empty( $dependency['dependency_note'] ) ) {
+					$prices[ $index ]['dependency_note'] = $dependency['dependency_note'];
+				}
+			}
+		}
 
 		$cache = array(
 			'updated_at' => current_time( 'mysql' ),
@@ -3299,6 +3406,14 @@ class AJForms_Admin {
 	private function handle_products_action() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
+		}
+
+		if ( isset( $_POST['ajcore_product_dependencies_nonce'] ) ) {
+			check_admin_referer( 'ajcore_save_product_dependencies', 'ajcore_product_dependencies_nonce' );
+			$raw_dependencies = isset( $_POST['product_dependencies'] ) && is_array( $_POST['product_dependencies'] ) ? wp_unslash( $_POST['product_dependencies'] ) : array();
+			$this->save_public_product_dependency_settings( $raw_dependencies );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-products', 'dependencies-saved' => 1 ), admin_url( 'admin.php' ) ) );
+			exit;
 		}
 
 		if ( ! isset( $_GET['ajf_products_action'], $_GET['_wpnonce'] ) ) {
@@ -6913,6 +7028,7 @@ class AJForms_Admin {
 		$settings = $this->get_plugin_settings();
 		$cache    = $this->get_stripe_products_cache();
 		$prices   = isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array();
+		$dependency_settings = $this->get_public_product_dependency_settings();
 		$active_count = 0;
 		$archived_count = 0;
 		foreach ( $prices as $price ) {
@@ -6963,6 +7079,10 @@ class AJForms_Admin {
 				.ajcore-product-card h2{margin:0 0 8px;font-size:17px}
 				.ajcore-product-price{font-size:24px;font-weight:800;color:#111827;margin:10px 0}
 				.ajcore-product-meta{display:grid;gap:5px;color:#64748b;font-size:13px}
+				.ajcore-product-dependency-box{margin-top:14px;padding:12px;border:1px solid #dbeafe;border-radius:12px;background:#eff6ff}
+				.ajcore-product-dependency-box label{display:block;margin:0 0 8px;font-weight:700;color:#1e3a8a}
+				.ajcore-product-dependency-box select,.ajcore-product-dependency-box textarea{width:100%;box-sizing:border-box;margin-top:4px}
+				.ajcore-product-dependency-note{margin:8px 0 0;color:#475569;font-size:12px;line-height:1.45}
 				.ajcore-shortcode{display:inline-block;margin-top:12px;padding:6px 8px;border-radius:8px;background:#f1f5f9;color:#334155}
 				.ajcore-products-empty{padding:24px;border:1px dashed #cbd5e1;border-radius:12px;background:#fff;color:#64748b}
 				@media (max-width: 960px){.ajcore-builder-controls{grid-template-columns:1fr}}
@@ -6990,6 +7110,9 @@ class AJForms_Admin {
 						);
 						?>
 					</div>
+				<?php endif; ?>
+				<?php if ( isset( $_GET['dependencies-saved'] ) ) : ?>
+					<div class="ajcore-products-notice ok"><?php esc_html_e( 'Product dependency settings saved.', 'ajforms' ); ?></div>
 				<?php endif; ?>
 
 				<p>
@@ -7082,7 +7205,9 @@ class AJForms_Admin {
 						</div>
 					</div>
 
-					<div class="ajcore-products-grid">
+					<form method="post" class="ajcore-product-dependencies-form">
+						<?php wp_nonce_field( 'ajcore_save_product_dependencies', 'ajcore_product_dependencies_nonce' ); ?>
+						<div class="ajcore-products-grid">
 						<?php foreach ( $prices as $price ) : ?>
 							<div class="ajcore-product-card">
 								<h2><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ) ); ?></h2>
@@ -7098,10 +7223,34 @@ class AJForms_Admin {
 									<span><?php echo esc_html( 'Price: ' . $price['id'] ); ?></span>
 									<span><?php echo esc_html( 'Product: ' . $price['product_id'] ); ?></span>
 								</div>
+								<?php
+								$dependency = isset( $dependency_settings[ $price['id'] ] ) ? $dependency_settings[ $price['id'] ] : array();
+								$selected_required_price = ! empty( $dependency['requires_price_id'] ) ? $dependency['requires_price_id'] : ( ! empty( $price['requires_price_id'] ) ? $price['requires_price_id'] : '' );
+								$dependency_note = ! empty( $dependency['dependency_note'] ) ? $dependency['dependency_note'] : ( ! empty( $price['dependency_note'] ) ? $price['dependency_note'] : '' );
+								?>
+								<div class="ajcore-product-dependency-box">
+									<label>
+										<?php esc_html_e( 'Requires another product', 'ajforms' ); ?>
+										<select name="product_dependencies[<?php echo esc_attr( $price['id'] ); ?>][requires_price_id]">
+											<option value=""><?php esc_html_e( 'No dependency', 'ajforms' ); ?></option>
+											<?php foreach ( $prices as $dependency_price ) : ?>
+												<?php if ( empty( $dependency_price['id'] ) || $dependency_price['id'] === $price['id'] ) { continue; } ?>
+												<option value="<?php echo esc_attr( $dependency_price['id'] ); ?>" <?php selected( $selected_required_price, $dependency_price['id'] ); ?>><?php echo esc_html( $dependency_price['product_name'] . ' — ' . strtoupper( $dependency_price['currency'] ) . ' ' . number_format_i18n( (float) $dependency_price['amount'], 2 ) . ( ! empty( $dependency_price['recurring_interval'] ) ? '/' . sanitize_key( (string) $dependency_price['recurring_interval'] ) : '' ) ); ?></option>
+											<?php endforeach; ?>
+										</select>
+									</label>
+									<label>
+										<?php esc_html_e( 'Dependency note shown to customer', 'ajforms' ); ?>
+										<textarea rows="3" name="product_dependencies[<?php echo esc_attr( $price['id'] ); ?>][dependency_note]" placeholder="<?php esc_attr_e( 'Example: This subscription requires Virtual Office Setup. We added it to your cart automatically.', 'ajforms' ); ?>"><?php echo esc_textarea( $dependency_note ); ?></textarea>
+									</label>
+									<p class="ajcore-product-dependency-note"><?php esc_html_e( 'When this product is added to cart, the required product will be added automatically with quantity 1.', 'ajforms' ); ?></p>
+								</div>
 								<code class="ajcore-shortcode">[ajcore_products price_ids="<?php echo esc_attr( $price['id'] ); ?>"]</code>
 							</div>
 						<?php endforeach; ?>
-					</div>
+						</div>
+						<p style="margin-top:16px;"><?php submit_button( __( 'Save Product Dependencies', 'ajforms' ), 'primary', 'submit', false ); ?></p>
+					</form>
 					<script>
 					(function() {
 						const builder = document.getElementById('ajcore-shortcode-builder');
