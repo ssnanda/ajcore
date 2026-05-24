@@ -3907,6 +3907,28 @@ class AJForms {
 					<button type="button" class="ajcore-cart-checkout" disabled style="margin-top:16px;background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:13px 20px;font-weight:800;cursor:pointer;"><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
 					<p class="ajcore-cart-message" style="display:none;margin:12px 0 0;color:#b32d2e;"></p>
 				</aside>
+				<div class="ajcore-cart-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-label="<?php echo esc_attr__( 'Review cart', 'ajforms' ); ?>">
+					<div class="ajcore-cart-modal-backdrop" data-ajcore-cart-close="1"></div>
+					<div class="ajcore-cart-modal-panel" role="document">
+						<div class="ajcore-cart-modal-header">
+							<div>
+								<h3><?php esc_html_e( 'Review Cart', 'ajforms' ); ?></h3>
+								<p><?php esc_html_e( 'Review selected products before continuing to Stripe checkout.', 'ajforms' ); ?></p>
+							</div>
+							<button type="button" class="ajcore-cart-modal-close" aria-label="<?php echo esc_attr__( 'Close cart', 'ajforms' ); ?>" data-ajcore-cart-close="1">&times;</button>
+						</div>
+						<div class="ajcore-cart-modal-empty"><?php esc_html_e( 'No products selected yet.', 'ajforms' ); ?></div>
+						<div class="ajcore-cart-modal-items"></div>
+						<div class="ajcore-cart-modal-note"></div>
+						<div class="ajcore-cart-modal-footer">
+							<div class="ajcore-cart-modal-total"></div>
+							<div class="ajcore-cart-modal-actions">
+								<button type="button" class="ajcore-cart-modal-clear"><?php esc_html_e( 'Clear Cart', 'ajforms' ); ?></button>
+								<button type="button" class="ajcore-cart-modal-checkout" disabled><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
+							</div>
+						</div>
+					</div>
+				</div>
 			<?php endif; ?>
 		</div>
 		<script>
@@ -3931,6 +3953,13 @@ class AJForms {
 			const miniCartStatus = root.querySelector('.ajcore-cart-mini-status');
 			const miniClearButton = root.querySelector('.ajcore-cart-mini-clear');
 			const miniCheckoutButton = root.querySelector('.ajcore-cart-mini-checkout');
+			const cartModal = root.querySelector('.ajcore-cart-modal');
+			const cartModalItems = root.querySelector('.ajcore-cart-modal-items');
+			const cartModalEmpty = root.querySelector('.ajcore-cart-modal-empty');
+			const cartModalTotal = root.querySelector('.ajcore-cart-modal-total');
+			const cartModalNote = root.querySelector('.ajcore-cart-modal-note');
+			const cartModalClearButton = root.querySelector('.ajcore-cart-modal-clear');
+			const cartModalCheckoutButton = root.querySelector('.ajcore-cart-modal-checkout');
 			const miniCartHome = miniCart ? miniCart.parentNode : null;
 			const miniCartPlaceholder = miniCart ? document.createComment('ajcore-cart-mini-home') : null;
 			if (miniCart && miniCartHome && miniCartPlaceholder) {
@@ -4192,6 +4221,35 @@ class AJForms {
 				if (miniCartStatus && items.length) {
 					miniCartStatus.textContent = itemCount + ' selected · ' + formatCurrency(total, currency);
 				}
+				if (cartModalItems && cartModalEmpty && cartModalTotal && cartModalCheckoutButton) {
+					cartModalItems.innerHTML = '';
+					cartModalEmpty.style.display = items.length ? 'none' : 'block';
+					cartModalCheckoutButton.disabled = items.length === 0;
+					if (cartModalClearButton) {
+						cartModalClearButton.disabled = items.length === 0;
+					}
+					items.forEach(function(item) {
+						const modalRow = document.createElement('div');
+						modalRow.className = 'ajcore-cart-modal-row';
+						modalRow.innerHTML = '<div class="ajcore-cart-modal-row-main"><strong></strong><span></span><small></small></div><span class="ajcore-cart-modal-row-qty">Qty 1</span><button type="button">Remove</button>';
+						modalRow.querySelector('strong').textContent = item.name;
+						modalRow.querySelector('span').textContent = formatCurrency(item.amount, item.currency);
+						const modalNote = modalRow.querySelector('small');
+						modalNote.textContent = item.locked ? item.locked : '';
+						modalNote.style.display = item.locked ? 'block' : 'none';
+						modalRow.querySelector('button').addEventListener('click', function() {
+							delete cart[item.price_id];
+							setCartMessage('');
+							renderCart();
+						});
+						cartModalItems.appendChild(modalRow);
+					});
+					cartModalTotal.textContent = items.length ? 'Total: ' + formatCurrency(total, currency) : '';
+					if (cartModalNote) {
+						cartModalNote.textContent = cartMessage && cartMessage.textContent ? cartMessage.textContent : '';
+						cartModalNote.style.display = cartModalNote.textContent ? 'block' : 'none';
+					}
+				}
 			saveCart();
 			refreshMobileMiniCartPosition();
 			}
@@ -4202,24 +4260,34 @@ class AJForms {
 				}, 0);
 			}
 
-			function openCartOrCheckout() {
-				if (checkoutButton && !checkoutButton.disabled && getCartItemCount() > 0) {
-					checkoutButton.click();
+			function openCartModal() {
+				if (!cartModal) {
+					const firstProduct = root.querySelector('.ajcore-product');
+					if (firstProduct) {
+						firstProduct.scrollIntoView({ behavior: 'smooth', block: 'start' });
+					}
 					return;
 				}
-
-				const firstProduct = root.querySelector('.ajcore-product');
-				if (firstProduct) {
-					firstProduct.scrollIntoView({ behavior: 'smooth', block: 'start' });
-				}
+				renderCart();
+				cartModal.classList.add('is-open');
+				cartModal.setAttribute('aria-hidden', 'false');
+				document.documentElement.classList.add('ajcore-cart-modal-open');
 			}
 
+			function closeCartModal() {
+				if (!cartModal) {
+					return;
+				}
+				cartModal.classList.remove('is-open');
+				cartModal.setAttribute('aria-hidden', 'true');
+				document.documentElement.classList.remove('ajcore-cart-modal-open');
+			}
 
 			if (floatingCartButton) {
-				floatingCartButton.addEventListener('click', openCartOrCheckout);
+				floatingCartButton.addEventListener('click', openCartModal);
 			}
 			if (miniCartButton) {
-				miniCartButton.addEventListener('click', openCartOrCheckout);
+				miniCartButton.addEventListener('click', openCartModal);
 			}
 			if (miniCheckoutButton) {
 				miniCheckoutButton.addEventListener('click', function() {
@@ -4231,6 +4299,28 @@ class AJForms {
 			if (miniClearButton) {
 				miniClearButton.addEventListener('click', clearCart);
 			}
+			if (cartModal) {
+				cartModal.addEventListener('click', function(event) {
+					if (event.target && event.target.closest('[data-ajcore-cart-close]')) {
+						closeCartModal();
+					}
+				});
+			}
+			if (cartModalClearButton) {
+				cartModalClearButton.addEventListener('click', clearCart);
+			}
+			if (cartModalCheckoutButton) {
+				cartModalCheckoutButton.addEventListener('click', function() {
+					if (checkoutButton && !checkoutButton.disabled) {
+						checkoutButton.click();
+					}
+				});
+			}
+			document.addEventListener('keydown', function(event) {
+				if (event.key === 'Escape') {
+					closeCartModal();
+				}
+			});
 
 			root.addEventListener('click', function(event) {
 				const addButton = event.target.closest('.ajcore-product-add');
@@ -4358,6 +4448,31 @@ class AJForms {
 			.ajcore-cart-mini-checkout{border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:10px 14px;font-weight:900;cursor:pointer}
 			.ajcore-cart-mini-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
 			.ajcore-cart-mini-notice{flex:0 0 100%;display:none;margin-top:6px;padding:8px 10px;border-radius:10px;background:#fff7ed;color:#9a3412;font-size:12px;font-weight:800;line-height:1.35;border:1px solid #fed7aa}
+			.ajcore-cart-modal{display:none;position:fixed;inset:0;z-index:2147483100;box-sizing:border-box}
+			.ajcore-cart-modal.is-open{display:block}
+			.ajcore-cart-modal-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.46);backdrop-filter:blur(4px)}
+			.ajcore-cart-modal-panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,calc(100vw - 32px));max-height:calc(100vh - 56px);overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:22px;box-shadow:0 28px 80px rgba(15,23,42,.28);padding:22px;box-sizing:border-box}
+			.ajcore-cart-modal-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+			.ajcore-cart-modal-header h3{margin:0 0 4px;font-size:26px;line-height:1.08;color:#0f172a}
+			.ajcore-cart-modal-header p{margin:0;color:#64748b;font-size:14px;line-height:1.5}
+			.ajcore-cart-modal-close{border:0;background:#f1f5f9;color:#0f172a;border-radius:999px;width:38px;height:38px;font-size:26px;line-height:1;cursor:pointer}
+			.ajcore-cart-modal-empty{padding:22px;border:1px dashed #cbd5e1;border-radius:16px;background:#f8fafc;color:#64748b;font-weight:700;text-align:center}
+			.ajcore-cart-modal-items{display:grid;gap:12px}
+			.ajcore-cart-modal-row{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}
+			.ajcore-cart-modal-row-main strong{display:block;color:#0f172a;font-size:15px;line-height:1.25;margin-bottom:4px}
+			.ajcore-cart-modal-row-main span{display:block;color:#475569;font-weight:800}
+			.ajcore-cart-modal-row-main small{margin-top:5px;color:#9a3412;font-weight:800;line-height:1.35}
+			.ajcore-cart-modal-row-qty{display:inline-flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;border-radius:999px;background:#f8fafc;color:#475569;min-height:34px;padding:0 10px;font-size:13px;font-weight:900;white-space:nowrap}
+			.ajcore-cart-modal-row button{background:#fff;color:#b32d2e;border:1px solid #fecaca;border-radius:10px;padding:9px 11px;font-weight:800;cursor:pointer}
+			.ajcore-cart-modal-note{display:none;margin-top:12px;padding:10px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:13px;font-weight:800;line-height:1.4}
+			.ajcore-cart-modal-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:18px;padding-top:16px;border-top:1px solid #e5e7eb}
+			.ajcore-cart-modal-total{font-size:22px;font-weight:900;color:#0f172a}
+			.ajcore-cart-modal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+			.ajcore-cart-modal-clear{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:11px 14px;font-weight:900;cursor:pointer}
+			.ajcore-cart-modal-clear:disabled{opacity:.45;cursor:not-allowed}
+			.ajcore-cart-modal-checkout{border:0;background:#0f7ac6;color:#fff;border-radius:999px;padding:12px 18px;font-weight:900;cursor:pointer}
+			.ajcore-cart-modal-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
+			.ajcore-cart-modal-open{overflow:hidden}
 			.ajcore-product-add.ajcore-added{background:#16a34a!important}
 			.ajcore-floating-cart{position:fixed;right:22px;bottom:22px;z-index:99999;display:none!important;align-items:center;gap:10px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:12px 15px;box-shadow:0 18px 40px rgba(15,122,198,.28);font-weight:800;cursor:pointer;line-height:1}
 			.ajcore-floating-cart:hover,.ajcore-floating-cart:focus{background:#0869ab;color:#fff;outline:0;box-shadow:0 0 0 4px rgba(15,122,198,.18),0 18px 40px rgba(15,122,198,.28)}
