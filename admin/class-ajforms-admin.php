@@ -1838,6 +1838,26 @@ class AJForms_Admin {
 					$product_rich_description = wp_kses_post( (string) $product['metadata']['description_html'] );
 				}
 			}
+			$product_metadata = ! empty( $product['metadata'] ) && is_array( $product['metadata'] ) ? $product['metadata'] : array();
+			$price_metadata   = ! empty( $price['metadata'] ) && is_array( $price['metadata'] ) ? $price['metadata'] : array();
+			$required_price_id = '';
+			foreach ( array( 'ajcore_requires_price_id', 'requires_price_id', 'required_price_id' ) as $dependency_key ) {
+				if ( '' === $required_price_id && ! empty( $price_metadata[ $dependency_key ] ) ) {
+					$required_price_id = sanitize_text_field( (string) $price_metadata[ $dependency_key ] );
+				}
+				if ( '' === $required_price_id && ! empty( $product_metadata[ $dependency_key ] ) ) {
+					$required_price_id = sanitize_text_field( (string) $product_metadata[ $dependency_key ] );
+				}
+			}
+			$required_product_name = '';
+			foreach ( array( 'ajcore_requires_product_name', 'requires_product_name', 'required_product_name' ) as $dependency_key ) {
+				if ( '' === $required_product_name && ! empty( $price_metadata[ $dependency_key ] ) ) {
+					$required_product_name = sanitize_text_field( (string) $price_metadata[ $dependency_key ] );
+				}
+				if ( '' === $required_product_name && ! empty( $product_metadata[ $dependency_key ] ) ) {
+					$required_product_name = sanitize_text_field( (string) $product_metadata[ $dependency_key ] );
+				}
+			}
 			$product_active = ! isset( $product['active'] ) || ! empty( $product['active'] );
 			$price_active   = ! isset( $price['active'] ) || ! empty( $price['active'] );
 			$unit_amount  = isset( $price['unit_amount'] ) ? absint( $price['unit_amount'] ) : 0;
@@ -1858,6 +1878,10 @@ class AJForms_Admin {
 				'product_description' => $product_description,
 				'product_rich_description' => $product_rich_description,
 				'product_summary' => $product_summary,
+				'product_metadata' => $product_metadata,
+				'price_metadata' => $price_metadata,
+				'requires_price_id' => $required_price_id,
+				'requires_product_name' => $required_product_name,
 				'product_active' => $product_active,
 				'price_active'   => $price_active,
 				'nickname'     => ! empty( $price['nickname'] ) ? sanitize_text_field( (string) $price['nickname'] ) : '',
