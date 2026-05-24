@@ -1155,6 +1155,41 @@ class AJForms_Admin {
 				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
 				'source_object_id'
 			);
+			if ( ! empty( $session['metadata']['source'] ) && 'ajcore_portal_balance_payment' === (string) $session['metadata']['source'] && 'paid' === $status && ! empty( $session['metadata']['ledger_ids'] ) ) {
+				$ledger_ids = array_values( array_filter( array_map( 'absint', preg_split( '/[,|]/', (string) $session['metadata']['ledger_ids'] ) ) ) );
+				foreach ( $ledger_ids as $ledger_id ) {
+					$ledger_row = $wpdb->get_row(
+						$wpdb->prepare(
+							"SELECT id, metadata FROM {$this->get_portal_ledger_table()} WHERE id = %d AND stripe_customer_id = %s LIMIT 1",
+							$ledger_id,
+							$customer_id
+						)
+					);
+					if ( ! $ledger_row ) {
+						continue;
+					}
+					$manual_metadata = ! empty( $ledger_row->metadata ) ? json_decode( (string) $ledger_row->metadata, true ) : array();
+					if ( ! is_array( $manual_metadata ) ) {
+						$manual_metadata = array();
+					}
+					$manual_metadata['paid_checkout_session_id'] = sanitize_text_field( (string) $session['id'] );
+					if ( '' !== $payment_intent_id ) {
+						$manual_metadata['paid_payment_intent_id'] = $payment_intent_id;
+					}
+					$wpdb->update(
+						$this->get_portal_ledger_table(),
+						array(
+							'status'            => 'paid',
+							'payment_intent_id' => $payment_intent_id,
+							'metadata'          => wp_json_encode( $manual_metadata ),
+						),
+						array( 'id' => $ledger_id ),
+						array( '%s', '%s', '%s' ),
+						array( '%d' )
+					);
+				}
+			}
+
 			if ( $transaction_upserted && $ledger_upserted ) {
 				$count++;
 			}
@@ -2830,6 +2865,8 @@ class AJForms_Admin {
 			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'service-requests';
 			if ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
+			} elseif ( 'billing' === $tab || isset( $_POST['ajcore_billing_action'] ) ) {
+				$this->handle_portal_billing_actions();
 			} elseif ( in_array( $tab, array( 'sync', 'menu', 'portal-users', 'products-services', 'tasks' ), true ) ) {
 				$this->handle_client_portal_settings_save();
 			} elseif ( 'customer' === $tab ) {
@@ -5224,6 +5261,91 @@ class AJForms_Admin {
 		<?php
 	}
 
+
+	private function handle_portal_billing_actions() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$action = isset( $_POST['ajcore_billing_action'] ) ? sanitize_key( wp_unslash( $_POST['ajcore_billing_action'] ) ) : '';
+		if ( 'add_manual_charge' !== $action ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_add_manual_charge', 'ajcore_manual_charge_nonce' );
+		$this->ensure_portal_schema();
+
+		$stripe_customer_id = isset( $_POST['stripe_customer_id'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_id'] ) ) : '';
+		$description        = isset( $_POST['charge_label'] ) ? sanitize_text_field( wp_unslash( $_POST['charge_label'] ) ) : '';
+		$amount             = isset( $_POST['charge_amount'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['charge_amount'] ) ) : 0;
+		$currency           = isset( $_POST['charge_currency'] ) ? strtolower( sanitize_key( wp_unslash( $_POST['charge_currency'] ) ) ) : 'usd';
+		$client_notes       = isset( $_POST['client_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['client_notes'] ) ) : '';
+		$admin_notes        = isset( $_POST['admin_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['admin_notes'] ) ) : '';
+
+		$redirect = add_query_arg(
+			array(
+				'page' => 'ajforms-client-portal',
+				'tab'  => 'billing',
+			),
+			admin_url( 'admin.php' )
+		);
+
+		if ( '' === $stripe_customer_id || '' === $description || $amount <= 0 || '' === $currency ) {
+			wp_safe_redirect( add_query_arg( 'billing-error', 'missing-fields', $redirect ) );
+			exit;
+		}
+
+		global $wpdb;
+		$customer_exists = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s",
+				$stripe_customer_id
+			)
+		);
+
+		if ( ! $customer_exists ) {
+			wp_safe_redirect( add_query_arg( 'billing-error', 'customer-not-found', $redirect ) );
+			exit;
+		}
+
+		$source_object_id = 'manual_charge_' . wp_generate_uuid4();
+		$metadata = array(
+			'source'       => 'manual_charge',
+			'client_notes' => $client_notes,
+			'admin_notes'  => $admin_notes,
+			'created_by'   => get_current_user_id(),
+		);
+
+		$inserted = $wpdb->insert(
+			$this->get_portal_ledger_table(),
+			array(
+				'stripe_customer_id' => $stripe_customer_id,
+				'source_object_id'   => $source_object_id,
+				'source_type'        => 'manual_charge',
+				'ledger_date'        => current_time( 'mysql' ),
+				'description'        => $description,
+				'amount'             => $amount,
+				'currency'           => $currency,
+				'status'             => 'unpaid',
+				'invoice_id'         => '',
+				'payment_intent_id'  => '',
+				'charge_id'          => '',
+				'metadata'           => wp_json_encode( $metadata ),
+				'created_at'         => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+
+		if ( false === $inserted ) {
+			wp_safe_redirect( add_query_arg( 'billing-error', 'insert-failed', $redirect ) );
+			exit;
+		}
+
+		wp_safe_redirect( add_query_arg( 'manual-charge-added', '1', $redirect ) );
+		exit;
+	}
+
+
 	private function display_portal_billing_tab() {
 		global $wpdb;
 
@@ -5259,12 +5381,43 @@ class AJForms_Admin {
 			LIMIT 300";
 		$ledger = ! empty( $params ) ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
 		$totals = $wpdb->get_row( "SELECT COUNT(*) AS total_rows, COALESCE(SUM(amount),0) AS total_amount FROM {$this->get_portal_ledger_table()}" );
+		$customers = $wpdb->get_results( "SELECT stripe_customer_id, email, name FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC, stripe_customer_id ASC LIMIT 500" );
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'billing' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="ajcore-admin-panel">
 			<h2><?php esc_html_e( 'Master Billing', 'ajforms' ); ?></h2>
 			<p><?php esc_html_e( 'Review all synced invoices, charges, checkout sessions, and client-created billing requests from one generic billing ledger.', 'ajforms' ); ?></p>
 			<p><strong><?php esc_html_e( 'Total Records:', 'ajforms' ); ?></strong> <?php echo esc_html( (int) $totals->total_rows ); ?> &nbsp; <strong><?php esc_html_e( 'Total Amount:', 'ajforms' ); ?></strong> <?php echo esc_html( number_format_i18n( (float) $totals->total_amount, 2 ) ); ?></p>
+
+			<?php if ( isset( $_GET['manual-charge-added'] ) ) : ?>
+				<div class="notice notice-success inline"><p><?php esc_html_e( 'Customer charge added.', 'ajforms' ); ?></p></div>
+			<?php elseif ( isset( $_GET['billing-error'] ) ) : ?>
+				<div class="notice notice-error inline"><p><?php esc_html_e( 'Unable to add customer charge. Please check the customer, label, and amount.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<details class="ajcore-admin-card" style="margin:16px 0;padding:16px;border:1px solid #dcdcde;background:#fff;border-radius:8px;">
+				<summary style="font-weight:700;cursor:pointer;"><?php esc_html_e( 'Add Customer Charge', 'ajforms' ); ?></summary>
+				<form method="post" style="margin-top:14px;display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px;max-width:920px;">
+					<input type="hidden" name="page" value="ajforms-client-portal">
+					<input type="hidden" name="tab" value="billing">
+					<input type="hidden" name="ajcore_billing_action" value="add_manual_charge">
+					<?php wp_nonce_field( 'ajcore_add_manual_charge', 'ajcore_manual_charge_nonce' ); ?>
+					<label style="display:flex;flex-direction:column;gap:6px;grid-column:1/-1;"><?php esc_html_e( 'Customer', 'ajforms' ); ?>
+						<select name="stripe_customer_id" required>
+							<option value=""><?php esc_html_e( 'Select customer', 'ajforms' ); ?></option>
+							<?php foreach ( $customers as $customer ) : ?>
+								<?php $customer_label = $customer->name ? $customer->name : ( $customer->email ? $customer->email : $customer->stripe_customer_id ); ?>
+								<option value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>"><?php echo esc_html( $customer_label . ' — ' . $customer->stripe_customer_id ); ?></option>
+							<?php endforeach; ?>
+						</select>
+					</label>
+					<label style="display:flex;flex-direction:column;gap:6px;"><?php esc_html_e( 'Charge Label', 'ajforms' ); ?><input type="text" name="charge_label" required placeholder="<?php esc_attr_e( 'Document filing fee', 'ajforms' ); ?>"></label>
+					<label style="display:flex;flex-direction:column;gap:6px;"><?php esc_html_e( 'Amount', 'ajforms' ); ?><span><input type="number" min="0.01" step="0.01" name="charge_amount" required style="width:140px;"> <input type="text" name="charge_currency" value="usd" style="width:70px;"></span></label>
+					<label style="display:flex;flex-direction:column;gap:6px;grid-column:1/-1;"><?php esc_html_e( 'Client-facing Note', 'ajforms' ); ?><textarea name="client_notes" rows="2" placeholder="<?php esc_attr_e( 'This note appears in the client billing ledger.', 'ajforms' ); ?>"></textarea></label>
+					<label style="display:flex;flex-direction:column;gap:6px;grid-column:1/-1;"><?php esc_html_e( 'Internal Admin Notes', 'ajforms' ); ?><textarea name="admin_notes" rows="2"></textarea></label>
+					<div style="grid-column:1/-1;"><button type="submit" class="button button-primary"><?php esc_html_e( 'Add Charge', 'ajforms' ); ?></button></div>
+				</form>
+			</details>
 
 			<form method="get" style="margin:14px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
 				<input type="hidden" name="page" value="ajforms-client-portal">

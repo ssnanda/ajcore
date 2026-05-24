@@ -110,6 +110,7 @@ class AJForms {
 		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_ajcore_create_custom_service_request', array( $this, 'ajax_create_custom_service_request' ) );
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
+		add_action( 'wp_ajax_ajcore_pay_portal_ledger', array( $this, 'ajax_pay_portal_ledger' ) );
 	}
 
 	private function is_portal_user_account( $user = null ) {
@@ -1322,6 +1323,58 @@ class AJForms {
 		return ob_get_clean();
 	}
 
+	private function get_portal_open_ledger_statuses() {
+		return array( 'unpaid', 'pending_payment', 'awaiting_payment' );
+	}
+
+	private function get_current_user_open_portal_ledger( $ledger_ids = array() ) {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return array();
+		}
+
+		global $wpdb;
+
+		$statuses = $this->get_portal_open_ledger_statuses();
+		$status_placeholders = implode( ',', array_fill( 0, count( $statuses ), '%s' ) );
+		$params = array_merge( array( $stripe_customer_id ), $statuses );
+		$where = "stripe_customer_id = %s AND amount > 0 AND status IN ({$status_placeholders})";
+
+		$ledger_ids = array_values( array_filter( array_map( 'absint', (array) $ledger_ids ) ) );
+		if ( ! empty( $ledger_ids ) ) {
+			$id_placeholders = implode( ',', array_fill( 0, count( $ledger_ids ), '%d' ) );
+			$where .= " AND id IN ({$id_placeholders})";
+			$params = array_merge( $params, $ledger_ids );
+		}
+
+		$sql = "SELECT * FROM {$this->get_portal_ledger_table()} WHERE {$where} ORDER BY ledger_date ASC, id ASC";
+
+		return $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
+	}
+
+	private function get_portal_open_ledger_total( $entries ) {
+		$total = 0;
+		$currency = '';
+
+		foreach ( (array) $entries as $entry ) {
+			$total += (float) $entry->amount;
+			if ( '' === $currency && ! empty( $entry->currency ) ) {
+				$currency = sanitize_key( (string) $entry->currency );
+			}
+		}
+
+		return array(
+			'amount'   => $total,
+			'currency' => $currency ? $currency : 'usd',
+		);
+	}
+
+	private function get_portal_pay_ledger_nonce() {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+
+		return wp_create_nonce( 'ajcore_pay_portal_ledger_' . $stripe_customer_id );
+	}
+
 	private function render_customer_portal_billing_tab() {
 		$context = $this->get_current_user_portal_billing_context();
 
@@ -1332,11 +1385,25 @@ class AJForms {
 		$ledger        = $context['ledger'];
 		$upcoming      = $context['upcoming'];
 		$subscriptions = $context['subscriptions'];
+		$open_ledger   = $this->get_current_user_open_portal_ledger();
+		$open_total    = $this->get_portal_open_ledger_total( $open_ledger );
+		$pay_nonce     = $this->get_portal_pay_ledger_nonce();
 
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'Billing', 'ajforms' ); ?></h2>
+
+			<?php if ( ! empty( $open_ledger ) ) : ?>
+				<div class="aj-portal-open-balance" style="margin:0 0 24px;padding:20px;border:1px solid #dbeafe;border-radius:22px;background:#eff6ff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+					<div>
+						<h3 style="margin:0 0 6px;"><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></h3>
+						<div style="font-size:24px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_money( $open_total['amount'], $open_total['currency'] ) ); ?></div>
+						<p style="margin:6px 0 0;color:#475569;"><?php esc_html_e( 'Pay all open charges in one checkout.', 'ajforms' ); ?></p>
+					</div>
+					<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="all" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Full Balance', 'ajforms' ); ?></button>
+				</div>
+			<?php endif; ?>
 
 			<h3><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></h3>
 			<?php if ( empty( $upcoming ) ) : ?>
@@ -1373,13 +1440,16 @@ class AJForms {
 								<?php if ( ! $entry_invoice_url && $entry_payment_url ) { $entry_invoice_url = $entry_payment_url; } ?>
 								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : ( $entry_payment_url ? __( 'Pay / View', 'ajforms' ) : __( 'Download', 'ajforms' ) ); ?>
 								<?php $entry_client_note = $this->get_ledger_metadata_value( $entry, 'client_notes' ); ?>
+								<?php $entry_is_open = ( (float) $entry->amount > 0 && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) ); ?>
 								<tr>
 									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
 									<td><?php echo esc_html( $entry->description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
 									<td><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
 									<td>
-										<?php if ( $entry_invoice_url ) : ?>
+										<?php if ( $entry_is_open ) : ?>
+											<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="<?php echo esc_attr( (int) $entry->id ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Now', 'ajforms' ); ?></button>
+										<?php elseif ( $entry_invoice_url ) : ?>
 											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
 										<?php else : ?>
 											<?php echo $this->get_portal_service_request_actions( $entry ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
@@ -2347,6 +2417,41 @@ class AJForms {
 						}
 					});
 				}
+
+				shell.addEventListener('click', function(event) {
+					const payButton = event.target.closest('.aj-portal-pay-ledger-button');
+					if (!payButton || payButton.disabled) {
+						return;
+					}
+
+					payButton.disabled = true;
+					const originalText = payButton.textContent;
+					payButton.textContent = '<?php echo esc_js( __( 'Loading...', 'ajforms' ) ); ?>';
+
+					const formData = new FormData();
+					formData.append('action', 'ajcore_pay_portal_ledger');
+					formData.append('ledger_ids', payButton.dataset.ledgerIds || 'all');
+					formData.append('nonce', payButton.dataset.nonce || '');
+					formData.append('current_url', window.location.href);
+
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+						method: 'POST',
+						credentials: 'same-origin',
+						body: formData
+					})
+						.then(parseJsonResponse)
+						.then(function(payload) {
+							if (!payload || !payload.success || !payload.data || !payload.data.url) {
+								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to start payment.', 'ajforms' ) ); ?>');
+							}
+							window.location.href = payload.data.url;
+						})
+						.catch(function(error) {
+							payButton.disabled = false;
+							payButton.textContent = originalText;
+							window.alert(error.message || '<?php echo esc_js( __( 'Unable to start payment.', 'ajforms' ) ); ?>');
+						});
+				});
 
 				shell.addEventListener('click', function(event) {
 					const button = event.target.closest('.aj-portal-add-service-button');
@@ -3653,6 +3758,111 @@ class AJForms {
 			)
 		);
 	}
+
+
+	public function ajax_pay_portal_ledger() {
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( __( 'You must be logged in to pay this balance.', 'ajforms' ), 401 );
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		if ( '' === $stripe_customer_id || ! wp_verify_nonce( $nonce, 'ajcore_pay_portal_ledger_' . $stripe_customer_id ) ) {
+			wp_send_json_error( __( 'Invalid payment request.', 'ajforms' ), 400 );
+		}
+
+		$raw_ledger_ids = isset( $_POST['ledger_ids'] ) ? sanitize_text_field( wp_unslash( $_POST['ledger_ids'] ) ) : '';
+		$ledger_ids = array();
+		if ( 'all' !== strtolower( $raw_ledger_ids ) ) {
+			$ledger_ids = array_filter( array_map( 'absint', preg_split( '/[,|]/', $raw_ledger_ids ) ) );
+		}
+
+		$entries = $this->get_current_user_open_portal_ledger( $ledger_ids );
+		if ( empty( $entries ) ) {
+			wp_send_json_error( __( 'No open balance is available for payment.', 'ajforms' ), 400 );
+		}
+
+		$currency = strtolower( (string) $entries[0]->currency );
+		foreach ( $entries as $entry ) {
+			if ( strtolower( (string) $entry->currency ) !== $currency ) {
+				wp_send_json_error( __( 'Open charges with different currencies must be paid separately.', 'ajforms' ), 400 );
+			}
+		}
+
+		$stripe_settings = $this->get_stripe_settings();
+		if ( empty( $stripe_settings['secret_key'] ) ) {
+			wp_send_json_error( __( 'Stripe is not connected.', 'ajforms' ), 400 );
+		}
+
+		$current_url = isset( $_POST['current_url'] ) ? esc_url_raw( wp_unslash( $_POST['current_url'] ) ) : $this->get_customer_portal_url();
+		$success_url = add_query_arg( 'ajcore_balance_payment', 'success', $current_url );
+		$cancel_url  = add_query_arg( 'ajcore_balance_payment', 'cancelled', $current_url );
+		$body = array(
+			'mode'        => 'payment',
+			'success_url' => $success_url,
+			'cancel_url'  => $cancel_url,
+			'customer'    => $stripe_customer_id,
+			'metadata[source]' => 'ajcore_portal_balance_payment',
+			'metadata[ledger_ids]' => implode( ',', wp_list_pluck( $entries, 'id' ) ),
+			'metadata[stripe_customer_id]' => $stripe_customer_id,
+		);
+
+		$line_index = 0;
+		foreach ( $entries as $entry ) {
+			$amount_minor = $this->convert_amount_to_minor_units( (float) $entry->amount, $entry->currency );
+			if ( $amount_minor <= 0 ) {
+				continue;
+			}
+			$body[ 'line_items[' . $line_index . '][price_data][currency]' ] = strtolower( (string) $entry->currency );
+			$body[ 'line_items[' . $line_index . '][price_data][unit_amount]' ] = $amount_minor;
+			$body[ 'line_items[' . $line_index . '][price_data][product_data][name]' ] = wp_strip_all_tags( (string) $entry->description );
+			$body[ 'line_items[' . $line_index . '][quantity]' ] = 1;
+			$line_index++;
+		}
+
+		if ( 0 === $line_index ) {
+			wp_send_json_error( __( 'No payable charges were found.', 'ajforms' ), 400 );
+		}
+
+		$response = $this->stripe_api_request(
+			'checkout/sessions',
+			$stripe_settings['secret_key'],
+			$body
+		);
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( $response->get_error_message(), 400 );
+		}
+
+		$checkout_session_id = ! empty( $response['id'] ) ? sanitize_text_field( (string) $response['id'] ) : '';
+		if ( $checkout_session_id ) {
+			global $wpdb;
+			foreach ( $entries as $entry ) {
+				$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+				$metadata['payment_checkout_session_id'] = $checkout_session_id;
+				if ( ! empty( $response['url'] ) ) {
+					$metadata['payment_url'] = esc_url_raw( (string) $response['url'] );
+				}
+				$wpdb->update(
+					$this->get_portal_ledger_table(),
+					array(
+						'status'   => 'pending_payment',
+						'metadata' => wp_json_encode( $metadata ),
+					),
+					array( 'id' => absint( $entry->id ), 'stripe_customer_id' => $stripe_customer_id ),
+					array( '%s', '%s' ),
+					array( '%d', '%s' )
+				);
+			}
+		}
+
+		wp_send_json_success(
+			array(
+				'url' => ! empty( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
+			)
+		);
+	}
+
 
 	private function validate_stripe_payment_submission( $form, $settings ) {
 		$stripe_config = $this->get_stripe_payment_config( $form, $settings );
