@@ -3737,6 +3737,7 @@ class AJForms {
 						<span class="ajcore-cart-mini-count">0</span>
 					</button>
 					<div class="ajcore-cart-mini-status"><?php esc_html_e( 'No products selected', 'ajforms' ); ?></div>
+					<button type="button" class="ajcore-cart-mini-clear" disabled><?php esc_html_e( 'Clear', 'ajforms' ); ?></button>
 					<button type="button" class="ajcore-cart-mini-checkout" disabled><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
 				</div>
 			<?php endif; ?>
@@ -3863,6 +3864,7 @@ class AJForms {
 			const miniCartButton = root.querySelector('.ajcore-cart-mini-button');
 			const miniCartCount = root.querySelector('.ajcore-cart-mini-count');
 			const miniCartStatus = root.querySelector('.ajcore-cart-mini-status');
+			const miniClearButton = root.querySelector('.ajcore-cart-mini-clear');
 			const miniCheckoutButton = root.querySelector('.ajcore-cart-mini-checkout');
 			const miniCartHome = miniCart ? miniCart.parentNode : null;
 			const miniCartPlaceholder = miniCart ? document.createComment('ajcore-cart-mini-home') : null;
@@ -3871,7 +3873,8 @@ class AJForms {
 			}
 
 			function getMobileCartTopOffset() {
-				const fallback = 132;
+				const fallback = 180;
+				let headerBottom = 0;
 				const selectors = ['.site-header', '#masthead', 'header[role="banner"]', 'header', '.wp-site-blocks > header', '.main-header-bar'];
 				for (let index = 0; index < selectors.length; index += 1) {
 					const header = document.querySelector(selectors[index]);
@@ -3880,11 +3883,26 @@ class AJForms {
 					}
 					const rect = header.getBoundingClientRect();
 					if (rect && rect.width > 0 && rect.bottom > 0) {
-						return Math.min(Math.max(Math.round(rect.bottom + 14), 96), 172);
+						headerBottom = Math.max(headerBottom, Math.round(rect.bottom));
 					}
 				}
 
-				return fallback;
+				const rootRect = root.getBoundingClientRect();
+				const cartHeight = miniCart && miniCart.offsetHeight ? miniCart.offsetHeight : 74;
+				const safeTop = headerBottom + 18;
+				const belowHeroTop = rootRect && rootRect.top > 0 ? Math.round(rootRect.top + 14) : fallback;
+				const viewportMax = Math.max(safeTop, window.innerHeight - cartHeight - 18);
+				const desiredTop = Math.max(safeTop, belowHeroTop);
+
+				return Math.min(desiredTop, viewportMax);
+			}
+
+			function refreshMobileMiniCartPosition() {
+				if (!miniCart || !miniCart.classList.contains('ajcore-mobile-fixed-cart')) {
+					return;
+				}
+
+				miniCart.style.setProperty('--ajcore-cart-mobile-top', getMobileCartTopOffset() + 'px');
 			}
 
 			function mountMobileMiniCart() {
@@ -3914,6 +3932,11 @@ class AJForms {
 				window.clearTimeout(root.ajcoreCartResizeTimer);
 				root.ajcoreCartResizeTimer = window.setTimeout(mountMobileMiniCart, 120);
 			});
+			window.addEventListener('scroll', function() {
+				window.clearTimeout(root.ajcoreCartScrollTimer);
+				root.ajcoreCartScrollTimer = window.setTimeout(refreshMobileMiniCartPosition, 40);
+			}, { passive: true });
+			window.setTimeout(refreshMobileMiniCartPosition, 250);
 
 			function formatCurrency(amount, currency) {
 				try {
@@ -3930,6 +3953,52 @@ class AJForms {
 
 				cartMessage.textContent = message || '';
 				cartMessage.style.display = message ? 'block' : 'none';
+			}
+
+			const cartStorageKey = 'ajcoreProductsCart:' + window.location.pathname + ':' + (root.dataset.includeArchived || 'no');
+
+			function saveCart() {
+				try {
+					window.sessionStorage.setItem(cartStorageKey, JSON.stringify(cart));
+				} catch (error) {}
+			}
+
+			function loadCart() {
+				try {
+					const stored = window.sessionStorage.getItem(cartStorageKey);
+					if (!stored) {
+						return;
+					}
+					const decoded = JSON.parse(stored);
+					if (!decoded || typeof decoded !== 'object') {
+						return;
+					}
+					Object.keys(decoded).forEach(function(priceId) {
+						const item = decoded[priceId];
+						if (!item || !item.price_id || !getProductByPriceId(item.price_id)) {
+							return;
+						}
+						cart[item.price_id] = {
+							price_id: item.price_id,
+							name: item.name || 'Product',
+							amount: parseFloat(item.amount || '0') || 0,
+							currency: item.currency || 'usd',
+							quantity: 1,
+							locked: item.locked || ''
+						};
+					});
+				} catch (error) {}
+			}
+
+			function clearCart() {
+				Object.keys(cart).forEach(function(priceId) {
+					delete cart[priceId];
+				});
+				try {
+					window.sessionStorage.removeItem(cartStorageKey);
+				} catch (error) {}
+				setCartMessage('');
+				renderCart();
 			}
 
 			function getProductByPriceId(priceId) {
@@ -4003,6 +4072,9 @@ class AJForms {
 				if (miniCheckoutButton) {
 					miniCheckoutButton.disabled = itemCount === 0;
 				}
+				if (miniClearButton) {
+					miniClearButton.disabled = itemCount === 0;
+				}
 				cartItems.innerHTML = '';
 				cartEmpty.style.display = items.length ? 'none' : 'block';
 				checkoutButton.disabled = items.length === 0;
@@ -4039,25 +4111,34 @@ class AJForms {
 				if (miniCartStatus && items.length) {
 					miniCartStatus.textContent = itemCount + ' selected · ' + formatCurrency(total, currency);
 				}
+			saveCart();
+			refreshMobileMiniCartPosition();
 			}
 
-			function scrollToCartPanel() {
-				const cartPanel = root.querySelector('.ajcore-cart-mini') || root.querySelector('.ajcore-cart');
-				if (!cartPanel) {
+			function getCartItemCount() {
+				return Object.values(cart).reduce(function(total, item) {
+					return total + (parseInt(item.quantity, 10) || 0);
+				}, 0);
+			}
+
+			function openCartOrCheckout() {
+				if (checkoutButton && !checkoutButton.disabled && getCartItemCount() > 0) {
+					checkoutButton.click();
 					return;
 				}
-				root.classList.add('ajcore-cart-highlight');
-				cartPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-				window.setTimeout(function() {
-					root.classList.remove('ajcore-cart-highlight');
-				}, 1200);
+
+				const firstProduct = root.querySelector('.ajcore-product');
+				if (firstProduct) {
+					firstProduct.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				}
 			}
 
+
 			if (floatingCartButton) {
-				floatingCartButton.addEventListener('click', scrollToCartPanel);
+				floatingCartButton.addEventListener('click', openCartOrCheckout);
 			}
 			if (miniCartButton) {
-				miniCartButton.addEventListener('click', scrollToCartPanel);
+				miniCartButton.addEventListener('click', openCartOrCheckout);
 			}
 			if (miniCheckoutButton) {
 				miniCheckoutButton.addEventListener('click', function() {
@@ -4065,6 +4146,9 @@ class AJForms {
 						checkoutButton.click();
 					}
 				});
+			}
+			if (miniClearButton) {
+				miniClearButton.addEventListener('click', clearCart);
 			}
 
 			root.addEventListener('click', function(event) {
@@ -4088,13 +4172,9 @@ class AJForms {
 					return;
 				}
 
-				const clearButton = event.target.closest('.ajcore-cart-clear');
+				const clearButton = event.target.closest('.ajcore-cart-clear, .ajcore-cart-mini-clear');
 				if (clearButton) {
-					Object.keys(cart).forEach(function(priceId) {
-						delete cart[priceId];
-					});
-					setCartMessage('');
-					renderCart();
+					clearCart();
 					return;
 				}
 
@@ -4167,6 +4247,7 @@ class AJForms {
 						});
 				});
 			}
+			loadCart();
 			renderCart();
 		})();
 		</script>
@@ -4191,6 +4272,8 @@ class AJForms {
 			.ajcore-cart-mini-button{display:inline-flex;align-items:center;gap:9px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:10px 14px;font-weight:900;cursor:pointer}
 			.ajcore-cart-mini-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
 			.ajcore-cart-mini-status{flex:1;color:#475569;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+			.ajcore-cart-mini-clear{border:0;border-radius:999px;background:#f1f5f9;color:#475569;padding:10px 12px;font-weight:900;cursor:pointer}
+			.ajcore-cart-mini-clear:disabled{opacity:.45;cursor:not-allowed}
 			.ajcore-cart-mini-checkout{border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:10px 14px;font-weight:900;cursor:pointer}
 			.ajcore-cart-mini-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
 			.ajcore-product-add.ajcore-added{background:#16a34a!important}
@@ -4200,7 +4283,7 @@ class AJForms {
 			.ajcore-floating-cart-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
 			.ajcore-floating-cart.has-items{animation:ajcoreCartPulse .28s ease}
 			@keyframes ajcoreCartPulse{0%{transform:scale(1)}50%{transform:scale(1.06)}100%{transform:scale(1)}}
-			@media (max-width: 800px){.ajcore-products-list{grid-template-columns:1fr!important}.ajcore-products-wrap-cart{padding-top:96px;padding-bottom:42px}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{left:12px;right:12px;margin:0;padding:10px;border-radius:16px}.ajcore-cart-mini.ajcore-mobile-fixed-cart{position:fixed!important;top:var(--ajcore-cart-mobile-top,calc(env(safe-area-inset-top,0px) + 132px))!important;bottom:auto!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;z-index:2147483000!important;box-sizing:border-box!important;transform:translateZ(0);}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
+			@media (max-width: 800px){.ajcore-products-list{grid-template-columns:1fr!important}.ajcore-products-wrap-cart{padding-top:118px;padding-bottom:42px}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{left:12px;right:12px;margin:0;padding:10px 12px;border-radius:16px;gap:8px}.ajcore-cart-mini.ajcore-mobile-fixed-cart{position:fixed!important;top:var(--ajcore-cart-mobile-top,calc(env(safe-area-inset-top,0px) + 190px))!important;bottom:auto!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;z-index:2147483000!important;box-sizing:border-box!important;transform:translateZ(0);}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-clear{padding:9px 10px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
 			@media (max-width: 980px){.ajcore-products-wrap-cart{grid-template-columns:1fr}.ajcore-products-wrap-cart .ajcore-cart{grid-column:auto;grid-row:auto;position:static}}
 		</style>
 		<?php
