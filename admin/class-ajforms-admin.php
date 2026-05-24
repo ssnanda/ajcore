@@ -4384,48 +4384,6 @@ class AJForms_Admin {
 		return isset( $labels[ $status ] ) ? $status : 'draft';
 	}
 
-	private function should_show_portal_billing_change_preview( $request ) {
-		$request_type = isset( $request->request_type ) ? sanitize_key( (string) $request->request_type ) : '';
-		$source       = isset( $request->source ) ? sanitize_key( (string) $request->source ) : '';
-		$source_type  = isset( $request->source_type ) ? sanitize_key( (string) $request->source_type ) : '';
-
-		$allowed_request_types = array( 'custom_request', 'service_request', 'quote_request', 'upgrade_request', 'billing_change' );
-		$allowed_sources       = array( 'portal_custom_request', 'portal_additional_entity_pricing', 'custom_request', 'service_quote_request', 'custom_service_request', 'service_request' );
-		$allowed_source_types  = array( 'custom_service_request', 'service_quote_request', 'custom_request', 'service_request' );
-
-		return in_array( $request_type, $allowed_request_types, true )
-			|| in_array( $source, $allowed_sources, true )
-			|| in_array( $source_type, $allowed_source_types, true );
-	}
-
-	private function should_delete_linked_ledger_for_service_request( $request ) {
-		$status       = isset( $request->status ) ? sanitize_key( (string) $request->status ) : '';
-		$request_type = isset( $request->request_type ) ? sanitize_key( (string) $request->request_type ) : '';
-		$source       = isset( $request->source ) ? sanitize_key( (string) $request->source ) : '';
-		$source_type  = isset( $request->source_type ) ? sanitize_key( (string) $request->source_type ) : '';
-
-		if ( ! in_array( $status, array( 'draft', 'pending_payment', 'cancelled', 'failed' ), true ) ) {
-			return false;
-		}
-
-		return 'add_service' === $request_type
-			&& ( 'ledger_backfill' === $source || 'checkout_session' === $source_type );
-	}
-
-	private function cleanup_stale_portal_checkout_request_attempts() {
-		global $wpdb;
-
-		$this->ensure_portal_schema();
-
-		$wpdb->query(
-			"DELETE FROM {$this->get_portal_service_requests_table()}
-			WHERE request_type = 'add_service'
-			AND source = 'ledger_backfill'
-			AND source_type = 'checkout_session'
-			AND status = 'pending_payment'"
-		);
-	}
-
 
 	private function get_portal_service_request_raw_data( $request ) {
 		$raw = isset( $request->raw_data ) ? json_decode( (string) $request->raw_data, true ) : array();
@@ -4437,256 +4395,6 @@ class AJForms_Admin {
 		$raw = $this->get_portal_service_request_raw_data( $request );
 
 		return isset( $raw[ $key ] ) && is_scalar( $raw[ $key ] ) ? sanitize_text_field( (string) $raw[ $key ] ) : '';
-	}
-
-
-	private function get_portal_service_request_billing_preview( $request ) {
-		$raw = $this->get_portal_service_request_raw_data( $request );
-
-		return isset( $raw['billing_preview'] ) && is_array( $raw['billing_preview'] ) ? $raw['billing_preview'] : array();
-	}
-
-	private function get_admin_subscription_preview_options( $stripe_customer_id ) {
-		global $wpdb;
-
-		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
-		if ( '' === $stripe_customer_id ) {
-			return array();
-		}
-
-		$rows = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_customer_id = %s ORDER BY current_period_end DESC, id DESC",
-				$stripe_customer_id
-			)
-		);
-
-		$options = array();
-		foreach ( $rows as $row ) {
-			$status = isset( $row->status ) ? sanitize_key( (string) $row->status ) : '';
-			if ( in_array( $status, array( 'canceled', 'incomplete_expired' ), true ) ) {
-				continue;
-			}
-
-			$data = $this->get_subscription_billing_preview_data( $row );
-			$label_parts = array();
-			if ( ! empty( $data['service_name'] ) ) {
-				$label_parts[] = $data['service_name'];
-			}
-			if ( ! empty( $data['amount_label'] ) ) {
-				$label_parts[] = $data['amount_label'];
-			}
-			if ( ! empty( $data['period_label'] ) ) {
-				$label_parts[] = $data['period_label'];
-			}
-
-			$options[] = array(
-				'id'    => sanitize_text_field( (string) $row->stripe_subscription_id ),
-				'label' => implode( ' — ', array_filter( $label_parts ) ),
-				'data'  => $data,
-			);
-		}
-
-		return $options;
-	}
-
-	private function get_admin_price_preview_options() {
-		global $wpdb;
-
-		$rows = $wpdb->get_results(
-			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 ORDER BY name ASC, price_amount ASC"
-		);
-
-		$options = array();
-		foreach ( $rows as $row ) {
-			$price_id = isset( $row->stripe_price_id ) ? sanitize_text_field( (string) $row->stripe_price_id ) : '';
-			if ( '' === $price_id ) {
-				continue;
-			}
-
-			$currency = ! empty( $row->currency ) ? sanitize_key( (string) $row->currency ) : 'usd';
-			$amount   = isset( $row->price_amount ) ? (float) $row->price_amount : 0.0;
-			$interval = ! empty( $row->recurring_interval ) ? sanitize_key( (string) $row->recurring_interval ) : '';
-			$label    = sprintf(
-				'%1$s — %2$s %3$s%4$s',
-				! empty( $row->name ) ? sanitize_text_field( (string) $row->name ) : __( 'Stripe product', 'ajforms' ),
-				strtoupper( $currency ),
-				number_format_i18n( $amount, 2 ),
-				$interval ? ' / ' . $interval : ''
-			);
-
-			$options[] = array(
-				'price_id'    => $price_id,
-				'product_id'  => ! empty( $row->stripe_product_id ) ? sanitize_text_field( (string) $row->stripe_product_id ) : '',
-				'name'        => ! empty( $row->name ) ? sanitize_text_field( (string) $row->name ) : __( 'Stripe product', 'ajforms' ),
-				'label'       => $label,
-				'amount'      => $amount,
-				'currency'    => $currency,
-				'interval'    => $interval,
-			);
-		}
-
-		return $options;
-	}
-
-	private function get_subscription_billing_preview_data( $subscription ) {
-		$raw   = ! empty( $subscription->raw_data ) ? json_decode( (string) $subscription->raw_data, true ) : array();
-		$raw   = is_array( $raw ) ? $raw : array();
-		$items = ! empty( $subscription->items ) ? json_decode( (string) $subscription->items, true ) : array();
-		$items = is_array( $items ) ? $items : array();
-
-		$service_name = '';
-		$amount       = 0.0;
-		$currency     = 'usd';
-		$interval     = '';
-		$price_id     = '';
-		$product_id   = '';
-
-		foreach ( $items as $item ) {
-			if ( ! is_array( $item ) ) {
-				continue;
-			}
-			$price = isset( $item['price'] ) && is_array( $item['price'] ) ? $item['price'] : array();
-			if ( '' === $service_name ) {
-				if ( ! empty( $item['description'] ) ) {
-					$service_name = sanitize_text_field( (string) $item['description'] );
-				} elseif ( ! empty( $price['nickname'] ) ) {
-					$service_name = sanitize_text_field( (string) $price['nickname'] );
-				} elseif ( ! empty( $price['product'] ) && is_array( $price['product'] ) && ! empty( $price['product']['name'] ) ) {
-					$service_name = sanitize_text_field( (string) $price['product']['name'] );
-				}
-			}
-			if ( ! empty( $price['id'] ) ) {
-				$price_id = sanitize_text_field( (string) $price['id'] );
-			}
-			if ( ! empty( $price['product'] ) ) {
-				$product_id = is_array( $price['product'] ) && ! empty( $price['product']['id'] ) ? sanitize_text_field( (string) $price['product']['id'] ) : sanitize_text_field( (string) $price['product'] );
-			}
-			if ( isset( $price['unit_amount'] ) ) {
-				$currency = ! empty( $price['currency'] ) ? sanitize_key( (string) $price['currency'] ) : $currency;
-				$amount   = $this->stripe_amount_to_decimal( $price['unit_amount'], $currency );
-			}
-			if ( ! empty( $price['recurring']['interval'] ) ) {
-				$interval = sanitize_key( (string) $price['recurring']['interval'] );
-			}
-			break;
-		}
-
-		if ( '' === $service_name ) {
-			$service_name = ! empty( $subscription->stripe_subscription_id ) ? sanitize_text_field( (string) $subscription->stripe_subscription_id ) : __( 'Current subscription', 'ajforms' );
-		}
-
-		$start_timestamp = ! empty( $raw['current_period_start'] ) ? absint( $raw['current_period_start'] ) : 0;
-		$end_timestamp   = ! empty( $raw['current_period_end'] ) ? absint( $raw['current_period_end'] ) : 0;
-		if ( ! $end_timestamp && ! empty( $subscription->current_period_end ) ) {
-			$end_timestamp = strtotime( $subscription->current_period_end . ' UTC' );
-		}
-
-		return array(
-			'subscription_id' => ! empty( $subscription->stripe_subscription_id ) ? sanitize_text_field( (string) $subscription->stripe_subscription_id ) : '',
-			'price_id'        => $price_id,
-			'product_id'      => $product_id,
-			'service_name'    => $service_name,
-			'amount'          => $amount,
-			'currency'        => $currency,
-			'interval'        => $interval,
-			'period_start'    => $start_timestamp,
-			'period_end'      => $end_timestamp,
-			'amount_label'    => strtoupper( $currency ) . ' ' . number_format_i18n( $amount, 2 ) . ( $interval ? ' / ' . $interval : '' ),
-			'period_label'    => $start_timestamp && $end_timestamp ? date_i18n( get_option( 'date_format' ), $start_timestamp ) . ' - ' . date_i18n( get_option( 'date_format' ), $end_timestamp ) : '',
-		);
-	}
-
-	private function calculate_service_request_billing_preview( $subscription_id, $new_price_id, $effective_date ) {
-		global $wpdb;
-
-		$subscription_id = sanitize_text_field( (string) $subscription_id );
-		$new_price_id    = sanitize_text_field( (string) $new_price_id );
-		$effective_date  = sanitize_text_field( (string) $effective_date );
-
-		$subscription = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
-				$subscription_id
-			)
-		);
-		$new_price = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s LIMIT 1",
-				$new_price_id
-			)
-		);
-
-		if ( ! $subscription || ! $new_price ) {
-			return new WP_Error( 'missing_preview_data', __( 'Choose both a current subscription and a new product/price before saving the preview.', 'ajforms' ) );
-		}
-
-		$current = $this->get_subscription_billing_preview_data( $subscription );
-		$new_currency = ! empty( $new_price->currency ) ? sanitize_key( (string) $new_price->currency ) : 'usd';
-		$new_amount   = isset( $new_price->price_amount ) ? (float) $new_price->price_amount : 0.0;
-		$new_interval = ! empty( $new_price->recurring_interval ) ? sanitize_key( (string) $new_price->recurring_interval ) : '';
-		$new_name     = ! empty( $new_price->name ) ? sanitize_text_field( (string) $new_price->name ) : __( 'New product', 'ajforms' );
-
-		$effective_timestamp = $effective_date ? strtotime( $effective_date . ' 00:00:00 UTC' ) : current_time( 'timestamp', true );
-		if ( ! $effective_timestamp ) {
-			$effective_timestamp = current_time( 'timestamp', true );
-		}
-
-		$credit = 0.0;
-		$credit_note = '';
-		$period_seconds = 0;
-		$remaining_seconds = 0;
-
-		if ( ! empty( $current['period_start'] ) && ! empty( $current['period_end'] ) && $current['period_end'] > $current['period_start'] ) {
-			$period_seconds = max( 1, (int) $current['period_end'] - (int) $current['period_start'] );
-			$remaining_seconds = max( 0, (int) $current['period_end'] - (int) $effective_timestamp );
-			if ( $remaining_seconds > $period_seconds ) {
-				$remaining_seconds = $period_seconds;
-			}
-			if ( strtolower( $current['currency'] ) === strtolower( $new_currency ) ) {
-				$credit = round( (float) $current['amount'] * ( $remaining_seconds / $period_seconds ), 2 );
-			} else {
-				$credit_note = __( 'Currency changed, so no automatic credit was estimated.', 'ajforms' );
-			}
-		} else {
-			$credit_note = __( 'Current subscription period was not available from the Stripe sync, so no unused-period credit was estimated.', 'ajforms' );
-		}
-
-		$net_due = max( 0, round( $new_amount - $credit, 2 ) );
-		$notes = array();
-		if ( $credit_note ) {
-			$notes[] = $credit_note;
-		}
-		if ( ! empty( $current['interval'] ) && ! empty( $new_interval ) && $current['interval'] !== $new_interval ) {
-			$notes[] = sprintf( __( 'Billing interval changes from %1$s to %2$s.', 'ajforms' ), $current['interval'], $new_interval );
-		}
-		$notes[] = __( 'Preview only. Stripe is not updated until a later Apply Billing Change phase.', 'ajforms' );
-
-		return array(
-			'created_at'                 => current_time( 'mysql' ),
-			'created_by'                 => get_current_user_id(),
-			'effective_date'             => gmdate( 'Y-m-d', (int) $effective_timestamp ),
-			'current_subscription_id'     => $subscription_id,
-			'current_service_name'        => $current['service_name'],
-			'current_price_id'            => $current['price_id'],
-			'current_amount'              => round( (float) $current['amount'], 2 ),
-			'current_currency'            => $current['currency'],
-			'current_interval'            => $current['interval'],
-			'current_period_start'        => ! empty( $current['period_start'] ) ? gmdate( 'Y-m-d', (int) $current['period_start'] ) : '',
-			'current_period_end'          => ! empty( $current['period_end'] ) ? gmdate( 'Y-m-d', (int) $current['period_end'] ) : '',
-			'new_price_id'                => $new_price_id,
-			'new_product_id'              => ! empty( $new_price->stripe_product_id ) ? sanitize_text_field( (string) $new_price->stripe_product_id ) : '',
-			'new_service_name'            => $new_name,
-			'new_amount'                  => round( $new_amount, 2 ),
-			'new_currency'                => $new_currency,
-			'new_interval'                => $new_interval,
-			'unused_credit'               => round( $credit, 2 ),
-			'new_charge'                  => round( $new_amount, 2 ),
-			'net_due'                     => $net_due,
-			'period_days'                 => $period_seconds ? round( $period_seconds / DAY_IN_SECONDS, 2 ) : 0,
-			'remaining_days'              => $remaining_seconds ? round( $remaining_seconds / DAY_IN_SECONDS, 2 ) : 0,
-			'notes'                       => $notes,
-		);
 	}
 
 	private function sync_portal_service_request_to_ledger( $request, $data = array() ) {
@@ -4739,9 +4447,9 @@ class AJForms_Admin {
 		$metadata = ! empty( $ledger->metadata ) ? json_decode( (string) $ledger->metadata, true ) : array();
 		$metadata = is_array( $metadata ) ? $metadata : array();
 
-		foreach ( array( 'payment_url', 'payment_reference', 'client_notes', 'request_id', 'billing_preview' ) as $meta_key ) {
+		foreach ( array( 'payment_url', 'payment_reference', 'client_notes', 'request_id' ) as $meta_key ) {
 			if ( array_key_exists( $meta_key, $data ) ) {
-				$metadata[ $meta_key ] = is_scalar( $data[ $meta_key ] ) ? (string) $data[ $meta_key ] : $data[ $meta_key ];
+				$metadata[ $meta_key ] = is_scalar( $data[ $meta_key ] ) ? (string) $data[ $meta_key ] : '';
 			}
 		}
 		$metadata['request_status_updated_at'] = current_time( 'mysql' );
@@ -4857,105 +4565,84 @@ class AJForms_Admin {
 		exit;
 	}
 
-
-	private function handle_portal_service_request_billing_preview_save() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-
-		if ( ! isset( $_POST['service_request_action'] ) || 'save_billing_preview' !== sanitize_key( wp_unslash( $_POST['service_request_action'] ) ) ) {
-			return;
-		}
-
-		$request_id = isset( $_POST['request_id'] ) ? absint( wp_unslash( $_POST['request_id'] ) ) : 0;
-		if ( ! $request_id ) {
-			return;
-		}
-
-		check_admin_referer( 'ajcore_service_request_billing_preview_' . $request_id );
-
+	private function cleanup_stale_pending_checkout_service_requests() {
 		global $wpdb;
-		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
-		if ( ! $request ) {
-			return;
-		}
 
-		$subscription_id = isset( $_POST['preview_subscription_id'] ) ? sanitize_text_field( wp_unslash( $_POST['preview_subscription_id'] ) ) : '';
-		$new_price_id    = isset( $_POST['preview_new_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['preview_new_price_id'] ) ) : '';
-		$effective_date  = isset( $_POST['preview_effective_date'] ) ? sanitize_text_field( wp_unslash( $_POST['preview_effective_date'] ) ) : current_time( 'Y-m-d' );
+		$this->ensure_portal_schema();
 
-		$preview = $this->calculate_service_request_billing_preview( $subscription_id, $new_price_id, $effective_date );
-		if ( is_wp_error( $preview ) ) {
-			wp_safe_redirect(
-				add_query_arg(
-					array(
-						'page'                  => 'ajforms-client-portal',
-						'tab'                   => 'service-requests',
-						'service-request-error' => rawurlencode( $preview->get_error_message() ),
-					),
-					admin_url( 'admin.php' )
-				)
-			);
-			exit;
-		}
-
-		$raw_data = $this->get_portal_service_request_raw_data( $request );
-		$raw_data['billing_preview'] = $preview;
-		$raw_data['billing_preview_history'] = isset( $raw_data['billing_preview_history'] ) && is_array( $raw_data['billing_preview_history'] ) ? $raw_data['billing_preview_history'] : array();
-		$raw_data['billing_preview_history'][] = $preview;
-		if ( count( $raw_data['billing_preview_history'] ) > 10 ) {
-			$raw_data['billing_preview_history'] = array_slice( $raw_data['billing_preview_history'], -10 );
-		}
-
-		$status = sanitize_key( (string) $request->status );
-		if ( 'admin_review_required' === $status ) {
-			$status = 'awaiting_payment';
-		}
-
-		$client_notes = trim( (string) $request->client_notes );
-		if ( '' === $client_notes ) {
-			$client_notes = sprintf(
-				__( 'Billing change preview: %1$s credit, %2$s new charge, %3$s estimated net due. Stripe has not been updated yet.', 'ajforms' ),
-				strtoupper( $preview['new_currency'] ) . ' ' . number_format_i18n( (float) $preview['unused_credit'], 2 ),
-				strtoupper( $preview['new_currency'] ) . ' ' . number_format_i18n( (float) $preview['new_charge'], 2 ),
-				strtoupper( $preview['new_currency'] ) . ' ' . number_format_i18n( (float) $preview['net_due'], 2 )
-			);
-		}
-
-		$wpdb->update(
-			$this->get_portal_service_requests_table(),
-			array(
-				'amount'       => (float) $preview['net_due'],
-				'currency'     => sanitize_key( (string) $preview['new_currency'] ),
-				'status'       => $status,
-				'client_notes' => $client_notes,
-				'raw_data'     => wp_json_encode( $raw_data ),
-				'updated_at'   => current_time( 'mysql' ),
-			),
-			array( 'id' => $request_id ),
-			array( '%f', '%s', '%s', '%s', '%s', '%s' ),
-			array( '%d' )
+		$stale_requests = $wpdb->get_results(
+			"SELECT r.*, l.source_type AS ledger_source_type, l.status AS ledger_status, l.invoice_id, l.payment_intent_id, l.charge_id
+			FROM {$this->get_portal_service_requests_table()} r
+			LEFT JOIN {$this->get_portal_ledger_table()} l ON l.id = r.ledger_id
+			WHERE r.request_type = 'add_service'
+			AND r.source = 'ledger_backfill'
+			AND r.status IN ('draft','pending_payment')
+			AND (r.source_type = 'checkout_session' OR l.source_type = 'checkout_session')"
 		);
 
-		$request->amount = (float) $preview['net_due'];
-		$request->currency = sanitize_key( (string) $preview['new_currency'] );
-		$request->status = $status;
-		$request->client_notes = $client_notes;
-		$request->raw_data = wp_json_encode( $raw_data );
+		foreach ( $stale_requests as $request ) {
+			if ( ! empty( $request->ledger_id ) && $this->is_portal_service_request_ledger_safe_to_delete( $request ) ) {
+				$wpdb->delete( $this->get_portal_ledger_table(), array( 'id' => (int) $request->ledger_id ), array( '%d' ) );
+			}
 
-		$this->sync_portal_service_request_to_ledger(
-			$request,
-			array(
-				'amount'       => (float) $preview['net_due'],
-				'currency'     => sanitize_key( (string) $preview['new_currency'] ),
-				'status'       => $status,
-				'client_notes' => $client_notes,
-				'request_id'   => $request_id,
+			$wpdb->delete( $this->get_portal_service_requests_table(), array( 'id' => (int) $request->id ), array( '%d' ) );
+		}
+	}
+
+	private function is_portal_service_request_ledger_safe_to_delete( $request ) {
+		if ( empty( $request->ledger_id ) ) {
+			return false;
+		}
+
+		global $wpdb;
+		$ledger = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE id = %d LIMIT 1",
+				(int) $request->ledger_id
 			)
 		);
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
-		exit;
+		if ( ! $ledger ) {
+			return false;
+		}
+
+		if ( ! empty( $ledger->invoice_id ) || ! empty( $ledger->payment_intent_id ) || ! empty( $ledger->charge_id ) ) {
+			return false;
+		}
+
+		$source_type = sanitize_key( (string) $ledger->source_type );
+		$status      = sanitize_key( (string) $ledger->status );
+
+		if ( in_array( $source_type, array( 'invoice', 'charge' ), true ) ) {
+			return false;
+		}
+
+		if ( 'checkout_session' === $source_type && in_array( $status, array( 'paid', 'succeeded', 'completed' ), true ) ) {
+			return false;
+		}
+
+		return in_array( $source_type, array( 'checkout_session', 'custom_service_request', 'service_quote_request', 'custom_request', 'service_request', 'portal_custom_request', 'portal_additional_entity_pricing' ), true );
+	}
+
+	private function handle_portal_service_request_delete( $request_id ) {
+		global $wpdb;
+
+		$request = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d LIMIT 1",
+				(int) $request_id
+			)
+		);
+
+		if ( ! $request ) {
+			return false;
+		}
+
+		if ( $this->is_portal_service_request_ledger_safe_to_delete( $request ) ) {
+			$wpdb->delete( $this->get_portal_ledger_table(), array( 'id' => (int) $request->ledger_id ), array( '%d' ) );
+		}
+
+		return false !== $wpdb->delete( $this->get_portal_service_requests_table(), array( 'id' => (int) $request_id ), array( '%d' ) );
 	}
 
 	private function backfill_portal_service_requests_from_ledger() {
@@ -4998,13 +4685,13 @@ class AJForms_Admin {
 			);
 			$source_type = sanitize_key( (string) $entry->source_type );
 			$is_checkout_request = 'checkout_session' === $source_type;
+			if ( $is_checkout_request && ! in_array( sanitize_key( (string) $entry->status ), array( 'paid', 'succeeded', 'completed', 'failed' ), true ) ) {
+				continue;
+			}
 			$request_type = $is_checkout_request ? 'add_service' : 'custom_request';
 			$status = 'admin_review_required';
 			if ( $is_checkout_request ) {
 				$status = 'paid' === $entry->status ? 'paid' : ( 'failed' === $entry->status ? 'failed' : 'pending_payment' );
-				if ( 'paid' !== $status ) {
-					continue;
-				}
 			} elseif ( ! empty( $entry->status ) ) {
 				$status = $this->normalize_portal_service_request_status( $entry->status );
 			}
@@ -5059,9 +4746,8 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
-		$this->cleanup_stale_portal_checkout_request_attempts();
+		$this->cleanup_stale_pending_checkout_service_requests();
 		$this->handle_portal_service_request_details_save();
-		$this->handle_portal_service_request_billing_preview_save();
 
 		if ( ! isset( $_GET['service_request_action'], $_GET['request_id'], $_GET['_wpnonce'] ) ) {
 			return;
@@ -5071,35 +4757,27 @@ class AJForms_Admin {
 		$action     = sanitize_key( wp_unslash( $_GET['service_request_action'] ) );
 		check_admin_referer( 'ajcore_service_request_' . $request_id );
 
-		$action_status_map = array(
-			'under_review'  => 'admin_review_required',
-			'await_payment' => 'awaiting_payment',
-			'paid'          => 'paid',
-			'complete'      => 'completed',
-			'cancel'        => 'cancelled',
-			'failed'        => 'failed',
-		);
-
-		global $wpdb;
-		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
-
 		if ( 'delete' === $action ) {
-			if ( $request ) {
-				if ( ! empty( $request->ledger_id ) && $this->should_delete_linked_ledger_for_service_request( $request ) ) {
-					$wpdb->delete( $this->get_portal_ledger_table(), array( 'id' => (int) $request->ledger_id ), array( '%d' ) );
-				}
-				$wpdb->delete( $this->get_portal_service_requests_table(), array( 'id' => $request_id ), array( '%d' ) );
-			}
-
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
+			$this->handle_portal_service_request_delete( $request_id );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-deleted' => 1 ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
+		$action_status_map = array(
+			'under_review'     => 'admin_review_required',
+			'await_payment'    => 'awaiting_payment',
+			'paid'             => 'paid',
+			'complete'     => 'completed',
+			'cancel'       => 'cancelled',
+			'failed'       => 'failed',
+		);
 		if ( ! isset( $action_status_map[ $action ] ) ) {
 			return;
 		}
 
+		global $wpdb;
 		$status = $action_status_map[ $action ];
+		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
 		if ( $request ) {
 			$wpdb->update(
 				$this->get_portal_service_requests_table(),
@@ -5131,7 +4809,7 @@ class AJForms_Admin {
 		global $wpdb;
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
-		$this->cleanup_stale_portal_checkout_request_attempts();
+		$this->cleanup_stale_pending_checkout_service_requests();
 
 		$status_filter = isset( $_GET['request_status'] ) ? sanitize_key( wp_unslash( $_GET['request_status'] ) ) : '';
 		$search        = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
@@ -5172,8 +4850,8 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
-			<?php if ( isset( $_GET['service-request-error'] ) ) : ?>
-				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['service-request-error'] ) ) ); ?></p></div>
+			<?php if ( isset( $_GET['service-request-deleted'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request deleted.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<p><?php esc_html_e( 'Review client add-service checkout attempts, paid purchases, and custom upgrade requests from one place.', 'ajforms' ); ?></p>
 
@@ -5217,10 +4895,10 @@ class AJForms_Admin {
 							'under_review'  => __( 'Under Review', 'ajforms' ),
 							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
 							'paid'          => __( 'Paid', 'ajforms' ),
-							'complete'      => __( 'Complete', 'ajforms' ),
-							'cancel'        => __( 'Cancel', 'ajforms' ),
-							'failed'        => __( 'Failed', 'ajforms' ),
-							'delete'        => __( 'Delete', 'ajforms' ),
+							'complete'     => __( 'Complete', 'ajforms' ),
+							'cancel'       => __( 'Cancel', 'ajforms' ),
+							'failed'       => __( 'Failed', 'ajforms' ),
+							'delete'       => __( 'Delete', 'ajforms' ),
 						);
 						?>
 						<tr>
@@ -5391,7 +5069,7 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
-		$this->cleanup_stale_portal_checkout_request_attempts();
+		$this->cleanup_stale_pending_checkout_service_requests();
 
 		$status_filter = isset( $_GET['request_status'] ) ? sanitize_key( wp_unslash( $_GET['request_status'] ) ) : '';
 		$search        = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
@@ -5432,8 +5110,8 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
-			<?php if ( isset( $_GET['service-request-error'] ) ) : ?>
-				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['service-request-error'] ) ) ); ?></p></div>
+			<?php if ( isset( $_GET['service-request-deleted'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request deleted.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<p><?php esc_html_e( 'Review client checkout attempts, custom pricing requests, paid purchases, and other service-related items that need an admin decision.', 'ajforms' ); ?></p>
 
@@ -5478,18 +5156,14 @@ class AJForms_Admin {
 							'under_review'  => __( 'Under Review', 'ajforms' ),
 							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
 							'paid'          => __( 'Paid', 'ajforms' ),
-							'complete'      => __( 'Complete', 'ajforms' ),
-							'cancel'        => __( 'Cancel', 'ajforms' ),
-							'failed'        => __( 'Failed', 'ajforms' ),
-							'delete'        => __( 'Delete', 'ajforms' ),
+							'complete'     => __( 'Complete', 'ajforms' ),
+							'cancel'       => __( 'Cancel', 'ajforms' ),
+							'failed'       => __( 'Failed', 'ajforms' ),
+							'delete'       => __( 'Delete', 'ajforms' ),
 						);
 						$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
 						$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
 						$save_details_nonce = wp_create_nonce( 'ajcore_service_request_details_' . (int) $request->id );
-						$billing_preview_nonce = wp_create_nonce( 'ajcore_service_request_billing_preview_' . (int) $request->id );
-						$billing_preview = $this->get_portal_service_request_billing_preview( $request );
-						$subscription_options = $this->get_admin_subscription_preview_options( $request->stripe_customer_id );
-						$price_options = $this->get_admin_price_preview_options();
 						?>
 						<tr>
 							<td>
@@ -5520,7 +5194,7 @@ class AJForms_Admin {
 										'ajcore_service_request_' . (int) $request->id
 									);
 									?>
-									<a class="button button-small<?php echo 'delete' === $action_key ? ' button-link-delete' : ''; ?>" href="<?php echo esc_url( $action_url ); ?>"<?php echo 'delete' === $action_key ? ' onclick="return confirm(\'' . esc_js( __( 'Delete this request? Pending checkout attempts will also be removed from the client billing list when safely linked.', 'ajforms' ) ) . '\');"' : ''; ?>><?php echo esc_html( $action_label ); ?></a>
+									<a class="button button-small" href="<?php echo esc_url( $action_url ); ?>"<?php echo 'delete' === $action_key ? ' onclick="return confirm(\'' . esc_js( __( 'Delete this request? Safe linked non-Stripe ledger rows may also be removed.', 'ajforms' ) ) . '\');"' : ''; ?>><?php echo esc_html( $action_label ); ?></a>
 								<?php endforeach; ?>
 
 								<details style="margin-top:8px;max-width:420px;">
@@ -5540,61 +5214,6 @@ class AJForms_Admin {
 										<button class="button button-small button-primary" type="submit"><?php esc_html_e( 'Save Details', 'ajforms' ); ?></button>
 									</form>
 								</details>
-
-								<?php if ( $this->should_show_portal_billing_change_preview( $request ) ) : ?>
-								<details style="margin-top:8px;max-width:520px;">
-									<summary><?php esc_html_e( 'Billing Change Preview', 'ajforms' ); ?></summary>
-									<p style="margin:8px 0;color:#646970;"><?php esc_html_e( 'Estimate credit, new charge, and net amount due before changing anything in Stripe. This preview does not update Stripe.', 'ajforms' ); ?></p>
-									<form method="post" style="margin-top:8px;display:grid;gap:6px;">
-										<input type="hidden" name="page" value="ajforms-client-portal">
-										<input type="hidden" name="tab" value="service-requests">
-										<input type="hidden" name="service_request_action" value="save_billing_preview">
-										<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
-										<input type="hidden" name="_wpnonce" value="<?php echo esc_attr( $billing_preview_nonce ); ?>">
-										<label><?php esc_html_e( 'Current subscription', 'ajforms' ); ?><br>
-											<select name="preview_subscription_id" style="width:100%;">
-												<option value=""><?php esc_html_e( 'Choose current subscription', 'ajforms' ); ?></option>
-												<?php foreach ( $subscription_options as $subscription_option ) : ?>
-													<option value="<?php echo esc_attr( $subscription_option['id'] ); ?>" <?php selected( isset( $billing_preview['current_subscription_id'] ) ? $billing_preview['current_subscription_id'] : '', $subscription_option['id'] ); ?>><?php echo esc_html( $subscription_option['label'] ); ?></option>
-												<?php endforeach; ?>
-											</select>
-										</label>
-										<label><?php esc_html_e( 'New product / price', 'ajforms' ); ?><br>
-											<select name="preview_new_price_id" style="width:100%;">
-												<option value=""><?php esc_html_e( 'Choose new product/price', 'ajforms' ); ?></option>
-												<?php foreach ( $price_options as $price_option ) : ?>
-													<option value="<?php echo esc_attr( $price_option['price_id'] ); ?>" <?php selected( isset( $billing_preview['new_price_id'] ) ? $billing_preview['new_price_id'] : '', $price_option['price_id'] ); ?>><?php echo esc_html( $price_option['label'] ); ?></option>
-												<?php endforeach; ?>
-											</select>
-										</label>
-										<label><?php esc_html_e( 'Effective date', 'ajforms' ); ?><br><input type="date" name="preview_effective_date" value="<?php echo esc_attr( ! empty( $billing_preview['effective_date'] ) ? $billing_preview['effective_date'] : current_time( 'Y-m-d' ) ); ?>"></label>
-										<button class="button button-small button-primary" type="submit"><?php esc_html_e( 'Save Billing Preview', 'ajforms' ); ?></button>
-									</form>
-
-									<?php if ( ! empty( $billing_preview ) ) : ?>
-										<div style="margin-top:10px;padding:10px;border:1px solid #dcdcde;background:#fff;border-radius:6px;">
-											<strong><?php esc_html_e( 'Latest Preview', 'ajforms' ); ?></strong>
-											<table class="widefat" style="margin-top:8px;">
-												<tbody>
-													<tr><td><?php esc_html_e( 'Effective date', 'ajforms' ); ?></td><td><?php echo esc_html( isset( $billing_preview['effective_date'] ) ? $billing_preview['effective_date'] : '' ); ?></td></tr>
-													<tr><td><?php esc_html_e( 'Current service', 'ajforms' ); ?></td><td><?php echo esc_html( isset( $billing_preview['current_service_name'] ) ? $billing_preview['current_service_name'] : '' ); ?></td></tr>
-													<tr><td><?php esc_html_e( 'New service', 'ajforms' ); ?></td><td><?php echo esc_html( isset( $billing_preview['new_service_name'] ) ? $billing_preview['new_service_name'] : '' ); ?></td></tr>
-													<tr><td><?php esc_html_e( 'Unused credit', 'ajforms' ); ?></td><td><?php echo esc_html( strtoupper( isset( $billing_preview['new_currency'] ) ? $billing_preview['new_currency'] : 'usd' ) . ' ' . number_format_i18n( isset( $billing_preview['unused_credit'] ) ? (float) $billing_preview['unused_credit'] : 0, 2 ) ); ?></td></tr>
-													<tr><td><?php esc_html_e( 'New charge', 'ajforms' ); ?></td><td><?php echo esc_html( strtoupper( isset( $billing_preview['new_currency'] ) ? $billing_preview['new_currency'] : 'usd' ) . ' ' . number_format_i18n( isset( $billing_preview['new_charge'] ) ? (float) $billing_preview['new_charge'] : 0, 2 ) ); ?></td></tr>
-													<tr><td><strong><?php esc_html_e( 'Estimated net due', 'ajforms' ); ?></strong></td><td><strong><?php echo esc_html( strtoupper( isset( $billing_preview['new_currency'] ) ? $billing_preview['new_currency'] : 'usd' ) . ' ' . number_format_i18n( isset( $billing_preview['net_due'] ) ? (float) $billing_preview['net_due'] : 0, 2 ) ); ?></strong></td></tr>
-												</tbody>
-											</table>
-											<?php if ( ! empty( $billing_preview['notes'] ) && is_array( $billing_preview['notes'] ) ) : ?>
-												<ul style="margin:8px 0 0 18px;list-style:disc;">
-													<?php foreach ( $billing_preview['notes'] as $preview_note ) : ?>
-														<li><?php echo esc_html( $preview_note ); ?></li>
-													<?php endforeach; ?>
-												</ul>
-											<?php endif; ?>
-										</div>
-									<?php endif; ?>
-								</details>
-								<?php endif; ?>
 							</td>
 						</tr>
 					<?php endforeach; ?>
