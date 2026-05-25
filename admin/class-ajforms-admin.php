@@ -2232,7 +2232,7 @@ class AJForms_Admin {
 			'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user->user_login ),
 			'login'
 		);
-		$subject = sprintf( __( 'Password reset for %s', 'ajforms' ), wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
+		$subject = __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
 		$settings = $this->get_plugin_settings();
 		$from_email = defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com';
 		if ( ! is_email( $from_email ) ) {
@@ -2278,6 +2278,78 @@ class AJForms_Admin {
 			esc_html__( 'Set New Password', 'ajforms' ),
 			esc_html__( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
 			esc_html__( 'If you did not request this email, you can ignore it.', 'ajforms' )
+		);
+		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+		if ( is_email( $from_email ) ) {
+			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
+			$headers[] = 'Reply-To: ' . $from_email;
+		}
+
+		return wp_mail( $user->user_email, $subject, $message, $headers );
+	}
+
+	private function send_portal_user_welcome_email( $user_id ) {
+		$user = get_userdata( absint( $user_id ) );
+		if ( ! $user ) {
+			return new WP_Error( 'missing_user', __( 'WordPress user was not found.', 'ajforms' ) );
+		}
+
+		$key = get_password_reset_key( $user );
+		if ( is_wp_error( $key ) ) {
+			return $key;
+		}
+
+		$reset_url = network_site_url(
+			'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user->user_login ),
+			'login'
+		);
+		$subject = __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
+		$settings = $this->get_plugin_settings();
+		$from_email = defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com';
+		if ( ! is_email( $from_email ) ) {
+			$from_email = 'donotreply@ncllcagents.com';
+		}
+		$from_name = ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$message = sprintf(
+			'<!doctype html><html><body style="margin:0;padding:0;background:#f6f8fc;color:#0f172a;font-family:Arial,Helvetica,sans-serif;">
+				<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background:#f6f8fc;padding:32px 16px;">
+					<tr>
+						<td align="center">
+							<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #dbe7f3;border-radius:24px;overflow:hidden;box-shadow:0 18px 48px rgba(15,23,42,.10);">
+								<tr>
+									<td style="height:8px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed);font-size:0;line-height:0;">&nbsp;</td>
+								</tr>
+								<tr>
+									<td style="padding:34px 34px 30px;">
+										<p style="margin:0 0 10px;color:#2563eb;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">%1$s</p>
+										<h1 style="margin:0 0 16px;font-size:30px;line-height:1.15;color:#0f172a;">%2$s</h1>
+										<p style="margin:0 0 18px;font-size:17px;line-height:1.65;color:#334155;">%3$s</p>
+										<p style="margin:0 0 18px;font-size:16px;line-height:1.6;color:#475569;">%4$s</p>
+										<p style="margin:0 0 28px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:16px;line-height:1.55;color:#0f172a;"><strong>%5$s</strong><br>%6$s</p>
+										<p style="margin:0 0 28px;">
+											<a href="%7$s" style="display:inline-block;background:#3157ff;color:#ffffff;text-decoration:none;border-radius:999px;padding:14px 24px;font-size:16px;font-weight:800;box-shadow:0 12px 28px rgba(49,87,255,.28);">%8$s</a>
+										</p>
+										<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#64748b;">%9$s</p>
+										<p style="margin:0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:14px;line-height:1.55;word-break:break-all;">
+											<a href="%7$s" style="color:#2563eb;text-decoration:underline;">%7$s</a>
+										</p>
+									</td>
+								</tr>
+							</table>
+						</td>
+					</tr>
+				</table>
+			</body></html>',
+			esc_html( $site_name ),
+			esc_html__( 'Welcome to your client portal', 'ajforms' ),
+			esc_html( sprintf( __( 'Hi %s,', 'ajforms' ), $user->display_name ) ),
+			esc_html__( 'Your client portal access has been enabled. Use the button below to set your password and sign in securely.', 'ajforms' ),
+			esc_html__( 'Your username is your email address:', 'ajforms' ),
+			esc_html( $user->user_email ),
+			esc_url( $reset_url ),
+			esc_html__( 'Set Password and Sign In', 'ajforms' ),
+			esc_html__( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' )
 		);
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		if ( is_email( $from_email ) ) {
@@ -5282,7 +5354,7 @@ class AJForms_Admin {
 			$action = sanitize_key( wp_unslash( $_POST['portal_bulk_action'] ) );
 			$selected_ids = isset( $_POST['portal_customer_ids'] ) && is_array( $_POST['portal_customer_ids'] ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['portal_customer_ids'] ) ) : array();
 			$selected_ids = array_values( array_filter( array_unique( $selected_ids ) ) );
-			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password', 'delete_archived' );
+			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password', 'send_welcome', 'delete_archived' );
 			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
 			$updated = 0;
 			$skipped = 0;
@@ -5362,6 +5434,16 @@ class AJForms_Admin {
 					$result = $this->send_portal_user_password_reset( (int) $valid_user->ID );
 					if ( false === $result ) {
 						$result = new WP_Error( 'reset_failed', __( 'Password reset email could not be sent.', 'ajforms' ) );
+					}
+				} elseif ( 'send_welcome' === $action && ! empty( $customer->user_id ) ) {
+					$valid_user = $this->get_valid_portal_mapping_user( $customer, $customer );
+					if ( ! $valid_user || ! $is_active ) {
+						$skipped++;
+						continue;
+					}
+					$result = $this->send_portal_user_welcome_email( (int) $valid_user->ID );
+					if ( false === $result ) {
+						$result = new WP_Error( 'welcome_failed', __( 'Welcome email could not be sent.', 'ajforms' ) );
 					}
 				} else {
 					$skipped++;
@@ -5819,6 +5901,11 @@ class AJForms_Admin {
 			'default_notifications_enabled'  => isset( $_POST['default_notifications_enabled'] ) ? '1' : '0',
 			'default_from_name'              => isset( $_POST['default_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['default_from_name'] ) ) : get_bloginfo( 'name' ),
 			'default_reply_to_mode'          => isset( $_POST['default_reply_to_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ), array( 'submitter', 'site' ), true ) ? sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ) : 'submitter',
+			'wp_email_templates_enabled'     => isset( $_POST['wp_email_templates_enabled'] ) ? '1' : '0',
+			'wp_email_from_email'            => isset( $_POST['wp_email_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_email_from_email'] ) ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? AJCORE_SYSTEM_FROM_EMAIL : 'donotreply@ncllcagents.com' ),
+			'wp_email_from_name'             => isset( $_POST['wp_email_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_email_from_name'] ) ) : get_bloginfo( 'name' ),
+			'wp_password_reset_subject'      => isset( $_POST['wp_password_reset_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_subject'] ) ) : 'Password reset for your Portal Login for NC LLC Agents Inc',
+			'wp_welcome_email_subject'       => isset( $_POST['wp_welcome_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_email_subject'] ) ) : 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -5852,6 +5939,7 @@ class AJForms_Admin {
 
 		$section_keys = array(
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
+			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices' ),
@@ -9398,6 +9486,7 @@ class AJForms_Admin {
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="archive"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="restore"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="reset_password"><?php esc_html_e( 'Reset Password', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="send_welcome"><?php esc_html_e( 'Send Welcome Email', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-link-delete" data-portal-bulk-action="delete_archived"><?php esc_html_e( 'Delete Archived', 'ajforms' ); ?></button>
 				<form method="post" style="display:inline;margin:0;">
 					<?php wp_nonce_field( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' ); ?>
@@ -11252,6 +11341,10 @@ class AJForms_Admin {
 				'label' => __( 'General Settings', 'ajforms' ),
 				'icon'  => 'admin-generic',
 			),
+			'email-templates' => array(
+				'label' => __( 'WP Email Templates', 'ajforms' ),
+				'icon'  => 'email-alt',
+			),
 			'spam'         => array(
 				'label' => __( 'Spam Protection', 'ajforms' ),
 				'icon'  => 'warning',
@@ -11416,6 +11509,9 @@ class AJForms_Admin {
 								<?php elseif ( 'payments' === $section ) : ?>
 									<h2><?php esc_html_e( 'Stripe Payments', 'ajforms' ); ?></h2>
 									<p><?php esc_html_e( 'Connect Stripe here once, then choose which individual forms should use it from the builder.', 'ajforms' ); ?></p>
+								<?php elseif ( 'email-templates' === $section ) : ?>
+									<h2><?php esc_html_e( 'WP Email Templates', 'ajforms' ); ?></h2>
+									<p><?php esc_html_e( 'Control WordPress transactional email branding and subjects so customer-facing messages do not expose internal email addresses.', 'ajforms' ); ?></p>
 								<?php endif; ?>
 							</div>
 
@@ -11465,6 +11561,57 @@ class AJForms_Admin {
 										<label for="default_success_message"><?php esc_html_e( 'Success Message', 'ajforms' ); ?></label>
 										<textarea name="default_success_message" id="default_success_message"><?php echo esc_textarea( $settings['default_success_message'] ); ?></textarea>
 										<div class="ajforms-settings-help"><?php esc_html_e( 'Used as the starting success message when building a new form.', 'ajforms' ); ?></div>
+									</div>
+								</div>
+							<?php elseif ( 'email-templates' === $section ) : ?>
+								<div class="ajforms-settings-card">
+									<span class="ajforms-settings-pill"><?php esc_html_e( 'WordPress Mail', 'ajforms' ); ?></span>
+									<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
+									<p><?php esc_html_e( 'These values are used for WordPress and AJ Core system emails. Keep internal inboxes out of From and Reply-To headers.', 'ajforms' ); ?></p>
+									<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
+										<input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>>
+										<div>
+											<strong><?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></strong>
+											<span><?php esc_html_e( 'Currently applies to WordPress password reset emails and AJ Core portal password/welcome emails.', 'ajforms' ); ?></span>
+										</div>
+									</div>
+									<div class="ajforms-settings-grid">
+										<div class="ajforms-settings-field">
+											<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
+											<input name="wp_email_from_email" id="wp_email_from_email" type="text" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+											<div class="ajforms-settings-help"><?php esc_html_e( 'Recommended: donotreply@ncllcagents.com', 'ajforms' ); ?></div>
+										</div>
+										<div class="ajforms-settings-field">
+											<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
+											<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
+										</div>
+									</div>
+								</div>
+
+								<div class="ajforms-settings-card">
+									<span class="ajforms-settings-pill"><?php esc_html_e( 'Templates', 'ajforms' ); ?></span>
+									<h3><?php esc_html_e( 'Email subjects', 'ajforms' ); ?></h3>
+									<p><?php esc_html_e( 'The HTML design is handled by AJ Core. Edit the customer-facing subjects here.', 'ajforms' ); ?></p>
+									<div class="ajforms-settings-grid">
+										<div class="ajforms-settings-field">
+											<label for="wp_password_reset_subject"><?php esc_html_e( 'Password Reset Subject', 'ajforms' ); ?></label>
+											<input name="wp_password_reset_subject" id="wp_password_reset_subject" type="text" value="<?php echo esc_attr( $settings['wp_password_reset_subject'] ); ?>">
+											<div class="ajforms-settings-help"><?php esc_html_e( 'Used for WordPress Users reset password and AJ Core portal reset password.', 'ajforms' ); ?></div>
+										</div>
+										<div class="ajforms-settings-field">
+											<label for="wp_welcome_email_subject"><?php esc_html_e( 'Portal Welcome Subject', 'ajforms' ); ?></label>
+											<input name="wp_welcome_email_subject" id="wp_welcome_email_subject" type="text" value="<?php echo esc_attr( $settings['wp_welcome_email_subject'] ); ?>">
+											<div class="ajforms-settings-help"><?php esc_html_e( 'Used by the Portal Users bulk Send Welcome Email action.', 'ajforms' ); ?></div>
+										</div>
+									</div>
+									<div class="ajforms-settings-note">
+										<strong><?php esc_html_e( 'Email types currently controlled:', 'ajforms' ); ?></strong>
+										<ul style="margin:10px 0 0 18px;list-style:disc;">
+											<li><?php esc_html_e( 'WordPress password reset from Users / wp-login.php', 'ajforms' ); ?></li>
+											<li><?php esc_html_e( 'AJ Core Portal Users reset password', 'ajforms' ); ?></li>
+											<li><?php esc_html_e( 'AJ Core Portal Users welcome email', 'ajforms' ); ?></li>
+											<li><?php esc_html_e( 'AJ Core form notification sender fallback', 'ajforms' ); ?></li>
+										</ul>
 									</div>
 								</div>
 							<?php elseif ( 'spam' === $section ) : ?>

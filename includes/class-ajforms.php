@@ -99,6 +99,9 @@ class AJForms {
 		add_filter( 'login_redirect', array( $this, 'filter_login_redirect' ), 999999, 3 );
 		add_filter( 'show_admin_bar', array( $this, 'filter_show_admin_bar' ) );
 		add_filter( 'wp_nav_menu_items', array( $this, 'add_customer_portal_nav_item' ), 10, 2 );
+		add_filter( 'wp_mail_from', array( $this, 'filter_wp_mail_from' ) );
+		add_filter( 'wp_mail_from_name', array( $this, 'filter_wp_mail_from_name' ) );
+		add_filter( 'retrieve_password_notification_email', array( $this, 'filter_wp_password_reset_email' ), 10, 4 );
 		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_upload' ) );
@@ -113,6 +116,101 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_create_custom_service_request', array( $this, 'ajax_create_custom_service_request' ) );
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 		add_action( 'wp_ajax_ajcore_pay_portal_ledger', array( $this, 'ajax_pay_portal_ledger' ) );
+	}
+
+	public function filter_wp_mail_from( $email ) {
+		$settings = get_option( 'ajforms_settings', array() );
+		$settings = is_array( $settings ) ? $settings : array();
+		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
+
+		return is_email( $from_email ) ? $from_email : $email;
+	}
+
+	public function filter_wp_mail_from_name( $name ) {
+		$settings = get_option( 'ajforms_settings', array() );
+		$settings = is_array( $settings ) ? $settings : array();
+		$from_name = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+
+		return '' !== $from_name ? $from_name : $name;
+	}
+
+	public function filter_wp_password_reset_email( $defaults, $key, $user_login, $user_data ) {
+		$settings = get_option( 'ajforms_settings', array() );
+		$settings = is_array( $settings ) ? $settings : array();
+		if ( isset( $settings['wp_email_templates_enabled'] ) && '1' !== (string) $settings['wp_email_templates_enabled'] ) {
+			return $defaults;
+		}
+
+		if ( ! $user_data instanceof WP_User ) {
+			return $defaults;
+		}
+
+		$reset_url = network_site_url(
+			'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user_login ),
+			'login'
+		);
+		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
+		$defaults['subject'] = $subject;
+		$defaults['headers'] = array( 'Content-Type: text/html; charset=UTF-8' );
+		$defaults['message'] = $this->build_wp_email_template(
+			array(
+				'headline'      => __( 'Set your client portal password', 'ajforms' ),
+				'greeting'      => sprintf( __( 'Hi %s,', 'ajforms' ), $user_data->display_name ),
+				'body'          => __( 'Use the secure button below to create a new password for your account. This link is private and should only be used by you.', 'ajforms' ),
+				'button_label'  => __( 'Set New Password', 'ajforms' ),
+				'button_url'    => $reset_url,
+				'link_intro'    => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
+				'footer'        => __( 'If you did not request this email, you can ignore it.', 'ajforms' ),
+			)
+		);
+
+		return $defaults;
+	}
+
+	private function build_wp_email_template( $args ) {
+		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$args = wp_parse_args(
+			$args,
+			array(
+				'headline'     => '',
+				'greeting'     => '',
+				'body'         => '',
+				'button_label' => '',
+				'button_url'   => '',
+				'link_intro'   => '',
+				'footer'       => '',
+			)
+		);
+
+		return sprintf(
+			'<!doctype html><html><body style="margin:0;padding:0;background:#f6f8fc;color:#0f172a;font-family:Arial,Helvetica,sans-serif;">
+				<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background:#f6f8fc;padding:32px 16px;">
+					<tr><td align="center">
+						<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #dbe7f3;border-radius:24px;overflow:hidden;box-shadow:0 18px 48px rgba(15,23,42,.10);">
+							<tr><td style="height:8px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed);font-size:0;line-height:0;">&nbsp;</td></tr>
+							<tr><td style="padding:34px 34px 30px;">
+								<p style="margin:0 0 10px;color:#2563eb;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">%1$s</p>
+								<h1 style="margin:0 0 16px;font-size:30px;line-height:1.15;color:#0f172a;">%2$s</h1>
+								<p style="margin:0 0 18px;font-size:17px;line-height:1.65;color:#334155;">%3$s</p>
+								<p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:#475569;">%4$s</p>
+								<p style="margin:0 0 28px;"><a href="%5$s" style="display:inline-block;background:#3157ff;color:#ffffff;text-decoration:none;border-radius:999px;padding:14px 24px;font-size:16px;font-weight:800;box-shadow:0 12px 28px rgba(49,87,255,.28);">%6$s</a></p>
+								<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#64748b;">%7$s</p>
+								<p style="margin:0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:14px;line-height:1.55;word-break:break-all;"><a href="%5$s" style="color:#2563eb;text-decoration:underline;">%5$s</a></p>
+								<p style="margin:24px 0 0;font-size:13px;line-height:1.5;color:#64748b;">%8$s</p>
+							</td></tr>
+						</table>
+					</td></tr>
+				</table>
+			</body></html>',
+			esc_html( $site_name ),
+			esc_html( $args['headline'] ),
+			esc_html( $args['greeting'] ),
+			esc_html( $args['body'] ),
+			esc_url( $args['button_url'] ),
+			esc_html( $args['button_label'] ),
+			esc_html( $args['link_intro'] ),
+			esc_html( $args['footer'] )
+		);
 	}
 
 	public function maybe_handle_stripe_webhook() {
