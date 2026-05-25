@@ -2463,6 +2463,35 @@ class AJForms_Admin {
 		return $label;
 	}
 
+	private function get_portal_product_admin_label( $product ) {
+		if ( ! $product ) {
+			return '';
+		}
+
+		$status = ! empty( $product->active ) ? __( 'Active', 'ajforms' ) : __( 'Inactive', 'ajforms' );
+		$interval = ! empty( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : __( 'one-time', 'ajforms' );
+		$price_id = ! empty( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+
+		return sprintf(
+			'%1$s — %2$s — %3$s — %4$s — %5$s',
+			sanitize_text_field( (string) $product->name ),
+			$this->get_portal_product_price_label( $product ),
+			$interval,
+			$status,
+			$price_id
+		);
+	}
+
+	private function get_portal_product_by_price_id( $price_id ) {
+		$price_id = sanitize_text_field( (string) $price_id );
+		if ( '' === $price_id ) {
+			return null;
+		}
+
+		$by_price = $this->get_portal_product_cache_by_price_id();
+		return isset( $by_price[ $price_id ] ) ? $by_price[ $price_id ] : null;
+	}
+
 	private function get_portal_service_period_from_ledger_entry( $entry ) {
 		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
 		foreach ( array( 'service_period', 'period' ) as $key ) {
@@ -6098,6 +6127,19 @@ class AJForms_Admin {
 		$payment_url  = isset( $_POST['payment_url'] ) ? esc_url_raw( wp_unslash( $_POST['payment_url'] ) ) : '';
 		$payment_reference = isset( $_POST['payment_reference'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_reference'] ) ) : '';
 		$after_save_status = isset( $_POST['after_save_status'] ) ? sanitize_key( wp_unslash( $_POST['after_save_status'] ) ) : '';
+		$selected_price_id = isset( $_POST['request_stripe_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['request_stripe_price_id'] ) ) : '';
+		$selected_product  = $this->get_portal_product_by_price_id( $selected_price_id );
+		if ( '' !== $selected_price_id && ! $selected_product ) {
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-error' => rawurlencode( __( 'Selected Stripe price was not found in the synced product cache.', 'ajforms' ) ) ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		$subscription_id = isset( $_POST['billing_subscription_id'] ) ? sanitize_text_field( wp_unslash( $_POST['billing_subscription_id'] ) ) : '';
+		$subscription_item_id = isset( $_POST['billing_subscription_item_id'] ) ? sanitize_text_field( wp_unslash( $_POST['billing_subscription_item_id'] ) ) : '';
+		$proration_behavior = isset( $_POST['billing_proration_behavior'] ) ? sanitize_key( wp_unslash( $_POST['billing_proration_behavior'] ) ) : 'create_prorations';
+		if ( ! in_array( $proration_behavior, array( 'create_prorations', 'none', 'always_invoice' ), true ) ) {
+			$proration_behavior = 'create_prorations';
+		}
 
 		$status = sanitize_key( (string) $request->status );
 		if ( '' !== $after_save_status && isset( $this->get_portal_service_request_status_labels()[ $after_save_status ] ) ) {
@@ -6109,20 +6151,53 @@ class AJForms_Admin {
 		$raw_data['payment_reference'] = $payment_reference;
 		$raw_data['details_updated_at'] = current_time( 'mysql' );
 		$raw_data['details_updated_by'] = get_current_user_id();
+		if ( $selected_product ) {
+			$raw_data['selected_service_price'] = array(
+				'stripe_price_id'   => sanitize_text_field( (string) $selected_product->stripe_price_id ),
+				'stripe_product_id' => sanitize_text_field( (string) $selected_product->stripe_product_id ),
+				'name'              => sanitize_text_field( (string) $selected_product->name ),
+				'amount'            => (float) $selected_product->price_amount,
+				'currency'          => sanitize_key( (string) $selected_product->currency ),
+				'recurring_interval'=> sanitize_key( (string) $selected_product->recurring_interval ),
+				'active'            => ! empty( $selected_product->active ) ? 1 : 0,
+			);
+			$raw_data['billing_preview'] = array(
+				'subscription_id'      => $subscription_id,
+				'subscription_item_id' => $subscription_item_id,
+				'new_price_id'         => sanitize_text_field( (string) $selected_product->stripe_price_id ),
+				'new_product_id'       => sanitize_text_field( (string) $selected_product->stripe_product_id ),
+				'new_price_label'      => $this->get_portal_product_admin_label( $selected_product ),
+				'proration_behavior'   => $proration_behavior,
+				'preview_saved_at'     => current_time( 'mysql' ),
+				'preview_saved_by'     => get_current_user_id(),
+			);
+		}
+
+		$update_data = array(
+			'amount'       => $amount,
+			'currency'     => $currency,
+			'status'       => $status,
+			'admin_notes'  => $admin_notes,
+			'client_notes' => $client_notes,
+			'raw_data'     => wp_json_encode( $raw_data ),
+			'updated_at'   => current_time( 'mysql' ),
+		);
+		$update_formats = array( '%f', '%s', '%s', '%s', '%s', '%s', '%s' );
+
+		if ( $selected_product ) {
+			$update_data['stripe_price_id']   = sanitize_text_field( (string) $selected_product->stripe_price_id );
+			$update_data['stripe_product_id'] = sanitize_text_field( (string) $selected_product->stripe_product_id );
+			$update_data['service_name']      = sanitize_text_field( (string) $selected_product->name );
+			$update_formats[] = '%s';
+			$update_formats[] = '%s';
+			$update_formats[] = '%s';
+		}
 
 		$wpdb->update(
 			$this->get_portal_service_requests_table(),
-			array(
-				'amount'       => $amount,
-				'currency'     => $currency,
-				'status'       => $status,
-				'admin_notes'  => $admin_notes,
-				'client_notes' => $client_notes,
-				'raw_data'     => wp_json_encode( $raw_data ),
-				'updated_at'   => current_time( 'mysql' ),
-			),
+			$update_data,
 			array( 'id' => $request_id ),
-			array( '%f', '%s', '%s', '%s', '%s', '%s', '%s' ),
+			$update_formats,
 			array( '%d' )
 		);
 
@@ -6132,6 +6207,11 @@ class AJForms_Admin {
 		$request->client_notes = $client_notes;
 		$request->admin_notes = $admin_notes;
 		$request->raw_data = wp_json_encode( $raw_data );
+		if ( $selected_product ) {
+			$request->stripe_price_id = sanitize_text_field( (string) $selected_product->stripe_price_id );
+			$request->stripe_product_id = sanitize_text_field( (string) $selected_product->stripe_product_id );
+			$request->service_name = sanitize_text_field( (string) $selected_product->name );
+		}
 
 		$this->sync_portal_service_request_to_ledger(
 			$request,
@@ -6584,6 +6664,8 @@ class AJForms_Admin {
 						<?php
 						$customer_label = $request->customer_name ? $request->customer_name : ( $request->customer_email ? $request->customer_email : $request->stripe_customer_id );
 						$status_label = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
+						$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
+						$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
 						$actions = array(
 							'under_review'  => __( 'Under Review', 'ajforms' ),
 							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
@@ -6598,7 +6680,7 @@ class AJForms_Admin {
 						<tr>
 							<td>
 								<strong><?php echo esc_html( $request->service_name ? $request->service_name : __( 'Service Request', 'ajforms' ) ); ?></strong><br>
-								<small><?php echo esc_html( $request->request_type ); ?><?php echo $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : ''; ?></small>
+								<small><?php echo esc_html( $request->request_type ); ?><?php echo $request_price_label ? ' · ' . esc_html( $request_price_label ) : ( $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : '' ); ?></small>
 							</td>
 							<td>
 								<?php echo esc_html( $customer_label ); ?><br>
@@ -6799,6 +6881,7 @@ class AJForms_Admin {
 		$requests = ! empty( $params ) ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
 		$counts   = $wpdb->get_results( "SELECT status, COUNT(*) AS total FROM {$this->get_portal_service_requests_table()} GROUP BY status", OBJECT_K );
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' ), admin_url( 'admin.php' ) );
+		$service_products = $this->get_portal_stripe_products_for_settings();
 		?>
 		<div class="ajcore-admin-panel">
 			<h2><?php esc_html_e( 'Requests', 'ajforms' ); ?></h2>
@@ -6807,6 +6890,9 @@ class AJForms_Admin {
 			<?php endif; ?>
 			<?php if ( isset( $_GET['service-request-deleted'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request deleted.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['service-request-error'] ) ) : ?>
+				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['service-request-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
 			<p><?php esc_html_e( 'Review client checkout attempts, custom pricing requests, paid purchases, and other service-related items that need an admin decision.', 'ajforms' ); ?></p>
 
@@ -6847,6 +6933,8 @@ class AJForms_Admin {
 						<?php
 						$customer_label = $request->customer_name ? $request->customer_name : ( $request->customer_email ? $request->customer_email : $request->stripe_customer_id );
 						$status_label   = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
+						$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
+						$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
 						$actions        = array(
 							'under_review'  => __( 'Under Review', 'ajforms' ),
 							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
@@ -6854,16 +6942,21 @@ class AJForms_Admin {
 							'complete'     => __( 'Complete', 'ajforms' ),
 							'cancel'       => __( 'Cancel', 'ajforms' ),
 							'failed'       => __( 'Failed', 'ajforms' ),
+							'apply_billing_change' => __( 'Apply Billing Change', 'ajforms' ),
 							'delete'       => __( 'Delete', 'ajforms' ),
 						);
 						$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
 						$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
+						$request_raw = $this->get_portal_service_request_raw_data( $request );
+						$billing_preview = ! empty( $request_raw['billing_preview'] ) && is_array( $request_raw['billing_preview'] ) ? $request_raw['billing_preview'] : array();
+						$current_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
+						$current_price_label = $current_product ? $this->get_portal_product_admin_label( $current_product ) : '';
 						$save_details_nonce = wp_create_nonce( 'ajcore_service_request_details_' . (int) $request->id );
 						?>
 						<tr>
 							<td>
 								<strong><?php echo esc_html( $request->service_name ? $request->service_name : __( 'Service Request', 'ajforms' ) ); ?></strong><br>
-								<small><?php echo esc_html( $request->request_type ); ?><?php echo $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : ''; ?></small>
+								<small><?php echo esc_html( $request->request_type ); ?><?php echo $request_price_label ? ' · ' . esc_html( $request_price_label ) : ( $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : '' ); ?></small>
 							</td>
 							<td>
 								<?php echo esc_html( $customer_label ); ?><br>
@@ -6901,9 +6994,40 @@ class AJForms_Admin {
 										<input type="hidden" name="service_request_action" value="save_details">
 										<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
 										<input type="hidden" name="_wpnonce" value="<?php echo esc_attr( $save_details_nonce ); ?>">
+										<label><?php esc_html_e( 'Service / Stripe Price', 'ajforms' ); ?><br>
+											<select name="request_stripe_price_id" style="width:100%;max-width:100%;">
+												<option value=""><?php esc_html_e( 'No synced Stripe price selected', 'ajforms' ); ?></option>
+												<?php foreach ( $service_products as $product ) : ?>
+													<?php
+													$price_id = ! empty( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+													if ( '' === $price_id ) {
+														continue;
+													}
+													?>
+													<option value="<?php echo esc_attr( $price_id ); ?>" <?php selected( $request->stripe_price_id, $price_id ); ?>><?php echo esc_html( $this->get_portal_product_admin_label( $product ) ); ?></option>
+												<?php endforeach; ?>
+											</select>
+											<?php if ( '' !== $current_price_label ) : ?><br><span class="description"><?php echo esc_html( sprintf( __( 'Current: %s', 'ajforms' ), $current_price_label ) ); ?></span><?php endif; ?>
+										</label>
 										<label><?php esc_html_e( 'Amount', 'ajforms' ); ?><br><input type="number" step="0.01" name="request_amount" value="<?php echo esc_attr( number_format( (float) $request->amount, 2, '.', '' ) ); ?>" style="width:120px;"> <input type="text" name="request_currency" value="<?php echo esc_attr( strtolower( (string) $request->currency ) ); ?>" style="width:70px;"></label>
 										<label><?php esc_html_e( 'Payment URL', 'ajforms' ); ?><br><input type="url" name="payment_url" value="<?php echo esc_attr( $payment_url ); ?>" placeholder="https://" style="width:100%;"></label>
 										<label><?php esc_html_e( 'Payment / Invoice Reference', 'ajforms' ); ?><br><input type="text" name="payment_reference" value="<?php echo esc_attr( $payment_reference ); ?>" style="width:100%;"></label>
+										<details>
+											<summary><?php esc_html_e( 'Billing Change Preview', 'ajforms' ); ?></summary>
+											<div style="display:grid;gap:6px;margin-top:8px;">
+												<label><?php esc_html_e( 'Stripe Subscription ID', 'ajforms' ); ?><br><input type="text" name="billing_subscription_id" value="<?php echo esc_attr( ! empty( $billing_preview['subscription_id'] ) ? $billing_preview['subscription_id'] : '' ); ?>" placeholder="sub_..." style="width:100%;"></label>
+												<label><?php esc_html_e( 'Stripe Subscription Item ID', 'ajforms' ); ?><br><input type="text" name="billing_subscription_item_id" value="<?php echo esc_attr( ! empty( $billing_preview['subscription_item_id'] ) ? $billing_preview['subscription_item_id'] : '' ); ?>" placeholder="si_..." style="width:100%;"></label>
+												<label><?php esc_html_e( 'Proration Behavior', 'ajforms' ); ?><br>
+													<select name="billing_proration_behavior" style="width:100%;">
+														<?php $selected_proration = ! empty( $billing_preview['proration_behavior'] ) ? sanitize_key( (string) $billing_preview['proration_behavior'] ) : 'create_prorations'; ?>
+														<option value="create_prorations" <?php selected( $selected_proration, 'create_prorations' ); ?>><?php esc_html_e( 'Create prorations', 'ajforms' ); ?></option>
+														<option value="none" <?php selected( $selected_proration, 'none' ); ?>><?php esc_html_e( 'No proration', 'ajforms' ); ?></option>
+														<option value="always_invoice" <?php selected( $selected_proration, 'always_invoice' ); ?>><?php esc_html_e( 'Always invoice', 'ajforms' ); ?></option>
+													</select>
+												</label>
+												<p class="description"><?php esc_html_e( 'Saving this preview uses the exact selected Stripe Price as the new price when Apply Billing Change is clicked.', 'ajforms' ); ?></p>
+											</div>
+										</details>
 										<label><?php esc_html_e( 'Client-facing Note', 'ajforms' ); ?><br><textarea name="client_notes" rows="2" style="width:100%;"><?php echo esc_textarea( (string) $request->client_notes ); ?></textarea></label>
 										<label><?php esc_html_e( 'Internal Admin Notes', 'ajforms' ); ?><br><textarea name="admin_notes" rows="2" style="width:100%;"><?php echo esc_textarea( (string) $request->admin_notes ); ?></textarea></label>
 										<label><?php esc_html_e( 'After Save Status', 'ajforms' ); ?><br><select name="after_save_status"><option value=""><?php esc_html_e( 'Keep current status', 'ajforms' ); ?></option><option value="awaiting_payment"><?php esc_html_e( 'Awaiting Payment', 'ajforms' ); ?></option><option value="paid"><?php esc_html_e( 'Paid', 'ajforms' ); ?></option><option value="completed"><?php esc_html_e( 'Completed', 'ajforms' ); ?></option></select></label>
