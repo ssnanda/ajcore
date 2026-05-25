@@ -526,8 +526,12 @@ class AJForms {
 			return 0.0;
 		}
 
-		if ( in_array( $source_type, array( 'charge', 'payment', 'refund' ), true ) ) {
-			return in_array( $status, array( 'succeeded', 'paid' ), true ) ? -1 * abs( $amount ) : 0.0;
+		if ( 'refund' === $source_type ) {
+			return in_array( $status, array( 'succeeded', 'paid', 'refunded', 'partial_refund', 'partially_refunded' ), true ) ? abs( $amount ) : 0.0;
+		}
+
+		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+			return in_array( $status, array( 'succeeded', 'paid', 'refunded', 'partial_refund', 'partially_refunded' ), true ) ? -1 * abs( $amount ) : 0.0;
 		}
 
 		if ( 'checkout_session' === $source_type ) {

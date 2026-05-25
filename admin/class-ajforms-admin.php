@@ -1068,6 +1068,120 @@ class AJForms_Admin {
 		return $updated;
 	}
 
+
+	private function get_stripe_charge_ledger_status( $charge ) {
+		$status          = ! empty( $charge['status'] ) ? sanitize_key( (string) $charge['status'] ) : '';
+		$amount          = isset( $charge['amount'] ) ? absint( $charge['amount'] ) : 0;
+		$amount_refunded = isset( $charge['amount_refunded'] ) ? absint( $charge['amount_refunded'] ) : 0;
+
+		if ( $amount_refunded > 0 && $amount > 0 ) {
+			return $amount_refunded >= $amount || ! empty( $charge['refunded'] ) ? 'refunded' : 'partially_refunded';
+		}
+
+		return $status;
+	}
+
+	private function get_stripe_charge_refunds( $charge ) {
+		$refunds = array();
+
+		if ( ! empty( $charge['refunds']['data'] ) && is_array( $charge['refunds']['data'] ) ) {
+			foreach ( $charge['refunds']['data'] as $refund ) {
+				if ( is_array( $refund ) && ! empty( $refund['id'] ) ) {
+					$refunds[] = $refund;
+				}
+			}
+		}
+
+		if ( empty( $refunds ) && ! empty( $charge['amount_refunded'] ) ) {
+			$refunds[] = array(
+				'id'      => 'rf_' . sanitize_text_field( (string) $charge['id'] ) . '_synced',
+				'amount'  => absint( $charge['amount_refunded'] ),
+				'currency'=> ! empty( $charge['currency'] ) ? sanitize_key( (string) $charge['currency'] ) : 'usd',
+				'charge'  => sanitize_text_field( (string) $charge['id'] ),
+				'status'  => 'succeeded',
+				'created' => ! empty( $charge['created'] ) ? absint( $charge['created'] ) : time(),
+				'reason'  => ! empty( $charge['refunds']['data'][0]['reason'] ) ? sanitize_text_field( (string) $charge['refunds']['data'][0]['reason'] ) : '',
+				'synthetic' => true,
+			);
+		}
+
+		return $refunds;
+	}
+
+	private function upsert_portal_refund_from_charge( $refund, $charge, $customer_id ) {
+		$customer_id = sanitize_text_field( (string) $customer_id );
+		if ( '' === $customer_id || empty( $refund['id'] ) || empty( $charge['id'] ) ) {
+			return 0;
+		}
+
+		$currency = ! empty( $refund['currency'] ) ? strtolower( sanitize_key( (string) $refund['currency'] ) ) : ( ! empty( $charge['currency'] ) ? strtolower( sanitize_key( (string) $charge['currency'] ) ) : 'usd' );
+		$status   = ! empty( $refund['status'] ) ? sanitize_key( (string) $refund['status'] ) : 'succeeded';
+		if ( 'pending' === $status ) {
+			$status = 'pending';
+		} elseif ( in_array( $status, array( 'failed', 'canceled', 'cancelled' ), true ) ) {
+			$status = 'failed';
+		} else {
+			$status = 'succeeded';
+		}
+
+		$refund_id = sanitize_text_field( (string) $refund['id'] );
+		$charge_id = sanitize_text_field( (string) $charge['id'] );
+		$description = sprintf( __( 'Refund for charge %s', 'ajforms' ), $charge_id );
+		if ( ! empty( $refund['reason'] ) ) {
+			$description .= ': ' . sanitize_text_field( (string) $refund['reason'] );
+		}
+
+		$data = array(
+			'stripe_object_id'   => $refund_id,
+			'object_type'        => 'refund',
+			'stripe_customer_id' => $customer_id,
+			'invoice_id'         => ! empty( $charge['invoice'] ) ? sanitize_text_field( (string) $charge['invoice'] ) : '',
+			'payment_intent_id'  => ! empty( $charge['payment_intent'] ) ? sanitize_text_field( (string) $charge['payment_intent'] ) : '',
+			'charge_id'          => $charge_id,
+			'description'        => $description,
+			'amount'             => $this->stripe_amount_to_decimal( isset( $refund['amount'] ) ? $refund['amount'] : 0, $currency ),
+			'currency'           => $currency,
+			'status'             => $status,
+			'transaction_date'   => ! empty( $refund['created'] ) ? $this->stripe_timestamp_to_mysql( $refund['created'] ) : current_time( 'mysql' ),
+			'due_date'           => null,
+			'raw_data'           => wp_json_encode( $refund ),
+			'synced_at'          => current_time( 'mysql' ),
+		);
+
+		$metadata = array(
+			'charge_id'          => $charge_id,
+			'payment_intent_id'  => $data['payment_intent_id'],
+			'invoice_id'         => $data['invoice_id'],
+			'original_charge_amount' => $this->stripe_amount_to_decimal( isset( $charge['amount'] ) ? $charge['amount'] : 0, $currency ),
+			'amount_refunded_total'  => $this->stripe_amount_to_decimal( isset( $charge['amount_refunded'] ) ? $charge['amount_refunded'] : 0, $currency ),
+			'synthetic'          => ! empty( $refund['synthetic'] ),
+		);
+
+		$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ), 'stripe_object_id' );
+		$ledger_upserted = $this->upsert_portal_record(
+			$this->get_portal_ledger_table(),
+			array(
+				'stripe_customer_id' => $data['stripe_customer_id'],
+				'source_object_id'   => $data['stripe_object_id'],
+				'source_type'        => 'refund',
+				'ledger_date'        => $data['transaction_date'],
+				'description'        => $data['description'],
+				'amount'             => $data['amount'],
+				'currency'           => $data['currency'],
+				'status'             => $data['status'],
+				'invoice_id'         => $data['invoice_id'],
+				'payment_intent_id'  => $data['payment_intent_id'],
+				'charge_id'          => $data['charge_id'],
+				'metadata'           => wp_json_encode( $metadata ),
+				'created_at'         => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+			'source_object_id'
+		);
+
+		return $transaction_upserted && $ledger_upserted ? 1 : 0;
+	}
+
 	private function sync_portal_stripe_transactions( $secret_key, $stripe_customer_id = '' ) {
 		global $wpdb;
 
@@ -1158,6 +1272,12 @@ class AJForms_Admin {
 			$this->upsert_guest_portal_customer_from_payment( $charge, 'charge' );
 
 			$currency = isset( $charge['currency'] ) ? strtolower( sanitize_key( $charge['currency'] ) ) : 'usd';
+			$charge_status = $this->get_stripe_charge_ledger_status( $charge );
+			$charge_ledger_metadata = array(
+				'refunded'              => ! empty( $charge['refunded'] ),
+				'amount_refunded'       => $this->stripe_amount_to_decimal( isset( $charge['amount_refunded'] ) ? $charge['amount_refunded'] : 0, $currency ),
+				'original_charge_amount'=> $this->stripe_amount_to_decimal( isset( $charge['amount'] ) ? $charge['amount'] : 0, $currency ),
+			);
 			$data = array(
 				'stripe_object_id'   => sanitize_text_field( (string) $charge['id'] ),
 				'object_type'        => 'charge',
@@ -1168,7 +1288,7 @@ class AJForms_Admin {
 				'description'        => ! empty( $charge['description'] ) ? sanitize_text_field( (string) $charge['description'] ) : sprintf( __( 'Charge %s', 'ajforms' ), $charge['id'] ),
 				'amount'             => $this->stripe_amount_to_decimal( isset( $charge['amount'] ) ? $charge['amount'] : 0, $currency ),
 				'currency'           => $currency,
-				'status'             => ! empty( $charge['status'] ) ? sanitize_key( (string) $charge['status'] ) : '',
+				'status'             => $charge_status,
 				'transaction_date'   => ! empty( $charge['created'] ) ? $this->stripe_timestamp_to_mysql( $charge['created'] ) : null,
 				'due_date'           => null,
 				'raw_data'           => wp_json_encode( $charge ),
@@ -1190,7 +1310,7 @@ class AJForms_Admin {
 					'invoice_id'         => $data['invoice_id'],
 					'payment_intent_id'  => $data['payment_intent_id'],
 					'charge_id'          => $data['charge_id'],
-					'metadata'           => ! empty( $session_ledger_metadata ) ? wp_json_encode( $session_ledger_metadata ) : '',
+					'metadata'           => wp_json_encode( $charge_ledger_metadata ),
 					'created_at'         => current_time( 'mysql' ),
 				),
 				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
@@ -1198,6 +1318,10 @@ class AJForms_Admin {
 			);
 			if ( $transaction_upserted && $ledger_upserted ) {
 				$count++;
+			}
+
+			foreach ( $this->get_stripe_charge_refunds( $charge ) as $refund ) {
+				$count += $this->upsert_portal_refund_from_charge( $refund, $charge, $customer_id );
 			}
 		}
 
@@ -1837,8 +1961,12 @@ class AJForms_Admin {
 			return 0.0;
 		}
 
-		if ( in_array( $source_type, array( 'charge', 'payment', 'refund' ), true ) ) {
-			return in_array( $status, array( 'succeeded', 'paid' ), true ) ? -1 * abs( $amount ) : 0.0;
+		if ( 'refund' === $source_type ) {
+			return in_array( $status, array( 'succeeded', 'paid', 'refunded', 'partial_refund', 'partially_refunded' ), true ) ? abs( $amount ) : 0.0;
+		}
+
+		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+			return in_array( $status, array( 'succeeded', 'paid', 'refunded', 'partial_refund', 'partially_refunded' ), true ) ? -1 * abs( $amount ) : 0.0;
 		}
 
 		if ( 'checkout_session' === $source_type ) {
