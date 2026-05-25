@@ -6524,6 +6524,247 @@ class AJForms_Admin {
 		<?php
 	}
 
+	private function get_portal_dashboard_url( $tab, $args = array() ) {
+		$args = array_merge(
+			array(
+				'page' => 'ajforms-client-portal',
+				'tab'  => sanitize_key( (string) $tab ),
+			),
+			(array) $args
+		);
+
+		return add_query_arg( $args, admin_url( 'admin.php' ) );
+	}
+
+	private function render_portal_dashboard_metric( $label, $value, $url = '', $note = '' ) {
+		?>
+		<a class="ajcore-dashboard-metric" href="<?php echo esc_url( $url ? $url : '#' ); ?>">
+			<span class="ajcore-dashboard-label"><?php echo esc_html( $label ); ?></span>
+			<strong><?php echo esc_html( (string) $value ); ?></strong>
+			<?php if ( '' !== (string) $note ) : ?>
+				<small><?php echo esc_html( (string) $note ); ?></small>
+			<?php endif; ?>
+		</a>
+		<?php
+	}
+
+	private function get_portal_dashboard_task_metrics() {
+		global $wpdb;
+
+		$tasks_table         = $this->get_portal_tasks_table();
+		$task_statuses_table = $this->get_portal_task_statuses_table();
+		$today               = current_time( 'Y-m-d' );
+		$soon                = date( 'Y-m-d', strtotime( $today . ' +7 days' ) );
+
+		return array(
+			'open'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$tasks_table} WHERE status IN ('open','waiting_on_client','in_progress','upcoming')" ),
+			'due_soon'  => (int) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT COUNT(*) FROM {$tasks_table} WHERE due_date >= %s AND due_date <= %s AND status NOT IN ('completed','cancelled')",
+					$today,
+					$soon
+				)
+			),
+			'overdue'   => (int) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT COUNT(*) FROM {$tasks_table} WHERE due_date < %s AND status NOT IN ('completed','cancelled')",
+					$today
+				)
+			),
+			'submitted' => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$tasks_table} WHERE status = 'submitted'" ) + (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$task_statuses_table} WHERE status = 'submitted'" ),
+			'verified'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$tasks_table} WHERE status = 'verified'" ) + (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$task_statuses_table} WHERE status = 'verified'" ),
+		);
+	}
+
+	private function get_portal_dashboard_billing_metrics() {
+		global $wpdb;
+
+		$month_start    = date( 'Y-m-01 00:00:00', current_time( 'timestamp' ) );
+		$ledger         = $wpdb->get_results( "SELECT * FROM {$this->get_portal_ledger_table()}" );
+		$open_balance   = 0.0;
+		$credit_balance = 0.0;
+		$paid_month     = 0.0;
+		$refunded_month = 0.0;
+		$failed_count   = 0;
+		$manual_unpaid  = 0;
+
+		foreach ( $ledger as $entry ) {
+			$status      = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+			$ledger_date = ! empty( $entry->ledger_date ) ? (string) $entry->ledger_date : '';
+			$amount      = isset( $entry->amount ) ? abs( (float) $entry->amount ) : 0.0;
+			$effect      = $this->get_portal_ledger_balance_effect( $entry );
+
+			if ( $effect > 0 ) {
+				$open_balance += $effect;
+			} elseif ( $effect < 0 ) {
+				$credit_balance += abs( $effect );
+			}
+
+			if ( $ledger_date >= $month_start && in_array( $status, array( 'paid', 'succeeded' ), true ) && 'refund' !== $source_type ) {
+				$paid_month += $amount;
+			}
+
+			if ( $ledger_date >= $month_start && ( 'refund' === $source_type || in_array( $status, array( 'refunded', 'partially_refunded', 'partial_refund' ), true ) ) ) {
+				$refunded_month += 'refund' === $source_type ? $amount : abs( $this->get_portal_ledger_refunded_amount( $entry ) );
+			}
+
+			if ( in_array( $status, array( 'failed', 'payment_failed', 'requires_payment_method' ), true ) ) {
+				$failed_count++;
+			}
+
+			if ( 'manual_charge' === $source_type && in_array( $status, $this->get_portal_open_ledger_statuses(), true ) ) {
+				$manual_unpaid++;
+			}
+		}
+
+		return array(
+			'open_balance'   => $open_balance,
+			'credit_balance' => $credit_balance,
+			'paid_month'     => $paid_month,
+			'refunded_month' => $refunded_month,
+			'failed_count'   => $failed_count,
+			'manual_unpaid'  => $manual_unpaid,
+		);
+	}
+
+	private function display_portal_dashboard_tab() {
+		global $wpdb;
+
+		$this->ensure_portal_schema();
+
+		$customers_table        = $this->get_portal_stripe_customers_table();
+		$mappings_table         = $this->get_portal_user_mappings_table();
+		$subscriptions_table    = $this->get_portal_stripe_subscriptions_table();
+		$service_requests_table = $this->get_portal_service_requests_table();
+		$files_table            = $this->get_portal_files_table();
+		$sync_logs_table        = $this->get_portal_sync_logs_table();
+
+		$total_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table}" );
+		$active_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table} WHERE enabled_portal = 1 AND (portal_status = 'active' OR portal_status = '')" );
+		$disabled_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table} WHERE portal_status = 'disabled' OR (enabled_portal = 0 AND (portal_status = '' OR portal_status IS NULL))" );
+		$archived_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table} WHERE portal_status = 'archived'" );
+		$customers_without_login = (int) $wpdb->get_var(
+			"SELECT COUNT(*) FROM {$customers_table} c
+			LEFT JOIN {$mappings_table} m ON m.stripe_customer_id = c.stripe_customer_id
+			LEFT JOIN {$wpdb->users} u ON u.ID = m.user_id
+			WHERE m.id IS NULL OR u.ID IS NULL"
+		);
+		$active_subscriptions = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$subscriptions_table} WHERE status IN ('active','trialing')" );
+		$billing_metrics      = $this->get_portal_dashboard_billing_metrics();
+		$request_counts       = $wpdb->get_results( "SELECT status, COUNT(*) AS total FROM {$service_requests_table} GROUP BY status", OBJECT_K );
+		$request_labels       = $this->get_portal_service_request_status_labels();
+		$paid_not_completed   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$service_requests_table} WHERE status = 'paid'" );
+		$task_metrics         = $this->get_portal_dashboard_task_metrics();
+		$total_files          = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$files_table}" );
+		$client_files         = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$files_table} f
+				INNER JOIN {$wpdb->usermeta} um ON um.user_id = f.created_by AND um.meta_key = %s
+				WHERE um.meta_value LIKE %s",
+				$wpdb->prefix . 'capabilities',
+				'%' . $wpdb->esc_like( 'aj_portal_user' ) . '%'
+			)
+		);
+		$stripe_mode          = $this->get_stripe_mode_badge_data();
+		$last_success         = $wpdb->get_row( "SELECT * FROM {$sync_logs_table} WHERE status = 'success' ORDER BY finished_at DESC, started_at DESC, id DESC LIMIT 1" );
+		$last_failed          = $wpdb->get_row( "SELECT * FROM {$sync_logs_table} WHERE status = 'failed' ORDER BY finished_at DESC, started_at DESC, id DESC LIMIT 1" );
+		$last_webhook         = $wpdb->get_row( "SELECT * FROM {$sync_logs_table} WHERE source = 'webhook' ORDER BY started_at DESC, id DESC LIMIT 1" );
+		?>
+		<div class="ajforms-settings-card ajcore-dashboard">
+			<style>
+				.ajcore-dashboard .ajcore-dashboard-section{margin:18px 0 24px}.ajcore-dashboard .ajcore-dashboard-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.ajcore-dashboard .ajcore-dashboard-metric{display:flex;min-height:96px;flex-direction:column;justify-content:space-between;gap:8px;padding:14px 16px;border:1px solid #dcdcde;border-radius:10px;background:#fff;text-decoration:none;color:#1d2327;box-shadow:0 1px 2px rgba(0,0,0,.03)}.ajcore-dashboard .ajcore-dashboard-metric:hover{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1}.ajcore-dashboard .ajcore-dashboard-label{font-weight:700;color:#50575e}.ajcore-dashboard .ajcore-dashboard-metric strong{font-size:26px;line-height:1.1;color:#1d2327}.ajcore-dashboard .ajcore-dashboard-metric small{color:#646970}.ajcore-dashboard .ajcore-dashboard-health{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.ajcore-dashboard .ajcore-dashboard-health-card{border:1px solid #dcdcde;border-radius:10px;background:#fff;padding:14px 16px}.ajcore-dashboard .ajcore-dashboard-health-card h3{margin:0 0 10px}.ajcore-dashboard .ajcore-status-pill.warning{background:#fff4ce;color:#8a6100}.ajcore-dashboard .ajcore-status-pill.error{background:#fcf0f1;color:#b32d2e}
+			</style>
+			<h2><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'Read-only company view of portal customers, billing, requests, files, tasks, and sync health from local AJ Core portal data.', 'ajforms' ); ?></p>
+
+			<div class="ajcore-dashboard-section">
+				<h3><?php esc_html_e( 'Portal Customers', 'ajforms' ); ?></h3>
+				<div class="ajcore-dashboard-grid">
+					<?php $this->render_portal_dashboard_metric( __( 'Total Portal Customers', 'ajforms' ), $total_customers, $this->get_portal_dashboard_url( 'portal-users' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Active Customers', 'ajforms' ), $active_customers, $this->get_portal_dashboard_url( 'portal-users' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Disabled Customers', 'ajforms' ), $disabled_customers, $this->get_portal_dashboard_url( 'portal-users' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Archived Customers', 'ajforms' ), $archived_customers, $this->get_portal_dashboard_url( 'portal-users' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Without Portal Login', 'ajforms' ), $customers_without_login, $this->get_portal_dashboard_url( 'portal-users' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Active Subscriptions', 'ajforms' ), $active_subscriptions, $this->get_portal_dashboard_url( 'products-services' ) ); ?>
+				</div>
+			</div>
+
+			<div class="ajcore-dashboard-section">
+				<h3><?php esc_html_e( 'Billing', 'ajforms' ); ?></h3>
+				<div class="ajcore-dashboard-grid">
+					<?php $this->render_portal_dashboard_metric( __( 'Open Balance Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Client Credit Balance', 'ajforms' ), $this->format_portal_money( $billing_metrics['credit_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Paid This Month', 'ajforms' ), $this->format_portal_money( $billing_metrics['paid_month'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_status' => 'paid' ) ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Refunded This Month', 'ajforms' ), $this->format_portal_money( $billing_metrics['refunded_month'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_source' => 'refund' ) ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'billing', array( 'billing_status' => 'failed' ) ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Unpaid Manual Charges', 'ajforms' ), $billing_metrics['manual_unpaid'], $this->get_portal_dashboard_url( 'billing', array( 'billing_source' => 'manual_charge', 'billing_status' => 'unpaid' ) ) ); ?>
+				</div>
+			</div>
+
+			<div class="ajcore-dashboard-section">
+				<h3><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h3>
+				<div class="ajcore-dashboard-grid">
+					<?php foreach ( $request_labels as $status_key => $status_label ) : ?>
+						<?php $count = isset( $request_counts[ $status_key ] ) ? (int) $request_counts[ $status_key ]->total : 0; ?>
+						<?php $this->render_portal_dashboard_metric( $status_label, $count, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => $status_key ) ) ); ?>
+					<?php endforeach; ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Paid Not Completed', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'paid' ) ) ); ?>
+				</div>
+			</div>
+
+			<div class="ajcore-dashboard-section">
+				<h3><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h3>
+				<div class="ajcore-dashboard-grid">
+					<?php $this->render_portal_dashboard_metric( __( 'Open Tasks', 'ajforms' ), $task_metrics['open'], $this->get_portal_dashboard_url( 'tasks', array( 'task_status_filter' => 'open' ) ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Due Soon', 'ajforms' ), $task_metrics['due_soon'], $this->get_portal_dashboard_url( 'tasks', array( 'task_due_to' => date( 'Y-m-d', strtotime( current_time( 'Y-m-d' ) . ' +7 days' ) ) ) ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Overdue', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_due_to' => current_time( 'Y-m-d' ) ) ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Submitted', 'ajforms' ), $task_metrics['submitted'], $this->get_portal_dashboard_url( 'tasks' ), __( 'Shown when task statuses use submitted.', 'ajforms' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Verified', 'ajforms' ), $task_metrics['verified'], $this->get_portal_dashboard_url( 'tasks' ), __( 'Shown when task statuses use verified.', 'ajforms' ) ); ?>
+				</div>
+			</div>
+
+			<div class="ajcore-dashboard-section">
+				<h3><?php esc_html_e( 'Files', 'ajforms' ); ?></h3>
+				<div class="ajcore-dashboard-grid">
+					<?php $this->render_portal_dashboard_metric( __( 'Shared Files', 'ajforms' ), $total_files, $this->get_portal_dashboard_url( 'file-library' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Client Uploaded', 'ajforms' ), $client_files, $this->get_portal_dashboard_url( 'file-library' ), __( 'Based on uploader role.', 'ajforms' ) ); ?>
+					<?php $this->render_portal_dashboard_metric( __( 'Pending Review', 'ajforms' ), __( 'Not tracked', 'ajforms' ), $this->get_portal_dashboard_url( 'file-library' ), __( 'No file review status exists yet.', 'ajforms' ) ); ?>
+				</div>
+			</div>
+
+			<div class="ajcore-dashboard-section">
+				<h3><?php esc_html_e( 'Sync / System Health', 'ajforms' ); ?></h3>
+				<div class="ajcore-dashboard-health">
+					<div class="ajcore-dashboard-health-card">
+						<h3><?php esc_html_e( 'Stripe Mode', 'ajforms' ); ?></h3>
+						<span class="ajcore-status-pill <?php echo ! empty( $stripe_mode['has_issues'] ) ? 'error' : ( ! empty( $stripe_mode['is_live'] ) ? 'warning' : '' ); ?>"><?php echo esc_html( $stripe_mode['label'] ); ?></span>
+						<?php if ( ! empty( $stripe_mode['issues'] ) ) : ?>
+							<ul>
+								<?php foreach ( $stripe_mode['issues'] as $issue ) : ?>
+									<li><?php echo esc_html( $issue ); ?></li>
+								<?php endforeach; ?>
+							</ul>
+						<?php endif; ?>
+					</div>
+					<div class="ajcore-dashboard-health-card">
+						<h3><?php esc_html_e( 'Last Successful Sync', 'ajforms' ); ?></h3>
+						<p><a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'sync', $last_success ? array( 'sync_log_id' => (int) $last_success->id ) : array() ) ); ?>"><?php echo esc_html( $last_success ? $last_success->finished_at . ' · ' . $last_success->job_name : __( 'No successful sync found.', 'ajforms' ) ); ?></a></p>
+					</div>
+					<div class="ajcore-dashboard-health-card">
+						<h3><?php esc_html_e( 'Last Failed Sync', 'ajforms' ); ?></h3>
+						<p><a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'sync', $last_failed ? array( 'sync_log_id' => (int) $last_failed->id ) : array() ) ); ?>"><?php echo esc_html( $last_failed ? $last_failed->started_at . ' · ' . $last_failed->job_name : __( 'No failed sync found.', 'ajforms' ) ); ?></a></p>
+					</div>
+					<div class="ajcore-dashboard-health-card">
+						<h3><?php esc_html_e( 'Webhook Status', 'ajforms' ); ?></h3>
+						<p><a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'sync', $last_webhook ? array( 'sync_log_id' => (int) $last_webhook->id ) : array() ) ); ?>"><?php echo esc_html( $last_webhook ? ucfirst( $last_webhook->status ) . ' · ' . $last_webhook->started_at : __( 'No webhook events received yet.', 'ajforms' ) ); ?></a></p>
+					</div>
+				</div>
+			</div>
+		</div>
+		<?php
+	}
+
 	public function display_client_portal_page() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
@@ -6531,8 +6772,8 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 
-		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'service-requests';
-		$tab      = in_array( $tab, array( 'file-library', 'sync', 'menu', 'portal-users', 'products-services', 'billing', 'service-requests', 'tasks', 'customer' ), true ) ? $tab : 'service-requests';
+		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'menu', 'portal-users', 'products-services', 'billing', 'service-requests', 'tasks', 'customer' ), true ) ? $tab : 'dashboard';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-client-portal-admin">
@@ -6543,6 +6784,7 @@ class AJForms_Admin {
 			<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
 			<?php if ( 'customer' !== $tab ) : ?>
 				<h2 class="nav-tab-wrapper">
+					<a class="nav-tab <?php echo 'dashboard' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'dashboard', $base_url ) ); ?>"><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'billing' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'billing', $base_url ) ); ?>"><?php esc_html_e( 'Billing', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></a>
@@ -6556,6 +6798,8 @@ class AJForms_Admin {
 			<?php
 			if ( 'customer' === $tab ) {
 				$this->display_portal_customer_detail_page();
+			} elseif ( 'dashboard' === $tab ) {
+				$this->display_portal_dashboard_tab();
 			} elseif ( 'sync' === $tab ) {
 				$this->display_portal_sync_tab();
 			} elseif ( 'portal-users' === $tab ) {
