@@ -6293,9 +6293,11 @@ class AJForms_Admin {
 		$status_filter   = isset( $_GET['billing_status'] ) ? sanitize_key( wp_unslash( $_GET['billing_status'] ) ) : '';
 		$source_filter   = isset( $_GET['billing_source'] ) ? sanitize_key( wp_unslash( $_GET['billing_source'] ) ) : '';
 		$customer_filter = isset( $_GET['billing_customer'] ) ? sanitize_text_field( wp_unslash( $_GET['billing_customer'] ) ) : '';
+		$view_filter     = isset( $_GET['billing_view'] ) ? sanitize_key( wp_unslash( $_GET['billing_view'] ) ) : '';
 		$search          = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
 		$where           = array( '1=1' );
 		$params          = array();
+		$open_statuses   = $this->get_portal_open_ledger_statuses();
 
 		if ( '' !== $status_filter ) {
 			$where[]  = 'l.status = %s';
@@ -6314,6 +6316,22 @@ class AJForms_Admin {
 			$params[] = $customer_filter;
 		}
 
+		if ( 'open' === $view_filter ) {
+			$where[] = 'l.status IN (' . implode( ',', array_fill( 0, count( $open_statuses ), '%s' ) ) . ')';
+			$params = array_merge( $params, $open_statuses );
+		} elseif ( 'failed' === $view_filter ) {
+			$failed_statuses = array( 'failed', 'payment_failed', 'requires_payment_method' );
+			$where[] = 'l.status IN (' . implode( ',', array_fill( 0, count( $failed_statuses ), '%s' ) ) . ')';
+			$params = array_merge( $params, $failed_statuses );
+		} elseif ( 'overdue' === $view_filter ) {
+			$ledger_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_ledger_table()}", 0 );
+			$date_expression = is_array( $ledger_columns ) && in_array( 'due_date', $ledger_columns, true ) ? 'COALESCE(NULLIF(l.due_date,\'\'), l.ledger_date)' : 'l.ledger_date';
+			$where[] = 'l.status IN (' . implode( ',', array_fill( 0, count( $open_statuses ), '%s' ) ) . ')';
+			$params = array_merge( $params, $open_statuses );
+			$where[] = "DATE({$date_expression}) < %s";
+			$params[] = current_time( 'Y-m-d' );
+		}
+
 		if ( '' !== $search ) {
 			$like = '%' . $wpdb->esc_like( $search ) . '%';
 			$where[] = '(l.description LIKE %s OR l.stripe_customer_id LIKE %s OR l.invoice_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s)';
@@ -6324,6 +6342,7 @@ class AJForms_Admin {
 			'status'   => $status_filter,
 			'source'   => $source_filter,
 			'customer' => $customer_filter,
+			'view'     => $view_filter,
 			'search'   => $search,
 			'where'    => $where,
 			'params'   => $params,
@@ -6384,6 +6403,7 @@ class AJForms_Admin {
 		$status_filter   = $filters['status'];
 		$source_filter   = $filters['source'];
 		$customer_filter = $filters['customer'];
+		$view_filter     = $filters['view'];
 		$search          = $filters['search'];
 
 		$sql = "SELECT l.*, c.email AS customer_email, c.name AS customer_name
@@ -6464,6 +6484,7 @@ class AJForms_Admin {
 			<form method="get" style="margin:14px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
 				<input type="hidden" name="page" value="ajforms-client-portal">
 				<input type="hidden" name="tab" value="billing">
+				<?php if ( '' !== $view_filter ) : ?><input type="hidden" name="billing_view" value="<?php echo esc_attr( $view_filter ); ?>"><?php endif; ?>
 				<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer, invoice, or description', 'ajforms' ); ?>">
 				<input type="text" name="billing_status" value="<?php echo esc_attr( $status_filter ); ?>" placeholder="<?php esc_attr_e( 'Status', 'ajforms' ); ?>">
 				<input type="text" name="billing_source" value="<?php echo esc_attr( $source_filter ); ?>" placeholder="<?php esc_attr_e( 'Source type', 'ajforms' ); ?>">
@@ -6622,7 +6643,7 @@ class AJForms_Admin {
 		$service_requests_table = $this->get_portal_service_requests_table();
 		$sync_logs_table        = $this->get_portal_sync_logs_table();
 
-		$active_customers      = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table} WHERE portal_status = 'active' OR (enabled_portal = 1 AND portal_status NOT IN ('disabled','archived'))" );
+		$active_customers      = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table} WHERE portal_status = 'active' OR (enabled_portal = 1 AND (portal_status IS NULL OR portal_status NOT IN ('disabled','archived')))" );
 		$active_subscriptions = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$subscriptions_table} WHERE status IN ('active','trialing')" );
 		$billing_metrics      = $this->get_portal_dashboard_billing_metrics();
 		$paid_not_completed   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$service_requests_table} WHERE status = 'paid'" );
@@ -6650,14 +6671,14 @@ class AJForms_Admin {
 			<p><?php esc_html_e( 'Read-only operating dashboard focused on items that need attention.', 'ajforms' ); ?></p>
 
 			<div class="ajcore-dashboard-grid">
-				<?php $this->render_portal_dashboard_metric( __( 'Active Clients', 'ajforms' ), $active_customers, $this->get_portal_dashboard_url( 'portal-users' ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Active Subscriptions / Services', 'ajforms' ), $active_subscriptions, $this->get_portal_dashboard_url( 'products-services' ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing' ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_status' => 'unpaid' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Overdue Tasks', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_due_to' => current_time( 'Y-m-d' ) ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Active Clients', 'ajforms' ), $active_customers, $this->get_portal_dashboard_url( 'portal-users', array( 'portal_user_status' => 'active' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Active Subscriptions / Services', 'ajforms' ), $active_subscriptions, $this->get_portal_dashboard_url( 'products-services', array( 'portal_service_view' => 'active_subscriptions' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'open' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'overdue' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Overdue Tasks', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_view' => 'overdue' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Paid Not Completed', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'paid' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Admin Review Required', 'ajforms' ), $admin_review_required, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'admin_review_required' ) ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'billing', array( 'billing_status' => 'failed' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'failed' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Sync / Webhook Health', 'ajforms' ), $health_has_issue ? __( 'Review', 'ajforms' ) : __( 'OK', 'ajforms' ), $this->get_portal_dashboard_url( 'sync', $last_failed ? array( 'sync_log_id' => (int) $last_failed->id ) : array() ), $health_note ); ?>
 			</div>
 
@@ -7487,15 +7508,32 @@ class AJForms_Admin {
 
 		global $wpdb;
 
+		$status_filter = isset( $_GET['portal_user_status'] ) ? sanitize_key( wp_unslash( $_GET['portal_user_status'] ) ) : '';
+		$allowed_status_filters = array( 'active', 'disabled', 'archived', 'without_login' );
+		$status_filter = in_array( $status_filter, $allowed_status_filters, true ) ? $status_filter : '';
+		$where = array( '1=1' );
+		if ( 'active' === $status_filter ) {
+			$where[] = "(c.portal_status = 'active' OR (c.enabled_portal = 1 AND (c.portal_status IS NULL OR c.portal_status NOT IN ('disabled','archived'))))";
+		} elseif ( 'disabled' === $status_filter ) {
+			$where[] = "(c.portal_status = 'disabled' OR (c.enabled_portal = 0 AND (c.portal_status = '' OR c.portal_status IS NULL)))";
+		} elseif ( 'archived' === $status_filter ) {
+			$where[] = "c.portal_status = 'archived'";
+		} elseif ( 'without_login' === $status_filter ) {
+			$where[] = '(m.id IS NULL OR u.ID IS NULL)';
+		}
+
 		$customers = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT c.*, m.user_id, m.customer_email AS mapped_email, m.updated_at AS mapped_at FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id ORDER BY c.enabled_portal DESC, c.name ASC, c.email ASC LIMIT %d",
-				300
-			)
+			"SELECT c.*, m.user_id, m.customer_email AS mapped_email, m.updated_at AS mapped_at
+			FROM {$this->get_portal_stripe_customers_table()} c
+			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
+			LEFT JOIN {$wpdb->users} u ON u.ID = m.user_id
+			WHERE " . implode( ' AND ', $where ) . '
+			ORDER BY c.enabled_portal DESC, c.name ASC, c.email ASC
+			LIMIT 300'
 		);
 
 		$total_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()}" );
-		$enabled_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE enabled_portal = 1 AND (portal_status = 'active' OR portal_status = '')" );
+		$enabled_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'active' OR (enabled_portal = 1 AND (portal_status IS NULL OR portal_status NOT IN ('disabled','archived')))" );
 		$available_fields = $this->discover_portal_customer_scalar_fields( $customers );
 		$display_fields   = array_values( array_intersect( $this->get_portal_customer_display_fields(), $available_fields ) );
 		if ( empty( $display_fields ) && ! empty( $available_fields ) ) {
@@ -7530,6 +7568,20 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users', 'ajforms' ), $enabled_count ) ); ?></span>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
+
+			<form method="get" style="margin:14px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+				<input type="hidden" name="page" value="ajforms-client-portal">
+				<input type="hidden" name="tab" value="portal-users">
+				<select name="portal_user_status">
+					<option value=""><?php esc_html_e( 'All portal customers', 'ajforms' ); ?></option>
+					<option value="active" <?php selected( $status_filter, 'active' ); ?>><?php esc_html_e( 'Active portal users', 'ajforms' ); ?></option>
+					<option value="disabled" <?php selected( $status_filter, 'disabled' ); ?>><?php esc_html_e( 'Disabled portal users', 'ajforms' ); ?></option>
+					<option value="archived" <?php selected( $status_filter, 'archived' ); ?>><?php esc_html_e( 'Archived portal users', 'ajforms' ); ?></option>
+					<option value="without_login" <?php selected( $status_filter, 'without_login' ); ?>><?php esc_html_e( 'Without portal login', 'ajforms' ); ?></option>
+				</select>
+				<button class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
+				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
+			</form>
 
 			<?php if ( ! empty( $available_fields ) ) : ?>
 				<?php
@@ -7669,12 +7721,25 @@ class AJForms_Admin {
 
 		global $wpdb;
 
+		$service_view = isset( $_GET['portal_service_view'] ) ? sanitize_key( wp_unslash( $_GET['portal_service_view'] ) ) : '';
+		$service_view = in_array( $service_view, array( 'active_subscriptions' ), true ) ? $service_view : '';
 		$products = $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT * FROM {$this->get_portal_stripe_products_table()} ORDER BY active DESC, sort_order ASC, name ASC LIMIT %d",
 				300
 			)
 		);
+		$active_subscriptions = array();
+		if ( 'active_subscriptions' === $service_view ) {
+			$active_subscriptions = $wpdb->get_results(
+				"SELECT s.*, c.name AS customer_name, c.email AS customer_email
+				FROM {$this->get_portal_stripe_subscriptions_table()} s
+				LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = s.stripe_customer_id
+				WHERE s.status IN ('active','trialing')
+				ORDER BY s.current_period_end ASC, s.synced_at DESC
+				LIMIT 300"
+			);
+		}
 		$active_count  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1" );
 		$visible_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden'" );
 		$total_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" );
@@ -7698,8 +7763,39 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d active', 'ajforms' ), $active_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d visible in Add Services', 'ajforms' ), $visible_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
+				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services', 'portal_service_view' => 'active_subscriptions' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Active Subscriptions', 'ajforms' ); ?></a>
+				<?php if ( 'active_subscriptions' === $service_view ) : ?><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Show Products', 'ajforms' ); ?></a><?php endif; ?>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
+
+			<?php if ( 'active_subscriptions' === $service_view ) : ?>
+				<table class="widefat striped" style="margin:16px 0;">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Subscription', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Current Period End', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php if ( empty( $active_subscriptions ) ) : ?>
+							<tr><td colspan="5"><?php esc_html_e( 'No active or trialing subscriptions found.', 'ajforms' ); ?></td></tr>
+						<?php else : ?>
+							<?php foreach ( $active_subscriptions as $subscription ) : ?>
+								<tr>
+									<td><code><?php echo esc_html( $subscription->stripe_subscription_id ); ?></code></td>
+									<td><?php echo esc_html( $subscription->customer_name ? $subscription->customer_name : ( $subscription->customer_email ? $subscription->customer_email : $subscription->stripe_customer_id ) ); ?><br><small><?php echo esc_html( $subscription->stripe_customer_id ); ?></small></td>
+									<td><strong><?php echo esc_html( $subscription->status ); ?></strong></td>
+									<td><?php echo esc_html( $subscription->current_period_end ? $this->format_portal_date( $subscription->current_period_end ) : '-' ); ?></td>
+									<td><?php echo esc_html( $this->format_portal_date( $subscription->synced_at ) ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						<?php endif; ?>
+					</tbody>
+				</table>
+			<?php endif; ?>
 
 			<form method="post">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
@@ -7802,12 +7898,14 @@ class AJForms_Admin {
 			'client'    => isset( $_GET['task_client_filter'] ) ? sanitize_text_field( wp_unslash( $_GET['task_client_filter'] ) ) : '',
 			'due_from'  => isset( $_GET['task_due_from'] ) ? sanitize_text_field( wp_unslash( $_GET['task_due_from'] ) ) : '',
 			'due_to'    => isset( $_GET['task_due_to'] ) ? sanitize_text_field( wp_unslash( $_GET['task_due_to'] ) ) : '',
+			'view'      => isset( $_GET['task_view'] ) ? sanitize_key( wp_unslash( $_GET['task_view'] ) ) : '',
 		);
 		$filters['scope']     = in_array( $filters['scope'], array_keys( $scopes ), true ) ? $filters['scope'] : '';
 		$filters['frequency'] = in_array( $filters['frequency'], array_keys( $frequencies ), true ) ? $filters['frequency'] : '';
 		$filters['status']    = in_array( $filters['status'], array_keys( $statuses ), true ) ? $filters['status'] : '';
 		$filters['due_from']  = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $filters['due_from'] ) ? $filters['due_from'] : '';
 		$filters['due_to']    = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $filters['due_to'] ) ? $filters['due_to'] : '';
+		$filters['view']      = in_array( $filters['view'], array( 'overdue' ), true ) ? $filters['view'] : '';
 
 		$edit_task_id  = isset( $_GET['edit_task_id'] ) ? absint( wp_unslash( $_GET['edit_task_id'] ) ) : 0;
 		$editing_task  = $edit_task_id ? $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_tasks_table()} WHERE id = %d", $edit_task_id ) ) : null;
@@ -7863,6 +7961,7 @@ class AJForms_Admin {
 					$scope = ! empty( $task->task_scope ) ? sanitize_key( $task->task_scope ) : 'client';
 					$frequency = ! empty( $task->task_frequency ) ? sanitize_key( $task->task_frequency ) : 'one_time';
 					$effective_status = 'client' === $scope && ! empty( $task->customer_status ) ? sanitize_key( $task->customer_status ) : sanitize_key( $task->status );
+					$closed_statuses = array( 'completed', 'verified', 'closed', 'cancelled', 'canceled', 'archived' );
 
 					if ( '' !== $filters['scope'] && $scope !== $filters['scope'] ) {
 						return false;
@@ -7880,6 +7979,9 @@ class AJForms_Admin {
 						return false;
 					}
 					if ( '' !== $filters['due_to'] && ( empty( $task->due_date ) || $task->due_date > $filters['due_to'] ) ) {
+						return false;
+					}
+					if ( 'overdue' === $filters['view'] && ( empty( $task->due_date ) || $task->due_date >= current_time( 'Y-m-d' ) || in_array( $effective_status, $closed_statuses, true ) ) ) {
 						return false;
 					}
 					if ( '' !== $filters['search'] ) {
@@ -7939,6 +8041,7 @@ class AJForms_Admin {
 			<form method="get" class="ajcore-task-filters">
 				<input type="hidden" name="page" value="ajforms-client-portal">
 				<input type="hidden" name="tab" value="tasks">
+				<?php if ( '' !== $filters['view'] ) : ?><input type="hidden" name="task_view" value="<?php echo esc_attr( $filters['view'] ); ?>"><?php endif; ?>
 				<label><?php esc_html_e( 'Search', 'ajforms' ); ?><input type="search" name="task_search" value="<?php echo esc_attr( $filters['search'] ); ?>"></label>
 				<label><?php esc_html_e( 'Type', 'ajforms' ); ?><select name="task_scope_filter"><option value=""><?php esc_html_e( 'All', 'ajforms' ); ?></option><?php foreach ( $scopes as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $filters['scope'], $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
 				<label><?php esc_html_e( 'Frequency', 'ajforms' ); ?><select name="task_frequency_filter"><option value=""><?php esc_html_e( 'All', 'ajforms' ); ?></option><?php foreach ( $frequencies as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $filters['frequency'], $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
