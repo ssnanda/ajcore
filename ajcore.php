@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.1.138
+ * Version: 0.1.139
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.1.138' );
+	define( 'AJCORE_VERSION', '0.1.139' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -82,11 +82,57 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'asana_workspace_gid'           => '',
 			'asana_project_gid'             => '',
 			'stripe_mode'                   => 'test',
+			'stripe_sandbox_publishable_key' => '',
+			'stripe_sandbox_secret_key'      => '',
+			'stripe_live_publishable_key'    => '',
+			'stripe_live_secret_key'         => '',
 			'stripe_publishable_key'        => '',
 			'stripe_secret_key'             => '',
 			'stripe_products_mode'          => 'all',
 			'stripe_selected_prices'        => array(),
 		);
+	}
+}
+
+
+if ( ! function_exists( 'ajcore_normalize_stripe_settings' ) ) {
+	function ajcore_normalize_stripe_settings( $settings ) {
+		$settings = is_array( $settings ) ? $settings : array();
+		$mode     = ! empty( $settings['stripe_mode'] ) && 'live' === sanitize_key( (string) $settings['stripe_mode'] ) ? 'live' : 'test';
+		$settings['stripe_mode'] = $mode;
+
+		foreach ( array( 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key' ) as $key ) {
+			if ( ! isset( $settings[ $key ] ) ) {
+				$settings[ $key ] = '';
+			}
+		}
+
+		/* Backward compatibility: if an older single-key setting exists, place it into the matching environment bucket in memory. */
+		$legacy_publishable = trim( (string) $settings['stripe_publishable_key'] );
+		if ( '' !== $legacy_publishable && function_exists( 'ajcore_get_stripe_key_environment' ) ) {
+			$environment = ajcore_get_stripe_key_environment( $legacy_publishable );
+			if ( 'test' === $environment && '' === trim( (string) $settings['stripe_sandbox_publishable_key'] ) ) {
+				$settings['stripe_sandbox_publishable_key'] = $legacy_publishable;
+			} elseif ( 'live' === $environment && '' === trim( (string) $settings['stripe_live_publishable_key'] ) ) {
+				$settings['stripe_live_publishable_key'] = $legacy_publishable;
+			}
+		}
+
+		$legacy_secret = trim( (string) $settings['stripe_secret_key'] );
+		if ( '' !== $legacy_secret && function_exists( 'ajcore_get_stripe_key_environment' ) ) {
+			$environment = ajcore_get_stripe_key_environment( $legacy_secret );
+			if ( 'test' === $environment && '' === trim( (string) $settings['stripe_sandbox_secret_key'] ) ) {
+				$settings['stripe_sandbox_secret_key'] = $legacy_secret;
+			} elseif ( 'live' === $environment && '' === trim( (string) $settings['stripe_live_secret_key'] ) ) {
+				$settings['stripe_live_secret_key'] = $legacy_secret;
+			}
+		}
+
+		$active_prefix = 'live' === $mode ? 'stripe_live' : 'stripe_sandbox';
+		$settings['stripe_publishable_key'] = trim( (string) $settings[ $active_prefix . '_publishable_key' ] );
+		$settings['stripe_secret_key']      = trim( (string) $settings[ $active_prefix . '_secret_key' ] );
+
+		return $settings;
 	}
 }
 
@@ -102,10 +148,12 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 			$file_settings = array();
 		}
 
-		return wp_parse_args(
+		$settings = wp_parse_args(
 			array_merge( $saved_settings, $file_settings ),
 			ajforms_get_settings_defaults()
 		);
+
+		return function_exists( 'ajcore_normalize_stripe_settings' ) ? ajcore_normalize_stripe_settings( $settings ) : $settings;
 	}
 }
 
@@ -121,7 +169,8 @@ if ( ! function_exists( 'ajforms_get_synced_setting_keys' ) ) {
 			'asana_workspace_gid',
 			'asana_project_gid',
 			'stripe_mode',
-			'stripe_publishable_key',
+			'stripe_sandbox_publishable_key',
+			'stripe_live_publishable_key',
 		);
 	}
 }

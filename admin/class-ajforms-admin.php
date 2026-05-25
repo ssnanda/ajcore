@@ -2452,6 +2452,10 @@ class AJForms_Admin {
 			'asana_workspace_gid'            => '',
 			'asana_project_gid'              => '',
 			'stripe_mode'                    => 'test',
+			'stripe_sandbox_publishable_key'  => '',
+			'stripe_sandbox_secret_key'       => '',
+			'stripe_live_publishable_key'     => '',
+			'stripe_live_secret_key'          => '',
 			'stripe_publishable_key'         => '',
 			'stripe_secret_key'              => '',
 			'stripe_products_mode'           => 'all',
@@ -3673,17 +3677,25 @@ class AJForms_Admin {
 			'asana_workspace_gid'            => isset( $_POST['asana_workspace_gid'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_workspace_gid'] ) ) : '',
 			'asana_project_gid'              => isset( $_POST['asana_project_gid'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_project_gid'] ) ) : '',
 			'stripe_mode'                    => isset( $_POST['stripe_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ), array( 'test', 'live' ), true ) ? sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ) : 'test',
-			'stripe_publishable_key'         => isset( $_POST['stripe_publishable_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_publishable_key'] ) ) : '',
-			'stripe_secret_key'              => isset( $_POST['stripe_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_secret_key'] ) ) : '',
+			'stripe_sandbox_publishable_key'  => isset( $_POST['stripe_sandbox_publishable_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_sandbox_publishable_key'] ) ) : '',
+			'stripe_sandbox_secret_key'       => isset( $_POST['stripe_sandbox_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_sandbox_secret_key'] ) ) : '',
+			'stripe_live_publishable_key'     => isset( $_POST['stripe_live_publishable_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_live_publishable_key'] ) ) : '',
+			'stripe_live_secret_key'          => isset( $_POST['stripe_live_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_live_secret_key'] ) ) : '',
+			'stripe_publishable_key'         => '',
+			'stripe_secret_key'              => '',
 			'stripe_products_mode'           => isset( $_POST['stripe_products_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['stripe_products_mode'] ) ), array( 'all', 'selected' ), true ) ? sanitize_key( wp_unslash( $_POST['stripe_products_mode'] ) ) : 'all',
 			'stripe_selected_prices'         => isset( $_POST['stripe_selected_prices'] ) && is_array( $_POST['stripe_selected_prices'] ) ? array_values( array_unique( array_map( 'sanitize_text_field', wp_unslash( $_POST['stripe_selected_prices'] ) ) ) ) : array(),
 		);
+
+		$active_stripe_prefix = 'live' === $settings['stripe_mode'] ? 'stripe_live' : 'stripe_sandbox';
+		$settings['stripe_publishable_key'] = isset( $settings[ $active_stripe_prefix . '_publishable_key' ] ) ? $settings[ $active_stripe_prefix . '_publishable_key' ] : '';
+		$settings['stripe_secret_key']      = isset( $settings[ $active_stripe_prefix . '_secret_key' ] ) ? $settings[ $active_stripe_prefix . '_secret_key' ] : '';
 
 		$section_keys = array(
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
-			'payments'     => array( 'stripe_mode', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices' ),
+			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -8690,14 +8702,23 @@ class AJForms_Admin {
 									</div>
 									<div class="ajforms-settings-grid">
 										<div class="ajforms-settings-field">
-											<label for="stripe_publishable_key"><?php esc_html_e( 'Publishable Key', 'ajforms' ); ?></label>
-											<input name="stripe_publishable_key" id="stripe_publishable_key" type="text" value="<?php echo esc_attr( $settings['stripe_publishable_key'] ); ?>">
+											<label for="stripe_sandbox_publishable_key"><?php esc_html_e( 'Sandbox Publishable Key', 'ajforms' ); ?></label>
+											<input name="stripe_sandbox_publishable_key" id="stripe_sandbox_publishable_key" type="text" value="<?php echo esc_attr( isset( $settings['stripe_sandbox_publishable_key'] ) ? $settings['stripe_sandbox_publishable_key'] : '' ); ?>" placeholder="pk_test_...">
 										</div>
 										<div class="ajforms-settings-field">
-											<label for="stripe_secret_key"><?php esc_html_e( 'Secret Key', 'ajforms' ); ?></label>
-											<input name="stripe_secret_key" id="stripe_secret_key" type="text" value="<?php echo esc_attr( $settings['stripe_secret_key'] ); ?>">
+											<label for="stripe_sandbox_secret_key"><?php esc_html_e( 'Sandbox Secret Key', 'ajforms' ); ?></label>
+											<input name="stripe_sandbox_secret_key" id="stripe_sandbox_secret_key" type="text" value="<?php echo esc_attr( isset( $settings['stripe_sandbox_secret_key'] ) ? $settings['stripe_sandbox_secret_key'] : '' ); ?>" placeholder="sk_test_...">
+										</div>
+										<div class="ajforms-settings-field">
+											<label for="stripe_live_publishable_key"><?php esc_html_e( 'Live Publishable Key', 'ajforms' ); ?></label>
+											<input name="stripe_live_publishable_key" id="stripe_live_publishable_key" type="text" value="<?php echo esc_attr( isset( $settings['stripe_live_publishable_key'] ) ? $settings['stripe_live_publishable_key'] : '' ); ?>" placeholder="pk_live_...">
+										</div>
+										<div class="ajforms-settings-field">
+											<label for="stripe_live_secret_key"><?php esc_html_e( 'Live Secret Key', 'ajforms' ); ?></label>
+											<input name="stripe_live_secret_key" id="stripe_live_secret_key" type="text" value="<?php echo esc_attr( isset( $settings['stripe_live_secret_key'] ) ? $settings['stripe_live_secret_key'] : '' ); ?>" placeholder="sk_live_...">
 										</div>
 									</div>
+									<p class="ajforms-settings-help" style="margin-top:10px;"><?php esc_html_e( 'AJ Core stores Sandbox and Live keys separately. The Stripe Mode dropdown chooses which key pair is active, so switching modes does not overwrite the other environment.', 'ajforms' ); ?></p>
 									<div class="ajforms-settings-actions" style="margin-top:18px;">
 										<button type="submit" class="button" name="ajf_sync_stripe_products" value="1"><?php esc_html_e( 'Save and Sync Products', 'ajforms' ); ?></button>
 										<span class="ajforms-settings-help">
