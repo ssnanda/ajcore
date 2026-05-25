@@ -955,9 +955,16 @@ class AJForms_Admin {
 		return is_email( $email ) ? 'guest_' . md5( $email ) : '';
 	}
 
+	private function is_real_stripe_customer_id( $customer_id ) {
+		return 0 === strpos( sanitize_text_field( (string) $customer_id ), 'cus_' );
+	}
+
 	private function get_payment_customer_id( $payment ) {
 		if ( ! empty( $payment['customer'] ) && is_string( $payment['customer'] ) ) {
 			return sanitize_text_field( (string) $payment['customer'] );
+		}
+		if ( ! empty( $payment['customer']['id'] ) && is_string( $payment['customer']['id'] ) ) {
+			return sanitize_text_field( (string) $payment['customer']['id'] );
 		}
 
 		$email = '';
@@ -1156,57 +1163,6 @@ class AJForms_Admin {
 		);
 	}
 
-	private function upsert_guest_portal_customer_from_payment( $payment, $source ) {
-		$customer_id = $this->get_payment_customer_id( $payment );
-		if ( '' === $customer_id || 0 === strpos( $customer_id, 'cus_' ) ) {
-			return 0;
-		}
-
-		$details = array();
-		if ( ! empty( $payment['customer_details'] ) && is_array( $payment['customer_details'] ) ) {
-			$details = $payment['customer_details'];
-		} elseif ( ! empty( $payment['billing_details'] ) && is_array( $payment['billing_details'] ) ) {
-			$details = $payment['billing_details'];
-		}
-
-		$email = ! empty( $details['email'] ) ? sanitize_email( (string) $details['email'] ) : '';
-		$name  = ! empty( $details['name'] ) ? sanitize_text_field( (string) $details['name'] ) : '';
-		$phone = ! empty( $details['phone'] ) ? sanitize_text_field( (string) $details['phone'] ) : '';
-		$checkout_custom_fields = $this->extract_checkout_custom_fields( $payment );
-		$business_name = ! empty( $checkout_custom_fields['business_name'] ) ? sanitize_text_field( (string) $checkout_custom_fields['business_name'] ) : '';
-
-		if ( '' === $email ) {
-			return 0;
-		}
-
-		$customer_metadata = array(
-			'source' => sanitize_key( $source ),
-			'guest'  => true,
-		);
-		foreach ( $checkout_custom_fields as $field_key => $field_value ) {
-			$customer_metadata[ $field_key ] = $field_value;
-		}
-		if ( '' !== $business_name ) {
-			$customer_metadata['business_name'] = $business_name;
-		}
-
-		return $this->upsert_portal_stripe_customer_record(
-			array(
-				'stripe_customer_id' => $customer_id,
-				'email'              => $email,
-				'name'               => $name,
-				'phone'              => $phone,
-				'address'            => ! empty( $details['address'] ) ? wp_json_encode( $details['address'] ) : '',
-				'metadata'           => wp_json_encode( $customer_metadata ),
-				'raw_data'           => wp_json_encode( $payment ),
-				'livemode'           => ! empty( $payment['livemode'] ) ? 1 : 0,
-				'created_at'         => ! empty( $payment['created'] ) ? $this->stripe_timestamp_to_mysql( $payment['created'] ) : null,
-				'synced_at'          => current_time( 'mysql' ),
-			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
-		);
-	}
-
 	private function sync_portal_stripe_products( $secret_key ) {
 		global $wpdb;
 
@@ -1298,31 +1254,13 @@ class AJForms_Admin {
 				continue;
 			}
 
-			$session = $this->enrich_checkout_session_with_line_items( $session, $secret_key );
-			$inserted = $this->upsert_guest_portal_customer_from_payment( $session, 'checkout_session' );
 			$customer_id = $this->get_payment_customer_id( $session );
-			if ( '' !== $customer_id ) {
-				$this->update_portal_customer_checkout_custom_fields( $customer_id, $session );
-			}
-			if ( $inserted ) {
-				$count++;
-			}
-		}
-
-		$charges = $this->stripe_api_get_all( 'charges', $secret_key );
-		if ( is_wp_error( $charges ) ) {
-			return $charges;
-		}
-
-		foreach ( $charges as $charge ) {
-			if ( empty( $charge['id'] ) ) {
+			if ( ! $this->is_real_stripe_customer_id( $customer_id ) ) {
+				$this->record_portal_sync_item( 'skipped', 'checkout_session', $session['id'], 'skipped', __( 'Skipped guest checkout buyer because portal customer sync now imports Stripe Customer records only.', 'ajforms' ), $session );
 				continue;
 			}
 
-			$inserted = $this->upsert_guest_portal_customer_from_payment( $charge, 'charge' );
-			if ( $inserted ) {
-				$count++;
-			}
+			$this->update_portal_customer_checkout_custom_fields( $customer_id, $session );
 		}
 
 		return $this->portal_db_error ? new WP_Error( 'portal_db_error', $this->portal_db_error ) : $count;
@@ -1683,11 +1621,10 @@ class AJForms_Admin {
 			}
 
 			$customer_id = $this->get_payment_customer_id( $charge );
-			if ( '' === $customer_id ) {
+			if ( ! $this->is_real_stripe_customer_id( $customer_id ) ) {
+				$this->record_portal_sync_item( 'skipped', 'charge', $charge['id'], 'skipped', __( 'Skipped guest charge because portal transaction sync now imports Stripe Customer records only.', 'ajforms' ), $charge );
 				continue;
 			}
-
-			$this->upsert_guest_portal_customer_from_payment( $charge, 'charge' );
 
 			$currency = isset( $charge['currency'] ) ? strtolower( sanitize_key( $charge['currency'] ) ) : 'usd';
 			$charge_status = $this->get_stripe_charge_ledger_status( $charge );
@@ -1755,11 +1692,11 @@ class AJForms_Admin {
 
 			$session = $this->enrich_checkout_session_with_line_items( $session, $secret_key );
 			$customer_id = $this->get_payment_customer_id( $session );
-			if ( '' === $customer_id ) {
+			if ( ! $this->is_real_stripe_customer_id( $customer_id ) ) {
+				$this->record_portal_sync_item( 'skipped', 'checkout_session', $session['id'], 'skipped', __( 'Skipped guest checkout session because portal transaction sync now imports Stripe Customer records only.', 'ajforms' ), $session );
 				continue;
 			}
 
-			$this->upsert_guest_portal_customer_from_payment( $session, 'checkout_session' );
 			$this->update_portal_customer_checkout_custom_fields( $customer_id, $session );
 			$checkout_custom_fields = $this->extract_checkout_custom_fields( $session );
 
@@ -2172,19 +2109,8 @@ class AJForms_Admin {
 			return new WP_Error( 'missing_customer', __( 'Stripe customer ID is required.', 'ajforms' ) );
 		}
 
-		if ( 0 === strpos( $stripe_customer_id, 'guest_' ) ) {
-			$customer_count    = $this->sync_portal_stripe_customers( $secret_key );
-			$transaction_count = $this->sync_portal_stripe_transactions( $secret_key );
-
-			if ( is_wp_error( $customer_count ) ) {
-				return $customer_count;
-			}
-
-			if ( is_wp_error( $transaction_count ) ) {
-				return $transaction_count;
-			}
-
-			return absint( $customer_count ) + absint( $transaction_count );
+		if ( ! $this->is_real_stripe_customer_id( $stripe_customer_id ) ) {
+			return new WP_Error( 'guest_customer_sync_disabled', __( 'Guest buyer records are no longer imported. Portal sync now imports Stripe Customer records only.', 'ajforms' ) );
 		}
 
 		$customer = $this->stripe_api_get( 'customers/' . rawurlencode( $stripe_customer_id ), $secret_key );
@@ -9414,7 +9340,7 @@ class AJForms_Admin {
 							<tr>
 								<td colspan="<?php echo esc_attr( 6 + count( $display_fields ) ); ?>">
 									<p><strong><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></strong></p>
-									<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customers and guest Checkout/Charge buyer records from the connected Stripe account.', 'ajforms' ); ?></p>
+									<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customer records from the connected Stripe account.', 'ajforms' ); ?></p>
 									<p>
 										<a class="button button-primary" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 									</p>
