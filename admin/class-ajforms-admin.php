@@ -3869,7 +3869,14 @@ class AJForms_Admin {
 			$action = sanitize_key( wp_unslash( $_POST['portal_user_action'] ) );
 			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
 
-			if ( 'disable' === $action ) {
+			if ( 'restore' === $action || 'enable' === $action ) {
+				$result = $this->enable_stripe_customer_as_portal_user( $stripe_customer_id );
+				if ( is_wp_error( $result ) ) {
+					$args['portal-error'] = rawurlencode( $result->get_error_message() );
+				} else {
+					$args['portal-user-enabled'] = 1;
+				}
+			} elseif ( 'disable' === $action ) {
 				$result = $this->disable_stripe_customer_portal_access( $stripe_customer_id );
 				if ( is_wp_error( $result ) ) {
 					$args['portal-error'] = rawurlencode( $result->get_error_message() );
@@ -7424,14 +7431,7 @@ class AJForms_Admin {
 										<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
 									</p>
 									<?php $portal_status = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' ); ?>
-									<?php if ( empty( $customer->user_id ) || 'active' !== $portal_status ) : ?>
-										<form method="post" style="margin:0 0 6px;">
-											<?php wp_nonce_field( 'ajcore_enable_portal_customer', 'ajcore_enable_portal_customer_nonce' ); ?>
-											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
-											<input type="hidden" name="redirect_tab" value="portal-users">
-											<button type="submit" class="button"><?php esc_html_e( 'Enable', 'ajforms' ); ?></button>
-										</form>
-									<?php else : ?>
+									<?php if ( 'active' === $portal_status && ! empty( $customer->enabled_portal ) && $user ) : ?>
 										<form method="post" style="margin:0 0 6px;">
 											<?php wp_nonce_field( 'ajcore_portal_user_action_' . $customer->stripe_customer_id, 'ajcore_portal_user_action_nonce' ); ?>
 											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
@@ -7450,6 +7450,26 @@ class AJForms_Admin {
 											<input type="hidden" name="portal_user_action" value="reset_password">
 											<button type="submit" class="button"><?php esc_html_e( 'Reset Password', 'ajforms' ); ?></button>
 										</form>
+									<?php elseif ( 'archived' === $portal_status ) : ?>
+										<form method="post" style="margin:0 0 6px;">
+											<?php wp_nonce_field( 'ajcore_portal_user_action_' . $customer->stripe_customer_id, 'ajcore_portal_user_action_nonce' ); ?>
+											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+											<input type="hidden" name="portal_user_action" value="restore">
+											<button type="submit" class="button button-primary"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
+										</form>
+									<?php else : ?>
+										<form method="post" style="margin:0 0 6px;">
+											<?php wp_nonce_field( 'ajcore_portal_user_action_' . $customer->stripe_customer_id, 'ajcore_portal_user_action_nonce' ); ?>
+											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+											<input type="hidden" name="portal_user_action" value="enable">
+											<button type="submit" class="button button-primary"><?php esc_html_e( 'Enable', 'ajforms' ); ?></button>
+										</form>
+										<form method="post" style="margin:0 0 6px;">
+											<?php wp_nonce_field( 'ajcore_portal_user_action_' . $customer->stripe_customer_id, 'ajcore_portal_user_action_nonce' ); ?>
+											<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+											<input type="hidden" name="portal_user_action" value="archive">
+											<button type="submit" class="button"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
+										</form>
 									<?php endif; ?>
 								</td>
 								<td>
@@ -7462,7 +7482,7 @@ class AJForms_Admin {
 								<?php endforeach; ?>
 								<td>
 									<?php if ( 'active' === $portal_status && ! empty( $customer->enabled_portal ) && $user ) : ?>
-										<span class="ajcore-status-pill"><?php esc_html_e( 'Enabled', 'ajforms' ); ?></span>
+										<span class="ajcore-status-pill"><?php esc_html_e( 'Active', 'ajforms' ); ?></span>
 									<?php elseif ( 'archived' === $portal_status ) : ?>
 										<span class="ajcore-status-pill off"><?php esc_html_e( 'Archived', 'ajforms' ); ?></span>
 									<?php else : ?>
