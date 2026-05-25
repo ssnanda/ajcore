@@ -29,6 +29,7 @@ class AJForms {
 		add_action( 'admin_menu', array( $plugin_admin, 'add_plugin_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_styles' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_scripts' ) );
+		add_action( 'admin_notices', array( $plugin_admin, 'display_stripe_mode_admin_notice' ) );
 		add_filter( 'plugin_action_links_' . AJFORMS_PLUGIN_BASENAME, array( $plugin_admin, 'add_plugin_action_links' ) );
 		add_filter( 'plugin_row_meta', array( $plugin_admin, 'add_plugin_row_meta_links' ), 10, 2 );
 
@@ -3025,12 +3026,23 @@ class AJForms {
 
 	private function get_stripe_settings() {
 		$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$issues = function_exists( 'ajcore_get_stripe_mode_issues' ) ? ajcore_get_stripe_mode_issues( $plugin_settings, true ) : array();
 
 		return array(
 			'mode'            => ! empty( $plugin_settings['stripe_mode'] ) ? sanitize_key( $plugin_settings['stripe_mode'] ) : 'test',
 			'publishable_key' => ! empty( $plugin_settings['stripe_publishable_key'] ) ? sanitize_text_field( $plugin_settings['stripe_publishable_key'] ) : '',
 			'secret_key'      => ! empty( $plugin_settings['stripe_secret_key'] ) ? sanitize_text_field( $plugin_settings['stripe_secret_key'] ) : '',
+			'mode_issues'     => is_array( $issues ) ? $issues : array(),
 		);
+	}
+
+	private function get_stripe_mode_blocking_error( $stripe_settings = array() ) {
+		$issues = isset( $stripe_settings['mode_issues'] ) && is_array( $stripe_settings['mode_issues'] ) ? $stripe_settings['mode_issues'] : array();
+		if ( empty( $issues ) ) {
+			return '';
+		}
+
+		return implode( ' ', array_map( 'sanitize_text_field', $issues ) );
 	}
 
 	private function get_stripe_payment_config( $form, $settings ) {
@@ -3043,11 +3055,12 @@ class AJForms {
 		$description     = $price ? $price['product_name'] : ( isset( $settings['stripe_description'] ) ? sanitize_text_field( $settings['stripe_description'] ) : 'Payment for {form_title}' );
 
 		return array(
-			'enabled'         => $enabled && '' !== $stripe_settings['publishable_key'] && '' !== $stripe_settings['secret_key'] && $amount > 0,
+			'enabled'         => $enabled && '' !== $stripe_settings['publishable_key'] && '' !== $stripe_settings['secret_key'] && $amount > 0 && '' === $this->get_stripe_mode_blocking_error( $stripe_settings ),
 			'publishable_key' => $stripe_settings['publishable_key'],
 			'secret_key'      => $stripe_settings['secret_key'],
 			'price_id'        => $price_id,
 			'product_id'      => $price && isset( $price['product_id'] ) ? $price['product_id'] : '',
+			'mode_issues'     => isset( $stripe_settings['mode_issues'] ) ? $stripe_settings['mode_issues'] : array(),
 			'amount'          => $amount,
 			'currency'        => in_array( $currency, array( 'usd', 'eur', 'gbp', 'cad', 'aud' ), true ) ? $currency : 'usd',
 			'description'     => str_replace( '{form_title}', $form->title, $description ),
@@ -3298,6 +3311,10 @@ class AJForms {
 
 		$normalized     = $this->normalize_schema( $schema );
 		$stripe_config  = $this->get_stripe_payment_config( $form, $normalized['settings'] );
+		$mode_error     = $this->get_stripe_mode_blocking_error( $stripe_config );
+		if ( '' !== $mode_error ) {
+			wp_send_json_error( $mode_error, 400 );
+		}
 
 		if ( ! $stripe_config['enabled'] ) {
 			wp_send_json_error( __( 'Stripe payments are not enabled for this form.', 'ajforms' ), 400 );
@@ -3636,6 +3653,10 @@ class AJForms {
 		}
 
 		$stripe_settings = $this->get_stripe_settings();
+		$mode_error = $this->get_stripe_mode_blocking_error( $stripe_settings );
+		if ( '' !== $mode_error ) {
+			wp_send_json_error( $mode_error, 400 );
+		}
 		if ( empty( $stripe_settings['secret_key'] ) ) {
 			wp_send_json_error( __( 'Stripe is not connected.', 'ajforms' ), 400 );
 		}
@@ -3804,6 +3825,10 @@ class AJForms {
 		}
 
 		$stripe_settings = $this->get_stripe_settings();
+		$mode_error = $this->get_stripe_mode_blocking_error( $stripe_settings );
+		if ( '' !== $mode_error ) {
+			wp_send_json_error( $mode_error, 400 );
+		}
 		if ( empty( $stripe_settings['secret_key'] ) ) {
 			wp_send_json_error( __( 'Stripe is not connected.', 'ajforms' ), 400 );
 		}
@@ -3880,6 +3905,10 @@ class AJForms {
 
 	private function validate_stripe_payment_submission( $form, $settings ) {
 		$stripe_config = $this->get_stripe_payment_config( $form, $settings );
+		$mode_error = $this->get_stripe_mode_blocking_error( $stripe_config );
+		if ( '' !== $mode_error ) {
+			return new WP_Error( 'stripe_mode_key_mismatch', $mode_error );
+		}
 
 		if ( ! $stripe_config['enabled'] ) {
 			return true;

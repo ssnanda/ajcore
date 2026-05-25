@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.1.137
+ * Version: 0.1.138
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.1.137' );
+	define( 'AJCORE_VERSION', '0.1.138' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -177,6 +177,85 @@ if ( ! function_exists( 'ajforms_write_synced_settings_file' ) ) {
 		}
 
 		return false !== file_put_contents( AJFORMS_SYNCED_SETTINGS_FILE, $encoded . PHP_EOL, LOCK_EX );
+	}
+}
+
+
+if ( ! function_exists( 'ajcore_get_stripe_mode_label' ) ) {
+	function ajcore_get_stripe_mode_label( $mode ) {
+		$mode = sanitize_key( (string) $mode );
+
+		return 'live' === $mode ? __( 'Live', 'ajforms' ) : __( 'Sandbox', 'ajforms' );
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_stripe_key_environment' ) ) {
+	function ajcore_get_stripe_key_environment( $key ) {
+		$key = trim( (string) $key );
+		if ( '' === $key ) {
+			return '';
+		}
+
+		if ( preg_match( '/^(pk|sk|rk)_test_/', $key ) ) {
+			return 'test';
+		}
+
+		if ( preg_match( '/^(pk|sk|rk)_live_/', $key ) ) {
+			return 'live';
+		}
+
+		return 'unknown';
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_stripe_mode_issues' ) ) {
+	function ajcore_get_stripe_mode_issues( $settings, $include_secret = true ) {
+		$settings = is_array( $settings ) ? $settings : array();
+		$mode     = ! empty( $settings['stripe_mode'] ) && 'live' === sanitize_key( (string) $settings['stripe_mode'] ) ? 'live' : 'test';
+		$expected = $mode;
+		$issues   = array();
+		$keys     = array(
+			'publishable' => isset( $settings['stripe_publishable_key'] ) ? (string) $settings['stripe_publishable_key'] : '',
+		);
+
+		if ( $include_secret ) {
+			$keys['secret'] = isset( $settings['stripe_secret_key'] ) ? (string) $settings['stripe_secret_key'] : '';
+		}
+
+		foreach ( $keys as $label => $key ) {
+			$environment = ajcore_get_stripe_key_environment( $key );
+			if ( '' === $environment || 'unknown' === $environment ) {
+				continue;
+			}
+
+			if ( $environment !== $expected ) {
+				$issues[] = sprintf(
+					/* translators: 1: Stripe mode, 2: key label, 3: key environment */
+					__( 'Stripe Mode is set to %1$s, but the %2$s key is a %3$s key.', 'ajforms' ),
+					ajcore_get_stripe_mode_label( $mode ),
+					$label,
+					ajcore_get_stripe_mode_label( $environment )
+				);
+			}
+		}
+
+		return $issues;
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_stripe_mode_badge_data' ) ) {
+	function ajcore_get_stripe_mode_badge_data( $settings ) {
+		$settings = is_array( $settings ) ? $settings : array();
+		$mode     = ! empty( $settings['stripe_mode'] ) && 'live' === sanitize_key( (string) $settings['stripe_mode'] ) ? 'live' : 'test';
+		$issues   = ajcore_get_stripe_mode_issues( $settings, true );
+
+		return array(
+			'mode'        => $mode,
+			'label'       => ajcore_get_stripe_mode_label( $mode ),
+			'is_live'     => 'live' === $mode,
+			'has_issues'  => ! empty( $issues ),
+			'issues'      => $issues,
+		);
 	}
 }
 

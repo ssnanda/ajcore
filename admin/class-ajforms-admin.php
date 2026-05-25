@@ -425,6 +425,11 @@ class AJForms_Admin {
 	}
 
 	private function stripe_api_get( $path, $secret_key, $query_args = array() ) {
+		$mode_error = $this->get_stripe_mode_blocking_error();
+		if ( '' !== $mode_error ) {
+			return new WP_Error( 'stripe_mode_key_mismatch', $mode_error );
+		}
+
 		$url = add_query_arg( $query_args, 'https://api.stripe.com/v1/' . ltrim( $path, '/' ) );
 
 		$response = wp_remote_get(
@@ -2452,6 +2457,78 @@ class AJForms_Admin {
 			'stripe_products_mode'           => 'all',
 			'stripe_selected_prices'         => array(),
 		);
+	}
+
+
+	private function get_stripe_mode_badge_data() {
+		$settings = $this->get_plugin_settings();
+
+		if ( function_exists( 'ajcore_get_stripe_mode_badge_data' ) ) {
+			return ajcore_get_stripe_mode_badge_data( $settings );
+		}
+
+		$mode = ! empty( $settings['stripe_mode'] ) && 'live' === sanitize_key( (string) $settings['stripe_mode'] ) ? 'live' : 'test';
+
+		return array(
+			'mode'       => $mode,
+			'label'      => 'live' === $mode ? __( 'Live', 'ajforms' ) : __( 'Sandbox', 'ajforms' ),
+			'is_live'    => 'live' === $mode,
+			'has_issues' => false,
+			'issues'     => array(),
+		);
+	}
+
+	public function display_stripe_mode_admin_notice() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
+		$stripe_pages = array(
+			'ajforms',
+			'ajforms-products',
+			'ajforms-client-portal',
+			'ajforms-settings',
+		);
+
+		if ( ! in_array( $page, $stripe_pages, true ) ) {
+			return;
+		}
+
+		$data = $this->get_stripe_mode_badge_data();
+		$settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
+		$notice_class = ! empty( $data['has_issues'] ) ? 'notice-error' : ( ! empty( $data['is_live'] ) ? 'notice-warning' : 'notice-info' );
+		?>
+		<div class="notice <?php echo esc_attr( $notice_class ); ?> ajcore-stripe-mode-notice">
+			<p>
+				<strong><?php echo esc_html( sprintf( __( 'Stripe %s Mode', 'ajforms' ), $data['label'] ) ); ?></strong>
+				<?php if ( ! empty( $data['is_live'] ) ) : ?>
+					<?php esc_html_e( 'Real customer payments are enabled.', 'ajforms' ); ?>
+				<?php else : ?>
+					<?php esc_html_e( 'Sandbox payments only. Use Stripe sandbox/test cards such as 4242 4242 4242 4242.', 'ajforms' ); ?>
+				<?php endif; ?>
+				<a href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Stripe settings', 'ajforms' ); ?></a>
+			</p>
+			<?php if ( ! empty( $data['issues'] ) ) : ?>
+				<ul style="margin-top:0;list-style:disc;padding-left:22px;">
+					<?php foreach ( $data['issues'] as $issue ) : ?>
+						<li><?php echo esc_html( $issue ); ?></li>
+					<?php endforeach; ?>
+				</ul>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	private function get_stripe_mode_blocking_error() {
+		$settings = $this->get_plugin_settings();
+		$issues = function_exists( 'ajcore_get_stripe_mode_issues' ) ? ajcore_get_stripe_mode_issues( $settings, true ) : array();
+
+		if ( empty( $issues ) ) {
+			return '';
+		}
+
+		return implode( ' ', array_map( 'sanitize_text_field', $issues ) );
 	}
 
 	private function normalize_imported_schema( $schema ) {
@@ -5715,7 +5792,7 @@ class AJForms_Admin {
 					<dt><?php esc_html_e( 'Name', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->name ); ?></dd>
 					<dt><?php esc_html_e( 'Email', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->email ); ?></dd>
 					<dt><?php esc_html_e( 'Phone', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->phone ); ?></dd>
-					<dt><?php esc_html_e( 'Mode', 'ajforms' ); ?></dt><dd><?php echo ! empty( $customer->livemode ) ? esc_html__( 'Live', 'ajforms' ) : esc_html__( 'Test', 'ajforms' ); ?></dd>
+					<dt><?php esc_html_e( 'Mode', 'ajforms' ); ?></dt><dd><?php echo ! empty( $customer->livemode ) ? esc_html__( 'Live', 'ajforms' ) : esc_html__( 'Sandbox', 'ajforms' ); ?></dd>
 					<dt><?php esc_html_e( 'Created', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->created_at ) ); ?></dd>
 					<dt><?php esc_html_e( 'Last Synced', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></dd>
 					<?php foreach ( $display_fields as $field ) : ?>
@@ -8590,10 +8667,24 @@ class AJForms_Admin {
 									<span class="ajforms-settings-pill"><?php esc_html_e( 'Stripe Payments', 'ajforms' ); ?></span>
 									<h3><?php esc_html_e( 'Stripe connection', 'ajforms' ); ?></h3>
 									<p><?php esc_html_e( 'These keys connect AJ Core to Stripe site-wide. Products sync from Stripe Prices and can be used in forms or on pages.', 'ajforms' ); ?></p>
+<?php $stripe_mode_data = $this->get_stripe_mode_badge_data(); ?>
+									<div class="notice <?php echo ! empty( $stripe_mode_data['has_issues'] ) ? 'notice-error' : ( ! empty( $stripe_mode_data['is_live'] ) ? 'notice-warning' : 'notice-info' ); ?> inline" style="margin:12px 0 18px;">
+										<p><strong><?php echo esc_html( sprintf( __( 'Stripe %s Mode', 'ajforms' ), $stripe_mode_data['label'] ) ); ?></strong>
+										<?php if ( ! empty( $stripe_mode_data['is_live'] ) ) : ?>
+											<?php esc_html_e( 'Use only live Stripe keys here. Payments are real.', 'ajforms' ); ?>
+										<?php else : ?>
+											<?php esc_html_e( 'Use Stripe sandbox/test keys here. Use Stripe test cards, not random card numbers.', 'ajforms' ); ?>
+										<?php endif; ?></p>
+										<?php if ( ! empty( $stripe_mode_data['issues'] ) ) : ?>
+											<ul style="list-style:disc;padding-left:20px;">
+												<?php foreach ( $stripe_mode_data['issues'] as $issue ) : ?><li><?php echo esc_html( $issue ); ?></li><?php endforeach; ?>
+											</ul>
+										<?php endif; ?>
+									</div>
 									<div class="ajforms-settings-field" style="max-width:280px;margin-bottom:22px;">
 										<label for="stripe_mode"><?php esc_html_e( 'Stripe Mode', 'ajforms' ); ?></label>
 										<select name="stripe_mode" id="stripe_mode">
-											<option value="test" <?php selected( $settings['stripe_mode'], 'test' ); ?>><?php esc_html_e( 'Test', 'ajforms' ); ?></option>
+											<option value="test" <?php selected( $settings['stripe_mode'], 'test' ); ?>><?php esc_html_e( 'Sandbox', 'ajforms' ); ?></option>
 											<option value="live" <?php selected( $settings['stripe_mode'], 'live' ); ?>><?php esc_html_e( 'Live', 'ajforms' ); ?></option>
 										</select>
 									</div>
