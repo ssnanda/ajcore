@@ -2088,7 +2088,42 @@ class AJForms_Admin {
 			$wpdb->prepare(
 				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s ORDER BY ledger_date DESC, id DESC LIMIT %d",
 				$stripe_customer_id,
-				20
+				100
+			)
+		);
+
+		$requests = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE stripe_customer_id = %s ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT %d",
+				$stripe_customer_id,
+				100
+			)
+		);
+
+		$tasks = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT t.*, ts.status AS customer_status, ts.completed_at AS customer_completed_at, ts.updated_at AS customer_status_updated_at
+				FROM {$this->get_portal_tasks_table()} t
+				LEFT JOIN {$this->get_portal_task_statuses_table()} ts ON ts.task_id = t.id AND ts.stripe_customer_id = %s
+				WHERE t.stripe_customer_id = %s OR t.task_scope = 'global'
+				ORDER BY t.due_date IS NULL ASC, t.due_date ASC, t.updated_at DESC, t.id DESC
+				LIMIT %d",
+				$stripe_customer_id,
+				$stripe_customer_id,
+				100
+			)
+		);
+
+		$task_comments = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT tc.*, t.title AS task_title
+				FROM {$this->get_portal_task_comments_table()} tc
+				LEFT JOIN {$this->get_portal_tasks_table()} t ON t.id = tc.task_id
+				WHERE tc.stripe_customer_id = %s
+				ORDER BY tc.created_at DESC, tc.id DESC
+				LIMIT %d",
+				$stripe_customer_id,
+				50
 			)
 		);
 
@@ -2120,11 +2155,106 @@ class AJForms_Admin {
 			'active_subs'       => array_values( array_filter( $subscriptions, array( $this, 'is_active_portal_subscription' ) ) ),
 			'purchased_products' => $this->get_portal_customer_purchased_products( $subscriptions, $ledger ),
 			'ledger'            => $ledger,
+			'requests'          => $requests,
 			'upcoming_payments' => $this->get_portal_customer_upcoming_payments( $subscriptions ),
 			'entities'          => $entities,
 			'files'             => $files,
-			'tasks'             => array(),
+			'tasks'             => $tasks,
+			'task_comments'     => $task_comments,
+			'balance'           => $this->get_portal_customer_balance_summary( $ledger ),
+			'activity'          => $this->get_portal_customer_activity_summary( $ledger, $requests, $tasks, $task_comments, $files ),
 		);
+	}
+
+	private function get_portal_customer_balance_summary( $ledger ) {
+		$open_balance = 0.0;
+		$credit_balance = 0.0;
+		$paid_total = 0.0;
+		$failed_count = 0;
+
+		foreach ( (array) $ledger as $entry ) {
+			$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+			$effect = $this->get_portal_ledger_balance_effect( $entry );
+			if ( $effect > 0 ) {
+				$open_balance += $effect;
+			} elseif ( $effect < 0 ) {
+				$credit_balance += abs( $effect );
+			}
+			if ( in_array( $status, array( 'paid', 'succeeded' ), true ) ) {
+				$paid_total += abs( (float) $entry->amount );
+			}
+			if ( in_array( $status, array( 'failed', 'payment_failed', 'requires_payment_method' ), true ) ) {
+				$failed_count++;
+			}
+		}
+
+		return array(
+			'open_balance'   => $open_balance,
+			'credit_balance' => $credit_balance,
+			'paid_total'     => $paid_total,
+			'failed_count'   => $failed_count,
+		);
+	}
+
+	private function get_portal_customer_activity_summary( $ledger, $requests, $tasks, $task_comments, $files ) {
+		$activity = array();
+
+		foreach ( (array) $requests as $request ) {
+			$date = ! empty( $request->updated_at ) ? $request->updated_at : $request->created_at;
+			$activity[] = array(
+				'date'    => $date,
+				'type'    => __( 'Request', 'ajforms' ),
+				'summary' => trim( (string) $request->service_name ) . ' · ' . sanitize_key( (string) $request->status ),
+				'note'    => ! empty( $request->admin_notes ) ? (string) $request->admin_notes : '',
+			);
+		}
+
+		foreach ( (array) $ledger as $entry ) {
+			$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+			$activity[] = array(
+				'date'    => ! empty( $entry->ledger_date ) ? $entry->ledger_date : $entry->created_at,
+				'type'    => __( 'Billing', 'ajforms' ),
+				'summary' => $this->get_portal_ledger_display_description( $entry ) . ' · ' . sanitize_key( (string) $entry->status ),
+				'note'    => ! empty( $metadata['admin_notes'] ) ? sanitize_textarea_field( (string) $metadata['admin_notes'] ) : '',
+			);
+		}
+
+		foreach ( (array) $tasks as $task ) {
+			$status = ! empty( $task->customer_status ) ? $task->customer_status : $task->status;
+			$activity[] = array(
+				'date'    => ! empty( $task->customer_status_updated_at ) ? $task->customer_status_updated_at : $task->updated_at,
+				'type'    => __( 'Task', 'ajforms' ),
+				'summary' => trim( (string) $task->title ) . ' · ' . sanitize_key( (string) $status ),
+				'note'    => '',
+			);
+		}
+
+		foreach ( (array) $task_comments as $comment ) {
+			$activity[] = array(
+				'date'    => $comment->created_at,
+				'type'    => __( 'Task Comment', 'ajforms' ),
+				'summary' => ! empty( $comment->task_title ) ? $comment->task_title : __( 'Task comment', 'ajforms' ),
+				'note'    => (string) $comment->comment,
+			);
+		}
+
+		foreach ( (array) $files as $file ) {
+			$activity[] = array(
+				'date'    => $file->created_at,
+				'type'    => __( 'File', 'ajforms' ),
+				'summary' => (string) $file->title,
+				'note'    => '',
+			);
+		}
+
+		usort(
+			$activity,
+			function ( $a, $b ) {
+				return strtotime( $b['date'] ) <=> strtotime( $a['date'] );
+			}
+		);
+
+		return array_slice( $activity, 0, 40 );
 	}
 
 	private function is_active_portal_subscription( $subscription ) {
@@ -4468,6 +4598,48 @@ class AJForms_Admin {
 		return array_values( array_unique( $labels ) );
 	}
 
+	private function get_portal_file_customer_links( $file_id ) {
+		global $wpdb;
+
+		$links = array();
+		foreach ( $this->get_portal_file_assignments( $file_id ) as $assignment ) {
+			$user_id = ! empty( $assignment->user_id ) ? (int) $assignment->user_id : 0;
+			$email   = ! empty( $assignment->user_email ) ? strtolower( sanitize_email( $assignment->user_email ) ) : '';
+			$where   = array();
+			$params  = array();
+
+			if ( $user_id ) {
+				$where[]  = 'm.user_id = %d';
+				$params[] = $user_id;
+			}
+
+			if ( '' !== $email ) {
+				$where[]  = 'LOWER(c.email) = %s';
+				$params[] = $email;
+			}
+
+			if ( empty( $where ) ) {
+				continue;
+			}
+
+			$sql = "SELECT c.stripe_customer_id, c.name, c.email
+				FROM {$this->get_portal_stripe_customers_table()} c
+				LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
+				WHERE " . implode( ' OR ', $where ) . '
+				LIMIT 5';
+			$customers = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
+			foreach ( $customers as $customer ) {
+				$label = $customer->name ? $customer->name : ( $customer->email ? $customer->email : $customer->stripe_customer_id );
+				$links[ $customer->stripe_customer_id ] = array(
+					'label' => $label,
+					'url'   => $this->get_portal_customer_360_url( $customer->stripe_customer_id ),
+				);
+			}
+		}
+
+		return array_values( $links );
+	}
+
 	private function handle_file_library_actions() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -5881,7 +6053,8 @@ class AJForms_Admin {
 							</td>
 							<td>
 								<?php echo esc_html( $customer_label ); ?><br>
-								<small><?php echo esc_html( $request->wp_user_email ? $request->wp_user_email : $request->stripe_customer_id ); ?></small>
+								<small><?php echo esc_html( $request->wp_user_email ? $request->wp_user_email : $request->stripe_customer_id ); ?></small><br>
+								<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $request->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View Customer', 'ajforms' ); ?></a>
 							</td>
 							<td><strong><?php echo esc_html( $status_label ); ?></strong></td>
 							<td><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></td>
@@ -6145,7 +6318,8 @@ class AJForms_Admin {
 							</td>
 							<td>
 								<?php echo esc_html( $customer_label ); ?><br>
-								<small><?php echo esc_html( $request->wp_user_email ? $request->wp_user_email : $request->stripe_customer_id ); ?></small>
+								<small><?php echo esc_html( $request->wp_user_email ? $request->wp_user_email : $request->stripe_customer_id ); ?></small><br>
+								<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $request->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View Customer', 'ajforms' ); ?></a>
 							</td>
 							<td><strong><?php echo esc_html( $status_label ); ?></strong></td>
 							<td><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></td>
@@ -6524,7 +6698,7 @@ class AJForms_Admin {
 						<?php $entry_debit_credit = $this->get_portal_ledger_debit_credit( $entry ); ?>
 						<tr>
 							<td><?php echo esc_html( $entry->ledger_date ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $entry->ledger_date . ' UTC' ) ) : '-' ); ?></td>
-							<td><?php echo esc_html( $customer_label ); ?><br><small><?php echo esc_html( $entry->stripe_customer_id ); ?></small></td>
+							<td><?php echo esc_html( $customer_label ); ?><br><small><?php echo esc_html( $entry->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $entry->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View Customer', 'ajforms' ); ?></a></td>
 							<td><?php echo esc_html( $this->get_portal_ledger_display_description( $entry ) ); ?></td>
 							<td><code><?php echo esc_html( $this->get_portal_ledger_transaction_id( $entry ) ? $this->get_portal_ledger_transaction_id( $entry ) : '-' ); ?></code></td>
 							<td><?php echo esc_html( $entry->source_type ); ?></td>
@@ -6555,6 +6729,17 @@ class AJForms_Admin {
 		);
 
 		return add_query_arg( $args, admin_url( 'admin.php' ) );
+	}
+
+	private function get_portal_customer_360_url( $stripe_customer_id ) {
+		return add_query_arg(
+			array(
+				'page'               => 'ajforms-client-portal',
+				'tab'                => 'customer',
+				'stripe_customer_id' => sanitize_text_field( (string) $stripe_customer_id ),
+			),
+			admin_url( 'admin.php' )
+		);
 	}
 
 	private function render_portal_dashboard_metric( $label, $value, $url = '', $note = '' ) {
@@ -6790,6 +6975,10 @@ class AJForms_Admin {
 			.ajcore-customer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:1180px}
 			.ajcore-customer-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px}
 			.ajcore-customer-card h3{margin:0 0 14px;font-size:16px}
+			.ajcore-customer-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:0 0 16px}
+			.ajcore-customer-summary div{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:14px}
+			.ajcore-customer-summary span{display:block;color:#646970;font-weight:600}
+			.ajcore-customer-summary strong{display:block;margin-top:8px;font-size:22px}
 			.ajcore-customer-meta{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 14px}
 			.ajcore-customer-meta dt{font-weight:600;color:#50575e}
 			.ajcore-customer-meta dd{margin:0;overflow-wrap:anywhere}
@@ -6800,6 +6989,9 @@ class AJForms_Admin {
 			.ajcore-customer-actions form{display:flex;gap:8px;align-items:center;margin:0}
 			.ajcore-customer-actions input[type="email"]{min-width:280px}
 			.ajcore-customer-card table{margin-top:8px}
+			.ajcore-customer-activity{margin:0;padding:0;list-style:none}
+			.ajcore-customer-activity li{border-left:3px solid #dbeafe;padding:8px 0 8px 12px;margin:0 0 10px}
+			.ajcore-customer-quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
 			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}}
 		</style>
 
@@ -6819,7 +7011,7 @@ class AJForms_Admin {
 		<div class="ajcore-customer-head">
 			<div>
 				<p><a href="<?php echo esc_url( $back_url ); ?>">&larr; <?php esc_html_e( 'Back to Client Portal', 'ajforms' ); ?></a></p>
-				<h2><?php echo esc_html( ! empty( $customer->name ) ? $customer->name : $customer->email ); ?></h2>
+				<h2><?php esc_html_e( 'Customer 360', 'ajforms' ); ?>: <?php echo esc_html( ! empty( $customer->name ) ? $customer->name : $customer->email ); ?></h2>
 				<code><?php echo esc_html( $customer->stripe_customer_id ); ?></code>
 			</div>
 			<div class="ajcore-customer-actions">
@@ -6839,6 +7031,15 @@ class AJForms_Admin {
 					</form>
 				<?php endif; ?>
 			</div>
+		</div>
+
+		<div class="ajcore-customer-summary">
+			<div><span><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></span><strong><?php echo esc_html( 'active' === $portal_status ? __( 'Active', 'ajforms' ) : ucfirst( $portal_status ) ); ?></strong></div>
+			<div><span><?php esc_html_e( 'Active Services', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['active_subs'] ) ); ?></strong></div>
+			<div><span><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['open_balance'], 'usd' ) ); ?></strong></div>
+			<div><span><?php esc_html_e( 'Credit Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['credit_balance'], 'usd' ) ); ?></strong></div>
+			<div><span><?php esc_html_e( 'Requests', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['requests'] ) ); ?></strong></div>
+			<div><span><?php esc_html_e( 'Tasks', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['tasks'] ) ); ?></strong></div>
 		</div>
 
 		<div class="ajcore-customer-grid">
@@ -6878,6 +7079,12 @@ class AJForms_Admin {
 					<input type="email" name="wp_user_email" value="<?php echo esc_attr( $user ? $user->user_email : $customer->email ); ?>" placeholder="<?php esc_attr_e( 'WordPress user email', 'ajforms' ); ?>">
 					<button type="submit" class="button"><?php esc_html_e( 'Relink User', 'ajforms' ); ?></button>
 				</form>
+				<div class="ajcore-customer-quick-actions">
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'billing', array( 'billing_customer' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Billing Ledger', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'file-library' ) ); ?>"><?php esc_html_e( 'Files', 'ajforms' ); ?></a>
+				</div>
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
@@ -6907,7 +7114,13 @@ class AJForms_Admin {
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
-				<h3><?php esc_html_e( 'Recent Invoices / Charges Ledger', 'ajforms' ); ?></h3>
+				<h3><?php esc_html_e( 'Billing Balance / Ledger', 'ajforms' ); ?></h3>
+				<p>
+					<strong><?php esc_html_e( 'Open:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_money( $detail['balance']['open_balance'], 'usd' ) ); ?>
+					&nbsp; <strong><?php esc_html_e( 'Credit:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_money( $detail['balance']['credit_balance'], 'usd' ) ); ?>
+					&nbsp; <strong><?php esc_html_e( 'Paid:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_money( $detail['balance']['paid_total'], 'usd' ) ); ?>
+					&nbsp; <strong><?php esc_html_e( 'Failed:', 'ajforms' ); ?></strong> <?php echo esc_html( $detail['balance']['failed_count'] ); ?>
+				</p>
 				<?php
 				$this->render_portal_dataset_section(
 					'ledger',
@@ -6915,6 +7128,32 @@ class AJForms_Admin {
 					$detail['ledger'],
 					array( 'ledger_date', 'description', 'metadata.service_period', 'amount', 'currency', 'status', 'invoice_id', 'charge_id' ),
 					__( 'No recent ledger records.', 'ajforms' )
+				);
+				?>
+			</div>
+
+			<div class="ajcore-customer-card ajcore-customer-wide">
+				<h3><?php esc_html_e( 'Requests', 'ajforms' ); ?></h3>
+				<?php
+				$this->render_portal_dataset_section(
+					'customer_requests',
+					__( 'Requests', 'ajforms' ),
+					$detail['requests'],
+					array( 'created_at', 'service_name', 'request_type', 'status', 'amount', 'currency', 'source', 'admin_notes', 'client_notes' ),
+					__( 'No requests found for this customer.', 'ajforms' )
+				);
+				?>
+			</div>
+
+			<div class="ajcore-customer-card ajcore-customer-wide">
+				<h3><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h3>
+				<?php
+				$this->render_portal_dataset_section(
+					'customer_tasks',
+					__( 'Tasks', 'ajforms' ),
+					$detail['tasks'],
+					array( 'title', 'task_scope', 'task_frequency', 'status', 'customer_status', 'due_date', 'action_required', 'client_visible' ),
+					__( 'No tasks found for this customer.', 'ajforms' )
 				);
 				?>
 			</div>
@@ -6937,14 +7176,27 @@ class AJForms_Admin {
 				<?php $this->render_portal_customer_entities_table( $detail['entities'] ); ?>
 			</div>
 
-			<div class="ajcore-customer-card">
+			<div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'Linked Files', 'ajforms' ); ?></h3>
 				<?php $this->render_portal_customer_files_table( $detail['files'] ); ?>
 			</div>
 
-			<div class="ajcore-customer-card">
-				<h3><?php esc_html_e( 'Linked Tasks', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'No portal task records are synced yet.', 'ajforms' ); ?></p>
+			<div class="ajcore-customer-card ajcore-customer-wide">
+				<h3><?php esc_html_e( 'Internal Notes / Activity', 'ajforms' ); ?></h3>
+				<?php if ( empty( $detail['activity'] ) ) : ?>
+					<p><?php esc_html_e( 'No customer activity found yet.', 'ajforms' ); ?></p>
+				<?php else : ?>
+					<ul class="ajcore-customer-activity">
+						<?php foreach ( $detail['activity'] as $activity ) : ?>
+							<li>
+								<strong><?php echo esc_html( $activity['type'] ); ?></strong>
+								<?php echo esc_html( $this->format_portal_date( $activity['date'] ) ); ?><br>
+								<?php echo esc_html( $activity['summary'] ); ?>
+								<?php if ( ! empty( $activity['note'] ) ) : ?><br><span class="description"><?php echo esc_html( wp_trim_words( $activity['note'], 28 ) ); ?></span><?php endif; ?>
+							</li>
+						<?php endforeach; ?>
+					</ul>
+				<?php endif; ?>
 			</div>
 		</div>
 		<?php $this->render_portal_field_picker_script(); ?>
@@ -7630,7 +7882,7 @@ class AJForms_Admin {
 							<tr>
 								<td>
 									<p style="margin:0 0 6px;">
-										<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
+										<a class="button" href="<?php echo esc_url( $this->get_portal_customer_360_url( $customer->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View Customer', 'ajforms' ); ?></a>
 									</p>
 									<?php $portal_status = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' ); ?>
 									<?php if ( 'active' === $portal_status && ! empty( $customer->enabled_portal ) && $user ) : ?>
@@ -7786,7 +8038,7 @@ class AJForms_Admin {
 							<?php foreach ( $active_subscriptions as $subscription ) : ?>
 								<tr>
 									<td><code><?php echo esc_html( $subscription->stripe_subscription_id ); ?></code></td>
-									<td><?php echo esc_html( $subscription->customer_name ? $subscription->customer_name : ( $subscription->customer_email ? $subscription->customer_email : $subscription->stripe_customer_id ) ); ?><br><small><?php echo esc_html( $subscription->stripe_customer_id ); ?></small></td>
+									<td><?php echo esc_html( $subscription->customer_name ? $subscription->customer_name : ( $subscription->customer_email ? $subscription->customer_email : $subscription->stripe_customer_id ) ); ?><br><small><?php echo esc_html( $subscription->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $subscription->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View Customer', 'ajforms' ); ?></a></td>
 									<td><strong><?php echo esc_html( $subscription->status ); ?></strong></td>
 									<td><?php echo esc_html( $subscription->current_period_end ? $this->format_portal_date( $subscription->current_period_end ) : '-' ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_date( $subscription->synced_at ) ); ?></td>
@@ -8095,7 +8347,7 @@ class AJForms_Admin {
 												<?php endif; ?>
 											</details>
 										<?php else : ?>
-											<?php echo esc_html( $task->customer_name ? $task->customer_name : $task->customer_email ); ?><?php if ( ! empty( $task->stripe_customer_id ) ) : ?><br><code><?php echo esc_html( $task->stripe_customer_id ); ?></code><?php endif; ?>
+											<?php echo esc_html( $task->customer_name ? $task->customer_name : $task->customer_email ); ?><?php if ( ! empty( $task->stripe_customer_id ) ) : ?><br><code><?php echo esc_html( $task->stripe_customer_id ); ?></code><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $task->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View Customer', 'ajforms' ); ?></a><?php endif; ?>
 										<?php endif; ?>
 									</td>
 									<td><strong><?php echo esc_html( $task->title ); ?></strong><br><span class="description"><?php echo esc_html( wp_trim_words( (string) $task->action_required, 18 ) ); ?></span></td>
@@ -8295,6 +8547,7 @@ class AJForms_Admin {
 									<?php
 									$file_url = wp_get_attachment_url( (int) $file->attachment_id );
 									$labels   = $this->get_portal_file_assignment_labels( (int) $file->id );
+									$customer_links = $this->get_portal_file_customer_links( (int) $file->id );
 									?>
 									<tr>
 										<td><strong><?php echo esc_html( $file->title ); ?></strong><br><span class="description"><?php echo esc_html( wp_trim_words( (string) $file->description, 16 ) ); ?></span></td>
@@ -8309,6 +8562,13 @@ class AJForms_Admin {
 														<li><?php echo esc_html( $label ); ?></li>
 													<?php endforeach; ?>
 												</ul>
+												<?php if ( ! empty( $customer_links ) ) : ?>
+													<p style="margin:8px 0 0;">
+														<?php foreach ( $customer_links as $customer_link ) : ?>
+															<a href="<?php echo esc_url( $customer_link['url'] ); ?>"><?php echo esc_html( sprintf( __( 'View Customer: %s', 'ajforms' ), $customer_link['label'] ) ); ?></a><br>
+														<?php endforeach; ?>
+													</p>
+												<?php endif; ?>
 											<?php endif; ?>
 										</td>
 										<td>
