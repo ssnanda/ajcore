@@ -1490,7 +1490,11 @@ class AJForms {
 					<div style="font-size:24px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_money( $balance_due, $balance_currency ) ); ?></div>
 					<p style="margin:6px 0 0;color:#475569;"><?php esc_html_e( 'Make a payment or pay your current balance in one checkout.', 'ajforms' ); ?></p>
 				</div>
-				<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+				<div class="aj-portal-payment-box" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;justify-content:flex-end;">
+					<label style="display:flex;flex-direction:column;gap:6px;font-weight:700;color:#334155;min-width:170px;">
+						<span><?php esc_html_e( 'Payment Amount', 'ajforms' ); ?></span>
+						<input type="number" class="aj-portal-payment-amount-input" min="0.01" step="0.01" inputmode="decimal" value="<?php echo esc_attr( $balance_due > 0 ? number_format( $balance_due, 2, '.', '' ) : '' ); ?>" placeholder="0.00" style="width:170px;border:1px solid #bfdbfe;border-radius:14px;padding:10px 12px;font-weight:800;background:#fff;">
+					</label>
 					<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="" data-payment-mode="custom" data-payment-amount="" data-payment-currency="<?php echo esc_attr( $balance_currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Make a Payment', 'ajforms' ); ?></button>
 					<?php if ( $balance_due > 0 ) : ?>
 						<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="all" data-payment-mode="balance" data-payment-amount="<?php echo esc_attr( number_format( $balance_due, 2, '.', '' ) ); ?>" data-payment-currency="<?php echo esc_attr( $balance_currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Balance', 'ajforms' ); ?></button>
@@ -2529,24 +2533,32 @@ class AJForms {
 					const paymentMode = payButton.dataset.paymentMode || '';
 					let paymentAmount = payButton.dataset.paymentAmount || '';
 					if (paymentMode === 'custom' || paymentMode === 'balance') {
-						const promptMessage = paymentMode === 'balance'
-							? '<?php echo esc_js( __( 'Enter the amount you want to pay toward your balance.', 'ajforms' ) ); ?>'
-							: '<?php echo esc_js( __( 'Enter the payment amount.', 'ajforms' ) ); ?>';
-						const enteredAmount = window.prompt(promptMessage, paymentAmount || '');
-						if (enteredAmount === null) {
-							return;
-						}
+						const paymentBox = payButton.closest('.aj-portal-payment-box');
+						const amountInput = paymentBox ? paymentBox.querySelector('.aj-portal-payment-amount-input') : null;
+						const enteredAmount = amountInput ? amountInput.value : paymentAmount;
+
 						if (String(enteredAmount).indexOf('-') !== -1) {
 							window.alert('<?php echo esc_js( __( 'Negative payment amounts are not allowed.', 'ajforms' ) ); ?>');
+							if (amountInput) {
+								amountInput.focus();
+							}
 							return;
 						}
+
 						paymentAmount = String(enteredAmount).replace(/[^0-9.]/g, '');
 						const numericAmount = parseFloat(paymentAmount);
 						if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
 							window.alert('<?php echo esc_js( __( 'Enter a payment amount greater than $0.00. Negative amounts are not allowed.', 'ajforms' ) ); ?>');
+							if (amountInput) {
+								amountInput.focus();
+							}
 							return;
 						}
+
 						paymentAmount = numericAmount.toFixed(2);
+						if (amountInput) {
+							amountInput.value = paymentAmount;
+						}
 					}
 
 					payButton.disabled = true;
