@@ -2233,14 +2233,59 @@ class AJForms_Admin {
 			'login'
 		);
 		$subject = sprintf( __( 'Password reset for %s', 'ajforms' ), wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
+		$settings = $this->get_plugin_settings();
+		$from_email = defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com';
+		if ( ! is_email( $from_email ) ) {
+			$from_email = 'donotreply@ncllcagents.com';
+		}
+		$from_name = ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 		$message = sprintf(
-			/* translators: 1: user display name, 2: password reset URL */
-			__( "Hi %1\$s,\n\nUse this link to set a new password:\n\n%2\$s", 'ajforms' ),
-			$user->display_name,
-			$reset_url
+			'<!doctype html><html><body style="margin:0;padding:0;background:#f6f8fc;color:#0f172a;font-family:Arial,Helvetica,sans-serif;">
+				<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background:#f6f8fc;padding:32px 16px;">
+					<tr>
+						<td align="center">
+							<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border:1px solid #dbe7f3;border-radius:24px;overflow:hidden;box-shadow:0 18px 48px rgba(15,23,42,.10);">
+								<tr>
+									<td style="height:8px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed);font-size:0;line-height:0;">&nbsp;</td>
+								</tr>
+								<tr>
+									<td style="padding:34px 34px 30px;">
+										<p style="margin:0 0 10px;color:#2563eb;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">%1$s</p>
+										<h1 style="margin:0 0 16px;font-size:30px;line-height:1.15;color:#0f172a;">%2$s</h1>
+										<p style="margin:0 0 18px;font-size:17px;line-height:1.65;color:#334155;">%3$s</p>
+										<p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:#475569;">%4$s</p>
+										<p style="margin:0 0 28px;">
+											<a href="%5$s" style="display:inline-block;background:#3157ff;color:#ffffff;text-decoration:none;border-radius:999px;padding:14px 24px;font-size:16px;font-weight:800;box-shadow:0 12px 28px rgba(49,87,255,.28);">%6$s</a>
+										</p>
+										<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#64748b;">%7$s</p>
+										<p style="margin:0;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:14px;line-height:1.55;word-break:break-all;">
+											<a href="%5$s" style="color:#2563eb;text-decoration:underline;">%5$s</a>
+										</p>
+										<p style="margin:24px 0 0;font-size:13px;line-height:1.5;color:#64748b;">%8$s</p>
+									</td>
+								</tr>
+							</table>
+						</td>
+					</tr>
+				</table>
+			</body></html>',
+			esc_html( $site_name ),
+			esc_html__( 'Set your client portal password', 'ajforms' ),
+			esc_html( sprintf( __( 'Hi %s,', 'ajforms' ), $user->display_name ) ),
+			esc_html__( 'Use the secure button below to create a new password for your client portal account. This link is private and should only be used by you.', 'ajforms' ),
+			esc_url( $reset_url ),
+			esc_html__( 'Set New Password', 'ajforms' ),
+			esc_html__( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
+			esc_html__( 'If you did not request this email, you can ignore it.', 'ajforms' )
 		);
+		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+		if ( is_email( $from_email ) ) {
+			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
+			$headers[] = 'Reply-To: ' . $from_email;
+		}
 
-		return wp_mail( $user->user_email, $subject, $message );
+		return wp_mail( $user->user_email, $subject, $message, $headers );
 	}
 
 	private function relink_stripe_customer_to_user_email( $stripe_customer_id, $email ) {

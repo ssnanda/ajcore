@@ -5812,7 +5812,7 @@ class AJForms {
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		$from_name = ! empty( $settings['notification_from_name'] ) ? sanitize_text_field( $this->replace_template_tags( (string) $settings['notification_from_name'], $form, $lead_data ) ) : '';
-		$from_email = ! empty( $settings['notification_from_email'] ) ? sanitize_email( $settings['notification_from_email'] ) : '';
+		$from_email = ! empty( $settings['notification_from_email'] ) ? sanitize_email( $settings['notification_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
 		$reply_to = $this->get_notification_reply_to_header( $settings, $form, $lead_data );
 		$attachments = array();
 
