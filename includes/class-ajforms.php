@@ -603,6 +603,18 @@ class AJForms {
 	}
 
 
+	private function get_portal_ledger_debit_credit( $entry ) {
+		$effect = $this->get_portal_ledger_balance_effect( $entry );
+		$currency = ! empty( $entry->currency ) ? sanitize_key( (string) $entry->currency ) : 'usd';
+
+		return array(
+			'debit'    => $effect > 0.00001 ? $this->format_portal_money( abs( $effect ), $currency ) : '',
+			'credit'   => $effect < -0.00001 ? $this->format_portal_money( abs( $effect ), $currency ) : '',
+			'currency' => $currency,
+		);
+	}
+
+
 	private function get_portal_ledger_transaction_id( $entry ) {
 		foreach ( array( 'charge_id', 'payment_intent_id', 'invoice_id', 'source_object_id' ) as $field ) {
 			if ( ! empty( $entry->{$field} ) ) {
@@ -1625,7 +1637,7 @@ class AJForms {
 			<?php else : ?>
 				<div class="aj-portal-table-wrap">
 					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Transaction ID', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
+						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Transaction ID', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Debit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Credit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
 							<?php foreach ( $ledger as $entry ) : ?>
 								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) : $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' ); ?>
@@ -1636,12 +1648,14 @@ class AJForms {
 								<?php $entry_transaction_id = $this->get_portal_ledger_transaction_id( $entry ); ?>
 								<?php $entry_display_description = $this->get_portal_ledger_display_description( $entry ); ?>
 								<?php $entry_is_open = ( $balance_due > 0 && (float) $entry->amount > 0 && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) ); ?>
+								<?php $entry_debit_credit = $this->get_portal_ledger_debit_credit( $entry ); ?>
 								<tr>
 									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
 									<td><?php echo esc_html( $entry_display_description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
 									<td><?php echo esc_html( $entry_transaction_id ? $entry_transaction_id : '-' ); ?></td>
 									<td><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
-									<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
+									<td><?php echo esc_html( $entry_debit_credit['debit'] ? $entry_debit_credit['debit'] : '-' ); ?></td>
+									<td><?php echo esc_html( $entry_debit_credit['credit'] ? $entry_debit_credit['credit'] : '-' ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
 									<td>
 										<?php if ( $entry_is_open ) : ?>
