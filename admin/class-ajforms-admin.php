@@ -2850,6 +2850,141 @@ class AJForms_Admin {
 		return '' !== $key ? $key : md5( wp_json_encode( $record ) );
 	}
 
+	private function get_portal_one_time_service_dedupe_key( $record ) {
+		$customer_id = '';
+		foreach ( array( 'stripe_customer_id', 'customer_id', 'local_customer_id' ) as $field ) {
+			if ( ! empty( $record->{$field} ) ) {
+				$customer_id = sanitize_text_field( (string) $record->{$field} );
+				break;
+			}
+		}
+		if ( '' === $customer_id && ! empty( $record->customer ) ) {
+			$customer_id = sanitize_title( (string) $record->customer );
+		}
+
+		$service_parts = array();
+		foreach ( array( 'stripe_product_id', 'stripe_price_id', 'checkout_session_id', 'invoice_id', 'payment_intent_id' ) as $field ) {
+			if ( ! empty( $record->{$field} ) ) {
+				$service_parts[] = sanitize_text_field( (string) $record->{$field} );
+			}
+		}
+
+		if ( empty( $service_parts ) && ! empty( $record->charge_id ) ) {
+			$service_parts[] = sanitize_text_field( (string) $record->charge_id );
+		}
+
+		if ( ! empty( $record->service_name ) ) {
+			$service_parts[] = sanitize_title( (string) $record->service_name );
+		}
+		if ( ! empty( $record->price ) ) {
+			$service_parts[] = sanitize_title( (string) $record->price );
+		}
+		if ( ! empty( $record->amount ) ) {
+			$service_parts[] = sanitize_title( (string) $record->amount );
+		}
+		if ( ! empty( $record->service_period ) ) {
+			$service_parts[] = sanitize_title( (string) $record->service_period );
+		}
+
+		$parts = array_filter( array_merge( array( $customer_id ), $service_parts ), 'strlen' );
+		return ! empty( $parts ) ? implode( ':', $parts ) : md5( wp_json_encode( $record ) );
+	}
+
+	private function get_portal_service_status_rank( $status ) {
+		$ranks = array(
+			'paid'            => 1,
+			'succeeded'       => 2,
+			'completed'       => 3,
+			'pending_payment' => 4,
+			'failed'          => 5,
+		);
+		$status = sanitize_key( (string) $status );
+
+		return isset( $ranks[ $status ] ) ? $ranks[ $status ] : 99;
+	}
+
+	private function merge_portal_one_time_service_record( $existing, $candidate ) {
+		$candidate_rank = $this->get_portal_service_status_rank( isset( $candidate->status ) ? $candidate->status : '' );
+		$existing_rank  = $this->get_portal_service_status_rank( isset( $existing->status ) ? $existing->status : '' );
+		if ( $candidate_rank < $existing_rank ) {
+			$existing->status = $candidate->status;
+		}
+
+		foreach ( array( 'amount', 'paid_at', 'synced_at' ) as $field ) {
+			if ( empty( $existing->{$field} ) || $candidate_rank < $existing_rank ) {
+				if ( ! empty( $candidate->{$field} ) ) {
+					$existing->{$field} = $candidate->{$field};
+				}
+			}
+		}
+
+		foreach ( array( 'stripe_product_id', 'stripe_price_id', 'checkout_session_id', 'invoice_id', 'payment_intent_id', 'charge_id', 'service_period', 'price' ) as $field ) {
+			if ( empty( $existing->{$field} ) && ! empty( $candidate->{$field} ) ) {
+				$existing->{$field} = $candidate->{$field};
+			}
+		}
+
+		if ( ! empty( $candidate->source_ref ) && empty( $existing->source_ref ) ) {
+			$existing->source_ref = $candidate->source_ref;
+		}
+
+		return $existing;
+	}
+
+	private function portal_one_time_service_records_match( $record, $existing_record ) {
+		if ( empty( $record->stripe_customer_id ) || empty( $existing_record->stripe_customer_id ) ) {
+			return false;
+		}
+		if ( (string) $record->stripe_customer_id !== (string) $existing_record->stripe_customer_id ) {
+			return false;
+		}
+		if ( sanitize_title( (string) $record->service_name ) !== sanitize_title( (string) $existing_record->service_name ) ) {
+			return false;
+		}
+
+		foreach ( array( 'payment_intent_id', 'checkout_session_id', 'invoice_id' ) as $field ) {
+			if ( ! empty( $record->{$field} ) && ! empty( $existing_record->{$field} ) && (string) $record->{$field} === (string) $existing_record->{$field} ) {
+				return true;
+			}
+		}
+
+		return empty( $record->payment_intent_id )
+			&& empty( $existing_record->payment_intent_id )
+			&& empty( $record->checkout_session_id )
+			&& empty( $existing_record->checkout_session_id )
+			&& ! empty( $record->amount )
+			&& ! empty( $existing_record->amount )
+			&& (string) $record->amount === (string) $existing_record->amount;
+	}
+
+	private function dedupe_portal_one_time_service_records( $records ) {
+		$deduped = array();
+		$order   = array();
+
+		foreach ( (array) $records as $record ) {
+			$key = $this->get_portal_one_time_service_dedupe_key( $record );
+			foreach ( $deduped as $existing_key => $existing_record ) {
+				if ( $this->portal_one_time_service_records_match( $record, $existing_record ) ) {
+					$key = $existing_key;
+					break;
+				}
+			}
+			if ( isset( $deduped[ $key ] ) ) {
+				$deduped[ $key ] = $this->merge_portal_one_time_service_record( $deduped[ $key ], $record );
+				continue;
+			}
+			$deduped[ $key ] = $record;
+			$order[] = $key;
+		}
+
+		$records = array();
+		foreach ( $order as $key ) {
+			$records[] = $deduped[ $key ];
+		}
+
+		return $records;
+	}
+
 	private function dedupe_portal_service_records( $records ) {
 		$deduped = array();
 		$seen    = array();
@@ -2882,6 +3017,7 @@ class AJForms_Admin {
 				'checkout_session_id'   => '',
 				'invoice_id'            => '',
 				'payment_intent_id'     => '',
+				'charge_id'             => '',
 				'service_period'        => '',
 				'status'                => '',
 				'amount'                => '',
@@ -2889,6 +3025,7 @@ class AJForms_Admin {
 				'synced_at'             => '',
 				'customer'              => '',
 				'stripe_customer_id'    => '',
+				'source_ref'            => '',
 				'next_action'           => '',
 			),
 			$context
@@ -2908,6 +3045,7 @@ class AJForms_Admin {
 			'checkout_session_id'   => ! empty( $identifiers['checkout_session_ids'][0] ) ? sanitize_text_field( (string) $identifiers['checkout_session_ids'][0] ) : ( ! empty( $entry->source_type ) && 'checkout_session' === sanitize_key( (string) $entry->source_type ) && ! empty( $entry->source_object_id ) ? sanitize_text_field( (string) $entry->source_object_id ) : '' ),
 			'invoice_id'            => ! empty( $identifiers['invoice_ids'][0] ) ? sanitize_text_field( (string) $identifiers['invoice_ids'][0] ) : ( ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : '' ),
 			'payment_intent_id'     => ! empty( $identifiers['payment_intent_ids'][0] ) ? sanitize_text_field( (string) $identifiers['payment_intent_ids'][0] ) : ( ! empty( $entry->payment_intent_id ) ? sanitize_text_field( (string) $entry->payment_intent_id ) : '' ),
+			'charge_id'             => ! empty( $entry->charge_id ) ? sanitize_text_field( (string) $entry->charge_id ) : '',
 			'service_period'        => $this->get_portal_service_period_from_ledger_entry( $entry ),
 			'status'                => isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '',
 			'amount'                => $this->format_portal_money( isset( $entry->amount ) ? $entry->amount : 0, isset( $entry->currency ) ? $entry->currency : 'usd' ),
@@ -2915,6 +3053,7 @@ class AJForms_Admin {
 			'synced_at'             => ! empty( $entry->created_at ) ? $entry->created_at : '',
 			'customer'              => ! empty( $entry->customer_name ) ? sanitize_text_field( (string) $entry->customer_name ) : ( ! empty( $entry->customer_email ) ? sanitize_email( (string) $entry->customer_email ) : ( ! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : __( 'Guest customer', 'ajforms' ) ) ),
 			'stripe_customer_id'    => ! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
+			'source_ref'            => ! empty( $entry->source_object_id ) ? sanitize_text_field( (string) $entry->source_object_id ) : '',
 			'next_action'           => __( 'Convert to Auto-Pay Subscription', 'ajforms' ),
 		);
 	}
@@ -3075,7 +3214,6 @@ class AJForms_Admin {
 
 		$ledger = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
 		$rows   = array();
-		$seen   = array();
 		foreach ( (array) $ledger as $entry ) {
 			if ( ! $this->is_one_time_paid_service_ledger_entry( $entry ) ) {
 				continue;
@@ -3094,11 +3232,6 @@ class AJForms_Admin {
 				}
 
 				$record = $this->make_portal_fallback_one_time_service_record( $entry, $fallback_service_name, $identifiers );
-				$dedupe_key = $this->get_portal_service_dedupe_key( $record );
-				if ( isset( $seen[ $dedupe_key ] ) ) {
-					continue;
-				}
-				$seen[ $dedupe_key ] = true;
 				$rows[] = $record;
 				continue;
 			}
@@ -3120,24 +3253,21 @@ class AJForms_Admin {
 					'checkout_session_id'    => ! empty( $identifiers['checkout_session_ids'][0] ) ? $identifiers['checkout_session_ids'][0] : ( 'checkout_session' === $entry->source_type ? $entry->source_object_id : '' ),
 					'invoice_id'             => ! empty( $identifiers['invoice_ids'][0] ) ? $identifiers['invoice_ids'][0] : $entry->invoice_id,
 					'payment_intent_id'      => ! empty( $identifiers['payment_intent_ids'][0] ) ? $identifiers['payment_intent_ids'][0] : $entry->payment_intent_id,
+					'charge_id'              => ! empty( $entry->charge_id ) ? $entry->charge_id : '',
 					'service_period'         => $this->get_portal_service_period_from_ledger_entry( $entry ),
 					'status'                 => $entry->status,
 					'amount'                 => $this->format_portal_money( $entry->amount, $entry->currency ),
 					'paid_at'                => $entry->ledger_date,
 					'synced_at'              => ! empty( $entry->created_at ) ? $entry->created_at : '',
+					'source_ref'             => ! empty( $entry->source_object_id ) ? $entry->source_object_id : '',
 					'next_action'            => 'one_time' === $record_billing_type ? __( 'Convert to Auto-Pay Subscription', 'ajforms' ) : '',
 				)
 			);
 
-			$dedupe_key = $this->get_portal_service_dedupe_key( $record );
-			if ( isset( $seen[ $dedupe_key ] ) ) {
-				continue;
-			}
-			$seen[ $dedupe_key ] = true;
 			$rows[] = $record;
 		}
 
-		return $rows;
+		return 'one_time' === $billing_type ? $this->dedupe_portal_one_time_service_records( $rows ) : $this->dedupe_portal_service_records( $rows );
 	}
 
 	private function get_portal_one_time_paid_services( $stripe_customer_id = '', $limit = 300 ) {
