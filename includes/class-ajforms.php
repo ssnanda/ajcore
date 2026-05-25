@@ -505,6 +505,69 @@ class AJForms {
 		return strtoupper( sanitize_text_field( (string) $currency ) ) . ' ' . number_format_i18n( (float) $amount, 2 );
 	}
 
+
+	private function get_portal_ledger_balance_effect( $entry ) {
+		$amount = isset( $entry->amount ) ? (float) $entry->amount : 0.0;
+		if ( 0.0 === $amount ) {
+			return 0.0;
+		}
+
+		$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+
+		if ( in_array( $status, array( 'cancelled', 'canceled', 'failed', 'void', 'voided', 'draft', 'admin_review_required' ), true ) ) {
+			return 0.0;
+		}
+
+		if ( in_array( $source_type, array( 'charge', 'payment', 'refund' ), true ) ) {
+			return in_array( $status, array( 'succeeded', 'paid' ), true ) ? -1 * abs( $amount ) : 0.0;
+		}
+
+		if ( 'checkout_session' === $source_type ) {
+			return 0.0;
+		}
+
+		if ( in_array( $source_type, array( 'manual_charge', 'invoice' ), true ) ) {
+			return abs( $amount );
+		}
+
+		if ( in_array( $status, $this->get_portal_open_ledger_statuses(), true ) ) {
+			return abs( $amount );
+		}
+
+		return 0.0;
+	}
+
+	private function get_portal_ledger_running_balances( $ledger ) {
+		$running = 0.0;
+		$balances = array();
+		$entries = array_reverse( (array) $ledger );
+
+		foreach ( $entries as $entry ) {
+			$entry_id = isset( $entry->id ) ? absint( $entry->id ) : 0;
+			$running += $this->get_portal_ledger_balance_effect( $entry );
+			if ( $entry_id ) {
+				$balances[ $entry_id ] = $running;
+			}
+		}
+
+		return array(
+			'balances' => $balances,
+			'total'    => $running,
+		);
+	}
+
+	private function format_portal_balance_amount( $amount, $currency ) {
+		$amount = (float) $amount;
+		$label = $this->format_portal_money( abs( $amount ), $currency );
+
+		if ( $amount < -0.00001 ) {
+			return sprintf( __( 'Credit %s', 'ajforms' ), $label );
+		}
+
+		return $label;
+	}
+
 	private function format_portal_date( $date ) {
 		if ( empty( $date ) ) {
 			return '-';
@@ -1403,6 +1466,10 @@ class AJForms {
 		$open_ledger   = $this->get_current_user_open_portal_ledger();
 		$open_total    = $this->get_portal_open_ledger_total( $open_ledger );
 		$pay_nonce     = $this->get_portal_pay_ledger_nonce();
+		$balance_data  = $this->get_portal_ledger_running_balances( $ledger );
+		$running_balances = $balance_data['balances'];
+		$final_balance = (float) $balance_data['total'];
+		$balance_currency = ! empty( $open_total['currency'] ) ? $open_total['currency'] : 'usd';
 
 		ob_start();
 		?>
@@ -1419,6 +1486,14 @@ class AJForms {
 					<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="all" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Full Balance', 'ajforms' ); ?></button>
 				</div>
 			<?php endif; ?>
+
+			<div class="aj-portal-balance-summary" style="margin:0 0 24px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+				<div>
+					<strong><?php esc_html_e( 'Final Ledger Balance', 'ajforms' ); ?></strong>
+					<p style="margin:4px 0 0;color:#64748b;"><?php esc_html_e( 'Running total after all visible billing history rows.', 'ajforms' ); ?></p>
+				</div>
+				<div style="font-size:20px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_balance_amount( $final_balance, $balance_currency ) ); ?></div>
+			</div>
 
 			<h3><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></h3>
 			<?php if ( empty( $upcoming ) ) : ?>
@@ -1447,7 +1522,7 @@ class AJForms {
 			<?php else : ?>
 				<div class="aj-portal-table-wrap">
 					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
+						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
 							<?php foreach ( $ledger as $entry ) : ?>
 								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) : $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' ); ?>
@@ -1461,6 +1536,7 @@ class AJForms {
 									<td><?php echo esc_html( $entry->description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
 									<td><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
+									<td><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
 									<td>
 										<?php if ( $entry_is_open ) : ?>
 											<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="<?php echo esc_attr( (int) $entry->id ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Now', 'ajforms' ); ?></button>

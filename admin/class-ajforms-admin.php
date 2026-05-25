@@ -1816,6 +1816,88 @@ class AJForms_Admin {
 		);
 	}
 
+
+	private function get_portal_open_ledger_statuses() {
+		return array( 'unpaid', 'pending_payment', 'awaiting_payment' );
+	}
+
+	private function get_portal_ledger_balance_effect( $entry ) {
+		$amount = isset( $entry->amount ) ? (float) $entry->amount : 0.0;
+		if ( 0.0 === $amount ) {
+			return 0.0;
+		}
+
+		$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+
+		if ( in_array( $status, array( 'cancelled', 'canceled', 'failed', 'void', 'voided', 'draft', 'admin_review_required' ), true ) ) {
+			return 0.0;
+		}
+
+		if ( in_array( $source_type, array( 'charge', 'payment', 'refund' ), true ) ) {
+			return in_array( $status, array( 'succeeded', 'paid' ), true ) ? -1 * abs( $amount ) : 0.0;
+		}
+
+		if ( 'checkout_session' === $source_type ) {
+			return 0.0;
+		}
+
+		if ( in_array( $source_type, array( 'manual_charge', 'invoice' ), true ) ) {
+			return abs( $amount );
+		}
+
+		if ( in_array( $status, $this->get_portal_open_ledger_statuses(), true ) ) {
+			return abs( $amount );
+		}
+
+		return 0.0;
+	}
+
+	private function get_portal_ledger_running_balances( $ledger ) {
+		$running_by_customer = array();
+		$balances = array();
+		$totals = array();
+		$entries = array_reverse( (array) $ledger );
+
+		foreach ( $entries as $entry ) {
+			$entry_id = isset( $entry->id ) ? absint( $entry->id ) : 0;
+			$customer_id = isset( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '';
+			if ( '' === $customer_id ) {
+				$customer_id = '_unknown';
+			}
+
+			if ( ! isset( $running_by_customer[ $customer_id ] ) ) {
+				$running_by_customer[ $customer_id ] = 0.0;
+			}
+
+			$running_by_customer[ $customer_id ] += $this->get_portal_ledger_balance_effect( $entry );
+
+			if ( $entry_id ) {
+				$balances[ $entry_id ] = $running_by_customer[ $customer_id ];
+			}
+		}
+
+		foreach ( $running_by_customer as $customer_id => $amount ) {
+			$totals[ $customer_id ] = (float) $amount;
+		}
+
+		return array(
+			'balances' => $balances,
+			'totals'   => $totals,
+		);
+	}
+
+	private function format_portal_balance_amount( $amount, $currency ) {
+		$amount = (float) $amount;
+		$label = $this->format_portal_money( abs( $amount ), $currency );
+
+		if ( $amount < -0.00001 ) {
+			return sprintf( __( 'Credit %s', 'ajforms' ), $label );
+		}
+
+		return $label;
+	}
+
 	private function format_portal_date( $date ) {
 		if ( empty( $date ) ) {
 			return '';
@@ -5553,6 +5635,7 @@ class AJForms_Admin {
 
 		$status_filter = isset( $_GET['billing_status'] ) ? sanitize_key( wp_unslash( $_GET['billing_status'] ) ) : '';
 		$source_filter = isset( $_GET['billing_source'] ) ? sanitize_key( wp_unslash( $_GET['billing_source'] ) ) : '';
+		$customer_filter = isset( $_GET['billing_customer'] ) ? sanitize_text_field( wp_unslash( $_GET['billing_customer'] ) ) : '';
 		$search        = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
 		$where         = array( '1=1' );
 		$params        = array();
@@ -5565,6 +5648,11 @@ class AJForms_Admin {
 		if ( '' !== $source_filter ) {
 			$where[]  = 'l.source_type = %s';
 			$params[] = $source_filter;
+		}
+
+		if ( '' !== $customer_filter ) {
+			$where[]  = 'l.stripe_customer_id = %s';
+			$params[] = $customer_filter;
 		}
 
 		if ( '' !== $search ) {
@@ -5580,6 +5668,10 @@ class AJForms_Admin {
 			ORDER BY l.ledger_date DESC, l.id DESC
 			LIMIT 300";
 		$ledger = ! empty( $params ) ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
+		$balance_data = $this->get_portal_ledger_running_balances( $ledger );
+		$running_balances = $balance_data['balances'];
+		$customer_running_totals = $balance_data['totals'];
+		$selected_customer_balance = '' !== $customer_filter && isset( $customer_running_totals[ $customer_filter ] ) ? (float) $customer_running_totals[ $customer_filter ] : 0.0;
 		$totals = $wpdb->get_row( "SELECT COUNT(*) AS total_rows, COALESCE(SUM(amount),0) AS total_amount FROM {$this->get_portal_ledger_table()}" );
 		$customers = $wpdb->get_results( "SELECT stripe_customer_id, email, name FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC, stripe_customer_id ASC LIMIT 500" );
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'billing' ), admin_url( 'admin.php' ) );
@@ -5588,6 +5680,11 @@ class AJForms_Admin {
 			<h2><?php esc_html_e( 'Master Billing', 'ajforms' ); ?></h2>
 			<p><?php esc_html_e( 'Review all synced invoices, charges, checkout sessions, and client-created billing requests from one generic billing ledger.', 'ajforms' ); ?></p>
 			<p><strong><?php esc_html_e( 'Total Records:', 'ajforms' ); ?></strong> <?php echo esc_html( (int) $totals->total_rows ); ?> &nbsp; <strong><?php esc_html_e( 'Total Amount:', 'ajforms' ); ?></strong> <?php echo esc_html( number_format_i18n( (float) $totals->total_amount, 2 ) ); ?></p>
+			<?php if ( '' !== $customer_filter ) : ?>
+				<p><strong><?php esc_html_e( 'Filtered Customer Balance:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_balance_amount( $selected_customer_balance, 'usd' ) ); ?></p>
+			<?php else : ?>
+				<p><em><?php esc_html_e( 'Select a customer filter to view that customer’s running ledger balance.', 'ajforms' ); ?></em></p>
+			<?php endif; ?>
 
 			<?php if ( isset( $_GET['manual-charge-added'] ) ) : ?>
 				<div class="notice notice-success inline"><p><?php esc_html_e( 'Customer charge added.', 'ajforms' ); ?></p></div>
@@ -5625,6 +5722,13 @@ class AJForms_Admin {
 				<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer, invoice, or description', 'ajforms' ); ?>">
 				<input type="text" name="billing_status" value="<?php echo esc_attr( $status_filter ); ?>" placeholder="<?php esc_attr_e( 'Status', 'ajforms' ); ?>">
 				<input type="text" name="billing_source" value="<?php echo esc_attr( $source_filter ); ?>" placeholder="<?php esc_attr_e( 'Source type', 'ajforms' ); ?>">
+				<select name="billing_customer">
+					<option value=""><?php esc_html_e( 'All customers', 'ajforms' ); ?></option>
+					<?php foreach ( $customers as $customer ) : ?>
+						<?php $customer_label = $customer->name ? $customer->name : ( $customer->email ? $customer->email : $customer->stripe_customer_id ); ?>
+						<option value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>" <?php selected( $customer_filter, $customer->stripe_customer_id ); ?>><?php echo esc_html( $customer_label ); ?></option>
+					<?php endforeach; ?>
+				</select>
 				<button class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
 				<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
 			</form>
@@ -5638,12 +5742,13 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Invoice / Charge', 'ajforms' ); ?></th>
 					</tr>
 				</thead>
 				<tbody>
 				<?php if ( empty( $ledger ) ) : ?>
-					<tr><td colspan="7"><?php esc_html_e( 'No billing records found.', 'ajforms' ); ?></td></tr>
+					<tr><td colspan="8"><?php esc_html_e( 'No billing records found.', 'ajforms' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $ledger as $entry ) : ?>
 						<?php $customer_label = $entry->customer_name ? $entry->customer_name : ( $entry->customer_email ? $entry->customer_email : $entry->stripe_customer_id ); ?>
@@ -5654,6 +5759,7 @@ class AJForms_Admin {
 							<td><?php echo esc_html( $entry->source_type ); ?></td>
 							<td><strong><?php echo esc_html( $entry->status ); ?></strong></td>
 							<td><?php echo esc_html( strtoupper( (string) $entry->currency ) . ' ' . number_format_i18n( (float) $entry->amount, 2 ) ); ?></td>
+							<td><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
 							<td>
 								<?php if ( $entry->invoice_id ) : ?><code><?php echo esc_html( $entry->invoice_id ); ?></code><br><?php endif; ?>
 								<?php if ( $entry->charge_id ) : ?><code><?php echo esc_html( $entry->charge_id ); ?></code><?php endif; ?>
