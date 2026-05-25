@@ -2232,13 +2232,13 @@ class AJForms_Admin {
 			'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user->user_login ),
 			'login'
 		);
-		$subject = __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
 		$settings = $this->get_plugin_settings();
-		$from_email = defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com';
+		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
+		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
 		if ( ! is_email( $from_email ) ) {
 			$from_email = 'donotreply@ncllcagents.com';
 		}
-		$from_name = ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$from_name = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : ( ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
 		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 		$message = sprintf(
 			'<!doctype html><html><body style="margin:0;padding:0;background:#f6f8fc;color:#0f172a;font-family:Arial,Helvetica,sans-serif;">
@@ -2303,13 +2303,13 @@ class AJForms_Admin {
 			'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user->user_login ),
 			'login'
 		);
-		$subject = __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
 		$settings = $this->get_plugin_settings();
-		$from_email = defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com';
+		$subject = ! empty( $settings['wp_welcome_email_subject'] ) ? sanitize_text_field( (string) $settings['wp_welcome_email_subject'] ) : __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
+		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
 		if ( ! is_email( $from_email ) ) {
 			$from_email = 'donotreply@ncllcagents.com';
 		}
-		$from_name = ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$from_name = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : ( ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
 		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 		$message = sprintf(
 			'<!doctype html><html><body style="margin:0;padding:0;background:#f6f8fc;color:#0f172a;font-family:Arial,Helvetica,sans-serif;">
