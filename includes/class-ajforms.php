@@ -670,7 +670,7 @@ class AJForms {
 			return 0.0;
 		}
 
-		if ( in_array( $source_type, array( 'manual_charge', 'invoice' ), true ) ) {
+		if ( in_array( $source_type, array( 'manual_charge', 'invoice' ), true ) && in_array( $status, $this->get_portal_open_ledger_statuses(), true ) ) {
 			return abs( $amount );
 		}
 
@@ -1684,7 +1684,7 @@ class AJForms {
 	}
 
 	private function get_portal_open_ledger_statuses() {
-		return array( 'unpaid', 'pending_payment', 'awaiting_payment' );
+		return array( 'open', 'unpaid', 'pending', 'pending_payment', 'awaiting_payment' );
 	}
 
 	private function get_ignored_unpaid_checkout_sources() {

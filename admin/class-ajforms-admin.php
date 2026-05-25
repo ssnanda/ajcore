@@ -3461,6 +3461,23 @@ class AJForms_Admin {
 		);
 	}
 
+	private function get_synced_portal_subscription_status( $subscription_id ) {
+		$subscription_id = sanitize_text_field( (string) $subscription_id );
+		if ( '' === $subscription_id ) {
+			return '';
+		}
+
+		global $wpdb;
+		$status = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT status FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
+				$subscription_id
+			)
+		);
+
+		return $status ? sanitize_key( (string) $status ) : '';
+	}
+
 	private function get_portal_ledger_service_records( $billing_type = '', $stripe_customer_id = '', $limit = 300 ) {
 		global $wpdb;
 
@@ -3513,8 +3530,22 @@ class AJForms_Admin {
 			if ( '' !== $billing_type && $record_billing_type !== $billing_type ) {
 				continue;
 			}
-			if ( 'subscription' === $record_billing_type && ! empty( $identifiers['subscription_ids'][0] ) && $this->has_synced_active_subscription( $identifiers['subscription_ids'][0] ) ) {
-				continue;
+			if ( 'subscription' === $record_billing_type && ! empty( $identifiers['subscription_ids'][0] ) ) {
+				$synced_subscription_status = $this->get_synced_portal_subscription_status( $identifiers['subscription_ids'][0] );
+				if ( in_array( $synced_subscription_status, array( 'active', 'trialing' ), true ) ) {
+					continue;
+				}
+				if ( '' !== $synced_subscription_status ) {
+					$this->record_portal_service_display_skip(
+						$entry,
+						sprintf(
+							/* translators: %s: Stripe subscription status */
+							__( 'Skipped recurring ledger row because the synced Stripe subscription is %s.', 'ajforms' ),
+							$synced_subscription_status
+						)
+					);
+					continue;
+				}
 			}
 
 			$record = $this->make_portal_service_record_from_product(
@@ -3753,7 +3784,7 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_open_ledger_statuses() {
-		return array( 'unpaid', 'pending_payment', 'awaiting_payment' );
+		return array( 'open', 'unpaid', 'pending', 'pending_payment', 'awaiting_payment' );
 	}
 
 	private function decode_portal_json( $value ) {
@@ -3810,7 +3841,7 @@ class AJForms_Admin {
 			return 0.0;
 		}
 
-		if ( in_array( $source_type, array( 'manual_charge', 'invoice' ), true ) ) {
+		if ( in_array( $source_type, array( 'manual_charge', 'invoice' ), true ) && in_array( $status, $this->get_portal_open_ledger_statuses(), true ) ) {
 			return abs( $amount );
 		}
 
@@ -8411,7 +8442,7 @@ class AJForms_Admin {
 		$sync_logs_table        = $this->get_portal_sync_logs_table();
 
 		$active_customers      = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table} WHERE portal_status = 'active' OR (enabled_portal = 1 AND (portal_status IS NULL OR portal_status NOT IN ('disabled','archived')))" );
-		$active_subscriptions = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$subscriptions_table} WHERE status IN ('active','trialing')" );
+		$active_subscription_objects = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$subscriptions_table} WHERE status IN ('active','trialing')" );
 		$active_subscription_rows = $wpdb->get_results(
 			"SELECT s.*, c.name AS customer_name, c.email AS customer_email
 			FROM {$subscriptions_table} s
@@ -8421,8 +8452,9 @@ class AJForms_Admin {
 			LIMIT 2000"
 		);
 		$active_recurring_services = $this->dedupe_portal_service_records( array_merge( $this->get_portal_service_records_from_subscriptions( $active_subscription_rows ), $this->get_portal_recurring_service_records_from_ledger( '', 2000 ) ) );
+		$auto_pay_services    = count( $active_recurring_services );
 		$one_time_services    = count( $this->get_portal_one_time_paid_services( '', 2000 ) );
-		$active_services      = count( $active_recurring_services ) + $one_time_services;
+		$active_services      = $auto_pay_services + $one_time_services;
 		$billing_metrics      = $this->get_portal_dashboard_billing_metrics();
 		$paid_not_completed   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$service_requests_table} WHERE status = 'paid'" );
 		$admin_review_required = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$service_requests_table} WHERE status = 'admin_review_required'" );
@@ -8450,8 +8482,8 @@ class AJForms_Admin {
 
 			<div class="ajcore-dashboard-grid">
 				<?php $this->render_portal_dashboard_metric( __( 'Active Clients', 'ajforms' ), $active_customers, $this->get_portal_dashboard_url( 'portal-users', array( 'portal_user_status' => 'active' ) ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Active Services', 'ajforms' ), $active_services, $this->get_portal_dashboard_url( 'products-services', array( 'portal_service_view' => 'active_services' ) ), sprintf( __( '%1$d auto-pay, %2$d one-time paid.', 'ajforms' ), $active_subscriptions, $one_time_services ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Auto-Pay Subscriptions', 'ajforms' ), $active_subscriptions, $this->get_portal_dashboard_url( 'products-services', array( 'portal_service_view' => 'active_services' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Active Services', 'ajforms' ), $active_services, $this->get_portal_dashboard_url( 'products-services', array( 'portal_service_view' => 'active_services' ) ), sprintf( __( '%1$d auto-pay services, %2$d one-time paid.', 'ajforms' ), $auto_pay_services, $one_time_services ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Auto-Pay Subscriptions', 'ajforms' ), $auto_pay_services, $this->get_portal_dashboard_url( 'products-services', array( 'portal_service_view' => 'active_services' ) ), sprintf( __( '%d active Stripe subscription records.', 'ajforms' ), $active_subscription_objects ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'open' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'overdue' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Tasks', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_view' => 'overdue' ) ) ); ?>
@@ -9707,7 +9739,7 @@ class AJForms_Admin {
 					<thead>
 						<tr>
 							<th><?php esc_html_e( 'Service', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Billing Type', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th>
@@ -9720,8 +9752,8 @@ class AJForms_Admin {
 						<?php else : ?>
 							<?php foreach ( $active_recurring_services as $service ) : ?>
 								<tr>
-									<td><?php echo esc_html( $service->service_name ); ?><br><small><?php echo esc_html( $service->price ); ?></small><?php if ( ! empty( $service->stripe_subscription_id ) ) : ?><br><code><?php echo esc_html( $service->stripe_subscription_id ); ?></code><?php endif; ?></td>
-									<td><strong><?php echo esc_html( $service->billing_type ); ?></strong></td>
+									<td><?php echo esc_html( $service->service_name ); ?><?php if ( ! empty( $service->stripe_subscription_id ) ) : ?><br><code><?php echo esc_html( $service->stripe_subscription_id ); ?></code><?php endif; ?></td>
+									<td><strong><?php echo esc_html( $service->price ); ?></strong></td>
 									<td><?php echo esc_html( $service->customer ); ?><br><small><?php echo esc_html( $service->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $service->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View Customer', 'ajforms' ); ?></a></td>
 									<td><strong><?php echo esc_html( $service->status ); ?></strong></td>
 									<td><?php echo esc_html( ! empty( $service->service_period ) ? $service->service_period : '-' ); ?></td>
