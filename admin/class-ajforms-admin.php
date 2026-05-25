@@ -6965,6 +6965,17 @@ class AJForms_Admin {
 			<style>
 				.ajforms-client-portal-admin .ajcore-status-pill{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;background:#f0f6fc;color:#0969da}
 				.ajforms-client-portal-admin .ajcore-status-pill.off{background:#f6f7f7;color:#646970}
+				.ajforms-client-portal-admin .ajcore-status-pill.active{background:#dcfce7;color:#166534}
+				.ajforms-client-portal-admin .ajcore-status-pill.disabled{background:#fef3c7;color:#92400e}
+				.ajforms-client-portal-admin .ajcore-status-pill.archived{background:#fee2e2;color:#991b1b}
+				.ajforms-client-portal-admin .ajcore-status-pill.no-login{background:#f1f5f9;color:#475569}
+				.ajforms-client-portal-admin .ajcore-portal-users-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0}
+				.ajforms-client-portal-admin .ajcore-portal-users-toolbar form{display:flex;align-items:center;gap:8px;margin:0}
+				.ajforms-client-portal-admin .ajcore-portal-users-toolbar .ajcore-toolbar-spacer{margin-left:auto}
+				.ajforms-client-portal-admin .ajcore-portal-users-table tr.ajcore-row-active td{background:#f6fff8}
+				.ajforms-client-portal-admin .ajcore-portal-users-table tr.ajcore-row-disabled td{background:#fffaf0}
+				.ajforms-client-portal-admin .ajcore-portal-users-table tr.ajcore-row-archived td{background:#fff7f7}
+				.ajforms-client-portal-admin .ajcore-portal-users-table tr.ajcore-row-no-login td{background:#f8fafc}
 			</style>
 			<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
 			<?php if ( 'customer' !== $tab ) : ?>
@@ -7894,22 +7905,30 @@ class AJForms_Admin {
 			<div class="ajforms-settings-inline-actions">
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d synced customers', 'ajforms' ), $total_customers ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users', 'ajforms' ), $enabled_count ) ); ?></span>
-				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
 
-			<form method="get" style="margin:14px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-				<input type="hidden" name="page" value="ajforms-client-portal">
-				<input type="hidden" name="tab" value="portal-users">
-				<select name="portal_user_status">
-					<option value=""><?php esc_html_e( 'All portal customers', 'ajforms' ); ?></option>
-					<option value="active" <?php selected( $status_filter, 'active' ); ?>><?php esc_html_e( 'Active portal users', 'ajforms' ); ?></option>
-					<option value="disabled" <?php selected( $status_filter, 'disabled' ); ?>><?php esc_html_e( 'Disabled portal users', 'ajforms' ); ?></option>
-					<option value="archived" <?php selected( $status_filter, 'archived' ); ?>><?php esc_html_e( 'Archived portal users', 'ajforms' ); ?></option>
-					<option value="without_login" <?php selected( $status_filter, 'without_login' ); ?>><?php esc_html_e( 'Without portal login', 'ajforms' ); ?></option>
-				</select>
-				<button class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
-				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
-			</form>
+			<div class="ajcore-portal-users-toolbar">
+				<form method="get">
+					<input type="hidden" name="page" value="ajforms-client-portal">
+					<input type="hidden" name="tab" value="portal-users">
+					<select name="portal_user_status">
+						<option value=""><?php esc_html_e( 'All', 'ajforms' ); ?></option>
+						<option value="active" <?php selected( $status_filter, 'active' ); ?>><?php esc_html_e( 'Active portal users', 'ajforms' ); ?></option>
+						<option value="disabled" <?php selected( $status_filter, 'disabled' ); ?>><?php esc_html_e( 'Disabled portal users', 'ajforms' ); ?></option>
+						<option value="archived" <?php selected( $status_filter, 'archived' ); ?>><?php esc_html_e( 'Archived portal users', 'ajforms' ); ?></option>
+						<option value="without_login" <?php selected( $status_filter, 'without_login' ); ?>><?php esc_html_e( 'Without portal login', 'ajforms' ); ?></option>
+					</select>
+					<button class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
+					<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
+				</form>
+				<button type="button" class="button" id="ajcore-select-all-portal-users"><?php esc_html_e( 'Select All', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="enable"><?php esc_html_e( 'Enable', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="disable"><?php esc_html_e( 'Disable', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="archive"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="restore"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="reset_password"><?php esc_html_e( 'Reset Password', 'ajforms' ); ?></button>
+				<a class="button ajcore-toolbar-spacer" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
+			</div>
 
 			<?php if ( ! empty( $available_fields ) ) : ?>
 				<?php
@@ -7930,25 +7949,17 @@ class AJForms_Admin {
 			<form method="post" id="ajcore-portal-users-bulk-form">
 				<?php wp_nonce_field( 'ajcore_portal_bulk_user_action', 'ajcore_portal_bulk_user_nonce' ); ?>
 				<input type="hidden" name="portal_bulk_action" id="ajcore-portal-bulk-action" value="">
-				<div class="ajforms-settings-inline-actions" style="margin:14px 0;">
-					<button type="button" class="button" id="ajcore-select-all-portal-users"><?php esc_html_e( 'Select All', 'ajforms' ); ?></button>
-					<button type="submit" class="button" data-portal-bulk-action="enable"><?php esc_html_e( 'Enable', 'ajforms' ); ?></button>
-					<button type="submit" class="button" data-portal-bulk-action="disable"><?php esc_html_e( 'Disable', 'ajforms' ); ?></button>
-					<button type="submit" class="button" data-portal-bulk-action="archive"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
-					<button type="submit" class="button button-primary" data-portal-bulk-action="restore"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
-					<button type="submit" class="button" data-portal-bulk-action="reset_password"><?php esc_html_e( 'Reset Password', 'ajforms' ); ?></button>
-				</div>
 
-				<table class="widefat striped">
+				<table class="widefat striped ajcore-portal-users-table">
 					<thead>
 						<tr>
 							<th style="width:34px;"><input type="checkbox" id="ajcore-check-all-portal-users"></th>
+							<th><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Stripe Customer', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
 							<?php foreach ( $display_fields as $field ) : ?>
 								<th><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></th>
 							<?php endforeach; ?>
-							<th><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'WordPress User', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
 						</tr>
@@ -7956,7 +7967,7 @@ class AJForms_Admin {
 					<tbody>
 						<?php if ( empty( $customers ) ) : ?>
 							<tr>
-								<td colspan="<?php echo esc_attr( 7 + count( $display_fields ) ); ?>">
+								<td colspan="<?php echo esc_attr( 6 + count( $display_fields ) ); ?>">
 									<p><strong><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></strong></p>
 									<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customers and guest Checkout/Charge buyer records from the connected Stripe account.', 'ajforms' ); ?></p>
 									<p>
@@ -7970,9 +7981,28 @@ class AJForms_Admin {
 								$user = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : null;
 								$portal_status = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' );
 								$is_active = 'active' === $portal_status && ! empty( $customer->enabled_portal );
+								$has_portal_login = $user && ! empty( $customer->user_id );
+								if ( 'archived' === $portal_status ) {
+									$status_label = __( 'Archived', 'ajforms' );
+									$status_class = 'archived';
+									$row_class    = 'ajcore-row-archived';
+								} elseif ( ! $has_portal_login ) {
+									$status_label = __( 'Without portal login', 'ajforms' );
+									$status_class = 'no-login';
+									$row_class    = 'ajcore-row-no-login';
+								} elseif ( $is_active ) {
+									$status_label = __( 'Active', 'ajforms' );
+									$status_class = 'active';
+									$row_class    = 'ajcore-row-active';
+								} else {
+									$status_label = __( 'Disabled', 'ajforms' );
+									$status_class = 'disabled';
+									$row_class    = 'ajcore-row-disabled';
+								}
 								?>
-								<tr>
+								<tr class="<?php echo esc_attr( $row_class ); ?>">
 									<td><input type="checkbox" class="ajcore-portal-user-checkbox" name="portal_customer_ids[]" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>"></td>
+									<td><span class="ajcore-status-pill <?php echo esc_attr( $status_class ); ?>"><?php echo esc_html( $status_label ); ?></span></td>
 									<td>
 										<strong><?php echo esc_html( ! empty( $customer->name ) ? $customer->name : __( 'Unnamed customer', 'ajforms' ) ); ?></strong><br>
 										<code><?php echo esc_html( $customer->stripe_customer_id ); ?></code><br>
@@ -7982,15 +8012,6 @@ class AJForms_Admin {
 									<?php foreach ( $display_fields as $field ) : ?>
 										<td><?php echo esc_html( $this->get_portal_customer_display_value( $customer, $field ) ); ?></td>
 									<?php endforeach; ?>
-									<td>
-										<?php if ( $is_active ) : ?>
-											<span class="ajcore-status-pill"><?php esc_html_e( 'Active', 'ajforms' ); ?></span>
-										<?php elseif ( 'archived' === $portal_status ) : ?>
-											<span class="ajcore-status-pill off"><?php esc_html_e( 'Archived', 'ajforms' ); ?></span>
-										<?php else : ?>
-											<span class="ajcore-status-pill off"><?php esc_html_e( 'Disabled', 'ajforms' ); ?></span>
-										<?php endif; ?>
-									</td>
 									<td>
 										<?php
 										if ( $user ) {
