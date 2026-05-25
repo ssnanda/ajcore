@@ -1885,6 +1885,39 @@ class AJForms_Admin {
 		);
 	}
 
+	private function reset_portal_sync_cache() {
+		global $wpdb;
+
+		$this->ensure_portal_schema();
+
+		$tables = array(
+			$this->get_portal_user_mappings_table(),
+			$this->get_portal_entity_mappings_table(),
+			$this->get_portal_ledger_table(),
+			$this->get_portal_stripe_transactions_table(),
+			$this->get_portal_stripe_subscriptions_table(),
+			$this->get_portal_stripe_products_table(),
+			$this->get_portal_stripe_customers_table(),
+			$this->get_portal_sync_log_items_table(),
+			$this->get_portal_sync_logs_table(),
+		);
+
+		$deleted = 0;
+		foreach ( $tables as $table ) {
+			$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
+			$result = $wpdb->query( "DELETE FROM {$table}" );
+			if ( false === $result ) {
+				return new WP_Error( 'portal_reset_failed', sprintf( __( 'Could not reset table %s.', 'ajforms' ), $table ) );
+			}
+			$deleted += absint( $count );
+		}
+
+		delete_option( 'ajcore_portal_sync_last_run' );
+		delete_option( 'ajforms_last_portal_db_error' );
+
+		return $deleted;
+	}
+
 	private function get_portal_sync_message( $message, $stats = array() ) {
 		$stats = is_array( $stats ) ? $stats : array();
 
@@ -5073,6 +5106,22 @@ class AJForms_Admin {
 		}
 
 		$this->ensure_portal_schema();
+
+		if ( isset( $_POST['ajcore_portal_master_reset_nonce'] ) ) {
+			check_admin_referer( 'ajcore_portal_master_reset', 'ajcore_portal_master_reset_nonce' );
+
+			$result = $this->reset_portal_sync_cache();
+			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' );
+
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['portal-reset'] = absint( $result );
+			}
+
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
 
 		if ( isset( $_POST['ajcore_portal_sync_settings_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_portal_sync_settings', 'ajcore_portal_sync_settings_nonce' );
@@ -9053,6 +9102,9 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
 				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-reset'] ) ) : ?>
+				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Master reset complete. Deleted %d local portal sync/cache rows. Forms, leads, files, tasks, service requests, WordPress users, and settings were kept.', 'ajforms' ), absint( wp_unslash( $_GET['portal-reset'] ) ) ) ); ?></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
@@ -9089,6 +9141,14 @@ class AJForms_Admin {
 				<?php endforeach; ?>
 			</div>
 		</div>
+
+		<form method="post" class="ajforms-settings-card" onsubmit="return window.confirm('<?php echo esc_js( __( 'Run AJ Core Client Portal master reset? This deletes local portal users, Stripe customer/product/subscription/transaction cache, billing ledger, mappings, and sync history. It does not delete WordPress users, forms, leads, files, tasks, service requests, or plugin settings.', 'ajforms' ) ); ?>');">
+			<?php wp_nonce_field( 'ajcore_portal_master_reset', 'ajcore_portal_master_reset_nonce' ); ?>
+			<h3><?php esc_html_e( 'Master Reset', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'Use this when local portal sync/cache data is bad and you want to sync fresh from Stripe.', 'ajforms' ); ?></p>
+			<p class="description"><?php esc_html_e( 'Deletes local portal users, Stripe customer/product/subscription/transaction cache, billing ledger, mappings, and sync history. Keeps forms, leads, files, tasks, service requests, WordPress users, and settings.', 'ajforms' ); ?></p>
+			<?php submit_button( __( 'MASTER RESET', 'ajforms' ), 'delete', 'submit', false ); ?>
+		</form>
 
 		<form method="post" class="ajforms-settings-card">
 			<?php wp_nonce_field( 'ajcore_save_portal_sync_settings', 'ajcore_portal_sync_settings_nonce' ); ?>
