@@ -1221,18 +1221,6 @@ class AJForms_Admin {
 			$checkout_custom_fields = $this->extract_checkout_custom_fields( $session );
 
 			$payment_intent_id = ! empty( $session['payment_intent'] ) ? sanitize_text_field( (string) $session['payment_intent'] ) : '';
-			if ( '' !== $payment_intent_id ) {
-				$existing_payment = $wpdb->get_var(
-					$wpdb->prepare(
-						"SELECT id FROM {$this->get_portal_stripe_transactions_table()} WHERE payment_intent_id = %s LIMIT 1",
-						$payment_intent_id
-					)
-				);
-				if ( $existing_payment ) {
-					continue;
-				}
-			}
-
 			$currency = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : 'usd';
 			$status   = ! empty( $session['payment_status'] ) ? sanitize_key( (string) $session['payment_status'] ) : '';
 			$session_source = ! empty( $session['metadata']['source'] ) ? sanitize_key( (string) $session['metadata']['source'] ) : '';
@@ -1244,6 +1232,13 @@ class AJForms_Admin {
 				continue;
 			}
 
+			/*
+			 * Balance-payment checkout sessions are intentionally reconciled before the
+			 * generic duplicate-payment-intent skip below. Stripe charges are synced before
+			 * checkout sessions in this method, so the related charge can already exist in
+			 * aj_portal_stripe_transactions. If we skip here too early, the original
+			 * manual ledger rows remain pending even though the checkout was paid.
+			 */
 			if ( $is_balance_payment_session ) {
 				if ( 'paid' === $status ) {
 					$count += $this->reconcile_portal_balance_payment_session( $session, $customer_id, $payment_intent_id );
@@ -1251,6 +1246,18 @@ class AJForms_Admin {
 
 				$this->cleanup_unpaid_portal_checkout_sessions( $customer_id );
 				continue;
+			}
+
+			if ( '' !== $payment_intent_id ) {
+				$existing_payment = $wpdb->get_var(
+					$wpdb->prepare(
+						"SELECT id FROM {$this->get_portal_stripe_transactions_table()} WHERE payment_intent_id = %s LIMIT 1",
+						$payment_intent_id
+					)
+				);
+				if ( $existing_payment ) {
+					continue;
+				}
 			}
 
 			$session_ledger_metadata = array();
