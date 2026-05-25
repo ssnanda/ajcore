@@ -146,11 +146,11 @@ class AJForms {
 		$auth_settings = get_option( 'ajcore_auth_settings', array() );
 		$customer_role = is_array( $auth_settings ) && ! empty( $auth_settings['customer_role'] ) ? sanitize_key( (string) $auth_settings['customer_role'] ) : 'aj_portal_user';
 
-		if ( in_array( 'aj_portal_user', $roles, true ) || ( $customer_role && in_array( $customer_role, $roles, true ) ) ) {
+		if ( in_array( 'aj_portal_user', $roles, true ) || user_can( $user, 'ajcore_customer_portal_access' ) || ( $customer_role && in_array( $customer_role, $roles, true ) ) ) {
 			return true;
 		}
 
-		return ! user_can( $user, 'edit_posts' );
+		return false;
 	}
 
 	private function is_frontend_portal_user() {
@@ -2131,7 +2131,10 @@ class AJForms {
 				FROM {$this->get_portal_user_mappings_table()} m
 				INNER JOIN {$this->get_portal_stripe_customers_table()} c
 					ON c.stripe_customer_id = m.stripe_customer_id
+				INNER JOIN {$wpdb->users} u
+					ON u.ID = m.user_id
 				WHERE m.user_id = %d
+					AND LOWER(u.user_email) IN (LOWER(c.email), LOWER(m.customer_email), LOWER(m.portal_user_email))
 					AND c.enabled_portal = 1
 					AND (c.portal_status = 'active' OR c.portal_status = '')
 				ORDER BY m.updated_at DESC, m.id DESC

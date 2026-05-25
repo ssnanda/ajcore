@@ -579,15 +579,14 @@ class AJForms_Admin {
 			AJForms_Activator::activate();
 		}
 
-		$wpdb->query(
-			"UPDATE {$this->get_portal_stripe_customers_table()} c
-			INNER JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
-			INNER JOIN {$wpdb->users} u ON u.ID = m.user_id
-			INNER JOIN {$wpdb->usermeta} um ON um.user_id = u.ID AND um.meta_key = '{$wpdb->prefix}capabilities'
-			SET c.enabled_portal = 1, c.portal_status = 'active'
-			WHERE (c.portal_status = '' OR c.portal_status IS NULL OR c.portal_status = 'disabled')
-			AND um.meta_value LIKE '%aj_portal_user%'"
-		);
+		$mapping_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_user_mappings_table()}", 0 );
+		if ( is_array( $mapping_columns ) && ! in_array( 'portal_user_email', $mapping_columns, true ) ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+			AJForms_Activator::activate();
+		}
+
+		$this->ensure_aj_portal_user_role();
+		$this->repair_portal_user_links_and_roles( false, false );
 	}
 
 	private function get_portal_cache_counts() {
@@ -605,6 +604,209 @@ class AJForms_Admin {
 			'tasks'         => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_tasks_table()}" ),
 			'sync_logs'     => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_sync_logs_table()}" ),
 		);
+	}
+
+	private function ensure_aj_portal_user_role() {
+		$role = get_role( 'aj_portal_user' );
+		if ( ! $role ) {
+			add_role(
+				'aj_portal_user',
+				__( 'AJ Portal User', 'ajforms' ),
+				array(
+					'read'                          => true,
+					'ajcore_customer_portal_access' => true,
+				)
+			);
+			return;
+		}
+
+		if ( ! $role->has_cap( 'read' ) ) {
+			$role->add_cap( 'read' );
+		}
+		if ( ! $role->has_cap( 'ajcore_customer_portal_access' ) ) {
+			$role->add_cap( 'ajcore_customer_portal_access' );
+		}
+	}
+
+	private function get_portal_customer_link_emails( $customer, $mapping = null ) {
+		$emails = array();
+		foreach ( array(
+			$customer && ! empty( $customer->email ) ? $customer->email : '',
+			$mapping && ! empty( $mapping->customer_email ) ? $mapping->customer_email : '',
+			$mapping && ! empty( $mapping->mapped_email ) ? $mapping->mapped_email : '',
+			$mapping && ! empty( $mapping->portal_user_email ) ? $mapping->portal_user_email : '',
+		) as $email ) {
+			$email = strtolower( sanitize_email( (string) $email ) );
+			if ( is_email( $email ) ) {
+				$emails[] = $email;
+			}
+		}
+
+		return array_values( array_unique( $emails ) );
+	}
+
+	private function get_valid_portal_mapping_user( $customer, $mapping ) {
+		if ( ! $customer || ! $mapping || empty( $mapping->user_id ) ) {
+			return null;
+		}
+
+		$user = get_userdata( (int) $mapping->user_id );
+		if ( ! $user ) {
+			return null;
+		}
+
+		return in_array( strtolower( $user->user_email ), $this->get_portal_customer_link_emails( $customer, $mapping ), true ) ? $user : null;
+	}
+
+	private function portal_user_has_portal_role( $user ) {
+		return $user && ( $this->user_has_elevated_role( $user ) || in_array( 'aj_portal_user', (array) $user->roles, true ) || user_can( $user, 'ajcore_customer_portal_access' ) );
+	}
+
+	private function user_has_elevated_role( $user ) {
+		if ( ! $user ) {
+			return false;
+		}
+
+		$elevated_roles = array( 'administrator', 'editor', 'shop_manager' );
+		return (bool) array_intersect( $elevated_roles, (array) $user->roles );
+	}
+
+	private function assign_aj_portal_user_role( $user ) {
+		if ( ! $user ) {
+			return false;
+		}
+
+		$this->ensure_aj_portal_user_role();
+		if ( $this->user_has_elevated_role( $user ) ) {
+			return false;
+		}
+
+		if ( ! in_array( 'aj_portal_user', (array) $user->roles, true ) ) {
+			$user->add_role( 'aj_portal_user' );
+		}
+
+		return true;
+	}
+
+	private function record_portal_link_repair_item( $action, $stripe_customer_id, $message, $raw_data = array() ) {
+		$this->record_portal_sync_item(
+			$action,
+			'portal_user_link',
+			$stripe_customer_id,
+			'success',
+			$message,
+			$raw_data,
+			$stripe_customer_id
+		);
+	}
+
+	private function repair_portal_user_links_and_roles( $log_items = true, $relink_matches = true ) {
+		global $wpdb;
+
+		$this->ensure_aj_portal_user_role();
+
+		$customers = $wpdb->get_results(
+			"SELECT c.*, m.id AS mapping_id, m.user_id, m.customer_email AS mapped_email, m.portal_user_email
+			FROM {$this->get_portal_stripe_customers_table()} c
+			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
+			ORDER BY c.id ASC"
+		);
+
+		$stats = array( 'cleared' => 0, 'relinked' => 0, 'roles' => 0, 'skipped' => 0 );
+		foreach ( (array) $customers as $customer ) {
+			$emails = $this->get_portal_customer_link_emails( $customer, $customer );
+			if ( empty( $emails ) ) {
+				$stats['skipped']++;
+				continue;
+			}
+
+			$current_user = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : null;
+			$valid_current_user = $current_user && in_array( strtolower( $current_user->user_email ), $emails, true );
+			$matched_user = null;
+			foreach ( $emails as $email ) {
+				$matched_user = get_user_by( 'email', $email );
+				if ( $matched_user ) {
+					break;
+				}
+			}
+
+			if ( $current_user && ! $valid_current_user ) {
+				if ( $customer->mapping_id ) {
+					$wpdb->delete(
+						$this->get_portal_user_mappings_table(),
+						array( 'id' => absint( $customer->mapping_id ) ),
+						array( '%d' )
+					);
+				}
+				$wpdb->update(
+					$this->get_portal_stripe_customers_table(),
+					array( 'enabled_portal' => 0, 'portal_status' => 'disabled' ),
+					array( 'stripe_customer_id' => $customer->stripe_customer_id ),
+					array( '%d', '%s' ),
+					array( '%s' )
+				);
+				$stats['cleared']++;
+				if ( $log_items ) {
+					$this->record_portal_link_repair_item( 'cleared', $customer->stripe_customer_id, __( 'Cleared mismatched local WordPress user ID from portal mapping.', 'ajforms' ), array( 'old_user_id' => (int) $current_user->ID, 'old_user_email' => $current_user->user_email, 'customer_emails' => $emails ) );
+				}
+			}
+
+			if ( $matched_user && ( $relink_matches || $valid_current_user ) ) {
+				$old_customer_ids = $wpdb->get_col(
+					$wpdb->prepare(
+						"SELECT stripe_customer_id FROM {$this->get_portal_user_mappings_table()} WHERE user_id = %d AND stripe_customer_id <> %s",
+						(int) $matched_user->ID,
+						$customer->stripe_customer_id
+					)
+				);
+				foreach ( (array) $old_customer_ids as $old_customer_id ) {
+					$wpdb->delete(
+						$this->get_portal_user_mappings_table(),
+						array( 'stripe_customer_id' => sanitize_text_field( (string) $old_customer_id ) ),
+						array( '%s' )
+					);
+					$wpdb->update(
+						$this->get_portal_stripe_customers_table(),
+						array( 'enabled_portal' => 0, 'portal_status' => 'disabled' ),
+						array( 'stripe_customer_id' => sanitize_text_field( (string) $old_customer_id ) ),
+						array( '%d', '%s' ),
+						array( '%s' )
+					);
+				}
+
+				$this->upsert_portal_record(
+					$this->get_portal_user_mappings_table(),
+					array(
+						'user_id'            => (int) $matched_user->ID,
+						'stripe_customer_id' => sanitize_text_field( (string) $customer->stripe_customer_id ),
+						'customer_email'     => sanitize_email( (string) $emails[0] ),
+						'portal_user_email'  => sanitize_email( (string) $matched_user->user_email ),
+						'updated_at'         => current_time( 'mysql' ),
+					),
+					array( '%d', '%s', '%s', '%s', '%s' ),
+					'stripe_customer_id'
+				);
+				if ( $relink_matches || 'active' === sanitize_key( (string) $customer->portal_status ) || ! empty( $customer->enabled_portal ) ) {
+					$wpdb->update(
+						$this->get_portal_stripe_customers_table(),
+						array( 'enabled_portal' => 1, 'portal_status' => 'active' ),
+						array( 'stripe_customer_id' => $customer->stripe_customer_id ),
+						array( '%d', '%s' ),
+						array( '%s' )
+					);
+				}
+				$stats['relinked']++;
+				if ( $log_items ) {
+					$this->record_portal_link_repair_item( 'relinked', $customer->stripe_customer_id, __( 'Relinked portal customer to local WordPress user by email.', 'ajforms' ), array( 'user_id' => (int) $matched_user->ID, 'user_email' => $matched_user->user_email ) );
+				}
+
+				if ( $this->assign_aj_portal_user_role( $matched_user ) ) {
+					$stats['roles']++;
+				}
+			}
+		}
+
+		return $stats;
 	}
 
 	private function reset_portal_sync_stats() {
@@ -2044,7 +2246,7 @@ class AJForms_Admin {
 		if ( $mapping && ! empty( $mapping->user_id ) ) {
 			$user = get_userdata( (int) $mapping->user_id );
 			if ( $user && in_array( 'aj_portal_user', (array) $user->roles, true ) ) {
-				$user->set_role( 'subscriber' );
+				$user->remove_role( 'aj_portal_user' );
 			}
 		}
 
@@ -2134,7 +2336,7 @@ class AJForms_Admin {
 			)
 		);
 
-		$user->set_role( 'aj_portal_user' );
+		$this->assign_aj_portal_user_role( $user );
 
 		$this->upsert_portal_record(
 			$this->get_portal_user_mappings_table(),
@@ -2142,9 +2344,10 @@ class AJForms_Admin {
 				'user_id'            => (int) $user->ID,
 				'stripe_customer_id' => $stripe_customer_id,
 				'customer_email'     => $email,
+				'portal_user_email'  => sanitize_email( $user->user_email ),
 				'updated_at'         => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s' ),
+			array( '%d', '%s', '%s', '%s', '%s' ),
 			'stripe_customer_id'
 		);
 
@@ -2183,7 +2386,7 @@ class AJForms_Admin {
 				$stripe_customer_id
 			)
 		);
-		$user = $mapping && ! empty( $mapping->user_id ) ? get_userdata( (int) $mapping->user_id ) : null;
+		$user = $this->get_valid_portal_mapping_user( $customer, $mapping );
 
 		$subscriptions = $wpdb->get_results(
 			$wpdb->prepare(
@@ -3880,7 +4083,7 @@ class AJForms_Admin {
 			)
 		);
 
-		$user->set_role( 'aj_portal_user' );
+		$this->assign_aj_portal_user_role( $user );
 
 		$wpdb->update(
 			$this->get_portal_stripe_customers_table(),
@@ -3899,9 +4102,10 @@ class AJForms_Admin {
 				'user_id'            => (int) $user->ID,
 				'stripe_customer_id' => $stripe_customer_id,
 				'customer_email'     => sanitize_email( $customer->email ),
+				'portal_user_email'  => sanitize_email( $user->user_email ),
 				'updated_at'         => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s' ),
+			array( '%d', '%s', '%s', '%s', '%s' ),
 			'stripe_customer_id'
 		);
 
@@ -5038,6 +5242,25 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_repair_portal_user_links_nonce'] ) ) {
+			check_admin_referer( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' );
+			$stats = $this->repair_portal_user_links_and_roles( true );
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'                  => 'ajforms-client-portal',
+						'tab'                   => 'portal-users',
+						'portal-links-repaired' => 1,
+						'portal-cleared'        => absint( $stats['cleared'] ),
+						'portal-relinked'       => absint( $stats['relinked'] ),
+						'portal-roles'          => absint( $stats['roles'] ),
+					),
+					admin_url( 'admin.php' )
+				)
+			);
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_portal_bulk_user_nonce'], $_POST['portal_bulk_action'] ) ) {
 			check_admin_referer( 'ajcore_portal_bulk_user_action', 'ajcore_portal_bulk_user_nonce' );
 			global $wpdb;
@@ -5060,7 +5283,7 @@ class AJForms_Admin {
 			foreach ( $selected_ids as $stripe_customer_id ) {
 				$customer = $wpdb->get_row(
 					$wpdb->prepare(
-						"SELECT c.*, m.user_id FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
+						"SELECT c.*, m.user_id, m.customer_email, m.portal_user_email FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
 						$stripe_customer_id
 					)
 				);
@@ -5084,7 +5307,12 @@ class AJForms_Admin {
 				} elseif ( 'restore' === $action && $is_archived ) {
 					$result = $this->enable_stripe_customer_as_portal_user( $stripe_customer_id );
 				} elseif ( 'reset_password' === $action && ! empty( $customer->user_id ) ) {
-					$result = $this->send_portal_user_password_reset( (int) $customer->user_id );
+					$valid_user = $this->get_valid_portal_mapping_user( $customer, $customer );
+					if ( ! $valid_user ) {
+						$skipped++;
+						continue;
+					}
+					$result = $this->send_portal_user_password_reset( (int) $valid_user->ID );
 					if ( false === $result ) {
 						$result = new WP_Error( 'reset_failed', __( 'Password reset email could not be sent.', 'ajforms' ) );
 					}
@@ -5141,13 +5369,14 @@ class AJForms_Admin {
 				}
 			} elseif ( 'reset_password' === $action ) {
 				global $wpdb;
-				$user_id = (int) $wpdb->get_var(
+				$customer = $wpdb->get_row(
 					$wpdb->prepare(
-						"SELECT user_id FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s LIMIT 1",
+						"SELECT c.*, m.user_id, m.customer_email, m.portal_user_email FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
 						$stripe_customer_id
 					)
 				);
-				$result = $this->send_portal_user_password_reset( $user_id );
+				$user = $customer ? $this->get_valid_portal_mapping_user( $customer, $customer ) : null;
+				$result = $user ? $this->send_portal_user_password_reset( (int) $user->ID ) : new WP_Error( 'invalid_link', __( 'The linked WordPress user does not match this customer email. Run Repair WP User Links & Roles first.', 'ajforms' ) );
 				if ( is_wp_error( $result ) ) {
 					$args['portal-error'] = rawurlencode( $result->get_error_message() );
 				} elseif ( ! $result ) {
@@ -9030,7 +9259,7 @@ class AJForms_Admin {
 		}
 
 		$customers = $wpdb->get_results(
-			"SELECT c.*, m.user_id, m.customer_email AS mapped_email, m.updated_at AS mapped_at
+			"SELECT c.*, m.user_id, m.customer_email AS mapped_email, m.portal_user_email, m.updated_at AS mapped_at
 			FROM {$this->get_portal_stripe_customers_table()} c
 			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
 			LEFT JOIN {$wpdb->users} u ON u.ID = m.user_id
@@ -9069,6 +9298,9 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['portal-fields-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer display fields saved.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-links-repaired'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Repair complete. Cleared: %1$d. Relinked: %2$d. Roles updated: %3$d.', 'ajforms' ), isset( $_GET['portal-cleared'] ) ? absint( wp_unslash( $_GET['portal-cleared'] ) ) : 0, isset( $_GET['portal-relinked'] ) ? absint( wp_unslash( $_GET['portal-relinked'] ) ) : 0, isset( $_GET['portal-roles'] ) ? absint( wp_unslash( $_GET['portal-roles'] ) ) : 0 ) ); ?></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
@@ -9098,6 +9330,10 @@ class AJForms_Admin {
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="archive"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="restore"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="reset_password"><?php esc_html_e( 'Reset Password', 'ajforms' ); ?></button>
+				<form method="post" style="display:inline;margin:0;">
+					<?php wp_nonce_field( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' ); ?>
+					<button type="submit" class="button"><?php esc_html_e( 'Repair WP User Links & Roles', 'ajforms' ); ?></button>
+				</form>
 				<a class="button ajcore-toolbar-spacer" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
 
@@ -9149,7 +9385,10 @@ class AJForms_Admin {
 						<?php else : ?>
 							<?php foreach ( $customers as $customer ) : ?>
 								<?php
-								$user = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : null;
+								$raw_user = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : null;
+								$user = $this->get_valid_portal_mapping_user( $customer, $customer );
+								$link_mismatch = $raw_user && ! $user;
+								$missing_portal_role = $user && ! $this->portal_user_has_portal_role( $user );
 								$portal_status = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' );
 								$is_active = 'active' === $portal_status && ! empty( $customer->enabled_portal );
 								$has_portal_login = $user && ! empty( $customer->user_id );
@@ -9188,6 +9427,12 @@ class AJForms_Admin {
 										if ( $user ) {
 											echo esc_html( $user->display_name . ' #' . $user->ID );
 											echo '<br><span class="description">' . esc_html( $user->user_email ) . '</span>';
+											if ( $missing_portal_role ) {
+												echo '<br><span class="notice-warning" style="color:#8a6d00;">' . esc_html__( 'Missing AJ Portal User role', 'ajforms' ) . '</span>';
+											}
+										} elseif ( $link_mismatch ) {
+											echo '<strong style="color:#b32d2e;">' . esc_html__( 'Mismatched WP user link', 'ajforms' ) . '</strong>';
+											echo '<br><span class="description">' . esc_html( $raw_user->user_email ) . '</span>';
 										} elseif ( ! empty( $customer->user_id ) ) {
 											esc_html_e( 'Linked user missing', 'ajforms' );
 										} else {

@@ -179,12 +179,14 @@ class AJForms_Activator {
 			user_id bigint(20) unsigned NOT NULL,
 			stripe_customer_id varchar(100) NOT NULL,
 			customer_email varchar(190) DEFAULT '' NOT NULL,
+			portal_user_email varchar(190) DEFAULT '' NOT NULL,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY user_id (user_id),
 			UNIQUE KEY stripe_customer_id (stripe_customer_id),
-			KEY customer_email (customer_email)
+			KEY customer_email (customer_email),
+			KEY portal_user_email (portal_user_email)
 		) $charset_collate;
 
 		CREATE TABLE $table_entity_mappings (
@@ -424,9 +426,17 @@ class AJForms_Activator {
 			'aj_portal_user',
 			__( 'AJ Portal User', 'ajforms' ),
 			array(
-				'read' => true,
+				'read'                          => true,
+				'ajcore_customer_portal_access' => true,
 			)
 		);
+		$portal_role = get_role( 'aj_portal_user' );
+		if ( $portal_role && ! $portal_role->has_cap( 'read' ) ) {
+			$portal_role->add_cap( 'read' );
+		}
+		if ( $portal_role && ! $portal_role->has_cap( 'ajcore_customer_portal_access' ) ) {
+			$portal_role->add_cap( 'ajcore_customer_portal_access' );
+		}
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
 		update_option( 'ajforms_portal_schema_version', '8', false );
 	}
