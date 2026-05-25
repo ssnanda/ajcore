@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.1.155
+ * Version: 0.1.156
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.1.155' );
+	define( 'AJCORE_VERSION', '0.1.156' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -138,7 +138,9 @@ if ( ! function_exists( 'ajcore_normalize_stripe_settings' ) ) {
 
 if ( ! function_exists( 'ajforms_get_settings' ) ) {
 	function ajforms_get_settings() {
-		$saved_settings = get_option( 'ajforms_settings', array() );
+		$raw_saved_settings = get_option( 'ajforms_settings', false );
+		$saved_settings     = is_array( $raw_saved_settings ) ? $raw_saved_settings : array();
+		$has_saved_settings = false !== $raw_saved_settings && ! empty( $saved_settings );
 		if ( ! is_array( $saved_settings ) ) {
 			$saved_settings = array();
 		}
@@ -148,12 +150,25 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 			$file_settings = array();
 		}
 
+		if ( ! $has_saved_settings ) {
+			$legacy_stripe_settings = ajforms_read_legacy_synced_stripe_settings_file();
+			if ( ! empty( $legacy_stripe_settings ) ) {
+				$file_settings = array_merge( $file_settings, $legacy_stripe_settings );
+			}
+		}
+
 		$settings = wp_parse_args(
-			array_merge( $saved_settings, $file_settings ),
+			array_merge( $file_settings, $saved_settings ),
 			ajforms_get_settings_defaults()
 		);
 
-		return function_exists( 'ajcore_normalize_stripe_settings' ) ? ajcore_normalize_stripe_settings( $settings ) : $settings;
+		$settings = function_exists( 'ajcore_normalize_stripe_settings' ) ? ajcore_normalize_stripe_settings( $settings ) : $settings;
+
+		if ( ! $has_saved_settings && ! empty( $file_settings ) ) {
+			update_option( 'ajforms_settings', $settings );
+		}
+
+		return $settings;
 	}
 }
 
@@ -168,9 +183,20 @@ if ( ! function_exists( 'ajforms_get_synced_setting_keys' ) ) {
 			'asana_enabled',
 			'asana_workspace_gid',
 			'asana_project_gid',
+		);
+	}
+}
+
+if ( ! function_exists( 'ajforms_get_stripe_setting_keys' ) ) {
+	function ajforms_get_stripe_setting_keys() {
+		return array(
 			'stripe_mode',
 			'stripe_sandbox_publishable_key',
+			'stripe_sandbox_secret_key',
 			'stripe_live_publishable_key',
+			'stripe_live_secret_key',
+			'stripe_publishable_key',
+			'stripe_secret_key',
 		);
 	}
 }
@@ -193,6 +219,33 @@ if ( ! function_exists( 'ajforms_read_synced_settings_file' ) ) {
 
 		$synced = array();
 		foreach ( ajforms_get_synced_setting_keys() as $key ) {
+			if ( array_key_exists( $key, $decoded ) ) {
+				$synced[ $key ] = $decoded[ $key ];
+			}
+		}
+
+		return $synced;
+	}
+}
+
+if ( ! function_exists( 'ajforms_read_legacy_synced_stripe_settings_file' ) ) {
+	function ajforms_read_legacy_synced_stripe_settings_file() {
+		if ( ! file_exists( AJFORMS_SYNCED_SETTINGS_FILE ) || ! is_readable( AJFORMS_SYNCED_SETTINGS_FILE ) ) {
+			return array();
+		}
+
+		$raw_settings = file_get_contents( AJFORMS_SYNCED_SETTINGS_FILE );
+		if ( false === $raw_settings || '' === trim( $raw_settings ) ) {
+			return array();
+		}
+
+		$decoded = json_decode( $raw_settings, true );
+		if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $decoded ) ) {
+			return array();
+		}
+
+		$synced = array();
+		foreach ( ajforms_get_stripe_setting_keys() as $key ) {
 			if ( array_key_exists( $key, $decoded ) ) {
 				$synced[ $key ] = $decoded[ $key ];
 			}

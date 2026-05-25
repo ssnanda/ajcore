@@ -6,7 +6,5 @@
     "turnstile_site_key": "",
     "asana_enabled": "0",
     "asana_workspace_gid": "",
-    "asana_project_gid": "",
-    "stripe_mode": "test",
-    "stripe_publishable_key": "pk_live_51SAFxfJu7Mcx61TtTnJ7ikSgM1nOJZQPTvOgg7zkY2t9cmLt8RlbFcxwfv66woKZnDJ1T2EnuqrJ9oxbYSL770M0004br5j72m"
+    "asana_project_gid": ""
 }
