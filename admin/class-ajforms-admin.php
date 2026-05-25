@@ -1944,6 +1944,67 @@ class AJForms_Admin {
 	}
 
 
+
+	private function get_portal_ledger_transaction_id( $entry ) {
+		foreach ( array( 'charge_id', 'payment_intent_id', 'invoice_id', 'source_object_id' ) as $field ) {
+			if ( ! empty( $entry->{$field} ) ) {
+				return sanitize_text_field( (string) $entry->{$field} );
+			}
+		}
+
+		return '';
+	}
+
+	private function get_portal_ledger_display_description( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		$status      = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+		$description = isset( $entry->description ) ? sanitize_text_field( (string) $entry->description ) : '';
+
+		if ( 'charge' === $source_type || 'payment' === $source_type ) {
+			if ( 'refunded' === $status ) {
+				return __( 'Payment — Refunded', 'ajforms' );
+			}
+			if ( in_array( $status, array( 'partially_refunded', 'partial_refund' ), true ) ) {
+				return __( 'Payment — Partially Refunded', 'ajforms' );
+			}
+
+			return __( 'Payment', 'ajforms' );
+		}
+
+		if ( 'refund' === $source_type ) {
+			return __( 'Refund', 'ajforms' );
+		}
+
+		if ( 'manual_charge' === $source_type && '' !== $description ) {
+			return $description;
+		}
+
+		if ( 'invoice' === $source_type ) {
+			$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+			if ( ! empty( $metadata['invoice_number'] ) ) {
+				return sprintf( __( 'Invoice %s', 'ajforms' ), sanitize_text_field( (string) $metadata['invoice_number'] ) );
+			}
+			if ( '' !== $description ) {
+				return $description;
+			}
+			return __( 'Invoice', 'ajforms' );
+		}
+
+		if ( 'checkout_session' === $source_type ) {
+			if ( false !== strpos( $description, 'ajcore_products_cart' ) ) {
+				return __( 'Website Checkout Payment', 'ajforms' );
+			}
+			if ( false !== strpos( $description, 'ajcore_portal_add_service' ) ) {
+				return __( 'Service Checkout Payment', 'ajforms' );
+			}
+			if ( false !== strpos( $description, 'ajcore_portal_balance_payment' ) ) {
+				return __( 'Balance Payment', 'ajforms' );
+			}
+		}
+
+		return '' !== $description ? $description : __( 'Billing Item', 'ajforms' );
+	}
+
 	private function get_portal_open_ledger_statuses() {
 		return array( 'unpaid', 'pending_payment', 'awaiting_payment' );
 	}
@@ -5901,6 +5962,7 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Description', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Transaction ID', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
@@ -5910,17 +5972,18 @@ class AJForms_Admin {
 				</thead>
 				<tbody>
 				<?php if ( empty( $ledger ) ) : ?>
-					<tr><td colspan="8"><?php esc_html_e( 'No billing records found.', 'ajforms' ); ?></td></tr>
+					<tr><td colspan="9"><?php esc_html_e( 'No billing records found.', 'ajforms' ); ?></td></tr>
 				<?php else : ?>
 					<?php foreach ( $ledger as $entry ) : ?>
 						<?php $customer_label = $entry->customer_name ? $entry->customer_name : ( $entry->customer_email ? $entry->customer_email : $entry->stripe_customer_id ); ?>
 						<tr>
 							<td><?php echo esc_html( $entry->ledger_date ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $entry->ledger_date . ' UTC' ) ) : '-' ); ?></td>
 							<td><?php echo esc_html( $customer_label ); ?><br><small><?php echo esc_html( $entry->stripe_customer_id ); ?></small></td>
-							<td><?php echo esc_html( $entry->description ); ?></td>
+							<td><?php echo esc_html( $this->get_portal_ledger_display_description( $entry ) ); ?></td>
+							<td><code><?php echo esc_html( $this->get_portal_ledger_transaction_id( $entry ) ? $this->get_portal_ledger_transaction_id( $entry ) : '-' ); ?></code></td>
 							<td><?php echo esc_html( $entry->source_type ); ?></td>
 							<td><strong><?php echo esc_html( $entry->status ); ?></strong></td>
-							<td><?php echo esc_html( strtoupper( (string) $entry->currency ) . ' ' . number_format_i18n( (float) $entry->amount, 2 ) ); ?></td>
+							<td><?php echo esc_html( $this->format_portal_money( $entry->amount, $entry->currency ) ); ?></td>
 							<td><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
 							<td>
 								<?php if ( $entry->invoice_id ) : ?><code><?php echo esc_html( $entry->invoice_id ); ?></code><br><?php endif; ?>
