@@ -586,7 +586,7 @@ class AJForms_Admin {
 		}
 
 		$this->ensure_aj_portal_user_role();
-		$this->repair_portal_user_links_and_roles( false, false );
+		$this->repair_portal_user_links_and_roles( false, false, false );
 	}
 
 	private function get_portal_cache_counts() {
@@ -700,17 +700,25 @@ class AJForms_Admin {
 		);
 	}
 
-	private function repair_portal_user_links_and_roles( $log_items = true, $relink_matches = true ) {
+	private function repair_portal_user_links_and_roles( $log_items = true, $relink_matches = true, $activate_matches = false, $customer_ids = array() ) {
 		global $wpdb;
 
 		$this->ensure_aj_portal_user_role();
 
-		$customers = $wpdb->get_results(
-			"SELECT c.*, m.id AS mapping_id, m.user_id, m.customer_email AS mapped_email, m.portal_user_email
+		$where = '1=1';
+		$params = array();
+		$customer_ids = array_values( array_filter( array_map( 'sanitize_text_field', (array) $customer_ids ) ) );
+		if ( ! empty( $customer_ids ) ) {
+			$where = 'c.stripe_customer_id IN (' . implode( ',', array_fill( 0, count( $customer_ids ), '%s' ) ) . ')';
+			$params = $customer_ids;
+		}
+
+		$sql = "SELECT c.*, m.id AS mapping_id, m.user_id, m.customer_email AS mapped_email, m.portal_user_email
 			FROM {$this->get_portal_stripe_customers_table()} c
 			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
-			ORDER BY c.id ASC"
-		);
+			WHERE {$where}
+			ORDER BY c.id ASC";
+		$customers = ! empty( $params ) ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
 
 		$stats = array( 'cleared' => 0, 'relinked' => 0, 'roles' => 0, 'skipped' => 0 );
 		foreach ( (array) $customers as $customer ) {
@@ -738,13 +746,6 @@ class AJForms_Admin {
 						array( '%d' )
 					);
 				}
-				$wpdb->update(
-					$this->get_portal_stripe_customers_table(),
-					array( 'enabled_portal' => 0, 'portal_status' => 'disabled' ),
-					array( 'stripe_customer_id' => $customer->stripe_customer_id ),
-					array( '%d', '%s' ),
-					array( '%s' )
-				);
 				$stats['cleared']++;
 				if ( $log_items ) {
 					$this->record_portal_link_repair_item( 'cleared', $customer->stripe_customer_id, __( 'Cleared mismatched local WordPress user ID from portal mapping.', 'ajforms' ), array( 'old_user_id' => (int) $current_user->ID, 'old_user_email' => $current_user->user_email, 'customer_emails' => $emails ) );
@@ -765,13 +766,6 @@ class AJForms_Admin {
 						array( 'stripe_customer_id' => sanitize_text_field( (string) $old_customer_id ) ),
 						array( '%s' )
 					);
-					$wpdb->update(
-						$this->get_portal_stripe_customers_table(),
-						array( 'enabled_portal' => 0, 'portal_status' => 'disabled' ),
-						array( 'stripe_customer_id' => sanitize_text_field( (string) $old_customer_id ) ),
-						array( '%d', '%s' ),
-						array( '%s' )
-					);
 				}
 
 				$this->upsert_portal_record(
@@ -786,7 +780,7 @@ class AJForms_Admin {
 					array( '%d', '%s', '%s', '%s', '%s' ),
 					'stripe_customer_id'
 				);
-				if ( $relink_matches || 'active' === sanitize_key( (string) $customer->portal_status ) || ! empty( $customer->enabled_portal ) ) {
+				if ( $activate_matches ) {
 					$wpdb->update(
 						$this->get_portal_stripe_customers_table(),
 						array( 'enabled_portal' => 1, 'portal_status' => 'active' ),
@@ -5244,7 +5238,7 @@ class AJForms_Admin {
 
 		if ( isset( $_POST['ajcore_repair_portal_user_links_nonce'] ) ) {
 			check_admin_referer( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' );
-			$stats = $this->repair_portal_user_links_and_roles( true );
+			$stats = $this->repair_portal_user_links_and_roles( true, true, false );
 			wp_safe_redirect(
 				add_query_arg(
 					array(
@@ -5268,7 +5262,7 @@ class AJForms_Admin {
 			$action = sanitize_key( wp_unslash( $_POST['portal_bulk_action'] ) );
 			$selected_ids = isset( $_POST['portal_customer_ids'] ) && is_array( $_POST['portal_customer_ids'] ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['portal_customer_ids'] ) ) : array();
 			$selected_ids = array_values( array_filter( array_unique( $selected_ids ) ) );
-			$allowed_actions = array( 'enable', 'disable', 'archive', 'restore', 'reset_password' );
+			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password' );
 			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
 			$updated = 0;
 			$skipped = 0;
@@ -5276,6 +5270,14 @@ class AJForms_Admin {
 
 			if ( empty( $selected_ids ) || ! in_array( $action, $allowed_actions, true ) ) {
 				$args['portal-error'] = rawurlencode( __( 'Select at least one portal user and a valid bulk action.', 'ajforms' ) );
+				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			if ( 'enable_repair' === $action ) {
+				$stats = $this->repair_portal_user_links_and_roles( true, true, true, $selected_ids );
+				$args['portal-bulk-updated'] = absint( $stats['relinked'] );
+				$args['portal-bulk-skipped'] = absint( $stats['skipped'] );
 				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 				exit;
 			}
@@ -9326,6 +9328,7 @@ class AJForms_Admin {
 				</form>
 				<button type="button" class="button" id="ajcore-select-all-portal-users"><?php esc_html_e( 'Select All', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="enable"><?php esc_html_e( 'Enable', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="enable_repair"><?php esc_html_e( 'Enable & Repair Selected Portal Users', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="disable"><?php esc_html_e( 'Disable', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="archive"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="restore"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
