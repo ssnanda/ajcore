@@ -5262,7 +5262,7 @@ class AJForms_Admin {
 			$action = sanitize_key( wp_unslash( $_POST['portal_bulk_action'] ) );
 			$selected_ids = isset( $_POST['portal_customer_ids'] ) && is_array( $_POST['portal_customer_ids'] ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['portal_customer_ids'] ) ) : array();
 			$selected_ids = array_values( array_filter( array_unique( $selected_ids ) ) );
-			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password' );
+			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password', 'delete_archived' );
 			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
 			$updated = 0;
 			$skipped = 0;
@@ -5300,7 +5300,32 @@ class AJForms_Admin {
 				$is_archived = 'archived' === $status;
 				$result = true;
 
-				if ( 'disable' === $action && $is_active ) {
+				if ( 'delete_archived' === $action ) {
+					if ( ! $is_archived ) {
+						$skipped++;
+						continue;
+					}
+
+					$wpdb->delete(
+						$this->get_portal_user_mappings_table(),
+						array( 'stripe_customer_id' => $stripe_customer_id ),
+						array( '%s' )
+					);
+					$result = $wpdb->delete(
+						$this->get_portal_stripe_customers_table(),
+						array( 'stripe_customer_id' => $stripe_customer_id ),
+						array( '%s' )
+					);
+					$this->record_portal_sync_item(
+						'deleted',
+						'portal_customer',
+						$stripe_customer_id,
+						false === $result ? 'failed' : 'success',
+						false === $result ? __( 'Archived portal customer delete failed.', 'ajforms' ) : __( 'Archived portal customer deleted from local cache.', 'ajforms' ),
+						array(),
+						$stripe_customer_id
+					);
+				} elseif ( 'disable' === $action && $is_active ) {
 					$result = $this->disable_stripe_customer_portal_access( $stripe_customer_id );
 				} elseif ( 'archive' === $action && ( $is_active || $is_disabled ) ) {
 					$result = $this->disable_stripe_customer_portal_access( $stripe_customer_id, 'archived' );
@@ -5334,7 +5359,11 @@ class AJForms_Admin {
 			if ( ! empty( $errors ) ) {
 				$args['portal-error'] = rawurlencode( implode( ' ', array_unique( $errors ) ) );
 			}
-			$args['portal-bulk-updated'] = $updated;
+			if ( 'delete_archived' === $action ) {
+				$args['portal-users-deleted'] = $updated;
+			} else {
+				$args['portal-bulk-updated'] = $updated;
+			}
 			$args['portal-bulk-skipped'] = $skipped;
 
 			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
@@ -9258,6 +9287,8 @@ class AJForms_Admin {
 			$where[] = "c.portal_status = 'archived'";
 		} elseif ( 'without_login' === $status_filter ) {
 			$where[] = '(m.id IS NULL OR u.ID IS NULL)';
+		} else {
+			$where[] = "(c.portal_status IS NULL OR c.portal_status <> 'archived')";
 		}
 
 		$customers = $wpdb->get_results(
@@ -9291,6 +9322,9 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['portal-user-archived'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Portal user archived. Billing, requests, files, tasks, and history were kept.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-users-deleted'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Archived portal user records deleted from the local cache: %1$d. Skipped: %2$d.', 'ajforms' ), absint( wp_unslash( $_GET['portal-users-deleted'] ) ), isset( $_GET['portal-bulk-skipped'] ) ? absint( wp_unslash( $_GET['portal-bulk-skipped'] ) ) : 0 ) ); ?></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-password-reset'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Password reset email sent.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -9317,7 +9351,7 @@ class AJForms_Admin {
 					<input type="hidden" name="page" value="ajforms-client-portal">
 					<input type="hidden" name="tab" value="portal-users">
 					<select name="portal_user_status">
-						<option value=""><?php esc_html_e( 'All', 'ajforms' ); ?></option>
+						<option value=""><?php esc_html_e( 'All except archived', 'ajforms' ); ?></option>
 						<option value="active" <?php selected( $status_filter, 'active' ); ?>><?php esc_html_e( 'Active portal users', 'ajforms' ); ?></option>
 						<option value="disabled" <?php selected( $status_filter, 'disabled' ); ?>><?php esc_html_e( 'Disabled portal users', 'ajforms' ); ?></option>
 						<option value="archived" <?php selected( $status_filter, 'archived' ); ?>><?php esc_html_e( 'Archived portal users', 'ajforms' ); ?></option>
@@ -9333,6 +9367,7 @@ class AJForms_Admin {
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="archive"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="restore"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="reset_password"><?php esc_html_e( 'Reset Password', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-link-delete" data-portal-bulk-action="delete_archived"><?php esc_html_e( 'Delete Archived', 'ajforms' ); ?></button>
 				<form method="post" style="display:inline;margin:0;">
 					<?php wp_nonce_field( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' ); ?>
 					<button type="submit" class="button"><?php esc_html_e( 'Repair WP User Links & Roles', 'ajforms' ); ?></button>
@@ -9468,6 +9503,10 @@ class AJForms_Admin {
 						if(!boxes().some(function(box){return box.checked;})){
 							event.preventDefault();
 							window.alert('<?php echo esc_js( __( 'Select at least one portal user.', 'ajforms' ) ); ?>');
+							return;
+						}
+						if('delete_archived' === action && !window.confirm('<?php echo esc_js( __( 'Delete selected archived portal customer records from the local AJ Core cache? WordPress users, Stripe records, billing, requests, files, tasks, and history will not be deleted.', 'ajforms' ) ); ?>')){
+							event.preventDefault();
 							return;
 						}
 						actionInput.value = action;
