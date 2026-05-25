@@ -23,6 +23,7 @@ class AJForms_Activator {
 		$table_task_statuses        = $wpdb->prefix . 'aj_portal_task_statuses';
 		$table_task_comments        = $wpdb->prefix . 'aj_portal_task_comments';
 		$table_sync_logs            = $wpdb->prefix . 'aj_portal_sync_logs';
+		$table_sync_log_items       = $wpdb->prefix . 'aj_portal_sync_log_items';
 		$table_service_requests     = $wpdb->prefix . 'aj_portal_service_requests';
 
 		$sql = "CREATE TABLE $table_forms (
@@ -96,12 +97,14 @@ class AJForms_Activator {
 			raw_data longtext NULL,
 			livemode tinyint(1) NOT NULL DEFAULT 0,
 			enabled_portal tinyint(1) NOT NULL DEFAULT 0,
+			portal_status varchar(50) DEFAULT 'disabled' NOT NULL,
 			created_at datetime NULL,
 			synced_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_customer_id (stripe_customer_id),
 			KEY email (email),
-			KEY enabled_portal (enabled_portal)
+			KEY enabled_portal (enabled_portal),
+			KEY portal_status (portal_status)
 		) $charset_collate;
 
 		CREATE TABLE $table_stripe_products (
@@ -269,6 +272,30 @@ class AJForms_Activator {
 			KEY started_at (started_at)
 		) $charset_collate;
 
+		CREATE TABLE $table_sync_log_items (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			log_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			run_key varchar(64) NOT NULL,
+			job_name varchar(100) DEFAULT '' NOT NULL,
+			action varchar(50) DEFAULT '' NOT NULL,
+			record_type varchar(100) DEFAULT '' NOT NULL,
+			record_id varchar(190) DEFAULT '' NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			status varchar(50) DEFAULT 'success' NOT NULL,
+			message longtext NULL,
+			raw_data longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY log_id (log_id),
+			KEY run_key (run_key),
+			KEY job_name (job_name),
+			KEY action (action),
+			KEY record_type (record_type),
+			KEY record_id (record_id),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY status (status)
+		) $charset_collate;
+
 		CREATE TABLE $table_ledger (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			stripe_customer_id varchar(100) NOT NULL,
@@ -326,6 +353,9 @@ class AJForms_Activator {
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+
+		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'active' WHERE enabled_portal = 1 AND (portal_status = '' OR portal_status = 'disabled')" );
+		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'disabled' WHERE enabled_portal = 0 AND (portal_status = '' OR portal_status IS NULL)" );
 
 		$current_year = (int) current_time( 'Y' );
 		$march_15 = strtotime( $current_year . '-03-15 00:00:00' ) < current_time( 'timestamp' ) ? ( $current_year + 1 ) . '-03-15' : $current_year . '-03-15';
@@ -398,6 +428,6 @@ class AJForms_Activator {
 			)
 		);
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '7', false );
+		update_option( 'ajforms_portal_schema_version', '8', false );
 	}
 }

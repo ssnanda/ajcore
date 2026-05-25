@@ -105,6 +105,7 @@ class AJForms {
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_service_request_remove' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_task_action' ) );
+		add_action( 'init', array( $this, 'maybe_handle_stripe_webhook' ) );
 		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
@@ -112,6 +113,16 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_create_custom_service_request', array( $this, 'ajax_create_custom_service_request' ) );
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 		add_action( 'wp_ajax_ajcore_pay_portal_ledger', array( $this, 'ajax_pay_portal_ledger' ) );
+	}
+
+	public function maybe_handle_stripe_webhook() {
+		if ( empty( $_GET['ajcore_stripe_webhook'] ) ) {
+			return;
+		}
+
+		$admin = new AJForms_Admin();
+		$admin->handle_stripe_webhook_request();
+		exit;
 	}
 
 	private function is_portal_user_account( $user = null ) {
@@ -2122,6 +2133,7 @@ class AJForms {
 					ON c.stripe_customer_id = m.stripe_customer_id
 				WHERE m.user_id = %d
 					AND c.enabled_portal = 1
+					AND (c.portal_status = 'active' OR c.portal_status = '')
 				ORDER BY m.updated_at DESC, m.id DESC
 				LIMIT 1",
 				$user_id
@@ -2145,7 +2157,7 @@ class AJForms {
 
 		return $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s AND enabled_portal = 1",
+				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s AND enabled_portal = 1 AND (portal_status = 'active' OR portal_status = '')",
 				sanitize_text_field( $mapping->stripe_customer_id )
 			)
 		);
