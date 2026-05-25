@@ -513,6 +513,20 @@ class AJForms {
 	}
 
 
+	private function get_portal_ledger_refunded_amount( $entry ) {
+		$raw = $this->decode_portal_json( isset( $entry->raw_data ) ? $entry->raw_data : '' );
+		if ( isset( $raw['amount_refunded'], $raw['currency'] ) ) {
+			return $this->stripe_amount_to_decimal( $raw['amount_refunded'], $raw['currency'] );
+		}
+
+		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+		if ( isset( $metadata['amount_refunded_total'] ) ) {
+			return (float) $metadata['amount_refunded_total'];
+		}
+
+		return 0.0;
+	}
+
 	private function get_portal_ledger_balance_effect( $entry ) {
 		$amount = isset( $entry->amount ) ? (float) $entry->amount : 0.0;
 		if ( 0.0 === $amount ) {
@@ -527,11 +541,20 @@ class AJForms {
 		}
 
 		if ( 'refund' === $source_type ) {
-			return in_array( $status, array( 'succeeded', 'paid', 'refunded', 'partial_refund', 'partially_refunded' ), true ) ? abs( $amount ) : 0.0;
+			return 0.0;
 		}
 
 		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
-			return in_array( $status, array( 'succeeded', 'paid', 'refunded', 'partial_refund', 'partially_refunded' ), true ) ? -1 * abs( $amount ) : 0.0;
+			if ( 'refunded' === $status ) {
+				return 0.0;
+			}
+
+			if ( in_array( $status, array( 'partially_refunded', 'partial_refund' ), true ) ) {
+				$net_paid = max( 0.0, abs( $amount ) - abs( $this->get_portal_ledger_refunded_amount( $entry ) ) );
+				return $net_paid > 0 ? -1 * $net_paid : 0.0;
+			}
+
+			return in_array( $status, array( 'succeeded', 'paid' ), true ) ? -1 * abs( $amount ) : 0.0;
 		}
 
 		if ( 'checkout_session' === $source_type ) {
