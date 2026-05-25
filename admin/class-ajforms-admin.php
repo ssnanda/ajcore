@@ -1809,11 +1809,14 @@ class AJForms_Admin {
 	}
 
 	private function format_portal_money( $amount, $currency ) {
-		return sprintf(
-			'%1$s %2$s',
-			strtoupper( sanitize_text_field( (string) $currency ) ),
-			number_format_i18n( (float) $amount, 2 )
-		);
+		$currency = strtolower( sanitize_key( (string) $currency ) );
+		$amount   = number_format_i18n( (float) $amount, 2 );
+
+		if ( 'usd' === $currency ) {
+			return '$' . $amount;
+		}
+
+		return strtoupper( sanitize_text_field( (string) $currency ) ) . ' ' . $amount;
 	}
 
 

@@ -502,7 +502,14 @@ class AJForms {
 	}
 
 	private function format_portal_money( $amount, $currency ) {
-		return strtoupper( sanitize_text_field( (string) $currency ) ) . ' ' . number_format_i18n( (float) $amount, 2 );
+		$currency = strtolower( sanitize_key( (string) $currency ) );
+		$amount   = number_format_i18n( (float) $amount, 2 );
+
+		if ( 'usd' === $currency ) {
+			return '$' . $amount;
+		}
+
+		return strtoupper( sanitize_text_field( (string) $currency ) ) . ' ' . $amount;
 	}
 
 
@@ -1469,23 +1476,27 @@ class AJForms {
 		$balance_data  = $this->get_portal_ledger_running_balances( $ledger );
 		$running_balances = $balance_data['balances'];
 		$final_balance = (float) $balance_data['total'];
-		$balance_currency = ! empty( $open_total['currency'] ) ? $open_total['currency'] : 'usd';
+		$balance_currency = ! empty( $open_total['currency'] ) ? $open_total['currency'] : ( ! empty( $ledger[0]->currency ) ? sanitize_key( (string) $ledger[0]->currency ) : 'usd' );
+		$balance_due      = max( 0, (float) $final_balance );
 
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'Billing', 'ajforms' ); ?></h2>
 
-			<?php if ( ! empty( $open_ledger ) ) : ?>
-				<div class="aj-portal-open-balance" style="margin:0 0 24px;padding:20px;border:1px solid #dbeafe;border-radius:22px;background:#eff6ff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-					<div>
-						<h3 style="margin:0 0 6px;"><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></h3>
-						<div style="font-size:24px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_money( $open_total['amount'], $open_total['currency'] ) ); ?></div>
-						<p style="margin:6px 0 0;color:#475569;"><?php esc_html_e( 'Pay all open charges in one checkout.', 'ajforms' ); ?></p>
-					</div>
-					<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="all" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Full Balance', 'ajforms' ); ?></button>
+			<div class="aj-portal-open-balance" style="margin:0 0 24px;padding:20px;border:1px solid #dbeafe;border-radius:22px;background:#eff6ff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+				<div>
+					<h3 style="margin:0 0 6px;"><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></h3>
+					<div style="font-size:24px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_money( $balance_due, $balance_currency ) ); ?></div>
+					<p style="margin:6px 0 0;color:#475569;"><?php esc_html_e( 'Make a payment or pay your current balance in one checkout.', 'ajforms' ); ?></p>
 				</div>
-			<?php endif; ?>
+				<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+					<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="" data-payment-mode="custom" data-payment-amount="" data-payment-currency="<?php echo esc_attr( $balance_currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Make a Payment', 'ajforms' ); ?></button>
+					<?php if ( $balance_due > 0 ) : ?>
+						<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="all" data-payment-mode="balance" data-payment-amount="<?php echo esc_attr( number_format( $balance_due, 2, '.', '' ) ); ?>" data-payment-currency="<?php echo esc_attr( $balance_currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Balance', 'ajforms' ); ?></button>
+					<?php endif; ?>
+				</div>
+			</div>
 
 			<div class="aj-portal-balance-summary" style="margin:0 0 24px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
 				<div>
@@ -1530,7 +1541,7 @@ class AJForms {
 								<?php if ( ! $entry_invoice_url && $entry_payment_url ) { $entry_invoice_url = $entry_payment_url; } ?>
 								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : ( $entry_payment_url ? __( 'Pay / View', 'ajforms' ) : __( 'Download', 'ajforms' ) ); ?>
 								<?php $entry_client_note = $this->get_ledger_metadata_value( $entry, 'client_notes' ); ?>
-								<?php $entry_is_open = ( (float) $entry->amount > 0 && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) ); ?>
+								<?php $entry_is_open = ( $balance_due > 0 && (float) $entry->amount > 0 && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) ); ?>
 								<tr>
 									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
 									<td><?php echo esc_html( $entry->description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
@@ -1539,7 +1550,7 @@ class AJForms {
 									<td><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
 									<td>
 										<?php if ( $entry_is_open ) : ?>
-											<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="<?php echo esc_attr( (int) $entry->id ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Now', 'ajforms' ); ?></button>
+											<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="<?php echo esc_attr( (int) $entry->id ); ?>" data-payment-mode="balance" data-payment-amount="<?php echo esc_attr( number_format( min( (float) $entry->amount, $balance_due ), 2, '.', '' ) ); ?>" data-payment-currency="<?php echo esc_attr( $entry->currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Now', 'ajforms' ); ?></button>
 										<?php elseif ( $entry_invoice_url ) : ?>
 											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
 										<?php else : ?>
@@ -2515,13 +2526,38 @@ class AJForms {
 						return;
 					}
 
+					const paymentMode = payButton.dataset.paymentMode || '';
+					let paymentAmount = payButton.dataset.paymentAmount || '';
+					if (paymentMode === 'custom' || paymentMode === 'balance') {
+						const promptMessage = paymentMode === 'balance'
+							? '<?php echo esc_js( __( 'Enter the amount you want to pay toward your balance.', 'ajforms' ) ); ?>'
+							: '<?php echo esc_js( __( 'Enter the payment amount.', 'ajforms' ) ); ?>';
+						const enteredAmount = window.prompt(promptMessage, paymentAmount || '');
+						if (enteredAmount === null) {
+							return;
+						}
+						if (String(enteredAmount).indexOf('-') !== -1) {
+							window.alert('<?php echo esc_js( __( 'Negative payment amounts are not allowed.', 'ajforms' ) ); ?>');
+							return;
+						}
+						paymentAmount = String(enteredAmount).replace(/[^0-9.]/g, '');
+						const numericAmount = parseFloat(paymentAmount);
+						if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+							window.alert('<?php echo esc_js( __( 'Enter a payment amount greater than $0.00. Negative amounts are not allowed.', 'ajforms' ) ); ?>');
+							return;
+						}
+						paymentAmount = numericAmount.toFixed(2);
+					}
+
 					payButton.disabled = true;
 					const originalText = payButton.textContent;
 					payButton.textContent = '<?php echo esc_js( __( 'Loading...', 'ajforms' ) ); ?>';
 
 					const formData = new FormData();
 					formData.append('action', 'ajcore_pay_portal_ledger');
-					formData.append('ledger_ids', payButton.dataset.ledgerIds || 'all');
+					formData.append('ledger_ids', payButton.dataset.ledgerIds || '');
+					formData.append('payment_amount', paymentAmount || '');
+					formData.append('payment_currency', payButton.dataset.paymentCurrency || 'usd');
 					formData.append('nonce', payButton.dataset.nonce || '');
 					formData.append('current_url', window.location.href);
 
@@ -3884,21 +3920,51 @@ class AJForms {
 
 		$raw_ledger_ids = isset( $_POST['ledger_ids'] ) ? sanitize_text_field( wp_unslash( $_POST['ledger_ids'] ) ) : '';
 		$ledger_ids = array();
-		if ( 'all' !== strtolower( $raw_ledger_ids ) ) {
+		if ( '' !== $raw_ledger_ids && 'all' !== strtolower( $raw_ledger_ids ) ) {
 			$ledger_ids = array_filter( array_map( 'absint', preg_split( '/[,|]/', $raw_ledger_ids ) ) );
 		}
 
-		$entries = $this->get_current_user_open_portal_ledger( $ledger_ids );
-		if ( empty( $entries ) ) {
-			wp_send_json_error( __( 'No open balance is available for payment.', 'ajforms' ), 400 );
+		$payment_amount_raw = isset( $_POST['payment_amount'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_amount'] ) ) : '';
+		if ( false !== strpos( (string) $payment_amount_raw, '-' ) ) {
+			wp_send_json_error( __( 'Negative payment amounts are not allowed.', 'ajforms' ), 400 );
+		}
+		$payment_amount_raw = preg_replace( '/[^0-9.]/', '', (string) $payment_amount_raw );
+		$payment_amount     = '' !== $payment_amount_raw ? round( (float) $payment_amount_raw, 2 ) : 0.0;
+		if ( $payment_amount < 0 ) {
+			wp_send_json_error( __( 'Negative payment amounts are not allowed.', 'ajforms' ), 400 );
 		}
 
-		$currency = strtolower( (string) $entries[0]->currency );
-		foreach ( $entries as $entry ) {
-			if ( strtolower( (string) $entry->currency ) !== $currency ) {
-				wp_send_json_error( __( 'Open charges with different currencies must be paid separately.', 'ajforms' ), 400 );
+		$payment_currency = isset( $_POST['payment_currency'] ) ? sanitize_key( wp_unslash( $_POST['payment_currency'] ) ) : 'usd';
+		if ( '' === $payment_currency ) {
+			$payment_currency = 'usd';
+		}
+
+		$entries = array();
+		if ( '' !== $raw_ledger_ids ) {
+			$entries = $this->get_current_user_open_portal_ledger( $ledger_ids );
+		}
+
+		if ( empty( $entries ) && $payment_amount <= 0 ) {
+			wp_send_json_error( __( 'Enter a payment amount greater than $0.00.', 'ajforms' ), 400 );
+		}
+
+		$currency = $payment_currency;
+		if ( ! empty( $entries ) ) {
+			$currency = strtolower( (string) $entries[0]->currency );
+			foreach ( $entries as $entry ) {
+				if ( strtolower( (string) $entry->currency ) !== $currency ) {
+					wp_send_json_error( __( 'Open charges with different currencies must be paid separately.', 'ajforms' ), 400 );
+				}
 			}
 		}
+
+		$open_entries_total = 0.0;
+		foreach ( $entries as $entry ) {
+			$open_entries_total += (float) $entry->amount;
+		}
+
+		$use_custom_amount = $payment_amount > 0;
+		$should_reconcile_ledgers = ( ! $use_custom_amount && ! empty( $entries ) ) || ( $use_custom_amount && ! empty( $entries ) && abs( $payment_amount - $open_entries_total ) < 0.005 );
 
 		$stripe_settings = $this->get_stripe_settings();
 		$mode_error = $this->get_stripe_mode_blocking_error( $stripe_settings );
@@ -3918,21 +3984,40 @@ class AJForms {
 			'cancel_url'  => $cancel_url,
 			'customer'    => $stripe_customer_id,
 			'metadata[source]' => 'ajcore_portal_balance_payment',
-			'metadata[ledger_ids]' => implode( ',', wp_list_pluck( $entries, 'id' ) ),
 			'metadata[stripe_customer_id]' => $stripe_customer_id,
+			'metadata[payment_amount]' => $use_custom_amount ? number_format( $payment_amount, 2, '.', '' ) : number_format( $open_entries_total, 2, '.', '' ),
+			'metadata[payment_currency]' => $currency,
 		);
+		if ( $should_reconcile_ledgers ) {
+			$body['metadata[ledger_ids]'] = implode( ',', wp_list_pluck( $entries, 'id' ) );
+		} else {
+			$body['metadata[ledger_ids]'] = '';
+			$body['metadata[account_payment_only]'] = '1';
+		}
 
 		$line_index = 0;
-		foreach ( $entries as $entry ) {
-			$amount_minor = $this->convert_amount_to_minor_units( (float) $entry->amount, $entry->currency );
+		if ( $use_custom_amount && ! $should_reconcile_ledgers ) {
+			$amount_minor = $this->convert_amount_to_minor_units( $payment_amount, $currency );
 			if ( $amount_minor <= 0 ) {
-				continue;
+				wp_send_json_error( __( 'Enter a payment amount greater than $0.00.', 'ajforms' ), 400 );
 			}
-			$body[ 'line_items[' . $line_index . '][price_data][currency]' ] = strtolower( (string) $entry->currency );
+			$body[ 'line_items[' . $line_index . '][price_data][currency]' ] = strtolower( (string) $currency );
 			$body[ 'line_items[' . $line_index . '][price_data][unit_amount]' ] = $amount_minor;
-			$body[ 'line_items[' . $line_index . '][price_data][product_data][name]' ] = wp_strip_all_tags( (string) $entry->description );
+			$body[ 'line_items[' . $line_index . '][price_data][product_data][name]' ] = __( 'Account payment', 'ajforms' );
 			$body[ 'line_items[' . $line_index . '][quantity]' ] = 1;
 			$line_index++;
+		} else {
+			foreach ( $entries as $entry ) {
+				$amount_minor = $this->convert_amount_to_minor_units( (float) $entry->amount, $entry->currency );
+				if ( $amount_minor <= 0 ) {
+					continue;
+				}
+				$body[ 'line_items[' . $line_index . '][price_data][currency]' ] = strtolower( (string) $entry->currency );
+				$body[ 'line_items[' . $line_index . '][price_data][unit_amount]' ] = $amount_minor;
+				$body[ 'line_items[' . $line_index . '][price_data][product_data][name]' ] = wp_strip_all_tags( (string) $entry->description );
+				$body[ 'line_items[' . $line_index . '][quantity]' ] = 1;
+				$line_index++;
+			}
 		}
 
 		if ( 0 === $line_index ) {
@@ -3950,7 +4035,7 @@ class AJForms {
 		}
 
 		$checkout_session_id = ! empty( $response['id'] ) ? sanitize_text_field( (string) $response['id'] ) : '';
-		if ( $checkout_session_id ) {
+		if ( $checkout_session_id && $should_reconcile_ledgers ) {
 			global $wpdb;
 			foreach ( $entries as $entry ) {
 				$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
