@@ -578,6 +578,16 @@ class AJForms_Admin {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
 		}
+
+		$wpdb->query(
+			"UPDATE {$this->get_portal_stripe_customers_table()} c
+			INNER JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
+			INNER JOIN {$wpdb->users} u ON u.ID = m.user_id
+			INNER JOIN {$wpdb->usermeta} um ON um.user_id = u.ID AND um.meta_key = '{$wpdb->prefix}capabilities'
+			SET c.enabled_portal = 1, c.portal_status = 'active'
+			WHERE (c.portal_status = '' OR c.portal_status IS NULL OR c.portal_status = 'disabled')
+			AND um.meta_value LIKE '%aj_portal_user%'"
+		);
 	}
 
 	private function get_portal_cache_counts() {
@@ -696,6 +706,51 @@ class AJForms_Admin {
 		$this->record_portal_sync_item( 'inserted', $unique_key, isset( $data[ $unique_key ] ) ? $data[ $unique_key ] : '', 'success', '', $data, isset( $data['stripe_customer_id'] ) ? $data['stripe_customer_id'] : '' );
 
 		return (int) $wpdb->insert_id;
+	}
+
+	private function upsert_portal_stripe_customer_record( $data, $formats ) {
+		global $wpdb;
+
+		$table = $this->get_portal_stripe_customers_table();
+		if ( empty( $data['stripe_customer_id'] ) ) {
+			return 0;
+		}
+
+		$existing = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT id, enabled_portal, portal_status FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
+				$data['stripe_customer_id']
+			)
+		);
+
+		if ( $existing && in_array( sanitize_key( (string) $existing->portal_status ), array( 'active', 'disabled', 'archived' ), true ) ) {
+			unset( $data['enabled_portal'], $data['portal_status'] );
+			$formats = array_slice( $formats, 0, count( $data ) );
+			$this->record_portal_sync_item(
+				'preserved',
+				'portal_status',
+				$data['stripe_customer_id'],
+				'success',
+				sprintf(
+					/* translators: %s: portal status */
+					__( 'Preserved existing portal status: %s.', 'ajforms' ),
+					sanitize_key( (string) $existing->portal_status )
+				),
+				array( 'portal_status' => sanitize_key( (string) $existing->portal_status ), 'enabled_portal' => (int) $existing->enabled_portal ),
+				$data['stripe_customer_id']
+			);
+		} else {
+			if ( ! array_key_exists( 'enabled_portal', $data ) ) {
+				$data['enabled_portal'] = 0;
+				$formats[] = '%d';
+			}
+			if ( ! array_key_exists( 'portal_status', $data ) ) {
+				$data['portal_status'] = 'disabled';
+				$formats[] = '%s';
+			}
+		}
+
+		return $this->upsert_portal_record( $table, $data, $formats, 'stripe_customer_id' );
 	}
 
 	private function get_guest_portal_customer_id( $email ) {
@@ -850,6 +905,61 @@ class AJForms_Admin {
 		return $summary;
 	}
 
+	private function enrich_checkout_session_with_line_items( $session, $secret_key ) {
+		if ( empty( $session['id'] ) ) {
+			return $session;
+		}
+
+		if ( ! empty( $session['line_items']['data'] ) || ! empty( $session['items'] ) ) {
+			return $session;
+		}
+
+		$line_items = $this->stripe_api_get(
+			'checkout/sessions/' . rawurlencode( (string) $session['id'] ) . '/line_items',
+			$secret_key,
+			array( 'limit' => 100, 'expand[]' => 'data.price.product' )
+		);
+
+		if ( is_wp_error( $line_items ) || empty( $line_items['data'] ) || ! is_array( $line_items['data'] ) ) {
+			return $session;
+		}
+
+		$session['line_items'] = $line_items;
+
+		return $session;
+	}
+
+	private function upsert_portal_checkout_session_transaction_cache( $session, $customer_id ) {
+		if ( empty( $session['id'] ) || '' === $customer_id ) {
+			return 0;
+		}
+
+		$payment_intent_id = ! empty( $session['payment_intent'] ) ? sanitize_text_field( (string) $session['payment_intent'] ) : '';
+		$currency = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : 'usd';
+
+		return $this->upsert_portal_record(
+			$this->get_portal_stripe_transactions_table(),
+			array(
+				'stripe_object_id'   => sanitize_text_field( (string) $session['id'] ),
+				'object_type'        => 'checkout_session',
+				'stripe_customer_id' => sanitize_text_field( (string) $customer_id ),
+				'invoice_id'         => ! empty( $session['invoice'] ) ? sanitize_text_field( (string) $session['invoice'] ) : '',
+				'payment_intent_id'  => $payment_intent_id,
+				'charge_id'          => '',
+				'description'        => ! empty( $session['metadata']['source'] ) ? sanitize_text_field( (string) $session['metadata']['source'] ) : sprintf( __( 'Checkout session %s', 'ajforms' ), $session['id'] ),
+				'amount'             => $this->stripe_amount_to_decimal( isset( $session['amount_total'] ) ? $session['amount_total'] : 0, $currency ),
+				'currency'           => $currency,
+				'status'             => ! empty( $session['payment_status'] ) ? sanitize_key( (string) $session['payment_status'] ) : '',
+				'transaction_date'   => ! empty( $session['created'] ) ? $this->stripe_timestamp_to_mysql( $session['created'] ) : null,
+				'due_date'           => null,
+				'raw_data'           => wp_json_encode( $session ),
+				'synced_at'          => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ),
+			'stripe_object_id'
+		);
+	}
+
 	private function upsert_guest_portal_customer_from_payment( $payment, $source ) {
 		$customer_id = $this->get_payment_customer_id( $payment );
 		if ( '' === $customer_id || 0 === strpos( $customer_id, 'cus_' ) ) {
@@ -884,8 +994,7 @@ class AJForms_Admin {
 			$customer_metadata['business_name'] = $business_name;
 		}
 
-		return $this->upsert_portal_record(
-			$this->get_portal_stripe_customers_table(),
+		return $this->upsert_portal_stripe_customer_record(
 			array(
 				'stripe_customer_id' => $customer_id,
 				'email'              => $email,
@@ -898,8 +1007,7 @@ class AJForms_Admin {
 				'created_at'         => ! empty( $payment['created'] ) ? $this->stripe_timestamp_to_mysql( $payment['created'] ) : null,
 				'synced_at'          => current_time( 'mysql' ),
 			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ),
-			'stripe_customer_id'
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 	}
 
@@ -964,8 +1072,7 @@ class AJForms_Admin {
 				continue;
 			}
 
-			$upserted = $this->upsert_portal_record(
-				$this->get_portal_stripe_customers_table(),
+			$upserted = $this->upsert_portal_stripe_customer_record(
 				array(
 					'stripe_customer_id' => sanitize_text_field( (string) $customer['id'] ),
 					'email'              => ! empty( $customer['email'] ) ? sanitize_email( (string) $customer['email'] ) : '',
@@ -978,8 +1085,7 @@ class AJForms_Admin {
 					'created_at'         => ! empty( $customer['created'] ) ? $this->stripe_timestamp_to_mysql( $customer['created'] ) : null,
 					'synced_at'          => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ),
-				'stripe_customer_id'
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 			);
 			if ( $upserted ) {
 				$count++;
@@ -996,6 +1102,7 @@ class AJForms_Admin {
 				continue;
 			}
 
+			$session = $this->enrich_checkout_session_with_line_items( $session, $secret_key );
 			$inserted = $this->upsert_guest_portal_customer_from_payment( $session, 'checkout_session' );
 			$customer_id = $this->get_payment_customer_id( $session );
 			if ( '' !== $customer_id ) {
@@ -1450,6 +1557,7 @@ class AJForms_Admin {
 				continue;
 			}
 
+			$session = $this->enrich_checkout_session_with_line_items( $session, $secret_key );
 			$customer_id = $this->get_payment_customer_id( $session );
 			if ( '' === $customer_id ) {
 				continue;
@@ -1495,6 +1603,7 @@ class AJForms_Admin {
 					)
 				);
 				if ( $existing_payment ) {
+					$this->upsert_portal_checkout_session_transaction_cache( $session, $customer_id );
 					continue;
 				}
 			}
@@ -1891,8 +2000,7 @@ class AJForms_Admin {
 			return new WP_Error( 'customer_not_found', __( 'Stripe customer was not found.', 'ajforms' ) );
 		}
 
-		$this->upsert_portal_record(
-			$this->get_portal_stripe_customers_table(),
+		$this->upsert_portal_stripe_customer_record(
 			array(
 				'stripe_customer_id' => sanitize_text_field( (string) $customer['id'] ),
 				'email'              => ! empty( $customer['email'] ) ? sanitize_email( (string) $customer['email'] ) : '',
@@ -1905,8 +2013,7 @@ class AJForms_Admin {
 				'created_at'         => ! empty( $customer['created'] ) ? $this->stripe_timestamp_to_mysql( $customer['created'] ) : null,
 				'synced_at'          => current_time( 'mysql' ),
 			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ),
-			'stripe_customer_id'
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
 		$subscription_count = $this->sync_portal_stripe_subscriptions( $secret_key, $stripe_customer_id );
@@ -2425,12 +2532,49 @@ class AJForms_Admin {
 		$this->collect_portal_service_identifiers_from_data( $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' ), $identifiers );
 		$this->collect_portal_service_identifiers_from_data( $this->decode_portal_json( isset( $entry->raw_data ) ? $entry->raw_data : '' ), $identifiers );
 		$this->collect_portal_service_identifiers_from_data( $this->decode_portal_json( isset( $entry->transaction_raw_data ) ? $entry->transaction_raw_data : '' ), $identifiers );
+		foreach ( $this->get_related_portal_transaction_raw_data_for_entry( $entry ) as $raw_data ) {
+			$this->collect_portal_service_identifiers_from_data( $raw_data, $identifiers );
+		}
 
 		foreach ( $identifiers as $key => $values ) {
 			$identifiers[ $key ] = array_values( array_filter( array_unique( $values ) ) );
 		}
 
 		return $identifiers;
+	}
+
+	private function get_related_portal_transaction_raw_data_for_entry( $entry ) {
+		global $wpdb;
+
+		$conditions = array();
+		$params     = array();
+		foreach ( array(
+			'stripe_object_id'  => isset( $entry->source_object_id ) ? $entry->source_object_id : '',
+			'payment_intent_id' => isset( $entry->payment_intent_id ) ? $entry->payment_intent_id : '',
+			'invoice_id'        => isset( $entry->invoice_id ) ? $entry->invoice_id : '',
+			'charge_id'         => isset( $entry->charge_id ) ? $entry->charge_id : '',
+		) as $column => $value ) {
+			if ( is_scalar( $value ) && '' !== (string) $value ) {
+				$conditions[] = "{$column} = %s";
+				$params[]     = sanitize_text_field( (string) $value );
+			}
+		}
+
+		if ( empty( $conditions ) ) {
+			return array();
+		}
+
+		$sql = "SELECT raw_data FROM {$this->get_portal_stripe_transactions_table()} WHERE (" . implode( ' OR ', $conditions ) . ") ORDER BY CASE object_type WHEN 'checkout_session' THEN 0 WHEN 'invoice' THEN 1 WHEN 'charge' THEN 2 ELSE 3 END, id DESC LIMIT 10";
+		$rows = $wpdb->get_col( $wpdb->prepare( $sql, $params ) );
+		$data = array();
+		foreach ( (array) $rows as $raw ) {
+			$decoded = $this->decode_portal_json( $raw );
+			if ( ! empty( $decoded ) ) {
+				$data[] = $decoded;
+			}
+		}
+
+		return $data;
 	}
 
 	private function resolve_portal_product_from_identifiers( $identifiers ) {
@@ -2517,6 +2661,7 @@ class AJForms_Admin {
 			'checkout payment',
 			'service checkout payment',
 			'balance payment',
+			'subscription creation',
 			'billing item',
 			'charge',
 			'invoice',
@@ -2533,10 +2678,14 @@ class AJForms_Admin {
 			return true;
 		}
 
+		if ( preg_match( '/^(charge|payment|invoice|checkout session|subscription creation)\s+(ch_|py_|pi_|in_|cs_)/', $normalized ) ) {
+			return true;
+		}
+
 		return preg_match( '/^(cs_|pi_|ch_|in_|cus_|prod_|price_|sub_)/', $normalized );
 	}
 
-	private function add_portal_service_label_candidate( &$candidates, $label ) {
+	private function add_portal_service_label_candidate( &$candidates, $label, $priority = 50 ) {
 		if ( ! is_scalar( $label ) ) {
 			return;
 		}
@@ -2546,7 +2695,10 @@ class AJForms_Admin {
 			return;
 		}
 
-		$candidates[] = $label;
+		$candidates[] = array(
+			'label'    => $label,
+			'priority' => absint( $priority ),
+		);
 	}
 
 	private function collect_portal_service_label_candidates_from_item( $item, &$candidates ) {
@@ -2554,16 +2706,40 @@ class AJForms_Admin {
 			return;
 		}
 
-		foreach ( array( 'product_name', 'service_name', 'name', 'description' ) as $key ) {
+		foreach ( array( 'product_name', 'service_name', 'name' ) as $key ) {
 			if ( isset( $item[ $key ] ) ) {
-				$this->add_portal_service_label_candidate( $candidates, $item[ $key ] );
+				$this->add_portal_service_label_candidate( $candidates, $item[ $key ], 10 );
+			}
+		}
+
+		if ( ! empty( $item['description'] ) ) {
+			$this->add_portal_service_label_candidate( $candidates, $item['description'], 40 );
+		}
+
+		if ( ! empty( $item['price'] ) && is_array( $item['price'] ) && ! empty( $item['price']['product'] ) ) {
+			if ( is_array( $item['price']['product'] ) && ! empty( $item['price']['product']['name'] ) ) {
+				$this->add_portal_service_label_candidate( $candidates, $item['price']['product']['name'], 12 );
+			} elseif ( is_scalar( $item['price']['product'] ) ) {
+				$product = $this->resolve_portal_product_from_identifiers(
+					array(
+						'price_ids'           => array(),
+						'product_ids'         => array( sanitize_text_field( (string) $item['price']['product'] ) ),
+						'subscription_ids'    => array(),
+						'checkout_session_ids'=> array(),
+						'invoice_ids'         => array(),
+						'payment_intent_ids'  => array(),
+					)
+				);
+				if ( $product && ! empty( $product->name ) ) {
+					$this->add_portal_service_label_candidate( $candidates, $product->name, 20 );
+				}
 			}
 		}
 
 		if ( ! empty( $item['price'] ) && is_array( $item['price'] ) ) {
 			foreach ( array( 'nickname', 'description' ) as $key ) {
 				if ( isset( $item['price'][ $key ] ) ) {
-					$this->add_portal_service_label_candidate( $candidates, $item['price'][ $key ] );
+					$this->add_portal_service_label_candidate( $candidates, $item['price'][ $key ], 35 );
 				}
 			}
 			if ( ! empty( $item['price']['product'] ) && is_array( $item['price']['product'] ) ) {
@@ -2597,7 +2773,8 @@ class AJForms_Admin {
 
 		foreach ( array( 'product_name', 'service_name', 'item_name', 'line_item_description', 'product_label', 'description' ) as $key ) {
 			if ( isset( $data[ $key ] ) ) {
-				$this->add_portal_service_label_candidate( $candidates, $data[ $key ] );
+				$priority = 'description' === $key ? 80 : 25;
+				$this->add_portal_service_label_candidate( $candidates, $data[ $key ], $priority );
 			}
 		}
 
@@ -2613,12 +2790,31 @@ class AJForms_Admin {
 		$this->collect_portal_service_label_candidates_from_data( $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' ), $candidates );
 		$this->collect_portal_service_label_candidates_from_data( $this->decode_portal_json( isset( $entry->raw_data ) ? $entry->raw_data : '' ), $candidates );
 		$this->collect_portal_service_label_candidates_from_data( $this->decode_portal_json( isset( $entry->transaction_raw_data ) ? $entry->transaction_raw_data : '' ), $candidates );
+		foreach ( $this->get_related_portal_transaction_raw_data_for_entry( $entry ) as $raw_data ) {
+			$this->collect_portal_service_label_candidates_from_data( $raw_data, $candidates );
+		}
 		if ( isset( $entry->description ) ) {
-			$this->add_portal_service_label_candidate( $candidates, $entry->description );
+			$this->add_portal_service_label_candidate( $candidates, $entry->description, 100 );
 		}
 
-		$candidates = array_values( array_unique( array_filter( $candidates ) ) );
-		return ! empty( $candidates[0] ) ? $candidates[0] : '';
+		usort(
+			$candidates,
+			function ( $a, $b ) {
+				return (int) $a['priority'] <=> (int) $b['priority'];
+			}
+		);
+
+		$seen = array();
+		foreach ( $candidates as $candidate ) {
+			$key = strtolower( $candidate['label'] );
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+			$seen[ $key ] = true;
+			return $candidate['label'];
+		}
+
+		return '';
 	}
 
 	private function record_portal_service_display_skip( $entry, $reason ) {
