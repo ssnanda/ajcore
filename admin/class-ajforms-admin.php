@@ -7,6 +7,7 @@ class AJForms_Admin {
 	private $portal_sync_current_run_key = '';
 	private $portal_sync_current_job = '';
 	private $portal_sync_stats = array();
+	private $portal_service_display_skips = array();
 
 	private function get_latest_release_api_url() {
 		return 'https://api.github.com/repos/ssnanda/ajcore/releases/latest';
@@ -2503,11 +2504,145 @@ class AJForms_Admin {
 		return '';
 	}
 
+	private function is_generic_portal_service_label( $label ) {
+		$label = trim( sanitize_text_field( (string) $label ) );
+		if ( '' === $label ) {
+			return true;
+		}
+
+		$normalized = strtolower( preg_replace( '/\s+/', ' ', $label ) );
+		$generic    = array(
+			'payment',
+			'website checkout payment',
+			'checkout payment',
+			'service checkout payment',
+			'balance payment',
+			'billing item',
+			'charge',
+			'invoice',
+			'checkout session',
+			'customer',
+			'product',
+			'price',
+			'ajcore_products_cart',
+			'ajcore_portal_add_service',
+			'ajcore_portal_balance_payment',
+		);
+
+		if ( in_array( $normalized, $generic, true ) ) {
+			return true;
+		}
+
+		return preg_match( '/^(cs_|pi_|ch_|in_|cus_|prod_|price_|sub_)/', $normalized );
+	}
+
+	private function add_portal_service_label_candidate( &$candidates, $label ) {
+		if ( ! is_scalar( $label ) ) {
+			return;
+		}
+
+		$label = trim( sanitize_text_field( (string) $label ) );
+		if ( $this->is_generic_portal_service_label( $label ) ) {
+			return;
+		}
+
+		$candidates[] = $label;
+	}
+
+	private function collect_portal_service_label_candidates_from_item( $item, &$candidates ) {
+		if ( ! is_array( $item ) ) {
+			return;
+		}
+
+		foreach ( array( 'product_name', 'service_name', 'name', 'description' ) as $key ) {
+			if ( isset( $item[ $key ] ) ) {
+				$this->add_portal_service_label_candidate( $candidates, $item[ $key ] );
+			}
+		}
+
+		if ( ! empty( $item['price'] ) && is_array( $item['price'] ) ) {
+			foreach ( array( 'nickname', 'description' ) as $key ) {
+				if ( isset( $item['price'][ $key ] ) ) {
+					$this->add_portal_service_label_candidate( $candidates, $item['price'][ $key ] );
+				}
+			}
+			if ( ! empty( $item['price']['product'] ) && is_array( $item['price']['product'] ) ) {
+				$this->collect_portal_service_label_candidates_from_item( $item['price']['product'], $candidates );
+			}
+		}
+
+		if ( ! empty( $item['product'] ) && is_array( $item['product'] ) ) {
+			$this->collect_portal_service_label_candidates_from_item( $item['product'], $candidates );
+		}
+	}
+
+	private function collect_portal_service_label_candidates_from_data( $data, &$candidates ) {
+		if ( ! is_array( $data ) ) {
+			return;
+		}
+
+		foreach ( array( 'line_items', 'lines', 'items', 'display_items' ) as $container_key ) {
+			if ( empty( $data[ $container_key ] ) || ! is_array( $data[ $container_key ] ) ) {
+				continue;
+			}
+
+			$items = $data[ $container_key ];
+			if ( isset( $items['data'] ) && is_array( $items['data'] ) ) {
+				$items = $items['data'];
+			}
+			foreach ( $items as $item ) {
+				$this->collect_portal_service_label_candidates_from_item( $item, $candidates );
+			}
+		}
+
+		foreach ( array( 'product_name', 'service_name', 'item_name', 'line_item_description', 'product_label', 'description' ) as $key ) {
+			if ( isset( $data[ $key ] ) ) {
+				$this->add_portal_service_label_candidate( $candidates, $data[ $key ] );
+			}
+		}
+
+		foreach ( $data as $value ) {
+			if ( is_array( $value ) ) {
+				$this->collect_portal_service_label_candidates_from_data( $value, $candidates );
+			}
+		}
+	}
+
+	private function get_portal_fallback_service_name_from_ledger_entry( $entry ) {
+		$candidates = array();
+		$this->collect_portal_service_label_candidates_from_data( $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' ), $candidates );
+		$this->collect_portal_service_label_candidates_from_data( $this->decode_portal_json( isset( $entry->raw_data ) ? $entry->raw_data : '' ), $candidates );
+		$this->collect_portal_service_label_candidates_from_data( $this->decode_portal_json( isset( $entry->transaction_raw_data ) ? $entry->transaction_raw_data : '' ), $candidates );
+		if ( isset( $entry->description ) ) {
+			$this->add_portal_service_label_candidate( $candidates, $entry->description );
+		}
+
+		$candidates = array_values( array_unique( array_filter( $candidates ) ) );
+		return ! empty( $candidates[0] ) ? $candidates[0] : '';
+	}
+
+	private function record_portal_service_display_skip( $entry, $reason ) {
+		if ( count( $this->portal_service_display_skips ) >= 25 ) {
+			return;
+		}
+
+		$this->portal_service_display_skips[] = array(
+			'reason'           => sanitize_text_field( (string) $reason ),
+			'customer'         => ! empty( $entry->customer_name ) ? sanitize_text_field( (string) $entry->customer_name ) : ( ! empty( $entry->customer_email ) ? sanitize_email( (string) $entry->customer_email ) : sanitize_text_field( (string) $entry->stripe_customer_id ) ),
+			'stripe_customer_id'=> isset( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
+			'source_type'      => isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '',
+			'source_object_id' => isset( $entry->source_object_id ) ? sanitize_text_field( (string) $entry->source_object_id ) : '',
+			'status'           => isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '',
+			'amount'           => $this->format_portal_money( isset( $entry->amount ) ? $entry->amount : 0, isset( $entry->currency ) ? $entry->currency : 'usd' ),
+		);
+	}
+
 	private function get_portal_service_dedupe_key( $record ) {
 		$parts = array(
 			isset( $record->stripe_customer_id ) ? (string) $record->stripe_customer_id : '',
 			isset( $record->stripe_product_id ) ? (string) $record->stripe_product_id : '',
 			isset( $record->stripe_price_id ) ? (string) $record->stripe_price_id : '',
+			isset( $record->service_name ) ? sanitize_title( (string) $record->service_name ) : '',
 			isset( $record->stripe_subscription_id ) ? (string) $record->stripe_subscription_id : '',
 			isset( $record->checkout_session_id ) ? (string) $record->checkout_session_id : '',
 			isset( $record->invoice_id ) ? (string) $record->invoice_id : '',
@@ -2561,6 +2696,30 @@ class AJForms_Admin {
 				'next_action'           => '',
 			),
 			$context
+		);
+	}
+
+	private function make_portal_fallback_one_time_service_record( $entry, $service_name, $identifiers = array() ) {
+		return (object) array(
+			'service_name'          => sanitize_text_field( (string) $service_name ),
+			'price'                 => '',
+			'recurring_interval'    => '',
+			'billing_type_key'      => 'one_time',
+			'billing_type'          => $this->get_portal_billing_type_label( 'one_time' ),
+			'stripe_price_id'       => '',
+			'stripe_product_id'     => '',
+			'stripe_subscription_id'=> ! empty( $identifiers['subscription_ids'][0] ) ? sanitize_text_field( (string) $identifiers['subscription_ids'][0] ) : '',
+			'checkout_session_id'   => ! empty( $identifiers['checkout_session_ids'][0] ) ? sanitize_text_field( (string) $identifiers['checkout_session_ids'][0] ) : ( ! empty( $entry->source_type ) && 'checkout_session' === sanitize_key( (string) $entry->source_type ) && ! empty( $entry->source_object_id ) ? sanitize_text_field( (string) $entry->source_object_id ) : '' ),
+			'invoice_id'            => ! empty( $identifiers['invoice_ids'][0] ) ? sanitize_text_field( (string) $identifiers['invoice_ids'][0] ) : ( ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : '' ),
+			'payment_intent_id'     => ! empty( $identifiers['payment_intent_ids'][0] ) ? sanitize_text_field( (string) $identifiers['payment_intent_ids'][0] ) : ( ! empty( $entry->payment_intent_id ) ? sanitize_text_field( (string) $entry->payment_intent_id ) : '' ),
+			'service_period'        => $this->get_portal_service_period_from_ledger_entry( $entry ),
+			'status'                => isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '',
+			'amount'                => $this->format_portal_money( isset( $entry->amount ) ? $entry->amount : 0, isset( $entry->currency ) ? $entry->currency : 'usd' ),
+			'paid_at'               => isset( $entry->ledger_date ) ? $entry->ledger_date : '',
+			'synced_at'             => ! empty( $entry->created_at ) ? $entry->created_at : '',
+			'customer'              => ! empty( $entry->customer_name ) ? sanitize_text_field( (string) $entry->customer_name ) : ( ! empty( $entry->customer_email ) ? sanitize_email( (string) $entry->customer_email ) : ( ! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : __( 'Guest customer', 'ajforms' ) ) ),
+			'stripe_customer_id'    => ! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
+			'next_action'           => __( 'Convert to Auto-Pay Subscription', 'ajforms' ),
 		);
 	}
 
@@ -2729,6 +2888,22 @@ class AJForms_Admin {
 			$identifiers = $this->get_portal_service_identifiers_from_ledger_entry( $entry );
 			$product     = $this->resolve_portal_product_from_identifiers( $identifiers );
 			if ( ! $product ) {
+				$fallback_service_name = $this->get_portal_fallback_service_name_from_ledger_entry( $entry );
+				if ( '' === $fallback_service_name ) {
+					$this->record_portal_service_display_skip( $entry, __( 'Skipped because no synced Stripe product, price, or usable checkout item description was found.', 'ajforms' ) );
+					continue;
+				}
+				if ( 'subscription' === $billing_type ) {
+					continue;
+				}
+
+				$record = $this->make_portal_fallback_one_time_service_record( $entry, $fallback_service_name, $identifiers );
+				$dedupe_key = $this->get_portal_service_dedupe_key( $record );
+				if ( isset( $seen[ $dedupe_key ] ) ) {
+					continue;
+				}
+				$seen[ $dedupe_key ] = true;
+				$rows[] = $record;
 				continue;
 			}
 
@@ -2775,6 +2950,46 @@ class AJForms_Admin {
 
 	private function get_portal_recurring_service_records_from_ledger( $stripe_customer_id = '', $limit = 300 ) {
 		return $this->get_portal_ledger_service_records( 'subscription', $stripe_customer_id, $limit );
+	}
+
+	private function render_portal_service_display_reconciliation_notes() {
+		if ( empty( $this->portal_service_display_skips ) ) {
+			return;
+		}
+		?>
+		<details class="ajcore-service-reconciliation" style="margin:16px 0;">
+			<summary><strong><?php esc_html_e( 'Service Display Reconciliation', 'ajforms' ); ?></strong></summary>
+			<p class="description"><?php esc_html_e( 'Paid ledger rows listed here were not shown as services. This is diagnostic only; billing ledger rows were not changed.', 'ajforms' ); ?></p>
+			<table class="widefat striped" style="margin-top:10px;">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Reason', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ( $this->portal_service_display_skips as $skip ) : ?>
+						<tr>
+							<td><?php echo esc_html( $skip['reason'] ); ?></td>
+							<td>
+								<?php echo esc_html( $skip['customer'] ); ?>
+								<?php if ( ! empty( $skip['stripe_customer_id'] ) ) : ?><br><code><?php echo esc_html( $skip['stripe_customer_id'] ); ?></code><?php endif; ?>
+							</td>
+							<td>
+								<?php echo esc_html( $skip['source_type'] ); ?>
+								<?php if ( ! empty( $skip['source_object_id'] ) ) : ?><br><code><?php echo esc_html( $skip['source_object_id'] ); ?></code><?php endif; ?>
+							</td>
+							<td><?php echo esc_html( $skip['status'] ); ?></td>
+							<td><?php echo esc_html( $skip['amount'] ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		</details>
+		<?php
 	}
 
 	private function get_portal_customer_purchased_products( $subscriptions, $ledger ) {
@@ -8713,6 +8928,7 @@ class AJForms_Admin {
 		$one_time_services    = array();
 		$active_recurring_services = array();
 		if ( 'active_services' === $service_view ) {
+			$this->portal_service_display_skips = array();
 			$active_subscriptions = $wpdb->get_results(
 				"SELECT s.*, c.name AS customer_name, c.email AS customer_email
 				FROM {$this->get_portal_stripe_subscriptions_table()} s
@@ -8812,6 +9028,7 @@ class AJForms_Admin {
 						<?php endif; ?>
 					</tbody>
 				</table>
+				<?php $this->render_portal_service_display_reconciliation_notes(); ?>
 			<?php endif; ?>
 
 			<form method="post">
