@@ -1595,10 +1595,7 @@ class AJForms {
 						<span><?php esc_html_e( 'Payment Amount', 'ajforms' ); ?></span>
 						<input type="number" class="aj-portal-payment-amount-input" min="0.01" step="0.01" inputmode="decimal" value="<?php echo esc_attr( $balance_due > 0 ? number_format( $balance_due, 2, '.', '' ) : '' ); ?>" placeholder="0.00" style="width:170px;border:1px solid #bfdbfe;border-radius:14px;padding:10px 12px;font-weight:800;background:#fff;">
 					</label>
-					<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="" data-payment-mode="custom" data-payment-amount="" data-payment-currency="<?php echo esc_attr( $balance_currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Make a Payment', 'ajforms' ); ?></button>
-					<?php if ( $balance_due > 0 ) : ?>
-						<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="all" data-payment-mode="balance" data-payment-amount="<?php echo esc_attr( number_format( $balance_due, 2, '.', '' ) ); ?>" data-payment-currency="<?php echo esc_attr( $balance_currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Balance', 'ajforms' ); ?></button>
-					<?php endif; ?>
+					<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="<?php echo esc_attr( $balance_due > 0 ? 'all' : '' ); ?>" data-payment-mode="<?php echo esc_attr( $balance_due > 0 ? 'balance' : 'custom' ); ?>" data-payment-amount="<?php echo esc_attr( $balance_due > 0 ? number_format( $balance_due, 2, '.', '' ) : '' ); ?>" data-payment-currency="<?php echo esc_attr( $balance_currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Make a Payment', 'ajforms' ); ?></button>
 				</div>
 			</div>
 
@@ -1640,10 +1637,8 @@ class AJForms {
 						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Transaction ID', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Debit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Credit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
 							<?php foreach ( $ledger as $entry ) : ?>
-								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ) : $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' ); ?>
-								<?php $entry_payment_url = $this->get_ledger_metadata_value( $entry, 'payment_url' ); ?>
-								<?php if ( ! $entry_invoice_url && $entry_payment_url ) { $entry_invoice_url = $entry_payment_url; } ?>
-								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : ( $entry_payment_url ? __( 'Pay / View', 'ajforms' ) : __( 'Download', 'ajforms' ) ); ?>
+								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ); ?>
+								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'PDF', 'ajforms' ); ?>
 								<?php $entry_client_note = $this->get_ledger_metadata_value( $entry, 'client_notes' ); ?>
 								<?php $entry_transaction_id = $this->get_portal_ledger_transaction_id( $entry ); ?>
 								<?php $entry_display_description = $this->get_portal_ledger_display_description( $entry ); ?>
@@ -1658,9 +1653,7 @@ class AJForms {
 									<td><?php echo esc_html( $entry_debit_credit['credit'] ? $entry_debit_credit['credit'] : '-' ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
 									<td>
-										<?php if ( $entry_is_open ) : ?>
-											<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="<?php echo esc_attr( (int) $entry->id ); ?>" data-payment-mode="balance" data-payment-amount="<?php echo esc_attr( number_format( min( (float) $entry->amount, $balance_due ), 2, '.', '' ) ); ?>" data-payment-currency="<?php echo esc_attr( $entry->currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Pay Now', 'ajforms' ); ?></button>
-										<?php elseif ( $entry_invoice_url ) : ?>
+										<?php if ( $entry_invoice_url ) : ?>
 											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
 										<?php else : ?>
 											<?php echo $this->get_portal_service_request_actions( $entry ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
