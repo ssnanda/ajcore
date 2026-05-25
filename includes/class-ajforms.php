@@ -1180,7 +1180,7 @@ class AJForms {
 		);
 		$ledger = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND NOT (source_type = 'checkout_session' AND (description = 'ajcore_portal_balance_payment' OR metadata LIKE '%%ajcore_portal_balance_payment%%')) ORDER BY ledger_date DESC LIMIT 50",
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND " . $this->get_ignored_unpaid_checkout_sql_fragment() . " ORDER BY ledger_date DESC LIMIT 50",
 				$stripe_customer_id
 			)
 		);
@@ -1327,6 +1327,20 @@ class AJForms {
 		return array( 'unpaid', 'pending_payment', 'awaiting_payment' );
 	}
 
+	private function get_ignored_unpaid_checkout_sources() {
+		return array(
+			'ajcore_portal_balance_payment',
+			'ajcore_products_cart',
+			'ajcore_portal_add_service',
+		);
+	}
+
+	private function get_ignored_unpaid_checkout_sql_fragment( $table_alias = '' ) {
+		$prefix = $table_alias ? sanitize_key( (string) $table_alias ) . '.' : '';
+
+		return "NOT ({$prefix}source_type = 'checkout_session' AND {$prefix}status IN ('unpaid','open','pending','pending_payment','requires_payment_method') AND ({$prefix}description IN ('ajcore_portal_balance_payment','ajcore_products_cart','ajcore_portal_add_service') OR {$prefix}metadata LIKE '%%ajcore_portal_balance_payment%%' OR {$prefix}metadata LIKE '%%ajcore_products_cart%%' OR {$prefix}metadata LIKE '%%ajcore_portal_add_service%%'))";
+	}
+
 	private function get_current_user_open_portal_ledger( $ledger_ids = array() ) {
 		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
 		if ( '' === $stripe_customer_id ) {
@@ -1338,7 +1352,7 @@ class AJForms {
 		$statuses = $this->get_portal_open_ledger_statuses();
 		$status_placeholders = implode( ',', array_fill( 0, count( $statuses ), '%s' ) );
 		$params = array_merge( array( $stripe_customer_id ), $statuses );
-		$where = "stripe_customer_id = %s AND amount > 0 AND status IN ({$status_placeholders}) AND NOT (source_type = 'checkout_session' AND (description = 'ajcore_portal_balance_payment' OR metadata LIKE '%%ajcore_portal_balance_payment%%'))";
+		$where = "stripe_customer_id = %s AND amount > 0 AND status IN ({$status_placeholders}) AND " . $this->get_ignored_unpaid_checkout_sql_fragment() . "";
 
 		$ledger_ids = array_values( array_filter( array_map( 'absint', (array) $ledger_ids ) ) );
 		if ( ! empty( $ledger_ids ) ) {

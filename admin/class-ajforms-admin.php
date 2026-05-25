@@ -946,20 +946,41 @@ class AJForms_Admin {
 	}
 
 
-	private function cleanup_unpaid_portal_balance_payment_sessions( $stripe_customer_id = '' ) {
+	private function get_ignored_unpaid_checkout_sources() {
+		return array(
+			'ajcore_portal_balance_payment',
+			'ajcore_products_cart',
+			'ajcore_portal_add_service',
+		);
+	}
+
+	private function cleanup_unpaid_portal_checkout_sessions( $stripe_customer_id = '' ) {
 		global $wpdb;
 
-		$ledger_table      = $this->get_portal_ledger_table();
-		$transactions_table = $this->get_portal_stripe_transactions_table();
-		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
-		$unpaid_statuses    = array( 'unpaid', 'open', 'pending', 'pending_payment', 'requires_payment_method' );
-		$status_placeholders = implode( ',', array_fill( 0, count( $unpaid_statuses ), '%s' ) );
+		$ledger_table         = $this->get_portal_ledger_table();
+		$transactions_table   = $this->get_portal_stripe_transactions_table();
+		$stripe_customer_id   = sanitize_text_field( (string) $stripe_customer_id );
+		$unpaid_statuses      = array( 'unpaid', 'open', 'pending', 'pending_payment', 'requires_payment_method' );
+		$ignored_sources      = $this->get_ignored_unpaid_checkout_sources();
+		$status_placeholders  = implode( ',', array_fill( 0, count( $unpaid_statuses ), '%s' ) );
+		$source_placeholders  = implode( ',', array_fill( 0, count( $ignored_sources ), '%s' ) );
+		$metadata_conditions  = array();
 
-		$ledger_sql = "DELETE FROM {$ledger_table} WHERE source_type = %s AND status IN ({$status_placeholders}) AND (description = %s OR metadata LIKE %s)";
+		foreach ( $ignored_sources as $ignored_source ) {
+			$metadata_conditions[] = 'metadata LIKE %s';
+		}
+
+		$ledger_sql = "DELETE FROM {$ledger_table} WHERE source_type = %s AND status IN ({$status_placeholders}) AND (description IN ({$source_placeholders}) OR " . implode( ' OR ', $metadata_conditions ) . ')';
 		$ledger_params = array_merge(
 			array( 'checkout_session' ),
 			$unpaid_statuses,
-			array( 'ajcore_portal_balance_payment', '%ajcore_portal_balance_payment%' )
+			$ignored_sources,
+			array_map(
+				function ( $ignored_source ) {
+					return '%' . $ignored_source . '%';
+				},
+				$ignored_sources
+			)
 		);
 		if ( '' !== $stripe_customer_id ) {
 			$ledger_sql .= ' AND stripe_customer_id = %s';
@@ -967,17 +988,21 @@ class AJForms_Admin {
 		}
 		$wpdb->query( $wpdb->prepare( $ledger_sql, $ledger_params ) );
 
-		$transaction_sql = "DELETE FROM {$transactions_table} WHERE object_type = %s AND status IN ({$status_placeholders}) AND description = %s";
+		$transaction_sql = "DELETE FROM {$transactions_table} WHERE object_type = %s AND status IN ({$status_placeholders}) AND description IN ({$source_placeholders})";
 		$transaction_params = array_merge(
 			array( 'checkout_session' ),
 			$unpaid_statuses,
-			array( 'ajcore_portal_balance_payment' )
+			$ignored_sources
 		);
 		if ( '' !== $stripe_customer_id ) {
 			$transaction_sql .= ' AND stripe_customer_id = %s';
 			$transaction_params[] = $stripe_customer_id;
 		}
 		$wpdb->query( $wpdb->prepare( $transaction_sql, $transaction_params ) );
+	}
+
+	private function cleanup_unpaid_portal_balance_payment_sessions( $stripe_customer_id = '' ) {
+		$this->cleanup_unpaid_portal_checkout_sessions( $stripe_customer_id );
 	}
 
 	private function reconcile_portal_balance_payment_session( $session, $customer_id, $payment_intent_id = '' ) {
@@ -1041,7 +1066,7 @@ class AJForms_Admin {
 	private function sync_portal_stripe_transactions( $secret_key, $stripe_customer_id = '' ) {
 		global $wpdb;
 
-		$this->cleanup_unpaid_portal_balance_payment_sessions( $stripe_customer_id );
+		$this->cleanup_unpaid_portal_checkout_sessions( $stripe_customer_id );
 
 		$invoice_args = array();
 		if ( '' !== $stripe_customer_id ) {
@@ -1205,14 +1230,21 @@ class AJForms_Admin {
 
 			$currency = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : 'usd';
 			$status   = ! empty( $session['payment_status'] ) ? sanitize_key( (string) $session['payment_status'] ) : '';
-			$is_balance_payment_session = ! empty( $session['metadata']['source'] ) && 'ajcore_portal_balance_payment' === (string) $session['metadata']['source'];
+			$session_source = ! empty( $session['metadata']['source'] ) ? sanitize_key( (string) $session['metadata']['source'] ) : '';
+			$is_balance_payment_session = 'ajcore_portal_balance_payment' === $session_source;
+			$is_ignored_unpaid_checkout = '' !== $session_source && in_array( $session_source, $this->get_ignored_unpaid_checkout_sources(), true ) && 'paid' !== $status;
+
+			if ( $is_ignored_unpaid_checkout ) {
+				$this->cleanup_unpaid_portal_checkout_sessions( $customer_id );
+				continue;
+			}
 
 			if ( $is_balance_payment_session ) {
 				if ( 'paid' === $status ) {
 					$count += $this->reconcile_portal_balance_payment_session( $session, $customer_id, $payment_intent_id );
 				}
 
-				$this->cleanup_unpaid_portal_balance_payment_sessions( $customer_id );
+				$this->cleanup_unpaid_portal_checkout_sessions( $customer_id );
 				continue;
 			}
 
@@ -5421,7 +5453,7 @@ class AJForms_Admin {
 		global $wpdb;
 
 		$this->ensure_portal_schema();
-		$this->cleanup_unpaid_portal_balance_payment_sessions();
+		$this->cleanup_unpaid_portal_checkout_sessions();
 
 		$status_filter = isset( $_GET['billing_status'] ) ? sanitize_key( wp_unslash( $_GET['billing_status'] ) ) : '';
 		$source_filter = isset( $_GET['billing_source'] ) ? sanitize_key( wp_unslash( $_GET['billing_source'] ) ) : '';
