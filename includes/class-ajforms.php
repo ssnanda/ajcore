@@ -712,23 +712,89 @@ class AJForms {
 
 	private function get_subscription_ledger_entry( $subscription, $ledger ) {
 		$subscription_id = isset( $subscription->stripe_subscription_id ) ? sanitize_text_field( (string) $subscription->stripe_subscription_id ) : '';
-		$fallback        = null;
 
 		foreach ( $ledger as $entry ) {
 			$metadata_subscription_id = $this->get_ledger_metadata_value( $entry, 'subscription_id' );
 			if ( $subscription_id && $metadata_subscription_id && $subscription_id === $metadata_subscription_id ) {
 				return $entry;
 			}
+		}
 
-			if ( null === $fallback && ( $this->get_ledger_metadata_value( $entry, 'description' ) || $this->get_ledger_metadata_value( $entry, 'service_period' ) ) ) {
-				$fallback = $entry;
+		return null;
+	}
+
+	private function get_synced_product_name_for_subscription_item( $item ) {
+		global $wpdb;
+
+		$price_id   = '';
+		$product_id = '';
+		$price      = isset( $item['price'] ) && is_array( $item['price'] ) ? $item['price'] : array();
+
+		if ( ! empty( $item['price_id'] ) ) {
+			$price_id = sanitize_text_field( (string) $item['price_id'] );
+		}
+		if ( '' === $price_id && ! empty( $price['id'] ) ) {
+			$price_id = sanitize_text_field( (string) $price['id'] );
+		}
+		if ( ! empty( $item['product_id'] ) ) {
+			$product_id = sanitize_text_field( (string) $item['product_id'] );
+		}
+		if ( '' === $product_id && ! empty( $price['product']['id'] ) ) {
+			$product_id = sanitize_text_field( (string) $price['product']['id'] );
+		}
+		if ( '' === $product_id && ! empty( $price['product'] ) && is_string( $price['product'] ) ) {
+			$product_id = sanitize_text_field( (string) $price['product'] );
+		}
+
+		if ( '' !== $price_id ) {
+			$name = $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT name FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s LIMIT 1",
+					$price_id
+				)
+			);
+			if ( $name ) {
+				return sanitize_text_field( (string) $name );
 			}
 		}
 
-		return $fallback;
+		if ( '' !== $product_id ) {
+			$name = $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT name FROM {$this->get_portal_stripe_products_table()} WHERE stripe_product_id = %s ORDER BY active DESC, id DESC LIMIT 1",
+					$product_id
+				)
+			);
+			if ( $name ) {
+				return sanitize_text_field( (string) $name );
+			}
+		}
+
+		return '';
 	}
 
 	private function get_subscription_service_name( $subscription, $ledger_entry = null ) {
+		$items = $this->decode_portal_json( isset( $subscription->items ) ? $subscription->items : '' );
+		foreach ( $items as $item ) {
+			$price = isset( $item['price'] ) && is_array( $item['price'] ) ? $item['price'] : array();
+			if ( ! empty( $price['product'] ) && is_array( $price['product'] ) && ! empty( $price['product']['name'] ) ) {
+				return sanitize_text_field( (string) $price['product']['name'] );
+			}
+			$service_name = $this->get_synced_product_name_for_subscription_item( $item );
+			if ( $service_name ) {
+				return $service_name;
+			}
+			if ( ! empty( $price['nickname'] ) ) {
+				return sanitize_text_field( (string) $price['nickname'] );
+			}
+			if ( ! empty( $item['description'] ) ) {
+				$service_name = $this->clean_stripe_line_service_name( $item['description'] );
+				if ( $service_name ) {
+					return $service_name;
+				}
+			}
+		}
+
 		if ( $ledger_entry ) {
 			$description = $this->get_ledger_metadata_value( $ledger_entry, 'description' );
 			if ( ! $description && ! empty( $ledger_entry->description ) ) {
@@ -741,25 +807,11 @@ class AJForms {
 			}
 		}
 
-		$items = $this->decode_portal_json( isset( $subscription->items ) ? $subscription->items : '' );
-		foreach ( $items as $item ) {
-			if ( ! empty( $item['description'] ) ) {
-				$service_name = $this->clean_stripe_line_service_name( $item['description'] );
-				if ( $service_name ) {
-					return $service_name;
-				}
-			}
-
-			$price = isset( $item['price'] ) && is_array( $item['price'] ) ? $item['price'] : array();
-			if ( ! empty( $price['nickname'] ) ) {
-				return sanitize_text_field( (string) $price['nickname'] );
-			}
-			if ( ! empty( $price['product'] ) && is_array( $price['product'] ) && ! empty( $price['product']['name'] ) ) {
-				return sanitize_text_field( (string) $price['product']['name'] );
-			}
-		}
-
 		return isset( $subscription->stripe_subscription_id ) ? $subscription->stripe_subscription_id : __( 'Service', 'ajforms' );
+	}
+
+	private function is_current_portal_subscription( $subscription ) {
+		return isset( $subscription->status ) && in_array( (string) $subscription->status, array( 'active', 'trialing' ), true );
 	}
 
 	private function get_subscription_amount_label( $subscription ) {
@@ -1379,7 +1431,7 @@ class AJForms {
 		$active_subscriptions = array_filter(
 			$subscriptions,
 			function ( $subscription ) {
-				return 'active' === $subscription->status || 'trialing' === $subscription->status;
+				return $this->is_current_portal_subscription( $subscription );
 			}
 		);
 
@@ -1402,6 +1454,15 @@ class AJForms {
 		}
 
 		$subscriptions      = $context['subscriptions'];
+		$current_services   = array_values( array_filter( $subscriptions, array( $this, 'is_current_portal_subscription' ) ) );
+		$past_services      = array_values(
+			array_filter(
+				$subscriptions,
+				function ( $subscription ) {
+					return ! $this->is_current_portal_subscription( $subscription );
+				}
+			)
+		);
 		$ledger             = $context['ledger'];
 		$service_settings   = get_option( 'ajcore_customer_portal_services_display', array() );
 		$service_settings   = is_array( $service_settings ) ? $service_settings : array();
@@ -1418,11 +1479,11 @@ class AJForms {
 
 			<?php if ( $show_current ) : ?>
 			<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
-			<?php if ( empty( $subscriptions ) ) : ?>
-				<p><?php esc_html_e( 'No subscription services are synced yet.', 'ajforms' ); ?></p>
+			<?php if ( empty( $current_services ) ) : ?>
+				<p><?php esc_html_e( 'No current services are synced yet.', 'ajforms' ); ?></p>
 			<?php else : ?>
 				<div class="aj-portal-services-list">
-					<?php foreach ( $subscriptions as $subscription ) : ?>
+					<?php foreach ( $current_services as $subscription ) : ?>
 						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
 						<div class="aj-portal-service-card">
 							<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
@@ -1431,6 +1492,25 @@ class AJForms {
 								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
+							</div>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+
+			<?php if ( ! empty( $past_services ) ) : ?>
+				<h3><?php esc_html_e( 'Past Services', 'ajforms' ); ?></h3>
+				<div class="aj-portal-services-list">
+					<?php foreach ( $past_services as $subscription ) : ?>
+						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
+						<div class="aj-portal-service-card aj-portal-service-card-past">
+							<h4><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></h4>
+							<div class="aj-portal-service-card-grid">
+								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php esc_html_e( 'No future billing', 'ajforms' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
 							</div>
 						</div>
@@ -2406,6 +2486,8 @@ class AJForms {
 					box-shadow:0 22px 54px rgba(15,23,42,.075);
 				}
 				.ajcore-portal-shell .aj-portal-service-card:before{content:"";position:absolute;left:0;right:0;top:0;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
+				.ajcore-portal-shell .aj-portal-service-card-past{background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);box-shadow:0 14px 36px rgba(15,23,42,.055)}
+				.ajcore-portal-shell .aj-portal-service-card-past:before{background:linear-gradient(90deg,#94a3b8,#cbd5e1)}
 				.ajcore-portal-shell .aj-portal-service-card h4{margin:0 0 18px;font-size:23px;line-height:1.14;letter-spacing:-.045em;color:#111827;text-wrap:balance}
 				.ajcore-portal-shell .aj-portal-service-card-grid{display:grid;grid-template-columns:minmax(260px,1.05fr) minmax(100px,.45fr) minmax(160px,.68fr) minmax(150px,.58fr) minmax(120px,.45fr);gap:18px;align-items:start}
 				.ajcore-portal-shell .aj-portal-service-card-grid div{min-width:0}

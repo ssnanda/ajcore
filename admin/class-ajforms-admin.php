@@ -1267,7 +1267,7 @@ class AJForms_Admin {
 	}
 
 	private function sync_portal_stripe_subscriptions( $secret_key, $stripe_customer_id = '' ) {
-		$args = array( 'status' => 'all', 'expand[]' => 'data.items.data.price' );
+		$args = array( 'status' => 'all', 'expand[]' => 'data.items.data.price.product' );
 		if ( '' !== $stripe_customer_id ) {
 			$args['customer'] = sanitize_text_field( $stripe_customer_id );
 		}
