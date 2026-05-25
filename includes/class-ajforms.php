@@ -1180,7 +1180,7 @@ class AJForms {
 		);
 		$ledger = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s ORDER BY ledger_date DESC LIMIT 50",
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND NOT (source_type = 'checkout_session' AND (description = 'ajcore_portal_balance_payment' OR metadata LIKE '%%ajcore_portal_balance_payment%%')) ORDER BY ledger_date DESC LIMIT 50",
 				$stripe_customer_id
 			)
 		);
@@ -1338,7 +1338,7 @@ class AJForms {
 		$statuses = $this->get_portal_open_ledger_statuses();
 		$status_placeholders = implode( ',', array_fill( 0, count( $statuses ), '%s' ) );
 		$params = array_merge( array( $stripe_customer_id ), $statuses );
-		$where = "stripe_customer_id = %s AND amount > 0 AND status IN ({$status_placeholders})";
+		$where = "stripe_customer_id = %s AND amount > 0 AND status IN ({$status_placeholders}) AND NOT (source_type = 'checkout_session' AND (description = 'ajcore_portal_balance_payment' OR metadata LIKE '%%ajcore_portal_balance_payment%%'))";
 
 		$ledger_ids = array_values( array_filter( array_map( 'absint', (array) $ledger_ids ) ) );
 		if ( ! empty( $ledger_ids ) ) {

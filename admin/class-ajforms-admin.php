@@ -945,8 +945,103 @@ class AJForms_Admin {
 		return $this->portal_db_error ? new WP_Error( 'portal_db_error', $this->portal_db_error ) : $count;
 	}
 
+
+	private function cleanup_unpaid_portal_balance_payment_sessions( $stripe_customer_id = '' ) {
+		global $wpdb;
+
+		$ledger_table      = $this->get_portal_ledger_table();
+		$transactions_table = $this->get_portal_stripe_transactions_table();
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$unpaid_statuses    = array( 'unpaid', 'open', 'pending', 'pending_payment', 'requires_payment_method' );
+		$status_placeholders = implode( ',', array_fill( 0, count( $unpaid_statuses ), '%s' ) );
+
+		$ledger_sql = "DELETE FROM {$ledger_table} WHERE source_type = %s AND status IN ({$status_placeholders}) AND (description = %s OR metadata LIKE %s)";
+		$ledger_params = array_merge(
+			array( 'checkout_session' ),
+			$unpaid_statuses,
+			array( 'ajcore_portal_balance_payment', '%ajcore_portal_balance_payment%' )
+		);
+		if ( '' !== $stripe_customer_id ) {
+			$ledger_sql .= ' AND stripe_customer_id = %s';
+			$ledger_params[] = $stripe_customer_id;
+		}
+		$wpdb->query( $wpdb->prepare( $ledger_sql, $ledger_params ) );
+
+		$transaction_sql = "DELETE FROM {$transactions_table} WHERE object_type = %s AND status IN ({$status_placeholders}) AND description = %s";
+		$transaction_params = array_merge(
+			array( 'checkout_session' ),
+			$unpaid_statuses,
+			array( 'ajcore_portal_balance_payment' )
+		);
+		if ( '' !== $stripe_customer_id ) {
+			$transaction_sql .= ' AND stripe_customer_id = %s';
+			$transaction_params[] = $stripe_customer_id;
+		}
+		$wpdb->query( $wpdb->prepare( $transaction_sql, $transaction_params ) );
+	}
+
+	private function reconcile_portal_balance_payment_session( $session, $customer_id, $payment_intent_id = '' ) {
+		global $wpdb;
+
+		if ( empty( $session['metadata']['ledger_ids'] ) ) {
+			return 0;
+		}
+
+		$session_id        = ! empty( $session['id'] ) ? sanitize_text_field( (string) $session['id'] ) : '';
+		$customer_id       = sanitize_text_field( (string) $customer_id );
+		$payment_intent_id = sanitize_text_field( (string) $payment_intent_id );
+		$ledger_ids        = array_values( array_filter( array_map( 'absint', preg_split( '/[,|]/', (string) $session['metadata']['ledger_ids'] ) ) ) );
+		$updated           = 0;
+
+		foreach ( $ledger_ids as $ledger_id ) {
+			$ledger_row = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT id, metadata FROM {$this->get_portal_ledger_table()} WHERE id = %d AND stripe_customer_id = %s LIMIT 1",
+					$ledger_id,
+					$customer_id
+				)
+			);
+			if ( ! $ledger_row ) {
+				continue;
+			}
+
+			$manual_metadata = ! empty( $ledger_row->metadata ) ? json_decode( (string) $ledger_row->metadata, true ) : array();
+			if ( ! is_array( $manual_metadata ) ) {
+				$manual_metadata = array();
+			}
+
+			$manual_metadata['paid_checkout_session_id'] = $session_id;
+			if ( '' !== $payment_intent_id ) {
+				$manual_metadata['paid_payment_intent_id'] = $payment_intent_id;
+			}
+			if ( ! empty( $session['amount_total'] ) ) {
+				$manual_metadata['paid_checkout_amount_total'] = absint( $session['amount_total'] );
+			}
+
+			$result = $wpdb->update(
+				$this->get_portal_ledger_table(),
+				array(
+					'status'            => 'paid',
+					'payment_intent_id' => $payment_intent_id,
+					'metadata'          => wp_json_encode( $manual_metadata ),
+				),
+				array( 'id' => $ledger_id ),
+				array( '%s', '%s', '%s' ),
+				array( '%d' )
+			);
+
+			if ( false !== $result ) {
+				$updated++;
+			}
+		}
+
+		return $updated;
+	}
+
 	private function sync_portal_stripe_transactions( $secret_key, $stripe_customer_id = '' ) {
 		global $wpdb;
+
+		$this->cleanup_unpaid_portal_balance_payment_sessions( $stripe_customer_id );
 
 		$invoice_args = array();
 		if ( '' !== $stripe_customer_id ) {
@@ -1110,6 +1205,17 @@ class AJForms_Admin {
 
 			$currency = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : 'usd';
 			$status   = ! empty( $session['payment_status'] ) ? sanitize_key( (string) $session['payment_status'] ) : '';
+			$is_balance_payment_session = ! empty( $session['metadata']['source'] ) && 'ajcore_portal_balance_payment' === (string) $session['metadata']['source'];
+
+			if ( $is_balance_payment_session ) {
+				if ( 'paid' === $status ) {
+					$count += $this->reconcile_portal_balance_payment_session( $session, $customer_id, $payment_intent_id );
+				}
+
+				$this->cleanup_unpaid_portal_balance_payment_sessions( $customer_id );
+				continue;
+			}
+
 			$session_ledger_metadata = array();
 			if ( ! empty( $checkout_custom_fields ) ) {
 				$session_ledger_metadata['checkout_custom_fields'] = $checkout_custom_fields;
@@ -1155,41 +1261,6 @@ class AJForms_Admin {
 				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
 				'source_object_id'
 			);
-			if ( ! empty( $session['metadata']['source'] ) && 'ajcore_portal_balance_payment' === (string) $session['metadata']['source'] && 'paid' === $status && ! empty( $session['metadata']['ledger_ids'] ) ) {
-				$ledger_ids = array_values( array_filter( array_map( 'absint', preg_split( '/[,|]/', (string) $session['metadata']['ledger_ids'] ) ) ) );
-				foreach ( $ledger_ids as $ledger_id ) {
-					$ledger_row = $wpdb->get_row(
-						$wpdb->prepare(
-							"SELECT id, metadata FROM {$this->get_portal_ledger_table()} WHERE id = %d AND stripe_customer_id = %s LIMIT 1",
-							$ledger_id,
-							$customer_id
-						)
-					);
-					if ( ! $ledger_row ) {
-						continue;
-					}
-					$manual_metadata = ! empty( $ledger_row->metadata ) ? json_decode( (string) $ledger_row->metadata, true ) : array();
-					if ( ! is_array( $manual_metadata ) ) {
-						$manual_metadata = array();
-					}
-					$manual_metadata['paid_checkout_session_id'] = sanitize_text_field( (string) $session['id'] );
-					if ( '' !== $payment_intent_id ) {
-						$manual_metadata['paid_payment_intent_id'] = $payment_intent_id;
-					}
-					$wpdb->update(
-						$this->get_portal_ledger_table(),
-						array(
-							'status'            => 'paid',
-							'payment_intent_id' => $payment_intent_id,
-							'metadata'          => wp_json_encode( $manual_metadata ),
-						),
-						array( 'id' => $ledger_id ),
-						array( '%s', '%s', '%s' ),
-						array( '%d' )
-					);
-				}
-			}
-
 			if ( $transaction_upserted && $ledger_upserted ) {
 				$count++;
 			}
@@ -5350,6 +5421,7 @@ class AJForms_Admin {
 		global $wpdb;
 
 		$this->ensure_portal_schema();
+		$this->cleanup_unpaid_portal_balance_payment_sessions();
 
 		$status_filter = isset( $_GET['billing_status'] ) ? sanitize_key( wp_unslash( $_GET['billing_status'] ) ) : '';
 		$source_filter = isset( $_GET['billing_source'] ) ? sanitize_key( wp_unslash( $_GET['billing_source'] ) ) : '';
