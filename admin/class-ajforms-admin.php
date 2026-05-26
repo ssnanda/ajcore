@@ -570,6 +570,7 @@ class AJForms_Admin {
 			$this->get_portal_service_requests_table(),
 			$this->get_portal_event_log_table(),
 			$this->get_portal_stripe_events_table(),
+			$this->get_portal_service_snapshots_table(),
 		);
 
 		foreach ( $required_tables as $table ) {
@@ -1632,7 +1633,7 @@ class AJForms_Admin {
 		$payment_intent_id = ! empty( $session['payment_intent'] ) ? sanitize_text_field( (string) $session['payment_intent'] ) : '';
 		$currency = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : 'usd';
 
-		return $this->upsert_portal_record(
+		$upserted = $this->upsert_portal_record(
 			$this->get_portal_stripe_transactions_table(),
 			array(
 				'stripe_object_id'   => sanitize_text_field( (string) $session['id'] ),
@@ -1654,6 +1655,9 @@ class AJForms_Admin {
 			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ),
 			'stripe_object_id'
 		);
+		$this->maybe_create_portal_service_snapshots_from_stripe_object( $session, 'checkout_session' );
+
+		return $upserted;
 	}
 
 	private function sync_portal_stripe_products( $secret_key ) {
@@ -1694,6 +1698,7 @@ class AJForms_Admin {
 				'stripe_price_id'
 			);
 			if ( $upserted ) {
+				$this->maybe_create_portal_service_snapshots_from_stripe_object( $subscription, 'subscription' );
 				$count++;
 			}
 		}
@@ -2098,6 +2103,7 @@ class AJForms_Admin {
 				'source_object_id'
 			);
 			if ( $transaction_upserted && $ledger_upserted ) {
+				$this->maybe_create_portal_service_snapshots_from_stripe_object( $invoice, 'invoice' );
 				$count++;
 			}
 		}
@@ -2170,6 +2176,7 @@ class AJForms_Admin {
 				'source_object_id'
 			);
 			if ( $transaction_upserted && $ledger_upserted ) {
+				$this->maybe_create_portal_service_snapshots_from_stripe_object( $charge, 'charge' );
 				$count++;
 			}
 
@@ -2286,6 +2293,7 @@ class AJForms_Admin {
 				'source_object_id'
 			);
 			if ( $transaction_upserted && $ledger_upserted ) {
+				$this->maybe_create_portal_service_snapshots_from_stripe_object( $session, 'checkout_session' );
 				$count++;
 			}
 		}
@@ -2395,6 +2403,7 @@ class AJForms_Admin {
 			$this->get_portal_ledger_table(),
 			$this->get_portal_stripe_transactions_table(),
 			$this->get_portal_stripe_subscriptions_table(),
+			$this->get_portal_service_snapshots_table(),
 			$this->get_portal_stripe_products_table(),
 			$this->get_portal_stripe_customers_table(),
 			$this->get_portal_sync_log_items_table(),
@@ -3375,6 +3384,7 @@ class AJForms_Admin {
 			$subscription->billing_type = $this->get_portal_billing_type_label( 'subscription' );
 		}
 		$active_recurring_services = array_merge(
+			$this->get_portal_service_records_from_snapshots( 'recurring', $stripe_customer_id, 100 ),
 			$this->get_portal_service_records_from_subscriptions( $active_subscriptions ),
 			$this->get_portal_recurring_service_records_from_ledger( $stripe_customer_id, 100 )
 		);
@@ -3742,6 +3752,319 @@ class AJForms_Admin {
 		);
 	}
 
+	private function get_portal_service_snapshot_key( $data ) {
+		$customer_identifier = ! empty( $data['stripe_customer_id'] ) ? $data['stripe_customer_id'] : ( ! empty( $data['guest_customer_id'] ) ? $data['guest_customer_id'] : ( ! empty( $data['customer_email'] ) ? strtolower( $data['customer_email'] ) : '' ) );
+		$product_part = ! empty( $data['product_id'] ) ? $data['product_id'] : ( ! empty( $data['product_name_snapshot'] ) ? sanitize_title( (string) $data['product_name_snapshot'] ) : '' );
+		$price_part   = ! empty( $data['price_id'] ) ? $data['price_id'] : '';
+		if ( ! empty( $data['subscription_id'] ) ) {
+			return 'svc_' . sha1( implode( '|', array( $customer_identifier, $product_part, $price_part, $data['subscription_id'], isset( $data['service_period_start'] ) ? $data['service_period_start'] : '', isset( $data['service_period_end'] ) ? $data['service_period_end'] : '' ) ) );
+		}
+		foreach ( array( 'payment_intent_id', 'checkout_session_id', 'invoice_id', 'charge_id' ) as $flow_id ) {
+			if ( ! empty( $data[ $flow_id ] ) ) {
+				return 'svc_' . sha1( implode( '|', array( $customer_identifier, $product_part, $price_part, $data[ $flow_id ], isset( $data['service_period_start'] ) ? $data['service_period_start'] : '', isset( $data['service_period_end'] ) ? $data['service_period_end'] : '' ) ) );
+			}
+		}
+
+		$parts = array(
+			$customer_identifier,
+			$product_part,
+			$price_part,
+			isset( $data['subscription_id'] ) ? $data['subscription_id'] : '',
+			isset( $data['checkout_session_id'] ) ? $data['checkout_session_id'] : '',
+			isset( $data['invoice_id'] ) ? $data['invoice_id'] : '',
+			isset( $data['payment_intent_id'] ) ? $data['payment_intent_id'] : '',
+			isset( $data['service_period_start'] ) ? $data['service_period_start'] : '',
+			isset( $data['service_period_end'] ) ? $data['service_period_end'] : '',
+			isset( $data['product_name_snapshot'] ) ? sanitize_title( (string) $data['product_name_snapshot'] ) : '',
+		);
+
+		return 'svc_' . sha1( implode( '|', array_map( 'strval', $parts ) ) );
+	}
+
+	private function upsert_portal_service_snapshot( $data ) {
+		global $wpdb;
+
+		$defaults = array(
+			'snapshot_key'          => '',
+			'stripe_customer_id'    => '',
+			'guest_customer_id'     => '',
+			'customer_email'        => '',
+			'product_id'            => '',
+			'price_id'              => '',
+			'product_name_snapshot' => '',
+			'price_label_snapshot'  => '',
+			'amount'                => 0,
+			'currency'              => 'usd',
+			'recurring_interval'    => '',
+			'quantity'              => 1,
+			'billing_type'          => 'one_time',
+			'checkout_session_id'   => '',
+			'invoice_id'            => '',
+			'payment_intent_id'     => '',
+			'charge_id'             => '',
+			'subscription_id'       => '',
+			'service_period_start'  => null,
+			'service_period_end'    => null,
+			'source_type'           => '',
+			'status'                => '',
+			'livemode'              => $this->get_current_stripe_livemode(),
+			'raw_data'              => '',
+		);
+		$data = array_merge( $defaults, is_array( $data ) ? $data : array() );
+		$data['stripe_customer_id']    = sanitize_text_field( (string) $data['stripe_customer_id'] );
+		$data['guest_customer_id']     = sanitize_text_field( (string) $data['guest_customer_id'] );
+		$data['customer_email']        = sanitize_email( (string) $data['customer_email'] );
+		$data['product_id']            = sanitize_text_field( (string) $data['product_id'] );
+		$data['price_id']              = sanitize_text_field( (string) $data['price_id'] );
+		$data['product_name_snapshot'] = sanitize_text_field( (string) $data['product_name_snapshot'] );
+		$data['price_label_snapshot']  = sanitize_text_field( (string) $data['price_label_snapshot'] );
+		$data['amount']                = (float) $data['amount'];
+		$data['currency']              = strtolower( sanitize_key( (string) $data['currency'] ) );
+		$data['recurring_interval']    = sanitize_key( (string) $data['recurring_interval'] );
+		$data['quantity']              = max( 1, absint( $data['quantity'] ) );
+		$data['billing_type']          = 'recurring' === sanitize_key( (string) $data['billing_type'] ) ? 'recurring' : 'one_time';
+		$data['checkout_session_id']   = sanitize_text_field( (string) $data['checkout_session_id'] );
+		$data['invoice_id']            = sanitize_text_field( (string) $data['invoice_id'] );
+		$data['payment_intent_id']     = sanitize_text_field( (string) $data['payment_intent_id'] );
+		$data['charge_id']             = sanitize_text_field( (string) $data['charge_id'] );
+		$data['subscription_id']       = sanitize_text_field( (string) $data['subscription_id'] );
+		$data['source_type']           = sanitize_key( (string) $data['source_type'] );
+		$data['status']                = sanitize_key( (string) $data['status'] );
+		$data['livemode']              = ! empty( $data['livemode'] ) ? 1 : 0;
+
+		if ( '' === $data['snapshot_key'] ) {
+			$data['snapshot_key'] = $this->get_portal_service_snapshot_key( $data );
+		}
+		$data['snapshot_key'] = sanitize_text_field( (string) $data['snapshot_key'] );
+
+		if ( '' === $data['stripe_customer_id'] && '' === $data['guest_customer_id'] && '' === $data['customer_email'] ) {
+			return 0;
+		}
+		if ( '' === $data['product_name_snapshot'] && '' === $data['product_id'] && '' === $data['price_id'] ) {
+			return 0;
+		}
+
+		$table = $this->get_portal_service_snapshots_table();
+		$existing = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$table} WHERE snapshot_key = %s LIMIT 1",
+				$data['snapshot_key']
+			)
+		);
+
+		$row = $data;
+		$row['updated_at'] = current_time( 'mysql' );
+		$formats = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' );
+
+		if ( $existing ) {
+			$unchanged = (string) $existing->product_name_snapshot === (string) $row['product_name_snapshot']
+				&& (float) $existing->amount === (float) $row['amount']
+				&& (string) $existing->status === (string) $row['status']
+				&& (int) $existing->livemode === (int) $row['livemode'];
+			if ( $unchanged ) {
+				$this->log_portal_event(
+					'service_snapshot_skipped_duplicate',
+					array(
+						'source'             => $row['source_type'],
+						'stripe_customer_id' => $row['stripe_customer_id'],
+						'email_after'        => $row['customer_email'],
+						'details'            => array(
+							'snapshot_key' => $row['snapshot_key'],
+							'product_name' => $row['product_name_snapshot'],
+						),
+					)
+				);
+				return (int) $existing->id;
+			}
+
+			$wpdb->update( $table, $row, array( 'id' => (int) $existing->id ), $formats, array( '%d' ) );
+			$this->log_portal_event(
+				'service_snapshot_updated',
+				array(
+					'source'             => $row['source_type'],
+					'stripe_customer_id' => $row['stripe_customer_id'],
+					'email_after'        => $row['customer_email'],
+					'details'            => array(
+						'snapshot_key' => $row['snapshot_key'],
+						'product_name' => $row['product_name_snapshot'],
+						'status'       => $row['status'],
+					),
+				)
+			);
+			return (int) $existing->id;
+		}
+
+		$row['created_at'] = current_time( 'mysql' );
+		$formats[] = '%s';
+		$wpdb->insert( $table, $row, $formats );
+		$insert_id = (int) $wpdb->insert_id;
+		if ( $insert_id ) {
+			$this->log_portal_event(
+				'service_snapshot_created',
+				array(
+					'source'             => $row['source_type'],
+					'stripe_customer_id' => $row['stripe_customer_id'],
+					'email_after'        => $row['customer_email'],
+					'details'            => array(
+						'snapshot_key' => $row['snapshot_key'],
+						'product_name' => $row['product_name_snapshot'],
+						'billing_type' => $row['billing_type'],
+						'amount'       => $row['amount'],
+						'currency'     => $row['currency'],
+					),
+				)
+			);
+		}
+
+		return $insert_id;
+	}
+
+	private function get_portal_service_snapshot_customer_context( $object ) {
+		$stripe_customer_id = $this->get_payment_customer_id( is_array( $object ) ? $object : array() );
+		$email = '';
+		foreach ( array( 'customer_email', 'receipt_email' ) as $key ) {
+			if ( ! empty( $object[ $key ] ) && is_scalar( $object[ $key ] ) ) {
+				$email = sanitize_email( (string) $object[ $key ] );
+				break;
+			}
+		}
+		if ( '' === $email && ! empty( $object['customer_details']['email'] ) ) {
+			$email = sanitize_email( (string) $object['customer_details']['email'] );
+		}
+		if ( '' === $email && ! empty( $object['billing_details']['email'] ) ) {
+			$email = sanitize_email( (string) $object['billing_details']['email'] );
+		}
+
+		return array(
+			'stripe_customer_id' => $this->is_real_stripe_customer_id( $stripe_customer_id ) ? $stripe_customer_id : '',
+			'guest_customer_id'  => $this->is_real_stripe_customer_id( $stripe_customer_id ) ? '' : ( '' !== $stripe_customer_id ? $stripe_customer_id : $this->get_guest_portal_customer_id( $email ) ),
+			'customer_email'     => $email,
+		);
+	}
+
+	private function get_portal_service_snapshot_line_items( $object ) {
+		foreach ( array( 'line_items', 'lines', 'items', 'display_items' ) as $key ) {
+			if ( empty( $object[ $key ] ) || ! is_array( $object[ $key ] ) ) {
+				continue;
+			}
+			$items = $object[ $key ];
+			if ( isset( $items['data'] ) && is_array( $items['data'] ) ) {
+				$items = $items['data'];
+			}
+			if ( ! empty( $items ) ) {
+				return array_values( array_filter( $items, 'is_array' ) );
+			}
+		}
+
+		return array();
+	}
+
+	private function maybe_create_portal_service_snapshot_from_line_item( $item, $parent, $source_type ) {
+		$customer = $this->get_portal_service_snapshot_customer_context( $parent );
+		$price    = ! empty( $item['price'] ) && is_array( $item['price'] ) ? $item['price'] : ( ! empty( $item['plan'] ) && is_array( $item['plan'] ) ? $item['plan'] : array() );
+		$price_id = ! empty( $price['id'] ) ? sanitize_text_field( (string) $price['id'] ) : ( ! empty( $item['price_id'] ) ? sanitize_text_field( (string) $item['price_id'] ) : '' );
+		$product_id = '';
+		$product_name = '';
+		if ( ! empty( $price['product'] ) && is_array( $price['product'] ) ) {
+			$product_id   = ! empty( $price['product']['id'] ) ? sanitize_text_field( (string) $price['product']['id'] ) : '';
+			$product_name = ! empty( $price['product']['name'] ) ? sanitize_text_field( (string) $price['product']['name'] ) : '';
+		} elseif ( ! empty( $price['product'] ) && is_scalar( $price['product'] ) ) {
+			$product_id = sanitize_text_field( (string) $price['product'] );
+		}
+		if ( '' === $product_id && ! empty( $item['product'] ) && is_array( $item['product'] ) ) {
+			$product_id   = ! empty( $item['product']['id'] ) ? sanitize_text_field( (string) $item['product']['id'] ) : '';
+			$product_name = '' === $product_name && ! empty( $item['product']['name'] ) ? sanitize_text_field( (string) $item['product']['name'] ) : $product_name;
+		} elseif ( '' === $product_id && ! empty( $item['product'] ) && is_scalar( $item['product'] ) ) {
+			$product_id = sanitize_text_field( (string) $item['product'] );
+		}
+
+		$product = $this->resolve_portal_product_from_identifiers(
+			array(
+				'price_ids'           => '' !== $price_id ? array( $price_id ) : array(),
+				'product_ids'         => '' !== $product_id ? array( $product_id ) : array(),
+				'subscription_ids'    => array(),
+				'checkout_session_ids'=> array(),
+				'invoice_ids'         => array(),
+				'payment_intent_ids'  => array(),
+			)
+		);
+		if ( $product ) {
+			$product_id = '' !== $product_id ? $product_id : sanitize_text_field( (string) $product->stripe_product_id );
+			$price_id   = '' !== $price_id ? $price_id : sanitize_text_field( (string) $product->stripe_price_id );
+		}
+
+		if ( '' === $product_name ) {
+			$product_name = $product && ! empty( $product->name ) ? sanitize_text_field( (string) $product->name ) : '';
+		}
+		if ( '' === $product_name && ! empty( $item['description'] ) ) {
+			$product_name = sanitize_text_field( (string) $item['description'] );
+		}
+		if ( '' === $product_name && ! empty( $parent['description'] ) && ! $this->is_generic_portal_service_label( $parent['description'] ) ) {
+			$product_name = sanitize_text_field( (string) $parent['description'] );
+		}
+
+		$currency = ! empty( $item['currency'] ) ? strtolower( sanitize_key( (string) $item['currency'] ) ) : ( ! empty( $price['currency'] ) ? strtolower( sanitize_key( (string) $price['currency'] ) ) : ( ! empty( $parent['currency'] ) ? strtolower( sanitize_key( (string) $parent['currency'] ) ) : 'usd' ) );
+		$quantity = ! empty( $item['quantity'] ) ? absint( $item['quantity'] ) : 1;
+		$amount_cents = isset( $item['amount_total'] ) ? $item['amount_total'] : ( isset( $item['amount'] ) ? $item['amount'] : ( isset( $price['unit_amount'] ) ? ( (int) $price['unit_amount'] * $quantity ) : 0 ) );
+		$amount = $this->stripe_amount_to_decimal( $amount_cents, $currency );
+		$interval = ! empty( $price['recurring']['interval'] ) ? sanitize_key( (string) $price['recurring']['interval'] ) : ( $product && ! empty( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '' );
+		$subscription_id = ! empty( $parent['subscription'] ) && is_scalar( $parent['subscription'] ) ? sanitize_text_field( (string) $parent['subscription'] ) : ( ! empty( $item['subscription'] ) && is_scalar( $item['subscription'] ) ? sanitize_text_field( (string) $item['subscription'] ) : '' );
+		if ( 'subscription' === $source_type && ! empty( $parent['id'] ) ) {
+			$subscription_id = sanitize_text_field( (string) $parent['id'] );
+		}
+
+		$period_start = ! empty( $item['period']['start'] ) ? $this->stripe_timestamp_to_mysql( $item['period']['start'] ) : ( ! empty( $parent['current_period_start'] ) ? $this->stripe_timestamp_to_mysql( $parent['current_period_start'] ) : null );
+		$period_end   = ! empty( $item['period']['end'] ) ? $this->stripe_timestamp_to_mysql( $item['period']['end'] ) : ( ! empty( $parent['current_period_end'] ) ? $this->stripe_timestamp_to_mysql( $parent['current_period_end'] ) : null );
+		$status       = ! empty( $parent['status'] ) ? sanitize_key( (string) $parent['status'] ) : ( ! empty( $parent['payment_status'] ) ? sanitize_key( (string) $parent['payment_status'] ) : '' );
+		$billing_type = ( '' !== $interval || '' !== $subscription_id ) ? 'recurring' : 'one_time';
+		$price_label  = $this->format_portal_money( $amount, $currency ) . ( '' !== $interval ? '/' . $interval : '' );
+
+		return $this->upsert_portal_service_snapshot(
+			array_merge(
+				$customer,
+				array(
+					'product_id'            => $product_id,
+					'price_id'              => $price_id,
+					'product_name_snapshot' => $product_name,
+					'price_label_snapshot'  => $price_label,
+					'amount'                => $amount,
+					'currency'              => $currency,
+					'recurring_interval'    => $interval,
+					'quantity'              => $quantity,
+					'billing_type'          => $billing_type,
+					'checkout_session_id'   => 'checkout_session' === $source_type && ! empty( $parent['id'] ) ? sanitize_text_field( (string) $parent['id'] ) : '',
+					'invoice_id'            => 'invoice' === $source_type && ! empty( $parent['id'] ) ? sanitize_text_field( (string) $parent['id'] ) : ( ! empty( $parent['invoice'] ) && is_scalar( $parent['invoice'] ) ? sanitize_text_field( (string) $parent['invoice'] ) : '' ),
+					'payment_intent_id'     => ! empty( $parent['payment_intent'] ) && is_scalar( $parent['payment_intent'] ) ? sanitize_text_field( (string) $parent['payment_intent'] ) : '',
+					'charge_id'             => 'charge' === $source_type && ! empty( $parent['id'] ) ? sanitize_text_field( (string) $parent['id'] ) : ( ! empty( $parent['charge'] ) && is_scalar( $parent['charge'] ) ? sanitize_text_field( (string) $parent['charge'] ) : '' ),
+					'subscription_id'       => $subscription_id,
+					'service_period_start'  => $period_start,
+					'service_period_end'    => $period_end,
+					'source_type'           => $source_type,
+					'status'                => $status,
+					'livemode'              => ! empty( $parent['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
+					'raw_data'              => wp_json_encode( array( 'parent' => $parent, 'item' => $item ) ),
+				)
+			)
+		);
+	}
+
+	private function maybe_create_portal_service_snapshots_from_stripe_object( $object, $source_type ) {
+		if ( ! is_array( $object ) || empty( $object['id'] ) ) {
+			return 0;
+		}
+
+		$count = 0;
+		$items = $this->get_portal_service_snapshot_line_items( $object );
+		if ( empty( $items ) ) {
+			$items = array( $object );
+		}
+		foreach ( $items as $item ) {
+			$count += $this->maybe_create_portal_service_snapshot_from_line_item( $item, $object, $source_type ) ? 1 : 0;
+		}
+
+		return $count;
+	}
+
 	private function get_portal_product_by_price_id( $price_id ) {
 		$price_id = sanitize_text_field( (string) $price_id );
 		if ( '' === $price_id ) {
@@ -3949,15 +4272,29 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_service_dedupe_key( $record ) {
+		$customer = isset( $record->stripe_customer_id ) ? (string) $record->stripe_customer_id : '';
+		$product  = isset( $record->stripe_product_id ) ? (string) $record->stripe_product_id : '';
+		$price    = isset( $record->stripe_price_id ) ? (string) $record->stripe_price_id : '';
+		if ( ! empty( $record->stripe_subscription_id ) && '' !== $customer && ( '' !== $product || '' !== $price ) ) {
+			return implode( ':', array_filter( array( $customer, $product, $price, (string) $record->stripe_subscription_id ), 'strlen' ) );
+		}
+
+		$flow_ids = array();
+		foreach ( array( 'checkout_session_id', 'invoice_id', 'payment_intent_id' ) as $field ) {
+			if ( ! empty( $record->{$field} ) ) {
+				$flow_ids[] = (string) $record->{$field};
+			}
+		}
+
+		if ( '' !== $customer && ( '' !== $product || '' !== $price ) && ! empty( $flow_ids ) ) {
+			return implode( ':', array_filter( array_merge( array( $customer, $product, $price ), $flow_ids ), 'strlen' ) );
+		}
+
 		$parts = array(
-			isset( $record->stripe_customer_id ) ? (string) $record->stripe_customer_id : '',
-			isset( $record->stripe_product_id ) ? (string) $record->stripe_product_id : '',
-			isset( $record->stripe_price_id ) ? (string) $record->stripe_price_id : '',
+			$customer,
+			$product,
+			$price,
 			isset( $record->service_name ) ? sanitize_title( (string) $record->service_name ) : '',
-			isset( $record->stripe_subscription_id ) ? (string) $record->stripe_subscription_id : '',
-			isset( $record->checkout_session_id ) ? (string) $record->checkout_session_id : '',
-			isset( $record->invoice_id ) ? (string) $record->invoice_id : '',
-			isset( $record->payment_intent_id ) ? (string) $record->payment_intent_id : '',
 			isset( $record->service_period ) ? (string) $record->service_period : '',
 		);
 
@@ -4145,6 +4482,77 @@ class AJForms_Admin {
 			),
 			$context
 		);
+	}
+
+	private function make_portal_service_record_from_snapshot( $snapshot ) {
+		$billing_type_key = ! empty( $snapshot->billing_type ) && 'recurring' === sanitize_key( (string) $snapshot->billing_type ) ? 'subscription' : 'one_time';
+		$service_period = '';
+		if ( ! empty( $snapshot->service_period_start ) && ! empty( $snapshot->service_period_end ) ) {
+			$service_period = $this->format_portal_date( $snapshot->service_period_start ) . ' - ' . $this->format_portal_date( $snapshot->service_period_end );
+		} elseif ( ! empty( $snapshot->service_period_end ) ) {
+			$service_period = sprintf( __( 'Renews %s', 'ajforms' ), $this->format_portal_date( $snapshot->service_period_end ) );
+		}
+
+		$customer_ref = ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : sanitize_text_field( (string) $snapshot->guest_customer_id );
+
+		return (object) array(
+			'service_name'           => ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : __( 'Service', 'ajforms' ),
+			'price'                  => ! empty( $snapshot->price_label_snapshot ) ? sanitize_text_field( (string) $snapshot->price_label_snapshot ) : $this->format_portal_money( $snapshot->amount, $snapshot->currency ),
+			'recurring_interval'     => ! empty( $snapshot->recurring_interval ) ? sanitize_key( (string) $snapshot->recurring_interval ) : '',
+			'billing_type_key'       => $billing_type_key,
+			'billing_type'           => $this->get_portal_billing_type_label( $billing_type_key ),
+			'stripe_price_id'        => ! empty( $snapshot->price_id ) ? sanitize_text_field( (string) $snapshot->price_id ) : '',
+			'stripe_product_id'      => ! empty( $snapshot->product_id ) ? sanitize_text_field( (string) $snapshot->product_id ) : '',
+			'stripe_subscription_id' => ! empty( $snapshot->subscription_id ) ? sanitize_text_field( (string) $snapshot->subscription_id ) : '',
+			'checkout_session_id'    => ! empty( $snapshot->checkout_session_id ) ? sanitize_text_field( (string) $snapshot->checkout_session_id ) : '',
+			'invoice_id'             => ! empty( $snapshot->invoice_id ) ? sanitize_text_field( (string) $snapshot->invoice_id ) : '',
+			'payment_intent_id'      => ! empty( $snapshot->payment_intent_id ) ? sanitize_text_field( (string) $snapshot->payment_intent_id ) : '',
+			'charge_id'              => ! empty( $snapshot->charge_id ) ? sanitize_text_field( (string) $snapshot->charge_id ) : '',
+			'service_period'         => $service_period,
+			'status'                 => ! empty( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '',
+			'amount'                 => $this->format_portal_money( $snapshot->amount, $snapshot->currency ),
+			'paid_at'                => ! empty( $snapshot->created_at ) ? $snapshot->created_at : '',
+			'synced_at'              => ! empty( $snapshot->updated_at ) ? $snapshot->updated_at : '',
+			'customer'               => ! empty( $snapshot->customer_name ) ? sanitize_text_field( (string) $snapshot->customer_name ) : ( ! empty( $snapshot->customer_email ) ? sanitize_email( (string) $snapshot->customer_email ) : $customer_ref ),
+			'stripe_customer_id'     => $customer_ref,
+			'source_ref'             => ! empty( $snapshot->snapshot_key ) ? sanitize_text_field( (string) $snapshot->snapshot_key ) : '',
+			'next_action'            => 'one_time' === $billing_type_key ? __( 'Convert to Auto-Pay Subscription', 'ajforms' ) : '',
+		);
+	}
+
+	private function get_portal_service_records_from_snapshots( $billing_type = '', $stripe_customer_id = '', $limit = 300 ) {
+		global $wpdb;
+
+		$where  = array( '1=1' );
+		$params = array();
+		if ( '' !== $billing_type ) {
+			$where[]  = 's.billing_type = %s';
+			$params[] = 'recurring' === $billing_type || 'subscription' === $billing_type ? 'recurring' : 'one_time';
+		}
+		if ( '' !== $stripe_customer_id ) {
+			$where[]  = 's.stripe_customer_id = %s';
+			$params[] = sanitize_text_field( (string) $stripe_customer_id );
+		}
+		if ( 'one_time' === $billing_type ) {
+			$where[] = "s.status IN ('paid','succeeded','completed')";
+		} elseif ( 'recurring' === $billing_type || 'subscription' === $billing_type ) {
+			$where[] = "(s.status IN ('active','trialing') OR (s.subscription_id = '' AND s.status IN ('paid','succeeded','completed')))";
+		}
+
+		$sql = "SELECT s.*, c.name AS customer_name
+			FROM {$this->get_portal_service_snapshots_table()} s
+			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = s.stripe_customer_id
+			WHERE " . implode( ' AND ', $where ) . '
+			ORDER BY s.updated_at DESC, s.id DESC
+			LIMIT %d';
+		$params[] = absint( $limit );
+		$rows = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
+		$records = array();
+		foreach ( (array) $rows as $row ) {
+			$records[] = $this->make_portal_service_record_from_snapshot( $row );
+		}
+
+		return 'one_time' === $billing_type ? $this->dedupe_portal_one_time_service_records( $records ) : $this->dedupe_portal_service_records( $records );
 	}
 
 	private function make_portal_fallback_one_time_service_record( $entry, $service_name, $identifiers = array() ) {
@@ -4413,7 +4821,15 @@ class AJForms_Admin {
 			$rows[] = $record;
 		}
 
-		return 'one_time' === $billing_type ? $this->dedupe_portal_one_time_service_records( $rows ) : $this->dedupe_portal_service_records( $rows );
+		if ( 'one_time' === $billing_type ) {
+			return $this->dedupe_portal_one_time_service_records( array_merge( $this->get_portal_service_records_from_snapshots( 'one_time', $stripe_customer_id, $limit ), $rows ) );
+		}
+
+		if ( 'subscription' === $billing_type || 'recurring' === $billing_type ) {
+			return $this->dedupe_portal_service_records( array_merge( $this->get_portal_service_records_from_snapshots( 'recurring', $stripe_customer_id, $limit ), $rows ) );
+		}
+
+		return $this->dedupe_portal_service_records( $rows );
 	}
 
 	private function get_portal_one_time_paid_services( $stripe_customer_id = '', $limit = 300 ) {
@@ -7607,6 +8023,11 @@ class AJForms_Admin {
 	private function get_portal_stripe_events_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_stripe_events';
+	}
+
+	private function get_portal_service_snapshots_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_service_snapshots';
 	}
 
 	public function get_form_record( $form_id ) {
