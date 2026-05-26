@@ -1487,6 +1487,33 @@ class AJForms {
 		);
 	}
 
+	private function get_portal_product_for_snapshot( $snapshot ) {
+		global $wpdb;
+
+		if ( ! empty( $snapshot->price_id ) ) {
+			$product = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s LIMIT 1",
+					sanitize_text_field( (string) $snapshot->price_id )
+				)
+			);
+			if ( $product ) {
+				return $product;
+			}
+		}
+
+		if ( ! empty( $snapshot->product_id ) ) {
+			return $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE stripe_product_id = %s ORDER BY recurring_interval DESC, active DESC, id DESC LIMIT 1",
+					sanitize_text_field( (string) $snapshot->product_id )
+				)
+			);
+		}
+
+		return null;
+	}
+
 	private function get_current_user_portal_billing_context() {
 		global $wpdb;
 
@@ -1572,19 +1599,132 @@ class AJForms {
 			return $this->format_portal_date( $snapshot->service_period_start ) . ' - ' . $this->format_portal_date( $snapshot->service_period_end );
 		}
 
+		if ( 'recurring' === $this->get_snapshot_billing_type_key( $snapshot ) ) {
+			$subscription_period = $this->get_snapshot_subscription_period_context( $snapshot );
+			if ( ! empty( $subscription_period['current_period_start'] ) && ! empty( $subscription_period['current_period_end'] ) ) {
+				return $this->format_portal_date( $subscription_period['current_period_start'] ) . ' - ' . $this->format_portal_date( $subscription_period['current_period_end'] );
+			}
+			if ( ! empty( $subscription_period['current_period_end'] ) ) {
+				return __( 'Through ', 'ajforms' ) . $this->format_portal_date( $subscription_period['current_period_end'] );
+			}
+		}
+
 		if ( ! empty( $snapshot->service_period_end ) ) {
 			return __( 'Through ', 'ajforms' ) . $this->format_portal_date( $snapshot->service_period_end );
 		}
 
-		if ( ! empty( $snapshot->created_at ) ) {
+		if ( 'one_time' === $this->get_snapshot_billing_type_key( $snapshot ) && ! empty( $snapshot->created_at ) ) {
 			return sprintf( __( 'Purchased %s', 'ajforms' ), $this->format_portal_date( $snapshot->created_at ) );
 		}
 
 		return '-';
 	}
 
+	private function get_snapshot_billing_type_key( $snapshot ) {
+		if ( ! empty( $snapshot->recurring_interval ) || ! empty( $snapshot->subscription_id ) ) {
+			return 'recurring';
+		}
+
+		$product = $this->get_portal_product_for_snapshot( $snapshot );
+		if ( $product && ! empty( $product->recurring_interval ) ) {
+			return 'recurring';
+		}
+
+		return ! empty( $snapshot->billing_type ) && 'recurring' === sanitize_key( (string) $snapshot->billing_type ) ? 'recurring' : 'one_time';
+	}
+
+	private function get_snapshot_subscription_period_context( $snapshot ) {
+		if ( empty( $snapshot->subscription_id ) ) {
+			return array();
+		}
+
+		global $wpdb;
+		$subscription = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT current_period_end, raw_data FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
+				sanitize_text_field( (string) $snapshot->subscription_id )
+			)
+		);
+		if ( ! $subscription ) {
+			return array();
+		}
+
+		$raw = $this->decode_portal_json( $subscription->raw_data );
+		return array(
+			'current_period_start' => ! empty( $raw['current_period_start'] ) ? gmdate( 'Y-m-d H:i:s', absint( $raw['current_period_start'] ) ) : '',
+			'current_period_end'   => ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : ( ! empty( $raw['current_period_end'] ) ? gmdate( 'Y-m-d H:i:s', absint( $raw['current_period_end'] ) ) : '' ),
+		);
+	}
+
+	private function get_snapshot_service_identity_key( $snapshot ) {
+		$customer = ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : ( ! empty( $snapshot->guest_customer_id ) ? sanitize_text_field( (string) $snapshot->guest_customer_id ) : sanitize_email( (string) $snapshot->customer_email ) );
+		$product  = ! empty( $snapshot->product_id ) ? sanitize_text_field( (string) $snapshot->product_id ) : sanitize_title( $this->get_snapshot_service_name( $snapshot ) );
+		$price    = ! empty( $snapshot->price_id ) ? sanitize_text_field( (string) $snapshot->price_id ) : '';
+		if ( ! empty( $snapshot->subscription_id ) ) {
+			return implode( ':', array_filter( array( $customer, $product, $price, sanitize_text_field( (string) $snapshot->subscription_id ) ), 'strlen' ) );
+		}
+		foreach ( array( 'checkout_session_id', 'invoice_id', 'payment_intent_id', 'charge_id' ) as $field ) {
+			if ( ! empty( $snapshot->$field ) ) {
+				return implode( ':', array_filter( array( $customer, $product, $price, sanitize_text_field( (string) $snapshot->$field ) ), 'strlen' ) );
+			}
+		}
+
+		return implode( ':', array_filter( array( $customer, $product, $price, ! empty( $snapshot->service_period ) ? sanitize_title( (string) $snapshot->service_period ) : '' ), 'strlen' ) );
+	}
+
+	private function portal_service_snapshots_match_recurring_service( $snapshot, $existing_snapshot ) {
+		if ( 'recurring' !== $this->get_snapshot_billing_type_key( $snapshot ) || 'recurring' !== $this->get_snapshot_billing_type_key( $existing_snapshot ) ) {
+			return false;
+		}
+
+		$customer = ! empty( $snapshot->stripe_customer_id ) ? (string) $snapshot->stripe_customer_id : '';
+		$existing_customer = ! empty( $existing_snapshot->stripe_customer_id ) ? (string) $existing_snapshot->stripe_customer_id : '';
+		if ( '' === $customer || '' === $existing_customer || $customer !== $existing_customer ) {
+			return false;
+		}
+
+		$product_match = ! empty( $snapshot->product_id ) && ! empty( $existing_snapshot->product_id ) && (string) $snapshot->product_id === (string) $existing_snapshot->product_id;
+		$price_match = ! empty( $snapshot->price_id ) && ! empty( $existing_snapshot->price_id ) && (string) $snapshot->price_id === (string) $existing_snapshot->price_id;
+		if ( ! $product_match && ! $price_match ) {
+			return false;
+		}
+
+		return ! empty( $snapshot->subscription_id ) || ! empty( $existing_snapshot->subscription_id );
+	}
+
+	private function dedupe_portal_service_snapshots_for_display( $snapshots ) {
+		$deduped = array();
+		$order   = array();
+		foreach ( (array) $snapshots as $snapshot ) {
+			$key = $this->get_snapshot_service_identity_key( $snapshot );
+			foreach ( $deduped as $existing_key => $existing_snapshot ) {
+				if ( $this->portal_service_snapshots_match_recurring_service( $snapshot, $existing_snapshot ) ) {
+					$key = $existing_key;
+					break;
+				}
+			}
+			if ( isset( $deduped[ $key ] ) ) {
+				$current_status = sanitize_key( (string) $deduped[ $key ]->status );
+				$new_status     = sanitize_key( (string) $snapshot->status );
+				if ( in_array( $new_status, array( 'active', 'trialing' ), true ) && ! in_array( $current_status, array( 'active', 'trialing' ), true ) ) {
+					$deduped[ $key ] = $snapshot;
+				}
+				continue;
+			}
+			$deduped[ $key ] = $snapshot;
+			$order[] = $key;
+		}
+
+		$records = array();
+		foreach ( $order as $key ) {
+			$records[] = $deduped[ $key ];
+		}
+
+		return $records;
+	}
+
 	private function get_snapshot_next_billing_date_label( $snapshot ) {
-		if ( empty( $snapshot->recurring_interval ) && empty( $snapshot->subscription_id ) ) {
+		if ( 'recurring' !== $this->get_snapshot_billing_type_key( $snapshot ) ) {
 			return __( 'No future billing', 'ajforms' );
 		}
 
@@ -1594,12 +1734,17 @@ class AJForms {
 			}
 		}
 
+		$subscription_period = $this->get_snapshot_subscription_period_context( $snapshot );
+		if ( ! empty( $subscription_period['current_period_end'] ) ) {
+			return $this->format_portal_date( $subscription_period['current_period_end'] );
+		}
+
 		return '-';
 	}
 
 	private function is_current_portal_service_snapshot( $snapshot ) {
 		$status = isset( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '';
-		$type   = isset( $snapshot->billing_type ) ? sanitize_key( (string) $snapshot->billing_type ) : '';
+		$type   = $this->get_snapshot_billing_type_key( $snapshot );
 
 		if ( 'recurring' === $type ) {
 			return in_array( $status, array( 'active', 'trialing', 'paid', 'succeeded', 'completed' ), true );
@@ -1617,7 +1762,7 @@ class AJForms {
 		}
 
 		$subscriptions      = $context['subscriptions'];
-		$snapshot_services  = array_values( array_filter( $context['service_snapshots'], array( $this, 'is_current_portal_service_snapshot' ) ) );
+		$snapshot_services  = $this->dedupe_portal_service_snapshots_for_display( array_values( array_filter( $context['service_snapshots'], array( $this, 'is_current_portal_service_snapshot' ) ) ) );
 		$snapshot_subscription_ids = array();
 		foreach ( $snapshot_services as $snapshot_service ) {
 			if ( ! empty( $snapshot_service->subscription_id ) ) {

@@ -4108,6 +4108,9 @@ class AJForms_Admin {
 			}
 		}
 		$status       = ! empty( $parent['status'] ) ? sanitize_key( (string) $parent['status'] ) : ( ! empty( $parent['payment_status'] ) ? sanitize_key( (string) $parent['payment_status'] ) : '' );
+		if ( '' === $interval && $product && ! empty( $product->recurring_interval ) ) {
+			$interval = sanitize_key( (string) $product->recurring_interval );
+		}
 		$billing_type = ( '' !== $interval || '' !== $subscription_id ) ? 'recurring' : 'one_time';
 		if ( '' === $service_period && $period_start && $period_end ) {
 			$service_period = $this->format_portal_date( $period_start ) . ' - ' . $this->format_portal_date( $period_end );
@@ -4491,6 +4494,8 @@ class AJForms_Admin {
 
 	private function get_portal_service_status_rank( $status ) {
 		$ranks = array(
+			'active'          => 0,
+			'trialing'        => 0,
 			'paid'            => 1,
 			'succeeded'       => 2,
 			'completed'       => 3,
@@ -4500,6 +4505,46 @@ class AJForms_Admin {
 		$status = sanitize_key( (string) $status );
 
 		return isset( $ranks[ $status ] ) ? $ranks[ $status ] : 99;
+	}
+
+	private function merge_portal_service_record( $existing, $candidate ) {
+		$candidate_rank = $this->get_portal_service_status_rank( isset( $candidate->status ) ? $candidate->status : '' );
+		$existing_rank  = $this->get_portal_service_status_rank( isset( $existing->status ) ? $existing->status : '' );
+		if ( $candidate_rank < $existing_rank ) {
+			$primary = $candidate;
+			$fallback = $existing;
+		} else {
+			$primary = $existing;
+			$fallback = $candidate;
+		}
+
+		foreach ( array( 'service_period', 'service_period_start', 'service_period_end', 'next_billing_date', 'price', 'amount', 'synced_at', 'paid_at', 'stripe_subscription_id', 'stripe_product_id', 'stripe_price_id', 'checkout_session_id', 'invoice_id', 'payment_intent_id', 'charge_id', 'source_ref' ) as $field ) {
+			if ( empty( $primary->{$field} ) && ! empty( $fallback->{$field} ) ) {
+				$primary->{$field} = $fallback->{$field};
+			}
+		}
+
+		return $primary;
+	}
+
+	private function portal_recurring_service_records_match( $record, $existing_record ) {
+		$record_type = isset( $record->billing_type_key ) ? sanitize_key( (string) $record->billing_type_key ) : '';
+		$existing_type = isset( $existing_record->billing_type_key ) ? sanitize_key( (string) $existing_record->billing_type_key ) : '';
+		if ( ! in_array( $record_type, array( 'subscription', 'recurring' ), true ) || ! in_array( $existing_type, array( 'subscription', 'recurring' ), true ) ) {
+			return false;
+		}
+
+		if ( empty( $record->stripe_customer_id ) || empty( $existing_record->stripe_customer_id ) || (string) $record->stripe_customer_id !== (string) $existing_record->stripe_customer_id ) {
+			return false;
+		}
+
+		$product_match = ! empty( $record->stripe_product_id ) && ! empty( $existing_record->stripe_product_id ) && (string) $record->stripe_product_id === (string) $existing_record->stripe_product_id;
+		$price_match = ! empty( $record->stripe_price_id ) && ! empty( $existing_record->stripe_price_id ) && (string) $record->stripe_price_id === (string) $existing_record->stripe_price_id;
+		if ( ! $product_match && ! $price_match ) {
+			return false;
+		}
+
+		return ! empty( $record->stripe_subscription_id ) || ! empty( $existing_record->stripe_subscription_id );
 	}
 
 	private function merge_portal_one_time_service_record( $existing, $candidate ) {
@@ -4586,18 +4631,46 @@ class AJForms_Admin {
 
 	private function dedupe_portal_service_records( $records ) {
 		$deduped = array();
-		$seen    = array();
+		$order   = array();
 
 		foreach ( (array) $records as $record ) {
 			$key = $this->get_portal_service_dedupe_key( $record );
-			if ( isset( $seen[ $key ] ) ) {
+			foreach ( $deduped as $existing_key => $existing_record ) {
+				if ( $this->portal_recurring_service_records_match( $record, $existing_record ) ) {
+					$key = $existing_key;
+					break;
+				}
+			}
+			if ( isset( $deduped[ $key ] ) ) {
+				if ( $this->portal_recurring_service_records_match( $record, $deduped[ $key ] ) && ( empty( $record->stripe_subscription_id ) || empty( $deduped[ $key ]->stripe_subscription_id ) ) ) {
+					$this->log_portal_event(
+						'service_recurring_payment_suppressed_from_one_time',
+						array(
+							'source'             => 'products_services_display',
+							'stripe_customer_id' => ! empty( $record->stripe_customer_id ) ? $record->stripe_customer_id : '',
+							'severity'           => 'info',
+							'details'            => array(
+								'product_id'       => ! empty( $record->stripe_product_id ) ? $record->stripe_product_id : '',
+								'price_id'         => ! empty( $record->stripe_price_id ) ? $record->stripe_price_id : '',
+								'subscription_id'  => ! empty( $record->stripe_subscription_id ) ? $record->stripe_subscription_id : ( ! empty( $deduped[ $key ]->stripe_subscription_id ) ? $deduped[ $key ]->stripe_subscription_id : '' ),
+								'reason'           => 'recurring_payment_row_represented_by_subscription_service',
+							),
+						)
+					);
+				}
+				$deduped[ $key ] = $this->merge_portal_service_record( $deduped[ $key ], $record );
 				continue;
 			}
-			$seen[ $key ] = true;
-			$deduped[] = $record;
+			$deduped[ $key ] = $record;
+			$order[] = $key;
 		}
 
-		return $deduped;
+		$records = array();
+		foreach ( $order as $key ) {
+			$records[] = $deduped[ $key ];
+		}
+
+		return $records;
 	}
 
 	private function make_portal_service_record_from_product( $product, $context = array() ) {
@@ -4635,7 +4708,18 @@ class AJForms_Admin {
 	}
 
 	private function make_portal_service_record_from_snapshot( $snapshot ) {
-		$billing_type_key = ! empty( $snapshot->billing_type ) && 'recurring' === sanitize_key( (string) $snapshot->billing_type ) ? 'subscription' : 'one_time';
+		$product = $this->resolve_portal_product_from_identifiers(
+			array(
+				'price_ids'           => ! empty( $snapshot->price_id ) ? array( sanitize_text_field( (string) $snapshot->price_id ) ) : array(),
+				'product_ids'         => ! empty( $snapshot->product_id ) ? array( sanitize_text_field( (string) $snapshot->product_id ) ) : array(),
+				'subscription_ids'    => ! empty( $snapshot->subscription_id ) ? array( sanitize_text_field( (string) $snapshot->subscription_id ) ) : array(),
+				'checkout_session_ids'=> ! empty( $snapshot->checkout_session_id ) ? array( sanitize_text_field( (string) $snapshot->checkout_session_id ) ) : array(),
+				'invoice_ids'         => ! empty( $snapshot->invoice_id ) ? array( sanitize_text_field( (string) $snapshot->invoice_id ) ) : array(),
+				'payment_intent_ids'  => ! empty( $snapshot->payment_intent_id ) ? array( sanitize_text_field( (string) $snapshot->payment_intent_id ) ) : array(),
+			)
+		);
+		$snapshot_interval = ! empty( $snapshot->recurring_interval ) ? sanitize_key( (string) $snapshot->recurring_interval ) : ( $product && ! empty( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '' );
+		$billing_type_key = ( ! empty( $snapshot_interval ) || ! empty( $snapshot->subscription_id ) || ( ! empty( $snapshot->billing_type ) && 'recurring' === sanitize_key( (string) $snapshot->billing_type ) ) ) ? 'subscription' : 'one_time';
 		$customer_ref = ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : sanitize_text_field( (string) $snapshot->guest_customer_id );
 		$period_start = ! empty( $snapshot->service_period_start ) ? $snapshot->service_period_start : '';
 		$period_end = ! empty( $snapshot->service_period_end ) ? $snapshot->service_period_end : '';
@@ -4656,7 +4740,7 @@ class AJForms_Admin {
 		$record = (object) array(
 			'service_name'           => ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : __( 'Service', 'ajforms' ),
 			'price'                  => ! empty( $snapshot->price_label_snapshot ) ? sanitize_text_field( (string) $snapshot->price_label_snapshot ) : $this->format_portal_money( $snapshot->amount, $snapshot->currency ),
-			'recurring_interval'     => ! empty( $snapshot->recurring_interval ) ? sanitize_key( (string) $snapshot->recurring_interval ) : '',
+			'recurring_interval'     => $snapshot_interval,
 			'billing_type_key'       => $billing_type_key,
 			'billing_type'           => $this->get_portal_billing_type_label( $billing_type_key ),
 			'stripe_price_id'        => ! empty( $snapshot->price_id ) ? sanitize_text_field( (string) $snapshot->price_id ) : '',
@@ -4691,8 +4775,11 @@ class AJForms_Admin {
 		$where  = array( '1=1' );
 		$params = array();
 		if ( '' !== $billing_type ) {
-			$where[]  = 's.billing_type = %s';
-			$params[] = 'recurring' === $billing_type || 'subscription' === $billing_type ? 'recurring' : 'one_time';
+			if ( 'recurring' === $billing_type || 'subscription' === $billing_type ) {
+				$where[] = "(s.billing_type = 'recurring' OR s.recurring_interval <> '' OR s.subscription_id <> '' OR p.recurring_interval <> '')";
+			} else {
+				$where[] = "s.billing_type = 'one_time' AND s.recurring_interval = '' AND s.subscription_id = '' AND COALESCE(p.recurring_interval, '') = ''";
+			}
 		}
 		if ( '' !== $stripe_customer_id ) {
 			$where[]  = 's.stripe_customer_id = %s';
@@ -4707,6 +4794,7 @@ class AJForms_Admin {
 		$sql = "SELECT s.*, c.name AS customer_name
 			FROM {$this->get_portal_service_snapshots_table()} s
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = s.stripe_customer_id
+			LEFT JOIN {$this->get_portal_stripe_products_table()} p ON p.stripe_price_id = s.price_id
 			WHERE " . implode( ' AND ', $where ) . '
 			ORDER BY s.updated_at DESC, s.id DESC
 			LIMIT %d';
@@ -4714,7 +4802,27 @@ class AJForms_Admin {
 		$rows = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
 		$records = array();
 		foreach ( (array) $rows as $row ) {
-			$records[] = $this->make_portal_service_record_from_snapshot( $row );
+			$record = $this->make_portal_service_record_from_snapshot( $row );
+			if ( 'one_time' === $billing_type && 'one_time' !== $record->billing_type_key ) {
+				$this->log_portal_event(
+					'service_snapshot_recurring_suppressed_from_one_time',
+					array(
+						'source'             => 'products_services_display',
+						'stripe_customer_id' => ! empty( $row->stripe_customer_id ) ? $row->stripe_customer_id : '',
+						'email_after'        => ! empty( $row->customer_email ) ? $row->customer_email : '',
+						'severity'           => 'info',
+						'details'            => array(
+							'snapshot_key'    => ! empty( $row->snapshot_key ) ? $row->snapshot_key : '',
+							'product_name'    => ! empty( $row->product_name_snapshot ) ? $row->product_name_snapshot : '',
+							'price_id'        => ! empty( $row->price_id ) ? $row->price_id : '',
+							'subscription_id' => ! empty( $row->subscription_id ) ? $row->subscription_id : '',
+							'reason'          => 'recurring_price_or_subscription_context',
+						),
+					)
+				);
+				continue;
+			}
+			$records[] = $record;
 		}
 
 		return 'one_time' === $billing_type ? $this->dedupe_portal_one_time_service_records( $records ) : $this->dedupe_portal_service_records( $records );
@@ -4959,27 +5067,65 @@ class AJForms_Admin {
 				continue;
 			}
 
-			$identifiers = $this->get_portal_service_identifiers_from_ledger_entry( $entry );
-			$product     = $this->resolve_portal_product_from_identifiers( $identifiers );
-			if ( ! $product ) {
-				$fallback_service_name = $this->get_portal_fallback_service_name_from_ledger_entry( $entry );
-				if ( '' === $fallback_service_name ) {
-					$this->record_portal_service_display_skip( $entry, __( 'Skipped because no synced Stripe product, price, or usable checkout item description was found.', 'ajforms' ) );
-					continue;
-				}
-				if ( 'subscription' === $billing_type ) {
+				$identifiers = $this->get_portal_service_identifiers_from_ledger_entry( $entry );
+				$product     = $this->resolve_portal_product_from_identifiers( $identifiers );
+				if ( ! $product ) {
+					if ( $this->portal_ledger_entry_has_subscription_context( $entry ) ) {
+						$this->record_portal_service_display_skip( $entry, __( 'Skipped because this payment has subscription context and is represented by recurring services.', 'ajforms' ) );
+						$this->log_portal_event(
+							'service_recurring_payment_suppressed_from_one_time',
+							array(
+								'source'             => 'products_services_display',
+								'stripe_customer_id' => ! empty( $entry->stripe_customer_id ) ? $entry->stripe_customer_id : '',
+								'severity'           => 'info',
+								'details'            => array(
+									'source_type'       => ! empty( $entry->source_type ) ? $entry->source_type : '',
+									'source_object_id'  => ! empty( $entry->source_object_id ) ? $entry->source_object_id : '',
+									'invoice_id'        => ! empty( $entry->invoice_id ) ? $entry->invoice_id : '',
+									'payment_intent_id' => ! empty( $entry->payment_intent_id ) ? $entry->payment_intent_id : '',
+									'reason'            => 'subscription_context_without_resolved_product',
+								),
+							)
+						);
+						continue;
+					}
+					$fallback_service_name = $this->get_portal_fallback_service_name_from_ledger_entry( $entry );
+					if ( '' === $fallback_service_name ) {
+						$this->record_portal_service_display_skip( $entry, __( 'Skipped because no synced Stripe product, price, or usable checkout item description was found.', 'ajforms' ) );
+						continue;
+					}
+					if ( 'subscription' === $billing_type ) {
+						continue;
+					}
+
+					$record = $this->make_portal_fallback_one_time_service_record( $entry, $fallback_service_name, $identifiers );
+					$rows[] = $record;
 					continue;
 				}
 
-				$record = $this->make_portal_fallback_one_time_service_record( $entry, $fallback_service_name, $identifiers );
-				$rows[] = $record;
-				continue;
-			}
-
-			$record_billing_type = ! empty( $product->recurring_interval ) ? 'subscription' : 'one_time';
-			if ( '' !== $billing_type && $record_billing_type !== $billing_type ) {
-				continue;
-			}
+				$record_billing_type = ! empty( $product->recurring_interval ) ? 'subscription' : 'one_time';
+				if ( '' !== $billing_type && $record_billing_type !== $billing_type ) {
+					if ( 'one_time' === $billing_type && 'subscription' === $record_billing_type ) {
+						$this->record_portal_service_display_skip( $entry, __( 'Skipped because the resolved Stripe price is recurring and is represented by recurring services.', 'ajforms' ) );
+						$this->log_portal_event(
+							'service_recurring_payment_suppressed_from_one_time',
+							array(
+								'source'             => 'products_services_display',
+								'stripe_customer_id' => ! empty( $entry->stripe_customer_id ) ? $entry->stripe_customer_id : '',
+								'severity'           => 'info',
+								'details'            => array(
+									'product_id'         => ! empty( $product->stripe_product_id ) ? $product->stripe_product_id : '',
+									'price_id'           => ! empty( $product->stripe_price_id ) ? $product->stripe_price_id : '',
+									'recurring_interval' => ! empty( $product->recurring_interval ) ? $product->recurring_interval : '',
+									'source_type'        => ! empty( $entry->source_type ) ? $entry->source_type : '',
+									'source_object_id'   => ! empty( $entry->source_object_id ) ? $entry->source_object_id : '',
+									'reason'             => 'resolved_recurring_price',
+								),
+							)
+						);
+					}
+					continue;
+				}
 			if ( 'subscription' === $record_billing_type && ! empty( $identifiers['subscription_ids'][0] ) ) {
 				$synced_subscription_status = $this->get_synced_portal_subscription_status( $identifiers['subscription_ids'][0] );
 				if ( in_array( $synced_subscription_status, array( 'active', 'trialing' ), true ) ) {
