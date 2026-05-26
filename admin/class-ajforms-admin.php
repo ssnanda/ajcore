@@ -581,7 +581,7 @@ class AJForms_Admin {
 		}
 
 		$mapping_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_user_mappings_table()}", 0 );
-		if ( is_array( $mapping_columns ) && ! in_array( 'portal_user_email', $mapping_columns, true ) ) {
+		if ( is_array( $mapping_columns ) && ( ! in_array( 'portal_user_email', $mapping_columns, true ) || ! in_array( 'site_uuid', $mapping_columns, true ) ) ) {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
 		}
@@ -595,9 +595,36 @@ class AJForms_Admin {
 		if ( '' === $uuid ) {
 			$uuid = wp_generate_uuid4();
 			update_option( 'ajcore_site_uuid', $uuid, false );
+			$this->log_site_uuid_created_event( $uuid );
 		}
 
 		return $uuid;
+	}
+
+	private function log_site_uuid_created_event( $uuid ) {
+		global $wpdb;
+
+		$table = $this->get_portal_event_log_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return false;
+		}
+
+		$actor = wp_get_current_user();
+		return $wpdb->insert(
+			$table,
+			array(
+				'event_type'     => 'site_uuid_created',
+				'severity'       => 'info',
+				'source'         => is_admin() ? 'wp_admin' : 'system',
+				'correlation_id' => wp_generate_uuid4(),
+				'site_uuid'      => sanitize_text_field( (string) $uuid ),
+				'actor_user_id'  => get_current_user_id(),
+				'actor_email'    => $actor && ! empty( $actor->user_email ) ? sanitize_email( $actor->user_email ) : '',
+				'details'        => wp_json_encode( array( 'option' => 'ajcore_site_uuid' ) ),
+				'created_at'     => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
+		);
 	}
 
 	private function get_portal_event_correlation_id() {
@@ -820,7 +847,94 @@ class AJForms_Admin {
 			return null;
 		}
 
-		return in_array( strtolower( $user->user_email ), $this->get_portal_customer_link_emails( $customer, $mapping ), true ) ? $user : null;
+		$emails = $this->get_portal_customer_link_emails( $customer, $mapping );
+		if ( ! in_array( strtolower( $user->user_email ), $emails, true ) ) {
+			return null;
+		}
+
+		$current_site_uuid = $this->get_ajcore_site_uuid();
+		$mapping_site_uuid = '';
+		if ( isset( $mapping->mapping_site_uuid ) ) {
+			$mapping_site_uuid = sanitize_text_field( (string) $mapping->mapping_site_uuid );
+		} elseif ( isset( $mapping->site_uuid ) ) {
+			$mapping_site_uuid = sanitize_text_field( (string) $mapping->site_uuid );
+		}
+
+		if ( '' === $mapping_site_uuid ) {
+			$this->migrate_portal_mapping_site_uuid( $mapping, $customer, $user, 'mapping_validation' );
+			return $user;
+		}
+
+		if ( $mapping_site_uuid !== $current_site_uuid ) {
+			$this->quarantine_portal_mapping_site_uuid_mismatch( $mapping, $customer, $user, 'mapping_validation' );
+			return null;
+		}
+
+		return $user;
+	}
+
+	private function migrate_portal_mapping_site_uuid( $mapping, $customer, $user, $source = 'repair' ) {
+		global $wpdb;
+
+		if ( ! $mapping || empty( $mapping->stripe_customer_id ) || ! $user ) {
+			return false;
+		}
+
+		$current_site_uuid = $this->get_ajcore_site_uuid();
+		$wpdb->update(
+			$this->get_portal_user_mappings_table(),
+			array(
+				'site_uuid'  => $current_site_uuid,
+				'updated_at' => current_time( 'mysql' ),
+			),
+			array( 'stripe_customer_id' => sanitize_text_field( (string) $mapping->stripe_customer_id ) ),
+			array( '%s', '%s' ),
+			array( '%s' )
+		);
+		$this->log_portal_event(
+			'mapping_migrated',
+			array(
+				'source'             => sanitize_key( (string) $source ),
+				'customer_id'        => isset( $customer->id ) ? (int) $customer->id : 0,
+				'stripe_customer_id' => sanitize_text_field( (string) $mapping->stripe_customer_id ),
+				'wp_user_id_after'   => (int) $user->ID,
+				'email_after'        => $user->user_email,
+				'details'            => array(
+					'reason'    => 'missing_site_uuid_email_validated',
+					'site_uuid' => $current_site_uuid,
+				),
+			)
+		);
+
+		return true;
+	}
+
+	private function quarantine_portal_mapping_site_uuid_mismatch( $mapping, $customer, $user = null, $source = 'repair' ) {
+		$mapping_site_uuid = '';
+		if ( isset( $mapping->mapping_site_uuid ) ) {
+			$mapping_site_uuid = sanitize_text_field( (string) $mapping->mapping_site_uuid );
+		} elseif ( isset( $mapping->site_uuid ) ) {
+			$mapping_site_uuid = sanitize_text_field( (string) $mapping->site_uuid );
+		}
+
+		$this->log_portal_event(
+			'mapping_quarantined',
+			array(
+				'severity'           => 'warning',
+				'source'             => sanitize_key( (string) $source ),
+				'customer_id'        => isset( $customer->id ) ? (int) $customer->id : 0,
+				'stripe_customer_id' => isset( $mapping->stripe_customer_id ) ? sanitize_text_field( (string) $mapping->stripe_customer_id ) : '',
+				'wp_user_id_before'  => isset( $mapping->user_id ) ? (int) $mapping->user_id : 0,
+				'email_before'       => $user && ! empty( $user->user_email ) ? $user->user_email : ( isset( $mapping->portal_user_email ) ? $mapping->portal_user_email : '' ),
+				'details'            => array(
+					'reason'            => 'site_uuid_mismatch',
+					'mapping_site_uuid' => $mapping_site_uuid,
+					'current_site_uuid' => $this->get_ajcore_site_uuid(),
+				),
+			)
+		);
+
+		return true;
 	}
 
 	private function portal_user_has_portal_role( $user ) {
@@ -899,7 +1013,7 @@ class AJForms_Admin {
 			$params = $customer_ids;
 		}
 
-		$sql = "SELECT c.*, m.id AS mapping_id, m.user_id, m.customer_email AS mapped_email, m.portal_user_email
+		$sql = "SELECT c.*, m.id AS mapping_id, m.user_id, m.customer_email AS mapped_email, m.portal_user_email, m.site_uuid AS mapping_site_uuid
 			FROM {$this->get_portal_stripe_customers_table()} c
 			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
 			WHERE {$where}
@@ -916,6 +1030,15 @@ class AJForms_Admin {
 
 			$current_user = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : null;
 			$valid_current_user = $current_user && in_array( strtolower( $current_user->user_email ), $emails, true );
+			$mapping_site_uuid = isset( $customer->mapping_site_uuid ) ? sanitize_text_field( (string) $customer->mapping_site_uuid ) : '';
+			if ( $valid_current_user && '' !== $mapping_site_uuid && $mapping_site_uuid !== $this->get_ajcore_site_uuid() ) {
+				if ( $log_items ) {
+					$this->quarantine_portal_mapping_site_uuid_mismatch( $customer, $customer, $current_user, $activate_matches ? 'enable_repair' : 'repair' );
+				}
+				$valid_current_user = false;
+			} elseif ( $valid_current_user && '' === $mapping_site_uuid && $log_items ) {
+				$this->migrate_portal_mapping_site_uuid( $customer, $customer, $current_user, $activate_matches ? 'enable_repair' : 'repair' );
+			}
 			$matched_user = null;
 			foreach ( $emails as $email ) {
 				$matched_user = get_user_by( 'email', $email );
@@ -976,9 +1099,10 @@ class AJForms_Admin {
 						'stripe_customer_id' => sanitize_text_field( (string) $customer->stripe_customer_id ),
 						'customer_email'     => sanitize_email( (string) $emails[0] ),
 						'portal_user_email'  => sanitize_email( (string) $matched_user->user_email ),
+						'site_uuid'          => $this->get_ajcore_site_uuid(),
 						'updated_at'         => current_time( 'mysql' ),
 					),
-					array( '%d', '%s', '%s', '%s', '%s' ),
+					array( '%d', '%s', '%s', '%s', '%s', '%s' ),
 					'stripe_customer_id'
 				);
 				if ( $activate_matches ) {
@@ -1025,6 +1149,21 @@ class AJForms_Admin {
 							'portal_status_before'=> isset( $customer->portal_status ) ? $customer->portal_status : '',
 							'portal_status_after' => $activate_matches ? 'active' : ( isset( $customer->portal_status ) ? $customer->portal_status : '' ),
 							'details'             => array( 'repair_action' => 'relinked_by_email' ),
+						)
+					);
+					$this->log_portal_event(
+						'mapping_relinked',
+						array(
+							'source'              => $activate_matches ? 'enable_repair' : 'repair',
+							'customer_id'         => isset( $customer->id ) ? (int) $customer->id : 0,
+							'stripe_customer_id'  => $customer->stripe_customer_id,
+							'wp_user_id_before'   => $valid_current_user && $current_user ? (int) $current_user->ID : 0,
+							'wp_user_id_after'    => (int) $matched_user->ID,
+							'email_before'        => $valid_current_user && $current_user ? $current_user->user_email : '',
+							'email_after'         => $matched_user->user_email,
+							'portal_status_before'=> isset( $customer->portal_status ) ? $customer->portal_status : '',
+							'portal_status_after' => $activate_matches ? 'active' : ( isset( $customer->portal_status ) ? $customer->portal_status : '' ),
+							'details'             => array( 'site_uuid' => $this->get_ajcore_site_uuid() ),
 						)
 					);
 				}
@@ -2701,9 +2840,10 @@ class AJForms_Admin {
 				'stripe_customer_id' => $stripe_customer_id,
 				'customer_email'     => $email,
 				'portal_user_email'  => sanitize_email( $user->user_email ),
+				'site_uuid'          => $this->get_ajcore_site_uuid(),
 				'updated_at'         => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s', '%s' ),
+			array( '%d', '%s', '%s', '%s', '%s', '%s' ),
 			'stripe_customer_id'
 		);
 
@@ -2726,6 +2866,21 @@ class AJForms_Admin {
 				'email_after'            => $user->user_email,
 				'portal_status_before'   => $customer_before && ! empty( $customer_before->portal_status ) ? $customer_before->portal_status : ( $customer_before && ! empty( $customer_before->enabled_portal ) ? 'active' : 'disabled' ),
 				'portal_status_after'    => 'active',
+			)
+		);
+		$this->log_portal_event(
+			'mapping_relinked',
+			array(
+				'source'                 => 'customer_detail',
+				'customer_id'            => $customer_before ? (int) $customer_before->id : 0,
+				'stripe_customer_id'     => $stripe_customer_id,
+				'wp_user_id_before'      => $mapping_before && ! empty( $mapping_before->user_id ) ? (int) $mapping_before->user_id : 0,
+				'wp_user_id_after'       => (int) $user->ID,
+				'email_before'           => $mapping_before && ! empty( $mapping_before->portal_user_email ) ? $mapping_before->portal_user_email : '',
+				'email_after'            => $user->user_email,
+				'portal_status_before'   => $customer_before && ! empty( $customer_before->portal_status ) ? $customer_before->portal_status : ( $customer_before && ! empty( $customer_before->enabled_portal ) ? 'active' : 'disabled' ),
+				'portal_status_after'    => 'active',
+				'details'                => array( 'site_uuid' => $this->get_ajcore_site_uuid() ),
 			)
 		);
 
@@ -4530,9 +4685,10 @@ class AJForms_Admin {
 				'stripe_customer_id' => $stripe_customer_id,
 				'customer_email'     => sanitize_email( $customer->email ),
 				'portal_user_email'  => sanitize_email( $user->user_email ),
+				'site_uuid'          => $this->get_ajcore_site_uuid(),
 				'updated_at'         => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s', '%s' ),
+			array( '%d', '%s', '%s', '%s', '%s', '%s' ),
 			'stripe_customer_id'
 		);
 		$this->log_portal_event(
@@ -5748,7 +5904,7 @@ class AJForms_Admin {
 			foreach ( $selected_ids as $stripe_customer_id ) {
 				$customer = $wpdb->get_row(
 					$wpdb->prepare(
-						"SELECT c.*, m.user_id, m.customer_email, m.portal_user_email FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
+						"SELECT c.*, m.user_id, m.customer_email, m.portal_user_email, m.site_uuid AS mapping_site_uuid FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
 						$stripe_customer_id
 					)
 				);
@@ -5875,7 +6031,7 @@ class AJForms_Admin {
 				global $wpdb;
 				$customer = $wpdb->get_row(
 					$wpdb->prepare(
-						"SELECT c.*, m.user_id, m.customer_email, m.portal_user_email FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
+						"SELECT c.*, m.user_id, m.customer_email, m.portal_user_email, m.site_uuid AS mapping_site_uuid FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
 						$stripe_customer_id
 					)
 				);
@@ -9960,7 +10116,7 @@ class AJForms_Admin {
 		}
 
 		$customers = $wpdb->get_results(
-			"SELECT c.*, m.user_id, m.customer_email AS mapped_email, m.portal_user_email, m.updated_at AS mapped_at
+			"SELECT c.*, m.user_id, m.customer_email AS mapped_email, m.portal_user_email, m.site_uuid AS mapping_site_uuid, m.updated_at AS mapped_at
 			FROM {$this->get_portal_stripe_customers_table()} c
 			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
 			LEFT JOIN {$wpdb->users} u ON u.ID = m.user_id

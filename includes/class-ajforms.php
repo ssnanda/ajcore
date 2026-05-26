@@ -2296,9 +2296,36 @@ class AJForms {
 		if ( '' === $uuid ) {
 			$uuid = wp_generate_uuid4();
 			update_option( 'ajcore_site_uuid', $uuid, false );
+			$this->log_site_uuid_created_event( $uuid );
 		}
 
 		return $uuid;
+	}
+
+	private function log_site_uuid_created_event( $uuid ) {
+		global $wpdb;
+
+		$table = $this->get_portal_event_log_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return false;
+		}
+
+		$actor = wp_get_current_user();
+		return $wpdb->insert(
+			$table,
+			array(
+				'event_type'     => 'site_uuid_created',
+				'severity'       => 'info',
+				'source'         => 'customer_portal',
+				'correlation_id' => wp_generate_uuid4(),
+				'site_uuid'      => sanitize_text_field( (string) $uuid ),
+				'actor_user_id'  => get_current_user_id(),
+				'actor_email'    => $actor && ! empty( $actor->user_email ) ? sanitize_email( $actor->user_email ) : '',
+				'details'        => wp_json_encode( array( 'option' => 'ajcore_site_uuid' ) ),
+				'created_at'     => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
+		);
 	}
 
 	private function get_portal_event_correlation_id() {
@@ -2397,6 +2424,63 @@ class AJForms {
 		return in_array( 'aj_portal_user', $roles, true ) || user_can( $user, 'ajcore_customer_portal_access' ) || ( $customer_role && in_array( $customer_role, $roles, true ) );
 	}
 
+	private function migrate_portal_mapping_site_uuid( $mapping, $user, $source = 'customer_portal' ) {
+		global $wpdb;
+
+		if ( ! $mapping || empty( $mapping->stripe_customer_id ) || ! $user ) {
+			return false;
+		}
+
+		$current_site_uuid = $this->get_ajcore_site_uuid();
+		$wpdb->update(
+			$this->get_portal_user_mappings_table(),
+			array(
+				'site_uuid'  => $current_site_uuid,
+				'updated_at' => current_time( 'mysql' ),
+			),
+			array( 'stripe_customer_id' => sanitize_text_field( (string) $mapping->stripe_customer_id ) ),
+			array( '%s', '%s' ),
+			array( '%s' )
+		);
+		$this->log_portal_event(
+			'mapping_migrated',
+			array(
+				'source'             => sanitize_key( (string) $source ),
+				'customer_id'        => isset( $mapping->customer_row_id ) ? (int) $mapping->customer_row_id : 0,
+				'stripe_customer_id' => sanitize_text_field( (string) $mapping->stripe_customer_id ),
+				'wp_user_id_after'   => (int) $user->ID,
+				'email_after'        => $user->user_email,
+				'details'            => array(
+					'reason'    => 'missing_site_uuid_email_validated',
+					'site_uuid' => $current_site_uuid,
+				),
+			)
+		);
+
+		return true;
+	}
+
+	private function quarantine_portal_mapping_site_uuid_mismatch( $mapping, $user = null, $source = 'customer_portal' ) {
+		$this->log_portal_event(
+			'mapping_quarantined',
+			array(
+				'severity'           => 'warning',
+				'source'             => sanitize_key( (string) $source ),
+				'customer_id'        => isset( $mapping->customer_row_id ) ? (int) $mapping->customer_row_id : 0,
+				'stripe_customer_id' => isset( $mapping->stripe_customer_id ) ? sanitize_text_field( (string) $mapping->stripe_customer_id ) : '',
+				'wp_user_id_before'  => isset( $mapping->user_id ) ? (int) $mapping->user_id : 0,
+				'email_before'       => $user && ! empty( $user->user_email ) ? $user->user_email : ( isset( $mapping->portal_user_email ) ? $mapping->portal_user_email : '' ),
+				'details'            => array(
+					'reason'            => 'site_uuid_mismatch',
+					'mapping_site_uuid' => isset( $mapping->site_uuid ) ? sanitize_text_field( (string) $mapping->site_uuid ) : '',
+					'current_site_uuid' => $this->get_ajcore_site_uuid(),
+				),
+			)
+		);
+
+		return true;
+	}
+
 	private function get_current_user_portal_access_context() {
 		if ( ! is_user_logged_in() ) {
 			return array( 'allowed' => false, 'reason' => 'not_logged_in', 'mapping' => null, 'customer' => null );
@@ -2440,6 +2524,16 @@ class AJForms {
 		$valid_emails = array_values( array_unique( $valid_emails ) );
 		if ( empty( $valid_emails ) || ! in_array( strtolower( (string) $user->user_email ), $valid_emails, true ) ) {
 			return array( 'allowed' => false, 'reason' => 'email_mismatch', 'mapping' => $row, 'customer' => $row );
+		}
+
+		$current_site_uuid = $this->get_ajcore_site_uuid();
+		$mapping_site_uuid = isset( $row->site_uuid ) ? sanitize_text_field( (string) $row->site_uuid ) : '';
+		if ( '' === $mapping_site_uuid ) {
+			$this->migrate_portal_mapping_site_uuid( $row, $user, 'customer_portal' );
+			$row->site_uuid = $current_site_uuid;
+		} elseif ( $mapping_site_uuid !== $current_site_uuid ) {
+			$this->quarantine_portal_mapping_site_uuid_mismatch( $row, $user, 'customer_portal' );
+			return array( 'allowed' => false, 'reason' => 'site_uuid_mismatch', 'mapping' => $row, 'customer' => $row );
 		}
 
 		$status = $this->normalize_portal_customer_status( $row->portal_status );
