@@ -4435,8 +4435,8 @@ class AJForms_Admin {
 		$customer = isset( $record->stripe_customer_id ) ? (string) $record->stripe_customer_id : '';
 		$product  = isset( $record->stripe_product_id ) ? (string) $record->stripe_product_id : '';
 		$price    = isset( $record->stripe_price_id ) ? (string) $record->stripe_price_id : '';
-		if ( ! empty( $record->stripe_subscription_id ) && '' !== $customer && ( '' !== $product || '' !== $price ) ) {
-			return implode( ':', array_filter( array( $customer, $product, $price, (string) $record->stripe_subscription_id ), 'strlen' ) );
+		if ( ! empty( $record->stripe_subscription_id ) ) {
+			return implode( ':', array_filter( array( $customer, (string) $record->stripe_subscription_id ), 'strlen' ) );
 		}
 
 		$flow_ids = array();
@@ -4546,6 +4546,12 @@ class AJForms_Admin {
 
 		if ( empty( $record->stripe_customer_id ) || empty( $existing_record->stripe_customer_id ) || (string) $record->stripe_customer_id !== (string) $existing_record->stripe_customer_id ) {
 			return false;
+		}
+
+		if ( ! empty( $record->stripe_subscription_id ) || ! empty( $existing_record->stripe_subscription_id ) ) {
+			return ! empty( $record->stripe_subscription_id )
+				&& ! empty( $existing_record->stripe_subscription_id )
+				&& (string) $record->stripe_subscription_id === (string) $existing_record->stripe_subscription_id;
 		}
 
 		$product_match = ! empty( $record->stripe_product_id ) && ! empty( $existing_record->stripe_product_id ) && (string) $record->stripe_product_id === (string) $existing_record->stripe_product_id;
@@ -7046,7 +7052,12 @@ class AJForms_Admin {
 			global $wpdb;
 
 			$action = sanitize_key( wp_unslash( $_POST['portal_bulk_action'] ) );
-			$selected_ids = isset( $_POST['portal_customer_ids'] ) && is_array( $_POST['portal_customer_ids'] ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['portal_customer_ids'] ) ) : array();
+			$selected_values = isset( $_POST['portal_customer_ids'] ) && is_array( $_POST['portal_customer_ids'] ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['portal_customer_ids'] ) ) : array();
+			$selected_ids    = array();
+			foreach ( $selected_values as $selected_value ) {
+				$parts = explode( '|', (string) $selected_value );
+				$selected_ids[] = sanitize_text_field( (string) $parts[0] );
+			}
 			$selected_ids = array_values( array_filter( array_unique( $selected_ids ) ) );
 			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password', 'send_welcome', 'delete_archived' );
 			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
@@ -11402,6 +11413,7 @@ class AJForms_Admin {
 						<tr>
 							<th style="width:34px;"><input type="checkbox" id="ajcore-check-all-portal-users"></th>
 							<th><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Customer ID', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Stripe Customer', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
 							<?php foreach ( $display_fields as $field ) : ?>
@@ -11414,7 +11426,7 @@ class AJForms_Admin {
 					<tbody>
 						<?php if ( empty( $customers ) ) : ?>
 							<tr>
-								<td colspan="<?php echo esc_attr( 6 + count( $display_fields ) ); ?>">
+								<td colspan="<?php echo esc_attr( 7 + count( $display_fields ) ); ?>">
 									<p><strong><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></strong></p>
 									<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customer records from the connected Stripe account.', 'ajforms' ); ?></p>
 									<p>
@@ -11449,16 +11461,19 @@ class AJForms_Admin {
 									$status_class = 'disabled';
 									$row_class    = 'ajcore-row-disabled';
 								}
+								$customer_email      = ! empty( $customer->email ) ? sanitize_email( (string) $customer->email ) : '';
+								$customer_unique_key = sanitize_text_field( (string) $customer->stripe_customer_id ) . '|' . strtolower( $customer_email );
 								?>
 								<tr class="<?php echo esc_attr( $row_class ); ?>">
-									<td><input type="checkbox" class="ajcore-portal-user-checkbox" name="portal_customer_ids[]" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>"></td>
+									<td><input type="checkbox" class="ajcore-portal-user-checkbox" name="portal_customer_ids[]" value="<?php echo esc_attr( $customer_unique_key ); ?>" data-customer-id="<?php echo esc_attr( $customer->stripe_customer_id ); ?>" data-customer-email="<?php echo esc_attr( $customer_email ); ?>"></td>
 									<td><span class="ajcore-status-pill <?php echo esc_attr( $status_class ); ?>"><?php echo esc_html( $status_label ); ?></span></td>
+									<td><code><?php echo esc_html( $customer->stripe_customer_id ); ?></code></td>
 									<td>
 										<strong><?php echo esc_html( ! empty( $customer->name ) ? $customer->name : __( 'Unnamed customer', 'ajforms' ) ); ?></strong><br>
-										<code><?php echo esc_html( $customer->stripe_customer_id ); ?></code><br>
+										<small><?php echo esc_html( sprintf( __( 'Unique: %s', 'ajforms' ), $customer_unique_key ) ); ?></small><br>
 										<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $customer->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a>
 									</td>
-									<td><?php echo esc_html( $customer->email ); ?></td>
+									<td><?php echo esc_html( $customer_email ); ?></td>
 									<?php foreach ( $display_fields as $field ) : ?>
 										<td><?php echo esc_html( $this->get_portal_customer_display_value( $customer, $field ) ); ?></td>
 									<?php endforeach; ?>
@@ -11590,6 +11605,7 @@ class AJForms_Admin {
 					<thead>
 						<tr>
 							<th><?php esc_html_e( 'Service', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Subscription ID', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
@@ -11600,11 +11616,12 @@ class AJForms_Admin {
 					</thead>
 					<tbody>
 						<?php if ( empty( $active_recurring_services ) ) : ?>
-							<tr><td colspan="7"><?php esc_html_e( 'No active recurring services found.', 'ajforms' ); ?></td></tr>
+							<tr><td colspan="8"><?php esc_html_e( 'No active recurring services found.', 'ajforms' ); ?></td></tr>
 						<?php else : ?>
 							<?php foreach ( $active_recurring_services as $service ) : ?>
 								<tr>
-									<td><?php echo esc_html( $service->service_name ); ?><?php if ( ! empty( $service->stripe_subscription_id ) ) : ?><br><code><?php echo esc_html( $service->stripe_subscription_id ); ?></code><?php endif; ?></td>
+									<td><?php echo esc_html( $service->service_name ); ?></td>
+									<td><code><?php echo esc_html( ! empty( $service->stripe_subscription_id ) ? $service->stripe_subscription_id : '-' ); ?></code></td>
 									<td><strong><?php echo esc_html( $service->price ); ?></strong></td>
 									<td><?php echo esc_html( $service->customer ); ?><br><small><?php echo esc_html( $service->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $service->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a></td>
 									<td><strong><?php echo esc_html( $service->status ); ?></strong></td>
