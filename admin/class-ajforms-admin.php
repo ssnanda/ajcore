@@ -11552,7 +11552,7 @@ class AJForms_Admin {
 				ORDER BY s.current_period_end ASC, s.synced_at DESC
 				LIMIT 300"
 			);
-			$active_recurring_services = $this->dedupe_portal_service_records( array_merge( $this->get_portal_service_records_from_snapshots( 'recurring', '', 300 ), $this->get_portal_service_records_from_subscriptions( $active_subscriptions ), $this->get_portal_recurring_service_records_from_ledger( '', 300 ) ) );
+			$active_recurring_services = $this->get_portal_service_records_from_subscriptions( $active_subscriptions );
 			$one_time_services = $this->get_portal_one_time_paid_services( '', 300 );
 		}
 		$active_count  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1" );
