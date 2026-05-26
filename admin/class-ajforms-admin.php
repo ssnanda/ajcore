@@ -4199,6 +4199,16 @@ class AJForms_Admin {
 		return '';
 	}
 
+	private function get_ledger_metadata_value( $entry, $key ) {
+		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+		if ( ! is_array( $metadata ) || empty( $key ) ) {
+			return '';
+		}
+
+		$key = sanitize_key( (string) $key );
+		return isset( $metadata[ $key ] ) && is_scalar( $metadata[ $key ] ) ? sanitize_text_field( (string) $metadata[ $key ] ) : '';
+	}
+
 	private function get_portal_service_record_period_label( $record ) {
 		if ( ! empty( $record->service_period ) && '-' !== (string) $record->service_period ) {
 			return sanitize_text_field( (string) $record->service_period );

@@ -1692,6 +1692,78 @@ class AJForms {
 		return ! empty( $snapshot->subscription_id ) || ! empty( $existing_snapshot->subscription_id );
 	}
 
+	private function get_subscription_service_identity_parts( $subscription ) {
+		$parts = array(
+			'price_ids'   => array(),
+			'product_ids' => array(),
+		);
+		$items = $this->decode_portal_json( isset( $subscription->items ) ? $subscription->items : '' );
+		if ( ! is_array( $items ) ) {
+			return $parts;
+		}
+
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+			if ( ! empty( $item['price_id'] ) ) {
+				$parts['price_ids'][] = sanitize_text_field( (string) $item['price_id'] );
+			}
+			if ( ! empty( $item['product_id'] ) ) {
+				$parts['product_ids'][] = sanitize_text_field( (string) $item['product_id'] );
+			}
+			if ( ! empty( $item['price'] ) && is_array( $item['price'] ) ) {
+				if ( ! empty( $item['price']['id'] ) ) {
+					$parts['price_ids'][] = sanitize_text_field( (string) $item['price']['id'] );
+				}
+				if ( ! empty( $item['price']['product'] ) ) {
+					if ( is_array( $item['price']['product'] ) && ! empty( $item['price']['product']['id'] ) ) {
+						$parts['product_ids'][] = sanitize_text_field( (string) $item['price']['product']['id'] );
+					} elseif ( is_scalar( $item['price']['product'] ) ) {
+						$parts['product_ids'][] = sanitize_text_field( (string) $item['price']['product'] );
+					}
+				}
+			}
+		}
+
+		$parts['price_ids'] = array_values( array_unique( array_filter( $parts['price_ids'] ) ) );
+		$parts['product_ids'] = array_values( array_unique( array_filter( $parts['product_ids'] ) ) );
+		return $parts;
+	}
+
+	private function recurring_snapshot_is_represented_by_active_subscription( $snapshot, $active_subscriptions ) {
+		if ( 'recurring' !== $this->get_snapshot_billing_type_key( $snapshot ) ) {
+			return false;
+		}
+
+		$status = isset( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '';
+		if ( in_array( $status, array( 'active', 'trialing' ), true ) ) {
+			return false;
+		}
+
+		if ( ! empty( $snapshot->subscription_id ) ) {
+			foreach ( (array) $active_subscriptions as $subscription ) {
+				if ( ! empty( $subscription->stripe_subscription_id ) && (string) $subscription->stripe_subscription_id === (string) $snapshot->subscription_id ) {
+					return true;
+				}
+			}
+		}
+
+		$snapshot_price = ! empty( $snapshot->price_id ) ? sanitize_text_field( (string) $snapshot->price_id ) : '';
+		$snapshot_product = ! empty( $snapshot->product_id ) ? sanitize_text_field( (string) $snapshot->product_id ) : '';
+		foreach ( (array) $active_subscriptions as $subscription ) {
+			$identity = $this->get_subscription_service_identity_parts( $subscription );
+			if ( '' !== $snapshot_price && in_array( $snapshot_price, $identity['price_ids'], true ) ) {
+				return true;
+			}
+			if ( '' !== $snapshot_product && in_array( $snapshot_product, $identity['product_ids'], true ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	private function dedupe_portal_service_snapshots_for_display( $snapshots ) {
 		$deduped = array();
 		$order   = array();
@@ -1762,14 +1834,23 @@ class AJForms {
 		}
 
 		$subscriptions      = $context['subscriptions'];
-		$snapshot_services  = $this->dedupe_portal_service_snapshots_for_display( array_values( array_filter( $context['service_snapshots'], array( $this, 'is_current_portal_service_snapshot' ) ) ) );
+		$current_services   = array_values( array_filter( $subscriptions, array( $this, 'is_current_portal_subscription' ) ) );
+		$snapshot_services  = $this->dedupe_portal_service_snapshots_for_display(
+			array_values(
+				array_filter(
+					array_filter( $context['service_snapshots'], array( $this, 'is_current_portal_service_snapshot' ) ),
+					function ( $snapshot ) use ( $current_services ) {
+						return ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $current_services );
+					}
+				)
+			)
+		);
 		$snapshot_subscription_ids = array();
 		foreach ( $snapshot_services as $snapshot_service ) {
 			if ( ! empty( $snapshot_service->subscription_id ) ) {
 				$snapshot_subscription_ids[] = sanitize_text_field( (string) $snapshot_service->subscription_id );
 			}
 		}
-		$current_services   = array_values( array_filter( $subscriptions, array( $this, 'is_current_portal_subscription' ) ) );
 		if ( ! empty( $snapshot_subscription_ids ) ) {
 			$current_services = array_values(
 				array_filter(
