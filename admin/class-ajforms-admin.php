@@ -4860,7 +4860,7 @@ class AJForms_Admin {
 			$params[] = sanitize_text_field( (string) $stripe_customer_id );
 		}
 		if ( 'one_time' === $billing_type ) {
-			$where[] = "s.status IN ('paid','succeeded','completed')";
+			$where[] = "s.status IN ('paid','succeeded','completed','used')";
 		} elseif ( 'recurring' === $billing_type || 'subscription' === $billing_type ) {
 			$where[] = "(s.status IN ('active','trialing') OR (s.subscription_id = '' AND s.status IN ('paid','succeeded','completed')))";
 		}
@@ -7060,6 +7060,36 @@ class AJForms_Admin {
 			}
 
 			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal-sync-settings' => 'saved' ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_mark_service_used_nonce'], $_POST['service_snapshot_key'] ) ) {
+			check_admin_referer( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' );
+
+			global $wpdb;
+			$snapshot_key = sanitize_text_field( wp_unslash( $_POST['service_snapshot_key'] ) );
+			if ( '' !== $snapshot_key ) {
+				$wpdb->update(
+					$this->get_portal_service_snapshots_table(),
+					array(
+						'status'     => 'used',
+						'updated_at' => current_time( 'mysql' ),
+					),
+					array( 'snapshot_key' => $snapshot_key ),
+					array( '%s', '%s' ),
+					array( '%s' )
+				);
+				$this->log_portal_event(
+					'service_marked_used',
+					array(
+						'source'   => 'admin_sold_items',
+						'severity' => 'info',
+						'details'  => array( 'snapshot_key' => $snapshot_key ),
+					)
+				);
+			}
+
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items', 'service-used' => '1' ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -11444,17 +11474,16 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
-
 			<div class="ajforms-settings-inline-actions">
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d synced customers', 'ajforms' ), $total_customers ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users', 'ajforms' ), $enabled_count ) ); ?></span>
 			</div>
 
 			<div class="ajcore-portal-users-toolbar">
-				<form method="get">
+				<form method="get" id="ajcore-portal-users-filter-form">
 					<input type="hidden" name="page" value="ajforms-client-portal">
 					<input type="hidden" name="tab" value="portal-users">
-					<select name="portal_user_status">
+					<select name="portal_user_status" id="ajcore-portal-user-status-filter">
 						<option value=""><?php esc_html_e( 'All except archived', 'ajforms' ); ?></option>
 						<option value="active" <?php selected( $status_filter, 'active' ); ?>><?php esc_html_e( 'Active portal users', 'ajforms' ); ?></option>
 						<option value="disabled" <?php selected( $status_filter, 'disabled' ); ?>><?php esc_html_e( 'Disabled portal users', 'ajforms' ); ?></option>
@@ -11600,8 +11629,11 @@ class AJForms_Admin {
 				var actionInput = document.getElementById('ajcore-portal-bulk-action');
 				var checkAll = document.getElementById('ajcore-check-all-portal-users');
 				var selectAll = document.getElementById('ajcore-select-all-portal-users');
+				var filterForm = document.getElementById('ajcore-portal-users-filter-form');
+				var statusFilter = document.getElementById('ajcore-portal-user-status-filter');
 				function boxes(){return Array.prototype.slice.call(document.querySelectorAll('.ajcore-portal-user-checkbox'));}
 				function setAll(checked){boxes().forEach(function(box){box.checked = checked;}); if(checkAll){checkAll.checked = checked;}}
+				if(statusFilter && filterForm){statusFilter.addEventListener('change', function(){filterForm.submit();});}
 				if(checkAll){checkAll.addEventListener('change', function(){setAll(checkAll.checked);});}
 				if(selectAll){selectAll.addEventListener('click', function(){setAll(true);});}
 				if(form){
@@ -11702,6 +11734,9 @@ class AJForms_Admin {
 		<div class="ajforms-settings-card">
 			<h2><?php esc_html_e( 'Sold Items', 'ajforms' ); ?></h2>
 			<p><?php esc_html_e( 'Purchased items from Stripe and AJ Core checkout, including recurring subscriptions and true one-time services.', 'ajforms' ); ?></p>
+			<?php if ( isset( $_GET['service-used'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service marked used.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
 
 			<form method="get" id="ajcore-sold-items-filter" class="ajforms-settings-inline-actions" style="align-items:center;gap:12px;">
 				<input type="hidden" name="page" value="ajforms-client-portal">
@@ -11734,11 +11769,12 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Next Billing / Paid', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 					</tr>
 				</thead>
 				<tbody>
 					<?php if ( empty( $sold_items ) ) : ?>
-						<tr><td colspan="9"><?php esc_html_e( 'No sold items found for this filter.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="10"><?php esc_html_e( 'No sold items found for this filter.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $sold_items as $item ) : ?>
 							<tr>
@@ -11751,6 +11787,17 @@ class AJForms_Admin {
 								<td><?php echo esc_html( $this->get_portal_service_record_period_label( $item ) ); ?></td>
 								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_next_billing_date_label( $item ) ) : esc_html( $this->format_portal_date( $item->paid_at ) ); ?></td>
 								<td><?php echo esc_html( $this->format_portal_date( $item->synced_at ) ); ?></td>
+								<td>
+									<?php if ( 'one_time' === $item->sold_item_type && ! empty( $item->source_ref ) && 'used' !== sanitize_key( (string) $item->status ) ) : ?>
+										<form method="post" style="margin:0;">
+											<?php wp_nonce_field( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' ); ?>
+											<input type="hidden" name="service_snapshot_key" value="<?php echo esc_attr( $item->source_ref ); ?>">
+											<button type="submit" class="button"><?php esc_html_e( 'Mark Used', 'ajforms' ); ?></button>
+										</form>
+									<?php else : ?>
+										-
+									<?php endif; ?>
+								</td>
 							</tr>
 						<?php endforeach; ?>
 					<?php endif; ?>
@@ -12648,7 +12695,6 @@ class AJForms_Admin {
 		$stripe_enabled = '' !== $this->get_stripe_secret_key_for_portal();
 		$cache_counts      = $this->get_portal_cache_counts();
 		$service_settings = $this->get_customer_portal_services_display_settings();
-		$service_products = $this->get_portal_stripe_products_for_settings();
 		$last_db_error     = get_option( 'ajforms_last_portal_db_error', '' );
 		?>
 		<?php if ( ! $embedded ) : ?>
@@ -12752,7 +12798,7 @@ class AJForms_Admin {
 
 					<div class="ajforms-settings-card" style="margin-top:18px;">
 						<h3><?php esc_html_e( 'My Services Page Controls', 'ajforms' ); ?></h3>
-						<p><?php esc_html_e( 'Choose what appears on the customer-facing My Services page, including which Stripe products customers can add.', 'ajforms' ); ?></p>
+						<p><?php esc_html_e( 'Choose which sections appear on the customer-facing My Services page. Add Services products are controlled from Client Portal > Product Catalog using Show in Add Services.', 'ajforms' ); ?></p>
 
 						<div class="ajcore-service-controls" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px;">
 							<div class="ajcore-service-control-box">
@@ -12760,34 +12806,8 @@ class AJForms_Admin {
 								<label><input type="checkbox" name="portal_services_show_current" value="1" <?php checked( ! empty( $service_settings['show_current_services'] ) ); ?>> <?php esc_html_e( 'Show Current Services', 'ajforms' ); ?></label><br>
 								<label><input type="checkbox" name="portal_services_show_add" value="1" <?php checked( ! empty( $service_settings['show_add_services'] ) ); ?>> <?php esc_html_e( 'Show Add Services', 'ajforms' ); ?></label>
 							</div>
-							<div class="ajcore-service-control-box">
-								<h4><?php esc_html_e( 'Add Services Product Mode', 'ajforms' ); ?></h4>
-								<label><input type="radio" name="portal_services_product_mode" value="all" <?php checked( 'all', $service_settings['product_mode'] ); ?>> <?php esc_html_e( 'Show all visible synced products', 'ajforms' ); ?></label><br>
-								<label><input type="radio" name="portal_services_product_mode" value="selected" <?php checked( 'selected', $service_settings['product_mode'] ); ?>> <?php esc_html_e( 'Only show selected products below', 'ajforms' ); ?></label>
-							</div>
 						</div>
-
-						<h4><?php esc_html_e( 'Selectable Add Services Products', 'ajforms' ); ?></h4>
-						<?php if ( empty( $service_products ) ) : ?>
-							<p><?php esc_html_e( 'No synced Stripe products found yet. Sync Stripe Products first.', 'ajforms' ); ?></p>
-						<?php else : ?>
-							<div class="ajcore-service-products" style="display:grid;gap:10px;max-height:360px;overflow:auto;border:1px solid #dcdcde;border-radius:10px;padding:12px;background:#fff;">
-								<?php foreach ( $service_products as $product ) : ?>
-									<?php
-									$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
-									if ( '' === $price_id ) {
-										continue;
-									}
-									$product_label = ! empty( $product->custom_label ) ? $product->custom_label : $product->name;
-									$amount_label  = strtoupper( $product->currency ) . ' ' . number_format_i18n( (float) $product->price_amount, 2 ) . ( $product->recurring_interval ? '/' . $product->recurring_interval : '' );
-									?>
-									<label class="ajcore-service-product-choice" style="display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid #eef2f7;border-radius:10px;background:#f8fafc;">
-										<input type="checkbox" name="portal_services_selected_prices[]" value="<?php echo esc_attr( $price_id ); ?>" <?php checked( in_array( $price_id, $service_settings['selected_price_ids'], true ) ); ?>>
-										<span><strong><?php echo esc_html( $product_label ); ?></strong><br><span><?php echo esc_html( $amount_label ); ?> · <?php echo esc_html( $price_id ); ?> · <?php echo ! empty( $product->active ) ? esc_html__( 'Active', 'ajforms' ) : esc_html__( 'Inactive', 'ajforms' ); ?> · <?php echo esc_html( $product->visibility ); ?></span></span>
-									</label>
-								<?php endforeach; ?>
-							</div>
-						<?php endif; ?>
+						<p><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Product Catalog', 'ajforms' ); ?></a></p>
 					</div>
 
 					<div class="ajforms-settings-actions">

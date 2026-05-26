@@ -971,15 +971,15 @@ class AJForms {
 			}
 		}
 
-		$raw   = $this->decode_portal_json( isset( $subscription->raw_data ) ? $subscription->raw_data : '' );
-		$start = ! empty( $raw['current_period_start'] ) ? (int) $raw['current_period_start'] : 0;
-		$end   = ! empty( $raw['current_period_end'] ) ? (int) $raw['current_period_end'] : 0;
+		$period = $this->get_subscription_period_context( $subscription );
+		$start  = ! empty( $period['start'] ) ? $period['start'] : '';
+		$end    = ! empty( $period['end'] ) ? $period['end'] : '';
 
 		if ( $start && $end ) {
 			return $this->format_portal_date( $start ) . ' - ' . $this->format_portal_date( $end );
 		}
 
-		return ! empty( $subscription->current_period_end ) ? __( 'Through ', 'ajforms' ) . $this->format_portal_date( $subscription->current_period_end ) : '-';
+		return $end ? __( 'Through ', 'ajforms' ) . $this->format_portal_date( $end ) : '-';
 	}
 
 	private function get_subscription_next_billing_date( $subscription, $ledger_entry = null ) {
@@ -990,7 +990,77 @@ class AJForms {
 			}
 		}
 
-		return ! empty( $subscription->current_period_end ) ? $this->format_portal_date( $subscription->current_period_end ) : '-';
+		$period = $this->get_subscription_period_context( $subscription );
+		return ! empty( $period['end'] ) ? $this->format_portal_date( $period['end'] ) : '-';
+	}
+
+	private function normalize_portal_stripe_timestamp_for_display( $value ) {
+		if ( empty( $value ) ) {
+			return '';
+		}
+
+		if ( is_numeric( $value ) ) {
+			return gmdate( 'Y-m-d H:i:s', absint( $value ) );
+		}
+
+		$timestamp = strtotime( (string) $value );
+		return $timestamp ? gmdate( 'Y-m-d H:i:s', $timestamp ) : sanitize_text_field( (string) $value );
+	}
+
+	private function get_subscription_period_context( $subscription ) {
+		$start = '';
+		$end   = '';
+		$raw   = $this->decode_portal_json( isset( $subscription->raw_data ) ? $subscription->raw_data : '' );
+
+		if ( ! empty( $raw['current_period_start'] ) ) {
+			$start = $this->normalize_portal_stripe_timestamp_for_display( $raw['current_period_start'] );
+		}
+		if ( ! empty( $raw['current_period_end'] ) ) {
+			$end = $this->normalize_portal_stripe_timestamp_for_display( $raw['current_period_end'] );
+		}
+
+		$items = $this->decode_portal_json( isset( $subscription->items ) ? $subscription->items : '' );
+		foreach ( (array) $items as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+			if ( '' === $start ) {
+				foreach ( array( 'current_period_start', 'period_start' ) as $key ) {
+					if ( ! empty( $item[ $key ] ) ) {
+						$start = $this->normalize_portal_stripe_timestamp_for_display( $item[ $key ] );
+						break;
+					}
+				}
+			}
+			if ( '' === $end ) {
+				foreach ( array( 'current_period_end', 'period_end' ) as $key ) {
+					if ( ! empty( $item[ $key ] ) ) {
+						$end = $this->normalize_portal_stripe_timestamp_for_display( $item[ $key ] );
+						break;
+					}
+				}
+			}
+			if ( ( '' === $start || '' === $end ) && ! empty( $item['period'] ) && is_array( $item['period'] ) ) {
+				if ( '' === $start && ! empty( $item['period']['start'] ) ) {
+					$start = $this->normalize_portal_stripe_timestamp_for_display( $item['period']['start'] );
+				}
+				if ( '' === $end && ! empty( $item['period']['end'] ) ) {
+					$end = $this->normalize_portal_stripe_timestamp_for_display( $item['period']['end'] );
+				}
+			}
+			if ( $start && $end ) {
+				break;
+			}
+		}
+
+		if ( '' === $end && ! empty( $subscription->current_period_end ) ) {
+			$end = $this->normalize_portal_stripe_timestamp_for_display( $subscription->current_period_end );
+		}
+
+		return array(
+			'start' => $start,
+			'end'   => $end,
+		);
 	}
 
 	private function get_subscription_price_ids( $subscription ) {
@@ -1191,11 +1261,6 @@ class AJForms {
 	private function get_portal_filtered_service_products( $subscriptions ) {
 		global $wpdb;
 
-		$service_settings   = get_option( 'ajcore_customer_portal_services_display', array() );
-		$service_settings   = is_array( $service_settings ) ? $service_settings : array();
-		$product_mode       = isset( $service_settings['product_mode'] ) && 'selected' === $service_settings['product_mode'] ? 'selected' : 'all';
-		$selected_price_ids = isset( $service_settings['selected_price_ids'] ) && is_array( $service_settings['selected_price_ids'] ) ? array_values( array_filter( array_map( 'sanitize_text_field', $service_settings['selected_price_ids'] ) ) ) : array();
-
 		$products = $wpdb->get_results(
 			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden' ORDER BY sort_order ASC, name ASC"
 		);
@@ -1203,14 +1268,10 @@ class AJForms {
 		return array_values(
 			array_filter(
 				$products,
-				function ( $product ) use ( $product_mode, $selected_price_ids ) {
+				function ( $product ) {
 					$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 
-					if ( '' === $price_id ) {
-						return false;
-					}
-
-					return 'selected' !== $product_mode || in_array( $price_id, $selected_price_ids, true );
+					return '' !== $price_id;
 				}
 			)
 		);
@@ -1232,11 +1293,11 @@ class AJForms {
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 					$open_request = $this->get_open_portal_service_request_for_product( $stripe_customer_id, $price_id, $product_id );
 
-					if ( 'allow_duplicate' === $behavior ) {
-						return true;
-					}
+					$product->portal_is_owned    = $is_owned ? 1 : 0;
+					$product->portal_open_request = $open_request ? 1 : 0;
+					$product->portal_can_add     = ( ! $open_request && ( ! $is_owned || 'allow_duplicate' === $behavior ) ) ? 1 : 0;
 
-					return ! $is_owned && ! $open_request;
+					return true;
 				}
 			)
 		);
@@ -1845,6 +1906,41 @@ class AJForms {
 		return in_array( $status, array( 'paid', 'succeeded', 'completed' ), true );
 	}
 
+	private function is_displayable_customer_portal_snapshot( $snapshot ) {
+		$name = $this->get_snapshot_service_name( $snapshot );
+		if ( $this->is_generic_customer_portal_service_label( $name ) ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	private function is_generic_customer_portal_service_label( $label ) {
+		$label = strtolower( trim( sanitize_text_field( (string) $label ) ) );
+		if ( '' === $label ) {
+			return true;
+		}
+
+		$generic = array(
+			'payment',
+			'website checkout payment',
+			'checkout payment',
+			'service checkout payment',
+			'balance payment',
+			'subscription creation',
+			'billing item',
+			'charge',
+			'invoice',
+			'checkout session',
+		);
+
+		if ( in_array( $label, $generic, true ) ) {
+			return true;
+		}
+
+		return (bool) preg_match( '/^(cs_|pi_|ch_|in_|sub_|price_|prod_)/', $label );
+	}
+
 	private function render_customer_portal_services_tab() {
 		$context = $this->get_current_user_portal_billing_context();
 		$customer = $context['customer'];
@@ -1860,7 +1956,7 @@ class AJForms {
 				array_filter(
 					array_filter( $context['service_snapshots'], array( $this, 'is_current_portal_service_snapshot' ) ),
 					function ( $snapshot ) use ( $current_services ) {
-						return ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $current_services );
+						return $this->is_displayable_customer_portal_snapshot( $snapshot ) && ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $current_services );
 					}
 				)
 			)
@@ -1871,6 +1967,18 @@ class AJForms {
 				function ( $subscription ) {
 					return ! $this->is_current_portal_subscription( $subscription );
 				}
+			)
+		);
+		$past_snapshot_services = $this->dedupe_portal_service_snapshots_for_display(
+			array_values(
+				array_filter(
+					$context['service_snapshots'],
+					function ( $snapshot ) use ( $current_services ) {
+						return $this->is_displayable_customer_portal_snapshot( $snapshot )
+							&& ! $this->is_current_portal_service_snapshot( $snapshot )
+							&& ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $current_services );
+					}
+				)
 			)
 		);
 		$ledger             = $context['ledger'];
@@ -1923,7 +2031,7 @@ class AJForms {
 				</div>
 			<?php endif; ?>
 
-			<?php if ( ! empty( $past_services ) ) : ?>
+			<?php if ( ! empty( $past_services ) || ! empty( $past_snapshot_services ) ) : ?>
 				<h3><?php esc_html_e( 'Past Services', 'ajforms' ); ?></h3>
 				<div class="aj-portal-services-list">
 					<?php foreach ( $past_services as $subscription ) : ?>
@@ -1938,6 +2046,18 @@ class AJForms {
 								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php esc_html_e( 'No future billing', 'ajforms' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
+							</div>
+						</div>
+					<?php endforeach; ?>
+					<?php foreach ( $past_snapshot_services as $snapshot ) : ?>
+						<div class="aj-portal-service-card aj-portal-service-card-past">
+							<h4><?php echo esc_html( $this->get_snapshot_service_name( $snapshot ) ); ?></h4>
+							<div class="aj-portal-service-card-grid">
+								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $snapshot->status ) ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_period_label( $snapshot ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php esc_html_e( 'No future billing', 'ajforms' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_amount_label( $snapshot ) ); ?></span></div>
 							</div>
 						</div>
 					<?php endforeach; ?>
@@ -1994,12 +2114,18 @@ class AJForms {
 								<p><?php echo esc_html( wp_trim_words( $product_description, 28 ) ); ?></p>
 							<?php endif; ?>
 							<div class="aj-portal-add-service-price"><?php echo esc_html( $this->get_portal_product_amount_label( $product ) ); ?></div>
-							<button
-								type="button"
-								class="button aj-portal-add-service-button"
-								data-price-id="<?php echo esc_attr( $price_id ); ?>"
-								data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_portal_add_service_' . $price_id ) ); ?>"
-							><?php esc_html_e( 'Add to My Services', 'ajforms' ); ?></button>
+							<?php if ( ! empty( $product->portal_open_request ) ) : ?>
+								<button type="button" class="button" disabled><?php esc_html_e( 'Request Pending', 'ajforms' ); ?></button>
+							<?php elseif ( empty( $product->portal_can_add ) ) : ?>
+								<button type="button" class="button" disabled><?php esc_html_e( 'Already Added', 'ajforms' ); ?></button>
+							<?php else : ?>
+								<button
+									type="button"
+									class="button aj-portal-add-service-button"
+									data-price-id="<?php echo esc_attr( $price_id ); ?>"
+									data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_portal_add_service_' . $price_id ) ); ?>"
+								><?php esc_html_e( 'Add to My Services', 'ajforms' ); ?></button>
+							<?php endif; ?>
 						</div>
 					<?php endforeach; ?>
 				</div>
