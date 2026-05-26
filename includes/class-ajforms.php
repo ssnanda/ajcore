@@ -1583,6 +1583,20 @@ class AJForms {
 		return '-';
 	}
 
+	private function get_snapshot_next_billing_date_label( $snapshot ) {
+		if ( empty( $snapshot->recurring_interval ) && empty( $snapshot->subscription_id ) ) {
+			return __( 'No future billing', 'ajforms' );
+		}
+
+		foreach ( array( 'next_billing_date', 'service_period_end' ) as $field ) {
+			if ( ! empty( $snapshot->$field ) ) {
+				return $this->format_portal_date( $snapshot->$field );
+			}
+		}
+
+		return '-';
+	}
+
 	private function is_current_portal_service_snapshot( $snapshot ) {
 		$status = isset( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '';
 		$type   = isset( $snapshot->billing_type ) ? sanitize_key( (string) $snapshot->billing_type ) : '';
@@ -1656,7 +1670,7 @@ class AJForms {
 								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( (string) $snapshot->status ) ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_period_label( $snapshot ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo ! empty( $snapshot->recurring_interval ) && ! empty( $snapshot->service_period_end ) ? esc_html( $this->format_portal_date( $snapshot->service_period_end ) ) : esc_html__( 'No future billing', 'ajforms' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_next_billing_date_label( $snapshot ) ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_amount_label( $snapshot ) ); ?></span></div>
 							</div>
 						</div>

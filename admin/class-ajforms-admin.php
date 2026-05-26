@@ -603,6 +603,7 @@ class AJForms_Admin {
 			|| ( is_array( $subscription_columns ) && ! in_array( 'livemode', $subscription_columns, true ) )
 			|| ( is_array( $product_columns ) && ! in_array( 'livemode', $product_columns, true ) )
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'service_period', $snapshot_columns, true ) )
+			|| ( is_array( $snapshot_columns ) && ! in_array( 'next_billing_date', $snapshot_columns, true ) )
 		) {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
@@ -3818,6 +3819,7 @@ class AJForms_Admin {
 			'service_period_start'  => null,
 			'service_period_end'    => null,
 			'service_period'        => '',
+			'next_billing_date'     => null,
 			'source_type'           => '',
 			'status'                => '',
 			'livemode'              => $this->get_current_stripe_livemode(),
@@ -3842,6 +3844,7 @@ class AJForms_Admin {
 		$data['charge_id']             = sanitize_text_field( (string) $data['charge_id'] );
 		$data['subscription_id']       = sanitize_text_field( (string) $data['subscription_id'] );
 		$data['service_period']        = sanitize_text_field( (string) $data['service_period'] );
+		$data['next_billing_date']     = ! empty( $data['next_billing_date'] ) ? sanitize_text_field( (string) $data['next_billing_date'] ) : null;
 		$data['source_type']           = sanitize_key( (string) $data['source_type'] );
 		$data['status']                = sanitize_key( (string) $data['status'] );
 		$data['livemode']              = ! empty( $data['livemode'] ) ? 1 : 0;
@@ -3868,7 +3871,35 @@ class AJForms_Admin {
 
 		$row = $data;
 		$row['updated_at'] = current_time( 'mysql' );
-		$formats = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' );
+		$formats = array(
+			'%s', // snapshot_key
+			'%s', // stripe_customer_id
+			'%s', // guest_customer_id
+			'%s', // customer_email
+			'%s', // product_id
+			'%s', // price_id
+			'%s', // product_name_snapshot
+			'%s', // price_label_snapshot
+			'%f', // amount
+			'%s', // currency
+			'%s', // recurring_interval
+			'%d', // quantity
+			'%s', // billing_type
+			'%s', // checkout_session_id
+			'%s', // invoice_id
+			'%s', // payment_intent_id
+			'%s', // charge_id
+			'%s', // subscription_id
+			'%s', // service_period_start
+			'%s', // service_period_end
+			'%s', // service_period
+			'%s', // next_billing_date
+			'%s', // source_type
+			'%s', // status
+			'%d', // livemode
+			'%s', // raw_data
+			'%s', // updated_at
+		);
 
 		if ( $existing ) {
 			$unchanged = (string) $existing->product_name_snapshot === (string) $row['product_name_snapshot']
@@ -3877,7 +3908,8 @@ class AJForms_Admin {
 				&& (int) $existing->livemode === (int) $row['livemode']
 				&& (string) $existing->service_period === (string) $row['service_period']
 				&& (string) $existing->service_period_start === (string) $row['service_period_start']
-				&& (string) $existing->service_period_end === (string) $row['service_period_end'];
+				&& (string) $existing->service_period_end === (string) $row['service_period_end']
+				&& (string) $existing->next_billing_date === (string) $row['next_billing_date'];
 			if ( $unchanged ) {
 				$this->log_portal_event(
 					'service_snapshot_skipped_duplicate',
@@ -3894,7 +3926,29 @@ class AJForms_Admin {
 				return (int) $existing->id;
 			}
 
+			$backfilled = array();
+			foreach ( array( 'service_period', 'service_period_start', 'service_period_end', 'next_billing_date' ) as $field ) {
+				if ( empty( $existing->$field ) && ! empty( $row[ $field ] ) ) {
+					$backfilled[ $field ] = $row[ $field ];
+				}
+			}
+
 			$wpdb->update( $table, $row, array( 'id' => (int) $existing->id ), $formats, array( '%d' ) );
+			if ( ! empty( $backfilled ) ) {
+				$this->log_portal_event(
+					'service_snapshot_backfilled',
+					array(
+						'source'             => $row['source_type'],
+						'stripe_customer_id' => $row['stripe_customer_id'],
+						'email_after'        => $row['customer_email'],
+						'details'            => array(
+							'snapshot_key' => $row['snapshot_key'],
+							'product_name' => $row['product_name_snapshot'],
+							'backfilled'   => $backfilled,
+						),
+					)
+				);
+			}
 			$this->log_portal_event(
 				'service_snapshot_updated',
 				array(
@@ -4055,6 +4109,22 @@ class AJForms_Admin {
 		}
 		$status       = ! empty( $parent['status'] ) ? sanitize_key( (string) $parent['status'] ) : ( ! empty( $parent['payment_status'] ) ? sanitize_key( (string) $parent['payment_status'] ) : '' );
 		$billing_type = ( '' !== $interval || '' !== $subscription_id ) ? 'recurring' : 'one_time';
+		if ( '' === $service_period && $period_start && $period_end ) {
+			$service_period = $this->format_portal_date( $period_start ) . ' - ' . $this->format_portal_date( $period_end );
+		}
+		$next_billing_date = null;
+		foreach ( array( $item_metadata, $parent_metadata ) as $metadata ) {
+			foreach ( array( 'next_billing_date', 'next_renewal_date', 'renewal_date', 'due_date' ) as $date_key ) {
+				if ( ! empty( $metadata[ $date_key ] ) && is_scalar( $metadata[ $date_key ] ) ) {
+					$timestamp = strtotime( (string) $metadata[ $date_key ] );
+					$next_billing_date = $timestamp ? gmdate( 'Y-m-d H:i:s', $timestamp ) : sanitize_text_field( (string) $metadata[ $date_key ] );
+					break 2;
+				}
+			}
+		}
+		if ( empty( $next_billing_date ) && 'recurring' === $billing_type && $period_end ) {
+			$next_billing_date = $period_end;
+		}
 		$price_label  = $this->format_portal_money( $amount, $currency ) . ( '' !== $interval ? '/' . $interval : '' );
 
 		return $this->upsert_portal_service_snapshot(
@@ -4078,6 +4148,7 @@ class AJForms_Admin {
 					'service_period_start'  => $period_start,
 					'service_period_end'    => $period_end,
 					'service_period'        => $service_period,
+					'next_billing_date'     => $next_billing_date,
 					'source_type'           => $source_type,
 					'status'                => $status,
 					'livemode'              => ! empty( $parent['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
@@ -4142,6 +4213,21 @@ class AJForms_Admin {
 		}
 		if ( ! empty( $record->paid_at ) ) {
 			return sprintf( __( 'Purchased %s', 'ajforms' ), $this->format_portal_date( $record->paid_at ) );
+		}
+
+		return '-';
+	}
+
+	private function get_portal_service_record_next_billing_date_label( $record ) {
+		$billing_type = isset( $record->billing_type_key ) ? sanitize_key( (string) $record->billing_type_key ) : '';
+		if ( 'subscription' !== $billing_type && 'recurring' !== $billing_type ) {
+			return ! empty( $record->next_billing_date ) && '-' !== (string) $record->next_billing_date ? $this->format_portal_date( $record->next_billing_date ) : '-';
+		}
+
+		foreach ( array( 'next_billing_date', 'current_period_end', 'service_period_end' ) as $field ) {
+			if ( ! empty( $record->$field ) && '-' !== (string) $record->$field ) {
+				return $this->format_portal_date( $record->$field );
+			}
 		}
 
 		return '-';
@@ -4527,14 +4613,15 @@ class AJForms_Admin {
 				'stripe_price_id'       => isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '',
 				'stripe_product_id'     => isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '',
 				'stripe_subscription_id'=> '',
-			'checkout_session_id'   => '',
-			'invoice_id'            => '',
-			'payment_intent_id'     => '',
-			'charge_id'             => '',
-			'service_period'        => '',
-			'service_period_start'  => '',
-			'service_period_end'    => '',
-			'status'                => '',
+				'checkout_session_id'   => '',
+				'invoice_id'            => '',
+				'payment_intent_id'     => '',
+				'charge_id'             => '',
+				'service_period'        => '',
+				'service_period_start'  => '',
+				'service_period_end'    => '',
+				'next_billing_date'     => '',
+				'status'                => '',
 				'amount'                => '',
 				'paid_at'               => '',
 				'synced_at'             => '',
@@ -4550,6 +4637,21 @@ class AJForms_Admin {
 	private function make_portal_service_record_from_snapshot( $snapshot ) {
 		$billing_type_key = ! empty( $snapshot->billing_type ) && 'recurring' === sanitize_key( (string) $snapshot->billing_type ) ? 'subscription' : 'one_time';
 		$customer_ref = ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : sanitize_text_field( (string) $snapshot->guest_customer_id );
+		$period_start = ! empty( $snapshot->service_period_start ) ? $snapshot->service_period_start : '';
+		$period_end = ! empty( $snapshot->service_period_end ) ? $snapshot->service_period_end : '';
+		$next_billing_date = ! empty( $snapshot->next_billing_date ) ? $snapshot->next_billing_date : '';
+		if ( 'subscription' === $billing_type_key && ( empty( $period_end ) || empty( $next_billing_date ) ) && ! empty( $snapshot->subscription_id ) ) {
+			$subscription_period = $this->get_synced_portal_subscription_period_context( $snapshot->subscription_id );
+			if ( empty( $period_start ) && ! empty( $subscription_period['current_period_start'] ) ) {
+				$period_start = $subscription_period['current_period_start'];
+			}
+			if ( empty( $period_end ) && ! empty( $subscription_period['current_period_end'] ) ) {
+				$period_end = $subscription_period['current_period_end'];
+			}
+			if ( empty( $next_billing_date ) && ! empty( $subscription_period['current_period_end'] ) ) {
+				$next_billing_date = $subscription_period['current_period_end'];
+			}
+		}
 
 		$record = (object) array(
 			'service_name'           => ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : __( 'Service', 'ajforms' ),
@@ -4565,8 +4667,9 @@ class AJForms_Admin {
 			'payment_intent_id'      => ! empty( $snapshot->payment_intent_id ) ? sanitize_text_field( (string) $snapshot->payment_intent_id ) : '',
 			'charge_id'              => ! empty( $snapshot->charge_id ) ? sanitize_text_field( (string) $snapshot->charge_id ) : '',
 			'service_period'         => ! empty( $snapshot->service_period ) ? sanitize_text_field( (string) $snapshot->service_period ) : '',
-			'service_period_start'   => ! empty( $snapshot->service_period_start ) ? $snapshot->service_period_start : '',
-			'service_period_end'     => ! empty( $snapshot->service_period_end ) ? $snapshot->service_period_end : '',
+			'service_period_start'   => $period_start,
+			'service_period_end'     => $period_end,
+			'next_billing_date'      => $next_billing_date,
 			'status'                 => ! empty( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '',
 			'amount'                 => $this->format_portal_money( $snapshot->amount, $snapshot->currency ),
 			'paid_at'                => ! empty( $snapshot->created_at ) ? $snapshot->created_at : '',
@@ -4577,6 +4680,7 @@ class AJForms_Admin {
 			'next_action'            => 'one_time' === $billing_type_key ? __( 'Convert to Auto-Pay Subscription', 'ajforms' ) : '',
 		);
 		$record->service_period = $this->get_portal_service_record_period_label( $record );
+		$record->next_billing_date = $this->get_portal_service_record_next_billing_date_label( $record );
 
 		return $record;
 	}
@@ -4633,6 +4737,7 @@ class AJForms_Admin {
 			'service_period'        => $this->get_portal_service_period_from_ledger_entry( $entry ),
 			'service_period_start'  => $this->get_ledger_metadata_value( $entry, 'service_period_start' ),
 			'service_period_end'    => $this->get_ledger_metadata_value( $entry, 'service_period_end' ),
+			'next_billing_date'     => $this->get_ledger_metadata_value( $entry, 'next_billing_date' ),
 			'status'                => isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '',
 			'amount'                => $this->format_portal_money( isset( $entry->amount ) ? $entry->amount : 0, isset( $entry->currency ) ? $entry->currency : 'usd' ),
 			'paid_at'               => isset( $entry->ledger_date ) ? $entry->ledger_date : '',
@@ -4643,6 +4748,7 @@ class AJForms_Admin {
 			'next_action'           => __( 'Convert to Auto-Pay Subscription', 'ajforms' ),
 		);
 		$record->service_period = $this->get_portal_service_record_period_label( $record );
+		$record->next_billing_date = $this->get_portal_service_record_next_billing_date_label( $record );
 
 		return $record;
 	}
@@ -4699,10 +4805,12 @@ class AJForms_Admin {
 						'status'                 => $subscription->status,
 						'service_period'         => '',
 						'service_period_end'     => ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : '',
+						'next_billing_date'      => ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : '',
 						'synced_at'              => ! empty( $subscription->synced_at ) ? $subscription->synced_at : '',
 					)
 				);
 				$record->service_period = $this->get_portal_service_record_period_label( $record );
+				$record->next_billing_date = $this->get_portal_service_record_next_billing_date_label( $record );
 				if ( 'subscription' !== $record->billing_type_key ) {
 					$record->billing_type_key = 'subscription';
 					$record->billing_type     = $this->get_portal_billing_type_label( 'subscription' );
@@ -4796,6 +4904,30 @@ class AJForms_Admin {
 		return $status ? sanitize_key( (string) $status ) : '';
 	}
 
+	private function get_synced_portal_subscription_period_context( $subscription_id ) {
+		$subscription_id = sanitize_text_field( (string) $subscription_id );
+		if ( '' === $subscription_id ) {
+			return array();
+		}
+
+		global $wpdb;
+		$subscription = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT current_period_end, raw_data FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
+				$subscription_id
+			)
+		);
+		if ( ! $subscription ) {
+			return array();
+		}
+
+		$raw = $this->decode_portal_json( $subscription->raw_data );
+		return array(
+			'current_period_start' => ! empty( $raw['current_period_start'] ) ? $this->stripe_timestamp_to_mysql( $raw['current_period_start'] ) : '',
+			'current_period_end'   => ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : ( ! empty( $raw['current_period_end'] ) ? $this->stripe_timestamp_to_mysql( $raw['current_period_end'] ) : '' ),
+		);
+	}
+
 	private function get_portal_ledger_service_records( $billing_type = '', $stripe_customer_id = '', $limit = 300 ) {
 		global $wpdb;
 
@@ -4879,6 +5011,7 @@ class AJForms_Admin {
 					'service_period'         => $this->get_portal_service_period_from_ledger_entry( $entry ),
 					'service_period_start'   => $this->get_ledger_metadata_value( $entry, 'service_period_start' ),
 					'service_period_end'     => $this->get_ledger_metadata_value( $entry, 'service_period_end' ),
+					'next_billing_date'      => $this->get_ledger_metadata_value( $entry, 'next_billing_date' ),
 					'status'                 => $entry->status,
 					'amount'                 => $this->format_portal_money( $entry->amount, $entry->currency ),
 					'paid_at'                => $entry->ledger_date,
@@ -4888,6 +5021,7 @@ class AJForms_Admin {
 				)
 			);
 			$record->service_period = $this->get_portal_service_record_period_label( $record );
+			$record->next_billing_date = $this->get_portal_service_record_next_billing_date_label( $record );
 
 			$rows[] = $record;
 		}
@@ -10293,7 +10427,7 @@ class AJForms_Admin {
 					'active_recurring_services',
 					__( 'Active Recurring Services', 'ajforms' ),
 					$detail['active_recurring_services'],
-					array( 'service_name', 'price', 'billing_type', 'status', 'service_period', 'stripe_subscription_id', 'stripe_price_id' ),
+					array( 'service_name', 'price', 'billing_type', 'status', 'service_period', 'next_billing_date', 'stripe_subscription_id', 'stripe_price_id' ),
 					__( 'No active recurring services.', 'ajforms' )
 				);
 				?>
@@ -10306,7 +10440,7 @@ class AJForms_Admin {
 					'one_time_services',
 					__( 'One-Time Paid Services', 'ajforms' ),
 					$detail['one_time_services'],
-					array( 'service_name', 'billing_type', 'status', 'amount', 'service_period', 'paid_at', 'next_action' ),
+					array( 'service_name', 'billing_type', 'status', 'amount', 'service_period', 'next_billing_date', 'paid_at', 'next_action' ),
 					__( 'No one-time paid services found.', 'ajforms' )
 				);
 				?>
@@ -11304,12 +11438,13 @@ class AJForms_Admin {
 							<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
 						<?php if ( empty( $active_recurring_services ) ) : ?>
-							<tr><td colspan="6"><?php esc_html_e( 'No active recurring services found.', 'ajforms' ); ?></td></tr>
+							<tr><td colspan="7"><?php esc_html_e( 'No active recurring services found.', 'ajforms' ); ?></td></tr>
 						<?php else : ?>
 							<?php foreach ( $active_recurring_services as $service ) : ?>
 								<tr>
@@ -11318,6 +11453,7 @@ class AJForms_Admin {
 									<td><?php echo esc_html( $service->customer ); ?><br><small><?php echo esc_html( $service->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $service->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a></td>
 									<td><strong><?php echo esc_html( $service->status ); ?></strong></td>
 									<td><?php echo esc_html( ! empty( $service->service_period ) ? $service->service_period : '-' ); ?></td>
+									<td><?php echo esc_html( $this->get_portal_service_record_next_billing_date_label( $service ) ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_date( $service->synced_at ) ); ?></td>
 								</tr>
 							<?php endforeach; ?>
@@ -11335,12 +11471,13 @@ class AJForms_Admin {
 							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Paid', 'ajforms' ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
 						<?php if ( empty( $one_time_services ) ) : ?>
-							<tr><td colspan="7"><?php esc_html_e( 'No one-time paid services found.', 'ajforms' ); ?></td></tr>
+							<tr><td colspan="8"><?php esc_html_e( 'No one-time paid services found.', 'ajforms' ); ?></td></tr>
 						<?php else : ?>
 							<?php foreach ( $one_time_services as $service ) : ?>
 								<tr>
@@ -11350,6 +11487,7 @@ class AJForms_Admin {
 									<td><strong><?php echo esc_html( $service->status ); ?></strong></td>
 									<td><?php echo esc_html( $service->amount ); ?></td>
 									<td><?php echo esc_html( $this->get_portal_service_record_period_label( $service ) ); ?></td>
+									<td><?php echo esc_html( $this->get_portal_service_record_next_billing_date_label( $service ) ); ?></td>
 									<td><?php echo esc_html( $this->format_portal_date( $service->paid_at ) ); ?></td>
 								</tr>
 							<?php endforeach; ?>

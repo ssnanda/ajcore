@@ -203,6 +203,7 @@ class AJForms_Activator {
 			service_period_start datetime NULL,
 			service_period_end datetime NULL,
 			service_period varchar(255) DEFAULT '' NOT NULL,
+			next_billing_date datetime NULL,
 			source_type varchar(50) DEFAULT '' NOT NULL,
 			status varchar(50) DEFAULT '' NOT NULL,
 			livemode tinyint(1) NOT NULL DEFAULT 0,
