@@ -4527,6 +4527,39 @@ class AJForms_Admin {
 		return '';
 	}
 
+	private function text_contains_recurring_price_interval( $value ) {
+		$value = wp_strip_all_tags( (string) $value );
+		if ( '' === trim( $value ) ) {
+			return false;
+		}
+
+		return (bool) preg_match( '/(?:\/|\bper\b)\s*(day|week|month|year)s?\b/i', $value );
+	}
+
+	private function is_displayable_one_time_service_record( $record ) {
+		$name = ! empty( $record->service_name ) ? sanitize_text_field( (string) $record->service_name ) : '';
+		if ( '' === $name || $this->is_generic_portal_service_label( $name ) ) {
+			return false;
+		}
+
+		if ( ! empty( $record->stripe_subscription_id ) ) {
+			return false;
+		}
+
+		$billing_type = ! empty( $record->billing_type_key ) ? sanitize_key( (string) $record->billing_type_key ) : '';
+		if ( '' !== $billing_type && 'one_time' !== $billing_type ) {
+			return false;
+		}
+
+		foreach ( array( 'service_name', 'price', 'amount' ) as $field ) {
+			if ( ! empty( $record->{$field} ) && $this->text_contains_recurring_price_interval( $record->{$field} ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	private function get_portal_service_status_rank( $status ) {
 		$ranks = array(
 			'active'          => 0,
@@ -4863,6 +4896,24 @@ class AJForms_Admin {
 				);
 				continue;
 			}
+			if ( 'one_time' === $billing_type && ! $this->is_displayable_one_time_service_record( $record ) ) {
+				$this->log_portal_event(
+					'service_one_time_artifact_suppressed',
+					array(
+						'source'             => 'products_services_display',
+						'stripe_customer_id' => ! empty( $row->stripe_customer_id ) ? $row->stripe_customer_id : '',
+						'email_after'        => ! empty( $row->customer_email ) ? $row->customer_email : '',
+						'severity'           => 'info',
+						'details'            => array(
+							'snapshot_key' => ! empty( $row->snapshot_key ) ? $row->snapshot_key : '',
+							'service_name' => ! empty( $record->service_name ) ? $record->service_name : '',
+							'source_id'    => $this->get_portal_one_time_service_source_id( $record ),
+							'reason'       => 'generic_or_recurring_payment_artifact',
+						),
+					)
+				);
+				continue;
+			}
 			$records[] = $record;
 		}
 
@@ -5139,6 +5190,10 @@ class AJForms_Admin {
 						$this->record_portal_service_display_skip( $entry, __( 'Skipped because the payment label is generic. One-time services require a product or checkout line item.', 'ajforms' ) );
 						continue;
 					}
+					if ( $this->text_contains_recurring_price_interval( $fallback_service_name ) ) {
+						$this->record_portal_service_display_skip( $entry, __( 'Skipped because the payment label looks like a recurring price artifact. One-time services require a one-time product or checkout line item.', 'ajforms' ) );
+						continue;
+					}
 					if ( 'subscription' === $billing_type ) {
 						continue;
 					}
@@ -5213,6 +5268,11 @@ class AJForms_Admin {
 			);
 			$record->service_period = $this->get_portal_service_record_period_label( $record );
 			$record->next_billing_date = $this->get_portal_service_record_next_billing_date_label( $record );
+
+			if ( 'one_time' === $billing_type && ! $this->is_displayable_one_time_service_record( $record ) ) {
+				$this->record_portal_service_display_skip( $entry, __( 'Skipped because this row is a generic payment or recurring-price artifact, not a one-time service line item.', 'ajforms' ) );
+				continue;
+			}
 
 			$rows[] = $record;
 		}
