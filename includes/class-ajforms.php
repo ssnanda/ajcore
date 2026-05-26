@@ -1510,6 +1510,12 @@ class AJForms {
 				$stripe_customer_id
 			)
 		);
+		$snapshots = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_service_snapshots_table()} WHERE stripe_customer_id = %s ORDER BY service_period_end DESC, updated_at DESC, id DESC LIMIT 100",
+				$stripe_customer_id
+			)
+		);
 		$ledger = $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_type <> 'refund' AND " . $this->get_ignored_unpaid_checkout_sql_fragment() . " ORDER BY ledger_date DESC LIMIT 50",
@@ -1537,10 +1543,55 @@ class AJForms {
 			'stripe_customer_id'   => $stripe_customer_id,
 			'customer'             => $customer,
 			'subscriptions'        => $subscriptions,
+			'service_snapshots'    => $snapshots,
 			'ledger'               => $ledger,
 			'upcoming'             => $upcoming,
 			'active_subscriptions' => $active_subscriptions,
 		);
+	}
+
+	private function get_snapshot_service_name( $snapshot ) {
+		return ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : __( 'Service', 'ajforms' );
+	}
+
+	private function get_snapshot_service_amount_label( $snapshot ) {
+		if ( ! empty( $snapshot->price_label_snapshot ) ) {
+			return sanitize_text_field( (string) $snapshot->price_label_snapshot );
+		}
+
+		$interval = ! empty( $snapshot->recurring_interval ) ? '/' . sanitize_text_field( (string) $snapshot->recurring_interval ) : '';
+		return $this->format_portal_money( isset( $snapshot->amount ) ? $snapshot->amount : 0, isset( $snapshot->currency ) ? $snapshot->currency : 'usd' ) . $interval;
+	}
+
+	private function get_snapshot_service_period_label( $snapshot ) {
+		if ( ! empty( $snapshot->service_period ) ) {
+			return sanitize_text_field( (string) $snapshot->service_period );
+		}
+
+		if ( ! empty( $snapshot->service_period_start ) && ! empty( $snapshot->service_period_end ) ) {
+			return $this->format_portal_date( $snapshot->service_period_start ) . ' - ' . $this->format_portal_date( $snapshot->service_period_end );
+		}
+
+		if ( ! empty( $snapshot->service_period_end ) ) {
+			return __( 'Through ', 'ajforms' ) . $this->format_portal_date( $snapshot->service_period_end );
+		}
+
+		if ( ! empty( $snapshot->created_at ) ) {
+			return sprintf( __( 'Purchased %s', 'ajforms' ), $this->format_portal_date( $snapshot->created_at ) );
+		}
+
+		return '-';
+	}
+
+	private function is_current_portal_service_snapshot( $snapshot ) {
+		$status = isset( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '';
+		$type   = isset( $snapshot->billing_type ) ? sanitize_key( (string) $snapshot->billing_type ) : '';
+
+		if ( 'recurring' === $type ) {
+			return in_array( $status, array( 'active', 'trialing', 'paid', 'succeeded', 'completed' ), true );
+		}
+
+		return in_array( $status, array( 'paid', 'succeeded', 'completed' ), true );
 	}
 
 	private function render_customer_portal_services_tab() {
@@ -1552,7 +1603,24 @@ class AJForms {
 		}
 
 		$subscriptions      = $context['subscriptions'];
+		$snapshot_services  = array_values( array_filter( $context['service_snapshots'], array( $this, 'is_current_portal_service_snapshot' ) ) );
+		$snapshot_subscription_ids = array();
+		foreach ( $snapshot_services as $snapshot_service ) {
+			if ( ! empty( $snapshot_service->subscription_id ) ) {
+				$snapshot_subscription_ids[] = sanitize_text_field( (string) $snapshot_service->subscription_id );
+			}
+		}
 		$current_services   = array_values( array_filter( $subscriptions, array( $this, 'is_current_portal_subscription' ) ) );
+		if ( ! empty( $snapshot_subscription_ids ) ) {
+			$current_services = array_values(
+				array_filter(
+					$current_services,
+					function ( $subscription ) use ( $snapshot_subscription_ids ) {
+						return empty( $subscription->stripe_subscription_id ) || ! in_array( sanitize_text_field( (string) $subscription->stripe_subscription_id ), $snapshot_subscription_ids, true );
+					}
+				)
+			);
+		}
 		$past_services      = array_values(
 			array_filter(
 				$subscriptions,
@@ -1577,10 +1645,22 @@ class AJForms {
 
 			<?php if ( $show_current ) : ?>
 			<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
-			<?php if ( empty( $current_services ) ) : ?>
+			<?php if ( empty( $snapshot_services ) && empty( $current_services ) ) : ?>
 				<p><?php esc_html_e( 'No current services are synced yet.', 'ajforms' ); ?></p>
 			<?php else : ?>
 				<div class="aj-portal-services-list">
+					<?php foreach ( $snapshot_services as $snapshot ) : ?>
+						<div class="aj-portal-service-card">
+							<h4><?php echo esc_html( $this->get_snapshot_service_name( $snapshot ) ); ?></h4>
+							<div class="aj-portal-service-card-grid">
+								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( (string) $snapshot->status ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_period_label( $snapshot ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo ! empty( $snapshot->recurring_interval ) && ! empty( $snapshot->service_period_end ) ? esc_html( $this->format_portal_date( $snapshot->service_period_end ) ) : esc_html__( 'No future billing', 'ajforms' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_amount_label( $snapshot ) ); ?></span></div>
+							</div>
+						</div>
+					<?php endforeach; ?>
 					<?php foreach ( $current_services as $subscription ) : ?>
 						<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
 						<div class="aj-portal-service-card">
@@ -2259,6 +2339,11 @@ class AJForms {
 	private function get_portal_stripe_subscriptions_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_stripe_subscriptions';
+	}
+
+	private function get_portal_service_snapshots_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_service_snapshots';
 	}
 
 	private function get_portal_ledger_table() {
