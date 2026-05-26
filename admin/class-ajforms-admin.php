@@ -984,13 +984,25 @@ class AJForms_Admin {
 		}
 
 		if ( ! in_array( 'aj_portal_user', (array) $user->roles, true ) ) {
-			$user->add_role( 'aj_portal_user' );
+			$roles_before = (array) $user->roles;
+			$user->set_role( 'aj_portal_user' );
 			$this->log_portal_event(
 				'role_added',
 				array(
 					'wp_user_id_after' => (int) $user->ID,
 					'email_after'      => $user->user_email,
-					'details'          => array( 'role' => 'aj_portal_user' ),
+					'details'          => array( 'role' => 'aj_portal_user', 'roles_before' => $roles_before, 'roles_after' => array( 'aj_portal_user' ) ),
+				)
+			);
+		} elseif ( in_array( 'subscriber', (array) $user->roles, true ) && 1 < count( (array) $user->roles ) ) {
+			$roles_before = (array) $user->roles;
+			$user->remove_role( 'subscriber' );
+			$this->log_portal_event(
+				'role_removed',
+				array(
+					'wp_user_id_after' => (int) $user->ID,
+					'email_after'      => $user->user_email,
+					'details'          => array( 'role' => 'subscriber', 'roles_before' => $roles_before, 'roles_after' => (array) $user->roles ),
 				)
 			);
 		}
@@ -2255,6 +2267,9 @@ class AJForms_Admin {
 				);
 				if ( $existing_payment ) {
 					$this->upsert_portal_checkout_session_transaction_cache( $session, $customer_id );
+					if ( 'paid' === $status ) {
+						$this->maybe_create_portal_service_snapshots_from_stripe_object( $session, 'checkout_session' );
+					}
 					continue;
 				}
 			}
@@ -5118,6 +5133,10 @@ class AJForms_Admin {
 					$fallback_service_name = $this->get_portal_fallback_service_name_from_ledger_entry( $entry );
 					if ( '' === $fallback_service_name ) {
 						$this->record_portal_service_display_skip( $entry, __( 'Skipped because no synced Stripe product, price, or usable checkout item description was found.', 'ajforms' ) );
+						continue;
+					}
+					if ( $this->is_generic_portal_service_label( $fallback_service_name ) ) {
+						$this->record_portal_service_display_skip( $entry, __( 'Skipped because the payment label is generic. One-time services require a product or checkout line item.', 'ajforms' ) );
 						continue;
 					}
 					if ( 'subscription' === $billing_type ) {
