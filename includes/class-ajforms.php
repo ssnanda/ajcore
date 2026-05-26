@@ -1736,11 +1736,6 @@ class AJForms {
 			return false;
 		}
 
-		$status = isset( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '';
-		if ( in_array( $status, array( 'active', 'trialing' ), true ) ) {
-			return false;
-		}
-
 		if ( ! empty( $snapshot->subscription_id ) ) {
 			foreach ( (array) $active_subscriptions as $subscription ) {
 				if ( ! empty( $subscription->stripe_subscription_id ) && (string) $subscription->stripe_subscription_id === (string) $snapshot->subscription_id ) {
@@ -1757,6 +1752,20 @@ class AJForms {
 				return true;
 			}
 			if ( '' !== $snapshot_product && in_array( $snapshot_product, $identity['product_ids'], true ) ) {
+				return true;
+			}
+		}
+
+		$snapshot_name   = $this->clean_stripe_line_service_name( $this->get_snapshot_service_name( $snapshot ) );
+		$snapshot_tokens = $this->get_portal_service_identity_tokens( $snapshot_name );
+		if ( empty( $snapshot_tokens ) ) {
+			return false;
+		}
+
+		foreach ( (array) $active_subscriptions as $subscription ) {
+			$subscription_name   = $this->clean_stripe_line_service_name( $this->get_subscription_service_name( $subscription ) );
+			$subscription_tokens = $this->get_portal_service_identity_tokens( $subscription_name );
+			if ( $this->portal_service_token_sets_match( $snapshot_tokens, $subscription_tokens ) ) {
 				return true;
 			}
 		}
@@ -1845,22 +1854,6 @@ class AJForms {
 				)
 			)
 		);
-		$snapshot_subscription_ids = array();
-		foreach ( $snapshot_services as $snapshot_service ) {
-			if ( ! empty( $snapshot_service->subscription_id ) ) {
-				$snapshot_subscription_ids[] = sanitize_text_field( (string) $snapshot_service->subscription_id );
-			}
-		}
-		if ( ! empty( $snapshot_subscription_ids ) ) {
-			$current_services = array_values(
-				array_filter(
-					$current_services,
-					function ( $subscription ) use ( $snapshot_subscription_ids ) {
-						return empty( $subscription->stripe_subscription_id ) || ! in_array( sanitize_text_field( (string) $subscription->stripe_subscription_id ), $snapshot_subscription_ids, true );
-					}
-				)
-			);
-		}
 		$past_services      = array_values(
 			array_filter(
 				$subscriptions,
