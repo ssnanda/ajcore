@@ -545,6 +545,12 @@ class AJForms_Admin {
 		return ! empty( $settings['stripe_secret_key'] ) ? sanitize_text_field( $settings['stripe_secret_key'] ) : '';
 	}
 
+	private function get_current_stripe_livemode() {
+		$settings = $this->get_plugin_settings();
+
+		return ! empty( $settings['stripe_mode'] ) && 'live' === sanitize_key( (string) $settings['stripe_mode'] ) ? 1 : 0;
+	}
+
 	private function ensure_portal_schema() {
 		global $wpdb;
 
@@ -563,6 +569,7 @@ class AJForms_Admin {
 			$this->get_portal_sync_log_items_table(),
 			$this->get_portal_service_requests_table(),
 			$this->get_portal_event_log_table(),
+			$this->get_portal_stripe_events_table(),
 		);
 
 		foreach ( $required_tables as $table ) {
@@ -582,6 +589,18 @@ class AJForms_Admin {
 
 		$mapping_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_user_mappings_table()}", 0 );
 		if ( is_array( $mapping_columns ) && ( ! in_array( 'portal_user_email', $mapping_columns, true ) || ! in_array( 'site_uuid', $mapping_columns, true ) ) ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+			AJForms_Activator::activate();
+		}
+
+		$transaction_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_transactions_table()}", 0 );
+		$subscription_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_subscriptions_table()}", 0 );
+		$product_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_products_table()}", 0 );
+		if (
+			( is_array( $transaction_columns ) && ! in_array( 'livemode', $transaction_columns, true ) )
+			|| ( is_array( $subscription_columns ) && ! in_array( 'livemode', $subscription_columns, true ) )
+			|| ( is_array( $product_columns ) && ! in_array( 'livemode', $product_columns, true ) )
+		) {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
 		}
@@ -1252,12 +1271,52 @@ class AJForms_Admin {
 	private function upsert_portal_record( $table, $data, $formats, $unique_key ) {
 		global $wpdb;
 
-		$existing_id = $wpdb->get_var(
+		$existing = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT id FROM {$table} WHERE {$unique_key} = %s LIMIT 1",
+				"SELECT * FROM {$table} WHERE {$unique_key} = %s LIMIT 1",
 				$data[ $unique_key ]
 			)
 		);
+		$existing_id = $existing ? (int) $existing->id : 0;
+
+		$mode_scoped_tables = array(
+			$this->get_portal_stripe_products_table(),
+			$this->get_portal_stripe_subscriptions_table(),
+			$this->get_portal_stripe_transactions_table(),
+		);
+		if ( $existing && in_array( $table, $mode_scoped_tables, true ) && array_key_exists( 'livemode', $data ) && isset( $existing->livemode ) && (int) $existing->livemode !== (int) $data['livemode'] ) {
+			$message = __( 'Skipped Stripe row because the existing record belongs to a different Stripe mode.', 'ajforms' );
+			$this->increment_portal_sync_stat( 'skipped' );
+			$this->record_portal_sync_item(
+				'stripe_mode_mismatch',
+				$unique_key,
+				isset( $data[ $unique_key ] ) ? $data[ $unique_key ] : '',
+				'skipped',
+				$message,
+				array(
+					'existing_livemode' => (int) $existing->livemode,
+					'incoming_livemode' => (int) $data['livemode'],
+					'data'              => $data,
+				),
+				isset( $data['stripe_customer_id'] ) ? $data['stripe_customer_id'] : ''
+			);
+			$this->log_portal_event(
+				'stripe_mode_mismatch_skipped',
+				array(
+					'severity'           => 'warning',
+					'source'             => 'stripe_sync',
+					'stripe_customer_id' => isset( $data['stripe_customer_id'] ) ? $data['stripe_customer_id'] : '',
+					'details'            => array(
+						'table'             => $table,
+						'unique_key'        => $unique_key,
+						'record_id'         => isset( $data[ $unique_key ] ) ? $data[ $unique_key ] : '',
+						'existing_livemode' => (int) $existing->livemode,
+						'incoming_livemode' => (int) $data['livemode'],
+					),
+				)
+			);
+			return 0;
+		}
 
 		if ( $existing_id ) {
 			$result = $wpdb->update( $table, $data, array( 'id' => absint( $existing_id ) ), $formats, array( '%d' ) );
@@ -1298,10 +1357,44 @@ class AJForms_Admin {
 
 		$existing = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT id, enabled_portal, portal_status FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
+				"SELECT id, enabled_portal, portal_status, livemode FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
 				$data['stripe_customer_id']
 			)
 		);
+
+		if ( $existing && array_key_exists( 'livemode', $data ) && isset( $existing->livemode ) && (int) $existing->livemode !== (int) $data['livemode'] ) {
+			$message = __( 'Skipped Stripe customer because the existing record belongs to a different Stripe mode.', 'ajforms' );
+			$this->increment_portal_sync_stat( 'skipped' );
+			$this->record_portal_sync_item(
+				'stripe_mode_mismatch',
+				'stripe_customer_id',
+				$data['stripe_customer_id'],
+				'skipped',
+				$message,
+				array(
+					'existing_livemode' => (int) $existing->livemode,
+					'incoming_livemode' => (int) $data['livemode'],
+				),
+				$data['stripe_customer_id']
+			);
+			$this->log_portal_event(
+				'stripe_mode_mismatch_skipped',
+				array(
+					'severity'           => 'warning',
+					'source'             => 'stripe_sync',
+					'customer_id'        => (int) $existing->id,
+					'stripe_customer_id' => $data['stripe_customer_id'],
+					'details'            => array(
+						'table'             => $table,
+						'unique_key'        => 'stripe_customer_id',
+						'record_id'         => $data['stripe_customer_id'],
+						'existing_livemode' => (int) $existing->livemode,
+						'incoming_livemode' => (int) $data['livemode'],
+					),
+				)
+			);
+			return 0;
+		}
 
 		if ( $existing && in_array( $this->normalize_portal_customer_status( $existing->portal_status ), array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ) {
 			unset( $data['enabled_portal'], $data['portal_status'] );
@@ -1555,9 +1648,10 @@ class AJForms_Admin {
 				'transaction_date'   => ! empty( $session['created'] ) ? $this->stripe_timestamp_to_mysql( $session['created'] ) : null,
 				'due_date'           => null,
 				'raw_data'           => wp_json_encode( $session ),
+				'livemode'           => ! empty( $session['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
 				'synced_at'          => current_time( 'mysql' ),
 			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ),
 			'stripe_object_id'
 		);
 	}
@@ -1593,9 +1687,10 @@ class AJForms_Admin {
 					'active'               => ( ! isset( $price['active'] ) || ! empty( $price['active'] ) ) && ( empty( $product ) || ! isset( $product['active'] ) || ! empty( $product['active'] ) ) ? 1 : 0,
 					'metadata'             => ! empty( $product['metadata'] ) ? wp_json_encode( $product['metadata'] ) : '',
 					'raw_data'             => wp_json_encode( $price ),
+					'livemode'             => ! empty( $price['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
 					'synced_at'            => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s', '%s' ),
+				array( '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s', '%d', '%s' ),
 				'stripe_price_id'
 			);
 			if ( $upserted ) {
@@ -1692,9 +1787,10 @@ class AJForms_Admin {
 					'cancel_at_period_end'   => ! empty( $subscription['cancel_at_period_end'] ) ? 1 : 0,
 					'items'                  => ! empty( $subscription['items']['data'] ) ? wp_json_encode( $subscription['items']['data'] ) : '',
 					'raw_data'               => wp_json_encode( $subscription ),
+					'livemode'               => ! empty( $subscription['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
 					'synced_at'              => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' ),
+				array( '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%d', '%s' ),
 				'stripe_subscription_id'
 			);
 			if ( $upserted ) {
@@ -1900,6 +1996,7 @@ class AJForms_Admin {
 			'transaction_date'   => ! empty( $refund['created'] ) ? $this->stripe_timestamp_to_mysql( $refund['created'] ) : current_time( 'mysql' ),
 			'due_date'           => null,
 			'raw_data'           => wp_json_encode( $refund ),
+			'livemode'           => isset( $refund['livemode'] ) ? ( ! empty( $refund['livemode'] ) ? 1 : 0 ) : ( isset( $charge['livemode'] ) ? ( ! empty( $charge['livemode'] ) ? 1 : 0 ) : $this->get_current_stripe_livemode() ),
 			'synced_at'          => current_time( 'mysql' ),
 		);
 
@@ -1912,7 +2009,7 @@ class AJForms_Admin {
 			'synthetic'          => ! empty( $refund['synthetic'] ),
 		);
 
-		$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ), 'stripe_object_id' );
+		$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ), 'stripe_object_id' );
 		$ledger_upserted = $this->upsert_portal_record(
 			$this->get_portal_ledger_table(),
 			array(
@@ -1975,10 +2072,11 @@ class AJForms_Admin {
 				'transaction_date'   => ! empty( $invoice['created'] ) ? $this->stripe_timestamp_to_mysql( $invoice['created'] ) : null,
 				'due_date'           => ! empty( $invoice['due_date'] ) ? $this->stripe_timestamp_to_mysql( $invoice['due_date'] ) : null,
 				'raw_data'           => wp_json_encode( $invoice ),
+				'livemode'           => ! empty( $invoice['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
 				'synced_at'          => current_time( 'mysql' ),
 			);
 
-			$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ), 'stripe_object_id' );
+			$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ), 'stripe_object_id' );
 			$ledger_upserted = $this->upsert_portal_record(
 				$this->get_portal_ledger_table(),
 				array(
@@ -2046,10 +2144,11 @@ class AJForms_Admin {
 				'transaction_date'   => ! empty( $charge['created'] ) ? $this->stripe_timestamp_to_mysql( $charge['created'] ) : null,
 				'due_date'           => null,
 				'raw_data'           => wp_json_encode( $charge ),
+				'livemode'           => ! empty( $charge['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
 				'synced_at'          => current_time( 'mysql' ),
 			);
 
-			$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ), 'stripe_object_id' );
+			$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ), 'stripe_object_id' );
 			$ledger_upserted = $this->upsert_portal_record(
 				$this->get_portal_ledger_table(),
 				array(
@@ -2161,10 +2260,11 @@ class AJForms_Admin {
 				'transaction_date'   => ! empty( $session['created'] ) ? $this->stripe_timestamp_to_mysql( $session['created'] ) : null,
 				'due_date'           => null,
 				'raw_data'           => wp_json_encode( $session ),
+				'livemode'           => ! empty( $session['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
 				'synced_at'          => current_time( 'mysql' ),
 			);
 
-			$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s' ), 'stripe_object_id' );
+			$transaction_upserted = $this->upsert_portal_record( $this->get_portal_stripe_transactions_table(), $data, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ), 'stripe_object_id' );
 			$ledger_upserted = $this->upsert_portal_record(
 				$this->get_portal_ledger_table(),
 				array(
@@ -2368,6 +2468,166 @@ class AJForms_Admin {
 		return (int) $wpdb->insert_id;
 	}
 
+	private function get_stripe_event_object_id( $event ) {
+		$object = ! empty( $event['data']['object'] ) && is_array( $event['data']['object'] ) ? $event['data']['object'] : array();
+
+		return ! empty( $object['id'] ) ? sanitize_text_field( (string) $object['id'] ) : '';
+	}
+
+	private function get_stripe_event_account_id( $event ) {
+		if ( ! empty( $event['account'] ) ) {
+			return sanitize_text_field( (string) $event['account'] );
+		}
+		if ( ! empty( $event['context'] ) ) {
+			return sanitize_text_field( (string) $event['context'] );
+		}
+
+		return '';
+	}
+
+	private function get_processed_stripe_event( $event_id ) {
+		global $wpdb;
+
+		$event_id = sanitize_text_field( (string) $event_id );
+		if ( '' === $event_id ) {
+			return null;
+		}
+
+		return $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_stripe_events_table()} WHERE event_id = %s LIMIT 1",
+				$event_id
+			)
+		);
+	}
+
+	private function record_stripe_event_received( $event ) {
+		global $wpdb;
+
+		$event_id = ! empty( $event['id'] ) ? sanitize_text_field( (string) $event['id'] ) : '';
+		if ( '' === $event_id ) {
+			return new WP_Error( 'missing_event_id', __( 'Stripe event ID is missing.', 'ajforms' ) );
+		}
+
+		$event_type     = ! empty( $event['type'] ) ? sanitize_text_field( (string) $event['type'] ) : '';
+		$livemode       = ! empty( $event['livemode'] ) ? 1 : 0;
+		$stripe_account = $this->get_stripe_event_account_id( $event );
+		$object_id      = $this->get_stripe_event_object_id( $event );
+		$existing       = $this->get_processed_stripe_event( $event_id );
+
+		if ( $existing ) {
+			$wpdb->update(
+				$this->get_portal_stripe_events_table(),
+				array(
+					'attempts'  => (int) $existing->attempts + 1,
+					'raw_event' => wp_json_encode( $event ),
+				),
+				array( 'event_id' => $event_id ),
+				array( '%d', '%s' ),
+				array( '%s' )
+			);
+			return $this->get_processed_stripe_event( $event_id );
+		}
+
+		$wpdb->insert(
+			$this->get_portal_stripe_events_table(),
+			array(
+				'event_id'          => $event_id,
+				'event_type'        => $event_type,
+				'livemode'          => $livemode,
+				'stripe_account'    => $stripe_account,
+				'object_id'         => $object_id,
+				'processing_status' => 'received',
+				'first_seen_at'     => current_time( 'mysql' ),
+				'processed_at'      => null,
+				'attempts'          => 1,
+				'last_error'        => '',
+				'raw_event'         => wp_json_encode( $event ),
+			),
+			array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+		);
+
+		return $this->get_processed_stripe_event( $event_id );
+	}
+
+	private function mark_stripe_event_processing( $event_id ) {
+		global $wpdb;
+
+		return $wpdb->update(
+			$this->get_portal_stripe_events_table(),
+			array( 'processing_status' => 'processing' ),
+			array( 'event_id' => sanitize_text_field( (string) $event_id ) ),
+			array( '%s' ),
+			array( '%s' )
+		);
+	}
+
+	private function mark_stripe_event_processed( $event_id ) {
+		global $wpdb;
+
+		return $wpdb->update(
+			$this->get_portal_stripe_events_table(),
+			array(
+				'processing_status' => 'processed',
+				'processed_at'      => current_time( 'mysql' ),
+				'last_error'        => '',
+			),
+			array( 'event_id' => sanitize_text_field( (string) $event_id ) ),
+			array( '%s', '%s', '%s' ),
+			array( '%s' )
+		);
+	}
+
+	private function mark_stripe_event_failed( $event_id, $error_message ) {
+		global $wpdb;
+
+		return $wpdb->update(
+			$this->get_portal_stripe_events_table(),
+			array(
+				'processing_status' => 'failed',
+				'processed_at'      => current_time( 'mysql' ),
+				'last_error'        => sanitize_textarea_field( (string) $error_message ),
+			),
+			array( 'event_id' => sanitize_text_field( (string) $event_id ) ),
+			array( '%s', '%s', '%s' ),
+			array( '%s' )
+		);
+	}
+
+	private function fetch_current_stripe_webhook_object( $type, $object, $secret_key ) {
+		$object_id = ! empty( $object['id'] ) ? sanitize_text_field( (string) $object['id'] ) : '';
+		if ( '' === $object_id ) {
+			return $object;
+		}
+
+		if ( 0 === strpos( $type, 'checkout.session.' ) ) {
+			$session = $this->stripe_api_get( 'checkout/sessions/' . rawurlencode( $object_id ), $secret_key );
+			if ( is_wp_error( $session ) ) {
+				return $session;
+			}
+
+			return $this->enrich_checkout_session_with_line_items( $session, $secret_key );
+		}
+
+		if ( 0 === strpos( $type, 'invoice.' ) ) {
+			return $this->stripe_api_get( 'invoices/' . rawurlencode( $object_id ), $secret_key );
+		}
+
+		if ( 0 === strpos( $type, 'customer.subscription.' ) ) {
+			return $this->stripe_api_get(
+				'subscriptions/' . rawurlencode( $object_id ),
+				$secret_key,
+				array( 'expand[]' => 'items.data.price' )
+			);
+		}
+
+		if ( 0 === strpos( $type, 'charge.' ) ) {
+			return $this->stripe_api_get( 'charges/' . rawurlencode( $object_id ), $secret_key );
+		}
+
+		return $object;
+	}
+
 	public function run_portal_sync_job( $source = 'manual', $requested_jobs = array() ) {
 		$this->ensure_portal_schema();
 
@@ -2476,6 +2736,88 @@ class AJForms_Admin {
 		$event = $verified_event;
 		$type  = sanitize_text_field( (string) $event['type'] );
 		$object = ! empty( $event['data']['object'] ) && is_array( $event['data']['object'] ) ? $event['data']['object'] : array();
+		$object_id = $this->get_stripe_event_object_id( $event );
+		$event_livemode = ! empty( $event['livemode'] ) ? 1 : 0;
+		$expected_livemode = $this->get_current_stripe_livemode();
+		if ( $event_livemode !== $expected_livemode ) {
+			$this->log_portal_event(
+				'webhook_failed',
+				array(
+					'severity' => 'warning',
+					'source'   => 'webhook',
+					'details'  => array(
+						'event_id'          => $event_id,
+						'event_type'        => $type,
+						'object_id'         => $object_id,
+						'reason'            => 'livemode_mismatch',
+						'event_livemode'    => $event_livemode,
+						'expected_livemode' => $expected_livemode,
+					),
+				)
+			);
+			status_header( 400 );
+			wp_send_json_error( array( 'message' => __( 'Stripe event mode does not match the active AJ Core Stripe mode.', 'ajforms' ) ) );
+		}
+
+		$event_row = $this->record_stripe_event_received( $event );
+		if ( is_wp_error( $event_row ) ) {
+			status_header( 500 );
+			wp_send_json_error( array( 'message' => $event_row->get_error_message() ) );
+		}
+
+		$this->log_portal_event(
+			'webhook_received',
+			array(
+				'source'  => 'webhook',
+				'details' => array(
+					'event_id'       => $event_id,
+					'event_type'     => $type,
+					'object_id'      => $object_id,
+					'livemode'       => $event_livemode,
+					'attempts'       => isset( $event_row->attempts ) ? (int) $event_row->attempts : 1,
+					'stripe_account' => $this->get_stripe_event_account_id( $event ),
+				),
+			)
+		);
+
+		if ( $event_row && 'processed' === (string) $event_row->processing_status ) {
+			$run_key = wp_generate_uuid4();
+			$job_name = sanitize_key( str_replace( '.', '_', $type ) );
+			$log_id = $this->write_portal_sync_log( $run_key, 'webhook', $job_name, 'started', 0, __( 'Duplicate Stripe webhook event received.', 'ajforms' ) );
+			$this->portal_sync_current_log_id = $log_id;
+			$this->portal_sync_current_run_key = $run_key;
+			$this->portal_sync_current_job = $job_name;
+			$this->record_portal_sync_item( 'duplicate_ignored', 'stripe_event', $event_id, 'skipped', __( 'Duplicate Stripe webhook event already processed successfully.', 'ajforms' ), $event, $this->get_payment_customer_id( $object ) );
+			$this->write_portal_sync_log( $run_key, 'webhook', $job_name, 'success', 0, $this->get_portal_sync_message( __( 'Duplicate Stripe webhook event ignored.', 'ajforms' ), array( 'skipped' => 1 ) ), $log_id );
+			$this->portal_sync_current_log_id = 0;
+			$this->portal_sync_current_run_key = '';
+			$this->portal_sync_current_job = '';
+			$this->log_portal_event(
+				'webhook_duplicate_skipped',
+				array(
+					'source'  => 'webhook',
+					'details' => array( 'event_id' => $event_id, 'event_type' => $type, 'object_id' => $object_id ),
+				)
+			);
+			wp_send_json_success( array( 'message' => 'duplicate_ignored' ) );
+		}
+
+		if ( $event_row && 'failed' === (string) $event_row->processing_status ) {
+			$this->log_portal_event(
+				'webhook_retried',
+				array(
+					'source'  => 'webhook',
+					'details' => array(
+						'event_id'   => $event_id,
+						'event_type' => $type,
+						'object_id'  => $object_id,
+						'attempts'   => (int) $event_row->attempts,
+					),
+				)
+			);
+		}
+
+		$this->mark_stripe_event_processing( $event_id );
 		$supported = array(
 			'checkout.session.completed',
 			'invoice.paid',
@@ -2486,7 +2828,38 @@ class AJForms_Admin {
 		);
 
 		if ( ! in_array( $type, $supported, true ) ) {
+			$this->mark_stripe_event_processed( $event_id );
+			$this->log_portal_event(
+				'webhook_skipped',
+				array(
+					'source'  => 'webhook',
+					'details' => array(
+						'event_id'   => $event_id,
+						'event_type' => $type,
+						'object_id'  => $object_id,
+						'reason'     => 'unsupported_event_type',
+					),
+				)
+			);
 			wp_send_json_success( array( 'message' => 'ignored' ) );
+		}
+
+		$current_object = $this->fetch_current_stripe_webhook_object( $type, $object, $secret_key );
+		if ( is_wp_error( $current_object ) ) {
+			$this->mark_stripe_event_failed( $event_id, $current_object->get_error_message() );
+			$this->log_portal_event(
+				'webhook_failed',
+				array(
+					'severity' => 'error',
+					'source'   => 'webhook',
+					'details'  => array( 'event_id' => $event_id, 'event_type' => $type, 'object_id' => $object_id, 'error' => $current_object->get_error_message() ),
+				)
+			);
+			status_header( 500 );
+			wp_send_json_error( array( 'message' => $current_object->get_error_message() ) );
+		}
+		if ( is_array( $current_object ) && ! empty( $current_object['id'] ) ) {
+			$object = $current_object;
 		}
 
 		$stripe_customer_id = '';
@@ -2528,10 +2901,27 @@ class AJForms_Admin {
 		$this->portal_sync_current_job     = '';
 
 		if ( is_wp_error( $result ) ) {
+			$this->mark_stripe_event_failed( $event_id, $result->get_error_message() );
+			$this->log_portal_event(
+				'webhook_failed',
+				array(
+					'severity' => 'error',
+					'source'   => 'webhook',
+					'details'  => array( 'event_id' => $event_id, 'event_type' => $type, 'object_id' => $object_id, 'error' => $result->get_error_message() ),
+				)
+			);
 			status_header( 500 );
 			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
 		}
 
+		$this->mark_stripe_event_processed( $event_id );
+		$this->log_portal_event(
+			'webhook_processed',
+			array(
+				'source'  => 'webhook',
+				'details' => array( 'event_id' => $event_id, 'event_type' => $type, 'object_id' => $object_id, 'records' => absint( $result ) ),
+			)
+		);
 		wp_send_json_success( array( 'message' => 'processed', 'records' => absint( $result ) ) );
 	}
 
@@ -7212,6 +7602,11 @@ class AJForms_Admin {
 	private function get_portal_event_log_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_event_log';
+	}
+
+	private function get_portal_stripe_events_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_stripe_events';
 	}
 
 	public function get_form_record( $form_id ) {

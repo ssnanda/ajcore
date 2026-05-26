@@ -26,6 +26,7 @@ class AJForms_Activator {
 		$table_sync_log_items       = $wpdb->prefix . 'aj_portal_sync_log_items';
 		$table_service_requests     = $wpdb->prefix . 'aj_portal_service_requests';
 		$table_event_log            = $wpdb->prefix . 'aj_portal_event_log';
+		$table_stripe_events        = $wpdb->prefix . 'aj_portal_stripe_events';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -128,6 +129,7 @@ class AJForms_Activator {
 			custom_request_title varchar(255) DEFAULT '' NOT NULL,
 			custom_request_message longtext NULL,
 			custom_request_button_label varchar(255) DEFAULT '' NOT NULL,
+			livemode tinyint(1) NOT NULL DEFAULT 0,
 			synced_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_price_id (stripe_price_id),
@@ -144,6 +146,7 @@ class AJForms_Activator {
 			cancel_at_period_end tinyint(1) NOT NULL DEFAULT 0,
 			items longtext NULL,
 			raw_data longtext NULL,
+			livemode tinyint(1) NOT NULL DEFAULT 0,
 			synced_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_subscription_id (stripe_subscription_id),
@@ -167,6 +170,7 @@ class AJForms_Activator {
 			transaction_date datetime NULL,
 			due_date datetime NULL,
 			raw_data longtext NULL,
+			livemode tinyint(1) NOT NULL DEFAULT 0,
 			synced_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_object_id (stripe_object_id),
@@ -385,6 +389,29 @@ class AJForms_Activator {
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY actor_user_id (actor_user_id),
 			KEY created_at (created_at)
+		) $charset_collate;
+
+		CREATE TABLE $table_stripe_events (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			event_id varchar(190) NOT NULL,
+			event_type varchar(100) NOT NULL,
+			livemode tinyint(1) NOT NULL DEFAULT 0,
+			stripe_account varchar(100) DEFAULT '' NOT NULL,
+			object_id varchar(190) DEFAULT '' NOT NULL,
+			processing_status varchar(50) DEFAULT 'received' NOT NULL,
+			first_seen_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			processed_at datetime NULL,
+			attempts int(11) NOT NULL DEFAULT 0,
+			last_error longtext NULL,
+			raw_event longtext NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY event_id (event_id),
+			KEY event_type (event_type),
+			KEY livemode (livemode),
+			KEY stripe_account (stripe_account),
+			KEY object_id (object_id),
+			KEY processing_status (processing_status),
+			KEY first_seen_at (first_seen_at)
 		) $charset_collate;";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -474,6 +501,6 @@ class AJForms_Activator {
 			$portal_role->add_cap( 'ajcore_customer_portal_access' );
 		}
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '10', false );
+		update_option( 'ajforms_portal_schema_version', '11', false );
 	}
 }
