@@ -25,6 +25,7 @@ class AJForms_Activator {
 		$table_sync_logs            = $wpdb->prefix . 'aj_portal_sync_logs';
 		$table_sync_log_items       = $wpdb->prefix . 'aj_portal_sync_log_items';
 		$table_service_requests     = $wpdb->prefix . 'aj_portal_service_requests';
+		$table_event_log            = $wpdb->prefix . 'aj_portal_event_log';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -351,6 +352,37 @@ class AJForms_Activator {
 			KEY source_object_id (source_object_id),
 			KEY ledger_id (ledger_id),
 			KEY created_at (created_at)
+		) $charset_collate;
+
+		CREATE TABLE $table_event_log (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			event_type varchar(100) NOT NULL,
+			severity varchar(20) DEFAULT 'info' NOT NULL,
+			source varchar(100) DEFAULT '' NOT NULL,
+			correlation_id varchar(100) DEFAULT '' NOT NULL,
+			site_uuid varchar(100) DEFAULT '' NOT NULL,
+			customer_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			wp_user_id_before bigint(20) unsigned NOT NULL DEFAULT 0,
+			wp_user_id_after bigint(20) unsigned NOT NULL DEFAULT 0,
+			email_before varchar(190) DEFAULT '' NOT NULL,
+			email_after varchar(190) DEFAULT '' NOT NULL,
+			portal_status_before varchar(50) DEFAULT '' NOT NULL,
+			portal_status_after varchar(50) DEFAULT '' NOT NULL,
+			actor_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			actor_email varchar(190) DEFAULT '' NOT NULL,
+			details longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY event_type (event_type),
+			KEY severity (severity),
+			KEY source (source),
+			KEY correlation_id (correlation_id),
+			KEY site_uuid (site_uuid),
+			KEY customer_id (customer_id),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY actor_user_id (actor_user_id),
+			KEY created_at (created_at)
 		) $charset_collate;";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -438,6 +470,6 @@ class AJForms_Activator {
 			$portal_role->add_cap( 'ajcore_customer_portal_access' );
 		}
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '8', false );
+		update_option( 'ajforms_portal_schema_version', '9', false );
 	}
 }

@@ -2286,6 +2286,91 @@ class AJForms {
 		return $wpdb->prefix . 'aj_portal_user_mappings';
 	}
 
+	private function get_portal_event_log_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_event_log';
+	}
+
+	private function get_ajcore_site_uuid() {
+		$uuid = (string) get_option( 'ajcore_site_uuid', '' );
+		if ( '' === $uuid ) {
+			$uuid = wp_generate_uuid4();
+			update_option( 'ajcore_site_uuid', $uuid, false );
+		}
+
+		return $uuid;
+	}
+
+	private function get_portal_event_correlation_id() {
+		static $correlation_id = '';
+		if ( '' === $correlation_id ) {
+			$correlation_id = wp_generate_uuid4();
+		}
+
+		return $correlation_id;
+	}
+
+	private function log_portal_event( $event_type, $args = array() ) {
+		global $wpdb;
+
+		$event_type = sanitize_key( (string) $event_type );
+		if ( '' === $event_type ) {
+			return false;
+		}
+
+		$table = $this->get_portal_event_log_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return false;
+		}
+
+		$actor = wp_get_current_user();
+		$args  = wp_parse_args(
+			(array) $args,
+			array(
+				'severity'             => 'info',
+				'source'               => 'customer_portal',
+				'correlation_id'       => $this->get_portal_event_correlation_id(),
+				'customer_id'          => 0,
+				'stripe_customer_id'   => '',
+				'wp_user_id_before'    => 0,
+				'wp_user_id_after'     => 0,
+				'email_before'         => '',
+				'email_after'          => '',
+				'portal_status_before' => '',
+				'portal_status_after'  => '',
+				'actor_user_id'        => get_current_user_id(),
+				'actor_email'          => $actor && ! empty( $actor->user_email ) ? $actor->user_email : '',
+				'details'              => array(),
+			)
+		);
+
+		$details = is_array( $args['details'] ) ? $args['details'] : array( 'value' => $args['details'] );
+
+		return $wpdb->insert(
+			$table,
+			array(
+				'event_type'             => $event_type,
+				'severity'               => in_array( sanitize_key( (string) $args['severity'] ), array( 'debug', 'info', 'warning', 'error', 'critical' ), true ) ? sanitize_key( (string) $args['severity'] ) : 'info',
+				'source'                 => sanitize_key( (string) $args['source'] ),
+				'correlation_id'         => sanitize_text_field( (string) $args['correlation_id'] ),
+				'site_uuid'              => sanitize_text_field( $this->get_ajcore_site_uuid() ),
+				'customer_id'            => absint( $args['customer_id'] ),
+				'stripe_customer_id'     => sanitize_text_field( (string) $args['stripe_customer_id'] ),
+				'wp_user_id_before'      => absint( $args['wp_user_id_before'] ),
+				'wp_user_id_after'       => absint( $args['wp_user_id_after'] ),
+				'email_before'           => sanitize_email( (string) $args['email_before'] ),
+				'email_after'            => sanitize_email( (string) $args['email_after'] ),
+				'portal_status_before'   => sanitize_key( (string) $args['portal_status_before'] ),
+				'portal_status_after'    => sanitize_key( (string) $args['portal_status_after'] ),
+				'actor_user_id'          => absint( $args['actor_user_id'] ),
+				'actor_email'            => sanitize_email( (string) $args['actor_email'] ),
+				'details'                => wp_json_encode( $details ),
+				'created_at'             => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
+		);
+	}
+
 	private function get_portal_service_requests_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_service_requests';
@@ -2410,6 +2495,18 @@ class AJForms {
 		);
 
 		if ( ! is_user_logged_in() ) {
+			$this->log_portal_event(
+				'auth_denied',
+				array(
+					'severity' => 'warning',
+					'source'   => 'customer_portal',
+					'details'  => array(
+						'reason'      => 'not_logged_in',
+						'request_uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
+					),
+				)
+			);
+
 			$login_url    = wp_login_url( get_permalink() );
 			$register_url = get_option( 'users_can_register' ) ? wp_registration_url() : '';
 
@@ -2426,6 +2523,39 @@ class AJForms {
 			</div>
 			<?php
 			return ob_get_clean();
+		}
+
+		$current_user = wp_get_current_user();
+		$mapping      = $this->get_current_user_portal_mapping();
+		if ( $mapping && ! empty( $mapping->stripe_customer_id ) ) {
+			$this->log_portal_event(
+				'auth_allowed',
+				array(
+					'source'               => 'customer_portal',
+					'stripe_customer_id'   => $mapping->stripe_customer_id,
+					'wp_user_id_after'     => get_current_user_id(),
+					'email_after'          => $current_user && ! empty( $current_user->user_email ) ? $current_user->user_email : '',
+					'portal_status_after'  => 'active',
+					'details'              => array(
+						'mapping_id'   => isset( $mapping->id ) ? (int) $mapping->id : 0,
+						'request_uri'  => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
+					),
+				)
+			);
+		} else {
+			$this->log_portal_event(
+				'auth_denied',
+				array(
+					'severity'          => 'warning',
+					'source'            => 'customer_portal',
+					'wp_user_id_before' => get_current_user_id(),
+					'email_before'      => $current_user && ! empty( $current_user->user_email ) ? $current_user->user_email : '',
+					'details'           => array(
+						'reason'      => 'no_active_portal_mapping',
+						'request_uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
+					),
+				)
+			);
 		}
 
 		$portal_items = array_values(
