@@ -4502,6 +4502,16 @@ class AJForms_Admin {
 		return ! empty( $parts ) ? implode( ':', $parts ) : md5( wp_json_encode( $record ) );
 	}
 
+	private function get_portal_one_time_service_source_id( $record ) {
+		foreach ( array( 'checkout_session_id', 'invoice_id', 'payment_intent_id', 'charge_id', 'source_ref' ) as $field ) {
+			if ( ! empty( $record->{$field} ) ) {
+				return sanitize_text_field( (string) $record->{$field} );
+			}
+		}
+
+		return '';
+	}
+
 	private function get_portal_service_status_rank( $status ) {
 		$ranks = array(
 			'active'          => 0,
@@ -11639,6 +11649,7 @@ class AJForms_Admin {
 					<thead>
 						<tr>
 							<th><?php esc_html_e( 'Service', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Source ID', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Billing Type', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
@@ -11650,11 +11661,12 @@ class AJForms_Admin {
 					</thead>
 					<tbody>
 						<?php if ( empty( $one_time_services ) ) : ?>
-							<tr><td colspan="8"><?php esc_html_e( 'No one-time paid services found.', 'ajforms' ); ?></td></tr>
+							<tr><td colspan="9"><?php esc_html_e( 'No one-time paid services found.', 'ajforms' ); ?></td></tr>
 						<?php else : ?>
 							<?php foreach ( $one_time_services as $service ) : ?>
 								<tr>
 									<td><?php echo esc_html( $service->service_name ); ?></td>
+									<td><code><?php echo esc_html( $this->get_portal_one_time_service_source_id( $service ) ? $this->get_portal_one_time_service_source_id( $service ) : '-' ); ?></code></td>
 									<td><strong><?php echo esc_html( $service->billing_type ); ?></strong></td>
 									<td><?php echo esc_html( $service->customer ); ?><br><small><?php echo esc_html( $service->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $service->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a></td>
 									<td><strong><?php echo esc_html( $service->status ); ?></strong></td>
