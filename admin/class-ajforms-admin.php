@@ -670,6 +670,90 @@ class AJForms_Admin {
 		);
 	}
 
+	private function normalize_portal_customer_status( $status ) {
+		$status = sanitize_key( (string) $status );
+		if ( 'without_login' === $status ) {
+			$status = 'without_portal_login';
+		}
+
+		return in_array( $status, array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ? $status : 'disabled';
+	}
+
+	private function portal_customer_status_enabled_value( $status ) {
+		return 'active' === $this->normalize_portal_customer_status( $status ) ? 1 : 0;
+	}
+
+	private function set_portal_customer_status( $stripe_customer_id, $new_status, $reason = '', $source = 'portal_users', $details = array() ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$new_status         = $this->normalize_portal_customer_status( $new_status );
+		if ( '' === $stripe_customer_id ) {
+			return new WP_Error( 'missing_customer', __( 'Stripe customer ID is required.', 'ajforms' ) );
+		}
+
+		$customer = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT id, portal_status, enabled_portal FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+		if ( ! $customer ) {
+			return new WP_Error( 'missing_customer', __( 'Portal customer was not found.', 'ajforms' ) );
+		}
+
+		$mapping = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+
+		$old_status  = $this->normalize_portal_customer_status( ! empty( $customer->portal_status ) ? $customer->portal_status : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' ) );
+		$old_enabled = (int) $customer->enabled_portal;
+		$new_enabled = $this->portal_customer_status_enabled_value( $new_status );
+
+		$updated = $wpdb->update(
+			$this->get_portal_stripe_customers_table(),
+			array(
+				'enabled_portal' => $new_enabled,
+				'portal_status'  => $new_status,
+			),
+			array( 'stripe_customer_id' => $stripe_customer_id ),
+			array( '%d', '%s' ),
+			array( '%s' )
+		);
+		if ( false === $updated ) {
+			return new WP_Error( 'status_update_failed', __( 'Unable to update portal customer status.', 'ajforms' ) );
+		}
+
+		if ( $old_status !== $new_status || $old_enabled !== $new_enabled ) {
+			$details = is_array( $details ) ? $details : array( 'value' => $details );
+			$details['reason'] = sanitize_text_field( (string) $reason );
+			$details['enabled_portal_before'] = $old_enabled;
+			$details['enabled_portal_after']  = $new_enabled;
+			$wp_user_id_after = $mapping && ! empty( $mapping->user_id ) ? (int) $mapping->user_id : ( ! empty( $details['wp_user_id'] ) ? absint( $details['wp_user_id'] ) : 0 );
+			$email_after      = $mapping && ! empty( $mapping->portal_user_email ) ? $mapping->portal_user_email : ( ! empty( $details['user_email'] ) ? sanitize_email( (string) $details['user_email'] ) : '' );
+			$this->log_portal_event(
+				'portal_status_changed',
+				array(
+					'source'                 => sanitize_key( (string) $source ),
+					'customer_id'            => (int) $customer->id,
+					'stripe_customer_id'     => $stripe_customer_id,
+					'wp_user_id_before'      => $mapping && ! empty( $mapping->user_id ) ? (int) $mapping->user_id : 0,
+					'wp_user_id_after'       => $wp_user_id_after,
+					'email_before'           => $mapping && ! empty( $mapping->portal_user_email ) ? $mapping->portal_user_email : '',
+					'email_after'            => $email_after,
+					'portal_status_before'   => $old_status,
+					'portal_status_after'    => $new_status,
+					'details'                => $details,
+				)
+			);
+		}
+
+		return true;
+	}
+
 	private function get_portal_cache_counts() {
 		global $wpdb;
 
@@ -899,27 +983,17 @@ class AJForms_Admin {
 				);
 				if ( $activate_matches ) {
 					$status_before = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' );
-					$wpdb->update(
-						$this->get_portal_stripe_customers_table(),
-						array( 'enabled_portal' => 1, 'portal_status' => 'active' ),
-						array( 'stripe_customer_id' => $customer->stripe_customer_id ),
-						array( '%d', '%s' ),
-						array( '%s' )
+					$this->set_portal_customer_status(
+						$customer->stripe_customer_id,
+						'active',
+						'enable_repair',
+						'enable_repair',
+						array(
+							'wp_user_id' => (int) $matched_user->ID,
+							'user_email' => $matched_user->user_email,
+							'previous_status' => $status_before,
+						)
 					);
-					if ( $log_items && 'active' !== $status_before ) {
-						$this->log_portal_event(
-							'portal_status_changed',
-							array(
-								'source'                 => 'enable_repair',
-								'customer_id'            => isset( $customer->id ) ? (int) $customer->id : 0,
-								'stripe_customer_id'     => $customer->stripe_customer_id,
-								'wp_user_id_after'       => (int) $matched_user->ID,
-								'email_after'            => $matched_user->user_email,
-								'portal_status_before'   => $status_before,
-								'portal_status_after'    => 'active',
-							)
-						);
-					}
 				}
 				$stats['relinked']++;
 				if ( $log_items ) {
@@ -1090,10 +1164,11 @@ class AJForms_Admin {
 			)
 		);
 
-		if ( $existing && in_array( sanitize_key( (string) $existing->portal_status ), array( 'active', 'disabled', 'archived' ), true ) ) {
+		if ( $existing && in_array( $this->normalize_portal_customer_status( $existing->portal_status ), array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ) {
 			unset( $data['enabled_portal'], $data['portal_status'] );
 			$formats = array_slice( $formats, 0, count( $data ) );
-			$preserved_status = sanitize_key( (string) $existing->portal_status );
+			$preserved_status = $this->normalize_portal_customer_status( $existing->portal_status );
+			$this->set_portal_customer_status( $data['stripe_customer_id'], $preserved_status, 'sync_preserve_status', 'stripe_sync' );
 			$this->record_portal_sync_item(
 				'preserved',
 				'portal_status',
@@ -1120,13 +1195,15 @@ class AJForms_Admin {
 			);
 		} else {
 			if ( ! array_key_exists( 'enabled_portal', $data ) ) {
-				$data['enabled_portal'] = 0;
+				$data['enabled_portal'] = $this->portal_customer_status_enabled_value( isset( $data['portal_status'] ) ? $data['portal_status'] : 'disabled' );
 				$formats[] = '%d';
 			}
 			if ( ! array_key_exists( 'portal_status', $data ) ) {
 				$data['portal_status'] = 'disabled';
 				$formats[] = '%s';
 			}
+			$data['portal_status']  = $this->normalize_portal_customer_status( $data['portal_status'] );
+			$data['enabled_portal'] = $this->portal_customer_status_enabled_value( $data['portal_status'] );
 		}
 
 		return $this->upsert_portal_record( $table, $data, $formats, 'stripe_customer_id' );
@@ -2371,13 +2448,7 @@ class AJForms_Admin {
 		global $wpdb;
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
-		$portal_status      = in_array( sanitize_key( (string) $portal_status ), array( 'disabled', 'archived' ), true ) ? sanitize_key( (string) $portal_status ) : 'disabled';
-		$customer_before = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT id, portal_status, enabled_portal FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
-				$stripe_customer_id
-			)
-		);
+		$portal_status      = in_array( $this->normalize_portal_customer_status( $portal_status ), array( 'disabled', 'archived', 'without_portal_login' ), true ) ? $this->normalize_portal_customer_status( $portal_status ) : 'disabled';
 		$mapping = $wpdb->get_row(
 			$wpdb->prepare(
 				"SELECT * FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s",
@@ -2401,31 +2472,13 @@ class AJForms_Admin {
 			}
 		}
 
-		$wpdb->update(
-			$this->get_portal_stripe_customers_table(),
-			array(
-				'enabled_portal' => 0,
-				'portal_status'  => $portal_status,
-			),
-			array( 'stripe_customer_id' => $stripe_customer_id ),
-			array( '%d', '%s' ),
-			array( '%s' )
+		return $this->set_portal_customer_status(
+			$stripe_customer_id,
+			$portal_status,
+			$portal_status,
+			'portal_users',
+			array( 'role_removed_if_present' => true )
 		);
-
-		$this->log_portal_event(
-			'portal_status_changed',
-			array(
-				'source'                 => 'portal_users',
-				'customer_id'            => $customer_before ? (int) $customer_before->id : 0,
-				'stripe_customer_id'     => $stripe_customer_id,
-				'wp_user_id_before'      => $mapping && ! empty( $mapping->user_id ) ? (int) $mapping->user_id : 0,
-				'email_before'           => $mapping && ! empty( $mapping->portal_user_email ) ? $mapping->portal_user_email : '',
-				'portal_status_before'   => $customer_before && ! empty( $customer_before->portal_status ) ? $customer_before->portal_status : ( $customer_before && ! empty( $customer_before->enabled_portal ) ? 'active' : 'disabled' ),
-				'portal_status_after'    => $portal_status,
-			)
-		);
-
-		return true;
 	}
 
 	private function send_portal_user_password_reset( $user_id ) {
@@ -2620,15 +2673,12 @@ class AJForms_Admin {
 					'details'            => array( 'kept_stripe_customer_id' => $stripe_customer_id, 'cleared_stripe_customer_id' => sanitize_text_field( $old_customer_id ) ),
 				)
 			);
-			$wpdb->update(
-				$this->get_portal_stripe_customers_table(),
-				array(
-					'enabled_portal' => 0,
-					'portal_status'  => 'disabled',
-				),
-				array( 'stripe_customer_id' => sanitize_text_field( $old_customer_id ) ),
-				array( '%d', '%s' ),
-				array( '%s' )
+			$this->set_portal_customer_status(
+				sanitize_text_field( $old_customer_id ),
+				'disabled',
+				'ambiguous_email_cleared',
+				'customer_detail',
+				array( 'kept_stripe_customer_id' => $stripe_customer_id )
 			);
 		}
 
@@ -2657,15 +2707,12 @@ class AJForms_Admin {
 			'stripe_customer_id'
 		);
 
-		$wpdb->update(
-			$this->get_portal_stripe_customers_table(),
-			array(
-				'enabled_portal' => 1,
-				'portal_status'  => 'active',
-			),
-			array( 'stripe_customer_id' => $stripe_customer_id ),
-			array( '%d', '%s' ),
-			array( '%s' )
+		$this->set_portal_customer_status(
+			$stripe_customer_id,
+			'active',
+			'relinked_by_email',
+			'customer_detail',
+			array( 'wp_user_id' => (int) $user->ID, 'user_email' => $user->user_email )
 		);
 		$this->log_portal_event(
 			'relinked_by_email',
@@ -4443,15 +4490,12 @@ class AJForms_Admin {
 					'details'            => array( 'kept_stripe_customer_id' => $stripe_customer_id, 'cleared_stripe_customer_id' => sanitize_text_field( $old_customer_id ) ),
 				)
 			);
-			$wpdb->update(
-				$this->get_portal_stripe_customers_table(),
-				array(
-					'enabled_portal' => 0,
-					'portal_status'  => 'disabled',
-				),
-				array( 'stripe_customer_id' => sanitize_text_field( $old_customer_id ) ),
-				array( '%d', '%s' ),
-				array( '%s' )
+			$this->set_portal_customer_status(
+				sanitize_text_field( $old_customer_id ),
+				'disabled',
+				'ambiguous_email_cleared',
+				'portal_users',
+				array( 'kept_stripe_customer_id' => $stripe_customer_id )
 			);
 		}
 
@@ -4467,32 +4511,17 @@ class AJForms_Admin {
 
 		$this->assign_aj_portal_user_role( $user );
 
-		$wpdb->update(
-			$this->get_portal_stripe_customers_table(),
+		$this->set_portal_customer_status(
+			$stripe_customer_id,
+			'active',
+			'enabled_portal_user',
+			'portal_users',
 			array(
-				'enabled_portal' => 1,
-				'portal_status'  => 'active',
-			),
-			array( 'stripe_customer_id' => $stripe_customer_id ),
-			array( '%d', '%s' ),
-			array( '%s' )
+				'wp_user_id'       => (int) $user->ID,
+				'user_email'       => $user->user_email,
+				'previous_status'  => $status_before,
+			)
 		);
-		if ( 'active' !== $status_before ) {
-			$this->log_portal_event(
-				'portal_status_changed',
-				array(
-					'source'                 => 'portal_users',
-					'customer_id'            => isset( $customer->id ) ? (int) $customer->id : 0,
-					'stripe_customer_id'     => $stripe_customer_id,
-					'wp_user_id_before'      => $mapping_before && ! empty( $mapping_before->user_id ) ? (int) $mapping_before->user_id : 0,
-					'wp_user_id_after'       => (int) $user->ID,
-					'email_before'           => $mapping_before && ! empty( $mapping_before->portal_user_email ) ? $mapping_before->portal_user_email : '',
-					'email_after'            => $user->user_email,
-					'portal_status_before'   => $status_before,
-					'portal_status_after'    => 'active',
-				)
-			);
-		}
 
 		$this->upsert_portal_record(
 			$this->get_portal_user_mappings_table(),
@@ -8776,7 +8805,7 @@ class AJForms_Admin {
 		$service_requests_table = $this->get_portal_service_requests_table();
 		$sync_logs_table        = $this->get_portal_sync_logs_table();
 
-		$active_customers      = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table} WHERE portal_status = 'active' OR (enabled_portal = 1 AND (portal_status IS NULL OR portal_status NOT IN ('disabled','archived')))" );
+		$active_customers      = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$customers_table} WHERE portal_status = 'active' AND enabled_portal = 1" );
 		$active_subscription_objects = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$subscriptions_table} WHERE status IN ('active','trialing')" );
 		$active_subscription_rows = $wpdb->get_results(
 			"SELECT s.*, c.name AS customer_name, c.email AS customer_email
@@ -9919,9 +9948,9 @@ class AJForms_Admin {
 		$status_filter = in_array( $status_filter, $allowed_status_filters, true ) ? $status_filter : '';
 		$where = array( '1=1' );
 		if ( 'active' === $status_filter ) {
-			$where[] = "(c.portal_status = 'active' OR (c.enabled_portal = 1 AND (c.portal_status IS NULL OR c.portal_status NOT IN ('disabled','archived'))))";
+			$where[] = "c.portal_status = 'active' AND c.enabled_portal = 1";
 		} elseif ( 'disabled' === $status_filter ) {
-			$where[] = "(c.portal_status = 'disabled' OR (c.enabled_portal = 0 AND (c.portal_status = '' OR c.portal_status IS NULL)))";
+			$where[] = "(c.portal_status = 'disabled' OR c.portal_status = 'without_portal_login' OR (c.enabled_portal = 0 AND (c.portal_status = '' OR c.portal_status IS NULL)))";
 		} elseif ( 'archived' === $status_filter ) {
 			$where[] = "c.portal_status = 'archived'";
 		} elseif ( 'without_login' === $status_filter ) {
@@ -9941,7 +9970,7 @@ class AJForms_Admin {
 		);
 
 		$total_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()}" );
-		$enabled_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'active' OR (enabled_portal = 1 AND (portal_status IS NULL OR portal_status NOT IN ('disabled','archived')))" );
+		$enabled_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'active' AND enabled_portal = 1" );
 		$available_fields = $this->discover_portal_customer_scalar_fields( $customers );
 		$display_fields   = array_values( array_intersect( $this->get_portal_customer_display_fields(), $available_fields ) );
 		if ( empty( $display_fields ) && ! empty( $available_fields ) ) {
@@ -10350,7 +10379,7 @@ class AJForms_Admin {
 		}
 
 		global $wpdb;
-		$customers = $wpdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} WHERE enabled_portal = 1 AND (portal_status = 'active' OR portal_status = '') ORDER BY name ASC, email ASC LIMIT 500" );
+		$customers = $wpdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} WHERE enabled_portal = 1 AND portal_status = 'active' ORDER BY name ASC, email ASC LIMIT 500" );
 		if ( empty( $customers ) ) {
 			$customers = $wpdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC LIMIT 500" );
 		}

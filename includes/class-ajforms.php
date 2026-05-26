@@ -2376,35 +2376,92 @@ class AJForms {
 		return $wpdb->prefix . 'aj_portal_service_requests';
 	}
 
-	private function get_current_user_portal_mapping() {
+	private function normalize_portal_customer_status( $status ) {
+		$status = sanitize_key( (string) $status );
+		if ( 'without_login' === $status ) {
+			$status = 'without_portal_login';
+		}
+
+		return in_array( $status, array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ? $status : 'disabled';
+	}
+
+	private function user_has_customer_portal_role( $user ) {
+		if ( is_wp_error( $user ) || ! $user instanceof WP_User ) {
+			return false;
+		}
+
+		$roles         = array_map( 'sanitize_key', (array) $user->roles );
+		$auth_settings = get_option( 'ajcore_auth_settings', array() );
+		$customer_role = is_array( $auth_settings ) && ! empty( $auth_settings['customer_role'] ) ? sanitize_key( (string) $auth_settings['customer_role'] ) : 'aj_portal_user';
+
+		return in_array( 'aj_portal_user', $roles, true ) || user_can( $user, 'ajcore_customer_portal_access' ) || ( $customer_role && in_array( $customer_role, $roles, true ) );
+	}
+
+	private function get_current_user_portal_access_context() {
 		if ( ! is_user_logged_in() ) {
-			return null;
+			return array( 'allowed' => false, 'reason' => 'not_logged_in', 'mapping' => null, 'customer' => null );
 		}
 
 		global $wpdb;
 
-		$user_id = get_current_user_id();
-		if ( ! $user_id ) {
-			return null;
+		$user = wp_get_current_user();
+		if ( ! $user || is_wp_error( $user ) || ! $user->ID ) {
+			return array( 'allowed' => false, 'reason' => 'no_mapping', 'mapping' => null, 'customer' => null );
 		}
 
-		return $wpdb->get_row(
+		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT m.*
+				"SELECT m.*, c.id AS customer_row_id, c.email AS stripe_email, c.portal_status, c.enabled_portal, c.stripe_customer_id AS customer_stripe_customer_id
 				FROM {$this->get_portal_user_mappings_table()} m
-				INNER JOIN {$this->get_portal_stripe_customers_table()} c
+				LEFT JOIN {$this->get_portal_stripe_customers_table()} c
 					ON c.stripe_customer_id = m.stripe_customer_id
-				INNER JOIN {$wpdb->users} u
-					ON u.ID = m.user_id
 				WHERE m.user_id = %d
-					AND LOWER(u.user_email) IN (LOWER(c.email), LOWER(m.customer_email), LOWER(m.portal_user_email))
-					AND c.enabled_portal = 1
-					AND (c.portal_status = 'active' OR c.portal_status = '')
 				ORDER BY m.updated_at DESC, m.id DESC
 				LIMIT 1",
-				$user_id
+				(int) $user->ID
 			)
 		);
+
+		if ( ! $row ) {
+			return array( 'allowed' => false, 'reason' => 'no_mapping', 'mapping' => null, 'customer' => null );
+		}
+
+		if ( empty( $row->customer_stripe_customer_id ) ) {
+			return array( 'allowed' => false, 'reason' => 'missing_customer', 'mapping' => $row, 'customer' => null );
+		}
+
+		$valid_emails = array();
+		foreach ( array( $row->stripe_email, $row->customer_email, $row->portal_user_email ) as $email ) {
+			$email = strtolower( sanitize_email( (string) $email ) );
+			if ( is_email( $email ) ) {
+				$valid_emails[] = $email;
+			}
+		}
+		$valid_emails = array_values( array_unique( $valid_emails ) );
+		if ( empty( $valid_emails ) || ! in_array( strtolower( (string) $user->user_email ), $valid_emails, true ) ) {
+			return array( 'allowed' => false, 'reason' => 'email_mismatch', 'mapping' => $row, 'customer' => $row );
+		}
+
+		$status = $this->normalize_portal_customer_status( $row->portal_status );
+		if ( 'active' !== $status ) {
+			return array( 'allowed' => false, 'reason' => 'archived' === $status ? 'status_archived' : 'status_disabled', 'mapping' => $row, 'customer' => $row );
+		}
+
+		if ( empty( $row->enabled_portal ) ) {
+			return array( 'allowed' => false, 'reason' => 'status_disabled', 'mapping' => $row, 'customer' => $row );
+		}
+
+		if ( ! $this->user_has_customer_portal_role( $user ) ) {
+			return array( 'allowed' => false, 'reason' => 'missing_role', 'mapping' => $row, 'customer' => $row );
+		}
+
+		return array( 'allowed' => true, 'reason' => '', 'mapping' => $row, 'customer' => $row );
+	}
+
+	private function get_current_user_portal_mapping() {
+		$context = $this->get_current_user_portal_access_context();
+
+		return ! empty( $context['allowed'] ) ? $context['mapping'] : null;
 	}
 
 	private function get_current_user_stripe_customer_id() {
@@ -2423,7 +2480,7 @@ class AJForms {
 
 		return $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s AND enabled_portal = 1 AND (portal_status = 'active' OR portal_status = '')",
+				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s AND enabled_portal = 1 AND portal_status = 'active'",
 				sanitize_text_field( $mapping->stripe_customer_id )
 			)
 		);
@@ -2526,8 +2583,9 @@ class AJForms {
 		}
 
 		$current_user = wp_get_current_user();
-		$mapping      = $this->get_current_user_portal_mapping();
-		if ( $mapping && ! empty( $mapping->stripe_customer_id ) ) {
+		$access       = $this->get_current_user_portal_access_context();
+		$mapping      = ! empty( $access['mapping'] ) ? $access['mapping'] : null;
+		if ( ! empty( $access['allowed'] ) && $mapping && ! empty( $mapping->stripe_customer_id ) ) {
 			$this->log_portal_event(
 				'auth_allowed',
 				array(
@@ -2543,19 +2601,34 @@ class AJForms {
 				)
 			);
 		} else {
+			$denied_stripe_customer_id = $mapping && ! empty( $mapping->stripe_customer_id ) ? $mapping->stripe_customer_id : '';
+			if ( '' === $denied_stripe_customer_id && $mapping && ! empty( $mapping->customer_stripe_customer_id ) ) {
+				$denied_stripe_customer_id = $mapping->customer_stripe_customer_id;
+			}
 			$this->log_portal_event(
 				'auth_denied',
 				array(
 					'severity'          => 'warning',
 					'source'            => 'customer_portal',
+					'stripe_customer_id'=> $denied_stripe_customer_id,
 					'wp_user_id_before' => get_current_user_id(),
 					'email_before'      => $current_user && ! empty( $current_user->user_email ) ? $current_user->user_email : '',
+					'portal_status_before' => $mapping && isset( $mapping->portal_status ) ? $this->normalize_portal_customer_status( $mapping->portal_status ) : '',
 					'details'           => array(
-						'reason'      => 'no_active_portal_mapping',
+						'reason'      => ! empty( $access['reason'] ) ? $access['reason'] : 'no_mapping',
 						'request_uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
 					),
 				)
 			);
+
+			ob_start();
+			?>
+			<div class="aj-customer-portal aj-customer-portal-login">
+				<p><?php esc_html_e( 'Your client portal access is not active for this account.', 'ajforms' ); ?></p>
+				<p><a class="button" href="<?php echo esc_url( wp_logout_url( home_url( '/' ) ) ); ?>"><?php esc_html_e( 'Log Out', 'ajforms' ); ?></a></p>
+			</div>
+			<?php
+			return ob_get_clean();
 		}
 
 		$portal_items = array_values(

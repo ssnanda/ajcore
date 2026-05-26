@@ -388,8 +388,10 @@ class AJForms_Activator {
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
 
-		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'active' WHERE enabled_portal = 1 AND (portal_status = '' OR portal_status = 'disabled')" );
+		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'active' WHERE enabled_portal = 1 AND (portal_status = '' OR portal_status IS NULL)" );
 		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'disabled' WHERE enabled_portal = 0 AND (portal_status = '' OR portal_status IS NULL)" );
+		$wpdb->query( "UPDATE $table_stripe_customers SET enabled_portal = 1 WHERE portal_status = 'active'" );
+		$wpdb->query( "UPDATE $table_stripe_customers SET enabled_portal = 0 WHERE portal_status IN ('disabled','archived','without_portal_login')" );
 
 		$current_year = (int) current_time( 'Y' );
 		$march_15 = strtotime( $current_year . '-03-15 00:00:00' ) < current_time( 'timestamp' ) ? ( $current_year + 1 ) . '-03-15' : $current_year . '-03-15';
