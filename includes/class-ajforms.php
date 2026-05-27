@@ -688,7 +688,7 @@ class AJForms {
 	private function get_portal_ledger_running_balances( $ledger ) {
 		$running = 0.0;
 		$balances = array();
-		$entries = array_reverse( (array) $ledger );
+		$entries = (array) $ledger;
 
 		foreach ( $entries as $entry ) {
 			$entry_id = isset( $entry->id ) ? absint( $entry->id ) : 0;
@@ -729,6 +729,24 @@ class AJForms {
 
 
 	private function get_portal_ledger_transaction_id( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+			foreach ( array( 'payment_intent_id', 'charge_id', 'source_object_id' ) as $field ) {
+				if ( ! empty( $entry->{$field} ) ) {
+					return sanitize_text_field( (string) $entry->{$field} );
+				}
+			}
+		}
+
+		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			foreach ( array( 'subscription_id', 'checkout_session_id', 'price_id', 'product_id', 'payment_intent_id', 'invoice_id' ) as $metadata_key ) {
+				$value = $this->get_ledger_metadata_value( $entry, $metadata_key );
+				if ( '' !== $value ) {
+					return $value;
+				}
+			}
+		}
+
 		foreach ( array( 'charge_id', 'payment_intent_id', 'invoice_id', 'source_object_id' ) as $field ) {
 			if ( ! empty( $entry->{$field} ) ) {
 				return sanitize_text_field( (string) $entry->{$field} );
@@ -760,6 +778,10 @@ class AJForms {
 
 		if ( 'manual_charge' === $source_type && '' !== $description ) {
 			return $description;
+		}
+
+		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) && '' !== $description ) {
+			return $this->clean_stripe_line_service_name( $description );
 		}
 
 		if ( 'invoice' === $source_type ) {
@@ -1737,10 +1759,11 @@ class AJForms {
 		);
 		$ledger = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_type <> 'refund' AND " . $this->get_ignored_unpaid_checkout_sql_fragment() . " ORDER BY ledger_date DESC LIMIT 50",
+				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_type <> 'refund' AND " . $this->get_ignored_unpaid_checkout_sql_fragment() . " ORDER BY ledger_date ASC, id ASC LIMIT 100",
 				$stripe_customer_id
 			)
 		);
+		$ledger = $this->get_customer_portal_display_ledger( $ledger );
 		$upcoming = array_filter(
 			$subscriptions,
 			function ( $subscription ) {
@@ -1771,6 +1794,136 @@ class AJForms {
 
 	private function get_snapshot_service_name( $snapshot ) {
 		return ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : __( 'Service', 'ajforms' );
+	}
+
+	private function get_snapshot_reference_label( $snapshot ) {
+		$customer_id = ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : '';
+		$parts       = array();
+		if ( '' !== $customer_id ) {
+			$parts[] = 'cus_id: ' . $customer_id;
+		}
+		if ( ! empty( $snapshot->subscription_id ) ) {
+			$parts[] = 'sub_id: ' . sanitize_text_field( (string) $snapshot->subscription_id );
+		} elseif ( ! empty( $snapshot->checkout_session_id ) ) {
+			$parts[] = 'checkout_id: ' . sanitize_text_field( (string) $snapshot->checkout_session_id );
+		} elseif ( ! empty( $snapshot->payment_intent_id ) ) {
+			$parts[] = 'payment_id: ' . sanitize_text_field( (string) $snapshot->payment_intent_id );
+		} elseif ( ! empty( $snapshot->price_id ) ) {
+			$parts[] = 'price_id: ' . sanitize_text_field( (string) $snapshot->price_id );
+		} elseif ( ! empty( $snapshot->product_id ) ) {
+			$parts[] = 'product_id: ' . sanitize_text_field( (string) $snapshot->product_id );
+		}
+
+		return implode( '  ', $parts );
+	}
+
+	private function get_customer_portal_ledger_display_rank( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( 'service_charge' === $source_type ) {
+			return 10;
+		}
+		if ( in_array( $source_type, array( 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			return 20;
+		}
+		if ( 'manual_charge' === $source_type ) {
+			return 30;
+		}
+		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+			return 90;
+		}
+
+		return 100;
+	}
+
+	private function get_customer_portal_ledger_status_rank( $entry ) {
+		$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+		$ranks  = array(
+			'paid'      => 1,
+			'succeeded' => 2,
+			'completed' => 3,
+			'complete'  => 4,
+			'open'      => 5,
+			'unpaid'    => 6,
+		);
+
+		return isset( $ranks[ $status ] ) ? $ranks[ $status ] : 20;
+	}
+
+	private function get_customer_portal_ledger_service_key( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( ! in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			return '';
+		}
+
+		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+		$parts    = array(
+			! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
+			! empty( $metadata['subscription_id'] ) ? sanitize_text_field( (string) $metadata['subscription_id'] ) : '',
+			! empty( $metadata['checkout_session_id'] ) ? sanitize_text_field( (string) $metadata['checkout_session_id'] ) : '',
+			! empty( $metadata['invoice_id'] ) ? sanitize_text_field( (string) $metadata['invoice_id'] ) : ( ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : '' ),
+			! empty( $metadata['payment_intent_id'] ) ? sanitize_text_field( (string) $metadata['payment_intent_id'] ) : ( ! empty( $entry->payment_intent_id ) ? sanitize_text_field( (string) $entry->payment_intent_id ) : '' ),
+			! empty( $metadata['product_id'] ) ? sanitize_text_field( (string) $metadata['product_id'] ) : '',
+			! empty( $metadata['price_id'] ) ? sanitize_text_field( (string) $metadata['price_id'] ) : '',
+			! empty( $entry->description ) ? sanitize_title( $this->clean_stripe_line_service_name( (string) $entry->description ) ) : '',
+			number_format( abs( (float) $entry->amount ), 2, '.', '' ),
+		);
+
+		return implode( ':', array_filter( $parts, 'strlen' ) );
+	}
+
+	private function should_show_customer_portal_ledger_entry( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( in_array( $source_type, array( 'invoice', 'checkout_session' ), true ) ) {
+			return false;
+		}
+
+		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item', 'manual_charge', 'charge', 'payment' ), true ) ) {
+			return 0.0 !== (float) $this->get_portal_ledger_balance_effect( $entry ) || in_array( $source_type, array( 'charge', 'payment' ), true );
+		}
+
+		return false;
+	}
+
+	private function get_customer_portal_display_ledger( $ledger ) {
+		$display = array();
+		foreach ( (array) $ledger as $entry ) {
+			if ( ! $this->should_show_customer_portal_ledger_entry( $entry ) ) {
+				continue;
+			}
+
+			$key = $this->get_customer_portal_ledger_service_key( $entry );
+			if ( '' !== $key && isset( $display[ $key ] ) ) {
+				$existing = $display[ $key ];
+				$current_rank  = $this->get_customer_portal_ledger_display_rank( $entry );
+				$existing_rank = $this->get_customer_portal_ledger_display_rank( $existing );
+				if ( $current_rank < $existing_rank || ( $current_rank === $existing_rank && $this->get_customer_portal_ledger_status_rank( $entry ) < $this->get_customer_portal_ledger_status_rank( $existing ) ) ) {
+					$display[ $key ] = $entry;
+				}
+				continue;
+			}
+
+			$display[ '' !== $key ? $key : 'entry_' . ( isset( $entry->id ) ? (int) $entry->id : count( $display ) ) ] = $entry;
+		}
+
+		$display = array_values( $display );
+		usort(
+			$display,
+			function ( $a, $b ) {
+				$a_time = ! empty( $a->ledger_date ) ? strtotime( $a->ledger_date . ' UTC' ) : 0;
+				$b_time = ! empty( $b->ledger_date ) ? strtotime( $b->ledger_date . ' UTC' ) : 0;
+				if ( $a_time === $b_time ) {
+					$rank_compare = $this->get_customer_portal_ledger_display_rank( $a ) <=> $this->get_customer_portal_ledger_display_rank( $b );
+					if ( 0 !== $rank_compare ) {
+						return $rank_compare;
+					}
+					return ( isset( $a->id ) ? (int) $a->id : 0 ) <=> ( isset( $b->id ) ? (int) $b->id : 0 );
+				}
+
+				return $a_time <=> $b_time;
+			}
+		);
+
+		return $display;
 	}
 
 	private function get_snapshot_service_amount_label( $snapshot ) {
@@ -2152,6 +2305,8 @@ class AJForms {
 					<?php foreach ( $snapshot_services as $snapshot ) : ?>
 						<div class="aj-portal-service-card">
 							<h4><?php echo esc_html( $this->get_snapshot_service_name( $snapshot ) ); ?></h4>
+							<?php $snapshot_ref = $this->get_snapshot_reference_label( $snapshot ); ?>
+							<?php if ( $snapshot_ref ) : ?><p class="aj-portal-service-ref"><?php echo esc_html( $snapshot_ref ); ?></p><?php endif; ?>
 							<?php $snapshot_is_recurring = 'recurring' === $this->get_snapshot_billing_type_key( $snapshot ); ?>
 							<div class="aj-portal-service-card-grid">
 								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
@@ -2188,6 +2343,8 @@ class AJForms {
 					<?php foreach ( $past_snapshot_services as $snapshot ) : ?>
 						<div class="aj-portal-service-card aj-portal-service-card-past">
 							<h4><?php echo esc_html( $this->get_snapshot_service_name( $snapshot ) ); ?></h4>
+							<?php $snapshot_ref = $this->get_snapshot_reference_label( $snapshot ); ?>
+							<?php if ( $snapshot_ref ) : ?><p class="aj-portal-service-ref"><?php echo esc_html( $snapshot_ref ); ?></p><?php endif; ?>
 							<?php $snapshot_is_recurring = 'recurring' === $this->get_snapshot_billing_type_key( $snapshot ); ?>
 							<div class="aj-portal-service-card-grid">
 								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
@@ -2490,6 +2647,7 @@ class AJForms {
 							<?php foreach ( $ledger as $entry ) : ?>
 								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ); ?>
 								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'PDF', 'ajforms' ); ?>
+								<?php $entry_invoice_id = ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' ); ?>
 								<?php $entry_client_note = $this->get_ledger_metadata_value( $entry, 'client_notes' ); ?>
 								<?php $entry_transaction_id = $this->get_portal_ledger_transaction_id( $entry ); ?>
 								<?php $entry_display_description = $this->get_portal_ledger_display_description( $entry ); ?>
@@ -2506,6 +2664,8 @@ class AJForms {
 									<td>
 										<?php if ( $entry_invoice_url ) : ?>
 											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
+										<?php elseif ( $entry_invoice_id ) : ?>
+											<code><?php echo esc_html( $entry_invoice_id ); ?></code>
 										<?php else : ?>
 											<?php echo $this->get_portal_service_request_actions( $entry ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 										<?php endif; ?>

@@ -4314,6 +4314,17 @@ class AJForms_Admin {
 			$source_object_id = $this->get_portal_service_charge_ledger_source_id( $snapshot );
 			$service_name     = ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : __( 'Service charge', 'ajforms' );
 			$ledger_date      = $this->get_portal_service_charge_ledger_date( $snapshot );
+			$invoice_metadata = array();
+			if ( ! empty( $snapshot->invoice_id ) ) {
+				$invoice_metadata_json = $wpdb->get_var(
+					$wpdb->prepare(
+						"SELECT metadata FROM {$this->get_portal_ledger_table()} WHERE source_type = %s AND source_object_id = %s LIMIT 1",
+						'invoice',
+						sanitize_text_field( (string) $snapshot->invoice_id )
+					)
+				);
+				$invoice_metadata = $this->decode_portal_json( $invoice_metadata_json );
+			}
 			$metadata         = array(
 				'ledger_line_type'      => 'service_charge',
 				'snapshot_key'          => ! empty( $snapshot->snapshot_key ) ? sanitize_text_field( (string) $snapshot->snapshot_key ) : '',
@@ -4334,6 +4345,11 @@ class AJForms_Admin {
 				'next_billing_date'     => ! empty( $snapshot->next_billing_date ) ? sanitize_text_field( (string) $snapshot->next_billing_date ) : '',
 				'snapshot_source_type'  => ! empty( $snapshot->source_type ) ? sanitize_key( (string) $snapshot->source_type ) : '',
 			);
+			foreach ( array( 'invoice_number', 'invoice_pdf', 'hosted_invoice_url' ) as $invoice_field ) {
+				if ( ! empty( $invoice_metadata[ $invoice_field ] ) && is_scalar( $invoice_metadata[ $invoice_field ] ) ) {
+					$metadata[ $invoice_field ] = sanitize_text_field( (string) $invoice_metadata[ $invoice_field ] );
+				}
+			}
 			$data             = array(
 				'stripe_customer_id' => sanitize_text_field( (string) $snapshot->stripe_customer_id ),
 				'source_object_id'   => $source_object_id,
@@ -4413,6 +4429,14 @@ class AJForms_Admin {
 
 		$key = sanitize_key( (string) $key );
 		return isset( $metadata[ $key ] ) && is_scalar( $metadata[ $key ] ) ? sanitize_text_field( (string) $metadata[ $key ] ) : '';
+	}
+
+	private function clean_stripe_line_service_name( $description ) {
+		$description = sanitize_text_field( (string) $description );
+		$description = preg_replace( '/^\s*\d+\s*(?:x|\x{00D7})\s*/iu', '', $description );
+		$description = preg_replace( '/\s*\(at\s+.*?\)\s*$/i', '', $description );
+
+		return trim( $description );
 	}
 
 	private function get_portal_service_record_period_label( $record ) {
@@ -5683,6 +5707,24 @@ class AJForms_Admin {
 
 
 	private function get_portal_ledger_transaction_id( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+			foreach ( array( 'payment_intent_id', 'charge_id', 'source_object_id' ) as $field ) {
+				if ( ! empty( $entry->{$field} ) ) {
+					return sanitize_text_field( (string) $entry->{$field} );
+				}
+			}
+		}
+
+		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			foreach ( array( 'subscription_id', 'checkout_session_id', 'price_id', 'product_id', 'payment_intent_id', 'invoice_id' ) as $metadata_key ) {
+				$value = $this->get_ledger_metadata_value( $entry, $metadata_key );
+				if ( '' !== $value ) {
+					return $value;
+				}
+			}
+		}
+
 		foreach ( array( 'charge_id', 'payment_intent_id', 'invoice_id', 'source_object_id' ) as $field ) {
 			if ( ! empty( $entry->{$field} ) ) {
 				return sanitize_text_field( (string) $entry->{$field} );
@@ -5714,6 +5756,10 @@ class AJForms_Admin {
 
 		if ( 'manual_charge' === $source_type && '' !== $description ) {
 			return $description;
+		}
+
+		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) && '' !== $description ) {
+			return $this->clean_stripe_line_service_name( $description );
 		}
 
 		if ( 'invoice' === $source_type ) {
