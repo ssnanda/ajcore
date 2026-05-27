@@ -4495,6 +4495,11 @@ class AJForms {
 								embeddedCheckout.destroy();
 							}
 							stripeInstance = window.Stripe(publishableKey);
+							if (typeof stripeInstance.createEmbeddedCheckoutPage === 'function') {
+								return stripeInstance.createEmbeddedCheckoutPage({
+									fetchClientSecret: function() { return Promise.resolve(payload.data.client_secret); }
+								});
+							}
 							return stripeInstance.initEmbeddedCheckout({
 								clientSecret: payload.data.client_secret
 							});
@@ -5849,7 +5854,7 @@ class AJForms {
 		if ( $embedded_checkout ) {
 			$body = array(
 				'mode'       => $checkout_mode,
-				'ui_mode'    => 'embedded',
+				'ui_mode'    => 'embedded_page',
 				'return_url' => str_replace(
 					'%7BCHECKOUT_SESSION_ID%7D',
 					'{CHECKOUT_SESSION_ID}',
@@ -6038,10 +6043,15 @@ class AJForms {
 			);
 		}
 
+		$checkout_client_secret = isset( $response['client_secret'] ) ? sanitize_text_field( (string) $response['client_secret'] ) : '';
+		if ( $embedded_checkout && ! preg_match( '/^cs_(test|live)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+$/', $checkout_client_secret ) ) {
+			wp_send_json_error( __( 'Stripe did not return a valid embedded Checkout client secret. Please verify Stripe API support for embedded_page checkout and try again.', 'ajforms' ), 400 );
+		}
+
 		wp_send_json_success(
 			array(
 				'url' => isset( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
-				'client_secret' => isset( $response['client_secret'] ) ? sanitize_text_field( (string) $response['client_secret'] ) : '',
+				'client_secret' => $checkout_client_secret,
 				'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? sanitize_text_field( (string) $stripe_settings['publishable_key'] ) : '',
 			)
 		);
@@ -7211,6 +7221,11 @@ class AJForms {
 							throw new Error((payload && payload.data) || 'Unable to start embedded checkout.');
 						}
 						ajcoreStripeInstance = window.Stripe(payload.data.publishable_key);
+						if (typeof ajcoreStripeInstance.createEmbeddedCheckoutPage === 'function') {
+							return ajcoreStripeInstance.createEmbeddedCheckoutPage({
+								fetchClientSecret: function() { return Promise.resolve(payload.data.client_secret); }
+							});
+						}
 						return ajcoreStripeInstance.initEmbeddedCheckout({ clientSecret: payload.data.client_secret });
 					})
 					.then(function(checkout) {
