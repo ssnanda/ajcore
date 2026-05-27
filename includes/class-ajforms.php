@@ -4021,7 +4021,7 @@ class AJForms {
 					.ajcore-portal-shell .aj-customer-portal-tabs{grid-template-columns:1fr}
 					.ajcore-portal-shell .aj-customer-portal-tab:last-child:nth-child(odd){grid-column:auto}
 				}
-			</style>
+					</style>
 			<?php if ( 'yes' === $atts['show_title'] ) : ?>
 				<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
 			<?php endif; ?>
@@ -4495,8 +4495,10 @@ class AJForms {
 								embeddedCheckout.destroy();
 							}
 							stripeInstance = window.Stripe(publishableKey);
-							return stripeInstance.initEmbeddedCheckout({
-								clientSecret: payload.data.client_secret
+							return stripeInstance.createEmbeddedCheckoutPage({
+								fetchClientSecret: function() {
+									return Promise.resolve(String(payload.data.client_secret || '').trim());
+								}
 							});
 						})
 						.then(function(checkout) {
@@ -5275,8 +5277,14 @@ class AJForms {
 		$headers = array(
 			'Authorization' => 'Bearer ' . $secret_key,
 		);
+
 		if ( is_array( $extra_headers ) && ! empty( $extra_headers ) ) {
-			$headers = array_merge( $headers, $extra_headers );
+			foreach ( $extra_headers as $header_name => $header_value ) {
+				$header_name = sanitize_text_field( (string) $header_name );
+				if ( '' !== $header_name ) {
+					$headers[ $header_name ] = sanitize_text_field( (string) $header_value );
+				}
+			}
 		}
 
 		$args = array(
@@ -5650,7 +5658,7 @@ class AJForms {
 
 		return sprintf(
 			/* translators: 1: total today amount, 2: recurring subscription amount, 3: recurring interval suffix, 4: one-time amount */
-			__( 'Total due today is %1$s. This Stripe page starts the subscription portion: %2$s%3$s. After successful checkout, AJ Core will immediately charge the one-time portion: %4$s using the same saved payment method. Renewal is %2$s%3$s after the first period.', 'ajforms' ),
+			__( 'Today due: %1$s. Starts subscription: %2$s%3$s. One-time charge after checkout: %4$s. Renewal after first period: %2$s%3$s.', 'ajforms' ),
 			$this->format_checkout_notice_money( $total_today_minor, $currency ),
 			$this->format_checkout_notice_money( $subscription_amount_minor, $currency ),
 			$interval_suffix,
@@ -5854,7 +5862,7 @@ class AJForms {
 		if ( $embedded_checkout ) {
 			$body = array(
 				'mode'       => $checkout_mode,
-				'ui_mode'    => 'embedded',
+				'ui_mode'    => 'embedded_page',
 				'return_url' => str_replace(
 					'%7BCHECKOUT_SESSION_ID%7D',
 					'{CHECKOUT_SESSION_ID}',
@@ -5957,10 +5965,6 @@ class AJForms {
 
 		$checkout_headers = array();
 		if ( $embedded_checkout ) {
-			/* Embedded Checkout needs Stripe's Checkout Session client_secret format. Pinning
-			 * only this request avoids older account API-version response differences without
-			 * changing the rest of AJ Core's Stripe sync behavior.
-			 */
 			$checkout_headers['Stripe-Version'] = '2026-03-25.dahlia';
 		}
 
@@ -6057,9 +6061,8 @@ class AJForms {
 		wp_send_json_success(
 			array(
 				'url' => isset( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
-				'client_secret' => isset( $response['client_secret'] ) ? trim( sanitize_text_field( (string) $response['client_secret'] ) ) : '',
-				'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? trim( sanitize_text_field( (string) $stripe_settings['publishable_key'] ) ) : '',
-				'session_id'      => isset( $response['id'] ) ? sanitize_text_field( (string) $response['id'] ) : '',
+				'client_secret' => isset( $response['client_secret'] ) ? sanitize_text_field( (string) $response['client_secret'] ) : '',
+				'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? sanitize_text_field( (string) $stripe_settings['publishable_key'] ) : '',
 			)
 		);
 	}
@@ -6502,17 +6505,16 @@ class AJForms {
 				$public_price_map[ $public_price['id'] ] = $public_price;
 			}
 		}
+		$public_stripe_settings = $this->get_stripe_settings();
 
 		ob_start();
 		?>
-		<?php if ( $is_cart_mode ) : ?>
-			<script src="https://js.stripe.com/v3/"></script>
-		<?php endif; ?>
 		<div
 			class="ajcore-products-wrap <?php echo $is_cart_mode ? 'ajcore-products-wrap-cart' : 'ajcore-products-wrap-buy'; ?> ajcore-products-template-<?php echo esc_attr( $template ); ?>"
 			data-mode="<?php echo esc_attr( $mode ); ?>"
 			data-cart-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_cart_checkout' ) ); ?>"
 			data-include-archived="<?php echo $include_archived ? 'yes' : 'no'; ?>"
+			data-publishable-key="<?php echo esc_attr( isset( $public_stripe_settings['publishable_key'] ) ? $public_stripe_settings['publishable_key'] : '' ); ?>"
 		>
 			<?php if ( $is_cart_mode ) : ?>
 				<div class="ajcore-checkout-notice <?php echo '' !== $checkout_notice_html ? 'is-success' : ''; ?>" <?php echo '' === $checkout_notice_html ? 'hidden' : ''; ?>><?php echo wp_kses_post( $checkout_notice_html ); ?></div>
@@ -6698,13 +6700,13 @@ class AJForms {
 			const cartModalNote = root.querySelector('.ajcore-cart-modal-note');
 			const cartModalClearButton = root.querySelector('.ajcore-cart-modal-clear');
 			const cartModalCheckoutButton = root.querySelector('.ajcore-cart-modal-checkout');
+			const checkoutNotice = root.querySelector('.ajcore-checkout-notice');
 			const embeddedCheckoutWrap = root.querySelector('.ajcore-cart-embedded-checkout');
 			const embeddedCheckoutSummary = root.querySelector('.ajcore-cart-embedded-summary');
 			const embeddedCheckoutMount = root.querySelector('.ajcore-cart-embedded-mount');
 			const embeddedCheckoutMessage = root.querySelector('.ajcore-cart-embedded-message');
-			const checkoutNotice = root.querySelector('.ajcore-checkout-notice');
-			let ajcoreEmbeddedCheckout = null;
 			let ajcoreStripeInstance = null;
+			let ajcoreEmbeddedCheckout = null;
 			const cartModalHome = cartModal ? cartModal.parentNode : null;
 			const cartModalPlaceholder = cartModal ? document.createComment('ajcore-cart-modal-home') : null;
 			if (cartModal && cartModalHome && cartModalPlaceholder) {
@@ -6850,7 +6852,6 @@ class AJForms {
 			}
 
 			function clearCart() {
-				destroyEmbeddedCheckout();
 				Object.keys(cart).forEach(function(priceId) {
 					delete cart[priceId];
 				});
@@ -6997,7 +6998,7 @@ class AJForms {
 				}
 				const intervalLabel = String(breakdown.interval || 'year').toLowerCase();
 				return '<div class="ajcore-mixed-checkout-review">' +
-					'<strong>Payment review before Stripe</strong>' +
+					'<strong>Payment review before checkout</strong>' +
 					'<p><b>Today:</b> ' + formatCurrency(breakdown.total, breakdown.currency) + ' total.</p>' +
 					'<p>This includes ' + formatCurrency(breakdown.one_time_total, breakdown.currency) + ' one-time and ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + ' recurring.</p>' +
 					'<p><b>Renewal:</b> ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + ' after the first period.</p>' +
@@ -7103,7 +7104,6 @@ class AJForms {
 					removeButton.style.cssText = 'background:#fff;color:#b32d2e;border:1px solid #fecaca;border-radius:9px;padding:8px 10px;font-weight:700;cursor:pointer;';
 					removeButton.addEventListener('click', function() {
 						delete cart[item.price_id];
-						destroyEmbeddedCheckout();
 						renderCart();
 					});
 					cartItems.appendChild(row);
@@ -7131,7 +7131,6 @@ class AJForms {
 						modalNote.style.display = item.locked ? 'block' : 'none';
 						modalRow.querySelector('button').addEventListener('click', function() {
 							delete cart[item.price_id];
-							destroyEmbeddedCheckout();
 							setCartMessage('');
 							renderCart();
 						});
@@ -7149,7 +7148,7 @@ class AJForms {
 						cartModalNote.style.display = (reviewHtml || messageText) ? 'block' : 'none';
 					}
 					if (cartModalCheckoutButton) {
-						cartModalCheckoutButton.textContent = cartNeedsMixedCheckoutReview(items) ? 'Continue to Secure Checkout' : 'Checkout';
+						cartModalCheckoutButton.textContent = cartNeedsMixedCheckoutReview(items) ? 'Continue Checkout' : 'Checkout';
 					}
 				}
 			saveCart();
@@ -7160,97 +7159,6 @@ class AJForms {
 				return Object.values(cart).reduce(function(total, item) {
 					return total + (parseInt(item.quantity, 10) || 0);
 				}, 0);
-			}
-
-			function setEmbeddedCheckoutMessage(message) {
-				if (!embeddedCheckoutMessage) {
-					return;
-				}
-				embeddedCheckoutMessage.textContent = message || '';
-				embeddedCheckoutMessage.hidden = !message;
-			}
-
-			function destroyEmbeddedCheckout() {
-				if (ajcoreEmbeddedCheckout && typeof ajcoreEmbeddedCheckout.destroy === 'function') {
-					ajcoreEmbeddedCheckout.destroy();
-				}
-				ajcoreEmbeddedCheckout = null;
-				if (embeddedCheckoutMount) {
-					embeddedCheckoutMount.innerHTML = '';
-				}
-				if (embeddedCheckoutWrap) {
-					embeddedCheckoutWrap.hidden = true;
-				}
-				setEmbeddedCheckoutMessage('');
-			}
-
-			function renderEmbeddedCheckoutSummary(items) {
-				if (!embeddedCheckoutSummary) {
-					return;
-				}
-				const breakdown = getMixedCartBreakdown(items);
-				const intervalLabel = String(breakdown.interval || 'year').toLowerCase();
-				embeddedCheckoutSummary.innerHTML = '<h4>Payment Summary</h4>' +
-					'<strong>Today due: ' + formatCurrency(breakdown.total, breakdown.currency) + '</strong>' +
-					'<p>Starts subscription: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</p>' +
-					'<p>One-time charge after checkout: ' + formatCurrency(breakdown.one_time_total, breakdown.currency) + '</p>' +
-					'<p>Renewal after first period: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</p>';
-			}
-
-			function startEmbeddedMixedCheckout(items) {
-				if (!embeddedCheckoutWrap || !embeddedCheckoutMount) {
-					return false;
-				}
-				if (typeof window.Stripe === 'undefined') {
-					setCartMessage('Stripe checkout could not be loaded. Please refresh and try again.');
-					return true;
-				}
-				destroyEmbeddedCheckout();
-				renderEmbeddedCheckoutSummary(items);
-				embeddedCheckoutWrap.hidden = false;
-				embeddedCheckoutMount.innerHTML = '<div class="ajcore-cart-embedded-loading">Loading secure checkout...</div>';
-				setEmbeddedCheckoutMessage('');
-				const formData = new FormData();
-				formData.append('action', 'ajcore_create_checkout_session');
-				formData.append('items', JSON.stringify(items.map(function(item) { return { price_id: item.price_id, quantity: 1 }; })));
-				formData.append('nonce', root.dataset.cartNonce);
-				formData.append('include_archived', root.dataset.includeArchived || 'no');
-				formData.append('current_url', window.location.href);
-				formData.append('embedded_checkout', '1');
-				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
-					method: 'POST',
-					credentials: 'same-origin',
-					body: formData
-				})
-					.then(function(response) { return response.json(); })
-					.then(function(payload) {
-						if (!payload || !payload.success || !payload.data || !payload.data.client_secret || !payload.data.publishable_key) {
-							throw new Error((payload && payload.data) || 'Unable to start embedded checkout.');
-						}
-						const embeddedClientSecret = String(payload.data.client_secret || '').trim();
-						if (!/^cs_(test|live)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+/.test(embeddedClientSecret)) {
-							throw new Error('Stripe did not return a valid embedded Checkout client secret. Please verify the Stripe API version and keys, then try again.');
-						}
-						ajcoreStripeInstance = window.Stripe(String(payload.data.publishable_key || '').trim());
-						return ajcoreStripeInstance.initEmbeddedCheckout({
-							fetchClientSecret: function() {
-								return Promise.resolve(embeddedClientSecret);
-							}
-						});
-					})
-					.then(function(checkout) {
-						ajcoreEmbeddedCheckout = checkout;
-						embeddedCheckoutMount.innerHTML = '';
-						checkout.mount(embeddedCheckoutMount);
-						embeddedCheckoutWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
-					})
-					.catch(function(error) {
-						embeddedCheckoutMount.innerHTML = '';
-						setEmbeddedCheckoutMessage(error.message || 'Unable to start embedded checkout.');
-						checkoutButton.disabled = false;
-						checkoutButton.textContent = 'Continue to Secure Checkout';
-					});
-				return true;
 			}
 
 			function openCartModal() {
@@ -7270,11 +7178,6 @@ class AJForms {
 			function closeCartModal() {
 				if (!cartModal) {
 					return;
-				}
-				destroyEmbeddedCheckout();
-				if (checkoutButton) {
-					checkoutButton.disabled = Object.keys(cart).length === 0;
-					checkoutButton.textContent = cartNeedsMixedCheckoutReview(Object.values(cart)) ? 'Continue to Secure Checkout' : 'Checkout';
 				}
 				cartModal.classList.remove('is-open');
 				cartModal.setAttribute('aria-hidden', 'true');
@@ -7392,6 +7295,90 @@ class AJForms {
 					});
 			});
 
+			function setEmbeddedCheckoutMessage(message) {
+				if (!embeddedCheckoutMessage) {
+					return;
+				}
+				embeddedCheckoutMessage.textContent = message || '';
+				embeddedCheckoutMessage.hidden = !message;
+			}
+
+			function destroyEmbeddedCheckout() {
+				if (ajcoreEmbeddedCheckout && typeof ajcoreEmbeddedCheckout.destroy === 'function') {
+					ajcoreEmbeddedCheckout.destroy();
+				}
+				ajcoreEmbeddedCheckout = null;
+				if (embeddedCheckoutMount) {
+					embeddedCheckoutMount.innerHTML = '';
+				}
+			}
+
+			function renderEmbeddedCheckoutSummary(items) {
+				if (!embeddedCheckoutSummary) {
+					return;
+				}
+				const breakdown = getMixedCartBreakdown(items);
+				const intervalLabel = String(breakdown.interval || 'year').toLowerCase();
+				embeddedCheckoutSummary.innerHTML = '<h4>Payment Summary</h4>' +
+					'<strong>Today due: ' + formatCurrency(breakdown.total, breakdown.currency) + '</strong>' +
+					'<p>Starts subscription: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</p>' +
+					'<p>One-time charge after checkout: ' + formatCurrency(breakdown.one_time_total, breakdown.currency) + '</p>' +
+					'<p>Renewal after first period: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</p>';
+			}
+
+			function startEmbeddedMixedCheckout(items, originalText) {
+				if (!embeddedCheckoutWrap || !embeddedCheckoutMount) {
+					return false;
+				}
+				if (typeof window.Stripe === 'undefined') {
+					setCartMessage('Stripe checkout could not be loaded. Please refresh and try again.');
+					return true;
+				}
+				destroyEmbeddedCheckout();
+				renderEmbeddedCheckoutSummary(items);
+				embeddedCheckoutWrap.hidden = false;
+				embeddedCheckoutMount.innerHTML = '<div class="ajcore-cart-embedded-loading">Loading secure checkout...</div>';
+				setEmbeddedCheckoutMessage('');
+				const formData = new FormData();
+				formData.append('action', 'ajcore_create_checkout_session');
+				formData.append('items', JSON.stringify(items.map(function(item) { return { price_id: item.price_id, quantity: 1 }; })));
+				formData.append('nonce', root.dataset.cartNonce);
+				formData.append('include_archived', root.dataset.includeArchived || 'no');
+				formData.append('current_url', window.location.href);
+				formData.append('embedded_checkout', '1');
+				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+					method: 'POST',
+					credentials: 'same-origin',
+					body: formData
+				})
+					.then(function(response) { return response.json(); })
+					.then(function(payload) {
+						if (!payload || !payload.success || !payload.data || !payload.data.client_secret || !payload.data.publishable_key) {
+							throw new Error((payload && payload.data) || 'Unable to start embedded checkout.');
+						}
+						const embeddedClientSecret = String(payload.data.client_secret || '').trim();
+						ajcoreStripeInstance = window.Stripe(String(payload.data.publishable_key || '').trim());
+						return ajcoreStripeInstance.createEmbeddedCheckoutPage({
+							fetchClientSecret: function() {
+								return Promise.resolve(embeddedClientSecret);
+							}
+						});
+					})
+					.then(function(checkout) {
+						ajcoreEmbeddedCheckout = checkout;
+						embeddedCheckoutMount.innerHTML = '';
+						checkout.mount(embeddedCheckoutMount);
+						embeddedCheckoutWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+					})
+					.catch(function(error) {
+						embeddedCheckoutMount.innerHTML = '';
+						setEmbeddedCheckoutMessage(error.message || 'Unable to start embedded checkout.');
+						checkoutButton.disabled = false;
+						checkoutButton.textContent = originalText || 'Checkout';
+					});
+				return true;
+			}
+
 			if (checkoutButton) {
 				checkoutButton.addEventListener('click', function() {
 					const cartItemsForCheckout = Object.values(cart);
@@ -7409,11 +7396,8 @@ class AJForms {
 					const originalText = checkoutButton.textContent;
 					checkoutButton.textContent = 'Loading...';
 					setCartMessage('');
-					if (cartNeedsMixedCheckoutReview(cartItemsForCheckout)) {
-						checkoutButton.textContent = 'Loading secure checkout...';
-						if (startEmbeddedMixedCheckout(cartItemsForCheckout)) {
-							return;
-						}
+					if (cartNeedsMixedCheckoutReview(cartItemsForCheckout) && startEmbeddedMixedCheckout(cartItemsForCheckout, originalText)) {
+						return;
 					}
 					const formData = new FormData();
 					formData.append('action', 'ajcore_create_checkout_session');
@@ -7486,7 +7470,7 @@ class AJForms {
 			.ajcore-cart-modal{display:none;position:fixed;inset:0;z-index:2147483100;box-sizing:border-box}
 			.ajcore-cart-modal.is-open{display:block}
 			.ajcore-cart-modal-backdrop{position:absolute;inset:0;z-index:1;background:rgba(15,23,42,.46);backdrop-filter:blur(4px)}
-			.ajcore-cart-modal-panel{position:absolute;z-index:2;left:50%;top:50%;transform:translate(-50%,-50%);width:min(1180px,calc(100vw - 32px));max-height:calc(100vh - 56px);overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:22px;box-shadow:0 28px 80px rgba(15,23,42,.28);padding:22px;box-sizing:border-box}
+			.ajcore-cart-modal-panel{position:absolute;z-index:2;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,calc(100vw - 32px));max-height:calc(100vh - 56px);overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:22px;box-shadow:0 28px 80px rgba(15,23,42,.28);padding:22px;box-sizing:border-box}
 			.ajcore-cart-modal-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
 			.ajcore-cart-modal-header h3{margin:0 0 4px;font-size:26px;line-height:1.08;color:#0f172a}
 			.ajcore-cart-modal-header p{margin:0;color:#64748b;font-size:14px;line-height:1.5}
@@ -7503,6 +7487,12 @@ class AJForms {
 			.ajcore-cart-modal-note .ajcore-mixed-checkout-review strong{display:block;color:#111827;font-size:15px;margin-bottom:7px}
 			.ajcore-cart-modal-note .ajcore-mixed-checkout-review p{margin:4px 0;color:#7c2d12}
 			.ajcore-cart-modal-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:18px;padding-top:16px;border-top:1px solid #e5e7eb}
+			.ajcore-cart-modal-total{font-size:22px;font-weight:900;color:#0f172a}
+			.ajcore-cart-modal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+			.ajcore-cart-modal-clear{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:11px 14px;font-weight:900;cursor:pointer}
+			.ajcore-cart-modal-clear:disabled{opacity:.45;cursor:not-allowed}
+			.ajcore-cart-modal-checkout{border:0;background:#0f7ac6;color:#fff;border-radius:999px;padding:12px 18px;font-weight:900;cursor:pointer}
+			.ajcore-cart-modal-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
 			.ajcore-cart-embedded-checkout{display:grid;grid-template-columns:minmax(260px,.9fr) minmax(320px,1.1fr);gap:18px;margin-top:18px;padding-top:18px;border-top:1px solid #e5e7eb}
 			.ajcore-cart-embedded-checkout[hidden]{display:none!important}
 			.ajcore-cart-embedded-summary{border:1px solid #fed7aa;background:#fff7ed;color:#7c2d12;border-radius:18px;padding:18px 20px;font-weight:900;line-height:1.45}
@@ -7513,12 +7503,6 @@ class AJForms {
 			.ajcore-cart-embedded-mount{min-height:460px}
 			.ajcore-cart-embedded-message{margin:0 0 12px;padding:10px 12px;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:12px;font-weight:900}
 			.ajcore-cart-embedded-loading{padding:18px;color:#475569;font-weight:900;text-align:center}
-			.ajcore-cart-modal-total{font-size:22px;font-weight:900;color:#0f172a}
-			.ajcore-cart-modal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
-			.ajcore-cart-modal-clear{border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:999px;padding:11px 14px;font-weight:900;cursor:pointer}
-			.ajcore-cart-modal-clear:disabled{opacity:.45;cursor:not-allowed}
-			.ajcore-cart-modal-checkout{border:0;background:#0f7ac6;color:#fff;border-radius:999px;padding:12px 18px;font-weight:900;cursor:pointer}
-			.ajcore-cart-modal-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
 			.ajcore-cart-modal-open{overflow:hidden}
 			.ajcore-product-add.ajcore-added{background:#16a34a!important}
 			.ajcore-floating-cart{position:fixed;right:22px;bottom:22px;z-index:99999;display:none!important;align-items:center;gap:10px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:12px 15px;box-shadow:0 18px 40px rgba(15,122,198,.28);font-weight:800;cursor:pointer;line-height:1}
