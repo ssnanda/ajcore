@@ -5753,7 +5753,6 @@ class AJForms {
 				$body['subscription_data[metadata][ajcore_one_time_amount]'] = (string) absint( $deferred_one_time_amount_minor );
 				$body['subscription_data[metadata][ajcore_one_time_currency]'] = '' !== $deferred_one_time_currency ? $deferred_one_time_currency : 'usd';
 				$body['subscription_data[metadata][ajcore_checkout_session_source]'] = $body['metadata[source]'];
-				$body['subscription_data[payment_settings][save_default_payment_method]'] = 'on_subscription';
 			}
 			if ( $portal_add_service && '' !== $mapped_stripe_customer_id ) {
 				$body['metadata[stripe_customer_id]'] = $mapped_stripe_customer_id;
