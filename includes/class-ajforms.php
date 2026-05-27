@@ -1894,27 +1894,66 @@ class AJForms {
 		return isset( $ranks[ $status ] ) ? $ranks[ $status ] : 20;
 	}
 
+	private function customer_portal_ledger_entry_is_recurring_service( $entry ) {
+		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+		$product_interval = $this->get_portal_product_recurring_interval_from_ids(
+			! empty( $metadata['price_id'] ) ? $metadata['price_id'] : '',
+			! empty( $metadata['product_id'] ) ? $metadata['product_id'] : ''
+		);
+		if ( null !== $product_interval ) {
+			return '' !== $product_interval;
+		}
+
+		$billing_type       = ! empty( $metadata['billing_type'] ) ? sanitize_key( (string) $metadata['billing_type'] ) : '';
+		$recurring_interval = ! empty( $metadata['recurring_interval'] ) ? sanitize_key( (string) $metadata['recurring_interval'] ) : '';
+
+		return 'recurring' === $billing_type || '' !== $recurring_interval;
+	}
+
+	private function get_customer_portal_ledger_reference_rank( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+			return ! empty( $entry->payment_intent_id ) ? 1 : ( ! empty( $entry->charge_id ) ? 2 : 6 );
+		}
+
+		if ( ! in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			return 9;
+		}
+
+		$is_recurring = $this->customer_portal_ledger_entry_is_recurring_service( $entry );
+		if ( $is_recurring ) {
+			if ( '' !== $this->get_ledger_metadata_value( $entry, 'subscription_id' ) ) {
+				return 1;
+			}
+			if ( '' !== $this->get_ledger_metadata_value( $entry, 'price_id' ) || '' !== $this->get_ledger_metadata_value( $entry, 'product_id' ) ) {
+				return 3;
+			}
+			return 7;
+		}
+
+		if ( '' !== $this->get_ledger_metadata_value( $entry, 'checkout_session_id' ) ) {
+			return 1;
+		}
+		if ( '' !== $this->get_ledger_metadata_value( $entry, 'payment_intent_id' ) ) {
+			return 2;
+		}
+		if ( '' !== $this->get_ledger_metadata_value( $entry, 'price_id' ) || '' !== $this->get_ledger_metadata_value( $entry, 'product_id' ) ) {
+			return 3;
+		}
+
+		return 7;
+	}
+
 	private function get_customer_portal_ledger_service_key( $entry ) {
 		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
 		if ( ! in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
 			return '';
 		}
 
-		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
-		$billing_type = ! empty( $metadata['billing_type'] ) ? sanitize_key( (string) $metadata['billing_type'] ) : '';
-		$recurring_interval = ! empty( $metadata['recurring_interval'] ) ? sanitize_key( (string) $metadata['recurring_interval'] ) : '';
-		$product_interval = $this->get_portal_product_recurring_interval_from_ids(
-			! empty( $metadata['price_id'] ) ? $metadata['price_id'] : '',
-			! empty( $metadata['product_id'] ) ? $metadata['product_id'] : ''
-		);
-		$is_recurring = null !== $product_interval ? '' !== $product_interval : ( 'recurring' === $billing_type || '' !== $recurring_interval );
 		$parts    = array(
 			! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
-			$is_recurring && ! empty( $metadata['subscription_id'] ) ? sanitize_text_field( (string) $metadata['subscription_id'] ) : '',
-			! empty( $metadata['product_id'] ) ? sanitize_text_field( (string) $metadata['product_id'] ) : '',
-			! empty( $metadata['price_id'] ) ? sanitize_text_field( (string) $metadata['price_id'] ) : '',
 			! empty( $entry->description ) ? sanitize_title( $this->clean_stripe_line_service_name( (string) $entry->description ) ) : '',
-			! empty( $metadata['service_period'] ) ? sanitize_title( (string) $metadata['service_period'] ) : '',
+			! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' ),
 			number_format( abs( (float) $entry->amount ), 2, '.', '' ),
 		);
 
@@ -1946,7 +1985,9 @@ class AJForms {
 				$existing = $display[ $key ];
 				$current_rank  = $this->get_customer_portal_ledger_display_rank( $entry );
 				$existing_rank = $this->get_customer_portal_ledger_display_rank( $existing );
-				if ( $current_rank < $existing_rank || ( $current_rank === $existing_rank && $this->get_customer_portal_ledger_status_rank( $entry ) < $this->get_customer_portal_ledger_status_rank( $existing ) ) ) {
+				$current_ref_rank = $this->get_customer_portal_ledger_reference_rank( $entry );
+				$existing_ref_rank = $this->get_customer_portal_ledger_reference_rank( $existing );
+				if ( $current_rank < $existing_rank || ( $current_rank === $existing_rank && ( $current_ref_rank < $existing_ref_rank || ( $current_ref_rank === $existing_ref_rank && $this->get_customer_portal_ledger_status_rank( $entry ) < $this->get_customer_portal_ledger_status_rank( $existing ) ) ) ) ) {
 					$display[ $key ] = $entry;
 				}
 				continue;

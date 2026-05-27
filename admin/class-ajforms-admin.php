@@ -5921,7 +5921,19 @@ class AJForms_Admin {
 		$running_by_customer = array();
 		$balances = array();
 		$totals = array();
-		$entries = array_reverse( (array) $ledger );
+		$entries = (array) $ledger;
+		usort(
+			$entries,
+			function ( $a, $b ) {
+				$a_time = ! empty( $a->ledger_date ) ? strtotime( $a->ledger_date . ' UTC' ) : 0;
+				$b_time = ! empty( $b->ledger_date ) ? strtotime( $b->ledger_date . ' UTC' ) : 0;
+				if ( $a_time === $b_time ) {
+					return ( isset( $a->id ) ? (int) $a->id : 0 ) <=> ( isset( $b->id ) ? (int) $b->id : 0 );
+				}
+
+				return $a_time <=> $b_time;
+			}
+		);
 
 		foreach ( $entries as $entry ) {
 			$entry_id = isset( $entry->id ) ? absint( $entry->id ) : 0;
@@ -5949,6 +5961,103 @@ class AJForms_Admin {
 			'balances' => $balances,
 			'totals'   => $totals,
 		);
+	}
+
+	private function admin_portal_ledger_entry_is_recurring_service( $entry ) {
+		$product_interval = $this->get_portal_product_recurring_interval_from_ids(
+			$this->get_ledger_metadata_value( $entry, 'price_id' ),
+			$this->get_ledger_metadata_value( $entry, 'product_id' )
+		);
+		if ( null !== $product_interval ) {
+			return '' !== $product_interval;
+		}
+
+		$billing_type       = sanitize_key( $this->get_ledger_metadata_value( $entry, 'billing_type' ) );
+		$recurring_interval = sanitize_key( $this->get_ledger_metadata_value( $entry, 'recurring_interval' ) );
+
+		return 'recurring' === $billing_type || '' !== $recurring_interval;
+	}
+
+	private function get_admin_portal_ledger_reference_rank( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+			return ! empty( $entry->payment_intent_id ) ? 1 : ( ! empty( $entry->charge_id ) ? 2 : 6 );
+		}
+		if ( ! in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			return 9;
+		}
+		if ( $this->admin_portal_ledger_entry_is_recurring_service( $entry ) ) {
+			return '' !== $this->get_ledger_metadata_value( $entry, 'subscription_id' ) ? 1 : 7;
+		}
+
+		return '' !== $this->get_ledger_metadata_value( $entry, 'checkout_session_id' ) ? 1 : ( '' !== $this->get_ledger_metadata_value( $entry, 'payment_intent_id' ) ? 2 : 7 );
+	}
+
+	private function get_admin_portal_ledger_service_key( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( ! in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			return '';
+		}
+
+		return implode(
+			':',
+			array_filter(
+				array(
+					! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
+					! empty( $entry->description ) ? sanitize_title( $this->clean_stripe_line_service_name( (string) $entry->description ) ) : '',
+					! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' ),
+					number_format( abs( (float) $entry->amount ), 2, '.', '' ),
+				),
+				'strlen'
+			)
+		);
+	}
+
+	private function should_show_admin_portal_ledger_entry( $entry ) {
+		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+		if ( in_array( $source_type, array( 'invoice', 'checkout_session' ), true ) ) {
+			return false;
+		}
+
+		return in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item', 'manual_charge', 'charge', 'payment' ), true );
+	}
+
+	private function get_admin_portal_display_ledger( $ledger ) {
+		$display = array();
+		foreach ( (array) $ledger as $entry ) {
+			if ( ! $this->should_show_admin_portal_ledger_entry( $entry ) ) {
+				continue;
+			}
+
+			$key = $this->get_admin_portal_ledger_service_key( $entry );
+			if ( '' !== $key && isset( $display[ $key ] ) ) {
+				$existing = $display[ $key ];
+				$current_ref_rank = $this->get_admin_portal_ledger_reference_rank( $entry );
+				$existing_ref_rank = $this->get_admin_portal_ledger_reference_rank( $existing );
+				if ( $current_ref_rank < $existing_ref_rank ) {
+					$display[ $key ] = $entry;
+				}
+				continue;
+			}
+
+			$display[ '' !== $key ? $key : 'entry_' . ( isset( $entry->id ) ? (int) $entry->id : count( $display ) ) ] = $entry;
+		}
+
+		$display = array_values( $display );
+		usort(
+			$display,
+			function ( $a, $b ) {
+				$a_time = ! empty( $a->ledger_date ) ? strtotime( $a->ledger_date . ' UTC' ) : 0;
+				$b_time = ! empty( $b->ledger_date ) ? strtotime( $b->ledger_date . ' UTC' ) : 0;
+				if ( $a_time === $b_time ) {
+					return ( isset( $a->id ) ? (int) $a->id : 0 ) <=> ( isset( $b->id ) ? (int) $b->id : 0 );
+				}
+
+				return $a_time <=> $b_time;
+			}
+		);
+
+		return $display;
 	}
 
 	private function format_portal_balance_amount( $amount, $currency ) {
@@ -10416,9 +10525,10 @@ class AJForms_Admin {
 			FROM {$this->get_portal_ledger_table()} l
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = l.stripe_customer_id
 			WHERE " . implode( ' AND ', $filters['where'] ) . "
-			ORDER BY l.ledger_date DESC, l.id DESC
+			ORDER BY l.ledger_date ASC, l.id ASC
 			LIMIT 300";
 		$ledger = ! empty( $filters['params'] ) ? $wpdb->get_results( $wpdb->prepare( $sql, $filters['params'] ) ) : $wpdb->get_results( $sql );
+		$ledger = $this->get_admin_portal_display_ledger( $ledger );
 		$balance_data = $this->get_portal_ledger_running_balances( $ledger );
 		$running_balances = $balance_data['balances'];
 		$customer_running_totals = $balance_data['totals'];
