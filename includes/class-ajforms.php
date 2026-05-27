@@ -3863,9 +3863,9 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-service-cart-row button{border:1px solid #fecaca;background:#fff;color:#b91c1c;border-radius:10px;padding:8px 11px;font-weight:850;cursor:pointer}
 				.ajcore-portal-shell .aj-portal-service-cart-empty{color:#64748b;font-weight:800}
 				.ajcore-portal-shell .aj-portal-service-cart-total{margin-top:14px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:22px;font-weight:950;color:#111827}
-				.ajcore-portal-shell .aj-portal-mixed-checkout-review{margin-top:14px;padding:16px;border:1px solid #fed7aa;border-radius:14px;background:#fff7ed;color:#7c2d12;font-size:16px;font-weight:800;line-height:1.65}
-				.ajcore-portal-shell .aj-portal-mixed-checkout-review strong{display:block;margin-bottom:8px;color:#111827;font-size:21px;font-weight:950}
-				.ajcore-portal-shell .aj-portal-mixed-checkout-review p{margin:5px 0}
+				.ajcore-portal-shell .aj-portal-mixed-checkout-review{margin-top:12px;padding:12px;border:1px solid #fed7aa;border-radius:14px;background:#fff7ed;color:#7c2d12;font-size:13px;font-weight:800;line-height:1.4}
+				.ajcore-portal-shell .aj-portal-mixed-checkout-review strong{display:block;margin-bottom:7px;color:#111827;font-size:15px}
+				.ajcore-portal-shell .aj-portal-mixed-checkout-review p{margin:4px 0}
 				.ajcore-portal-shell .aj-portal-service-checkout-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}
 				.ajcore-portal-shell .aj-portal-service-checkout-header h4{margin:0;font-size:22px;color:#111827}
 				.ajcore-portal-shell .aj-portal-service-checkout-close{background:#f1f5f9;color:#475569}
@@ -5645,7 +5645,7 @@ class AJForms {
 
 		return sprintf(
 			/* translators: 1: total today amount, 2: recurring subscription amount, 3: recurring interval suffix, 4: one-time amount */
-			__( 'Total due today is %1$s. This Stripe page starts the subscription portion: %2$s%3$s. After successful checkout, the one-time portion of %4$s will be charged using the same saved payment method. Renewal is %2$s%3$s after the first period.', 'ajforms' ),
+			__( 'ⓘ 𝐈𝐌𝐏𝐎𝐑𝐓𝐀𝐍𝐓 𝐏𝐀𝐘𝐌𝐄𝐍𝐓 𝐍𝐎𝐓𝐈𝐂𝐄\n━━━━━━━━━━━━━━━━━━━━\nToday you are authorizing %1$s total. This Stripe page starts the subscription portion: %2$s%3$s. After successful checkout, the one-time portion will be charged immediately: %4$s using the same saved payment method. Renewal is %2$s%3$s after the first period.\n━━━━━━━━━━━━━━━━━━━━', 'ajforms' ),
 			$this->format_checkout_notice_money( $total_today_minor, $currency ),
 			$this->format_checkout_notice_money( $subscription_amount_minor, $currency ),
 			$interval_suffix,
@@ -5945,7 +5945,8 @@ class AJForms {
 		if ( 'subscription' === $checkout_mode && ! empty( $deferred_one_time_items ) ) {
 			$mixed_checkout_message = $this->get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency );
 			if ( '' !== $mixed_checkout_message ) {
-				$body['custom_text[submit][message]'] = $mixed_checkout_message;
+				$body['custom_text[submit][message]']       = $mixed_checkout_message;
+				$body['custom_text[after_submit][message]'] = $mixed_checkout_message;
 			}
 		}
 
@@ -6168,7 +6169,8 @@ class AJForms {
 		if ( 'subscription' === $checkout_mode && ! empty( $deferred_one_time_items ) ) {
 			$mixed_checkout_message = $this->get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency );
 			if ( '' !== $mixed_checkout_message ) {
-				$body['custom_text[submit][message]'] = $mixed_checkout_message;
+				$body['custom_text[submit][message]']       = $mixed_checkout_message;
+				$body['custom_text[after_submit][message]'] = $mixed_checkout_message;
 			}
 		}
 
@@ -7359,9 +7361,9 @@ class AJForms {
 			.ajcore-cart-modal-row-main small{margin-top:5px;color:#9a3412;font-weight:800;line-height:1.35}
 			.ajcore-cart-modal-row-qty{display:inline-flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;border-radius:999px;background:#f8fafc;color:#475569;min-height:34px;padding:0 10px;font-size:13px;font-weight:900;white-space:nowrap}
 			.ajcore-cart-modal-row button{background:#fff;color:#b32d2e;border:1px solid #fecaca;border-radius:10px;padding:9px 11px;font-weight:800;cursor:pointer}
-			.ajcore-cart-modal-note{display:none;margin-top:14px;padding:16px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:16px;font-weight:800;line-height:1.65}
-			.ajcore-cart-modal-note .ajcore-mixed-checkout-review strong{display:block;color:#111827;font-size:21px;font-weight:950;margin-bottom:8px}
-			.ajcore-cart-modal-note .ajcore-mixed-checkout-review p{margin:5px 0;color:#7c2d12}
+			.ajcore-cart-modal-note{display:none;margin-top:12px;padding:10px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:13px;font-weight:800;line-height:1.4}
+			.ajcore-cart-modal-note .ajcore-mixed-checkout-review strong{display:block;color:#111827;font-size:15px;margin-bottom:7px}
+			.ajcore-cart-modal-note .ajcore-mixed-checkout-review p{margin:4px 0;color:#7c2d12}
 			.ajcore-cart-modal-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:18px;padding-top:16px;border-top:1px solid #e5e7eb}
 			.ajcore-cart-modal-total{font-size:22px;font-weight:900;color:#0f172a}
 			.ajcore-cart-modal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
