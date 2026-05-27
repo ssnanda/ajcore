@@ -3862,6 +3862,9 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-service-cart-row button{border:1px solid #fecaca;background:#fff;color:#b91c1c;border-radius:10px;padding:8px 11px;font-weight:850;cursor:pointer}
 				.ajcore-portal-shell .aj-portal-service-cart-empty{color:#64748b;font-weight:800}
 				.ajcore-portal-shell .aj-portal-service-cart-total{margin-top:14px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:22px;font-weight:950;color:#111827}
+				.ajcore-portal-shell .aj-portal-mixed-checkout-review{margin-top:12px;padding:12px;border:1px solid #fed7aa;border-radius:14px;background:#fff7ed;color:#7c2d12;font-size:13px;font-weight:800;line-height:1.4}
+				.ajcore-portal-shell .aj-portal-mixed-checkout-review strong{display:block;margin-bottom:7px;color:#111827;font-size:15px}
+				.ajcore-portal-shell .aj-portal-mixed-checkout-review p{margin:4px 0}
 				.ajcore-portal-shell .aj-portal-service-checkout-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}
 				.ajcore-portal-shell .aj-portal-service-checkout-header h4{margin:0;font-size:22px;color:#111827}
 				.ajcore-portal-shell .aj-portal-service-checkout-close{background:#f1f5f9;color:#475569}
@@ -4206,6 +4209,58 @@ class AJForms {
 					return label;
 				}
 
+				function getPortalCartSignature(items) {
+					return (items || Object.values(portalCart)).map(function(item) {
+						return (item.price_id || '') + ':' + (parseInt(item.quantity, 10) || 1);
+					}).sort().join('|');
+				}
+
+				function getPortalMixedCartBreakdown(items) {
+					const breakdown = {
+						total: 0,
+						one_time_total: 0,
+						recurring_total: 0,
+						currency: 'usd',
+						interval: '',
+						has_one_time: false,
+						has_recurring: false
+					};
+					(items || Object.values(portalCart)).forEach(function(item) {
+						const amount = (parseFloat(item.amount || '0') || 0) * (parseInt(item.quantity, 10) || 1);
+						breakdown.total += amount;
+						breakdown.currency = item.currency || breakdown.currency;
+						if (item.recurring_interval) {
+							breakdown.has_recurring = true;
+							breakdown.recurring_total += amount;
+							breakdown.interval = breakdown.interval || item.recurring_interval;
+						} else {
+							breakdown.has_one_time = true;
+							breakdown.one_time_total += amount;
+						}
+					});
+					return breakdown;
+				}
+
+				function portalCartNeedsMixedCheckoutReview(items) {
+					const breakdown = getPortalMixedCartBreakdown(items);
+					return breakdown.has_one_time && breakdown.has_recurring;
+				}
+
+				function getPortalMixedCheckoutReviewHtml(items) {
+					const breakdown = getPortalMixedCartBreakdown(items);
+					if (!breakdown.has_one_time || !breakdown.has_recurring) {
+						return '';
+					}
+					const interval = breakdown.interval || '<?php echo esc_js( __( 'year', 'ajforms' ) ); ?>';
+					return '<div class="aj-portal-mixed-checkout-review">' +
+						'<strong><?php echo esc_js( __( 'Payment review before checkout', 'ajforms' ) ); ?></strong>' +
+						'<p><b><?php echo esc_js( __( 'Today:', 'ajforms' ) ); ?></b> ' + formatPortalMoney(breakdown.total, breakdown.currency) + ' <?php echo esc_js( __( 'total.', 'ajforms' ) ); ?></p>' +
+						'<p><?php echo esc_js( __( 'Includes', 'ajforms' ) ); ?> ' + formatPortalMoney(breakdown.one_time_total, breakdown.currency) + ' <?php echo esc_js( __( 'one-time and', 'ajforms' ) ); ?> ' + formatPortalMoney(breakdown.recurring_total, breakdown.currency) + ' <?php echo esc_js( __( 'per', 'ajforms' ) ); ?> ' + interval + ' <?php echo esc_js( __( 'recurring.', 'ajforms' ) ); ?></p>' +
+						'<p><b><?php echo esc_js( __( 'Renewal:', 'ajforms' ) ); ?></b> ' + formatPortalMoney(breakdown.recurring_total, breakdown.currency) + ' <?php echo esc_js( __( 'per', 'ajforms' ) ); ?> ' + interval + ' <?php echo esc_js( __( 'after the first period.', 'ajforms' ) ); ?></p>' +
+						'<p><?php echo esc_js( __( 'You will enter payment once. Stripe may show the subscription portion; AJ Core charges the one-time portion immediately after successful checkout using the same payment method.', 'ajforms' ) ); ?></p>' +
+						'</div>';
+				}
+
 				function findPortalCardByPriceId(priceId) {
 					const options = shell.querySelectorAll('.aj-portal-add-service-price-select option, input.aj-portal-add-service-price-select');
 					for (let index = 0; index < options.length; index += 1) {
@@ -4301,7 +4356,8 @@ class AJForms {
 						emptyEl.hidden = count > 0;
 					}
 					if (totalEl) {
-						totalEl.textContent = count ? ('<?php echo esc_js( __( 'Total:', 'ajforms' ) ); ?> ' + formatPortalMoney(total, currency)) : '';
+						const reviewHtml = getPortalMixedCheckoutReviewHtml(items);
+						totalEl.innerHTML = count ? ('<div><?php echo esc_js( __( 'Total:', 'ajforms' ) ); ?> ' + formatPortalMoney(total, currency) + '</div>' + reviewHtml) : '';
 					}
 					if (statusEl) {
 						statusEl.textContent = count ? (count + ' <?php echo esc_js( __( 'selected', 'ajforms' ) ); ?> · ' + formatPortalMoney(total, currency)) : '<?php echo esc_js( __( 'No services selected', 'ajforms' ) ); ?>';
@@ -4385,12 +4441,24 @@ class AJForms {
 				}
 
 				function startPortalEmbeddedCheckout(button) {
-					const items = Object.values(portalCart).map(function(item) {
-						return { price_id: item.price_id, quantity: 1 };
-					});
-					if (!items.length) {
+					const portalItemsForCheckout = Object.values(portalCart);
+					if (!portalItemsForCheckout.length) {
 						return;
 					}
+					if (portalCartNeedsMixedCheckoutReview(portalItemsForCheckout) && button && button.dataset.reviewedCart !== getPortalCartSignature(portalItemsForCheckout)) {
+						button.dataset.reviewedCart = getPortalCartSignature(portalItemsForCheckout);
+						button.textContent = '<?php echo esc_js( __( 'Continue Checkout', 'ajforms' ) ); ?>';
+						renderPortalCart('');
+						const panel = portalCartWrap.querySelector('.aj-portal-service-cart-panel');
+						if (panel) {
+							panel.hidden = false;
+							panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+						}
+						return;
+					}
+					const items = portalItemsForCheckout.map(function(item) {
+						return { price_id: item.price_id, quantity: 1 };
+					});
 					if (!window.Stripe) {
 						window.alert('<?php echo esc_js( __( 'Stripe checkout could not be loaded.', 'ajforms' ) ); ?>');
 						return;
@@ -6620,6 +6688,58 @@ class AJForms {
 				return intervalList.length > 1 ? intervalList : [];
 			}
 
+			function getCartSignature(items) {
+				return (items || Object.values(cart)).map(function(item) {
+					return (item.price_id || '') + ':' + (parseInt(item.quantity, 10) || 1);
+				}).sort().join('|');
+			}
+
+			function getMixedCartBreakdown(items) {
+				const breakdown = {
+					total: 0,
+					one_time_total: 0,
+					recurring_total: 0,
+					currency: 'usd',
+					interval: '',
+					has_one_time: false,
+					has_recurring: false
+				};
+				(items || Object.values(cart)).forEach(function(item) {
+					const amount = (parseFloat(item.amount || '0') || 0) * (parseInt(item.quantity, 10) || 1);
+					breakdown.total += amount;
+					breakdown.currency = item.currency || breakdown.currency;
+					if (item.recurring_interval) {
+						breakdown.has_recurring = true;
+						breakdown.recurring_total += amount;
+						breakdown.interval = breakdown.interval || item.recurring_interval;
+					} else {
+						breakdown.has_one_time = true;
+						breakdown.one_time_total += amount;
+					}
+				});
+				return breakdown;
+			}
+
+			function cartNeedsMixedCheckoutReview(items) {
+				const breakdown = getMixedCartBreakdown(items);
+				return breakdown.has_one_time && breakdown.has_recurring;
+			}
+
+			function getMixedCheckoutReviewHtml(items) {
+				const breakdown = getMixedCartBreakdown(items);
+				if (!breakdown.has_one_time || !breakdown.has_recurring) {
+					return '';
+				}
+				const intervalLabel = String(breakdown.interval || 'year').toLowerCase();
+				return '<div class="ajcore-mixed-checkout-review">' +
+					'<strong>Payment review before Stripe</strong>' +
+					'<p><b>Today:</b> ' + formatCurrency(breakdown.total, breakdown.currency) + ' total.</p>' +
+					'<p>This includes ' + formatCurrency(breakdown.one_time_total, breakdown.currency) + ' one-time and ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + ' recurring.</p>' +
+					'<p><b>Renewal:</b> ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + ' after the first period.</p>' +
+					'<p>You will enter payment once. Stripe may show the subscription portion on its checkout screen; AJ Core will charge the one-time portion immediately after successful checkout using the same payment method.</p>' +
+					'</div>';
+			}
+
 			function upsertCartProduct(product, lockedReason) {
 				if (!product) {
 					return false;
@@ -6752,8 +6872,17 @@ class AJForms {
 					});
 					cartModalTotal.textContent = items.length ? 'Total: ' + formatCurrency(total, currency) : '';
 					if (cartModalNote) {
-						cartModalNote.textContent = cartMessage && cartMessage.textContent ? cartMessage.textContent : '';
-						cartModalNote.style.display = cartModalNote.textContent ? 'block' : 'none';
+						const reviewHtml = getMixedCheckoutReviewHtml(items);
+						const messageText = cartMessage && cartMessage.textContent ? cartMessage.textContent : '';
+						if (reviewHtml) {
+							cartModalNote.innerHTML = reviewHtml;
+						} else {
+							cartModalNote.textContent = messageText;
+						}
+						cartModalNote.style.display = (reviewHtml || messageText) ? 'block' : 'none';
+					}
+					if (cartModalCheckoutButton) {
+						cartModalCheckoutButton.textContent = cartNeedsMixedCheckoutReview(items) ? 'Continue to Stripe' : 'Checkout';
 					}
 				}
 			saveCart();
@@ -6818,6 +6947,7 @@ class AJForms {
 			if (cartModalCheckoutButton) {
 				cartModalCheckoutButton.addEventListener('click', function() {
 					if (checkoutButton && !checkoutButton.disabled) {
+						checkoutButton.dataset.reviewedCart = getCartSignature();
 						checkoutButton.click();
 					}
 				});
@@ -6901,12 +7031,17 @@ class AJForms {
 
 			if (checkoutButton) {
 				checkoutButton.addEventListener('click', function() {
-					const items = Object.values(cart).map(function(item) {
-						return { price_id: item.price_id, quantity: 1 };
-					});
-					if (!items.length) {
+					const cartItemsForCheckout = Object.values(cart);
+					if (!cartItemsForCheckout.length) {
 						return;
 					}
+					if (cartNeedsMixedCheckoutReview(cartItemsForCheckout) && checkoutButton.dataset.reviewedCart !== getCartSignature(cartItemsForCheckout)) {
+						openCartModal();
+						return;
+					}
+					const items = cartItemsForCheckout.map(function(item) {
+						return { price_id: item.price_id, quantity: 1 };
+					});
 					checkoutButton.disabled = true;
 					const originalText = checkoutButton.textContent;
 					checkoutButton.textContent = 'Loading...';
@@ -6983,6 +7118,8 @@ class AJForms {
 			.ajcore-cart-modal-row-qty{display:inline-flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;border-radius:999px;background:#f8fafc;color:#475569;min-height:34px;padding:0 10px;font-size:13px;font-weight:900;white-space:nowrap}
 			.ajcore-cart-modal-row button{background:#fff;color:#b32d2e;border:1px solid #fecaca;border-radius:10px;padding:9px 11px;font-weight:800;cursor:pointer}
 			.ajcore-cart-modal-note{display:none;margin-top:12px;padding:10px 12px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;font-size:13px;font-weight:800;line-height:1.4}
+			.ajcore-cart-modal-note .ajcore-mixed-checkout-review strong{display:block;color:#111827;font-size:15px;margin-bottom:7px}
+			.ajcore-cart-modal-note .ajcore-mixed-checkout-review p{margin:4px 0;color:#7c2d12}
 			.ajcore-cart-modal-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:18px;padding-top:16px;border-top:1px solid #e5e7eb}
 			.ajcore-cart-modal-total{font-size:22px;font-weight:900;color:#0f172a}
 			.ajcore-cart-modal-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
