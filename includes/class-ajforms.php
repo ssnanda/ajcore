@@ -5535,6 +5535,9 @@ class AJForms {
 		$allowed_price_map   = array();
 		$checkout_mode       = 'payment';
 		$portal_product      = null;
+		$deferred_one_time_items = array();
+		$deferred_one_time_amount_minor = 0;
+		$deferred_one_time_currency = '';
 
 		if ( $portal_add_service ) {
 			$portal_context  = $this->get_current_user_portal_billing_context();
@@ -5626,6 +5629,44 @@ class AJForms {
 			}
 		}
 
+		if ( is_array( $items ) && 'subscription' === $checkout_mode ) {
+			$subscription_items = array();
+			foreach ( $items as $normalized_item ) {
+				if ( ! is_array( $normalized_item ) || empty( $normalized_item['price_id'] ) ) {
+					continue;
+				}
+
+				$normalized_price_id = sanitize_text_field( (string) $normalized_item['price_id'] );
+				if ( empty( $allowed_price_map[ $normalized_price_id ] ) ) {
+					continue;
+				}
+
+				if ( ! empty( $allowed_price_map[ $normalized_price_id ]['recurring_interval'] ) ) {
+					$subscription_items[] = $normalized_item;
+					continue;
+				}
+
+				$item_currency = ! empty( $allowed_price_map[ $normalized_price_id ]['currency'] ) ? strtolower( sanitize_key( (string) $allowed_price_map[ $normalized_price_id ]['currency'] ) ) : 'usd';
+				if ( '' === $deferred_one_time_currency ) {
+					$deferred_one_time_currency = $item_currency;
+				} elseif ( $deferred_one_time_currency !== $item_currency ) {
+					wp_send_json_error( __( 'Checkout does not support mixed currencies in one cart.', 'ajforms' ), 400 );
+				}
+
+				$item_amount = isset( $allowed_price_map[ $normalized_price_id ]['amount'] ) ? (float) $allowed_price_map[ $normalized_price_id ]['amount'] : 0.0;
+				$deferred_one_time_amount_minor += $this->convert_amount_to_minor_units( $item_amount, $item_currency );
+				$deferred_one_time_items[] = $normalized_item;
+			}
+
+			if ( ! empty( $deferred_one_time_items ) ) {
+				if ( empty( $subscription_items ) ) {
+					$checkout_mode = 'payment';
+				} else {
+					$items = $subscription_items;
+				}
+			}
+		}
+
 		$stripe_settings = $this->get_stripe_settings();
 		$mode_error = $this->get_stripe_mode_blocking_error( $stripe_settings );
 		if ( '' !== $mode_error ) {
@@ -5693,6 +5734,27 @@ class AJForms {
 			}
 
 			$body['metadata[source]'] = $portal_add_service ? 'ajcore_portal_add_service' : 'ajcore_products_cart';
+			if ( ! empty( $deferred_one_time_items ) ) {
+				$deferred_price_ids = array_values(
+					array_filter(
+						array_map(
+							function ( $item ) {
+								return is_array( $item ) && ! empty( $item['price_id'] ) ? sanitize_text_field( (string) $item['price_id'] ) : '';
+							},
+							$deferred_one_time_items
+						)
+					)
+				);
+				$body['metadata[source]'] = $portal_add_service ? 'ajcore_portal_mixed_cart_subscription' : 'ajcore_mixed_cart_subscription';
+				$body['metadata[ajcore_one_time_price_ids]'] = implode( ',', $deferred_price_ids );
+				$body['metadata[ajcore_one_time_amount]'] = (string) absint( $deferred_one_time_amount_minor );
+				$body['metadata[ajcore_one_time_currency]'] = '' !== $deferred_one_time_currency ? $deferred_one_time_currency : 'usd';
+				$body['subscription_data[metadata][ajcore_one_time_price_ids]'] = implode( ',', $deferred_price_ids );
+				$body['subscription_data[metadata][ajcore_one_time_amount]'] = (string) absint( $deferred_one_time_amount_minor );
+				$body['subscription_data[metadata][ajcore_one_time_currency]'] = '' !== $deferred_one_time_currency ? $deferred_one_time_currency : 'usd';
+				$body['subscription_data[metadata][ajcore_checkout_session_source]'] = $body['metadata[source]'];
+				$body['subscription_data[payment_settings][save_default_payment_method]'] = 'on_subscription';
+			}
 			if ( $portal_add_service && '' !== $mapped_stripe_customer_id ) {
 				$body['metadata[stripe_customer_id]'] = $mapped_stripe_customer_id;
 			}

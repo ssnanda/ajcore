@@ -533,6 +533,12 @@ class AJForms_Admin {
 		return in_array( $currency, array( 'jpy', 'krw', 'vnd' ), true ) ? (float) $amount : (float) $amount / 100;
 	}
 
+	private function stripe_decimal_to_minor_units( $amount, $currency ) {
+		$currency = strtolower( sanitize_key( $currency ) );
+
+		return in_array( $currency, array( 'jpy', 'krw', 'vnd' ), true ) ? (int) round( (float) $amount ) : (int) round( (float) $amount * 100 );
+	}
+
 	private function stripe_timestamp_to_mysql( $timestamp ) {
 		$timestamp = absint( $timestamp );
 
@@ -2677,6 +2683,288 @@ class AJForms_Admin {
 		return $object;
 	}
 
+	private function get_scalar_stripe_id( $value, $prefix = '' ) {
+		if ( is_array( $value ) && ! empty( $value['id'] ) ) {
+			$value = $value['id'];
+		}
+
+		$value = is_scalar( $value ) ? sanitize_text_field( (string) $value ) : '';
+		if ( '' !== $prefix && 0 !== strpos( $value, $prefix ) ) {
+			return '';
+		}
+
+		return $value;
+	}
+
+	private function get_deferred_one_time_price_ids_from_checkout_session( $session ) {
+		$metadata = ! empty( $session['metadata'] ) && is_array( $session['metadata'] ) ? $session['metadata'] : array();
+		$raw      = ! empty( $metadata['ajcore_one_time_price_ids'] ) ? sanitize_text_field( (string) $metadata['ajcore_one_time_price_ids'] ) : '';
+		if ( '' === $raw ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_unique(
+					array_map(
+						'sanitize_text_field',
+						array_map( 'trim', explode( ',', $raw ) )
+					)
+				)
+			)
+		);
+	}
+
+	private function get_deferred_one_time_payment_method_from_subscription( $subscription_id, $customer_id, $secret_key ) {
+		$subscription_id = sanitize_text_field( (string) $subscription_id );
+		$customer_id     = sanitize_text_field( (string) $customer_id );
+		if ( '' === $subscription_id ) {
+			return '';
+		}
+
+		$subscription = $this->stripe_api_get(
+			'subscriptions/' . rawurlencode( $subscription_id ),
+			$secret_key,
+			array( 'expand[]' => 'latest_invoice.payment_intent' )
+		);
+		if ( is_wp_error( $subscription ) ) {
+			return '';
+		}
+
+		$payment_method = $this->get_scalar_stripe_id( isset( $subscription['default_payment_method'] ) ? $subscription['default_payment_method'] : '', 'pm_' );
+		if ( '' !== $payment_method ) {
+			return $payment_method;
+		}
+
+		$latest_invoice = ! empty( $subscription['latest_invoice'] ) && is_array( $subscription['latest_invoice'] ) ? $subscription['latest_invoice'] : array();
+		$payment_intent = ! empty( $latest_invoice['payment_intent'] ) && is_array( $latest_invoice['payment_intent'] ) ? $latest_invoice['payment_intent'] : array();
+		$payment_method = $this->get_scalar_stripe_id( isset( $payment_intent['payment_method'] ) ? $payment_intent['payment_method'] : '', 'pm_' );
+		if ( '' !== $payment_method ) {
+			return $payment_method;
+		}
+
+		$latest_invoice_id = empty( $latest_invoice ) && ! empty( $subscription['latest_invoice'] ) ? $this->get_scalar_stripe_id( $subscription['latest_invoice'], 'in_' ) : '';
+		if ( '' !== $latest_invoice_id ) {
+			$invoice = $this->stripe_api_get(
+				'invoices/' . rawurlencode( $latest_invoice_id ),
+				$secret_key,
+				array( 'expand[]' => 'payment_intent' )
+			);
+			if ( ! is_wp_error( $invoice ) && ! empty( $invoice['payment_intent'] ) && is_array( $invoice['payment_intent'] ) ) {
+				$payment_method = $this->get_scalar_stripe_id( isset( $invoice['payment_intent']['payment_method'] ) ? $invoice['payment_intent']['payment_method'] : '', 'pm_' );
+				if ( '' !== $payment_method ) {
+					return $payment_method;
+				}
+			}
+		}
+
+		if ( '' !== $customer_id ) {
+			$customer = $this->stripe_api_get( 'customers/' . rawurlencode( $customer_id ), $secret_key );
+			if ( ! is_wp_error( $customer ) && ! empty( $customer['invoice_settings']['default_payment_method'] ) ) {
+				return $this->get_scalar_stripe_id( $customer['invoice_settings']['default_payment_method'], 'pm_' );
+			}
+		}
+
+		return '';
+	}
+
+	private function create_deferred_one_time_service_snapshots_from_checkout( $session, $payment_intent, $price_ids ) {
+		$count       = 0;
+		$customer_id = ! empty( $session['customer'] ) && is_scalar( $session['customer'] ) ? sanitize_text_field( (string) $session['customer'] ) : '';
+		$currency    = ! empty( $payment_intent['currency'] ) ? strtolower( sanitize_key( (string) $payment_intent['currency'] ) ) : ( ! empty( $session['currency'] ) ? strtolower( sanitize_key( (string) $session['currency'] ) ) : 'usd' );
+		$status      = ! empty( $payment_intent['status'] ) ? sanitize_key( (string) $payment_intent['status'] ) : 'succeeded';
+		$parent      = array(
+			'id'             => ! empty( $session['id'] ) ? sanitize_text_field( (string) $session['id'] ) : '',
+			'customer'       => $customer_id,
+			'payment_intent' => ! empty( $payment_intent['id'] ) ? sanitize_text_field( (string) $payment_intent['id'] ) : '',
+			'status'         => in_array( $status, array( 'succeeded', 'processing' ), true ) ? $status : 'paid',
+			'payment_status' => 'succeeded' === $status ? 'paid' : $status,
+			'currency'       => $currency,
+			'livemode'       => ! empty( $payment_intent['livemode'] ) || ! empty( $session['livemode'] ),
+			'metadata'       => ! empty( $session['metadata'] ) && is_array( $session['metadata'] ) ? $session['metadata'] : array(),
+		);
+
+		foreach ( $price_ids as $price_id ) {
+			$price_id = sanitize_text_field( (string) $price_id );
+			if ( '' === $price_id ) {
+				continue;
+			}
+
+			$product = $this->get_portal_product_by_price_id( $price_id );
+			if ( ! $product ) {
+				continue;
+			}
+
+			$item_currency = ! empty( $product->currency ) ? strtolower( sanitize_key( (string) $product->currency ) ) : $currency;
+			$amount_minor  = $this->stripe_decimal_to_minor_units( isset( $product->price_amount ) ? (float) $product->price_amount : 0, $item_currency );
+			$item          = array(
+				'price'        => array(
+					'id'          => $price_id,
+					'currency'    => $item_currency,
+					'unit_amount' => $amount_minor,
+					'product'     => array(
+						'id'   => ! empty( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '',
+						'name' => ! empty( $product->name ) ? sanitize_text_field( (string) $product->name ) : '',
+					),
+				),
+				'quantity'     => 1,
+				'amount_total' => $amount_minor,
+				'currency'     => $item_currency,
+				'description'  => ! empty( $product->name ) ? sanitize_text_field( (string) $product->name ) : $price_id,
+			);
+
+			$count += $this->maybe_create_portal_service_snapshot_from_line_item( $item, $parent, 'checkout_session' ) ? 1 : 0;
+		}
+
+		if ( $count && '' !== $customer_id ) {
+			$this->backfill_portal_ledger_service_charges_from_snapshots( $customer_id );
+		}
+
+		return $count;
+	}
+
+	private function maybe_charge_deferred_one_time_items_for_checkout_session( $session, $secret_key ) {
+		if ( empty( $session['id'] ) || empty( $session['subscription'] ) || empty( $session['customer'] ) ) {
+			return 0;
+		}
+
+		$price_ids = $this->get_deferred_one_time_price_ids_from_checkout_session( $session );
+		if ( empty( $price_ids ) ) {
+			return 0;
+		}
+
+		global $wpdb;
+
+		$session_id  = sanitize_text_field( (string) $session['id'] );
+		$customer_id = sanitize_text_field( (string) $session['customer'] );
+		$existing    = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id FROM {$this->get_portal_ledger_table()} WHERE source_object_id = %s OR metadata LIKE %s LIMIT 1",
+				'mixed_one_time_' . $session_id,
+				'%' . $wpdb->esc_like( $session_id ) . '%ajcore_mixed_one_time_payment%'
+			)
+		);
+		if ( $existing ) {
+			return 0;
+		}
+
+		$metadata = ! empty( $session['metadata'] ) && is_array( $session['metadata'] ) ? $session['metadata'] : array();
+		$amount   = ! empty( $metadata['ajcore_one_time_amount'] ) ? absint( $metadata['ajcore_one_time_amount'] ) : 0;
+		$currency = ! empty( $metadata['ajcore_one_time_currency'] ) ? strtolower( sanitize_key( (string) $metadata['ajcore_one_time_currency'] ) ) : ( ! empty( $session['currency'] ) ? strtolower( sanitize_key( (string) $session['currency'] ) ) : 'usd' );
+		if ( $amount <= 0 ) {
+			foreach ( $price_ids as $price_id ) {
+				$product = $this->get_portal_product_by_price_id( $price_id );
+				if ( $product ) {
+					$currency = ! empty( $product->currency ) ? strtolower( sanitize_key( (string) $product->currency ) ) : $currency;
+					$amount  += $this->stripe_decimal_to_minor_units( isset( $product->price_amount ) ? (float) $product->price_amount : 0, $currency );
+				}
+			}
+		}
+		if ( $amount <= 0 ) {
+			return 0;
+		}
+
+		$subscription_id = sanitize_text_field( (string) $session['subscription'] );
+		$payment_method = $this->get_deferred_one_time_payment_method_from_subscription( $subscription_id, $customer_id, $secret_key );
+		if ( '' === $payment_method ) {
+			return new WP_Error( 'missing_payment_method', __( 'Unable to charge one-time cart items because Stripe did not expose the subscription payment method yet.', 'ajforms' ) );
+		}
+
+		$description = sprintf( __( 'One-time items from checkout %s', 'ajforms' ), $session_id );
+		$payment_intent = $this->stripe_api_request(
+			'payment_intents',
+			$secret_key,
+			array(
+				'amount'                       => $amount,
+				'currency'                     => $currency,
+				'customer'                     => $customer_id,
+				'payment_method'              => $payment_method,
+				'confirm'                     => 'true',
+				'off_session'                 => 'true',
+				'description'                 => $description,
+				'metadata[source]'            => 'ajcore_mixed_one_time_payment',
+				'metadata[checkout_session_id]' => $session_id,
+				'metadata[subscription_id]'    => $subscription_id,
+				'metadata[stripe_customer_id]' => $customer_id,
+				'metadata[price_ids]'          => implode( ',', $price_ids ),
+			)
+		);
+		if ( is_wp_error( $payment_intent ) ) {
+			return $payment_intent;
+		}
+
+		$payment_intent_id = ! empty( $payment_intent['id'] ) ? sanitize_text_field( (string) $payment_intent['id'] ) : '';
+		$status            = ! empty( $payment_intent['status'] ) ? sanitize_key( (string) $payment_intent['status'] ) : '';
+		$amount_decimal    = $this->stripe_amount_to_decimal( $amount, $currency );
+		$charge_id         = ! empty( $payment_intent['latest_charge'] ) ? $this->get_scalar_stripe_id( $payment_intent['latest_charge'], 'ch_' ) : '';
+		$now               = current_time( 'mysql' );
+
+		if ( '' !== $payment_intent_id ) {
+			$this->upsert_portal_record(
+				$this->get_portal_stripe_transactions_table(),
+				array(
+					'stripe_object_id'   => $payment_intent_id,
+					'object_type'        => 'payment_intent',
+					'stripe_customer_id' => $customer_id,
+					'invoice_id'         => '',
+					'payment_intent_id'  => $payment_intent_id,
+					'charge_id'          => $charge_id,
+					'description'        => __( 'One-time cart payment', 'ajforms' ),
+					'amount'             => $amount_decimal,
+					'currency'           => $currency,
+					'status'             => $status,
+					'transaction_date'   => $now,
+					'due_date'           => null,
+					'raw_data'           => wp_json_encode( $payment_intent ),
+					'livemode'           => ! empty( $payment_intent['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
+					'synced_at'          => $now,
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%d', '%s' ),
+				'stripe_object_id'
+			);
+			$this->upsert_portal_record(
+				$this->get_portal_ledger_table(),
+				array(
+					'stripe_customer_id' => $customer_id,
+					'source_object_id'   => 'mixed_one_time_' . $session_id,
+					'source_type'        => 'payment_intent',
+					'ledger_date'        => $now,
+					'description'        => __( 'Payment', 'ajforms' ),
+					'amount'             => $amount_decimal,
+					'currency'           => $currency,
+					'status'             => $status,
+					'invoice_id'         => '',
+					'payment_intent_id'  => $payment_intent_id,
+					'charge_id'          => $charge_id,
+					'metadata'           => wp_json_encode( array( 'source' => 'ajcore_mixed_one_time_payment', 'checkout_session_id' => $session_id, 'price_ids' => $price_ids ) ),
+					'created_at'         => $now,
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+				'source_object_id'
+			);
+		}
+
+		$snapshot_count = $this->create_deferred_one_time_service_snapshots_from_checkout( $session, $payment_intent, $price_ids );
+		$this->log_portal_event(
+			'mixed_cart_one_time_payment_created',
+			array(
+				'source'             => 'webhook',
+				'stripe_customer_id' => $customer_id,
+				'details'            => array(
+					'checkout_session_id' => $session_id,
+					'subscription_id'     => $subscription_id,
+					'payment_intent_id'   => $payment_intent_id,
+					'amount'              => $amount_decimal,
+					'currency'            => $currency,
+					'price_ids'           => $price_ids,
+					'snapshots'           => $snapshot_count,
+				),
+			)
+		);
+
+		return 1 + absint( $snapshot_count );
+	}
+
 	public function run_portal_sync_job( $source = 'manual', $requested_jobs = array() ) {
 		$this->ensure_portal_schema();
 
@@ -2916,6 +3204,24 @@ class AJForms_Admin {
 			$stripe_customer_id = sanitize_text_field( (string) $object['customer'] );
 		}
 
+		$deferred_one_time_result = 0;
+		if ( 'checkout.session.completed' === $type && is_array( $object ) ) {
+			$deferred_one_time_result = $this->maybe_charge_deferred_one_time_items_for_checkout_session( $object, $secret_key );
+			if ( is_wp_error( $deferred_one_time_result ) ) {
+				$this->mark_stripe_event_failed( $event_id, $deferred_one_time_result->get_error_message() );
+				$this->log_portal_event(
+					'webhook_failed',
+					array(
+						'severity' => 'error',
+						'source'   => 'webhook',
+						'details'  => array( 'event_id' => $event_id, 'event_type' => $type, 'object_id' => $object_id, 'error' => $deferred_one_time_result->get_error_message(), 'phase' => 'mixed_cart_one_time_payment' ),
+					)
+				);
+				status_header( 500 );
+				wp_send_json_error( array( 'message' => $deferred_one_time_result->get_error_message() ) );
+			}
+		}
+
 		$run_key = wp_generate_uuid4();
 		$log_id  = $this->write_portal_sync_log( $run_key, 'webhook', sanitize_key( str_replace( '.', '_', $type ) ), 'started', 0, sprintf( __( 'Stripe webhook %s received.', 'ajforms' ), $type ) );
 		$this->reset_portal_sync_stats();
@@ -2931,6 +3237,7 @@ class AJForms_Admin {
 		}
 
 		if ( ! is_wp_error( $result ) ) {
+			$result = absint( $result ) + absint( $deferred_one_time_result );
 			$this->backfill_portal_service_requests_from_ledger();
 			$this->cleanup_stale_pending_checkout_service_requests();
 		}
