@@ -122,7 +122,7 @@ class AJForms_Activator {
 			active tinyint(1) NOT NULL DEFAULT 1,
 			metadata longtext NULL,
 			raw_data longtext NULL,
-			visibility varchar(50) DEFAULT 'visible' NOT NULL,
+			visibility varchar(50) DEFAULT 'hidden' NOT NULL,
 			custom_label varchar(255) DEFAULT '' NOT NULL,
 			sort_order int(11) DEFAULT 0 NOT NULL,
 			description_override longtext NULL,

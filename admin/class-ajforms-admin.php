@@ -1702,12 +1702,19 @@ class AJForms_Admin {
 			$product  = isset( $price['product'] ) && is_array( $price['product'] ) ? $price['product'] : array();
 			$currency = isset( $price['currency'] ) ? strtolower( sanitize_key( $price['currency'] ) ) : 'usd';
 			$recurring = isset( $price['recurring'] ) && is_array( $price['recurring'] ) ? $price['recurring'] : array();
+			$price_id = sanitize_text_field( (string) $price['id'] );
+			$existing_visibility = $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT visibility FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s LIMIT 1",
+					$price_id
+				)
+			);
 
 			$upserted = $this->upsert_portal_record(
 				$this->get_portal_stripe_products_table(),
 				array(
 					'stripe_product_id'    => ! empty( $product['id'] ) ? sanitize_text_field( (string) $product['id'] ) : sanitize_text_field( (string) $price['product'] ),
-					'stripe_price_id'      => sanitize_text_field( (string) $price['id'] ),
+					'stripe_price_id'      => $price_id,
 					'name'                 => ! empty( $product['name'] ) ? sanitize_text_field( (string) $product['name'] ) : __( 'Stripe product', 'ajforms' ),
 					'description'          => ! empty( $product['description'] ) ? sanitize_textarea_field( (string) $product['description'] ) : '',
 					'price_amount'         => $this->stripe_amount_to_decimal( isset( $price['unit_amount'] ) ? $price['unit_amount'] : 0, $currency ),
@@ -1716,10 +1723,11 @@ class AJForms_Admin {
 					'active'               => ( ! isset( $price['active'] ) || ! empty( $price['active'] ) ) && ( empty( $product ) || ! isset( $product['active'] ) || ! empty( $product['active'] ) ) ? 1 : 0,
 					'metadata'             => ! empty( $product['metadata'] ) ? wp_json_encode( $product['metadata'] ) : '',
 					'raw_data'             => wp_json_encode( $price ),
+					'visibility'           => $existing_visibility ? sanitize_key( (string) $existing_visibility ) : 'hidden',
 					'livemode'             => ! empty( $price['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
 					'synced_at'            => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s', '%d', '%s' ),
+				array( '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%s' ),
 				'stripe_price_id'
 			);
 			if ( $upserted ) {
@@ -4995,6 +5003,10 @@ class AJForms_Admin {
 				if ( ! $product ) {
 					continue;
 				}
+				$subscription_period = $this->get_synced_portal_subscription_period_context( $subscription->stripe_subscription_id );
+				$period_start = ! empty( $subscription_period['current_period_start'] ) ? $subscription_period['current_period_start'] : '';
+				$period_end   = ! empty( $subscription_period['current_period_end'] ) ? $subscription_period['current_period_end'] : ( ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : '' );
+				$service_period = ( $period_start && $period_end ) ? $this->format_portal_date( $period_start ) . ' - ' . $this->format_portal_date( $period_end ) : '';
 
 				$record = $this->make_portal_service_record_from_product(
 					$product,
@@ -5003,9 +5015,10 @@ class AJForms_Admin {
 						'customer'               => ! empty( $subscription->customer_name ) ? $subscription->customer_name : ( ! empty( $subscription->customer_email ) ? $subscription->customer_email : $subscription->stripe_customer_id ),
 						'stripe_subscription_id' => $subscription->stripe_subscription_id,
 						'status'                 => $subscription->status,
-						'service_period'         => '',
-						'service_period_end'     => ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : '',
-						'next_billing_date'      => ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : '',
+						'service_period'         => $service_period,
+						'service_period_start'   => $period_start,
+						'service_period_end'     => $period_end,
+						'next_billing_date'      => $period_end,
 						'synced_at'              => ! empty( $subscription->synced_at ) ? $subscription->synced_at : '',
 					)
 				);
@@ -5104,6 +5117,19 @@ class AJForms_Admin {
 		return $status ? sanitize_key( (string) $status ) : '';
 	}
 
+	private function normalize_portal_subscription_period_value( $value ) {
+		if ( empty( $value ) ) {
+			return '';
+		}
+
+		if ( is_numeric( $value ) ) {
+			return $this->stripe_timestamp_to_mysql( $value );
+		}
+
+		$timestamp = strtotime( (string) $value );
+		return $timestamp ? gmdate( 'Y-m-d H:i:s', $timestamp ) : sanitize_text_field( (string) $value );
+	}
+
 	private function get_synced_portal_subscription_period_context( $subscription_id ) {
 		$subscription_id = sanitize_text_field( (string) $subscription_id );
 		if ( '' === $subscription_id ) {
@@ -5113,7 +5139,7 @@ class AJForms_Admin {
 		global $wpdb;
 		$subscription = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT current_period_end, raw_data FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
+				"SELECT current_period_end, items, raw_data FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
 				$subscription_id
 			)
 		);
@@ -5122,9 +5148,45 @@ class AJForms_Admin {
 		}
 
 		$raw = $this->decode_portal_json( $subscription->raw_data );
+		$start = ! empty( $raw['current_period_start'] ) ? $this->normalize_portal_subscription_period_value( $raw['current_period_start'] ) : '';
+		$end   = ! empty( $subscription->current_period_end ) ? $this->normalize_portal_subscription_period_value( $subscription->current_period_end ) : ( ! empty( $raw['current_period_end'] ) ? $this->normalize_portal_subscription_period_value( $raw['current_period_end'] ) : '' );
+		$items = $this->decode_portal_json( $subscription->items );
+		foreach ( (array) $items as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+			if ( empty( $start ) ) {
+				foreach ( array( 'current_period_start', 'period_start' ) as $key ) {
+					if ( ! empty( $item[ $key ] ) ) {
+						$start = $this->normalize_portal_subscription_period_value( $item[ $key ] );
+						break;
+					}
+				}
+			}
+			if ( empty( $end ) ) {
+				foreach ( array( 'current_period_end', 'period_end' ) as $key ) {
+					if ( ! empty( $item[ $key ] ) ) {
+						$end = $this->normalize_portal_subscription_period_value( $item[ $key ] );
+						break;
+					}
+				}
+			}
+			if ( ( empty( $start ) || empty( $end ) ) && ! empty( $item['period'] ) && is_array( $item['period'] ) ) {
+				if ( empty( $start ) && ! empty( $item['period']['start'] ) ) {
+					$start = $this->normalize_portal_subscription_period_value( $item['period']['start'] );
+				}
+				if ( empty( $end ) && ! empty( $item['period']['end'] ) ) {
+					$end = $this->normalize_portal_subscription_period_value( $item['period']['end'] );
+				}
+			}
+			if ( $start && $end ) {
+				break;
+			}
+		}
+
 		return array(
-			'current_period_start' => ! empty( $raw['current_period_start'] ) ? $this->stripe_timestamp_to_mysql( $raw['current_period_start'] ) : '',
-			'current_period_end'   => ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : ( ! empty( $raw['current_period_end'] ) ? $this->stripe_timestamp_to_mysql( $raw['current_period_end'] ) : '' ),
+			'current_period_start' => $start,
+			'current_period_end'   => $end,
 		);
 	}
 
@@ -11784,8 +11846,8 @@ class AJForms_Admin {
 								<td><?php echo esc_html( $item->customer ); ?><br><small><?php echo esc_html( $item->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $item->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a></td>
 								<td><strong><?php echo esc_html( $item->status ); ?></strong></td>
 								<td><?php echo esc_html( ! empty( $item->amount ) ? $item->amount : $item->price ); ?></td>
-								<td><?php echo esc_html( $this->get_portal_service_record_period_label( $item ) ); ?></td>
-								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_next_billing_date_label( $item ) ) : esc_html( $this->format_portal_date( $item->paid_at ) ); ?></td>
+								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_period_label( $item ) ) : '-'; ?></td>
+								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_next_billing_date_label( $item ) ) : '-'; ?></td>
 								<td><?php echo esc_html( $this->format_portal_date( $item->synced_at ) ); ?></td>
 								<td>
 									<?php if ( 'one_time' === $item->sold_item_type && ! empty( $item->source_ref ) && 'used' !== sanitize_key( (string) $item->status ) ) : ?>

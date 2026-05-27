@@ -2019,11 +2019,14 @@ class AJForms {
 					<?php foreach ( $snapshot_services as $snapshot ) : ?>
 						<div class="aj-portal-service-card">
 							<h4><?php echo esc_html( $this->get_snapshot_service_name( $snapshot ) ); ?></h4>
+							<?php $snapshot_is_recurring = 'recurring' === $this->get_snapshot_billing_type_key( $snapshot ); ?>
 							<div class="aj-portal-service-card-grid">
 								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( (string) $snapshot->status ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_period_label( $snapshot ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_next_billing_date_label( $snapshot ) ); ?></span></div>
+								<?php if ( $snapshot_is_recurring ) : ?>
+									<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_period_label( $snapshot ) ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_next_billing_date_label( $snapshot ) ); ?></span></div>
+								<?php endif; ?>
 								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_amount_label( $snapshot ) ); ?></span></div>
 							</div>
 						</div>
@@ -2052,11 +2055,14 @@ class AJForms {
 					<?php foreach ( $past_snapshot_services as $snapshot ) : ?>
 						<div class="aj-portal-service-card aj-portal-service-card-past">
 							<h4><?php echo esc_html( $this->get_snapshot_service_name( $snapshot ) ); ?></h4>
+							<?php $snapshot_is_recurring = 'recurring' === $this->get_snapshot_billing_type_key( $snapshot ); ?>
 							<div class="aj-portal-service-card-grid">
 								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $snapshot->status ) ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_period_label( $snapshot ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php esc_html_e( 'No future billing', 'ajforms' ); ?></span></div>
+								<?php if ( $snapshot_is_recurring ) : ?>
+									<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_period_label( $snapshot ) ); ?></span></div>
+									<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php esc_html_e( 'No future billing', 'ajforms' ); ?></span></div>
+								<?php endif; ?>
 								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_amount_label( $snapshot ) ); ?></span></div>
 							</div>
 						</div>
