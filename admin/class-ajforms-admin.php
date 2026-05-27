@@ -1731,7 +1731,6 @@ class AJForms_Admin {
 				'stripe_price_id'
 			);
 			if ( $upserted ) {
-				$this->maybe_create_portal_service_snapshots_from_stripe_object( $subscription, 'subscription' );
 				$count++;
 			}
 		}
@@ -1832,9 +1831,12 @@ class AJForms_Admin {
 				'stripe_subscription_id'
 			);
 			if ( $upserted ) {
+				$this->maybe_create_portal_service_snapshots_from_stripe_object( $subscription, 'subscription' );
 				$count++;
 			}
 		}
+
+		$count += $this->backfill_portal_ledger_service_charges_from_snapshots( $stripe_customer_id );
 
 		return $this->portal_db_error ? new WP_Error( 'portal_db_error', $this->portal_db_error ) : $count;
 	}
@@ -2333,6 +2335,8 @@ class AJForms_Admin {
 				$count++;
 			}
 		}
+
+		$count += $this->backfill_portal_ledger_service_charges_from_snapshots( $stripe_customer_id );
 
 		return $this->portal_db_error ? new WP_Error( 'portal_db_error', $this->portal_db_error ) : $count;
 	}
@@ -3470,8 +3474,8 @@ class AJForms_Admin {
 			} elseif ( $effect < 0 ) {
 				$credit_balance += abs( $effect );
 			}
-			if ( in_array( $status, array( 'paid', 'succeeded' ), true ) ) {
-				$paid_total += abs( (float) $entry->amount );
+			if ( $effect < 0 && in_array( $status, array( 'paid', 'succeeded', 'partially_refunded', 'partial_refund' ), true ) ) {
+				$paid_total += abs( $effect );
 			}
 			if ( in_array( $status, array( 'failed', 'payment_failed', 'requires_payment_method' ), true ) ) {
 				$failed_count++;
@@ -4199,6 +4203,185 @@ class AJForms_Admin {
 		}
 
 		return $count;
+	}
+
+	private function get_portal_service_charge_ledger_source_id( $snapshot ) {
+		$snapshot_key = ! empty( $snapshot->snapshot_key ) ? sanitize_text_field( (string) $snapshot->snapshot_key ) : '';
+		if ( '' === $snapshot_key ) {
+			$parts = array(
+				! empty( $snapshot->stripe_customer_id ) ? $snapshot->stripe_customer_id : '',
+				! empty( $snapshot->product_id ) ? $snapshot->product_id : '',
+				! empty( $snapshot->price_id ) ? $snapshot->price_id : '',
+				! empty( $snapshot->subscription_id ) ? $snapshot->subscription_id : '',
+				! empty( $snapshot->checkout_session_id ) ? $snapshot->checkout_session_id : '',
+				! empty( $snapshot->invoice_id ) ? $snapshot->invoice_id : '',
+				! empty( $snapshot->payment_intent_id ) ? $snapshot->payment_intent_id : '',
+				! empty( $snapshot->charge_id ) ? $snapshot->charge_id : '',
+				! empty( $snapshot->service_period_start ) ? $snapshot->service_period_start : '',
+				! empty( $snapshot->service_period_end ) ? $snapshot->service_period_end : '',
+			);
+			$snapshot_key = implode( '|', array_map( 'strval', $parts ) );
+		}
+
+		return 'svc_charge_' . substr( sha1( $snapshot_key ), 0, 32 );
+	}
+
+	private function should_create_portal_service_charge_ledger_row( $snapshot ) {
+		$amount = isset( $snapshot->amount ) ? (float) $snapshot->amount : 0.0;
+		if ( $amount <= 0 ) {
+			return false;
+		}
+
+		$source_type = ! empty( $snapshot->source_type ) ? sanitize_key( (string) $snapshot->source_type ) : '';
+		if ( ! in_array( $source_type, array( 'invoice', 'checkout_session' ), true ) ) {
+			return false;
+		}
+
+		$status = ! empty( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '';
+		if ( in_array( $status, array( 'failed', 'void', 'voided', 'draft', 'requires_payment_method' ), true ) ) {
+			return false;
+		}
+
+		$service_name = ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : '';
+		if ( '' === $service_name && empty( $snapshot->product_id ) && empty( $snapshot->price_id ) ) {
+			return false;
+		}
+		if ( '' !== $service_name && $this->is_generic_portal_service_label( $service_name ) && empty( $snapshot->product_id ) && empty( $snapshot->price_id ) ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	private function get_portal_service_charge_ledger_status( $snapshot ) {
+		$status = ! empty( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '';
+		if ( in_array( $status, array( 'paid', 'succeeded', 'completed', 'active', 'trialing' ), true ) ) {
+			return 'paid';
+		}
+		if ( in_array( $status, array( 'open', 'unpaid', 'pending', 'pending_payment', 'awaiting_payment' ), true ) ) {
+			return $status;
+		}
+
+		return '' !== $status ? $status : 'paid';
+	}
+
+	private function get_portal_service_charge_ledger_date( $snapshot ) {
+		$raw = ! empty( $snapshot->raw_data ) ? json_decode( (string) $snapshot->raw_data, true ) : array();
+		if ( ! is_array( $raw ) ) {
+			$raw = array();
+		}
+
+		$parent = ! empty( $raw['parent'] ) && is_array( $raw['parent'] ) ? $raw['parent'] : array();
+		foreach ( array( 'created', 'effective_at' ) as $timestamp_key ) {
+			if ( ! empty( $parent[ $timestamp_key ] ) && is_numeric( $parent[ $timestamp_key ] ) ) {
+				return $this->stripe_timestamp_to_mysql( $parent[ $timestamp_key ] );
+			}
+		}
+		if ( ! empty( $parent['status_transitions']['paid_at'] ) && is_numeric( $parent['status_transitions']['paid_at'] ) ) {
+			return $this->stripe_timestamp_to_mysql( $parent['status_transitions']['paid_at'] );
+		}
+
+		return ! empty( $snapshot->created_at ) ? $snapshot->created_at : current_time( 'mysql' );
+	}
+
+	private function backfill_portal_ledger_service_charges_from_snapshots( $stripe_customer_id = '' ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$where             = 'stripe_customer_id <> %s';
+		$params            = array( '' );
+		if ( '' !== $stripe_customer_id ) {
+			$where    .= ' AND stripe_customer_id = %s';
+			$params[] = $stripe_customer_id;
+		}
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_service_snapshots_table()} WHERE {$where} ORDER BY updated_at ASC, id ASC",
+				$params
+			)
+		);
+		if ( empty( $rows ) ) {
+			return 0;
+		}
+
+		$changed = 0;
+		foreach ( $rows as $snapshot ) {
+			if ( ! $this->should_create_portal_service_charge_ledger_row( $snapshot ) ) {
+				continue;
+			}
+
+			$source_object_id = $this->get_portal_service_charge_ledger_source_id( $snapshot );
+			$service_name     = ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : __( 'Service charge', 'ajforms' );
+			$ledger_date      = $this->get_portal_service_charge_ledger_date( $snapshot );
+			$metadata         = array(
+				'ledger_line_type'      => 'service_charge',
+				'snapshot_key'          => ! empty( $snapshot->snapshot_key ) ? sanitize_text_field( (string) $snapshot->snapshot_key ) : '',
+				'product_id'            => ! empty( $snapshot->product_id ) ? sanitize_text_field( (string) $snapshot->product_id ) : '',
+				'price_id'              => ! empty( $snapshot->price_id ) ? sanitize_text_field( (string) $snapshot->price_id ) : '',
+				'price_label_snapshot'  => ! empty( $snapshot->price_label_snapshot ) ? sanitize_text_field( (string) $snapshot->price_label_snapshot ) : '',
+				'billing_type'          => ! empty( $snapshot->billing_type ) ? sanitize_key( (string) $snapshot->billing_type ) : '',
+				'recurring_interval'    => ! empty( $snapshot->recurring_interval ) ? sanitize_key( (string) $snapshot->recurring_interval ) : '',
+				'quantity'              => ! empty( $snapshot->quantity ) ? absint( $snapshot->quantity ) : 1,
+				'checkout_session_id'   => ! empty( $snapshot->checkout_session_id ) ? sanitize_text_field( (string) $snapshot->checkout_session_id ) : '',
+				'invoice_id'            => ! empty( $snapshot->invoice_id ) ? sanitize_text_field( (string) $snapshot->invoice_id ) : '',
+				'payment_intent_id'     => ! empty( $snapshot->payment_intent_id ) ? sanitize_text_field( (string) $snapshot->payment_intent_id ) : '',
+				'charge_id'             => ! empty( $snapshot->charge_id ) ? sanitize_text_field( (string) $snapshot->charge_id ) : '',
+				'subscription_id'       => ! empty( $snapshot->subscription_id ) ? sanitize_text_field( (string) $snapshot->subscription_id ) : '',
+				'service_period'        => ! empty( $snapshot->service_period ) ? sanitize_text_field( (string) $snapshot->service_period ) : '',
+				'service_period_start'  => ! empty( $snapshot->service_period_start ) ? sanitize_text_field( (string) $snapshot->service_period_start ) : '',
+				'service_period_end'    => ! empty( $snapshot->service_period_end ) ? sanitize_text_field( (string) $snapshot->service_period_end ) : '',
+				'next_billing_date'     => ! empty( $snapshot->next_billing_date ) ? sanitize_text_field( (string) $snapshot->next_billing_date ) : '',
+				'snapshot_source_type'  => ! empty( $snapshot->source_type ) ? sanitize_key( (string) $snapshot->source_type ) : '',
+			);
+			$data             = array(
+				'stripe_customer_id' => sanitize_text_field( (string) $snapshot->stripe_customer_id ),
+				'source_object_id'   => $source_object_id,
+				'source_type'        => 'service_charge',
+				'ledger_date'        => $ledger_date,
+				'description'        => $service_name,
+				'amount'             => (float) $snapshot->amount,
+				'currency'           => ! empty( $snapshot->currency ) ? strtolower( sanitize_key( (string) $snapshot->currency ) ) : 'usd',
+				'status'             => $this->get_portal_service_charge_ledger_status( $snapshot ),
+				'invoice_id'         => ! empty( $snapshot->invoice_id ) ? sanitize_text_field( (string) $snapshot->invoice_id ) : '',
+				'payment_intent_id'  => ! empty( $snapshot->payment_intent_id ) ? sanitize_text_field( (string) $snapshot->payment_intent_id ) : '',
+				'charge_id'          => ! empty( $snapshot->charge_id ) ? sanitize_text_field( (string) $snapshot->charge_id ) : '',
+				'metadata'           => wp_json_encode( $metadata ),
+				'created_at'         => current_time( 'mysql' ),
+			);
+			$formats          = array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' );
+			$existing_id      = (int) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT id FROM {$this->get_portal_ledger_table()} WHERE source_object_id = %s LIMIT 1",
+					$source_object_id
+				)
+			);
+
+			if ( $existing_id ) {
+				$result = $wpdb->update( $this->get_portal_ledger_table(), $data, array( 'id' => $existing_id ), $formats, array( '%d' ) );
+			} else {
+				$result = $wpdb->insert( $this->get_portal_ledger_table(), $data, $formats );
+			}
+
+			if ( false !== $result && $result > 0 ) {
+				$changed++;
+			}
+		}
+
+		if ( $changed > 0 ) {
+			$this->log_portal_event(
+				'ledger_service_charges_backfilled',
+				array(
+					'source'             => 'stripe_sync',
+					'stripe_customer_id' => $stripe_customer_id,
+					'details'            => array(
+						'rows_changed' => $changed,
+					),
+				)
+			);
+		}
+
+		return $changed;
 	}
 
 	private function get_portal_product_by_price_id( $price_id ) {
@@ -5598,6 +5781,10 @@ class AJForms_Admin {
 
 		if ( 'refund' === $source_type ) {
 			return 0.0;
+		}
+
+		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			return abs( $amount );
 		}
 
 		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
@@ -10114,6 +10301,7 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 		$this->cleanup_unpaid_portal_checkout_sessions();
+		$this->backfill_portal_ledger_service_charges_from_snapshots();
 
 		$filters         = $this->get_portal_billing_filter_data();
 		$status_filter   = $filters['status'];
@@ -10143,8 +10331,8 @@ class AJForms_Admin {
 			} elseif ( $effect < 0 ) {
 				$credit_balance += abs( $effect );
 			}
-			if ( in_array( sanitize_key( (string) $entry->status ), array( 'paid', 'succeeded' ), true ) ) {
-				$paid_total += abs( (float) $entry->amount );
+			if ( $effect < 0 && in_array( sanitize_key( (string) $entry->status ), array( 'paid', 'succeeded', 'partially_refunded', 'partial_refund' ), true ) ) {
+				$paid_total += abs( $effect );
 			}
 		}
 		$totals = $wpdb->get_row( "SELECT COUNT(*) AS total_rows, COALESCE(SUM(amount),0) AS total_amount FROM {$this->get_portal_ledger_table()}" );

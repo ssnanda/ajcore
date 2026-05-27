@@ -653,6 +653,10 @@ class AJForms {
 			return 0.0;
 		}
 
+		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
+			return abs( $amount );
+		}
+
 		if ( in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
 			if ( 'refunded' === $status ) {
 				return 0.0;
