@@ -4258,7 +4258,7 @@ class AJForms {
 						'<p><b><?php echo esc_js( __( 'Today:', 'ajforms' ) ); ?></b> ' + formatPortalMoney(breakdown.total, breakdown.currency) + ' <?php echo esc_js( __( 'total.', 'ajforms' ) ); ?></p>' +
 						'<p><?php echo esc_js( __( 'Includes', 'ajforms' ) ); ?> ' + formatPortalMoney(breakdown.one_time_total, breakdown.currency) + ' <?php echo esc_js( __( 'one-time and', 'ajforms' ) ); ?> ' + formatPortalMoney(breakdown.recurring_total, breakdown.currency) + ' <?php echo esc_js( __( 'per', 'ajforms' ) ); ?> ' + interval + ' <?php echo esc_js( __( 'recurring.', 'ajforms' ) ); ?></p>' +
 						'<p><b><?php echo esc_js( __( 'Renewal:', 'ajforms' ) ); ?></b> ' + formatPortalMoney(breakdown.recurring_total, breakdown.currency) + ' <?php echo esc_js( __( 'per', 'ajforms' ) ); ?> ' + interval + ' <?php echo esc_js( __( 'after the first period.', 'ajforms' ) ); ?></p>' +
-						'<p><?php echo esc_js( __( 'You will enter payment once. Stripe may show the subscription portion; the one-time portion will be charged immediately after successful checkout using the same payment method.', 'ajforms' ) ); ?></p>' +
+						'<p><?php echo esc_js( __( 'You will enter payment once. Stripe may show the subscription portion; AJ Core charges the one-time portion immediately after successful checkout using the same payment method.', 'ajforms' ) ); ?></p>' +
 						'</div>';
 				}
 
@@ -5645,7 +5645,7 @@ class AJForms {
 
 		return sprintf(
 			/* translators: 1: total today amount, 2: recurring subscription amount, 3: recurring interval suffix, 4: one-time amount */
-			__( 'ⓘ 𝐈𝐌𝐏𝐎𝐑𝐓𝐀𝐍𝐓 𝐏𝐀𝐘𝐌𝐄𝐍𝐓 𝐍𝐎𝐓𝐈𝐂𝐄\n━━━━━━━━━━━━━━━━━━━━\nToday you are authorizing %1$s total. This Stripe page starts the subscription portion: %2$s%3$s. After successful checkout, the one-time portion will be charged immediately: %4$s using the same saved payment method. Renewal is %2$s%3$s after the first period.\n━━━━━━━━━━━━━━━━━━━━', 'ajforms' ),
+			__( 'Today due: %1$s\nStarts subscription: %2$s%3$s\nOne-time charge after checkout: %4$s\nRenewal after first period: %2$s%3$s', 'ajforms' ),
 			$this->format_checkout_notice_money( $total_today_minor, $currency ),
 			$this->format_checkout_notice_money( $subscription_amount_minor, $currency ),
 			$interval_suffix,
@@ -6967,7 +6967,7 @@ class AJForms {
 					'<p><b>Today:</b> ' + formatCurrency(breakdown.total, breakdown.currency) + ' total.</p>' +
 					'<p>This includes ' + formatCurrency(breakdown.one_time_total, breakdown.currency) + ' one-time and ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + ' recurring.</p>' +
 					'<p><b>Renewal:</b> ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + ' after the first period.</p>' +
-					'<p>You will enter payment once. Stripe may show the subscription portion on its checkout screen; the one-time portion will be charged immediately after successful checkout using the same payment method.</p>' +
+					'<p>You will enter payment once. Stripe may show the subscription portion on its checkout screen; AJ Core will charge the one-time portion immediately after successful checkout using the same payment method.</p>' +
 					'</div>';
 			}
 
