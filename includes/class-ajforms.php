@@ -1532,6 +1532,133 @@ class AJForms {
 		return $this->format_portal_money( $amount, $currency ) . $interval;
 	}
 
+	private function get_portal_product_price_display_label( $product ) {
+		$amount   = isset( $product->price_amount ) ? (float) $product->price_amount : 0;
+		$currency = isset( $product->currency ) ? strtoupper( sanitize_key( (string) $product->currency ) ) : 'USD';
+		$interval = ! empty( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '';
+
+		return $currency . ' ' . number_format_i18n( $amount, 2 ) . ( '' !== $interval ? ' ' . sprintf( __( 'Per %s', 'ajforms' ), $interval ) : '' );
+	}
+
+	private function get_portal_product_dependency_data( $product, $products_by_price = array() ) {
+		$price_id             = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+		$dependency_settings  = $this->get_public_product_dependency_settings();
+		$required_price_id    = '';
+		$required_product_name = '';
+		$dependency_note      = '';
+		$raw_data             = $this->decode_portal_json( isset( $product->raw_data ) ? $product->raw_data : '' );
+		$metadata             = $this->decode_portal_json( isset( $product->metadata ) ? $product->metadata : '' );
+
+		if ( isset( $dependency_settings[ $price_id ] ) ) {
+			$required_price_id = isset( $dependency_settings[ $price_id ]['requires_price_id'] ) ? sanitize_text_field( (string) $dependency_settings[ $price_id ]['requires_price_id'] ) : '';
+			$dependency_note   = isset( $dependency_settings[ $price_id ]['dependency_note'] ) ? sanitize_textarea_field( (string) $dependency_settings[ $price_id ]['dependency_note'] ) : '';
+		}
+
+		foreach ( array( $metadata, isset( $raw_data['metadata'] ) && is_array( $raw_data['metadata'] ) ? $raw_data['metadata'] : array() ) as $source ) {
+			if ( '' === $required_price_id ) {
+				foreach ( array( 'ajcore_requires_price_id', 'requires_price_id', 'required_price_id' ) as $key ) {
+					if ( ! empty( $source[ $key ] ) && is_scalar( $source[ $key ] ) ) {
+						$required_price_id = sanitize_text_field( (string) $source[ $key ] );
+						break;
+					}
+				}
+			}
+			if ( '' === $required_product_name ) {
+				foreach ( array( 'ajcore_requires_product_name', 'requires_product_name', 'required_product_name' ) as $key ) {
+					if ( ! empty( $source[ $key ] ) && is_scalar( $source[ $key ] ) ) {
+						$required_product_name = sanitize_text_field( (string) $source[ $key ] );
+						break;
+					}
+				}
+			}
+			if ( '' === $dependency_note ) {
+				foreach ( array( 'ajcore_dependency_note', 'dependency_note', 'required_product_note' ) as $key ) {
+					if ( ! empty( $source[ $key ] ) && is_scalar( $source[ $key ] ) ) {
+						$dependency_note = sanitize_textarea_field( (string) $source[ $key ] );
+						break;
+					}
+				}
+			}
+		}
+
+		if ( '' !== $required_price_id && isset( $products_by_price[ $required_price_id ] ) && '' === $required_product_name ) {
+			$required_product_name = ! empty( $products_by_price[ $required_price_id ]->custom_label ) ? $products_by_price[ $required_price_id ]->custom_label : ( isset( $products_by_price[ $required_price_id ]->name ) ? $products_by_price[ $required_price_id ]->name : '' );
+		}
+
+		if ( '' === $dependency_note && '' !== $required_product_name ) {
+			$dependency_note = sprintf( __( 'This service requires %s. It will be added to your cart when available.', 'ajforms' ), $required_product_name );
+		}
+
+		return array(
+			'requires_price_id'    => $required_price_id,
+			'requires_product_name' => $required_product_name,
+			'dependency_note'      => $dependency_note,
+		);
+	}
+
+	private function get_portal_add_service_product_groups( $products ) {
+		$products_by_price = array();
+		foreach ( (array) $products as $product ) {
+			$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+			if ( '' !== $price_id ) {
+				$products_by_price[ $price_id ] = $product;
+			}
+		}
+
+		$groups = array();
+		foreach ( (array) $products as $product ) {
+			$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+			if ( '' === $price_id ) {
+				continue;
+			}
+
+			$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
+			$group_key  = '' !== $product_id ? $product_id : $price_id;
+			$name       = ! empty( $product->custom_label ) ? sanitize_text_field( (string) $product->custom_label ) : ( isset( $product->name ) ? sanitize_text_field( (string) $product->name ) : __( 'Service', 'ajforms' ) );
+			$description = ! empty( $product->description_override ) ? (string) $product->description_override : ( isset( $product->description ) ? (string) $product->description : '' );
+			$dependency = $this->get_portal_product_dependency_data( $product, $products_by_price );
+
+			if ( ! isset( $groups[ $group_key ] ) ) {
+				$groups[ $group_key ] = array(
+					'product_id'   => $product_id,
+					'name'         => $name,
+					'description'  => $description,
+					'prices'       => array(),
+					'sort_order'   => isset( $product->sort_order ) ? (int) $product->sort_order : 0,
+				);
+			}
+
+			$groups[ $group_key ]['prices'][] = array(
+				'price_id'              => $price_id,
+				'product_id'            => $product_id,
+				'name'                  => $name,
+				'amount'                => isset( $product->price_amount ) ? (float) $product->price_amount : 0,
+				'currency'              => isset( $product->currency ) ? strtolower( sanitize_key( (string) $product->currency ) ) : 'usd',
+				'recurring_interval'    => ! empty( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '',
+				'price_label'           => $this->get_portal_product_price_display_label( $product ),
+				'button_label'          => ! empty( $product->portal_open_request ) ? __( 'Request Pending', 'ajforms' ) : ( empty( $product->portal_can_add ) ? __( 'Already Added', 'ajforms' ) : __( 'Add to My Services', 'ajforms' ) ),
+				'can_add'               => ! empty( $product->portal_can_add ) ? 1 : 0,
+				'required_price_id'     => $dependency['requires_price_id'],
+				'required_product_name' => $dependency['requires_product_name'],
+				'dependency_note'       => $dependency['dependency_note'],
+			);
+		}
+
+		uasort(
+			$groups,
+			function ( $a, $b ) {
+				$sort_a = isset( $a['sort_order'] ) ? (int) $a['sort_order'] : 0;
+				$sort_b = isset( $b['sort_order'] ) ? (int) $b['sort_order'] : 0;
+				if ( $sort_a === $sort_b ) {
+					return strcasecmp( (string) $a['name'], (string) $b['name'] );
+				}
+				return $sort_a <=> $sort_b;
+			}
+		);
+
+		return array_values( $groups );
+	}
+
 	private function get_portal_product_by_price_id( $price_id ) {
 		global $wpdb;
 
@@ -1987,8 +2114,10 @@ class AJForms {
 		$show_current       = ! isset( $service_settings['show_current_services'] ) || (bool) $service_settings['show_current_services'];
 		$show_add           = ! isset( $service_settings['show_add_services'] ) || (bool) $service_settings['show_add_services'];
 		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions, $ledger ) : array();
+		$available_product_groups = $show_add ? $this->get_portal_add_service_product_groups( $available_products ) : array();
 		$custom_request_products = $show_add ? $this->get_portal_custom_request_products( $subscriptions, $ledger ) : array();
 		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
+		$stripe_settings    = $this->get_stripe_settings();
 
 		ob_start();
 		?>
@@ -2102,36 +2231,105 @@ class AJForms {
 					<?php endforeach; ?>
 				</div>
 			<?php endif; ?>
-			<?php if ( empty( $available_products ) ) : ?>
+			<?php if ( empty( $available_product_groups ) ) : ?>
 				<?php if ( empty( $custom_request_products ) ) : ?>
 					<p><?php esc_html_e( 'No additional services are currently available for this account.', 'ajforms' ); ?></p>
 				<?php endif; ?>
 			<?php else : ?>
+				<div
+					class="aj-portal-service-cart"
+					data-cart-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_cart_checkout' ) ); ?>"
+					data-publishable-key="<?php echo esc_attr( isset( $stripe_settings['publishable_key'] ) ? $stripe_settings['publishable_key'] : '' ); ?>"
+				>
+					<div class="aj-portal-service-cart-bar" aria-live="polite">
+						<button type="button" class="aj-portal-service-cart-toggle">
+							<span><?php esc_html_e( 'Cart', 'ajforms' ); ?></span>
+							<strong class="aj-portal-service-cart-count">0</strong>
+						</button>
+						<div class="aj-portal-service-cart-status"><?php esc_html_e( 'No services selected', 'ajforms' ); ?></div>
+						<button type="button" class="aj-portal-service-cart-clear" disabled><?php esc_html_e( 'Clear', 'ajforms' ); ?></button>
+						<button type="button" class="aj-portal-service-cart-checkout" disabled><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
+					</div>
+					<div class="aj-portal-service-cart-panel" hidden>
+						<div class="aj-portal-service-cart-items"></div>
+						<div class="aj-portal-service-cart-empty"><?php esc_html_e( 'No services selected yet.', 'ajforms' ); ?></div>
+						<div class="aj-portal-service-cart-total"></div>
+					</div>
+					<div class="aj-portal-service-checkout-panel" hidden>
+						<div class="aj-portal-service-checkout-header">
+							<h4><?php esc_html_e( 'Secure checkout', 'ajforms' ); ?></h4>
+							<button type="button" class="aj-portal-service-checkout-close"><?php esc_html_e( 'Close', 'ajforms' ); ?></button>
+						</div>
+						<div class="aj-portal-service-checkout-mount"></div>
+					</div>
+				</div>
 				<div class="aj-portal-add-service-grid">
-					<?php foreach ( $available_products as $product ) : ?>
+					<?php foreach ( $available_product_groups as $group ) : ?>
 						<?php
-						$product_name        = ! empty( $product->custom_label ) ? $product->custom_label : $product->name;
-						$product_description = ! empty( $product->description_override ) ? $product->description_override : $product->description;
-						$price_id            = sanitize_text_field( (string) $product->stripe_price_id );
+						$prices              = isset( $group['prices'] ) && is_array( $group['prices'] ) ? array_values( $group['prices'] ) : array();
+						$first_price         = ! empty( $prices ) ? $prices[0] : array();
+						$product_name        = isset( $group['name'] ) ? $group['name'] : __( 'Service', 'ajforms' );
+						$product_description = isset( $group['description'] ) ? $group['description'] : '';
+						$can_add             = ! empty( $first_price['can_add'] );
 						?>
-						<div class="aj-portal-add-service-card">
+						<div
+							class="aj-portal-add-service-card aj-portal-add-service-product"
+							data-product-id="<?php echo esc_attr( isset( $group['product_id'] ) ? $group['product_id'] : '' ); ?>"
+						>
 							<h4><?php echo esc_html( $product_name ); ?></h4>
 							<?php if ( $product_description ) : ?>
 								<p><?php echo esc_html( wp_trim_words( $product_description, 28 ) ); ?></p>
 							<?php endif; ?>
-							<div class="aj-portal-add-service-price"><?php echo esc_html( $this->get_portal_product_amount_label( $product ) ); ?></div>
-							<?php if ( ! empty( $product->portal_open_request ) ) : ?>
-								<button type="button" class="button" disabled><?php esc_html_e( 'Request Pending', 'ajforms' ); ?></button>
-							<?php elseif ( empty( $product->portal_can_add ) ) : ?>
-								<button type="button" class="button" disabled><?php esc_html_e( 'Already Added', 'ajforms' ); ?></button>
+							<?php if ( count( $prices ) > 1 ) : ?>
+								<label class="aj-portal-add-service-price-choice">
+									<span><?php esc_html_e( 'Choose option', 'ajforms' ); ?></span>
+									<select class="aj-portal-add-service-price-select">
+										<?php foreach ( $prices as $price ) : ?>
+											<option
+												value="<?php echo esc_attr( $price['price_id'] ); ?>"
+												data-product-name="<?php echo esc_attr( $price['name'] ); ?>"
+												data-amount="<?php echo esc_attr( $price['amount'] ); ?>"
+												data-currency="<?php echo esc_attr( $price['currency'] ); ?>"
+												data-recurring-interval="<?php echo esc_attr( $price['recurring_interval'] ); ?>"
+												data-price-label="<?php echo esc_attr( $price['price_label'] ); ?>"
+												data-can-add="<?php echo esc_attr( $price['can_add'] ); ?>"
+												data-button-label="<?php echo esc_attr( $price['button_label'] ); ?>"
+												data-required-price-id="<?php echo esc_attr( $price['required_price_id'] ); ?>"
+												data-required-product-name="<?php echo esc_attr( $price['required_product_name'] ); ?>"
+												data-dependency-note="<?php echo esc_attr( $price['dependency_note'] ); ?>"
+											><?php echo esc_html( $price['price_label'] ); ?></option>
+										<?php endforeach; ?>
+									</select>
+								</label>
 							<?php else : ?>
-								<button
-									type="button"
-									class="button aj-portal-add-service-button"
-									data-price-id="<?php echo esc_attr( $price_id ); ?>"
-									data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_portal_add_service_' . $price_id ) ); ?>"
-								><?php esc_html_e( 'Add to My Services', 'ajforms' ); ?></button>
+								<input
+									type="hidden"
+									class="aj-portal-add-service-price-select"
+									value="<?php echo esc_attr( isset( $first_price['price_id'] ) ? $first_price['price_id'] : '' ); ?>"
+									data-product-name="<?php echo esc_attr( isset( $first_price['name'] ) ? $first_price['name'] : $product_name ); ?>"
+									data-amount="<?php echo esc_attr( isset( $first_price['amount'] ) ? $first_price['amount'] : 0 ); ?>"
+									data-currency="<?php echo esc_attr( isset( $first_price['currency'] ) ? $first_price['currency'] : 'usd' ); ?>"
+									data-recurring-interval="<?php echo esc_attr( isset( $first_price['recurring_interval'] ) ? $first_price['recurring_interval'] : '' ); ?>"
+									data-price-label="<?php echo esc_attr( isset( $first_price['price_label'] ) ? $first_price['price_label'] : '' ); ?>"
+									data-can-add="<?php echo esc_attr( isset( $first_price['can_add'] ) ? $first_price['can_add'] : 0 ); ?>"
+									data-button-label="<?php echo esc_attr( isset( $first_price['button_label'] ) ? $first_price['button_label'] : __( 'Add to My Services', 'ajforms' ) ); ?>"
+									data-required-price-id="<?php echo esc_attr( isset( $first_price['required_price_id'] ) ? $first_price['required_price_id'] : '' ); ?>"
+									data-required-product-name="<?php echo esc_attr( isset( $first_price['required_product_name'] ) ? $first_price['required_product_name'] : '' ); ?>"
+									data-dependency-note="<?php echo esc_attr( isset( $first_price['dependency_note'] ) ? $first_price['dependency_note'] : '' ); ?>"
+								>
 							<?php endif; ?>
+							<div class="aj-portal-add-service-price"><?php echo esc_html( isset( $first_price['price_label'] ) ? $first_price['price_label'] : '' ); ?></div>
+							<div class="aj-portal-add-service-requires" <?php echo empty( $first_price['required_product_name'] ) ? 'hidden' : ''; ?>>
+								<?php
+								echo esc_html(
+									! empty( $first_price['required_product_name'] )
+										? sprintf( __( 'Requires another product: %s', 'ajforms' ), $first_price['required_product_name'] )
+										: ''
+								);
+								?>
+							</div>
+							<div class="aj-portal-add-service-dependency-note" <?php echo empty( $first_price['dependency_note'] ) ? 'hidden' : ''; ?>><?php echo esc_html( isset( $first_price['dependency_note'] ) ? $first_price['dependency_note'] : '' ); ?></div>
+							<button type="button" class="button aj-portal-add-service-button" <?php disabled( ! $can_add ); ?>><?php echo esc_html( isset( $first_price['button_label'] ) ? $first_price['button_label'] : __( 'Add to My Services', 'ajforms' ) ); ?></button>
 						</div>
 					<?php endforeach; ?>
 				</div>
@@ -3374,10 +3572,36 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-add-service-card h4{position:relative;z-index:1;margin:0;font-size:22px;line-height:1.15;letter-spacing:-.04em;color:#111827;text-wrap:balance}
 				.ajcore-portal-shell .aj-portal-add-service-card p{position:relative;z-index:1;margin:0;color:#475569;line-height:1.6;font-size:15px}
 				.ajcore-portal-shell .aj-portal-add-service-price{position:relative;z-index:1;margin-top:auto;font-weight:950;color:#111827;font-size:19px;letter-spacing:-.025em}
+				.ajcore-portal-shell .aj-portal-add-service-price-choice{position:relative;z-index:1;display:grid;gap:7px;margin:4px 0 0;color:#475569;font-weight:850;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+				.ajcore-portal-shell .aj-portal-add-service-price-choice select{width:100%;min-height:46px;border:1px solid #dbe7f3;border-radius:14px;background:#fff;color:#111827;padding:0 12px;font-size:15px;font-weight:800;text-transform:none;letter-spacing:0}
+				.ajcore-portal-shell .aj-portal-add-service-requires,.ajcore-portal-shell .aj-portal-add-service-dependency-note{position:relative;z-index:1;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:800;line-height:1.4}
+				.ajcore-portal-shell .aj-portal-add-service-requires{border:1px solid #dbeafe;background:#eff6ff;color:#1e40af}
+				.ajcore-portal-shell .aj-portal-add-service-dependency-note{border:1px solid #fed7aa;background:#fff7ed;color:#9a3412}
 				.ajcore-portal-shell .aj-portal-add-service-card .button{position:relative;z-index:1;align-self:flex-start}
 				.ajcore-portal-shell .aj-portal-add-service-message{border:1px solid #dbe7f3;border-radius:18px;padding:15px 16px;background:#fff;color:#1f2937;box-shadow:0 10px 24px rgba(15,23,42,.05)}
 				.ajcore-portal-shell .aj-portal-add-service-message.is-error{border-color:#fecaca;color:#b91c1c;background:#fff7f7}
 				.ajcore-portal-shell .aj-portal-add-service-message.is-success{border-color:#bbf7d0;color:#166534;background:#f0fdf4}
+				.ajcore-portal-shell .aj-portal-service-cart{margin:0 0 20px}
+				.ajcore-portal-shell .aj-portal-service-cart-bar{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #dbeafe;border-radius:18px;background:rgba(255,255,255,.96);box-shadow:0 14px 34px rgba(15,23,42,.08)}
+				.ajcore-portal-shell .aj-portal-service-cart-toggle{display:inline-flex;align-items:center;gap:9px;border:0;border-radius:999px;background:#4f46e5;color:#fff;padding:10px 15px;font-weight:950;cursor:pointer}
+				.ajcore-portal-shell .aj-portal-service-cart-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:999px;background:#fff;color:#4f46e5;font-size:13px}
+				.ajcore-portal-shell .aj-portal-service-cart-status{flex:1;color:#475569;font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+				.ajcore-portal-shell .aj-portal-service-cart-clear,.ajcore-portal-shell .aj-portal-service-cart-checkout,.ajcore-portal-shell .aj-portal-service-checkout-close{border:0;border-radius:999px;padding:10px 14px;font-weight:950;cursor:pointer}
+				.ajcore-portal-shell .aj-portal-service-cart-clear{background:#f1f5f9;color:#475569}
+				.ajcore-portal-shell .aj-portal-service-cart-checkout{background:#0f7ac6;color:#fff}
+				.ajcore-portal-shell .aj-portal-service-cart-clear:disabled,.ajcore-portal-shell .aj-portal-service-cart-checkout:disabled{opacity:.5;cursor:not-allowed}
+				.ajcore-portal-shell .aj-portal-service-cart-panel,.ajcore-portal-shell .aj-portal-service-checkout-panel{margin-top:14px;border:1px solid #dbe7f3;border-radius:22px;background:#fff;padding:18px;box-shadow:0 18px 48px rgba(15,23,42,.08)}
+				.ajcore-portal-shell .aj-portal-service-cart-items{display:grid;gap:10px}
+				.ajcore-portal-shell .aj-portal-service-cart-row{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:13px;border:1px solid #e2e8f0;border-radius:16px;background:#fff}
+				.ajcore-portal-shell .aj-portal-service-cart-row strong{display:block;color:#0f172a;font-size:15px;line-height:1.25}
+				.ajcore-portal-shell .aj-portal-service-cart-row span{display:block;margin-top:4px;color:#475569;font-weight:850}
+				.ajcore-portal-shell .aj-portal-service-cart-row small{display:block;margin-top:5px;color:#9a3412;font-weight:800;line-height:1.35}
+				.ajcore-portal-shell .aj-portal-service-cart-row button{border:1px solid #fecaca;background:#fff;color:#b91c1c;border-radius:10px;padding:8px 11px;font-weight:850;cursor:pointer}
+				.ajcore-portal-shell .aj-portal-service-cart-empty{color:#64748b;font-weight:800}
+				.ajcore-portal-shell .aj-portal-service-cart-total{margin-top:14px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:22px;font-weight:950;color:#111827}
+				.ajcore-portal-shell .aj-portal-service-checkout-header{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}
+				.ajcore-portal-shell .aj-portal-service-checkout-header h4{margin:0;font-size:22px;color:#111827}
+				.ajcore-portal-shell .aj-portal-service-checkout-close{background:#f1f5f9;color:#475569}
 
 				.ajcore-portal-shell .aj-portal-table-wrap{overflow:auto;margin:0 0 28px;border-radius:22px;border:1px solid rgba(219,231,243,.95);background:rgba(255,255,255,.88);box-shadow:0 18px 46px rgba(15,23,42,.07);backdrop-filter:blur(12px);width:100%;max-width:none}
 				.ajcore-portal-shell .aj-portal-table{width:100%;border-collapse:separate;border-spacing:0;background:transparent;border:0;font-size:15px;min-width:760px}
@@ -3561,6 +3785,9 @@ class AJForms {
 				echo $this->render_customer_portal_profile_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
 			?>
+			<?php if ( 'services' === $active_tab ) : ?>
+				<script src="https://js.stripe.com/v3/"></script>
+			<?php endif; ?>
 			<script>
 			(function() {
 				const shell = document.currentScript.closest('.ajcore-portal-shell');
@@ -3654,21 +3881,268 @@ class AJForms {
 					}
 
 					const message = shell.querySelector('.aj-portal-add-service-message');
-					const originalText = button.textContent;
-					button.disabled = true;
-					button.textContent = '<?php echo esc_js( __( 'Loading...', 'ajforms' ) ); ?>';
-
 					if (message) {
 						message.textContent = '';
 						message.className = 'aj-portal-add-service-message';
 						message.style.display = 'none';
 					}
 
+					addPortalServiceToCart(button.closest('.aj-portal-add-service-product'));
+				});
+
+				const portalCartWrap = shell.querySelector('.aj-portal-service-cart');
+				const portalCart = {};
+				let embeddedCheckout = null;
+				let stripeInstance = null;
+
+				function getPortalPriceOption(card) {
+					const input = card ? card.querySelector('.aj-portal-add-service-price-select') : null;
+					if (!input) {
+						return null;
+					}
+					if (input.tagName && input.tagName.toLowerCase() === 'select') {
+						return input.options[input.selectedIndex] || null;
+					}
+					return input;
+				}
+
+				function getPortalItemFromOption(option, card) {
+					if (!option || !option.value) {
+						return null;
+					}
+					return {
+						price_id: option.value,
+						product_name: option.dataset.productName || (card ? card.querySelector('h4')?.textContent : '') || '<?php echo esc_js( __( 'Service', 'ajforms' ) ); ?>',
+						amount: parseFloat(option.dataset.amount || '0') || 0,
+						currency: option.dataset.currency || 'usd',
+						recurring_interval: option.dataset.recurringInterval || '',
+						price_label: option.dataset.priceLabel || '',
+						required_price_id: option.dataset.requiredPriceId || '',
+						required_product_name: option.dataset.requiredProductName || '',
+						dependency_note: option.dataset.dependencyNote || '',
+						can_add: option.dataset.canAdd === '1'
+					};
+				}
+
+				function formatPortalMoney(amount, currency) {
+					try {
+						return new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency || 'usd').toUpperCase() }).format(amount || 0);
+					} catch (error) {
+						return '$' + (Number(amount || 0)).toFixed(2);
+					}
+				}
+
+				function getPortalCartItemLabel(item) {
+					if (item.price_label) {
+						return item.price_label;
+					}
+					let label = formatPortalMoney(item.amount, item.currency);
+					if (item.recurring_interval) {
+						label += ' /' + item.recurring_interval;
+					}
+					return label;
+				}
+
+				function findPortalCardByPriceId(priceId) {
+					const options = shell.querySelectorAll('.aj-portal-add-service-price-select option, input.aj-portal-add-service-price-select');
+					for (let index = 0; index < options.length; index += 1) {
+						if (options[index].value === priceId) {
+							return options[index].closest('.aj-portal-add-service-product');
+						}
+					}
+					return null;
+				}
+
+				function addPortalCartItem(item, locked) {
+					if (!item || !item.price_id || !item.can_add) {
+						return false;
+					}
+					portalCart[item.price_id] = Object.assign({}, item, { quantity: 1, locked: locked || '' });
+					return true;
+				}
+
+				function addPortalServiceToCart(card) {
+					const option = getPortalPriceOption(card);
+					const item = getPortalItemFromOption(option, card);
+					if (!item || !item.can_add) {
+						return;
+					}
+
+					let notice = '';
+					if (item.required_price_id && !portalCart[item.required_price_id]) {
+						const requiredCard = findPortalCardByPriceId(item.required_price_id);
+						const requiredOption = getPortalPriceOption(requiredCard);
+						const requiredItem = getPortalItemFromOption(requiredOption, requiredCard);
+						if (requiredItem && requiredItem.price_id === item.required_price_id && requiredItem.can_add) {
+							addPortalCartItem(requiredItem, item.dependency_note || '<?php echo esc_js( __( 'Required service added automatically.', 'ajforms' ) ); ?>');
+							notice = item.dependency_note || '';
+						} else if (item.dependency_note) {
+							notice = item.dependency_note;
+						}
+					}
+
+					addPortalCartItem(item, '');
+					renderPortalCart(notice);
+				}
+
+				function renderPortalCart(notice) {
+					if (!portalCartWrap) {
+						return;
+					}
+					const items = Object.values(portalCart);
+					const count = items.length;
+					const countEl = portalCartWrap.querySelector('.aj-portal-service-cart-count');
+					const statusEl = portalCartWrap.querySelector('.aj-portal-service-cart-status');
+					const clearButton = portalCartWrap.querySelector('.aj-portal-service-cart-clear');
+					const checkoutButton = portalCartWrap.querySelector('.aj-portal-service-cart-checkout');
+					const panel = portalCartWrap.querySelector('.aj-portal-service-cart-panel');
+					const itemsEl = portalCartWrap.querySelector('.aj-portal-service-cart-items');
+					const emptyEl = portalCartWrap.querySelector('.aj-portal-service-cart-empty');
+					const totalEl = portalCartWrap.querySelector('.aj-portal-service-cart-total');
+					let total = 0;
+					let currency = 'usd';
+
+					if (countEl) {
+						countEl.textContent = String(count);
+					}
+					if (clearButton) {
+						clearButton.disabled = count === 0;
+					}
+					if (checkoutButton) {
+						checkoutButton.disabled = count === 0;
+					}
+					if (itemsEl) {
+						itemsEl.innerHTML = '';
+					}
+					items.forEach(function(item) {
+						total += item.amount || 0;
+						currency = item.currency || currency;
+						if (!itemsEl) {
+							return;
+						}
+						const row = document.createElement('div');
+						row.className = 'aj-portal-service-cart-row';
+						row.innerHTML = '<div><strong></strong><span></span><small></small></div><em>Qty 1</em><button type="button"><?php echo esc_js( __( 'Remove', 'ajforms' ) ); ?></button>';
+						row.querySelector('strong').textContent = item.product_name || '<?php echo esc_js( __( 'Service', 'ajforms' ) ); ?>';
+						row.querySelector('span').textContent = getPortalCartItemLabel(item);
+						const note = row.querySelector('small');
+						note.textContent = item.locked || '';
+						note.hidden = !item.locked;
+						row.querySelector('button').addEventListener('click', function() {
+							delete portalCart[item.price_id];
+							renderPortalCart('');
+						});
+						itemsEl.appendChild(row);
+					});
+					if (emptyEl) {
+						emptyEl.hidden = count > 0;
+					}
+					if (totalEl) {
+						totalEl.textContent = count ? ('<?php echo esc_js( __( 'Total:', 'ajforms' ) ); ?> ' + formatPortalMoney(total, currency)) : '';
+					}
+					if (statusEl) {
+						statusEl.textContent = count ? (count + ' <?php echo esc_js( __( 'selected', 'ajforms' ) ); ?> · ' + formatPortalMoney(total, currency)) : '<?php echo esc_js( __( 'No services selected', 'ajforms' ) ); ?>';
+					}
+					if (panel && count > 0) {
+						panel.hidden = false;
+					}
+					if (notice) {
+						const message = shell.querySelector('.aj-portal-add-service-message');
+						if (message) {
+							message.textContent = notice;
+							message.className = 'aj-portal-add-service-message is-success';
+							message.style.display = 'block';
+						}
+					}
+				}
+
+				function updatePortalServiceCard(card) {
+					const option = getPortalPriceOption(card);
+					const item = getPortalItemFromOption(option, card);
+					if (!item) {
+						return;
+					}
+					const price = card.querySelector('.aj-portal-add-service-price');
+					const requires = card.querySelector('.aj-portal-add-service-requires');
+					const note = card.querySelector('.aj-portal-add-service-dependency-note');
+					const button = card.querySelector('.aj-portal-add-service-button');
+					if (price) {
+						price.textContent = item.price_label || getPortalCartItemLabel(item);
+					}
+					if (requires) {
+						requires.textContent = item.required_product_name ? ('<?php echo esc_js( __( 'Requires another product:', 'ajforms' ) ); ?> ' + item.required_product_name) : '';
+						requires.hidden = !item.required_product_name;
+					}
+					if (note) {
+						note.textContent = item.dependency_note || '';
+						note.hidden = !item.dependency_note;
+					}
+					if (button) {
+						button.disabled = !item.can_add;
+						button.textContent = option.dataset.buttonLabel || (item.can_add ? '<?php echo esc_js( __( 'Add to My Services', 'ajforms' ) ); ?>' : '<?php echo esc_js( __( 'Already Added', 'ajforms' ) ); ?>');
+					}
+				}
+
+				shell.querySelectorAll('.aj-portal-add-service-product').forEach(updatePortalServiceCard);
+				shell.addEventListener('change', function(event) {
+					if (event.target && event.target.matches('.aj-portal-add-service-price-select')) {
+						updatePortalServiceCard(event.target.closest('.aj-portal-add-service-product'));
+					}
+					if (event.target && event.target.matches('.aj-portal-users-status-filter')) {
+						event.target.form.submit();
+					}
+				});
+
+				if (portalCartWrap) {
+					portalCartWrap.addEventListener('click', function(event) {
+						if (event.target.closest('.aj-portal-service-cart-toggle')) {
+							const panel = portalCartWrap.querySelector('.aj-portal-service-cart-panel');
+							if (panel) {
+								panel.hidden = !panel.hidden;
+							}
+						}
+						if (event.target.closest('.aj-portal-service-cart-clear')) {
+							Object.keys(portalCart).forEach(function(priceId) { delete portalCart[priceId]; });
+							renderPortalCart('');
+						}
+						if (event.target.closest('.aj-portal-service-checkout-close')) {
+							const checkoutPanel = portalCartWrap.querySelector('.aj-portal-service-checkout-panel');
+							if (embeddedCheckout && typeof embeddedCheckout.destroy === 'function') {
+								embeddedCheckout.destroy();
+								embeddedCheckout = null;
+							}
+							if (checkoutPanel) {
+								checkoutPanel.hidden = true;
+							}
+						}
+						if (event.target.closest('.aj-portal-service-cart-checkout')) {
+							startPortalEmbeddedCheckout(event.target.closest('.aj-portal-service-cart-checkout'));
+						}
+					});
+				}
+
+				function startPortalEmbeddedCheckout(button) {
+					const items = Object.values(portalCart).map(function(item) {
+						return { price_id: item.price_id, quantity: 1 };
+					});
+					if (!items.length) {
+						return;
+					}
+					if (!window.Stripe) {
+						window.alert('<?php echo esc_js( __( 'Stripe checkout could not be loaded.', 'ajforms' ) ); ?>');
+						return;
+					}
+					const originalText = button ? button.textContent : '';
+					if (button) {
+						button.disabled = true;
+						button.textContent = '<?php echo esc_js( __( 'Loading checkout...', 'ajforms' ) ); ?>';
+					}
 					const formData = new FormData();
 					formData.append('action', 'ajcore_create_checkout_session');
 					formData.append('portal_add_service', '1');
-					formData.append('price_id', button.dataset.priceId || '');
-					formData.append('nonce', button.dataset.nonce || '');
+					formData.append('embedded_checkout', '1');
+					formData.append('items', JSON.stringify(items));
+					formData.append('nonce', portalCartWrap.dataset.cartNonce || '');
 					formData.append('current_url', window.location.href);
 
 					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
@@ -3678,14 +4152,36 @@ class AJForms {
 					})
 						.then(parseJsonResponse)
 						.then(function(payload) {
-							if (!payload || !payload.success || !payload.data || !payload.data.url) {
+							if (!payload || !payload.success || !payload.data || !payload.data.client_secret) {
 								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to start checkout.', 'ajforms' ) ); ?>');
 							}
-							window.location.href = payload.data.url;
+							const publishableKey = payload.data.publishable_key || portalCartWrap.dataset.publishableKey || '';
+							if (!publishableKey) {
+								throw new Error('<?php echo esc_js( __( 'Stripe publishable key is missing.', 'ajforms' ) ); ?>');
+							}
+							if (embeddedCheckout && typeof embeddedCheckout.destroy === 'function') {
+								embeddedCheckout.destroy();
+							}
+							stripeInstance = window.Stripe(publishableKey);
+							return stripeInstance.initEmbeddedCheckout({
+								clientSecret: payload.data.client_secret
+							});
+						})
+						.then(function(checkout) {
+							embeddedCheckout = checkout;
+							const checkoutPanel = portalCartWrap.querySelector('.aj-portal-service-checkout-panel');
+							const mount = portalCartWrap.querySelector('.aj-portal-service-checkout-mount');
+							if (checkoutPanel) {
+								checkoutPanel.hidden = false;
+							}
+							if (mount) {
+								mount.innerHTML = '';
+								embeddedCheckout.mount(mount);
+								mount.scrollIntoView({ behavior: 'smooth', block: 'start' });
+							}
 						})
 						.catch(function(error) {
-							button.disabled = false;
-							button.textContent = originalText;
+							const message = shell.querySelector('.aj-portal-add-service-message');
 							if (message) {
 								message.textContent = error.message || '<?php echo esc_js( __( 'Unable to start checkout.', 'ajforms' ) ); ?>';
 								message.className = 'aj-portal-add-service-message is-error';
@@ -3693,8 +4189,14 @@ class AJForms {
 							} else {
 								window.alert(error.message || '<?php echo esc_js( __( 'Unable to start checkout.', 'ajforms' ) ); ?>');
 							}
+						})
+						.finally(function() {
+							if (button) {
+								button.disabled = Object.keys(portalCart).length === 0;
+								button.textContent = originalText;
+							}
 						});
-				});
+				}
 
 
 				shell.addEventListener('click', function(event) {
@@ -4739,9 +5241,17 @@ class AJForms {
 		$items    = isset( $_POST['items'] ) ? json_decode( wp_unslash( $_POST['items'] ), true ) : null; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$include_archived  = isset( $_POST['include_archived'] ) && in_array( strtolower( sanitize_text_field( wp_unslash( $_POST['include_archived'] ) ) ), array( '1', 'true', 'yes' ), true );
 		$portal_add_service = isset( $_POST['portal_add_service'] ) && in_array( strtolower( sanitize_text_field( wp_unslash( $_POST['portal_add_service'] ) ) ), array( '1', 'true', 'yes' ), true );
+		$embedded_checkout = isset( $_POST['embedded_checkout'] ) && in_array( strtolower( sanitize_text_field( wp_unslash( $_POST['embedded_checkout'] ) ) ), array( '1', 'true', 'yes' ), true );
 
 		if ( $portal_add_service ) {
-			if ( ! is_user_logged_in() || '' === $price_id || ! wp_verify_nonce( $nonce, 'ajcore_portal_add_service_' . $price_id ) ) {
+			if ( ! is_user_logged_in() ) {
+				wp_send_json_error( __( 'Invalid portal service request.', 'ajforms' ), 400 );
+			}
+			if ( is_array( $items ) ) {
+				if ( ! wp_verify_nonce( $nonce, 'ajcore_cart_checkout' ) ) {
+					wp_send_json_error( __( 'Invalid portal service cart request.', 'ajforms' ), 400 );
+				}
+			} elseif ( '' === $price_id || ! wp_verify_nonce( $nonce, 'ajcore_portal_add_service_' . $price_id ) ) {
 				wp_send_json_error( __( 'Invalid portal service request.', 'ajforms' ), 400 );
 			}
 		} elseif ( is_array( $items ) ) {
@@ -4764,17 +5274,39 @@ class AJForms {
 		$portal_product      = null;
 
 		if ( $portal_add_service ) {
-			$portal_product = $this->get_portal_product_by_price_id( $price_id );
-			if ( ! $portal_product ) {
-				wp_send_json_error( __( 'Service is not available.', 'ajforms' ), 404 );
-			}
+			$portal_context  = $this->get_current_user_portal_billing_context();
+			$portal_products = ( '' !== $portal_context['stripe_customer_id'] && $portal_context['customer'] )
+				? $this->get_portal_available_service_products( $portal_context['subscriptions'], $portal_context['ledger'] )
+				: array();
 
-			$allowed_price_map[ $price_id ] = array(
-				'id'                 => $price_id,
-				'product_id'         => isset( $portal_product->stripe_product_id ) ? sanitize_text_field( (string) $portal_product->stripe_product_id ) : '',
-				'recurring_interval' => isset( $portal_product->recurring_interval ) ? sanitize_key( (string) $portal_product->recurring_interval ) : '',
-			);
-			$checkout_mode = ! empty( $allowed_price_map[ $price_id ]['recurring_interval'] ) ? 'subscription' : 'payment';
+			foreach ( $portal_products as $available_product ) {
+				if ( empty( $available_product->portal_can_add ) ) {
+					continue;
+				}
+
+				$available_price_id = isset( $available_product->stripe_price_id ) ? sanitize_text_field( (string) $available_product->stripe_price_id ) : '';
+				if ( '' === $available_price_id ) {
+					continue;
+				}
+
+				$allowed_price_map[ $available_price_id ] = array(
+					'id'                 => $available_price_id,
+					'product_id'         => isset( $available_product->stripe_product_id ) ? sanitize_text_field( (string) $available_product->stripe_product_id ) : '',
+					'product_name'       => ! empty( $available_product->custom_label ) ? sanitize_text_field( (string) $available_product->custom_label ) : ( isset( $available_product->name ) ? sanitize_text_field( (string) $available_product->name ) : '' ),
+					'amount'             => isset( $available_product->price_amount ) ? (float) $available_product->price_amount : 0,
+					'currency'           => isset( $available_product->currency ) ? sanitize_key( (string) $available_product->currency ) : 'usd',
+					'recurring_interval' => isset( $available_product->recurring_interval ) ? sanitize_key( (string) $available_product->recurring_interval ) : '',
+				);
+			}
+			$allowed_price_map = array_column( $this->apply_public_product_dependency_settings_to_prices( array_values( $allowed_price_map ) ), null, 'id' );
+
+			if ( ! is_array( $items ) ) {
+				$portal_product = $this->get_portal_product_by_price_id( $price_id );
+				if ( ! $portal_product || empty( $allowed_price_map[ $price_id ] ) ) {
+					wp_send_json_error( __( 'Service is not available.', 'ajforms' ), 404 );
+				}
+				$checkout_mode = ! empty( $allowed_price_map[ $price_id ]['recurring_interval'] ) ? 'subscription' : 'payment';
+			}
 		} else {
 			// Load the full public price set for public checkout so dependency rules can add required products
 			// even when the required price was not part of the original submitted cart.
@@ -4848,6 +5380,13 @@ class AJForms {
 			'success_url' => $success_url,
 			'cancel_url'  => $cancel_url,
 		);
+		if ( $portal_add_service && $embedded_checkout ) {
+			$body = array(
+				'mode'       => $checkout_mode,
+				'ui_mode'    => 'embedded',
+				'return_url' => add_query_arg( 'ajcore_checkout', 'success', $current_url ),
+			);
+		}
 
 		/*
 		 * Collect Business Name directly in Stripe Checkout as Stripe's native customer
@@ -4890,7 +5429,10 @@ class AJForms {
 				wp_send_json_error( __( 'Your cart is empty.', 'ajforms' ), 400 );
 			}
 
-			$body['metadata[source]'] = 'ajcore_products_cart';
+			$body['metadata[source]'] = $portal_add_service ? 'ajcore_portal_add_service' : 'ajcore_products_cart';
+			if ( $portal_add_service && '' !== $mapped_stripe_customer_id ) {
+				$body['metadata[stripe_customer_id]'] = $mapped_stripe_customer_id;
+			}
 		} else {
 			$price = isset( $allowed_price_map[ $price_id ] ) ? $allowed_price_map[ $price_id ] : reset( $allowed_price_map );
 			$body['line_items[0][price]']    = $price_id;
@@ -4915,13 +5457,38 @@ class AJForms {
 
 		if ( $portal_add_service && ! empty( $response['id'] ) && '' !== $mapped_stripe_customer_id ) {
 			global $wpdb;
-			$product_name = $portal_product && ! empty( $portal_product->custom_label ) ? $portal_product->custom_label : ( $portal_product && ! empty( $portal_product->name ) ? $portal_product->name : __( 'Additional service request', 'ajforms' ) );
+			$line_price_ids = is_array( $items )
+				? array_values(
+					array_filter(
+						array_map(
+							function ( $item ) {
+								return is_array( $item ) && ! empty( $item['price_id'] ) ? sanitize_text_field( (string) $item['price_id'] ) : '';
+							},
+							$items
+						)
+					)
+				)
+				: array( $price_id );
+			$product_names = array();
+			$total_amount  = 0.0;
+			$currency      = 'usd';
+			foreach ( $line_price_ids as $line_price_id ) {
+				$line_product = $this->get_portal_product_by_price_id( $line_price_id );
+				if ( $line_product ) {
+					$product_names[] = ! empty( $line_product->custom_label ) ? sanitize_text_field( (string) $line_product->custom_label ) : ( ! empty( $line_product->name ) ? sanitize_text_field( (string) $line_product->name ) : $line_price_id );
+					$total_amount   += isset( $line_product->price_amount ) ? (float) $line_product->price_amount : 0;
+					$currency        = isset( $line_product->currency ) ? sanitize_key( (string) $line_product->currency ) : $currency;
+				}
+			}
+			$product_name = ! empty( $product_names ) ? implode( ', ', array_unique( $product_names ) ) : __( 'Additional services', 'ajforms' );
 			$product_description = sprintf( __( 'Service request: %s', 'ajforms' ), $product_name );
 			$checkout_url = ! empty( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '';
 			$metadata = array(
 				'checkout_url' => $checkout_url,
-				'price_id'     => $price_id,
-				'product_id'   => isset( $allowed_price_map[ $price_id ]['product_id'] ) ? $allowed_price_map[ $price_id ]['product_id'] : '',
+				'checkout_session_client_secret' => ! empty( $response['client_secret'] ) ? sanitize_text_field( (string) $response['client_secret'] ) : '',
+				'price_id'     => is_array( $items ) ? '' : $price_id,
+				'price_ids'    => $line_price_ids,
+				'product_id'   => ! is_array( $items ) && isset( $allowed_price_map[ $price_id ]['product_id'] ) ? $allowed_price_map[ $price_id ]['product_id'] : '',
 				'product_name' => $product_name,
 				'source'       => 'portal_add_service',
 			);
@@ -4934,8 +5501,8 @@ class AJForms {
 					'source_type'        => 'checkout_session',
 					'ledger_date'        => current_time( 'mysql' ),
 					'description'        => $product_description,
-					'amount'             => $portal_product ? (float) $portal_product->price_amount : 0,
-					'currency'           => $portal_product ? sanitize_key( (string) $portal_product->currency ) : 'usd',
+					'amount'             => $total_amount,
+					'currency'           => $currency,
 					'status'             => 'unpaid',
 					'invoice_id'         => '',
 					'payment_intent_id'  => '',
@@ -4950,13 +5517,13 @@ class AJForms {
 				array(
 					'wp_user_id'         => get_current_user_id(),
 					'stripe_customer_id' => $mapped_stripe_customer_id,
-					'stripe_price_id'    => $price_id,
-					'stripe_product_id'  => isset( $allowed_price_map[ $price_id ]['product_id'] ) ? $allowed_price_map[ $price_id ]['product_id'] : '',
+					'stripe_price_id'    => is_array( $items ) ? '' : $price_id,
+					'stripe_product_id'  => ! is_array( $items ) && isset( $allowed_price_map[ $price_id ]['product_id'] ) ? $allowed_price_map[ $price_id ]['product_id'] : '',
 					'service_name'       => $product_name,
 					'request_type'       => 'add_service',
 					'status'             => 'pending_payment',
-					'amount'             => $portal_product ? (float) $portal_product->price_amount : 0,
-					'currency'           => $portal_product ? sanitize_key( (string) $portal_product->currency ) : 'usd',
+					'amount'             => $total_amount,
+					'currency'           => $currency,
 					'source_object_id'   => sanitize_text_field( (string) $response['id'] ),
 					'source_type'        => 'checkout_session',
 					'source'             => 'client_portal',
@@ -4969,6 +5536,8 @@ class AJForms {
 		wp_send_json_success(
 			array(
 				'url' => isset( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
+				'client_secret' => isset( $response['client_secret'] ) ? sanitize_text_field( (string) $response['client_secret'] ) : '',
+				'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? sanitize_text_field( (string) $stripe_settings['publishable_key'] ) : '',
 			)
 		);
 	}
