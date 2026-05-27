@@ -5880,7 +5880,7 @@ class AJForms {
 		 * Checkout Session. This keeps Stripe Dashboard's Customer > More options >
 		 * Business name populated when Checkout creates/updates the customer.
 		 */
-		if ( ! $portal_add_service && ! $embedded_checkout ) {
+		if ( ! $portal_add_service ) {
 			$body['name_collection[business][enabled]']  = 'true';
 			$body['name_collection[business][optional]'] = 'false';
 		}
@@ -5952,7 +5952,7 @@ class AJForms {
 		}
 
 
-		if ( 'subscription' === $checkout_mode && ! empty( $deferred_one_time_items ) && ! $embedded_checkout ) {
+		if ( 'subscription' === $checkout_mode && ! empty( $deferred_one_time_items ) ) {
 			$mixed_checkout_message = $this->get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency );
 			if ( '' !== $mixed_checkout_message ) {
 				$body['custom_text[submit][message]']       = $mixed_checkout_message;
