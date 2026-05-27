@@ -739,7 +739,17 @@ class AJForms {
 		}
 
 		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item' ), true ) ) {
-			foreach ( array( 'subscription_id', 'checkout_session_id', 'price_id', 'product_id', 'payment_intent_id', 'invoice_id' ) as $metadata_key ) {
+			$billing_type = $this->get_ledger_metadata_value( $entry, 'billing_type' );
+			$recurring_interval = $this->get_ledger_metadata_value( $entry, 'recurring_interval' );
+			$product_interval = $this->get_portal_product_recurring_interval_from_ids(
+				$this->get_ledger_metadata_value( $entry, 'price_id' ),
+				$this->get_ledger_metadata_value( $entry, 'product_id' )
+			);
+			$is_recurring = null !== $product_interval ? '' !== $product_interval : ( 'recurring' === sanitize_key( $billing_type ) || '' !== $recurring_interval );
+			$keys = $is_recurring
+				? array( 'subscription_id', 'price_id', 'product_id' )
+				: array( 'checkout_session_id', 'payment_intent_id', 'price_id', 'product_id', 'invoice_id' );
+			foreach ( $keys as $metadata_key ) {
 				$value = $this->get_ledger_metadata_value( $entry, $metadata_key );
 				if ( '' !== $value ) {
 					return $value;
@@ -1728,6 +1738,41 @@ class AJForms {
 		return null;
 	}
 
+	private function get_portal_product_recurring_interval_from_ids( $price_id = '', $product_id = '' ) {
+		global $wpdb;
+
+		$price_id   = sanitize_text_field( (string) $price_id );
+		$product_id = sanitize_text_field( (string) $product_id );
+
+		if ( '' !== $price_id ) {
+			$row = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT recurring_interval FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s LIMIT 1",
+					$price_id
+				)
+			);
+			if ( $row ) {
+				return ! empty( $row->recurring_interval ) ? sanitize_key( (string) $row->recurring_interval ) : '';
+			}
+			return null;
+		}
+
+		if ( '' !== $product_id ) {
+			$row = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT recurring_interval FROM {$this->get_portal_stripe_products_table()} WHERE stripe_product_id = %s ORDER BY recurring_interval DESC, active DESC, id DESC LIMIT 1",
+					$product_id
+				)
+			);
+			if ( $row ) {
+				return ! empty( $row->recurring_interval ) ? sanitize_key( (string) $row->recurring_interval ) : '';
+			}
+			return null;
+		}
+
+		return null;
+	}
+
 	private function get_current_user_portal_billing_context() {
 		global $wpdb;
 
@@ -1802,7 +1847,7 @@ class AJForms {
 		if ( '' !== $customer_id ) {
 			$parts[] = 'cus_id: ' . $customer_id;
 		}
-		if ( ! empty( $snapshot->subscription_id ) ) {
+		if ( 'recurring' === $this->get_snapshot_billing_type_key( $snapshot ) && ! empty( $snapshot->subscription_id ) ) {
 			$parts[] = 'sub_id: ' . sanitize_text_field( (string) $snapshot->subscription_id );
 		} elseif ( ! empty( $snapshot->checkout_session_id ) ) {
 			$parts[] = 'checkout_id: ' . sanitize_text_field( (string) $snapshot->checkout_session_id );
@@ -1856,15 +1901,20 @@ class AJForms {
 		}
 
 		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
+		$billing_type = ! empty( $metadata['billing_type'] ) ? sanitize_key( (string) $metadata['billing_type'] ) : '';
+		$recurring_interval = ! empty( $metadata['recurring_interval'] ) ? sanitize_key( (string) $metadata['recurring_interval'] ) : '';
+		$product_interval = $this->get_portal_product_recurring_interval_from_ids(
+			! empty( $metadata['price_id'] ) ? $metadata['price_id'] : '',
+			! empty( $metadata['product_id'] ) ? $metadata['product_id'] : ''
+		);
+		$is_recurring = null !== $product_interval ? '' !== $product_interval : ( 'recurring' === $billing_type || '' !== $recurring_interval );
 		$parts    = array(
 			! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
-			! empty( $metadata['subscription_id'] ) ? sanitize_text_field( (string) $metadata['subscription_id'] ) : '',
-			! empty( $metadata['checkout_session_id'] ) ? sanitize_text_field( (string) $metadata['checkout_session_id'] ) : '',
-			! empty( $metadata['invoice_id'] ) ? sanitize_text_field( (string) $metadata['invoice_id'] ) : ( ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : '' ),
-			! empty( $metadata['payment_intent_id'] ) ? sanitize_text_field( (string) $metadata['payment_intent_id'] ) : ( ! empty( $entry->payment_intent_id ) ? sanitize_text_field( (string) $entry->payment_intent_id ) : '' ),
+			$is_recurring && ! empty( $metadata['subscription_id'] ) ? sanitize_text_field( (string) $metadata['subscription_id'] ) : '',
 			! empty( $metadata['product_id'] ) ? sanitize_text_field( (string) $metadata['product_id'] ) : '',
 			! empty( $metadata['price_id'] ) ? sanitize_text_field( (string) $metadata['price_id'] ) : '',
 			! empty( $entry->description ) ? sanitize_title( $this->clean_stripe_line_service_name( (string) $entry->description ) ) : '',
+			! empty( $metadata['service_period'] ) ? sanitize_title( (string) $metadata['service_period'] ) : '',
 			number_format( abs( (float) $entry->amount ), 2, '.', '' ),
 		);
 
@@ -1966,12 +2016,20 @@ class AJForms {
 	}
 
 	private function get_snapshot_billing_type_key( $snapshot ) {
-		if ( ! empty( $snapshot->recurring_interval ) || ! empty( $snapshot->subscription_id ) ) {
+		if ( ! empty( $snapshot->recurring_interval ) ) {
 			return 'recurring';
 		}
 
 		$product = $this->get_portal_product_for_snapshot( $snapshot );
 		if ( $product && ! empty( $product->recurring_interval ) ) {
+			return 'recurring';
+		}
+
+		if ( $product && empty( $product->recurring_interval ) ) {
+			return 'one_time';
+		}
+
+		if ( ! empty( $snapshot->subscription_id ) ) {
 			return 'recurring';
 		}
 
