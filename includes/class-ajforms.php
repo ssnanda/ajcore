@@ -5854,7 +5854,7 @@ class AJForms {
 		if ( $embedded_checkout ) {
 			$body = array(
 				'mode'       => $checkout_mode,
-				'ui_mode'    => 'embedded',
+				'ui_mode'    => 'embedded_page',
 				'return_url' => str_replace(
 					'%7BCHECKOUT_SESSION_ID%7D',
 					'{CHECKOUT_SESSION_ID}',
