@@ -6263,6 +6263,95 @@ class AJForms {
 		return wp_kses_post( $html );
 	}
 
+	private function format_checkout_notice_money( $amount_minor, $currency ) {
+		$currency = strtoupper( sanitize_key( (string) $currency ) );
+		$amount   = $this->stripe_minor_amount_to_decimal( $amount_minor, $currency );
+
+		return trim( $currency . ' ' . number_format_i18n( $amount, 2 ) );
+	}
+
+	private function stripe_minor_amount_to_decimal( $amount_minor, $currency ) {
+		$currency = strtolower( sanitize_key( (string) $currency ) );
+		$amount   = (float) $amount_minor;
+
+		return in_array( $currency, array( 'jpy', 'krw', 'vnd' ), true ) ? $amount : $amount / 100;
+	}
+
+	private function get_checkout_success_notice_html() {
+		$checkout_status = isset( $_GET['ajcore_checkout'] ) ? sanitize_key( wp_unslash( $_GET['ajcore_checkout'] ) ) : '';
+		$session_id      = isset( $_GET['session_id'] ) ? sanitize_text_field( wp_unslash( $_GET['session_id'] ) ) : '';
+		if ( 'success' !== $checkout_status ) {
+			return '';
+		}
+
+		$stripe_settings = $this->get_stripe_settings();
+		if ( '' === $session_id || 0 !== strpos( $session_id, 'cs_' ) || empty( $stripe_settings['secret_key'] ) ) {
+			return '<strong>' . esc_html__( 'Checkout complete.', 'ajforms' ) . '</strong><span>' . esc_html__( 'Your order was received.', 'ajforms' ) . '</span>';
+		}
+
+		$session = $this->stripe_api_request(
+			'checkout/sessions/' . rawurlencode( $session_id ),
+			$stripe_settings['secret_key'],
+			array(),
+			'GET'
+		);
+		if ( is_wp_error( $session ) ) {
+			return '<strong>' . esc_html__( 'Checkout complete.', 'ajforms' ) . '</strong><span>' . esc_html__( 'Your order was received.', 'ajforms' ) . '</span>';
+		}
+
+		$currency     = ! empty( $session['currency'] ) ? strtolower( sanitize_key( (string) $session['currency'] ) ) : 'usd';
+		$session_mode = ! empty( $session['mode'] ) ? sanitize_key( (string) $session['mode'] ) : '';
+		$metadata     = ! empty( $session['metadata'] ) && is_array( $session['metadata'] ) ? $session['metadata'] : array();
+		$one_time     = ! empty( $metadata['ajcore_one_time_amount'] ) ? absint( $metadata['ajcore_one_time_amount'] ) : 0;
+		$checkout_amount = isset( $session['amount_total'] ) ? absint( $session['amount_total'] ) : 0;
+		$subscription_amount = 'subscription' === $session_mode ? $checkout_amount : 0;
+		$direct_payment_amount = 'payment' === $session_mode ? $checkout_amount : 0;
+		$total_today = $subscription_amount + $direct_payment_amount + $one_time;
+
+		$rows = array();
+		if ( $subscription_amount > 0 ) {
+			$rows[] = array(
+				'label' => __( 'Subscription checkout', 'ajforms' ),
+				'value' => $this->format_checkout_notice_money( $subscription_amount, $currency ),
+				'note'  => __( 'Recurring service charged by Stripe Checkout.', 'ajforms' ),
+			);
+		}
+		if ( $one_time > 0 ) {
+			$rows[] = array(
+				'label' => __( 'One-time items', 'ajforms' ),
+				'value' => $this->format_checkout_notice_money( $one_time, $currency ),
+				'note'  => __( 'Charged separately after checkout using the same payment method.', 'ajforms' ),
+			);
+		}
+		if ( $direct_payment_amount > 0 ) {
+			$rows[] = array(
+				'label' => __( 'One-time checkout', 'ajforms' ),
+				'value' => $this->format_checkout_notice_money( $direct_payment_amount, $currency ),
+				'note'  => __( 'One-time payment charged by Stripe Checkout.', 'ajforms' ),
+			);
+		}
+
+		if ( empty( $rows ) ) {
+			$rows[] = array(
+				'label' => __( 'Checkout', 'ajforms' ),
+				'value' => $this->format_checkout_notice_money( $checkout_amount, $currency ),
+				'note'  => __( 'Payment processed by Stripe.', 'ajforms' ),
+			);
+			$total_today = $checkout_amount;
+		}
+
+		$html  = '<strong>' . esc_html__( 'Checkout complete.', 'ajforms' ) . '</strong>';
+		$html .= '<span>' . esc_html__( 'Your payment was processed. Here is what was charged today:', 'ajforms' ) . '</span>';
+		$html .= '<div class="ajcore-checkout-receipt">';
+		foreach ( $rows as $row ) {
+			$html .= '<div><b>' . esc_html( $row['label'] ) . '</b><em>' . esc_html( $row['value'] ) . '</em><small>' . esc_html( $row['note'] ) . '</small></div>';
+		}
+		$html .= '<div class="ajcore-checkout-receipt-total"><b>' . esc_html__( 'Total charged today', 'ajforms' ) . '</b><em>' . esc_html( $this->format_checkout_notice_money( $total_today, $currency ) ) . '</em></div>';
+		$html .= '</div>';
+
+		return $html;
+	}
+
 	public function render_products_shortcode( $atts ) {
 		$atts = shortcode_atts(
 			array(
@@ -6301,6 +6390,7 @@ class AJForms {
 		$show_summary        = in_array( 'summary', $show_fields, true );
 		$show_price          = in_array( 'price', $show_fields, true );
 		$show_button         = in_array( 'button', $show_fields, true );
+		$checkout_notice_html = $this->get_checkout_success_notice_html();
 
 		if ( empty( $prices ) ) {
 			return '';
@@ -6322,6 +6412,7 @@ class AJForms {
 			data-include-archived="<?php echo $include_archived ? 'yes' : 'no'; ?>"
 		>
 			<?php if ( $is_cart_mode ) : ?>
+				<div class="ajcore-checkout-notice <?php echo '' !== $checkout_notice_html ? 'is-success' : ''; ?>" <?php echo '' === $checkout_notice_html ? 'hidden' : ''; ?>><?php echo wp_kses_post( $checkout_notice_html ); ?></div>
 				<div class="ajcore-cart-mini" aria-live="polite">
 					<button type="button" class="ajcore-cart-mini-button" aria-label="<?php echo esc_attr__( 'View selected products in cart', 'ajforms' ); ?>">
 						<span class="ajcore-cart-mini-icon" aria-hidden="true">🛒</span>
@@ -6497,6 +6588,7 @@ class AJForms {
 			const cartModalNote = root.querySelector('.ajcore-cart-modal-note');
 			const cartModalClearButton = root.querySelector('.ajcore-cart-modal-clear');
 			const cartModalCheckoutButton = root.querySelector('.ajcore-cart-modal-checkout');
+			const checkoutNotice = root.querySelector('.ajcore-checkout-notice');
 			const cartModalHome = cartModal ? cartModal.parentNode : null;
 			const cartModalPlaceholder = cartModal ? document.createComment('ajcore-cart-modal-home') : null;
 			if (cartModal && cartModalHome && cartModalPlaceholder) {
@@ -6650,6 +6742,23 @@ class AJForms {
 				} catch (error) {}
 				setCartMessage('');
 				renderCart();
+			}
+
+			function getCheckoutReturnStatus() {
+				try {
+					return new URLSearchParams(window.location.search).get('ajcore_checkout') || '';
+				} catch (error) {
+					return '';
+				}
+			}
+
+			function showCheckoutNotice(message, type) {
+				if (!checkoutNotice) {
+					return;
+				}
+				checkoutNotice.textContent = message || '';
+				checkoutNotice.hidden = !message;
+				checkoutNotice.className = 'ajcore-checkout-notice ' + (type === 'error' ? 'is-error' : 'is-success');
 			}
 
 			function getProductByPriceId(priceId) {
@@ -7110,12 +7219,25 @@ class AJForms {
 						});
 				});
 			}
-			loadCart();
+			if (getCheckoutReturnStatus() === 'success') {
+				try {
+					window.sessionStorage.removeItem(cartStorageKey);
+				} catch (error) {}
+				showCheckoutNotice('Checkout complete. Your order was received.', 'success');
+			} else if (getCheckoutReturnStatus() === 'cancelled') {
+				showCheckoutNotice('Checkout was cancelled. Your cart is still available.', 'error');
+				loadCart();
+			} else {
+				loadCart();
+			}
 			renderCart();
 		})();
 		</script>
 		<style>
 			.ajcore-products-wrap-cart{display:block}
+			.ajcore-checkout-notice{grid-column:1 / -1;margin:0 0 16px;padding:14px 16px;border-radius:14px;font-size:15px;font-weight:850;line-height:1.4}
+			.ajcore-checkout-notice.is-success{border:1px solid #bbf7d0;background:#f0fdf4;color:#166534}
+			.ajcore-checkout-notice.is-error{border:1px solid #fed7aa;background:#fff7ed;color:#9a3412}
 			.ajcore-products-wrap-cart .ajcore-products-list{grid-column:auto}
 			.ajcore-products-wrap-cart .ajcore-cart{display:none!important}
 			.ajcore-products-wrap-cart.ajcore-cart-highlight .ajcore-cart-mini{box-shadow:0 0 0 4px rgba(15,122,198,.16),0 18px 44px rgba(15,23,42,.12)!important;transform:translateY(-2px)}
