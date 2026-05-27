@@ -5271,13 +5271,18 @@ class AJForms {
 		return (int) round( $amount * 100 );
 	}
 
-	private function stripe_api_request( $path, $secret_key, $body = array(), $method = 'POST' ) {
+	private function stripe_api_request( $path, $secret_key, $body = array(), $method = 'POST', $extra_headers = array() ) {
+		$headers = array(
+			'Authorization' => 'Bearer ' . $secret_key,
+		);
+		if ( is_array( $extra_headers ) && ! empty( $extra_headers ) ) {
+			$headers = array_merge( $headers, $extra_headers );
+		}
+
 		$args = array(
 			'timeout' => 20,
 			'method'  => $method,
-			'headers' => array(
-				'Authorization' => 'Bearer ' . $secret_key,
-			),
+			'headers' => $headers,
 		);
 
 		if ( 'GET' === strtoupper( $method ) ) {
@@ -5950,10 +5955,21 @@ class AJForms {
 			}
 		}
 
+		$checkout_headers = array();
+		if ( $embedded_checkout ) {
+			/* Embedded Checkout needs Stripe's Checkout Session client_secret format. Pinning
+			 * only this request avoids older account API-version response differences without
+			 * changing the rest of AJ Core's Stripe sync behavior.
+			 */
+			$checkout_headers['Stripe-Version'] = '2026-03-25.dahlia';
+		}
+
 		$response = $this->stripe_api_request(
 			'checkout/sessions',
 			$stripe_settings['secret_key'],
-			$body
+			$body,
+			'POST',
+			$checkout_headers
 		);
 
 		if ( is_wp_error( $response ) ) {
@@ -6041,8 +6057,9 @@ class AJForms {
 		wp_send_json_success(
 			array(
 				'url' => isset( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
-				'client_secret' => isset( $response['client_secret'] ) ? sanitize_text_field( (string) $response['client_secret'] ) : '',
-				'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? sanitize_text_field( (string) $stripe_settings['publishable_key'] ) : '',
+				'client_secret' => isset( $response['client_secret'] ) ? trim( sanitize_text_field( (string) $response['client_secret'] ) ) : '',
+				'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? trim( sanitize_text_field( (string) $stripe_settings['publishable_key'] ) ) : '',
+				'session_id'      => isset( $response['id'] ) ? sanitize_text_field( (string) $response['id'] ) : '',
 			)
 		);
 	}
@@ -7210,8 +7227,16 @@ class AJForms {
 						if (!payload || !payload.success || !payload.data || !payload.data.client_secret || !payload.data.publishable_key) {
 							throw new Error((payload && payload.data) || 'Unable to start embedded checkout.');
 						}
-						ajcoreStripeInstance = window.Stripe(payload.data.publishable_key);
-						return ajcoreStripeInstance.initEmbeddedCheckout({ clientSecret: payload.data.client_secret });
+						const embeddedClientSecret = String(payload.data.client_secret || '').trim();
+						if (!/^cs_(test|live)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+/.test(embeddedClientSecret)) {
+							throw new Error('Stripe did not return a valid embedded Checkout client secret. Please verify the Stripe API version and keys, then try again.');
+						}
+						ajcoreStripeInstance = window.Stripe(String(payload.data.publishable_key || '').trim());
+						return ajcoreStripeInstance.initEmbeddedCheckout({
+							fetchClientSecret: function() {
+								return Promise.resolve(embeddedClientSecret);
+							}
+						});
 					})
 					.then(function(checkout) {
 						ajcoreEmbeddedCheckout = checkout;
