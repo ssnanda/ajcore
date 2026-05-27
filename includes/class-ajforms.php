@@ -5645,7 +5645,7 @@ class AJForms {
 
 		return sprintf(
 			/* translators: 1: total today amount, 2: recurring subscription amount, 3: recurring interval suffix, 4: one-time amount */
-			__( 'Today due: %1$s\nStarts subscription: %2$s%3$s\nOne-time charge after checkout: %4$s\nRenewal after first period: %2$s%3$s', 'ajforms' ),
+			__( "Today due: %1$s\nStarts subscription: %2$s%3$s\nOne-time charge after checkout: %4$s\nRenewal after first period: %2$s%3$s", 'ajforms' ),
 			$this->format_checkout_notice_money( $total_today_minor, $currency ),
 			$this->format_checkout_notice_money( $subscription_amount_minor, $currency ),
 			$interval_suffix,
@@ -5946,7 +5946,6 @@ class AJForms {
 			$mixed_checkout_message = $this->get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency );
 			if ( '' !== $mixed_checkout_message ) {
 				$body['custom_text[submit][message]']       = $mixed_checkout_message;
-				$body['custom_text[after_submit][message]'] = $mixed_checkout_message;
 			}
 		}
 
@@ -6170,7 +6169,6 @@ class AJForms {
 			$mixed_checkout_message = $this->get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency );
 			if ( '' !== $mixed_checkout_message ) {
 				$body['custom_text[submit][message]']       = $mixed_checkout_message;
-				$body['custom_text[after_submit][message]'] = $mixed_checkout_message;
 			}
 		}
 
