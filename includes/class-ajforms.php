@@ -4494,15 +4494,9 @@ class AJForms {
 							if (embeddedCheckout && typeof embeddedCheckout.destroy === 'function') {
 								embeddedCheckout.destroy();
 							}
-							const checkoutClientSecret = String(payload.data.client_secret || '').trim();
-							if (!checkoutClientSecret || checkoutClientSecret.indexOf('_secret_') === -1) {
-								throw new Error('<?php echo esc_js( __( 'Stripe did not return a valid embedded Checkout client secret.', 'ajforms' ) ); ?>');
-							}
 							stripeInstance = window.Stripe(publishableKey);
 							return stripeInstance.initEmbeddedCheckout({
-								fetchClientSecret: function() {
-									return Promise.resolve(checkoutClientSecret);
-								}
+								clientSecret: payload.data.client_secret
 							});
 						})
 						.then(function(checkout) {
@@ -5852,7 +5846,7 @@ class AJForms {
 			'success_url' => $success_url,
 			'cancel_url'  => $cancel_url,
 		);
-		if ( $portal_add_service && $embedded_checkout ) {
+		if ( $embedded_checkout && is_array( $items ) ) {
 			$body = array(
 				'mode'       => $checkout_mode,
 				'ui_mode'    => 'embedded',
@@ -6492,11 +6486,15 @@ class AJForms {
 
 		ob_start();
 		?>
+		<?php if ( $is_cart_mode ) : ?>
+			<script src="https://js.stripe.com/v3/"></script>
+		<?php endif; ?>
 		<div
 			class="ajcore-products-wrap <?php echo $is_cart_mode ? 'ajcore-products-wrap-cart' : 'ajcore-products-wrap-buy'; ?> ajcore-products-template-<?php echo esc_attr( $template ); ?>"
 			data-mode="<?php echo esc_attr( $mode ); ?>"
 			data-cart-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_cart_checkout' ) ); ?>"
 			data-include-archived="<?php echo $include_archived ? 'yes' : 'no'; ?>"
+			data-publishable-key="<?php echo esc_attr( isset( $stripe_settings['publishable_key'] ) ? $stripe_settings['publishable_key'] : '' ); ?>"
 		>
 			<?php if ( $is_cart_mode ) : ?>
 				<div class="ajcore-checkout-notice <?php echo '' !== $checkout_notice_html ? 'is-success' : ''; ?>" <?php echo '' === $checkout_notice_html ? 'hidden' : ''; ?>><?php echo wp_kses_post( $checkout_notice_html ); ?></div>
@@ -6642,6 +6640,17 @@ class AJForms {
 								<button type="button" class="ajcore-cart-modal-checkout" disabled><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
 							</div>
 						</div>
+						<div class="ajcore-embedded-checkout-panel" hidden>
+							<div class="ajcore-embedded-checkout-layout">
+								<div class="ajcore-embedded-checkout-summary">
+									<h4><?php esc_html_e( 'Payment Summary', 'ajforms' ); ?></h4>
+									<div class="ajcore-embedded-checkout-summary-content"></div>
+								</div>
+								<div class="ajcore-embedded-checkout-frame">
+									<div class="ajcore-embedded-checkout-mount"></div>
+								</div>
+							</div>
+						</div>
 					</div>
 				</div>
 			<?php endif; ?>
@@ -6675,6 +6684,11 @@ class AJForms {
 			const cartModalNote = root.querySelector('.ajcore-cart-modal-note');
 			const cartModalClearButton = root.querySelector('.ajcore-cart-modal-clear');
 			const cartModalCheckoutButton = root.querySelector('.ajcore-cart-modal-checkout');
+			const embeddedCheckoutPanel = root.querySelector('.ajcore-embedded-checkout-panel');
+			const embeddedCheckoutSummary = root.querySelector('.ajcore-embedded-checkout-summary-content');
+			const embeddedCheckoutMount = root.querySelector('.ajcore-embedded-checkout-mount');
+			let stripeInstance = null;
+			let embeddedCheckout = null;
 			const checkoutNotice = root.querySelector('.ajcore-checkout-notice');
 			const cartModalHome = cartModal ? cartModal.parentNode : null;
 			const cartModalPlaceholder = cartModal ? document.createComment('ajcore-cart-modal-home') : null;
@@ -7153,6 +7167,42 @@ class AJForms {
 				document.documentElement.classList.remove('ajcore-cart-modal-open');
 			}
 
+			function resetEmbeddedCheckoutPanel() {
+				if (embeddedCheckout && typeof embeddedCheckout.destroy === 'function') {
+					embeddedCheckout.destroy();
+				}
+				embeddedCheckout = null;
+				if (embeddedCheckoutMount) {
+					embeddedCheckoutMount.innerHTML = '';
+				}
+				if (embeddedCheckoutPanel) {
+					embeddedCheckoutPanel.hidden = true;
+				}
+			}
+
+			function renderEmbeddedCheckoutSummary(items) {
+				if (!embeddedCheckoutSummary) {
+					return;
+				}
+				const breakdown = getMixedCartBreakdown(items);
+				const intervalLabel = String(breakdown.interval || 'year').toLowerCase();
+				embeddedCheckoutSummary.innerHTML =
+					'<div class="ajcore-embedded-summary-total">Today due: ' + formatCurrency(breakdown.total, breakdown.currency) + '</div>' +
+					'<div>Starts subscription: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</div>' +
+					'<div>One-time charge after checkout: ' + formatCurrency(breakdown.one_time_total, breakdown.currency) + '</div>' +
+					'<div>Renewal after first period: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</div>';
+			}
+
+			function parseJsonResponse(response) {
+				return response.text().then(function(text) {
+					try {
+						return JSON.parse(text);
+					} catch (error) {
+						throw new Error('The server returned an invalid response.');
+					}
+				});
+			}
+
 			if (floatingCartButton) {
 				floatingCartButton.addEventListener('click', openCartModal);
 			}
@@ -7172,12 +7222,16 @@ class AJForms {
 			if (cartModal) {
 				cartModal.addEventListener('click', function(event) {
 					if (event.target && event.target.closest('[data-ajcore-cart-close]')) {
+						resetEmbeddedCheckoutPanel();
 						closeCartModal();
 					}
 				});
 			}
 			if (cartModalClearButton) {
-				cartModalClearButton.addEventListener('click', clearCart);
+				cartModalClearButton.addEventListener('click', function() {
+					resetEmbeddedCheckoutPanel();
+					clearCart();
+				});
 			}
 			if (cartModalCheckoutButton) {
 				cartModalCheckoutButton.addEventListener('click', function() {
@@ -7264,6 +7318,53 @@ class AJForms {
 					});
 			});
 
+			function startPublicEmbeddedCartCheckout(cartItemsForCheckout, items, button, originalText) {
+				const formData = new FormData();
+				formData.append('action', 'ajcore_create_checkout_session');
+				formData.append('items', JSON.stringify(items));
+				formData.append('nonce', root.dataset.cartNonce);
+				formData.append('include_archived', root.dataset.includeArchived || 'no');
+				formData.append('current_url', window.location.href);
+				formData.append('embedded_checkout', '1');
+				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+					method: 'POST',
+					credentials: 'same-origin',
+					body: formData
+				})
+					.then(parseJsonResponse)
+					.then(function(payload) {
+						if (!payload || !payload.success || !payload.data || !payload.data.client_secret) {
+							throw new Error((payload && payload.data) || 'Unable to start embedded checkout.');
+						}
+						const publishableKey = payload.data.publishable_key || root.dataset.publishableKey || '';
+						if (!publishableKey || typeof window.Stripe === 'undefined') {
+							throw new Error('Stripe embedded checkout could not be loaded.');
+						}
+						resetEmbeddedCheckoutPanel();
+						renderEmbeddedCheckoutSummary(cartItemsForCheckout);
+						if (embeddedCheckoutPanel) {
+							embeddedCheckoutPanel.hidden = false;
+						}
+						openCartModal();
+						stripeInstance = window.Stripe(publishableKey);
+						return stripeInstance.initEmbeddedCheckout({ clientSecret: payload.data.client_secret });
+					})
+					.then(function(checkout) {
+						embeddedCheckout = checkout;
+						if (embeddedCheckoutMount) {
+							embeddedCheckout.mount(embeddedCheckoutMount);
+							embeddedCheckoutMount.scrollIntoView({ behavior: 'smooth', block: 'start' });
+						}
+					})
+					.catch(function(error) {
+						setCartMessage(error.message || 'Unable to start embedded checkout.');
+					})
+					.finally(function() {
+						button.disabled = Object.keys(cart).length === 0;
+						button.textContent = originalText;
+					});
+			}
+
 			if (checkoutButton) {
 				checkoutButton.addEventListener('click', function() {
 					const cartItemsForCheckout = Object.values(cart);
@@ -7281,6 +7382,10 @@ class AJForms {
 					const originalText = checkoutButton.textContent;
 					checkoutButton.textContent = 'Loading...';
 					setCartMessage('');
+					if (cartNeedsMixedCheckoutReview(cartItemsForCheckout)) {
+						startPublicEmbeddedCartCheckout(cartItemsForCheckout, items, checkoutButton, originalText);
+						return;
+					}
 					const formData = new FormData();
 					formData.append('action', 'ajcore_create_checkout_session');
 					formData.append('items', JSON.stringify(items));
@@ -7292,7 +7397,7 @@ class AJForms {
 						credentials: 'same-origin',
 						body: formData
 					})
-						.then(function(response) { return response.json(); })
+						.then(parseJsonResponse)
 						.then(function(payload) {
 							if (!payload || !payload.success || !payload.data || !payload.data.url) {
 								throw new Error((payload && payload.data) || 'Unable to start checkout.');
@@ -7352,7 +7457,7 @@ class AJForms {
 			.ajcore-cart-modal{display:none;position:fixed;inset:0;z-index:2147483100;box-sizing:border-box}
 			.ajcore-cart-modal.is-open{display:block}
 			.ajcore-cart-modal-backdrop{position:absolute;inset:0;z-index:1;background:rgba(15,23,42,.46);backdrop-filter:blur(4px)}
-			.ajcore-cart-modal-panel{position:absolute;z-index:2;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,calc(100vw - 32px));max-height:calc(100vh - 56px);overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:22px;box-shadow:0 28px 80px rgba(15,23,42,.28);padding:22px;box-sizing:border-box}
+			.ajcore-cart-modal-panel{position:absolute;z-index:2;left:50%;top:50%;transform:translate(-50%,-50%);width:min(1120px,calc(100vw - 32px));max-height:calc(100vh - 56px);overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:22px;box-shadow:0 28px 80px rgba(15,23,42,.28);padding:22px;box-sizing:border-box}
 			.ajcore-cart-modal-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
 			.ajcore-cart-modal-header h3{margin:0 0 4px;font-size:26px;line-height:1.08;color:#0f172a}
 			.ajcore-cart-modal-header p{margin:0;color:#64748b;font-size:14px;line-height:1.5}
@@ -7375,6 +7480,14 @@ class AJForms {
 			.ajcore-cart-modal-clear:disabled{opacity:.45;cursor:not-allowed}
 			.ajcore-cart-modal-checkout{border:0;background:#0f7ac6;color:#fff;border-radius:999px;padding:12px 18px;font-weight:900;cursor:pointer}
 			.ajcore-cart-modal-checkout:disabled{background:#cbd5e1;cursor:not-allowed}
+			.ajcore-embedded-checkout-panel{margin-top:18px;padding-top:18px;border-top:1px solid #e5e7eb}
+			.ajcore-embedded-checkout-layout{display:grid;grid-template-columns:minmax(280px,.9fr) minmax(360px,1.1fr);gap:18px;align-items:start}
+			.ajcore-embedded-checkout-summary{border:1px solid #fed7aa;background:#fff7ed;color:#7c2d12;border-radius:18px;padding:18px;box-sizing:border-box}
+			.ajcore-embedded-checkout-summary h4{margin:0 0 12px;color:#111827;font-size:19px;line-height:1.2}
+			.ajcore-embedded-checkout-summary-content{display:grid;gap:9px;font-size:16px;line-height:1.45;font-weight:900}
+			.ajcore-embedded-summary-total{font-size:20px;color:#0f172a}
+			.ajcore-embedded-checkout-frame{border:1px solid #e2e8f0;border-radius:18px;background:#fff;padding:14px;box-sizing:border-box}
+			.ajcore-embedded-checkout-mount{min-height:520px}
 			.ajcore-cart-modal-open{overflow:hidden}
 			.ajcore-product-add.ajcore-added{background:#16a34a!important}
 			.ajcore-floating-cart{position:fixed;right:22px;bottom:22px;z-index:99999;display:none!important;align-items:center;gap:10px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:12px 15px;box-shadow:0 18px 40px rgba(15,122,198,.28);font-weight:800;cursor:pointer;line-height:1}
@@ -7383,7 +7496,7 @@ class AJForms {
 			.ajcore-floating-cart-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
 			.ajcore-floating-cart.has-items{animation:ajcoreCartPulse .28s ease}
 			@keyframes ajcoreCartPulse{0%{transform:scale(1)}50%{transform:scale(1.06)}100%{transform:scale(1)}}
-			@media (max-width: 800px){.ajcore-cart-modal-panel{top:calc(env(safe-area-inset-top,0px) + 110px);transform:translateX(-50%);max-height:calc(100vh - 140px);width:calc(100vw - 24px);padding:18px}.ajcore-cart-modal-row{grid-template-columns:1fr;align-items:start}.ajcore-cart-modal-footer{align-items:flex-start;flex-direction:column}.ajcore-products-list{grid-template-columns:1fr!important}.ajcore-products-wrap-cart{padding-top:118px;padding-bottom:42px}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{left:12px;right:12px;margin:0;padding:10px 12px;border-radius:16px;gap:8px}.ajcore-cart-mini.ajcore-mobile-fixed-cart{position:fixed!important;top:var(--ajcore-cart-mobile-top,calc(env(safe-area-inset-top,0px) + 190px))!important;bottom:auto!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;z-index:2147483000!important;box-sizing:border-box!important;transform:translateZ(0);}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-clear{padding:9px 10px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
+			@media (max-width: 800px){.ajcore-cart-modal-panel{top:calc(env(safe-area-inset-top,0px) + 110px);transform:translateX(-50%);max-height:calc(100vh - 140px);width:calc(100vw - 24px);padding:18px}.ajcore-embedded-checkout-layout{grid-template-columns:1fr}.ajcore-cart-modal-row{grid-template-columns:1fr;align-items:start}.ajcore-cart-modal-footer{align-items:flex-start;flex-direction:column}.ajcore-products-list{grid-template-columns:1fr!important}.ajcore-products-wrap-cart{padding-top:118px;padding-bottom:42px}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{left:12px;right:12px;margin:0;padding:10px 12px;border-radius:16px;gap:8px}.ajcore-cart-mini.ajcore-mobile-fixed-cart{position:fixed!important;top:var(--ajcore-cart-mobile-top,calc(env(safe-area-inset-top,0px) + 190px))!important;bottom:auto!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;z-index:2147483000!important;box-sizing:border-box!important;transform:translateZ(0);}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-clear{padding:9px 10px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
 			@media (max-width: 980px){.ajcore-products-wrap-cart{grid-template-columns:1fr}.ajcore-products-wrap-cart .ajcore-cart{grid-column:auto;grid-row:auto;position:static}}
 		</style>
 		<?php
