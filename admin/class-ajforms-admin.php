@@ -2836,7 +2836,10 @@ class AJForms_Admin {
 		global $wpdb;
 
 		$session_id  = sanitize_text_field( (string) $session['id'] );
-		$customer_id = sanitize_text_field( (string) $session['customer'] );
+		$customer_id = $this->get_scalar_stripe_id( $session['customer'], 'cus_' );
+		if ( '' === $customer_id ) {
+			return new WP_Error( 'missing_customer', __( 'Unable to charge one-time cart items because the checkout session customer is missing.', 'ajforms' ) );
+		}
 		$existing    = $wpdb->get_var(
 			$wpdb->prepare(
 				"SELECT id FROM {$this->get_portal_ledger_table()} WHERE source_object_id = %s OR metadata LIKE %s LIMIT 1",
@@ -2864,7 +2867,10 @@ class AJForms_Admin {
 			return 0;
 		}
 
-		$subscription_id = sanitize_text_field( (string) $session['subscription'] );
+		$subscription_id = $this->get_scalar_stripe_id( $session['subscription'], 'sub_' );
+		if ( '' === $subscription_id ) {
+			return new WP_Error( 'missing_subscription', __( 'Unable to charge one-time cart items because the checkout session subscription is missing.', 'ajforms' ) );
+		}
 		$payment_method = $this->get_deferred_one_time_payment_method_from_subscription( $subscription_id, $customer_id, $secret_key );
 		if ( '' === $payment_method ) {
 			return new WP_Error( 'missing_payment_method', __( 'Unable to charge one-time cart items because Stripe did not expose the subscription payment method yet.', 'ajforms' ) );
@@ -2963,6 +2969,75 @@ class AJForms_Admin {
 		);
 
 		return 1 + absint( $snapshot_count );
+	}
+
+	public function finalize_mixed_checkout_session_by_id( $session_id, $source = 'manual' ) {
+		$this->ensure_portal_schema();
+
+		$session_id = sanitize_text_field( (string) $session_id );
+		$source     = sanitize_key( (string) $source );
+		if ( 0 !== strpos( $session_id, 'cs_' ) ) {
+			return new WP_Error( 'invalid_checkout_session', __( 'Invalid checkout session.', 'ajforms' ) );
+		}
+
+		$secret_key = $this->get_stripe_secret_key_for_portal();
+		if ( '' === $secret_key ) {
+			return new WP_Error( 'missing_stripe_key', __( 'Stripe secret key is required.', 'ajforms' ) );
+		}
+
+		$session = $this->stripe_api_get(
+			'checkout/sessions/' . rawurlencode( $session_id ),
+			$secret_key,
+			array(
+				'expand[]' => 'subscription',
+			)
+		);
+		if ( is_wp_error( $session ) ) {
+			$this->log_portal_event(
+				'mixed_cart_one_time_payment_failed',
+				array(
+					'severity' => 'error',
+					'source'   => $source,
+					'details'  => array(
+						'checkout_session_id' => $session_id,
+						'error'               => $session->get_error_message(),
+					),
+				)
+			);
+			return $session;
+		}
+
+		$session = $this->enrich_checkout_session_with_line_items( $session, $secret_key );
+		$result  = $this->maybe_charge_deferred_one_time_items_for_checkout_session( $session, $secret_key );
+		if ( is_wp_error( $result ) ) {
+			$this->log_portal_event(
+				'mixed_cart_one_time_payment_failed',
+				array(
+					'severity' => 'error',
+					'source'   => $source,
+					'details'  => array(
+						'checkout_session_id' => $session_id,
+						'error'               => $result->get_error_message(),
+					),
+				)
+			);
+			return $result;
+		}
+
+		if ( $result > 0 ) {
+			$this->log_portal_event(
+				'mixed_cart_one_time_payment_finalized',
+				array(
+					'source'  => $source,
+					'details' => array(
+						'checkout_session_id' => $session_id,
+						'result'              => $result,
+					),
+				)
+			);
+		}
+
+		return $result;
 	}
 
 	public function run_portal_sync_job( $source = 'manual', $requested_jobs = array() ) {
@@ -12348,7 +12423,7 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d with portal access', 'ajforms' ), $enabled_count ) ); ?></span>
 			</div>
 
-			<details class="ajforms-settings-card">
+			<details class="ajforms-settings-card" open>
 				<summary><strong><?php esc_html_e( 'Create Stripe Customer', 'ajforms' ); ?></strong></summary>
 				<form method="post" class="ajforms-settings-grid" style="margin-top:12px;">
 					<?php wp_nonce_field( 'ajcore_create_stripe_customer', 'ajcore_create_stripe_customer_nonce' ); ?>

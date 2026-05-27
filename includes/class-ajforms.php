@@ -108,6 +108,7 @@ class AJForms {
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_service_request_remove' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_task_action' ) );
+		add_action( 'template_redirect', array( $this, 'maybe_finalize_mixed_checkout_from_success_url' ) );
 		add_action( 'init', array( $this, 'maybe_handle_stripe_webhook' ) );
 		add_action( 'wp_ajax_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
 		add_action( 'wp_ajax_nopriv_ajf_create_stripe_payment_intent', array( $this, 'ajax_create_stripe_payment_intent' ) );
@@ -5565,6 +5566,27 @@ class AJForms {
 		return count( $intervals ) > 1 ? $intervals : array();
 	}
 
+	public function maybe_finalize_mixed_checkout_from_success_url() {
+		if ( is_admin() || wp_doing_ajax() ) {
+			return;
+		}
+
+		$checkout_status = isset( $_GET['ajcore_checkout'] ) ? sanitize_key( wp_unslash( $_GET['ajcore_checkout'] ) ) : '';
+		$session_id      = isset( $_GET['session_id'] ) ? sanitize_text_field( wp_unslash( $_GET['session_id'] ) ) : '';
+		if ( 'success' !== $checkout_status || 0 !== strpos( $session_id, 'cs_' ) ) {
+			return;
+		}
+
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return;
+		}
+
+		$admin = new AJForms_Admin();
+		if ( method_exists( $admin, 'finalize_mixed_checkout_session_by_id' ) ) {
+			$admin->finalize_mixed_checkout_session_by_id( $session_id, 'success_return' );
+		}
+	}
+
 
 	public function ajax_create_checkout_session() {
 		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
@@ -5745,7 +5767,14 @@ class AJForms {
 		}
 
 		$current_url = isset( $_POST['current_url'] ) ? esc_url_raw( wp_unslash( $_POST['current_url'] ) ) : home_url( '/' );
-		$success_url = add_query_arg( 'ajcore_checkout', 'success', $current_url );
+		$success_url = add_query_arg(
+			array(
+				'ajcore_checkout' => 'success',
+				'session_id'      => '{CHECKOUT_SESSION_ID}',
+			),
+			$current_url
+		);
+		$success_url = str_replace( '%7BCHECKOUT_SESSION_ID%7D', '{CHECKOUT_SESSION_ID}', $success_url );
 		$cancel_url  = add_query_arg( 'ajcore_checkout', 'cancelled', $current_url );
 		$body        = array(
 			'mode'        => $checkout_mode,
@@ -5756,7 +5785,17 @@ class AJForms {
 			$body = array(
 				'mode'       => $checkout_mode,
 				'ui_mode'    => 'embedded',
-				'return_url' => add_query_arg( 'ajcore_checkout', 'success', $current_url ),
+				'return_url' => str_replace(
+					'%7BCHECKOUT_SESSION_ID%7D',
+					'{CHECKOUT_SESSION_ID}',
+					add_query_arg(
+						array(
+							'ajcore_checkout' => 'success',
+							'session_id'      => '{CHECKOUT_SESSION_ID}',
+						),
+						$current_url
+					)
+				),
 			);
 		}
 
