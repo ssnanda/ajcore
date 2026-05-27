@@ -7607,6 +7607,63 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_create_stripe_customer_nonce'] ) ) {
+			check_admin_referer( 'ajcore_create_stripe_customer', 'ajcore_create_stripe_customer_nonce' );
+
+			$secret_key = $this->get_stripe_secret_key_for_portal();
+			$args       = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
+			if ( '' === $secret_key ) {
+				$args['portal-error'] = rawurlencode( __( 'Stripe secret key is required.', 'ajforms' ) );
+				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			$email         = isset( $_POST['stripe_customer_email'] ) ? sanitize_email( wp_unslash( $_POST['stripe_customer_email'] ) ) : '';
+			$name          = isset( $_POST['stripe_customer_name'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_name'] ) ) : '';
+			$phone         = isset( $_POST['stripe_customer_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_phone'] ) ) : '';
+			$business_name = isset( $_POST['stripe_customer_business_name'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_business_name'] ) ) : '';
+			$description   = isset( $_POST['stripe_customer_description'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_description'] ) ) : '';
+
+			if ( ! is_email( $email ) ) {
+				$args['portal-error'] = rawurlencode( __( 'A valid customer email is required.', 'ajforms' ) );
+				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			$body = array(
+				'email' => $email,
+			);
+			if ( '' !== $name || '' !== $business_name ) {
+				$body['name'] = '' !== $name ? $name : $business_name;
+			}
+			if ( '' !== $phone ) {
+				$body['phone'] = $phone;
+			}
+			if ( '' !== $description ) {
+				$body['description'] = $description;
+			}
+			if ( '' !== $business_name ) {
+				$body['metadata[business_name]'] = $business_name;
+			}
+
+			$result = $this->stripe_api_request( 'customers', $secret_key, $body );
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} elseif ( empty( $result['id'] ) ) {
+				$args['portal-error'] = rawurlencode( __( 'Stripe did not return a customer ID.', 'ajforms' ) );
+			} else {
+				$sync_result = $this->sync_single_portal_stripe_customer( $secret_key, sanitize_text_field( (string) $result['id'] ) );
+				if ( is_wp_error( $sync_result ) ) {
+					$args['portal-error'] = rawurlencode( $sync_result->get_error_message() );
+				} else {
+					$args['portal-customer-created'] = sanitize_text_field( (string) $result['id'] );
+				}
+			}
+
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_repair_portal_user_links_nonce'] ) ) {
 			check_admin_referer( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' );
 			$stats = $this->repair_portal_user_links_and_roles( true, true, false );
@@ -7645,7 +7702,7 @@ class AJForms_Admin {
 			$errors = array();
 
 			if ( empty( $selected_ids ) || ! in_array( $action, $allowed_actions, true ) ) {
-				$args['portal-error'] = rawurlencode( __( 'Select at least one portal user and a valid bulk action.', 'ajforms' ) );
+				$args['portal-error'] = rawurlencode( __( 'Select at least one customer and a valid bulk action.', 'ajforms' ) );
 				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 				exit;
 			}
@@ -10865,7 +10922,7 @@ class AJForms_Admin {
 					<a class="nav-tab <?php echo 'dashboard' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'dashboard', $base_url ) ); ?>"><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'billing' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'billing', $base_url ) ); ?>"><?php esc_html_e( 'Billing', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Customers', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'sold-items' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sold-items', $base_url ) ); ?>"><?php esc_html_e( 'Sold Items', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'products-services' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'products-services', $base_url ) ); ?>"><?php esc_html_e( 'Product Catalog', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'tasks' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'tasks', $base_url ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
@@ -11946,20 +12003,23 @@ class AJForms_Admin {
 		}
 		?>
 		<div class="ajforms-settings-card">
-			<h2><?php esc_html_e( 'Portal Users', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'Portal users are WordPress users linked to synced Stripe Customers. Stripe remains the customer source of truth.', 'ajforms' ); ?></p>
+			<h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'Customers are synced from Stripe and can optionally be linked to WordPress portal access.', 'ajforms' ); ?></p>
 
 			<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled as a portal user.', 'ajforms' ); ?></p></div>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled for portal access.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-user-disabled'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Portal user disabled.', 'ajforms' ); ?></p></div>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer portal access disabled.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-user-archived'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Portal user archived. Billing, requests, files, tasks, and history were kept.', 'ajforms' ); ?></p></div>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer archived. Billing, requests, files, tasks, and history were kept.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-users-deleted'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Archived portal user records deleted from the local cache: %1$d. Skipped: %2$d.', 'ajforms' ), absint( wp_unslash( $_GET['portal-users-deleted'] ) ), isset( $_GET['portal-bulk-skipped'] ) ? absint( wp_unslash( $_GET['portal-bulk-skipped'] ) ) : 0 ) ); ?></p></div>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Archived customer records deleted from the local cache: %1$d. Skipped: %2$d.', 'ajforms' ), absint( wp_unslash( $_GET['portal-users-deleted'] ) ), isset( $_GET['portal-bulk-skipped'] ) ? absint( wp_unslash( $_GET['portal-bulk-skipped'] ) ) : 0 ) ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-customer-created'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Stripe customer created and synced: %s.', 'ajforms' ), sanitize_text_field( wp_unslash( $_GET['portal-customer-created'] ) ) ) ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-password-reset'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Password reset email sent.', 'ajforms' ); ?></p></div>
@@ -11978,8 +12038,38 @@ class AJForms_Admin {
 			<?php endif; ?>
 			<div class="ajforms-settings-inline-actions">
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d synced customers', 'ajforms' ), $total_customers ) ); ?></span>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users', 'ajforms' ), $enabled_count ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d with portal access', 'ajforms' ), $enabled_count ) ); ?></span>
 			</div>
+
+			<details class="ajforms-settings-card">
+				<summary><strong><?php esc_html_e( 'Create Stripe Customer', 'ajforms' ); ?></strong></summary>
+				<form method="post" class="ajforms-settings-grid" style="margin-top:12px;">
+					<?php wp_nonce_field( 'ajcore_create_stripe_customer', 'ajcore_create_stripe_customer_nonce' ); ?>
+					<label>
+						<span><?php esc_html_e( 'Email', 'ajforms' ); ?></span>
+						<input type="email" name="stripe_customer_email" required>
+					</label>
+					<label>
+						<span><?php esc_html_e( 'Customer Name', 'ajforms' ); ?></span>
+						<input type="text" name="stripe_customer_name">
+					</label>
+					<label>
+						<span><?php esc_html_e( 'Business Name', 'ajforms' ); ?></span>
+						<input type="text" name="stripe_customer_business_name">
+					</label>
+					<label>
+						<span><?php esc_html_e( 'Phone', 'ajforms' ); ?></span>
+						<input type="text" name="stripe_customer_phone">
+					</label>
+					<label class="ajforms-settings-grid-full">
+						<span><?php esc_html_e( 'Description', 'ajforms' ); ?></span>
+						<input type="text" name="stripe_customer_description">
+					</label>
+					<div class="ajforms-settings-grid-full">
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Create Stripe Customer', 'ajforms' ); ?></button>
+					</div>
+				</form>
+			</details>
 
 			<div class="ajcore-portal-users-toolbar">
 				<form method="get" id="ajcore-portal-users-filter-form">
@@ -11987,17 +12077,14 @@ class AJForms_Admin {
 					<input type="hidden" name="tab" value="portal-users">
 					<select name="portal_user_status" id="ajcore-portal-user-status-filter">
 						<option value=""><?php esc_html_e( 'All except archived', 'ajforms' ); ?></option>
-						<option value="active" <?php selected( $status_filter, 'active' ); ?>><?php esc_html_e( 'Active portal users', 'ajforms' ); ?></option>
-						<option value="disabled" <?php selected( $status_filter, 'disabled' ); ?>><?php esc_html_e( 'Disabled portal users', 'ajforms' ); ?></option>
-						<option value="archived" <?php selected( $status_filter, 'archived' ); ?>><?php esc_html_e( 'Archived portal users', 'ajforms' ); ?></option>
+						<option value="active" <?php selected( $status_filter, 'active' ); ?>><?php esc_html_e( 'Active portal access', 'ajforms' ); ?></option>
+						<option value="disabled" <?php selected( $status_filter, 'disabled' ); ?>><?php esc_html_e( 'Disabled portal access', 'ajforms' ); ?></option>
+						<option value="archived" <?php selected( $status_filter, 'archived' ); ?>><?php esc_html_e( 'Archived customers', 'ajforms' ); ?></option>
 						<option value="without_login" <?php selected( $status_filter, 'without_login' ); ?>><?php esc_html_e( 'Without portal login', 'ajforms' ); ?></option>
 					</select>
-					<button class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
-					<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
 				</form>
-				<button type="button" class="button" id="ajcore-select-all-portal-users"><?php esc_html_e( 'Select All', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="enable"><?php esc_html_e( 'Enable', 'ajforms' ); ?></button>
-				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="enable_repair"><?php esc_html_e( 'Enable & Repair Selected Portal Users', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="enable_repair"><?php esc_html_e( 'Enable & Repair Selected Customers', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="disable"><?php esc_html_e( 'Disable', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="archive"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="restore"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
@@ -12005,7 +12092,7 @@ class AJForms_Admin {
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="send_welcome"><?php esc_html_e( 'Send Welcome Email', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-link-delete" data-portal-bulk-action="delete_archived"><?php esc_html_e( 'Delete Archived', 'ajforms' ); ?></button>
 				<form method="post" style="display:inline;margin:0;">
-					<?php wp_nonce_field( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' ); ?>
+				<?php wp_nonce_field( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' ); ?>
 					<button type="submit" class="button"><?php esc_html_e( 'Repair WP User Links & Roles', 'ajforms' ); ?></button>
 				</form>
 				<a class="button ajcore-toolbar-spacer" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
@@ -12130,14 +12217,12 @@ class AJForms_Admin {
 				var form = document.getElementById('ajcore-portal-users-bulk-form');
 				var actionInput = document.getElementById('ajcore-portal-bulk-action');
 				var checkAll = document.getElementById('ajcore-check-all-portal-users');
-				var selectAll = document.getElementById('ajcore-select-all-portal-users');
 				var filterForm = document.getElementById('ajcore-portal-users-filter-form');
 				var statusFilter = document.getElementById('ajcore-portal-user-status-filter');
 				function boxes(){return Array.prototype.slice.call(document.querySelectorAll('.ajcore-portal-user-checkbox'));}
 				function setAll(checked){boxes().forEach(function(box){box.checked = checked;}); if(checkAll){checkAll.checked = checked;}}
 				if(statusFilter && filterForm){statusFilter.addEventListener('change', function(){filterForm.submit();});}
 				if(checkAll){checkAll.addEventListener('change', function(){setAll(checkAll.checked);});}
-				if(selectAll){selectAll.addEventListener('click', function(){setAll(true);});}
 				if(form){
 					form.addEventListener('submit', function(event){
 						var submitter = event.submitter || document.activeElement;
@@ -12145,7 +12230,7 @@ class AJForms_Admin {
 						if(!action){event.preventDefault(); return;}
 						if(!boxes().some(function(box){return box.checked;})){
 							event.preventDefault();
-							window.alert('<?php echo esc_js( __( 'Select at least one portal user.', 'ajforms' ) ); ?>');
+							window.alert('<?php echo esc_js( __( 'Select at least one customer.', 'ajforms' ) ); ?>');
 							return;
 						}
 						if('delete_archived' === action && !window.confirm('<?php echo esc_js( __( 'Delete selected archived portal customer records from the local AJ Core cache? WordPress users, Stripe records, billing, requests, files, tasks, and history will not be deleted.', 'ajforms' ) ); ?>')){
