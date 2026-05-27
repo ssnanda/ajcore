@@ -5588,6 +5588,71 @@ class AJForms {
 	}
 
 
+
+	private function get_mixed_checkout_interval_label( $interval ) {
+		$interval = sanitize_key( (string) $interval );
+
+		$labels = array(
+			'day'   => __( 'day', 'ajforms' ),
+			'week'  => __( 'week', 'ajforms' ),
+			'month' => __( 'month', 'ajforms' ),
+			'year'  => __( 'year', 'ajforms' ),
+		);
+
+		return isset( $labels[ $interval ] ) ? $labels[ $interval ] : $interval;
+	}
+
+	private function get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency ) {
+		if ( empty( $deferred_one_time_amount_minor ) || ! is_array( $items ) ) {
+			return '';
+		}
+
+		$currency = '' !== (string) $deferred_one_time_currency ? strtolower( sanitize_key( (string) $deferred_one_time_currency ) ) : 'usd';
+		$subscription_amount_minor = 0;
+		$recurring_interval = '';
+
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) || empty( $item['price_id'] ) ) {
+				continue;
+			}
+
+			$item_price_id = sanitize_text_field( (string) $item['price_id'] );
+			if ( empty( $allowed_price_map[ $item_price_id ] ) || empty( $allowed_price_map[ $item_price_id ]['recurring_interval'] ) ) {
+				continue;
+			}
+
+			$item_currency = ! empty( $allowed_price_map[ $item_price_id ]['currency'] ) ? strtolower( sanitize_key( (string) $allowed_price_map[ $item_price_id ]['currency'] ) ) : $currency;
+			if ( $item_currency !== $currency ) {
+				continue;
+			}
+
+			$quantity = isset( $item['quantity'] ) ? max( 1, absint( $item['quantity'] ) ) : 1;
+			$item_amount = isset( $allowed_price_map[ $item_price_id ]['amount'] ) ? (float) $allowed_price_map[ $item_price_id ]['amount'] : 0.0;
+			$subscription_amount_minor += $this->convert_amount_to_minor_units( $item_amount, $item_currency ) * $quantity;
+
+			if ( '' === $recurring_interval ) {
+				$recurring_interval = sanitize_key( (string) $allowed_price_map[ $item_price_id ]['recurring_interval'] );
+			}
+		}
+
+		if ( empty( $subscription_amount_minor ) ) {
+			return '';
+		}
+
+		$total_today_minor = absint( $subscription_amount_minor ) + absint( $deferred_one_time_amount_minor );
+		$interval_label    = $this->get_mixed_checkout_interval_label( $recurring_interval );
+		$interval_suffix   = '' !== $interval_label ? sprintf( __( ' per %s', 'ajforms' ), $interval_label ) : '';
+
+		return sprintf(
+			/* translators: 1: total today amount, 2: recurring subscription amount, 3: recurring interval suffix, 4: one-time amount */
+			__( 'Total due today is %1$s. This Stripe page starts the subscription portion: %2$s%3$s. After successful checkout, AJ Core will immediately charge the one-time portion: %4$s using the same saved payment method. Renewal is %2$s%3$s after the first period.', 'ajforms' ),
+			$this->format_checkout_notice_money( $total_today_minor, $currency ),
+			$this->format_checkout_notice_money( $subscription_amount_minor, $currency ),
+			$interval_suffix,
+			$this->format_checkout_notice_money( $deferred_one_time_amount_minor, $currency )
+		);
+	}
+
 	public function ajax_create_checkout_session() {
 		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
 		$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
@@ -5876,6 +5941,15 @@ class AJForms {
 			}
 		}
 
+
+		if ( 'subscription' === $checkout_mode && ! empty( $deferred_one_time_items ) ) {
+			$mixed_checkout_message = $this->get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency );
+			if ( '' !== $mixed_checkout_message ) {
+				$body['custom_text[submit][message]']       = $mixed_checkout_message;
+				$body['custom_text[after_submit][message]'] = $mixed_checkout_message;
+			}
+		}
+
 		$response = $this->stripe_api_request(
 			'checkout/sessions',
 			$stripe_settings['secret_key'],
@@ -6089,6 +6163,15 @@ class AJForms {
 
 		if ( 0 === $line_index ) {
 			wp_send_json_error( __( 'No payable charges were found.', 'ajforms' ), 400 );
+		}
+
+
+		if ( 'subscription' === $checkout_mode && ! empty( $deferred_one_time_items ) ) {
+			$mixed_checkout_message = $this->get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency );
+			if ( '' !== $mixed_checkout_message ) {
+				$body['custom_text[submit][message]']       = $mixed_checkout_message;
+				$body['custom_text[after_submit][message]'] = $mixed_checkout_message;
+			}
 		}
 
 		$response = $this->stripe_api_request(
