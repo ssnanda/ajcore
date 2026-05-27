@@ -4495,8 +4495,13 @@ class AJForms {
 								embeddedCheckout.destroy();
 							}
 							stripeInstance = window.Stripe(publishableKey);
-							return stripeInstance.initEmbeddedCheckout({
-								clientSecret: payload.data.client_secret
+							if (typeof stripeInstance.createEmbeddedCheckoutPage !== 'function') {
+								throw new Error('<?php echo esc_js( __( 'Stripe Embedded Checkout Page is not available. Please refresh and try again.', 'ajforms' ) ); ?>');
+							}
+							return stripeInstance.createEmbeddedCheckoutPage({
+								fetchClientSecret: function() {
+									return Promise.resolve(String(payload.data.client_secret || '').trim());
+								}
 							});
 						})
 						.then(function(checkout) {
@@ -7232,7 +7237,10 @@ class AJForms {
 							throw new Error('Stripe did not return a valid embedded Checkout client secret. Please verify the Stripe API version and keys, then try again.');
 						}
 						ajcoreStripeInstance = window.Stripe(String(payload.data.publishable_key || '').trim());
-						return ajcoreStripeInstance.initEmbeddedCheckout({
+						if (typeof ajcoreStripeInstance.createEmbeddedCheckoutPage !== 'function') {
+							throw new Error('Stripe Embedded Checkout Page is not available. Please refresh and try again.');
+						}
+						return ajcoreStripeInstance.createEmbeddedCheckoutPage({
 							fetchClientSecret: function() {
 								return Promise.resolve(embeddedClientSecret);
 							}
