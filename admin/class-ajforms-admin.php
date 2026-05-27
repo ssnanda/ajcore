@@ -7433,6 +7433,46 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' );
 
 			global $wpdb;
+			$product_group_rows = isset( $_POST['portal_product_groups'] ) && is_array( $_POST['portal_product_groups'] ) ? wp_unslash( $_POST['portal_product_groups'] ) : array();
+			if ( ! empty( $product_group_rows ) ) {
+				foreach ( $product_group_rows as $group_key => $row ) {
+					if ( ! is_array( $row ) ) {
+						continue;
+					}
+
+					$row_ids = isset( $row['row_ids'] ) ? array_filter( array_map( 'absint', explode( ',', sanitize_text_field( $row['row_ids'] ) ) ) ) : array();
+					if ( empty( $row_ids ) ) {
+						continue;
+					}
+
+					$visibility = isset( $row['visibility'] ) && 'hidden' === sanitize_key( $row['visibility'] ) ? 'hidden' : 'visible';
+					$duplicate_options = $this->get_portal_product_duplicate_behavior_options();
+					$duplicate_behavior = isset( $row['duplicate_behavior'] ) ? sanitize_key( $row['duplicate_behavior'] ) : 'no_duplicates';
+					if ( ! isset( $duplicate_options[ $duplicate_behavior ] ) ) {
+						$duplicate_behavior = 'no_duplicates';
+					}
+
+					foreach ( $row_ids as $product_id ) {
+						$wpdb->update(
+							$this->get_portal_stripe_products_table(),
+							array(
+								'visibility'                  => $visibility,
+								'custom_label'                => isset( $row['custom_label'] ) ? sanitize_text_field( $row['custom_label'] ) : '',
+								'description_override'        => isset( $row['description_override'] ) ? sanitize_textarea_field( $row['description_override'] ) : '',
+								'sort_order'                  => isset( $row['sort_order'] ) ? intval( $row['sort_order'] ) : 0,
+								'duplicate_behavior'          => $duplicate_behavior,
+								'custom_request_title'        => isset( $row['custom_request_title'] ) ? sanitize_text_field( $row['custom_request_title'] ) : '',
+								'custom_request_message'      => isset( $row['custom_request_message'] ) ? sanitize_textarea_field( $row['custom_request_message'] ) : '',
+								'custom_request_button_label' => isset( $row['custom_request_button_label'] ) ? sanitize_text_field( $row['custom_request_button_label'] ) : '',
+							),
+							array( 'id' => $product_id ),
+							array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s' ),
+							array( '%d' )
+						);
+					}
+				}
+			}
+
 			$product_rows = isset( $_POST['portal_products'] ) && is_array( $_POST['portal_products'] ) ? wp_unslash( $_POST['portal_products'] ) : array();
 			foreach ( $product_rows as $product_id => $row ) {
 				$product_id = absint( $product_id );
@@ -11887,6 +11927,17 @@ class AJForms_Admin {
 		$visible_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden'" );
 		$total_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" );
 		$duplicate_behavior_options = $this->get_portal_product_duplicate_behavior_options();
+		$product_groups = array();
+		foreach ( (array) $products as $product ) {
+			$group_key = ! empty( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : 'row_' . (int) $product->id;
+			if ( ! isset( $product_groups[ $group_key ] ) ) {
+				$product_groups[ $group_key ] = array(
+					'product' => $product,
+					'rows'    => array(),
+				);
+			}
+			$product_groups[ $group_key ]['rows'][] = $product;
+		}
 		?>
 		<div class="ajforms-settings-card">
 			<h2><?php esc_html_e( 'Product Catalog', 'ajforms' ); ?></h2>
@@ -11920,46 +11971,79 @@ class AJForms_Admin {
 							<th><?php esc_html_e( 'Product / Service', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Portal Label / Description', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Duplicate / Upgrade Logic', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Billing Type', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Prices', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Sort', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Stripe IDs', 'ajforms' ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
-						<?php if ( empty( $products ) ) : ?>
-							<tr><td colspan="8"><?php esc_html_e( 'No synced Stripe products yet.', 'ajforms' ); ?></td></tr>
+						<?php if ( empty( $product_groups ) ) : ?>
+							<tr><td colspan="7"><?php esc_html_e( 'No synced Stripe products yet.', 'ajforms' ); ?></td></tr>
 						<?php else : ?>
-							<?php foreach ( $products as $product ) : ?>
+							<?php foreach ( $product_groups as $group_key => $group ) : ?>
+								<?php
+								$product = $group['product'];
+								$rows    = $group['rows'];
+								$row_ids = wp_list_pluck( $rows, 'id' );
+								$active_rows = array_values(
+									array_filter(
+										$rows,
+										function ( $row ) {
+											return ! empty( $row->active );
+										}
+									)
+								);
+								$visible_rows = array_values(
+									array_filter(
+										$rows,
+										function ( $row ) {
+											return ! empty( $row->active ) && 'hidden' !== (string) $row->visibility;
+										}
+									)
+								);
+								$group_active  = ! empty( $active_rows );
+								$group_visible = ! empty( $visible_rows );
+								$field_key     = sanitize_key( $group_key );
+								?>
 								<tr>
 									<td>
-										<input type="hidden" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][visibility]" value="hidden">
-										<label><input type="checkbox" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][visibility]" value="visible" <?php checked( 'hidden' !== $product->visibility && ! empty( $product->active ) ); ?> <?php disabled( empty( $product->active ) ); ?>> <?php esc_html_e( 'Visible', 'ajforms' ); ?></label>
-										<?php if ( empty( $product->active ) ) : ?><br><span class="description"><?php esc_html_e( 'Archived in Stripe', 'ajforms' ); ?></span><?php endif; ?>
+										<input type="hidden" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][row_ids]" value="<?php echo esc_attr( implode( ',', array_map( 'absint', $row_ids ) ) ); ?>">
+										<input type="hidden" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][visibility]" value="hidden">
+										<label><input type="checkbox" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][visibility]" value="visible" <?php checked( $group_visible ); ?> <?php disabled( ! $group_active ); ?>> <?php esc_html_e( 'Visible', 'ajforms' ); ?></label>
+										<?php if ( ! $group_active ) : ?><br><span class="description"><?php esc_html_e( 'Archived in Stripe', 'ajforms' ); ?></span><?php endif; ?>
 									</td>
 									<td>
 										<strong><?php echo esc_html( $product->name ); ?></strong>
+										<?php if ( count( $rows ) > 1 ) : ?><br><span class="description"><?php echo esc_html( sprintf( __( '%d prices', 'ajforms' ), count( $rows ) ) ); ?></span><?php endif; ?>
 										<?php if ( ! empty( $product->description ) ) : ?><br><span class="description"><?php echo esc_html( wp_trim_words( wp_strip_all_tags( $product->description ), 18 ) ); ?></span><?php endif; ?>
 									</td>
 									<td>
-										<input type="text" style="width:100%;margin-bottom:6px" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][custom_label]" value="<?php echo esc_attr( $product->custom_label ); ?>" placeholder="<?php esc_attr_e( 'Optional portal label', 'ajforms' ); ?>">
-										<textarea style="width:100%;min-height:70px" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][description_override]" placeholder="<?php esc_attr_e( 'Optional portal description override', 'ajforms' ); ?>"><?php echo esc_textarea( $product->description_override ); ?></textarea>
+										<input type="text" style="width:100%;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_label]" value="<?php echo esc_attr( $product->custom_label ); ?>" placeholder="<?php esc_attr_e( 'Optional portal label', 'ajforms' ); ?>">
+										<textarea style="width:100%;min-height:70px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][description_override]" placeholder="<?php esc_attr_e( 'Optional portal description override', 'ajforms' ); ?>"><?php echo esc_textarea( $product->description_override ); ?></textarea>
 									</td>
 									<td>
 										<?php $selected_duplicate_behavior = ! empty( $product->duplicate_behavior ) && isset( $duplicate_behavior_options[ $product->duplicate_behavior ] ) ? $product->duplicate_behavior : 'no_duplicates'; ?>
-										<select style="width:100%;margin-bottom:6px" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][duplicate_behavior]">
+										<select style="width:100%;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][duplicate_behavior]">
 											<?php foreach ( $duplicate_behavior_options as $behavior_key => $behavior_label ) : ?>
 												<option value="<?php echo esc_attr( $behavior_key ); ?>" <?php selected( $selected_duplicate_behavior, $behavior_key ); ?>><?php echo esc_html( $behavior_label ); ?></option>
 											<?php endforeach; ?>
 										</select>
-										<input type="text" style="width:100%;margin-bottom:6px" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][custom_request_title]" value="<?php echo esc_attr( isset( $product->custom_request_title ) ? $product->custom_request_title : '' ); ?>" placeholder="<?php esc_attr_e( 'Custom request title', 'ajforms' ); ?>">
-										<textarea style="width:100%;min-height:60px;margin-bottom:6px" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][custom_request_message]" placeholder="<?php esc_attr_e( 'Custom request message shown after client already owns this service', 'ajforms' ); ?>"><?php echo esc_textarea( isset( $product->custom_request_message ) ? $product->custom_request_message : '' ); ?></textarea>
-										<input type="text" style="width:100%" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][custom_request_button_label]" value="<?php echo esc_attr( isset( $product->custom_request_button_label ) ? $product->custom_request_button_label : '' ); ?>" placeholder="<?php esc_attr_e( 'Button label', 'ajforms' ); ?>">
+										<input type="text" style="width:100%;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_request_title]" value="<?php echo esc_attr( isset( $product->custom_request_title ) ? $product->custom_request_title : '' ); ?>" placeholder="<?php esc_attr_e( 'Custom request title', 'ajforms' ); ?>">
+										<textarea style="width:100%;min-height:60px;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_request_message]" placeholder="<?php esc_attr_e( 'Custom request message shown after client already owns this service', 'ajforms' ); ?>"><?php echo esc_textarea( isset( $product->custom_request_message ) ? $product->custom_request_message : '' ); ?></textarea>
+										<input type="text" style="width:100%" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_request_button_label]" value="<?php echo esc_attr( isset( $product->custom_request_button_label ) ? $product->custom_request_button_label : '' ); ?>" placeholder="<?php esc_attr_e( 'Button label', 'ajforms' ); ?>">
 									</td>
-									<td><?php echo esc_html( $this->format_portal_money( $product->price_amount, $product->currency ) ); ?></td>
-									<td><?php echo ! empty( $product->recurring_interval ) ? esc_html( $this->get_portal_billing_type_label( 'subscription' ) ) : esc_html( $this->get_portal_billing_type_label( 'one_time' ) ); ?></td>
-									<td><input type="number" style="width:80px" name="portal_products[<?php echo esc_attr( (int) $product->id ); ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></td>
-									<td><code><?php echo esc_html( $product->stripe_product_id ); ?></code><br><code><?php echo esc_html( $product->stripe_price_id ); ?></code></td>
+									<td>
+										<?php foreach ( $rows as $price_row ) : ?>
+											<div style="margin:0 0 8px;">
+												<strong><?php echo esc_html( $this->format_portal_money( $price_row->price_amount, $price_row->currency ) . ( ! empty( $price_row->recurring_interval ) ? '/' . $price_row->recurring_interval : '' ) ); ?></strong>
+												<br><span class="description"><?php echo ! empty( $price_row->recurring_interval ) ? esc_html( $this->get_portal_billing_type_label( 'subscription' ) ) : esc_html( $this->get_portal_billing_type_label( 'one_time' ) ); ?></span>
+												<br><code><?php echo esc_html( $price_row->stripe_price_id ); ?></code>
+												<?php if ( empty( $price_row->active ) ) : ?><br><span class="description"><?php esc_html_e( 'Archived', 'ajforms' ); ?></span><?php endif; ?>
+											</div>
+										<?php endforeach; ?>
+									</td>
+									<td><input type="number" style="width:80px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></td>
+									<td><code><?php echo esc_html( $product->stripe_product_id ); ?></code></td>
 								</tr>
 							<?php endforeach; ?>
 						<?php endif; ?>

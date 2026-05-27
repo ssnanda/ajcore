@@ -3417,14 +3417,14 @@ class AJForms {
 					--ajp-cyan:#06b6d4;
 					--ajp-green:#10b981;
 					--ajp-red:#ef4444;
-					--ajp-shadow:0 30px 85px rgba(15,23,42,.10);
-					--ajp-shadow-soft:0 18px 48px rgba(15,23,42,.075);
+					--ajp-shadow:0 20px 52px rgba(15,23,42,.09);
+					--ajp-shadow-soft:0 12px 32px rgba(15,23,42,.065);
 					position:relative;
 					isolation:isolate;
 					width:calc(100vw - 48px);
 					max-width:none;
-					margin:28px 0 0 calc(50% - 50vw + 24px);
-					padding:0 0 72px;
+					margin:18px 0 0 calc(50% - 50vw + 24px);
+					padding:0 0 44px;
 					font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 					color:var(--ajp-ink);
 				}
@@ -3432,8 +3432,8 @@ class AJForms {
 					content:"";
 					position:absolute;
 					z-index:-1;
-					inset:-48px -28px auto;
-					height:230px;
+					inset:-34px -28px auto;
+					height:170px;
 					background:
 						radial-gradient(circle at 18% 22%,rgba(49,87,255,.18),transparent 30%),
 						radial-gradient(circle at 82% 8%,rgba(124,58,237,.17),transparent 28%),
@@ -3442,9 +3442,9 @@ class AJForms {
 					pointer-events:none;
 				}
 				.ajcore-portal-shell *{box-sizing:border-box}
-				.ajcore-portal-shell h1{margin:0 0 18px;padding:0;font-size:32px;line-height:1.08;letter-spacing:-.04em;color:var(--ajp-ink)}
-				.ajcore-portal-shell h2{margin:0 0 24px;padding:0;font-size:clamp(34px,3.2vw,44px);line-height:.98;letter-spacing:-.06em;background:linear-gradient(135deg,#1d4ed8 0%,#3157ff 42%,#7c3aed 100%);-webkit-background-clip:text;background-clip:text;color:transparent;text-wrap:balance}
-				.ajcore-portal-shell h3{margin:30px 0 14px;padding:0;font-size:23px;line-height:1.16;letter-spacing:-.04em;color:var(--ajp-ink)}
+				.ajcore-portal-shell h1{margin:0 0 14px;padding:0;font-size:28px;line-height:1.08;letter-spacing:-.04em;color:var(--ajp-ink)}
+				.ajcore-portal-shell h2{margin:0 0 16px;padding:0;font-size:clamp(28px,2.45vw,36px);line-height:1;letter-spacing:-.055em;background:linear-gradient(135deg,#1d4ed8 0%,#3157ff 42%,#7c3aed 100%);-webkit-background-clip:text;background-clip:text;color:transparent;text-wrap:balance}
+				.ajcore-portal-shell h3{margin:22px 0 10px;padding:0;font-size:20px;line-height:1.16;letter-spacing:-.04em;color:var(--ajp-ink)}
 				.ajcore-portal-shell h3:first-of-type{margin-top:0}
 				.ajcore-portal-shell p{color:#334155;line-height:1.65;font-size:16px}
 				.ajcore-portal-shell a{color:#2563eb;text-decoration:none;font-weight:800}
@@ -3476,13 +3476,13 @@ class AJForms {
 					display:flex;
 					align-items:center;
 					gap:8px;
-					margin:0 0 26px;
-					padding:8px;
+					margin:0 0 18px;
+					padding:6px;
 					overflow-x:auto;
 					-webkit-overflow-scrolling:touch;
 					scrollbar-width:none;
 					border:1px solid rgba(219,231,243,.9);
-					border-radius:26px;
+					border-radius:22px;
 					background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(255,255,255,.78));
 					box-shadow:var(--ajp-shadow-soft);
 					backdrop-filter:blur(18px);
@@ -3494,9 +3494,9 @@ class AJForms {
 					display:inline-flex;
 					align-items:center;
 					justify-content:center;
-					min-height:50px;
-					padding:13px 18px;
-					border-radius:19px;
+					min-height:40px;
+					padding:9px 14px;
+					border-radius:15px;
 					color:#475569;
 					font-size:15px;
 					font-weight:950;
@@ -3505,9 +3505,9 @@ class AJForms {
 					transition:background .18s ease,color .18s ease,transform .18s ease,box-shadow .18s ease;
 				}
 				.ajcore-portal-shell .aj-customer-portal-tab:hover{background:#eef4ff;color:#1d4ed8;transform:translateY(-1px)}
-				.ajcore-portal-shell .aj-customer-portal-tab.is-active{background:linear-gradient(135deg,#3157ff 0%,#713df2 100%);color:#fff;box-shadow:0 16px 36px rgba(49,87,255,.26)}
-				.ajcore-portal-shell .aj-customer-portal-panel{position:relative;margin:0;padding:0;min-height:560px;animation:ajp-fade-up .28s ease both}
-				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 24px}
+				.ajcore-portal-shell .aj-customer-portal-tab.is-active{background:linear-gradient(135deg,#3157ff 0%,#713df2 100%);color:#fff;box-shadow:0 10px 24px rgba(49,87,255,.22)}
+				.ajcore-portal-shell .aj-customer-portal-panel{position:relative;margin:0;padding:0;min-height:0;animation:ajp-fade-up .28s ease both}
+				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 16px}
 				@keyframes ajp-fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 				.ajcore-portal-shell .aj-portal-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:0 0 24px;width:100%}
@@ -3533,45 +3533,45 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-summary-card strong{position:relative;z-index:1;color:#475569;font-size:14px;font-weight:900}
 				.ajcore-portal-shell .aj-portal-summary-card span{position:relative;z-index:1;font-size:30px;line-height:1;font-weight:950;letter-spacing:-.055em;color:var(--ajp-ink)}
 
-				.ajcore-portal-shell .aj-portal-services-list{display:grid;gap:16px;margin:0 0 26px;width:100%;max-width:none}
+				.ajcore-portal-shell .aj-portal-services-list{display:grid;gap:12px;margin:0 0 20px;width:100%;max-width:none}
 				.ajcore-portal-shell .aj-portal-service-card{
 					position:relative;
 					overflow:hidden;
 					border:1px solid rgba(219,231,243,.95);
-					border-radius:30px;
+					border-radius:22px;
 					background:radial-gradient(circle at 100% 0%,rgba(124,58,237,.14),transparent 28%),linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);
-					padding:22px;
-					box-shadow:0 22px 54px rgba(15,23,42,.075);
+					padding:16px 18px;
+					box-shadow:0 14px 34px rgba(15,23,42,.06);
 				}
 				.ajcore-portal-shell .aj-portal-service-card:before{content:"";position:absolute;left:0;right:0;top:0;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
 				.ajcore-portal-shell .aj-portal-service-card-past{background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);box-shadow:0 14px 36px rgba(15,23,42,.055)}
 				.ajcore-portal-shell .aj-portal-service-card-past:before{background:linear-gradient(90deg,#94a3b8,#cbd5e1)}
-				.ajcore-portal-shell .aj-portal-service-card h4{margin:0 0 18px;font-size:23px;line-height:1.14;letter-spacing:-.045em;color:#111827;text-wrap:balance}
-				.ajcore-portal-shell .aj-portal-service-card-grid{display:grid;grid-template-columns:minmax(260px,1.05fr) minmax(100px,.45fr) minmax(160px,.68fr) minmax(150px,.58fr) minmax(120px,.45fr);gap:18px;align-items:start}
+				.ajcore-portal-shell .aj-portal-service-card h4{margin:0 0 12px;font-size:19px;line-height:1.14;letter-spacing:-.04em;color:#111827;text-wrap:balance}
+				.ajcore-portal-shell .aj-portal-service-card-grid{display:grid;grid-template-columns:minmax(220px,1fr) minmax(95px,.45fr) minmax(150px,.7fr) minmax(145px,.65fr) minmax(110px,.45fr);gap:12px;align-items:start}
 				.ajcore-portal-shell .aj-portal-service-card-grid div{min-width:0}
-				.ajcore-portal-shell .aj-portal-service-card-grid strong{display:block;font-size:12px;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:.075em;font-weight:950}
-				.ajcore-portal-shell .aj-portal-service-card-grid span{display:block;color:#0f172a;font-weight:900;font-size:16px;line-height:1.46;overflow-wrap:anywhere}
+				.ajcore-portal-shell .aj-portal-service-card-grid strong{display:block;font-size:11px;color:#64748b;margin-bottom:5px;text-transform:uppercase;letter-spacing:.07em;font-weight:950}
+				.ajcore-portal-shell .aj-portal-service-card-grid span{display:block;color:#0f172a;font-weight:900;font-size:14px;line-height:1.35;overflow-wrap:anywhere}
 
-				.ajcore-portal-shell .aj-portal-add-service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;margin:0 0 20px;width:100%;max-width:none}
+				.ajcore-portal-shell .aj-portal-add-service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:0 0 18px;width:100%;max-width:none}
 				.ajcore-portal-shell .aj-portal-add-service-card{
 					position:relative;
 					overflow:hidden;
-					min-height:190px;
+					min-height:0;
 					display:flex;
 					flex-direction:column;
-					gap:16px;
+					gap:11px;
 					border:1px solid rgba(219,231,243,.95);
-					border-radius:28px;
-					padding:22px;
+					border-radius:22px;
+					padding:16px 18px;
 					background:linear-gradient(180deg,rgba(255,255,255,.96) 0%,rgba(248,251,255,.92) 100%);
-					box-shadow:0 26px 66px rgba(15,23,42,.07);
+					box-shadow:0 12px 30px rgba(15,23,42,.055);
 					transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
 				}
-				.ajcore-portal-shell .aj-portal-add-service-card:after{content:"";position:absolute;right:-64px;top:-76px;width:178px;height:178px;border-radius:999px;background:radial-gradient(circle,rgba(124,58,237,.13),transparent 70%)}
-				.ajcore-portal-shell .aj-portal-add-service-card:hover{transform:translateY(-5px);border-color:#bfdbfe;box-shadow:0 32px 72px rgba(37,99,235,.14)}
-				.ajcore-portal-shell .aj-portal-add-service-card h4{position:relative;z-index:1;margin:0;font-size:22px;line-height:1.15;letter-spacing:-.04em;color:#111827;text-wrap:balance}
-				.ajcore-portal-shell .aj-portal-add-service-card p{position:relative;z-index:1;margin:0;color:#475569;line-height:1.6;font-size:15px}
-				.ajcore-portal-shell .aj-portal-add-service-price{position:relative;z-index:1;margin-top:auto;font-weight:950;color:#111827;font-size:19px;letter-spacing:-.025em}
+				.ajcore-portal-shell .aj-portal-add-service-card:after{content:"";position:absolute;right:-72px;top:-84px;width:158px;height:158px;border-radius:999px;background:radial-gradient(circle,rgba(124,58,237,.10),transparent 70%)}
+				.ajcore-portal-shell .aj-portal-add-service-card:hover{transform:translateY(-2px);border-color:#bfdbfe;box-shadow:0 18px 44px rgba(37,99,235,.11)}
+				.ajcore-portal-shell .aj-portal-add-service-card h4{position:relative;z-index:1;margin:0;font-size:18px;line-height:1.18;letter-spacing:-.035em;color:#111827;text-wrap:balance}
+				.ajcore-portal-shell .aj-portal-add-service-card p{position:relative;z-index:1;margin:0;color:#475569;line-height:1.45;font-size:14px}
+				.ajcore-portal-shell .aj-portal-add-service-price{position:relative;z-index:1;margin-top:auto;font-weight:950;color:#111827;font-size:16px;letter-spacing:-.02em}
 				.ajcore-portal-shell .aj-portal-add-service-price-choice{position:relative;z-index:1;display:grid;gap:7px;margin:4px 0 0;color:#475569;font-weight:850;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
 				.ajcore-portal-shell .aj-portal-add-service-price-choice select{width:100%;min-height:46px;border:1px solid #dbe7f3;border-radius:14px;background:#fff;color:#111827;padding:0 12px;font-size:15px;font-weight:800;text-transform:none;letter-spacing:0}
 				.ajcore-portal-shell .aj-portal-add-service-requires,.ajcore-portal-shell .aj-portal-add-service-dependency-note{position:relative;z-index:1;padding:10px 12px;border-radius:14px;font-size:13px;font-weight:800;line-height:1.4}
