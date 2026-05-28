@@ -4495,10 +4495,10 @@ class AJForms {
 								embeddedCheckout.destroy();
 							}
 							stripeInstance = window.Stripe(publishableKey);
-							if (typeof stripeInstance.createEmbeddedCheckoutPage !== 'function') {
-								throw new Error('<?php echo esc_js( __( 'Stripe Embedded Checkout Page is not available. Please refresh and try again.', 'ajforms' ) ); ?>');
+							if (typeof stripeInstance.initEmbeddedCheckout !== 'function') {
+								throw new Error('<?php echo esc_js( __( 'Stripe Embedded Checkout is not available. Please refresh and try again.', 'ajforms' ) ); ?>');
 							}
-							return stripeInstance.createEmbeddedCheckoutPage({
+							return stripeInstance.initEmbeddedCheckout({
 								fetchClientSecret: function() {
 									return Promise.resolve(String(payload.data.client_secret || '').trim());
 								}
@@ -5859,7 +5859,7 @@ class AJForms {
 		if ( $embedded_checkout ) {
 			$body = array(
 				'mode'       => $checkout_mode,
-				'ui_mode'    => 'embedded_page',
+				'ui_mode'    => 'embedded',
 				'return_url' => str_replace(
 					'%7BCHECKOUT_SESSION_ID%7D',
 					'{CHECKOUT_SESSION_ID}',
@@ -5960,21 +5960,11 @@ class AJForms {
 			}
 		}
 
-		$checkout_headers = array();
-		if ( $embedded_checkout ) {
-			/* Embedded Checkout needs Stripe's Checkout Session client_secret format. Pinning
-			 * only this request avoids older account API-version response differences without
-			 * changing the rest of AJ Core's Stripe sync behavior.
-			 */
-			$checkout_headers['Stripe-Version'] = '2026-03-25.dahlia';
-		}
-
 		$response = $this->stripe_api_request(
 			'checkout/sessions',
 			$stripe_settings['secret_key'],
 			$body,
-			'POST',
-			$checkout_headers
+			'POST'
 		);
 
 		if ( is_wp_error( $response ) ) {
@@ -6866,6 +6856,21 @@ class AJForms {
 				renderCart();
 			}
 
+			function clearAllStoredAjcoreProductCarts() {
+				destroyEmbeddedCheckout();
+				Object.keys(cart).forEach(function(priceId) {
+					delete cart[priceId];
+				});
+				try {
+					for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+						const key = window.sessionStorage.key(index);
+						if (key && key.indexOf('ajcoreProductsCart:') === 0) {
+							window.sessionStorage.removeItem(key);
+						}
+					}
+				} catch (error) {}
+			}
+
 			function getCheckoutReturnStatus() {
 				try {
 					return new URLSearchParams(window.location.search).get('ajcore_checkout') || '';
@@ -7144,17 +7149,12 @@ class AJForms {
 					});
 					cartModalTotal.textContent = items.length ? 'Total: ' + formatCurrency(total, currency) : '';
 					if (cartModalNote) {
-						const reviewHtml = getMixedCheckoutReviewHtml(items);
 						const messageText = cartMessage && cartMessage.textContent ? cartMessage.textContent : '';
-						if (reviewHtml) {
-							cartModalNote.innerHTML = reviewHtml;
-						} else {
-							cartModalNote.textContent = messageText;
-						}
-						cartModalNote.style.display = (reviewHtml || messageText) ? 'block' : 'none';
+						cartModalNote.textContent = messageText;
+						cartModalNote.style.display = messageText ? 'block' : 'none';
 					}
 					if (cartModalCheckoutButton) {
-						cartModalCheckoutButton.textContent = cartNeedsMixedCheckoutReview(items) ? 'Continue to Secure Checkout' : 'Checkout';
+						cartModalCheckoutButton.textContent = 'Secure Checkout';
 					}
 				}
 			saveCart();
@@ -7195,14 +7195,20 @@ class AJForms {
 				}
 				const breakdown = getMixedCartBreakdown(items);
 				const intervalLabel = String(breakdown.interval || 'year').toLowerCase();
-				embeddedCheckoutSummary.innerHTML = '<h4>Payment Summary</h4>' +
-					'<strong>Today due: ' + formatCurrency(breakdown.total, breakdown.currency) + '</strong>' +
-					'<p>Starts subscription: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</p>' +
-					'<p>One-time charge after checkout: ' + formatCurrency(breakdown.one_time_total, breakdown.currency) + '</p>' +
-					'<p>Renewal after first period: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</p>';
+				let html = '<h4>Payment Summary</h4><strong>Today due: ' + formatCurrency(breakdown.total, breakdown.currency) + '</strong>';
+				if (breakdown.recurring_total > 0) {
+					html += '<p>Subscription checkout: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</p>';
+				}
+				if (breakdown.one_time_total > 0) {
+					html += '<p>One-time items: ' + formatCurrency(breakdown.one_time_total, breakdown.currency) + '</p>';
+				}
+				if (breakdown.recurring_total > 0) {
+					html += '<p>Renewal after first period: ' + formatCurrency(breakdown.recurring_total, breakdown.currency) + ' per ' + intervalLabel + '</p>';
+				}
+				embeddedCheckoutSummary.innerHTML = html;
 			}
 
-			function startEmbeddedMixedCheckout(items) {
+			function startEmbeddedCartCheckout(items) {
 				if (!embeddedCheckoutWrap || !embeddedCheckoutMount) {
 					return false;
 				}
@@ -7237,10 +7243,10 @@ class AJForms {
 							throw new Error('Stripe did not return a valid embedded Checkout client secret. Please verify the Stripe API version and keys, then try again.');
 						}
 						ajcoreStripeInstance = window.Stripe(String(payload.data.publishable_key || '').trim());
-						if (typeof ajcoreStripeInstance.createEmbeddedCheckoutPage !== 'function') {
-							throw new Error('Stripe Embedded Checkout Page is not available. Please refresh and try again.');
+						if (typeof ajcoreStripeInstance.initEmbeddedCheckout !== 'function') {
+							throw new Error('Stripe Embedded Checkout is not available. Please refresh and try again.');
 						}
-						return ajcoreStripeInstance.createEmbeddedCheckoutPage({
+						return ajcoreStripeInstance.initEmbeddedCheckout({
 							fetchClientSecret: function() {
 								return Promise.resolve(embeddedClientSecret);
 							}
@@ -7256,7 +7262,7 @@ class AJForms {
 						embeddedCheckoutMount.innerHTML = '';
 						setEmbeddedCheckoutMessage(error.message || 'Unable to start embedded checkout.');
 						checkoutButton.disabled = false;
-						checkoutButton.textContent = 'Continue to Secure Checkout';
+						checkoutButton.textContent = 'Checkout';
 					});
 				return true;
 			}
@@ -7282,7 +7288,7 @@ class AJForms {
 				destroyEmbeddedCheckout();
 				if (checkoutButton) {
 					checkoutButton.disabled = Object.keys(cart).length === 0;
-					checkoutButton.textContent = cartNeedsMixedCheckoutReview(Object.values(cart)) ? 'Continue to Secure Checkout' : 'Checkout';
+					checkoutButton.textContent = 'Secure Checkout';
 				}
 				cartModal.classList.remove('is-open');
 				cartModal.setAttribute('aria-hidden', 'true');
@@ -7406,10 +7412,6 @@ class AJForms {
 					if (!cartItemsForCheckout.length) {
 						return;
 					}
-					if (cartNeedsMixedCheckoutReview(cartItemsForCheckout) && checkoutButton.dataset.reviewedCart !== getCartSignature(cartItemsForCheckout)) {
-						openCartModal();
-						return;
-					}
 					const items = cartItemsForCheckout.map(function(item) {
 						return { price_id: item.price_id, quantity: 1 };
 					});
@@ -7417,11 +7419,9 @@ class AJForms {
 					const originalText = checkoutButton.textContent;
 					checkoutButton.textContent = 'Loading...';
 					setCartMessage('');
-					if (cartNeedsMixedCheckoutReview(cartItemsForCheckout)) {
-						checkoutButton.textContent = 'Loading secure checkout...';
-						if (startEmbeddedMixedCheckout(cartItemsForCheckout)) {
-							return;
-						}
+					checkoutButton.textContent = 'Loading secure checkout...';
+					if (startEmbeddedCartCheckout(cartItemsForCheckout)) {
+						return;
 					}
 					const formData = new FormData();
 					formData.append('action', 'ajcore_create_checkout_session');
@@ -7449,10 +7449,13 @@ class AJForms {
 				});
 			}
 			if (getCheckoutReturnStatus() === 'success') {
-				try {
-					window.sessionStorage.removeItem(cartStorageKey);
-				} catch (error) {}
-				showCheckoutNotice('Checkout complete. Your order was received.', 'success');
+				clearAllStoredAjcoreProductCarts();
+				if (checkoutNotice && checkoutNotice.textContent.trim()) {
+					checkoutNotice.hidden = false;
+					checkoutNotice.classList.add('is-success');
+				} else {
+					showCheckoutNotice('Checkout complete. Your order was received.', 'success');
+				}
 			} else if (getCheckoutReturnStatus() === 'cancelled') {
 				showCheckoutNotice('Checkout was cancelled. Your cart is still available.', 'error');
 				loadCart();
