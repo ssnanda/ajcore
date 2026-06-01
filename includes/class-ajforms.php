@@ -2426,6 +2426,87 @@ class AJForms {
 		return ! empty( $snapshot->subscription_id ) || ! empty( $existing_snapshot->subscription_id );
 	}
 
+	private function portal_service_snapshots_match_one_time_service( $snapshot, $existing_snapshot ) {
+		if ( 'one_time' !== $this->get_snapshot_billing_type_key( $snapshot ) || 'one_time' !== $this->get_snapshot_billing_type_key( $existing_snapshot ) ) {
+			return false;
+		}
+
+		$customer = ! empty( $snapshot->stripe_customer_id ) ? (string) $snapshot->stripe_customer_id : ( ! empty( $snapshot->guest_customer_id ) ? (string) $snapshot->guest_customer_id : (string) $snapshot->customer_email );
+		$existing_customer = ! empty( $existing_snapshot->stripe_customer_id ) ? (string) $existing_snapshot->stripe_customer_id : ( ! empty( $existing_snapshot->guest_customer_id ) ? (string) $existing_snapshot->guest_customer_id : (string) $existing_snapshot->customer_email );
+		if ( '' === $customer || '' === $existing_customer || $customer !== $existing_customer ) {
+			return false;
+		}
+
+		$name = sanitize_title( $this->get_snapshot_service_name( $snapshot ) );
+		$existing_name = sanitize_title( $this->get_snapshot_service_name( $existing_snapshot ) );
+		if ( '' === $name || '' === $existing_name || $name !== $existing_name ) {
+			return false;
+		}
+
+		$product_match = ! empty( $snapshot->product_id ) && ! empty( $existing_snapshot->product_id ) && (string) $snapshot->product_id === (string) $existing_snapshot->product_id;
+		$price_match = ! empty( $snapshot->price_id ) && ! empty( $existing_snapshot->price_id ) && (string) $snapshot->price_id === (string) $existing_snapshot->price_id;
+		if ( $product_match || $price_match ) {
+			return true;
+		}
+
+		foreach ( array( 'checkout_session_id', 'invoice_id', 'payment_intent_id', 'charge_id' ) as $field ) {
+			if ( ! empty( $snapshot->$field ) && ! empty( $existing_snapshot->$field ) && (string) $snapshot->$field === (string) $existing_snapshot->$field ) {
+				return true;
+			}
+		}
+
+		if ( ! empty( $snapshot->amount ) && ! empty( $existing_snapshot->amount ) && (float) $snapshot->amount !== (float) $existing_snapshot->amount ) {
+			return false;
+		}
+
+		$period = ! empty( $snapshot->service_period ) ? sanitize_title( (string) $snapshot->service_period ) : '';
+		$existing_period = ! empty( $existing_snapshot->service_period ) ? sanitize_title( (string) $existing_snapshot->service_period ) : '';
+		return '' !== $period && '' !== $existing_period && $period === $existing_period;
+	}
+
+	private function get_snapshot_display_status_rank( $snapshot ) {
+		$status = isset( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : '';
+		$type   = $this->get_snapshot_billing_type_key( $snapshot );
+
+		if ( 'one_time' === $type ) {
+			$ranks = array(
+				'used'      => 0,
+				'paid'      => 1,
+				'succeeded' => 2,
+				'completed' => 3,
+				'complete'  => 3,
+				'active'    => 4,
+			);
+		} else {
+			$ranks = array(
+				'active'    => 0,
+				'trialing'  => 0,
+				'paid'      => 1,
+				'succeeded' => 2,
+				'completed' => 3,
+				'complete'  => 3,
+				'canceled'  => 9,
+				'cancelled' => 9,
+			);
+		}
+
+		return isset( $ranks[ $status ] ) ? $ranks[ $status ] : 99;
+	}
+
+	private function merge_portal_service_snapshot_for_display( $existing_snapshot, $candidate_snapshot ) {
+		$use_candidate = $this->get_snapshot_display_status_rank( $candidate_snapshot ) < $this->get_snapshot_display_status_rank( $existing_snapshot );
+		$primary       = $use_candidate ? clone $candidate_snapshot : clone $existing_snapshot;
+		$fallback      = $use_candidate ? $existing_snapshot : $candidate_snapshot;
+
+		foreach ( array( 'product_id', 'price_id', 'checkout_session_id', 'invoice_id', 'payment_intent_id', 'charge_id', 'subscription_id', 'service_period', 'service_period_start', 'service_period_end', 'next_billing_date', 'price_label_snapshot', 'raw_data' ) as $field ) {
+			if ( empty( $primary->$field ) && ! empty( $fallback->$field ) ) {
+				$primary->$field = $fallback->$field;
+			}
+		}
+
+		return $primary;
+	}
+
 	private function get_subscription_service_identity_parts( $subscription ) {
 		$parts = array(
 			'price_ids'   => array(),
@@ -2524,17 +2605,16 @@ class AJForms {
 		foreach ( (array) $snapshots as $snapshot ) {
 			$key = $this->get_snapshot_service_identity_key( $snapshot );
 			foreach ( $deduped as $existing_key => $existing_snapshot ) {
-				if ( $this->portal_service_snapshots_match_recurring_service( $snapshot, $existing_snapshot ) ) {
+				if (
+					$this->portal_service_snapshots_match_recurring_service( $snapshot, $existing_snapshot )
+					|| $this->portal_service_snapshots_match_one_time_service( $snapshot, $existing_snapshot )
+				) {
 					$key = $existing_key;
 					break;
 				}
 			}
 			if ( isset( $deduped[ $key ] ) ) {
-				$current_status = sanitize_key( (string) $deduped[ $key ]->status );
-				$new_status     = sanitize_key( (string) $snapshot->status );
-				if ( in_array( $new_status, array( 'active', 'trialing' ), true ) && ! in_array( $current_status, array( 'active', 'trialing' ), true ) ) {
-					$deduped[ $key ] = $snapshot;
-				}
+				$deduped[ $key ] = $this->merge_portal_service_snapshot_for_display( $deduped[ $key ], $snapshot );
 				continue;
 			}
 			$deduped[ $key ] = $snapshot;
@@ -2576,7 +2656,7 @@ class AJForms {
 			return in_array( $status, array( 'active', 'trialing', 'paid', 'succeeded', 'completed' ), true );
 		}
 
-		return in_array( $status, array( 'paid', 'succeeded', 'completed' ), true );
+		return in_array( $status, array( 'paid', 'succeeded', 'completed', 'complete' ), true );
 	}
 
 	private function is_displayable_customer_portal_snapshot( $snapshot ) {
@@ -2624,16 +2704,17 @@ class AJForms {
 
 		$subscriptions      = $context['subscriptions'];
 		$current_services   = array_values( array_filter( $subscriptions, array( $this, 'is_current_portal_subscription' ) ) );
-		$snapshot_services  = $this->dedupe_portal_service_snapshots_for_display(
+		$displayable_snapshot_services = $this->dedupe_portal_service_snapshots_for_display(
 			array_values(
 				array_filter(
-					array_filter( $context['service_snapshots'], array( $this, 'is_current_portal_service_snapshot' ) ),
+					$context['service_snapshots'],
 					function ( $snapshot ) use ( $current_services ) {
 						return $this->is_displayable_customer_portal_snapshot( $snapshot ) && ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $current_services );
 					}
 				)
 			)
 		);
+		$snapshot_services  = array_values( array_filter( $displayable_snapshot_services, array( $this, 'is_current_portal_service_snapshot' ) ) );
 		$past_services      = array_values(
 			array_filter(
 				$subscriptions,
@@ -2642,16 +2723,12 @@ class AJForms {
 				}
 			)
 		);
-		$past_snapshot_services = $this->dedupe_portal_service_snapshots_for_display(
-			array_values(
-				array_filter(
-					$context['service_snapshots'],
-					function ( $snapshot ) use ( $current_services ) {
-						return $this->is_displayable_customer_portal_snapshot( $snapshot )
-							&& ! $this->is_current_portal_service_snapshot( $snapshot )
-							&& ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $current_services );
-					}
-				)
+		$past_snapshot_services = array_values(
+			array_filter(
+				$displayable_snapshot_services,
+				function ( $snapshot ) {
+					return ! $this->is_current_portal_service_snapshot( $snapshot );
+				}
 			)
 		);
 		$ledger             = $context['ledger'];
