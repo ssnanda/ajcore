@@ -2092,6 +2092,7 @@ class AJForms {
 				$stripe_customer_id
 			)
 		);
+		$snapshots = $this->apply_portal_service_states_to_snapshots( $snapshots );
 		$ledger = $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_type <> 'refund' AND " . $this->get_ignored_unpaid_checkout_sql_fragment() . " ORDER BY ledger_date ASC, id ASC LIMIT 100",
@@ -2129,6 +2130,101 @@ class AJForms {
 
 	private function get_snapshot_service_name( $snapshot ) {
 		return ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : __( 'Service', 'ajforms' );
+	}
+
+	private function apply_portal_service_states_to_snapshots( $snapshots ) {
+		global $wpdb;
+
+		$snapshots = is_array( $snapshots ) ? $snapshots : array();
+		if ( empty( $snapshots ) ) {
+			return $snapshots;
+		}
+
+		$table = $this->get_portal_service_states_table();
+		$exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+		if ( $exists !== $table ) {
+			return $snapshots;
+		}
+
+		$customer_ids = array();
+		$emails       = array();
+		foreach ( $snapshots as $snapshot ) {
+			if ( ! empty( $snapshot->stripe_customer_id ) ) {
+				$customer_ids[] = sanitize_text_field( (string) $snapshot->stripe_customer_id );
+			}
+			if ( ! empty( $snapshot->customer_email ) ) {
+				$emails[] = sanitize_email( (string) $snapshot->customer_email );
+			}
+		}
+		$customer_ids = array_values( array_unique( array_filter( $customer_ids ) ) );
+		$emails       = array_values( array_unique( array_filter( $emails ) ) );
+		if ( empty( $customer_ids ) && empty( $emails ) ) {
+			return $snapshots;
+		}
+
+		$where = array();
+		$params = array();
+		if ( ! empty( $customer_ids ) ) {
+			$where[] = 'stripe_customer_id IN (' . implode( ',', array_fill( 0, count( $customer_ids ), '%s' ) ) . ')';
+			$params = array_merge( $params, $customer_ids );
+		}
+		if ( ! empty( $emails ) ) {
+			$where[] = 'customer_email IN (' . implode( ',', array_fill( 0, count( $emails ), '%s' ) ) . ')';
+			$params = array_merge( $params, $emails );
+		}
+
+		$states = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$table} WHERE (" . implode( ' OR ', $where ) . ") AND service_status <> '' ORDER BY updated_at DESC, id DESC LIMIT 200",
+				$params
+			)
+		);
+		if ( empty( $states ) ) {
+			return $snapshots;
+		}
+
+		foreach ( $snapshots as $snapshot ) {
+			foreach ( $states as $state ) {
+				if ( $this->portal_service_state_matches_snapshot( $state, $snapshot ) ) {
+					$snapshot->status = sanitize_key( (string) $state->service_status );
+					if ( ! empty( $state->used_at ) ) {
+						$snapshot->used_at = $state->used_at;
+					}
+					if ( ! empty( $state->notes ) ) {
+						$snapshot->service_state_notes = $state->notes;
+					}
+					break;
+				}
+			}
+		}
+
+		return $snapshots;
+	}
+
+	private function portal_service_state_matches_snapshot( $state, $snapshot ) {
+		$state_name = ! empty( $state->product_name ) ? sanitize_title( (string) $state->product_name ) : '';
+		$snapshot_name = ! empty( $snapshot->product_name_snapshot ) ? sanitize_title( (string) $snapshot->product_name_snapshot ) : '';
+		if ( '' !== $state_name && '' !== $snapshot_name && $state_name !== $snapshot_name ) {
+			return false;
+		}
+
+		if ( ! empty( $state->amount ) && ! empty( $snapshot->amount ) && (float) $state->amount !== (float) $snapshot->amount ) {
+			return false;
+		}
+
+		foreach ( array( 'product_id', 'price_id', 'invoice_id', 'checkout_session_id', 'payment_intent_id', 'charge_id', 'subscription_id' ) as $field ) {
+			if ( ! empty( $state->$field ) && ! empty( $snapshot->$field ) && (string) $state->$field === (string) $snapshot->$field ) {
+				return true;
+			}
+		}
+
+		$state_period = ! empty( $state->service_period ) ? sanitize_title( (string) $state->service_period ) : '';
+		$snapshot_period = ! empty( $snapshot->service_period ) ? sanitize_title( (string) $snapshot->service_period ) : '';
+		if ( '' !== $state_period && '' !== $snapshot_period && $state_period === $snapshot_period ) {
+			return true;
+		}
+
+		return '' !== $state_name && '' !== $snapshot_name && $state_name === $snapshot_name;
 	}
 
 	private function get_snapshot_reference_label( $snapshot ) {
@@ -3554,6 +3650,11 @@ class AJForms {
 	private function get_portal_service_snapshots_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_service_snapshots';
+	}
+
+	private function get_portal_service_states_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_service_states';
 	}
 
 	private function get_portal_ledger_table() {

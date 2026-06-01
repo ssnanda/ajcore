@@ -28,6 +28,7 @@ class AJForms_Activator {
 		$table_event_log            = $wpdb->prefix . 'aj_portal_event_log';
 		$table_stripe_events        = $wpdb->prefix . 'aj_portal_stripe_events';
 		$table_service_snapshots    = $wpdb->prefix . 'aj_portal_service_snapshots';
+		$table_service_states       = $wpdb->prefix . 'aj_portal_service_states';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -225,6 +226,44 @@ class AJForms_Activator {
 			KEY invoice_id (invoice_id),
 			KEY payment_intent_id (payment_intent_id),
 			KEY livemode (livemode)
+		) $charset_collate;
+
+		CREATE TABLE $table_service_states (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			service_state_key varchar(190) NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			guest_customer_id varchar(100) DEFAULT '' NOT NULL,
+			customer_email varchar(190) DEFAULT '' NOT NULL,
+			product_id varchar(100) DEFAULT '' NOT NULL,
+			price_id varchar(100) DEFAULT '' NOT NULL,
+			product_name varchar(255) DEFAULT '' NOT NULL,
+			amount decimal(12,2) DEFAULT 0 NOT NULL,
+			currency varchar(12) DEFAULT 'usd' NOT NULL,
+			checkout_session_id varchar(100) DEFAULT '' NOT NULL,
+			invoice_id varchar(100) DEFAULT '' NOT NULL,
+			payment_intent_id varchar(100) DEFAULT '' NOT NULL,
+			charge_id varchar(100) DEFAULT '' NOT NULL,
+			subscription_id varchar(100) DEFAULT '' NOT NULL,
+			service_period_start datetime NULL,
+			service_period_end datetime NULL,
+			service_period varchar(255) DEFAULT '' NOT NULL,
+			service_status varchar(50) DEFAULT '' NOT NULL,
+			notes longtext NULL,
+			used_at datetime NULL,
+			used_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY service_state_key (service_state_key),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY guest_customer_id (guest_customer_id),
+			KEY customer_email (customer_email),
+			KEY product_id (product_id),
+			KEY price_id (price_id),
+			KEY invoice_id (invoice_id),
+			KEY checkout_session_id (checkout_session_id),
+			KEY payment_intent_id (payment_intent_id),
+			KEY service_status (service_status)
 		) $charset_collate;
 
 		CREATE TABLE $table_user_mappings (

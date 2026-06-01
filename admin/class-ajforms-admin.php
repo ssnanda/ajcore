@@ -577,6 +577,7 @@ class AJForms_Admin {
 			$this->get_portal_event_log_table(),
 			$this->get_portal_stripe_events_table(),
 			$this->get_portal_service_snapshots_table(),
+			$this->get_portal_service_states_table(),
 		);
 
 		foreach ( $required_tables as $table ) {
@@ -604,6 +605,7 @@ class AJForms_Admin {
 		$subscription_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_subscriptions_table()}", 0 );
 		$product_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_products_table()}", 0 );
 		$snapshot_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_snapshots_table()}", 0 );
+		$service_state_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_states_table()}", 0 );
 		if (
 			( is_array( $transaction_columns ) && ! in_array( 'livemode', $transaction_columns, true ) )
 			|| ( is_array( $subscription_columns ) && ! in_array( 'livemode', $subscription_columns, true ) )
@@ -611,6 +613,7 @@ class AJForms_Admin {
 			|| ( is_array( $product_columns ) && ! in_array( 'upgrade_from_product_id', $product_columns, true ) )
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'service_period', $snapshot_columns, true ) )
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'next_billing_date', $snapshot_columns, true ) )
+			|| ( is_array( $service_state_columns ) && ! in_array( 'service_state_key', $service_state_columns, true ) )
 		) {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
@@ -2471,19 +2474,34 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tables = array(
-			$this->get_portal_user_mappings_table(),
-			$this->get_portal_entity_mappings_table(),
-			$this->get_portal_ledger_table(),
 			$this->get_portal_stripe_transactions_table(),
 			$this->get_portal_stripe_subscriptions_table(),
 			$this->get_portal_service_snapshots_table(),
 			$this->get_portal_stripe_products_table(),
-			$this->get_portal_stripe_customers_table(),
 			$this->get_portal_sync_log_items_table(),
 			$this->get_portal_sync_logs_table(),
 		);
 
 		$deleted = 0;
+		$ledger_table = $this->get_portal_ledger_table();
+		$generated_ledger_source_types = array(
+			'charge',
+			'payment',
+			'payment_intent',
+			'invoice',
+			'checkout_session',
+			'refund',
+			'service_charge',
+			'invoice_line_item',
+			'checkout_line_item',
+		);
+		$ledger_placeholders = implode( ',', array_fill( 0, count( $generated_ledger_source_types ), '%s' ) );
+		$deleted += absint( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$ledger_table} WHERE source_type IN ({$ledger_placeholders})", $generated_ledger_source_types ) ) );
+		$ledger_result = $wpdb->query( $wpdb->prepare( "DELETE FROM {$ledger_table} WHERE source_type IN ({$ledger_placeholders})", $generated_ledger_source_types ) );
+		if ( false === $ledger_result ) {
+			return new WP_Error( 'portal_reset_failed', sprintf( __( 'Could not reset table %s.', 'ajforms' ), $ledger_table ) );
+		}
+
 		foreach ( $tables as $table ) {
 			$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
 			$result = $wpdb->query( "DELETE FROM {$table}" );
@@ -4356,6 +4374,145 @@ class AJForms_Admin {
 		return 'svc_' . sha1( implode( '|', array_map( 'strval', $parts ) ) );
 	}
 
+	private function get_portal_service_state_key( $data ) {
+		$customer_identifier = ! empty( $data['stripe_customer_id'] ) ? $data['stripe_customer_id'] : ( ! empty( $data['guest_customer_id'] ) ? $data['guest_customer_id'] : ( ! empty( $data['customer_email'] ) ? strtolower( $data['customer_email'] ) : '' ) );
+		$product_part = ! empty( $data['product_id'] ) ? $data['product_id'] : ( ! empty( $data['product_name'] ) ? sanitize_title( (string) $data['product_name'] ) : '' );
+		$price_part   = ! empty( $data['price_id'] ) ? $data['price_id'] : '';
+		$flow_part    = '';
+		foreach ( array( 'invoice_id', 'checkout_session_id', 'payment_intent_id', 'charge_id', 'subscription_id' ) as $field ) {
+			if ( ! empty( $data[ $field ] ) ) {
+				$flow_part = $data[ $field ];
+				break;
+			}
+		}
+
+		return 'state_' . sha1(
+			implode(
+				'|',
+				array_map(
+					'strval',
+					array(
+						$customer_identifier,
+						$product_part,
+						$price_part,
+						$flow_part,
+						! empty( $data['amount'] ) ? $data['amount'] : '',
+						! empty( $data['service_period_start'] ) ? $data['service_period_start'] : '',
+						! empty( $data['service_period_end'] ) ? $data['service_period_end'] : '',
+					)
+				)
+			)
+		);
+	}
+
+	private function normalize_portal_service_state_data_from_snapshot( $snapshot, $status, $notes = '' ) {
+		$data = array(
+			'stripe_customer_id'   => ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : '',
+			'guest_customer_id'    => ! empty( $snapshot->guest_customer_id ) ? sanitize_text_field( (string) $snapshot->guest_customer_id ) : '',
+			'customer_email'       => ! empty( $snapshot->customer_email ) ? sanitize_email( (string) $snapshot->customer_email ) : '',
+			'product_id'           => ! empty( $snapshot->product_id ) ? sanitize_text_field( (string) $snapshot->product_id ) : '',
+			'price_id'             => ! empty( $snapshot->price_id ) ? sanitize_text_field( (string) $snapshot->price_id ) : '',
+			'product_name'         => ! empty( $snapshot->product_name_snapshot ) ? sanitize_text_field( (string) $snapshot->product_name_snapshot ) : '',
+			'amount'               => ! empty( $snapshot->amount ) ? (float) $snapshot->amount : 0,
+			'currency'             => ! empty( $snapshot->currency ) ? strtolower( sanitize_key( (string) $snapshot->currency ) ) : 'usd',
+			'checkout_session_id'  => ! empty( $snapshot->checkout_session_id ) ? sanitize_text_field( (string) $snapshot->checkout_session_id ) : '',
+			'invoice_id'           => ! empty( $snapshot->invoice_id ) ? sanitize_text_field( (string) $snapshot->invoice_id ) : '',
+			'payment_intent_id'    => ! empty( $snapshot->payment_intent_id ) ? sanitize_text_field( (string) $snapshot->payment_intent_id ) : '',
+			'charge_id'            => ! empty( $snapshot->charge_id ) ? sanitize_text_field( (string) $snapshot->charge_id ) : '',
+			'subscription_id'      => ! empty( $snapshot->subscription_id ) ? sanitize_text_field( (string) $snapshot->subscription_id ) : '',
+			'service_period_start' => ! empty( $snapshot->service_period_start ) ? sanitize_text_field( (string) $snapshot->service_period_start ) : null,
+			'service_period_end'   => ! empty( $snapshot->service_period_end ) ? sanitize_text_field( (string) $snapshot->service_period_end ) : null,
+			'service_period'       => ! empty( $snapshot->service_period ) ? sanitize_text_field( (string) $snapshot->service_period ) : '',
+			'service_status'       => sanitize_key( (string) $status ),
+			'notes'                => sanitize_textarea_field( (string) $notes ),
+			'used_at'              => 'used' === sanitize_key( (string) $status ) ? current_time( 'mysql' ) : null,
+			'used_by'              => get_current_user_id(),
+		);
+		$data['service_state_key'] = $this->get_portal_service_state_key( $data );
+
+		return $data;
+	}
+
+	private function upsert_portal_service_state( $data ) {
+		global $wpdb;
+
+		$defaults = array(
+			'service_state_key'    => '',
+			'stripe_customer_id'   => '',
+			'guest_customer_id'    => '',
+			'customer_email'       => '',
+			'product_id'           => '',
+			'price_id'             => '',
+			'product_name'         => '',
+			'amount'               => 0,
+			'currency'             => 'usd',
+			'checkout_session_id'  => '',
+			'invoice_id'           => '',
+			'payment_intent_id'    => '',
+			'charge_id'            => '',
+			'subscription_id'      => '',
+			'service_period_start' => null,
+			'service_period_end'   => null,
+			'service_period'       => '',
+			'service_status'       => '',
+			'notes'                => '',
+			'used_at'              => null,
+			'used_by'              => 0,
+		);
+		$data = array_merge( $defaults, is_array( $data ) ? $data : array() );
+		if ( '' === $data['service_state_key'] ) {
+			$data['service_state_key'] = $this->get_portal_service_state_key( $data );
+		}
+
+		$row = array(
+			'service_state_key'    => sanitize_text_field( (string) $data['service_state_key'] ),
+			'stripe_customer_id'   => sanitize_text_field( (string) $data['stripe_customer_id'] ),
+			'guest_customer_id'    => sanitize_text_field( (string) $data['guest_customer_id'] ),
+			'customer_email'       => sanitize_email( (string) $data['customer_email'] ),
+			'product_id'           => sanitize_text_field( (string) $data['product_id'] ),
+			'price_id'             => sanitize_text_field( (string) $data['price_id'] ),
+			'product_name'         => sanitize_text_field( (string) $data['product_name'] ),
+			'amount'               => (float) $data['amount'],
+			'currency'             => strtolower( sanitize_key( (string) $data['currency'] ) ),
+			'checkout_session_id'  => sanitize_text_field( (string) $data['checkout_session_id'] ),
+			'invoice_id'           => sanitize_text_field( (string) $data['invoice_id'] ),
+			'payment_intent_id'    => sanitize_text_field( (string) $data['payment_intent_id'] ),
+			'charge_id'            => sanitize_text_field( (string) $data['charge_id'] ),
+			'subscription_id'      => sanitize_text_field( (string) $data['subscription_id'] ),
+			'service_period_start' => ! empty( $data['service_period_start'] ) ? sanitize_text_field( (string) $data['service_period_start'] ) : null,
+			'service_period_end'   => ! empty( $data['service_period_end'] ) ? sanitize_text_field( (string) $data['service_period_end'] ) : null,
+			'service_period'       => sanitize_text_field( (string) $data['service_period'] ),
+			'service_status'       => sanitize_key( (string) $data['service_status'] ),
+			'notes'                => sanitize_textarea_field( (string) $data['notes'] ),
+			'used_at'              => ! empty( $data['used_at'] ) ? sanitize_text_field( (string) $data['used_at'] ) : null,
+			'used_by'              => absint( $data['used_by'] ),
+			'updated_at'           => current_time( 'mysql' ),
+		);
+
+		if ( '' === $row['service_state_key'] || '' === $row['service_status'] ) {
+			return 0;
+		}
+
+		$table = $this->get_portal_service_states_table();
+		$existing_id = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id FROM {$table} WHERE service_state_key = %s LIMIT 1",
+				$row['service_state_key']
+			)
+		);
+		$formats = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' );
+
+		if ( $existing_id ) {
+			$wpdb->update( $table, $row, array( 'id' => absint( $existing_id ) ), $formats, array( '%d' ) );
+			return absint( $existing_id );
+		}
+
+		$row['created_at'] = current_time( 'mysql' );
+		$wpdb->insert( $table, $row, array_merge( $formats, array( '%s' ) ) );
+
+		return absint( $wpdb->insert_id );
+	}
+
 	private function upsert_portal_service_snapshot( $data ) {
 		global $wpdb;
 
@@ -5586,6 +5743,7 @@ class AJForms_Admin {
 	}
 
 	private function make_portal_service_record_from_snapshot( $snapshot ) {
+		$service_state = $this->get_matching_portal_service_state_for_snapshot( $snapshot );
 		$product = $this->resolve_portal_product_from_identifiers(
 			array(
 				'price_ids'           => ! empty( $snapshot->price_id ) ? array( sanitize_text_field( (string) $snapshot->price_id ) ) : array(),
@@ -5641,10 +5799,87 @@ class AJForms_Admin {
 			'source_ref'             => ! empty( $snapshot->snapshot_key ) ? sanitize_text_field( (string) $snapshot->snapshot_key ) : '',
 			'next_action'            => 'one_time' === $billing_type_key ? __( 'Convert to Auto-Pay Subscription', 'ajforms' ) : '',
 		);
+		if ( $service_state && ! empty( $service_state->service_status ) ) {
+			$record->status = sanitize_key( (string) $service_state->service_status );
+			if ( ! empty( $service_state->used_at ) ) {
+				$record->used_at = $service_state->used_at;
+			}
+			if ( ! empty( $service_state->notes ) ) {
+				$record->service_state_notes = $service_state->notes;
+			}
+		}
 		$record->service_period = $this->get_portal_service_record_period_label( $record );
 		$record->next_billing_date = $this->get_portal_service_record_next_billing_date_label( $record );
 
 		return $record;
+	}
+
+	private function get_matching_portal_service_state_for_snapshot( $snapshot ) {
+		global $wpdb;
+
+		$customer_id = ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : '';
+		$guest_id    = ! empty( $snapshot->guest_customer_id ) ? sanitize_text_field( (string) $snapshot->guest_customer_id ) : '';
+		$email       = ! empty( $snapshot->customer_email ) ? sanitize_email( (string) $snapshot->customer_email ) : '';
+		if ( '' === $customer_id && '' === $guest_id && '' === $email ) {
+			return null;
+		}
+
+		$where = array();
+		$params = array();
+		if ( '' !== $customer_id ) {
+			$where[] = 'stripe_customer_id = %s';
+			$params[] = $customer_id;
+		}
+		if ( '' !== $guest_id ) {
+			$where[] = 'guest_customer_id = %s';
+			$params[] = $guest_id;
+		}
+		if ( '' !== $email ) {
+			$where[] = 'customer_email = %s';
+			$params[] = $email;
+		}
+
+		$table = $this->get_portal_service_states_table();
+		$states = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$table} WHERE (" . implode( ' OR ', $where ) . ") AND service_status <> '' ORDER BY updated_at DESC, id DESC LIMIT 100",
+				$params
+			)
+		);
+
+		foreach ( (array) $states as $state ) {
+			if ( $this->portal_service_state_matches_snapshot( $state, $snapshot ) ) {
+				return $state;
+			}
+		}
+
+		return null;
+	}
+
+	private function portal_service_state_matches_snapshot( $state, $snapshot ) {
+		$state_name = ! empty( $state->product_name ) ? sanitize_title( (string) $state->product_name ) : '';
+		$snapshot_name = ! empty( $snapshot->product_name_snapshot ) ? sanitize_title( (string) $snapshot->product_name_snapshot ) : '';
+		if ( '' !== $state_name && '' !== $snapshot_name && $state_name !== $snapshot_name ) {
+			return false;
+		}
+
+		if ( ! empty( $state->amount ) && ! empty( $snapshot->amount ) && (float) $state->amount !== (float) $snapshot->amount ) {
+			return false;
+		}
+
+		foreach ( array( 'product_id', 'price_id', 'invoice_id', 'checkout_session_id', 'payment_intent_id', 'charge_id', 'subscription_id' ) as $field ) {
+			if ( ! empty( $state->$field ) && ! empty( $snapshot->$field ) && (string) $state->$field === (string) $snapshot->$field ) {
+				return true;
+			}
+		}
+
+		$state_period = ! empty( $state->service_period ) ? sanitize_title( (string) $state->service_period ) : '';
+		$snapshot_period = ! empty( $snapshot->service_period ) ? sanitize_title( (string) $snapshot->service_period ) : '';
+		if ( '' !== $state_period && '' !== $snapshot_period && $state_period === $snapshot_period ) {
+			return true;
+		}
+
+		return '' !== $state_name && '' !== $snapshot_name && $state_name === $snapshot_name;
 	}
 
 	private function get_portal_service_records_from_snapshots( $billing_type = '', $stripe_customer_id = '', $limit = 300 ) {
@@ -8073,6 +8308,18 @@ class AJForms_Admin {
 			global $wpdb;
 			$snapshot_key = sanitize_text_field( wp_unslash( $_POST['service_snapshot_key'] ) );
 			if ( '' !== $snapshot_key ) {
+				$snapshot = $wpdb->get_row(
+					$wpdb->prepare(
+						"SELECT * FROM {$this->get_portal_service_snapshots_table()} WHERE snapshot_key = %s LIMIT 1",
+						$snapshot_key
+					)
+				);
+				$state_id = 0;
+				if ( $snapshot ) {
+					$state_id = $this->upsert_portal_service_state(
+						$this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' )
+					);
+				}
 				$wpdb->update(
 					$this->get_portal_service_snapshots_table(),
 					array(
@@ -8088,7 +8335,12 @@ class AJForms_Admin {
 					array(
 						'source'   => 'admin_sold_items',
 						'severity' => 'info',
-						'details'  => array( 'snapshot_key' => $snapshot_key ),
+						'stripe_customer_id' => $snapshot && ! empty( $snapshot->stripe_customer_id ) ? $snapshot->stripe_customer_id : '',
+						'details'  => array(
+							'snapshot_key'     => $snapshot_key,
+							'service_state_id' => $state_id,
+							'product_name'     => $snapshot && ! empty( $snapshot->product_name_snapshot ) ? $snapshot->product_name_snapshot : '',
+						),
 					)
 				);
 			}
@@ -9676,6 +9928,11 @@ class AJForms_Admin {
 	private function get_portal_service_snapshots_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_service_snapshots';
+	}
+
+	private function get_portal_service_states_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_service_states';
 	}
 
 	public function get_form_record( $form_id ) {
@@ -12410,7 +12667,7 @@ class AJForms_Admin {
 				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-reset'] ) ) : ?>
-				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Master reset complete. Deleted %d local portal sync/cache rows. Forms, leads, files, tasks, service requests, WordPress users, and settings were kept.', 'ajforms' ), absint( wp_unslash( $_GET['portal-reset'] ) ) ) ); ?></p></div>
+				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Master reset complete. Deleted %d rebuildable Stripe sync/cache rows. Portal access, WordPress users, files, tasks, service requests, customer mappings, service usage states, and settings were kept.', 'ajforms' ), absint( wp_unslash( $_GET['portal-reset'] ) ) ) ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
@@ -12449,11 +12706,11 @@ class AJForms_Admin {
 			</div>
 		</div>
 
-		<form method="post" class="ajforms-settings-card" onsubmit="return window.confirm('<?php echo esc_js( __( 'Run AJ Core Client Portal master reset? This deletes local portal users, Stripe customer/product/subscription/transaction cache, billing ledger, mappings, and sync history. It does not delete WordPress users, forms, leads, files, tasks, service requests, or plugin settings.', 'ajforms' ) ); ?>');">
+		<form method="post" class="ajforms-settings-card" onsubmit="return window.confirm('<?php echo esc_js( __( 'Run AJ Core Client Portal master reset? This deletes rebuildable Stripe product/subscription/transaction cache, generated billing ledger rows, generated service snapshots, and sync history. It keeps WordPress users, portal mappings/access, files, tasks, service requests, service usage states, forms, leads, and plugin settings.', 'ajforms' ) ); ?>');">
 			<?php wp_nonce_field( 'ajcore_portal_master_reset', 'ajcore_portal_master_reset_nonce' ); ?>
 			<h3><?php esc_html_e( 'Master Reset', 'ajforms' ); ?></h3>
 			<p><?php esc_html_e( 'Use this when local portal sync/cache data is bad and you want to sync fresh from Stripe.', 'ajforms' ); ?></p>
-			<p class="description"><?php esc_html_e( 'Deletes local portal users, Stripe customer/product/subscription/transaction cache, billing ledger, mappings, and sync history. Keeps forms, leads, files, tasks, service requests, WordPress users, and settings.', 'ajforms' ); ?></p>
+			<p class="description"><?php esc_html_e( 'Deletes rebuildable Stripe cache, generated ledger rows, generated service snapshots, and sync history. Keeps customer records, portal access/mappings, service usage states such as Used, manual charges, forms, leads, files, tasks, service requests, WordPress users, and settings.', 'ajforms' ); ?></p>
 			<?php submit_button( __( 'MASTER RESET', 'ajforms' ), 'delete', 'submit', false ); ?>
 		</form>
 
