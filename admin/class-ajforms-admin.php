@@ -1853,6 +1853,8 @@ class AJForms_Admin {
 			'ajcore_portal_balance_payment',
 			'ajcore_products_cart',
 			'ajcore_portal_add_service',
+			'ajcore_mixed_cart_subscription',
+			'ajcore_portal_mixed_cart_subscription',
 		);
 	}
 
@@ -1861,6 +1863,7 @@ class AJForms_Admin {
 
 		$ledger_table         = $this->get_portal_ledger_table();
 		$transactions_table   = $this->get_portal_stripe_transactions_table();
+		$snapshots_table      = $this->get_portal_service_snapshots_table();
 		$stripe_customer_id   = sanitize_text_field( (string) $stripe_customer_id );
 		$unpaid_statuses      = array( 'unpaid', 'open', 'pending', 'pending_payment', 'requires_payment_method' );
 		$ignored_sources      = $this->get_ignored_unpaid_checkout_sources();
@@ -1889,6 +1892,29 @@ class AJForms_Admin {
 			$ledger_params[] = $stripe_customer_id;
 		}
 		$wpdb->query( $wpdb->prepare( $ledger_sql, $ledger_params ) );
+
+		$service_charge_sql = "DELETE FROM {$ledger_table} WHERE source_type = %s AND status IN ({$status_placeholders}) AND metadata LIKE %s";
+		$service_charge_params = array_merge(
+			array( 'service_charge' ),
+			$unpaid_statuses,
+			array( '%"snapshot_source_type":"checkout_session"%' )
+		);
+		if ( '' !== $stripe_customer_id ) {
+			$service_charge_sql .= ' AND stripe_customer_id = %s';
+			$service_charge_params[] = $stripe_customer_id;
+		}
+		$wpdb->query( $wpdb->prepare( $service_charge_sql, $service_charge_params ) );
+
+		$snapshot_sql = "DELETE FROM {$snapshots_table} WHERE source_type = %s AND status IN ({$status_placeholders})";
+		$snapshot_params = array_merge(
+			array( 'checkout_session' ),
+			$unpaid_statuses
+		);
+		if ( '' !== $stripe_customer_id ) {
+			$snapshot_sql .= ' AND stripe_customer_id = %s';
+			$snapshot_params[] = $stripe_customer_id;
+		}
+		$wpdb->query( $wpdb->prepare( $snapshot_sql, $snapshot_params ) );
 
 		$transaction_sql = "DELETE FROM {$transactions_table} WHERE object_type = %s AND status IN ({$status_placeholders}) AND description IN ({$source_placeholders})";
 		$transaction_params = array_merge(
@@ -4578,6 +4604,14 @@ class AJForms_Admin {
 	private function maybe_create_portal_service_snapshots_from_stripe_object( $object, $source_type ) {
 		if ( ! is_array( $object ) || empty( $object['id'] ) ) {
 			return 0;
+		}
+
+		if ( 'checkout_session' === $source_type ) {
+			$checkout_status = ! empty( $object['status'] ) ? sanitize_key( (string) $object['status'] ) : '';
+			$payment_status  = ! empty( $object['payment_status'] ) ? sanitize_key( (string) $object['payment_status'] ) : '';
+			if ( 'paid' !== $payment_status && ! in_array( $checkout_status, array( 'complete', 'completed' ), true ) ) {
+				return 0;
+			}
 		}
 
 		$count = 0;

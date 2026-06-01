@@ -2632,13 +2632,15 @@ class AJForms {
 			'ajcore_portal_balance_payment',
 			'ajcore_products_cart',
 			'ajcore_portal_add_service',
+			'ajcore_mixed_cart_subscription',
+			'ajcore_portal_mixed_cart_subscription',
 		);
 	}
 
 	private function get_ignored_unpaid_checkout_sql_fragment( $table_alias = '' ) {
 		$prefix = $table_alias ? sanitize_key( (string) $table_alias ) . '.' : '';
 
-		return "NOT ({$prefix}source_type = 'checkout_session' AND {$prefix}status IN ('unpaid','open','pending','pending_payment','requires_payment_method') AND ({$prefix}description IN ('ajcore_portal_balance_payment','ajcore_products_cart','ajcore_portal_add_service') OR {$prefix}metadata LIKE '%%ajcore_portal_balance_payment%%' OR {$prefix}metadata LIKE '%%ajcore_products_cart%%' OR {$prefix}metadata LIKE '%%ajcore_portal_add_service%%'))";
+		return "NOT ({$prefix}source_type = 'checkout_session' AND {$prefix}status IN ('unpaid','open','pending','pending_payment','requires_payment_method') AND ({$prefix}description IN ('ajcore_portal_balance_payment','ajcore_products_cart','ajcore_portal_add_service','ajcore_mixed_cart_subscription','ajcore_portal_mixed_cart_subscription') OR {$prefix}metadata LIKE '%%ajcore_portal_balance_payment%%' OR {$prefix}metadata LIKE '%%ajcore_products_cart%%' OR {$prefix}metadata LIKE '%%ajcore_portal_add_service%%' OR {$prefix}metadata LIKE '%%ajcore_mixed_cart_subscription%%' OR {$prefix}metadata LIKE '%%ajcore_portal_mixed_cart_subscription%%'))";
 	}
 
 	private function get_current_user_open_portal_ledger( $ledger_ids = array() ) {
