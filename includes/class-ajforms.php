@@ -286,6 +286,27 @@ class AJForms {
 		return home_url( '/' );
 	}
 
+	private function normalize_embedded_checkout_url( $url ) {
+		$url = esc_url_raw( $url );
+		if ( '' === $url ) {
+			$url = home_url( '/' );
+		}
+
+		$parts = wp_parse_url( $url );
+		$host  = isset( $parts['host'] ) ? strtolower( (string) $parts['host'] ) : '';
+
+		if (
+			isset( $parts['scheme'] )
+			&& 'http' === strtolower( (string) $parts['scheme'] )
+			&& '' !== $host
+			&& ! in_array( $host, array( 'localhost', '127.0.0.1', '::1' ), true )
+		) {
+			$url = preg_replace( '/^http:/i', 'https:', $url );
+		}
+
+		return esc_url_raw( $url );
+	}
+
 	public function maybe_create_customer_portal_page() {
 		if ( get_option( 'ajcore_customer_portal_page_created', '' ) ) {
 			return;
@@ -4495,10 +4516,10 @@ class AJForms {
 								embeddedCheckout.destroy();
 							}
 							stripeInstance = window.Stripe(publishableKey);
-							if (typeof stripeInstance.initEmbeddedCheckout !== 'function') {
+							if (typeof stripeInstance.createEmbeddedCheckoutPage !== 'function') {
 								throw new Error('<?php echo esc_js( __( 'Stripe Embedded Checkout is not available. Please refresh and try again.', 'ajforms' ) ); ?>');
 							}
-							return stripeInstance.initEmbeddedCheckout({
+							return stripeInstance.createEmbeddedCheckoutPage({
 								fetchClientSecret: function() {
 									return Promise.resolve(String(payload.data.client_secret || '').trim());
 								}
@@ -5842,6 +5863,9 @@ class AJForms {
 		}
 
 		$current_url = isset( $_POST['current_url'] ) ? esc_url_raw( wp_unslash( $_POST['current_url'] ) ) : home_url( '/' );
+		if ( $embedded_checkout ) {
+			$current_url = $this->normalize_embedded_checkout_url( $current_url );
+		}
 		$success_url = add_query_arg(
 			array(
 				'ajcore_checkout' => 'success',
@@ -5859,7 +5883,7 @@ class AJForms {
 		if ( $embedded_checkout ) {
 			$body = array(
 				'mode'       => $checkout_mode,
-				'ui_mode'    => 'embedded',
+				'ui_mode'    => 'embedded_page',
 				'return_url' => str_replace(
 					'%7BCHECKOUT_SESSION_ID%7D',
 					'{CHECKOUT_SESSION_ID}',
@@ -5960,11 +5984,13 @@ class AJForms {
 			}
 		}
 
-		$response = $this->stripe_api_request(
+		$checkout_headers = $embedded_checkout ? array( 'Stripe-Version' => '2026-03-25.dahlia' ) : array();
+		$response         = $this->stripe_api_request(
 			'checkout/sessions',
 			$stripe_settings['secret_key'],
 			$body,
-			'POST'
+			'POST',
+			$checkout_headers
 		);
 
 		if ( is_wp_error( $response ) ) {
@@ -7212,6 +7238,10 @@ class AJForms {
 				if (!embeddedCheckoutWrap || !embeddedCheckoutMount) {
 					return false;
 				}
+				if (window.location.protocol === 'http:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(window.location.hostname)) {
+					window.location.href = window.location.href.replace(/^http:/i, 'https:');
+					return true;
+				}
 				if (typeof window.Stripe === 'undefined') {
 					setCartMessage('Stripe checkout could not be loaded. Please refresh and try again.');
 					return true;
@@ -7243,10 +7273,10 @@ class AJForms {
 							throw new Error('Stripe did not return a valid embedded Checkout client secret. Please verify the Stripe API version and keys, then try again.');
 						}
 						ajcoreStripeInstance = window.Stripe(String(payload.data.publishable_key || '').trim());
-						if (typeof ajcoreStripeInstance.initEmbeddedCheckout !== 'function') {
+						if (typeof ajcoreStripeInstance.createEmbeddedCheckoutPage !== 'function') {
 							throw new Error('Stripe Embedded Checkout is not available. Please refresh and try again.');
 						}
-						return ajcoreStripeInstance.initEmbeddedCheckout({
+						return ajcoreStripeInstance.createEmbeddedCheckoutPage({
 							fetchClientSecret: function() {
 								return Promise.resolve(embeddedClientSecret);
 							}
@@ -7304,7 +7334,12 @@ class AJForms {
 			if (miniCheckoutButton) {
 				miniCheckoutButton.addEventListener('click', function() {
 					if (checkoutButton && !checkoutButton.disabled) {
-						checkoutButton.click();
+						openCartModal();
+						if (cartModalCheckoutButton && !cartModalCheckoutButton.disabled) {
+							cartModalCheckoutButton.click();
+						} else {
+							checkoutButton.click();
+						}
 					}
 				});
 			}
