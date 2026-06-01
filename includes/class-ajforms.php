@@ -3791,6 +3791,8 @@ class AJForms {
 				}
 				.ajcore-portal-shell .aj-customer-portal-tab:hover{background:#eef4ff;color:#1d4ed8;transform:translateY(-1px)}
 				.ajcore-portal-shell .aj-customer-portal-tab.is-active{background:linear-gradient(135deg,#3157ff 0%,#713df2 100%);color:#fff;box-shadow:0 10px 24px rgba(49,87,255,.22)}
+				.ajcore-portal-shell .aj-customer-portal-logout{margin-left:auto;background:#f8fafc;border:1px solid #e2e8f0;color:#334155}
+				.ajcore-portal-shell .aj-customer-portal-logout:hover{background:#fff1f2;border-color:#fecdd3;color:#be123c}
 				.ajcore-portal-shell .aj-customer-portal-panel{position:relative;margin:0;padding:0;min-height:0;animation:ajp-fade-up .28s ease both}
 				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 16px}
 				@keyframes ajp-fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -4018,6 +4020,7 @@ class AJForms {
 						white-space:normal;
 						text-align:center;
 					}
+					.ajcore-portal-shell .aj-customer-portal-logout{margin-left:0;grid-column:1 / -1}
 					.ajcore-portal-shell .aj-customer-portal-tab:last-child:nth-child(odd){grid-column:1 / -1}
 					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 					.ajcore-portal-shell .aj-portal-summary-card{min-height:104px;border-radius:22px;padding:20px 18px}
@@ -4056,6 +4059,7 @@ class AJForms {
 					?>
 					<a class="aj-customer-portal-tab <?php echo $is_active ? 'is-active' : ''; ?>" href="<?php echo esc_url( $item_url ); ?>"><?php echo esc_html( $item['label'] ); ?></a>
 				<?php endforeach; ?>
+				<a class="aj-customer-portal-tab aj-customer-portal-logout" href="<?php echo esc_url( wp_logout_url( home_url( '/' ) ) ); ?>"><?php esc_html_e( 'Logout', 'ajforms' ); ?></a>
 			</nav>
 
 			<?php
