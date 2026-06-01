@@ -106,6 +106,7 @@ class AJForms {
 		add_filter( 'login_headertext', array( $this, 'filter_login_header_text' ) );
 		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
+		add_action( 'template_redirect', array( $this, 'maybe_redirect_guest_customer_portal' ), 1 );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_upload' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_service_request_remove' ) );
@@ -532,6 +533,43 @@ class AJForms {
 		}
 
 		return $show;
+	}
+
+	public function maybe_redirect_guest_customer_portal() {
+		if ( is_user_logged_in() || ! is_singular() ) {
+			return;
+		}
+
+		$post = get_post();
+		if ( ! $post instanceof WP_Post ) {
+			return;
+		}
+
+		$portal_page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
+		$is_portal_page = $portal_page_id && (int) $post->ID === $portal_page_id;
+		$has_shortcode  = has_shortcode( (string) $post->post_content, 'aj_customer_portal' );
+		if ( ! $is_portal_page && ! $has_shortcode ) {
+			return;
+		}
+
+		$this->log_guest_portal_redirect();
+
+		wp_safe_redirect( wp_login_url( get_permalink( $post ) ) );
+		exit;
+	}
+
+	private function log_guest_portal_redirect() {
+		$this->log_portal_event(
+			'auth_denied',
+			array(
+				'severity' => 'warning',
+				'source'   => 'customer_portal',
+				'details'  => array(
+					'reason'      => 'not_logged_in',
+					'request_uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
+				),
+			)
+		);
 	}
 
 	public function add_customer_portal_nav_item( $items, $args ) {
@@ -3826,32 +3864,25 @@ class AJForms {
 		);
 
 		if ( ! is_user_logged_in() ) {
-			$this->log_portal_event(
-				'auth_denied',
-				array(
-					'severity' => 'warning',
-					'source'   => 'customer_portal',
-					'details'  => array(
-						'reason'      => 'not_logged_in',
-						'request_uri' => isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '',
-					),
-				)
-			);
+			$this->log_guest_portal_redirect();
 
-			$login_url    = wp_login_url( get_permalink() );
-			$register_url = get_option( 'users_can_register' ) ? wp_registration_url() : '';
+			$redirect_to = get_permalink();
+			if ( ! $redirect_to ) {
+				$redirect_to = $this->get_customer_portal_url();
+			}
+			$login_url = wp_login_url( $redirect_to );
+			if ( ! headers_sent() ) {
+				wp_safe_redirect( $login_url );
+				exit;
+			}
 
 			ob_start();
 			?>
-			<div class="aj-customer-portal aj-customer-portal-login">
-				<p><?php esc_html_e( 'Please log in to view your files.', 'ajforms' ); ?></p>
-				<p>
-					<a class="button" href="<?php echo esc_url( $login_url ); ?>"><?php esc_html_e( 'Log In', 'ajforms' ); ?></a>
-					<?php if ( $register_url ) : ?>
-						<a class="button" href="<?php echo esc_url( $register_url ); ?>"><?php esc_html_e( 'Register', 'ajforms' ); ?></a>
-					<?php endif; ?>
-				</p>
-			</div>
+			<script>window.location.href = <?php echo wp_json_encode( esc_url_raw( $login_url ) ); ?>;</script>
+			<noscript>
+				<meta http-equiv="refresh" content="0;url=<?php echo esc_url( $login_url ); ?>">
+				<p><a class="button" href="<?php echo esc_url( $login_url ); ?>"><?php esc_html_e( 'Continue to login', 'ajforms' ); ?></a></p>
+			</noscript>
 			<?php
 			return ob_get_clean();
 		}
