@@ -8533,6 +8533,33 @@ class AJForms_Admin {
 				);
 			}
 
+			$dependency_rows = isset( $_POST['portal_product_dependencies'] ) && is_array( $_POST['portal_product_dependencies'] ) ? wp_unslash( $_POST['portal_product_dependencies'] ) : array();
+			if ( ! empty( $dependency_rows ) ) {
+				$dependency_settings = $this->get_public_product_dependency_settings();
+				foreach ( $dependency_rows as $dependency_price_id => $dependency_row ) {
+					$dependency_price_id = sanitize_text_field( (string) $dependency_price_id );
+					if ( '' === $dependency_price_id || ! is_array( $dependency_row ) ) {
+						continue;
+					}
+
+					$required_price_id = isset( $dependency_row['requires_price_id'] ) ? sanitize_text_field( $dependency_row['requires_price_id'] ) : '';
+					$dependency_note   = isset( $dependency_row['dependency_note'] ) ? sanitize_textarea_field( $dependency_row['dependency_note'] ) : '';
+					if ( $required_price_id === $dependency_price_id ) {
+						$required_price_id = '';
+					}
+					if ( '' === $required_price_id && '' === $dependency_note ) {
+						unset( $dependency_settings[ $dependency_price_id ] );
+						continue;
+					}
+
+					$dependency_settings[ $dependency_price_id ] = array(
+						'requires_price_id' => $required_price_id,
+						'dependency_note'   => $dependency_note,
+					);
+				}
+				$this->save_public_product_dependency_settings( $dependency_settings );
+			}
+
 			wp_safe_redirect(
 				add_query_arg(
 					array(
@@ -12985,6 +13012,7 @@ class AJForms_Admin {
 		$visible_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden'" );
 		$total_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" );
 		$duplicate_behavior_options = $this->get_portal_product_duplicate_behavior_options();
+		$dependency_settings = $this->get_public_product_dependency_settings();
 		$product_groups = array();
 		foreach ( (array) $products as $product ) {
 			$group_key = ! empty( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : 'row_' . (int) $product->id;
@@ -13004,6 +13032,20 @@ class AJForms_Admin {
 				continue;
 			}
 			$upgrade_product_options[ $option_product_id ] = ! empty( $option_product->custom_label ) ? sanitize_text_field( (string) $option_product->custom_label ) : sanitize_text_field( (string) $option_product->name );
+		}
+		$dependency_price_options = array();
+		foreach ( (array) $products as $dependency_product ) {
+			$dependency_price_id = ! empty( $dependency_product->stripe_price_id ) ? sanitize_text_field( (string) $dependency_product->stripe_price_id ) : '';
+			if ( '' === $dependency_price_id ) {
+				continue;
+			}
+			$dependency_label = ! empty( $dependency_product->custom_label ) ? sanitize_text_field( (string) $dependency_product->custom_label ) : sanitize_text_field( (string) $dependency_product->name );
+			$dependency_price_options[ $dependency_price_id ] = sprintf(
+				'%1$s - %2$s%3$s',
+				$dependency_label,
+				$this->format_portal_money( $dependency_product->price_amount, $dependency_product->currency ),
+				! empty( $dependency_product->recurring_interval ) ? '/' . sanitize_key( (string) $dependency_product->recurring_interval ) : ''
+			);
 		}
 		?>
 		<div class="ajforms-settings-card">
@@ -13111,11 +13153,29 @@ class AJForms_Admin {
 									</td>
 									<td>
 										<?php foreach ( $rows as $price_row ) : ?>
+											<?php
+											$price_dependency = ! empty( $dependency_settings[ $price_row->stripe_price_id ] ) ? $dependency_settings[ $price_row->stripe_price_id ] : array();
+											$selected_required_price = ! empty( $price_dependency['requires_price_id'] ) ? sanitize_text_field( (string) $price_dependency['requires_price_id'] ) : '';
+											$dependency_note = ! empty( $price_dependency['dependency_note'] ) ? sanitize_textarea_field( (string) $price_dependency['dependency_note'] ) : '';
+											?>
 											<div style="margin:0 0 8px;">
 												<strong><?php echo esc_html( $this->format_portal_money( $price_row->price_amount, $price_row->currency ) . ( ! empty( $price_row->recurring_interval ) ? '/' . $price_row->recurring_interval : '' ) ); ?></strong>
 												<br><span class="description"><?php echo ! empty( $price_row->recurring_interval ) ? esc_html( $this->get_portal_billing_type_label( 'subscription' ) ) : esc_html( $this->get_portal_billing_type_label( 'one_time' ) ); ?></span>
 												<br><code><?php echo esc_html( $price_row->stripe_price_id ); ?></code>
 												<?php if ( empty( $price_row->active ) ) : ?><br><span class="description"><?php esc_html_e( 'Archived', 'ajforms' ); ?></span><?php endif; ?>
+												<div style="margin-top:8px;padding:8px;border:1px solid #dbeafe;border-radius:8px;background:#eff6ff;">
+													<label class="description" for="ajcore-dependency-<?php echo esc_attr( $price_row->stripe_price_id ); ?>"><?php esc_html_e( 'Requires another product', 'ajforms' ); ?></label>
+													<select id="ajcore-dependency-<?php echo esc_attr( $price_row->stripe_price_id ); ?>" style="width:100%;margin:2px 0 6px;" name="portal_product_dependencies[<?php echo esc_attr( $price_row->stripe_price_id ); ?>][requires_price_id]">
+														<option value=""><?php esc_html_e( 'No dependency', 'ajforms' ); ?></option>
+														<?php foreach ( $dependency_price_options as $dependency_price_id => $dependency_label ) : ?>
+															<?php if ( $dependency_price_id === (string) $price_row->stripe_price_id ) : ?>
+																<?php continue; ?>
+															<?php endif; ?>
+															<option value="<?php echo esc_attr( $dependency_price_id ); ?>" <?php selected( $selected_required_price, $dependency_price_id ); ?>><?php echo esc_html( $dependency_label ); ?></option>
+														<?php endforeach; ?>
+													</select>
+													<textarea style="width:100%;min-height:52px;" name="portal_product_dependencies[<?php echo esc_attr( $price_row->stripe_price_id ); ?>][dependency_note]" placeholder="<?php esc_attr_e( 'Dependency note shown to logged-in customers', 'ajforms' ); ?>"><?php echo esc_textarea( $dependency_note ); ?></textarea>
+												</div>
 											</div>
 										<?php endforeach; ?>
 									</td>

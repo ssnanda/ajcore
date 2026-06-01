@@ -1231,6 +1231,17 @@ class AJForms {
 		return '';
 	}
 
+	private function is_portal_product_owned_by_exact_id( $product, $purchased_price_ids, $purchased_product_ids ) {
+		$price_id   = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+		$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
+
+		if ( '' !== $price_id && in_array( $price_id, $purchased_price_ids, true ) ) {
+			return true;
+		}
+
+		return '' !== $product_id && in_array( $product_id, $purchased_product_ids, true );
+	}
+
 	private function get_portal_service_identity_tokens( $value ) {
 		$value = strtolower( wp_strip_all_tags( (string) $value ) );
 		$value = preg_replace( '/[^a-z0-9]+/i', ' ', $value );
@@ -1383,8 +1394,10 @@ class AJForms {
 			array_filter(
 				$products,
 				function ( $product ) use ( $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger, $stripe_customer_id ) {
-					$is_owned = $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger );
 					$behavior = $this->get_portal_product_duplicate_behavior( $product );
+					$is_owned = 'upgrade' === $behavior
+						? $this->is_portal_product_owned_by_exact_id( $product, $purchased_price_ids, $purchased_product_ids )
+						: $this->is_portal_product_owned( $product, $purchased_price_ids, $purchased_product_ids, $subscriptions, $ledger );
 					$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 					$open_request = $this->get_open_portal_service_request_for_product( $stripe_customer_id, $price_id, $product_id );
@@ -1741,7 +1754,7 @@ class AJForms {
 				'currency'              => isset( $product->currency ) ? strtolower( sanitize_key( (string) $product->currency ) ) : 'usd',
 				'recurring_interval'    => ! empty( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '',
 				'price_label'           => $this->get_portal_product_price_display_label( $product ),
-				'button_label'          => ! empty( $product->portal_open_request ) ? __( 'Request Pending', 'ajforms' ) : ( empty( $product->portal_can_add ) ? __( 'Already Added', 'ajforms' ) : ( ! empty( $product->portal_is_upgrade ) ? __( 'Upgrade Service', 'ajforms' ) : __( 'Add to My Services', 'ajforms' ) ) ),
+				'button_label'          => ! empty( $product->portal_open_request ) ? __( 'Request Pending', 'ajforms' ) : ( empty( $product->portal_can_add ) ? ( ! empty( $product->portal_is_upgrade ) && empty( $product->portal_is_owned ) ? __( 'Requires Existing Service', 'ajforms' ) : __( 'Already Added', 'ajforms' ) ) : ( ! empty( $product->portal_is_upgrade ) ? __( 'Upgrade Service', 'ajforms' ) : __( 'Add to My Services', 'ajforms' ) ) ),
 				'can_add'               => ! empty( $product->portal_can_add ) ? 1 : 0,
 				'is_upgrade'            => ! empty( $product->portal_is_upgrade ) ? 1 : 0,
 				'upgrade_from_product_id' => ! empty( $product->portal_upgrade_from_product_id ) ? sanitize_text_field( (string) $product->portal_upgrade_from_product_id ) : '',
@@ -4523,17 +4536,6 @@ class AJForms {
 					if (!portalItemsForCheckout.length) {
 						return;
 					}
-					if (portalCartNeedsMixedCheckoutReview(portalItemsForCheckout) && button && button.dataset.reviewedCart !== getPortalCartSignature(portalItemsForCheckout)) {
-						button.dataset.reviewedCart = getPortalCartSignature(portalItemsForCheckout);
-						button.textContent = '<?php echo esc_js( __( 'Continue Checkout', 'ajforms' ) ); ?>';
-						renderPortalCart('');
-						const panel = portalCartWrap.querySelector('.aj-portal-service-cart-panel');
-						if (panel) {
-							panel.hidden = false;
-							panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-						}
-						return;
-					}
 					const items = portalItemsForCheckout.map(function(item) {
 						return { price_id: item.price_id, quantity: 1 };
 					});
@@ -4594,7 +4596,6 @@ class AJForms {
 									mount.id = 'ajcore-portal-embedded-checkout-' + Math.random().toString(36).slice(2);
 								}
 								embeddedCheckout.mount('#' + mount.id);
-								mount.scrollIntoView({ behavior: 'smooth', block: 'start' });
 							}
 						})
 						.catch(function(error) {
