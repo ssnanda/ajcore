@@ -4516,12 +4516,12 @@ class AJForms {
 								embeddedCheckout.destroy();
 							}
 							stripeInstance = window.Stripe(publishableKey);
-							if (typeof stripeInstance.createEmbeddedCheckoutPage !== 'function') {
+							if (typeof stripeInstance.initEmbeddedCheckout !== 'function') {
 								throw new Error('<?php echo esc_js( __( 'Stripe Embedded Checkout is not available. Please refresh and try again.', 'ajforms' ) ); ?>');
 							}
-							return stripeInstance.createEmbeddedCheckoutPage({
+							return stripeInstance.initEmbeddedCheckout({
 								fetchClientSecret: function() {
-									return Promise.resolve(String(payload.data.client_secret || '').trim());
+									return Promise.resolve(decodeURIComponent(String(payload.data.client_secret || '').trim()));
 								}
 							});
 						})
@@ -4534,7 +4534,10 @@ class AJForms {
 							}
 							if (mount) {
 								mount.innerHTML = '';
-								embeddedCheckout.mount(mount);
+								if (!mount.id) {
+									mount.id = 'ajcore-portal-embedded-checkout-' + Math.random().toString(36).slice(2);
+								}
+								embeddedCheckout.mount('#' + mount.id);
 								mount.scrollIntoView({ behavior: 'smooth', block: 'start' });
 							}
 						})
@@ -5883,7 +5886,7 @@ class AJForms {
 		if ( $embedded_checkout ) {
 			$body = array(
 				'mode'       => $checkout_mode,
-				'ui_mode'    => 'embedded_page',
+				'ui_mode'    => 'embedded',
 				'return_url' => str_replace(
 					'%7BCHECKOUT_SESSION_ID%7D',
 					'{CHECKOUT_SESSION_ID}',
@@ -5984,13 +5987,11 @@ class AJForms {
 			}
 		}
 
-		$checkout_headers = $embedded_checkout ? array( 'Stripe-Version' => '2026-03-25.dahlia' ) : array();
 		$response         = $this->stripe_api_request(
 			'checkout/sessions',
 			$stripe_settings['secret_key'],
 			$body,
-			'POST',
-			$checkout_headers
+			'POST'
 		);
 
 		if ( is_wp_error( $response ) ) {
@@ -6078,7 +6079,7 @@ class AJForms {
 		wp_send_json_success(
 			array(
 				'url' => isset( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
-				'client_secret' => isset( $response['client_secret'] ) ? trim( sanitize_text_field( (string) $response['client_secret'] ) ) : '',
+				'client_secret' => isset( $response['client_secret'] ) ? trim( sanitize_text_field( rawurldecode( (string) $response['client_secret'] ) ) ) : '',
 				'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? trim( sanitize_text_field( (string) $stripe_settings['publishable_key'] ) ) : '',
 				'session_id'      => isset( $response['id'] ) ? sanitize_text_field( (string) $response['id'] ) : '',
 			)
@@ -7248,6 +7249,11 @@ class AJForms {
 				}
 				destroyEmbeddedCheckout();
 				renderEmbeddedCheckoutSummary(items);
+				if (cartModal) {
+					cartModal.classList.add('is-open');
+					cartModal.setAttribute('aria-hidden', 'false');
+					document.documentElement.classList.add('ajcore-cart-modal-open');
+				}
 				embeddedCheckoutWrap.hidden = false;
 				embeddedCheckoutMount.innerHTML = '<div class="ajcore-cart-embedded-loading">Loading secure checkout...</div>';
 				setEmbeddedCheckoutMessage('');
@@ -7269,23 +7275,26 @@ class AJForms {
 							throw new Error((payload && payload.data) || 'Unable to start embedded checkout.');
 						}
 						const embeddedClientSecret = String(payload.data.client_secret || '').trim();
-						if (!/^cs_(test|live)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+/.test(embeddedClientSecret)) {
+						if (!/^cs_(test|live)_.*_secret_/.test(decodeURIComponent(embeddedClientSecret))) {
 							throw new Error('Stripe did not return a valid embedded Checkout client secret. Please verify the Stripe API version and keys, then try again.');
 						}
 						ajcoreStripeInstance = window.Stripe(String(payload.data.publishable_key || '').trim());
-						if (typeof ajcoreStripeInstance.createEmbeddedCheckoutPage !== 'function') {
+						if (typeof ajcoreStripeInstance.initEmbeddedCheckout !== 'function') {
 							throw new Error('Stripe Embedded Checkout is not available. Please refresh and try again.');
 						}
-						return ajcoreStripeInstance.createEmbeddedCheckoutPage({
+						return ajcoreStripeInstance.initEmbeddedCheckout({
 							fetchClientSecret: function() {
-								return Promise.resolve(embeddedClientSecret);
+								return Promise.resolve(decodeURIComponent(embeddedClientSecret));
 							}
 						});
 					})
 					.then(function(checkout) {
 						ajcoreEmbeddedCheckout = checkout;
 						embeddedCheckoutMount.innerHTML = '';
-						checkout.mount(embeddedCheckoutMount);
+						if (!embeddedCheckoutMount.id) {
+							embeddedCheckoutMount.id = 'ajcore-cart-embedded-checkout-' + Math.random().toString(36).slice(2);
+						}
+						checkout.mount('#' + embeddedCheckoutMount.id);
 						embeddedCheckoutWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 					})
 					.catch(function(error) {
