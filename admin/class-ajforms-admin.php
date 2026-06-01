@@ -578,6 +578,7 @@ class AJForms_Admin {
 			$this->get_portal_stripe_events_table(),
 			$this->get_portal_service_snapshots_table(),
 			$this->get_portal_service_states_table(),
+			$this->get_portal_customer_states_table(),
 		);
 
 		foreach ( $required_tables as $table ) {
@@ -606,6 +607,7 @@ class AJForms_Admin {
 		$product_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_products_table()}", 0 );
 		$snapshot_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_snapshots_table()}", 0 );
 		$service_state_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_states_table()}", 0 );
+		$customer_state_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_customer_states_table()}", 0 );
 		if (
 			( is_array( $transaction_columns ) && ! in_array( 'livemode', $transaction_columns, true ) )
 			|| ( is_array( $subscription_columns ) && ! in_array( 'livemode', $subscription_columns, true ) )
@@ -614,11 +616,13 @@ class AJForms_Admin {
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'service_period', $snapshot_columns, true ) )
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'next_billing_date', $snapshot_columns, true ) )
 			|| ( is_array( $service_state_columns ) && ! in_array( 'service_state_key', $service_state_columns, true ) )
+			|| ( is_array( $customer_state_columns ) && ! in_array( 'portal_status', $customer_state_columns, true ) )
 		) {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
 		}
 
+		$this->seed_portal_customer_states_from_existing_customers();
 		$this->ensure_aj_portal_user_role();
 		$this->repair_portal_user_links_and_roles( false, false, false );
 	}
@@ -743,6 +747,132 @@ class AJForms_Admin {
 		return 'active' === $this->normalize_portal_customer_status( $status ) ? 1 : 0;
 	}
 
+	private function get_portal_customer_state( $stripe_customer_id ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		if ( '' === $stripe_customer_id ) {
+			return null;
+		}
+
+		$table = $this->get_portal_customer_states_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return null;
+		}
+
+		return $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+	}
+
+	private function upsert_portal_customer_state( $stripe_customer_id, $portal_status, $source = '', $reason = '', $details = array() ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$portal_status      = $this->normalize_portal_customer_status( $portal_status );
+		if ( '' === $stripe_customer_id ) {
+			return 0;
+		}
+
+		$table = $this->get_portal_customer_states_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return 0;
+		}
+
+		$customer = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT id, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+		$mapping = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT user_id, customer_email, portal_user_email, site_uuid FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+
+		$customer_email = '';
+		if ( $mapping && ! empty( $mapping->customer_email ) ) {
+			$customer_email = sanitize_email( (string) $mapping->customer_email );
+		} elseif ( $customer && ! empty( $customer->email ) ) {
+			$customer_email = sanitize_email( (string) $customer->email );
+		} elseif ( ! empty( $details['customer_email'] ) ) {
+			$customer_email = sanitize_email( (string) $details['customer_email'] );
+		}
+
+		$row = array(
+			'stripe_customer_id'  => $stripe_customer_id,
+			'customer_email'      => $customer_email,
+			'portal_status'       => $portal_status,
+			'enabled_portal'      => $this->portal_customer_status_enabled_value( $portal_status ),
+			'wp_user_id'          => $mapping && ! empty( $mapping->user_id ) ? absint( $mapping->user_id ) : ( ! empty( $details['wp_user_id'] ) ? absint( $details['wp_user_id'] ) : 0 ),
+			'portal_user_email'   => $mapping && ! empty( $mapping->portal_user_email ) ? sanitize_email( (string) $mapping->portal_user_email ) : ( ! empty( $details['user_email'] ) ? sanitize_email( (string) $details['user_email'] ) : '' ),
+			'site_uuid'           => $mapping && ! empty( $mapping->site_uuid ) ? sanitize_text_field( (string) $mapping->site_uuid ) : $this->get_ajcore_site_uuid(),
+			'status_source'       => sanitize_key( (string) $source ),
+			'status_reason'       => sanitize_text_field( (string) $reason ),
+			'updated_at'          => current_time( 'mysql' ),
+		);
+
+		$existing_id = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+
+		$formats = array( '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s' );
+		if ( $existing_id ) {
+			$wpdb->update( $table, $row, array( 'id' => absint( $existing_id ) ), $formats, array( '%d' ) );
+			return absint( $existing_id );
+		}
+
+		$row['created_at'] = current_time( 'mysql' );
+		$wpdb->insert( $table, $row, array_merge( $formats, array( '%s' ) ) );
+
+		return absint( $wpdb->insert_id );
+	}
+
+	private function seed_portal_customer_states_from_existing_customers() {
+		global $wpdb;
+
+		$table = $this->get_portal_customer_states_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return;
+		}
+
+		$customers = $wpdb->get_results(
+			"SELECT stripe_customer_id, email, portal_status, enabled_portal
+			FROM {$this->get_portal_stripe_customers_table()}
+			WHERE stripe_customer_id <> ''
+			LIMIT 2000"
+		);
+
+		foreach ( $customers as $customer ) {
+			$exists = $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT id FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
+					$customer->stripe_customer_id
+				)
+			);
+			if ( $exists ) {
+				continue;
+			}
+
+			$status = $this->normalize_portal_customer_status( ! empty( $customer->portal_status ) ? $customer->portal_status : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' ) );
+			$this->upsert_portal_customer_state(
+				$customer->stripe_customer_id,
+				$status,
+				'schema_seed',
+				'preserve_existing_customer_status',
+				array( 'customer_email' => $customer->email )
+			);
+		}
+	}
+
 	private function set_portal_customer_status( $stripe_customer_id, $new_status, $reason = '', $source = 'portal_users', $details = array() ) {
 		global $wpdb;
 
@@ -787,8 +917,10 @@ class AJForms_Admin {
 			return new WP_Error( 'status_update_failed', __( 'Unable to update portal customer status.', 'ajforms' ) );
 		}
 
+		$details = is_array( $details ) ? $details : array( 'value' => $details );
+		$this->upsert_portal_customer_state( $stripe_customer_id, $new_status, $source, $reason, $details );
+
 		if ( $old_status !== $new_status || $old_enabled !== $new_enabled ) {
-			$details = is_array( $details ) ? $details : array( 'value' => $details );
 			$details['reason'] = sanitize_text_field( (string) $reason );
 			$details['enabled_portal_before'] = $old_enabled;
 			$details['enabled_portal_after']  = $new_enabled;
@@ -1422,7 +1554,50 @@ class AJForms_Admin {
 			return 0;
 		}
 
-		if ( $existing && in_array( $this->normalize_portal_customer_status( $existing->portal_status ), array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ) {
+		$customer_state = $this->get_portal_customer_state( $data['stripe_customer_id'] );
+		if ( $customer_state && in_array( $this->normalize_portal_customer_status( $customer_state->portal_status ), array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ) {
+			if ( ! array_key_exists( 'enabled_portal', $data ) ) {
+				$formats[] = '%d';
+			}
+			if ( ! array_key_exists( 'portal_status', $data ) ) {
+				$formats[] = '%s';
+			}
+			$preserved_status       = $this->normalize_portal_customer_status( $customer_state->portal_status );
+			$data['portal_status']  = $preserved_status;
+			$data['enabled_portal'] = $this->portal_customer_status_enabled_value( $preserved_status );
+			$this->record_portal_sync_item(
+				'preserved',
+				'portal_customer_state',
+				$data['stripe_customer_id'],
+				'success',
+				sprintf(
+					/* translators: %s: portal status */
+					__( 'Preserved local portal customer state: %s.', 'ajforms' ),
+					$preserved_status
+				),
+				array(
+					'portal_status'  => $preserved_status,
+					'enabled_portal' => (int) $data['enabled_portal'],
+					'state_id'       => (int) $customer_state->id,
+				),
+				$data['stripe_customer_id']
+			);
+			$this->log_portal_event(
+				'sync_status_preserved',
+				array(
+					'source'                 => 'stripe_sync',
+					'customer_id'            => $existing ? (int) $existing->id : 0,
+					'stripe_customer_id'     => $data['stripe_customer_id'],
+					'portal_status_before'   => $preserved_status,
+					'portal_status_after'    => $preserved_status,
+					'details'                => array(
+						'enabled_portal' => (int) $data['enabled_portal'],
+						'state_source'   => 'aj_portal_customer_states',
+						'state_id'       => (int) $customer_state->id,
+					),
+				)
+			);
+		} elseif ( $existing && in_array( $this->normalize_portal_customer_status( $existing->portal_status ), array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ) {
 			unset( $data['enabled_portal'], $data['portal_status'] );
 			$formats = array_slice( $formats, 0, count( $data ) );
 			$preserved_status = $this->normalize_portal_customer_status( $existing->portal_status );
@@ -2474,6 +2649,7 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tables = array(
+			$this->get_portal_stripe_customers_table(),
 			$this->get_portal_stripe_transactions_table(),
 			$this->get_portal_stripe_subscriptions_table(),
 			$this->get_portal_service_snapshots_table(),
@@ -8307,6 +8483,8 @@ class AJForms_Admin {
 
 			global $wpdb;
 			$snapshot_key = sanitize_text_field( wp_unslash( $_POST['service_snapshot_key'] ) );
+			$state_action = isset( $_POST['service_state_action'] ) ? sanitize_key( wp_unslash( $_POST['service_state_action'] ) ) : 'used';
+			$state_action = 'unused' === $state_action ? 'unused' : 'used';
 			if ( '' !== $snapshot_key ) {
 				$snapshot = $wpdb->get_row(
 					$wpdb->prepare(
@@ -8316,14 +8494,25 @@ class AJForms_Admin {
 				);
 				$state_id = 0;
 				if ( $snapshot ) {
-					$state_id = $this->upsert_portal_service_state(
-						$this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' )
-					);
+					if ( 'used' === $state_action ) {
+						$state_id = $this->upsert_portal_service_state(
+							$this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' )
+						);
+					} else {
+						$state_data = $this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' );
+						if ( ! empty( $state_data['service_state_key'] ) ) {
+							$wpdb->delete(
+								$this->get_portal_service_states_table(),
+								array( 'service_state_key' => $state_data['service_state_key'] ),
+								array( '%s' )
+							);
+						}
+					}
 				}
 				$wpdb->update(
 					$this->get_portal_service_snapshots_table(),
 					array(
-						'status'     => 'used',
+						'status'     => 'used' === $state_action ? 'used' : 'paid',
 						'updated_at' => current_time( 'mysql' ),
 					),
 					array( 'snapshot_key' => $snapshot_key ),
@@ -8331,7 +8520,7 @@ class AJForms_Admin {
 					array( '%s' )
 				);
 				$this->log_portal_event(
-					'service_marked_used',
+					'used' === $state_action ? 'service_marked_used' : 'service_marked_unused',
 					array(
 						'source'   => 'admin_sold_items',
 						'severity' => 'info',
@@ -8345,7 +8534,7 @@ class AJForms_Admin {
 				);
 			}
 
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items', 'service-used' => '1' ), admin_url( 'admin.php' ) ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items', 'service-used' => 'used' === $state_action ? '1' : '0' ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -9933,6 +10122,11 @@ class AJForms_Admin {
 	private function get_portal_service_states_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_service_states';
+	}
+
+	private function get_portal_customer_states_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_customer_states';
 	}
 
 	public function get_form_record( $form_id ) {
@@ -13179,7 +13373,7 @@ class AJForms_Admin {
 			<h2><?php esc_html_e( 'Sold Items', 'ajforms' ); ?></h2>
 			<p><?php esc_html_e( 'Purchased items from Stripe and AJ Core checkout, including recurring subscriptions and true one-time services.', 'ajforms' ); ?></p>
 			<?php if ( isset( $_GET['service-used'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service marked used.', 'ajforms' ); ?></p></div>
+				<div class="notice notice-success is-dismissible"><p><?php echo '0' === (string) $_GET['service-used'] ? esc_html__( 'Service marked unused.', 'ajforms' ) : esc_html__( 'Service marked used.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 
 			<form method="get" id="ajcore-sold-items-filter" class="ajforms-settings-inline-actions" style="align-items:center;gap:12px;">
@@ -13232,11 +13426,17 @@ class AJForms_Admin {
 								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_next_billing_date_label( $item ) ) : '-'; ?></td>
 								<td><?php echo esc_html( $this->format_portal_date( $item->synced_at ) ); ?></td>
 								<td>
-									<?php if ( 'one_time' === $item->sold_item_type && ! empty( $item->source_ref ) && 'used' !== sanitize_key( (string) $item->status ) ) : ?>
+									<?php if ( 'one_time' === $item->sold_item_type && ! empty( $item->source_ref ) ) : ?>
 										<form method="post" style="margin:0;">
 											<?php wp_nonce_field( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' ); ?>
 											<input type="hidden" name="service_snapshot_key" value="<?php echo esc_attr( $item->source_ref ); ?>">
-											<button type="submit" class="button"><?php esc_html_e( 'Mark Used', 'ajforms' ); ?></button>
+											<?php if ( 'used' === sanitize_key( (string) $item->status ) ) : ?>
+												<input type="hidden" name="service_state_action" value="unused">
+												<button type="submit" class="button"><?php esc_html_e( 'Mark Unused', 'ajforms' ); ?></button>
+											<?php else : ?>
+												<input type="hidden" name="service_state_action" value="used">
+												<button type="submit" class="button"><?php esc_html_e( 'Mark Used', 'ajforms' ); ?></button>
+											<?php endif; ?>
 										</form>
 									<?php else : ?>
 										-

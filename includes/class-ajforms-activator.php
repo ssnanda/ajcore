@@ -29,6 +29,7 @@ class AJForms_Activator {
 		$table_stripe_events        = $wpdb->prefix . 'aj_portal_stripe_events';
 		$table_service_snapshots    = $wpdb->prefix . 'aj_portal_service_snapshots';
 		$table_service_states       = $wpdb->prefix . 'aj_portal_service_states';
+		$table_customer_states      = $wpdb->prefix . 'aj_portal_customer_states';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -109,6 +110,30 @@ class AJForms_Activator {
 			KEY email (email),
 			KEY enabled_portal (enabled_portal),
 			KEY portal_status (portal_status)
+		) $charset_collate;
+
+		CREATE TABLE $table_customer_states (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			stripe_customer_id varchar(100) NOT NULL,
+			customer_email varchar(190) DEFAULT '' NOT NULL,
+			portal_status varchar(50) DEFAULT 'disabled' NOT NULL,
+			enabled_portal tinyint(1) NOT NULL DEFAULT 0,
+			wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			portal_user_email varchar(190) DEFAULT '' NOT NULL,
+			site_uuid varchar(100) DEFAULT '' NOT NULL,
+			status_source varchar(100) DEFAULT '' NOT NULL,
+			status_reason varchar(255) DEFAULT '' NOT NULL,
+			notes longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY stripe_customer_id (stripe_customer_id),
+			KEY customer_email (customer_email),
+			KEY portal_status (portal_status),
+			KEY enabled_portal (enabled_portal),
+			KEY wp_user_id (wp_user_id),
+			KEY portal_user_email (portal_user_email),
+			KEY site_uuid (site_uuid)
 		) $charset_collate;
 
 		CREATE TABLE $table_stripe_products (
@@ -508,6 +533,24 @@ class AJForms_Activator {
 		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'disabled' WHERE enabled_portal = 0 AND (portal_status = '' OR portal_status IS NULL)" );
 		$wpdb->query( "UPDATE $table_stripe_customers SET enabled_portal = 1 WHERE portal_status = 'active'" );
 		$wpdb->query( "UPDATE $table_stripe_customers SET enabled_portal = 0 WHERE portal_status IN ('disabled','archived','without_portal_login')" );
+
+		$now = current_time( 'mysql' );
+		$wpdb->query(
+			$wpdb->prepare(
+				"INSERT INTO $table_customer_states
+					(stripe_customer_id, customer_email, portal_status, enabled_portal, status_source, status_reason, created_at, updated_at)
+				SELECT stripe_customer_id, email, portal_status, enabled_portal, %s, %s, %s, %s
+				FROM $table_stripe_customers
+				WHERE stripe_customer_id <> ''
+				ON DUPLICATE KEY UPDATE
+					customer_email = VALUES(customer_email),
+					updated_at = VALUES(updated_at)",
+				'activation_seed',
+				'preserve_existing_customer_status',
+				$now,
+				$now
+			)
+		);
 
 		$current_year = (int) current_time( 'Y' );
 		$march_15 = strtotime( $current_year . '-03-15 00:00:00' ) < current_time( 'timestamp' ) ? ( $current_year + 1 ) . '-03-15' : $current_year . '-03-15';

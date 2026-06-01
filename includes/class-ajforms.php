@@ -3657,6 +3657,11 @@ class AJForms {
 		return $wpdb->prefix . 'aj_portal_service_states';
 	}
 
+	private function get_portal_customer_states_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_customer_states';
+	}
+
 	private function get_portal_ledger_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_ledger';
@@ -3908,6 +3913,20 @@ class AJForms {
 
 		if ( empty( $row->customer_stripe_customer_id ) ) {
 			return array( 'allowed' => false, 'reason' => 'missing_customer', 'mapping' => $row, 'customer' => null );
+		}
+
+		$customer_state_table = $this->get_portal_customer_states_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $customer_state_table ) ) === $customer_state_table ) {
+			$customer_state = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT portal_status, enabled_portal FROM {$customer_state_table} WHERE stripe_customer_id = %s LIMIT 1",
+					$row->customer_stripe_customer_id
+				)
+			);
+			if ( $customer_state ) {
+				$row->portal_status  = $customer_state->portal_status;
+				$row->enabled_portal = (int) $customer_state->enabled_portal;
+			}
 		}
 
 		$valid_emails = array();
