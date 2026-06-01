@@ -102,6 +102,9 @@ class AJForms {
 		add_filter( 'wp_mail_from', array( $this, 'filter_wp_mail_from' ) );
 		add_filter( 'wp_mail_from_name', array( $this, 'filter_wp_mail_from_name' ) );
 		add_filter( 'retrieve_password_notification_email', array( $this, 'filter_wp_password_reset_email' ), 10, 4 );
+		add_action( 'login_enqueue_scripts', array( $this, 'enqueue_custom_login_styles' ) );
+		add_filter( 'login_headerurl', array( $this, 'filter_login_header_url' ) );
+		add_filter( 'login_headertext', array( $this, 'filter_login_header_text' ) );
 		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_upload' ) );
@@ -117,6 +120,171 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_create_custom_service_request', array( $this, 'ajax_create_custom_service_request' ) );
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 		add_action( 'wp_ajax_ajcore_pay_portal_ledger', array( $this, 'ajax_pay_portal_ledger' ) );
+	}
+
+	private function get_custom_login_logo_url() {
+		$logo_id = absint( get_theme_mod( 'custom_logo' ) );
+		if ( ! $logo_id ) {
+			$logo_id = absint( get_option( 'site_logo' ) );
+		}
+
+		if ( $logo_id ) {
+			$image = wp_get_attachment_image_src( $logo_id, 'full' );
+			if ( is_array( $image ) && ! empty( $image[0] ) ) {
+				return esc_url_raw( $image[0] );
+			}
+		}
+
+		$custom_logo = get_custom_logo();
+		if ( preg_match( '/<img[^>]+src=[\'"]([^\'"]+)[\'"]/i', $custom_logo, $matches ) && ! empty( $matches[1] ) ) {
+			return esc_url_raw( html_entity_decode( $matches[1], ENT_QUOTES ) );
+		}
+
+		return '';
+	}
+
+	public function filter_login_header_url( $url ) {
+		return home_url( '/' );
+	}
+
+	public function filter_login_header_text( $text ) {
+		return wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+	}
+
+	public function enqueue_custom_login_styles() {
+		$logo_url  = $this->get_custom_login_logo_url();
+		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		?>
+		<style>
+			body.login {
+				min-height: 100vh;
+				background:
+					radial-gradient(circle at top left, rgba(14, 165, 233, 0.16), transparent 34rem),
+					radial-gradient(circle at top right, rgba(99, 102, 241, 0.18), transparent 36rem),
+					linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+				color: #0f172a;
+				font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			}
+			body.login #login {
+				width: min(420px, calc(100vw - 32px));
+				padding: 7vh 0 0;
+			}
+			body.login h1 {
+				margin: 0 0 22px;
+			}
+			body.login h1 a {
+				width: min(300px, 86vw);
+				height: 88px;
+				margin: 0 auto;
+				background-position: center;
+				background-repeat: no-repeat;
+				background-size: contain;
+				color: transparent;
+			}
+			<?php if ( '' !== $logo_url ) : ?>
+			body.login h1 a {
+				background-image: url("<?php echo esc_url( $logo_url ); ?>");
+			}
+			<?php else : ?>
+			body.login h1 a {
+				width: auto;
+				height: auto;
+				text-indent: 0;
+				background: none;
+				color: #0f172a;
+				font-size: 28px;
+				font-weight: 800;
+				line-height: 1.15;
+				text-decoration: none;
+			}
+			body.login h1 a:before {
+				content: "<?php echo esc_js( $site_name ); ?>";
+			}
+			<?php endif; ?>
+			body.login form {
+				margin-top: 0;
+				padding: 30px;
+				border: 1px solid #dbe7f5;
+				border-radius: 22px;
+				background: rgba(255, 255, 255, 0.94);
+				box-shadow: 0 24px 70px rgba(15, 23, 42, 0.14);
+			}
+			body.login label {
+				color: #1e293b;
+				font-size: 14px;
+				font-weight: 700;
+			}
+			body.login form .input,
+			body.login input[type="text"],
+			body.login input[type="password"],
+			body.login input[type="email"] {
+				min-height: 48px;
+				padding: 10px 14px;
+				border: 1px solid #cbd7e6;
+				border-radius: 12px;
+				background: #f8fafc;
+				color: #0f172a;
+				font-size: 17px;
+				box-shadow: none;
+			}
+			body.login form .input:focus,
+			body.login input[type="text"]:focus,
+			body.login input[type="password"]:focus,
+			body.login input[type="email"]:focus {
+				border-color: #2563eb;
+				background: #fff;
+				box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+			}
+			body.login .button.wp-hide-pw {
+				color: #475569;
+			}
+			body.login .button-primary {
+				min-height: 46px;
+				padding: 0 22px;
+				border: 0;
+				border-radius: 999px;
+				background: linear-gradient(135deg, #2563eb 0%, #6d3df5 100%);
+				color: #fff;
+				font-size: 15px;
+				font-weight: 800;
+				box-shadow: 0 14px 32px rgba(37, 99, 235, 0.28);
+			}
+			body.login .button-primary:hover,
+			body.login .button-primary:focus {
+				background: linear-gradient(135deg, #1d4ed8 0%, #5b21d9 100%);
+				box-shadow: 0 16px 36px rgba(37, 99, 235, 0.34);
+			}
+			body.login #nav,
+			body.login #backtoblog {
+				text-align: center;
+			}
+			body.login #nav a,
+			body.login #backtoblog a,
+			body.login .privacy-policy-page-link a {
+				color: #334155;
+				font-weight: 700;
+				text-decoration: none;
+			}
+			body.login #nav a:hover,
+			body.login #backtoblog a:hover,
+			body.login .privacy-policy-page-link a:hover {
+				color: #2563eb;
+			}
+			body.login .message,
+			body.login .notice,
+			body.login #login_error {
+				border-left: 0;
+				border-radius: 14px;
+				box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+			}
+			body.login .language-switcher {
+				margin-top: 20px;
+			}
+			body.login .language-switcher select {
+				border-radius: 10px;
+			}
+		</style>
+		<?php
 	}
 
 	public function filter_wp_mail_from( $email ) {
