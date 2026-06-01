@@ -1188,9 +1188,47 @@ class AJForms {
 
 	private function get_portal_product_duplicate_behavior( $product ) {
 		$behavior = isset( $product->duplicate_behavior ) ? sanitize_key( (string) $product->duplicate_behavior ) : 'no_duplicates';
-		$allowed  = array( 'no_duplicates', 'allow_duplicate', 'custom_request' );
+		$allowed  = array( 'no_duplicates', 'allow_duplicate', 'custom_request', 'upgrade' );
 
 		return in_array( $behavior, $allowed, true ) ? $behavior : 'no_duplicates';
+	}
+
+	private function get_portal_product_upgrade_from_product_id( $product ) {
+		$product_id = isset( $product->upgrade_from_product_id ) ? sanitize_text_field( (string) $product->upgrade_from_product_id ) : '';
+
+		return 0 === strpos( $product_id, 'prod_' ) ? $product_id : '';
+	}
+
+	private function find_current_portal_subscription_for_product_id( $product_id, $subscriptions ) {
+		$product_id = sanitize_text_field( (string) $product_id );
+		if ( '' === $product_id ) {
+			return null;
+		}
+
+		foreach ( (array) $subscriptions as $subscription ) {
+			if ( ! $this->is_current_portal_subscription( $subscription ) ) {
+				continue;
+			}
+
+			if ( in_array( $product_id, $this->get_subscription_product_ids( $subscription ), true ) ) {
+				return $subscription;
+			}
+		}
+
+		return null;
+	}
+
+	private function get_portal_subscription_id( $subscription ) {
+		foreach ( array( 'stripe_subscription_id', 'subscription_id', 'id' ) as $key ) {
+			if ( isset( $subscription->{$key} ) && 0 === strpos( (string) $subscription->{$key}, 'sub_' ) ) {
+				return sanitize_text_field( (string) $subscription->{$key} );
+			}
+			if ( is_array( $subscription ) && ! empty( $subscription[ $key ] ) && 0 === strpos( (string) $subscription[ $key ], 'sub_' ) ) {
+				return sanitize_text_field( (string) $subscription[ $key ] );
+			}
+		}
+
+		return '';
 	}
 
 	private function get_portal_service_identity_tokens( $value ) {
@@ -1350,10 +1388,19 @@ class AJForms {
 					$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 					$product_id = isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '';
 					$open_request = $this->get_open_portal_service_request_for_product( $stripe_customer_id, $price_id, $product_id );
+					$upgrade_from_product_id = 'upgrade' === $behavior ? $this->get_portal_product_upgrade_from_product_id( $product ) : '';
+					$upgrade_from_subscription = '' !== $upgrade_from_product_id ? $this->find_current_portal_subscription_for_product_id( $upgrade_from_product_id, $subscriptions ) : null;
+					$upgrade_from_subscription_id = $upgrade_from_subscription ? $this->get_portal_subscription_id( $upgrade_from_subscription ) : '';
 
-					$product->portal_is_owned    = $is_owned ? 1 : 0;
-					$product->portal_open_request = $open_request ? 1 : 0;
-					$product->portal_can_add     = ( ! $open_request && ( ! $is_owned || 'allow_duplicate' === $behavior ) ) ? 1 : 0;
+					$product->portal_is_owned                     = $is_owned ? 1 : 0;
+					$product->portal_open_request                  = $open_request ? 1 : 0;
+					$product->portal_is_upgrade                    = 'upgrade' === $behavior ? 1 : 0;
+					$product->portal_upgrade_from_product_id       = $upgrade_from_product_id;
+					$product->portal_upgrade_from_subscription_id  = $upgrade_from_subscription_id;
+					$product->portal_can_add                       = ( ! $open_request && ( ! $is_owned || 'allow_duplicate' === $behavior ) ) ? 1 : 0;
+					if ( 'upgrade' === $behavior ) {
+						$product->portal_can_add = ( ! $open_request && ! $is_owned && '' !== $upgrade_from_subscription_id ) ? 1 : 0;
+					}
 
 					return true;
 				}
@@ -1694,8 +1741,11 @@ class AJForms {
 				'currency'              => isset( $product->currency ) ? strtolower( sanitize_key( (string) $product->currency ) ) : 'usd',
 				'recurring_interval'    => ! empty( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '',
 				'price_label'           => $this->get_portal_product_price_display_label( $product ),
-				'button_label'          => ! empty( $product->portal_open_request ) ? __( 'Request Pending', 'ajforms' ) : ( empty( $product->portal_can_add ) ? __( 'Already Added', 'ajforms' ) : __( 'Add to My Services', 'ajforms' ) ),
+				'button_label'          => ! empty( $product->portal_open_request ) ? __( 'Request Pending', 'ajforms' ) : ( empty( $product->portal_can_add ) ? __( 'Already Added', 'ajforms' ) : ( ! empty( $product->portal_is_upgrade ) ? __( 'Upgrade Service', 'ajforms' ) : __( 'Add to My Services', 'ajforms' ) ) ),
 				'can_add'               => ! empty( $product->portal_can_add ) ? 1 : 0,
+				'is_upgrade'            => ! empty( $product->portal_is_upgrade ) ? 1 : 0,
+				'upgrade_from_product_id' => ! empty( $product->portal_upgrade_from_product_id ) ? sanitize_text_field( (string) $product->portal_upgrade_from_product_id ) : '',
+				'upgrade_from_subscription_id' => ! empty( $product->portal_upgrade_from_subscription_id ) ? sanitize_text_field( (string) $product->portal_upgrade_from_subscription_id ) : '',
 				'required_price_id'     => $dependency['requires_price_id'],
 				'required_product_name' => $dependency['requires_product_name'],
 				'dependency_note'       => $dependency['dependency_note'],
@@ -5733,6 +5783,7 @@ class AJForms {
 		$deferred_one_time_items = array();
 		$deferred_one_time_amount_minor = 0;
 		$deferred_one_time_currency = '';
+		$portal_upgrade_items = array();
 
 		if ( $portal_add_service ) {
 			$portal_context  = $this->get_current_user_portal_billing_context();
@@ -5757,6 +5808,9 @@ class AJForms {
 					'amount'             => isset( $available_product->price_amount ) ? (float) $available_product->price_amount : 0,
 					'currency'           => isset( $available_product->currency ) ? sanitize_key( (string) $available_product->currency ) : 'usd',
 					'recurring_interval' => isset( $available_product->recurring_interval ) ? sanitize_key( (string) $available_product->recurring_interval ) : '',
+					'duplicate_behavior' => $this->get_portal_product_duplicate_behavior( $available_product ),
+					'upgrade_from_product_id' => ! empty( $available_product->portal_upgrade_from_product_id ) ? sanitize_text_field( (string) $available_product->portal_upgrade_from_product_id ) : '',
+					'upgrade_from_subscription_id' => ! empty( $available_product->portal_upgrade_from_subscription_id ) ? sanitize_text_field( (string) $available_product->portal_upgrade_from_subscription_id ) : '',
 				);
 			}
 			$allowed_price_map = array_column( $this->apply_public_product_dependency_settings_to_prices( array_values( $allowed_price_map ) ), null, 'id' );
@@ -5859,6 +5913,33 @@ class AJForms {
 				} else {
 					$items = $subscription_items;
 				}
+			}
+		}
+
+		if ( $portal_add_service ) {
+			$selected_items_for_upgrade = is_array( $items ) ? $items : array( array( 'price_id' => $price_id, 'quantity' => 1 ) );
+			foreach ( $selected_items_for_upgrade as $selected_item ) {
+				$selected_price_id = is_array( $selected_item ) && ! empty( $selected_item['price_id'] ) ? sanitize_text_field( (string) $selected_item['price_id'] ) : '';
+				if ( '' === $selected_price_id || empty( $allowed_price_map[ $selected_price_id ] ) ) {
+					continue;
+				}
+
+				$selected_allowed_price = $allowed_price_map[ $selected_price_id ];
+				if ( 'upgrade' !== ( isset( $selected_allowed_price['duplicate_behavior'] ) ? sanitize_key( (string) $selected_allowed_price['duplicate_behavior'] ) : '' ) ) {
+					continue;
+				}
+
+				$upgrade_from_subscription_id = ! empty( $selected_allowed_price['upgrade_from_subscription_id'] ) ? sanitize_text_field( (string) $selected_allowed_price['upgrade_from_subscription_id'] ) : '';
+				if ( '' === $upgrade_from_subscription_id || 0 !== strpos( $upgrade_from_subscription_id, 'sub_' ) ) {
+					wp_send_json_error( __( 'This upgrade is not available for your current services.', 'ajforms' ), 400 );
+				}
+
+				$portal_upgrade_items[] = array(
+					'from_product_id'       => ! empty( $selected_allowed_price['upgrade_from_product_id'] ) ? sanitize_text_field( (string) $selected_allowed_price['upgrade_from_product_id'] ) : '',
+					'from_subscription_id'  => $upgrade_from_subscription_id,
+					'to_product_id'         => ! empty( $selected_allowed_price['product_id'] ) ? sanitize_text_field( (string) $selected_allowed_price['product_id'] ) : '',
+					'to_price_id'           => $selected_price_id,
+				);
 			}
 		}
 
@@ -5984,6 +6065,21 @@ class AJForms {
 			}
 		}
 
+		if ( $portal_add_service && ! empty( $portal_upgrade_items ) ) {
+			$primary_upgrade = reset( $portal_upgrade_items );
+			$body['metadata[ajcore_upgrade]'] = '1';
+			$body['metadata[ajcore_upgrade_items]'] = wp_json_encode( $portal_upgrade_items );
+			$body['metadata[ajcore_upgrade_from_product_id]'] = $primary_upgrade['from_product_id'];
+			$body['metadata[ajcore_upgrade_from_subscription_id]'] = $primary_upgrade['from_subscription_id'];
+			$body['metadata[ajcore_upgrade_to_product_id]'] = $primary_upgrade['to_product_id'];
+			$body['metadata[ajcore_upgrade_to_price_id]'] = $primary_upgrade['to_price_id'];
+			if ( 'subscription' === $checkout_mode ) {
+				$body['subscription_data[metadata][ajcore_upgrade]'] = '1';
+				$body['subscription_data[metadata][ajcore_upgrade_items]'] = wp_json_encode( $portal_upgrade_items );
+				$body['subscription_data[metadata][ajcore_upgrade_from_subscription_id]'] = $primary_upgrade['from_subscription_id'];
+			}
+		}
+
 
 		if ( 'subscription' === $checkout_mode && ! empty( $deferred_one_time_items ) ) {
 			$mixed_checkout_message = $this->get_mixed_checkout_custom_text_message( $items, $allowed_price_map, $deferred_one_time_amount_minor, $deferred_one_time_currency );
@@ -6040,6 +6136,7 @@ class AJForms {
 				'product_id'   => ! is_array( $items ) && isset( $allowed_price_map[ $price_id ]['product_id'] ) ? $allowed_price_map[ $price_id ]['product_id'] : '',
 				'product_name' => $product_name,
 				'source'       => 'portal_add_service',
+				'upgrade_items' => $portal_upgrade_items,
 			);
 
 			$wpdb->replace(

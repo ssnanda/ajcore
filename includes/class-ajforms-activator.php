@@ -127,6 +127,7 @@ class AJForms_Activator {
 			sort_order int(11) DEFAULT 0 NOT NULL,
 			description_override longtext NULL,
 			duplicate_behavior varchar(50) DEFAULT 'no_duplicates' NOT NULL,
+			upgrade_from_product_id varchar(100) DEFAULT '' NOT NULL,
 			custom_request_title varchar(255) DEFAULT '' NOT NULL,
 			custom_request_message longtext NULL,
 			custom_request_button_label varchar(255) DEFAULT '' NOT NULL,

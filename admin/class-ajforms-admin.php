@@ -608,6 +608,7 @@ class AJForms_Admin {
 			( is_array( $transaction_columns ) && ! in_array( 'livemode', $transaction_columns, true ) )
 			|| ( is_array( $subscription_columns ) && ! in_array( 'livemode', $subscription_columns, true ) )
 			|| ( is_array( $product_columns ) && ! in_array( 'livemode', $product_columns, true ) )
+			|| ( is_array( $product_columns ) && ! in_array( 'upgrade_from_product_id', $product_columns, true ) )
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'service_period', $snapshot_columns, true ) )
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'next_billing_date', $snapshot_columns, true ) )
 		) {
@@ -2997,6 +2998,102 @@ class AJForms_Admin {
 		return 1 + absint( $snapshot_count );
 	}
 
+	private function get_checkout_session_metadata_value( $session, $key ) {
+		if ( ! is_array( $session ) || empty( $key ) ) {
+			return '';
+		}
+
+		if ( ! empty( $session['metadata'] ) && is_array( $session['metadata'] ) && isset( $session['metadata'][ $key ] ) && is_scalar( $session['metadata'][ $key ] ) ) {
+			return sanitize_text_field( (string) $session['metadata'][ $key ] );
+		}
+
+		return '';
+	}
+
+	private function process_portal_upgrade_checkout_session( $session, $secret_key, $source = 'webhook' ) {
+		global $wpdb;
+
+		if ( ! is_array( $session ) ) {
+			return 0;
+		}
+
+		$is_upgrade = '1' === $this->get_checkout_session_metadata_value( $session, 'ajcore_upgrade' );
+		$old_subscription_id = $this->get_checkout_session_metadata_value( $session, 'ajcore_upgrade_from_subscription_id' );
+		if ( ! $is_upgrade || '' === $old_subscription_id || 0 !== strpos( $old_subscription_id, 'sub_' ) ) {
+			return 0;
+		}
+
+		$status         = ! empty( $session['status'] ) ? sanitize_key( (string) $session['status'] ) : '';
+		$payment_status = ! empty( $session['payment_status'] ) ? sanitize_key( (string) $session['payment_status'] ) : '';
+		if ( ! in_array( $status, array( 'complete', 'completed' ), true ) && 'paid' !== $payment_status ) {
+			return 0;
+		}
+
+		$new_subscription_id = '';
+		if ( ! empty( $session['subscription'] ) ) {
+			if ( is_array( $session['subscription'] ) && ! empty( $session['subscription']['id'] ) ) {
+				$new_subscription_id = sanitize_text_field( (string) $session['subscription']['id'] );
+			} elseif ( is_string( $session['subscription'] ) ) {
+				$new_subscription_id = sanitize_text_field( (string) $session['subscription'] );
+			}
+		}
+		if ( '' !== $new_subscription_id && $new_subscription_id === $old_subscription_id ) {
+			return new WP_Error( 'invalid_upgrade_subscription', __( 'Upgrade checkout returned the same subscription as the source subscription.', 'ajforms' ) );
+		}
+
+		$old_subscription = $this->stripe_api_get( 'subscriptions/' . rawurlencode( $old_subscription_id ), $secret_key );
+		if ( is_wp_error( $old_subscription ) ) {
+			return $old_subscription;
+		}
+
+		$old_status = ! empty( $old_subscription['status'] ) ? sanitize_key( (string) $old_subscription['status'] ) : '';
+		if ( ! in_array( $old_status, array( 'canceled', 'cancelled' ), true ) ) {
+			$cancel_result = $this->stripe_api_request( 'subscriptions/' . rawurlencode( $old_subscription_id ), $secret_key, array(), 'DELETE' );
+			if ( is_wp_error( $cancel_result ) ) {
+				return $cancel_result;
+			}
+		}
+
+		$wpdb->update(
+			$this->get_portal_stripe_subscriptions_table(),
+			array(
+				'status'    => 'canceled',
+				'synced_at' => current_time( 'mysql' ),
+			),
+			array( 'stripe_subscription_id' => $old_subscription_id ),
+			array( '%s', '%s' ),
+			array( '%s' )
+		);
+		$wpdb->update(
+			$this->get_portal_service_snapshots_table(),
+			array(
+				'status'     => 'canceled',
+				'updated_at' => current_time( 'mysql' ),
+			),
+			array( 'subscription_id' => $old_subscription_id ),
+			array( '%s', '%s' ),
+			array( '%s' )
+		);
+
+		$this->log_portal_event(
+			'portal_service_upgraded',
+			array(
+				'source'             => sanitize_key( (string) $source ),
+				'stripe_customer_id' => ! empty( $session['customer'] ) && is_string( $session['customer'] ) ? sanitize_text_field( (string) $session['customer'] ) : '',
+				'details'            => array(
+					'checkout_session_id'       => ! empty( $session['id'] ) ? sanitize_text_field( (string) $session['id'] ) : '',
+					'from_subscription_id'      => $old_subscription_id,
+					'to_subscription_id'        => $new_subscription_id,
+					'from_product_id'           => $this->get_checkout_session_metadata_value( $session, 'ajcore_upgrade_from_product_id' ),
+					'to_product_id'             => $this->get_checkout_session_metadata_value( $session, 'ajcore_upgrade_to_product_id' ),
+					'to_price_id'               => $this->get_checkout_session_metadata_value( $session, 'ajcore_upgrade_to_price_id' ),
+				),
+			)
+		);
+
+		return 1;
+	}
+
 	public function finalize_mixed_checkout_session_by_id( $session_id, $source = 'manual' ) {
 		$this->ensure_portal_schema();
 
@@ -3050,6 +3147,22 @@ class AJForms_Admin {
 			return $result;
 		}
 
+		$upgrade_result = $this->process_portal_upgrade_checkout_session( $session, $secret_key, $source );
+		if ( is_wp_error( $upgrade_result ) ) {
+			$this->log_portal_event(
+				'portal_service_upgrade_failed',
+				array(
+					'severity' => 'error',
+					'source'   => $source,
+					'details'  => array(
+						'checkout_session_id' => $session_id,
+						'error'               => $upgrade_result->get_error_message(),
+					),
+				)
+			);
+			return $upgrade_result;
+		}
+
 		if ( $result > 0 ) {
 			$this->log_portal_event(
 				'mixed_cart_one_time_payment_finalized',
@@ -3063,7 +3176,7 @@ class AJForms_Admin {
 			);
 		}
 
-		return $result;
+		return absint( $result ) + absint( $upgrade_result );
 	}
 
 	public function run_portal_sync_job( $source = 'manual', $requested_jobs = array() ) {
@@ -3320,6 +3433,20 @@ class AJForms_Admin {
 				);
 				status_header( 500 );
 				wp_send_json_error( array( 'message' => $deferred_one_time_result->get_error_message() ) );
+			}
+			$upgrade_result = $this->process_portal_upgrade_checkout_session( $object, $secret_key, 'webhook' );
+			if ( is_wp_error( $upgrade_result ) ) {
+				$this->mark_stripe_event_failed( $event_id, $upgrade_result->get_error_message() );
+				$this->log_portal_event(
+					'webhook_failed',
+					array(
+						'severity' => 'error',
+						'source'   => 'webhook',
+						'details'  => array( 'event_id' => $event_id, 'event_type' => $type, 'object_id' => $object_id, 'error' => $upgrade_result->get_error_message(), 'phase' => 'portal_service_upgrade' ),
+					)
+				);
+				status_header( 500 );
+				wp_send_json_error( array( 'message' => $upgrade_result->get_error_message() ) );
 			}
 		}
 
@@ -7871,6 +7998,7 @@ class AJForms_Admin {
 			'no_duplicates'  => __( 'Do not allow duplicate', 'ajforms' ),
 			'allow_duplicate' => __( 'Allow duplicate', 'ajforms' ),
 			'custom_request'  => __( 'Show custom request if already owned', 'ajforms' ),
+			'upgrade'         => __( 'Upgrade existing service', 'ajforms' ),
 		);
 	}
 
@@ -8322,8 +8450,22 @@ class AJForms_Admin {
 					if ( ! isset( $duplicate_options[ $duplicate_behavior ] ) ) {
 						$duplicate_behavior = 'no_duplicates';
 					}
+					$upgrade_from_product_id = isset( $row['upgrade_from_product_id'] ) ? sanitize_text_field( $row['upgrade_from_product_id'] ) : '';
+					if ( 'upgrade' !== $duplicate_behavior || 0 !== strpos( $upgrade_from_product_id, 'prod_' ) ) {
+						$upgrade_from_product_id = '';
+					}
 
 					foreach ( $row_ids as $product_id ) {
+						$current_product = $wpdb->get_row(
+							$wpdb->prepare(
+								"SELECT stripe_product_id FROM {$this->get_portal_stripe_products_table()} WHERE id = %d",
+								$product_id
+							)
+						);
+						$row_upgrade_from_product_id = $upgrade_from_product_id;
+						if ( $current_product && $row_upgrade_from_product_id === (string) $current_product->stripe_product_id ) {
+							$row_upgrade_from_product_id = '';
+						}
 						$wpdb->update(
 							$this->get_portal_stripe_products_table(),
 							array(
@@ -8332,12 +8474,13 @@ class AJForms_Admin {
 								'description_override'        => isset( $row['description_override'] ) ? sanitize_textarea_field( $row['description_override'] ) : '',
 								'sort_order'                  => isset( $row['sort_order'] ) ? intval( $row['sort_order'] ) : 0,
 								'duplicate_behavior'          => $duplicate_behavior,
+								'upgrade_from_product_id'     => $row_upgrade_from_product_id,
 								'custom_request_title'        => isset( $row['custom_request_title'] ) ? sanitize_text_field( $row['custom_request_title'] ) : '',
 								'custom_request_message'      => isset( $row['custom_request_message'] ) ? sanitize_textarea_field( $row['custom_request_message'] ) : '',
 								'custom_request_button_label' => isset( $row['custom_request_button_label'] ) ? sanitize_text_field( $row['custom_request_button_label'] ) : '',
 							),
 							array( 'id' => $product_id ),
-							array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s' ),
+							array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
 							array( '%d' )
 						);
 					}
@@ -8357,6 +8500,19 @@ class AJForms_Admin {
 				if ( ! isset( $duplicate_options[ $duplicate_behavior ] ) ) {
 					$duplicate_behavior = 'no_duplicates';
 				}
+				$upgrade_from_product_id = isset( $row['upgrade_from_product_id'] ) ? sanitize_text_field( $row['upgrade_from_product_id'] ) : '';
+				if ( 'upgrade' !== $duplicate_behavior || 0 !== strpos( $upgrade_from_product_id, 'prod_' ) ) {
+					$upgrade_from_product_id = '';
+				}
+				$current_product = $wpdb->get_row(
+					$wpdb->prepare(
+						"SELECT stripe_product_id FROM {$this->get_portal_stripe_products_table()} WHERE id = %d",
+						$product_id
+					)
+				);
+				if ( $current_product && $upgrade_from_product_id === (string) $current_product->stripe_product_id ) {
+					$upgrade_from_product_id = '';
+				}
 
 				$wpdb->update(
 					$this->get_portal_stripe_products_table(),
@@ -8366,12 +8522,13 @@ class AJForms_Admin {
 						'description_override'        => isset( $row['description_override'] ) ? sanitize_textarea_field( $row['description_override'] ) : '',
 						'sort_order'                  => isset( $row['sort_order'] ) ? intval( $row['sort_order'] ) : 0,
 						'duplicate_behavior'          => $duplicate_behavior,
+						'upgrade_from_product_id'     => $upgrade_from_product_id,
 						'custom_request_title'        => isset( $row['custom_request_title'] ) ? sanitize_text_field( $row['custom_request_title'] ) : '',
 						'custom_request_message'      => isset( $row['custom_request_message'] ) ? sanitize_textarea_field( $row['custom_request_message'] ) : '',
 						'custom_request_button_label' => isset( $row['custom_request_button_label'] ) ? sanitize_text_field( $row['custom_request_button_label'] ) : '',
 					),
 					array( 'id' => $product_id ),
-					array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s' ),
+					array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s' ),
 					array( '%d' )
 				);
 			}
@@ -12839,6 +12996,15 @@ class AJForms_Admin {
 			}
 			$product_groups[ $group_key ]['rows'][] = $product;
 		}
+		$upgrade_product_options = array();
+		foreach ( $product_groups as $option_group_key => $option_group ) {
+			$option_product = $option_group['product'];
+			$option_product_id = ! empty( $option_product->stripe_product_id ) ? sanitize_text_field( (string) $option_product->stripe_product_id ) : '';
+			if ( '' === $option_product_id ) {
+				continue;
+			}
+			$upgrade_product_options[ $option_product_id ] = ! empty( $option_product->custom_label ) ? sanitize_text_field( (string) $option_product->custom_label ) : sanitize_text_field( (string) $option_product->name );
+		}
 		?>
 		<div class="ajforms-settings-card">
 			<h2><?php esc_html_e( 'Product Catalog', 'ajforms' ); ?></h2>
@@ -12927,6 +13093,16 @@ class AJForms_Admin {
 										<select style="width:100%;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][duplicate_behavior]">
 											<?php foreach ( $duplicate_behavior_options as $behavior_key => $behavior_label ) : ?>
 												<option value="<?php echo esc_attr( $behavior_key ); ?>" <?php selected( $selected_duplicate_behavior, $behavior_key ); ?>><?php echo esc_html( $behavior_label ); ?></option>
+											<?php endforeach; ?>
+										</select>
+										<label class="description" for="ajcore-upgrade-from-<?php echo esc_attr( $field_key ); ?>"><?php esc_html_e( 'Upgrade from', 'ajforms' ); ?></label>
+										<select id="ajcore-upgrade-from-<?php echo esc_attr( $field_key ); ?>" style="width:100%;margin:2px 0 10px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][upgrade_from_product_id]">
+											<option value=""><?php esc_html_e( 'None', 'ajforms' ); ?></option>
+											<?php foreach ( $upgrade_product_options as $upgrade_product_id => $upgrade_product_label ) : ?>
+												<?php if ( $upgrade_product_id === (string) $product->stripe_product_id ) : ?>
+													<?php continue; ?>
+												<?php endif; ?>
+												<option value="<?php echo esc_attr( $upgrade_product_id ); ?>" <?php selected( isset( $product->upgrade_from_product_id ) ? (string) $product->upgrade_from_product_id : '', $upgrade_product_id ); ?>><?php echo esc_html( $upgrade_product_label ); ?></option>
 											<?php endforeach; ?>
 										</select>
 										<input type="text" style="width:100%;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_request_title]" value="<?php echo esc_attr( isset( $product->custom_request_title ) ? $product->custom_request_title : '' ); ?>" placeholder="<?php esc_attr_e( 'Custom request title', 'ajforms' ); ?>">
