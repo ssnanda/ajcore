@@ -98,7 +98,6 @@ class AJForms {
 		add_shortcode( 'aj_customer_portal', array( $this, 'render_customer_portal_shortcode' ) );
 		add_filter( 'login_redirect', array( $this, 'filter_login_redirect' ), 999999, 3 );
 		add_filter( 'show_admin_bar', array( $this, 'filter_show_admin_bar' ) );
-		add_filter( 'wp_nav_menu_items', array( $this, 'add_customer_portal_nav_item' ), 10, 2 );
 		add_filter( 'wp_mail_from', array( $this, 'filter_wp_mail_from' ) );
 		add_filter( 'wp_mail_from_name', array( $this, 'filter_wp_mail_from_name' ) );
 		add_filter( 'retrieve_password_notification_email', array( $this, 'filter_wp_password_reset_email' ), 10, 4 );
