@@ -3911,22 +3911,32 @@ class AJForms {
 			return array( 'allowed' => false, 'reason' => 'no_mapping', 'mapping' => null, 'customer' => null );
 		}
 
-		if ( empty( $row->customer_stripe_customer_id ) ) {
-			return array( 'allowed' => false, 'reason' => 'missing_customer', 'mapping' => $row, 'customer' => null );
+		if ( empty( $row->customer_stripe_customer_id ) && ! empty( $row->stripe_customer_id ) ) {
+			$row->customer_stripe_customer_id = sanitize_text_field( (string) $row->stripe_customer_id );
 		}
 
 		$customer_state_table = $this->get_portal_customer_states_table();
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $customer_state_table ) ) === $customer_state_table ) {
 			$customer_state = $wpdb->get_row(
 				$wpdb->prepare(
-					"SELECT portal_status, enabled_portal FROM {$customer_state_table} WHERE stripe_customer_id = %s LIMIT 1",
+					"SELECT portal_status, enabled_portal, customer_email, portal_user_email FROM {$customer_state_table} WHERE stripe_customer_id = %s LIMIT 1",
 					$row->customer_stripe_customer_id
 				)
 			);
 			if ( $customer_state ) {
 				$row->portal_status  = $customer_state->portal_status;
 				$row->enabled_portal = (int) $customer_state->enabled_portal;
+				if ( empty( $row->stripe_email ) && ! empty( $customer_state->customer_email ) ) {
+					$row->stripe_email = $customer_state->customer_email;
+				}
+				if ( empty( $row->portal_user_email ) && ! empty( $customer_state->portal_user_email ) ) {
+					$row->portal_user_email = $customer_state->portal_user_email;
+				}
 			}
+		}
+
+		if ( empty( $row->customer_stripe_customer_id ) ) {
+			return array( 'allowed' => false, 'reason' => 'missing_customer', 'mapping' => $row, 'customer' => null );
 		}
 
 		$valid_emails = array();
@@ -3987,11 +3997,45 @@ class AJForms {
 
 		global $wpdb;
 
-		return $wpdb->get_row(
+		$customer = $wpdb->get_row(
 			$wpdb->prepare(
 				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s AND enabled_portal = 1 AND portal_status = 'active'",
 				sanitize_text_field( $mapping->stripe_customer_id )
 			)
+		);
+		if ( $customer ) {
+			return $customer;
+		}
+
+		$customer_state_table = $this->get_portal_customer_states_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $customer_state_table ) ) !== $customer_state_table ) {
+			return null;
+		}
+
+		$state = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$customer_state_table} WHERE stripe_customer_id = %s AND enabled_portal = 1 AND portal_status = 'active' LIMIT 1",
+				sanitize_text_field( $mapping->stripe_customer_id )
+			)
+		);
+		if ( ! $state ) {
+			return null;
+		}
+
+		return (object) array(
+			'id'                 => 0,
+			'stripe_customer_id' => sanitize_text_field( $mapping->stripe_customer_id ),
+			'email'              => ! empty( $state->customer_email ) ? sanitize_email( (string) $state->customer_email ) : sanitize_email( (string) $mapping->customer_email ),
+			'name'               => '',
+			'phone'              => '',
+			'address'            => '',
+			'metadata'           => '',
+			'raw_data'           => '',
+			'livemode'           => 0,
+			'enabled_portal'     => 1,
+			'portal_status'      => 'active',
+			'created_at'         => null,
+			'synced_at'          => '',
 		);
 	}
 
