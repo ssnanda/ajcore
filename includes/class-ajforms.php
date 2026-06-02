@@ -1168,7 +1168,7 @@ class AJForms {
 			}
 		}
 
-		return isset( $subscription->stripe_subscription_id ) ? $subscription->stripe_subscription_id : __( 'Service', 'ajforms' );
+		return __( 'Service', 'ajforms' );
 	}
 
 	private function is_current_portal_subscription( $subscription ) {
@@ -2273,24 +2273,7 @@ class AJForms {
 	}
 
 	private function get_snapshot_reference_label( $snapshot ) {
-		$customer_id = ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : '';
-		$parts       = array();
-		if ( '' !== $customer_id ) {
-			$parts[] = 'cus_id: ' . $customer_id;
-		}
-		if ( 'recurring' === $this->get_snapshot_billing_type_key( $snapshot ) && ! empty( $snapshot->subscription_id ) ) {
-			$parts[] = 'sub_id: ' . sanitize_text_field( (string) $snapshot->subscription_id );
-		} elseif ( ! empty( $snapshot->checkout_session_id ) ) {
-			$parts[] = 'checkout_id: ' . sanitize_text_field( (string) $snapshot->checkout_session_id );
-		} elseif ( ! empty( $snapshot->payment_intent_id ) ) {
-			$parts[] = 'payment_id: ' . sanitize_text_field( (string) $snapshot->payment_intent_id );
-		} elseif ( ! empty( $snapshot->price_id ) ) {
-			$parts[] = 'price_id: ' . sanitize_text_field( (string) $snapshot->price_id );
-		} elseif ( ! empty( $snapshot->product_id ) ) {
-			$parts[] = 'product_id: ' . sanitize_text_field( (string) $snapshot->product_id );
-		}
-
-		return implode( '  ', $parts );
+		return '';
 	}
 
 	private function get_customer_portal_ledger_display_rank( $entry ) {
@@ -2730,14 +2713,7 @@ class AJForms {
 	}
 
 	private function get_portal_subscription_reference_label( $subscription ) {
-		$customer_id     = ! empty( $subscription->stripe_customer_id ) ? sanitize_text_field( (string) $subscription->stripe_customer_id ) : '';
-		$subscription_id = ! empty( $subscription->stripe_subscription_id ) ? sanitize_text_field( (string) $subscription->stripe_subscription_id ) : '';
-
-		if ( '' === $customer_id && '' === $subscription_id ) {
-			return '';
-		}
-
-		return trim( sprintf( 'cus_id: %s  sub_id: %s', $customer_id ? $customer_id : '-', $subscription_id ? $subscription_id : '-' ) );
+		return '';
 	}
 
 	private function dedupe_portal_service_snapshots_for_display( $snapshots ) {
@@ -3251,21 +3227,19 @@ class AJForms {
 			<?php else : ?>
 				<div class="aj-portal-table-wrap">
 					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Transaction ID', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Debit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Credit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
+						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Debit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Credit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
 							<?php foreach ( $ledger as $entry ) : ?>
 								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ); ?>
 								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'PDF', 'ajforms' ); ?>
 								<?php $entry_invoice_id = ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' ); ?>
 								<?php $entry_client_note = $this->get_ledger_metadata_value( $entry, 'client_notes' ); ?>
-								<?php $entry_transaction_id = $this->get_portal_ledger_transaction_id( $entry ); ?>
 								<?php $entry_display_description = $this->get_portal_ledger_display_description( $entry ); ?>
 								<?php $entry_is_open = ( $balance_due > 0 && (float) $entry->amount > 0 && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) ); ?>
 								<?php $entry_debit_credit = $this->get_portal_ledger_debit_credit( $entry ); ?>
 								<tr>
 									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
 									<td><?php echo esc_html( $entry_display_description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
-									<td><?php echo esc_html( $entry_transaction_id ? $entry_transaction_id : '-' ); ?></td>
 									<td><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
 									<td><?php echo esc_html( $entry_debit_credit['debit'] ? $entry_debit_credit['debit'] : '-' ); ?></td>
 									<td><?php echo esc_html( $entry_debit_credit['credit'] ? $entry_debit_credit['credit'] : '-' ); ?></td>
@@ -3274,7 +3248,7 @@ class AJForms {
 										<?php if ( $entry_invoice_url ) : ?>
 											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
 										<?php elseif ( $entry_invoice_id ) : ?>
-											<code><?php echo esc_html( $entry_invoice_id ); ?></code>
+											<?php echo esc_html( $entry_invoice_label && 'PDF' !== $entry_invoice_label ? $entry_invoice_label : __( 'Invoice', 'ajforms' ) ); ?>
 										<?php else : ?>
 											<?php echo $this->get_portal_service_request_actions( $entry ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 										<?php endif; ?>

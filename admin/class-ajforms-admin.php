@@ -4454,6 +4454,7 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_customer_balance_summary( $ledger ) {
+		$net_balance = 0.0;
 		$open_balance = 0.0;
 		$credit_balance = 0.0;
 		$paid_total = 0.0;
@@ -4462,17 +4463,19 @@ class AJForms_Admin {
 		foreach ( (array) $ledger as $entry ) {
 			$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
 			$effect = $this->get_portal_ledger_balance_effect( $entry );
-			if ( $effect > 0 ) {
-				$open_balance += $effect;
-			} elseif ( $effect < 0 ) {
-				$credit_balance += abs( $effect );
-			}
+			$net_balance += $effect;
 			if ( $effect < 0 && in_array( $status, array( 'paid', 'succeeded', 'partially_refunded', 'partial_refund' ), true ) ) {
 				$paid_total += abs( $effect );
 			}
 			if ( in_array( $status, array( 'failed', 'payment_failed', 'requires_payment_method' ), true ) ) {
 				$failed_count++;
 			}
+		}
+
+		if ( $net_balance > 0.00001 ) {
+			$open_balance = $net_balance;
+		} elseif ( $net_balance < -0.00001 ) {
+			$credit_balance = abs( $net_balance );
 		}
 
 		return array(
@@ -12093,13 +12096,16 @@ class AJForms_Admin {
 		$paid_total = 0.0;
 		foreach ( $ledger as $entry ) {
 			$effect = $this->get_portal_ledger_balance_effect( $entry );
-			if ( $effect > 0 ) {
-				$open_balance += $effect;
-			} elseif ( $effect < 0 ) {
-				$credit_balance += abs( $effect );
-			}
 			if ( $effect < 0 && in_array( sanitize_key( (string) $entry->status ), array( 'paid', 'succeeded', 'partially_refunded', 'partial_refund' ), true ) ) {
 				$paid_total += abs( $effect );
+			}
+		}
+		foreach ( $customer_running_totals as $customer_balance ) {
+			$customer_balance = (float) $customer_balance;
+			if ( $customer_balance > 0.00001 ) {
+				$open_balance += $customer_balance;
+			} elseif ( $customer_balance < -0.00001 ) {
+				$credit_balance += abs( $customer_balance );
 			}
 		}
 		$totals = $wpdb->get_row( "SELECT COUNT(*) AS total_rows, COALESCE(SUM(amount),0) AS total_amount FROM {$this->get_portal_ledger_table()}" );
@@ -12280,7 +12286,11 @@ class AJForms_Admin {
 
 		$today          = current_time( 'Y-m-d' );
 		$ledger         = $wpdb->get_results( "SELECT * FROM {$this->get_portal_ledger_table()}" );
+		$ledger         = $this->get_admin_portal_display_ledger( $ledger );
+		$customer_balances = array();
+		$open_customer_balances = array();
 		$open_balance   = 0.0;
+		$credit_balance = 0.0;
 		$overdue_amount = 0.0;
 		$failed_count   = 0;
 
@@ -12288,9 +12298,16 @@ class AJForms_Admin {
 			$status   = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
 			$effect   = $this->get_portal_ledger_balance_effect( $entry );
 			$due_date = '';
-
-			if ( $effect > 0 ) {
-				$open_balance += $effect;
+			$customer_id = ! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '_unknown';
+			if ( ! isset( $customer_balances[ $customer_id ] ) ) {
+				$customer_balances[ $customer_id ] = 0.0;
+			}
+			$customer_balances[ $customer_id ] += $effect;
+			if ( $effect > 0 && in_array( $status, $this->get_portal_open_ledger_statuses(), true ) ) {
+				if ( ! isset( $open_customer_balances[ $customer_id ] ) ) {
+					$open_customer_balances[ $customer_id ] = 0.0;
+				}
+				$open_customer_balances[ $customer_id ] += $effect;
 			}
 
 			if ( in_array( $status, array( 'failed', 'payment_failed', 'requires_payment_method' ), true ) ) {
@@ -12308,8 +12325,21 @@ class AJForms_Admin {
 			}
 		}
 
+		foreach ( $open_customer_balances as $balance ) {
+			if ( $balance > 0.00001 ) {
+				$open_balance += $balance;
+			}
+		}
+
+		foreach ( $customer_balances as $balance ) {
+			if ( $balance < -0.00001 ) {
+				$credit_balance += abs( $balance );
+			}
+		}
+
 		return array(
 			'open_balance'   => $open_balance,
+			'credit_balance' => $credit_balance,
 			'overdue_amount' => $overdue_amount,
 			'failed_count'   => $failed_count,
 		);
@@ -12648,10 +12678,11 @@ class AJForms_Admin {
 		);
 		?>
 		<style>
+			.ajcore-customer-360{max-width:1280px}
 			.ajcore-customer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:16px 0 18px}
 			.ajcore-customer-head h2{margin:0 0 6px;font-size:24px}
-			.ajcore-customer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;max-width:1180px}
-			.ajcore-customer-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px}
+			.ajcore-customer-grid{display:grid;grid-template-columns:repeat(2,minmax(320px,1fr));gap:16px}
+			.ajcore-customer-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px;overflow:hidden}
 			.ajcore-customer-card h3{margin:0 0 14px;font-size:16px}
 			.ajcore-customer-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:0 0 16px}
 			.ajcore-customer-summary div{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:14px}
@@ -12666,7 +12697,12 @@ class AJForms_Admin {
 			.ajcore-customer-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 			.ajcore-customer-actions form{display:flex;gap:8px;align-items:center;margin:0}
 			.ajcore-customer-actions input[type="email"]{min-width:280px}
-			.ajcore-customer-card table{margin-top:8px}
+			.ajcore-customer-table-wrap{max-width:100%;overflow:auto;border:1px solid #dcdcde;border-radius:8px;background:#fff}
+			.ajcore-customer-table-wrap table{margin:0;min-width:760px;border:0}
+			.ajcore-customer-card th,.ajcore-customer-card td{vertical-align:top}
+			.ajcore-customer-field-value{display:inline-block;max-width:380px;white-space:normal;overflow-wrap:anywhere}
+			.ajcore-customer-json summary{cursor:pointer;font-weight:600}
+			.ajcore-customer-json pre{max-width:560px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin:8px 0 0;padding:10px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:6px}
 			.ajcore-customer-activity{margin:0;padding:0;list-style:none}
 			.ajcore-customer-activity li{border-left:3px solid #dbeafe;padding:8px 0 8px 12px;margin:0 0 10px}
 			.ajcore-customer-quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
@@ -12686,6 +12722,7 @@ class AJForms_Admin {
 			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Display fields saved.', 'ajforms' ); ?></p></div>
 		<?php endif; ?>
 
+		<div class="ajcore-customer-360">
 		<div class="ajcore-customer-head">
 			<div>
 				<p><a href="<?php echo esc_url( $back_url ); ?>">&larr; <?php esc_html_e( 'Back to Client Portal', 'ajforms' ); ?></a></p>
@@ -12732,7 +12769,7 @@ class AJForms_Admin {
 					<dt><?php esc_html_e( 'Created', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->created_at ) ); ?></dd>
 					<dt><?php esc_html_e( 'Last Synced', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></dd>
 					<?php foreach ( $display_fields as $field ) : ?>
-						<dt><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></dt><dd><?php echo esc_html( $this->get_portal_customer_display_value( $customer, $field ) ); ?></dd>
+						<dt><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></dt><dd><?php $this->render_portal_customer_field_value( $this->get_portal_customer_display_value( $customer, $field ) ); ?></dd>
 					<?php endforeach; ?>
 				</dl>
 			</div>
@@ -12893,6 +12930,7 @@ class AJForms_Admin {
 					</ul>
 				<?php endif; ?>
 			</div>
+		</div>
 		</div>
 		<?php $this->render_portal_field_picker_script(); ?>
 		<?php
@@ -13118,25 +13156,48 @@ class AJForms_Admin {
 			return;
 		}
 		?>
-		<table class="widefat striped">
-			<thead>
-				<tr>
-					<?php foreach ( $selected as $field ) : ?>
-						<th><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></th>
-					<?php endforeach; ?>
-				</tr>
-			</thead>
-			<tbody>
-				<?php foreach ( $rows as $row ) : ?>
+		<div class="ajcore-customer-table-wrap">
+			<table class="widefat striped">
+				<thead>
 					<tr>
 						<?php foreach ( $selected as $field ) : ?>
-							<td><?php echo esc_html( $this->get_portal_row_display_value( $row, $field ) ); ?></td>
+							<th><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></th>
 						<?php endforeach; ?>
 					</tr>
-				<?php endforeach; ?>
-			</tbody>
-		</table>
+				</thead>
+				<tbody>
+					<?php foreach ( $rows as $row ) : ?>
+						<tr>
+							<?php foreach ( $selected as $field ) : ?>
+								<td><?php $this->render_portal_customer_field_value( $this->get_portal_row_display_value( $row, $field ) ); ?></td>
+							<?php endforeach; ?>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		</div>
 		<?php
+	}
+
+	private function render_portal_customer_field_value( $value ) {
+		if ( is_bool( $value ) ) {
+			$value = $value ? __( 'Yes', 'ajforms' ) : __( 'No', 'ajforms' );
+		} elseif ( is_array( $value ) || is_object( $value ) ) {
+			$value = wp_json_encode( $value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+		}
+
+		$value = null === $value || '' === $value ? '-' : (string) $value;
+		$trimmed = trim( $value );
+		$looks_like_json = '' !== $trimmed && in_array( substr( $trimmed, 0, 1 ), array( '{', '[' ), true );
+		$is_long = strlen( $trimmed ) > 320;
+
+		if ( $looks_like_json || $is_long ) {
+			$summary = $looks_like_json ? __( 'View JSON', 'ajforms' ) : __( 'View details', 'ajforms' );
+			echo '<details class="ajcore-customer-json"><summary>' . esc_html( $summary ) . '</summary><pre>' . esc_html( $trimmed ) . '</pre></details>';
+			return;
+		}
+
+		echo '<span class="ajcore-customer-field-value">' . esc_html( $trimmed ) . '</span>';
 	}
 
 	private function render_portal_customer_products_table( $products ) {
