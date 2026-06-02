@@ -14,6 +14,7 @@ class AJForms_Activator {
 		$table_portal_file_users = $wpdb->prefix . 'aj_portal_file_users';
 		$table_stripe_customers     = $wpdb->prefix . 'aj_portal_stripe_customers';
 		$table_stripe_products      = $wpdb->prefix . 'aj_portal_stripe_products';
+		$table_product_catalog      = $wpdb->prefix . 'aj_portal_product_catalog';
 		$table_stripe_subscriptions = $wpdb->prefix . 'aj_portal_stripe_subscriptions';
 		$table_stripe_transactions  = $wpdb->prefix . 'aj_portal_stripe_transactions';
 		$table_user_mappings        = $wpdb->prefix . 'aj_auth_user_mappings';
@@ -163,6 +164,27 @@ class AJForms_Activator {
 			UNIQUE KEY stripe_price_id (stripe_price_id),
 			KEY stripe_product_id (stripe_product_id),
 			KEY active (active)
+		) $charset_collate;
+
+		CREATE TABLE $table_product_catalog (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			stripe_product_id varchar(100) NOT NULL,
+			visibility varchar(50) DEFAULT 'hidden' NOT NULL,
+			custom_label varchar(255) DEFAULT '' NOT NULL,
+			sort_order int(11) DEFAULT 0 NOT NULL,
+			description_override longtext NULL,
+			duplicate_behavior varchar(50) DEFAULT 'no_duplicates' NOT NULL,
+			upgrade_from_product_id varchar(100) DEFAULT '' NOT NULL,
+			custom_request_title varchar(255) DEFAULT '' NOT NULL,
+			custom_request_message longtext NULL,
+			custom_request_button_label varchar(255) DEFAULT '' NOT NULL,
+			price_settings longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY stripe_product_id (stripe_product_id),
+			KEY visibility (visibility),
+			KEY duplicate_behavior (duplicate_behavior)
 		) $charset_collate;
 
 		CREATE TABLE $table_stripe_subscriptions (
@@ -541,6 +563,66 @@ class AJForms_Activator {
 			if ( $legacy_exists === $legacy_table && $new_exists === $new_table ) {
 				$wpdb->query( "INSERT IGNORE INTO $new_table SELECT * FROM $legacy_table" );
 				$wpdb->query( "DROP TABLE IF EXISTS $legacy_table" );
+			}
+		}
+
+		$catalog_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM $table_product_catalog" );
+		if ( 0 === $catalog_count ) {
+			$dependency_settings = get_option( 'ajcore_public_product_dependencies', array() );
+			$dependency_settings = is_array( $dependency_settings ) ? $dependency_settings : array();
+			$legacy_products = $wpdb->get_results(
+				"SELECT stripe_product_id,
+					MAX(visibility) AS visibility,
+					MAX(custom_label) AS custom_label,
+					MIN(sort_order) AS sort_order,
+					MAX(description_override) AS description_override,
+					MAX(duplicate_behavior) AS duplicate_behavior,
+					MAX(upgrade_from_product_id) AS upgrade_from_product_id,
+					MAX(custom_request_title) AS custom_request_title,
+					MAX(custom_request_message) AS custom_request_message,
+					MAX(custom_request_button_label) AS custom_request_button_label
+				FROM $table_stripe_products
+				WHERE stripe_product_id <> ''
+				GROUP BY stripe_product_id"
+			);
+			foreach ( (array) $legacy_products as $legacy_product ) {
+				$price_ids = $wpdb->get_col(
+					$wpdb->prepare(
+						"SELECT stripe_price_id FROM $table_stripe_products WHERE stripe_product_id = %s AND stripe_price_id <> ''",
+						$legacy_product->stripe_product_id
+					)
+				);
+				$price_settings = array();
+				foreach ( (array) $price_ids as $price_id ) {
+					if ( ! empty( $dependency_settings[ $price_id ] ) && is_array( $dependency_settings[ $price_id ] ) ) {
+						$price_settings[ $price_id ] = array(
+							'requires_price_id' => isset( $dependency_settings[ $price_id ]['requires_price_id'] ) ? sanitize_text_field( (string) $dependency_settings[ $price_id ]['requires_price_id'] ) : '',
+							'dependency_note'   => isset( $dependency_settings[ $price_id ]['dependency_note'] ) ? sanitize_textarea_field( (string) $dependency_settings[ $price_id ]['dependency_note'] ) : '',
+						);
+					}
+				}
+				$duplicate_behavior = sanitize_key( (string) $legacy_product->duplicate_behavior );
+				if ( ! in_array( $duplicate_behavior, array( 'no_duplicates', 'allow_duplicate', 'custom_request', 'upgrade' ), true ) ) {
+					$duplicate_behavior = 'no_duplicates';
+				}
+				$visibility = sanitize_key( (string) $legacy_product->visibility );
+				$wpdb->insert(
+					$table_product_catalog,
+					array(
+						'stripe_product_id'           => sanitize_text_field( (string) $legacy_product->stripe_product_id ),
+						'visibility'                  => 'visible' === $visibility ? 'visible' : 'hidden',
+						'custom_label'                => sanitize_text_field( (string) $legacy_product->custom_label ),
+						'sort_order'                  => intval( $legacy_product->sort_order ),
+						'description_override'        => sanitize_textarea_field( (string) $legacy_product->description_override ),
+						'duplicate_behavior'          => $duplicate_behavior,
+						'upgrade_from_product_id'     => sanitize_text_field( (string) $legacy_product->upgrade_from_product_id ),
+						'custom_request_title'        => sanitize_text_field( (string) $legacy_product->custom_request_title ),
+						'custom_request_message'      => sanitize_textarea_field( (string) $legacy_product->custom_request_message ),
+						'custom_request_button_label' => sanitize_text_field( (string) $legacy_product->custom_request_button_label ),
+						'price_settings'              => ! empty( $price_settings ) ? wp_json_encode( $price_settings ) : '',
+					),
+					array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+				);
 			}
 		}
 

@@ -404,6 +404,61 @@ class AJForms_Admin {
 		return $normalized;
 	}
 
+	private function get_public_product_display_settings() {
+		$settings = get_option( 'ajcore_public_product_display_settings', array() );
+		if ( ! is_array( $settings ) ) {
+			$settings = array();
+		}
+
+		$selected_prices = isset( $settings['selected_prices'] ) && is_array( $settings['selected_prices'] ) ? array_values( array_unique( array_map( 'sanitize_text_field', $settings['selected_prices'] ) ) ) : array();
+		$order = array();
+		if ( isset( $settings['order'] ) && is_array( $settings['order'] ) ) {
+			foreach ( $settings['order'] as $price_id => $sort_order ) {
+				$price_id = sanitize_text_field( (string) $price_id );
+				if ( '' !== $price_id ) {
+					$order[ $price_id ] = intval( $sort_order );
+				}
+			}
+		}
+
+		return array(
+			'selected_prices' => $selected_prices,
+			'order'           => $order,
+		);
+	}
+
+	private function save_public_product_display_settings( $selected_prices, $order ) {
+		$selected_prices = is_array( $selected_prices ) ? array_values( array_unique( array_filter( array_map( 'sanitize_text_field', $selected_prices ) ) ) ) : array();
+		$clean_order = array();
+		if ( is_array( $order ) ) {
+			foreach ( $order as $price_id => $sort_order ) {
+				$price_id = sanitize_text_field( (string) $price_id );
+				if ( '' !== $price_id ) {
+					$clean_order[ $price_id ] = intval( $sort_order );
+				}
+			}
+		}
+
+		update_option(
+			'ajcore_public_product_display_settings',
+			array(
+				'selected_prices' => $selected_prices,
+				'order'           => $clean_order,
+			),
+			false
+		);
+
+		$settings = $this->get_plugin_settings();
+		$settings['stripe_products_mode']   = empty( $selected_prices ) ? 'all' : 'selected';
+		$settings['stripe_selected_prices'] = $selected_prices;
+		update_option( 'ajforms_settings', $settings, false );
+
+		return array(
+			'selected_prices' => $selected_prices,
+			'order'           => $clean_order,
+		);
+	}
+
 	private function merge_public_product_dependency_settings_into_cache() {
 		$dependency_settings = $this->get_public_product_dependency_settings();
 		$cache               = $this->get_stripe_products_cache();
@@ -563,6 +618,7 @@ class AJForms_Admin {
 		$required_tables = array(
 			$this->get_portal_stripe_customers_table(),
 			$this->get_portal_stripe_products_table(),
+			$this->get_portal_product_catalog_table(),
 			$this->get_portal_stripe_subscriptions_table(),
 			$this->get_portal_stripe_transactions_table(),
 			$this->get_portal_user_mappings_table(),
@@ -605,6 +661,7 @@ class AJForms_Admin {
 		$transaction_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_transactions_table()}", 0 );
 		$subscription_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_subscriptions_table()}", 0 );
 		$product_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_products_table()}", 0 );
+		$product_catalog_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_product_catalog_table()}", 0 );
 		$snapshot_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_snapshots_table()}", 0 );
 		$service_state_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_states_table()}", 0 );
 		$customer_state_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_customer_states_table()}", 0 );
@@ -613,6 +670,7 @@ class AJForms_Admin {
 			|| ( is_array( $subscription_columns ) && ! in_array( 'livemode', $subscription_columns, true ) )
 			|| ( is_array( $product_columns ) && ! in_array( 'livemode', $product_columns, true ) )
 			|| ( is_array( $product_columns ) && ! in_array( 'upgrade_from_product_id', $product_columns, true ) )
+			|| ( is_array( $product_catalog_columns ) && ! in_array( 'price_settings', $product_catalog_columns, true ) )
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'service_period', $snapshot_columns, true ) )
 			|| ( is_array( $snapshot_columns ) && ! in_array( 'next_billing_date', $snapshot_columns, true ) )
 			|| ( is_array( $service_state_columns ) && ! in_array( 'service_state_key', $service_state_columns, true ) )
@@ -2674,6 +2732,7 @@ class AJForms_Admin {
 				array( 'table' => $this->get_portal_customer_states_table(), 'scope' => __( 'Durable portal enabled/disabled/archived state', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_user_mappings_table(), 'scope' => __( 'Local WordPress user mappings', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_service_states_table(), 'scope' => __( 'Durable service used/unused state', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_product_catalog_table(), 'scope' => __( 'Product Catalog visibility, labels, dependencies, and upgrade rules', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_entity_mappings_table(), 'scope' => __( 'Entity mappings', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_files_table(), 'scope' => __( 'Client file records', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_file_users_table(), 'scope' => __( 'Client file assignments', 'ajforms' ) ),
@@ -2708,6 +2767,93 @@ class AJForms_Admin {
 		}
 
 		return $inventory;
+	}
+
+	private function get_portal_product_catalog_settings( $stripe_product_id ) {
+		global $wpdb;
+
+		$stripe_product_id = sanitize_text_field( (string) $stripe_product_id );
+		if ( '' === $stripe_product_id ) {
+			return null;
+		}
+
+		return $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_product_catalog_table()} WHERE stripe_product_id = %s LIMIT 1",
+				$stripe_product_id
+			)
+		);
+	}
+
+	private function upsert_portal_product_catalog_settings( $stripe_product_id, $settings ) {
+		global $wpdb;
+
+		$stripe_product_id = sanitize_text_field( (string) $stripe_product_id );
+		if ( '' === $stripe_product_id || ! is_array( $settings ) ) {
+			return false;
+		}
+
+		$allowed_duplicate_behaviors = array( 'no_duplicates', 'allow_duplicate', 'custom_request', 'upgrade' );
+		$visibility = isset( $settings['visibility'] ) && 'visible' === sanitize_key( (string) $settings['visibility'] ) ? 'visible' : 'hidden';
+		$duplicate_behavior = isset( $settings['duplicate_behavior'] ) ? sanitize_key( (string) $settings['duplicate_behavior'] ) : 'no_duplicates';
+		if ( ! in_array( $duplicate_behavior, $allowed_duplicate_behaviors, true ) ) {
+			$duplicate_behavior = 'no_duplicates';
+		}
+
+		$price_settings = isset( $settings['price_settings'] ) && is_array( $settings['price_settings'] ) ? $settings['price_settings'] : array();
+		$clean_price_settings = array();
+		foreach ( $price_settings as $price_id => $price_setting ) {
+			$price_id = sanitize_text_field( (string) $price_id );
+			if ( '' === $price_id || ! is_array( $price_setting ) ) {
+				continue;
+			}
+			$requires_price_id = isset( $price_setting['requires_price_id'] ) ? sanitize_text_field( (string) $price_setting['requires_price_id'] ) : '';
+			$dependency_note   = isset( $price_setting['dependency_note'] ) ? sanitize_textarea_field( (string) $price_setting['dependency_note'] ) : '';
+			if ( '' === $requires_price_id && '' === $dependency_note ) {
+				continue;
+			}
+			$clean_price_settings[ $price_id ] = array(
+				'requires_price_id' => $requires_price_id,
+				'dependency_note'   => $dependency_note,
+			);
+		}
+
+		$data = array(
+			'stripe_product_id'           => $stripe_product_id,
+			'visibility'                  => $visibility,
+			'custom_label'                => isset( $settings['custom_label'] ) ? sanitize_text_field( (string) $settings['custom_label'] ) : '',
+			'sort_order'                  => isset( $settings['sort_order'] ) ? intval( $settings['sort_order'] ) : 0,
+			'description_override'        => isset( $settings['description_override'] ) ? sanitize_textarea_field( (string) $settings['description_override'] ) : '',
+			'duplicate_behavior'          => $duplicate_behavior,
+			'upgrade_from_product_id'     => isset( $settings['upgrade_from_product_id'] ) ? sanitize_text_field( (string) $settings['upgrade_from_product_id'] ) : '',
+			'custom_request_title'        => isset( $settings['custom_request_title'] ) ? sanitize_text_field( (string) $settings['custom_request_title'] ) : '',
+			'custom_request_message'      => isset( $settings['custom_request_message'] ) ? sanitize_textarea_field( (string) $settings['custom_request_message'] ) : '',
+			'custom_request_button_label' => isset( $settings['custom_request_button_label'] ) ? sanitize_text_field( (string) $settings['custom_request_button_label'] ) : '',
+			'price_settings'              => ! empty( $clean_price_settings ) ? wp_json_encode( $clean_price_settings ) : '',
+		);
+
+		$existing_id = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id FROM {$this->get_portal_product_catalog_table()} WHERE stripe_product_id = %s LIMIT 1",
+				$stripe_product_id
+			)
+		);
+
+		if ( $existing_id ) {
+			return false !== $wpdb->update(
+				$this->get_portal_product_catalog_table(),
+				$data,
+				array( 'id' => absint( $existing_id ) ),
+				array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+				array( '%d' )
+			);
+		}
+
+		return false !== $wpdb->insert(
+			$this->get_portal_product_catalog_table(),
+			$data,
+			array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
 	}
 
 	private function backup_ajcore_tables() {
@@ -9109,6 +9255,24 @@ class AJForms_Admin {
 						if ( $current_product && $row_upgrade_from_product_id === (string) $current_product->stripe_product_id ) {
 							$row_upgrade_from_product_id = '';
 						}
+						if ( $current_product && ! empty( $current_product->stripe_product_id ) ) {
+							$existing_catalog = $this->get_portal_product_catalog_settings( $current_product->stripe_product_id );
+							$this->upsert_portal_product_catalog_settings(
+								$current_product->stripe_product_id,
+								array(
+									'visibility'                  => $visibility,
+									'custom_label'                => isset( $row['custom_label'] ) ? sanitize_text_field( $row['custom_label'] ) : '',
+									'description_override'        => isset( $row['description_override'] ) ? sanitize_textarea_field( $row['description_override'] ) : '',
+									'sort_order'                  => isset( $row['sort_order'] ) ? intval( $row['sort_order'] ) : 0,
+									'duplicate_behavior'          => $duplicate_behavior,
+									'upgrade_from_product_id'     => $row_upgrade_from_product_id,
+									'custom_request_title'        => isset( $row['custom_request_title'] ) ? sanitize_text_field( $row['custom_request_title'] ) : '',
+									'custom_request_message'      => isset( $row['custom_request_message'] ) ? sanitize_textarea_field( $row['custom_request_message'] ) : '',
+									'custom_request_button_label' => isset( $row['custom_request_button_label'] ) ? sanitize_text_field( $row['custom_request_button_label'] ) : '',
+									'price_settings'              => $existing_catalog && ! empty( $existing_catalog->price_settings ) ? json_decode( $existing_catalog->price_settings, true ) : array(),
+								)
+							);
+						}
 						$wpdb->update(
 							$this->get_portal_stripe_products_table(),
 							array(
@@ -9156,6 +9320,24 @@ class AJForms_Admin {
 				if ( $current_product && $upgrade_from_product_id === (string) $current_product->stripe_product_id ) {
 					$upgrade_from_product_id = '';
 				}
+				if ( $current_product && ! empty( $current_product->stripe_product_id ) ) {
+					$existing_catalog = $this->get_portal_product_catalog_settings( $current_product->stripe_product_id );
+					$this->upsert_portal_product_catalog_settings(
+						$current_product->stripe_product_id,
+						array(
+							'visibility'                  => $visibility,
+							'custom_label'                => isset( $row['custom_label'] ) ? sanitize_text_field( $row['custom_label'] ) : '',
+							'description_override'        => isset( $row['description_override'] ) ? sanitize_textarea_field( $row['description_override'] ) : '',
+							'sort_order'                  => isset( $row['sort_order'] ) ? intval( $row['sort_order'] ) : 0,
+							'duplicate_behavior'          => $duplicate_behavior,
+							'upgrade_from_product_id'     => $upgrade_from_product_id,
+							'custom_request_title'        => isset( $row['custom_request_title'] ) ? sanitize_text_field( $row['custom_request_title'] ) : '',
+							'custom_request_message'      => isset( $row['custom_request_message'] ) ? sanitize_textarea_field( $row['custom_request_message'] ) : '',
+							'custom_request_button_label' => isset( $row['custom_request_button_label'] ) ? sanitize_text_field( $row['custom_request_button_label'] ) : '',
+							'price_settings'              => $existing_catalog && ! empty( $existing_catalog->price_settings ) ? json_decode( $existing_catalog->price_settings, true ) : array(),
+						)
+					);
+				}
 
 				$wpdb->update(
 					$this->get_portal_stripe_products_table(),
@@ -9179,10 +9361,20 @@ class AJForms_Admin {
 			$dependency_rows = isset( $_POST['portal_product_dependencies'] ) && is_array( $_POST['portal_product_dependencies'] ) ? wp_unslash( $_POST['portal_product_dependencies'] ) : array();
 			if ( ! empty( $dependency_rows ) ) {
 				$dependency_settings = $this->get_public_product_dependency_settings();
+				$affected_product_ids = array();
 				foreach ( $dependency_rows as $dependency_price_id => $dependency_row ) {
 					$dependency_price_id = sanitize_text_field( (string) $dependency_price_id );
 					if ( '' === $dependency_price_id || ! is_array( $dependency_row ) ) {
 						continue;
+					}
+					$dependency_product_id = $wpdb->get_var(
+						$wpdb->prepare(
+							"SELECT stripe_product_id FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s LIMIT 1",
+							$dependency_price_id
+						)
+					);
+					if ( $dependency_product_id ) {
+						$affected_product_ids[] = sanitize_text_field( (string) $dependency_product_id );
 					}
 
 					$required_price_id = isset( $dependency_row['requires_price_id'] ) ? sanitize_text_field( $dependency_row['requires_price_id'] ) : '';
@@ -9201,6 +9393,36 @@ class AJForms_Admin {
 					);
 				}
 				$this->save_public_product_dependency_settings( $dependency_settings );
+				foreach ( array_unique( array_filter( $affected_product_ids ) ) as $affected_product_id ) {
+					$existing_catalog = $this->get_portal_product_catalog_settings( $affected_product_id );
+					$price_ids = $wpdb->get_col(
+						$wpdb->prepare(
+							"SELECT stripe_price_id FROM {$this->get_portal_stripe_products_table()} WHERE stripe_product_id = %s AND stripe_price_id <> ''",
+							$affected_product_id
+						)
+					);
+					$price_settings = array();
+					foreach ( (array) $price_ids as $price_id ) {
+						if ( ! empty( $dependency_settings[ $price_id ] ) && is_array( $dependency_settings[ $price_id ] ) ) {
+							$price_settings[ $price_id ] = $dependency_settings[ $price_id ];
+						}
+					}
+					$this->upsert_portal_product_catalog_settings(
+						$affected_product_id,
+						array(
+							'visibility'                  => $existing_catalog ? $existing_catalog->visibility : 'hidden',
+							'custom_label'                => $existing_catalog ? $existing_catalog->custom_label : '',
+							'description_override'        => $existing_catalog ? $existing_catalog->description_override : '',
+							'sort_order'                  => $existing_catalog ? intval( $existing_catalog->sort_order ) : 0,
+							'duplicate_behavior'          => $existing_catalog ? $existing_catalog->duplicate_behavior : 'no_duplicates',
+							'upgrade_from_product_id'     => $existing_catalog ? $existing_catalog->upgrade_from_product_id : '',
+							'custom_request_title'        => $existing_catalog ? $existing_catalog->custom_request_title : '',
+							'custom_request_message'      => $existing_catalog ? $existing_catalog->custom_request_message : '',
+							'custom_request_button_label' => $existing_catalog ? $existing_catalog->custom_request_button_label : '',
+							'price_settings'              => $price_settings,
+						)
+					);
+				}
 			}
 
 			wp_safe_redirect(
@@ -9618,6 +9840,24 @@ class AJForms_Admin {
 	private function handle_products_action() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
+		}
+
+		if ( isset( $_POST['ajcore_public_product_display_nonce'] ) ) {
+			check_admin_referer( 'ajcore_save_public_product_display', 'ajcore_public_product_display_nonce' );
+			$selected = isset( $_POST['public_product_selected_prices'] ) && is_array( $_POST['public_product_selected_prices'] ) ? wp_unslash( $_POST['public_product_selected_prices'] ) : array();
+			$order    = isset( $_POST['public_product_order'] ) && is_array( $_POST['public_product_order'] ) ? wp_unslash( $_POST['public_product_order'] ) : array();
+			$this->save_public_product_display_settings( $selected, $order );
+
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'             => 'ajforms-products',
+						'products-display' => 'saved',
+					),
+					admin_url( 'admin.php' )
+				)
+			);
+			exit;
 		}
 
 		if ( isset( $_POST['ajcore_product_dependencies_nonce'] ) ) {
@@ -10249,6 +10489,11 @@ class AJForms_Admin {
 	private function get_portal_stripe_products_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_stripe_products';
+	}
+
+	private function get_portal_product_catalog_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_product_catalog';
 	}
 
 	private function get_portal_stripe_subscriptions_table() {
@@ -13745,15 +13990,38 @@ class AJForms_Admin {
 
 		$products = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_products_table()} ORDER BY active DESC, sort_order ASC, name ASC LIMIT %d",
+				"SELECT p.*,
+					COALESCE(c.visibility, p.visibility, 'hidden') AS visibility,
+					COALESCE(c.custom_label, p.custom_label, '') AS custom_label,
+					COALESCE(c.sort_order, p.sort_order, 0) AS sort_order,
+					COALESCE(c.description_override, p.description_override, '') AS description_override,
+					COALESCE(c.duplicate_behavior, p.duplicate_behavior, 'no_duplicates') AS duplicate_behavior,
+					COALESCE(c.upgrade_from_product_id, p.upgrade_from_product_id, '') AS upgrade_from_product_id,
+					COALESCE(c.custom_request_title, p.custom_request_title, '') AS custom_request_title,
+					COALESCE(c.custom_request_message, p.custom_request_message, '') AS custom_request_message,
+					COALESCE(c.custom_request_button_label, p.custom_request_button_label, '') AS custom_request_button_label,
+					c.price_settings AS portal_price_settings
+				FROM {$this->get_portal_stripe_products_table()} p
+				LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id
+				ORDER BY p.active DESC, sort_order ASC, p.name ASC LIMIT %d",
 				300
 			)
 		);
 		$active_count  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1" );
-		$visible_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden'" );
+		$visible_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} p LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id WHERE p.active = 1 AND COALESCE(c.visibility, p.visibility, 'hidden') <> 'hidden'" );
 		$total_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" );
 		$duplicate_behavior_options = $this->get_portal_product_duplicate_behavior_options();
 		$dependency_settings = $this->get_public_product_dependency_settings();
+		foreach ( (array) $products as $product ) {
+			$catalog_price_settings = ! empty( $product->portal_price_settings ) ? json_decode( $product->portal_price_settings, true ) : array();
+			if ( is_array( $catalog_price_settings ) ) {
+				foreach ( $catalog_price_settings as $price_id => $price_setting ) {
+					if ( is_array( $price_setting ) ) {
+						$dependency_settings[ sanitize_text_field( (string) $price_id ) ] = $price_setting;
+					}
+				}
+			}
+		}
 		$product_groups = array();
 		foreach ( (array) $products as $product ) {
 			$group_key = ! empty( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : 'row_' . (int) $product->id;
@@ -14853,6 +15121,24 @@ class AJForms_Admin {
 		$cache    = $this->get_stripe_products_cache();
 		$prices   = isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array();
 		$dependency_settings = $this->get_public_product_dependency_settings();
+		$display_settings = $this->get_public_product_display_settings();
+		$selected_display_prices = ! empty( $display_settings['selected_prices'] ) ? $display_settings['selected_prices'] : ( isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? array_map( 'sanitize_text_field', $settings['stripe_selected_prices'] ) : array() );
+		$product_order = isset( $display_settings['order'] ) && is_array( $display_settings['order'] ) ? $display_settings['order'] : array();
+		if ( ! empty( $product_order ) ) {
+			usort(
+				$prices,
+				function ( $a, $b ) use ( $product_order ) {
+					$a_id = isset( $a['id'] ) ? sanitize_text_field( (string) $a['id'] ) : '';
+					$b_id = isset( $b['id'] ) ? sanitize_text_field( (string) $b['id'] ) : '';
+					$a_order = isset( $product_order[ $a_id ] ) ? intval( $product_order[ $a_id ] ) : 9999;
+					$b_order = isset( $product_order[ $b_id ] ) ? intval( $product_order[ $b_id ] ) : 9999;
+					if ( $a_order === $b_order ) {
+						return strcasecmp( isset( $a['product_name'] ) ? (string) $a['product_name'] : '', isset( $b['product_name'] ) ? (string) $b['product_name'] : '' );
+					}
+					return $a_order <=> $b_order;
+				}
+			);
+		}
 		$active_count = 0;
 		$archived_count = 0;
 		foreach ( $prices as $price ) {
@@ -14938,6 +15224,9 @@ class AJForms_Admin {
 				<?php if ( isset( $_GET['dependencies-saved'] ) ) : ?>
 					<div class="ajcore-products-notice ok"><?php esc_html_e( 'Product dependency settings saved.', 'ajforms' ); ?></div>
 				<?php endif; ?>
+				<?php if ( isset( $_GET['products-display'] ) ) : ?>
+					<div class="ajcore-products-notice ok"><?php esc_html_e( 'Product selection and order saved.', 'ajforms' ); ?></div>
+				<?php endif; ?>
 
 				<p>
 					<strong><?php esc_html_e( 'Page shortcodes:', 'ajforms' ); ?></strong>
@@ -14948,13 +15237,17 @@ class AJForms_Admin {
 				<?php if ( empty( $prices ) ) : ?>
 					<div class="ajcore-products-empty"><?php esc_html_e( 'No synced Stripe prices yet.', 'ajforms' ); ?></div>
 				<?php else : ?>
-					<div class="ajcore-shortcode-builder" id="ajcore-shortcode-builder">
+					<form method="post" class="ajcore-shortcode-builder" id="ajcore-shortcode-builder">
+						<?php wp_nonce_field( 'ajcore_save_public_product_display', 'ajcore_public_product_display_nonce' ); ?>
 						<div class="ajcore-builder-head">
 							<div>
 								<h2><?php esc_html_e( 'Build a Product Shortcode', 'ajforms' ); ?></h2>
-								<p><?php esc_html_e( 'Filter, select products, choose what to show, then generate a shortcode for any page.', 'ajforms' ); ?></p>
+								<p><?php esc_html_e( 'Filter, select products, set their order, choose what to show, then generate a shortcode for any page.', 'ajforms' ); ?></p>
 							</div>
-							<button type="button" class="button" id="ajcore-select-visible-products"><?php esc_html_e( 'Select Visible', 'ajforms' ); ?></button>
+							<div style="display:flex;gap:8px;align-items:center;">
+								<button type="button" class="button" id="ajcore-select-visible-products"><?php esc_html_e( 'Select Visible', 'ajforms' ); ?></button>
+								<?php submit_button( __( 'Save Selection & Order', 'ajforms' ), 'primary', 'submit', false ); ?>
+							</div>
 						</div>
 
 						<div class="ajcore-builder-controls">
@@ -15002,13 +15295,17 @@ class AJForms_Admin {
 						</div>
 
 						<div class="ajcore-product-picker">
+							<?php $default_sort = 10; ?>
 							<?php foreach ( $prices as $price ) : ?>
 								<?php
 								$is_active = ! empty( $price['product_active'] ) && ! empty( $price['price_active'] );
 								$state     = $is_active ? 'active' : 'archived';
+								$price_id  = isset( $price['id'] ) ? sanitize_text_field( (string) $price['id'] ) : '';
+								$sort_value = isset( $product_order[ $price_id ] ) ? intval( $product_order[ $price_id ] ) : $default_sort;
+								$default_sort += 10;
 								?>
 								<label class="ajcore-product-choice <?php echo $is_active ? 'is-active' : 'is-archived'; ?>" data-status="<?php echo esc_attr( $state ); ?>">
-									<input type="checkbox" class="ajcore-product-select" value="<?php echo esc_attr( $price['id'] ); ?>">
+									<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $price_id ); ?>" <?php checked( in_array( $price_id, $selected_display_prices, true ) ); ?>>
 									<span>
 										<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ) ); ?></strong>
 										<?php
@@ -15018,6 +15315,10 @@ class AJForms_Admin {
 										<?php if ( ! empty( $price['product_description'] ) ) : ?>
 											<span><?php echo esc_html( wp_trim_words( $price['product_description'], 16 ) ); ?></span>
 										<?php endif; ?>
+										<span style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+											<?php esc_html_e( 'Order', 'ajforms' ); ?>
+											<input type="number" class="ajcore-product-order" name="public_product_order[<?php echo esc_attr( $price_id ); ?>]" value="<?php echo esc_attr( $sort_value ); ?>" style="width:76px;min-height:30px;">
+										</span>
 									</span>
 								</label>
 							<?php endforeach; ?>
@@ -15027,7 +15328,7 @@ class AJForms_Admin {
 							<input type="text" id="ajcore-generated-shortcode" readonly value="[ajcore_products]">
 							<button type="button" class="button button-primary" id="ajcore-copy-shortcode"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
 						</div>
-					</div>
+					</form>
 
 					<form method="post" class="ajcore-product-dependencies-form">
 						<?php wp_nonce_field( 'ajcore_save_product_dependencies', 'ajcore_product_dependencies_nonce' ); ?>
@@ -15084,6 +15385,7 @@ class AJForms_Admin {
 						const statusFilters = Array.from(builder.querySelectorAll('.ajcore-status-filter'));
 						const productChoices = Array.from(builder.querySelectorAll('.ajcore-product-choice'));
 						const productInputs = Array.from(builder.querySelectorAll('.ajcore-product-select'));
+						const orderInputs = Array.from(builder.querySelectorAll('.ajcore-product-order'));
 						const displayInputs = Array.from(builder.querySelectorAll('.ajcore-display-field'));
 						const output = document.getElementById('ajcore-generated-shortcode');
 						const copyButton = document.getElementById('ajcore-copy-shortcode');
@@ -15115,7 +15417,13 @@ class AJForms_Admin {
 							const mode = modeInput ? modeInput.value : 'buy';
 							const template = templateInput ? templateInput.value : 'default';
 							const details = detailsInput ? detailsInput.value : 'none';
-							const priceIds = productInputs.filter((input) => input.checked).map((input) => input.value);
+							const priceIds = productInputs.filter((input) => input.checked).sort((a, b) => {
+								const aOrderInput = a.closest('.ajcore-product-choice') ? a.closest('.ajcore-product-choice').querySelector('.ajcore-product-order') : null;
+								const bOrderInput = b.closest('.ajcore-product-choice') ? b.closest('.ajcore-product-choice').querySelector('.ajcore-product-order') : null;
+								const aOrder = parseInt((aOrderInput || {}).value || '9999', 10);
+								const bOrder = parseInt((bOrderInput || {}).value || '9999', 10);
+								return aOrder === bOrder ? 0 : aOrder - bOrder;
+							}).map((input) => input.value);
 							const fields = displayInputs.filter((input) => input.checked).map((input) => input.value);
 							const includeArchived = selectedStatuses().includes('archived') ? 'yes' : '';
 							const attrs = [];
@@ -15142,6 +15450,7 @@ class AJForms_Admin {
 
 						statusFilters.forEach((input) => input.addEventListener('change', updateVisibility));
 						productInputs.forEach((input) => input.addEventListener('change', updateShortcode));
+						orderInputs.forEach((input) => input.addEventListener('input', updateShortcode));
 						displayInputs.forEach((input) => input.addEventListener('change', updateShortcode));
 						builder.querySelectorAll('input[name="ajcore_shortcode_mode"]').forEach((input) => input.addEventListener('change', updateShortcode));
 						builder.querySelectorAll('input[name="ajcore_shortcode_template"]').forEach((input) => input.addEventListener('change', updateShortcode));
@@ -15227,10 +15536,11 @@ class AJForms_Admin {
 						),
 						admin_url( 'admin.php' )
 					)
-				);
-				exit;
-			}
+			);
+			exit;
 		}
+
+	}
 
 		if ( isset( $_GET['lead_action'], $_GET['lead_id'], $_GET['_wpnonce'] ) ) {
 			$action  = sanitize_text_field( wp_unslash( $_GET['lead_action'] ) );

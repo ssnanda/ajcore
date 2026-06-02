@@ -1574,7 +1574,21 @@ class AJForms {
 		global $wpdb;
 
 		$products = $wpdb->get_results(
-			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden' ORDER BY sort_order ASC, name ASC"
+			"SELECT p.*,
+				COALESCE(c.visibility, p.visibility, 'hidden') AS visibility,
+				COALESCE(c.custom_label, p.custom_label, '') AS custom_label,
+				COALESCE(c.sort_order, p.sort_order, 0) AS sort_order,
+				COALESCE(c.description_override, p.description_override, '') AS description_override,
+				COALESCE(c.duplicate_behavior, p.duplicate_behavior, 'no_duplicates') AS duplicate_behavior,
+				COALESCE(c.upgrade_from_product_id, p.upgrade_from_product_id, '') AS upgrade_from_product_id,
+				COALESCE(c.custom_request_title, p.custom_request_title, '') AS custom_request_title,
+				COALESCE(c.custom_request_message, p.custom_request_message, '') AS custom_request_message,
+				COALESCE(c.custom_request_button_label, p.custom_request_button_label, '') AS custom_request_button_label,
+				c.price_settings AS portal_price_settings
+			FROM {$this->get_portal_stripe_products_table()} p
+			LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id
+			WHERE p.active = 1 AND COALESCE(c.visibility, p.visibility, 'hidden') <> 'hidden'
+			ORDER BY sort_order ASC, p.name ASC"
 		);
 
 		return array_values(
@@ -1700,7 +1714,21 @@ class AJForms {
 		// Do not let product-mode selection hide an already-configured custom-request upsell.
 		// The admin explicitly controls this using each product's duplicate_behavior setting.
 		$fallback_products = $wpdb->get_results(
-			"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE active = 1 AND visibility <> 'hidden' AND duplicate_behavior = 'custom_request' ORDER BY sort_order ASC, name ASC"
+			"SELECT p.*,
+				COALESCE(c.visibility, p.visibility, 'hidden') AS visibility,
+				COALESCE(c.custom_label, p.custom_label, '') AS custom_label,
+				COALESCE(c.sort_order, p.sort_order, 0) AS sort_order,
+				COALESCE(c.description_override, p.description_override, '') AS description_override,
+				COALESCE(c.duplicate_behavior, p.duplicate_behavior, 'no_duplicates') AS duplicate_behavior,
+				COALESCE(c.upgrade_from_product_id, p.upgrade_from_product_id, '') AS upgrade_from_product_id,
+				COALESCE(c.custom_request_title, p.custom_request_title, '') AS custom_request_title,
+				COALESCE(c.custom_request_message, p.custom_request_message, '') AS custom_request_message,
+				COALESCE(c.custom_request_button_label, p.custom_request_button_label, '') AS custom_request_button_label,
+				c.price_settings AS portal_price_settings
+			FROM {$this->get_portal_stripe_products_table()} p
+			LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id
+			WHERE p.active = 1 AND COALESCE(c.visibility, p.visibility, 'hidden') <> 'hidden' AND COALESCE(c.duplicate_behavior, p.duplicate_behavior, 'no_duplicates') = 'custom_request'
+			ORDER BY sort_order ASC, p.name ASC"
 		);
 		foreach ( $fallback_products as $product ) {
 			$maybe_add_custom_product( $product );
@@ -1871,8 +1899,12 @@ class AJForms {
 		$dependency_note      = '';
 		$raw_data             = $this->decode_portal_json( isset( $product->raw_data ) ? $product->raw_data : '' );
 		$metadata             = $this->decode_portal_json( isset( $product->metadata ) ? $product->metadata : '' );
+		$catalog_price_settings = ! empty( $product->portal_price_settings ) ? json_decode( (string) $product->portal_price_settings, true ) : array();
 
-		if ( isset( $dependency_settings[ $price_id ] ) ) {
+		if ( is_array( $catalog_price_settings ) && isset( $catalog_price_settings[ $price_id ] ) && is_array( $catalog_price_settings[ $price_id ] ) ) {
+			$required_price_id = isset( $catalog_price_settings[ $price_id ]['requires_price_id'] ) ? sanitize_text_field( (string) $catalog_price_settings[ $price_id ]['requires_price_id'] ) : '';
+			$dependency_note   = isset( $catalog_price_settings[ $price_id ]['dependency_note'] ) ? sanitize_textarea_field( (string) $catalog_price_settings[ $price_id ]['dependency_note'] ) : '';
+		} elseif ( isset( $dependency_settings[ $price_id ] ) ) {
 			$required_price_id = isset( $dependency_settings[ $price_id ]['requires_price_id'] ) ? sanitize_text_field( (string) $dependency_settings[ $price_id ]['requires_price_id'] ) : '';
 			$dependency_note   = isset( $dependency_settings[ $price_id ]['dependency_note'] ) ? sanitize_textarea_field( (string) $dependency_settings[ $price_id ]['dependency_note'] ) : '';
 		}
@@ -1995,7 +2027,20 @@ class AJForms {
 
 		return $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s AND active = 1 AND visibility <> 'hidden' LIMIT 1",
+				"SELECT p.*,
+					COALESCE(c.visibility, p.visibility, 'hidden') AS visibility,
+					COALESCE(c.custom_label, p.custom_label, '') AS custom_label,
+					COALESCE(c.sort_order, p.sort_order, 0) AS sort_order,
+					COALESCE(c.description_override, p.description_override, '') AS description_override,
+					COALESCE(c.duplicate_behavior, p.duplicate_behavior, 'no_duplicates') AS duplicate_behavior,
+					COALESCE(c.upgrade_from_product_id, p.upgrade_from_product_id, '') AS upgrade_from_product_id,
+					COALESCE(c.custom_request_title, p.custom_request_title, '') AS custom_request_title,
+					COALESCE(c.custom_request_message, p.custom_request_message, '') AS custom_request_message,
+					COALESCE(c.custom_request_button_label, p.custom_request_button_label, '') AS custom_request_button_label,
+					c.price_settings AS portal_price_settings
+				FROM {$this->get_portal_stripe_products_table()} p
+				LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id
+				WHERE p.stripe_price_id = %s AND p.active = 1 AND COALESCE(c.visibility, p.visibility, 'hidden') <> 'hidden' LIMIT 1",
 				$price_id
 			)
 		);
@@ -3640,6 +3685,11 @@ class AJForms {
 	private function get_portal_stripe_products_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_stripe_products';
+	}
+
+	private function get_portal_product_catalog_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_product_catalog';
 	}
 
 	private function get_portal_stripe_subscriptions_table() {
@@ -5682,6 +5732,29 @@ class AJForms {
 		return $normalized;
 	}
 
+	private function get_public_product_display_settings() {
+		$settings = get_option( 'ajcore_public_product_display_settings', array() );
+		if ( ! is_array( $settings ) ) {
+			$settings = array();
+		}
+
+		$selected_prices = isset( $settings['selected_prices'] ) && is_array( $settings['selected_prices'] ) ? array_values( array_unique( array_map( 'sanitize_text_field', $settings['selected_prices'] ) ) ) : array();
+		$order = array();
+		if ( isset( $settings['order'] ) && is_array( $settings['order'] ) ) {
+			foreach ( $settings['order'] as $price_id => $sort_order ) {
+				$price_id = sanitize_text_field( (string) $price_id );
+				if ( '' !== $price_id ) {
+					$order[ $price_id ] = intval( $sort_order );
+				}
+			}
+		}
+
+		return array(
+			'selected_prices' => $selected_prices,
+			'order'           => $order,
+		);
+	}
+
 	private function apply_public_product_dependency_settings_to_prices( $prices ) {
 		$dependency_settings = $this->get_public_product_dependency_settings();
 		if ( empty( $dependency_settings ) || ! is_array( $prices ) ) {
@@ -5712,8 +5785,10 @@ class AJForms {
 
 	private function get_public_stripe_prices( $requested_price_ids = array(), $include_archived = false ) {
 		$settings       = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$mode           = isset( $settings['stripe_products_mode'] ) ? sanitize_key( $settings['stripe_products_mode'] ) : 'all';
-		$selected       = isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? array_map( 'sanitize_text_field', $settings['stripe_selected_prices'] ) : array();
+		$display_settings = $this->get_public_product_display_settings();
+		$mode           = ! empty( $display_settings['selected_prices'] ) ? 'selected' : ( isset( $settings['stripe_products_mode'] ) ? sanitize_key( $settings['stripe_products_mode'] ) : 'all' );
+		$selected       = ! empty( $display_settings['selected_prices'] ) ? $display_settings['selected_prices'] : ( isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? array_map( 'sanitize_text_field', $settings['stripe_selected_prices'] ) : array() );
+		$order          = isset( $display_settings['order'] ) && is_array( $display_settings['order'] ) ? $display_settings['order'] : array();
 		$requested      = array_filter( array_map( 'sanitize_text_field', (array) $requested_price_ids ) );
 		$cache          = $this->get_stripe_products_cache();
 		$prices         = isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array();
@@ -5737,6 +5812,31 @@ class AJForms {
 			}
 
 			$allowed_prices[] = $price;
+		}
+
+		if ( ! empty( $requested ) ) {
+			usort(
+				$allowed_prices,
+				function ( $a, $b ) use ( $requested ) {
+					$a_id = isset( $a['id'] ) ? sanitize_text_field( (string) $a['id'] ) : '';
+					$b_id = isset( $b['id'] ) ? sanitize_text_field( (string) $b['id'] ) : '';
+					return array_search( $a_id, $requested, true ) <=> array_search( $b_id, $requested, true );
+				}
+			);
+		} elseif ( ! empty( $order ) ) {
+			usort(
+				$allowed_prices,
+				function ( $a, $b ) use ( $order ) {
+					$a_id = isset( $a['id'] ) ? sanitize_text_field( (string) $a['id'] ) : '';
+					$b_id = isset( $b['id'] ) ? sanitize_text_field( (string) $b['id'] ) : '';
+					$a_order = isset( $order[ $a_id ] ) ? intval( $order[ $a_id ] ) : 9999;
+					$b_order = isset( $order[ $b_id ] ) ? intval( $order[ $b_id ] ) : 9999;
+					if ( $a_order === $b_order ) {
+						return strcasecmp( isset( $a['product_name'] ) ? (string) $a['product_name'] : '', isset( $b['product_name'] ) ? (string) $b['product_name'] : '' );
+					}
+					return $a_order <=> $b_order;
+				}
+			);
 		}
 
 		return $this->apply_public_product_dependency_settings_to_prices( $allowed_prices );
@@ -7117,7 +7217,9 @@ class AJForms {
 					$price_label    = $price_currency . ' ' . number_format_i18n( $price_amount, 2 ) . $price_interval;
 					$description    = isset( $price['product_description'] ) ? (string) $price['product_description'] : '';
 					$rich_description = ! empty( $price['product_rich_description'] ) ? (string) $price['product_rich_description'] : $description;
-					$summary        = ! empty( $price['product_summary'] ) ? (string) $price['product_summary'] : wp_trim_words( $description, 16 );
+					$plain_description = wp_strip_all_tags( $rich_description );
+					$summary        = ! empty( $price['product_summary'] ) ? (string) $price['product_summary'] : wp_trim_words( $plain_description, 22 );
+					$short_description = wp_trim_words( $plain_description, 34 );
 					$required_price_id = $this->get_public_price_required_price_id( $price, $public_price_map );
 					$required_product_name = '';
 					if ( '' !== $required_price_id && ! empty( $public_price_map[ $required_price_id ]['product_name'] ) ) {
@@ -7151,14 +7253,14 @@ class AJForms {
 						<?php endif; ?>
 						<?php if ( $show_description && '' !== $rich_description ) : ?>
 							<div class="ajcore-product-description" style="margin-bottom:10px;color:#64748b;">
-								<?php echo $this->render_product_rich_text( $rich_description ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<?php echo esc_html( $short_description ); ?>
 							</div>
 						<?php elseif ( $show_description && ! empty( $price['nickname'] ) ) : ?>
 							<div class="ajcore-product-description" style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['nickname'] ); ?></div>
 						<?php endif; ?>
-						<?php if ( 'expand' === $details_mode && '' !== $rich_description && ! $show_description ) : ?>
+						<?php if ( 'expand' === $details_mode && '' !== $rich_description ) : ?>
 							<details class="ajcore-product-details" style="margin:0 0 14px;color:#64748b;">
-								<summary style="cursor:pointer;color:#0f7ac6;font-weight:700;"><?php esc_html_e( 'View details', 'ajforms' ); ?></summary>
+								<summary style="cursor:pointer;color:#0f7ac6;font-weight:700;"><?php esc_html_e( 'View full details', 'ajforms' ); ?></summary>
 								<div style="margin-top:8px;line-height:1.45;">
 									<?php echo $this->render_product_rich_text( $rich_description ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 								</div>
