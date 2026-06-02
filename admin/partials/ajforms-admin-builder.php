@@ -109,7 +109,7 @@ $initial_data = array(
 
 if ( $form_id ) {
 	global $wpdb;
-	$table = $wpdb->prefix . 'ajforms_forms';
+	$table = $wpdb->prefix . 'aj_forms_forms';
 	$form  = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE id = %d", $form_id ) );
 
 	if ( $form ) {

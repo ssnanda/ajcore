@@ -6,9 +6,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 global $wpdb;
 
 $lead_id          = isset( $_GET['lead_id'] ) ? absint( wp_unslash( $_GET['lead_id'] ) ) : 0;
-$leads_table      = $wpdb->prefix . 'ajforms_leads';
-$forms_table      = $wpdb->prefix . 'ajforms_forms';
-$lead_notes_table = $wpdb->prefix . 'ajforms_lead_notes';
+$leads_table      = $wpdb->prefix . 'aj_forms_leads';
+$forms_table      = $wpdb->prefix . 'aj_forms_forms';
+$lead_notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 $admin            = new AJForms_Admin();
 
 $lead = $wpdb->get_row(

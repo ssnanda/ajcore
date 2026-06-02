@@ -251,8 +251,8 @@ class AJForms_Forms_List_Table extends WP_List_Table {
 	public function prepare_items() {
 		global $wpdb;
 
-		$table_name = $wpdb->prefix . 'ajforms_forms';
-		$leads_table = $wpdb->prefix . 'ajforms_leads';
+		$table_name = $wpdb->prefix . 'aj_forms_forms';
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
 		$per_page   = 20;
 		$paged      = $this->get_pagenum();
 		$offset     = ( $paged - 1 ) * $per_page;

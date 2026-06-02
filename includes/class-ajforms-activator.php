@@ -7,16 +7,16 @@ class AJForms_Activator {
 
 		$charset_collate = $wpdb->get_charset_collate();
 
-		$table_forms      = $wpdb->prefix . 'ajforms_forms';
-		$table_leads      = $wpdb->prefix . 'ajforms_leads';
-		$table_lead_notes = $wpdb->prefix . 'ajforms_lead_notes';
+		$table_forms      = $wpdb->prefix . 'aj_forms_forms';
+		$table_leads      = $wpdb->prefix . 'aj_forms_leads';
+		$table_lead_notes = $wpdb->prefix . 'aj_forms_lead_notes';
 		$table_portal_files      = $wpdb->prefix . 'aj_portal_files';
 		$table_portal_file_users = $wpdb->prefix . 'aj_portal_file_users';
 		$table_stripe_customers     = $wpdb->prefix . 'aj_portal_stripe_customers';
 		$table_stripe_products      = $wpdb->prefix . 'aj_portal_stripe_products';
 		$table_stripe_subscriptions = $wpdb->prefix . 'aj_portal_stripe_subscriptions';
 		$table_stripe_transactions  = $wpdb->prefix . 'aj_portal_stripe_transactions';
-		$table_user_mappings        = $wpdb->prefix . 'aj_portal_user_mappings';
+		$table_user_mappings        = $wpdb->prefix . 'aj_auth_user_mappings';
 		$table_entity_mappings      = $wpdb->prefix . 'aj_portal_entity_mappings';
 		$table_ledger               = $wpdb->prefix . 'aj_portal_ledger';
 		$table_tasks                = $wpdb->prefix . 'aj_portal_tasks';
@@ -528,6 +528,21 @@ class AJForms_Activator {
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+
+		$legacy_table_migrations = array(
+			$wpdb->prefix . 'ajforms_forms'         => $table_forms,
+			$wpdb->prefix . 'ajforms_leads'         => $table_leads,
+			$wpdb->prefix . 'ajforms_lead_notes'    => $table_lead_notes,
+			$wpdb->prefix . 'aj_portal_user_mappings' => $table_user_mappings,
+		);
+		foreach ( $legacy_table_migrations as $legacy_table => $new_table ) {
+			$legacy_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $legacy_table ) );
+			$new_exists    = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $new_table ) );
+			if ( $legacy_exists === $legacy_table && $new_exists === $new_table ) {
+				$wpdb->query( "INSERT IGNORE INTO $new_table SELECT * FROM $legacy_table" );
+				$wpdb->query( "DROP TABLE IF EXISTS $legacy_table" );
+			}
+		}
 
 		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'active' WHERE enabled_portal = 1 AND (portal_status = '' OR portal_status IS NULL)" );
 		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'disabled' WHERE enabled_portal = 0 AND (portal_status = '' OR portal_status IS NULL)" );

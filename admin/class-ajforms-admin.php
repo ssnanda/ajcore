@@ -2687,11 +2687,16 @@ class AJForms_Admin {
 		);
 	}
 
-	private function get_portal_table_inventory() {
+	private function get_ajcore_table_inventory() {
 		global $wpdb;
 
-		$tables = $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $wpdb->prefix . 'aj_portal_' ) . '%' ) );
+		$tables = array();
+		foreach ( array( 'aj_forms_', 'aj_portal_', 'aj_crm_', 'aj_auto_', 'aj_auth_' ) as $prefix ) {
+			$matches = $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $wpdb->prefix . $prefix ) . '%' ) );
+			$tables = array_merge( $tables, (array) $matches );
+		}
 		$tables = array_values( array_filter( array_map( 'sanitize_text_field', (array) $tables ) ) );
+		$tables = array_values( array_unique( $tables ) );
 		sort( $tables );
 
 		$inventory = array();
@@ -2705,12 +2710,12 @@ class AJForms_Admin {
 		return $inventory;
 	}
 
-	private function backup_portal_tables() {
+	private function backup_ajcore_tables() {
 		global $wpdb;
 
 		$this->ensure_portal_schema();
 
-		$inventory = $this->get_portal_table_inventory();
+		$inventory = $this->get_ajcore_table_inventory();
 		$upload_dir = wp_upload_dir();
 		if ( ! empty( $upload_dir['error'] ) ) {
 			return new WP_Error( 'backup_upload_dir_failed', $upload_dir['error'] );
@@ -2743,7 +2748,7 @@ class AJForms_Admin {
 			);
 		}
 
-		$filename = 'ajcore-portal-backup-' . gmdate( 'Ymd-His' ) . '-' . wp_generate_password( 8, false, false ) . '.json';
+		$filename = 'ajcore-tables-backup-' . gmdate( 'Ymd-His' ) . '-' . wp_generate_password( 8, false, false ) . '.json';
 		$path = trailingslashit( $backup_dir ) . $filename;
 		$written = file_put_contents( $path, wp_json_encode( $backup, JSON_PRETTY_PRINT ) );
 		if ( false === $written ) {
@@ -2751,7 +2756,7 @@ class AJForms_Admin {
 		}
 
 		$this->log_portal_event(
-			'portal_tables_backed_up',
+			'ajcore_tables_backed_up',
 			array(
 				'source'   => 'sync_center',
 				'severity' => 'info',
@@ -8541,9 +8546,9 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 
-		if ( isset( $_GET['ajcore_download_portal_backup'], $_GET['_wpnonce'] ) ) {
-			$backup_file = sanitize_file_name( wp_unslash( $_GET['ajcore_download_portal_backup'] ) );
-			check_admin_referer( 'ajcore_download_portal_backup_' . $backup_file );
+		if ( isset( $_GET['ajcore_download_tables_backup'], $_GET['_wpnonce'] ) ) {
+			$backup_file = sanitize_file_name( wp_unslash( $_GET['ajcore_download_tables_backup'] ) );
+			check_admin_referer( 'ajcore_download_tables_backup_' . $backup_file );
 
 			$upload_dir = wp_upload_dir();
 			$backup_path = trailingslashit( $upload_dir['basedir'] ) . 'ajcore-backups/' . $backup_file;
@@ -8574,7 +8579,7 @@ class AJForms_Admin {
 
 			$backup = null;
 			if ( ! empty( $_POST['ajcore_backup_before_reset'] ) ) {
-				$backup = $this->backup_portal_tables();
+				$backup = $this->backup_ajcore_tables();
 				if ( is_wp_error( $backup ) ) {
 					wp_safe_redirect(
 						add_query_arg(
@@ -8606,10 +8611,10 @@ class AJForms_Admin {
 			exit;
 		}
 
-		if ( isset( $_POST['ajcore_portal_backup_nonce'] ) ) {
-			check_admin_referer( 'ajcore_portal_backup', 'ajcore_portal_backup_nonce' );
+		if ( isset( $_POST['ajcore_tables_backup_nonce'] ) ) {
+			check_admin_referer( 'ajcore_tables_backup', 'ajcore_tables_backup_nonce' );
 
-			$backup = $this->backup_portal_tables();
+			$backup = $this->backup_ajcore_tables();
 			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' );
 
 			if ( is_wp_error( $backup ) ) {
@@ -10213,17 +10218,17 @@ class AJForms_Admin {
 
 	private function get_forms_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'ajforms_forms';
+		return $wpdb->prefix . 'aj_forms_forms';
 	}
 
 	private function get_leads_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'ajforms_leads';
+		return $wpdb->prefix . 'aj_forms_leads';
 	}
 
 	private function get_lead_notes_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'ajforms_lead_notes';
+		return $wpdb->prefix . 'aj_forms_lead_notes';
 	}
 
 	private function get_portal_files_table() {
@@ -10258,7 +10263,7 @@ class AJForms_Admin {
 
 	private function get_portal_user_mappings_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_user_mappings';
+		return $wpdb->prefix . 'aj_auth_user_mappings';
 	}
 
 	private function get_portal_entity_mappings_table() {
@@ -13046,7 +13051,7 @@ class AJForms_Admin {
 		$open_log_items = $open_log_id ? $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$this->get_portal_sync_log_items_table()} WHERE log_id = %d ORDER BY id ASC LIMIT 500", $open_log_id ) ) : array();
 		$sync_url     = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
 		$reset_plan   = $this->get_portal_master_reset_plan();
-		$table_inventory = $this->get_portal_table_inventory();
+		$table_inventory = $this->get_ajcore_table_inventory();
 		$backup_file  = isset( $_GET['portal-backup-file'] ) ? sanitize_file_name( wp_unslash( $_GET['portal-backup-file'] ) ) : '';
 		$backup_download_url = '';
 		if ( '' !== $backup_file ) {
@@ -13058,11 +13063,11 @@ class AJForms_Admin {
 						array(
 							'page' => 'ajforms-client-portal',
 							'tab'  => 'sync',
-							'ajcore_download_portal_backup' => $backup_file,
+							'ajcore_download_tables_backup' => $backup_file,
 						),
 						admin_url( 'admin.php' )
 					),
-					'ajcore_download_portal_backup_' . $backup_file
+					'ajcore_download_tables_backup_' . $backup_file
 				);
 			}
 		}
@@ -13124,11 +13129,11 @@ class AJForms_Admin {
 		</div>
 
 		<div class="ajforms-settings-card">
-			<h3><?php esc_html_e( 'Portal Tables', 'ajforms' ); ?></h3>
-			<p><?php esc_html_e( 'AJ Core client portal tables use the wp_aj_portal_* prefix. Stripe rebuildable cache tables include stripe in the table name; local AJ Core state is stored separately so resets do not wipe portal access or service usage decisions.', 'ajforms' ); ?></p>
+			<h3><?php esc_html_e( 'AJ Core Tables', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'AJ Core-owned tables use wp_aj_forms_*, wp_aj_portal_*, wp_aj_crm_*, wp_aj_auto_*, and wp_aj_auth_* naming. Stripe rebuildable cache remains under wp_aj_portal_stripe_* because it powers the client portal. Local AJ Core state is stored separately so resets do not wipe portal access or service usage decisions.', 'ajforms' ); ?></p>
 			<form method="post" style="margin:0 0 12px;">
-				<?php wp_nonce_field( 'ajcore_portal_backup', 'ajcore_portal_backup_nonce' ); ?>
-				<?php submit_button( __( 'Backup Portal Tables', 'ajforms' ), 'secondary', 'submit', false ); ?>
+				<?php wp_nonce_field( 'ajcore_tables_backup', 'ajcore_tables_backup_nonce' ); ?>
+				<?php submit_button( __( 'Backup AJ Core Tables', 'ajforms' ), 'secondary', 'submit', false ); ?>
 			</form>
 			<table class="widefat striped">
 				<thead>
@@ -13183,7 +13188,7 @@ class AJForms_Admin {
 					</table>
 				</div>
 			</div>
-			<p><label><input type="checkbox" name="ajcore_backup_before_reset" value="1" checked> <?php esc_html_e( 'Create portal table backup before reset', 'ajforms' ); ?></label></p>
+			<p><label><input type="checkbox" name="ajcore_backup_before_reset" value="1" checked> <?php esc_html_e( 'Create AJ Core table backup before reset', 'ajforms' ); ?></label></p>
 			<?php submit_button( __( 'MASTER RESET', 'ajforms' ), 'delete', 'submit', false ); ?>
 		</form>
 

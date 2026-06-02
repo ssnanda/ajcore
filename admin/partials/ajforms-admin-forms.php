@@ -22,10 +22,10 @@ $add_new_url = add_query_arg(
 );
 
 $stats = array(
-	'total'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ajforms_forms WHERE status IN ('published','draft')" ),
-	'published'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ajforms_forms WHERE status = 'published'" ),
-	'draft'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ajforms_forms WHERE status = 'draft'" ),
-	'deleted'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ajforms_forms WHERE status = 'deleted'" ),
+	'total'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}aj_forms_forms WHERE status IN ('published','draft')" ),
+	'published'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}aj_forms_forms WHERE status = 'published'" ),
+	'draft'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}aj_forms_forms WHERE status = 'draft'" ),
+	'deleted'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}aj_forms_forms WHERE status = 'deleted'" ),
 );
 ?>
 

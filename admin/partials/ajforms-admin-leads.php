@@ -5,7 +5,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 global $wpdb;
 
-$forms_table = $wpdb->prefix . 'ajforms_forms';
+$forms_table = $wpdb->prefix . 'aj_forms_forms';
 $forms       = $wpdb->get_results( "SELECT id, title FROM {$forms_table} ORDER BY title ASC" );
 
 $selected_form   = isset( $_GET['form_id'] ) ? absint( wp_unslash( $_GET['form_id'] ) ) : 0;
@@ -15,7 +15,7 @@ $leads_list_table = new AJForms_Leads_List_Table();
 $leads_list_table->process_bulk_action();
 $leads_list_table->prepare_items();
 
-$leads_table_name = $wpdb->prefix . 'ajforms_leads';
+$leads_table_name = $wpdb->prefix . 'aj_forms_leads';
 $lead_stats = array(
 	'total'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$leads_table_name}" ),
 	'unread' => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'unread' ) ),

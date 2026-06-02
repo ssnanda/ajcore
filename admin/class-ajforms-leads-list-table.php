@@ -85,8 +85,8 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 		check_admin_referer( 'bulk-' . $this->_args['plural'] );
 
 		global $wpdb;
-		$leads_table      = $wpdb->prefix . 'ajforms_leads';
-		$lead_notes_table = $wpdb->prefix . 'ajforms_lead_notes';
+		$leads_table      = $wpdb->prefix . 'aj_forms_leads';
+		$lead_notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 		$placeholders     = implode( ',', array_fill( 0, count( $lead_ids ), '%d' ) );
 
 		if ( 'delete' === $action ) {
@@ -224,8 +224,8 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 	public function prepare_items() {
 		global $wpdb;
 
-		$leads_table = $wpdb->prefix . 'ajforms_leads';
-		$forms_table = $wpdb->prefix . 'ajforms_forms';
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$forms_table = $wpdb->prefix . 'aj_forms_forms';
 
 		$per_page = 20;
 		$paged    = $this->get_pagenum();

@@ -3684,7 +3684,7 @@ class AJForms {
 
 	private function get_portal_user_mappings_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_user_mappings';
+		return $wpdb->prefix . 'aj_auth_user_mappings';
 	}
 
 	private function get_portal_event_log_table() {
@@ -4026,7 +4026,7 @@ class AJForms {
 			'id'                 => 0,
 			'stripe_customer_id' => sanitize_text_field( $mapping->stripe_customer_id ),
 			'email'              => ! empty( $state->customer_email ) ? sanitize_email( (string) $state->customer_email ) : sanitize_email( (string) $mapping->customer_email ),
-			'name'               => '',
+			'name'               => $this->get_current_user_portal_display_name_fallback( $mapping, $state ),
 			'phone'              => '',
 			'address'            => '',
 			'metadata'           => '',
@@ -4037,6 +4037,22 @@ class AJForms {
 			'created_at'         => null,
 			'synced_at'          => '',
 		);
+	}
+
+	private function get_current_user_portal_display_name_fallback( $mapping, $state ) {
+		$user = wp_get_current_user();
+		if ( $user && ! empty( $user->display_name ) && $user->display_name !== $user->user_login ) {
+			return sanitize_text_field( (string) $user->display_name );
+		}
+
+		foreach ( array( $state->customer_email ?? '', $state->portal_user_email ?? '', $mapping->customer_email ?? '', $mapping->portal_user_email ?? '' ) as $email ) {
+			$email = sanitize_email( (string) $email );
+			if ( is_email( $email ) ) {
+				return $email;
+			}
+		}
+
+		return '';
 	}
 
 	private function get_portal_file_record( $file_id ) {
@@ -6851,7 +6867,7 @@ class AJForms {
 
 	private function get_forms_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'ajforms_forms';
+		return $wpdb->prefix . 'aj_forms_forms';
 	}
 
 	private function render_product_rich_text( $text ) {
@@ -8134,7 +8150,7 @@ class AJForms {
 
 	private function get_leads_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'ajforms_leads';
+		return $wpdb->prefix . 'aj_forms_leads';
 	}
 
 	private function get_form_by_id( $form_id ) {
