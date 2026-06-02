@@ -953,11 +953,13 @@ class AJForms_Admin {
 
 		return array(
 			'customers'     => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()}" ),
+			'customer_states' => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_customer_states_table()}" ),
 			'products'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" ),
 			'subscriptions' => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_subscriptions_table()}" ),
 			'transactions'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_transactions_table()}" ),
 			'ledger'        => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_ledger_table()}" ),
 			'mappings'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_user_mappings_table()}" ),
+			'service_states' => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_states_table()}" ),
 			'tasks'         => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_tasks_table()}" ),
 			'sync_logs'     => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_sync_logs_table()}" ),
 		);
@@ -2643,23 +2645,7 @@ class AJForms_Admin {
 		);
 	}
 
-	private function reset_portal_sync_cache() {
-		global $wpdb;
-
-		$this->ensure_portal_schema();
-
-		$tables = array(
-			$this->get_portal_stripe_customers_table(),
-			$this->get_portal_stripe_transactions_table(),
-			$this->get_portal_stripe_subscriptions_table(),
-			$this->get_portal_service_snapshots_table(),
-			$this->get_portal_stripe_products_table(),
-			$this->get_portal_sync_log_items_table(),
-			$this->get_portal_sync_logs_table(),
-		);
-
-		$deleted = 0;
-		$ledger_table = $this->get_portal_ledger_table();
+	private function get_portal_master_reset_plan() {
 		$generated_ledger_source_types = array(
 			'charge',
 			'payment',
@@ -2671,6 +2657,133 @@ class AJForms_Admin {
 			'invoice_line_item',
 			'checkout_line_item',
 		);
+
+		return array(
+			'generated_ledger_source_types' => $generated_ledger_source_types,
+			'cleared_tables' => array(
+				array( 'table' => $this->get_portal_stripe_customers_table(), 'scope' => __( 'Stripe customer cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_stripe_products_table(), 'scope' => __( 'Stripe product/price cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_stripe_subscriptions_table(), 'scope' => __( 'Stripe subscription cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_stripe_transactions_table(), 'scope' => __( 'Stripe transaction cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_service_snapshots_table(), 'scope' => __( 'Generated service snapshots', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_sync_log_items_table(), 'scope' => __( 'Sync history detail rows', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_sync_logs_table(), 'scope' => __( 'Sync history runs', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_ledger_table(), 'scope' => __( 'Generated Stripe billing ledger rows', 'ajforms' ), 'mode' => sprintf( __( 'Rows where source_type is %s', 'ajforms' ), implode( ', ', $generated_ledger_source_types ) ) ),
+			),
+			'preserved_tables' => array(
+				array( 'table' => $this->get_portal_customer_states_table(), 'scope' => __( 'Durable portal enabled/disabled/archived state', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_user_mappings_table(), 'scope' => __( 'Local WordPress user mappings', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_service_states_table(), 'scope' => __( 'Durable service used/unused state', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_entity_mappings_table(), 'scope' => __( 'Entity mappings', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_files_table(), 'scope' => __( 'Client file records', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_file_users_table(), 'scope' => __( 'Client file assignments', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_tasks_table(), 'scope' => __( 'Tasks', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_task_statuses_table(), 'scope' => __( 'Task statuses', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_task_comments_table(), 'scope' => __( 'Task comments', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_service_requests_table(), 'scope' => __( 'Service requests', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_event_log_table(), 'scope' => __( 'Audit/event log', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_stripe_events_table(), 'scope' => __( 'Stripe webhook idempotency log', 'ajforms' ) ),
+			),
+		);
+	}
+
+	private function get_portal_table_inventory() {
+		global $wpdb;
+
+		$tables = $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $wpdb->prefix . 'aj_portal_' ) . '%' ) );
+		$tables = array_values( array_filter( array_map( 'sanitize_text_field', (array) $tables ) ) );
+		sort( $tables );
+
+		$inventory = array();
+		foreach ( $tables as $table ) {
+			$inventory[] = array(
+				'table' => $table,
+				'rows'  => absint( $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ) ),
+			);
+		}
+
+		return $inventory;
+	}
+
+	private function backup_portal_tables() {
+		global $wpdb;
+
+		$this->ensure_portal_schema();
+
+		$inventory = $this->get_portal_table_inventory();
+		$upload_dir = wp_upload_dir();
+		if ( ! empty( $upload_dir['error'] ) ) {
+			return new WP_Error( 'backup_upload_dir_failed', $upload_dir['error'] );
+		}
+
+		$backup_dir = trailingslashit( $upload_dir['basedir'] ) . 'ajcore-backups';
+		if ( ! wp_mkdir_p( $backup_dir ) ) {
+			return new WP_Error( 'backup_dir_failed', __( 'Could not create AJ Core backup directory.', 'ajforms' ) );
+		}
+
+		if ( ! file_exists( trailingslashit( $backup_dir ) . 'index.php' ) ) {
+			file_put_contents( trailingslashit( $backup_dir ) . 'index.php', "<?php\n// Silence is golden.\n" );
+		}
+		if ( ! file_exists( trailingslashit( $backup_dir ) . '.htaccess' ) ) {
+			file_put_contents( trailingslashit( $backup_dir ) . '.htaccess', "Deny from all\n" );
+		}
+
+		$backup = array(
+			'created_at' => current_time( 'mysql' ),
+			'site_url'   => home_url( '/' ),
+			'tables'     => array(),
+		);
+
+		foreach ( $inventory as $item ) {
+			$table = $item['table'];
+			$backup['tables'][ $table ] = array(
+				'row_count' => absint( $item['rows'] ),
+				'columns'   => $wpdb->get_results( "SHOW COLUMNS FROM {$table}", ARRAY_A ),
+				'rows'      => $wpdb->get_results( "SELECT * FROM {$table}", ARRAY_A ),
+			);
+		}
+
+		$filename = 'ajcore-portal-backup-' . gmdate( 'Ymd-His' ) . '-' . wp_generate_password( 8, false, false ) . '.json';
+		$path = trailingslashit( $backup_dir ) . $filename;
+		$written = file_put_contents( $path, wp_json_encode( $backup, JSON_PRETTY_PRINT ) );
+		if ( false === $written ) {
+			return new WP_Error( 'backup_write_failed', __( 'Could not write AJ Core portal backup file.', 'ajforms' ) );
+		}
+
+		$this->log_portal_event(
+			'portal_tables_backed_up',
+			array(
+				'source'   => 'sync_center',
+				'severity' => 'info',
+				'details'  => array(
+					'file' => $filename,
+					'tables' => wp_list_pluck( $inventory, 'table' ),
+				),
+			)
+		);
+
+		return array(
+			'file' => $filename,
+			'path' => $path,
+		);
+	}
+
+	private function reset_portal_sync_cache() {
+		global $wpdb;
+
+		$this->ensure_portal_schema();
+
+		$plan = $this->get_portal_master_reset_plan();
+		$tables = array();
+		foreach ( $plan['cleared_tables'] as $item ) {
+			if ( $this->get_portal_ledger_table() !== $item['table'] ) {
+				$tables[] = $item['table'];
+			}
+		}
+
+		$deleted = 0;
+		$ledger_table = $this->get_portal_ledger_table();
+		$generated_ledger_source_types = $plan['generated_ledger_source_types'];
 		$ledger_placeholders = implode( ',', array_fill( 0, count( $generated_ledger_source_types ), '%s' ) );
 		$deleted += absint( $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$ledger_table} WHERE source_type IN ({$ledger_placeholders})", $generated_ledger_source_types ) ) );
 		$ledger_result = $wpdb->query( $wpdb->prepare( "DELETE FROM {$ledger_table} WHERE source_type IN ({$ledger_placeholders})", $generated_ledger_source_types ) );
@@ -8428,8 +8541,54 @@ class AJForms_Admin {
 
 		$this->ensure_portal_schema();
 
+		if ( isset( $_GET['ajcore_download_portal_backup'], $_GET['_wpnonce'] ) ) {
+			$backup_file = sanitize_file_name( wp_unslash( $_GET['ajcore_download_portal_backup'] ) );
+			check_admin_referer( 'ajcore_download_portal_backup_' . $backup_file );
+
+			$upload_dir = wp_upload_dir();
+			$backup_path = trailingslashit( $upload_dir['basedir'] ) . 'ajcore-backups/' . $backup_file;
+			if ( '' === $backup_file || ! file_exists( $backup_path ) || ! is_readable( $backup_path ) ) {
+				wp_safe_redirect(
+					add_query_arg(
+						array(
+							'page'         => 'ajforms-client-portal',
+							'tab'          => 'sync',
+							'portal-error' => rawurlencode( __( 'Backup file was not found.', 'ajforms' ) ),
+						),
+						admin_url( 'admin.php' )
+					)
+				);
+				exit;
+			}
+
+			nocache_headers();
+			header( 'Content-Type: application/json; charset=utf-8' );
+			header( 'Content-Disposition: attachment; filename="' . $backup_file . '"' );
+			header( 'Content-Length: ' . filesize( $backup_path ) );
+			readfile( $backup_path );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_portal_master_reset_nonce'] ) ) {
 			check_admin_referer( 'ajcore_portal_master_reset', 'ajcore_portal_master_reset_nonce' );
+
+			$backup = null;
+			if ( ! empty( $_POST['ajcore_backup_before_reset'] ) ) {
+				$backup = $this->backup_portal_tables();
+				if ( is_wp_error( $backup ) ) {
+					wp_safe_redirect(
+						add_query_arg(
+							array(
+								'page'         => 'ajforms-client-portal',
+								'tab'          => 'sync',
+								'portal-error' => rawurlencode( $backup->get_error_message() ),
+							),
+							admin_url( 'admin.php' )
+						)
+					);
+					exit;
+				}
+			}
 
 			$result = $this->reset_portal_sync_cache();
 			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' );
@@ -8438,6 +8597,25 @@ class AJForms_Admin {
 				$args['portal-error'] = rawurlencode( $result->get_error_message() );
 			} else {
 				$args['portal-reset'] = absint( $result );
+				if ( is_array( $backup ) && ! empty( $backup['file'] ) ) {
+					$args['portal-backup-file'] = rawurlencode( $backup['file'] );
+				}
+			}
+
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_portal_backup_nonce'] ) ) {
+			check_admin_referer( 'ajcore_portal_backup', 'ajcore_portal_backup_nonce' );
+
+			$backup = $this->backup_portal_tables();
+			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' );
+
+			if ( is_wp_error( $backup ) ) {
+				$args['portal-error'] = rawurlencode( $backup->get_error_message() );
+			} else {
+				$args['portal-backup-file'] = rawurlencode( $backup['file'] );
 			}
 
 			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
@@ -8729,10 +8907,29 @@ class AJForms_Admin {
 						array( 'stripe_customer_id' => $stripe_customer_id ),
 						array( '%s' )
 					);
+					$wpdb->delete(
+						$this->get_portal_customer_states_table(),
+						array( 'stripe_customer_id' => $stripe_customer_id ),
+						array( '%s' )
+					);
 					$result = $wpdb->delete(
 						$this->get_portal_stripe_customers_table(),
 						array( 'stripe_customer_id' => $stripe_customer_id ),
 						array( '%s' )
+					);
+					$this->log_portal_event(
+						'portal_customer_deleted',
+						array(
+							'source'                 => 'portal_users',
+							'severity'               => false === $result ? 'error' : 'warning',
+							'stripe_customer_id'     => $stripe_customer_id,
+							'portal_status_before'   => $status,
+							'portal_status_after'    => '',
+							'details'                => array(
+								'reason' => 'delete_archived',
+								'local_lifecycle_state_deleted' => true,
+							),
+						)
 					);
 					$this->record_portal_sync_item(
 						'deleted',
@@ -12848,6 +13045,27 @@ class AJForms_Admin {
 		$open_log_id  = isset( $_GET['sync_log_id'] ) ? absint( wp_unslash( $_GET['sync_log_id'] ) ) : 0;
 		$open_log_items = $open_log_id ? $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$this->get_portal_sync_log_items_table()} WHERE log_id = %d ORDER BY id ASC LIMIT 500", $open_log_id ) ) : array();
 		$sync_url     = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
+		$reset_plan   = $this->get_portal_master_reset_plan();
+		$table_inventory = $this->get_portal_table_inventory();
+		$backup_file  = isset( $_GET['portal-backup-file'] ) ? sanitize_file_name( wp_unslash( $_GET['portal-backup-file'] ) ) : '';
+		$backup_download_url = '';
+		if ( '' !== $backup_file ) {
+			$upload_dir = wp_upload_dir();
+			$backup_path = trailingslashit( $upload_dir['basedir'] ) . 'ajcore-backups/' . $backup_file;
+			if ( file_exists( $backup_path ) ) {
+				$backup_download_url = wp_nonce_url(
+					add_query_arg(
+						array(
+							'page' => 'ajforms-client-portal',
+							'tab'  => 'sync',
+							'ajcore_download_portal_backup' => $backup_file,
+						),
+						admin_url( 'admin.php' )
+					),
+					'ajcore_download_portal_backup_' . $backup_file
+				);
+			}
+		}
 		?>
 		<div class="ajforms-settings-card">
 			<h3><?php esc_html_e( 'Stripe Sync Center', 'ajforms' ); ?></h3>
@@ -12863,6 +13081,9 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['portal-reset'] ) ) : ?>
 				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Master reset complete. Deleted %d rebuildable Stripe sync/cache rows. Portal access, WordPress users, files, tasks, service requests, customer mappings, service usage states, and settings were kept.', 'ajforms' ), absint( wp_unslash( $_GET['portal-reset'] ) ) ) ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( '' !== $backup_download_url ) : ?>
+				<div class="notice notice-success inline"><p><?php echo esc_html__( 'Portal table backup created:', 'ajforms' ); ?> <a href="<?php echo esc_url( $backup_download_url ); ?>"><?php echo esc_html( $backup_file ); ?></a></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
@@ -12873,6 +13094,8 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d Stripe subscriptions cached', 'ajforms' ), $cache_counts['subscriptions'] ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d billing records cached', 'ajforms' ), $cache_counts['ledger'] ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users linked', 'ajforms' ), $cache_counts['mappings'] ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d customer states preserved', 'ajforms' ), $cache_counts['customer_states'] ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d service states preserved', 'ajforms' ), $cache_counts['service_states'] ) ); ?></span>
 			</div>
 
 			<div class="ajforms-settings-card" style="margin:16px 0 0;">
@@ -12900,11 +13123,67 @@ class AJForms_Admin {
 			</div>
 		</div>
 
+		<div class="ajforms-settings-card">
+			<h3><?php esc_html_e( 'Portal Tables', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'AJ Core client portal tables use the wp_aj_portal_* prefix. Stripe rebuildable cache tables include stripe in the table name; local AJ Core state is stored separately so resets do not wipe portal access or service usage decisions.', 'ajforms' ); ?></p>
+			<form method="post" style="margin:0 0 12px;">
+				<?php wp_nonce_field( 'ajcore_portal_backup', 'ajcore_portal_backup_nonce' ); ?>
+				<?php submit_button( __( 'Backup Portal Tables', 'ajforms' ), 'secondary', 'submit', false ); ?>
+			</form>
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Table', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Rows', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ( $table_inventory as $item ) : ?>
+						<tr>
+							<td><code><?php echo esc_html( $item['table'] ); ?></code></td>
+							<td><?php echo esc_html( number_format_i18n( $item['rows'] ) ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		</div>
+
 		<form method="post" class="ajforms-settings-card" onsubmit="return window.confirm('<?php echo esc_js( __( 'Run AJ Core Client Portal master reset? This deletes rebuildable Stripe product/subscription/transaction cache, generated billing ledger rows, generated service snapshots, and sync history. It keeps WordPress users, portal mappings/access, files, tasks, service requests, service usage states, forms, leads, and plugin settings.', 'ajforms' ) ); ?>');">
 			<?php wp_nonce_field( 'ajcore_portal_master_reset', 'ajcore_portal_master_reset_nonce' ); ?>
 			<h3><?php esc_html_e( 'Master Reset', 'ajforms' ); ?></h3>
 			<p><?php esc_html_e( 'Use this when local portal sync/cache data is bad and you want to sync fresh from Stripe.', 'ajforms' ); ?></p>
-			<p class="description"><?php esc_html_e( 'Deletes rebuildable Stripe cache, generated ledger rows, generated service snapshots, and sync history. Keeps customer records, portal access/mappings, service usage states such as Used, manual charges, forms, leads, files, tasks, service requests, WordPress users, and settings.', 'ajforms' ); ?></p>
+			<p class="description"><?php esc_html_e( 'Deletes rebuildable Stripe cache, generated ledger rows, generated service snapshots, and sync history. Keeps durable customer lifecycle state, portal access/mappings, service usage states such as Used, manual charges, forms, leads, files, tasks, service requests, WordPress users, and settings.', 'ajforms' ); ?></p>
+			<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin:16px 0;">
+				<div>
+					<h4><?php esc_html_e( 'Master Reset Clears', 'ajforms' ); ?></h4>
+					<table class="widefat striped">
+						<thead><tr><th><?php esc_html_e( 'Table', 'ajforms' ); ?></th><th><?php esc_html_e( 'Scope', 'ajforms' ); ?></th></tr></thead>
+						<tbody>
+							<?php foreach ( $reset_plan['cleared_tables'] as $item ) : ?>
+								<tr>
+									<td><code><?php echo esc_html( $item['table'] ); ?></code></td>
+									<td><?php echo esc_html( $item['scope'] ); ?><br><small><?php echo esc_html( $item['mode'] ); ?></small></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+				<div>
+					<h4><?php esc_html_e( 'Master Reset Keeps', 'ajforms' ); ?></h4>
+					<table class="widefat striped">
+						<thead><tr><th><?php esc_html_e( 'Table', 'ajforms' ); ?></th><th><?php esc_html_e( 'Scope', 'ajforms' ); ?></th></tr></thead>
+						<tbody>
+							<?php foreach ( $reset_plan['preserved_tables'] as $item ) : ?>
+								<tr>
+									<td><code><?php echo esc_html( $item['table'] ); ?></code></td>
+									<td><?php echo esc_html( $item['scope'] ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			</div>
+			<p><label><input type="checkbox" name="ajcore_backup_before_reset" value="1" checked> <?php esc_html_e( 'Create portal table backup before reset', 'ajforms' ); ?></label></p>
 			<?php submit_button( __( 'MASTER RESET', 'ajforms' ), 'delete', 'submit', false ); ?>
 		</form>
 
