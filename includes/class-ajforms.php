@@ -761,7 +761,7 @@ class AJForms {
 			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Profile', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
 		}
 
-		$business_name    = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
+		$business_name    = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name', 'description' ) );
 		$business_address = $this->get_customer_business_address( $customer );
 		$display_name     = $customer->name ? $customer->name : $customer->email;
 
@@ -2880,7 +2880,7 @@ class AJForms {
 		$available_products = $show_add ? $this->get_portal_available_service_products( $subscriptions, $ledger ) : array();
 		$available_product_groups = $show_add ? $this->get_portal_add_service_product_groups( $available_products ) : array();
 		$custom_request_products = $show_add ? $this->get_portal_custom_request_products( $subscriptions, $ledger ) : array();
-		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
+		$business_name      = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name', 'description' ) );
 		$stripe_settings    = $this->get_stripe_settings();
 
 		ob_start();
@@ -3619,7 +3619,7 @@ class AJForms {
 		$services_url         = add_query_arg( 'portal_tab', 'services', $this->get_customer_portal_url() );
 		$tasks_url            = add_query_arg( 'portal_tab', 'tasks', $this->get_customer_portal_url() );
 		$email_us_url         = home_url( '/email-us/' );
-		$business_name        = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name' ) );
+		$business_name        = $this->get_portal_customer_meta_value( $customer, array( 'business_name', 'business', 'company', 'company_name', 'description' ) );
 		$text_message         = sprintf(
 			__( 'Hi, I am an existing customer and my business name is: %1$s. My name is: %2$s. I need help with ', 'ajforms' ),
 			$business_name ? $business_name : '-',
@@ -4046,35 +4046,42 @@ class AJForms {
 		}
 
 		global $wpdb;
+		$stripe_customer_id = sanitize_text_field( $mapping->stripe_customer_id );
+
+		$customer_state_table = $this->get_portal_customer_states_table();
+		$state_table_exists   = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $customer_state_table ) ) === $customer_state_table;
+		$state                = null;
+		if ( $state_table_exists ) {
+			$state = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT * FROM {$customer_state_table} WHERE stripe_customer_id = %s AND enabled_portal = 1 AND portal_status = 'active' LIMIT 1",
+					$stripe_customer_id
+				)
+			);
+		}
 
 		$customer = $wpdb->get_row(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s AND enabled_portal = 1 AND portal_status = 'active'",
-				sanitize_text_field( $mapping->stripe_customer_id )
+				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
 			)
 		);
-		if ( $customer ) {
+		if ( $customer && ( $state || ( ! empty( $customer->enabled_portal ) && 'active' === $this->normalize_portal_customer_status( $customer->portal_status ) ) ) ) {
+			$customer->enabled_portal = 1;
+			$customer->portal_status  = 'active';
 			return $customer;
 		}
 
-		$customer_state_table = $this->get_portal_customer_states_table();
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $customer_state_table ) ) !== $customer_state_table ) {
+		if ( ! $state_table_exists ) {
 			return null;
 		}
-
-		$state = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT * FROM {$customer_state_table} WHERE stripe_customer_id = %s AND enabled_portal = 1 AND portal_status = 'active' LIMIT 1",
-				sanitize_text_field( $mapping->stripe_customer_id )
-			)
-		);
 		if ( ! $state ) {
 			return null;
 		}
 
 		return (object) array(
 			'id'                 => 0,
-			'stripe_customer_id' => sanitize_text_field( $mapping->stripe_customer_id ),
+			'stripe_customer_id' => $stripe_customer_id,
 			'email'              => ! empty( $state->customer_email ) ? sanitize_email( (string) $state->customer_email ) : sanitize_email( (string) $mapping->customer_email ),
 			'name'               => $this->get_current_user_portal_display_name_fallback( $mapping, $state ),
 			'phone'              => '',
