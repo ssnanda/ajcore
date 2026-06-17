@@ -17036,19 +17036,9 @@ class AJForms_Admin {
 			$connected_sites = $shared_db->get_results( "SELECT * FROM `{$sites_table}` ORDER BY is_master DESC, last_seen DESC" );
 		}
 
-		// Is the current site the designated Master?
-		$is_current_master = false;
-		if ( $schema_initialized && ! empty( $connected_sites ) ) {
-			foreach ( $connected_sites as $_cs ) {
-				if ( (string) $_cs->site_uuid === $site_uuid && $_cs->is_master ) {
-					$is_current_master = true;
-					break;
-				}
-			}
-		} elseif ( ! $schema_initialized ) {
-			// Before schema exists, treat local site as master for setup purposes.
-			$is_current_master = true;
-		}
+		// Is the current site the designated Master? Use ajcore_is_stripe_sync_owner() for a fresh
+		// direct query so a site that was recently demoted sees the correct non-master UI immediately.
+		$is_current_master = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true;
 		?>
 
 		<?php if ( $is_enabled && $shared_db ) : ?>
@@ -17433,16 +17423,24 @@ class AJForms_Admin {
 		check_ajax_referer( 'ajcore_set_shared_master', 'nonce' );
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ) );
+			return;
+		}
+
+		if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ! ajcore_is_stripe_sync_owner() ) {
+			wp_send_json_error( __( 'Only the current Master site can reassign master designation.', 'ajforms' ), 403 );
+			return;
 		}
 
 		$target_uuid = isset( $_POST['site_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['site_uuid'] ) ) : '';
 		if ( '' === $target_uuid ) {
 			wp_send_json_error( __( 'Site UUID is required.', 'ajforms' ) );
+			return;
 		}
 
 		$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
 		if ( ! $shared_db ) {
 			wp_send_json_error( __( 'Shared DB is not connected.', 'ajforms' ) );
+			return;
 		}
 
 		$table = $shared_db->prefix . 'aj_shared_sites';
@@ -17457,6 +17455,11 @@ class AJForms_Admin {
 
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ), 403 );
+			return;
+		}
+
+		if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ! ajcore_is_stripe_sync_owner() ) {
+			wp_send_json_error( __( 'Only the current Master site can resign master status.', 'ajforms' ), 403 );
 			return;
 		}
 
