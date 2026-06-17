@@ -17039,6 +17039,20 @@ class AJForms_Admin {
 		// Is the current site the designated Master? Use ajcore_is_stripe_sync_owner() for a fresh
 		// direct query so a site that was recently demoted sees the correct non-master UI immediately.
 		$is_current_master = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true;
+		// Recovery: if no site is currently master, allow any admin to claim master to avoid a
+		// situation where the UI is stuck with no way to designate a master.
+		if ( ! $is_current_master && $schema_initialized && ! empty( $connected_sites ) ) {
+			$has_any_master = false;
+			foreach ( $connected_sites as $_cs ) {
+				if ( $_cs->is_master ) {
+					$has_any_master = true;
+					break;
+				}
+			}
+			if ( ! $has_any_master ) {
+				$is_current_master = true;
+			}
+		}
 		?>
 
 		<?php if ( $is_enabled && $shared_db ) : ?>
@@ -17088,12 +17102,7 @@ class AJForms_Admin {
 						<td><?php echo $site->is_master ? '<span style="color:#166534;font-weight:700;">&#10003; ' . esc_html__( 'Master', 'ajforms' ) . '</span>' : '—'; ?></td>
 						<td><?php echo esc_html( $site->last_seen ); ?></td>
 						<td>
-							<?php if ( $is_current_master && $is_this_site && $site->is_master ) : ?>
-							<button type="button" class="button button-small ajcore-resign-master-btn"
-								style="border-color:#b91c1c;color:#b91c1c;">
-								<?php esc_html_e( 'Resign as Master', 'ajforms' ); ?>
-							</button>
-							<?php elseif ( $is_current_master && ! $site->is_master ) : ?>
+							<?php if ( $is_current_master && ! $site->is_master ) : ?>
 							<button type="button" class="button button-small ajcore-set-master-btn"
 								data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>"
 								data-domain="<?php echo esc_attr( $site->domain ); ?>">
@@ -17260,27 +17269,6 @@ class AJForms_Admin {
 			});
 		});
 
-		// Resign as Master button.
-		var resignBtn = document.querySelector('.ajcore-resign-master-btn');
-		if ( resignBtn ) {
-			resignBtn.addEventListener('click', function() {
-				if ( ! confirm( '<?php echo esc_js( __( 'Resign as Master? This site will stop running Stripe sync and webhooks. No other site will be designated Master until you set one manually.', 'ajforms' ) ); ?>' ) ) return;
-				resignBtn.disabled = true;
-				var data = new FormData();
-				data.append('action', 'ajcore_resign_shared_db_master');
-				data.append('nonce',  '<?php echo esc_js( wp_create_nonce( 'ajcore_resign_shared_master' ) ); ?>');
-				fetch(ajaxurl, { method: 'POST', body: data })
-					.then(function(r) { return r.json(); })
-					.then(function(res) {
-						if (res.success) { location.reload(); }
-						else {
-							alert(res.data || '<?php echo esc_js( __( 'Failed.', 'ajforms' ) ); ?>');
-							resignBtn.disabled = false;
-						}
-					})
-					.catch(function() { resignBtn.disabled = false; });
-			});
-		}
 		})();
 		</script>
 		<?php
@@ -17426,11 +17414,6 @@ class AJForms_Admin {
 			return;
 		}
 
-		if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ! ajcore_is_stripe_sync_owner() ) {
-			wp_send_json_error( __( 'Only the current Master site can reassign master designation.', 'ajforms' ), 403 );
-			return;
-		}
-
 		$target_uuid = isset( $_POST['site_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['site_uuid'] ) ) : '';
 		if ( '' === $target_uuid ) {
 			wp_send_json_error( __( 'Site UUID is required.', 'ajforms' ) );
@@ -17443,37 +17426,22 @@ class AJForms_Admin {
 			return;
 		}
 
+		$is_master = function_exists( 'ajcore_is_stripe_sync_owner' ) && ajcore_is_stripe_sync_owner();
+		if ( ! $is_master ) {
+			// Allow action when no site is currently master (recovery from orphaned state).
+			$sites_table  = $shared_db->prefix . 'aj_shared_sites';
+			$any_master   = (int) $shared_db->get_var( "SELECT COUNT(*) FROM `{$sites_table}` WHERE is_master = 1" );
+			if ( $any_master > 0 ) {
+				wp_send_json_error( __( 'Only the current Master site can reassign master designation.', 'ajforms' ), 403 );
+				return;
+			}
+		}
+
 		$table = $shared_db->prefix . 'aj_shared_sites';
 		$shared_db->query( "UPDATE `{$table}` SET is_master = 0" );
 		$shared_db->update( $table, array( 'is_master' => 1 ), array( 'site_uuid' => $target_uuid ), array( '%d' ), array( '%s' ) );
 
 		wp_send_json_success( __( 'Master updated.', 'ajforms' ) );
-	}
-
-	public function ajax_resign_shared_db_master() {
-		check_ajax_referer( 'ajcore_resign_shared_master', 'nonce' );
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ), 403 );
-			return;
-		}
-
-		if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ! ajcore_is_stripe_sync_owner() ) {
-			wp_send_json_error( __( 'Only the current Master site can resign master status.', 'ajforms' ), 403 );
-			return;
-		}
-
-		$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
-		if ( ! $shared_db ) {
-			wp_send_json_error( __( 'Cannot connect to shared database.', 'ajforms' ) );
-			return;
-		}
-
-		$uuid  = (string) get_option( 'ajcore_site_uuid', '' );
-		$table = $shared_db->prefix . 'aj_shared_sites';
-		$shared_db->update( $table, array( 'is_master' => 0 ), array( 'site_uuid' => $uuid ), array( '%d' ), array( '%s' ) );
-
-		wp_send_json_success( __( 'Resigned as Master. No site is currently designated as Master.', 'ajforms' ) );
 	}
 
 	public function ajax_toggle_multisite_portal() {
