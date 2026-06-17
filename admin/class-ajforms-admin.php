@@ -697,7 +697,7 @@ class AJForms_Admin {
 	}
 
 	private function log_site_uuid_created_event( $uuid ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$table = $this->get_portal_event_log_table();
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
@@ -732,7 +732,7 @@ class AJForms_Admin {
 	}
 
 	private function log_portal_event( $event_type, $args = array() ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$event_type = sanitize_key( (string) $event_type );
 		if ( '' === $event_type ) {
@@ -806,7 +806,7 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_customer_state( $stripe_customer_id ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		if ( '' === $stripe_customer_id ) {
@@ -828,6 +828,7 @@ class AJForms_Admin {
 
 	private function upsert_portal_customer_state( $stripe_customer_id, $portal_status, $source = '', $reason = '', $details = array() ) {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		$portal_status      = $this->normalize_portal_customer_status( $portal_status );
@@ -836,12 +837,12 @@ class AJForms_Admin {
 		}
 
 		$table = $this->get_portal_customer_states_table();
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
 			return 0;
 		}
 
-		$customer = $wpdb->get_row(
-			$wpdb->prepare(
+		$customer = $pdb->get_row(
+			$pdb->prepare(
 				"SELECT id, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
 				$stripe_customer_id
 			)
@@ -875,8 +876,8 @@ class AJForms_Admin {
 			'updated_at'          => current_time( 'mysql' ),
 		);
 
-		$existing_id = $wpdb->get_var(
-			$wpdb->prepare(
+		$existing_id = $pdb->get_var(
+			$pdb->prepare(
 				"SELECT id FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
 				$stripe_customer_id
 			)
@@ -884,18 +885,18 @@ class AJForms_Admin {
 
 		$formats = array( '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s' );
 		if ( $existing_id ) {
-			$wpdb->update( $table, $row, array( 'id' => absint( $existing_id ) ), $formats, array( '%d' ) );
+			$pdb->update( $table, $row, array( 'id' => absint( $existing_id ) ), $formats, array( '%d' ) );
 			return absint( $existing_id );
 		}
 
 		$row['created_at'] = current_time( 'mysql' );
-		$wpdb->insert( $table, $row, array_merge( $formats, array( '%s' ) ) );
+		$pdb->insert( $table, $row, array_merge( $formats, array( '%s' ) ) );
 
-		return absint( $wpdb->insert_id );
+		return absint( $pdb->insert_id );
 	}
 
 	private function seed_portal_customer_states_from_existing_customers() {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$table = $this->get_portal_customer_states_table();
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
@@ -933,6 +934,7 @@ class AJForms_Admin {
 
 	private function set_portal_customer_status( $stripe_customer_id, $new_status, $reason = '', $source = 'portal_users', $details = array() ) {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		$new_status         = $this->normalize_portal_customer_status( $new_status );
@@ -940,8 +942,8 @@ class AJForms_Admin {
 			return new WP_Error( 'missing_customer', __( 'Stripe customer ID is required.', 'ajforms' ) );
 		}
 
-		$customer = $wpdb->get_row(
-			$wpdb->prepare(
+		$customer = $pdb->get_row(
+			$pdb->prepare(
 				"SELECT id, portal_status, enabled_portal FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
 				$stripe_customer_id
 			)
@@ -961,7 +963,7 @@ class AJForms_Admin {
 		$old_enabled = (int) $customer->enabled_portal;
 		$new_enabled = $this->portal_customer_status_enabled_value( $new_status );
 
-		$updated = $wpdb->update(
+		$updated = $pdb->update(
 			$this->get_portal_stripe_customers_table(),
 			array(
 				'enabled_portal' => $new_enabled,
@@ -1006,20 +1008,21 @@ class AJForms_Admin {
 
 	private function get_portal_cache_counts() {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 
 		return array(
-			'customers'     => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()}" ),
-			'customer_states' => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_customer_states_table()}" ),
-			'products'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" ),
-			'subscriptions' => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_subscriptions_table()}" ),
-			'transactions'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_transactions_table()}" ),
-			'ledger'        => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_ledger_table()}" ),
-			'mappings'      => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_user_mappings_table()}" ),
-			'service_states' => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_states_table()}" ),
-			'tasks'         => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_tasks_table()}" ),
-			'sync_logs'     => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_sync_logs_table()}" ),
+			'customers'      => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()}" ),
+			'customer_states' => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_customer_states_table()}" ),
+			'products'       => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" ),
+			'subscriptions'  => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_subscriptions_table()}" ),
+			'transactions'   => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_transactions_table()}" ),
+			'ledger'         => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_ledger_table()}" ),
+			'mappings'       => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_user_mappings_table()}" ), // local
+			'service_states' => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_states_table()}" ),
+			'tasks'          => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_tasks_table()}" ),
+			'sync_logs'      => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_sync_logs_table()}" ),
 		);
 	}
 
@@ -1465,7 +1468,7 @@ class AJForms_Admin {
 			return;
 		}
 
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$wpdb->insert(
 			$this->get_portal_sync_log_items_table(),
@@ -1487,7 +1490,7 @@ class AJForms_Admin {
 	}
 
 	private function upsert_portal_record( $table, $data, $formats, $unique_key ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$existing = $wpdb->get_row(
 			$wpdb->prepare(
@@ -1566,7 +1569,7 @@ class AJForms_Admin {
 	}
 
 	private function upsert_portal_stripe_customer_record( $data, $formats ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$table = $this->get_portal_stripe_customers_table();
 		if ( empty( $data['stripe_customer_id'] ) ) {
@@ -1931,7 +1934,7 @@ class AJForms_Admin {
 	}
 
 	private function sync_portal_stripe_products( $secret_key ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$products = $this->stripe_api_get_all( 'prices', $secret_key, array( 'expand[]' => 'data.product' ) );
 		if ( is_wp_error( $products ) ) {
@@ -2770,7 +2773,7 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_product_catalog_settings( $stripe_product_id ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$stripe_product_id = sanitize_text_field( (string) $stripe_product_id );
 		if ( '' === $stripe_product_id ) {
@@ -2786,7 +2789,7 @@ class AJForms_Admin {
 	}
 
 	private function upsert_portal_product_catalog_settings( $stripe_product_id, $settings ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$stripe_product_id = sanitize_text_field( (string) $stripe_product_id );
 		if ( '' === $stripe_product_id || ! is_array( $settings ) ) {
@@ -2920,7 +2923,7 @@ class AJForms_Admin {
 	}
 
 	private function reset_portal_sync_cache() {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 
@@ -2981,7 +2984,7 @@ class AJForms_Admin {
 	}
 
 	private function write_portal_sync_log( $run_key, $source, $job_name, $status, $records_synced = 0, $message = '', $log_id = 0 ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$data = array(
 			'run_key'        => sanitize_text_field( (string) $run_key ),
@@ -3026,7 +3029,7 @@ class AJForms_Admin {
 	}
 
 	private function get_processed_stripe_event( $event_id ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$event_id = sanitize_text_field( (string) $event_id );
 		if ( '' === $event_id ) {
@@ -3042,7 +3045,7 @@ class AJForms_Admin {
 	}
 
 	private function record_stripe_event_received( $event ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$event_id = ! empty( $event['id'] ) ? sanitize_text_field( (string) $event['id'] ) : '';
 		if ( '' === $event_id ) {
@@ -3091,7 +3094,7 @@ class AJForms_Admin {
 	}
 
 	private function mark_stripe_event_processing( $event_id ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		return $wpdb->update(
 			$this->get_portal_stripe_events_table(),
@@ -3103,7 +3106,7 @@ class AJForms_Admin {
 	}
 
 	private function mark_stripe_event_processed( $event_id ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		return $wpdb->update(
 			$this->get_portal_stripe_events_table(),
@@ -3119,7 +3122,7 @@ class AJForms_Admin {
 	}
 
 	private function mark_stripe_event_failed( $event_id, $error_message ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		return $wpdb->update(
 			$this->get_portal_stripe_events_table(),
@@ -4594,7 +4597,7 @@ class AJForms_Admin {
 			return $cache;
 		}
 
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 		$cache = array();
 		$rows  = $wpdb->get_results( "SELECT * FROM {$this->get_portal_stripe_products_table()}" );
 		foreach ( (array) $rows as $row ) {
@@ -4612,7 +4615,7 @@ class AJForms_Admin {
 			return $cache;
 		}
 
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 		$cache = array();
 		$rows  = $wpdb->get_results( "SELECT * FROM {$this->get_portal_stripe_products_table()} ORDER BY recurring_interval DESC, price_amount DESC" );
 		foreach ( (array) $rows as $row ) {
@@ -4881,7 +4884,7 @@ class AJForms_Admin {
 	}
 
 	private function upsert_portal_service_state( $data ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$defaults = array(
 			'service_state_key'    => '',
@@ -4961,7 +4964,7 @@ class AJForms_Admin {
 	}
 
 	private function upsert_portal_service_snapshot( $data ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$defaults = array(
 			'snapshot_key'          => '',
@@ -5437,7 +5440,7 @@ class AJForms_Admin {
 	}
 
 	private function backfill_portal_ledger_service_charges_from_snapshots( $stripe_customer_id = '' ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		$where             = 'stripe_customer_id <> %s';
@@ -6262,7 +6265,7 @@ class AJForms_Admin {
 	}
 
 	private function get_matching_portal_service_state_for_snapshot( $snapshot ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$customer_id = ! empty( $snapshot->stripe_customer_id ) ? sanitize_text_field( (string) $snapshot->stripe_customer_id ) : '';
 		$guest_id    = ! empty( $snapshot->guest_customer_id ) ? sanitize_text_field( (string) $snapshot->guest_customer_id ) : '';
@@ -6330,7 +6333,7 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_service_records_from_snapshots( $billing_type = '', $stripe_customer_id = '', $limit = 300 ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$where  = array( '1=1' );
 		$params = array();
@@ -6569,7 +6572,7 @@ class AJForms_Admin {
 			return false;
 		}
 
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 		return (bool) $wpdb->get_var(
 			$wpdb->prepare(
 				"SELECT id FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s AND status IN ('active','trialing') LIMIT 1",
@@ -6584,7 +6587,7 @@ class AJForms_Admin {
 			return '';
 		}
 
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 		$status = $wpdb->get_var(
 			$wpdb->prepare(
 				"SELECT status FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
@@ -6614,7 +6617,7 @@ class AJForms_Admin {
 			return array();
 		}
 
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 		$subscription = $wpdb->get_row(
 			$wpdb->prepare(
 				"SELECT current_period_end, items, raw_data FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
@@ -6669,7 +6672,7 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_ledger_service_records( $billing_type = '', $stripe_customer_id = '', $limit = 300 ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$where  = "l.status IN ('paid','succeeded','completed')";
 		$params = array();
@@ -10497,99 +10500,86 @@ class AJForms_Admin {
 		return $wpdb->prefix . 'aj_portal_file_users';
 	}
 
+	/** Returns the wpdb instance for shared portal tables (or local wpdb when multi-site mode is off). */
+	private function get_pdb() {
+		return function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+	}
+
 	private function get_portal_stripe_customers_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_stripe_customers';
+		return $this->get_pdb()->prefix . 'aj_portal_stripe_customers';
 	}
 
 	private function get_portal_stripe_products_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_stripe_products';
+		return $this->get_pdb()->prefix . 'aj_portal_stripe_products';
 	}
 
 	private function get_portal_product_catalog_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_product_catalog';
+		return $this->get_pdb()->prefix . 'aj_portal_product_catalog';
 	}
 
 	private function get_portal_stripe_subscriptions_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_stripe_subscriptions';
+		return $this->get_pdb()->prefix . 'aj_portal_stripe_subscriptions';
 	}
 
 	private function get_portal_stripe_transactions_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_stripe_transactions';
+		return $this->get_pdb()->prefix . 'aj_portal_stripe_transactions';
 	}
 
 	private function get_portal_user_mappings_table() {
 		global $wpdb;
-		return $wpdb->prefix . 'aj_auth_user_mappings';
+		return $wpdb->prefix . 'aj_auth_user_mappings'; // Always local — not in shared DB.
 	}
 
 	private function get_portal_entity_mappings_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_entity_mappings';
+		return $this->get_pdb()->prefix . 'aj_portal_entity_mappings';
 	}
 
 	private function get_portal_ledger_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_ledger';
+		return $this->get_pdb()->prefix . 'aj_portal_ledger';
 	}
 
 	private function get_portal_tasks_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_tasks';
+		return $this->get_pdb()->prefix . 'aj_portal_tasks';
 	}
 
 	private function get_portal_task_statuses_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_task_statuses';
+		return $this->get_pdb()->prefix . 'aj_portal_task_statuses';
 	}
 
 	private function get_portal_task_comments_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_task_comments';
+		return $this->get_pdb()->prefix . 'aj_portal_task_comments';
 	}
 
 	private function get_portal_sync_logs_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_sync_logs';
+		return $this->get_pdb()->prefix . 'aj_portal_sync_logs';
 	}
 
 	private function get_portal_sync_log_items_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_sync_log_items';
+		return $this->get_pdb()->prefix . 'aj_portal_sync_log_items';
 	}
 
 	private function get_portal_service_requests_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_service_requests';
+		return $this->get_pdb()->prefix . 'aj_portal_service_requests';
 	}
 
 	private function get_portal_event_log_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_event_log';
+		return $this->get_pdb()->prefix . 'aj_portal_event_log';
 	}
 
 	private function get_portal_stripe_events_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_stripe_events';
+		return $this->get_pdb()->prefix . 'aj_portal_stripe_events';
 	}
 
 	private function get_portal_service_snapshots_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_service_snapshots';
+		return $this->get_pdb()->prefix . 'aj_portal_service_snapshots';
 	}
 
 	private function get_portal_service_states_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_service_states';
+		return $this->get_pdb()->prefix . 'aj_portal_service_states';
 	}
 
 	private function get_portal_customer_states_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_customer_states';
+		return $this->get_pdb()->prefix . 'aj_portal_customer_states';
 	}
 
 	public function get_form_record( $form_id ) {
@@ -16787,12 +16777,11 @@ class AJForms_Admin {
 		$existing = is_array( $existing ) ? $existing : array();
 
 		$new = array(
-			'enabled'    => ! empty( $_POST['shared_db_enabled'] ) ? 1 : 0,
-			'host'       => sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) ),
-			'name'       => sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) ),
-			'user'       => sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) ),
-			'prefix'     => sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) ),
-			'ms_enabled' => ! empty( $_POST['ms_portal_enabled'] ) ? 1 : 0,
+			'enabled' => ! empty( $_POST['shared_db_enabled'] ) ? 1 : 0,
+			'host'    => sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) ),
+			'name'    => sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) ),
+			'user'    => sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) ),
+			'prefix'  => sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) ),
 		);
 
 		$posted_password = isset( $_POST['shared_db_password'] ) ? (string) wp_unslash( $_POST['shared_db_password'] ) : '';
@@ -16801,13 +16790,12 @@ class AJForms_Admin {
 		// Don't override fields that are locked by constants.
 		foreach (
 			array(
-				'enabled'    => 'AJCORE_SHARED_DB_ENABLED',
-				'host'       => 'AJCORE_SHARED_DB_HOST',
-				'name'       => 'AJCORE_SHARED_DB_NAME',
-				'user'       => 'AJCORE_SHARED_DB_USER',
-				'password'   => 'AJCORE_SHARED_DB_PASSWORD',
-				'prefix'     => 'AJCORE_SHARED_DB_PREFIX',
-				'ms_enabled' => 'AJCORE_MULTISITE_PORTAL_ENABLED',
+				'enabled'  => 'AJCORE_SHARED_DB_ENABLED',
+				'host'     => 'AJCORE_SHARED_DB_HOST',
+				'name'     => 'AJCORE_SHARED_DB_NAME',
+				'user'     => 'AJCORE_SHARED_DB_USER',
+				'password' => 'AJCORE_SHARED_DB_PASSWORD',
+				'prefix'   => 'AJCORE_SHARED_DB_PREFIX',
 			) as $field => $const
 		) {
 			if ( defined( $const ) ) {
@@ -16832,8 +16820,9 @@ class AJForms_Admin {
 	}
 
 	private function display_portal_shared_db_settings_tab() {
-		$s         = function_exists( 'ajcore_get_shared_db_settings' ) ? ajcore_get_shared_db_settings() : array();
+		$s          = function_exists( 'ajcore_get_shared_db_settings' ) ? ajcore_get_shared_db_settings() : array();
 		$is_enabled = ! empty( $s['enabled'] );
+		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) ? ajcore_is_multisite_portal_enabled() : false;
 		$site_uuid  = (string) get_option( 'ajcore_site_uuid', '' );
 		if ( '' === $site_uuid ) {
 			$site_uuid = wp_generate_uuid4();
@@ -16842,6 +16831,7 @@ class AJForms_Admin {
 		$saved        = get_option( 'ajcore_shared_db_settings', array() );
 		$saved        = is_array( $saved ) ? $saved : array();
 		$has_password = ( ! empty( $saved['password'] ) ) || defined( 'AJCORE_SHARED_DB_PASSWORD' );
+		$ms_locked    = defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' );
 
 		if ( isset( $_GET['shared-db-saved'] ) ) {
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Shared DB settings saved.', 'ajforms' ) . '</p></div>';
@@ -16849,6 +16839,49 @@ class AJForms_Admin {
 		if ( isset( $_GET['shared-db-error'] ) ) {
 			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['shared-db-error'] ) ) ) . '</p></div>';
 		}
+
+		// Multi-Site Portal mode banner (always at top).
+		?>
+		<div class="ajforms-settings-card" style="margin-bottom:16px;">
+			<?php if ( $ms_enabled ) : ?>
+			<div style="display:flex;align-items:center;gap:20px;padding:18px 24px;background:#f0fdf4;border:2px solid #86efac;border-radius:8px;">
+				<div style="flex:1;">
+					<div style="font-size:17px;font-weight:700;color:#166534;">&#9679; Multi-Site Portal &mdash; Active</div>
+					<div style="color:#15803d;margin-top:6px;font-size:13px;">Portal data reads and writes are routing through the shared database. Stripe sync runs on the designated Master site only.</div>
+				</div>
+				<?php if ( ! $ms_locked ) : ?>
+				<button type="button" id="ajcore-toggle-multisite" class="button"
+					style="background:#991b1b;color:#fff;border-color:#991b1b;padding:8px 20px;font-size:14px;height:auto;flex-shrink:0;">
+					<?php esc_html_e( 'Disable Multi-Site Portal', 'ajforms' ); ?>
+				</button>
+				<?php else : ?>
+				<span class="description"><?php esc_html_e( 'Locked via AJCORE_MULTISITE_PORTAL_ENABLED constant.', 'ajforms' ); ?></span>
+				<?php endif; ?>
+			</div>
+			<?php elseif ( $is_enabled ) : ?>
+			<div style="display:flex;align-items:center;gap:20px;padding:18px 24px;background:#f8fafc;border:2px solid #cbd5e1;border-radius:8px;">
+				<div style="flex:1;">
+					<div style="font-size:17px;font-weight:700;color:#475569;">&#9675; Multi-Site Portal &mdash; Local Mode</div>
+					<div style="color:#64748b;margin-top:6px;font-size:13px;">Portal data is using the local database. Shared database is configured and ready. Enable Multi-Site Portal to switch reads and writes to the shared DB.</div>
+				</div>
+				<?php if ( ! $ms_locked ) : ?>
+				<button type="button" id="ajcore-toggle-multisite" class="button button-primary"
+					style="padding:10px 24px;font-size:14px;height:auto;flex-shrink:0;">
+					<?php esc_html_e( 'Enable Multi-Site Portal', 'ajforms' ); ?>
+				</button>
+				<?php else : ?>
+				<span class="description"><?php esc_html_e( 'Locked via AJCORE_MULTISITE_PORTAL_ENABLED constant.', 'ajforms' ); ?></span>
+				<?php endif; ?>
+			</div>
+			<?php else : ?>
+			<div style="padding:16px 22px;background:#fefce8;border:2px solid #fde68a;border-radius:8px;">
+				<div style="font-size:15px;font-weight:600;color:#92400e;">Multi-Site Portal requires a configured Shared DB</div>
+				<div style="color:#78350f;margin-top:6px;font-size:13px;">Configure and enable the Shared AJ Core DB below, then return here to activate Multi-Site Portal.</div>
+			</div>
+			<?php endif; ?>
+			<div id="ajcore-ms-toggle-result" style="margin-top:10px;font-weight:600;display:none;"></div>
+		</div>
+		<?php
 		?>
 		<div class="ajforms-settings-card">
 			<h3><?php esc_html_e( 'Shared AJ Core DB', 'ajforms' ); ?></h3>
@@ -16960,25 +16993,9 @@ class AJForms_Admin {
 
 				<?php if ( $is_enabled ) : ?>
 				<hr style="margin:24px 0;">
-				<h4><?php esc_html_e( 'Multi-Site Portal', 'ajforms' ); ?></h4>
+				<h4><?php esc_html_e( 'Multi-Site Portal Identity', 'ajforms' ); ?></h4>
 				<p class="description"><?php esc_html_e( 'This site\'s identity in the shared portal network. Read from the shared DB control table.', 'ajforms' ); ?></p>
 				<table class="form-table" role="presentation">
-					<tr>
-						<th scope="row">
-							<?php esc_html_e( 'Enable Multi-Site Portal', 'ajforms' ); ?>
-							<?php if ( defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' ) ) : ?>
-								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
-							<?php endif; ?>
-						</th>
-						<td>
-							<label>
-								<input type="checkbox" name="ms_portal_enabled" value="1"
-									<?php checked( ! empty( $s['ms_enabled'] ) ); ?>
-									<?php echo defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' ) ? 'disabled' : ''; ?>>
-								<?php esc_html_e( 'Yes', 'ajforms' ); ?>
-							</label>
-						</td>
-					</tr>
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></th>
 						<td>
@@ -17076,6 +17093,41 @@ class AJForms_Admin {
 
 		<script>
 		(function() {
+			// Multi-Site Portal toggle.
+			var msToggleBtn = document.getElementById('ajcore-toggle-multisite');
+			if ( msToggleBtn ) {
+				msToggleBtn.addEventListener('click', function() {
+					var resultEl = document.getElementById('ajcore-ms-toggle-result');
+					msToggleBtn.disabled = true;
+					resultEl.style.display = 'block';
+					resultEl.style.color = '';
+					resultEl.textContent = '<?php echo esc_js( __( 'Saving…', 'ajforms' ) ); ?>';
+
+					var data = new FormData();
+					data.append('action', 'ajcore_toggle_multisite_portal');
+					data.append('nonce',  '<?php echo esc_js( wp_create_nonce( 'ajcore_toggle_multisite_portal' ) ); ?>');
+
+					fetch(ajaxurl, { method: 'POST', body: data })
+						.then(function(r) { return r.json(); })
+						.then(function(res) {
+							if (res.success) {
+								resultEl.textContent = res.data.message || '<?php echo esc_js( __( 'Saved.', 'ajforms' ) ); ?>';
+								resultEl.style.color = '#166534';
+								setTimeout(function() { location.reload(); }, 800);
+							} else {
+								resultEl.textContent = res.data || '<?php echo esc_js( __( 'Failed.', 'ajforms' ) ); ?>';
+								resultEl.style.color = '#991b1b';
+								msToggleBtn.disabled = false;
+							}
+						})
+						.catch(function() {
+							resultEl.textContent = '<?php echo esc_js( __( 'Request failed.', 'ajforms' ) ); ?>';
+							resultEl.style.color = '#991b1b';
+							msToggleBtn.disabled = false;
+						});
+				});
+			}
+
 			var btn = document.getElementById('ajcore-test-shared-db');
 			if ( ! btn ) return;
 			btn.addEventListener('click', function() {
@@ -17347,6 +17399,38 @@ class AJForms_Admin {
 		$shared_db->update( $table, array( 'is_master' => 1 ), array( 'site_uuid' => $target_uuid ), array( '%d' ), array( '%s' ) );
 
 		wp_send_json_success( __( 'Master updated.', 'ajforms' ) );
+	}
+
+	public function ajax_toggle_multisite_portal() {
+		check_ajax_referer( 'ajcore_toggle_multisite_portal', 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ), 403 );
+			return;
+		}
+
+		if ( defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' ) ) {
+			wp_send_json_error( __( 'This setting is locked by the AJCORE_MULTISITE_PORTAL_ENABLED constant.', 'ajforms' ) );
+			return;
+		}
+
+		$existing   = get_option( 'ajcore_shared_db_settings', array() );
+		$existing   = is_array( $existing ) ? $existing : array();
+		$new_state  = empty( $existing['ms_enabled'] ) ? 1 : 0;
+
+		$existing['ms_enabled'] = $new_state;
+		update_option( 'ajcore_shared_db_settings', $existing, false );
+
+		if ( $new_state && function_exists( 'ajcore_register_site_in_shared_db' ) ) {
+			ajcore_register_site_in_shared_db();
+		}
+
+		wp_send_json_success( array(
+			'ms_enabled' => $new_state,
+			'message'    => $new_state
+				? __( 'Multi-Site Portal enabled. Portal reads and writes now route through the shared database.', 'ajforms' )
+				: __( 'Multi-Site Portal disabled. Portal data will use the local database.', 'ajforms' ),
+		) );
 	}
 
 	public function ajax_test_shared_db_connection() {

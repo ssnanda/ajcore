@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.2.53
+ * Version: 0.2.54
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.2.53' );
+	define( 'AJCORE_VERSION', '0.2.54' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -430,6 +430,31 @@ if ( ! function_exists( 'ajcore_is_shared_db_enabled' ) ) {
 	function ajcore_is_shared_db_enabled() {
 		$s = ajcore_get_shared_db_settings();
 		return ! empty( $s['enabled'] );
+	}
+}
+
+if ( ! function_exists( 'ajcore_is_multisite_portal_enabled' ) ) {
+	function ajcore_is_multisite_portal_enabled() {
+		$s = ajcore_get_shared_db_settings();
+		return ! empty( $s['ms_enabled'] ) && ajcore_is_shared_db_enabled();
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_portal_db' ) ) {
+	/**
+	 * Returns the wpdb instance for portal (shared) tables.
+	 * In multi-site mode with a live shared DB connection: returns the shared DB.
+	 * Otherwise: returns the global $wpdb (local database).
+	 */
+	function ajcore_get_portal_db() {
+		if ( ajcore_is_multisite_portal_enabled() ) {
+			$shared = ajcore_get_shared_db();
+			if ( $shared ) {
+				return $shared;
+			}
+		}
+		global $wpdb;
+		return $wpdb;
 	}
 }
 
