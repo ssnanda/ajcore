@@ -36,6 +36,7 @@ class AJForms {
 		add_action( 'wp_ajax_ajf_save_form', array( $plugin_admin, 'ajax_save_form' ) );
 		add_action( 'wp_ajax_ajf_import_form', array( $plugin_admin, 'ajax_import_form' ) );
 		add_action( 'wp_ajax_ajf_sync_asana_reference_data', array( $plugin_admin, 'ajax_sync_asana_reference_data' ) );
+		add_action( 'wp_ajax_ajcore_test_shared_db', array( $plugin_admin, 'ajax_test_shared_db_connection' ) );
 		add_action( 'ajforms_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
 		add_action( 'ajcore_portal_stripe_sync', array( $plugin_admin, 'run_scheduled_portal_sync_job' ) );
 	}

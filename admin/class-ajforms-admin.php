@@ -3716,6 +3716,10 @@ class AJForms_Admin {
 			return;
 		}
 
+		if ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() ) {
+			return;
+		}
+
 		$this->run_portal_sync_job( 'cron', $settings['jobs'] );
 	}
 
@@ -8591,6 +8595,8 @@ class AJForms_Admin {
 				$this->handle_portal_customer_detail_actions();
 			} elseif ( 'file-library' === $tab ) {
 				$this->handle_file_library_actions();
+			} elseif ( 'settings' === $tab ) {
+				$this->handle_portal_shared_db_settings_save();
 			}
 		} elseif ( 'ajforms-auth' === $page ) {
 			$this->handle_auth_settings_save();
@@ -8876,6 +8882,13 @@ class AJForms_Admin {
 			$current_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'menu';
 			$current_tab = in_array( $current_tab, array( 'sync', 'menu', 'portal-users', 'sold-items', 'products-services', 'tasks' ), true ) ? $current_tab : 'menu';
 			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
+
+			if ( in_array( $action, array( 'sync_all', 'sync_products', 'sync_customers', 'sync_subscriptions', 'sync_transactions' ), true )
+				&& function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() ) {
+				$args['portal-error'] = rawurlencode( __( 'Stripe sync is owned by another AJ Core site. This site reads shared portal data only.', 'ajforms' ) );
+				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
 
 			if ( '' === $secret_key ) {
 				$args['portal-error'] = rawurlencode( __( 'Stripe secret key is required.', 'ajforms' ) );
@@ -12425,7 +12438,7 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'settings' ), true ) ? $tab : 'dashboard';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-client-portal-admin">
@@ -12458,6 +12471,7 @@ class AJForms_Admin {
 					<a class="nav-tab <?php echo 'sync' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sync', $base_url ) ); ?>"><?php esc_html_e( 'Sync', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'event-log' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'event-log', $base_url ) ); ?>"><?php esc_html_e( 'Event Log', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'menu' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'menu', $base_url ) ); ?>"><?php esc_html_e( 'Menu', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'settings' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'settings', $base_url ) ); ?>"><?php esc_html_e( 'Settings', 'ajforms' ); ?></a>
 				</h2>
 			<?php endif; ?>
 			<?php
@@ -12483,6 +12497,8 @@ class AJForms_Admin {
 				$this->display_portal_tasks_tab();
 			} elseif ( 'menu' === $tab ) {
 				$this->display_client_portal_settings_tab( 'menu', true );
+			} elseif ( 'settings' === $tab ) {
+				$this->display_portal_shared_db_settings_tab();
 			} else {
 				$this->display_file_library_page( true );
 			}
@@ -13426,12 +13442,16 @@ class AJForms_Admin {
 				<?php endif; ?>
 			</div>
 
-			<div class="ajforms-settings-inline-actions" style="margin-top:12px;">
-				<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Run Selected Sync Now', 'ajforms' ); ?></a>
-				<?php foreach ( $jobs as $job_key => $job_label ) : ?>
-					<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_' . $job_key ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_' . $job_key ) ); ?>"><?php echo esc_html( sprintf( __( 'Sync %s', 'ajforms' ), $job_label ) ); ?></a>
-				<?php endforeach; ?>
-			</div>
+			<?php if ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() ) : ?>
+				<div class="notice notice-warning inline" style="margin-top:12px;"><p><?php esc_html_e( 'Stripe sync is owned by another AJ Core site. This site reads shared portal data only.', 'ajforms' ); ?></p></div>
+			<?php else : ?>
+				<div class="ajforms-settings-inline-actions" style="margin-top:12px;">
+					<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Run Selected Sync Now', 'ajforms' ); ?></a>
+					<?php foreach ( $jobs as $job_key => $job_label ) : ?>
+						<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_' . $job_key ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_' . $job_key ) ); ?>"><?php echo esc_html( sprintf( __( 'Sync %s', 'ajforms' ), $job_label ) ); ?></a>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
 		</div>
 
 		<div class="ajforms-settings-card">
@@ -16752,5 +16772,355 @@ class AJForms_Admin {
 
 	public function bulk_delete_forms( $form_ids ) {
 		$this->delete_forms_and_related_data( $form_ids );
+	}
+
+	private function handle_portal_shared_db_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		if ( ! isset( $_POST['ajcore_shared_db_nonce'] ) ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_save_shared_db_settings', 'ajcore_shared_db_nonce' );
+
+		$existing = get_option( 'ajcore_shared_db_settings', array() );
+		$existing = is_array( $existing ) ? $existing : array();
+
+		$new = array(
+			'enabled'      => ! empty( $_POST['shared_db_enabled'] ) ? 1 : 0,
+			'host'         => sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) ),
+			'name'         => sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) ),
+			'user'         => sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) ),
+			'prefix'       => sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) ),
+			'ms_enabled'   => ! empty( $_POST['ms_portal_enabled'] ) ? 1 : 0,
+			'site_code'    => sanitize_text_field( wp_unslash( $_POST['ms_site_code'] ?? '' ) ),
+			'site_label'   => sanitize_text_field( wp_unslash( $_POST['ms_site_label'] ?? '' ) ),
+			'stripe_owner' => ! empty( $_POST['ms_stripe_owner'] ) ? 1 : 0,
+		);
+
+		$posted_password = isset( $_POST['shared_db_password'] ) ? (string) wp_unslash( $_POST['shared_db_password'] ) : '';
+		$new['password'] = '' !== $posted_password ? $posted_password : ( $existing['password'] ?? '' );
+
+		// Don't override fields that are locked by constants.
+		foreach (
+			array(
+				'enabled'      => 'AJCORE_SHARED_DB_ENABLED',
+				'host'         => 'AJCORE_SHARED_DB_HOST',
+				'name'         => 'AJCORE_SHARED_DB_NAME',
+				'user'         => 'AJCORE_SHARED_DB_USER',
+				'password'     => 'AJCORE_SHARED_DB_PASSWORD',
+				'prefix'       => 'AJCORE_SHARED_DB_PREFIX',
+				'ms_enabled'   => 'AJCORE_MULTISITE_PORTAL_ENABLED',
+				'site_code'    => 'AJCORE_SITE_CODE',
+				'site_label'   => 'AJCORE_SITE_LABEL',
+				'stripe_owner' => 'AJCORE_STRIPE_SYNC_OWNER',
+			) as $field => $const
+		) {
+			if ( defined( $const ) ) {
+				unset( $new[ $field ] );
+			}
+		}
+
+		update_option( 'ajcore_shared_db_settings', array_merge( $existing, $new ), false );
+
+		wp_safe_redirect(
+			add_query_arg(
+				array( 'page' => 'ajforms-client-portal', 'tab' => 'settings', 'shared-db-saved' => '1' ),
+				admin_url( 'admin.php' )
+			)
+		);
+		exit;
+	}
+
+	private function display_portal_shared_db_settings_tab() {
+		$s         = function_exists( 'ajcore_get_shared_db_settings' ) ? ajcore_get_shared_db_settings() : array();
+		$is_enabled = ! empty( $s['enabled'] );
+		$site_uuid  = (string) get_option( 'ajcore_site_uuid', '' );
+		if ( '' === $site_uuid ) {
+			$site_uuid = wp_generate_uuid4();
+			update_option( 'ajcore_site_uuid', $site_uuid, false );
+		}
+		$saved        = get_option( 'ajcore_shared_db_settings', array() );
+		$saved        = is_array( $saved ) ? $saved : array();
+		$has_password = ( ! empty( $saved['password'] ) ) || defined( 'AJCORE_SHARED_DB_PASSWORD' );
+
+		if ( isset( $_GET['shared-db-saved'] ) ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Shared DB settings saved.', 'ajforms' ) . '</p></div>';
+		}
+		if ( isset( $_GET['shared-db-error'] ) ) {
+			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['shared-db-error'] ) ) ) . '</p></div>';
+		}
+		?>
+		<div class="ajforms-settings-card">
+			<h3><?php esc_html_e( 'Shared AJ Core DB', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'Connect a shared MySQL database so multiple AJ Core installations can read common portal and business data. Forms, leads, WordPress users, portal files, and file access always remain local.', 'ajforms' ); ?></p>
+			<p class="description"><?php esc_html_e( 'Any setting can be locked by defining the corresponding constant in wp-config.php. Locked fields are shown read-only and cannot be overridden from this screen.', 'ajforms' ); ?></p>
+
+			<form method="post">
+				<?php wp_nonce_field( 'ajcore_save_shared_db_settings', 'ajcore_shared_db_nonce' ); ?>
+
+				<h4><?php esc_html_e( 'Shared DB Settings', 'ajforms' ); ?></h4>
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'Enable Shared AJ Core DB', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_SHARED_DB_ENABLED' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<label>
+								<input type="checkbox" name="shared_db_enabled" value="1"
+									<?php checked( $is_enabled ); ?>
+									<?php echo defined( 'AJCORE_SHARED_DB_ENABLED' ) ? 'disabled' : ''; ?>>
+								<?php esc_html_e( 'Yes', 'ajforms' ); ?>
+							</label>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'DB Host', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_SHARED_DB_HOST' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<input type="text" name="shared_db_host" class="regular-text"
+								value="<?php echo esc_attr( (string) ( $s['host'] ?? '' ) ); ?>"
+								<?php echo defined( 'AJCORE_SHARED_DB_HOST' ) ? 'readonly' : ''; ?>>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'DB Name', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_SHARED_DB_NAME' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<input type="text" name="shared_db_name" class="regular-text"
+								value="<?php echo esc_attr( (string) ( $s['name'] ?? '' ) ); ?>"
+								<?php echo defined( 'AJCORE_SHARED_DB_NAME' ) ? 'readonly' : ''; ?>>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'DB User', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_SHARED_DB_USER' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<input type="text" name="shared_db_user" class="regular-text"
+								value="<?php echo esc_attr( (string) ( $s['user'] ?? '' ) ); ?>"
+								<?php echo defined( 'AJCORE_SHARED_DB_USER' ) ? 'readonly' : ''; ?>>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'DB Password', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_SHARED_DB_PASSWORD' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<?php if ( defined( 'AJCORE_SHARED_DB_PASSWORD' ) ) : ?>
+								<input type="password" class="regular-text" value="••••••••" disabled>
+								<p class="description"><?php esc_html_e( 'Password is set via AJCORE_SHARED_DB_PASSWORD constant.', 'ajforms' ); ?></p>
+							<?php elseif ( $has_password ) : ?>
+								<input type="password" name="shared_db_password" class="regular-text"
+									placeholder="<?php esc_attr_e( 'configured — leave blank to keep', 'ajforms' ); ?>">
+								<p class="description"><?php esc_html_e( 'A password is saved. Leave blank to keep it, or enter a new value to replace it.', 'ajforms' ); ?></p>
+							<?php else : ?>
+								<input type="password" name="shared_db_password" class="regular-text"
+									placeholder="<?php esc_attr_e( 'Enter DB password', 'ajforms' ); ?>">
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'Table Prefix', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_SHARED_DB_PREFIX' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<input type="text" name="shared_db_prefix" class="regular-text"
+								value="<?php echo esc_attr( (string) ( $s['prefix'] ?? 'wp_' ) ); ?>"
+								<?php echo defined( 'AJCORE_SHARED_DB_PREFIX' ) ? 'readonly' : ''; ?>>
+						</td>
+					</tr>
+				</table>
+
+				<div style="margin:16px 0 8px;">
+					<button type="button" id="ajcore-test-shared-db" class="button button-secondary">
+						<?php esc_html_e( 'Test Connection', 'ajforms' ); ?>
+					</button>
+					<span id="ajcore-shared-db-test-result" style="margin-left:10px;font-weight:600;"></span>
+				</div>
+
+				<?php if ( $is_enabled ) : ?>
+				<hr style="margin:24px 0;">
+				<h4><?php esc_html_e( 'Multi-Site Portal Settings', 'ajforms' ); ?></h4>
+				<p class="description"><?php esc_html_e( 'Configure this installation\'s identity in the shared portal network. Only shown when Shared DB is enabled.', 'ajforms' ); ?></p>
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'Enable Multi-Site Portal', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<label>
+								<input type="checkbox" name="ms_portal_enabled" value="1"
+									<?php checked( ! empty( $s['ms_enabled'] ) ); ?>
+									<?php echo defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' ) ? 'disabled' : ''; ?>>
+								<?php esc_html_e( 'Yes', 'ajforms' ); ?>
+							</label>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'Site Code', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_SITE_CODE' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<input type="text" name="ms_site_code" class="regular-text"
+								value="<?php echo esc_attr( (string) ( $s['site_code'] ?? '' ) ); ?>"
+								<?php echo defined( 'AJCORE_SITE_CODE' ) ? 'readonly' : ''; ?>>
+							<p class="description"><?php esc_html_e( 'Short identifier for this site (e.g. site1). Used to tag shared records.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'Site Label', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_SITE_LABEL' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<input type="text" name="ms_site_label" class="regular-text"
+								value="<?php echo esc_attr( (string) ( $s['site_label'] ?? '' ) ); ?>"
+								<?php echo defined( 'AJCORE_SITE_LABEL' ) ? 'readonly' : ''; ?>>
+							<p class="description"><?php esc_html_e( 'Human-readable name for this site.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" class="regular-text" value="<?php echo esc_attr( $site_uuid ); ?>" readonly>
+							<p class="description"><?php esc_html_e( 'Auto-generated unique identifier for this installation. Read-only.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<?php esc_html_e( 'Stripe Sync Owner', 'ajforms' ); ?>
+							<?php if ( defined( 'AJCORE_STRIPE_SYNC_OWNER' ) ) : ?>
+								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
+							<?php endif; ?>
+						</th>
+						<td>
+							<label>
+								<input type="checkbox" name="ms_stripe_owner" value="1"
+									<?php checked( ! empty( $s['stripe_owner'] ) ); ?>
+									<?php echo defined( 'AJCORE_STRIPE_SYNC_OWNER' ) ? 'disabled' : ''; ?>>
+								<?php esc_html_e( 'Yes — this site runs Stripe sync, cron, and webhook ingestion', 'ajforms' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'Only one site in a shared portal network should own Stripe sync. Non-owner sites read shared data but cannot trigger syncs.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+				</table>
+				<?php endif; ?>
+
+				<?php submit_button( __( 'Save Settings', 'ajforms' ) ); ?>
+			</form>
+		</div>
+		<script>
+		(function() {
+			var btn = document.getElementById('ajcore-test-shared-db');
+			if ( ! btn ) return;
+			btn.addEventListener('click', function() {
+				var resultEl = document.getElementById('ajcore-shared-db-test-result');
+				var form     = btn.closest('form');
+				function val(n) { var el = form.querySelector('[name="' + n + '"]'); return el ? el.value : ''; }
+
+				btn.disabled = true;
+				resultEl.textContent = '<?php echo esc_js( __( 'Testing…', 'ajforms' ) ); ?>';
+				resultEl.style.color = '';
+
+				var data = new FormData();
+				data.append('action',   'ajcore_test_shared_db');
+				data.append('nonce',    '<?php echo esc_js( wp_create_nonce( 'ajcore_test_shared_db' ) ); ?>');
+				data.append('host',     val('shared_db_host'));
+				data.append('name',     val('shared_db_name'));
+				data.append('user',     val('shared_db_user'));
+				data.append('password', val('shared_db_password'));
+				data.append('prefix',   val('shared_db_prefix'));
+
+				fetch(ajaxurl, { method: 'POST', body: data })
+					.then(function(r) { return r.json(); })
+					.then(function(res) {
+						resultEl.textContent = res.data || ( res.success
+							? '<?php echo esc_js( __( 'Connected successfully.', 'ajforms' ) ); ?>'
+							: '<?php echo esc_js( __( 'Connection failed.', 'ajforms' ) ); ?>' );
+						resultEl.style.color = res.success ? '#166534' : '#991b1b';
+					})
+					.catch(function() {
+						resultEl.textContent = '<?php echo esc_js( __( 'Request failed.', 'ajforms' ) ); ?>';
+						resultEl.style.color = '#991b1b';
+					})
+					.finally(function() { btn.disabled = false; });
+			});
+		})();
+		</script>
+		<?php
+	}
+
+	public function ajax_test_shared_db_connection() {
+		check_ajax_referer( 'ajcore_test_shared_db', 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$host   = isset( $_POST['host'] )   ? sanitize_text_field( wp_unslash( $_POST['host'] ) )   : '';
+		$name   = isset( $_POST['name'] )   ? sanitize_text_field( wp_unslash( $_POST['name'] ) )   : '';
+		$user   = isset( $_POST['user'] )   ? sanitize_text_field( wp_unslash( $_POST['user'] ) )   : '';
+		$pass   = isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] )           : '';
+
+		// Fall back to saved/constant password if left blank.
+		if ( '' === $pass ) {
+			if ( defined( 'AJCORE_SHARED_DB_PASSWORD' ) ) {
+				$pass = (string) AJCORE_SHARED_DB_PASSWORD;
+			} else {
+				$saved = get_option( 'ajcore_shared_db_settings', array() );
+				$pass  = ! empty( $saved['password'] ) ? (string) $saved['password'] : '';
+			}
+		}
+
+		// Use constant values when fields are locked.
+		if ( defined( 'AJCORE_SHARED_DB_HOST' ) ) { $host = (string) AJCORE_SHARED_DB_HOST; }
+		if ( defined( 'AJCORE_SHARED_DB_NAME' ) ) { $name = (string) AJCORE_SHARED_DB_NAME; }
+		if ( defined( 'AJCORE_SHARED_DB_USER' ) ) { $user = (string) AJCORE_SHARED_DB_USER; }
+
+		if ( '' === $host || '' === $name || '' === $user ) {
+			wp_send_json_error( __( 'Host, name, and user are required.', 'ajforms' ) );
+		}
+
+		$db = new wpdb( $user, $pass, $name, $host );
+		$db->suppress_errors( true );
+		$db->show_errors = false;
+
+		$result = $db->get_var( 'SELECT 1' );
+
+		if ( '1' !== (string) $result ) {
+			$msg = $db->last_error ? $db->last_error : __( 'Could not connect to the specified database.', 'ajforms' );
+			wp_send_json_error( $msg );
+		}
+
+		wp_send_json_success( __( 'Connection successful.', 'ajforms' ) );
 	}
 }

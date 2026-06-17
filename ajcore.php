@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.2.48
+ * Version: 0.2.49
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.2.48' );
+	define( 'AJCORE_VERSION', '0.2.49' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -367,6 +367,135 @@ if ( ! function_exists( 'ajcore_get_stripe_mode_badge_data' ) ) {
 			'has_issues'  => ! empty( $issues ),
 			'issues'      => $issues,
 		);
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_shared_db_settings' ) ) {
+	/**
+	 * Returns effective shared-DB settings, with wp-config.php constants taking priority over saved options.
+	 *
+	 * Supported constants (all optional):
+	 *   AJCORE_SHARED_DB_ENABLED        (bool)
+	 *   AJCORE_SHARED_DB_HOST           (string)
+	 *   AJCORE_SHARED_DB_NAME           (string)
+	 *   AJCORE_SHARED_DB_USER           (string)
+	 *   AJCORE_SHARED_DB_PASSWORD       (string)
+	 *   AJCORE_SHARED_DB_PREFIX         (string)
+	 *   AJCORE_MULTISITE_PORTAL_ENABLED (bool)
+	 *   AJCORE_SITE_CODE                (string)
+	 *   AJCORE_SITE_LABEL               (string)
+	 *   AJCORE_STRIPE_SYNC_OWNER        (bool)
+	 */
+	function ajcore_get_shared_db_settings() {
+		$saved = get_option( 'ajcore_shared_db_settings', array() );
+		$saved = is_array( $saved ) ? $saved : array();
+
+		$s = wp_parse_args(
+			$saved,
+			array(
+				'enabled'      => false,
+				'host'         => '',
+				'name'         => '',
+				'user'         => '',
+				'password'     => '',
+				'prefix'       => 'wp_',
+				'ms_enabled'   => false,
+				'site_code'    => '',
+				'site_label'   => '',
+				'stripe_owner' => false,
+			)
+		);
+
+		if ( defined( 'AJCORE_SHARED_DB_ENABLED' ) ) {
+			$s['enabled'] = (bool) AJCORE_SHARED_DB_ENABLED;
+		}
+		if ( defined( 'AJCORE_SHARED_DB_HOST' ) ) {
+			$s['host'] = (string) AJCORE_SHARED_DB_HOST;
+		}
+		if ( defined( 'AJCORE_SHARED_DB_NAME' ) ) {
+			$s['name'] = (string) AJCORE_SHARED_DB_NAME;
+		}
+		if ( defined( 'AJCORE_SHARED_DB_USER' ) ) {
+			$s['user'] = (string) AJCORE_SHARED_DB_USER;
+		}
+		if ( defined( 'AJCORE_SHARED_DB_PASSWORD' ) ) {
+			$s['password'] = (string) AJCORE_SHARED_DB_PASSWORD;
+		}
+		if ( defined( 'AJCORE_SHARED_DB_PREFIX' ) ) {
+			$s['prefix'] = (string) AJCORE_SHARED_DB_PREFIX;
+		}
+		if ( defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' ) ) {
+			$s['ms_enabled'] = (bool) AJCORE_MULTISITE_PORTAL_ENABLED;
+		}
+		if ( defined( 'AJCORE_SITE_CODE' ) ) {
+			$s['site_code'] = (string) AJCORE_SITE_CODE;
+		}
+		if ( defined( 'AJCORE_SITE_LABEL' ) ) {
+			$s['site_label'] = (string) AJCORE_SITE_LABEL;
+		}
+		if ( defined( 'AJCORE_STRIPE_SYNC_OWNER' ) ) {
+			$s['stripe_owner'] = (bool) AJCORE_STRIPE_SYNC_OWNER;
+		}
+
+		return $s;
+	}
+}
+
+if ( ! function_exists( 'ajcore_is_shared_db_enabled' ) ) {
+	function ajcore_is_shared_db_enabled() {
+		$s = ajcore_get_shared_db_settings();
+		return ! empty( $s['enabled'] );
+	}
+}
+
+if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) ) {
+	/**
+	 * Returns true when this site may run Stripe sync/cron/webhook.
+	 * Always true for local-only installs (shared DB disabled).
+	 */
+	function ajcore_is_stripe_sync_owner() {
+		if ( ! ajcore_is_shared_db_enabled() ) {
+			return true;
+		}
+		$s = ajcore_get_shared_db_settings();
+		return ! empty( $s['stripe_owner'] );
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_shared_db' ) ) {
+	/**
+	 * Returns a wpdb instance connected to the shared DB, or null if not enabled/configured.
+	 * The returned connection uses the configured table prefix.
+	 */
+	function ajcore_get_shared_db() {
+		static $shared_db_cache = null;
+		static $shared_db_tried = false;
+
+		if ( $shared_db_tried ) {
+			return $shared_db_cache;
+		}
+		$shared_db_tried = true;
+
+		$s = ajcore_get_shared_db_settings();
+		if ( empty( $s['enabled'] ) || '' === $s['host'] || '' === $s['name'] || '' === $s['user'] || '' === $s['password'] ) {
+			return null;
+		}
+
+		$db = new wpdb( $s['user'], $s['password'], $s['name'], $s['host'] );
+		$db->suppress_errors( true );
+		$db->show_errors = false;
+		if ( ! empty( $s['prefix'] ) ) {
+			$db->prefix       = $s['prefix'];
+			$db->base_prefix  = $s['prefix'];
+		}
+
+		$result = $db->get_var( 'SELECT 1' );
+		if ( '1' !== (string) $result ) {
+			return null;
+		}
+
+		$shared_db_cache = $db;
+		return $shared_db_cache;
 	}
 }
 
