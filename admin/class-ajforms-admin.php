@@ -1490,7 +1490,12 @@ class AJForms_Admin {
 	}
 
 	private function upsert_portal_record( $table, $data, $formats, $unique_key ) {
-		$wpdb = $this->get_pdb();
+		// Local-only tables (user mappings) must never be written via the shared DB connection.
+		if ( $table === $this->get_portal_user_mappings_table() ) {
+			global $wpdb;
+		} else {
+			$wpdb = $this->get_pdb();
+		}
 
 		$existing = $wpdb->get_row(
 			$wpdb->prepare(
