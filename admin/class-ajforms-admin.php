@@ -17116,10 +17116,23 @@ class AJForms_Admin {
 
 		// phpcs:ignore WordPress.DB.RestrictedFunctions.mysql_mysqli_connect
 		$conn = @mysqli_connect( $host, $user, $pass, $name );
+		$err  = $conn ? '' : (string) mysqli_connect_error();
+
+		// "localhost" triggers a Unix socket attempt. When that fails, retry
+		// with 127.0.0.1 to force a TCP connection instead.
+		if ( ! $conn && 'localhost' === $host ) {
+			$conn = @mysqli_connect( '127.0.0.1', $user, $pass, $name ); // phpcs:ignore
+			if ( $conn ) {
+				$err = '';
+			}
+		}
 
 		if ( ! $conn ) {
-			$err = mysqli_connect_error();
-			wp_send_json_error( $err ?: __( 'Could not connect to the specified database.', 'ajforms' ) );
+			$hint = '';
+			if ( false !== strpos( $err, 'No such file or directory' ) || false !== strpos( $err, 'Can\'t connect' ) ) {
+				$hint = ' ' . __( 'Tip: "localhost" uses a Unix socket. Try your actual hostname, IP address, or — in DDEV — use "db" as the host.', 'ajforms' );
+			}
+			wp_send_json_error( ( $err ?: __( 'Could not connect to the specified database.', 'ajforms' ) ) . $hint );
 		}
 
 		mysqli_close( $conn );
