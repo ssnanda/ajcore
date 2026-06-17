@@ -614,6 +614,7 @@ class AJForms_Admin {
 
 	private function ensure_portal_schema() {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$required_tables = array(
 			$this->get_portal_stripe_customers_table(),
@@ -638,7 +639,9 @@ class AJForms_Admin {
 		);
 
 		foreach ( $required_tables as $table ) {
-			$exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+			// Use shared DB connection for shared tables (identified by the pdb prefix).
+			$check_db = ( $pdb !== $wpdb && strncmp( $table, $pdb->prefix, strlen( $pdb->prefix ) ) === 0 ) ? $pdb : $wpdb;
+			$exists   = $check_db->get_var( $check_db->prepare( 'SHOW TABLES LIKE %s', $table ) );
 			if ( $exists !== $table ) {
 				require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 				AJForms_Activator::activate();
@@ -646,7 +649,7 @@ class AJForms_Admin {
 			}
 		}
 
-		$customer_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_customers_table()}", 0 );
+		$customer_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_customers_table()}", 0 );
 		if ( is_array( $customer_columns ) && ! in_array( 'portal_status', $customer_columns, true ) ) {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
@@ -658,13 +661,13 @@ class AJForms_Admin {
 			AJForms_Activator::activate();
 		}
 
-		$transaction_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_transactions_table()}", 0 );
-		$subscription_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_subscriptions_table()}", 0 );
-		$product_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_products_table()}", 0 );
-		$product_catalog_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_product_catalog_table()}", 0 );
-		$snapshot_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_snapshots_table()}", 0 );
-		$service_state_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_states_table()}", 0 );
-		$customer_state_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_customer_states_table()}", 0 );
+		$transaction_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_transactions_table()}", 0 );
+		$subscription_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_subscriptions_table()}", 0 );
+		$product_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_stripe_products_table()}", 0 );
+		$product_catalog_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_product_catalog_table()}", 0 );
+		$snapshot_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_snapshots_table()}", 0 );
+		$service_state_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_states_table()}", 0 );
+		$customer_state_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_customer_states_table()}", 0 );
 		if (
 			( is_array( $transaction_columns ) && ! in_array( 'livemode', $transaction_columns, true ) )
 			|| ( is_array( $subscription_columns ) && ! in_array( 'livemode', $subscription_columns, true ) )
@@ -2676,26 +2679,36 @@ class AJForms_Admin {
 
 	private function get_portal_sync_reconciliation() {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 
-		$unmatched_payments = (int) $wpdb->get_var(
+		$unmatched_payments = (int) $pdb->get_var(
 			"SELECT COUNT(*) FROM {$this->get_portal_ledger_table()} l
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = l.stripe_customer_id
 			WHERE l.source_type IN ('charge','payment','checkout_session') AND (l.stripe_customer_id = '' OR c.id IS NULL)"
 		);
-		$unmatched_refunds = (int) $wpdb->get_var(
+		$unmatched_refunds = (int) $pdb->get_var(
 			"SELECT COUNT(*) FROM {$this->get_portal_ledger_table()} r
 			LEFT JOIN {$this->get_portal_ledger_table()} c ON c.charge_id = r.charge_id AND c.source_type IN ('charge','payment')
 			WHERE r.source_type = 'refund' AND (r.charge_id = '' OR c.id IS NULL)"
 		);
-		$missing_users = (int) $wpdb->get_var(
-			"SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} c
-			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
-			LEFT JOIN {$wpdb->users} u ON u.ID = m.user_id
-			WHERE c.enabled_portal = 1 AND (m.id IS NULL OR u.ID IS NULL)"
-		);
-		$failed_logs = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_sync_logs_table()} WHERE status = 'failed'" );
+		// Count enabled customers without a valid local WP user mapping — split cross-DB JOIN into PHP merge.
+		$enabled_customers = (array) $pdb->get_col( "SELECT c.stripe_customer_id FROM {$this->get_portal_stripe_customers_table()} c WHERE c.enabled_portal = 1" );
+		$missing_users = 0;
+		if ( ! empty( $enabled_customers ) ) {
+			$ec_ph   = implode( ',', array_fill( 0, count( $enabled_customers ), '%s' ) );
+			$mapped  = (array) $wpdb->get_col(
+				$wpdb->prepare(
+					"SELECT m.stripe_customer_id FROM {$this->get_portal_user_mappings_table()} m
+					INNER JOIN {$wpdb->users} u ON u.ID = m.user_id
+					WHERE m.stripe_customer_id IN ({$ec_ph})",
+					...$enabled_customers
+				)
+			);
+			$missing_users = count( array_diff( $enabled_customers, $mapped ) );
+		}
+		$failed_logs = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_sync_logs_table()} WHERE status = 'failed'" );
 		$settings = $this->get_plugin_settings();
 		$key_warnings = function_exists( 'ajcore_get_stripe_mode_issues' ) ? ajcore_get_stripe_mode_issues( $settings, true ) : array();
 		if ( empty( $settings['stripe_secret_key'] ) ) {
@@ -8696,11 +8709,11 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_stripe_products_for_settings() {
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 
-		return $wpdb->get_results( "SELECT * FROM {$this->get_portal_stripe_products_table()} ORDER BY sort_order ASC, name ASC" );
+		return $pdb->get_results( "SELECT * FROM {$this->get_portal_stripe_products_table()} ORDER BY sort_order ASC, name ASC" );
 	}
 
 	private function handle_client_portal_settings_save() {
@@ -9025,6 +9038,7 @@ class AJForms_Admin {
 		if ( isset( $_POST['ajcore_portal_bulk_user_nonce'], $_POST['portal_bulk_action'] ) ) {
 			check_admin_referer( 'ajcore_portal_bulk_user_action', 'ajcore_portal_bulk_user_nonce' );
 			global $wpdb;
+			$pdb = $this->get_pdb();
 
 			$action = sanitize_key( wp_unslash( $_POST['portal_bulk_action'] ) );
 			$selected_values = isset( $_POST['portal_customer_ids'] ) && is_array( $_POST['portal_customer_ids'] ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['portal_customer_ids'] ) ) : array();
@@ -9055,9 +9069,10 @@ class AJForms_Admin {
 			}
 
 			foreach ( $selected_ids as $stripe_customer_id ) {
-				$customer = $wpdb->get_row(
-					$wpdb->prepare(
-						"SELECT c.*, m.user_id, m.customer_email, m.portal_user_email, m.site_uuid AS mapping_site_uuid FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
+				// Fetch customer from shared DB, mapping from local DB, merge in PHP.
+				$customer = $pdb->get_row(
+					$pdb->prepare(
+						"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
 						$stripe_customer_id
 					)
 				);
@@ -9065,6 +9080,16 @@ class AJForms_Admin {
 					$skipped++;
 					continue;
 				}
+				$_mapping                    = $wpdb->get_row(
+					$wpdb->prepare(
+						"SELECT * FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s LIMIT 1",
+						$stripe_customer_id
+					)
+				);
+				$customer->user_id           = $_mapping ? $_mapping->user_id : null;
+				$customer->customer_email    = $_mapping ? $_mapping->customer_email : null;
+				$customer->portal_user_email = $_mapping ? $_mapping->portal_user_email : null;
+				$customer->mapping_site_uuid = $_mapping ? $_mapping->site_uuid : null;
 
 				$status = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' );
 				$is_active = 'active' === $status && ! empty( $customer->enabled_portal );
@@ -9083,12 +9108,12 @@ class AJForms_Admin {
 						array( 'stripe_customer_id' => $stripe_customer_id ),
 						array( '%s' )
 					);
-					$wpdb->delete(
+					$pdb->delete(
 						$this->get_portal_customer_states_table(),
 						array( 'stripe_customer_id' => $stripe_customer_id ),
 						array( '%s' )
 					);
-					$result = $wpdb->delete(
+					$result = $pdb->delete(
 						$this->get_portal_stripe_customers_table(),
 						array( 'stripe_customer_id' => $stripe_customer_id ),
 						array( '%s' )
@@ -9201,12 +9226,25 @@ class AJForms_Admin {
 				}
 			} elseif ( 'reset_password' === $action ) {
 				global $wpdb;
-				$customer = $wpdb->get_row(
-					$wpdb->prepare(
-						"SELECT c.*, m.user_id, m.customer_email, m.portal_user_email, m.site_uuid AS mapping_site_uuid FROM {$this->get_portal_stripe_customers_table()} c LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id WHERE c.stripe_customer_id = %s LIMIT 1",
+				$_pdb     = $this->get_pdb();
+				$customer = $_pdb->get_row(
+					$_pdb->prepare(
+						"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
 						$stripe_customer_id
 					)
 				);
+				if ( $customer ) {
+					$_mapping = $wpdb->get_row(
+						$wpdb->prepare(
+							"SELECT * FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s LIMIT 1",
+							$stripe_customer_id
+						)
+					);
+					$customer->user_id           = $_mapping ? $_mapping->user_id : null;
+					$customer->customer_email    = $_mapping ? $_mapping->customer_email : null;
+					$customer->portal_user_email = $_mapping ? $_mapping->portal_user_email : null;
+					$customer->mapping_site_uuid = $_mapping ? $_mapping->site_uuid : null;
+				}
 				$user = $customer ? $this->get_valid_portal_mapping_user( $customer, $customer ) : null;
 				$result = $user ? $this->send_portal_user_password_reset( (int) $user->ID ) : new WP_Error( 'invalid_link', __( 'The linked WordPress user does not match this customer email. Run Repair WP User Links & Roles first.', 'ajforms' ) );
 				if ( is_wp_error( $result ) ) {
@@ -9246,6 +9284,7 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' );
 
 			global $wpdb;
+			$pdb                = $this->get_pdb();
 			$product_group_rows = isset( $_POST['portal_product_groups'] ) && is_array( $_POST['portal_product_groups'] ) ? wp_unslash( $_POST['portal_product_groups'] ) : array();
 			if ( ! empty( $product_group_rows ) ) {
 				foreach ( $product_group_rows as $group_key => $row ) {
@@ -9270,8 +9309,8 @@ class AJForms_Admin {
 					}
 
 					foreach ( $row_ids as $product_id ) {
-						$current_product = $wpdb->get_row(
-							$wpdb->prepare(
+						$current_product = $pdb->get_row(
+							$pdb->prepare(
 								"SELECT stripe_product_id FROM {$this->get_portal_stripe_products_table()} WHERE id = %d",
 								$product_id
 							)
@@ -9298,7 +9337,7 @@ class AJForms_Admin {
 								)
 							);
 						}
-						$wpdb->update(
+						$pdb->update(
 							$this->get_portal_stripe_products_table(),
 							array(
 								'visibility'                  => $visibility,
@@ -9336,8 +9375,8 @@ class AJForms_Admin {
 				if ( 'upgrade' !== $duplicate_behavior || 0 !== strpos( $upgrade_from_product_id, 'prod_' ) ) {
 					$upgrade_from_product_id = '';
 				}
-				$current_product = $wpdb->get_row(
-					$wpdb->prepare(
+				$current_product = $pdb->get_row(
+					$pdb->prepare(
 						"SELECT stripe_product_id FROM {$this->get_portal_stripe_products_table()} WHERE id = %d",
 						$product_id
 					)
@@ -9364,7 +9403,7 @@ class AJForms_Admin {
 					);
 				}
 
-				$wpdb->update(
+				$pdb->update(
 					$this->get_portal_stripe_products_table(),
 					array(
 						'visibility'                  => $visibility,
@@ -9392,8 +9431,8 @@ class AJForms_Admin {
 					if ( '' === $dependency_price_id || ! is_array( $dependency_row ) ) {
 						continue;
 					}
-					$dependency_product_id = $wpdb->get_var(
-						$wpdb->prepare(
+					$dependency_product_id = $pdb->get_var(
+						$pdb->prepare(
 							"SELECT stripe_product_id FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s LIMIT 1",
 							$dependency_price_id
 						)
@@ -9467,6 +9506,7 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_bulk_portal_tasks', 'ajcore_portal_task_bulk_nonce' );
 
 			global $wpdb;
+			$pdb      = $this->get_pdb();
 			$task_ids = isset( $_POST['portal_task_ids'] ) ? array_values( array_filter( array_map( 'absint', wp_unslash( $_POST['portal_task_ids'] ) ) ) ) : array();
 			$bulk_action = isset( $_POST['portal_task_bulk_action'] ) ? sanitize_key( wp_unslash( $_POST['portal_task_bulk_action'] ) ) : '';
 			$allowed_statuses = array( 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled' );
@@ -9480,15 +9520,15 @@ class AJForms_Admin {
 				$placeholders = implode( ',', array_fill( 0, count( $task_ids ), '%d' ) );
 
 				if ( 'delete' === $bulk_action ) {
-					$wpdb->query( $wpdb->prepare( "DELETE FROM {$this->get_portal_task_comments_table()} WHERE task_id IN ({$placeholders})", $task_ids ) );
-					$wpdb->query( $wpdb->prepare( "DELETE FROM {$this->get_portal_task_statuses_table()} WHERE task_id IN ({$placeholders})", $task_ids ) );
-					$wpdb->query( $wpdb->prepare( "DELETE FROM {$this->get_portal_tasks_table()} WHERE id IN ({$placeholders})", $task_ids ) );
+					$pdb->query( $pdb->prepare( "DELETE FROM {$this->get_portal_task_comments_table()} WHERE task_id IN ({$placeholders})", $task_ids ) );
+					$pdb->query( $pdb->prepare( "DELETE FROM {$this->get_portal_task_statuses_table()} WHERE task_id IN ({$placeholders})", $task_ids ) );
+					$pdb->query( $pdb->prepare( "DELETE FROM {$this->get_portal_tasks_table()} WHERE id IN ({$placeholders})", $task_ids ) );
 				} elseif ( 'mark_completed' === $bulk_action ) {
 					$params = array_merge( array( 'completed', current_time( 'mysql' ) ), $task_ids );
-					$wpdb->query( $wpdb->prepare( "UPDATE {$this->get_portal_tasks_table()} SET status = %s, updated_at = %s WHERE id IN ({$placeholders})", $params ) );
+					$pdb->query( $pdb->prepare( "UPDATE {$this->get_portal_tasks_table()} SET status = %s, updated_at = %s WHERE id IN ({$placeholders})", $params ) );
 				} elseif ( 'mark_open' === $bulk_action ) {
 					$params = array_merge( array( 'open', current_time( 'mysql' ) ), $task_ids );
-					$wpdb->query( $wpdb->prepare( "UPDATE {$this->get_portal_tasks_table()} SET status = %s, updated_at = %s WHERE id IN ({$placeholders})", $params ) );
+					$pdb->query( $pdb->prepare( "UPDATE {$this->get_portal_tasks_table()} SET status = %s, updated_at = %s WHERE id IN ({$placeholders})", $params ) );
 				} elseif ( 'bulk_update' === $bulk_action ) {
 					$updates = array();
 					$formats = array();
@@ -9515,7 +9555,7 @@ class AJForms_Admin {
 						$updates['updated_at'] = current_time( 'mysql' );
 						$formats[] = '%s';
 						foreach ( $task_ids as $bulk_task_id ) {
-							$wpdb->update( $this->get_portal_tasks_table(), $updates, array( 'id' => absint( $bulk_task_id ) ), $formats, array( '%d' ) );
+							$pdb->update( $this->get_portal_tasks_table(), $updates, array( 'id' => absint( $bulk_task_id ) ), $formats, array( '%d' ) );
 						}
 					}
 				}
@@ -9529,6 +9569,7 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_save_portal_task', 'ajcore_portal_task_nonce' );
 
 			global $wpdb;
+			$pdb                = $this->get_pdb();
 			$task_id            = isset( $_POST['portal_task_id'] ) ? absint( wp_unslash( $_POST['portal_task_id'] ) ) : 0;
 			$task_scope         = isset( $_POST['task_scope'] ) ? sanitize_key( wp_unslash( $_POST['task_scope'] ) ) : 'client';
 			$task_frequency     = isset( $_POST['task_frequency'] ) ? sanitize_key( wp_unslash( $_POST['task_frequency'] ) ) : 'one_time';
@@ -9563,9 +9604,9 @@ class AJForms_Admin {
 				);
 				$formats = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s' );
 				if ( $task_id ) {
-					$wpdb->update( $this->get_portal_tasks_table(), $data, array( 'id' => $task_id ), $formats, array( '%d' ) );
+					$pdb->update( $this->get_portal_tasks_table(), $data, array( 'id' => $task_id ), $formats, array( '%d' ) );
 				} else {
-					$wpdb->insert( $this->get_portal_tasks_table(), $data, $formats );
+					$pdb->insert( $this->get_portal_tasks_table(), $data, $formats );
 				}
 			}
 
@@ -9577,10 +9618,10 @@ class AJForms_Admin {
 			$task_id = absint( wp_unslash( $_GET['task_id'] ) );
 			check_admin_referer( 'ajcore_delete_portal_task_' . $task_id );
 			if ( 'delete' === sanitize_key( wp_unslash( $_GET['portal_task_action'] ) ) ) {
-				global $wpdb;
-				$wpdb->delete( $this->get_portal_task_comments_table(), array( 'task_id' => $task_id ), array( '%d' ) );
-				$wpdb->delete( $this->get_portal_task_statuses_table(), array( 'task_id' => $task_id ), array( '%d' ) );
-				$wpdb->delete( $this->get_portal_tasks_table(), array( 'id' => $task_id ), array( '%d' ) );
+				$pdb = $this->get_pdb();
+				$pdb->delete( $this->get_portal_task_comments_table(), array( 'task_id' => $task_id ), array( '%d' ) );
+				$pdb->delete( $this->get_portal_task_statuses_table(), array( 'task_id' => $task_id ), array( '%d' ) );
+				$pdb->delete( $this->get_portal_tasks_table(), array( 'id' => $task_id ), array( '%d' ) );
 			}
 			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'tasks', 'portal-task' => 'deleted' ), admin_url( 'admin.php' ) ) );
 			exit;
@@ -10918,7 +10959,8 @@ class AJForms_Admin {
 		check_admin_referer( 'ajcore_service_request_details_' . $request_id );
 
 		global $wpdb;
-		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
+		$pdb     = $this->get_pdb();
+		$request = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
 		if ( ! $request ) {
 			return;
 		}
@@ -11009,7 +11051,7 @@ class AJForms_Admin {
 			$update_formats[] = '%s';
 		}
 
-		$wpdb->update(
+		$pdb->update(
 			$this->get_portal_service_requests_table(),
 			$update_data,
 			array( 'id' => $request_id ),
@@ -11065,11 +11107,11 @@ class AJForms_Admin {
 	}
 
 	private function cleanup_stale_pending_checkout_service_requests() {
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 
-		$stale_requests = $wpdb->get_results(
+		$stale_requests = $pdb->get_results(
 			"SELECT r.*, l.source_type AS ledger_source_type, l.status AS ledger_status, l.invoice_id, l.payment_intent_id, l.charge_id
 			FROM {$this->get_portal_service_requests_table()} r
 			LEFT JOIN {$this->get_portal_ledger_table()} l ON l.id = r.ledger_id
@@ -11081,10 +11123,10 @@ class AJForms_Admin {
 
 		foreach ( $stale_requests as $request ) {
 			if ( ! empty( $request->ledger_id ) && $this->is_portal_service_request_ledger_safe_to_delete( $request ) ) {
-				$wpdb->delete( $this->get_portal_ledger_table(), array( 'id' => (int) $request->ledger_id ), array( '%d' ) );
+				$pdb->delete( $this->get_portal_ledger_table(), array( 'id' => (int) $request->ledger_id ), array( '%d' ) );
 			}
 
-			$wpdb->delete( $this->get_portal_service_requests_table(), array( 'id' => (int) $request->id ), array( '%d' ) );
+			$pdb->delete( $this->get_portal_service_requests_table(), array( 'id' => (int) $request->id ), array( '%d' ) );
 		}
 	}
 
@@ -11093,9 +11135,9 @@ class AJForms_Admin {
 			return false;
 		}
 
-		global $wpdb;
-		$ledger = $wpdb->get_row(
-			$wpdb->prepare(
+		$pdb    = $this->get_pdb();
+		$ledger = $pdb->get_row(
+			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE id = %d LIMIT 1",
 				(int) $request->ledger_id
 			)
@@ -11124,10 +11166,10 @@ class AJForms_Admin {
 	}
 
 	private function handle_portal_service_request_delete( $request_id ) {
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
-		$request = $wpdb->get_row(
-			$wpdb->prepare(
+		$request = $pdb->get_row(
+			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d LIMIT 1",
 				(int) $request_id
 			)
@@ -11138,16 +11180,16 @@ class AJForms_Admin {
 		}
 
 		if ( $this->is_portal_service_request_ledger_safe_to_delete( $request ) ) {
-			$wpdb->delete( $this->get_portal_ledger_table(), array( 'id' => (int) $request->ledger_id ), array( '%d' ) );
+			$pdb->delete( $this->get_portal_ledger_table(), array( 'id' => (int) $request->ledger_id ), array( '%d' ) );
 		}
 
-		return false !== $wpdb->delete( $this->get_portal_service_requests_table(), array( 'id' => (int) $request_id ), array( '%d' ) );
+		return false !== $pdb->delete( $this->get_portal_service_requests_table(), array( 'id' => (int) $request_id ), array( '%d' ) );
 	}
 
 	private function apply_portal_billing_change_request( $request_id ) {
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
-		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d LIMIT 1", absint( $request_id ) ) );
+		$request = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d LIMIT 1", absint( $request_id ) ) );
 		if ( ! $request ) {
 			return new WP_Error( 'request_not_found', __( 'Service request was not found.', 'ajforms' ) );
 		}
@@ -11379,11 +11421,11 @@ class AJForms_Admin {
 			return;
 		}
 
-		global $wpdb;
-		$status = $action_status_map[ $action ];
-		$request = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
+		$pdb    = $this->get_pdb();
+		$status  = $action_status_map[ $action ];
+		$request = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
 		if ( $request ) {
-			$wpdb->update(
+			$pdb->update(
 				$this->get_portal_service_requests_table(),
 				array( 'status' => $status, 'updated_at' => current_time( 'mysql' ) ),
 				array( 'id' => $request_id ),
@@ -11411,6 +11453,7 @@ class AJForms_Admin {
 		}
 
 		global $wpdb;
+		$pdb = $this->get_pdb();
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
 		$this->cleanup_stale_pending_checkout_service_requests();
@@ -11433,20 +11476,35 @@ class AJForms_Admin {
 		}
 
 		if ( '' !== $search ) {
-			$like = '%' . $wpdb->esc_like( $search ) . '%';
+			$like = '%' . $pdb->esc_like( $search ) . '%';
 			$where[] = '(r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s)';
 			$params = array_merge( $params, array( $like, $like, $like, $like ) );
 		}
 
-		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, u.user_email AS wp_user_email, u.display_name AS wp_display_name
+		// Query shared tables (requests + customers) via $pdb; look up local WP users separately.
+		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name
 			FROM {$this->get_portal_service_requests_table()} r
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = r.stripe_customer_id
-			LEFT JOIN {$wpdb->users} u ON u.ID = r.wp_user_id
 			WHERE " . implode( ' AND ', $where ) . "
 			ORDER BY r.created_at DESC, r.id DESC
 			LIMIT 200";
-		$requests = ! empty( $params ) ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
-		$counts = $wpdb->get_results( "SELECT status, COUNT(*) AS total FROM {$this->get_portal_service_requests_table()} GROUP BY status", OBJECT_K );
+		$requests_raw = ! empty( $params ) ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
+		$user_ids     = array_values( array_unique( array_filter( array_map( function( $r ) { return (int) $r->wp_user_id; }, (array) $requests_raw ) ) ) );
+		$users_by_id  = array();
+		if ( ! empty( $user_ids ) ) {
+			$uid_ph = implode( ',', array_fill( 0, count( $user_ids ), '%d' ) );
+			foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT ID, user_email, display_name FROM {$wpdb->users} WHERE ID IN ({$uid_ph})", ...$user_ids ) ) as $u ) {
+				$users_by_id[ (int) $u->ID ] = $u;
+			}
+		}
+		$requests = array();
+		foreach ( (array) $requests_raw as $r ) {
+			$u                  = isset( $users_by_id[ (int) $r->wp_user_id ] ) ? $users_by_id[ (int) $r->wp_user_id ] : null;
+			$r->wp_user_email   = $u ? $u->user_email : '';
+			$r->wp_display_name = $u ? $u->display_name : '';
+			$requests[]         = $r;
+		}
+		$counts = $pdb->get_results( "SELECT status, COUNT(*) AS total FROM {$this->get_portal_service_requests_table()} GROUP BY status", OBJECT_K );
 		$base_url = add_query_arg( array( 'page' => 'ajforms-service-requests' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-service-requests-admin">
@@ -11677,6 +11735,7 @@ class AJForms_Admin {
 
 	private function display_portal_service_requests_tab() {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
@@ -11700,20 +11759,35 @@ class AJForms_Admin {
 		}
 
 		if ( '' !== $search ) {
-			$like = '%' . $wpdb->esc_like( $search ) . '%';
+			$like = '%' . $pdb->esc_like( $search ) . '%';
 			$where[] = '(r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s)';
 			$params = array_merge( $params, array( $like, $like, $like, $like ) );
 		}
 
-		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, u.user_email AS wp_user_email, u.display_name AS wp_display_name
+		// Query shared tables (requests + customers) via $pdb; look up local WP users separately.
+		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name
 			FROM {$this->get_portal_service_requests_table()} r
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = r.stripe_customer_id
-			LEFT JOIN {$wpdb->users} u ON u.ID = r.wp_user_id
 			WHERE " . implode( ' AND ', $where ) . "
 			ORDER BY r.created_at DESC, r.id DESC
 			LIMIT 200";
-		$requests = ! empty( $params ) ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
-		$counts   = $wpdb->get_results( "SELECT status, COUNT(*) AS total FROM {$this->get_portal_service_requests_table()} GROUP BY status", OBJECT_K );
+		$requests_raw = ! empty( $params ) ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
+		$user_ids     = array_values( array_unique( array_filter( array_map( function( $r ) { return (int) $r->wp_user_id; }, (array) $requests_raw ) ) ) );
+		$users_by_id  = array();
+		if ( ! empty( $user_ids ) ) {
+			$uid_ph = implode( ',', array_fill( 0, count( $user_ids ), '%d' ) );
+			foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT ID, user_email, display_name FROM {$wpdb->users} WHERE ID IN ({$uid_ph})", ...$user_ids ) ) as $u ) {
+				$users_by_id[ (int) $u->ID ] = $u;
+			}
+		}
+		$requests = array();
+		foreach ( (array) $requests_raw as $r ) {
+			$u                  = isset( $users_by_id[ (int) $r->wp_user_id ] ) ? $users_by_id[ (int) $r->wp_user_id ] : null;
+			$r->wp_user_email   = $u ? $u->user_email : '';
+			$r->wp_display_name = $u ? $u->display_name : '';
+			$requests[]         = $r;
+		}
+		$counts   = $pdb->get_results( "SELECT status, COUNT(*) AS total FROM {$this->get_portal_service_requests_table()} GROUP BY status", OBJECT_K );
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' ), admin_url( 'admin.php' ) );
 		$service_products = $this->get_portal_stripe_products_for_settings();
 		?>
@@ -11918,9 +11992,9 @@ class AJForms_Admin {
 			exit;
 		}
 
-		global $wpdb;
-		$customer_exists = (int) $wpdb->get_var(
-			$wpdb->prepare(
+		$pdb             = $this->get_pdb();
+		$customer_exists = (int) $pdb->get_var(
+			$pdb->prepare(
 				"SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s",
 				$stripe_customer_id
 			)
@@ -11939,7 +12013,7 @@ class AJForms_Admin {
 			'created_by'   => get_current_user_id(),
 		);
 
-		$inserted = $wpdb->insert(
+		$inserted = $pdb->insert(
 			$this->get_portal_ledger_table(),
 			array(
 				'stripe_customer_id' => $stripe_customer_id,
@@ -11970,6 +12044,7 @@ class AJForms_Admin {
 
 	private function get_portal_billing_filter_data() {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$status_filter   = isset( $_GET['billing_status'] ) ? sanitize_key( wp_unslash( $_GET['billing_status'] ) ) : '';
 		$source_filter   = isset( $_GET['billing_source'] ) ? sanitize_key( wp_unslash( $_GET['billing_source'] ) ) : '';
@@ -12005,7 +12080,7 @@ class AJForms_Admin {
 			$where[] = 'l.status IN (' . implode( ',', array_fill( 0, count( $failed_statuses ), '%s' ) ) . ')';
 			$params = array_merge( $params, $failed_statuses );
 		} elseif ( 'overdue' === $view_filter ) {
-			$ledger_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_ledger_table()}", 0 );
+			$ledger_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_ledger_table()}", 0 );
 			$date_expression = is_array( $ledger_columns ) && in_array( 'due_date', $ledger_columns, true ) ? 'COALESCE(NULLIF(l.due_date,\'\'), l.ledger_date)' : 'l.ledger_date';
 			$where[] = 'l.status IN (' . implode( ',', array_fill( 0, count( $open_statuses ), '%s' ) ) . ')';
 			$params = array_merge( $params, $open_statuses );
@@ -12014,7 +12089,7 @@ class AJForms_Admin {
 		}
 
 		if ( '' !== $search ) {
-			$like = '%' . $wpdb->esc_like( $search ) . '%';
+			$like = '%' . $pdb->esc_like( $search ) . '%';
 			$where[] = '(l.description LIKE %s OR l.stripe_customer_id LIKE %s OR l.invoice_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s)';
 			$params = array_merge( $params, array( $like, $like, $like, $like, $like ) );
 		}
@@ -12031,7 +12106,7 @@ class AJForms_Admin {
 	}
 
 	private function export_portal_billing_csv() {
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 		$filters = $this->get_portal_billing_filter_data();
@@ -12040,7 +12115,7 @@ class AJForms_Admin {
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = l.stripe_customer_id
 			WHERE " . implode( ' AND ', $filters['where'] ) . '
 			ORDER BY l.ledger_date DESC, l.id DESC';
-		$ledger = ! empty( $filters['params'] ) ? $wpdb->get_results( $wpdb->prepare( $sql, $filters['params'] ) ) : $wpdb->get_results( $sql );
+		$ledger = ! empty( $filters['params'] ) ? $pdb->get_results( $pdb->prepare( $sql, $filters['params'] ) ) : $pdb->get_results( $sql );
 
 		nocache_headers();
 		header( 'Content-Type: text/csv; charset=utf-8' );
@@ -12076,6 +12151,7 @@ class AJForms_Admin {
 
 	private function display_portal_billing_tab() {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 		$this->cleanup_unpaid_portal_checkout_sessions();
@@ -12094,7 +12170,7 @@ class AJForms_Admin {
 			WHERE " . implode( ' AND ', $filters['where'] ) . "
 			ORDER BY l.ledger_date ASC, l.id ASC
 			LIMIT 300";
-		$ledger = ! empty( $filters['params'] ) ? $wpdb->get_results( $wpdb->prepare( $sql, $filters['params'] ) ) : $wpdb->get_results( $sql );
+		$ledger = ! empty( $filters['params'] ) ? $pdb->get_results( $pdb->prepare( $sql, $filters['params'] ) ) : $pdb->get_results( $sql );
 		$ledger = $this->get_admin_portal_display_ledger( $ledger );
 		$balance_data = $this->get_portal_ledger_running_balances( $ledger );
 		$running_balances = $balance_data['balances'];
@@ -12117,8 +12193,8 @@ class AJForms_Admin {
 				$credit_balance += abs( $customer_balance );
 			}
 		}
-		$totals = $wpdb->get_row( "SELECT COUNT(*) AS total_rows, COALESCE(SUM(amount),0) AS total_amount FROM {$this->get_portal_ledger_table()}" );
-		$customers = $wpdb->get_results( "SELECT stripe_customer_id, email, name FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC, stripe_customer_id ASC LIMIT 500" );
+		$totals = $pdb->get_row( "SELECT COUNT(*) AS total_rows, COALESCE(SUM(amount),0) AS total_amount FROM {$this->get_portal_ledger_table()}" );
+		$customers = $pdb->get_results( "SELECT stripe_customer_id, email, name FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC, stripe_customer_id ASC LIMIT 500" );
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'billing' ), admin_url( 'admin.php' ) );
 		$export_url = wp_nonce_url( add_query_arg( array_merge( $_GET, array( 'billing_export' => 'csv' ) ), admin_url( 'admin.php' ) ), 'ajcore_export_billing_ledger' );
 		?>
@@ -12291,10 +12367,9 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_dashboard_billing_metrics() {
-		global $wpdb;
-
-		$today          = current_time( 'Y-m-d' );
-		$ledger         = $wpdb->get_results( "SELECT * FROM {$this->get_portal_ledger_table()}" );
+		$pdb   = $this->get_pdb();
+		$today = current_time( 'Y-m-d' );
+		$ledger = $pdb->get_results( "SELECT * FROM {$this->get_portal_ledger_table()}" );
 		$ledger         = $this->get_admin_portal_display_ledger( $ledger );
 		$customer_balances = array();
 		$open_customer_balances = array();
@@ -13361,6 +13436,7 @@ class AJForms_Admin {
 
 	private function display_portal_sync_tab() {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$this->ensure_portal_schema();
 
@@ -13368,11 +13444,11 @@ class AJForms_Admin {
 		$settings     = $this->get_portal_sync_settings();
 		$jobs         = $this->get_portal_sync_jobs();
 		$frequencies  = $this->get_portal_sync_frequency_labels();
-		$logs         = $wpdb->get_results( "SELECT * FROM {$this->get_portal_sync_logs_table()} ORDER BY started_at DESC, id DESC LIMIT 80" );
+		$logs         = $pdb->get_results( "SELECT * FROM {$this->get_portal_sync_logs_table()} ORDER BY started_at DESC, id DESC LIMIT 80" );
 		$last_run     = get_option( 'ajcore_portal_sync_last_run', '' );
 		$reconciliation = $this->get_portal_sync_reconciliation();
 		$open_log_id  = isset( $_GET['sync_log_id'] ) ? absint( wp_unslash( $_GET['sync_log_id'] ) ) : 0;
-		$open_log_items = $open_log_id ? $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$this->get_portal_sync_log_items_table()} WHERE log_id = %d ORDER BY id ASC LIMIT 500", $open_log_id ) ) : array();
+		$open_log_items = $open_log_id ? $pdb->get_results( $pdb->prepare( "SELECT * FROM {$this->get_portal_sync_log_items_table()} WHERE log_id = %d ORDER BY id ASC LIMIT 500", $open_log_id ) ) : array();
 		$sync_url     = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
 		$reset_plan   = $this->get_portal_master_reset_plan();
 		$table_inventory = $this->get_ajcore_table_inventory();
@@ -14102,9 +14178,10 @@ class AJForms_Admin {
 		}
 
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
-		$products = $wpdb->get_results(
-			$wpdb->prepare(
+		$products = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT p.*,
 					COALESCE(c.visibility, p.visibility, 'hidden') AS visibility,
 					COALESCE(c.custom_label, p.custom_label, '') AS custom_label,
@@ -14122,9 +14199,9 @@ class AJForms_Admin {
 				300
 			)
 		);
-		$active_count  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1" );
-		$visible_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} p LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id WHERE p.active = 1 AND COALESCE(c.visibility, p.visibility, 'hidden') <> 'hidden'" );
-		$total_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" );
+		$active_count  = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} WHERE active = 1" );
+		$visible_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()} p LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id WHERE p.active = 1 AND COALESCE(c.visibility, p.visibility, 'hidden') <> 'hidden'" );
+		$total_count   = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_products_table()}" );
 		$duplicate_behavior_options = $this->get_portal_product_duplicate_behavior_options();
 		$dependency_settings = $this->get_public_product_dependency_settings();
 		foreach ( (array) $products as $product ) {
@@ -14322,9 +14399,10 @@ class AJForms_Admin {
 		}
 
 		global $wpdb;
-		$customers = $wpdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} WHERE enabled_portal = 1 AND portal_status = 'active' ORDER BY name ASC, email ASC LIMIT 500" );
+		$pdb       = $this->get_pdb();
+		$customers = $pdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} WHERE enabled_portal = 1 AND portal_status = 'active' ORDER BY name ASC, email ASC LIMIT 500" );
 		if ( empty( $customers ) ) {
-			$customers = $wpdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC LIMIT 500" );
+			$customers = $pdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC LIMIT 500" );
 		}
 
 		$customer_map = array();
@@ -14367,10 +14445,10 @@ class AJForms_Admin {
 		$filters['view']      = in_array( $filters['view'], array( 'overdue' ), true ) ? $filters['view'] : '';
 
 		$edit_task_id  = isset( $_GET['edit_task_id'] ) ? absint( wp_unslash( $_GET['edit_task_id'] ) ) : 0;
-		$editing_task  = $edit_task_id ? $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_tasks_table()} WHERE id = %d", $edit_task_id ) ) : null;
+		$editing_task  = $edit_task_id ? $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_tasks_table()} WHERE id = %d", $edit_task_id ) ) : null;
 		$show_task_form = $editing_task || ( isset( $_GET['new_task'] ) && '1' === (string) $_GET['new_task'] );
 
-		$tasks_raw = $wpdb->get_results(
+		$tasks_raw = $pdb->get_results(
 			"SELECT t.*, c.name AS customer_name, c.email AS customer_email, ts.status AS customer_status, ts.completed_at AS customer_completed_at, ts.updated_at AS customer_status_updated_at
 			FROM {$this->get_portal_tasks_table()} t
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = t.stripe_customer_id
@@ -14384,7 +14462,7 @@ class AJForms_Admin {
 		$latest_comments = array();
 		if ( ! empty( $all_task_ids ) ) {
 			$placeholders = implode( ',', array_fill( 0, count( $all_task_ids ), '%d' ) );
-			$comments = $wpdb->get_results( $wpdb->prepare( "SELECT tc.*, c.name AS customer_name, c.email AS customer_email FROM {$this->get_portal_task_comments_table()} tc LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = tc.stripe_customer_id WHERE tc.task_id IN ({$placeholders}) ORDER BY tc.created_at DESC, tc.id DESC", $all_task_ids ) );
+			$comments = $pdb->get_results( $pdb->prepare( "SELECT tc.*, c.name AS customer_name, c.email AS customer_email FROM {$this->get_portal_task_comments_table()} tc LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = tc.stripe_customer_id WHERE tc.task_id IN ({$placeholders}) ORDER BY tc.created_at DESC, tc.id DESC", $all_task_ids ) );
 			foreach ( $comments as $comment ) {
 				$task_id = absint( $comment->task_id );
 				if ( ! isset( $comments_by_task[ $task_id ] ) ) {
