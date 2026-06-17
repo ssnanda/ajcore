@@ -17110,17 +17110,19 @@ class AJForms_Admin {
 			wp_send_json_error( __( 'Host, name, and user are required.', 'ajforms' ) );
 		}
 
-		$db = new wpdb( $user, $pass, $name, $host );
-		$db->suppress_errors( true );
-		$db->show_errors = false;
-
-		$result = $db->get_var( 'SELECT 1' );
-
-		if ( '1' !== (string) $result ) {
-			$msg = $db->last_error ? $db->last_error : __( 'Could not connect to the specified database.', 'ajforms' );
-			wp_send_json_error( $msg );
+		if ( ! function_exists( 'mysqli_connect' ) ) {
+			wp_send_json_error( __( 'The mysqli PHP extension is not available on this server.', 'ajforms' ) );
 		}
 
+		// phpcs:ignore WordPress.DB.RestrictedFunctions.mysql_mysqli_connect
+		$conn = @mysqli_connect( $host, $user, $pass, $name );
+
+		if ( ! $conn ) {
+			$err = mysqli_connect_error();
+			wp_send_json_error( $err ?: __( 'Could not connect to the specified database.', 'ajforms' ) );
+		}
+
+		mysqli_close( $conn );
 		wp_send_json_success( __( 'Connection successful.', 'ajforms' ) );
 	}
 }
