@@ -16787,15 +16787,12 @@ class AJForms_Admin {
 		$existing = is_array( $existing ) ? $existing : array();
 
 		$new = array(
-			'enabled'      => ! empty( $_POST['shared_db_enabled'] ) ? 1 : 0,
-			'host'         => sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) ),
-			'name'         => sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) ),
-			'user'         => sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) ),
-			'prefix'       => sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) ),
-			'ms_enabled'   => ! empty( $_POST['ms_portal_enabled'] ) ? 1 : 0,
-			'site_code'    => sanitize_text_field( wp_unslash( $_POST['ms_site_code'] ?? '' ) ),
-			'site_label'   => sanitize_text_field( wp_unslash( $_POST['ms_site_label'] ?? '' ) ),
-			'stripe_owner' => ! empty( $_POST['ms_stripe_owner'] ) ? 1 : 0,
+			'enabled'    => ! empty( $_POST['shared_db_enabled'] ) ? 1 : 0,
+			'host'       => sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) ),
+			'name'       => sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) ),
+			'user'       => sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) ),
+			'prefix'     => sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) ),
+			'ms_enabled' => ! empty( $_POST['ms_portal_enabled'] ) ? 1 : 0,
 		);
 
 		$posted_password = isset( $_POST['shared_db_password'] ) ? (string) wp_unslash( $_POST['shared_db_password'] ) : '';
@@ -16804,16 +16801,13 @@ class AJForms_Admin {
 		// Don't override fields that are locked by constants.
 		foreach (
 			array(
-				'enabled'      => 'AJCORE_SHARED_DB_ENABLED',
-				'host'         => 'AJCORE_SHARED_DB_HOST',
-				'name'         => 'AJCORE_SHARED_DB_NAME',
-				'user'         => 'AJCORE_SHARED_DB_USER',
-				'password'     => 'AJCORE_SHARED_DB_PASSWORD',
-				'prefix'       => 'AJCORE_SHARED_DB_PREFIX',
-				'ms_enabled'   => 'AJCORE_MULTISITE_PORTAL_ENABLED',
-				'site_code'    => 'AJCORE_SITE_CODE',
-				'site_label'   => 'AJCORE_SITE_LABEL',
-				'stripe_owner' => 'AJCORE_STRIPE_SYNC_OWNER',
+				'enabled'    => 'AJCORE_SHARED_DB_ENABLED',
+				'host'       => 'AJCORE_SHARED_DB_HOST',
+				'name'       => 'AJCORE_SHARED_DB_NAME',
+				'user'       => 'AJCORE_SHARED_DB_USER',
+				'password'   => 'AJCORE_SHARED_DB_PASSWORD',
+				'prefix'     => 'AJCORE_SHARED_DB_PREFIX',
+				'ms_enabled' => 'AJCORE_MULTISITE_PORTAL_ENABLED',
 			) as $field => $const
 		) {
 			if ( defined( $const ) ) {
@@ -16822,6 +16816,11 @@ class AJForms_Admin {
 		}
 
 		update_option( 'ajcore_shared_db_settings', array_merge( $existing, $new ), false );
+
+		// Auto-register this site in the shared DB control table.
+		if ( function_exists( 'ajcore_register_site_in_shared_db' ) ) {
+			ajcore_register_site_in_shared_db();
+		}
 
 		wp_safe_redirect(
 			add_query_arg(
@@ -16961,8 +16960,8 @@ class AJForms_Admin {
 
 				<?php if ( $is_enabled ) : ?>
 				<hr style="margin:24px 0;">
-				<h4><?php esc_html_e( 'Multi-Site Portal Settings', 'ajforms' ); ?></h4>
-				<p class="description"><?php esc_html_e( 'Configure this installation\'s identity in the shared portal network. Only shown when Shared DB is enabled.', 'ajforms' ); ?></p>
+				<h4><?php esc_html_e( 'Multi-Site Portal', 'ajforms' ); ?></h4>
+				<p class="description"><?php esc_html_e( 'This site\'s identity in the shared portal network. Read from the shared DB control table.', 'ajforms' ); ?></p>
 				<table class="form-table" role="presentation">
 					<tr>
 						<th scope="row">
@@ -16981,55 +16980,17 @@ class AJForms_Admin {
 						</td>
 					</tr>
 					<tr>
-						<th scope="row">
-							<?php esc_html_e( 'Site Code', 'ajforms' ); ?>
-							<?php if ( defined( 'AJCORE_SITE_CODE' ) ) : ?>
-								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
-							<?php endif; ?>
-						</th>
-						<td>
-							<input type="text" name="ms_site_code" class="regular-text"
-								value="<?php echo esc_attr( (string) ( $s['site_code'] ?? '' ) ); ?>"
-								<?php echo defined( 'AJCORE_SITE_CODE' ) ? 'readonly' : ''; ?>>
-							<p class="description"><?php esc_html_e( 'Short identifier for this site (e.g. site1). Used to tag shared records.', 'ajforms' ); ?></p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">
-							<?php esc_html_e( 'Site Label', 'ajforms' ); ?>
-							<?php if ( defined( 'AJCORE_SITE_LABEL' ) ) : ?>
-								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
-							<?php endif; ?>
-						</th>
-						<td>
-							<input type="text" name="ms_site_label" class="regular-text"
-								value="<?php echo esc_attr( (string) ( $s['site_label'] ?? '' ) ); ?>"
-								<?php echo defined( 'AJCORE_SITE_LABEL' ) ? 'readonly' : ''; ?>>
-							<p class="description"><?php esc_html_e( 'Human-readable name for this site.', 'ajforms' ); ?></p>
-						</td>
-					</tr>
-					<tr>
 						<th scope="row"><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></th>
 						<td>
 							<input type="text" class="regular-text" value="<?php echo esc_attr( $site_uuid ); ?>" readonly>
-							<p class="description"><?php esc_html_e( 'Auto-generated unique identifier for this installation. Read-only.', 'ajforms' ); ?></p>
+							<p class="description"><?php esc_html_e( 'Auto-generated identifier for this installation. Stored in the shared control table.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th scope="row">
-							<?php esc_html_e( 'Stripe Sync Owner', 'ajforms' ); ?>
-							<?php if ( defined( 'AJCORE_STRIPE_SYNC_OWNER' ) ) : ?>
-								<span class="description">(<?php esc_html_e( 'set via constant', 'ajforms' ); ?>)</span>
-							<?php endif; ?>
-						</th>
+						<th scope="row"><?php esc_html_e( 'Domain', 'ajforms' ); ?></th>
 						<td>
-							<label>
-								<input type="checkbox" name="ms_stripe_owner" value="1"
-									<?php checked( ! empty( $s['stripe_owner'] ) ); ?>
-									<?php echo defined( 'AJCORE_STRIPE_SYNC_OWNER' ) ? 'disabled' : ''; ?>>
-								<?php esc_html_e( 'Yes — this site runs Stripe sync, cron, and webhook ingestion', 'ajforms' ); ?>
-							</label>
-							<p class="description"><?php esc_html_e( 'Only one site in a shared portal network should own Stripe sync. Non-owner sites read shared data but cannot trigger syncs.', 'ajforms' ); ?></p>
+							<input type="text" class="regular-text" value="<?php echo esc_attr( home_url( '/' ) ); ?>" readonly>
+							<p class="description"><?php esc_html_e( 'Registered automatically from home_url(). Shown in the connected sites list.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 				</table>
@@ -17039,23 +17000,78 @@ class AJForms_Admin {
 			</form>
 		</div>
 
-		<?php if ( $is_enabled ) : ?>
+		<?php
+		// Determine shared DB state for the tools/connected-sites panels.
+		$shared_db          = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		$sites_table        = $shared_db ? ( $shared_db->prefix . 'aj_shared_sites' ) : '';
+		$schema_initialized = $shared_db && $sites_table && ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $sites_table ) ) === $sites_table );
+		$connected_sites    = $schema_initialized ? $shared_db->get_results( "SELECT * FROM `{$sites_table}` ORDER BY is_master DESC, last_seen DESC" ) : array();
+
+		// Auto-register this site now that we know the schema is up.
+		if ( $schema_initialized && function_exists( 'ajcore_register_site_in_shared_db' ) ) {
+			ajcore_register_site_in_shared_db();
+			$connected_sites = $shared_db->get_results( "SELECT * FROM `{$sites_table}` ORDER BY is_master DESC, last_seen DESC" );
+		}
+		?>
+
+		<?php if ( $is_enabled && $shared_db ) : ?>
 		<div class="ajforms-settings-card" style="margin-top:16px;">
 			<h3><?php esc_html_e( 'Shared DB Tools', 'ajforms' ); ?></h3>
-			<p><?php esc_html_e( 'Initialize the schema in the shared DB, or sync portal data between local and shared. Each copy operation replaces all destination rows.', 'ajforms' ); ?></p>
+			<p><?php esc_html_e( 'Sync portal data between local and shared. Each copy operation replaces all destination rows.', 'ajforms' ); ?></p>
 			<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-				<button type="button" id="ajcore-init-shared-schema" class="button button-secondary">
-					<?php esc_html_e( 'Initialize Shared DB Schema', 'ajforms' ); ?>
-				</button>
-				<button type="button" id="ajcore-migrate-local-to-shared" class="button button-secondary">
-					<?php esc_html_e( 'Copy Local → Shared DB', 'ajforms' ); ?>
-				</button>
-				<button type="button" id="ajcore-migrate-shared-to-local" class="button button-secondary">
-					<?php esc_html_e( 'Copy Shared → Local DB', 'ajforms' ); ?>
-				</button>
+				<?php if ( ! $schema_initialized ) : ?>
+					<button type="button" id="ajcore-init-shared-schema" class="button button-primary">
+						<?php esc_html_e( 'Initialize Shared DB Schema', 'ajforms' ); ?>
+					</button>
+				<?php else : ?>
+					<button type="button" id="ajcore-migrate-local-to-shared" class="button button-secondary">
+						<?php esc_html_e( 'Copy Local → Shared DB', 'ajforms' ); ?>
+					</button>
+					<button type="button" id="ajcore-migrate-shared-to-local" class="button button-secondary">
+						<?php esc_html_e( 'Copy Shared → Local DB', 'ajforms' ); ?>
+					</button>
+				<?php endif; ?>
 			</div>
 			<div id="ajcore-migration-result" style="font-weight:600;margin-top:4px;"></div>
 		</div>
+
+		<?php if ( $schema_initialized && ! empty( $connected_sites ) ) : ?>
+		<div class="ajforms-settings-card" style="margin-top:16px;">
+			<h3><?php esc_html_e( 'Connected Sites', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'Sites registered in the shared DB control table. The Master site is the only one that runs Stripe sync, cron, and webhook ingestion.', 'ajforms' ); ?></p>
+			<table class="widefat striped" style="margin-top:8px;">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Domain', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Master', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Last Seen', 'ajforms' ); ?></th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ( $connected_sites as $site ) : ?>
+					<tr<?php echo esc_attr( $site->site_uuid ) === $site_uuid ? ' style="background:#f0f6fc;"' : ''; ?>>
+						<td><?php echo esc_html( $site->domain ); ?><?php echo esc_attr( $site->site_uuid ) === $site_uuid ? ' <strong>(' . esc_html__( 'this site', 'ajforms' ) . ')</strong>' : ''; ?></td>
+						<td><code><?php echo esc_html( $site->site_uuid ); ?></code></td>
+						<td><?php echo $site->is_master ? '<span style="color:#166534;font-weight:700;">&#10003; ' . esc_html__( 'Master', 'ajforms' ) . '</span>' : '—'; ?></td>
+						<td><?php echo esc_html( $site->last_seen ); ?></td>
+						<td>
+							<?php if ( ! $site->is_master ) : ?>
+							<button type="button" class="button button-small ajcore-set-master-btn"
+								data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>"
+								data-domain="<?php echo esc_attr( $site->domain ); ?>">
+								<?php esc_html_e( 'Set as Master', 'ajforms' ); ?>
+							</button>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php endif; ?>
+
 		<?php endif; ?>
 
 		<script>
@@ -17135,7 +17151,7 @@ class AJForms_Admin {
 			ajcoreMigrationRequest(
 				'ajcore-init-shared-schema',
 				'',
-				'<?php echo esc_js( __( 'Create / update the 18 shared portal tables in the shared DB? Existing data will not be changed.', 'ajforms' ) ); ?>'
+				'<?php echo esc_js( __( 'Create the 19 shared portal tables (including the control table) in the shared DB? Existing data will not be changed.', 'ajforms' ) ); ?>'
 			);
 			ajcoreMigrationRequest(
 				'ajcore-migrate-local-to-shared',
@@ -17147,6 +17163,31 @@ class AJForms_Admin {
 				'shared_to_local',
 				'<?php echo esc_js( __( 'Copy shared DB portal data to this local DB? This will REPLACE your local portal data.', 'ajforms' ) ); ?>'
 			);
+		// Set as Master buttons.
+		document.querySelectorAll('.ajcore-set-master-btn').forEach(function(masterBtn) {
+			masterBtn.addEventListener('click', function() {
+				var uuid   = masterBtn.dataset.uuid;
+				var domain = masterBtn.dataset.domain;
+				if ( ! confirm( '<?php echo esc_js( __( 'Set', 'ajforms' ) ); ?> ' + domain + ' <?php echo esc_js( __( 'as the Stripe Sync Master? All other sites will become read-only for sync.', 'ajforms' ) ); ?>' ) ) return;
+
+				masterBtn.disabled = true;
+				var data = new FormData();
+				data.append('action',    'ajcore_set_shared_db_master');
+				data.append('nonce',     '<?php echo esc_js( wp_create_nonce( 'ajcore_set_shared_master' ) ); ?>');
+				data.append('site_uuid', uuid);
+
+				fetch(ajaxurl, { method: 'POST', body: data })
+					.then(function(r) { return r.json(); })
+					.then(function(res) {
+						if (res.success) { location.reload(); }
+						else {
+							alert(res.data || '<?php echo esc_js( __( 'Failed.', 'ajforms' ) ); ?>');
+							masterBtn.disabled = false;
+						}
+					})
+					.catch(function() { masterBtn.disabled = false; });
+			});
+		});
 		})();
 		</script>
 		<?php
@@ -17283,6 +17324,29 @@ class AJForms_Admin {
 		);
 
 		wp_send_json_success( array( 'message' => $message, 'tables' => $results, 'errors' => $errors ) );
+	}
+
+	public function ajax_set_shared_db_master() {
+		check_ajax_referer( 'ajcore_set_shared_master', 'nonce' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$target_uuid = isset( $_POST['site_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['site_uuid'] ) ) : '';
+		if ( '' === $target_uuid ) {
+			wp_send_json_error( __( 'Site UUID is required.', 'ajforms' ) );
+		}
+
+		$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		if ( ! $shared_db ) {
+			wp_send_json_error( __( 'Shared DB is not connected.', 'ajforms' ) );
+		}
+
+		$table = $shared_db->prefix . 'aj_shared_sites';
+		$shared_db->query( "UPDATE `{$table}` SET is_master = 0" );
+		$shared_db->update( $table, array( 'is_master' => 1 ), array( 'site_uuid' => $target_uuid ), array( '%d' ), array( '%s' ) );
+
+		wp_send_json_success( __( 'Master updated.', 'ajforms' ) );
 	}
 
 	public function ajax_test_shared_db_connection() {

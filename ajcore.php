@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.2.52
+ * Version: 0.2.53
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.2.52' );
+	define( 'AJCORE_VERSION', '0.2.53' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -382,9 +382,6 @@ if ( ! function_exists( 'ajcore_get_shared_db_settings' ) ) {
 	 *   AJCORE_SHARED_DB_PASSWORD       (string)
 	 *   AJCORE_SHARED_DB_PREFIX         (string)
 	 *   AJCORE_MULTISITE_PORTAL_ENABLED (bool)
-	 *   AJCORE_SITE_CODE                (string)
-	 *   AJCORE_SITE_LABEL               (string)
-	 *   AJCORE_STRIPE_SYNC_OWNER        (bool)
 	 */
 	function ajcore_get_shared_db_settings() {
 		$saved = get_option( 'ajcore_shared_db_settings', array() );
@@ -393,16 +390,13 @@ if ( ! function_exists( 'ajcore_get_shared_db_settings' ) ) {
 		$s = wp_parse_args(
 			$saved,
 			array(
-				'enabled'      => false,
-				'host'         => '',
-				'name'         => '',
-				'user'         => '',
-				'password'     => '',
-				'prefix'       => 'wp_',
-				'ms_enabled'   => false,
-				'site_code'    => '',
-				'site_label'   => '',
-				'stripe_owner' => false,
+				'enabled'    => false,
+				'host'       => '',
+				'name'       => '',
+				'user'       => '',
+				'password'   => '',
+				'prefix'     => 'wp_',
+				'ms_enabled' => false,
 			)
 		);
 
@@ -427,15 +421,6 @@ if ( ! function_exists( 'ajcore_get_shared_db_settings' ) ) {
 		if ( defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' ) ) {
 			$s['ms_enabled'] = (bool) AJCORE_MULTISITE_PORTAL_ENABLED;
 		}
-		if ( defined( 'AJCORE_SITE_CODE' ) ) {
-			$s['site_code'] = (string) AJCORE_SITE_CODE;
-		}
-		if ( defined( 'AJCORE_SITE_LABEL' ) ) {
-			$s['site_label'] = (string) AJCORE_SITE_LABEL;
-		}
-		if ( defined( 'AJCORE_STRIPE_SYNC_OWNER' ) ) {
-			$s['stripe_owner'] = (bool) AJCORE_STRIPE_SYNC_OWNER;
-		}
 
 		return $s;
 	}
@@ -452,13 +437,84 @@ if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) ) {
 	/**
 	 * Returns true when this site may run Stripe sync/cron/webhook.
 	 * Always true for local-only installs (shared DB disabled).
+	 * When shared DB is enabled, reads is_master from the aj_shared_sites control table.
 	 */
 	function ajcore_is_stripe_sync_owner() {
 		if ( ! ajcore_is_shared_db_enabled() ) {
 			return true;
 		}
-		$s = ajcore_get_shared_db_settings();
-		return ! empty( $s['stripe_owner'] );
+
+		$shared_db = ajcore_get_shared_db();
+		if ( ! $shared_db ) {
+			return true; // Can't connect — don't silently disable syncing.
+		}
+
+		$uuid = (string) get_option( 'ajcore_site_uuid', '' );
+		if ( '' === $uuid ) {
+			return false;
+		}
+
+		$table = $shared_db->prefix . 'aj_shared_sites';
+		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return true; // Control table not yet created — schema not initialized yet.
+		}
+
+		$is_master = $shared_db->get_var(
+			$shared_db->prepare( "SELECT is_master FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid )
+		);
+
+		return '1' === (string) $is_master;
+	}
+}
+
+if ( ! function_exists( 'ajcore_register_site_in_shared_db' ) ) {
+	/**
+	 * Upserts this site's record in the shared aj_shared_sites control table.
+	 * Silently returns if the shared DB is not connected or the table doesn't exist yet.
+	 */
+	function ajcore_register_site_in_shared_db() {
+		$shared_db = ajcore_get_shared_db();
+		if ( ! $shared_db ) {
+			return;
+		}
+
+		$uuid = (string) get_option( 'ajcore_site_uuid', '' );
+		if ( '' === $uuid ) {
+			$uuid = wp_generate_uuid4();
+			update_option( 'ajcore_site_uuid', $uuid, false );
+		}
+
+		$table = $shared_db->prefix . 'aj_shared_sites';
+		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return;
+		}
+
+		$domain   = (string) home_url( '/' );
+		$existing = $shared_db->get_row(
+			$shared_db->prepare( "SELECT id FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid )
+		);
+
+		if ( $existing ) {
+			$shared_db->update(
+				$table,
+				array( 'domain' => $domain, 'last_seen' => current_time( 'mysql' ) ),
+				array( 'site_uuid' => $uuid ),
+				array( '%s', '%s' ),
+				array( '%s' )
+			);
+		} else {
+			$shared_db->insert(
+				$table,
+				array(
+					'site_uuid'     => $uuid,
+					'domain'        => $domain,
+					'is_master'     => 0,
+					'last_seen'     => current_time( 'mysql' ),
+					'registered_at' => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%d', '%s', '%s' )
+			);
+		}
 	}
 }
 

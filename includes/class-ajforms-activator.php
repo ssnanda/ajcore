@@ -737,6 +737,7 @@ class AJForms_Activator {
 	 * Safe to pass to dbDelta() with a shared wpdb instance.
 	 */
 	public static function get_shared_portal_table_sql( $prefix, $charset_collate ) {
+		$t_shared_sites         = $prefix . 'aj_shared_sites';
 		$t_stripe_customers     = $prefix . 'aj_portal_stripe_customers';
 		$t_customer_states      = $prefix . 'aj_portal_customer_states';
 		$t_stripe_products      = $prefix . 'aj_portal_stripe_products';
@@ -756,7 +757,20 @@ class AJForms_Activator {
 		$t_event_log            = $prefix . 'aj_portal_event_log';
 		$t_stripe_events        = $prefix . 'aj_portal_stripe_events';
 
-		return "CREATE TABLE $t_stripe_customers (
+		return "CREATE TABLE $t_shared_sites (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			site_uuid varchar(100) NOT NULL,
+			domain varchar(255) DEFAULT '' NOT NULL,
+			is_master tinyint(1) NOT NULL DEFAULT 0,
+			last_seen datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			registered_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY site_uuid (site_uuid),
+			KEY is_master (is_master),
+			KEY domain (domain)
+		) $charset_collate;
+
+		CREATE TABLE $t_stripe_customers (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			stripe_customer_id varchar(100) NOT NULL,
 			email varchar(190) DEFAULT '' NOT NULL,
