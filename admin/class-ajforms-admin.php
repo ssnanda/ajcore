@@ -17038,6 +17038,26 @@ class AJForms_Admin {
 				<?php submit_button( __( 'Save Settings', 'ajforms' ) ); ?>
 			</form>
 		</div>
+
+		<?php if ( $is_enabled ) : ?>
+		<div class="ajforms-settings-card" style="margin-top:16px;">
+			<h3><?php esc_html_e( 'Shared DB Tools', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'Initialize the schema in the shared DB, or sync portal data between local and shared. Each copy operation replaces all destination rows.', 'ajforms' ); ?></p>
+			<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+				<button type="button" id="ajcore-init-shared-schema" class="button button-secondary">
+					<?php esc_html_e( 'Initialize Shared DB Schema', 'ajforms' ); ?>
+				</button>
+				<button type="button" id="ajcore-migrate-local-to-shared" class="button button-secondary">
+					<?php esc_html_e( 'Copy Local → Shared DB', 'ajforms' ); ?>
+				</button>
+				<button type="button" id="ajcore-migrate-shared-to-local" class="button button-secondary">
+					<?php esc_html_e( 'Copy Shared → Local DB', 'ajforms' ); ?>
+				</button>
+			</div>
+			<div id="ajcore-migration-result" style="font-weight:600;margin-top:4px;"></div>
+		</div>
+		<?php endif; ?>
+
 		<script>
 		(function() {
 			var btn = document.getElementById('ajcore-test-shared-db');
@@ -17074,9 +17094,195 @@ class AJForms_Admin {
 					})
 					.finally(function() { btn.disabled = false; });
 			});
+
+			function ajcoreMigrationRequest( btnId, direction, confirmMsg ) {
+				var triggerBtn = document.getElementById( btnId );
+				if ( ! triggerBtn ) return;
+				triggerBtn.addEventListener( 'click', function() {
+					if ( ! confirm( confirmMsg ) ) return;
+					var resultEl = document.getElementById( 'ajcore-migration-result' );
+					triggerBtn.disabled = true;
+					resultEl.textContent = '<?php echo esc_js( __( 'Working…', 'ajforms' ) ); ?>';
+					resultEl.style.color = '';
+
+					var data = new FormData();
+					data.append( 'action',    direction ? 'ajcore_migrate_portal_data' : 'ajcore_init_shared_db_schema' );
+					data.append( 'nonce',     direction ? '<?php echo esc_js( wp_create_nonce( 'ajcore_migrate_portal_data' ) ); ?>' : '<?php echo esc_js( wp_create_nonce( 'ajcore_init_shared_schema' ) ); ?>' );
+					if ( direction ) data.append( 'direction', direction );
+
+					fetch( ajaxurl, { method: 'POST', body: data } )
+						.then( function(r) { return r.json(); } )
+						.then( function(res) {
+							if ( res.success ) {
+								resultEl.textContent = ( res.data && res.data.message ) ? res.data.message : res.data;
+								resultEl.style.color = '#166534';
+								if ( res.data && res.data.errors && res.data.errors.length ) {
+									resultEl.textContent += ' (' + res.data.errors.join( '; ' ) + ')';
+								}
+							} else {
+								resultEl.textContent = res.data || '<?php echo esc_js( __( 'Failed.', 'ajforms' ) ); ?>';
+								resultEl.style.color = '#991b1b';
+							}
+						} )
+						.catch( function() {
+							resultEl.textContent = '<?php echo esc_js( __( 'Request failed.', 'ajforms' ) ); ?>';
+							resultEl.style.color = '#991b1b';
+						} )
+						.finally( function() { triggerBtn.disabled = false; } );
+				} );
+			}
+
+			ajcoreMigrationRequest(
+				'ajcore-init-shared-schema',
+				'',
+				'<?php echo esc_js( __( 'Create / update the 18 shared portal tables in the shared DB? Existing data will not be changed.', 'ajforms' ) ); ?>'
+			);
+			ajcoreMigrationRequest(
+				'ajcore-migrate-local-to-shared',
+				'local_to_shared',
+				'<?php echo esc_js( __( 'Copy all local portal data to the shared DB? This will REPLACE all current shared DB data.', 'ajforms' ) ); ?>'
+			);
+			ajcoreMigrationRequest(
+				'ajcore-migrate-shared-to-local',
+				'shared_to_local',
+				'<?php echo esc_js( __( 'Copy shared DB portal data to this local DB? This will REPLACE your local portal data.', 'ajforms' ) ); ?>'
+			);
 		})();
 		</script>
 		<?php
+	}
+
+	/** The 18 base table names that belong in the shared DB. */
+	private function get_shared_portal_table_bases() {
+		return array(
+			'aj_portal_stripe_customers',
+			'aj_portal_customer_states',
+			'aj_portal_stripe_products',
+			'aj_portal_product_catalog',
+			'aj_portal_stripe_subscriptions',
+			'aj_portal_stripe_transactions',
+			'aj_portal_service_snapshots',
+			'aj_portal_service_states',
+			'aj_portal_entity_mappings',
+			'aj_portal_tasks',
+			'aj_portal_task_statuses',
+			'aj_portal_task_comments',
+			'aj_portal_sync_logs',
+			'aj_portal_sync_log_items',
+			'aj_portal_ledger',
+			'aj_portal_service_requests',
+			'aj_portal_event_log',
+			'aj_portal_stripe_events',
+		);
+	}
+
+	public function ajax_init_shared_db_schema() {
+		check_ajax_referer( 'ajcore_init_shared_schema', 'nonce' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		if ( ! $shared_db ) {
+			wp_send_json_error( __( 'Shared DB is not connected. Save and test your credentials first.', 'ajforms' ) );
+		}
+
+		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+		$charset_collate = $shared_db->get_charset_collate();
+		$sql             = AJForms_Activator::get_shared_portal_table_sql( $shared_db->prefix, $charset_collate );
+
+		// Temporarily swap global $wpdb so dbDelta writes to the shared DB.
+		global $wpdb;
+		$original_wpdb = $wpdb;
+		$wpdb          = $shared_db;
+		dbDelta( $sql );
+		$wpdb = $original_wpdb;
+
+		// Report what's now in the shared DB.
+		$found = array();
+		foreach ( $this->get_shared_portal_table_bases() as $base ) {
+			$tbl = $shared_db->prefix . $base;
+			if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $tbl ) ) === $tbl ) {
+				$found[] = $base;
+			}
+		}
+
+		wp_send_json_success(
+			sprintf(
+				__( 'Schema ready. %d of 18 shared tables exist in the shared DB.', 'ajforms' ),
+				count( $found )
+			)
+		);
+	}
+
+	public function ajax_migrate_portal_data() {
+		check_ajax_referer( 'ajcore_migrate_portal_data', 'nonce' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$direction = isset( $_POST['direction'] ) ? sanitize_key( wp_unslash( $_POST['direction'] ) ) : '';
+		if ( ! in_array( $direction, array( 'local_to_shared', 'shared_to_local' ), true ) ) {
+			wp_send_json_error( __( 'Invalid direction.', 'ajforms' ) );
+		}
+
+		$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		if ( ! $shared_db ) {
+			wp_send_json_error( __( 'Shared DB is not connected. Save and test your credentials first.', 'ajforms' ) );
+		}
+
+		global $wpdb;
+
+		if ( 'local_to_shared' === $direction ) {
+			$src_db     = $wpdb;
+			$dst_db     = $shared_db;
+		} else {
+			$src_db     = $shared_db;
+			$dst_db     = $wpdb;
+		}
+
+		$results = array();
+		$errors  = array();
+
+		foreach ( $this->get_shared_portal_table_bases() as $base ) {
+			$src_table = $src_db->prefix . $base;
+			$dst_table = $dst_db->prefix . $base;
+
+			// Skip if source table doesn't exist.
+			if ( $src_db->get_var( $src_db->prepare( 'SHOW TABLES LIKE %s', $src_table ) ) !== $src_table ) {
+				$errors[] = $base . ': source table not found';
+				continue;
+			}
+			// Skip if destination table doesn't exist.
+			if ( $dst_db->get_var( $dst_db->prepare( 'SHOW TABLES LIKE %s', $dst_table ) ) !== $dst_table ) {
+				$errors[] = $base . ': destination table not found (run Initialize Schema first)';
+				continue;
+			}
+
+			$dst_db->query( "TRUNCATE TABLE `{$dst_table}`" );
+
+			$rows  = $src_db->get_results( "SELECT * FROM `{$src_table}`", ARRAY_A );
+			$count = 0;
+			foreach ( $rows as $row ) {
+				if ( false !== $dst_db->insert( $dst_table, $row ) ) {
+					$count++;
+				}
+			}
+			$results[ $base ] = $count;
+		}
+
+		$total   = array_sum( $results );
+		$message = sprintf(
+			'local_to_shared' === $direction
+				? __( 'Copied %d rows across %d tables from local → shared DB.', 'ajforms' )
+				: __( 'Copied %d rows across %d tables from shared → local DB.', 'ajforms' ),
+			$total,
+			count( $results )
+		);
+
+		wp_send_json_success( array( 'message' => $message, 'tables' => $results, 'errors' => $errors ) );
 	}
 
 	public function ajax_test_shared_db_connection() {
@@ -17114,14 +17320,23 @@ class AJForms_Admin {
 			wp_send_json_error( __( 'The mysqli PHP extension is not available on this server.', 'ajforms' ) );
 		}
 
+		// Parse optional port from "hostname:port" format (wpdb handles this natively;
+		// mysqli_connect requires it as a separate argument).
+		$port = 3306;
+		if ( strpos( $host, ':' ) !== false ) {
+			$parts = explode( ':', $host, 2 );
+			$host  = $parts[0];
+			$port  = (int) $parts[1];
+		}
+
 		// phpcs:ignore WordPress.DB.RestrictedFunctions.mysql_mysqli_connect
-		$conn = @mysqli_connect( $host, $user, $pass, $name );
+		$conn = @mysqli_connect( $host, $user, $pass, $name, $port );
 		$err  = $conn ? '' : (string) mysqli_connect_error();
 
-		// "localhost" triggers a Unix socket attempt. When that fails, retry
-		// with 127.0.0.1 to force a TCP connection instead.
-		if ( ! $conn && 'localhost' === $host ) {
-			$conn = @mysqli_connect( '127.0.0.1', $user, $pass, $name ); // phpcs:ignore
+		// "localhost" with default port triggers a Unix socket attempt. When that
+		// fails, retry with 127.0.0.1 to force TCP.
+		if ( ! $conn && 'localhost' === $host && 3306 === $port ) {
+			$conn = @mysqli_connect( '127.0.0.1', $user, $pass, $name, 3306 ); // phpcs:ignore
 			if ( $conn ) {
 				$err = '';
 			}
