@@ -12458,7 +12458,13 @@ class AJForms_Admin {
 					<a class="nav-tab <?php echo 'products-services' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'products-services', $base_url ) ); ?>"><?php esc_html_e( 'Product Catalog', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'tasks' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'tasks', $base_url ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'file-library' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'file-library', $base_url ) ); ?>"><?php esc_html_e( 'File Library', 'ajforms' ); ?></a>
+					<?php $sync_owner = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true; ?>
+					<?php if ( $sync_owner ) : ?>
 					<a class="nav-tab <?php echo 'sync' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sync', $base_url ) ); ?>"><?php esc_html_e( 'Sync', 'ajforms' ); ?></a>
+					<?php else : ?>
+					<span class="nav-tab" title="<?php esc_attr_e( 'Stripe sync runs on the Master site only.', 'ajforms' ); ?>"
+						style="opacity:0.45;cursor:not-allowed;pointer-events:none;"><?php esc_html_e( 'Sync', 'ajforms' ); ?></span>
+					<?php endif; ?>
 					<a class="nav-tab <?php echo 'event-log' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'event-log', $base_url ) ); ?>"><?php esc_html_e( 'Event Log', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'menu' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'menu', $base_url ) ); ?>"><?php esc_html_e( 'Menu', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'settings' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'settings', $base_url ) ); ?>"><?php esc_html_e( 'Settings', 'ajforms' ); ?></a>
@@ -17029,6 +17035,20 @@ class AJForms_Admin {
 			ajcore_register_site_in_shared_db();
 			$connected_sites = $shared_db->get_results( "SELECT * FROM `{$sites_table}` ORDER BY is_master DESC, last_seen DESC" );
 		}
+
+		// Is the current site the designated Master?
+		$is_current_master = false;
+		if ( $schema_initialized && ! empty( $connected_sites ) ) {
+			foreach ( $connected_sites as $_cs ) {
+				if ( (string) $_cs->site_uuid === $site_uuid && $_cs->is_master ) {
+					$is_current_master = true;
+					break;
+				}
+			}
+		} elseif ( ! $schema_initialized ) {
+			// Before schema exists, treat local site as master for setup purposes.
+			$is_current_master = true;
+		}
 		?>
 
 		<?php if ( $is_enabled && $shared_db ) : ?>
@@ -17036,17 +17056,19 @@ class AJForms_Admin {
 			<h3><?php esc_html_e( 'Shared DB Tools', 'ajforms' ); ?></h3>
 			<p><?php esc_html_e( 'Sync portal data between local and shared. Each copy operation replaces all destination rows.', 'ajforms' ); ?></p>
 			<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-				<?php if ( ! $schema_initialized ) : ?>
+				<?php if ( ! $schema_initialized && $is_current_master ) : ?>
 					<button type="button" id="ajcore-init-shared-schema" class="button button-primary">
 						<?php esc_html_e( 'Initialize Shared DB Schema', 'ajforms' ); ?>
 					</button>
-				<?php else : ?>
+				<?php elseif ( $schema_initialized && $is_current_master ) : ?>
 					<button type="button" id="ajcore-migrate-local-to-shared" class="button button-secondary">
 						<?php esc_html_e( 'Copy Local → Shared DB', 'ajforms' ); ?>
 					</button>
 					<button type="button" id="ajcore-migrate-shared-to-local" class="button button-secondary">
 						<?php esc_html_e( 'Copy Shared → Local DB', 'ajforms' ); ?>
 					</button>
+				<?php elseif ( $schema_initialized && ! $is_current_master ) : ?>
+					<p class="description" style="margin:0;"><?php esc_html_e( 'Data migration is only available on the Master site.', 'ajforms' ); ?></p>
 				<?php endif; ?>
 			</div>
 			<div id="ajcore-migration-result" style="font-weight:600;margin-top:4px;"></div>
@@ -17067,14 +17089,21 @@ class AJForms_Admin {
 					</tr>
 				</thead>
 				<tbody>
-					<?php foreach ( $connected_sites as $site ) : ?>
-					<tr<?php echo esc_attr( $site->site_uuid ) === $site_uuid ? ' style="background:#f0f6fc;"' : ''; ?>>
-						<td><?php echo esc_html( $site->domain ); ?><?php echo esc_attr( $site->site_uuid ) === $site_uuid ? ' <strong>(' . esc_html__( 'this site', 'ajforms' ) . ')</strong>' : ''; ?></td>
+					<?php foreach ( $connected_sites as $site ) :
+						$is_this_site = ( (string) $site->site_uuid === $site_uuid );
+					?>
+					<tr<?php echo $is_this_site ? ' style="background:#f0f6fc;"' : ''; ?>>
+						<td><?php echo esc_html( $site->domain ); ?><?php echo $is_this_site ? ' <strong>(' . esc_html__( 'this site', 'ajforms' ) . ')</strong>' : ''; ?></td>
 						<td><code><?php echo esc_html( $site->site_uuid ); ?></code></td>
 						<td><?php echo $site->is_master ? '<span style="color:#166534;font-weight:700;">&#10003; ' . esc_html__( 'Master', 'ajforms' ) . '</span>' : '—'; ?></td>
 						<td><?php echo esc_html( $site->last_seen ); ?></td>
 						<td>
-							<?php if ( ! $site->is_master ) : ?>
+							<?php if ( $is_current_master && $is_this_site && $site->is_master ) : ?>
+							<button type="button" class="button button-small ajcore-resign-master-btn"
+								style="border-color:#b91c1c;color:#b91c1c;">
+								<?php esc_html_e( 'Resign as Master', 'ajforms' ); ?>
+							</button>
+							<?php elseif ( $is_current_master && ! $site->is_master ) : ?>
 							<button type="button" class="button button-small ajcore-set-master-btn"
 								data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>"
 								data-domain="<?php echo esc_attr( $site->domain ); ?>">
@@ -17240,6 +17269,28 @@ class AJForms_Admin {
 					.catch(function() { masterBtn.disabled = false; });
 			});
 		});
+
+		// Resign as Master button.
+		var resignBtn = document.querySelector('.ajcore-resign-master-btn');
+		if ( resignBtn ) {
+			resignBtn.addEventListener('click', function() {
+				if ( ! confirm( '<?php echo esc_js( __( 'Resign as Master? This site will stop running Stripe sync and webhooks. No other site will be designated Master until you set one manually.', 'ajforms' ) ); ?>' ) ) return;
+				resignBtn.disabled = true;
+				var data = new FormData();
+				data.append('action', 'ajcore_resign_shared_db_master');
+				data.append('nonce',  '<?php echo esc_js( wp_create_nonce( 'ajcore_resign_shared_master' ) ); ?>');
+				fetch(ajaxurl, { method: 'POST', body: data })
+					.then(function(r) { return r.json(); })
+					.then(function(res) {
+						if (res.success) { location.reload(); }
+						else {
+							alert(res.data || '<?php echo esc_js( __( 'Failed.', 'ajforms' ) ); ?>');
+							resignBtn.disabled = false;
+						}
+					})
+					.catch(function() { resignBtn.disabled = false; });
+			});
+		}
 		})();
 		</script>
 		<?php
@@ -17399,6 +17450,27 @@ class AJForms_Admin {
 		$shared_db->update( $table, array( 'is_master' => 1 ), array( 'site_uuid' => $target_uuid ), array( '%d' ), array( '%s' ) );
 
 		wp_send_json_success( __( 'Master updated.', 'ajforms' ) );
+	}
+
+	public function ajax_resign_shared_db_master() {
+		check_ajax_referer( 'ajcore_resign_shared_master', 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ), 403 );
+			return;
+		}
+
+		$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		if ( ! $shared_db ) {
+			wp_send_json_error( __( 'Cannot connect to shared database.', 'ajforms' ) );
+			return;
+		}
+
+		$uuid  = (string) get_option( 'ajcore_site_uuid', '' );
+		$table = $shared_db->prefix . 'aj_shared_sites';
+		$shared_db->update( $table, array( 'is_master' => 0 ), array( 'site_uuid' => $uuid ), array( '%d' ), array( '%s' ) );
+
+		wp_send_json_success( __( 'Resigned as Master. No site is currently designated as Master.', 'ajforms' ) );
 	}
 
 	public function ajax_toggle_multisite_portal() {

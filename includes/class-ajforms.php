@@ -41,6 +41,7 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_migrate_portal_data', array( $plugin_admin, 'ajax_migrate_portal_data' ) );
 		add_action( 'wp_ajax_ajcore_set_shared_db_master', array( $plugin_admin, 'ajax_set_shared_db_master' ) );
 		add_action( 'wp_ajax_ajcore_toggle_multisite_portal', array( $plugin_admin, 'ajax_toggle_multisite_portal' ) );
+		add_action( 'wp_ajax_ajcore_resign_shared_db_master', array( $plugin_admin, 'ajax_resign_shared_db_master' ) );
 		add_action( 'ajforms_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
 		add_action( 'ajcore_portal_stripe_sync', array( $plugin_admin, 'run_scheduled_portal_sync_job' ) );
 	}
