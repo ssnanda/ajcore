@@ -7517,14 +7517,15 @@ class AJForms_Admin {
 
 	private function enable_stripe_customer_as_portal_user( $stripe_customer_id ) {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		if ( '' === $stripe_customer_id ) {
 			return new WP_Error( 'missing_customer', __( 'Stripe customer ID is required.', 'ajforms' ) );
 		}
 
-		$customer = $wpdb->get_row(
-			$wpdb->prepare(
+		$customer = $pdb->get_row(
+			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s",
 				$stripe_customer_id
 			)
@@ -13629,10 +13630,13 @@ class AJForms_Admin {
 		}
 
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$status_filter = isset( $_GET['portal_user_status'] ) ? sanitize_key( wp_unslash( $_GET['portal_user_status'] ) ) : '';
 		$allowed_status_filters = array( 'active', 'disabled', 'archived', 'without_login' );
 		$status_filter = in_array( $status_filter, $allowed_status_filters, true ) ? $status_filter : '';
+
+		// Build WHERE against stripe_customers only; without_login is applied in PHP after merging mapping data.
 		$where = array( '1=1' );
 		if ( 'active' === $status_filter ) {
 			$where[] = "c.portal_status = 'active' AND c.enabled_portal = 1";
@@ -13640,24 +13644,53 @@ class AJForms_Admin {
 			$where[] = "(c.portal_status = 'disabled' OR c.portal_status = 'without_portal_login' OR (c.enabled_portal = 0 AND (c.portal_status = '' OR c.portal_status IS NULL)))";
 		} elseif ( 'archived' === $status_filter ) {
 			$where[] = "c.portal_status = 'archived'";
-		} elseif ( 'without_login' === $status_filter ) {
-			$where[] = '(m.id IS NULL OR u.ID IS NULL)';
-		} else {
+		} elseif ( 'without_login' !== $status_filter ) {
 			$where[] = "(c.portal_status IS NULL OR c.portal_status <> 'archived')";
 		}
 
-		$customers = $wpdb->get_results(
-			"SELECT c.*, m.user_id, m.customer_email AS mapped_email, m.portal_user_email, m.site_uuid AS mapping_site_uuid, m.updated_at AS mapped_at
-			FROM {$this->get_portal_stripe_customers_table()} c
-			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
-			LEFT JOIN {$wpdb->users} u ON u.ID = m.user_id
-			WHERE " . implode( ' AND ', $where ) . '
+		// Step 1: Fetch stripe_customers from shared DB (or local in single-site mode).
+		$customers_raw = $pdb->get_results(
+			'SELECT c.* FROM ' . $this->get_portal_stripe_customers_table() . ' c
+			WHERE ' . implode( ' AND ', $where ) . '
 			ORDER BY c.enabled_portal DESC, c.name ASC, c.email ASC
 			LIMIT 300'
 		);
 
-		$total_customers = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()}" );
-		$enabled_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'active' AND enabled_portal = 1" );
+		// Step 2: Fetch user_mappings for these customers from local DB.
+		$mappings_by_cid = array();
+		if ( ! empty( $customers_raw ) ) {
+			$cids         = array_column( (array) $customers_raw, 'stripe_customer_id' );
+			$placeholders = implode( ', ', array_fill( 0, count( $cids ), '%s' ) );
+			$mapping_rows = $wpdb->get_results(
+				$wpdb->prepare(
+					"SELECT m.*, u.ID AS user_exists FROM {$this->get_portal_user_mappings_table()} m
+					LEFT JOIN {$wpdb->users} u ON u.ID = m.user_id
+					WHERE m.stripe_customer_id IN ({$placeholders})",
+					...$cids
+				)
+			);
+			foreach ( (array) $mapping_rows as $mr ) {
+				$mappings_by_cid[ $mr->stripe_customer_id ] = $mr;
+			}
+		}
+
+		// Step 3: Merge mapping data and apply without_login filter in PHP.
+		$customers = array();
+		foreach ( (array) $customers_raw as $c ) {
+			$mr                   = isset( $mappings_by_cid[ $c->stripe_customer_id ] ) ? $mappings_by_cid[ $c->stripe_customer_id ] : null;
+			$c->user_id           = $mr ? $mr->user_id : null;
+			$c->mapped_email      = $mr ? $mr->customer_email : null;
+			$c->portal_user_email = $mr ? $mr->portal_user_email : null;
+			$c->mapping_site_uuid = $mr ? $mr->site_uuid : null;
+			$c->mapped_at         = $mr ? $mr->updated_at : null;
+			if ( 'without_login' === $status_filter && $mr && ! empty( $mr->user_exists ) ) {
+				continue;
+			}
+			$customers[] = $c;
+		}
+
+		$total_customers = (int) $pdb->get_var( 'SELECT COUNT(*) FROM ' . $this->get_portal_stripe_customers_table() );
+		$enabled_count   = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'active' AND enabled_portal = 1" );
 		$available_fields = $this->discover_portal_customer_scalar_fields( $customers );
 		$display_fields   = array_values( array_intersect( $this->get_portal_customer_display_fields(), $available_fields ) );
 		if ( empty( $display_fields ) && ! empty( $available_fields ) ) {
