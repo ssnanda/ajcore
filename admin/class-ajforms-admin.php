@@ -9145,7 +9145,7 @@ class AJForms_Admin {
 					$result = $this->disable_stripe_customer_portal_access( $stripe_customer_id );
 				} elseif ( 'archive' === $action && ( $is_active || $is_disabled ) ) {
 					$result = $this->disable_stripe_customer_portal_access( $stripe_customer_id, 'archived' );
-				} elseif ( 'enable' === $action && $is_disabled ) {
+				} elseif ( 'enable' === $action && ( $is_disabled || ( $is_active && empty( $customer->user_id ) ) ) ) {
 					$result = $this->enable_stripe_customer_as_portal_user( $stripe_customer_id );
 				} elseif ( 'restore' === $action && $is_archived ) {
 					$result = $this->enable_stripe_customer_as_portal_user( $stripe_customer_id );
