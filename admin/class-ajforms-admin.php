@@ -12084,7 +12084,7 @@ class AJForms_Admin {
 		$service_products = $this->get_portal_stripe_products_for_settings();
 		?>
 		<div class="ajcore-admin-panel">
-			<h2><?php esc_html_e( 'Requests', 'ajforms' ); ?></h2>
+			<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -12094,7 +12094,7 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['service-request-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
-			<p><?php esc_html_e( 'Review client checkout attempts, custom pricing requests, paid purchases, and other service-related items that need an admin decision.', 'ajforms' ); ?></p>
+			<p><?php esc_html_e( 'This queue tracks customer requests from the portal, including custom request cards shown when a client already owns a service, checkout attempts, paid service purchases, and items that need an admin decision or follow-up.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
 				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
@@ -12787,7 +12787,7 @@ class AJForms_Admin {
 				<strong><?php echo esc_html( sprintf( __( 'Stripe mode: %s', 'ajforms' ), $stripe_mode['label'] ) ); ?></strong>
 				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'sync' ) ); ?>"><?php esc_html_e( 'View Sync History', 'ajforms' ); ?></a>
 				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'billing' ) ); ?>"><?php esc_html_e( 'Open Billing Workspace', 'ajforms' ); ?></a>
-				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests' ) ); ?>"><?php esc_html_e( 'Review Requests', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests' ) ); ?>"><?php esc_html_e( 'Review Service Requests', 'ajforms' ); ?></a>
 			</div>
 		</div>
 		<?php
