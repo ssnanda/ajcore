@@ -11139,6 +11139,41 @@ class AJForms_Admin {
 		);
 	}
 
+	private function get_portal_service_request_quick_actions( $request, $raw_data = array() ) {
+		$status          = isset( $request->status ) ? sanitize_key( (string) $request->status ) : '';
+		$raw_data        = is_array( $raw_data ) ? $raw_data : array();
+		$billing_preview = ! empty( $raw_data['billing_preview'] ) && is_array( $raw_data['billing_preview'] ) ? $raw_data['billing_preview'] : array();
+		$actions         = array();
+
+		if ( ! in_array( $status, array( 'admin_review_required', 'completed', 'cancelled' ), true ) ) {
+			$actions['under_review'] = __( 'Start Review', 'ajforms' );
+		}
+
+		if ( in_array( $status, array( 'draft', 'pending_payment', 'awaiting_payment', 'failed' ), true ) ) {
+			$actions['await_payment'] = __( 'Request Payment', 'ajforms' );
+		}
+
+		if ( ! in_array( $status, array( 'completed', 'cancelled', 'failed' ), true ) ) {
+			$actions['complete'] = __( 'Mark Fulfilled', 'ajforms' );
+		}
+
+		if (
+			! empty( $billing_preview )
+			&& ( ! empty( $billing_preview['subscription_id'] ) || ! empty( $billing_preview['subscription_item_id'] ) )
+			&& ( ! empty( $billing_preview['new_price_id'] ) || ! empty( $request->stripe_price_id ) )
+		) {
+			$actions['apply_billing_change'] = __( 'Apply Billing Change', 'ajforms' );
+		}
+
+		if ( ! in_array( $status, array( 'completed', 'cancelled' ), true ) ) {
+			$actions['cancel'] = __( 'Cancel', 'ajforms' );
+		}
+
+		$actions['delete'] = __( 'Delete', 'ajforms' );
+
+		return $actions;
+	}
+
 	private function normalize_portal_service_request_status( $status ) {
 		$status = sanitize_key( (string) $status );
 		$labels = $this->get_portal_service_request_status_labels();
@@ -11800,7 +11835,7 @@ class AJForms_Admin {
 		$base_url = add_query_arg( array( 'page' => 'ajforms-service-requests' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-service-requests-admin">
-			<h1><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h1>
+			<h1><?php esc_html_e( 'Service Requests / Manual Review', 'ajforms' ); ?></h1>
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -11810,7 +11845,7 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-deleted'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request deleted.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
-			<p><?php esc_html_e( 'Review client add-service checkout attempts, paid purchases, and custom upgrade requests from one place.', 'ajforms' ); ?></p>
+			<p><?php esc_html_e( 'Use this queue for customer service requests and paid purchases that need manual fulfillment, such as updating state records, sending next-step instructions, or completing internal setup.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
 				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
@@ -11850,16 +11885,7 @@ class AJForms_Admin {
 						$status_label = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
 						$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
 						$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
-						$actions = array(
-							'under_review'  => __( 'Under Review', 'ajforms' ),
-							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
-							'paid'          => __( 'Paid', 'ajforms' ),
-							'complete'     => __( 'Complete', 'ajforms' ),
-							'cancel'       => __( 'Cancel', 'ajforms' ),
-							'failed'       => __( 'Failed', 'ajforms' ),
-							'apply_billing_change' => __( 'Apply Billing Change', 'ajforms' ),
-							'delete'       => __( 'Delete', 'ajforms' ),
-						);
+						$actions = $this->get_portal_service_request_quick_actions( $request, $this->get_portal_service_request_raw_data( $request ) );
 						?>
 						<tr>
 							<td>
@@ -12084,7 +12110,7 @@ class AJForms_Admin {
 		$service_products = $this->get_portal_stripe_products_for_settings();
 		?>
 		<div class="ajcore-admin-panel">
-			<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
+			<h2><?php esc_html_e( 'Service Requests / Manual Review', 'ajforms' ); ?></h2>
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -12094,7 +12120,7 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['service-request-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
-			<p><?php esc_html_e( 'This queue tracks customer requests from the portal, including custom request cards shown when a client already owns a service, checkout attempts, paid service purchases, and items that need an admin decision or follow-up.', 'ajforms' ); ?></p>
+			<p><?php esc_html_e( 'Use this queue for customer service requests and paid purchases that need manual fulfillment, such as updating state records, sending next-step instructions, or completing internal setup.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
 				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
@@ -12135,20 +12161,11 @@ class AJForms_Admin {
 						$status_label   = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
 						$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
 						$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
-						$actions        = array(
-							'under_review'  => __( 'Under Review', 'ajforms' ),
-							'await_payment' => __( 'Awaiting Payment', 'ajforms' ),
-							'paid'          => __( 'Paid', 'ajforms' ),
-							'complete'     => __( 'Complete', 'ajforms' ),
-							'cancel'       => __( 'Cancel', 'ajforms' ),
-							'failed'       => __( 'Failed', 'ajforms' ),
-							'apply_billing_change' => __( 'Apply Billing Change', 'ajforms' ),
-							'delete'       => __( 'Delete', 'ajforms' ),
-						);
 						$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
 						$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
 						$request_raw = $this->get_portal_service_request_raw_data( $request );
 						$billing_preview = ! empty( $request_raw['billing_preview'] ) && is_array( $request_raw['billing_preview'] ) ? $request_raw['billing_preview'] : array();
+						$actions = $this->get_portal_service_request_quick_actions( $request, $request_raw );
 						$current_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
 						$current_price_label = $current_product ? $this->get_portal_product_admin_label( $current_product ) : '';
 						$save_details_nonce = wp_create_nonce( 'ajcore_service_request_details_' . (int) $request->id );
@@ -12777,7 +12794,7 @@ class AJForms_Admin {
 				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'open' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'overdue' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Tasks', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_view' => 'overdue' ) ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Paid Not Completed', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'paid' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Paid Needs Fulfillment', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'paid' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Admin Review Required', 'ajforms' ), $admin_review_required, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'admin_review_required' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'failed' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Sync / Webhook Health', 'ajforms' ), $health_has_issue ? __( 'Review', 'ajforms' ) : __( 'OK', 'ajforms' ), $this->get_portal_dashboard_url( 'sync', $last_failed ? array( 'sync_log_id' => (int) $last_failed->id ) : array() ), $health_note ); ?>
@@ -12824,7 +12841,7 @@ class AJForms_Admin {
 			<?php if ( 'customer' !== $tab ) : ?>
 				<h2 class="nav-tab-wrapper">
 					<a class="nav-tab <?php echo 'dashboard' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'dashboard', $base_url ) ); ?>"><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Manual Review', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'billing' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'billing', $base_url ) ); ?>"><?php esc_html_e( 'Billing', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Customers', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'sold-items' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sold-items', $base_url ) ); ?>"><?php esc_html_e( 'Sold Items', 'ajforms' ); ?></a>
