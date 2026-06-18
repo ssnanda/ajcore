@@ -1011,6 +1011,10 @@ class AJForms {
 				return __( 'Payment — Partially Refunded', 'ajforms' );
 			}
 
+			if ( '' !== $description && 0 !== strpos( $description, 'Charge ch_' ) ) {
+				return $description;
+			}
+
 			return __( 'Payment', 'ajforms' );
 		}
 

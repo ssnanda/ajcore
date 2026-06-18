@@ -3382,7 +3382,17 @@ class AJForms_Admin {
 			return new WP_Error( 'missing_payment_method', __( 'Unable to charge one-time cart items because Stripe did not expose the subscription payment method yet.', 'ajforms' ) );
 		}
 
-		$description = sprintf( __( 'One-time items from checkout %s', 'ajforms' ), $session_id );
+		$product_names = array();
+		foreach ( $price_ids as $price_id ) {
+			$product = $this->get_portal_product_by_price_id( $price_id );
+			if ( $product ) {
+				$label = ! empty( $product->custom_label ) ? sanitize_text_field( (string) $product->custom_label ) : ( ! empty( $product->name ) ? sanitize_text_field( (string) $product->name ) : '' );
+				if ( '' !== $label && ! in_array( $label, $product_names, true ) ) {
+					$product_names[] = $label;
+				}
+			}
+		}
+		$description = ! empty( $product_names ) ? implode( ', ', $product_names ) : sprintf( __( 'One-time items from checkout %s', 'ajforms' ), $session_id );
 		$payment_intent = $this->stripe_api_request(
 			'payment_intents',
 			$secret_key,
@@ -7047,6 +7057,11 @@ class AJForms_Admin {
 			}
 			if ( in_array( $status, array( 'partially_refunded', 'partial_refund' ), true ) ) {
 				return __( 'Payment — Partially Refunded', 'ajforms' );
+			}
+
+			// Use the description from Stripe if it's meaningful (not a fallback "Charge ch_xxx" string).
+			if ( '' !== $description && 0 !== strpos( $description, 'Charge ch_' ) ) {
+				return $description;
 			}
 
 			return __( 'Payment', 'ajforms' );
