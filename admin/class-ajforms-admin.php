@@ -806,9 +806,38 @@ class AJForms_Admin {
 		$days     = isset( $settings['portal_event_log_retention_days'] ) ? absint( $settings['portal_event_log_retention_days'] ) : 180;
 		$max_rows = isset( $settings['portal_event_log_max_rows'] ) ? absint( $settings['portal_event_log_max_rows'] ) : 50000;
 
+		$shared_settings = $this->get_shared_portal_event_log_retention_settings();
+		if ( $shared_settings ) {
+			$days     = $shared_settings['days'];
+			$max_rows = $shared_settings['max_rows'];
+		}
+
 		return array(
 			'days'     => $days,
 			'max_rows' => $max_rows,
+		);
+	}
+
+	private function get_shared_portal_event_log_retention_settings() {
+		$wpdb = $this->get_pdb();
+		$table = $this->get_portal_event_log_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return false;
+		}
+
+		$details_json = $wpdb->get_var( "SELECT details FROM `{$table}` WHERE event_type = 'event_log_retention_settings_updated' ORDER BY created_at DESC, id DESC LIMIT 1" );
+		if ( empty( $details_json ) ) {
+			return false;
+		}
+
+		$details = json_decode( (string) $details_json, true );
+		if ( ! is_array( $details ) ) {
+			return false;
+		}
+
+		return array(
+			'days'     => isset( $details['retention_days'] ) ? absint( $details['retention_days'] ) : 180,
+			'max_rows' => isset( $details['max_rows'] ) ? absint( $details['max_rows'] ) : 50000,
 		);
 	}
 
@@ -829,16 +858,16 @@ class AJForms_Admin {
 
 		if ( $days > 0 ) {
 			$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
-			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE created_at < %s", $cutoff ) );
+			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE event_type <> 'event_log_retention_settings_updated' AND created_at < %s", $cutoff ) );
 			$deleted['old_rows'] = absint( $wpdb->rows_affected );
 		}
 
 		if ( $max_rows > 0 ) {
-			$boundary = $wpdb->get_row( $wpdb->prepare( "SELECT id, created_at FROM `{$table}` ORDER BY created_at DESC, id DESC LIMIT 1 OFFSET %d", $max_rows ) );
+			$boundary = $wpdb->get_row( $wpdb->prepare( "SELECT id, created_at FROM `{$table}` WHERE event_type <> 'event_log_retention_settings_updated' ORDER BY created_at DESC, id DESC LIMIT 1 OFFSET %d", $max_rows ) );
 			if ( $boundary ) {
 				$wpdb->query(
 					$wpdb->prepare(
-						"DELETE FROM `{$table}` WHERE created_at < %s OR (created_at = %s AND id <= %d)",
+						"DELETE FROM `{$table}` WHERE event_type <> 'event_log_retention_settings_updated' AND (created_at < %s OR (created_at = %s AND id <= %d))",
 						$boundary->created_at,
 						$boundary->created_at,
 						absint( $boundary->id )
@@ -10031,6 +10060,16 @@ class AJForms_Admin {
 			if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
 				ajforms_write_synced_settings_file( $settings );
 			}
+			$this->log_portal_event(
+				'event_log_retention_settings_updated',
+				array(
+					'source'  => 'wp_admin',
+					'details' => array(
+						'retention_days' => $days,
+						'max_rows'       => $max_rows,
+					),
+				)
+			);
 			$redirect_args['event-log-settings-saved'] = 1;
 		} elseif ( 'purge_now' === $action ) {
 			$result = $this->purge_portal_event_log();
