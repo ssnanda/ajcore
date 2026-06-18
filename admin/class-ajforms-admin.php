@@ -14554,7 +14554,6 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		global $wpdb;
 		$pdb       = $this->get_pdb();
 		$customers = $pdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} WHERE enabled_portal = 1 AND portal_status = 'active' ORDER BY name ASC, email ASC LIMIT 500" );
 		if ( empty( $customers ) ) {
@@ -14631,15 +14630,25 @@ class AJForms_Admin {
 		}
 
 		$global_statuses_by_task = array();
+		$global_statuses_by_task_customer = array();
 		$global_progress = array();
 		$total_portal_customers = max( 1, count( $customers ) );
-		$global_status_rows = $wpdb->get_results(
+		$global_status_rows = $pdb->get_results(
 			"SELECT ts.*, c.name AS customer_name, c.email AS customer_email FROM {$this->get_portal_task_statuses_table()} ts LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = ts.stripe_customer_id ORDER BY ts.updated_at DESC, ts.id DESC"
 		);
 		foreach ( $global_status_rows as $status_row ) {
 			$task_id = absint( $status_row->task_id );
+			$status_customer_id = ! empty( $status_row->stripe_customer_id ) ? sanitize_text_field( (string) $status_row->stripe_customer_id ) : '';
 			if ( ! isset( $global_statuses_by_task[ $task_id ] ) ) {
 				$global_statuses_by_task[ $task_id ] = array();
+			}
+			if ( '' !== $status_customer_id ) {
+				if ( ! isset( $global_statuses_by_task_customer[ $task_id ] ) ) {
+					$global_statuses_by_task_customer[ $task_id ] = array();
+				}
+				if ( ! isset( $global_statuses_by_task_customer[ $task_id ][ $status_customer_id ] ) ) {
+					$global_statuses_by_task_customer[ $task_id ][ $status_customer_id ] = $status_row;
+				}
 			}
 			$global_statuses_by_task[ $task_id ][] = $status_row;
 			if ( 'completed' === sanitize_key( $status_row->status ) ) {
@@ -14647,13 +14656,21 @@ class AJForms_Admin {
 			}
 		}
 
+		$selected_customer = '';
+		if ( '' !== $filters['client'] && isset( $customer_map[ $filters['client'] ] ) ) {
+			$selected_customer = $customer_map[ $filters['client'] ];
+		}
+
 		$tasks = array_values(
 			array_filter(
 				(array) $tasks_raw,
-				function ( $task ) use ( $filters ) {
+				function ( $task ) use ( $filters, $global_statuses_by_task_customer ) {
 					$scope = ! empty( $task->task_scope ) ? sanitize_key( $task->task_scope ) : 'client';
 					$frequency = ! empty( $task->task_frequency ) ? sanitize_key( $task->task_frequency ) : 'one_time';
 					$effective_status = 'client' === $scope && ! empty( $task->customer_status ) ? sanitize_key( $task->customer_status ) : sanitize_key( $task->status );
+					if ( 'global' === $scope && '' !== $filters['client'] && ! empty( $global_statuses_by_task_customer[ absint( $task->id ) ][ $filters['client'] ] ) ) {
+						$effective_status = sanitize_key( (string) $global_statuses_by_task_customer[ absint( $task->id ) ][ $filters['client'] ]->status );
+					}
 					$closed_statuses = array( 'completed', 'verified', 'closed', 'cancelled', 'canceled', 'archived' );
 
 					if ( '' !== $filters['scope'] && $scope !== $filters['scope'] ) {
@@ -14665,7 +14682,7 @@ class AJForms_Admin {
 					if ( '' !== $filters['status'] && $effective_status !== $filters['status'] ) {
 						return false;
 					}
-					if ( '' !== $filters['client'] && (string) $task->stripe_customer_id !== $filters['client'] ) {
+					if ( '' !== $filters['client'] && 'global' !== $scope && (string) $task->stripe_customer_id !== $filters['client'] ) {
 						return false;
 					}
 					if ( '' !== $filters['due_from'] && ( empty( $task->due_date ) || $task->due_date < $filters['due_from'] ) ) {
@@ -14687,19 +14704,58 @@ class AJForms_Admin {
 			)
 		);
 
+		$task_metric_counts = array(
+			'total'    => count( $tasks ),
+			'open'     => 0,
+			'overdue'  => 0,
+			'complete' => 0,
+			'visible'  => 0,
+		);
+		foreach ( $tasks as $task_for_metrics ) {
+			$metric_scope = ! empty( $task_for_metrics->task_scope ) ? sanitize_key( $task_for_metrics->task_scope ) : 'client';
+			$metric_status = 'client' === $metric_scope && ! empty( $task_for_metrics->customer_status ) ? sanitize_key( $task_for_metrics->customer_status ) : sanitize_key( $task_for_metrics->status );
+			if ( 'global' === $metric_scope && '' !== $filters['client'] && ! empty( $global_statuses_by_task_customer[ absint( $task_for_metrics->id ) ][ $filters['client'] ] ) ) {
+				$metric_status = sanitize_key( (string) $global_statuses_by_task_customer[ absint( $task_for_metrics->id ) ][ $filters['client'] ]->status );
+			}
+			if ( in_array( $metric_status, array( 'open', 'waiting_on_client', 'in_progress', 'upcoming' ), true ) ) {
+				$task_metric_counts['open']++;
+			}
+			if ( 'completed' === $metric_status ) {
+				$task_metric_counts['complete']++;
+			}
+			if ( ! empty( $task_for_metrics->client_visible ) ) {
+				$task_metric_counts['visible']++;
+			}
+			if ( ! empty( $task_for_metrics->due_date ) && $task_for_metrics->due_date < current_time( 'Y-m-d' ) && ! in_array( $metric_status, array( 'completed', 'cancelled', 'canceled', 'closed', 'archived' ), true ) ) {
+				$task_metric_counts['overdue']++;
+			}
+		}
+
 		$current_scope     = $editing_task && ! empty( $editing_task->task_scope ) ? sanitize_key( $editing_task->task_scope ) : 'client';
 		$current_frequency = $editing_task && ! empty( $editing_task->task_frequency ) ? sanitize_key( $editing_task->task_frequency ) : 'one_time';
 		?>
 		<div class="ajforms-settings-card ajcore-admin-tasks">
 			<style>
-				.ajcore-admin-tasks .ajcore-task-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:16px 0}.ajcore-admin-tasks .ajcore-task-form-card{max-width:980px;background:#fff;border:1px solid #dcdcde;border-radius:12px;padding:16px;margin:16px 0}.ajcore-admin-tasks .ajcore-task-filters{display:grid;grid-template-columns:repeat(7,minmax(130px,1fr));gap:10px;align-items:end;background:#fff;border:1px solid #dcdcde;border-radius:12px;padding:12px;margin:14px 0}.ajcore-admin-tasks .ajcore-task-filters label{display:flex;flex-direction:column;gap:5px;font-weight:600}.ajcore-admin-tasks .ajcore-task-bulkbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:12px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:10px}.ajcore-admin-tasks .ajcore-task-comments{max-width:360px}.ajcore-admin-tasks .ajcore-comment-list{margin:8px 0 0;padding-left:0;list-style:none}.ajcore-admin-tasks .ajcore-comment-list li{border-left:3px solid #dbeafe;padding:6px 0 6px 10px;margin:8px 0}.ajcore-admin-tasks .ajcore-progress-pill{display:inline-flex;border-radius:999px;background:#eef2ff;color:#1d4ed8;font-weight:700;padding:4px 9px}.ajcore-admin-tasks .ajcore-muted{color:#646970}.ajcore-admin-tasks .ajcore-status-client{display:block;color:#166534;font-size:12px;margin-top:4px}.ajcore-admin-tasks .column-check{width:34px}@media(max-width:1200px){.ajcore-admin-tasks .ajcore-task-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+				.ajcore-admin-tasks .ajcore-task-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}.ajcore-admin-tasks .ajcore-task-head h2{margin:0 0 6px}.ajcore-admin-tasks .ajcore-task-head p{margin:0;color:#50575e;max-width:760px}.ajcore-admin-tasks .ajcore-task-metrics{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:10px;margin:14px 0}.ajcore-admin-tasks .ajcore-task-metric{border:1px solid #dcdcde;border-radius:8px;background:#fff;padding:12px}.ajcore-admin-tasks .ajcore-task-metric span{display:block;color:#646970;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}.ajcore-admin-tasks .ajcore-task-metric strong{display:block;font-size:24px;line-height:1.2;margin-top:3px}.ajcore-admin-tasks .ajcore-task-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:16px 0}.ajcore-admin-tasks .ajcore-task-form-card{max-width:980px;background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:16px;margin:16px 0}.ajcore-admin-tasks .ajcore-task-filters{display:grid;grid-template-columns:1.4fr repeat(6,minmax(130px,1fr)) auto;gap:10px;align-items:end;background:#f6f7f7;border:1px solid #dcdcde;border-radius:8px;padding:12px;margin:14px 0}.ajcore-admin-tasks .ajcore-task-filters label{display:flex;flex-direction:column;gap:5px;font-weight:600}.ajcore-admin-tasks .ajcore-task-filters input,.ajcore-admin-tasks .ajcore-task-filters select{width:100%;max-width:none}.ajcore-admin-tasks .ajcore-task-filter-actions{display:flex;gap:6px;align-items:center}.ajcore-admin-tasks .ajcore-task-bulkbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:12px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:8px}.ajcore-admin-tasks .ajcore-task-comments{max-width:360px}.ajcore-admin-tasks .ajcore-comment-list{margin:8px 0 0;padding-left:0;list-style:none}.ajcore-admin-tasks .ajcore-comment-list li{border-left:3px solid #dbeafe;padding:6px 0 6px 10px;margin:8px 0}.ajcore-admin-tasks .ajcore-progress-pill{display:inline-flex;border-radius:999px;background:#eef2ff;color:#1d4ed8;font-weight:700;padding:4px 9px}.ajcore-admin-tasks .ajcore-muted{color:#646970}.ajcore-admin-tasks .ajcore-status-client{display:block;color:#166534;font-size:12px;margin-top:4px}.ajcore-admin-tasks .column-check{width:34px}.ajcore-admin-tasks .widefat td{vertical-align:top}.ajcore-admin-tasks details summary{cursor:pointer;color:#2271b1}@media(max-width:1200px){.ajcore-admin-tasks .ajcore-task-filters,.ajcore-admin-tasks .ajcore-task-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.ajcore-admin-tasks .ajcore-task-filters,.ajcore-admin-tasks .ajcore-task-metrics{grid-template-columns:1fr}}
 			</style>
-			<h2><?php esc_html_e( 'Client Tasks / Action Items', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'Create global tasks for every portal user or client-specific tasks for one customer. Portal users can comment and mark visible tasks complete from their portal.', 'ajforms' ); ?></p>
+			<div class="ajcore-task-head">
+				<div>
+					<h2><?php esc_html_e( 'Client Tasks / Action Items', 'ajforms' ); ?></h2>
+					<p><?php echo $selected_customer ? esc_html( sprintf( __( 'Showing tasks for %s, including global tasks assigned to all portal users.', 'ajforms' ), $selected_customer->name ? $selected_customer->name : $selected_customer->email ) ) : esc_html__( 'Create global tasks for every portal user or client-specific tasks for one customer. Portal users can comment and mark visible tasks complete from their portal.', 'ajforms' ); ?></p>
+				</div>
+				<button type="button" class="button button-primary" id="ajcore-toggle-task-form"><?php echo esc_html( $editing_task ? __( 'Edit Task', 'ajforms' ) : __( 'New Task', 'ajforms' ) ); ?></button>
+			</div>
 			<?php if ( isset( $_GET['portal-task'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Task updated.', 'ajforms' ); ?></p></div><?php endif; ?>
 
+			<div class="ajcore-task-metrics">
+				<div class="ajcore-task-metric"><span><?php esc_html_e( 'Shown', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( $task_metric_counts['total'] ) ); ?></strong></div>
+				<div class="ajcore-task-metric"><span><?php esc_html_e( 'Open', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( $task_metric_counts['open'] ) ); ?></strong></div>
+				<div class="ajcore-task-metric"><span><?php esc_html_e( 'Overdue', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( $task_metric_counts['overdue'] ) ); ?></strong></div>
+				<div class="ajcore-task-metric"><span><?php esc_html_e( 'Completed', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( $task_metric_counts['complete'] ) ); ?></strong></div>
+				<div class="ajcore-task-metric"><span><?php esc_html_e( 'Client Visible', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( $task_metric_counts['visible'] ) ); ?></strong></div>
+			</div>
+
 			<div class="ajcore-task-toolbar">
-				<button type="button" class="button button-primary" id="ajcore-toggle-task-form"><?php echo esc_html( $editing_task ? __( 'Edit Task', 'ajforms' ) : __( 'New Task', 'ajforms' ) ); ?></button>
 				<span class="ajcore-muted"><?php echo esc_html( sprintf( __( '%d tasks shown', 'ajforms' ), count( $tasks ) ) ); ?></span>
 			</div>
 
@@ -14731,7 +14787,7 @@ class AJForms_Admin {
 				</form>
 			</div>
 
-			<form method="get" class="ajcore-task-filters">
+			<form method="get" class="ajcore-task-filters" id="ajcore-task-filters">
 				<input type="hidden" name="page" value="ajforms-client-portal">
 				<input type="hidden" name="tab" value="tasks">
 				<?php if ( '' !== $filters['view'] ) : ?><input type="hidden" name="task_view" value="<?php echo esc_attr( $filters['view'] ); ?>"><?php endif; ?>
@@ -14742,7 +14798,7 @@ class AJForms_Admin {
 				<label><?php esc_html_e( 'Client', 'ajforms' ); ?><select name="task_client_filter"><option value=""><?php esc_html_e( 'All', 'ajforms' ); ?></option><?php foreach ( $customers as $customer ) : ?><option value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>" <?php selected( $filters['client'], $customer->stripe_customer_id ); ?>><?php echo esc_html( $customer->name ? $customer->name : $customer->email ); ?></option><?php endforeach; ?></select></label>
 				<label><?php esc_html_e( 'Due From', 'ajforms' ); ?><input type="date" name="task_due_from" value="<?php echo esc_attr( $filters['due_from'] ); ?>"></label>
 				<label><?php esc_html_e( 'Due To', 'ajforms' ); ?><input type="date" name="task_due_to" value="<?php echo esc_attr( $filters['due_to'] ); ?>"></label>
-				<div><button class="button" type="submit"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button> <a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'tasks' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a></div>
+				<div class="ajcore-task-filter-actions"><button class="button" type="submit"><?php esc_html_e( 'Apply', 'ajforms' ); ?></button> <a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'tasks' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a></div>
 			</form>
 
 			<form method="post" id="ajcore-tasks-bulk-form">
@@ -14771,6 +14827,11 @@ class AJForms_Admin {
 								$task_scope = ! empty( $task->task_scope ) ? sanitize_key( $task->task_scope ) : 'client';
 								$task_frequency = ! empty( $task->task_frequency ) ? sanitize_key( $task->task_frequency ) : 'one_time';
 								$effective_status = 'client' === $task_scope && ! empty( $task->customer_status ) ? sanitize_key( $task->customer_status ) : sanitize_key( $task->status );
+								$selected_client_status = null;
+								if ( 'global' === $task_scope && '' !== $filters['client'] && ! empty( $global_statuses_by_task_customer[ $task_id ][ $filters['client'] ] ) ) {
+									$selected_client_status = $global_statuses_by_task_customer[ $task_id ][ $filters['client'] ];
+									$effective_status = sanitize_key( (string) $selected_client_status->status );
+								}
 								$completed_count = isset( $global_progress[ $task_id ] ) ? absint( $global_progress[ $task_id ] ) : 0;
 								$activity_rows = isset( $global_statuses_by_task[ $task_id ] ) ? $global_statuses_by_task[ $task_id ] : array();
 								$task_comments = isset( $comments_by_task[ $task_id ] ) ? $comments_by_task[ $task_id ] : array();
@@ -14782,6 +14843,9 @@ class AJForms_Admin {
 									<td>
 										<?php if ( 'global' === $task_scope ) : ?>
 											<span class="ajcore-progress-pill"><?php echo esc_html( sprintf( __( '%1$d of %2$d complete', 'ajforms' ), $completed_count, $total_portal_customers ) ); ?></span>
+											<?php if ( $selected_customer ) : ?>
+												<br><span class="ajcore-status-client"><?php echo esc_html( sprintf( __( 'For %s', 'ajforms' ), $selected_customer->name ? $selected_customer->name : $selected_customer->email ) ); ?></span>
+											<?php endif; ?>
 											<details><summary><?php esc_html_e( 'Drill down', 'ajforms' ); ?></summary>
 												<?php if ( empty( $activity_rows ) ) : ?><p class="ajcore-muted"><?php esc_html_e( 'No client activity yet.', 'ajforms' ); ?></p><?php else : ?>
 												<ul><?php foreach ( $activity_rows as $row ) : ?><li><?php echo esc_html( ( $row->customer_name ? $row->customer_name : $row->customer_email ) . ' — ' . ( isset( $statuses[ $row->status ] ) ? $statuses[ $row->status ] : $row->status ) . ' — ' . $this->format_portal_date( $row->updated_at ) ); ?></li><?php endforeach; ?></ul>
@@ -14793,7 +14857,7 @@ class AJForms_Admin {
 									</td>
 									<td><strong><?php echo esc_html( $task->title ); ?></strong><br><span class="description"><?php echo esc_html( wp_trim_words( (string) $task->action_required, 18 ) ); ?></span></td>
 									<td><?php echo esc_html( isset( $frequencies[ $task_frequency ] ) ? $frequencies[ $task_frequency ] : $task_frequency ); ?></td>
-									<td><?php echo esc_html( isset( $statuses[ $effective_status ] ) ? $statuses[ $effective_status ] : $effective_status ); ?><?php if ( 'client' === $task_scope && ! empty( $task->customer_status ) ) : ?><span class="ajcore-status-client"><?php esc_html_e( 'Updated by portal user', 'ajforms' ); ?></span><?php endif; ?></td>
+									<td><?php echo esc_html( isset( $statuses[ $effective_status ] ) ? $statuses[ $effective_status ] : $effective_status ); ?><?php if ( 'client' === $task_scope && ! empty( $task->customer_status ) ) : ?><span class="ajcore-status-client"><?php esc_html_e( 'Updated by portal user', 'ajforms' ); ?></span><?php elseif ( $selected_client_status ) : ?><span class="ajcore-status-client"><?php esc_html_e( 'Selected client status', 'ajforms' ); ?></span><?php endif; ?></td>
 									<td><?php echo esc_html( $task->due_date ? $this->format_portal_date( $task->due_date ) : '-' ); ?></td>
 									<td class="ajcore-task-comments">
 										<?php if ( empty( $task_comments ) ) : ?>
@@ -14828,6 +14892,19 @@ class AJForms_Admin {
 			if(checkAll){checkAll.addEventListener('change', function(){setAllTasks(checkAll.checked);});}
 			if(selectBtn){selectBtn.addEventListener('click', function(){setAllTasks(true);});}
 			document.querySelectorAll('[data-bulk-action]').forEach(function(button){button.addEventListener('click', function(e){var any = Array.from(document.querySelectorAll('.ajcore-task-checkbox')).some(function(box){return box.checked;}); if(!any){e.preventDefault(); alert('Select at least one task first.'); return;} var action = button.getAttribute('data-bulk-action') || ''; if(action === 'delete' && !confirm('Delete selected tasks and their comments/status history?')){e.preventDefault(); return;} document.getElementById('portal_task_bulk_action').value = action;});});
+			var filterForm = document.getElementById('ajcore-task-filters');
+			if(filterForm){
+				var submitFilters = function(){filterForm.requestSubmit ? filterForm.requestSubmit() : filterForm.submit();};
+				filterForm.querySelectorAll('select,input[type="date"]').forEach(function(field){field.addEventListener('change', submitFilters);});
+				var search = filterForm.querySelector('input[type="search"]');
+				var searchTimer;
+				if(search){
+					search.addEventListener('input', function(){
+						window.clearTimeout(searchTimer);
+						searchTimer = window.setTimeout(submitFilters, 450);
+					});
+				}
+			}
 		})();
 		</script>
 		<?php

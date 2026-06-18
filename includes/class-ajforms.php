@@ -1900,12 +1900,54 @@ class AJForms {
 		return $currency . ' ' . number_format_i18n( $amount, 2 ) . ( '' !== $interval ? ' ' . sprintf( __( 'Per %s', 'ajforms' ), $interval ) : '' );
 	}
 
+	private function get_portal_dependency_product_by_price_id( $price_id ) {
+		$pdb = $this->get_pdb();
+
+		$price_id = sanitize_text_field( (string) $price_id );
+		if ( '' === $price_id ) {
+			return null;
+		}
+
+		return $pdb->get_row(
+			$pdb->prepare(
+				"SELECT p.*,
+					COALESCE(c.custom_label, p.custom_label, '') AS custom_label,
+					COALESCE(c.description_override, p.description_override, '') AS description_override,
+					COALESCE(c.sort_order, p.sort_order, 0) AS sort_order
+				FROM {$this->get_portal_stripe_products_table()} p
+				LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id
+				WHERE p.stripe_price_id = %s AND p.active = 1 LIMIT 1",
+				$price_id
+			)
+		);
+	}
+
+	private function get_portal_dependency_price_checkout_data( $price_id ) {
+		$product = $this->get_portal_dependency_product_by_price_id( $price_id );
+		if ( ! $product ) {
+			return null;
+		}
+
+		return array(
+			'id'                 => sanitize_text_field( (string) $price_id ),
+			'product_id'         => isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '',
+			'product_name'       => ! empty( $product->custom_label ) ? sanitize_text_field( (string) $product->custom_label ) : ( isset( $product->name ) ? sanitize_text_field( (string) $product->name ) : '' ),
+			'amount'             => isset( $product->price_amount ) ? (float) $product->price_amount : 0,
+			'currency'           => isset( $product->currency ) ? sanitize_key( (string) $product->currency ) : 'usd',
+			'recurring_interval' => isset( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '',
+			'duplicate_behavior' => 'allow_duplicate',
+			'upgrade_from_product_id' => '',
+			'upgrade_from_subscription_id' => '',
+		);
+	}
+
 	private function get_portal_product_dependency_data( $product, $products_by_price = array() ) {
 		$price_id             = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
 		$dependency_settings  = $this->get_public_product_dependency_settings();
 		$required_price_id    = '';
 		$required_product_name = '';
 		$dependency_note      = '';
+		$required_product     = null;
 		$raw_data             = $this->decode_portal_json( isset( $product->raw_data ) ? $product->raw_data : '' );
 		$metadata             = $this->decode_portal_json( isset( $product->metadata ) ? $product->metadata : '' );
 		$catalog_price_settings = ! empty( $product->portal_price_settings ) ? json_decode( (string) $product->portal_price_settings, true ) : array();
@@ -1948,15 +1990,27 @@ class AJForms {
 		if ( '' !== $required_price_id && isset( $products_by_price[ $required_price_id ] ) && '' === $required_product_name ) {
 			$required_product_name = ! empty( $products_by_price[ $required_price_id ]->custom_label ) ? $products_by_price[ $required_price_id ]->custom_label : ( isset( $products_by_price[ $required_price_id ]->name ) ? $products_by_price[ $required_price_id ]->name : '' );
 		}
+		if ( '' !== $required_price_id && ! isset( $products_by_price[ $required_price_id ] ) ) {
+			$required_product = $this->get_portal_dependency_product_by_price_id( $required_price_id );
+			if ( $required_product && '' === $required_product_name ) {
+				$required_product_name = ! empty( $required_product->custom_label ) ? sanitize_text_field( (string) $required_product->custom_label ) : ( ! empty( $required_product->name ) ? sanitize_text_field( (string) $required_product->name ) : '' );
+			}
+		}
 
 		if ( '' === $dependency_note && '' !== $required_product_name ) {
 			$dependency_note = sprintf( __( 'This service requires %s. It will be added to your cart when available.', 'ajforms' ), $required_product_name );
 		}
 
+		$required_product = $required_product ? $required_product : ( isset( $products_by_price[ $required_price_id ] ) ? $products_by_price[ $required_price_id ] : null );
+
 		return array(
-			'requires_price_id'    => $required_price_id,
-			'requires_product_name' => $required_product_name,
-			'dependency_note'      => $dependency_note,
+			'requires_price_id'        => $required_price_id,
+			'requires_product_name'    => $required_product_name,
+			'dependency_note'          => $dependency_note,
+			'required_amount'          => $required_product && isset( $required_product->price_amount ) ? (float) $required_product->price_amount : 0,
+			'required_currency'        => $required_product && ! empty( $required_product->currency ) ? strtolower( sanitize_key( (string) $required_product->currency ) ) : 'usd',
+			'required_interval'        => $required_product && ! empty( $required_product->recurring_interval ) ? sanitize_key( (string) $required_product->recurring_interval ) : '',
+			'required_price_label'     => $required_product ? $this->get_portal_product_price_display_label( $required_product ) : '',
 		);
 	}
 
@@ -2008,6 +2062,10 @@ class AJForms {
 				'required_price_id'     => $dependency['requires_price_id'],
 				'required_product_name' => $dependency['requires_product_name'],
 				'dependency_note'       => $dependency['dependency_note'],
+				'required_amount'       => $dependency['required_amount'],
+				'required_currency'     => $dependency['required_currency'],
+				'required_interval'     => $dependency['required_interval'],
+				'required_price_label'  => $dependency['required_price_label'],
 			);
 		}
 
@@ -3063,6 +3121,10 @@ class AJForms {
 												data-required-price-id="<?php echo esc_attr( $price['required_price_id'] ); ?>"
 												data-required-product-name="<?php echo esc_attr( $price['required_product_name'] ); ?>"
 												data-dependency-note="<?php echo esc_attr( $price['dependency_note'] ); ?>"
+												data-required-amount="<?php echo esc_attr( $price['required_amount'] ); ?>"
+												data-required-currency="<?php echo esc_attr( $price['required_currency'] ); ?>"
+												data-required-recurring-interval="<?php echo esc_attr( $price['required_interval'] ); ?>"
+												data-required-price-label="<?php echo esc_attr( $price['required_price_label'] ); ?>"
 											><?php echo esc_html( $price['price_label'] ); ?></option>
 										<?php endforeach; ?>
 									</select>
@@ -3082,6 +3144,10 @@ class AJForms {
 									data-required-price-id="<?php echo esc_attr( isset( $first_price['required_price_id'] ) ? $first_price['required_price_id'] : '' ); ?>"
 									data-required-product-name="<?php echo esc_attr( isset( $first_price['required_product_name'] ) ? $first_price['required_product_name'] : '' ); ?>"
 									data-dependency-note="<?php echo esc_attr( isset( $first_price['dependency_note'] ) ? $first_price['dependency_note'] : '' ); ?>"
+									data-required-amount="<?php echo esc_attr( isset( $first_price['required_amount'] ) ? $first_price['required_amount'] : 0 ); ?>"
+									data-required-currency="<?php echo esc_attr( isset( $first_price['required_currency'] ) ? $first_price['required_currency'] : 'usd' ); ?>"
+									data-required-recurring-interval="<?php echo esc_attr( isset( $first_price['required_interval'] ) ? $first_price['required_interval'] : '' ); ?>"
+									data-required-price-label="<?php echo esc_attr( isset( $first_price['required_price_label'] ) ? $first_price['required_price_label'] : '' ); ?>"
 								>
 							<?php endif; ?>
 							<div class="aj-portal-add-service-price"><?php echo esc_html( isset( $first_price['price_label'] ) ? $first_price['price_label'] : '' ); ?></div>
@@ -4789,6 +4855,10 @@ class AJForms {
 						required_price_id: option.dataset.requiredPriceId || '',
 						required_product_name: option.dataset.requiredProductName || '',
 						dependency_note: option.dataset.dependencyNote || '',
+						required_amount: parseFloat(option.dataset.requiredAmount || '0') || 0,
+						required_currency: option.dataset.requiredCurrency || 'usd',
+						required_recurring_interval: option.dataset.requiredRecurringInterval || '',
+						required_price_label: option.dataset.requiredPriceLabel || '',
 						can_add: option.dataset.canAdd === '1'
 					};
 				}
@@ -4896,6 +4966,20 @@ class AJForms {
 						const requiredItem = getPortalItemFromOption(requiredOption, requiredCard);
 						if (requiredItem && requiredItem.price_id === item.required_price_id && requiredItem.can_add) {
 							addPortalCartItem(requiredItem, item.dependency_note || '<?php echo esc_js( __( 'Required service added automatically.', 'ajforms' ) ); ?>');
+							notice = item.dependency_note || '';
+						} else if (item.required_amount > 0) {
+							addPortalCartItem({
+								price_id: item.required_price_id,
+								product_name: item.required_product_name || '<?php echo esc_js( __( 'Required service', 'ajforms' ) ); ?>',
+								amount: item.required_amount,
+								currency: item.required_currency || item.currency || 'usd',
+								recurring_interval: item.required_recurring_interval || '',
+								price_label: item.required_price_label || '',
+								required_price_id: '',
+								required_product_name: '',
+								dependency_note: '',
+								can_add: true
+							}, item.dependency_note || '<?php echo esc_js( __( 'Required service added automatically.', 'ajforms' ) ); ?>');
 							notice = item.dependency_note || '';
 						} else if (item.dependency_note) {
 							notice = item.dependency_note;
@@ -6377,6 +6461,16 @@ class AJForms {
 				);
 			}
 			$allowed_price_map = array_column( $this->apply_public_product_dependency_settings_to_prices( array_values( $allowed_price_map ) ), null, 'id' );
+			foreach ( array_values( $allowed_price_map ) as $allowed_price ) {
+				$required_price_id = ! empty( $allowed_price['requires_price_id'] ) ? sanitize_text_field( (string) $allowed_price['requires_price_id'] ) : '';
+				if ( '' === $required_price_id || ! empty( $allowed_price_map[ $required_price_id ] ) ) {
+					continue;
+				}
+				$required_price = $this->get_portal_dependency_price_checkout_data( $required_price_id );
+				if ( $required_price ) {
+					$allowed_price_map[ $required_price_id ] = $required_price;
+				}
+			}
 
 			if ( ! is_array( $items ) ) {
 				$portal_product = $this->get_portal_product_by_price_id( $price_id );
