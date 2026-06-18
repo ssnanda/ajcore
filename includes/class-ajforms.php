@@ -4912,6 +4912,7 @@ class AJForms {
 						return;
 					}
 					event.preventDefault();
+					event.stopPropagation();
 
 					const message = shell.querySelector('.aj-portal-add-service-message');
 					if (message) {
@@ -4931,17 +4932,18 @@ class AJForms {
 				let stripeInstance = null;
 
 				function preservePortalCartScroll(callback) {
-					const anchor = portalCartWrap || shell;
-					const beforeTop = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect().top : null;
+					const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+					const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
 					callback();
-					if (null === beforeTop || !anchor || !anchor.getBoundingClientRect) {
-						return;
-					}
-					const afterTop = anchor.getBoundingClientRect().top;
-					const delta = afterTop - beforeTop;
-					if (Math.abs(delta) > 1) {
-						window.scrollBy(0, delta);
-					}
+					const restore = function() {
+						window.scrollTo(scrollX, scrollY);
+					};
+					restore();
+					window.setTimeout(restore, 0);
+					window.requestAnimationFrame(restore);
+					window.requestAnimationFrame(function() {
+						window.requestAnimationFrame(restore);
+					});
 				}
 
 				function getPortalPriceOption(card) {
@@ -5068,6 +5070,22 @@ class AJForms {
 					notice.hidden = !message;
 				}
 
+				function getPortalSubscriptionIntervalConflict(itemsToAdd) {
+					const combined = Object.values(portalCart);
+					itemsToAdd.forEach(function(item) {
+						if (item && item.price_id && !portalCart[item.price_id]) {
+							combined.push(item);
+						}
+					});
+					return getPortalCartSubscriptionIntervals(combined);
+				}
+
+				function showPortalIntervalConflictPopup(intervals) {
+					const message = '<?php echo esc_js( __( 'Checkout does not support multiple subscription billing intervals in the same cart. Please checkout monthly and yearly subscriptions separately.', 'ajforms' ) ); ?>';
+					setPortalCartNotice(message);
+					window.alert(message);
+				}
+
 				function findPortalCardByPriceId(priceId) {
 					const options = shell.querySelectorAll('.aj-portal-add-service-price-select option, input.aj-portal-add-service-price-select');
 					for (let index = 0; index < options.length; index += 1) {
@@ -5094,15 +5112,16 @@ class AJForms {
 					}
 
 					let notice = '';
+					const itemsToAdd = [item];
 					if (item.required_price_id && !portalCart[item.required_price_id]) {
 						const requiredCard = findPortalCardByPriceId(item.required_price_id);
 						const requiredOption = getPortalPriceOption(requiredCard);
 						const requiredItem = getPortalItemFromOption(requiredOption, requiredCard);
 						if (requiredItem && requiredItem.price_id === item.required_price_id && requiredItem.can_add) {
-							addPortalCartItem(requiredItem, item.dependency_note || '<?php echo esc_js( __( 'Required service added automatically.', 'ajforms' ) ); ?>');
+							itemsToAdd.unshift(requiredItem);
 							notice = item.dependency_note || '';
 						} else if (item.required_amount > 0) {
-							addPortalCartItem({
+							itemsToAdd.unshift({
 								price_id: item.required_price_id,
 								product_name: item.required_product_name || '<?php echo esc_js( __( 'Required service', 'ajforms' ) ); ?>',
 								amount: item.required_amount,
@@ -5113,17 +5132,28 @@ class AJForms {
 								required_product_name: '',
 								dependency_note: '',
 								can_add: true
-							}, item.dependency_note || '<?php echo esc_js( __( 'Required service added automatically.', 'ajforms' ) ); ?>');
+							});
 							notice = item.dependency_note || '';
 						} else if (item.dependency_note) {
 							notice = item.dependency_note;
 						}
-						}
-
-						addPortalCartItem(item, '');
-						setPortalCartNotice('');
-						renderPortalCart(notice);
 					}
+
+					const recurringConflict = getPortalSubscriptionIntervalConflict(itemsToAdd);
+					if (recurringConflict.length > 1) {
+						showPortalIntervalConflictPopup(recurringConflict);
+						return;
+					}
+
+					itemsToAdd.forEach(function(itemToAdd) {
+						addPortalCartItem(
+							itemToAdd,
+							itemToAdd.price_id === item.price_id ? '' : (item.dependency_note || '<?php echo esc_js( __( 'Required service added automatically.', 'ajforms' ) ); ?>')
+						);
+					});
+					setPortalCartNotice('');
+					renderPortalCart(notice);
+				}
 
 				function renderPortalCart(notice) {
 					if (!portalCartWrap) {
@@ -5168,14 +5198,15 @@ class AJForms {
 						const note = row.querySelector('small');
 						note.textContent = item.locked || '';
 						note.hidden = !item.locked;
-							row.querySelector('button').addEventListener('click', function(event) {
-								event.preventDefault();
-								preservePortalCartScroll(function() {
-									delete portalCart[item.price_id];
-									setPortalCartNotice('');
-									renderPortalCart('');
-								});
+						row.querySelector('button').addEventListener('click', function(event) {
+							event.preventDefault();
+							event.stopPropagation();
+							preservePortalCartScroll(function() {
+								delete portalCart[item.price_id];
+								setPortalCartNotice('');
+								renderPortalCart('');
 							});
+						});
 						itemsEl.appendChild(row);
 					});
 					if (emptyEl) {
@@ -5242,6 +5273,7 @@ class AJForms {
 					portalCartWrap.addEventListener('click', function(event) {
 						if (event.target.closest('.aj-portal-service-cart-toggle')) {
 							event.preventDefault();
+							event.stopPropagation();
 							const panel = portalCartWrap.querySelector('.aj-portal-service-cart-panel');
 							if (panel) {
 								preservePortalCartScroll(function() {
@@ -5251,6 +5283,7 @@ class AJForms {
 						}
 						if (event.target.closest('.aj-portal-service-cart-clear')) {
 							event.preventDefault();
+							event.stopPropagation();
 							preservePortalCartScroll(function() {
 								Object.keys(portalCart).forEach(function(priceId) { delete portalCart[priceId]; });
 								setPortalCartNotice('');
@@ -5259,6 +5292,7 @@ class AJForms {
 						}
 						if (event.target.closest('.aj-portal-service-checkout-close')) {
 							event.preventDefault();
+							event.stopPropagation();
 							const checkoutPanel = portalCartWrap.querySelector('.aj-portal-service-checkout-panel');
 							if (embeddedCheckout && typeof embeddedCheckout.destroy === 'function') {
 								embeddedCheckout.destroy();
@@ -5270,6 +5304,7 @@ class AJForms {
 						}
 						if (event.target.closest('.aj-portal-service-cart-checkout')) {
 							event.preventDefault();
+							event.stopPropagation();
 							startPortalEmbeddedCheckout(event.target.closest('.aj-portal-service-cart-checkout'));
 						}
 					});
@@ -7724,17 +7759,18 @@ class AJForms {
 			}
 
 			function preserveCartScroll(callback) {
-				const anchor = miniCart || cartItems || root;
-				const beforeTop = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect().top : null;
+				const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+				const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
 				callback();
-				if (null === beforeTop || !anchor || !anchor.getBoundingClientRect) {
-					return;
-				}
-				const afterTop = anchor.getBoundingClientRect().top;
-				const delta = afterTop - beforeTop;
-				if (Math.abs(delta) > 1) {
-					window.scrollBy(0, delta);
-				}
+				const restore = function() {
+					window.scrollTo(scrollX, scrollY);
+				};
+				restore();
+				window.setTimeout(restore, 0);
+				window.requestAnimationFrame(restore);
+				window.requestAnimationFrame(function() {
+					window.requestAnimationFrame(restore);
+				});
 			}
 
 			function setCartMessage(message) {
@@ -8062,6 +8098,7 @@ class AJForms {
 					removeButton.style.cssText = 'background:#fff;color:#b32d2e;border:1px solid #fecaca;border-radius:9px;padding:8px 10px;font-weight:700;cursor:pointer;';
 					removeButton.addEventListener('click', function(event) {
 						event.preventDefault();
+						event.stopPropagation();
 						preserveCartScroll(function() {
 							delete cart[item.price_id];
 							destroyEmbeddedCheckout();
@@ -8093,6 +8130,7 @@ class AJForms {
 						modalNote.style.display = item.locked ? 'block' : 'none';
 						modalRow.querySelector('button').addEventListener('click', function(event) {
 							event.preventDefault();
+							event.stopPropagation();
 							delete cart[item.price_id];
 							destroyEmbeddedCheckout();
 							setCartMessage('');
@@ -8281,6 +8319,7 @@ class AJForms {
 			if (miniClearButton) {
 				miniClearButton.addEventListener('click', function(event) {
 					event.preventDefault();
+					event.stopPropagation();
 					preserveCartScroll(clearCart);
 				});
 			}
@@ -8294,6 +8333,7 @@ class AJForms {
 			if (cartModalClearButton) {
 				cartModalClearButton.addEventListener('click', function(event) {
 					event.preventDefault();
+					event.stopPropagation();
 					clearCart();
 				});
 			}
@@ -8315,6 +8355,7 @@ class AJForms {
 				const addButton = event.target.closest('.ajcore-product-add');
 				if (addButton) {
 					event.preventDefault();
+					event.stopPropagation();
 					const product = addButton.closest('.ajcore-product');
 					if (!product) {
 						return;
@@ -8350,6 +8391,7 @@ class AJForms {
 				const clearButton = event.target.closest('.ajcore-cart-clear, .ajcore-cart-mini-clear');
 				if (clearButton) {
 					event.preventDefault();
+					event.stopPropagation();
 					preserveCartScroll(clearCart);
 					return;
 				}
