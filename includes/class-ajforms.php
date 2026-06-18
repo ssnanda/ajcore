@@ -3507,7 +3507,7 @@ class AJForms {
 
 			$lines[] = sprintf(
 				/* translators: 1: service name, 2: business/entity name, 3: service period */
-				__( 'You currently have %1$s for %2$s with NC LLC Agents Inc from %3$s.', 'ajforms' ),
+				__( 'You currently have %1$s for %2$s from %3$s.', 'ajforms' ),
 				$service_name,
 				$entity_label,
 				$service_period
