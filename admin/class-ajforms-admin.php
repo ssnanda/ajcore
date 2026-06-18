@@ -5248,6 +5248,14 @@ class AJForms_Admin {
 			$product_id = sanitize_text_field( (string) $item['product'] );
 		}
 
+		// Stripe invoice line item v2 format: price and product are under pricing.price_details (not the old item.price object).
+		if ( '' === $price_id && ! empty( $item['pricing']['price_details']['price'] ) && is_scalar( $item['pricing']['price_details']['price'] ) ) {
+			$price_id = sanitize_text_field( (string) $item['pricing']['price_details']['price'] );
+		}
+		if ( '' === $product_id && ! empty( $item['pricing']['price_details']['product'] ) && is_scalar( $item['pricing']['price_details']['product'] ) ) {
+			$product_id = sanitize_text_field( (string) $item['pricing']['price_details']['product'] );
+		}
+
 		$product = $this->resolve_portal_product_from_identifiers(
 			array(
 				'price_ids'           => '' !== $price_id ? array( $price_id ) : array(),
@@ -5279,6 +5287,10 @@ class AJForms_Admin {
 		$amount = $this->stripe_amount_to_decimal( $amount_cents, $currency );
 		$interval = ! empty( $price['recurring']['interval'] ) ? sanitize_key( (string) $price['recurring']['interval'] ) : ( $product && ! empty( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '' );
 		$item_subscription_id = ! empty( $item['subscription'] ) && is_scalar( $item['subscription'] ) ? sanitize_text_field( (string) $item['subscription'] ) : '';
+		// Stripe invoice line item v2 format: subscription ID is under parent.subscription_item_details.subscription.
+		if ( '' === $item_subscription_id && ! empty( $item['parent']['subscription_item_details']['subscription'] ) && is_scalar( $item['parent']['subscription_item_details']['subscription'] ) ) {
+			$item_subscription_id = sanitize_text_field( (string) $item['parent']['subscription_item_details']['subscription'] );
+		}
 		$parent_subscription_id = ! empty( $parent['subscription'] ) && is_scalar( $parent['subscription'] ) ? sanitize_text_field( (string) $parent['subscription'] ) : '';
 		$subscription_id = $item_subscription_id;
 		if ( 'subscription' === $source_type && ! empty( $parent['id'] ) ) {
@@ -8858,13 +8870,13 @@ class AJForms_Admin {
 		if ( isset( $_POST['ajcore_mark_service_used_nonce'], $_POST['service_snapshot_key'] ) ) {
 			check_admin_referer( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' );
 
-			global $wpdb;
+			$pdb = $this->get_pdb();
 			$snapshot_key = sanitize_text_field( wp_unslash( $_POST['service_snapshot_key'] ) );
 			$state_action = isset( $_POST['service_state_action'] ) ? sanitize_key( wp_unslash( $_POST['service_state_action'] ) ) : 'used';
 			$state_action = 'unused' === $state_action ? 'unused' : 'used';
 			if ( '' !== $snapshot_key ) {
-				$snapshot = $wpdb->get_row(
-					$wpdb->prepare(
+				$snapshot = $pdb->get_row(
+					$pdb->prepare(
 						"SELECT * FROM {$this->get_portal_service_snapshots_table()} WHERE snapshot_key = %s LIMIT 1",
 						$snapshot_key
 					)
@@ -8878,7 +8890,7 @@ class AJForms_Admin {
 					} else {
 						$state_data = $this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' );
 						if ( ! empty( $state_data['service_state_key'] ) ) {
-							$wpdb->delete(
+							$pdb->delete(
 								$this->get_portal_service_states_table(),
 								array( 'service_state_key' => $state_data['service_state_key'] ),
 								array( '%s' )
@@ -8886,7 +8898,7 @@ class AJForms_Admin {
 						}
 					}
 				}
-				$wpdb->update(
+				$pdb->update(
 					$this->get_portal_service_snapshots_table(),
 					array(
 						'status'     => 'used' === $state_action ? 'used' : 'paid',
