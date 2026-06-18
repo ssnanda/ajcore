@@ -2704,6 +2704,14 @@ class AJForms {
 			}
 		}
 
+		// Name-token matching only applies to recurring snapshots. A one-time service (e.g.
+		// "Virtual Office Setup") must never be suppressed just because a subscription with a
+		// similarly-named service (e.g. "Virtual Office Subscription") is active — they are
+		// distinct purchases.
+		if ( 'one_time' === $this->get_snapshot_billing_type_key( $snapshot ) ) {
+			return false;
+		}
+
 		$snapshot_name   = $this->clean_stripe_line_service_name( $this->get_snapshot_service_name( $snapshot ) );
 		$snapshot_tokens = $this->get_portal_service_identity_tokens( $snapshot_name );
 		if ( empty( $snapshot_tokens ) ) {

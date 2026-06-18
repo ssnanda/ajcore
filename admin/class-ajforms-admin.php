@@ -4356,10 +4356,11 @@ class AJForms_Admin {
 
 	private function get_portal_customer_detail_data( $stripe_customer_id ) {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
-		$customer = $wpdb->get_row(
-			$wpdb->prepare(
+		$customer = $pdb->get_row(
+			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s",
 				$stripe_customer_id
 			)
@@ -4369,6 +4370,7 @@ class AJForms_Admin {
 			return null;
 		}
 
+		// user_mappings is always local — not in shared DB.
 		$mapping = $wpdb->get_row(
 			$wpdb->prepare(
 				"SELECT * FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s",
@@ -4377,31 +4379,31 @@ class AJForms_Admin {
 		);
 		$user = $this->get_valid_portal_mapping_user( $customer, $mapping );
 
-		$subscriptions = $wpdb->get_results(
-			$wpdb->prepare(
+		$subscriptions = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_customer_id = %s ORDER BY current_period_end DESC, id DESC",
 				$stripe_customer_id
 			)
 		);
 
-		$ledger = $wpdb->get_results(
-			$wpdb->prepare(
+		$ledger = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s ORDER BY ledger_date DESC, id DESC LIMIT %d",
 				$stripe_customer_id,
 				100
 			)
 		);
 
-		$requests = $wpdb->get_results(
-			$wpdb->prepare(
+		$requests = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE stripe_customer_id = %s ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT %d",
 				$stripe_customer_id,
 				100
 			)
 		);
 
-		$tasks = $wpdb->get_results(
-			$wpdb->prepare(
+		$tasks = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT t.*, ts.status AS customer_status, ts.completed_at AS customer_completed_at, ts.updated_at AS customer_status_updated_at
 				FROM {$this->get_portal_tasks_table()} t
 				LEFT JOIN {$this->get_portal_task_statuses_table()} ts ON ts.task_id = t.id AND ts.stripe_customer_id = %s
@@ -4414,8 +4416,8 @@ class AJForms_Admin {
 			)
 		);
 
-		$task_comments = $wpdb->get_results(
-			$wpdb->prepare(
+		$task_comments = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT tc.*, t.title AS task_title
 				FROM {$this->get_portal_task_comments_table()} tc
 				LEFT JOIN {$this->get_portal_tasks_table()} t ON t.id = tc.task_id
@@ -4427,8 +4429,8 @@ class AJForms_Admin {
 			)
 		);
 
-		$entities = $wpdb->get_results(
-			$wpdb->prepare(
+		$entities = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_entity_mappings_table()} WHERE stripe_customer_id = %s ORDER BY entity_label ASC, entity_key ASC",
 				$stripe_customer_id
 			)
@@ -4438,8 +4440,8 @@ class AJForms_Admin {
 		if ( $user || ! empty( $customer->email ) ) {
 			$user_id = $user ? (int) $user->ID : 0;
 			$email   = ! empty( $customer->email ) ? strtolower( sanitize_email( $customer->email ) ) : '';
-			$files   = $wpdb->get_results(
-				$wpdb->prepare(
+			$files   = $pdb->get_results(
+				$pdb->prepare(
 					"SELECT DISTINCT f.* FROM {$this->get_portal_files_table()} f INNER JOIN {$this->get_portal_file_users_table()} fu ON fu.file_id = f.id WHERE fu.user_id = %d OR LOWER(fu.user_email) = %s ORDER BY f.created_at DESC",
 					$user_id,
 					$email
@@ -14038,7 +14040,7 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$type_filter = isset( $_GET['sold_type'] ) ? wp_unslash( $_GET['sold_type'] ) : array( 'recurring', 'one_time' );
 		$type_filter = is_array( $type_filter ) ? array_map( 'sanitize_key', $type_filter ) : array( sanitize_key( (string) $type_filter ) );
@@ -14050,7 +14052,7 @@ class AJForms_Admin {
 		$search = isset( $_GET['sold_search'] ) ? sanitize_text_field( wp_unslash( $_GET['sold_search'] ) ) : '';
 		$this->portal_service_display_skips = array();
 
-		$active_subscriptions = $wpdb->get_results(
+		$active_subscriptions = $pdb->get_results(
 			"SELECT s.*, c.name AS customer_name, c.email AS customer_email
 			FROM {$this->get_portal_stripe_subscriptions_table()} s
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = s.stripe_customer_id
