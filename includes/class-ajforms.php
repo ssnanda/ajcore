@@ -3808,7 +3808,7 @@ class AJForms {
 	}
 
 	private function log_site_uuid_created_event( $uuid ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$table = $this->get_portal_event_log_table();
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
@@ -3843,7 +3843,7 @@ class AJForms {
 	}
 
 	private function log_portal_event( $event_type, $args = array() ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$event_type = sanitize_key( (string) $event_type );
 		if ( '' === $event_type ) {
@@ -3878,7 +3878,7 @@ class AJForms {
 
 		$details = is_array( $args['details'] ) ? $args['details'] : array( 'value' => $args['details'] );
 
-		return $wpdb->insert(
+		$inserted = $wpdb->insert(
 			$table,
 			array(
 				'event_type'             => $event_type,
@@ -3901,6 +3901,72 @@ class AJForms {
 			),
 			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
 		);
+
+		if ( false !== $inserted ) {
+			$this->maybe_purge_portal_event_log();
+		}
+
+		return $inserted;
+	}
+
+	private function get_portal_event_log_retention_settings() {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$settings = is_array( $settings ) ? $settings : array();
+		$days     = isset( $settings['portal_event_log_retention_days'] ) ? absint( $settings['portal_event_log_retention_days'] ) : 180;
+		$max_rows = isset( $settings['portal_event_log_max_rows'] ) ? absint( $settings['portal_event_log_max_rows'] ) : 50000;
+
+		return array(
+			'days'     => $days,
+			'max_rows' => $max_rows,
+		);
+	}
+
+	private function purge_portal_event_log( $days = null, $max_rows = null ) {
+		$wpdb = $this->get_pdb();
+		$table = $this->get_portal_event_log_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return false;
+		}
+
+		$retention = $this->get_portal_event_log_retention_settings();
+		$days      = null === $days ? $retention['days'] : absint( $days );
+		$max_rows  = null === $max_rows ? $retention['max_rows'] : absint( $max_rows );
+
+		if ( $days > 0 ) {
+			$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
+			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE created_at < %s", $cutoff ) );
+		}
+
+		if ( $max_rows > 0 ) {
+			$boundary = $wpdb->get_row( $wpdb->prepare( "SELECT id, created_at FROM `{$table}` ORDER BY created_at DESC, id DESC LIMIT 1 OFFSET %d", $max_rows ) );
+			if ( $boundary ) {
+				$wpdb->query(
+					$wpdb->prepare(
+						"DELETE FROM `{$table}` WHERE created_at < %s OR (created_at = %s AND id <= %d)",
+						$boundary->created_at,
+						$boundary->created_at,
+						absint( $boundary->id )
+					)
+				);
+			}
+		}
+
+		return true;
+	}
+
+	private function maybe_purge_portal_event_log() {
+		$retention = $this->get_portal_event_log_retention_settings();
+		if ( $retention['days'] < 1 && $retention['max_rows'] < 1 ) {
+			return;
+		}
+
+		$last_run = absint( get_option( 'ajcore_portal_event_log_last_auto_purge', 0 ) );
+		if ( $last_run > ( time() - DAY_IN_SECONDS ) ) {
+			return;
+		}
+
+		update_option( 'ajcore_portal_event_log_last_auto_purge', time(), false );
+		$this->purge_portal_event_log( $retention['days'], $retention['max_rows'] );
 	}
 
 	private function get_portal_service_requests_table() {

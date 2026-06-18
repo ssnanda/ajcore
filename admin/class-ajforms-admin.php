@@ -770,7 +770,7 @@ class AJForms_Admin {
 
 		$details = is_array( $args['details'] ) ? $args['details'] : array( 'value' => $args['details'] );
 
-		return $wpdb->insert(
+		$inserted = $wpdb->insert(
 			$table,
 			array(
 				'event_type'             => $event_type,
@@ -793,6 +793,78 @@ class AJForms_Admin {
 			),
 			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
 		);
+
+		if ( false !== $inserted ) {
+			$this->maybe_purge_portal_event_log();
+		}
+
+		return $inserted;
+	}
+
+	private function get_portal_event_log_retention_settings() {
+		$settings = $this->get_plugin_settings();
+		$days     = isset( $settings['portal_event_log_retention_days'] ) ? absint( $settings['portal_event_log_retention_days'] ) : 180;
+		$max_rows = isset( $settings['portal_event_log_max_rows'] ) ? absint( $settings['portal_event_log_max_rows'] ) : 50000;
+
+		return array(
+			'days'     => $days,
+			'max_rows' => $max_rows,
+		);
+	}
+
+	private function purge_portal_event_log( $days = null, $max_rows = null ) {
+		$wpdb = $this->get_pdb();
+		$table = $this->get_portal_event_log_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return new WP_Error( 'event_log_missing', __( 'The portal event log table is not available.', 'ajforms' ) );
+		}
+
+		$retention = $this->get_portal_event_log_retention_settings();
+		$days      = null === $days ? $retention['days'] : absint( $days );
+		$max_rows  = null === $max_rows ? $retention['max_rows'] : absint( $max_rows );
+		$deleted   = array(
+			'old_rows'   => 0,
+			'extra_rows' => 0,
+		);
+
+		if ( $days > 0 ) {
+			$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
+			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$table}` WHERE created_at < %s", $cutoff ) );
+			$deleted['old_rows'] = absint( $wpdb->rows_affected );
+		}
+
+		if ( $max_rows > 0 ) {
+			$boundary = $wpdb->get_row( $wpdb->prepare( "SELECT id, created_at FROM `{$table}` ORDER BY created_at DESC, id DESC LIMIT 1 OFFSET %d", $max_rows ) );
+			if ( $boundary ) {
+				$wpdb->query(
+					$wpdb->prepare(
+						"DELETE FROM `{$table}` WHERE created_at < %s OR (created_at = %s AND id <= %d)",
+						$boundary->created_at,
+						$boundary->created_at,
+						absint( $boundary->id )
+					)
+				);
+				$deleted['extra_rows'] = absint( $wpdb->rows_affected );
+			}
+		}
+
+		$deleted['total'] = $deleted['old_rows'] + $deleted['extra_rows'];
+		return $deleted;
+	}
+
+	private function maybe_purge_portal_event_log() {
+		$retention = $this->get_portal_event_log_retention_settings();
+		if ( $retention['days'] < 1 && $retention['max_rows'] < 1 ) {
+			return;
+		}
+
+		$last_run = absint( get_option( 'ajcore_portal_event_log_last_auto_purge', 0 ) );
+		if ( $last_run > ( time() - DAY_IN_SECONDS ) ) {
+			return;
+		}
+
+		update_option( 'ajcore_portal_event_log_last_auto_purge', time(), false );
+		$this->purge_portal_event_log( $retention['days'], $retention['max_rows'] );
 	}
 
 	private function normalize_portal_customer_status( $status ) {
@@ -8127,6 +8199,8 @@ class AJForms_Admin {
 			'stripe_secret_key'              => '',
 			'stripe_products_mode'           => 'all',
 			'stripe_selected_prices'         => array(),
+			'portal_event_log_retention_days' => 180,
+			'portal_event_log_max_rows'      => 50000,
 		);
 	}
 
@@ -8720,6 +8794,8 @@ class AJForms_Admin {
 				$this->handle_portal_billing_actions();
 			} elseif ( in_array( $tab, array( 'sync', 'menu', 'portal-users', 'sold-items', 'products-services', 'tasks' ), true ) ) {
 				$this->handle_client_portal_settings_save();
+			} elseif ( 'event-log' === $tab ) {
+				$this->handle_portal_event_log_actions();
 			} elseif ( 'customer' === $tab ) {
 				$this->handle_portal_customer_detail_actions();
 			} elseif ( 'file-library' === $tab ) {
@@ -9930,6 +10006,43 @@ class AJForms_Admin {
 			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
 			exit;
 		}
+	}
+
+	private function handle_portal_event_log_actions() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_event_log_nonce'], $_POST['ajcore_event_log_action'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_event_log_settings', 'ajcore_event_log_nonce' );
+
+		$action       = sanitize_key( wp_unslash( $_POST['ajcore_event_log_action'] ) );
+		$redirect_args = array(
+			'page' => 'ajforms-client-portal',
+			'tab'  => 'event-log',
+		);
+
+		if ( 'save_retention' === $action ) {
+			$days     = isset( $_POST['portal_event_log_retention_days'] ) ? absint( wp_unslash( $_POST['portal_event_log_retention_days'] ) ) : 180;
+			$max_rows = isset( $_POST['portal_event_log_max_rows'] ) ? absint( wp_unslash( $_POST['portal_event_log_max_rows'] ) ) : 50000;
+			$settings = $this->get_plugin_settings();
+			$settings['portal_event_log_retention_days'] = $days;
+			$settings['portal_event_log_max_rows']       = $max_rows;
+			update_option( 'ajforms_settings', $settings, false );
+			if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
+				ajforms_write_synced_settings_file( $settings );
+			}
+			$redirect_args['event-log-settings-saved'] = 1;
+		} elseif ( 'purge_now' === $action ) {
+			$result = $this->purge_portal_event_log();
+			if ( is_wp_error( $result ) ) {
+				$redirect_args['event-log-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$redirect_args['event-log-purged'] = isset( $result['total'] ) ? absint( $result['total'] ) : 0;
+			}
+		}
+
+		wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+		exit;
 	}
 
 	private function handle_settings_save() {
@@ -12729,7 +12842,7 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$table = $this->get_portal_event_log_table();
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
@@ -12780,9 +12893,56 @@ class AJForms_Admin {
 		$sources     = $wpdb->get_col( "SELECT DISTINCT source FROM {$table} ORDER BY source ASC" );
 		$severities  = array( 'debug', 'info', 'warning', 'error', 'critical' );
 		$base_url    = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'event-log' ), admin_url( 'admin.php' ) );
+		$retention   = $this->get_portal_event_log_retention_settings();
+		$total_rows  = absint( $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ) );
+		$last_purge  = absint( get_option( 'ajcore_portal_event_log_last_auto_purge', 0 ) );
 		?>
 		<h2><?php esc_html_e( 'Event Log', 'ajforms' ); ?></h2>
 		<p><?php esc_html_e( 'Audit trail for portal mapping, role, lifecycle, auth, sync preservation, repair, and provisioning events.', 'ajforms' ); ?></p>
+
+		<?php if ( isset( $_GET['event-log-settings-saved'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Event log retention settings saved.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+		<?php if ( isset( $_GET['event-log-purged'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Event log purge complete. Deleted %d rows.', 'ajforms' ), absint( $_GET['event-log-purged'] ) ) ); ?></p></div>
+		<?php endif; ?>
+		<?php if ( isset( $_GET['event-log-error'] ) ) : ?>
+			<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['event-log-error'] ) ) ); ?></p></div>
+		<?php endif; ?>
+
+		<div class="ajforms-settings-card" style="margin:12px 0 16px;padding:16px 18px;border-radius:8px;">
+			<h3 style="margin-top:0;"><?php esc_html_e( 'Retention & Purging', 'ajforms' ); ?></h3>
+			<p class="description">
+				<?php
+				echo esc_html(
+					sprintf(
+						__( 'Current table rows: %1$d. Automatic purge runs at most once per day after a new event is logged.%2$s', 'ajforms' ),
+						$total_rows,
+						$last_purge ? ' ' . sprintf( __( 'Last auto purge: %s.', 'ajforms' ), wp_date( 'Y-m-d H:i:s', $last_purge ) ) : ''
+					)
+				);
+				?>
+			</p>
+			<form method="post" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;">
+				<?php wp_nonce_field( 'ajcore_event_log_settings', 'ajcore_event_log_nonce' ); ?>
+				<input type="hidden" name="ajcore_event_log_action" value="save_retention">
+				<label>
+					<?php esc_html_e( 'Keep days', 'ajforms' ); ?><br>
+					<input type="number" name="portal_event_log_retention_days" min="0" step="1" value="<?php echo esc_attr( $retention['days'] ); ?>" style="width:120px;">
+				</label>
+				<label>
+					<?php esc_html_e( 'Max rows', 'ajforms' ); ?><br>
+					<input type="number" name="portal_event_log_max_rows" min="0" step="100" value="<?php echo esc_attr( $retention['max_rows'] ); ?>" style="width:140px;">
+				</label>
+				<button type="submit" class="button button-secondary"><?php esc_html_e( 'Save Retention', 'ajforms' ); ?></button>
+			</form>
+			<form method="post" style="margin-top:10px;">
+				<?php wp_nonce_field( 'ajcore_event_log_settings', 'ajcore_event_log_nonce' ); ?>
+				<input type="hidden" name="ajcore_event_log_action" value="purge_now">
+				<button type="submit" class="button button-secondary"><?php esc_html_e( 'Purge Now', 'ajforms' ); ?></button>
+				<span class="description"><?php esc_html_e( 'Deletes rows older than the retention window, then trims oldest rows over the max row cap. Set either value to 0 to disable that rule.', 'ajforms' ); ?></span>
+			</form>
+		</div>
 
 		<form method="get" class="ajcore-filter-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px;">
 			<input type="hidden" name="page" value="ajforms-client-portal">
