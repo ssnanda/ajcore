@@ -4913,6 +4913,43 @@ class AJForms_Admin {
 		return $data;
 	}
 
+	private function parse_portal_money_amount( $amount ) {
+		if ( is_numeric( $amount ) ) {
+			return (float) $amount;
+		}
+
+		$amount = preg_replace( '/[^0-9.\-]/', '', (string) $amount );
+		return '' !== $amount && is_numeric( $amount ) ? (float) $amount : 0;
+	}
+
+	private function normalize_portal_service_state_data_from_record( $record, $status, $notes = '' ) {
+		$data = array(
+			'stripe_customer_id'   => ! empty( $record->stripe_customer_id ) ? sanitize_text_field( (string) $record->stripe_customer_id ) : '',
+			'guest_customer_id'    => ! empty( $record->guest_customer_id ) ? sanitize_text_field( (string) $record->guest_customer_id ) : '',
+			'customer_email'       => ! empty( $record->customer_email ) ? sanitize_email( (string) $record->customer_email ) : '',
+			'product_id'           => ! empty( $record->stripe_product_id ) ? sanitize_text_field( (string) $record->stripe_product_id ) : ( ! empty( $record->product_id ) ? sanitize_text_field( (string) $record->product_id ) : '' ),
+			'price_id'             => ! empty( $record->stripe_price_id ) ? sanitize_text_field( (string) $record->stripe_price_id ) : ( ! empty( $record->price_id ) ? sanitize_text_field( (string) $record->price_id ) : '' ),
+			'product_name'         => ! empty( $record->service_name ) ? sanitize_text_field( (string) $record->service_name ) : '',
+			'amount'               => isset( $record->amount ) ? $this->parse_portal_money_amount( $record->amount ) : 0,
+			'currency'             => ! empty( $record->currency ) ? strtolower( sanitize_key( (string) $record->currency ) ) : 'usd',
+			'checkout_session_id'  => ! empty( $record->checkout_session_id ) ? sanitize_text_field( (string) $record->checkout_session_id ) : '',
+			'invoice_id'           => ! empty( $record->invoice_id ) ? sanitize_text_field( (string) $record->invoice_id ) : '',
+			'payment_intent_id'    => ! empty( $record->payment_intent_id ) ? sanitize_text_field( (string) $record->payment_intent_id ) : '',
+			'charge_id'            => ! empty( $record->charge_id ) ? sanitize_text_field( (string) $record->charge_id ) : '',
+			'subscription_id'      => ! empty( $record->stripe_subscription_id ) ? sanitize_text_field( (string) $record->stripe_subscription_id ) : ( ! empty( $record->subscription_id ) ? sanitize_text_field( (string) $record->subscription_id ) : '' ),
+			'service_period_start' => ! empty( $record->service_period_start ) ? sanitize_text_field( (string) $record->service_period_start ) : null,
+			'service_period_end'   => ! empty( $record->service_period_end ) ? sanitize_text_field( (string) $record->service_period_end ) : null,
+			'service_period'       => ! empty( $record->service_period ) ? sanitize_text_field( (string) $record->service_period ) : '',
+			'service_status'       => sanitize_key( (string) $status ),
+			'notes'                => sanitize_textarea_field( (string) $notes ),
+			'used_at'              => 'used' === sanitize_key( (string) $status ) ? current_time( 'mysql' ) : null,
+			'used_by'              => get_current_user_id(),
+		);
+		$data['service_state_key'] = $this->get_portal_service_state_key( $data );
+
+		return $data;
+	}
+
 	private function upsert_portal_service_state( $data ) {
 		$wpdb = $this->get_pdb();
 
@@ -6348,6 +6385,45 @@ class AJForms_Admin {
 		return null;
 	}
 
+	private function get_matching_portal_service_state_for_record( $record ) {
+		$snapshot = (object) array(
+			'stripe_customer_id'      => ! empty( $record->stripe_customer_id ) ? sanitize_text_field( (string) $record->stripe_customer_id ) : '',
+			'guest_customer_id'       => ! empty( $record->guest_customer_id ) ? sanitize_text_field( (string) $record->guest_customer_id ) : '',
+			'customer_email'          => ! empty( $record->customer_email ) ? sanitize_email( (string) $record->customer_email ) : '',
+			'product_id'              => ! empty( $record->stripe_product_id ) ? sanitize_text_field( (string) $record->stripe_product_id ) : ( ! empty( $record->product_id ) ? sanitize_text_field( (string) $record->product_id ) : '' ),
+			'price_id'                => ! empty( $record->stripe_price_id ) ? sanitize_text_field( (string) $record->stripe_price_id ) : ( ! empty( $record->price_id ) ? sanitize_text_field( (string) $record->price_id ) : '' ),
+			'product_name_snapshot'   => ! empty( $record->service_name ) ? sanitize_text_field( (string) $record->service_name ) : '',
+			'amount'                  => isset( $record->amount ) ? $this->parse_portal_money_amount( $record->amount ) : 0,
+			'checkout_session_id'     => ! empty( $record->checkout_session_id ) ? sanitize_text_field( (string) $record->checkout_session_id ) : '',
+			'invoice_id'              => ! empty( $record->invoice_id ) ? sanitize_text_field( (string) $record->invoice_id ) : '',
+			'payment_intent_id'       => ! empty( $record->payment_intent_id ) ? sanitize_text_field( (string) $record->payment_intent_id ) : '',
+			'charge_id'               => ! empty( $record->charge_id ) ? sanitize_text_field( (string) $record->charge_id ) : '',
+			'subscription_id'         => ! empty( $record->stripe_subscription_id ) ? sanitize_text_field( (string) $record->stripe_subscription_id ) : ( ! empty( $record->subscription_id ) ? sanitize_text_field( (string) $record->subscription_id ) : '' ),
+			'service_period'          => ! empty( $record->service_period ) ? sanitize_text_field( (string) $record->service_period ) : '',
+			'service_period_start'    => ! empty( $record->service_period_start ) ? sanitize_text_field( (string) $record->service_period_start ) : '',
+			'service_period_end'      => ! empty( $record->service_period_end ) ? sanitize_text_field( (string) $record->service_period_end ) : '',
+		);
+
+		return $this->get_matching_portal_service_state_for_snapshot( $snapshot );
+	}
+
+	private function apply_portal_service_state_to_record( $record ) {
+		$service_state = $this->get_matching_portal_service_state_for_record( $record );
+		if ( ! $service_state || empty( $service_state->service_status ) ) {
+			return $record;
+		}
+
+		$record->status = sanitize_key( (string) $service_state->service_status );
+		if ( ! empty( $service_state->used_at ) ) {
+			$record->used_at = $service_state->used_at;
+		}
+		if ( ! empty( $service_state->notes ) ) {
+			$record->service_state_notes = $service_state->notes;
+		}
+
+		return $record;
+	}
+
 	private function portal_service_state_matches_snapshot( $state, $snapshot ) {
 		$state_name = ! empty( $state->product_name ) ? sanitize_title( (string) $state->product_name ) : '';
 		$snapshot_name = ! empty( $snapshot->product_name_snapshot ) ? sanitize_title( (string) $snapshot->product_name_snapshot ) : '';
@@ -6474,6 +6550,7 @@ class AJForms_Admin {
 			'paid_at'               => isset( $entry->ledger_date ) ? $entry->ledger_date : '',
 			'synced_at'             => ! empty( $entry->created_at ) ? $entry->created_at : '',
 			'customer'              => ! empty( $entry->customer_name ) ? sanitize_text_field( (string) $entry->customer_name ) : ( ! empty( $entry->customer_email ) ? sanitize_email( (string) $entry->customer_email ) : ( ! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : __( 'Guest customer', 'ajforms' ) ) ),
+			'customer_email'        => ! empty( $entry->customer_email ) ? sanitize_email( (string) $entry->customer_email ) : '',
 			'stripe_customer_id'    => ! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
 			'source_ref'            => ! empty( $entry->source_object_id ) ? sanitize_text_field( (string) $entry->source_object_id ) : '',
 			'next_action'           => __( 'Convert to Auto-Pay Subscription', 'ajforms' ),
@@ -6848,6 +6925,7 @@ class AJForms_Admin {
 					'paid_at'                => $entry->ledger_date,
 					'synced_at'              => ! empty( $entry->created_at ) ? $entry->created_at : '',
 					'source_ref'             => ! empty( $entry->source_object_id ) ? $entry->source_object_id : '',
+					'customer_email'         => ! empty( $entry->customer_email ) ? $entry->customer_email : '',
 					'next_action'            => 'one_time' === $record_billing_type ? __( 'Convert to Auto-Pay Subscription', 'ajforms' ) : '',
 				)
 			);
@@ -8895,32 +8973,52 @@ class AJForms_Admin {
 				}
 				$effective_snapshot_key = $snapshot ? sanitize_text_field( (string) $snapshot->snapshot_key ) : $snapshot_key;
 				$state_id = 0;
+				$state_data = array();
 				if ( $snapshot ) {
+					$state_data = $this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' );
+				} else {
+					$posted_record = (object) array(
+						'stripe_customer_id'      => isset( $_POST['service_stripe_customer_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_stripe_customer_id'] ) ) : '',
+						'customer_email'          => isset( $_POST['service_customer_email'] ) ? sanitize_email( wp_unslash( $_POST['service_customer_email'] ) ) : '',
+						'service_name'            => isset( $_POST['service_name'] ) ? sanitize_text_field( wp_unslash( $_POST['service_name'] ) ) : '',
+						'stripe_product_id'       => isset( $_POST['service_product_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_product_id'] ) ) : '',
+						'stripe_price_id'         => isset( $_POST['service_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_price_id'] ) ) : '',
+						'amount'                  => isset( $_POST['service_amount'] ) ? sanitize_text_field( wp_unslash( $_POST['service_amount'] ) ) : '',
+						'currency'                => isset( $_POST['service_currency'] ) ? sanitize_key( wp_unslash( $_POST['service_currency'] ) ) : 'usd',
+						'checkout_session_id'     => isset( $_POST['service_checkout_session_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_checkout_session_id'] ) ) : '',
+						'invoice_id'              => isset( $_POST['service_invoice_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_invoice_id'] ) ) : '',
+						'payment_intent_id'       => isset( $_POST['service_payment_intent_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_payment_intent_id'] ) ) : '',
+						'charge_id'               => isset( $_POST['service_charge_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_charge_id'] ) ) : '',
+						'stripe_subscription_id'  => isset( $_POST['service_subscription_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_subscription_id'] ) ) : '',
+						'service_period'          => isset( $_POST['service_period'] ) ? sanitize_text_field( wp_unslash( $_POST['service_period'] ) ) : '',
+						'service_period_start'    => isset( $_POST['service_period_start'] ) ? sanitize_text_field( wp_unslash( $_POST['service_period_start'] ) ) : '',
+						'service_period_end'      => isset( $_POST['service_period_end'] ) ? sanitize_text_field( wp_unslash( $_POST['service_period_end'] ) ) : '',
+					);
+					$state_data = $this->normalize_portal_service_state_data_from_record( $posted_record, 'used' );
+				}
+				if ( ! empty( $state_data['service_state_key'] ) ) {
 					if ( 'used' === $state_action ) {
-						$state_id = $this->upsert_portal_service_state(
-							$this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' )
-						);
+						$state_id = $this->upsert_portal_service_state( $state_data );
 					} else {
-						$state_data = $this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' );
-						if ( ! empty( $state_data['service_state_key'] ) ) {
-							$pdb->delete(
-								$this->get_portal_service_states_table(),
-								array( 'service_state_key' => $state_data['service_state_key'] ),
-								array( '%s' )
-							);
-						}
+						$pdb->delete(
+							$this->get_portal_service_states_table(),
+							array( 'service_state_key' => $state_data['service_state_key'] ),
+							array( '%s' )
+						);
 					}
 				}
-				$pdb->update(
-					$this->get_portal_service_snapshots_table(),
-					array(
-						'status'     => 'used' === $state_action ? 'used' : 'paid',
-						'updated_at' => current_time( 'mysql' ),
-					),
-					array( 'snapshot_key' => $effective_snapshot_key ),
-					array( '%s', '%s' ),
-					array( '%s' )
-				);
+				if ( $snapshot ) {
+					$pdb->update(
+						$this->get_portal_service_snapshots_table(),
+						array(
+							'status'     => 'used' === $state_action ? 'used' : 'paid',
+							'updated_at' => current_time( 'mysql' ),
+						),
+						array( 'snapshot_key' => $effective_snapshot_key ),
+						array( '%s', '%s' ),
+						array( '%s' )
+					);
+				}
 				$this->log_portal_event(
 					'used' === $state_action ? 'service_marked_used' : 'service_marked_unused',
 					array(
@@ -14099,6 +14197,7 @@ class AJForms_Admin {
 		}
 		if ( in_array( 'one_time', $type_filter, true ) ) {
 			foreach ( $one_time_services as $service ) {
+				$service = $this->apply_portal_service_state_to_record( $service );
 				$service->sold_item_type = 'one_time';
 				$service->sold_item_type_label = __( 'One-Time', 'ajforms' );
 				$service->sold_item_source_id = $this->get_portal_one_time_service_source_id( $service );
@@ -14192,6 +14291,21 @@ class AJForms_Admin {
 										<form method="post" style="margin:0;">
 											<?php wp_nonce_field( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' ); ?>
 											<input type="hidden" name="service_snapshot_key" value="<?php echo esc_attr( $item->source_ref ); ?>">
+											<input type="hidden" name="service_stripe_customer_id" value="<?php echo esc_attr( ! empty( $item->stripe_customer_id ) ? $item->stripe_customer_id : '' ); ?>">
+											<input type="hidden" name="service_customer_email" value="<?php echo esc_attr( ! empty( $item->customer_email ) ? $item->customer_email : '' ); ?>">
+											<input type="hidden" name="service_name" value="<?php echo esc_attr( ! empty( $item->service_name ) ? $item->service_name : '' ); ?>">
+											<input type="hidden" name="service_product_id" value="<?php echo esc_attr( ! empty( $item->stripe_product_id ) ? $item->stripe_product_id : '' ); ?>">
+											<input type="hidden" name="service_price_id" value="<?php echo esc_attr( ! empty( $item->stripe_price_id ) ? $item->stripe_price_id : '' ); ?>">
+											<input type="hidden" name="service_amount" value="<?php echo esc_attr( ! empty( $item->amount ) ? $item->amount : ( ! empty( $item->price ) ? $item->price : '' ) ); ?>">
+											<input type="hidden" name="service_currency" value="<?php echo esc_attr( ! empty( $item->currency ) ? $item->currency : 'usd' ); ?>">
+											<input type="hidden" name="service_checkout_session_id" value="<?php echo esc_attr( ! empty( $item->checkout_session_id ) ? $item->checkout_session_id : '' ); ?>">
+											<input type="hidden" name="service_invoice_id" value="<?php echo esc_attr( ! empty( $item->invoice_id ) ? $item->invoice_id : '' ); ?>">
+											<input type="hidden" name="service_payment_intent_id" value="<?php echo esc_attr( ! empty( $item->payment_intent_id ) ? $item->payment_intent_id : '' ); ?>">
+											<input type="hidden" name="service_charge_id" value="<?php echo esc_attr( ! empty( $item->charge_id ) ? $item->charge_id : '' ); ?>">
+											<input type="hidden" name="service_subscription_id" value="<?php echo esc_attr( ! empty( $item->stripe_subscription_id ) ? $item->stripe_subscription_id : '' ); ?>">
+											<input type="hidden" name="service_period" value="<?php echo esc_attr( ! empty( $item->service_period ) ? $item->service_period : '' ); ?>">
+											<input type="hidden" name="service_period_start" value="<?php echo esc_attr( ! empty( $item->service_period_start ) ? $item->service_period_start : '' ); ?>">
+											<input type="hidden" name="service_period_end" value="<?php echo esc_attr( ! empty( $item->service_period_end ) ? $item->service_period_end : '' ); ?>">
 											<?php if ( 'used' === sanitize_key( (string) $item->status ) ) : ?>
 												<input type="hidden" name="service_state_action" value="unused">
 												<button type="submit" class="button"><?php esc_html_e( 'Mark Unused', 'ajforms' ); ?></button>
