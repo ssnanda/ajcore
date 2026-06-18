@@ -8881,6 +8881,19 @@ class AJForms_Admin {
 						$snapshot_key
 					)
 				);
+				// Fallback: source_ref for ledger-based items is the Stripe ID (ch_, in_, pi_, cs_), not a snapshot key.
+				if ( ! $snapshot ) {
+					$snapshot = $pdb->get_row(
+						$pdb->prepare(
+							"SELECT * FROM {$this->get_portal_service_snapshots_table()} WHERE billing_type = 'one_time' AND (charge_id = %s OR invoice_id = %s OR payment_intent_id = %s OR checkout_session_id = %s) ORDER BY id DESC LIMIT 1",
+							$snapshot_key,
+							$snapshot_key,
+							$snapshot_key,
+							$snapshot_key
+						)
+					);
+				}
+				$effective_snapshot_key = $snapshot ? sanitize_text_field( (string) $snapshot->snapshot_key ) : $snapshot_key;
 				$state_id = 0;
 				if ( $snapshot ) {
 					if ( 'used' === $state_action ) {
@@ -8904,7 +8917,7 @@ class AJForms_Admin {
 						'status'     => 'used' === $state_action ? 'used' : 'paid',
 						'updated_at' => current_time( 'mysql' ),
 					),
-					array( 'snapshot_key' => $snapshot_key ),
+					array( 'snapshot_key' => $effective_snapshot_key ),
 					array( '%s', '%s' ),
 					array( '%s' )
 				);
@@ -8915,7 +8928,7 @@ class AJForms_Admin {
 						'severity' => 'info',
 						'stripe_customer_id' => $snapshot && ! empty( $snapshot->stripe_customer_id ) ? $snapshot->stripe_customer_id : '',
 						'details'  => array(
-							'snapshot_key'     => $snapshot_key,
+							'snapshot_key'     => $effective_snapshot_key,
 							'service_state_id' => $state_id,
 							'product_name'     => $snapshot && ! empty( $snapshot->product_name_snapshot ) ? $snapshot->product_name_snapshot : '',
 						),
