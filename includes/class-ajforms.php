@@ -1597,7 +1597,7 @@ class AJForms {
 			FROM {$this->get_portal_stripe_products_table()} p
 			LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id
 			WHERE p.active = 1 AND COALESCE(c.visibility, p.visibility, 'hidden') <> 'hidden'
-			ORDER BY sort_order ASC, p.name ASC"
+			ORDER BY CASE WHEN COALESCE(c.sort_order, p.sort_order, 0) > 0 THEN 0 ELSE 1 END ASC, sort_order ASC, p.name ASC"
 		);
 
 		return array_values(
@@ -1737,7 +1737,7 @@ class AJForms {
 			FROM {$this->get_portal_stripe_products_table()} p
 			LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id
 			WHERE p.active = 1 AND COALESCE(c.visibility, p.visibility, 'hidden') <> 'hidden' AND COALESCE(c.duplicate_behavior, p.duplicate_behavior, 'no_duplicates') = 'custom_request'
-			ORDER BY sort_order ASC, p.name ASC"
+			ORDER BY CASE WHEN COALESCE(c.sort_order, p.sort_order, 0) > 0 THEN 0 ELSE 1 END ASC, sort_order ASC, p.name ASC"
 		);
 		foreach ( $fallback_products as $product ) {
 			$maybe_add_custom_product( $product );
@@ -2016,6 +2016,11 @@ class AJForms {
 			function ( $a, $b ) {
 				$sort_a = isset( $a['sort_order'] ) ? (int) $a['sort_order'] : 0;
 				$sort_b = isset( $b['sort_order'] ) ? (int) $b['sort_order'] : 0;
+				$bucket_a = $sort_a > 0 ? 0 : 1;
+				$bucket_b = $sort_b > 0 ? 0 : 1;
+				if ( $bucket_a !== $bucket_b ) {
+					return $bucket_a <=> $bucket_b;
+				}
 				if ( $sort_a === $sort_b ) {
 					return strcasecmp( (string) $a['name'], (string) $b['name'] );
 				}

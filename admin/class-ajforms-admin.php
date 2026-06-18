@@ -14351,7 +14351,7 @@ class AJForms_Admin {
 					c.price_settings AS portal_price_settings
 				FROM {$this->get_portal_stripe_products_table()} p
 				LEFT JOIN {$this->get_portal_product_catalog_table()} c ON c.stripe_product_id = p.stripe_product_id
-				ORDER BY p.active DESC, sort_order ASC, p.name ASC LIMIT %d",
+				ORDER BY p.active DESC, CASE WHEN COALESCE(c.sort_order, p.sort_order, 0) > 0 THEN 0 ELSE 1 END ASC, sort_order ASC, p.name ASC LIMIT %d",
 				300
 			)
 		);
