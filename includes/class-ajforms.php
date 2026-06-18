@@ -1094,7 +1094,7 @@ class AJForms {
 	}
 
 	private function get_synced_product_name_for_subscription_item( $item ) {
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$price_id   = '';
 		$product_id = '';
@@ -1117,8 +1117,8 @@ class AJForms {
 		}
 
 		if ( '' !== $price_id ) {
-			$name = $wpdb->get_var(
-				$wpdb->prepare(
+			$name = $pdb->get_var(
+				$pdb->prepare(
 					"SELECT name FROM {$this->get_portal_stripe_products_table()} WHERE stripe_price_id = %s LIMIT 1",
 					$price_id
 				)
@@ -1129,8 +1129,8 @@ class AJForms {
 		}
 
 		if ( '' !== $product_id ) {
-			$name = $wpdb->get_var(
-				$wpdb->prepare(
+			$name = $pdb->get_var(
+				$pdb->prepare(
 					"SELECT name FROM {$this->get_portal_stripe_products_table()} WHERE stripe_product_id = %s ORDER BY active DESC, id DESC LIMIT 1",
 					$product_id
 				)
@@ -1580,9 +1580,9 @@ class AJForms {
 	}
 
 	private function get_portal_filtered_service_products( $subscriptions ) {
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
-		$products = $wpdb->get_results(
+		$products = $pdb->get_results(
 			"SELECT p.*,
 				COALESCE(c.visibility, p.visibility, 'hidden') AS visibility,
 				COALESCE(c.custom_label, p.custom_label, '') AS custom_label,
@@ -1650,7 +1650,7 @@ class AJForms {
 	}
 
 	private function get_portal_custom_request_products( $subscriptions, $ledger = array() ) {
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$purchased_price_ids   = $this->get_customer_purchased_price_ids( $subscriptions );
 		$purchased_product_ids = $this->get_customer_purchased_product_ids( $subscriptions );
@@ -1722,7 +1722,7 @@ class AJForms {
 
 		// Do not let product-mode selection hide an already-configured custom-request upsell.
 		// The admin explicitly controls this using each product's duplicate_behavior setting.
-		$fallback_products = $wpdb->get_results(
+		$fallback_products = $pdb->get_results(
 			"SELECT p.*,
 				COALESCE(c.visibility, p.visibility, 'hidden') AS visibility,
 				COALESCE(c.custom_label, p.custom_label, '') AS custom_label,
@@ -2505,9 +2505,9 @@ class AJForms {
 			return array();
 		}
 
-		global $wpdb;
-		$subscription = $wpdb->get_row(
-			$wpdb->prepare(
+		$pdb = $this->get_pdb();
+		$subscription = $pdb->get_row(
+			$pdb->prepare(
 				"SELECT current_period_end, raw_data FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_subscription_id = %s LIMIT 1",
 				sanitize_text_field( (string) $snapshot->subscription_id )
 			)
@@ -3128,7 +3128,7 @@ class AJForms {
 			return array();
 		}
 
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$statuses = $this->get_portal_open_ledger_statuses();
 		$status_placeholders = implode( ',', array_fill( 0, count( $statuses ), '%s' ) );
@@ -3144,7 +3144,7 @@ class AJForms {
 
 		$sql = "SELECT * FROM {$this->get_portal_ledger_table()} WHERE {$where} ORDER BY ledger_date ASC, id ASC";
 
-		return $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
+		return $pdb->get_results( $pdb->prepare( $sql, $params ) );
 	}
 
 	private function get_portal_open_ledger_total( $entries ) {

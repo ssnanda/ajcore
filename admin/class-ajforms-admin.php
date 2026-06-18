@@ -9599,8 +9599,8 @@ class AJForms_Admin {
 				$this->save_public_product_dependency_settings( $dependency_settings );
 				foreach ( array_unique( array_filter( $affected_product_ids ) ) as $affected_product_id ) {
 					$existing_catalog = $this->get_portal_product_catalog_settings( $affected_product_id );
-					$price_ids = $wpdb->get_col(
-						$wpdb->prepare(
+					$price_ids = $pdb->get_col(
+						$pdb->prepare(
 							"SELECT stripe_price_id FROM {$this->get_portal_stripe_products_table()} WHERE stripe_product_id = %s AND stripe_price_id <> ''",
 							$affected_product_id
 						)
