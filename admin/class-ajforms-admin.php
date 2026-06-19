@@ -11147,6 +11147,7 @@ class AJForms_Admin {
 		$status          = isset( $request->status ) ? sanitize_key( (string) $request->status ) : '';
 		$raw_data        = is_array( $raw_data ) ? $raw_data : array();
 		$billing_preview = ! empty( $raw_data['billing_preview'] ) && is_array( $raw_data['billing_preview'] ) ? $raw_data['billing_preview'] : array();
+		$is_stripe_import = $this->is_portal_service_request_stripe_import( $request );
 		$actions         = array();
 
 		if ( ! in_array( $status, array( 'admin_review_required', 'completed', 'cancelled' ), true ) ) {
@@ -11169,13 +11170,23 @@ class AJForms_Admin {
 			$actions['apply_billing_change'] = __( 'Apply Billing Change', 'ajforms' );
 		}
 
-		if ( ! in_array( $status, array( 'completed', 'cancelled' ), true ) ) {
+		if ( ! $is_stripe_import && ! in_array( $status, array( 'completed', 'cancelled' ), true ) ) {
 			$actions['cancel'] = __( 'Cancel', 'ajforms' );
 		}
 
-		$actions['delete'] = __( 'Delete', 'ajforms' );
+		if ( ! $is_stripe_import ) {
+			$actions['delete'] = __( 'Delete', 'ajforms' );
+		}
 
 		return $actions;
+	}
+
+	private function is_portal_service_request_stripe_import( $request ) {
+		$source_type = isset( $request->source_type ) ? sanitize_key( (string) $request->source_type ) : '';
+		$ledger_source_type = isset( $request->ledger_source_type ) ? sanitize_key( (string) $request->ledger_source_type ) : '';
+		$stripe_source_types = array( 'checkout_session', 'invoice', 'charge', 'payment', 'payment_intent', 'refund', 'subscription' );
+
+		return in_array( $source_type, $stripe_source_types, true ) || in_array( $ledger_source_type, $stripe_source_types, true );
 	}
 
 	private function normalize_portal_service_request_status( $status ) {
@@ -11301,7 +11312,7 @@ class AJForms_Admin {
 		}
 
 		if ( ! empty( $labels ) ) {
-			return implode( ', ', array_values( $labels ) );
+			return reset( $labels );
 		}
 
 		return __( 'Service Request', 'ajforms' );
@@ -11960,7 +11971,7 @@ class AJForms_Admin {
 		}
 
 		// Query shared tables (requests + customers) via $pdb; look up local WP users separately.
-		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, l.metadata AS ledger_metadata, l.invoice_id, l.payment_intent_id, l.charge_id, t.raw_data AS transaction_raw_data
+		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, l.metadata AS ledger_metadata, l.source_type AS ledger_source_type, l.invoice_id, l.payment_intent_id, l.charge_id, t.raw_data AS transaction_raw_data
 			FROM {$this->get_portal_service_requests_table()} r
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = r.stripe_customer_id
 			LEFT JOIN {$this->get_portal_ledger_table()} l ON l.id = r.ledger_id
@@ -11988,7 +11999,6 @@ class AJForms_Admin {
 		$base_url = add_query_arg( array( 'page' => 'ajforms-service-requests' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-service-requests-admin">
-			<h1><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h1>
 			<?php if ( isset( $_GET['service-used'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php echo '0' === (string) $_GET['service-used'] ? esc_html__( 'Service marked unused.', 'ajforms' ) : esc_html__( 'Service marked used.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -12001,7 +12011,6 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-deleted'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request deleted.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
-			<p><?php esc_html_e( 'Use this queue for customer service requests and paid purchases that need manual fulfillment, such as updating state records, sending next-step instructions, or completing internal setup.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
 				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
@@ -12042,15 +12051,12 @@ class AJForms_Admin {
 							$status_label = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
 							$request_raw = $this->get_portal_service_request_raw_data( $request );
 							$request_display_name = $this->get_portal_service_request_display_name( $request, $request_raw );
-							$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
-							$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
 							$actions = $this->get_portal_service_request_quick_actions( $request, $request_raw );
 							?>
-							<tr>
-								<td>
-									<strong><?php echo esc_html( $request_display_name ); ?></strong><br>
-									<small><?php echo esc_html( $request->request_type ); ?><?php echo $request_price_label ? ' · ' . esc_html( $request_price_label ) : ( $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : '' ); ?></small>
-								</td>
+								<tr>
+									<td>
+										<strong><?php echo esc_html( $request_display_name ); ?></strong>
+									</td>
 								<td>
 									<?php echo esc_html( $customer_labels['name'] ); ?><br>
 									<small><?php echo esc_html( $customer_labels['email'] ); ?></small><br>
@@ -12254,7 +12260,7 @@ class AJForms_Admin {
 		}
 
 		// Query shared tables (requests + customers) via $pdb; look up local WP users separately.
-		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, l.metadata AS ledger_metadata, l.invoice_id, l.payment_intent_id, l.charge_id, t.raw_data AS transaction_raw_data
+		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, l.metadata AS ledger_metadata, l.source_type AS ledger_source_type, l.invoice_id, l.payment_intent_id, l.charge_id, t.raw_data AS transaction_raw_data
 			FROM {$this->get_portal_service_requests_table()} r
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = r.stripe_customer_id
 			LEFT JOIN {$this->get_portal_ledger_table()} l ON l.id = r.ledger_id
@@ -12283,7 +12289,6 @@ class AJForms_Admin {
 		$service_products = $this->get_portal_stripe_products_for_settings();
 		?>
 		<div class="ajcore-admin-panel">
-			<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
 			<?php if ( isset( $_GET['service-used'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php echo '0' === (string) $_GET['service-used'] ? esc_html__( 'Service marked unused.', 'ajforms' ) : esc_html__( 'Service marked used.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -12296,7 +12301,6 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['service-request-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['service-request-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
-			<p><?php esc_html_e( 'Use this queue for customer service requests and paid purchases that need manual fulfillment, such as updating state records, sending next-step instructions, or completing internal setup.', 'ajforms' ); ?></p>
 
 			<ul class="subsubsub">
 				<li><a href="<?php echo esc_url( $base_url ); ?>" class="<?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a></li>
@@ -12338,8 +12342,6 @@ class AJForms_Admin {
 							$status_label   = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
 							$request_raw = $this->get_portal_service_request_raw_data( $request );
 							$request_display_name = $this->get_portal_service_request_display_name( $request, $request_raw );
-							$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
-							$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
 							$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
 							$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
 							$billing_preview = ! empty( $request_raw['billing_preview'] ) && is_array( $request_raw['billing_preview'] ) ? $request_raw['billing_preview'] : array();
@@ -12348,11 +12350,10 @@ class AJForms_Admin {
 						$current_price_label = $current_product ? $this->get_portal_product_admin_label( $current_product ) : '';
 						$save_details_nonce = wp_create_nonce( 'ajcore_service_request_details_' . (int) $request->id );
 						?>
-							<tr>
-								<td>
-									<strong><?php echo esc_html( $request_display_name ); ?></strong><br>
-									<small><?php echo esc_html( $request->request_type ); ?><?php echo $request_price_label ? ' · ' . esc_html( $request_price_label ) : ( $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : '' ); ?></small>
-								</td>
+								<tr>
+									<td>
+										<strong><?php echo esc_html( $request_display_name ); ?></strong>
+									</td>
 								<td>
 									<?php echo esc_html( $customer_labels['name'] ); ?><br>
 									<small><?php echo esc_html( $customer_labels['email'] ); ?></small><br>
