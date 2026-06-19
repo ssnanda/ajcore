@@ -11802,12 +11802,15 @@ class AJForms_Admin {
 
 	private function backfill_portal_service_requests_from_ledger() {
 		global $wpdb;
+		$pdb = $this->get_pdb();
 
+		file_put_contents( '/tmp/ajbackfill.log', date('H:i:s') . ' PRE_SCHEMA pdb=' . $pdb->dbhost . "\n", FILE_APPEND );
 		$this->ensure_portal_schema();
+		file_put_contents( '/tmp/ajbackfill.log', date('H:i:s') . ' POST_SCHEMA' . "\n", FILE_APPEND );
 		$actionable_source_types = array( 'custom_service_request', 'service_quote_request', 'custom_request', 'service_request', 'checkout_session' );
 		$source_placeholders = implode( ',', array_fill( 0, count( $actionable_source_types ), '%s' ) );
-		$ledger_rows = $wpdb->get_results(
-			$wpdb->prepare(
+		$ledger_rows = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT l.*, c.email AS customer_email, c.name AS customer_name
 				FROM {$this->get_portal_ledger_table()} l
 				LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = l.stripe_customer_id
@@ -11817,13 +11820,15 @@ class AJForms_Admin {
 			)
 		);
 
+		file_put_contents( '/tmp/ajbackfill.log', date('H:i:s') . ' ledger_rows count=' . count($ledger_rows) . ' pdb=' . $pdb->dbhost . "\n", FILE_APPEND );
 		foreach ( $ledger_rows as $entry ) {
+			file_put_contents( '/tmp/ajbackfill.log', date('H:i:s') . ' entry id=' . $entry->id . ' type=' . $entry->source_type . ' source=' . substr($entry->source_object_id, 0, 30) . "\n", FILE_APPEND );
 			if ( empty( $entry->source_object_id ) ) {
 				continue;
 			}
 
-			$existing = $wpdb->get_row(
-				$wpdb->prepare(
+			$existing = $pdb->get_row(
+				$pdb->prepare(
 					"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE source_object_id = %s LIMIT 1",
 					$entry->source_object_id
 				)
@@ -11889,8 +11894,8 @@ class AJForms_Admin {
 			// Last resort: look up the checkout session in stripe_transactions (populated by Stripe sync) to
 			// find price IDs and product names from the raw session data and expanded line items.
 			if ( $is_checkout_request && ( '' === $resolved_service_name || $this->is_generic_portal_service_label( $resolved_service_name ) ) ) {
-				$tx_raw_json = $wpdb->get_var(
-					$wpdb->prepare(
+				$tx_raw_json = $pdb->get_var(
+					$pdb->prepare(
 						"SELECT raw_data FROM {$this->get_portal_stripe_transactions_table()} WHERE stripe_object_id = %s LIMIT 1",
 						sanitize_text_field( (string) $entry->source_object_id )
 					)
@@ -11993,25 +11998,125 @@ class AJForms_Admin {
 			$request_formats = array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%d', '%s', '%d', '%s', '%s' );
 
 			if ( $existing ) {
-				$wpdb->update(
+				file_put_contents( '/tmp/ajbackfill.log', date('H:i:s') . ' UPDATE SR id=' . (int) $existing->id . ' service_name=' . $resolved_service_name . ' source=' . substr($entry->source_object_id, 0, 30) . "\n", FILE_APPEND );
+				$pdb->update(
 					$this->get_portal_service_requests_table(),
 					$request_data,
 					array( 'id' => (int) $existing->id ),
 					$request_formats,
 					array( '%d' )
 				);
+				file_put_contents( '/tmp/ajbackfill.log', date('H:i:s') . ' RESULT rows_affected=' . $pdb->rows_affected . ' last_error=' . $pdb->last_error . "\n", FILE_APPEND );
 				continue;
 			}
 
 			$request_data['created_at'] = ! empty( $entry->created_at ) ? $entry->created_at : current_time( 'mysql' );
 			$request_formats[] = '%s';
 
-			$wpdb->insert(
+			$pdb->insert(
 				$this->get_portal_service_requests_table(),
 				$request_data,
 				$request_formats
 			);
-	}
+		}
+
+		// Repair orphaned service requests: records whose ledger_id points to a non-existent ledger entry.
+		// This happens after a master reset — the ledger is wiped and re-synced with new IDs, but service
+		// requests are intentionally kept. Their ledger_id values become stale (pointing to deleted rows).
+		$orphaned = $pdb->get_results(
+			"SELECT r.*
+			FROM {$this->get_portal_service_requests_table()} r
+			LEFT JOIN {$this->get_portal_ledger_table()} l ON l.id = r.ledger_id
+			WHERE r.ledger_id > 0 AND l.id IS NULL
+			LIMIT 200"
+		);
+		foreach ( (array) $orphaned as $orphan ) {
+			$source_object_id = sanitize_text_field( (string) $orphan->source_object_id );
+			if ( '' === $source_object_id ) {
+				continue;
+			}
+
+			$repair_data   = array( 'updated_at' => current_time( 'mysql' ) );
+			$repair_fmts   = array( '%s' );
+
+			// Try to relink to a ledger entry that matches this checkout session ID.
+			$new_ledger = $pdb->get_row(
+				$pdb->prepare(
+					"SELECT * FROM {$this->get_portal_ledger_table()} WHERE source_object_id = %s LIMIT 1",
+					$source_object_id
+				)
+			);
+			if ( $new_ledger ) {
+				$repair_data['ledger_id'] = (int) $new_ledger->id;
+				$repair_fmts[]            = '%d';
+			}
+
+			// If service_name is generic/empty, try to recover a product name from stripe_transactions.
+			$existing_name = sanitize_text_field( (string) $orphan->service_name );
+			if ( '' === $existing_name || $this->is_generic_portal_service_label( $existing_name ) ) {
+				$tx_raw_json = $pdb->get_var(
+					$pdb->prepare(
+						"SELECT raw_data FROM {$this->get_portal_stripe_transactions_table()} WHERE stripe_object_id = %s LIMIT 1",
+						$source_object_id
+					)
+				);
+				if ( $tx_raw_json ) {
+					$tx_data       = json_decode( (string) $tx_raw_json, true );
+					$tx_price_ids  = array();
+					$recovered_name = '';
+					if ( is_array( $tx_data ) ) {
+						$this->collect_portal_service_request_price_ids_from_data( $tx_data, $tx_price_ids );
+						$tx_names = array();
+						foreach ( $tx_price_ids as $tx_pid ) {
+							$tx_product = $this->get_portal_product_by_price_id( $tx_pid );
+							if ( $tx_product ) {
+								$tx_label = ! empty( $tx_product->custom_label ) ? $tx_product->custom_label : ( ! empty( $tx_product->name ) ? $tx_product->name : '' );
+								if ( '' !== $tx_label ) {
+									$tx_names[] = sanitize_text_field( (string) $tx_label );
+								}
+							}
+						}
+						if ( ! empty( $tx_names ) ) {
+							$recovered_name = implode( ', ', array_unique( $tx_names ) );
+						}
+						if ( '' === $recovered_name || $this->is_generic_portal_service_label( $recovered_name ) ) {
+							$tx_candidates = array();
+							$this->collect_portal_service_label_candidates_from_data( $tx_data, $tx_candidates );
+							if ( ! empty( $tx_candidates ) ) {
+								usort(
+									$tx_candidates,
+									function ( $a, $b ) {
+										return (int) $a['priority'] <=> (int) $b['priority'];
+									}
+								);
+								$c_label = sanitize_text_field( (string) reset( $tx_candidates )['label'] );
+								if ( '' !== $c_label && ! $this->is_generic_portal_service_label( $c_label ) ) {
+									$recovered_name = $c_label;
+								}
+							}
+						}
+						if ( '' !== $recovered_name ) {
+							$repair_data['service_name'] = $recovered_name;
+							$repair_fmts[]               = '%s';
+							if ( '' === (string) $orphan->stripe_price_id && ! empty( $tx_price_ids ) ) {
+								$repair_data['stripe_price_id'] = sanitize_text_field( (string) reset( $tx_price_ids ) );
+								$repair_fmts[]                  = '%s';
+							}
+						}
+					}
+				}
+			}
+
+			if ( count( $repair_data ) > 1 ) {
+				$pdb->update(
+					$this->get_portal_service_requests_table(),
+					$repair_data,
+					array( 'id' => (int) $orphan->id ),
+					$repair_fmts,
+					array( '%d' )
+				);
+			}
+		}
 	}
 
 	private function handle_service_requests_actions() {
