@@ -11886,6 +11886,91 @@ class AJForms_Admin {
 			$resolved_price_id   = '' !== $meta_price_id ? $meta_price_id : ( ! empty( $meta_price_ids ) ? $meta_price_ids[0] : '' );
 			$resolved_product_id = ! empty( $metadata['product_id'] ) ? sanitize_text_field( (string) $metadata['product_id'] ) : '';
 
+			// Last resort: look up the checkout session in stripe_transactions (populated by Stripe sync) to
+			// find price IDs and product names from the raw session data and expanded line items.
+			if ( $is_checkout_request && ( '' === $resolved_service_name || $this->is_generic_portal_service_label( $resolved_service_name ) ) ) {
+				$tx_raw_json = $wpdb->get_var(
+					$wpdb->prepare(
+						"SELECT raw_data FROM {$this->get_portal_stripe_transactions_table()} WHERE stripe_object_id = %s LIMIT 1",
+						sanitize_text_field( (string) $entry->source_object_id )
+					)
+				);
+				if ( $tx_raw_json ) {
+					$tx_data = json_decode( (string) $tx_raw_json, true );
+					if ( is_array( $tx_data ) ) {
+						// Collect price IDs from the full session object (including session.metadata.price_id).
+						$tx_price_ids = array();
+						$this->collect_portal_service_request_price_ids_from_data( $tx_data, $tx_price_ids );
+						foreach ( $tx_price_ids as $tx_pid ) {
+							if ( '' === $resolved_price_id ) {
+								$resolved_price_id = $tx_pid;
+							}
+							if ( ! in_array( $tx_pid, $meta_price_ids, true ) ) {
+								$meta_price_ids[] = $tx_pid;
+							}
+						}
+						// Try product catalog lookup with newly discovered price IDs.
+						$tx_resolved_names = array();
+						foreach ( $meta_price_ids as $tx_pid ) {
+							$tx_product = $this->get_portal_product_by_price_id( $tx_pid );
+							if ( $tx_product ) {
+								$tx_label = ! empty( $tx_product->custom_label ) ? $tx_product->custom_label : ( ! empty( $tx_product->name ) ? $tx_product->name : '' );
+								if ( '' !== $tx_label ) {
+									$tx_resolved_names[] = sanitize_text_field( (string) $tx_label );
+								}
+							}
+						}
+						if ( ! empty( $tx_resolved_names ) ) {
+							$resolved_service_name = implode( ', ', array_unique( $tx_resolved_names ) );
+						}
+						// If still unresolved, extract names directly from line items in the session data.
+						if ( '' === $resolved_service_name || $this->is_generic_portal_service_label( $resolved_service_name ) ) {
+							$tx_candidates = array();
+							$this->collect_portal_service_label_candidates_from_data( $tx_data, $tx_candidates );
+							if ( ! empty( $tx_candidates ) ) {
+								usort(
+									$tx_candidates,
+									function ( $a, $b ) {
+										return (int) $a['priority'] <=> (int) $b['priority'];
+									}
+								);
+								$tx_label = sanitize_text_field( (string) reset( $tx_candidates )['label'] );
+								if ( '' !== $tx_label && ! $this->is_generic_portal_service_label( $tx_label ) ) {
+									$resolved_service_name = $tx_label;
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// When updating an existing record, preserve values that were set at checkout creation time but
+			// may have been lost because the Stripe sync overwrote the ledger entry metadata.
+			if ( $existing ) {
+				// Preserve service_name: if we resolved nothing useful, keep whatever good name is already stored.
+				if ( '' === $resolved_service_name || $this->is_generic_portal_service_label( $resolved_service_name ) ) {
+					$existing_name = sanitize_text_field( (string) $existing->service_name );
+					if ( '' !== $existing_name && ! $this->is_generic_portal_service_label( $existing_name ) ) {
+						$resolved_service_name = $existing_name;
+					}
+				}
+				// Preserve stripe_price_id: don't overwrite a known price ID with empty.
+				if ( '' === $resolved_price_id && ! empty( $existing->stripe_price_id ) ) {
+					$resolved_price_id = sanitize_text_field( (string) $existing->stripe_price_id );
+				}
+				// Preserve stripe_product_id similarly.
+				if ( '' === $resolved_product_id && ! empty( $existing->stripe_product_id ) ) {
+					$resolved_product_id = sanitize_text_field( (string) $existing->stripe_product_id );
+				}
+				// Merge ledger_metadata into existing raw_data so we don't erase the original checkout session data.
+				$existing_raw = ! empty( $existing->raw_data ) ? json_decode( (string) $existing->raw_data, true ) : array();
+				$existing_raw = is_array( $existing_raw ) ? $existing_raw : array();
+				$merged_raw   = array_merge( $existing_raw, array( 'ledger_metadata' => $metadata ) );
+				$raw_data_value = wp_json_encode( $merged_raw );
+			} else {
+				$raw_data_value = wp_json_encode( array( 'ledger_metadata' => $metadata ) );
+			}
+
 			$request_data = array(
 				'wp_user_id'          => $wp_user_id,
 				'stripe_customer_id'  => $stripe_customer_id,
@@ -11901,7 +11986,7 @@ class AJForms_Admin {
 				'ledger_id'           => (int) $entry->id,
 				'source'              => ! empty( $metadata['source'] ) ? sanitize_key( (string) $metadata['source'] ) : 'ledger_backfill',
 				'created_by'          => 0,
-				'raw_data'            => wp_json_encode( array( 'ledger_metadata' => $metadata ) ),
+				'raw_data'            => $raw_data_value,
 				'updated_at'          => current_time( 'mysql' ),
 			);
 
