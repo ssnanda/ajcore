@@ -5876,6 +5876,8 @@ class AJForms_Admin {
 			'ajcore_products_cart',
 			'ajcore_portal_add_service',
 			'ajcore_portal_balance_payment',
+			'ajcore_mixed_cart_subscription',
+			'ajcore_portal_mixed_cart_subscription',
 		);
 
 		if ( in_array( $normalized, $generic, true ) ) {
@@ -9127,7 +9129,7 @@ class AJForms_Admin {
 				$this->log_portal_event(
 					'used' === $state_action ? 'service_marked_used' : 'service_marked_unused',
 					array(
-						'source'   => 'admin_sold_items',
+						'source'   => 'admin_service_requests',
 						'severity' => 'info',
 						'stripe_customer_id' => $snapshot && ! empty( $snapshot->stripe_customer_id ) ? $snapshot->stripe_customer_id : '',
 						'details'  => array(
@@ -9139,7 +9141,9 @@ class AJForms_Admin {
 				);
 			}
 
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items', 'service-used' => 'used' === $state_action ? '1' : '0' ), admin_url( 'admin.php' ) ) );
+			$return_tab = isset( $_POST['service_state_return_tab'] ) ? sanitize_key( wp_unslash( $_POST['service_state_return_tab'] ) ) : 'service-requests';
+			$return_tab = in_array( $return_tab, array( 'service-requests', 'sold-items' ), true ) ? $return_tab : 'service-requests';
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => $return_tab, 'service-used' => 'used' === $state_action ? '1' : '0' ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -11194,6 +11198,153 @@ class AJForms_Admin {
 		return isset( $raw[ $key ] ) && is_scalar( $raw[ $key ] ) ? sanitize_text_field( (string) $raw[ $key ] ) : '';
 	}
 
+	private function get_portal_service_request_customer_labels( $request ) {
+		$company_name = ! empty( $request->customer_name ) ? sanitize_text_field( (string) $request->customer_name ) : '';
+		$email        = ! empty( $request->customer_email ) ? sanitize_email( (string) $request->customer_email ) : '';
+		if ( '' === $email && ! empty( $request->wp_user_email ) ) {
+			$email = sanitize_email( (string) $request->wp_user_email );
+		}
+
+		return array(
+			'name'  => '' !== $company_name ? $company_name : ( '' !== $email ? $email : sanitize_text_field( (string) $request->stripe_customer_id ) ),
+			'email' => '' !== $email ? $email : sanitize_text_field( (string) $request->stripe_customer_id ),
+		);
+	}
+
+	private function add_portal_service_request_price_id_candidates( $value, &$price_ids ) {
+		if ( is_array( $value ) ) {
+			foreach ( $value as $nested_value ) {
+				$this->add_portal_service_request_price_id_candidates( $nested_value, $price_ids );
+			}
+			return;
+		}
+
+		if ( ! is_scalar( $value ) ) {
+			return;
+		}
+
+		foreach ( preg_split( '/\s*,\s*/', sanitize_text_field( (string) $value ) ) as $price_id ) {
+			if ( preg_match( '/^price_/', $price_id ) && ! in_array( $price_id, $price_ids, true ) ) {
+				$price_ids[] = $price_id;
+			}
+		}
+	}
+
+	private function collect_portal_service_request_price_ids_from_data( $data, &$price_ids ) {
+		if ( ! is_array( $data ) ) {
+			return;
+		}
+
+		foreach ( array( 'price_id', 'stripe_price_id', 'price_ids', 'ajcore_one_time_price_ids' ) as $key ) {
+			if ( isset( $data[ $key ] ) ) {
+				$this->add_portal_service_request_price_id_candidates( $data[ $key ], $price_ids );
+			}
+		}
+
+		if ( ! empty( $data['price'] ) && is_array( $data['price'] ) && ! empty( $data['price']['id'] ) ) {
+			$this->add_portal_service_request_price_id_candidates( $data['price']['id'], $price_ids );
+		}
+
+		foreach ( $data as $value ) {
+			if ( is_array( $value ) ) {
+				$this->collect_portal_service_request_price_ids_from_data( $value, $price_ids );
+			}
+		}
+	}
+
+	private function get_portal_service_request_display_name( $request, $raw_data = array() ) {
+		$candidates = array();
+		$price_ids  = array();
+
+		if ( ! empty( $request->stripe_price_id ) ) {
+			$this->add_portal_service_request_price_id_candidates( $request->stripe_price_id, $price_ids );
+		}
+
+		$raw_data = is_array( $raw_data ) ? $raw_data : array();
+		$this->collect_portal_service_label_candidates_from_data( $raw_data, $candidates );
+		$this->collect_portal_service_request_price_ids_from_data( $raw_data, $price_ids );
+
+		foreach ( array( 'ledger_metadata', 'transaction_raw_data' ) as $field ) {
+			if ( ! empty( $request->$field ) ) {
+				$decoded = $this->decode_portal_json( $request->$field );
+				$this->collect_portal_service_label_candidates_from_data( $decoded, $candidates );
+				$this->collect_portal_service_request_price_ids_from_data( $decoded, $price_ids );
+			}
+		}
+
+		foreach ( $price_ids as $price_id ) {
+			$product = $this->get_portal_product_by_price_id( $price_id );
+			if ( $product ) {
+				$label = ! empty( $product->custom_label ) ? $product->custom_label : ( ! empty( $product->name ) ? $product->name : '' );
+				$this->add_portal_service_label_candidate( $candidates, $label, 8 );
+			}
+		}
+
+		if ( ! empty( $request->service_name ) ) {
+			$this->add_portal_service_label_candidate( $candidates, $request->service_name, 100 );
+		}
+
+		usort(
+			$candidates,
+			function ( $a, $b ) {
+				return (int) $a['priority'] <=> (int) $b['priority'];
+			}
+		);
+
+		$labels = array();
+		foreach ( $candidates as $candidate ) {
+			$label = sanitize_text_field( (string) $candidate['label'] );
+			$key   = strtolower( $label );
+			if ( '' !== $label && ! isset( $labels[ $key ] ) ) {
+				$labels[ $key ] = $label;
+			}
+		}
+
+		if ( ! empty( $labels ) ) {
+			return implode( ', ', array_values( $labels ) );
+		}
+
+		return __( 'Service Request', 'ajforms' );
+	}
+
+	private function get_portal_service_request_usage_reference( $request ) {
+		foreach ( array( 'source_object_id', 'payment_intent_id', 'charge_id', 'invoice_id', 'checkout_session_id' ) as $field ) {
+			if ( ! empty( $request->$field ) ) {
+				return sanitize_text_field( (string) $request->$field );
+			}
+		}
+
+		return ! empty( $request->id ) ? 'service_request_' . absint( $request->id ) : '';
+	}
+
+	private function render_portal_service_request_usage_form( $request, $action, $label ) {
+		$action = 'unused' === sanitize_key( (string) $action ) ? 'unused' : 'used';
+		$ref    = $this->get_portal_service_request_usage_reference( $request );
+		if ( '' === $ref ) {
+			return;
+		}
+		?>
+		<form method="post" style="display:inline-block;margin:2px 0;">
+			<?php wp_nonce_field( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' ); ?>
+			<input type="hidden" name="service_state_action" value="<?php echo esc_attr( $action ); ?>">
+			<input type="hidden" name="service_state_return_tab" value="service-requests">
+			<input type="hidden" name="service_snapshot_key" value="<?php echo esc_attr( $ref ); ?>">
+			<input type="hidden" name="service_stripe_customer_id" value="<?php echo esc_attr( ! empty( $request->stripe_customer_id ) ? $request->stripe_customer_id : '' ); ?>">
+			<input type="hidden" name="service_customer_email" value="<?php echo esc_attr( ! empty( $request->customer_email ) ? $request->customer_email : '' ); ?>">
+			<input type="hidden" name="service_name" value="<?php echo esc_attr( ! empty( $request->service_name ) ? $request->service_name : '' ); ?>">
+			<input type="hidden" name="service_product_id" value="<?php echo esc_attr( ! empty( $request->stripe_product_id ) ? $request->stripe_product_id : '' ); ?>">
+			<input type="hidden" name="service_price_id" value="<?php echo esc_attr( ! empty( $request->stripe_price_id ) ? $request->stripe_price_id : '' ); ?>">
+			<input type="hidden" name="service_amount" value="<?php echo esc_attr( ! empty( $request->amount ) ? $request->amount : '' ); ?>">
+			<input type="hidden" name="service_currency" value="<?php echo esc_attr( ! empty( $request->currency ) ? $request->currency : 'usd' ); ?>">
+			<input type="hidden" name="service_checkout_session_id" value="<?php echo esc_attr( ! empty( $request->source_type ) && 'checkout_session' === sanitize_key( (string) $request->source_type ) && ! empty( $request->source_object_id ) ? $request->source_object_id : '' ); ?>">
+			<input type="hidden" name="service_invoice_id" value="<?php echo esc_attr( ! empty( $request->invoice_id ) ? $request->invoice_id : '' ); ?>">
+			<input type="hidden" name="service_payment_intent_id" value="<?php echo esc_attr( ! empty( $request->payment_intent_id ) ? $request->payment_intent_id : '' ); ?>">
+			<input type="hidden" name="service_charge_id" value="<?php echo esc_attr( ! empty( $request->charge_id ) ? $request->charge_id : '' ); ?>">
+			<button type="submit" class="button button-small"><?php echo esc_html( $label ); ?></button>
+		</form>
+		<?php
+	}
+
 	private function sync_portal_service_request_to_ledger( $request, $data = array() ) {
 		global $wpdb;
 
@@ -11809,9 +11960,11 @@ class AJForms_Admin {
 		}
 
 		// Query shared tables (requests + customers) via $pdb; look up local WP users separately.
-		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name
+		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, l.metadata AS ledger_metadata, l.invoice_id, l.payment_intent_id, l.charge_id, t.raw_data AS transaction_raw_data
 			FROM {$this->get_portal_service_requests_table()} r
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = r.stripe_customer_id
+			LEFT JOIN {$this->get_portal_ledger_table()} l ON l.id = r.ledger_id
+			LEFT JOIN {$this->get_portal_stripe_transactions_table()} t ON t.stripe_object_id = r.source_object_id
 			WHERE " . implode( ' AND ', $where ) . "
 			ORDER BY r.created_at DESC, r.id DESC
 			LIMIT 200";
@@ -11835,7 +11988,10 @@ class AJForms_Admin {
 		$base_url = add_query_arg( array( 'page' => 'ajforms-service-requests' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajforms-service-requests-admin">
-			<h1><?php esc_html_e( 'Service Requests / Manual Review', 'ajforms' ); ?></h1>
+			<h1><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h1>
+			<?php if ( isset( $_GET['service-used'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo '0' === (string) $_GET['service-used'] ? esc_html__( 'Service marked unused.', 'ajforms' ) : esc_html__( 'Service marked used.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -11865,47 +12021,62 @@ class AJForms_Admin {
 
 			<table class="widefat striped">
 				<thead>
-					<tr>
-						<th><?php esc_html_e( 'Request', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Created', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
-					</tr>
+						<tr>
+							<th><?php esc_html_e( 'Request', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Created', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Usage', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+						</tr>
 				</thead>
 				<tbody>
-				<?php if ( empty( $requests ) ) : ?>
-					<tr><td colspan="7"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
-				<?php else : ?>
-					<?php foreach ( $requests as $request ) : ?>
-						<?php
-						$customer_label = $request->customer_name ? $request->customer_name : ( $request->customer_email ? $request->customer_email : $request->stripe_customer_id );
-						$status_label = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
-						$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
-						$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
-						$actions = $this->get_portal_service_request_quick_actions( $request, $this->get_portal_service_request_raw_data( $request ) );
-						?>
-						<tr>
-							<td>
-								<strong><?php echo esc_html( $request->service_name ? $request->service_name : __( 'Service Request', 'ajforms' ) ); ?></strong><br>
-								<small><?php echo esc_html( $request->request_type ); ?><?php echo $request_price_label ? ' · ' . esc_html( $request_price_label ) : ( $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : '' ); ?></small>
-							</td>
-							<td>
-								<?php echo esc_html( $customer_label ); ?><br>
-								<small><?php echo esc_html( $request->wp_user_email ? $request->wp_user_email : $request->stripe_customer_id ); ?></small><br>
-								<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $request->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a>
-							</td>
+					<?php if ( empty( $requests ) ) : ?>
+						<tr><td colspan="8"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $requests as $request ) : ?>
+							<?php
+							$customer_labels = $this->get_portal_service_request_customer_labels( $request );
+							$status_label = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
+							$request_raw = $this->get_portal_service_request_raw_data( $request );
+							$request_display_name = $this->get_portal_service_request_display_name( $request, $request_raw );
+							$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
+							$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
+							$actions = $this->get_portal_service_request_quick_actions( $request, $request_raw );
+							?>
+							<tr>
+								<td>
+									<strong><?php echo esc_html( $request_display_name ); ?></strong><br>
+									<small><?php echo esc_html( $request->request_type ); ?><?php echo $request_price_label ? ' · ' . esc_html( $request_price_label ) : ( $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : '' ); ?></small>
+								</td>
+								<td>
+									<?php echo esc_html( $customer_labels['name'] ); ?><br>
+									<small><?php echo esc_html( $customer_labels['email'] ); ?></small><br>
+									<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $request->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a>
+								</td>
 							<td><strong><?php echo esc_html( $status_label ); ?></strong></td>
-							<td><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></td>
-							<td><?php echo esc_html( $request->source ? $request->source : $request->source_type ); ?></td>
-							<td><?php echo esc_html( $request->created_at ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $request->created_at . ' UTC' ) ) : '-' ); ?></td>
-							<td>
-								<?php foreach ( $actions as $action_key => $action_label ) : ?>
-									<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-service-requests', 'service_request_action' => $action_key, 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ) ); ?>"><?php echo esc_html( $action_label ); ?></a>
-								<?php endforeach; ?>
-							</td>
+								<td><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></td>
+								<td><?php echo esc_html( $request->source ? $request->source : $request->source_type ); ?></td>
+								<td><?php echo esc_html( $request->created_at ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $request->created_at . ' UTC' ) ) : '-' ); ?></td>
+								<td>
+									<?php $this->render_portal_service_request_usage_form( $request, 'used', __( 'Mark Used', 'ajforms' ) ); ?>
+									<?php $this->render_portal_service_request_usage_form( $request, 'unused', __( 'Mark Unused', 'ajforms' ) ); ?>
+								</td>
+								<td>
+									<?php foreach ( $actions as $action_key => $action_label ) : ?>
+										<?php
+										$action_title = '';
+										if ( 'cancel' === $action_key ) {
+											$action_title = __( 'Marks this request and linked ledger as cancelled only.', 'ajforms' );
+										} elseif ( 'delete' === $action_key ) {
+											$action_title = __( 'Removes this queue item and safe generated non-Stripe ledger only.', 'ajforms' );
+										}
+										?>
+										<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-service-requests', 'service_request_action' => $action_key, 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ) ); ?>"<?php echo '' !== $action_title ? ' title="' . esc_attr( $action_title ) . '"' : ''; ?>><?php echo esc_html( $action_label ); ?></a>
+									<?php endforeach; ?>
+								</td>
 						</tr>
 					<?php endforeach; ?>
 				<?php endif; ?>
@@ -12083,9 +12254,11 @@ class AJForms_Admin {
 		}
 
 		// Query shared tables (requests + customers) via $pdb; look up local WP users separately.
-		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name
+		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, l.metadata AS ledger_metadata, l.invoice_id, l.payment_intent_id, l.charge_id, t.raw_data AS transaction_raw_data
 			FROM {$this->get_portal_service_requests_table()} r
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = r.stripe_customer_id
+			LEFT JOIN {$this->get_portal_ledger_table()} l ON l.id = r.ledger_id
+			LEFT JOIN {$this->get_portal_stripe_transactions_table()} t ON t.stripe_object_id = r.source_object_id
 			WHERE " . implode( ' AND ', $where ) . "
 			ORDER BY r.created_at DESC, r.id DESC
 			LIMIT 200";
@@ -12110,7 +12283,10 @@ class AJForms_Admin {
 		$service_products = $this->get_portal_stripe_products_for_settings();
 		?>
 		<div class="ajcore-admin-panel">
-			<h2><?php esc_html_e( 'Service Requests / Manual Review', 'ajforms' ); ?></h2>
+			<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
+			<?php if ( isset( $_GET['service-used'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo '0' === (string) $_GET['service-used'] ? esc_html__( 'Service marked unused.', 'ajforms' ) : esc_html__( 'Service marked used.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['service-request-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
@@ -12145,50 +12321,62 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Request', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Created', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
-					</tr>
+							<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Created', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Usage', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+						</tr>
 				</thead>
 				<tbody>
-				<?php if ( empty( $requests ) ) : ?>
-					<tr><td colspan="7"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
-				<?php else : ?>
-					<?php foreach ( $requests as $request ) : ?>
-						<?php
-						$customer_label = $request->customer_name ? $request->customer_name : ( $request->customer_email ? $request->customer_email : $request->stripe_customer_id );
-						$status_label   = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
-						$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
-						$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
-						$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
-						$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
-						$request_raw = $this->get_portal_service_request_raw_data( $request );
-						$billing_preview = ! empty( $request_raw['billing_preview'] ) && is_array( $request_raw['billing_preview'] ) ? $request_raw['billing_preview'] : array();
+					<?php if ( empty( $requests ) ) : ?>
+						<tr><td colspan="8"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $requests as $request ) : ?>
+							<?php
+							$customer_labels = $this->get_portal_service_request_customer_labels( $request );
+							$status_label   = isset( $labels[ $request->status ] ) ? $labels[ $request->status ] : ucfirst( str_replace( '_', ' ', $request->status ) );
+							$request_raw = $this->get_portal_service_request_raw_data( $request );
+							$request_display_name = $this->get_portal_service_request_display_name( $request, $request_raw );
+							$request_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
+							$request_price_label = $request_product ? $this->get_portal_product_admin_label( $request_product ) : '';
+							$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
+							$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
+							$billing_preview = ! empty( $request_raw['billing_preview'] ) && is_array( $request_raw['billing_preview'] ) ? $request_raw['billing_preview'] : array();
 						$actions = $this->get_portal_service_request_quick_actions( $request, $request_raw );
 						$current_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
 						$current_price_label = $current_product ? $this->get_portal_product_admin_label( $current_product ) : '';
 						$save_details_nonce = wp_create_nonce( 'ajcore_service_request_details_' . (int) $request->id );
 						?>
-						<tr>
-							<td>
-								<strong><?php echo esc_html( $request->service_name ? $request->service_name : __( 'Service Request', 'ajforms' ) ); ?></strong><br>
-								<small><?php echo esc_html( $request->request_type ); ?><?php echo $request_price_label ? ' · ' . esc_html( $request_price_label ) : ( $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : '' ); ?></small>
-							</td>
-							<td>
-								<?php echo esc_html( $customer_label ); ?><br>
-								<small><?php echo esc_html( $request->wp_user_email ? $request->wp_user_email : $request->stripe_customer_id ); ?></small><br>
-								<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $request->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a>
-							</td>
+							<tr>
+								<td>
+									<strong><?php echo esc_html( $request_display_name ); ?></strong><br>
+									<small><?php echo esc_html( $request->request_type ); ?><?php echo $request_price_label ? ' · ' . esc_html( $request_price_label ) : ( $request->stripe_price_id ? ' · ' . esc_html( $request->stripe_price_id ) : '' ); ?></small>
+								</td>
+								<td>
+									<?php echo esc_html( $customer_labels['name'] ); ?><br>
+									<small><?php echo esc_html( $customer_labels['email'] ); ?></small><br>
+									<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $request->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a>
+								</td>
 							<td><strong><?php echo esc_html( $status_label ); ?></strong></td>
-							<td><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></td>
-							<td><?php echo esc_html( $request->source ? $request->source : $request->source_type ); ?></td>
-							<td><?php echo esc_html( $request->created_at ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $request->created_at . ' UTC' ) ) : '-' ); ?></td>
-							<td>
-								<?php foreach ( $actions as $action_key => $action_label ) : ?>
-									<?php
-									$action_url = wp_nonce_url(
-										add_query_arg(
+								<td><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></td>
+								<td><?php echo esc_html( $request->source ? $request->source : $request->source_type ); ?></td>
+								<td><?php echo esc_html( $request->created_at ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $request->created_at . ' UTC' ) ) : '-' ); ?></td>
+								<td>
+									<?php $this->render_portal_service_request_usage_form( $request, 'used', __( 'Mark Used', 'ajforms' ) ); ?>
+									<?php $this->render_portal_service_request_usage_form( $request, 'unused', __( 'Mark Unused', 'ajforms' ) ); ?>
+								</td>
+								<td>
+									<?php foreach ( $actions as $action_key => $action_label ) : ?>
+										<?php
+										$action_title = '';
+										if ( 'cancel' === $action_key ) {
+											$action_title = __( 'Marks this request and linked ledger as cancelled only.', 'ajforms' );
+										} elseif ( 'delete' === $action_key ) {
+											$action_title = __( 'Removes this queue item and safe generated non-Stripe ledger only.', 'ajforms' );
+										}
+										$action_url = wp_nonce_url(
+											add_query_arg(
 											array(
 												'page'                   => 'ajforms-client-portal',
 												'tab'                    => 'service-requests',
@@ -12197,11 +12385,11 @@ class AJForms_Admin {
 											),
 											admin_url( 'admin.php' )
 										),
-										'ajcore_service_request_' . (int) $request->id
-									);
-									?>
-									<a class="button button-small" href="<?php echo esc_url( $action_url ); ?>"<?php echo 'delete' === $action_key ? ' onclick="return confirm(\'' . esc_js( __( 'Delete this request? Safe linked non-Stripe ledger rows may also be removed.', 'ajforms' ) ) . '\');"' : ''; ?>><?php echo esc_html( $action_label ); ?></a>
-								<?php endforeach; ?>
+											'ajcore_service_request_' . (int) $request->id
+										);
+										?>
+										<a class="button button-small" href="<?php echo esc_url( $action_url ); ?>"<?php echo '' !== $action_title ? ' title="' . esc_attr( $action_title ) . '"' : ''; ?><?php echo 'delete' === $action_key ? ' onclick="return confirm(\'' . esc_js( __( 'Delete this request? Safe linked non-Stripe ledger rows may also be removed.', 'ajforms' ) ) . '\');"' : ''; ?>><?php echo esc_html( $action_label ); ?></a>
+									<?php endforeach; ?>
 
 								<details style="margin-top:8px;max-width:420px;">
 									<summary><?php esc_html_e( 'Payment / Fulfillment Details', 'ajforms' ); ?></summary>
@@ -12789,7 +12977,7 @@ class AJForms_Admin {
 
 			<div class="ajcore-dashboard-grid">
 				<?php $this->render_portal_dashboard_metric( __( 'Active Clients', 'ajforms' ), $active_customers, $this->get_portal_dashboard_url( 'portal-users', array( 'portal_user_status' => 'active' ) ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Sold Items', 'ajforms' ), $active_services, $this->get_portal_dashboard_url( 'sold-items' ), sprintf( __( '%1$d auto-pay services, %2$d one-time paid.', 'ajforms' ), $auto_pay_services, $one_time_services ) ); ?>
+			<?php $this->render_portal_dashboard_metric( __( 'Sold Products', 'ajforms' ), $active_services, $this->get_portal_dashboard_url( 'sold-items' ), sprintf( __( '%1$d auto-pay services, %2$d one-time paid.', 'ajforms' ), $auto_pay_services, $one_time_services ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Auto-Pay Subscriptions', 'ajforms' ), $auto_pay_services, $this->get_portal_dashboard_url( 'sold-items', array( 'sold_type' => 'recurring' ) ), sprintf( __( '%d active Stripe subscription records.', 'ajforms' ), $active_subscription_objects ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'open' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'overdue' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
@@ -12841,10 +13029,10 @@ class AJForms_Admin {
 			<?php if ( 'customer' !== $tab ) : ?>
 				<h2 class="nav-tab-wrapper">
 					<a class="nav-tab <?php echo 'dashboard' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'dashboard', $base_url ) ); ?>"><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Manual Review', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'billing' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'billing', $base_url ) ); ?>"><?php esc_html_e( 'Billing', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Customers', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'sold-items' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sold-items', $base_url ) ); ?>"><?php esc_html_e( 'Sold Items', 'ajforms' ); ?></a>
+					<a class="nav-tab <?php echo 'sold-items' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sold-items', $base_url ) ); ?>"><?php esc_html_e( 'Sold Products', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'products-services' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'products-services', $base_url ) ); ?>"><?php esc_html_e( 'Product Catalog', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'tasks' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'tasks', $base_url ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
 					<a class="nav-tab <?php echo 'file-library' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'file-library', $base_url ) ); ?>"><?php esc_html_e( 'File Library', 'ajforms' ); ?></a>
@@ -14447,11 +14635,8 @@ class AJForms_Admin {
 
 		?>
 		<div class="ajforms-settings-card">
-			<h2><?php esc_html_e( 'Sold Items', 'ajforms' ); ?></h2>
+			<h2><?php esc_html_e( 'Sold Products', 'ajforms' ); ?></h2>
 			<p><?php esc_html_e( 'Purchased items from Stripe and AJ Core checkout, including recurring subscriptions and true one-time services.', 'ajforms' ); ?></p>
-			<?php if ( isset( $_GET['service-used'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php echo '0' === (string) $_GET['service-used'] ? esc_html__( 'Service marked unused.', 'ajforms' ) : esc_html__( 'Service marked used.', 'ajforms' ); ?></p></div>
-			<?php endif; ?>
 
 			<form method="get" id="ajcore-sold-items-filter" class="ajforms-settings-inline-actions" style="align-items:center;gap:12px;">
 				<input type="hidden" name="page" value="ajforms-client-portal">
@@ -14484,12 +14669,11 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Next Billing / Paid', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 					</tr>
 				</thead>
 				<tbody>
 					<?php if ( empty( $sold_items ) ) : ?>
-						<tr><td colspan="10"><?php esc_html_e( 'No sold items found for this filter.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="9"><?php esc_html_e( 'No sold products found for this filter.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $sold_items as $item ) : ?>
 							<tr>
@@ -14502,38 +14686,6 @@ class AJForms_Admin {
 								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_period_label( $item ) ) : '-'; ?></td>
 								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_next_billing_date_label( $item ) ) : '-'; ?></td>
 								<td><?php echo esc_html( $this->format_portal_date( $item->synced_at ) ); ?></td>
-								<td>
-									<?php if ( 'one_time' === $item->sold_item_type && ! empty( $item->source_ref ) ) : ?>
-										<form method="post" style="margin:0;">
-											<?php wp_nonce_field( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' ); ?>
-											<input type="hidden" name="service_snapshot_key" value="<?php echo esc_attr( $item->source_ref ); ?>">
-											<input type="hidden" name="service_stripe_customer_id" value="<?php echo esc_attr( ! empty( $item->stripe_customer_id ) ? $item->stripe_customer_id : '' ); ?>">
-											<input type="hidden" name="service_customer_email" value="<?php echo esc_attr( ! empty( $item->customer_email ) ? $item->customer_email : '' ); ?>">
-											<input type="hidden" name="service_name" value="<?php echo esc_attr( ! empty( $item->service_name ) ? $item->service_name : '' ); ?>">
-											<input type="hidden" name="service_product_id" value="<?php echo esc_attr( ! empty( $item->stripe_product_id ) ? $item->stripe_product_id : '' ); ?>">
-											<input type="hidden" name="service_price_id" value="<?php echo esc_attr( ! empty( $item->stripe_price_id ) ? $item->stripe_price_id : '' ); ?>">
-											<input type="hidden" name="service_amount" value="<?php echo esc_attr( ! empty( $item->amount ) ? $item->amount : ( ! empty( $item->price ) ? $item->price : '' ) ); ?>">
-											<input type="hidden" name="service_currency" value="<?php echo esc_attr( ! empty( $item->currency ) ? $item->currency : 'usd' ); ?>">
-											<input type="hidden" name="service_checkout_session_id" value="<?php echo esc_attr( ! empty( $item->checkout_session_id ) ? $item->checkout_session_id : '' ); ?>">
-											<input type="hidden" name="service_invoice_id" value="<?php echo esc_attr( ! empty( $item->invoice_id ) ? $item->invoice_id : '' ); ?>">
-											<input type="hidden" name="service_payment_intent_id" value="<?php echo esc_attr( ! empty( $item->payment_intent_id ) ? $item->payment_intent_id : '' ); ?>">
-											<input type="hidden" name="service_charge_id" value="<?php echo esc_attr( ! empty( $item->charge_id ) ? $item->charge_id : '' ); ?>">
-											<input type="hidden" name="service_subscription_id" value="<?php echo esc_attr( ! empty( $item->stripe_subscription_id ) ? $item->stripe_subscription_id : '' ); ?>">
-											<input type="hidden" name="service_period" value="<?php echo esc_attr( ! empty( $item->service_period ) ? $item->service_period : '' ); ?>">
-											<input type="hidden" name="service_period_start" value="<?php echo esc_attr( ! empty( $item->service_period_start ) ? $item->service_period_start : '' ); ?>">
-											<input type="hidden" name="service_period_end" value="<?php echo esc_attr( ! empty( $item->service_period_end ) ? $item->service_period_end : '' ); ?>">
-											<?php if ( 'used' === sanitize_key( (string) $item->status ) ) : ?>
-												<input type="hidden" name="service_state_action" value="unused">
-												<button type="submit" class="button"><?php esc_html_e( 'Mark Unused', 'ajforms' ); ?></button>
-											<?php else : ?>
-												<input type="hidden" name="service_state_action" value="used">
-												<button type="submit" class="button"><?php esc_html_e( 'Mark Used', 'ajforms' ); ?></button>
-											<?php endif; ?>
-										</form>
-									<?php else : ?>
-										-
-									<?php endif; ?>
-								</td>
 							</tr>
 						<?php endforeach; ?>
 					<?php endif; ?>
@@ -14639,10 +14791,10 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d active', 'ajforms' ), $active_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d visible in Add Services', 'ajforms' ), $visible_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
-				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sold Items', 'ajforms' ); ?></a>
+			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sold Products', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
-			<p class="description"><?php esc_html_e( 'Customer 360 opens from each customer link in Portal Users, Billing, Sold Items, Requests, Tasks, and Files.', 'ajforms' ); ?></p>
+		<p class="description"><?php esc_html_e( 'Customer 360 opens from each customer link in Portal Users, Billing, Sold Products, Requests, Tasks, and Files.', 'ajforms' ); ?></p>
 
 			<form method="post">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
