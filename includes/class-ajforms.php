@@ -641,6 +641,13 @@ class AJForms {
 				'url'     => '',
 				'enabled' => true,
 			),
+			array(
+				'id'      => 'service-requests',
+				'label'   => __( 'Service Requests', 'ajforms' ),
+				'type'    => 'built_in',
+				'url'     => '',
+				'enabled' => true,
+			),
 		);
 
 		$built_in_ids    = wp_list_pluck( $default_items, 'id' );
@@ -798,6 +805,95 @@ class AJForms {
 					<a class="button" href="<?php echo esc_url( wp_logout_url( home_url( '/' ) ) ); ?>"><?php esc_html_e( 'Logout', 'ajforms' ); ?></a>
 				</div>
 			</div>
+		</section>
+		<?php
+		return ob_get_clean();
+	}
+
+	private function get_client_service_request_status_label( $status ) {
+		$labels = array(
+			'draft'                 => __( 'Pending', 'ajforms' ),
+			'pending_payment'       => __( 'Pending Payment', 'ajforms' ),
+			'awaiting_payment'      => __( 'Awaiting Payment', 'ajforms' ),
+			'paid'                  => __( 'Paid – Processing', 'ajforms' ),
+			'updating_sosn'         => __( 'In Progress', 'ajforms' ),
+			'signing_cmra'          => __( 'Awaiting Signature', 'ajforms' ),
+			'active'                => __( 'Active', 'ajforms' ),
+			'admin_review_required' => __( 'Under Review', 'ajforms' ),
+			'completed'             => __( 'Completed', 'ajforms' ),
+			'cancelled'             => __( 'Cancelled', 'ajforms' ),
+			'failed'                => __( 'Failed', 'ajforms' ),
+		);
+
+		return isset( $labels[ $status ] ) ? $labels[ $status ] : ucwords( str_replace( '_', ' ', $status ) );
+	}
+
+	private function render_customer_portal_service_requests_tab() {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+
+		if ( '' === $stripe_customer_id ) {
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Service Requests', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked yet.', 'ajforms' ) . '</p></section>';
+		}
+
+		$pdb      = $this->get_pdb();
+		$requests = $pdb->get_results(
+			$pdb->prepare(
+				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE stripe_customer_id = %s ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 100",
+				$stripe_customer_id
+			)
+		);
+
+		ob_start();
+		?>
+		<section class="aj-customer-portal-panel">
+			<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
+
+			<?php if ( empty( $requests ) ) : ?>
+				<p><?php esc_html_e( 'You have no service requests on file.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div class="aj-portal-table-wrap">
+					<table class="aj-portal-table">
+						<thead>
+							<tr>
+								<th><?php esc_html_e( 'Service', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Notes', 'ajforms' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $requests as $request ) : ?>
+								<?php
+								$status       = sanitize_key( (string) $request->status );
+								$status_label = $this->get_client_service_request_status_label( $status );
+								$service_name = ! empty( $request->service_name ) ? sanitize_text_field( (string) $request->service_name ) : __( 'Service Request', 'ajforms' );
+								$client_notes = ! empty( $request->client_notes ) ? sanitize_text_field( (string) $request->client_notes ) : '';
+								$created      = ! empty( $request->created_at ) ? $this->format_portal_date( $request->created_at ) : '-';
+								$is_terminal  = in_array( $status, array( 'completed', 'cancelled', 'failed', 'active' ), true );
+								?>
+								<tr>
+									<td><strong><?php echo esc_html( $service_name ); ?></strong></td>
+									<td>
+										<span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;
+											<?php
+											if ( 'active' === $status || 'completed' === $status ) {
+												echo 'background:#dcfce7;color:#166534;';
+											} elseif ( 'cancelled' === $status || 'failed' === $status ) {
+												echo 'background:#fee2e2;color:#991b1b;';
+											} else {
+												echo 'background:#dbeafe;color:#1e40af;';
+											}
+											?>
+										"><?php echo esc_html( $status_label ); ?></span>
+									</td>
+									<td><?php echo esc_html( $created ); ?></td>
+									<td><?php echo esc_html( $client_notes ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php endif; ?>
 		</section>
 		<?php
 		return ob_get_clean();
@@ -1785,7 +1881,7 @@ class AJForms {
 
 	private function normalize_portal_service_request_status( $status ) {
 		$status = sanitize_key( (string) $status );
-		$allowed = array( 'draft', 'pending_payment', 'awaiting_payment', 'paid', 'cancelled', 'failed', 'admin_review_required', 'completed' );
+		$allowed = array( 'draft', 'pending_payment', 'awaiting_payment', 'paid', 'updating_sosn', 'signing_cmra', 'active', 'cancelled', 'failed', 'admin_review_required', 'completed' );
 
 		return in_array( $status, $allowed, true ) ? $status : 'draft';
 	}
@@ -4815,6 +4911,8 @@ class AJForms {
 				echo $this->render_customer_portal_file_library_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'profile' === $active_tab ) {
 				echo $this->render_customer_portal_profile_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			} elseif ( 'service-requests' === $active_tab ) {
+				echo $this->render_customer_portal_service_requests_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
 			?>
 			<?php if ( 'services' === $active_tab ) : ?>

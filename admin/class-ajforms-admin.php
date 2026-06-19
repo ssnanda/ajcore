@@ -11136,6 +11136,9 @@ class AJForms_Admin {
 			'pending_payment'       => __( 'Pending Payment', 'ajforms' ),
 			'awaiting_payment'      => __( 'Awaiting Payment', 'ajforms' ),
 			'paid'                  => __( 'Paid', 'ajforms' ),
+			'updating_sosn'         => __( 'Updating SOS/NC', 'ajforms' ),
+			'signing_cmra'          => __( 'Signing CMRA', 'ajforms' ),
+			'active'                => __( 'Active', 'ajforms' ),
 			'cancelled'             => __( 'Cancelled', 'ajforms' ),
 			'failed'                => __( 'Failed', 'ajforms' ),
 			'admin_review_required' => __( 'Admin Review Required', 'ajforms' ),
@@ -11143,14 +11146,32 @@ class AJForms_Admin {
 		);
 	}
 
+	private function get_portal_service_request_product_type( $request ) {
+		$name = strtolower( sanitize_text_field( (string) $request->service_name ) );
+		if ( '' === $name && ! empty( $request->stripe_price_id ) ) {
+			$product = $this->get_portal_product_by_price_id( sanitize_text_field( (string) $request->stripe_price_id ) );
+			if ( $product ) {
+				$name = strtolower( ! empty( $product->custom_label ) ? (string) $product->custom_label : (string) $product->name );
+			}
+		}
+		if ( false !== strpos( $name, 'registered agent' ) || false !== strpos( $name, 'registered_agent' ) ) {
+			return 'registered_agent';
+		}
+		if ( false !== strpos( $name, 'virtual office' ) || false !== strpos( $name, 'virtual_office' ) ) {
+			return 'virtual_office';
+		}
+		return '';
+	}
+
 	private function get_portal_service_request_quick_actions( $request, $raw_data = array() ) {
 		$status          = isset( $request->status ) ? sanitize_key( (string) $request->status ) : '';
 		$raw_data        = is_array( $raw_data ) ? $raw_data : array();
 		$billing_preview = ! empty( $raw_data['billing_preview'] ) && is_array( $raw_data['billing_preview'] ) ? $raw_data['billing_preview'] : array();
 		$is_stripe_import = $this->is_portal_service_request_stripe_import( $request );
+		$product_type    = $this->get_portal_service_request_product_type( $request );
 		$actions         = array();
 
-		if ( ! in_array( $status, array( 'admin_review_required', 'completed', 'cancelled' ), true ) ) {
+		if ( ! in_array( $status, array( 'admin_review_required', 'updating_sosn', 'signing_cmra', 'active', 'completed', 'cancelled' ), true ) ) {
 			$actions['under_review'] = __( 'Start Review', 'ajforms' );
 		}
 
@@ -11158,7 +11179,19 @@ class AJForms_Admin {
 			$actions['await_payment'] = __( 'Request Payment', 'ajforms' );
 		}
 
-		if ( ! in_array( $status, array( 'completed', 'cancelled', 'failed' ), true ) ) {
+		if ( 'paid' === $status ) {
+			if ( 'registered_agent' === $product_type ) {
+				$actions['update_sosn'] = __( 'Update SOS/NC', 'ajforms' );
+			} elseif ( 'virtual_office' === $product_type ) {
+				$actions['sign_cmra'] = __( 'Send CMRA for Signing', 'ajforms' );
+			}
+		}
+
+		if ( in_array( $status, array( 'updating_sosn', 'signing_cmra' ), true ) ) {
+			$actions['activate'] = __( 'Mark Active', 'ajforms' );
+		}
+
+		if ( ! in_array( $status, array( 'active', 'completed', 'cancelled', 'failed', 'updating_sosn', 'signing_cmra' ), true ) ) {
 			$actions['complete'] = __( 'Mark Fulfilled', 'ajforms' );
 		}
 
@@ -11170,7 +11203,7 @@ class AJForms_Admin {
 			$actions['apply_billing_change'] = __( 'Apply Billing Change', 'ajforms' );
 		}
 
-		if ( ! $is_stripe_import && ! in_array( $status, array( 'completed', 'cancelled' ), true ) ) {
+		if ( ! $is_stripe_import && ! in_array( $status, array( 'active', 'completed', 'cancelled' ), true ) ) {
 			$actions['cancel'] = __( 'Cancel', 'ajforms' );
 		}
 
@@ -11292,7 +11325,7 @@ class AJForms_Admin {
 		}
 
 		if ( ! empty( $request->service_name ) ) {
-			$this->add_portal_service_label_candidate( $candidates, $request->service_name, 100 );
+			$this->add_portal_service_label_candidate( $candidates, $request->service_name, 15 );
 		}
 
 		usort(
@@ -11899,12 +11932,15 @@ class AJForms_Admin {
 		}
 
 		$action_status_map = array(
-			'under_review'     => 'admin_review_required',
-			'await_payment'    => 'awaiting_payment',
-			'paid'             => 'paid',
-			'complete'     => 'completed',
-			'cancel'       => 'cancelled',
-			'failed'       => 'failed',
+			'under_review'  => 'admin_review_required',
+			'await_payment' => 'awaiting_payment',
+			'paid'          => 'paid',
+			'update_sosn'   => 'updating_sosn',
+			'sign_cmra'     => 'signing_cmra',
+			'activate'      => 'active',
+			'complete'      => 'completed',
+			'cancel'        => 'cancelled',
+			'failed'        => 'failed',
 		);
 		if ( ! isset( $action_status_map[ $action ] ) ) {
 			return;
@@ -11952,7 +11988,7 @@ class AJForms_Admin {
 		$labels        = $this->get_portal_service_request_status_labels();
 		$where         = array( '1=1' );
 		$params        = array();
-		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'paid', 'failed' );
+		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'paid', 'updating_sosn', 'signing_cmra', 'failed' );
 		$show_actionable_default = '' === $status_filter && '' === $search;
 
 		if ( 'all' === $status_filter ) {
@@ -11961,7 +11997,7 @@ class AJForms_Admin {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
 		} elseif ( $show_actionable_default ) {
-			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed')";
+			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','updating_sosn','signing_cmra','failed')";
 		}
 
 		if ( '' !== $search ) {
@@ -12241,7 +12277,7 @@ class AJForms_Admin {
 		$labels        = $this->get_portal_service_request_status_labels();
 		$where         = array( '1=1' );
 		$params        = array();
-		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'paid', 'failed' );
+		$actionable_statuses = array( 'admin_review_required', 'pending_payment', 'awaiting_payment', 'paid', 'updating_sosn', 'signing_cmra', 'failed' );
 		$show_actionable_default = '' === $status_filter && '' === $search;
 
 		if ( 'all' === $status_filter ) {
@@ -12250,7 +12286,7 @@ class AJForms_Admin {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
 		} elseif ( $show_actionable_default ) {
-			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed')";
+			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','updating_sosn','signing_cmra','failed')";
 		}
 
 		if ( '' !== $search ) {
@@ -12392,54 +12428,6 @@ class AJForms_Admin {
 										<a class="button button-small" href="<?php echo esc_url( $action_url ); ?>"<?php echo '' !== $action_title ? ' title="' . esc_attr( $action_title ) . '"' : ''; ?><?php echo 'delete' === $action_key ? ' onclick="return confirm(\'' . esc_js( __( 'Delete this request? Safe linked non-Stripe ledger rows may also be removed.', 'ajforms' ) ) . '\');"' : ''; ?>><?php echo esc_html( $action_label ); ?></a>
 									<?php endforeach; ?>
 
-								<details style="margin-top:8px;max-width:420px;">
-									<summary><?php esc_html_e( 'Payment / Fulfillment Details', 'ajforms' ); ?></summary>
-									<form method="post" style="margin-top:8px;display:grid;gap:6px;">
-										<input type="hidden" name="page" value="ajforms-client-portal">
-										<input type="hidden" name="tab" value="service-requests">
-										<input type="hidden" name="service_request_action" value="save_details">
-										<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
-										<input type="hidden" name="_wpnonce" value="<?php echo esc_attr( $save_details_nonce ); ?>">
-										<label><?php esc_html_e( 'Service / Stripe Price', 'ajforms' ); ?><br>
-											<select name="request_stripe_price_id" style="width:100%;max-width:100%;">
-												<option value=""><?php esc_html_e( 'No synced Stripe price selected', 'ajforms' ); ?></option>
-												<?php foreach ( $service_products as $product ) : ?>
-													<?php
-													$price_id = ! empty( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
-													if ( '' === $price_id ) {
-														continue;
-													}
-													?>
-													<option value="<?php echo esc_attr( $price_id ); ?>" <?php selected( $request->stripe_price_id, $price_id ); ?>><?php echo esc_html( $this->get_portal_product_admin_label( $product ) ); ?></option>
-												<?php endforeach; ?>
-											</select>
-											<?php if ( '' !== $current_price_label ) : ?><br><span class="description"><?php echo esc_html( sprintf( __( 'Current: %s', 'ajforms' ), $current_price_label ) ); ?></span><?php endif; ?>
-										</label>
-										<label><?php esc_html_e( 'Amount', 'ajforms' ); ?><br><input type="number" step="0.01" name="request_amount" value="<?php echo esc_attr( number_format( (float) $request->amount, 2, '.', '' ) ); ?>" style="width:120px;"> <input type="text" name="request_currency" value="<?php echo esc_attr( strtolower( (string) $request->currency ) ); ?>" style="width:70px;"></label>
-										<label><?php esc_html_e( 'Payment URL', 'ajforms' ); ?><br><input type="url" name="payment_url" value="<?php echo esc_attr( $payment_url ); ?>" placeholder="https://" style="width:100%;"></label>
-										<label><?php esc_html_e( 'Payment / Invoice Reference', 'ajforms' ); ?><br><input type="text" name="payment_reference" value="<?php echo esc_attr( $payment_reference ); ?>" style="width:100%;"></label>
-										<details>
-											<summary><?php esc_html_e( 'Billing Change Preview', 'ajforms' ); ?></summary>
-											<div style="display:grid;gap:6px;margin-top:8px;">
-												<label><?php esc_html_e( 'Stripe Subscription ID', 'ajforms' ); ?><br><input type="text" name="billing_subscription_id" value="<?php echo esc_attr( ! empty( $billing_preview['subscription_id'] ) ? $billing_preview['subscription_id'] : '' ); ?>" placeholder="sub_..." style="width:100%;"></label>
-												<label><?php esc_html_e( 'Stripe Subscription Item ID', 'ajforms' ); ?><br><input type="text" name="billing_subscription_item_id" value="<?php echo esc_attr( ! empty( $billing_preview['subscription_item_id'] ) ? $billing_preview['subscription_item_id'] : '' ); ?>" placeholder="si_..." style="width:100%;"></label>
-												<label><?php esc_html_e( 'Proration Behavior', 'ajforms' ); ?><br>
-													<select name="billing_proration_behavior" style="width:100%;">
-														<?php $selected_proration = ! empty( $billing_preview['proration_behavior'] ) ? sanitize_key( (string) $billing_preview['proration_behavior'] ) : 'create_prorations'; ?>
-														<option value="create_prorations" <?php selected( $selected_proration, 'create_prorations' ); ?>><?php esc_html_e( 'Create prorations', 'ajforms' ); ?></option>
-														<option value="none" <?php selected( $selected_proration, 'none' ); ?>><?php esc_html_e( 'No proration', 'ajforms' ); ?></option>
-														<option value="always_invoice" <?php selected( $selected_proration, 'always_invoice' ); ?>><?php esc_html_e( 'Always invoice', 'ajforms' ); ?></option>
-													</select>
-												</label>
-												<p class="description"><?php esc_html_e( 'Saving this preview uses the exact selected Stripe Price as the new price when Apply Billing Change is clicked.', 'ajforms' ); ?></p>
-											</div>
-										</details>
-										<label><?php esc_html_e( 'Client-facing Note', 'ajforms' ); ?><br><textarea name="client_notes" rows="2" style="width:100%;"><?php echo esc_textarea( (string) $request->client_notes ); ?></textarea></label>
-										<label><?php esc_html_e( 'Internal Admin Notes', 'ajforms' ); ?><br><textarea name="admin_notes" rows="2" style="width:100%;"><?php echo esc_textarea( (string) $request->admin_notes ); ?></textarea></label>
-										<label><?php esc_html_e( 'After Save Status', 'ajforms' ); ?><br><select name="after_save_status"><option value=""><?php esc_html_e( 'Keep current status', 'ajforms' ); ?></option><option value="awaiting_payment"><?php esc_html_e( 'Awaiting Payment', 'ajforms' ); ?></option><option value="paid"><?php esc_html_e( 'Paid', 'ajforms' ); ?></option><option value="completed"><?php esc_html_e( 'Completed', 'ajforms' ); ?></option></select></label>
-										<button class="button button-small button-primary" type="submit"><?php esc_html_e( 'Save Details', 'ajforms' ); ?></button>
-									</form>
-								</details>
 							</td>
 						</tr>
 					<?php endforeach; ?>
