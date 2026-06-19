@@ -11851,12 +11851,47 @@ class AJForms_Admin {
 				$status = $this->normalize_portal_service_request_status( $entry->status );
 			}
 
+			// Resolve price IDs from metadata (handle both single price_id and multi-product price_ids array).
+			$meta_price_id  = ! empty( $metadata['price_id'] ) ? sanitize_text_field( (string) $metadata['price_id'] ) : '';
+			$meta_price_ids = ! empty( $metadata['price_ids'] ) && is_array( $metadata['price_ids'] )
+				? array_values( array_filter( array_unique( array_map( 'sanitize_text_field', $metadata['price_ids'] ) ) ) )
+				: array();
+			if ( '' !== $meta_price_id && ! in_array( $meta_price_id, $meta_price_ids, true ) ) {
+				array_unshift( $meta_price_ids, $meta_price_id );
+			}
+
+			// Resolve service name: prefer stored product_name, then look up the product catalog by price IDs.
+			$resolved_service_name = ! empty( $metadata['product_name'] ) ? sanitize_text_field( (string) $metadata['product_name'] ) : '';
+			if ( '' === $resolved_service_name || $this->is_generic_portal_service_label( $resolved_service_name ) ) {
+				$resolved_names = array();
+				foreach ( $meta_price_ids as $pid ) {
+					$pid_product = $this->get_portal_product_by_price_id( $pid );
+					if ( $pid_product ) {
+						$pid_label = ! empty( $pid_product->custom_label ) ? $pid_product->custom_label : ( ! empty( $pid_product->name ) ? $pid_product->name : '' );
+						if ( '' !== $pid_label ) {
+							$resolved_names[] = sanitize_text_field( (string) $pid_label );
+						}
+					}
+				}
+				if ( ! empty( $resolved_names ) ) {
+					$resolved_service_name = implode( ', ', array_unique( $resolved_names ) );
+				}
+			}
+			if ( '' === $resolved_service_name || $this->is_generic_portal_service_label( $resolved_service_name ) ) {
+				$desc = sanitize_text_field( (string) $entry->description );
+				$resolved_service_name = $this->is_generic_portal_service_label( $desc ) ? '' : $desc;
+			}
+
+			// For single-product requests, use the explicit price_id; for multi-product, use the first resolved one.
+			$resolved_price_id   = '' !== $meta_price_id ? $meta_price_id : ( ! empty( $meta_price_ids ) ? $meta_price_ids[0] : '' );
+			$resolved_product_id = ! empty( $metadata['product_id'] ) ? sanitize_text_field( (string) $metadata['product_id'] ) : '';
+
 			$request_data = array(
 				'wp_user_id'          => $wp_user_id,
 				'stripe_customer_id'  => $stripe_customer_id,
-				'stripe_price_id'     => ! empty( $metadata['price_id'] ) ? sanitize_text_field( (string) $metadata['price_id'] ) : '',
-				'stripe_product_id'   => ! empty( $metadata['product_id'] ) ? sanitize_text_field( (string) $metadata['product_id'] ) : '',
-				'service_name'        => ! empty( $metadata['product_name'] ) ? sanitize_text_field( (string) $metadata['product_name'] ) : sanitize_text_field( (string) $entry->description ),
+				'stripe_price_id'     => $resolved_price_id,
+				'stripe_product_id'   => $resolved_product_id,
+				'service_name'        => $resolved_service_name,
 				'request_type'        => $request_type,
 				'status'              => $status,
 				'amount'              => (float) $entry->amount,

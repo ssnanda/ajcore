@@ -866,7 +866,14 @@ class AJForms {
 								<?php
 								$status       = sanitize_key( (string) $request->status );
 								$status_label = $this->get_client_service_request_status_label( $status );
-								$service_name = ! empty( $request->service_name ) ? sanitize_text_field( (string) $request->service_name ) : __( 'Service Request', 'ajforms' );
+								$service_name = ! empty( $request->service_name ) ? sanitize_text_field( (string) $request->service_name ) : '';
+								if ( '' === $service_name && ! empty( $request->stripe_price_id ) ) {
+									$sr_product   = $this->get_portal_product_by_price_id( sanitize_text_field( (string) $request->stripe_price_id ) );
+									$service_name = $sr_product && ! empty( $sr_product->name ) ? sanitize_text_field( (string) $sr_product->name ) : '';
+								}
+								if ( '' === $service_name ) {
+									$service_name = __( 'Service Request', 'ajforms' );
+								}
 								$client_notes = ! empty( $request->client_notes ) ? sanitize_text_field( (string) $request->client_notes ) : '';
 								$created      = ! empty( $request->created_at ) ? $this->format_portal_date( $request->created_at ) : '-';
 								$is_terminal  = in_array( $status, array( 'completed', 'cancelled', 'failed', 'active' ), true );
