@@ -13028,13 +13028,12 @@ class AJForms_Admin {
 		$export_url = wp_nonce_url( add_query_arg( array_merge( $_GET, array( 'billing_export' => 'csv' ) ), admin_url( 'admin.php' ) ), 'ajcore_export_billing_ledger' );
 		?>
 		<div class="ajcore-admin-panel">
-			<h2><?php esc_html_e( 'Master Billing', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'Review all synced invoices, charges, checkout sessions, and client-created billing requests from one generic billing ledger.', 'ajforms' ); ?></p>
-			<div class="ajforms-settings-inline-actions" style="margin:12px 0;">
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d records', 'ajforms' ), (int) $totals->total_rows ) ); ?></span>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( 'Open balance: %s', 'ajforms' ), $this->format_portal_money( $open_balance, 'usd' ) ) ); ?></span>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( 'Credit balance: %s', 'ajforms' ), $this->format_portal_money( $credit_balance, 'usd' ) ) ); ?></span>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( 'Paid total: %s', 'ajforms' ), $this->format_portal_money( $paid_total, 'usd' ) ) ); ?></span>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Billing', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Ledger view of customer charges, payments, credits, checkout sessions, invoices, and manual billing activity.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( $export_url ); ?>"><?php esc_html_e( 'Export CSV', 'ajforms' ); ?></a></div>
+			<div class="ajcore-kpi-grid">
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Records', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( (int) $totals->total_rows ) ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $open_balance, 'usd' ) ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Credit Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $credit_balance, 'usd' ) ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Paid Total', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $paid_total, 'usd' ) ); ?></strong></div>
 			</div>
 			<?php if ( '' !== $customer_filter ) : ?>
 				<p><strong><?php esc_html_e( 'Filtered Customer Balance:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_balance_amount( $selected_customer_balance, 'usd' ) ); ?></p>
@@ -13088,7 +13087,6 @@ class AJForms_Admin {
 				</select>
 				<button class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
 				<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
-				<a class="button" href="<?php echo esc_url( $export_url ); ?>"><?php esc_html_e( 'Export CSV', 'ajforms' ); ?></a>
 			</form>
 
 			<table class="widefat striped">
@@ -13302,10 +13300,9 @@ class AJForms_Admin {
 		?>
 		<div class="ajforms-settings-card ajcore-dashboard">
 			<style>
-				.ajcore-dashboard .ajcore-dashboard-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:16px}.ajcore-dashboard .ajcore-dashboard-metric{display:flex;min-height:116px;flex-direction:column;justify-content:space-between;gap:10px;padding:16px 18px;border:1px solid #dcdcde;border-radius:10px;background:#fff;text-decoration:none;color:#1d2327;box-shadow:0 1px 2px rgba(0,0,0,.03)}.ajcore-dashboard .ajcore-dashboard-metric:hover{border-color:#2271b1;box-shadow:0 0 0 1px #2271b1}.ajcore-dashboard .ajcore-dashboard-label{font-weight:700;color:#50575e}.ajcore-dashboard .ajcore-dashboard-metric strong{font-size:30px;line-height:1.1;color:#1d2327}.ajcore-dashboard .ajcore-dashboard-metric small{color:#646970}.ajcore-dashboard .ajcore-dashboard-metric.is-alert strong{color:#b32d2e}.ajcore-dashboard .ajcore-dashboard-context{margin-top:20px;color:#646970}.ajcore-dashboard .ajcore-dashboard-context a{margin-right:12px}
+				.ajcore-dashboard .ajcore-dashboard-context{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px;color:#64748b}.ajcore-dashboard .ajcore-dashboard-context strong{margin-right:auto}.ajcore-dashboard .ajcore-dashboard-context a{display:inline-flex;align-items:center;border:1px solid #dbe7f3;background:#fff;border-radius:999px;padding:7px 11px;text-decoration:none;font-weight:800}.ajcore-dashboard .ajcore-dashboard-context a:hover{background:#f8fafc}
 			</style>
-			<h2><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'Read-only operating dashboard focused on items that need attention.', 'ajforms' ); ?></p>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Quick operating snapshot for billing, customers, fulfillment, tasks, and sync health.', 'ajforms' ); ?></p></div></div>
 
 			<div class="ajcore-dashboard-grid">
 				<?php $this->render_portal_dashboard_metric( __( 'Active Clients', 'ajforms' ), $active_customers, $this->get_portal_dashboard_url( 'portal-users', array( 'portal_user_status' => 'active' ) ) ); ?>
@@ -13359,7 +13356,18 @@ class AJForms_Admin {
 		?>
 		<div class="wrap ajforms-client-portal-admin ajcore-modern-admin">
 			<style>
-				.ajcore-modern-admin{--ajc-ink:#0f172a;--ajc-muted:#64748b;--ajc-line:#dbe7f3;--ajc-soft:#f8fafc;--ajc-blue:#3157ff;}
+				.ajcore-modern-admin{--ajc-ink:#0f172a;--ajc-muted:#64748b;--ajc-line:#dbe7f3;--ajc-soft:#f8fafc;--ajc-blue:#3157ff;--ajc-green:#16a34a;--ajc-amber:#d97706;--ajc-red:#dc2626;--ajc-card:#ffffff;--ajc-shadow:0 14px 34px rgba(15,23,42,.06);} 
+				.ajcore-modern-admin .ajforms-settings-card,.ajcore-modern-admin .ajcore-admin-panel{background:var(--ajc-card);border:1px solid var(--ajc-line);border-radius:22px;padding:20px 22px;margin:0 0 16px;box-shadow:var(--ajc-shadow)}
+				.ajcore-modern-admin .ajforms-settings-card h2,.ajcore-modern-admin .ajcore-admin-panel h2,.ajcore-modern-admin .ajforms-settings-card h3,.ajcore-modern-admin .ajcore-admin-panel h3{margin-top:0;color:var(--ajc-ink)}
+				.ajcore-modern-admin .ajforms-settings-card>p,.ajcore-modern-admin .ajcore-admin-panel>p{color:var(--ajc-muted);font-size:14px;line-height:1.55;max-width:920px}
+				.ajcore-modern-admin .ajcore-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}.ajcore-modern-admin .ajcore-section-head h2{margin:0 0 5px;font-size:22px}.ajcore-modern-admin .ajcore-section-head p{margin:0;color:var(--ajc-muted);max-width:850px;line-height:1.55}
+				.ajcore-modern-admin .ajforms-settings-inline-actions{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;margin:14px 0}.ajcore-modern-admin .ajforms-settings-pill{display:inline-flex;align-items:center;gap:8px;padding:10px 13px;border-radius:16px;border:1px solid #e2e8f0;background:linear-gradient(180deg,#fff,#f8fafc);color:#334155;font-weight:800;box-shadow:0 8px 18px rgba(15,23,42,.035)}
+				.ajcore-modern-admin .ajcore-kpi-grid,.ajcore-modern-admin .ajcore-dashboard-grid,.ajcore-modern-admin .ajcore-task-metrics{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))!important;gap:12px!important;margin:14px 0!important}.ajcore-modern-admin .ajcore-kpi-card,.ajcore-modern-admin .ajcore-dashboard-metric,.ajcore-modern-admin .ajcore-task-metric{display:flex!important;min-height:82px!important;flex-direction:column!important;justify-content:center!important;gap:5px!important;padding:16px 18px!important;border:1px solid #e2e8f0!important;border-radius:20px!important;background:linear-gradient(135deg,#fff 0%,#f8fbff 100%)!important;box-shadow:0 12px 28px rgba(15,23,42,.045)!important;text-decoration:none!important;color:var(--ajc-ink)!important}.ajcore-modern-admin .ajcore-dashboard-metric:hover{transform:translateY(-1px);border-color:#bfdbfe!important;box-shadow:0 18px 36px rgba(49,87,255,.10)!important}.ajcore-modern-admin .ajcore-kpi-card span,.ajcore-modern-admin .ajcore-dashboard-label,.ajcore-modern-admin .ajcore-task-metric span{color:var(--ajc-muted)!important;font-size:12px!important;font-weight:900!important;text-transform:uppercase;letter-spacing:.045em}.ajcore-modern-admin .ajcore-kpi-card strong,.ajcore-modern-admin .ajcore-dashboard-metric strong,.ajcore-modern-admin .ajcore-task-metric strong{color:var(--ajc-ink)!important;font-size:26px!important;line-height:1.1!important}.ajcore-modern-admin .ajcore-dashboard-metric small{color:var(--ajc-muted)!important;line-height:1.35!important}
+				.ajcore-modern-admin .widefat{border:1px solid #e2e8f0!important;border-radius:18px!important;overflow:hidden!important;background:#fff!important;box-shadow:none!important}.ajcore-modern-admin .widefat thead th{background:#f8fafc!important;color:#334155!important;font-weight:900!important;border-bottom:1px solid #e2e8f0!important}.ajcore-modern-admin .widefat td,.ajcore-modern-admin .widefat th{padding:13px 14px!important;vertical-align:middle}.ajcore-modern-admin .widefat tbody tr:hover td{background:#fbfdff!important}.ajcore-modern-admin .widefat code{border-radius:8px;background:#f1f5f9;padding:3px 6px;color:#334155}
+				.ajcore-modern-admin .button{border-radius:999px!important;font-weight:800!important;padding:4px 13px!important}.ajcore-modern-admin .button.button-primary{background:#3157ff!important;border-color:#3157ff!important;box-shadow:0 8px 18px rgba(49,87,255,.18)!important}.ajcore-modern-admin input[type=search],.ajcore-modern-admin input[type=text],.ajcore-modern-admin input[type=email],.ajcore-modern-admin input[type=number],.ajcore-modern-admin input[type=date],.ajcore-modern-admin select,.ajcore-modern-admin textarea{border-color:#cbd7e6;border-radius:12px;box-shadow:none}.ajcore-modern-admin input:focus,.ajcore-modern-admin select:focus,.ajcore-modern-admin textarea:focus{border-color:#3157ff;box-shadow:0 0 0 3px rgba(49,87,255,.13)}
+				.ajcore-modern-admin .ajcore-filter-bar,.ajcore-modern-admin form[method=get]{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:12px;box-shadow:0 10px 24px rgba(15,23,42,.035)}
+				.ajcore-modern-admin details.ajforms-settings-card,.ajcore-modern-admin details.ajcore-admin-card,.ajcore-modern-admin .ajcore-inline-drawer{border-style:dashed}.ajcore-modern-admin details>summary{cursor:pointer;font-weight:900;color:#0f172a;list-style:none}.ajcore-modern-admin details>summary::-webkit-details-marker{display:none}.ajcore-modern-admin details>summary:before{content:'+';display:inline-grid;place-items:center;width:22px;height:22px;border-radius:999px;background:#eef2ff;color:#3157ff;margin-right:8px;font-weight:900}.ajcore-modern-admin details[open]>summary:before{content:'–'}
+				.ajcore-modern-admin .notice.inline,.ajcore-modern-admin .notice{border-radius:14px;border-left-width:4px;box-shadow:0 8px 18px rgba(15,23,42,.04)}
 				.ajcore-modern-admin .ajcore-status-pill{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800;background:#f0f6fc;color:#0969da}
 				.ajcore-modern-admin .ajcore-status-pill.off{background:#f6f7f7;color:#646970}.ajcore-modern-admin .ajcore-status-pill.active{background:#dcfce7;color:#166534}.ajcore-modern-admin .ajcore-status-pill.disabled{background:#fef3c7;color:#92400e}.ajcore-modern-admin .ajcore-status-pill.archived{background:#fee2e2;color:#991b1b}.ajcore-modern-admin .ajcore-status-pill.no-login{background:#f1f5f9;color:#475569}
 				.ajcore-modern-admin .ajcore-portal-users-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0}.ajcore-modern-admin .ajcore-portal-users-toolbar form{display:flex;align-items:center;gap:8px;margin:0}.ajcore-modern-admin .ajcore-portal-users-toolbar .ajcore-toolbar-spacer{margin-left:auto}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-active td{background:#f6fff8}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-disabled td{background:#fffaf0}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-archived td{background:#fff7f7}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-no-login td{background:#f8fafc}
@@ -13492,8 +13500,8 @@ class AJForms_Admin {
 		$total_rows  = absint( $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ) );
 		$last_purge  = absint( get_option( 'ajcore_portal_event_log_last_auto_purge', 0 ) );
 		?>
-		<h2><?php esc_html_e( 'Event Log', 'ajforms' ); ?></h2>
-		<p><?php esc_html_e( 'Audit trail for portal mapping, role, lifecycle, auth, sync preservation, repair, and provisioning events.', 'ajforms' ); ?></p>
+		<div class="ajforms-settings-card ajcore-event-log-panel">
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Event Log', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Audit trail for portal mapping, roles, lifecycle changes, auth, sync preservation, repair, and provisioning events.', 'ajforms' ); ?></p></div><span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d rows', 'ajforms' ), $total_rows ) ); ?></span></div>
 
 		<?php if ( isset( $_GET['event-log-settings-saved'] ) ) : ?>
 			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Event log retention settings saved.', 'ajforms' ); ?></p></div>
@@ -13626,6 +13634,7 @@ class AJForms_Admin {
 				<?php endif; ?>
 			</tbody>
 		</table>
+		</div>
 		<?php
 	}
 
@@ -14367,9 +14376,8 @@ class AJForms_Admin {
 			}
 		}
 		?>
-		<div class="ajforms-settings-card">
-			<h3><?php esc_html_e( 'Stripe Sync Center', 'ajforms' ); ?></h3>
-			<p><?php esc_html_e( 'Use this tab as the single place to sync Stripe portal data, schedule recurring syncs, and review sync history.', 'ajforms' ); ?></p>
+		<div class="ajforms-settings-card ajcore-sync-panel">
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Sync Center', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Run Stripe sync jobs, review cache counts, check data quality, and inspect sync history from one workspace.', 'ajforms' ); ?></p></div></div>
 			<p><strong><?php esc_html_e( 'Stripe Webhook URL:', 'ajforms' ); ?></strong> <code><?php echo esc_html( add_query_arg( 'ajcore_stripe_webhook', '1', home_url( '/' ) ) ); ?></code></p>
 
 			<?php if ( isset( $_GET['portal-sync-settings'] ) ) : ?>
@@ -14668,9 +14676,8 @@ class AJForms_Admin {
 			$display_fields = array_slice( array_values( array_intersect( array( 'name', 'email', 'customer_details.name', 'customer_details.email', 'created', 'livemode' ), $available_fields ) ), 0, 6 );
 		}
 		?>
-		<div class="ajforms-settings-card">
-			<h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'Customers are synced from Stripe and can optionally be linked to WordPress portal access.', 'ajforms' ); ?></p>
+		<div class="ajforms-settings-card ajcore-customers-panel">
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Stripe customer records with portal access, WordPress user links, lifecycle status, and Customer 360 shortcuts.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a></div>
 
 			<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled for portal access.', 'ajforms' ); ?></p></div>
@@ -14707,8 +14714,8 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d with portal access', 'ajforms' ), $enabled_count ) ); ?></span>
 			</div>
 
-			<details class="ajforms-settings-card" open>
-				<summary><strong><?php esc_html_e( 'Create Stripe Customer', 'ajforms' ); ?></strong></summary>
+			<details class="ajforms-settings-card ajcore-inline-drawer">
+				<summary><strong><?php esc_html_e( 'Add Stripe Customer', 'ajforms' ); ?></strong></summary>
 				<form method="post" class="ajforms-settings-grid" style="margin-top:12px;">
 					<?php wp_nonce_field( 'ajcore_create_stripe_customer', 'ajcore_create_stripe_customer_nonce' ); ?>
 					<label>
@@ -15451,7 +15458,7 @@ class AJForms_Admin {
 		?>
 		<div class="ajforms-settings-card ajcore-admin-tasks">
 			<style>
-				.ajcore-admin-tasks .ajcore-task-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}.ajcore-admin-tasks .ajcore-task-head h2{margin:0 0 6px}.ajcore-admin-tasks .ajcore-task-head p{margin:0;color:#50575e;max-width:760px}.ajcore-admin-tasks .ajcore-task-metrics{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:10px;margin:14px 0}.ajcore-admin-tasks .ajcore-task-metric{border:1px solid #dcdcde;border-radius:8px;background:#fff;padding:12px}.ajcore-admin-tasks .ajcore-task-metric span{display:block;color:#646970;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}.ajcore-admin-tasks .ajcore-task-metric strong{display:block;font-size:24px;line-height:1.2;margin-top:3px}.ajcore-admin-tasks .ajcore-task-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:16px 0}.ajcore-admin-tasks .ajcore-task-form-card{max-width:980px;background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:16px;margin:16px 0}.ajcore-admin-tasks .ajcore-task-filters{display:grid;grid-template-columns:1.4fr repeat(6,minmax(130px,1fr)) auto;gap:10px;align-items:end;background:#f6f7f7;border:1px solid #dcdcde;border-radius:8px;padding:12px;margin:14px 0}.ajcore-admin-tasks .ajcore-task-filters label{display:flex;flex-direction:column;gap:5px;font-weight:600}.ajcore-admin-tasks .ajcore-task-filters input,.ajcore-admin-tasks .ajcore-task-filters select{width:100%;max-width:none}.ajcore-admin-tasks .ajcore-task-filter-actions{display:flex;gap:6px;align-items:center}.ajcore-admin-tasks .ajcore-task-bulkbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:12px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:8px}.ajcore-admin-tasks .ajcore-task-comments{max-width:360px}.ajcore-admin-tasks .ajcore-comment-list{margin:8px 0 0;padding-left:0;list-style:none}.ajcore-admin-tasks .ajcore-comment-list li{border-left:3px solid #dbeafe;padding:6px 0 6px 10px;margin:8px 0}.ajcore-admin-tasks .ajcore-progress-pill{display:inline-flex;border-radius:999px;background:#eef2ff;color:#1d4ed8;font-weight:700;padding:4px 9px}.ajcore-admin-tasks .ajcore-muted{color:#646970}.ajcore-admin-tasks .ajcore-status-client{display:block;color:#166534;font-size:12px;margin-top:4px}.ajcore-admin-tasks .column-check{width:34px}.ajcore-admin-tasks .widefat td{vertical-align:top}.ajcore-admin-tasks details summary{cursor:pointer;color:#2271b1}@media(max-width:1200px){.ajcore-admin-tasks .ajcore-task-filters,.ajcore-admin-tasks .ajcore-task-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.ajcore-admin-tasks .ajcore-task-filters,.ajcore-admin-tasks .ajcore-task-metrics{grid-template-columns:1fr}}
+				.ajcore-admin-tasks .ajcore-task-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:10px}.ajcore-admin-tasks .ajcore-task-head h2{margin:0 0 5px;font-size:22px}.ajcore-admin-tasks .ajcore-task-head p{margin:0;color:#64748b;max-width:820px}.ajcore-admin-tasks .ajcore-task-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:12px 0}.ajcore-admin-tasks .ajcore-task-form-card{background:#fff;border:1px dashed #cbd7e6;border-radius:18px;padding:16px;margin:12px 0}.ajcore-admin-tasks .ajcore-task-filters{display:grid;grid-template-columns:1.4fr repeat(5,minmax(120px,1fr)) auto;gap:10px;align-items:end;background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:12px;margin:12px 0;box-shadow:0 10px 24px rgba(15,23,42,.035)}.ajcore-admin-tasks .ajcore-task-filters label{display:flex;flex-direction:column;gap:5px;font-weight:800;color:#334155}.ajcore-admin-tasks .ajcore-task-filters input,.ajcore-admin-tasks .ajcore-task-filters select{width:100%;max-width:none}.ajcore-admin-tasks .ajcore-task-filter-actions{display:flex;gap:6px;align-items:center}.ajcore-admin-tasks .ajcore-task-bulkbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0;padding:10px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px}.ajcore-admin-tasks .ajcore-task-comments{max-width:360px}.ajcore-admin-tasks .ajcore-comment-list{margin:8px 0 0;padding-left:0;list-style:none}.ajcore-admin-tasks .ajcore-comment-list li{border-left:3px solid #dbeafe;padding:6px 0 6px 10px;margin:8px 0}.ajcore-admin-tasks .ajcore-progress-pill{display:inline-flex;border-radius:999px;background:#eef2ff;color:#1d4ed8;font-weight:800;padding:4px 9px}.ajcore-admin-tasks .ajcore-muted{color:#64748b}.ajcore-admin-tasks .ajcore-status-client{display:block;color:#166534;font-size:12px;margin-top:4px}.ajcore-admin-tasks .column-check{width:34px}.ajcore-admin-tasks .widefat td{vertical-align:top}.ajcore-admin-tasks details summary{cursor:pointer;color:#3157ff}@media(max-width:1200px){.ajcore-admin-tasks .ajcore-task-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:720px){.ajcore-admin-tasks .ajcore-task-filters{grid-template-columns:1fr}}
 			</style>
 			<div class="ajcore-task-head">
 				<div>
@@ -15686,25 +15693,15 @@ class AJForms_Admin {
 			<?php endif; ?>
 
 			<style>
-				.ajforms-file-library-grid{display:grid;grid-template-columns:minmax(360px,520px) minmax(520px,1fr);gap:24px;align-items:start;margin-top:18px}
-				.ajforms-file-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:20px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-				.ajforms-file-card h2{margin:0 0 16px;font-size:18px}
-				.ajforms-file-field{margin-bottom:16px}
-				.ajforms-file-field label{display:block;font-weight:700;margin-bottom:7px}
-				.ajforms-file-field input[type="text"],.ajforms-file-field textarea{width:100%;max-width:100%}
-				.ajforms-file-picker{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-				.ajforms-selected-file{margin-top:8px;color:#50575e;word-break:break-word}
-				.ajforms-user-list{border:1px solid #dcdcde;border-radius:8px;max-height:260px;overflow:auto;padding:8px;background:#f6f7f7}
-				.ajforms-user-list label{display:block;padding:7px 8px;margin:0;border-radius:6px;font-weight:500}
-				.ajforms-user-list label:hover{background:#fff}
-				.ajforms-file-table td{vertical-align:top}
-				.ajforms-assignment-list{margin:0;padding-left:18px}
-				@media (max-width:1200px){.ajforms-file-library-grid{grid-template-columns:1fr}}
+				.ajforms-file-library-grid{display:grid;grid-template-columns:1fr;gap:16px;align-items:start;margin-top:14px}
+				.ajforms-file-card{background:#fff;border:1px solid #dbe7f3;border-radius:22px;padding:18px 20px;box-shadow:0 14px 34px rgba(15,23,42,.05)}
+				.ajforms-file-card h2{margin:0 0 14px;font-size:20px}.ajforms-file-field{margin-bottom:14px}.ajforms-file-field label{display:block;font-weight:800;margin-bottom:7px;color:#334155}.ajforms-file-field input[type="text"],.ajforms-file-field textarea{width:100%;max-width:100%}.ajforms-file-picker{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.ajforms-selected-file{margin-top:8px;color:#64748b;word-break:break-word}.ajforms-user-list{border:1px solid #dbe7f3;border-radius:16px;max-height:210px;overflow:auto;padding:8px;background:#f8fafc}.ajforms-user-list label{display:block;padding:8px 10px;margin:0;border-radius:10px;font-weight:600}.ajforms-user-list label:hover{background:#fff}.ajforms-file-table td{vertical-align:middle}.ajforms-assignment-list{margin:0;padding-left:18px}.ajforms-file-upload-drawer{background:#fff;border:1px dashed #cbd7e6;border-radius:20px;padding:14px 16px;box-shadow:0 10px 26px rgba(15,23,42,.035)}.ajforms-file-upload-drawer>summary{font-weight:900;cursor:pointer}.ajforms-file-upload-drawer>summary:before{content:'+';display:inline-grid;place-items:center;width:22px;height:22px;border-radius:999px;background:#eef2ff;color:#3157ff;margin-right:8px}.ajforms-file-upload-drawer[open]>summary:before{content:'–'}
 			</style>
 
 			<div class="ajforms-file-library-grid">
-				<form class="ajforms-file-card" method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-client-portal&tab=file-library' ) ); ?>">
-					<h2><?php echo $editing_file ? esc_html__( 'Edit File', 'ajforms' ) : esc_html__( 'Add File', 'ajforms' ); ?></h2>
+				<details class="ajforms-file-upload-drawer" <?php echo $editing_file ? 'open' : ''; ?>>
+					<summary><?php echo $editing_file ? esc_html__( 'Edit File', 'ajforms' ) : esc_html__( 'Add File', 'ajforms' ); ?></summary>
+					<form class="ajforms-file-card" method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-client-portal&tab=file-library' ) ); ?>">
 					<?php wp_nonce_field( 'ajf_save_portal_file', 'ajf_portal_file_nonce' ); ?>
 					<input type="hidden" name="portal_file_id" value="<?php echo esc_attr( $editing_file ? (int) $editing_file->id : 0 ); ?>">
 					<input type="hidden" name="attachment_id" id="ajforms-portal-attachment-id" value="<?php echo esc_attr( $editing_file ? (int) $editing_file->attachment_id : 0 ); ?>">
@@ -15758,7 +15755,8 @@ class AJForms_Admin {
 							<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-client-portal&tab=file-library' ) ); ?>"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></a>
 						<?php endif; ?>
 					</p>
-				</form>
+					</form>
+				</details>
 
 				<div class="ajforms-file-card">
 					<h2><?php esc_html_e( 'Shared Files', 'ajforms' ); ?></h2>
