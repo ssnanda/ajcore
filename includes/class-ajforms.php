@@ -123,6 +123,7 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_create_checkout_session', array( $this, 'ajax_create_checkout_session' ) );
 		add_action( 'wp_ajax_ajcore_create_custom_service_request', array( $this, 'ajax_create_custom_service_request' ) );
+		add_action( 'wp_ajax_ajcore_submit_portal_service_request', array( $this, 'ajax_submit_portal_service_request' ) );
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 		add_action( 'wp_ajax_ajcore_pay_portal_ledger', array( $this, 'ajax_pay_portal_ledger' ) );
 	}
@@ -843,10 +844,71 @@ class AJForms {
 			)
 		);
 
+		$new_sr_nonce = wp_create_nonce( 'ajcore_submit_portal_service_request' );
+
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
+
+			<div id="aj-new-sr-wrap" style="margin-bottom:24px;">
+				<button id="aj-new-sr-toggle" class="button button-primary" onclick="document.getElementById('aj-new-sr-form-wrap').style.display=document.getElementById('aj-new-sr-form-wrap').style.display==='none'?'block':'none';return false;"><?php esc_html_e( '+ New Service Request', 'ajforms' ); ?></button>
+				<div id="aj-new-sr-form-wrap" style="display:none;margin-top:12px;padding:16px;border:1px solid #ddd;background:#f9f9f9;border-radius:6px;max-width:600px;">
+					<h3 style="margin-top:0;"><?php esc_html_e( 'Submit a New Service Request', 'ajforms' ); ?></h3>
+					<form id="aj-new-sr-form">
+						<p>
+							<label style="display:block;font-weight:600;margin-bottom:4px;"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
+							<input type="text" id="aj-sr-subject" name="subject" style="width:100%;padding:8px;" placeholder="<?php esc_attr_e( 'e.g. Update registered agent address', 'ajforms' ); ?>" required>
+						</p>
+						<p>
+							<label style="display:block;font-weight:600;margin-bottom:4px;"><?php esc_html_e( 'Details', 'ajforms' ); ?></label>
+							<textarea id="aj-sr-details" name="details" rows="4" style="width:100%;padding:8px;" placeholder="<?php esc_attr_e( 'Please describe what you need...', 'ajforms' ); ?>"></textarea>
+						</p>
+						<p id="aj-new-sr-msg" style="display:none;padding:8px;border-radius:4px;"></p>
+						<button type="submit" id="aj-new-sr-submit" class="button button-primary"><?php esc_html_e( 'Submit Request', 'ajforms' ); ?></button>
+					</form>
+					<script>
+					(function(){
+						document.getElementById('aj-new-sr-form').addEventListener('submit', function(e){
+							e.preventDefault();
+							var btn = document.getElementById('aj-new-sr-submit');
+							var msg = document.getElementById('aj-new-sr-msg');
+							btn.disabled = true;
+							btn.textContent = '<?php echo esc_js( __( 'Submitting…', 'ajforms' ) ); ?>';
+							var fd = new FormData();
+							fd.append('action', 'ajcore_submit_portal_service_request');
+							fd.append('nonce', '<?php echo esc_js( $new_sr_nonce ); ?>');
+							fd.append('subject', document.getElementById('aj-sr-subject').value);
+							fd.append('details', document.getElementById('aj-sr-details').value);
+							fetch('<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>', {method:'POST',body:fd,credentials:'same-origin'})
+								.then(function(r){return r.json();})
+								.then(function(data){
+									msg.style.display = 'block';
+									if(data.success){
+										msg.style.background = '#dcfce7';
+										msg.style.color = '#166534';
+										msg.textContent = data.data.message || '<?php echo esc_js( __( 'Request submitted!', 'ajforms' ) ); ?>';
+										document.getElementById('aj-sr-subject').value = '';
+										document.getElementById('aj-sr-details').value = '';
+										setTimeout(function(){ location.reload(); }, 1500);
+									} else {
+										msg.style.background = '#fee2e2';
+										msg.style.color = '#991b1b';
+										msg.textContent = (data.data && data.data.message) ? data.data.message : '<?php echo esc_js( __( 'Submission failed. Please try again.', 'ajforms' ) ); ?>';
+										btn.disabled = false;
+										btn.textContent = '<?php echo esc_js( __( 'Submit Request', 'ajforms' ) ); ?>';
+									}
+								})
+								.catch(function(){
+									msg.style.display='block';msg.style.background='#fee2e2';msg.style.color='#991b1b';
+									msg.textContent='<?php echo esc_js( __( 'Network error. Please try again.', 'ajforms' ) ); ?>';
+									btn.disabled=false;btn.textContent='<?php echo esc_js( __( 'Submit Request', 'ajforms' ) ); ?>';
+								});
+						});
+					})();
+					</script>
+				</div>
+			</div>
 
 			<?php if ( empty( $requests ) ) : ?>
 				<p><?php esc_html_e( 'You have no service requests on file.', 'ajforms' ); ?></p>
@@ -856,6 +918,7 @@ class AJForms {
 						<thead>
 							<tr>
 								<th><?php esc_html_e( 'Service', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Payment', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Notes', 'ajforms' ); ?></th>
@@ -864,8 +927,19 @@ class AJForms {
 						<tbody>
 							<?php foreach ( $requests as $request ) : ?>
 								<?php
-								$status       = sanitize_key( (string) $request->status );
-								$status_label = $this->get_client_service_request_status_label( $status );
+								$pay_status    = sanitize_key( (string) $request->status );
+								$svc_status    = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+								$pay_label     = $this->get_client_service_request_status_label( $pay_status );
+								$svc_labels    = array(
+									'new'           => __( 'New', 'ajforms' ),
+									'under_review'  => __( 'Under Review', 'ajforms' ),
+									'updating_sosn' => __( 'In Progress', 'ajforms' ),
+									'signing_cmra'  => __( 'Awaiting Signature', 'ajforms' ),
+									'active'        => __( 'Active', 'ajforms' ),
+									'completed'     => __( 'Completed', 'ajforms' ),
+									'cancelled'     => __( 'Cancelled', 'ajforms' ),
+								);
+								$svc_label     = isset( $svc_labels[ $svc_status ] ) ? $svc_labels[ $svc_status ] : ucwords( str_replace( '_', ' ', $svc_status ) );
 								$service_name = ! empty( $request->service_name ) ? sanitize_text_field( (string) $request->service_name ) : '';
 								if ( '' === $service_name && ! empty( $request->stripe_price_id ) ) {
 									$sr_product   = $this->get_portal_product_by_price_id( sanitize_text_field( (string) $request->stripe_price_id ) );
@@ -876,22 +950,16 @@ class AJForms {
 								}
 								$client_notes = ! empty( $request->client_notes ) ? sanitize_text_field( (string) $request->client_notes ) : '';
 								$created      = ! empty( $request->created_at ) ? $this->format_portal_date( $request->created_at ) : '-';
-								$is_terminal  = in_array( $status, array( 'completed', 'cancelled', 'failed', 'active' ), true );
+								$is_active    = in_array( $svc_status, array( 'active', 'completed' ), true );
+								$is_cancelled = 'cancelled' === $svc_status;
 								?>
 								<tr>
 									<td><strong><?php echo esc_html( $service_name ); ?></strong></td>
 									<td>
-										<span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;
-											<?php
-											if ( 'active' === $status || 'completed' === $status ) {
-												echo 'background:#dcfce7;color:#166534;';
-											} elseif ( 'cancelled' === $status || 'failed' === $status ) {
-												echo 'background:#fee2e2;color:#991b1b;';
-											} else {
-												echo 'background:#dbeafe;color:#1e40af;';
-											}
-											?>
-										"><?php echo esc_html( $status_label ); ?></span>
+										<span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;<?php echo 'paid' === $pay_status ? 'background:#dcfce7;color:#166534;' : ( in_array( $pay_status, array( 'cancelled', 'failed' ), true ) ? 'background:#fee2e2;color:#991b1b;' : 'background:#fef9c3;color:#854d0e;' ); ?>"><?php echo esc_html( $pay_label ); ?></span>
+									</td>
+									<td>
+										<span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;<?php echo $is_active ? 'background:#dcfce7;color:#166534;' : ( $is_cancelled ? 'background:#fee2e2;color:#991b1b;' : 'background:#dbeafe;color:#1e40af;' ); ?>"><?php echo esc_html( $svc_label ); ?></span>
 									</td>
 									<td><?php echo esc_html( $created ); ?></td>
 									<td><?php echo esc_html( $client_notes ); ?></td>
@@ -6384,6 +6452,58 @@ class AJForms {
 				'description'   => $stripe_config['description'],
 			)
 		);
+	}
+
+	public function ajax_submit_portal_service_request() {
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( array( 'message' => __( 'Login required.', 'ajforms' ) ), 401 );
+		}
+
+		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+		if ( ! wp_verify_nonce( $nonce, 'ajcore_submit_portal_service_request' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Invalid request.', 'ajforms' ) ), 403 );
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			wp_send_json_error( array( 'message' => __( 'Your portal account is not linked yet.', 'ajforms' ) ), 403 );
+		}
+
+		$subject = isset( $_POST['subject'] ) ? sanitize_text_field( wp_unslash( $_POST['subject'] ) ) : '';
+		$details = isset( $_POST['details'] ) ? sanitize_textarea_field( wp_unslash( $_POST['details'] ) ) : '';
+
+		if ( '' === $subject ) {
+			wp_send_json_error( array( 'message' => __( 'Please enter a subject.', 'ajforms' ) ), 400 );
+		}
+
+		$pdb    = $this->get_pdb();
+		$sr_tbl = $this->get_portal_service_requests_table();
+
+		$inserted = $pdb->insert(
+			$sr_tbl,
+			array(
+				'stripe_customer_id' => $stripe_customer_id,
+				'wp_user_id'         => get_current_user_id(),
+				'source'             => 'client_portal',
+				'source_type'        => 'client_portal',
+				'source_object_id'   => 'client_portal_' . wp_generate_uuid4(),
+				'service_name'       => $subject,
+				'client_notes'       => $details,
+				'status'             => 'draft',
+				'service_status'     => 'new',
+				'amount'             => 0,
+				'currency'           => 'usd',
+				'created_at'         => current_time( 'mysql' ),
+				'updated_at'         => current_time( 'mysql' ),
+			),
+			array( '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s' )
+		);
+
+		if ( ! $inserted ) {
+			wp_send_json_error( array( 'message' => __( 'Could not submit request. Please try again.', 'ajforms' ) ), 500 );
+		}
+
+		wp_send_json_success( array( 'message' => __( 'Your service request has been submitted. We will be in touch shortly.', 'ajforms' ) ) );
 	}
 
 	public function ajax_cancel_portal_service_request() {
