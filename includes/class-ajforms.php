@@ -817,8 +817,8 @@ class AJForms {
 			'pending_payment'       => __( 'Pending Payment', 'ajforms' ),
 			'awaiting_payment'      => __( 'Awaiting Payment', 'ajforms' ),
 			'paid'                  => __( 'Paid – Processing', 'ajforms' ),
-			'updating_sosn'         => __( 'In Progress', 'ajforms' ),
-			'signing_cmra'          => __( 'Awaiting Signature', 'ajforms' ),
+			'updating_sosn'         => __( 'Updating SOS/NC', 'ajforms' ),
+			'signing_cmra'          => __( 'Awaiting CMRA Signature', 'ajforms' ),
 			'active'                => __( 'Active', 'ajforms' ),
 			'admin_review_required' => __( 'Under Review', 'ajforms' ),
 			'completed'             => __( 'Completed', 'ajforms' ),
@@ -910,82 +910,65 @@ class AJForms {
 				</div>
 			</div>
 
+			<style>
+				.aj-client-sr-list{display:grid;gap:14px;margin-top:18px}.aj-client-sr-card{border:1px solid #e4ebf3;border-radius:18px;background:#fff;padding:16px;box-shadow:0 10px 26px rgba(15,23,42,.05)}.aj-client-sr-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}.aj-client-sr-title{font-weight:800;color:#0f172a;font-size:16px}.aj-client-sr-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;color:#64748b}.aj-client-sr-badge{display:inline-flex;align-items:center;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:800;background:#dbeafe;color:#1e40af}.aj-client-sr-badge.is-good{background:#dcfce7;color:#166534}.aj-client-sr-badge.is-warn{background:#fef9c3;color:#854d0e}.aj-client-sr-badge.is-bad{background:#fee2e2;color:#991b1b}.aj-client-sr-note{margin-top:12px;padding:12px;border-radius:14px;background:#f8fafc;color:#334155}
+			</style>
 			<?php if ( empty( $requests ) ) : ?>
-				<p><?php esc_html_e( 'You have no service requests on file.', 'ajforms' ); ?></p>
+				<div class="aj-portal-empty-state">
+					<strong><?php esc_html_e( 'No service requests yet', 'ajforms' ); ?></strong>
+					<p><?php esc_html_e( 'New service requests and setup progress will appear here.', 'ajforms' ); ?></p>
+				</div>
 			<?php else : ?>
-				<div class="aj-portal-table-wrap">
-					<table class="aj-portal-table">
-						<thead>
-							<tr>
-								<th><?php esc_html_e( 'Service', 'ajforms' ); ?></th>
-								<th><?php esc_html_e( 'Payment', 'ajforms' ); ?></th>
-								<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
-								<th><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
-								<th><?php esc_html_e( 'Notes', 'ajforms' ); ?></th>
-							</tr>
-						</thead>
-						<tbody>
-							<?php foreach ( $requests as $request ) : ?>
-								<?php
-								$pay_status    = sanitize_key( (string) $request->status );
-								$svc_status    = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
-								$pay_label     = $this->get_client_service_request_status_label( $pay_status );
-								$svc_labels    = array(
-									'new'                    => __( 'New', 'ajforms' ),
-									'under_review'           => __( 'Under Review', 'ajforms' ),
-									'pending_customer'       => __( 'Pending Customer', 'ajforms' ),
-									'pending_agent'          => __( 'Pending Agent', 'ajforms' ),
-									'meeting_scheduled'      => __( 'Meeting Scheduled', 'ajforms' ),
-									'sosnc_filing'           => __( 'Filing with SOS/NC', 'ajforms' ),
-									'llc_documents_emailed'  => __( 'Documents Emailed', 'ajforms' ),
-									'signing_cmra'           => __( 'Awaiting CMRA Signature', 'ajforms' ),
-									'id_proof_needed'        => __( 'ID Proof Needed', 'ajforms' ),
-									'address_proof_needed'   => __( 'Address Proof Needed', 'ajforms' ),
-									'vo_setup_required'      => __( 'Virtual Office Setup Required', 'ajforms' ),
-									'sosnc_client'           => __( 'Waiting on Customer SOS/NC Update', 'ajforms' ),
-									'updating_sosn'          => __( 'SOS/NC Update in Progress', 'ajforms' ),
-									'included_with_llc_setup' => __( 'Included with LLC Setup', 'ajforms' ),
-									'active'                 => __( 'Active', 'ajforms' ),
-									'completed'              => __( 'Completed', 'ajforms' ),
-									'cancelled'              => __( 'Cancelled', 'ajforms' ),
-								);
-								$svc_labels    = array(
-									'new'           => __( 'New', 'ajforms' ),
-									'under_review'  => __( 'Under Review', 'ajforms' ),
-									'updating_sosn' => __( 'In Progress', 'ajforms' ),
-									'signing_cmra'  => __( 'Awaiting Signature', 'ajforms' ),
-									'active'        => __( 'Active', 'ajforms' ),
-									'completed'     => __( 'Completed', 'ajforms' ),
-									'cancelled'     => __( 'Cancelled', 'ajforms' ),
-								);
-								$svc_label     = isset( $svc_labels[ $svc_status ] ) ? $svc_labels[ $svc_status ] : ucwords( str_replace( '_', ' ', $svc_status ) );
-								$service_name = ! empty( $request->service_name ) ? sanitize_text_field( (string) $request->service_name ) : '';
-								if ( '' === $service_name && ! empty( $request->stripe_price_id ) ) {
-									$sr_product   = $this->get_portal_product_by_price_id( sanitize_text_field( (string) $request->stripe_price_id ) );
-									$service_name = $sr_product && ! empty( $sr_product->name ) ? sanitize_text_field( (string) $sr_product->name ) : '';
-								}
-								if ( '' === $service_name ) {
-									$service_name = __( 'Service Request', 'ajforms' );
-								}
-								$client_notes = ! empty( $request->client_notes ) ? sanitize_text_field( (string) $request->client_notes ) : '';
-								$created      = ! empty( $request->created_at ) ? $this->format_portal_date( $request->created_at ) : '-';
-								$is_active    = in_array( $svc_status, array( 'active', 'completed' ), true );
-								$is_cancelled = 'cancelled' === $svc_status;
-								?>
-								<tr>
-									<td><strong><?php echo esc_html( $service_name ); ?></strong></td>
-									<td>
-										<span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;<?php echo 'paid' === $pay_status ? 'background:#dcfce7;color:#166534;' : ( in_array( $pay_status, array( 'cancelled', 'failed' ), true ) ? 'background:#fee2e2;color:#991b1b;' : 'background:#fef9c3;color:#854d0e;' ); ?>"><?php echo esc_html( $pay_label ); ?></span>
-									</td>
-									<td>
-										<span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;<?php echo $is_active ? 'background:#dcfce7;color:#166534;' : ( $is_cancelled ? 'background:#fee2e2;color:#991b1b;' : 'background:#dbeafe;color:#1e40af;' ); ?>"><?php echo esc_html( $svc_label ); ?></span>
-									</td>
-									<td><?php echo esc_html( $created ); ?></td>
-									<td><?php echo esc_html( $client_notes ); ?></td>
-								</tr>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
+				<div class="aj-client-sr-list">
+					<?php foreach ( $requests as $request ) : ?>
+						<?php
+						$pay_status = sanitize_key( (string) $request->status );
+						$svc_status = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+						$pay_label  = $this->get_client_service_request_status_label( $pay_status );
+						$svc_labels = array(
+							'new'                    => __( 'New', 'ajforms' ),
+							'under_review'           => __( 'Under Review', 'ajforms' ),
+							'pending_customer'       => __( 'Pending Customer', 'ajforms' ),
+							'pending_agent'          => __( 'Pending Agent', 'ajforms' ),
+							'meeting_scheduled'      => __( 'Meeting Scheduled', 'ajforms' ),
+							'sosnc_filing'           => __( 'Filing with SOS/NC', 'ajforms' ),
+							'llc_documents_emailed'  => __( 'Documents Emailed', 'ajforms' ),
+							'signing_cmra'           => __( 'Awaiting CMRA Signature', 'ajforms' ),
+							'id_proof_needed'        => __( 'ID Proof Needed', 'ajforms' ),
+							'address_proof_needed'   => __( 'Address Proof Needed', 'ajforms' ),
+							'vo_setup_required'      => __( 'Virtual Office Setup Required', 'ajforms' ),
+							'sosnc_client'           => __( 'Waiting on Customer SOS/NC Update', 'ajforms' ),
+							'updating_sosn'          => __( 'SOS/NC Update in Progress', 'ajforms' ),
+							'included_with_llc_setup' => __( 'Included with LLC Setup', 'ajforms' ),
+							'active'                 => __( 'Active', 'ajforms' ),
+							'completed'              => __( 'Completed', 'ajforms' ),
+							'cancelled'              => __( 'Cancelled', 'ajforms' ),
+						);
+						$svc_label = isset( $svc_labels[ $svc_status ] ) ? $svc_labels[ $svc_status ] : ucwords( str_replace( '_', ' ', $svc_status ) );
+						$service_name = ! empty( $request->service_name ) ? sanitize_text_field( (string) $request->service_name ) : '';
+						if ( '' === $service_name && ! empty( $request->stripe_price_id ) ) {
+							$sr_product = $this->get_portal_product_by_price_id( sanitize_text_field( (string) $request->stripe_price_id ) );
+							$service_name = $sr_product && ! empty( $sr_product->name ) ? sanitize_text_field( (string) $sr_product->name ) : '';
+						}
+						if ( '' === $service_name ) {
+							$service_name = __( 'Service Request', 'ajforms' );
+						}
+						$client_notes = ! empty( $request->client_notes ) ? sanitize_text_field( (string) $request->client_notes ) : '';
+						$created = ! empty( $request->created_at ) ? $this->format_portal_date( $request->created_at ) : '-';
+						$pay_class = 'paid' === $pay_status || 'completed' === $pay_status || 'active' === $pay_status ? 'is-good' : ( in_array( $pay_status, array( 'cancelled', 'failed' ), true ) ? 'is-bad' : 'is-warn' );
+						$svc_class = in_array( $svc_status, array( 'active', 'completed' ), true ) ? 'is-good' : ( 'cancelled' === $svc_status ? 'is-bad' : 'is-warn' );
+						?>
+						<div class="aj-client-sr-card">
+							<div class="aj-client-sr-head">
+								<div>
+									<div class="aj-client-sr-title"><?php echo esc_html( $service_name ); ?></div>
+									<div class="aj-client-sr-meta"><span><?php echo esc_html( $created ); ?></span><span><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></span></div>
+								</div>
+								<div class="aj-client-sr-meta"><span class="aj-client-sr-badge <?php echo esc_attr( $pay_class ); ?>"><?php echo esc_html( $pay_label ); ?></span><span class="aj-client-sr-badge <?php echo esc_attr( $svc_class ); ?>"><?php echo esc_html( $svc_label ); ?></span></div>
+							</div>
+							<?php if ( '' !== $client_notes ) : ?><div class="aj-client-sr-note"><?php echo esc_html( $client_notes ); ?></div><?php endif; ?>
+						</div>
+					<?php endforeach; ?>
 				</div>
 			<?php endif; ?>
 		</section>

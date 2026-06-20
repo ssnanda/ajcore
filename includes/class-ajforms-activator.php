@@ -26,6 +26,7 @@ class AJForms_Activator {
 		$table_sync_logs            = $wpdb->prefix . 'aj_portal_sync_logs';
 		$table_sync_log_items       = $wpdb->prefix . 'aj_portal_sync_log_items';
 		$table_service_requests     = $wpdb->prefix . 'aj_portal_service_requests';
+		$table_service_request_history = $wpdb->prefix . 'aj_portal_service_request_history';
 		$table_event_log            = $wpdb->prefix . 'aj_portal_event_log';
 		$table_stripe_events        = $wpdb->prefix . 'aj_portal_stripe_events';
 		$table_service_snapshots    = $wpdb->prefix . 'aj_portal_service_snapshots';
@@ -470,6 +471,7 @@ class AJForms_Activator {
 			service_name varchar(255) DEFAULT '' NOT NULL,
 			request_type varchar(100) DEFAULT 'add_service' NOT NULL,
 			status varchar(50) DEFAULT 'draft' NOT NULL,
+			service_status varchar(50) DEFAULT 'new' NOT NULL,
 			amount decimal(12,2) DEFAULT 0 NOT NULL,
 			currency varchar(12) DEFAULT 'usd' NOT NULL,
 			source_object_id varchar(100) DEFAULT '' NOT NULL,
@@ -489,8 +491,32 @@ class AJForms_Activator {
 			KEY stripe_product_id (stripe_product_id),
 			KEY request_type (request_type),
 			KEY status (status),
+			KEY service_status (service_status),
 			KEY source_object_id (source_object_id),
 			KEY ledger_id (ledger_id),
+			KEY created_at (created_at)
+		) $charset_collate;
+
+
+		CREATE TABLE $table_service_request_history (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			request_id bigint(20) unsigned NOT NULL,
+			event_type varchar(50) DEFAULT 'note' NOT NULL,
+			status_before varchar(50) DEFAULT '' NOT NULL,
+			status_after varchar(50) DEFAULT '' NOT NULL,
+			service_status_before varchar(50) DEFAULT '' NOT NULL,
+			service_status_after varchar(50) DEFAULT '' NOT NULL,
+			note longtext NULL,
+			visibility varchar(30) DEFAULT 'internal' NOT NULL,
+			actor_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			actor_email varchar(190) DEFAULT '' NOT NULL,
+			details longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY request_id (request_id),
+			KEY event_type (event_type),
+			KEY visibility (visibility),
+			KEY actor_user_id (actor_user_id),
 			KEY created_at (created_at)
 		) $charset_collate;
 
@@ -1131,6 +1157,7 @@ class AJForms_Activator {
 			service_name varchar(255) DEFAULT '' NOT NULL,
 			request_type varchar(100) DEFAULT 'add_service' NOT NULL,
 			status varchar(50) DEFAULT 'draft' NOT NULL,
+			service_status varchar(50) DEFAULT 'new' NOT NULL,
 			amount decimal(12,2) DEFAULT 0 NOT NULL,
 			currency varchar(12) DEFAULT 'usd' NOT NULL,
 			source_object_id varchar(100) DEFAULT '' NOT NULL,
@@ -1150,6 +1177,7 @@ class AJForms_Activator {
 			KEY stripe_product_id (stripe_product_id),
 			KEY request_type (request_type),
 			KEY status (status),
+			KEY service_status (service_status),
 			KEY source_object_id (source_object_id),
 			KEY ledger_id (ledger_id),
 			KEY created_at (created_at)
