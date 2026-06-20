@@ -9057,115 +9057,6 @@ class AJForms_Admin {
 			exit;
 		}
 
-		if ( isset( $_POST['ajcore_mark_service_used_nonce'], $_POST['service_snapshot_key'] ) ) {
-			check_admin_referer( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' );
-
-			$pdb = $this->get_pdb();
-			$snapshot_key = sanitize_text_field( wp_unslash( $_POST['service_snapshot_key'] ) );
-			$state_action = isset( $_POST['service_state_action'] ) ? sanitize_key( wp_unslash( $_POST['service_state_action'] ) ) : 'used';
-			$state_action = 'unused' === $state_action ? 'unused' : 'used';
-			if ( '' !== $snapshot_key ) {
-				$snapshot = $pdb->get_row(
-					$pdb->prepare(
-						"SELECT * FROM {$this->get_portal_service_snapshots_table()} WHERE snapshot_key = %s LIMIT 1",
-						$snapshot_key
-					)
-				);
-				// Fallback: source_ref for ledger-based items is the Stripe ID (ch_, in_, pi_, cs_), not a snapshot key.
-				if ( ! $snapshot ) {
-					$snapshot = $pdb->get_row(
-						$pdb->prepare(
-							"SELECT * FROM {$this->get_portal_service_snapshots_table()} WHERE billing_type = 'one_time' AND (charge_id = %s OR invoice_id = %s OR payment_intent_id = %s OR checkout_session_id = %s) ORDER BY id DESC LIMIT 1",
-							$snapshot_key,
-							$snapshot_key,
-							$snapshot_key,
-							$snapshot_key
-						)
-					);
-				}
-				$effective_snapshot_key = $snapshot ? sanitize_text_field( (string) $snapshot->snapshot_key ) : $snapshot_key;
-				$state_id = 0;
-				$state_data = array();
-				if ( $snapshot ) {
-					$state_data = $this->normalize_portal_service_state_data_from_snapshot( $snapshot, 'used' );
-				} else {
-					$posted_record = (object) array(
-						'stripe_customer_id'      => isset( $_POST['service_stripe_customer_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_stripe_customer_id'] ) ) : '',
-						'customer_email'          => isset( $_POST['service_customer_email'] ) ? sanitize_email( wp_unslash( $_POST['service_customer_email'] ) ) : '',
-						'service_name'            => isset( $_POST['service_name'] ) ? sanitize_text_field( wp_unslash( $_POST['service_name'] ) ) : '',
-						'stripe_product_id'       => isset( $_POST['service_product_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_product_id'] ) ) : '',
-						'stripe_price_id'         => isset( $_POST['service_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_price_id'] ) ) : '',
-						'amount'                  => isset( $_POST['service_amount'] ) ? sanitize_text_field( wp_unslash( $_POST['service_amount'] ) ) : '',
-						'currency'                => isset( $_POST['service_currency'] ) ? sanitize_key( wp_unslash( $_POST['service_currency'] ) ) : 'usd',
-						'checkout_session_id'     => isset( $_POST['service_checkout_session_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_checkout_session_id'] ) ) : '',
-						'invoice_id'              => isset( $_POST['service_invoice_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_invoice_id'] ) ) : '',
-						'payment_intent_id'       => isset( $_POST['service_payment_intent_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_payment_intent_id'] ) ) : '',
-						'charge_id'               => isset( $_POST['service_charge_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_charge_id'] ) ) : '',
-						'stripe_subscription_id'  => isset( $_POST['service_subscription_id'] ) ? sanitize_text_field( wp_unslash( $_POST['service_subscription_id'] ) ) : '',
-						'service_period'          => isset( $_POST['service_period'] ) ? sanitize_text_field( wp_unslash( $_POST['service_period'] ) ) : '',
-						'service_period_start'    => isset( $_POST['service_period_start'] ) ? sanitize_text_field( wp_unslash( $_POST['service_period_start'] ) ) : '',
-						'service_period_end'      => isset( $_POST['service_period_end'] ) ? sanitize_text_field( wp_unslash( $_POST['service_period_end'] ) ) : '',
-					);
-					$state_data = $this->normalize_portal_service_state_data_from_record( $posted_record, 'used' );
-				}
-				if ( ! empty( $state_data['service_state_key'] ) ) {
-					if ( 'used' === $state_action ) {
-						$state_id = $this->upsert_portal_service_state( $state_data );
-					} else {
-						$pdb->delete(
-							$this->get_portal_service_states_table(),
-							array( 'service_state_key' => $state_data['service_state_key'] ),
-							array( '%s' )
-						);
-					}
-				}
-				if ( $snapshot ) {
-					$pdb->update(
-						$this->get_portal_service_snapshots_table(),
-						array(
-							'status'     => 'used' === $state_action ? 'used' : 'paid',
-							'updated_at' => current_time( 'mysql' ),
-						),
-						array( 'snapshot_key' => $effective_snapshot_key ),
-						array( '%s', '%s' ),
-						array( '%s' )
-					);
-				}
-				$this->log_portal_event(
-					'used' === $state_action ? 'service_marked_used' : 'service_marked_unused',
-					array(
-						'source'   => 'admin_service_requests',
-						'severity' => 'info',
-						'stripe_customer_id' => $snapshot && ! empty( $snapshot->stripe_customer_id ) ? $snapshot->stripe_customer_id : '',
-						'details'  => array(
-							'snapshot_key'     => $effective_snapshot_key,
-							'service_state_id' => $state_id,
-							'product_name'     => $snapshot && ! empty( $snapshot->product_name_snapshot ) ? $snapshot->product_name_snapshot : '',
-						),
-					)
-				);
-
-				$sr_id = isset( $_POST['service_request_id'] ) ? absint( wp_unslash( $_POST['service_request_id'] ) ) : 0;
-				if ( $sr_id > 0 ) {
-					$pdb->update(
-						$this->get_portal_service_requests_table(),
-						array(
-							'service_status' => 'used' === $state_action ? 'active' : 'new',
-							'updated_at'     => current_time( 'mysql' ),
-						),
-						array( 'id' => $sr_id ),
-						array( '%s', '%s' ),
-						array( '%d' )
-					);
-				}
-			}
-
-			$return_tab = isset( $_POST['service_state_return_tab'] ) ? sanitize_key( wp_unslash( $_POST['service_state_return_tab'] ) ) : 'service-requests';
-			$return_tab = in_array( $return_tab, array( 'service-requests', 'sold-items' ), true ) ? $return_tab : 'service-requests';
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => $return_tab, 'service-used' => 'used' === $state_action ? '1' : '0' ), admin_url( 'admin.php' ) ) );
-			exit;
-		}
-
 		if ( isset( $_GET['portal_action'], $_GET['_wpnonce'] ) ) {
 			$action     = sanitize_key( wp_unslash( $_GET['portal_action'] ) );
 			$secret_key = $this->get_stripe_secret_key_for_portal();
@@ -11383,45 +11274,6 @@ class AJForms_Admin {
 		return __( 'Service Request', 'ajforms' );
 	}
 
-	private function get_portal_service_request_usage_reference( $request ) {
-		foreach ( array( 'source_object_id', 'payment_intent_id', 'charge_id', 'invoice_id', 'checkout_session_id' ) as $field ) {
-			if ( ! empty( $request->$field ) ) {
-				return sanitize_text_field( (string) $request->$field );
-			}
-		}
-
-		return ! empty( $request->id ) ? 'service_request_' . absint( $request->id ) : '';
-	}
-
-	private function render_portal_service_request_usage_form( $request, $action, $label ) {
-		$action = 'unused' === sanitize_key( (string) $action ) ? 'unused' : 'used';
-		$ref    = $this->get_portal_service_request_usage_reference( $request );
-		if ( '' === $ref ) {
-			return;
-		}
-		?>
-		<form method="post" style="display:inline-block;margin:2px 0;">
-			<?php wp_nonce_field( 'ajcore_mark_service_used', 'ajcore_mark_service_used_nonce' ); ?>
-			<input type="hidden" name="service_state_action" value="<?php echo esc_attr( $action ); ?>">
-			<input type="hidden" name="service_request_id" value="<?php echo esc_attr( absint( $request->id ) ); ?>">
-			<input type="hidden" name="service_state_return_tab" value="service-requests">
-			<input type="hidden" name="service_snapshot_key" value="<?php echo esc_attr( $ref ); ?>">
-			<input type="hidden" name="service_stripe_customer_id" value="<?php echo esc_attr( ! empty( $request->stripe_customer_id ) ? $request->stripe_customer_id : '' ); ?>">
-			<input type="hidden" name="service_customer_email" value="<?php echo esc_attr( ! empty( $request->customer_email ) ? $request->customer_email : '' ); ?>">
-			<input type="hidden" name="service_name" value="<?php echo esc_attr( ! empty( $request->service_name ) ? $request->service_name : '' ); ?>">
-			<input type="hidden" name="service_product_id" value="<?php echo esc_attr( ! empty( $request->stripe_product_id ) ? $request->stripe_product_id : '' ); ?>">
-			<input type="hidden" name="service_price_id" value="<?php echo esc_attr( ! empty( $request->stripe_price_id ) ? $request->stripe_price_id : '' ); ?>">
-			<input type="hidden" name="service_amount" value="<?php echo esc_attr( ! empty( $request->amount ) ? $request->amount : '' ); ?>">
-			<input type="hidden" name="service_currency" value="<?php echo esc_attr( ! empty( $request->currency ) ? $request->currency : 'usd' ); ?>">
-			<input type="hidden" name="service_checkout_session_id" value="<?php echo esc_attr( ! empty( $request->source_type ) && 'checkout_session' === sanitize_key( (string) $request->source_type ) && ! empty( $request->source_object_id ) ? $request->source_object_id : '' ); ?>">
-			<input type="hidden" name="service_invoice_id" value="<?php echo esc_attr( ! empty( $request->invoice_id ) ? $request->invoice_id : '' ); ?>">
-			<input type="hidden" name="service_payment_intent_id" value="<?php echo esc_attr( ! empty( $request->payment_intent_id ) ? $request->payment_intent_id : '' ); ?>">
-			<input type="hidden" name="service_charge_id" value="<?php echo esc_attr( ! empty( $request->charge_id ) ? $request->charge_id : '' ); ?>">
-			<button type="submit" class="button button-small"><?php echo esc_html( $label ); ?></button>
-		</form>
-		<?php
-	}
-
 	private function sync_portal_service_request_to_ledger( $request, $data = array() ) {
 		global $wpdb;
 
@@ -12341,13 +12193,12 @@ class AJForms_Admin {
 							<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Created', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Usage', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 						</tr>
 				</thead>
 				<tbody>
 					<?php if ( empty( $requests ) ) : ?>
-						<tr><td colspan="9"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="8"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $requests as $request ) : ?>
 							<?php
@@ -12374,10 +12225,6 @@ class AJForms_Admin {
 								<td><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></td>
 								<td><?php echo esc_html( $request->source ? $request->source : $request->source_type ); ?></td>
 								<td><?php echo esc_html( $request->created_at ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $request->created_at . ' UTC' ) ) : '-' ); ?></td>
-								<td>
-									<?php $this->render_portal_service_request_usage_form( $request, 'used', __( 'Mark Used', 'ajforms' ) ); ?>
-									<?php $this->render_portal_service_request_usage_form( $request, 'unused', __( 'Mark Unused', 'ajforms' ) ); ?>
-								</td>
 								<td>
 									<?php foreach ( $actions as $action_key => $action_label ) : ?>
 										<?php
@@ -12637,13 +12484,12 @@ class AJForms_Admin {
 							<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Created', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Usage', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 						</tr>
 				</thead>
 				<tbody>
 					<?php if ( empty( $requests ) ) : ?>
-						<tr><td colspan="9"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="8"><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $requests as $request ) : ?>
 							<?php
@@ -12676,10 +12522,6 @@ class AJForms_Admin {
 								<td><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></td>
 								<td><?php echo esc_html( $request->source ? $request->source : $request->source_type ); ?></td>
 								<td><?php echo esc_html( $request->created_at ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $request->created_at . ' UTC' ) ) : '-' ); ?></td>
-								<td>
-									<?php $this->render_portal_service_request_usage_form( $request, 'used', __( 'Mark Used', 'ajforms' ) ); ?>
-									<?php $this->render_portal_service_request_usage_form( $request, 'unused', __( 'Mark Unused', 'ajforms' ) ); ?>
-								</td>
 								<td>
 									<?php foreach ( $actions as $action_key => $action_label ) : ?>
 										<?php
@@ -14867,7 +14709,6 @@ class AJForms_Admin {
 		}
 		if ( in_array( 'one_time', $type_filter, true ) ) {
 			foreach ( $one_time_services as $service ) {
-				$service = $this->apply_portal_service_state_to_record( $service );
 				$service->sold_item_type = 'one_time';
 				$service->sold_item_type_label = __( 'One-Time', 'ajforms' );
 				$service->sold_item_source_id = $this->get_portal_one_time_service_source_id( $service );
