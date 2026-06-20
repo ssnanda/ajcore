@@ -11058,75 +11058,130 @@ class AJForms_Admin {
 
 	private function get_portal_sr_service_status_labels() {
 		return array(
-			'new'           => __( 'New', 'ajforms' ),
-			'under_review'  => __( 'Under Review', 'ajforms' ),
-			'updating_sosn' => __( 'Updating SOS/NC', 'ajforms' ),
-			'signing_cmra'  => __( 'Signing CMRA', 'ajforms' ),
-			'active'        => __( 'Active', 'ajforms' ),
-			'completed'     => __( 'Completed', 'ajforms' ),
-			'cancelled'     => __( 'Cancelled', 'ajforms' ),
+			'new'                    => __( 'New', 'ajforms' ),
+			'under_review'           => __( 'Under Review', 'ajforms' ),
+			'pending_customer'       => __( 'Pending Customer', 'ajforms' ),
+			'pending_agent'          => __( 'Pending Agent', 'ajforms' ),
+			'meeting_scheduled'      => __( 'Meeting Scheduled', 'ajforms' ),
+			'sosnc_filing'           => __( 'Filing with SOS/NC', 'ajforms' ),
+			'llc_documents_emailed'  => __( 'LLC Documents Emailed', 'ajforms' ),
+			'signing_cmra'           => __( 'Signing CMRA', 'ajforms' ),
+			'id_proof_needed'        => __( 'ID Proof Needed', 'ajforms' ),
+			'address_proof_needed'   => __( 'Address Proof Needed', 'ajforms' ),
+			'vo_setup_required'      => __( 'Virtual Office Setup Required', 'ajforms' ),
+			'sosnc_client'           => __( 'Customer Updating SOS/NC', 'ajforms' ),
+			'updating_sosn'          => __( 'Updating SOS/NC', 'ajforms' ),
+			'included_with_llc_setup' => __( 'Included with LLC Setup', 'ajforms' ),
+			'active'                 => __( 'Active', 'ajforms' ),
+			'completed'              => __( 'Completed', 'ajforms' ),
+			'cancelled'              => __( 'Cancelled', 'ajforms' ),
 		);
 	}
 
 	private function get_portal_service_request_product_type( $request ) {
-		$name = strtolower( sanitize_text_field( (string) $request->service_name ) );
-		if ( '' === $name && ! empty( $request->stripe_price_id ) ) {
+		$name_parts = array();
+		if ( ! empty( $request->service_name ) ) {
+			$name_parts[] = (string) $request->service_name;
+		}
+		if ( ! empty( $request->stripe_price_id ) ) {
 			$product = $this->get_portal_product_by_price_id( sanitize_text_field( (string) $request->stripe_price_id ) );
 			if ( $product ) {
-				$name = strtolower( ! empty( $product->custom_label ) ? (string) $product->custom_label : (string) $product->name );
+				foreach ( array( 'custom_label', 'name', 'description', 'recurring_interval' ) as $field ) {
+					if ( ! empty( $product->{$field} ) ) {
+						$name_parts[] = (string) $product->{$field};
+					}
+				}
 			}
 		}
-		if ( false !== strpos( $name, 'registered agent' ) || false !== strpos( $name, 'registered_agent' ) ) {
-			return 'registered_agent';
+
+		$name = strtolower( implode( ' ', array_map( 'sanitize_text_field', $name_parts ) ) );
+		$name = str_replace( array( '_', '-' ), ' ', $name );
+
+		if ( false !== strpos( $name, 'llc setup' ) || false !== strpos( $name, 'entity setup' ) || false !== strpos( $name, 'new entity' ) ) {
+			return 'llc_setup';
 		}
-		if ( false !== strpos( $name, 'virtual office' ) || false !== strpos( $name, 'virtual_office' ) ) {
-			return 'virtual_office';
+		if ( false !== strpos( $name, 'registered agent' ) ) {
+			return 'registered_agent_subscription';
 		}
-		return '';
+		if ( false !== strpos( $name, 'virtual office' ) ) {
+			if ( false !== strpos( $name, 'setup' ) || false !== strpos( $name, 'one time' ) || false !== strpos( $name, 'one-time' ) ) {
+				return 'virtual_office_setup';
+			}
+			return 'virtual_office_subscription';
+		}
+
+		return 'custom_request';
 	}
 
 	private function get_portal_service_request_quick_actions( $request, $raw_data = array() ) {
-		$status          = isset( $request->status ) ? sanitize_key( (string) $request->status ) : '';
-		$service_status  = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
-		$raw_data        = is_array( $raw_data ) ? $raw_data : array();
-		$billing_preview = ! empty( $raw_data['billing_preview'] ) && is_array( $raw_data['billing_preview'] ) ? $raw_data['billing_preview'] : array();
+		$status           = isset( $request->status ) ? sanitize_key( (string) $request->status ) : '';
+		$service_status   = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+		$raw_data         = is_array( $raw_data ) ? $raw_data : array();
+		$billing_preview  = ! empty( $raw_data['billing_preview'] ) && is_array( $raw_data['billing_preview'] ) ? $raw_data['billing_preview'] : array();
 		$is_stripe_import = $this->is_portal_service_request_stripe_import( $request );
-		$product_type    = $this->get_portal_service_request_product_type( $request );
-		$actions         = array();
+		$product_type     = $this->get_portal_service_request_product_type( $request );
+		$actions          = array();
+		$is_paid          = in_array( $status, array( 'paid', 'completed', 'active' ), true );
+		$is_terminal      = in_array( $service_status, array( 'completed', 'cancelled' ), true );
+		$review_states    = array( 'new', '', 'under_review' );
 
-		if ( ! in_array( $service_status, array( 'under_review', 'updating_sosn', 'signing_cmra', 'active', 'completed', 'cancelled' ), true ) ) {
-			$actions['under_review'] = __( 'Start Review', 'ajforms' );
-		}
-
-		if ( in_array( $status, array( 'draft', 'pending_payment', 'awaiting_payment', 'failed' ), true ) ) {
+		if ( ! $is_paid && in_array( $status, array( 'draft', 'pending_payment', 'awaiting_payment', 'failed', 'admin_review_required' ), true ) ) {
 			$actions['await_payment'] = __( 'Request Payment', 'ajforms' );
 		}
 
-		if ( 'paid' === $status && ! in_array( $service_status, array( 'active', 'completed', 'cancelled' ), true ) ) {
-			if ( 'registered_agent' === $product_type ) {
-				$actions['update_sosn'] = __( 'Update SOS/NC', 'ajforms' );
-			} elseif ( 'virtual_office' === $product_type ) {
-				$actions['sign_cmra'] = __( 'Send CMRA for Signing', 'ajforms' );
+		if ( $is_paid && ! $is_terminal ) {
+			if ( in_array( $service_status, $review_states, true ) ) {
+				if ( 'llc_setup' === $product_type ) {
+					$actions['schedule_meeting'] = __( 'Schedule Meeting', 'ajforms' );
+				} elseif ( 'virtual_office_setup' === $product_type ) {
+					$actions['sign_cmra'] = __( 'Send CMRA for Signing', 'ajforms' );
+				} elseif ( 'virtual_office_subscription' === $product_type ) {
+					$actions['require_vo_setup'] = __( 'Require Virtual Office Setup', 'ajforms' );
+					$actions['activate'] = __( 'Mark Active', 'ajforms' );
+				} elseif ( 'registered_agent_subscription' === $product_type ) {
+					$actions['customer_sosnc'] = __( 'Customer Will Update SOS/NC', 'ajforms' );
+					$actions['update_sosn'] = __( 'We Update SOS/NC', 'ajforms' );
+					$actions['included_llc_setup'] = __( 'Included with LLC Setup', 'ajforms' );
+				} else {
+					if ( 'new' === $service_status || '' === $service_status ) {
+						$actions['under_review'] = __( 'Start Review', 'ajforms' );
+					} else {
+						$actions['pending_customer'] = __( 'Pending Customer', 'ajforms' );
+						$actions['pending_agent'] = __( 'Pending Agent', 'ajforms' );
+						$actions['complete'] = __( 'Mark Completed', 'ajforms' );
+					}
+				}
+			} elseif ( 'meeting_scheduled' === $service_status ) {
+				$actions['file_sosnc'] = __( 'File with SOS/NC', 'ajforms' );
+			} elseif ( 'sosnc_filing' === $service_status ) {
+				$actions['email_llc_documents'] = __( 'Email LLC Documents', 'ajforms' );
+			} elseif ( 'llc_documents_emailed' === $service_status ) {
+				$actions['complete'] = __( 'Mark Completed', 'ajforms' );
+			} elseif ( 'signing_cmra' === $service_status ) {
+				$actions['collect_id_proof'] = __( 'Collect ID Proof', 'ajforms' );
+			} elseif ( 'id_proof_needed' === $service_status ) {
+				$actions['collect_address_proof'] = __( 'Collect Address Proof', 'ajforms' );
+			} elseif ( 'address_proof_needed' === $service_status ) {
+				$actions['complete'] = 'virtual_office_setup' === $product_type ? __( 'Complete Setup', 'ajforms' ) : __( 'Mark Completed', 'ajforms' );
+			} elseif ( 'vo_setup_required' === $service_status ) {
+				$actions['activate'] = __( 'Mark Active', 'ajforms' );
+			} elseif ( in_array( $service_status, array( 'sosnc_client', 'updating_sosn', 'included_with_llc_setup' ), true ) ) {
+				$actions['activate'] = __( 'Mark Active', 'ajforms' );
+			} elseif ( in_array( $service_status, array( 'pending_customer', 'pending_agent' ), true ) ) {
+				$actions['complete'] = __( 'Mark Completed', 'ajforms' );
 			}
 		}
 
-		if ( in_array( $service_status, array( 'updating_sosn', 'signing_cmra' ), true ) ) {
-			$actions['activate'] = __( 'Mark Active', 'ajforms' );
-		}
-
-		if ( ! in_array( $service_status, array( 'active', 'completed', 'cancelled' ), true ) ) {
-			$actions['complete'] = __( 'Mark Fulfilled', 'ajforms' );
-		}
-
 		if (
-			! empty( $billing_preview )
+			! $is_terminal
+			&& ! empty( $billing_preview )
 			&& ( ! empty( $billing_preview['subscription_id'] ) || ! empty( $billing_preview['subscription_item_id'] ) )
 			&& ( ! empty( $billing_preview['new_price_id'] ) || ! empty( $request->stripe_price_id ) )
 		) {
 			$actions['apply_billing_change'] = __( 'Apply Billing Change', 'ajforms' );
 		}
 
-		if ( ! $is_stripe_import && ! in_array( $service_status, array( 'active', 'completed', 'cancelled' ), true ) ) {
+		if ( ! $is_stripe_import && ! $is_terminal ) {
 			$actions['cancel'] = __( 'Cancel', 'ajforms' );
 		}
 
@@ -12041,12 +12096,22 @@ class AJForms_Admin {
 			'failed'        => 'failed',
 		);
 		$service_action_map = array(
-			'under_review'  => 'under_review',
-			'update_sosn'   => 'updating_sosn',
-			'sign_cmra'     => 'signing_cmra',
-			'activate'      => 'active',
-			'complete'      => 'completed',
-			'cancel'        => 'cancelled',
+			'under_review'          => 'under_review',
+			'pending_customer'      => 'pending_customer',
+			'pending_agent'         => 'pending_agent',
+			'schedule_meeting'      => 'meeting_scheduled',
+			'file_sosnc'            => 'sosnc_filing',
+			'email_llc_documents'   => 'llc_documents_emailed',
+			'sign_cmra'             => 'signing_cmra',
+			'collect_id_proof'      => 'id_proof_needed',
+			'collect_address_proof' => 'address_proof_needed',
+			'require_vo_setup'      => 'vo_setup_required',
+			'customer_sosnc'        => 'sosnc_client',
+			'update_sosn'           => 'updating_sosn',
+			'included_llc_setup'    => 'included_with_llc_setup',
+			'activate'              => 'active',
+			'complete'              => 'completed',
+			'cancel'                => 'cancelled',
 		);
 
 		$is_payment_action = isset( $payment_action_map[ $action ] );

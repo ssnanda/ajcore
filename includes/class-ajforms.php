@@ -931,6 +931,25 @@ class AJForms {
 								$svc_status    = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
 								$pay_label     = $this->get_client_service_request_status_label( $pay_status );
 								$svc_labels    = array(
+									'new'                    => __( 'New', 'ajforms' ),
+									'under_review'           => __( 'Under Review', 'ajforms' ),
+									'pending_customer'       => __( 'Pending Customer', 'ajforms' ),
+									'pending_agent'          => __( 'Pending Agent', 'ajforms' ),
+									'meeting_scheduled'      => __( 'Meeting Scheduled', 'ajforms' ),
+									'sosnc_filing'           => __( 'Filing with SOS/NC', 'ajforms' ),
+									'llc_documents_emailed'  => __( 'Documents Emailed', 'ajforms' ),
+									'signing_cmra'           => __( 'Awaiting CMRA Signature', 'ajforms' ),
+									'id_proof_needed'        => __( 'ID Proof Needed', 'ajforms' ),
+									'address_proof_needed'   => __( 'Address Proof Needed', 'ajforms' ),
+									'vo_setup_required'      => __( 'Virtual Office Setup Required', 'ajforms' ),
+									'sosnc_client'           => __( 'Waiting on Customer SOS/NC Update', 'ajforms' ),
+									'updating_sosn'          => __( 'SOS/NC Update in Progress', 'ajforms' ),
+									'included_with_llc_setup' => __( 'Included with LLC Setup', 'ajforms' ),
+									'active'                 => __( 'Active', 'ajforms' ),
+									'completed'              => __( 'Completed', 'ajforms' ),
+									'cancelled'              => __( 'Cancelled', 'ajforms' ),
+								);
+								$svc_labels    = array(
 									'new'           => __( 'New', 'ajforms' ),
 									'under_review'  => __( 'Under Review', 'ajforms' ),
 									'updating_sosn' => __( 'In Progress', 'ajforms' ),
