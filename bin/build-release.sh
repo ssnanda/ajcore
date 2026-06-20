@@ -9,14 +9,14 @@ PLUGIN_FILE="$ROOT_DIR/ajcore.php"
 GITHUB_REPO="ssnanda/ajcore"
 TAG_PREFIX="v"
 
-GITHUB_RELEASE="true"
+GITHUB_RELEASE="ask"
 GIT_COMMIT="ask"
-GIT_PUSH="true"
+GIT_PUSH="ask"
 RELEASE_BRANCH="ask"
 USE_CURRENT_BRANCH="false"
 CREATE_BRANCH="false"
 MAIN_RELEASE_BRANCH="main"
-MERGE_TO_MAIN="true"
+MERGE_TO_MAIN="ask"
 
 usage() {
   cat <<'USAGE'
@@ -24,16 +24,13 @@ Usage:
   ./bin/build-release.sh
 
 Interactive flow:
-  1. Choose release branch, default main
-  2. Choose version bump
-  3. Ask whether to commit version changes to git
-
-After those prompts, the default behavior is yes for:
-  - Push branch and version tag to GitHub
-  - Create/update GitHub Release and upload zip
-  - Merge non-main release branches back to main
-
-Use --no-push, --no-github-release, or --no-merge-main to override.
+  1. Choose version bump
+  2. Choose release branch, default main
+  3. Build releases/<slug>-<version>.zip
+  4. Ask whether to commit to git
+  5. Ask whether to push to GitHub
+  6. Ask whether to create/upload GitHub Release asset
+  7. For non-main branches, optionally merge back to main
 
 Options are still supported:
   --version X.Y.Z

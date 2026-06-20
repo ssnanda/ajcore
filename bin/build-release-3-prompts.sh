@@ -24,13 +24,13 @@ Usage:
   ./bin/build-release.sh
 
 Interactive flow:
-  1. Choose version bump
-  2. Choose release branch, default main
-  3. Build releases/<slug>-<version>.zip
-  4. Ask whether to commit to git
-  5. Ask whether to push to GitHub
-  6. Ask whether to create/upload GitHub Release asset
-  7. For non-main branches, optionally merge back to main
+  1. Choose release branch, default main
+  2. Choose version bump
+  3. Ask whether to commit to git
+  4. Build releases/<slug>-<version>.zip
+  5. Push branch and version tag to GitHub by default
+  6. Create/upload GitHub Release asset by default
+  7. For non-main branches, skip merge back to main by default
 
 Options are still supported:
   --version X.Y.Z
@@ -567,11 +567,8 @@ if [[ "$GIT_COMMIT" == "true" ]]; then
 fi
 
 if [[ "$GIT_PUSH" == "ask" ]]; then
-  if ask_yes_no "Push branch and version tag to GitHub?" "y"; then
-    GIT_PUSH="true"
-  else
-    GIT_PUSH="false"
-  fi
+  GIT_PUSH="true"
+  echo "Git: defaulting to push branch and version tag to GitHub"
 fi
 
 if [[ "$GIT_PUSH" == "true" ]]; then
@@ -580,11 +577,8 @@ if [[ "$GIT_PUSH" == "true" ]]; then
 fi
 
 if [[ "$GITHUB_RELEASE" == "ask" ]]; then
-  if ask_yes_no "Create/update GitHub Release and upload zip?" "y"; then
-    GITHUB_RELEASE="true"
-  else
-    GITHUB_RELEASE="false"
-  fi
+  GITHUB_RELEASE="true"
+  echo "GitHub: defaulting to create/update GitHub Release and upload zip"
 fi
 
 if [[ "$GITHUB_RELEASE" == "true" ]]; then
@@ -602,11 +596,8 @@ fi
 
 if ! is_main_release_branch; then
   if [[ "$MERGE_TO_MAIN" == "ask" ]]; then
-    if ask_yes_no "Merge this branch into $MAIN_RELEASE_BRANCH now?" "n"; then
-      MERGE_TO_MAIN="true"
-    else
-      MERGE_TO_MAIN="false"
-    fi
+    MERGE_TO_MAIN="false"
+    echo "Git: defaulting to skip merge into $MAIN_RELEASE_BRANCH"
   fi
 
   if [[ "$MERGE_TO_MAIN" == "true" ]]; then
