@@ -12439,7 +12439,8 @@ class AJForms_Admin {
 		if ( 'checkout_only' === $source_filter ) {
 			$where[] = "(r.source_type = 'checkout_session' OR r.source = 'checkout_session')";
 		} elseif ( 'show_all' !== $source_filter ) {
-			$where[] = "(COALESCE(NULLIF(r.source_type,''), r.source, '') <> 'checkout_session')";
+			// Hide only unpaid/unfinished checkout leads by default. Paid checkout sessions are real service purchases and must stay visible.
+			$where[] = "NOT ((r.source_type = 'checkout_session' OR r.source = 'checkout_session') AND r.status NOT IN ('paid','completed','active'))";
 		}
 
 		if ( '' !== $search ) {
@@ -12502,7 +12503,7 @@ class AJForms_Admin {
 				<div class="aj-sr-toolbar">
 					<div class="aj-sr-search"><input type="search" id="aj-sr-live-search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer, service, email, source, note...', 'ajforms' ); ?>"></div>
 					<select id="aj-sr-source-filter" onchange="if(this.value){window.location.href=this.value;}">
-						<option value="<?php echo esc_url( remove_query_arg( 'sr_source', $base_url ) ); ?>" <?php selected( $source_filter, 'hide_checkout' ); ?>><?php esc_html_e( 'Hide checkout leads', 'ajforms' ); ?></option>
+						<option value="<?php echo esc_url( remove_query_arg( 'sr_source', $base_url ) ); ?>" <?php selected( $source_filter, 'hide_checkout' ); ?>><?php esc_html_e( 'Hide unpaid checkout leads', 'ajforms' ); ?></option>
 						<option value="<?php echo esc_url( add_query_arg( 'sr_source', 'show_all', $base_url ) ); ?>" <?php selected( $source_filter, 'show_all' ); ?>><?php esc_html_e( 'Show all sources', 'ajforms' ); ?></option>
 						<option value="<?php echo esc_url( add_query_arg( 'sr_source', 'checkout_only', $base_url ) ); ?>" <?php selected( $source_filter, 'checkout_only' ); ?>><?php echo esc_html( sprintf( __( 'Checkout leads (%d)', 'ajforms' ), $checkout_source_count ) ); ?></option>
 					</select>
