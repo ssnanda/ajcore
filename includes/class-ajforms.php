@@ -12,12 +12,14 @@ class AJForms {
 		$this->load_dependencies();
 		$this->define_admin_hooks();
 		$this->define_public_hooks();
+		$this->define_rest_hooks();
 		add_filter( 'cron_schedules', array( $this, 'add_ajcore_cron_schedules' ) );
 		add_action( 'init', array( $this, 'schedule_recurring_events' ) );
 	}
 
 	private function load_dependencies() {
 		require_once AJFORMS_PLUGIN_DIR . 'admin/class-ajforms-admin.php';
+		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-rest-api.php';
 	}
 
 	private function define_admin_hooks() {
@@ -95,6 +97,11 @@ class AJForms {
 		if ( ! wp_next_scheduled( 'ajcore_portal_stripe_sync' ) ) {
 			wp_schedule_event( time() + 10 * MINUTE_IN_SECONDS, $frequency, 'ajcore_portal_stripe_sync' );
 		}
+	}
+
+	private function define_rest_hooks() {
+		$rest_api = new AJCore_REST_API();
+		add_action( 'rest_api_init', array( $rest_api, 'register_routes' ) );
 	}
 
 	private function define_public_hooks() {
