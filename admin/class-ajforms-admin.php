@@ -639,9 +639,14 @@ class AJForms_Admin {
 			$this->get_portal_customer_states_table(),
 		);
 
+		$local_tables = array(
+			$this->get_portal_user_mappings_table(),
+		);
+
 		foreach ( $required_tables as $table ) {
-			// Use shared DB connection for shared tables (identified by the pdb prefix).
-			$check_db = ( $pdb !== $wpdb && strncmp( $table, $pdb->prefix, strlen( $pdb->prefix ) ) === 0 ) ? $pdb : $wpdb;
+			// User mappings are intentionally local to this WordPress install, even when shared DB is enabled.
+			// Do not infer the DB connection from table prefix because local and shared installs may both use wp_.
+			$check_db = in_array( $table, $local_tables, true ) ? $wpdb : $pdb;
 			$exists   = $check_db->get_var( $check_db->prepare( 'SHOW TABLES LIKE %s', $table ) );
 			if ( $exists !== $table ) {
 				require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
@@ -13400,7 +13405,7 @@ class AJForms_Admin {
 			} elseif ( 'menu' === $tab ) {
 				$this->display_client_portal_settings_tab( 'menu', true );
 			} elseif ( 'settings' === $tab ) {
-				$this->display_client_portal_settings_tab( 'file-library', true );
+				$this->display_portal_shared_db_settings_tab();
 			} else {
 				$this->display_file_library_page( true );
 			}
