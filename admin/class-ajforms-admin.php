@@ -8856,7 +8856,9 @@ class AJForms_Admin {
 			$this->handle_service_requests_actions();
 		} elseif ( 'ajforms-client-portal' === $page ) {
 			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'service-requests';
-			if ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
+			if ( 'api' === $tab ) {
+				$this->handle_portal_api_settings_save();
+			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
 			} elseif ( 'billing' === $tab || isset( $_POST['ajcore_billing_action'] ) ) {
 				$this->handle_portal_billing_actions();
@@ -13335,7 +13337,7 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'settings' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings' ), true ) ? $tab : 'dashboard';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		$stripe_mode = $this->get_stripe_mode_badge_data();
 		$stripe_settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
@@ -13351,6 +13353,7 @@ class AJForms_Admin {
 			'sync'               => __( 'Sync', 'ajforms' ),
 			'event-log'          => __( 'Event Log', 'ajforms' ),
 			'menu'               => __( 'Menu', 'ajforms' ),
+			'api'                => __( 'API', 'ajforms' ),
 			'settings'           => __( 'Settings', 'ajforms' ),
 		);
 		?>
@@ -13429,12 +13432,200 @@ class AJForms_Admin {
 				$this->display_portal_tasks_tab();
 			} elseif ( 'menu' === $tab ) {
 				$this->display_client_portal_settings_tab( 'menu', true );
+			} elseif ( 'api' === $tab ) {
+				$this->display_portal_api_tab();
 			} elseif ( 'settings' === $tab ) {
 				$this->display_portal_shared_db_settings_tab();
 			} else {
 				$this->display_file_library_page( true );
 			}
 			?>
+		</div>
+		<?php
+	}
+
+
+	private function handle_portal_api_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) || empty( $_POST['ajcore_api_settings_action'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_save_api_settings', 'ajcore_api_nonce' );
+
+		$settings = array(
+			'enabled'             => ! empty( $_POST['api_enabled'] ) ? '1' : '0',
+			'ops_enabled'         => ! empty( $_POST['ops_enabled'] ) ? '1' : '0',
+			'portal_enabled'      => ! empty( $_POST['portal_enabled'] ) ? '1' : '0',
+			'public_status'       => ! empty( $_POST['public_status'] ) ? '1' : '0',
+			'master_only'         => ! empty( $_POST['master_only'] ) ? '1' : '0',
+			'require_https_notes' => ! empty( $_POST['require_https_notes'] ) ? '1' : '0',
+		);
+
+		update_option( 'ajcore_api_settings', $settings, false );
+
+		$this->log_portal_event(
+			'api_settings_updated',
+			array(
+				'source'  => 'api_settings',
+				'details' => $settings,
+			)
+		);
+
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'api', 'api-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private function get_portal_api_settings() {
+		if ( class_exists( 'AJCore_REST_API' ) && method_exists( 'AJCore_REST_API', 'get_api_settings' ) ) {
+			return AJCore_REST_API::get_api_settings();
+		}
+
+		$settings = get_option( 'ajcore_api_settings', array() );
+		return wp_parse_args(
+			is_array( $settings ) ? $settings : array(),
+			array(
+				'enabled'             => '1',
+				'ops_enabled'         => '1',
+				'portal_enabled'      => '1',
+				'public_status'       => '1',
+				'master_only'         => '1',
+				'require_https_notes' => '1',
+			)
+		);
+	}
+
+	private function get_portal_api_endpoint_catalog() {
+		if ( class_exists( 'AJCore_REST_API' ) && method_exists( 'AJCore_REST_API', 'get_endpoint_catalog' ) ) {
+			return AJCore_REST_API::get_endpoint_catalog();
+		}
+
+		return array();
+	}
+
+	private function get_api_status_badge( $enabled, $label_on, $label_off ) {
+		return '<span class="ajcore-status-pill ' . ( $enabled ? 'active' : 'disabled' ) . '">' . esc_html( $enabled ? $label_on : $label_off ) . '</span>';
+	}
+
+	private function display_portal_api_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings = $this->get_portal_api_settings();
+		$catalog  = $this->get_portal_api_endpoint_catalog();
+		$base_url = rest_url( 'ajcore/v1' );
+		$is_master = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true;
+		$shared_enabled = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
+		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
+		$app_passwords_available = function_exists( 'wp_is_application_passwords_available' ) ? wp_is_application_passwords_available() : true;
+		$profile_url = admin_url( 'profile.php#application-passwords-section' );
+		$role_manager_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'role-manager' ), admin_url( 'admin.php' ) );
+		$status_url = rest_url( 'ajcore/v1/status' );
+		$ops_summary_url = rest_url( 'ajcore/v1/ops/summary' );
+		$portal_me_url = rest_url( 'ajcore/v1/portal/me' );
+		?>
+		<div class="ajcore-admin-panel">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'AJ Core API', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'Use these REST endpoints for the OPS portal, iOS app, and future integrations. In multi-site portal mode, protected API routes should run from the Master site only.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+
+			<?php if ( isset( $_GET['api-settings-saved'] ) ) : ?>
+				<div class="notice notice-success inline"><p><?php esc_html_e( 'API settings saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<div class="ajcore-kpi-grid">
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Protected API', 'ajforms' ); ?></span><strong><?php echo '1' === (string) $settings['enabled'] ? esc_html__( 'Enabled', 'ajforms' ) : esc_html__( 'Disabled', 'ajforms' ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Master Site', 'ajforms' ); ?></span><strong><?php echo $is_master ? esc_html__( 'Yes', 'ajforms' ) : esc_html__( 'No', 'ajforms' ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Shared DB', 'ajforms' ); ?></span><strong><?php echo $shared_enabled ? esc_html__( 'On', 'ajforms' ) : esc_html__( 'Off', 'ajforms' ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Multi Site Portal', 'ajforms' ); ?></span><strong><?php echo $ms_enabled ? esc_html__( 'On', 'ajforms' ) : esc_html__( 'Off', 'ajforms' ); ?></strong></div>
+			</div>
+		</div>
+
+		<div class="ajcore-admin-panel">
+			<h2><?php esc_html_e( 'Access Control', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'AJ Core uses WordPress authentication and roles. Browser/admin testing uses REST nonces. External apps should use WordPress Application Passwords or a future token/JWT layer.', 'ajforms' ); ?></p>
+
+			<form method="post">
+				<?php wp_nonce_field( 'ajcore_save_api_settings', 'ajcore_api_nonce' ); ?>
+				<input type="hidden" name="ajcore_api_settings_action" value="save">
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Protected API access', 'ajforms' ); ?></th>
+						<td><label><input type="checkbox" name="api_enabled" value="1" <?php checked( $settings['enabled'], '1' ); ?>> <?php esc_html_e( 'Enable protected AJ Core API endpoints', 'ajforms' ); ?></label></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'OPS API', 'ajforms' ); ?></th>
+						<td><label><input type="checkbox" name="ops_enabled" value="1" <?php checked( $settings['ops_enabled'], '1' ); ?>> <?php esc_html_e( 'Allow admin/staff OPS endpoints', 'ajforms' ); ?></label></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Customer Portal API', 'ajforms' ); ?></th>
+						<td><label><input type="checkbox" name="portal_enabled" value="1" <?php checked( $settings['portal_enabled'], '1' ); ?>> <?php esc_html_e( 'Allow customer-facing portal/iOS endpoints', 'ajforms' ); ?></label></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Status endpoint', 'ajforms' ); ?></th>
+						<td><label><input type="checkbox" name="public_status" value="1" <?php checked( $settings['public_status'], '1' ); ?>> <?php esc_html_e( 'Allow public health/status endpoint', 'ajforms' ); ?></label></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Multi-site safety', 'ajforms' ); ?></th>
+						<td><label><input type="checkbox" name="master_only" value="1" <?php checked( $settings['master_only'], '1' ); ?>> <?php esc_html_e( 'Run protected API only on Master site when multi-site portal mode is enabled', 'ajforms' ); ?></label></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'HTTPS reminder', 'ajforms' ); ?></th>
+						<td><label><input type="checkbox" name="require_https_notes" value="1" <?php checked( $settings['require_https_notes'], '1' ); ?>> <?php esc_html_e( 'Show HTTPS reminder for external apps', 'ajforms' ); ?></label></td>
+					</tr>
+				</table>
+				<p><button type="submit" class="button button-primary"><?php esc_html_e( 'Save API Settings', 'ajforms' ); ?></button></p>
+			</form>
+
+			<div class="ajforms-settings-inline-actions">
+				<span class="ajforms-settings-pill"><?php echo wp_kses_post( $this->get_api_status_badge( $app_passwords_available, __( 'Application Passwords available', 'ajforms' ), __( 'Application Passwords unavailable', 'ajforms' ) ) ); ?></span>
+				<a class="button" href="<?php echo esc_url( $profile_url ); ?>"><?php esc_html_e( 'Open My Application Passwords', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( $role_manager_url ); ?>"><?php esc_html_e( 'Open Role Manager', 'ajforms' ); ?></a>
+			</div>
+		</div>
+
+		<div class="ajcore-admin-panel">
+			<h2><?php esc_html_e( 'How to Test', 'ajforms' ); ?></h2>
+			<table class="widefat striped">
+				<tbody>
+					<tr><th><?php esc_html_e( 'Public status', 'ajforms' ); ?></th><td><code><?php echo esc_html( $status_url ); ?></code></td></tr>
+					<tr><th><?php esc_html_e( 'Admin browser console', 'ajforms' ); ?></th><td><code>fetch('<?php echo esc_js( wp_parse_url( $ops_summary_url, PHP_URL_PATH ) ); ?>', { headers: { 'X-WP-Nonce': wpApiSettings.nonce } }).then(r =&gt; r.json()).then(console.log)</code></td></tr>
+					<tr><th><?php esc_html_e( 'Customer browser console', 'ajforms' ); ?></th><td><code>fetch('<?php echo esc_js( wp_parse_url( $portal_me_url, PHP_URL_PATH ) ); ?>', { headers: { 'X-WP-Nonce': wpApiSettings.nonce } }).then(r =&gt; r.json()).then(console.log)</code></td></tr>
+					<tr><th><?php esc_html_e( 'External app auth', 'ajforms' ); ?></th><td><?php esc_html_e( 'Use HTTPS plus a WordPress username and Application Password for Basic Auth. OPS calls require an administrator account. Portal calls require an AJ portal user or administrator account.', 'ajforms' ); ?></td></tr>
+				</tbody>
+			</table>
+		</div>
+
+		<div class="ajcore-admin-panel">
+			<h2><?php esc_html_e( 'Available Endpoints', 'ajforms' ); ?></h2>
+			<p><?php echo esc_html( sprintf( __( 'Base URL: %s', 'ajforms' ), $base_url ) ); ?></p>
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Surface', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Method', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Endpoint', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Auth', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Used By', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Purpose', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ( $catalog as $endpoint ) : ?>
+						<tr>
+							<td><?php echo esc_html( $endpoint['surface'] ); ?></td>
+							<td><code><?php echo esc_html( $endpoint['method'] ); ?></code></td>
+							<td><code><?php echo esc_html( rest_url( 'ajcore/v1' . $endpoint['path'] ) ); ?></code></td>
+							<td><?php echo esc_html( $endpoint['auth'] ); ?></td>
+							<td><?php echo esc_html( $endpoint['app'] ); ?></td>
+							<td><?php echo esc_html( $endpoint['purpose'] ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
 		</div>
 		<?php
 	}
