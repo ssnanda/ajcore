@@ -689,9 +689,25 @@ class AJForms_Admin {
 			AJForms_Activator::activate();
 		}
 
-		$sr_columns = $pdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_service_requests_table()}", 0 );
-		if ( is_array( $sr_columns ) && ! in_array( 'service_status', $sr_columns, true ) ) {
-			$pdb->query( "ALTER TABLE {$this->get_portal_service_requests_table()} ADD COLUMN service_status VARCHAR(50) NOT NULL DEFAULT 'new' AFTER status" );
+		$sr_table   = $this->get_portal_service_requests_table();
+		$sr_columns = $pdb->get_col( "SHOW COLUMNS FROM {$sr_table}", 0 );
+		if ( is_array( $sr_columns ) ) {
+			$sr_column_definitions = array(
+				'service_status'   => "ALTER TABLE {$sr_table} ADD COLUMN service_status VARCHAR(50) NOT NULL DEFAULT 'new' AFTER status",
+				'source_object_id' => "ALTER TABLE {$sr_table} ADD COLUMN source_object_id VARCHAR(100) NOT NULL DEFAULT '' AFTER currency",
+				'source_type'      => "ALTER TABLE {$sr_table} ADD COLUMN source_type VARCHAR(50) NOT NULL DEFAULT '' AFTER source_object_id",
+				'ledger_id'        => "ALTER TABLE {$sr_table} ADD COLUMN ledger_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 AFTER source_type",
+				'admin_notes'      => "ALTER TABLE {$sr_table} ADD COLUMN admin_notes LONGTEXT NULL AFTER ledger_id",
+				'client_notes'     => "ALTER TABLE {$sr_table} ADD COLUMN client_notes LONGTEXT NULL AFTER admin_notes",
+				'source'           => "ALTER TABLE {$sr_table} ADD COLUMN source VARCHAR(50) NOT NULL DEFAULT 'system' AFTER client_notes",
+				'raw_data'         => "ALTER TABLE {$sr_table} ADD COLUMN raw_data LONGTEXT NULL AFTER created_by",
+			);
+
+			foreach ( $sr_column_definitions as $column_name => $alter_sql ) {
+				if ( ! in_array( $column_name, $sr_columns, true ) ) {
+					$pdb->query( $alter_sql );
+				}
+			}
 		}
 
 		$sr_history_table = $this->get_portal_service_request_history_table();
