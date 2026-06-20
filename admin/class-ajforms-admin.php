@@ -8283,6 +8283,10 @@ class AJForms_Admin {
 			return;
 		}
 
+		if ( 'ajforms-client-portal' === $page ) {
+			return;
+		}
+
 		$data = $this->get_stripe_mode_badge_data();
 		$settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
 		$notice_class = ! empty( $data['has_issues'] ) ? 'notice-error' : ( ! empty( $data['is_live'] ) ? 'notice-warning' : 'notice-info' );
@@ -11168,6 +11172,70 @@ class AJForms_Admin {
 		);
 	}
 
+	private function get_portal_service_request_service_status_options( $request ) {
+		$product_type = $this->get_portal_service_request_product_type( $request );
+		$labels       = $this->get_portal_sr_service_status_labels();
+
+		$sets = array(
+			'llc_setup' => array(
+				'new',
+				'under_review',
+				'meeting_scheduled',
+				'sosnc_filing',
+				'llc_documents_emailed',
+				'completed',
+				'cancelled',
+			),
+			'virtual_office_setup' => array(
+				'new',
+				'signing_cmra',
+				'id_proof_needed',
+				'address_proof_needed',
+				'completed',
+				'cancelled',
+			),
+			'virtual_office_subscription' => array(
+				'new',
+				'vo_setup_required',
+				'active',
+				'cancelled',
+			),
+			'registered_agent_subscription' => array(
+				'new',
+				'under_review',
+				'sosnc_client',
+				'updating_sosn',
+				'included_with_llc_setup',
+				'active',
+				'cancelled',
+			),
+			'custom_request' => array(
+				'new',
+				'under_review',
+				'pending_customer',
+				'pending_agent',
+				'active',
+				'completed',
+				'cancelled',
+			),
+		);
+
+		$keys = isset( $sets[ $product_type ] ) ? $sets[ $product_type ] : $sets['custom_request'];
+		$options = array();
+		foreach ( $keys as $key ) {
+			if ( isset( $labels[ $key ] ) ) {
+				$options[ $key ] = $labels[ $key ];
+			}
+		}
+
+		$current = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+		if ( '' !== $current && isset( $labels[ $current ] ) && ! isset( $options[ $current ] ) ) {
+			$options = array( $current => $labels[ $current ] ) + $options;
+		}
+
+		return $options;
+	}
+
 	private function get_portal_service_request_product_type( $request ) {
 		$name_parts = array();
 		if ( ! empty( $request->service_name ) ) {
@@ -11530,11 +11598,11 @@ class AJForms_Admin {
 			$currency = 'usd';
 		}
 
-		$client_notes       = isset( $_POST['client_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['client_notes'] ) ) : '';
-		$admin_notes        = isset( $_POST['admin_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['admin_notes'] ) ) : '';
+		$client_notes       = isset( $_POST['client_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['client_notes'] ) ) : (string) $request->client_notes;
+		$admin_notes        = isset( $_POST['admin_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['admin_notes'] ) ) : (string) $request->admin_notes;
 		$new_history_note   = isset( $_POST['service_request_note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['service_request_note'] ) ) : '';
-		$payment_url        = isset( $_POST['payment_url'] ) ? esc_url_raw( wp_unslash( $_POST['payment_url'] ) ) : '';
-		$payment_reference  = isset( $_POST['payment_reference'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_reference'] ) ) : '';
+		$payment_url        = isset( $_POST['payment_url'] ) ? esc_url_raw( wp_unslash( $_POST['payment_url'] ) ) : $this->get_portal_service_request_meta_value( $request, 'payment_url' );
+		$payment_reference  = isset( $_POST['payment_reference'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_reference'] ) ) : $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
 		$after_save_status  = isset( $_POST['after_save_status'] ) ? sanitize_key( wp_unslash( $_POST['after_save_status'] ) ) : '';
 		$after_service_status = isset( $_POST['after_service_status'] ) ? sanitize_key( wp_unslash( $_POST['after_service_status'] ) ) : '';
 		$selected_price_id  = isset( $_POST['request_stripe_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['request_stripe_price_id'] ) ) : '';
@@ -12334,19 +12402,20 @@ class AJForms_Admin {
 		$params        = array();
 		$show_actionable_default = '' === $status_filter && '' === $search;
 
+		$actionable_service_statuses = array( 'new', 'under_review', 'pending_customer', 'pending_agent', 'meeting_scheduled', 'sosnc_filing', 'signing_cmra', 'id_proof_needed', 'address_proof_needed', 'vo_setup_required', 'sosnc_client', 'updating_sosn', 'included_with_llc_setup' );
 		if ( 'all' === $status_filter ) {
 			$status_filter = 'all';
 		} elseif ( '' !== $status_filter && isset( $labels[ $status_filter ] ) ) {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
 		} elseif ( $show_actionable_default ) {
-			$where[] = "r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','updating_sosn','signing_cmra','failed') OR r.service_status IN ('new','under_review','pending_customer','pending_agent','meeting_scheduled','sosnc_filing','signing_cmra','id_proof_needed','address_proof_needed','vo_setup_required','sosnc_client','updating_sosn','included_with_llc_setup')";
+			$where[] = "(r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR r.service_status IN ('" . implode( "','", array_map( 'esc_sql', $actionable_service_statuses ) ) . "'))";
 		}
 
 		if ( '' !== $search ) {
 			$like = '%' . $pdb->esc_like( $search ) . '%';
-			$where[] = '(r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s)';
-			$params = array_merge( $params, array( $like, $like, $like, $like ) );
+			$where[] = '(r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s OR r.client_notes LIKE %s OR r.admin_notes LIKE %s)';
+			$params = array_merge( $params, array( $like, $like, $like, $like, $like, $like ) );
 		}
 
 		$sql = "SELECT r.*, c.email AS customer_email, c.name AS customer_name, l.metadata AS ledger_metadata, l.source_type AS ledger_source_type, l.invoice_id, l.payment_intent_id, l.charge_id, t.raw_data AS transaction_raw_data
@@ -12376,52 +12445,43 @@ class AJForms_Admin {
 
 		$counts = $pdb->get_results( "SELECT status, COUNT(*) AS total FROM {$this->get_portal_service_requests_table()} GROUP BY status", OBJECT_K );
 		$total_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()}" );
-		$needs_action_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()} WHERE status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR service_status IN ('new','under_review','pending_customer','pending_agent','meeting_scheduled','sosnc_filing','signing_cmra','id_proof_needed','address_proof_needed','vo_setup_required','sosnc_client','updating_sosn','included_with_llc_setup')" );
+		$needs_action_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()} WHERE status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR service_status IN ('" . implode( "','", array_map( 'esc_sql', $actionable_service_statuses ) ) . "')" );
 		$completed_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()} WHERE status = 'completed' OR service_status = 'completed'" );
 		$active_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()} WHERE status = 'active' OR service_status = 'active'" );
 
 		$is_standalone = 'standalone' === $context;
 		$base_url = $is_standalone ? add_query_arg( array( 'page' => 'ajforms-service-requests' ), admin_url( 'admin.php' ) ) : add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' ), admin_url( 'admin.php' ) );
-		$service_products = $this->get_portal_stripe_products_for_settings();
 		?>
 		<style>
-			.aj-sr-shell{display:grid;gap:18px;margin-top:16px}.aj-sr-hero{background:linear-gradient(135deg,#fff 0%,#f8fbff 55%,#eef6ff 100%);border:1px solid #dce8f5;border-radius:24px;padding:24px;box-shadow:0 18px 42px rgba(15,23,42,.06)}.aj-sr-hero h2{margin:0 0 8px;font-size:28px}.aj-sr-hero p{margin:0;color:#64748b;max-width:850px}.aj-sr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.aj-sr-stat{background:#fff;border:1px solid #e4ebf3;border-radius:18px;padding:16px;box-shadow:0 10px 26px rgba(15,23,42,.04)}.aj-sr-stat strong{display:block;font-size:26px;line-height:1;color:#0f172a}.aj-sr-stat span{display:block;margin-top:8px;color:#64748b;font-weight:700}.aj-sr-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #e4ebf3;border-radius:18px;padding:14px}.aj-sr-pills{display:flex;gap:8px;flex-wrap:wrap}.aj-sr-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid #dbe5ef;border-radius:999px;padding:7px 11px;background:#fff;text-decoration:none;font-weight:700;color:#334155}.aj-sr-pill.current{background:#0f172a;color:#fff;border-color:#0f172a}.aj-sr-card{background:#fff;border:1px solid #e4ebf3;border-radius:22px;padding:18px;box-shadow:0 14px 34px rgba(15,23,42,.05);margin-bottom:14px}.aj-sr-card-head{display:grid;grid-template-columns:minmax(260px,1.3fr) minmax(220px,.9fr) auto;gap:16px;align-items:start}.aj-sr-title{font-size:16px;font-weight:800;color:#0f172a}.aj-sr-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px;color:#64748b}.aj-sr-badge{display:inline-flex;align-items:center;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;background:#f1f5f9;color:#475569}.aj-sr-badge.is-paid,.aj-sr-badge.is-active,.aj-sr-badge.is-completed{background:#ecfdf3;color:#166534}.aj-sr-badge.is-awaiting_payment,.aj-sr-badge.is-pending_payment,.aj-sr-badge.is-new,.aj-sr-badge.is-under_review{background:#fef3c7;color:#92400e}.aj-sr-badge.is-cancelled,.aj-sr-badge.is-failed{background:#fef2f2;color:#b91c1c}.aj-sr-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.aj-sr-details{margin-top:14px;border-top:1px solid #edf2f7;padding-top:14px}.aj-sr-details summary{cursor:pointer;font-weight:800;color:#2563eb}.aj-sr-detail-grid{display:grid;grid-template-columns:minmax(280px,1fr) minmax(280px,1fr);gap:16px;margin-top:14px}.aj-sr-edit-card,.aj-sr-history-card{border:1px solid #e5edf5;border-radius:18px;padding:16px;background:#fbfdff}.aj-sr-edit-card textarea,.aj-sr-edit-card input,.aj-sr-edit-card select{width:100%;max-width:100%;box-sizing:border-box}.aj-sr-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.aj-sr-form-grid label{font-weight:700;color:#334155}.aj-sr-form-grid span{display:block;margin-bottom:6px}.aj-sr-timeline{display:grid;gap:10px;max-height:420px;overflow:auto;padding-right:4px}.aj-sr-timeline-item{border-left:3px solid #bfdbfe;padding:0 0 0 12px}.aj-sr-timeline-item strong{display:block;color:#0f172a}.aj-sr-timeline-item small{display:block;color:#64748b;margin:3px 0 5px}.aj-sr-timeline-item p{margin:0;color:#334155}.aj-sr-empty{border:1px dashed #cbd5e1;border-radius:20px;padding:28px;text-align:center;background:#fff;color:#64748b}@media(max-width:1100px){.aj-sr-stats,.aj-sr-card-head,.aj-sr-detail-grid{grid-template-columns:1fr}.aj-sr-actions{justify-content:flex-start}}
+			.aj-sr-shell{display:grid;gap:12px;margin-top:10px}.aj-sr-topline{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.aj-sr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;flex:1}.aj-sr-stat{background:#fff;border:1px solid #e4ebf3;border-radius:18px;padding:13px 15px;box-shadow:0 8px 22px rgba(15,23,42,.04)}.aj-sr-stat strong{display:block;font-size:23px;line-height:1;color:#0f172a}.aj-sr-stat span{display:block;margin-top:5px;color:#64748b;font-weight:800;font-size:12px}.aj-sr-toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #e4ebf3;border-radius:18px;padding:12px;box-shadow:0 10px 26px rgba(15,23,42,.04)}.aj-sr-search{min-width:280px;flex:1;position:relative}.aj-sr-search input{width:100%;min-height:38px;border-radius:999px;border:1px solid #cbd5e1;padding:0 15px}.aj-sr-toolbar select{min-height:38px;border-radius:999px;border-color:#cbd5e1;font-weight:700;max-width:260px}.aj-sr-count-note{color:#64748b;font-weight:700}.aj-sr-list{display:grid;gap:10px}.aj-sr-card{background:#fff;border:1px solid #e4ebf3;border-radius:20px;padding:15px 17px;box-shadow:0 10px 28px rgba(15,23,42,.04)}.aj-sr-card-head{display:grid;grid-template-columns:minmax(280px,1.1fr) minmax(220px,.8fr) auto;gap:14px;align-items:start}.aj-sr-title{font-size:15px;font-weight:900;color:#0f172a}.aj-sr-meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px;color:#64748b;align-items:center}.aj-sr-badge{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:900;background:#f1f5f9;color:#475569}.aj-sr-badge.is-paid,.aj-sr-badge.is-active,.aj-sr-badge.is-completed,.aj-sr-badge.is-llc_documents_emailed{background:#ecfdf3;color:#166534}.aj-sr-badge.is-awaiting_payment,.aj-sr-badge.is-pending_payment,.aj-sr-badge.is-new,.aj-sr-badge.is-under_review,.aj-sr-badge.is-meeting_scheduled,.aj-sr-badge.is-sosnc_filing,.aj-sr-badge.is-signing_cmra,.aj-sr-badge.is-id_proof_needed,.aj-sr-badge.is-address_proof_needed,.aj-sr-badge.is-vo_setup_required,.aj-sr-badge.is-sosnc_client,.aj-sr-badge.is-updating_sosn,.aj-sr-badge.is-included_with_llc_setup{background:#fef3c7;color:#92400e}.aj-sr-badge.is-cancelled,.aj-sr-badge.is-failed{background:#fef2f2;color:#b91c1c}.aj-sr-customer{font-size:13px;color:#334155}.aj-sr-customer strong{font-size:14px;color:#0f172a}.aj-sr-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.aj-sr-actions .button{border-radius:10px}.aj-sr-details{margin-top:12px;border-top:1px solid #edf2f7;padding-top:11px}.aj-sr-details summary{cursor:pointer;font-weight:900;color:#3157ff}.aj-sr-detail-grid{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(320px,1.15fr);gap:14px;margin-top:12px}.aj-sr-edit-card,.aj-sr-history-card,.aj-sr-readonly-card{border:1px solid #e5edf5;border-radius:17px;padding:14px;background:#fbfdff}.aj-sr-edit-card h3,.aj-sr-history-card h3,.aj-sr-readonly-card h3{margin-top:0;margin-bottom:10px}.aj-sr-edit-card textarea,.aj-sr-edit-card select{width:100%;max-width:100%;box-sizing:border-box}.aj-sr-edit-card label{display:block;font-weight:800;color:#334155;margin:0 0 10px}.aj-sr-edit-card label span{display:block;margin-bottom:6px}.aj-sr-readonly-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.aj-sr-readonly-grid div{background:#fff;border:1px solid #edf2f7;border-radius:12px;padding:9px}.aj-sr-readonly-grid small{display:block;color:#64748b;font-weight:800;margin-bottom:3px}.aj-sr-timeline{display:grid;gap:10px;max-height:360px;overflow:auto;padding-right:4px}.aj-sr-timeline-item{border-left:3px solid #bfdbfe;padding:0 0 0 12px}.aj-sr-timeline-item strong{display:block;color:#0f172a}.aj-sr-timeline-item small{display:block;color:#64748b;margin:3px 0 5px}.aj-sr-timeline-item p{margin:0 0 4px;color:#334155}.aj-sr-empty{border:1px dashed #cbd5e1;border-radius:20px;padding:24px;text-align:center;background:#fff;color:#64748b}.aj-sr-hidden{display:none!important}@media(max-width:1100px){.aj-sr-stats,.aj-sr-card-head,.aj-sr-detail-grid{grid-template-columns:1fr}.aj-sr-actions{justify-content:flex-start}.aj-sr-readonly-grid{grid-template-columns:1fr}}
 		</style>
 		<div class="<?php echo $is_standalone ? 'wrap ajforms-service-requests-admin' : 'ajcore-admin-panel'; ?>">
-			<div class="aj-sr-shell">
-				<div class="aj-sr-hero">
-					<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
-					<p><?php esc_html_e( 'Track service fulfillment, customer follow-up, internal notes, and every status change from one timeline-based queue.', 'ajforms' ); ?></p>
-				</div>
+			<div class="aj-sr-shell" data-aj-sr-shell>
 				<?php if ( isset( $_GET['service-request-updated'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div><?php endif; ?>
 				<?php if ( isset( $_GET['service-request-deleted'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request deleted.', 'ajforms' ); ?></p></div><?php endif; ?>
 				<?php if ( isset( $_GET['service-request-error'] ) ) : ?><div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['service-request-error'] ) ) ); ?></p></div><?php endif; ?>
-				<div class="aj-sr-stats">
-					<div class="aj-sr-stat"><strong><?php echo esc_html( $total_count ); ?></strong><span><?php esc_html_e( 'Total Requests', 'ajforms' ); ?></span></div>
-					<div class="aj-sr-stat"><strong><?php echo esc_html( $needs_action_count ); ?></strong><span><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></span></div>
-					<div class="aj-sr-stat"><strong><?php echo esc_html( $active_count ); ?></strong><span><?php esc_html_e( 'Active', 'ajforms' ); ?></span></div>
-					<div class="aj-sr-stat"><strong><?php echo esc_html( $completed_count ); ?></strong><span><?php esc_html_e( 'Completed', 'ajforms' ); ?></span></div>
+				<div class="aj-sr-topline">
+					<div class="aj-sr-stats">
+						<div class="aj-sr-stat"><strong><?php echo esc_html( $total_count ); ?></strong><span><?php esc_html_e( 'Total', 'ajforms' ); ?></span></div>
+						<div class="aj-sr-stat"><strong><?php echo esc_html( $needs_action_count ); ?></strong><span><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></span></div>
+						<div class="aj-sr-stat"><strong><?php echo esc_html( $active_count ); ?></strong><span><?php esc_html_e( 'Active', 'ajforms' ); ?></span></div>
+						<div class="aj-sr-stat"><strong><?php echo esc_html( $completed_count ); ?></strong><span><?php esc_html_e( 'Completed', 'ajforms' ); ?></span></div>
+					</div>
 				</div>
 				<div class="aj-sr-toolbar">
-					<div class="aj-sr-pills">
-						<a href="<?php echo esc_url( $base_url ); ?>" class="aj-sr-pill <?php echo '' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></a>
-						<a href="<?php echo esc_url( add_query_arg( 'request_status', 'all', $base_url ) ); ?>" class="aj-sr-pill <?php echo 'all' === $status_filter ? 'current' : ''; ?>"><?php esc_html_e( 'All', 'ajforms' ); ?></a>
-						<?php foreach ( $labels as $status_key => $status_label ) : ?>
-							<?php $count = isset( $counts[ $status_key ] ) ? (int) $counts[ $status_key ]->total : 0; ?>
-							<a href="<?php echo esc_url( add_query_arg( 'request_status', $status_key, $base_url ) ); ?>" class="aj-sr-pill <?php echo $status_filter === $status_key ? 'current' : ''; ?>"><?php echo esc_html( $status_label . ' (' . $count . ')' ); ?></a>
+					<div class="aj-sr-search"><input type="search" id="aj-sr-live-search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer, service, email, note...', 'ajforms' ); ?>"></div>
+					<select id="aj-sr-status-filter" onchange="if(this.value){window.location.href=this.value;}">
+						<option value="<?php echo esc_url( $base_url ); ?>" <?php selected( $status_filter, '' ); ?>><?php esc_html_e( 'Needs Action', 'ajforms' ); ?> (<?php echo esc_html( $needs_action_count ); ?>)</option>
+						<option value="<?php echo esc_url( add_query_arg( 'request_status', 'all', $base_url ) ); ?>" <?php selected( $status_filter, 'all' ); ?>><?php esc_html_e( 'All Requests', 'ajforms' ); ?> (<?php echo esc_html( $total_count ); ?>)</option>
+						<?php foreach ( $labels as $key => $label ) : ?>
+							<?php $count = isset( $counts[ $key ] ) ? (int) $counts[ $key ]->total : 0; ?>
+							<option value="<?php echo esc_url( add_query_arg( 'request_status', $key, $base_url ) ); ?>" <?php selected( $status_filter, $key ); ?>><?php echo esc_html( $label . ' (' . $count . ')' ); ?></option>
 						<?php endforeach; ?>
-					</div>
-					<form method="get" style="display:flex;gap:8px;align-items:center;margin-left:auto;">
-						<input type="hidden" name="page" value="<?php echo esc_attr( $is_standalone ? 'ajforms-service-requests' : 'ajforms-client-portal' ); ?>">
-						<?php if ( ! $is_standalone ) : ?><input type="hidden" name="tab" value="service-requests"><?php endif; ?>
-						<?php if ( '' !== $status_filter ) : ?><input type="hidden" name="request_status" value="<?php echo esc_attr( $status_filter ); ?>"><?php endif; ?>
-						<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer or service', 'ajforms' ); ?>">
-						<button class="button button-primary"><?php esc_html_e( 'Search', 'ajforms' ); ?></button>
-					</form>
+					</select>
+					<span class="aj-sr-count-note"><span data-aj-sr-visible-count><?php echo esc_html( count( $requests ) ); ?></span> <?php esc_html_e( 'shown', 'ajforms' ); ?></span>
 				</div>
-
 				<?php if ( empty( $requests ) ) : ?>
-					<div class="aj-sr-empty"><strong><?php esc_html_e( 'No service requests found.', 'ajforms' ); ?></strong><p><?php esc_html_e( 'Try changing the filter or search terms.', 'ajforms' ); ?></p></div>
+					<div class="aj-sr-empty"><strong><?php esc_html_e( 'No service requests found.', 'ajforms' ); ?></strong></div>
 				<?php else : ?>
 					<div class="aj-sr-list">
 						<?php foreach ( $requests as $request ) : ?>
@@ -12434,15 +12494,12 @@ class AJForms_Admin {
 							$request_raw     = $this->get_portal_service_request_raw_data( $request );
 							$request_display_name = $this->get_portal_service_request_display_name( $request, $request_raw );
 							$actions = $this->get_portal_service_request_quick_actions( $request, $request_raw );
-							$current_product = ! empty( $request->stripe_price_id ) ? $this->get_portal_product_by_price_id( $request->stripe_price_id ) : null;
-							$current_price_label = $current_product ? $this->get_portal_product_admin_label( $current_product ) : '';
-							$save_details_nonce = wp_create_nonce( 'ajcore_service_request_details_' . (int) $request->id );
-							$payment_url = $this->get_portal_service_request_meta_value( $request, 'payment_url' );
-							$payment_reference = $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
-							$billing_preview = ! empty( $request_raw['billing_preview'] ) && is_array( $request_raw['billing_preview'] ) ? $request_raw['billing_preview'] : array();
 							$history = $this->get_portal_service_request_history( (int) $request->id );
+							$service_options = $this->get_portal_service_request_service_status_options( $request );
+							$billing_preview = ! empty( $request_raw['billing_preview'] ) && is_array( $request_raw['billing_preview'] ) ? $request_raw['billing_preview'] : array();
+							$search_blob = strtolower( implode( ' ', array( $request_display_name, $customer_labels['name'], $customer_labels['email'], $request->stripe_customer_id, $request->client_notes, $request->admin_notes, $status_label, $svc_label ) ) );
 							?>
-							<div class="aj-sr-card">
+							<div class="aj-sr-card" data-aj-sr-card data-aj-sr-search="<?php echo esc_attr( $search_blob ); ?>">
 								<div class="aj-sr-card-head">
 									<div>
 										<div class="aj-sr-title"><?php echo esc_html( $request_display_name ); ?></div>
@@ -12453,11 +12510,7 @@ class AJForms_Admin {
 											<span><?php echo esc_html( $request->created_at ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $request->created_at . ' UTC' ) ) : '-' ); ?></span>
 										</div>
 									</div>
-									<div>
-										<strong><?php echo esc_html( $customer_labels['name'] ); ?></strong><br>
-										<small><?php echo esc_html( $customer_labels['email'] ); ?></small><br>
-										<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $request->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a>
-									</div>
+									<div class="aj-sr-customer"><strong><?php echo esc_html( $customer_labels['name'] ); ?></strong><br><span><?php echo esc_html( $customer_labels['email'] ); ?></span><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $request->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a></div>
 									<div class="aj-sr-actions">
 										<?php foreach ( $actions as $action_key => $action_label ) : ?>
 											<?php $action_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service_request_action' => $action_key, 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ); ?>
@@ -12466,37 +12519,29 @@ class AJForms_Admin {
 									</div>
 								</div>
 								<details class="aj-sr-details">
-									<summary><?php esc_html_e( 'Details, notes, and history', 'ajforms' ); ?></summary>
+									<summary><?php esc_html_e( 'Workflow, notes, history', 'ajforms' ); ?></summary>
 									<div class="aj-sr-detail-grid">
 										<div class="aj-sr-edit-card">
-											<h3><?php esc_html_e( 'Edit Request', 'ajforms' ); ?></h3>
+											<h3><?php esc_html_e( 'Update Workflow', 'ajforms' ); ?></h3>
 											<form method="post">
 												<input type="hidden" name="service_request_action" value="save_details">
 												<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
 												<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
-												<div class="aj-sr-form-grid">
-													<label><span><?php esc_html_e( 'Amount', 'ajforms' ); ?></span><input type="number" step="0.01" name="request_amount" value="<?php echo esc_attr( number_format( (float) $request->amount, 2, '.', '' ) ); ?>"></label>
-													<label><span><?php esc_html_e( 'Currency', 'ajforms' ); ?></span><input type="text" name="request_currency" value="<?php echo esc_attr( $request->currency ); ?>"></label>
-													<label><span><?php esc_html_e( 'Payment Status', 'ajforms' ); ?></span><select name="after_save_status"><option value=""><?php echo esc_html( $status_label ); ?></option><?php foreach ( $labels as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>"><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
-													<label><span><?php esc_html_e( 'Service Status', 'ajforms' ); ?></span><select name="after_service_status"><option value=""><?php echo esc_html( $svc_label ); ?></option><?php foreach ( $service_labels as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>"><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
-												</div>
-												<p><label><span><?php esc_html_e( 'Service / Price', 'ajforms' ); ?></span><select name="request_stripe_price_id"><option value=""><?php echo esc_html( $current_price_label ? $current_price_label : __( 'Keep current service', 'ajforms' ) ); ?></option><?php foreach ( $service_products as $product ) : ?><option value="<?php echo esc_attr( $product->stripe_price_id ); ?>"><?php echo esc_html( $this->get_portal_product_admin_label( $product ) ); ?></option><?php endforeach; ?></select></label></p>
-												<div class="aj-sr-form-grid">
-													<label><span><?php esc_html_e( 'Payment URL', 'ajforms' ); ?></span><input type="url" name="payment_url" value="<?php echo esc_attr( $payment_url ); ?>"></label>
-													<label><span><?php esc_html_e( 'Payment Reference', 'ajforms' ); ?></span><input type="text" name="payment_reference" value="<?php echo esc_attr( $payment_reference ); ?>"></label>
-												</div>
-												<?php if ( ! empty( $billing_preview ) ) : ?>
-													<div class="aj-sr-form-grid">
-														<label><span><?php esc_html_e( 'Subscription ID', 'ajforms' ); ?></span><input type="text" name="billing_subscription_id" value="<?php echo esc_attr( isset( $billing_preview['subscription_id'] ) ? $billing_preview['subscription_id'] : '' ); ?>"></label>
-														<label><span><?php esc_html_e( 'Subscription Item ID', 'ajforms' ); ?></span><input type="text" name="billing_subscription_item_id" value="<?php echo esc_attr( isset( $billing_preview['subscription_item_id'] ) ? $billing_preview['subscription_item_id'] : '' ); ?>"></label>
-													</div>
-												<?php endif; ?>
-												<input type="hidden" name="billing_proration_behavior" value="<?php echo esc_attr( isset( $billing_preview['proration_behavior'] ) ? $billing_preview['proration_behavior'] : 'create_prorations' ); ?>">
-												<p><label><span><?php esc_html_e( 'Add Internal Note', 'ajforms' ); ?></span><textarea name="service_request_note" rows="3" placeholder="<?php esc_attr_e( 'Example: Called customer and requested ID proof.', 'ajforms' ); ?>"></textarea></label></p>
-												<p><label><span><?php esc_html_e( 'Admin Notes Snapshot', 'ajforms' ); ?></span><textarea name="admin_notes" rows="3"><?php echo esc_textarea( $request->admin_notes ); ?></textarea></label></p>
-												<p><label><span><?php esc_html_e( 'Client Notes', 'ajforms' ); ?></span><textarea name="client_notes" rows="3"><?php echo esc_textarea( $request->client_notes ); ?></textarea></label></p>
-												<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Details / Add Note', 'ajforms' ); ?></button>
+												<label><span><?php esc_html_e( 'Service Status', 'ajforms' ); ?></span><select name="after_service_status"><?php foreach ( $service_options as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $svc_status, $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
+												<label><span><?php esc_html_e( 'Internal Note', 'ajforms' ); ?></span><textarea name="service_request_note" rows="4" placeholder="<?php esc_attr_e( 'Add a note. It will be timestamped in history.', 'ajforms' ); ?>"></textarea></label>
+												<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Workflow / Note', 'ajforms' ); ?></button>
 											</form>
+											<div class="aj-sr-readonly-card" style="margin-top:12px;">
+												<h3><?php esc_html_e( 'Stripe / Request Snapshot', 'ajforms' ); ?></h3>
+												<div class="aj-sr-readonly-grid">
+													<div><small><?php esc_html_e( 'Payment', 'ajforms' ); ?></small><?php echo esc_html( $status_label ); ?></div>
+													<div><small><?php esc_html_e( 'Amount', 'ajforms' ); ?></small><?php echo esc_html( strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ); ?></div>
+													<div><small><?php esc_html_e( 'Source', 'ajforms' ); ?></small><?php echo esc_html( $request->source_type ? $request->source_type : $request->source ); ?></div>
+													<div><small><?php esc_html_e( 'Service ID', 'ajforms' ); ?></small><?php echo esc_html( ! empty( $request->stripe_price_id ) ? $request->stripe_price_id : '-' ); ?></div>
+												</div>
+												<?php if ( '' !== (string) $request->client_notes ) : ?><p><strong><?php esc_html_e( 'Customer Message:', 'ajforms' ); ?></strong><br><?php echo esc_html( $request->client_notes ); ?></p><?php endif; ?>
+												<?php if ( ! empty( $billing_preview ) ) : ?><p><strong><?php esc_html_e( 'Billing Preview:', 'ajforms' ); ?></strong> <?php echo esc_html( ! empty( $billing_preview['new_price_label'] ) ? $billing_preview['new_price_label'] : __( 'Saved billing change details available.', 'ajforms' ) ); ?></p><?php endif; ?>
+											</div>
 										</div>
 										<div class="aj-sr-history-card">
 											<h3><?php esc_html_e( 'History', 'ajforms' ); ?></h3>
@@ -12524,8 +12569,27 @@ class AJForms_Admin {
 				<?php endif; ?>
 			</div>
 		</div>
+		<script>
+		(function(){
+			const input=document.getElementById('aj-sr-live-search');
+			const count=document.querySelector('[data-aj-sr-visible-count]');
+			const cards=Array.from(document.querySelectorAll('[data-aj-sr-card]'));
+			function run(){
+				const q=(input && input.value ? input.value : '').trim().toLowerCase();
+				let visible=0;
+				cards.forEach(function(card){
+					const match=!q || (card.getAttribute('data-aj-sr-search')||'').indexOf(q)!==-1;
+					card.classList.toggle('aj-sr-hidden', !match);
+					if(match){ visible++; }
+				});
+				if(count){ count.textContent=String(visible); }
+			}
+			if(input){ input.addEventListener('input', run); run(); }
+		})();
+		</script>
 		<?php
 	}
+
 
 	public function display_service_requests_page() {
 		if ( ! current_user_can( 'manage_options' ) ) {
@@ -12701,8 +12765,8 @@ class AJForms_Admin {
 		$description        = isset( $_POST['charge_label'] ) ? sanitize_text_field( wp_unslash( $_POST['charge_label'] ) ) : '';
 		$amount             = isset( $_POST['charge_amount'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['charge_amount'] ) ) : 0;
 		$currency           = isset( $_POST['charge_currency'] ) ? strtolower( sanitize_key( wp_unslash( $_POST['charge_currency'] ) ) ) : 'usd';
-		$client_notes       = isset( $_POST['client_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['client_notes'] ) ) : '';
-		$admin_notes        = isset( $_POST['admin_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['admin_notes'] ) ) : '';
+		$client_notes       = isset( $_POST['client_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['client_notes'] ) ) : (string) $request->client_notes;
+		$admin_notes        = isset( $_POST['admin_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['admin_notes'] ) ) : (string) $request->admin_notes;
 
 		$redirect = add_query_arg(
 			array(
@@ -13236,45 +13300,63 @@ class AJForms_Admin {
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
 		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'settings' ), true ) ? $tab : 'dashboard';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
+		$stripe_mode = $this->get_stripe_mode_badge_data();
+		$stripe_settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
+		$tabs = array(
+			'dashboard'          => __( 'Dashboard', 'ajforms' ),
+			'service-requests'   => __( 'Service Requests', 'ajforms' ),
+			'billing'            => __( 'Billing', 'ajforms' ),
+			'portal-users'       => __( 'Customers', 'ajforms' ),
+			'sold-items'         => __( 'Sold Products', 'ajforms' ),
+			'products-services'  => __( 'Product Catalog', 'ajforms' ),
+			'tasks'              => __( 'Tasks', 'ajforms' ),
+			'file-library'       => __( 'File Library', 'ajforms' ),
+			'sync'               => __( 'Sync', 'ajforms' ),
+			'event-log'          => __( 'Event Log', 'ajforms' ),
+			'menu'               => __( 'Menu', 'ajforms' ),
+			'settings'           => __( 'Settings', 'ajforms' ),
+		);
 		?>
-		<div class="wrap ajforms-client-portal-admin">
+		<div class="wrap ajforms-client-portal-admin ajcore-modern-admin">
 			<style>
-				.ajforms-client-portal-admin .ajcore-status-pill{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;background:#f0f6fc;color:#0969da}
-				.ajforms-client-portal-admin .ajcore-status-pill.off{background:#f6f7f7;color:#646970}
-				.ajforms-client-portal-admin .ajcore-status-pill.active{background:#dcfce7;color:#166534}
-				.ajforms-client-portal-admin .ajcore-status-pill.disabled{background:#fef3c7;color:#92400e}
-				.ajforms-client-portal-admin .ajcore-status-pill.archived{background:#fee2e2;color:#991b1b}
-				.ajforms-client-portal-admin .ajcore-status-pill.no-login{background:#f1f5f9;color:#475569}
-				.ajforms-client-portal-admin .ajcore-portal-users-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0}
-				.ajforms-client-portal-admin .ajcore-portal-users-toolbar form{display:flex;align-items:center;gap:8px;margin:0}
-				.ajforms-client-portal-admin .ajcore-portal-users-toolbar .ajcore-toolbar-spacer{margin-left:auto}
-				.ajforms-client-portal-admin .ajcore-portal-users-table tr.ajcore-row-active td{background:#f6fff8}
-				.ajforms-client-portal-admin .ajcore-portal-users-table tr.ajcore-row-disabled td{background:#fffaf0}
-				.ajforms-client-portal-admin .ajcore-portal-users-table tr.ajcore-row-archived td{background:#fff7f7}
-				.ajforms-client-portal-admin .ajcore-portal-users-table tr.ajcore-row-no-login td{background:#f8fafc}
+				.ajcore-modern-admin{--ajc-ink:#0f172a;--ajc-muted:#64748b;--ajc-line:#dbe7f3;--ajc-soft:#f8fafc;--ajc-blue:#3157ff;}
+				.ajcore-modern-admin .ajcore-status-pill{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800;background:#f0f6fc;color:#0969da}
+				.ajcore-modern-admin .ajcore-status-pill.off{background:#f6f7f7;color:#646970}.ajcore-modern-admin .ajcore-status-pill.active{background:#dcfce7;color:#166534}.ajcore-modern-admin .ajcore-status-pill.disabled{background:#fef3c7;color:#92400e}.ajcore-modern-admin .ajcore-status-pill.archived{background:#fee2e2;color:#991b1b}.ajcore-modern-admin .ajcore-status-pill.no-login{background:#f1f5f9;color:#475569}
+				.ajcore-modern-admin .ajcore-portal-users-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0}.ajcore-modern-admin .ajcore-portal-users-toolbar form{display:flex;align-items:center;gap:8px;margin:0}.ajcore-modern-admin .ajcore-portal-users-toolbar .ajcore-toolbar-spacer{margin-left:auto}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-active td{background:#f6fff8}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-disabled td{background:#fffaf0}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-archived td{background:#fff7f7}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-no-login td{background:#f8fafc}
+				.ajcore-app-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:14px 0 14px;padding:18px 20px;border:1px solid var(--ajc-line);border-radius:24px;background:radial-gradient(circle at 0% 0%,rgba(49,87,255,.16),transparent 28rem),linear-gradient(135deg,#fff 0%,#f8fbff 100%);box-shadow:0 18px 42px rgba(15,23,42,.06)}
+				.ajcore-brand{display:flex;align-items:center;gap:14px}.ajcore-brand-mark{width:48px;height:48px;border-radius:18px;background:linear-gradient(135deg,#3157ff,#7c3aed);display:grid;place-items:center;color:#fff;font-size:24px;box-shadow:0 14px 30px rgba(49,87,255,.28)}.ajcore-brand h1{margin:0;font-size:25px;line-height:1.15;color:var(--ajc-ink)}.ajcore-brand span{display:block;margin-top:3px;color:var(--ajc-muted);font-weight:700}
+				.ajcore-stripe-mini{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.ajcore-stripe-mini .stripe-pill{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:8px 12px;font-weight:800;border:1px solid #fde68a;background:#fffbeb;color:#92400e}.ajcore-stripe-mini .stripe-pill.is-test{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}.ajcore-stripe-mini .stripe-pill.is-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+				.ajcore-tabs-shell{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:10px;border:1px solid var(--ajc-line);border-radius:20px;background:#fff;box-shadow:0 10px 26px rgba(15,23,42,.04)}.ajcore-tab-link{display:inline-flex;align-items:center;padding:9px 12px;border-radius:14px;text-decoration:none;font-weight:800;color:#334155}.ajcore-tab-link:hover{background:#f1f5f9;color:#0f172a}.ajcore-tab-link.is-active{background:#0f172a;color:#fff}.ajcore-tab-select{display:none;width:100%;max-width:360px}.ajcore-tab-spacer{flex:1}
+				@media(max-width:1100px){.ajcore-app-header{align-items:flex-start;flex-direction:column}.ajcore-tabs-shell .ajcore-tab-link{display:none}.ajcore-tab-select{display:block}.ajcore-tab-spacer{display:none}}
 			</style>
-			<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
+			<div class="ajcore-app-header">
+				<div class="ajcore-brand">
+					<div class="ajcore-brand-mark" aria-hidden="true">✦</div>
+					<div><h1><?php esc_html_e( 'AJ Core - Client Portal', 'ajforms' ); ?></h1><span><?php echo esc_html( isset( $tabs[ $tab ] ) ? $tabs[ $tab ] : __( 'Dashboard', 'ajforms' ) ); ?></span></div>
+				</div>
+				<div class="ajcore-stripe-mini">
+					<span class="stripe-pill <?php echo ! empty( $stripe_mode['has_issues'] ) ? 'is-error' : ( empty( $stripe_mode['is_live'] ) ? 'is-test' : '' ); ?>"><?php echo esc_html( sprintf( __( 'Stripe %s Mode', 'ajforms' ), $stripe_mode['label'] ) ); ?></span>
+					<a href="<?php echo esc_url( $stripe_settings_url ); ?>"><?php esc_html_e( 'Stripe settings', 'ajforms' ); ?></a>
+				</div>
+			</div>
 			<?php if ( 'customer' !== $tab ) : ?>
-				<h2 class="nav-tab-wrapper">
-					<a class="nav-tab <?php echo 'dashboard' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'dashboard', $base_url ) ); ?>"><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'service-requests' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'service-requests', $base_url ) ); ?>"><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'billing' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'billing', $base_url ) ); ?>"><?php esc_html_e( 'Billing', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'portal-users' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'portal-users', $base_url ) ); ?>"><?php esc_html_e( 'Customers', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'sold-items' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sold-items', $base_url ) ); ?>"><?php esc_html_e( 'Sold Products', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'products-services' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'products-services', $base_url ) ); ?>"><?php esc_html_e( 'Product Catalog', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'tasks' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'tasks', $base_url ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'file-library' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'file-library', $base_url ) ); ?>"><?php esc_html_e( 'File Library', 'ajforms' ); ?></a>
-					<?php $sync_owner = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true; ?>
-					<?php if ( $sync_owner ) : ?>
-					<a class="nav-tab <?php echo 'sync' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'sync', $base_url ) ); ?>"><?php esc_html_e( 'Sync', 'ajforms' ); ?></a>
-					<?php else : ?>
-					<span class="nav-tab" title="<?php esc_attr_e( 'Stripe sync runs on the Master site only.', 'ajforms' ); ?>"
-						style="opacity:0.45;cursor:not-allowed;pointer-events:none;"><?php esc_html_e( 'Sync', 'ajforms' ); ?></span>
-					<?php endif; ?>
-					<a class="nav-tab <?php echo 'event-log' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'event-log', $base_url ) ); ?>"><?php esc_html_e( 'Event Log', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'menu' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'menu', $base_url ) ); ?>"><?php esc_html_e( 'Menu', 'ajforms' ); ?></a>
-					<a class="nav-tab <?php echo 'settings' === $tab ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', 'settings', $base_url ) ); ?>"><?php esc_html_e( 'Settings', 'ajforms' ); ?></a>
-				</h2>
+				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'AJ Core Client Portal sections', 'ajforms' ); ?>">
+					<select class="ajcore-tab-select" onchange="if(this.value){window.location.href=this.value;}">
+						<?php foreach ( $tabs as $tab_key => $tab_label ) : ?>
+							<?php $tab_url = add_query_arg( 'tab', $tab_key, $base_url ); ?>
+							<option value="<?php echo esc_url( $tab_url ); ?>" <?php selected( $tab, $tab_key ); ?>><?php echo esc_html( $tab_label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<?php foreach ( $tabs as $tab_key => $tab_label ) : ?>
+						<?php
+						$sync_owner = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true;
+						if ( 'sync' === $tab_key && ! $sync_owner ) : ?>
+							<span class="ajcore-tab-link" title="<?php esc_attr_e( 'Stripe sync runs on the Master site only.', 'ajforms' ); ?>" style="opacity:.45;cursor:not-allowed;"><?php echo esc_html( $tab_label ); ?></span>
+						<?php else : ?>
+							<a class="ajcore-tab-link <?php echo $tab === $tab_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', $tab_key, $base_url ) ); ?>"><?php echo esc_html( $tab_label ); ?></a>
+						<?php endif; ?>
+					<?php endforeach; ?>
+				</nav>
 			<?php endif; ?>
 			<?php
 			if ( 'customer' === $tab ) {
@@ -13290,7 +13372,7 @@ class AJForms_Admin {
 			} elseif ( 'sold-items' === $tab ) {
 				$this->display_portal_sold_items_tab();
 			} elseif ( 'products-services' === $tab ) {
-				$this->display_portal_products_services_tab();
+				$this->display_products_services_tab();
 			} elseif ( 'billing' === $tab ) {
 				$this->display_portal_billing_tab();
 			} elseif ( 'service-requests' === $tab ) {
@@ -13298,9 +13380,9 @@ class AJForms_Admin {
 			} elseif ( 'tasks' === $tab ) {
 				$this->display_portal_tasks_tab();
 			} elseif ( 'menu' === $tab ) {
-				$this->display_client_portal_settings_tab( 'menu', true );
+				$this->display_portal_menu_tab();
 			} elseif ( 'settings' === $tab ) {
-				$this->display_portal_shared_db_settings_tab();
+				$this->display_portal_settings_tab();
 			} else {
 				$this->display_file_library_page( true );
 			}
@@ -13308,6 +13390,7 @@ class AJForms_Admin {
 		</div>
 		<?php
 	}
+
 
 	private function display_portal_event_log_tab() {
 		if ( ! current_user_can( 'manage_options' ) ) {
