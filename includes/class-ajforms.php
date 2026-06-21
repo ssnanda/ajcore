@@ -930,6 +930,7 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_pay_portal_ledger', array( $this, 'ajax_pay_portal_ledger' ) );
 		add_action( 'wp_ajax_ajcore_reservation_check_availability', array( $this, 'ajax_reservation_check_availability' ) );
 		add_action( 'wp_ajax_ajcore_reservation_create_checkout', array( $this, 'ajax_reservation_create_checkout' ) );
+		add_action( 'wp_ajax_ajcore_reservation_request', array( $this, 'ajax_reservation_request' ) );
 		add_action( 'wp_ajax_ajcore_test_zoho_connection', array( $this, 'ajax_test_zoho_connection' ) );
 		add_action( 'wp_ajax_ajcore_get_reservation_events', array( $this, 'ajax_get_reservation_events' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_get_reservation_events', array( $this, 'ajax_get_reservation_events' ) );
@@ -11745,6 +11746,7 @@ class AJForms {
 		.aj-res-pay-button{width:100%!important;padding:10px!important;font-size:14px!important;font-weight:700!important}
 		.aj-res-spinner{display:none;font-size:13px;color:#64748b;margin-top:8px}
 		.aj-res-error-msg{display:none;color:#dc2626;font-size:13px;margin-top:8px}
+		.aj-res-success-msg{background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:14px 16px;color:#166534;font-size:14px;margin-top:10px;text-align:center}
 		/* My Reservations */
 		.aj-reservations-my-list{margin-top:24px}
 		.aj-reservations-my-list h3{margin-bottom:10px}
@@ -11806,10 +11808,10 @@ class AJForms {
 						<span><?php esc_html_e( 'Notes (optional)', 'ajforms' ); ?></span>
 						<textarea id="aj-res-field-notes" rows="3"></textarea>
 					</label>
-					<p class="aj-res-no-cancel-notice"><?php esc_html_e( 'Reservations are prepaid and non-refundable. No cancellations or rescheduling.', 'ajforms' ); ?></p>
-					<button type="button" class="button button-primary aj-res-pay-button" id="aj-res-pay-button"><?php esc_html_e( 'Pay Now', 'ajforms' ); ?></button>
-					<span class="aj-res-spinner" id="aj-res-spinner" hidden><?php esc_html_e( 'Processing…', 'ajforms' ); ?></span>
-					<p class="aj-res-error-msg" id="aj-res-error-msg" hidden></p>
+					<button type="button" class="button button-primary aj-res-pay-button" id="aj-res-pay-button"><?php esc_html_e( 'Submit Request', 'ajforms' ); ?></button>
+					<span class="aj-res-spinner" id="aj-res-spinner"><?php esc_html_e( 'Submitting…', 'ajforms' ); ?></span>
+					<p class="aj-res-error-msg" id="aj-res-error-msg"></p>
+					<div class="aj-res-success-msg" id="aj-res-success-msg" style="display:none"></div>
 				</div>
 			</div>
 
@@ -11860,17 +11862,18 @@ class AJForms {
 		<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
 		<script>
 		(function() {
-			var calEl      = document.getElementById('aj-res-fullcalendar');
-			var overlay    = document.getElementById('aj-res-modal-overlay');
-			var closeBtn   = document.getElementById('aj-res-modal-close');
-			var summary    = document.getElementById('aj-res-booking-summary');
-			var payBtn     = document.getElementById('aj-res-pay-button');
-			var spinner    = document.getElementById('aj-res-spinner');
-			var errMsg     = document.getElementById('aj-res-error-msg');
-			var nameField  = document.getElementById('aj-res-field-name');
-			var emailField = document.getElementById('aj-res-field-email');
-			var phoneField = document.getElementById('aj-res-field-phone');
-			var notesField = document.getElementById('aj-res-field-notes');
+			var calEl       = document.getElementById('aj-res-fullcalendar');
+			var overlay     = document.getElementById('aj-res-modal-overlay');
+			var closeBtn    = document.getElementById('aj-res-modal-close');
+			var summary     = document.getElementById('aj-res-booking-summary');
+			var payBtn      = document.getElementById('aj-res-pay-button');
+			var spinner     = document.getElementById('aj-res-spinner');
+			var errMsg      = document.getElementById('aj-res-error-msg');
+			var successMsg  = document.getElementById('aj-res-success-msg');
+			var nameField   = document.getElementById('aj-res-field-name');
+			var emailField  = document.getElementById('aj-res-field-email');
+			var phoneField  = document.getElementById('aj-res-field-phone');
+			var notesField  = document.getElementById('aj-res-field-notes');
 
 			if (!calEl || typeof FullCalendar === 'undefined') return;
 
@@ -11978,13 +11981,16 @@ class AJForms {
 					'<p><strong><?php echo esc_js( __( 'Time', 'ajforms' ) ); ?>:</strong> ' + escH(startFmt) + ' &ndash; ' + escH(endFmt) + '</p>' +
 					'<p><strong><?php echo esc_js( __( 'Duration', 'ajforms' ) ); ?>:</strong> ' + hours + (hours === 1 ? ' <?php echo esc_js( __( 'hour', 'ajforms' ) ); ?>' : ' <?php echo esc_js( __( 'hours', 'ajforms' ) ); ?>') + '</p>' +
 					'<p><strong><?php echo esc_js( __( 'Rate', 'ajforms' ) ); ?>:</strong> ' + escH(isBiz ? bizLabel : afterLabel) + '</p>';
-				errMsg.style.display = 'none';
-				errMsg.textContent = '';
+				errMsg.style.display    = 'none';
+				errMsg.textContent      = '';
+				successMsg.style.display = 'none';
+				successMsg.textContent  = '';
 				nameField.value    = '';
 				emailField.value   = '';
 				phoneField.value   = '';
 				notesField.value   = '';
 				payBtn.disabled    = false;
+				payBtn.style.display = 'block';
 				spinner.style.display = 'none';
 				overlay.style.display = 'flex';
 				document.body.style.overflow = 'hidden';
@@ -12020,10 +12026,11 @@ class AJForms {
 						return;
 					}
 					payBtn.disabled = true;
+					payBtn.style.display = 'none';
 					spinner.style.display = 'block';
 					var fd = new FormData();
-					fd.append('action',         'ajcore_reservation_create_checkout');
-					fd.append('nonce',          checkoutNonce);
+					fd.append('action',         'ajcore_reservation_request');
+					fd.append('nonce',          checkNonce);
 					fd.append('resource_key',   resourceKey);
 					fd.append('start_at',       selectedStartStr);
 					fd.append('end_at',         selectedEndStr);
@@ -12034,18 +12041,23 @@ class AJForms {
 					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: fd })
 					.then(function(r) { return r.json(); })
 					.then(function(payload) {
-						payBtn.disabled = false;
 						spinner.style.display = 'none';
-						if (!payload.success || !payload.data || !payload.data.checkout_url) {
-							errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to start checkout. Please try again.', 'ajforms' ) ); ?>';
+						if (!payload.success) {
+							payBtn.disabled = false;
+							payBtn.style.display = 'block';
+							errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to submit reservation. Please try again.', 'ajforms' ) ); ?>';
 							errMsg.style.display = 'block';
 							return;
 						}
-						window.location.href = payload.data.checkout_url;
+						successMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Reservation submitted!', 'ajforms' ) ); ?>';
+						successMsg.style.display = 'block';
+						calendar.refetchEvents();
+						setTimeout(function() { closeModal(); location.reload(); }, 3000);
 					})
 					.catch(function() {
-						payBtn.disabled = false;
 						spinner.style.display = 'none';
+						payBtn.disabled = false;
+						payBtn.style.display = 'block';
 						errMsg.textContent = '<?php echo esc_js( __( 'Network error. Please try again.', 'ajforms' ) ); ?>';
 						errMsg.style.display = 'block';
 					});
@@ -12594,6 +12606,7 @@ class AJForms {
 						'client_id'     => $client_id,
 						'client_secret' => $client_secret,
 						'code'          => $auth_code,
+						'access_type'   => 'offline',
 					),
 					'https://accounts.zoho.com/oauth/v2/token'
 				),
@@ -12751,30 +12764,180 @@ class AJForms {
 
 		// Also show Zoho Calendar events as unavailable blocks.
 		$settings      = get_option( 'ajforms_settings', array() );
-		$zoho_token    = ! empty( $settings['zoho_api_token'] )   ? trim( (string) $settings['zoho_api_token'] )   : '';
-		$zoho_cal_id   = ! empty( $settings['zoho_calendar_id'] ) ? trim( (string) $settings['zoho_calendar_id'] ) : '';
-		$site_tz       = get_option( 'timezone_string', 'America/New_York' );
-		if ( '' !== $zoho_token && '' !== $zoho_cal_id && class_exists( 'AJCore_Zoho_Calendar' ) ) {
-			$zoho_events = AJCore_Zoho_Calendar::get_events_for_range( $zoho_cal_id, $start_raw, $end_raw, $site_tz, $zoho_token );
-			if ( ! is_wp_error( $zoho_events ) ) {
-				$utc_tz = new DateTimeZone( 'UTC' );
-				foreach ( $zoho_events as $ze ) {
-					$ze['start']->setTimezone( $utc_tz );
-					$ze['end']->setTimezone( $utc_tz );
-					$events[] = array(
-						'title'           => __( 'Unavailable', 'ajforms' ),
-						'start'           => $ze['start']->format( 'Y-m-d\TH:i:s\Z' ),
-						'end'             => $ze['end']->format( 'Y-m-d\TH:i:s\Z' ),
-						'backgroundColor' => '#fef3c7',
-						'borderColor'     => '#d97706',
-						'textColor'       => '#92400e',
-						'display'         => 'block',
-					);
+		$zoho_cal_uid  = ! empty( $settings['zoho_calendar_uid'] ) ? trim( (string) $settings['zoho_calendar_uid'] ) : '';
+		$site_tz       = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : get_option( 'timezone_string', 'America/New_York' );
+		if ( '' !== $zoho_cal_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
+			$zoho_token = $this->get_valid_zoho_token( $settings );
+			if ( '' !== $zoho_token ) {
+				$zoho_events = AJCore_Zoho_Calendar::get_events_for_range( $zoho_cal_uid, $start_raw, $end_raw, $site_tz, $zoho_token );
+				if ( ! is_wp_error( $zoho_events ) ) {
+					$utc_tz = new DateTimeZone( 'UTC' );
+					foreach ( $zoho_events as $ze ) {
+						$ze['start']->setTimezone( $utc_tz );
+						$ze['end']->setTimezone( $utc_tz );
+						$events[] = array(
+							'title'           => __( 'Unavailable', 'ajforms' ),
+							'start'           => $ze['start']->format( 'Y-m-d\TH:i:s\Z' ),
+							'end'             => $ze['end']->format( 'Y-m-d\TH:i:s\Z' ),
+							'backgroundColor' => '#fef3c7',
+							'borderColor'     => '#d97706',
+							'textColor'       => '#92400e',
+							'display'         => 'block',
+						);
+					}
 				}
 			}
 		}
 
 		wp_send_json( $events );
+	}
+
+	/**
+	 * Returns a valid Zoho API token, auto-refreshing with the refresh token if expired.
+	 * Returns empty string if no valid token can be obtained.
+	 */
+	private function get_valid_zoho_token( array &$settings = array() ) {
+		if ( empty( $settings ) ) {
+			$settings = get_option( 'ajforms_settings', array() );
+		}
+
+		$token      = ! empty( $settings['zoho_api_token'] ) ? trim( (string) $settings['zoho_api_token'] ) : '';
+		$expires_at = ! empty( $settings['zoho_api_token_expires_at'] ) ? strtotime( $settings['zoho_api_token_expires_at'] ) : 0;
+
+		// Token still valid (with 60-second buffer).
+		if ( '' !== $token && $expires_at > time() + 60 ) {
+			return $token;
+		}
+
+		// Try to refresh using the refresh token.
+		$refresh_token = ! empty( $settings['zoho_refresh_token'] ) ? trim( (string) $settings['zoho_refresh_token'] ) : '';
+		$client_id     = ! empty( $settings['zoho_oauth_client_id'] ) ? trim( (string) $settings['zoho_oauth_client_id'] ) : '';
+		$client_secret = ! empty( $settings['zoho_oauth_client_secret'] ) ? trim( (string) $settings['zoho_oauth_client_secret'] ) : '';
+
+		if ( '' === $refresh_token || '' === $client_id || '' === $client_secret ) {
+			return '';
+		}
+
+		$response = wp_remote_post(
+			add_query_arg(
+				array(
+					'grant_type'    => 'refresh_token',
+					'client_id'     => $client_id,
+					'client_secret' => $client_secret,
+					'refresh_token' => $refresh_token,
+				),
+				'https://accounts.zoho.com/oauth/v2/token'
+			),
+			array( 'timeout' => 15 )
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return '';
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( empty( $body['access_token'] ) ) {
+			return '';
+		}
+
+		$new_token  = sanitize_text_field( (string) $body['access_token'] );
+		$expires_in = ! empty( $body['expires_in'] ) ? absint( $body['expires_in'] ) : 3600;
+		$settings['zoho_api_token']            = $new_token;
+		$settings['zoho_api_token_expires_at'] = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
+		update_option( 'ajforms_settings', $settings, false );
+
+		return $new_token;
+	}
+
+	/**
+	 * Save a reservation request to DB without Stripe payment (for testing / manual-confirmation flow).
+	 */
+	public function ajax_reservation_request() {
+		check_ajax_referer( 'ajcore_reservation_check_availability', 'nonce' );
+
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( array( 'message' => __( 'You must be logged in to make a reservation.', 'ajforms' ) ) );
+		}
+
+		$resource_key   = isset( $_POST['resource_key'] )   ? sanitize_key( wp_unslash( $_POST['resource_key'] ) )          : '';
+		$start_at_raw   = isset( $_POST['start_at'] )       ? sanitize_text_field( wp_unslash( $_POST['start_at'] ) )        : '';
+		$end_at_raw     = isset( $_POST['end_at'] )         ? sanitize_text_field( wp_unslash( $_POST['end_at'] ) )          : '';
+		$customer_name  = isset( $_POST['customer_name'] )  ? sanitize_text_field( wp_unslash( $_POST['customer_name'] ) )   : '';
+		$customer_email = isset( $_POST['customer_email'] ) ? sanitize_email( wp_unslash( $_POST['customer_email'] ) )       : '';
+		$customer_phone = isset( $_POST['customer_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['customer_phone'] ) )  : '';
+		$customer_notes = isset( $_POST['customer_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['customer_notes'] ) ) : '';
+
+		if ( ! $resource_key || ! $start_at_raw || ! $end_at_raw || ! $customer_name || ! $customer_email ) {
+			wp_send_json_error( array( 'message' => __( 'Missing required fields.', 'ajforms' ) ) );
+		}
+
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Reservation system unavailable.', 'ajforms' ) ) );
+		}
+
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+
+		try {
+			$start_dt = $this->parse_reservation_datetime_to_utc( $start_at_raw, $timezone );
+			$end_dt   = $this->parse_reservation_datetime_to_utc( $end_at_raw, $timezone );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => __( 'Invalid date/time format.', 'ajforms' ) ) );
+		}
+
+		$whole_hour_check = $this->validate_reservation_whole_hour_slot( $start_dt, $end_dt, $timezone );
+		if ( is_wp_error( $whole_hour_check ) ) {
+			wp_send_json_error( array( 'message' => $whole_hour_check->get_error_message() ) );
+		}
+
+		$start_at_utc = $start_dt->format( 'Y-m-d H:i:s' );
+		$end_at_utc   = $end_dt->format( 'Y-m-d H:i:s' );
+
+		$window_check = AJCore_Reservations::validate_booking_window( $start_at_utc, $end_at_utc, $timezone );
+		if ( is_wp_error( $window_check ) ) {
+			wp_send_json_error( array( 'message' => $window_check->get_error_message() ) );
+		}
+
+		$resource = $this->get_configured_reservation_resource( $resource_key, $settings );
+		if ( ! $resource ) {
+			wp_send_json_error( array( 'message' => __( 'Resource not found.', 'ajforms' ) ) );
+		}
+
+		$conflict = AJCore_Reservations::check_local_conflict( (int) $resource->id, $start_at_utc, $end_at_utc, '' );
+		if ( is_wp_error( $conflict ) ) {
+			wp_send_json_error( array( 'message' => $conflict->get_error_message() ) );
+		}
+
+		// Prepend phone to notes since the DB table has no phone column yet.
+		$notes_with_phone = '' !== $customer_phone
+			? 'Phone: ' . $customer_phone . ( '' !== $customer_notes ? "\n" . $customer_notes : '' )
+			: $customer_notes;
+
+		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
+		$result = AJCore_Reservations::create_reservation( array(
+			'wp_user_id'       => get_current_user_id(),
+			'resource_id'      => (int) $resource->id,
+			'resource_key'     => $resource_key,
+			'resource_name'    => (string) ( $resource->resource_name ?? $resource_key ),
+			'zoho_calendar_uid'=> ! empty( $settings['zoho_calendar_uid'] ) ? $settings['zoho_calendar_uid'] : '',
+			'zoho_calendar_id' => ! empty( $settings['zoho_calendar_id'] ) ? $settings['zoho_calendar_id'] : '',
+			'pricing_type'     => $pricing_type,
+			'start_at'         => $start_at_utc,
+			'end_at'           => $end_at_utc,
+			'timezone'         => $timezone,
+			'customer_name'    => $customer_name,
+			'customer_email'   => $customer_email,
+			'customer_notes'   => $notes_with_phone,
+		) );
+
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+		}
+
+		wp_send_json_success( array(
+			'message'        => __( 'Reservation submitted! We will confirm within 24 hours.', 'ajforms' ),
+			'reservation_id' => $result,
+		) );
 	}
 
 	/**
