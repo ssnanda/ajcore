@@ -19039,8 +19039,18 @@ class AJForms_Admin {
 			'Pacific/Honolulu'    => 'Hawaii Time',
 			'UTC'                 => 'UTC',
 		);
-
 		?>
+		<style>
+			.ajc-helper-box{background:#f0f6fc;border:1px solid #bfdbfe;border-radius:12px;padding:14px 18px;margin:10px 0 4px;font-size:13px;line-height:1.6}
+			.ajc-helper-box h4{margin:0 0 8px;font-size:13px;color:#1d4ed8}
+			.ajc-helper-box ol,.ajc-helper-box ul{margin:6px 0 0 18px;padding:0}
+			.ajc-helper-box li{margin-bottom:4px}
+			.ajc-helper-box code{background:#dbeafe;border-radius:4px;padding:1px 5px;font-size:12px;color:#1e40af}
+			.ajc-optional-badge{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #fde68a;border-radius:999px;font-size:11px;font-weight:700;padding:1px 8px;margin-left:6px;vertical-align:middle}
+			.ajc-required-badge{display:inline-block;background:#dcfce7;color:#166534;border:1px solid #bbf7d0;border-radius:999px;font-size:11px;font-weight:700;padding:1px 8px;margin-left:6px;vertical-align:middle}
+			.ajc-section-mode{background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px 14px;margin:8px 0;font-size:13px;color:#9a3412}
+		</style>
+
 		<?php if ( $saved ) : ?>
 			<div class="notice notice-success inline"><p><?php esc_html_e( 'Calendar / Reservations settings saved.', 'ajforms' ); ?></p></div>
 		<?php endif; ?>
@@ -19048,9 +19058,10 @@ class AJForms_Admin {
 		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
 			<?php wp_nonce_field( 'ajcore_save_calendar_settings', 'ajcore_calendar_settings_nonce' ); ?>
 
+			<!-- ── General ───────────────────────────────────────────────────── -->
 			<div class="ajforms-settings-card">
 				<h2><?php esc_html_e( 'Calendar / Reservations Settings', 'ajforms' ); ?></h2>
-				<p><?php esc_html_e( 'Configure Zoho Calendar integration and reservation defaults. Zoho API token is stored in the WordPress database only — never in synced-settings.json.', 'ajforms' ); ?></p>
+				<p><?php esc_html_e( 'Zoho API token is stored in WordPress only — never written to synced-settings.json or exposed on customer-facing pages.', 'ajforms' ); ?></p>
 
 				<h3><?php esc_html_e( 'General', 'ajforms' ); ?></h3>
 				<table class="form-table">
@@ -19059,7 +19070,7 @@ class AJForms_Admin {
 						<td>
 							<label>
 								<input type="checkbox" name="zoho_reservations_enabled" value="1" <?php checked( '1', $settings['zoho_reservations_enabled'] ?? '0' ); ?>>
-								<?php esc_html_e( 'Enable reservation products and calendar integration', 'ajforms' ); ?>
+								<?php esc_html_e( 'Enable reservation booking in the customer portal', 'ajforms' ); ?>
 							</label>
 						</td>
 					</tr>
@@ -19071,107 +19082,176 @@ class AJForms_Admin {
 									<option value="<?php echo esc_attr( $tz_key ); ?>" <?php selected( $settings['zoho_default_timezone'] ?? 'America/New_York', $tz_key ); ?>><?php echo esc_html( $tz_label ); ?></option>
 								<?php endforeach; ?>
 							</select>
+							<p class="description"><?php esc_html_e( 'All booking times are shown in this timezone.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Default Resource Name', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Resource Name', 'ajforms' ); ?></th>
 						<td>
 							<input type="text" name="reservation_resource_name" value="<?php echo esc_attr( $settings['reservation_resource_name'] ?? 'Conference Room' ); ?>" class="regular-text">
-							<p class="description"><?php esc_html_e( 'Shown to customers on the portal.', 'ajforms' ); ?></p>
+							<p class="description"><?php esc_html_e( 'Shown to customers on the booking page, e.g. "Conference Room".', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Default Resource Key', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Resource Key', 'ajforms' ); ?></th>
 						<td>
 							<input type="text" name="reservation_resource_key" value="<?php echo esc_attr( $settings['reservation_resource_key'] ?? 'conference_room' ); ?>" class="regular-text">
-							<p class="description"><?php esc_html_e( 'Lowercase slug, e.g. conference_room. Used internally.', 'ajforms' ); ?></p>
+							<p class="description"><?php esc_html_e( 'Lowercase slug used internally, e.g. conference_room.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Business Hours Pricing Label', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Business Hours Label', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" name="reservation_business_hours_label" value="<?php echo esc_attr( $settings['reservation_business_hours_label'] ?? '' ); ?>" class="regular-text">
-							<p class="description"><?php esc_html_e( 'Mon–Fri 9am–5pm. Shown to customers during booking.', 'ajforms' ); ?></p>
+							<input type="text" name="reservation_business_hours_label" value="<?php echo esc_attr( $settings['reservation_business_hours_label'] ?? '' ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'Business Hours Rate', 'ajforms' ); ?>">
+							<p class="description"><?php esc_html_e( 'Mon–Fri 9am–5pm rate. Shown to customers during booking.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'After-Hours / Weekend Pricing Label', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'After-Hours / Weekend Label', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" name="reservation_after_hours_label" value="<?php echo esc_attr( $settings['reservation_after_hours_label'] ?? '' ); ?>" class="regular-text">
-							<p class="description"><?php esc_html_e( 'Mon–Fri before 9am or after 5pm, and all weekend.', 'ajforms' ); ?></p>
+							<input type="text" name="reservation_after_hours_label" value="<?php echo esc_attr( $settings['reservation_after_hours_label'] ?? '' ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'After-Hours / Weekend Rate', 'ajforms' ); ?>">
+							<p class="description"><?php esc_html_e( 'All other times within the 8am–10pm booking window.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 				</table>
+			</div>
 
-				<hr>
-				<h3><?php esc_html_e( 'Zoho Calendar Identifiers', 'ajforms' ); ?></h3>
-				<table class="form-table">
-					<tr>
-						<th><?php esc_html_e( 'Zoho Calendar UID', 'ajforms' ); ?></th>
-						<td><input type="text" name="zoho_calendar_uid" value="<?php echo esc_attr( $settings['zoho_calendar_uid'] ?? '' ); ?>" class="regular-text"></td>
-					</tr>
-					<tr>
-						<th><?php esc_html_e( 'Zoho Calendar ID', 'ajforms' ); ?></th>
-						<td><input type="text" name="zoho_calendar_id" value="<?php echo esc_attr( $settings['zoho_calendar_id'] ?? '' ); ?>" class="regular-text"></td>
-					</tr>
-					<tr>
-						<th><?php esc_html_e( 'Zoho Resource UID', 'ajforms' ); ?></th>
-						<td>
-							<input type="text" name="zoho_resource_uid" value="<?php echo esc_attr( $settings['zoho_resource_uid'] ?? '' ); ?>" class="regular-text">
-							<p class="description"><?php esc_html_e( 'Used for free/busy availability checks via the Zoho Resource API.', 'ajforms' ); ?></p>
-						</td>
-					</tr>
-				</table>
+			<!-- ── Schedule Appointment URL (core feature) ───────────────────── -->
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Zoho Schedule Appointment URL', 'ajforms' ); ?> <span class="ajc-required-badge"><?php esc_html_e( 'Required for booking', 'ajforms' ); ?></span></h3>
+				<p><?php esc_html_e( 'This is the primary integration. After a customer pays, AJCore opens a prefilled Zoho appointment form so the booking is recorded on your calendar.', 'ajforms' ); ?></p>
 
-				<hr>
-				<h3><?php esc_html_e( 'Zoho Schedule Appointment URL', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'Paste your Zoho appointment URL. AJCore will replace the placeholders below with real customer and booking data.', 'ajforms' ); ?></p>
-				<p><strong><?php esc_html_e( 'Supported placeholders:', 'ajforms' ); ?></strong>
-					<code>[name]</code>, <code>[EmailId]</code>, <code>[MM/dd/yyyy]</code>, <code>[13:00]</code>, <code>[Reason for Appointment]</code>
-				</p>
+				<div class="ajc-helper-box">
+					<h4><?php esc_html_e( 'Where to find this in Zoho Calendar', 'ajforms' ); ?></h4>
+					<ol>
+						<li><?php esc_html_e( 'Open Zoho Calendar and click the settings/share icon on your calendar.', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Look for "Web API for schedule appointment" — copy that full URL.', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'It will look like: https://calendar.zoho.com/eventreq/zz0801…?name=[name]&mailId=[EmailId]&date=[MM/dd/yyyy]&time=[13:00]&reason=[Reason for Appointment]', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Paste the whole URL below — leave the placeholders exactly as they appear.', 'ajforms' ); ?></li>
+					</ol>
+					<p style="margin:8px 0 0"><strong><?php esc_html_e( 'Placeholders AJCore will fill in automatically:', 'ajforms' ); ?></strong><br>
+						<code>[name]</code> &nbsp;
+						<code>[EmailId]</code> &nbsp;
+						<code>[MM/dd/yyyy]</code> &nbsp;
+						<code>[13:00]</code> &nbsp;
+						<code>[Reason for Appointment]</code>
+					</p>
+				</div>
+
 				<table class="form-table">
 					<tr>
 						<th><?php esc_html_e( 'Schedule Appointment URL', 'ajforms' ); ?></th>
 						<td>
-							<textarea name="zoho_schedule_appointment_url" rows="4" class="large-text"><?php echo esc_textarea( $settings['zoho_schedule_appointment_url'] ?? '' ); ?></textarea>
+							<textarea name="zoho_schedule_appointment_url" rows="4" class="large-text" placeholder="https://calendar.zoho.com/eventreq/..."><?php echo esc_textarea( $settings['zoho_schedule_appointment_url'] ?? '' ); ?></textarea>
 						</td>
 					</tr>
 				</table>
+			</div>
 
-				<hr>
-				<h3><?php esc_html_e( 'Zoho Resource Free/Busy API', 'ajforms' ); ?></h3>
+			<!-- ── Zoho Calendar Identifiers ─────────────────────────────────── -->
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Zoho Calendar Identifiers', 'ajforms' ); ?> <span class="ajc-optional-badge"><?php esc_html_e( 'Optional – needed for API event creation', 'ajforms' ); ?></span></h3>
+				<p><?php esc_html_e( 'These are only needed if you want AJCore to automatically create calendar events via the Zoho API (instead of using the appointment URL above). Most users can skip this section.', 'ajforms' ); ?></p>
+
+				<div class="ajc-helper-box">
+					<h4><?php esc_html_e( 'Where to find Calendar UID and Calendar ID', 'ajforms' ); ?></h4>
+					<ul>
+						<li><strong><?php esc_html_e( 'Calendar UID:', 'ajforms' ); ?></strong> <?php esc_html_e( 'Found in the Embed Calendar URL after "#calendar=". Example embed URL: https://calendar.zoho.com/zc/ui/embed/#calendar=zz08011230be… — the part after "#calendar=" is the Calendar UID.', 'ajforms' ); ?></li>
+						<li><strong><?php esc_html_e( 'Calendar ID:', 'ajforms' ); ?></strong> <?php esc_html_e( 'Found in your CalDAV URL. Example: https://calendar.zoho.com/caldav/9e488fd10118435dbfbb…/events/ — the long hex string between /caldav/ and /events/ is the Calendar ID.', 'ajforms' ); ?></li>
+					</ul>
+					<p style="margin:8px 0 0"><?php esc_html_e( 'To see both URLs: open Zoho Calendar → share/settings icon on your calendar → "Integrate Calendar" or "HTML" section.', 'ajforms' ); ?></p>
+				</div>
+
 				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Zoho Calendar UID', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="zoho_calendar_uid" value="<?php echo esc_attr( $settings['zoho_calendar_uid'] ?? '' ); ?>" class="regular-text" placeholder="zz08011230be8c54c81adea…">
+							<p class="description"><?php esc_html_e( 'From the embed URL after "#calendar=".', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Zoho Calendar ID', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="zoho_calendar_id" value="<?php echo esc_attr( $settings['zoho_calendar_id'] ?? '' ); ?>" class="regular-text" placeholder="9e488fd10118435dbfbb…">
+							<p class="description"><?php esc_html_e( 'From your CalDAV URL — the hex string between /caldav/ and /events/.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+				</table>
+			</div>
+
+			<!-- ── Zoho Resource UID / Free-Busy (advanced) ──────────────────── -->
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Resource Free/Busy Check', 'ajforms' ); ?> <span class="ajc-optional-badge"><?php esc_html_e( 'Optional – advanced', 'ajforms' ); ?></span></h3>
+				<p><?php esc_html_e( 'If you have a Zoho Resource Calendar (a bookable room/equipment entry in Zoho\'s resource management), you can enable a live free/busy check so AJCore cross-checks the Zoho calendar before allowing a booking. Leave blank to use local-only conflict checking.', 'ajforms' ); ?></p>
+
+				<div class="ajc-helper-box">
+					<h4><?php esc_html_e( 'What is a Zoho Resource UID?', 'ajforms' ); ?></h4>
+					<p style="margin:0 0 6px"><?php esc_html_e( 'A Resource UID is only available if you have set up a Resource Calendar in Zoho (separate from a personal calendar). If you only have a regular calendar, skip this — the Resource UID field does not apply.', 'ajforms' ); ?></p>
+					<p style="margin:0"><strong><?php esc_html_e( 'To find it (if you have one):', 'ajforms' ); ?></strong></p>
+					<ol>
+						<li><?php esc_html_e( 'In Zoho Calendar, go to Settings → Resources.', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Click your Conference Room resource to open its detail.', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'The UID is shown in the detail panel, or retrieve it via API:', 'ajforms' ); ?> <code>GET https://calendar.zoho.com/api/v1/resources</code></li>
+					</ol>
+				</div>
+
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Zoho Resource UID', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="zoho_resource_uid" value="<?php echo esc_attr( $settings['zoho_resource_uid'] ?? '' ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'Leave blank if not using resource calendars', 'ajforms' ); ?>">
+							<p class="description"><?php esc_html_e( 'Only needed for the live free/busy check against a Zoho Resource Calendar.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
 					<tr>
 						<th><?php esc_html_e( 'Free/Busy API URL', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" name="zoho_resource_freebusy_url" value="<?php echo esc_attr( $settings['zoho_resource_freebusy_url'] ?? '' ); ?>" class="large-text">
-							<p class="description"><?php esc_html_e( 'Use {resourceuid} as a placeholder for the Zoho Resource UID, e.g. https://calendar.zoho.com/api/v1/resources/{resourceuid}/freebusy', 'ajforms' ); ?></p>
+							<input type="text" name="zoho_resource_freebusy_url" value="<?php echo esc_attr( $settings['zoho_resource_freebusy_url'] ?? '' ); ?>" class="large-text" placeholder="https://calendar.zoho.com/api/v1/resources/{resourceuid}/freebusy">
+							<p class="description"><?php esc_html_e( 'Use {resourceuid} as the placeholder — AJCore replaces it with the Resource UID above.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 				</table>
+			</div>
 
-				<hr>
-				<h3><?php esc_html_e( 'Zoho API Authentication', 'ajforms' ); ?></h3>
-				<p class="description"><?php esc_html_e( 'Zoho API token is stored in WordPress database only. It is never written to synced-settings.json or exposed in customer-facing pages.', 'ajforms' ); ?></p>
+			<!-- ── Zoho API Authentication (advanced) ────────────────────────── -->
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Zoho API Authentication', 'ajforms' ); ?> <span class="ajc-optional-badge"><?php esc_html_e( 'Optional – only needed for API mode', 'ajforms' ); ?></span></h3>
+
+				<div class="ajc-section-mode">
+					<strong><?php esc_html_e( 'Do you need an API token?', 'ajforms' ); ?></strong><br>
+					<?php esc_html_e( 'No — if you filled in the Schedule Appointment URL above, AJCore works without an API token. The URL-based mode sends customers to a prefilled Zoho appointment form after payment. The API token is only needed if you want AJCore to programmatically create Zoho calendar events without redirecting the customer, or to run live free/busy checks.', 'ajforms' ); ?>
+				</div>
+
+				<div class="ajc-helper-box">
+					<h4><?php esc_html_e( 'How to get a Zoho API token (if you need one)', 'ajforms' ); ?></h4>
+					<ol>
+						<li><?php esc_html_e( 'Go to Zoho API Console: https://api-console.zoho.com', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Create a Self Client (for server-to-server) or a Server-Based Application.', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Grant the scope: ZohoCalendar.event.CREATE and ZohoCalendar.calendar.READ', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Generate the access/refresh token and paste the access token below.', 'ajforms' ); ?></li>
+					</ol>
+					<p style="margin:6px 0 0;font-size:12px;color:#374151"><?php esc_html_e( 'Note: Zoho access tokens expire. For production use, implement a token refresh flow or use a long-lived self-client token.', 'ajforms' ); ?></p>
+				</div>
+
+				<p class="description" style="margin-bottom:10px"><?php esc_html_e( 'The API token is stored in the WordPress database only — never written to synced-settings.json or shown on any customer-facing page.', 'ajforms' ); ?></p>
 				<table class="form-table">
-					<tr>
-						<th><?php esc_html_e( 'API Auth Mode', 'ajforms' ); ?></th>
-						<td>
-							<input type="text" name="zoho_api_auth_mode" value="<?php echo esc_attr( $settings['zoho_api_auth_mode'] ?? '' ); ?>" class="regular-text" placeholder="e.g. bearer_token">
-						</td>
-					</tr>
 					<tr>
 						<th><?php esc_html_e( 'Zoho API Token', 'ajforms' ); ?></th>
 						<td>
-							<input type="password" name="zoho_api_token" value="<?php echo esc_attr( $settings['zoho_api_token'] ?? '' ); ?>" class="regular-text" autocomplete="new-password">
-							<p class="description"><?php esc_html_e( 'Bearer token for Zoho Calendar API. Leave blank to use URL-only (appointment link) mode.', 'ajforms' ); ?></p>
+							<input type="password" name="zoho_api_token" value="<?php echo esc_attr( $settings['zoho_api_token'] ?? '' ); ?>" class="regular-text" autocomplete="new-password" placeholder="<?php esc_attr_e( 'Leave blank to use URL-only mode', 'ajforms' ); ?>">
+							<p class="description"><?php esc_html_e( 'Bearer token for Zoho Calendar API. Leave blank to use appointment URL mode.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Test Zoho API Connection', 'ajforms' ); ?></th>
 						<td>
-							<button type="button" class="button" disabled><?php esc_html_e( 'Test Zoho Connection (coming soon)', 'ajforms' ); ?></button>
-							<p class="description"><?php esc_html_e( 'Save settings first, then test the connection.', 'ajforms' ); ?></p>
+							<button type="button" class="button" id="ajc-test-zoho-btn"
+								data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_test_zoho_connection' ) ); ?>">
+								<?php esc_html_e( 'Test Connection', 'ajforms' ); ?>
+							</button>
+							<span id="ajc-test-zoho-result" style="margin-left:10px;font-weight:600"></span>
+							<p class="description"><?php esc_html_e( 'Save settings first, then click Test. Requires a valid API Token above. Makes a read-only call to list your Zoho calendars.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 				</table>
@@ -19179,17 +19259,185 @@ class AJForms_Admin {
 				<p class="submit"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save Calendar Settings', 'ajforms' ); ?></button></p>
 			</div>
 
+			<!-- ── Appointment URL Tester ─────────────────────────────────────── -->
 			<div class="ajforms-settings-card">
-				<h3><?php esc_html_e( 'Booking Rules (Read-only)', 'ajforms' ); ?></h3>
+				<h3><?php esc_html_e( 'Test Appointment URL', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'Fill in sample values and click "Preview URL" to verify your Schedule Appointment URL is built correctly before going live. The link opens in a new tab so you can confirm the Zoho form pre-fills.', 'ajforms' ); ?></p>
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Sample Name', 'ajforms' ); ?></th>
+						<td><input type="text" id="ajc-test-name" class="regular-text" value="Jane Smith"></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Sample Email', 'ajforms' ); ?></th>
+						<td><input type="text" id="ajc-test-email" class="regular-text" value="jane@example.com"></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Sample Date', 'ajforms' ); ?></th>
+						<td><input type="date" id="ajc-test-date" class="regular-text" value="<?php echo esc_attr( gmdate( 'Y-m-d', strtotime( 'next monday' ) ) ); ?>"></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Sample Start Time', 'ajforms' ); ?></th>
+						<td>
+							<select id="ajc-test-time">
+								<?php for ( $h = 8; $h <= 21; $h++ ) : ?>
+									<option value="<?php echo esc_attr( sprintf( '%02d:00', $h ) ); ?>" <?php selected( $h, 10 ); ?>>
+										<?php echo esc_html( sprintf( '%02d:00', $h ) . ' (' . ( $h < 12 ? $h . ':00 AM' : ( 12 === $h ? '12:00 PM' : ( $h - 12 ) . ':00 PM' ) ) . ')' ); ?>
+									</option>
+								<?php endfor; ?>
+							</select>
+						</td>
+					</tr>
+				</table>
+				<p>
+					<button type="button" class="button" id="ajc-preview-url-btn"><?php esc_html_e( 'Preview URL', 'ajforms' ); ?></button>
+					&nbsp;
+					<a id="ajc-preview-url-link" href="#" target="_blank" rel="noopener" style="display:none;" class="button button-primary"><?php esc_html_e( 'Open Zoho Appointment Form →', 'ajforms' ); ?></a>
+				</p>
+				<p id="ajc-preview-url-display" style="word-break:break-all;font-size:12px;color:#555;display:none;"></p>
+			</div>
+
+			<!-- ── What to do next checklist ────────────────────────────────── -->
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Setup Checklist — What to Do After Saving', 'ajforms' ); ?></h3>
+				<?php
+				$appointment_url_set = ! empty( $settings['zoho_schedule_appointment_url'] );
+				$resource_name_set   = ! empty( $settings['reservation_resource_name'] );
+				$biz_label_set       = ! empty( $settings['reservation_business_hours_label'] );
+				$after_label_set     = ! empty( $settings['reservation_after_hours_label'] );
+				$enabled             = ! empty( $settings['zoho_reservations_enabled'] );
+				?>
+				<ol style="line-height:2">
+					<li <?php echo $enabled ? 'style="color:#166534"' : ''; ?>>
+						<?php echo $enabled ? '&#10003;' : '&#9675;'; ?>
+						<strong><?php esc_html_e( 'Enable reservations', 'ajforms' ); ?></strong> —
+						<?php esc_html_e( 'Check the "Enable Zoho Reservations" box and save.', 'ajforms' ); ?>
+					</li>
+					<li <?php echo $appointment_url_set ? 'style="color:#166534"' : ''; ?>>
+						<?php echo $appointment_url_set ? '&#10003;' : '&#9675;'; ?>
+						<strong><?php esc_html_e( 'Paste your Zoho Schedule Appointment URL', 'ajforms' ); ?></strong> —
+						<?php esc_html_e( 'Copy the "Web API for schedule appointment" URL from Zoho Calendar and paste it above.', 'ajforms' ); ?>
+					</li>
+					<li <?php echo ( $biz_label_set && $after_label_set ) ? 'style="color:#166534"' : ''; ?>>
+						<?php echo ( $biz_label_set && $after_label_set ) ? '&#10003;' : '&#9675;'; ?>
+						<strong><?php esc_html_e( 'Set pricing labels', 'ajforms' ); ?></strong> —
+						<?php esc_html_e( 'Fill in the Business Hours and After-Hours labels so customers see the right rate tier.', 'ajforms' ); ?>
+					</li>
+					<li>
+						&#9675; <strong><?php esc_html_e( 'Test the appointment URL', 'ajforms' ); ?></strong> —
+						<?php esc_html_e( 'Use the "Test Appointment URL" panel above to confirm the Zoho form pre-fills correctly.', 'ajforms' ); ?>
+					</li>
+					<li>
+						&#9675; <strong><?php esc_html_e( 'Add prices to your Resource in the Product Catalog', 'ajforms' ); ?></strong> —
+						<?php
+						$catalog_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) );
+						printf(
+							/* translators: %s: link to Product Catalog tab */
+							esc_html__( 'Go to %s, add or edit your Conference Room product, set it as a Reservation product, and enter the Stripe Business Hours Price ID and After-Hours Price ID.', 'ajforms' ),
+							'<a href="' . esc_url( $catalog_url ) . '">' . esc_html__( 'Product Catalog', 'ajforms' ) . '</a>'
+						);
+						?>
+					</li>
+					<li>
+						&#9675; <strong><?php esc_html_e( 'Test a booking end-to-end', 'ajforms' ); ?></strong> —
+						<?php esc_html_e( 'Log in as a test customer, go to the Reservations tab in the portal, pick a date and time, and complete a Stripe test payment. Then check the Reservations tab here to confirm the record appears.', 'ajforms' ); ?>
+					</li>
+				</ol>
+			</div>
+
+			<!-- ── Booking Rules reference ───────────────────────────────────── -->
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Booking Rules', 'ajforms' ); ?></h3>
 				<ul>
-					<li><?php esc_html_e( 'Booking window: 8:00 AM – 10:00 PM', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'Business hours: Monday–Friday, 9:00 AM – 5:00 PM', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'After-hours/weekend: Mon–Fri before 9 AM or after 5 PM, and all Saturday/Sunday', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Booking window: 8:00 AM – 10:00 PM daily', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Business hours (Mon–Fri 9:00 AM – 5:00 PM) → business hours rate', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'All other times within window (evenings, weekends) → after-hours rate', 'ajforms' ); ?></li>
 					<li><?php esc_html_e( 'Prepay only — no cancellation, no refund, no rescheduling', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'Pending reservations hold the slot for 15 minutes before expiring', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Pending reservations hold the slot for 15 minutes then expire', 'ajforms' ); ?></li>
 				</ul>
 			</div>
 		</form>
+
+		<script>
+		(function(){
+			// ── Zoho API connection test ──────────────────────────────────────
+			const testBtn    = document.getElementById('ajc-test-zoho-btn');
+			const testResult = document.getElementById('ajc-test-zoho-result');
+			if ( testBtn ) {
+				testBtn.addEventListener('click', function(){
+					testResult.textContent = '<?php echo esc_js( __( 'Testing…', 'ajforms' ) ); ?>';
+					testResult.style.color = '#555';
+					testBtn.disabled = true;
+					const fd = new FormData();
+					fd.append('action', 'ajcore_test_zoho_connection');
+					fd.append('nonce',  testBtn.dataset.nonce);
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+						method:'POST', credentials:'same-origin', body:fd
+					})
+					.then(r=>r.json())
+					.then(payload=>{
+						testBtn.disabled = false;
+						if ( payload.success ) {
+							testResult.textContent = '✓ ' + (payload.data && payload.data.message ? payload.data.message : '<?php echo esc_js( __( 'Connected successfully.', 'ajforms' ) ); ?>');
+							testResult.style.color = '#166534';
+						} else {
+							testResult.textContent = '✗ ' + ((payload.data && payload.data.message) || '<?php echo esc_js( __( 'Connection failed.', 'ajforms' ) ); ?>');
+							testResult.style.color = '#dc2626';
+						}
+					})
+					.catch(()=>{
+						testBtn.disabled = false;
+						testResult.textContent = '<?php echo esc_js( __( 'Request failed. Check your network.', 'ajforms' ) ); ?>';
+						testResult.style.color = '#dc2626';
+					});
+				});
+			}
+
+			// ── Appointment URL preview ───────────────────────────────────────
+			const previewBtn  = document.getElementById('ajc-preview-url-btn');
+			const previewLink = document.getElementById('ajc-preview-url-link');
+			const previewDisp = document.getElementById('ajc-preview-url-display');
+			if ( previewBtn ) {
+				previewBtn.addEventListener('click', function(){
+					const urlTemplate = document.querySelector('textarea[name="zoho_schedule_appointment_url"]').value.trim();
+					if ( ! urlTemplate ) {
+						previewDisp.textContent = '<?php echo esc_js( __( 'Enter the Schedule Appointment URL first.', 'ajforms' ) ); ?>';
+						previewDisp.style.display = 'block';
+						previewLink.style.display  = 'none';
+						return;
+					}
+					const name  = document.getElementById('ajc-test-name').value  || 'Jane Smith';
+					const email = document.getElementById('ajc-test-email').value || 'jane@example.com';
+					const rawDate = document.getElementById('ajc-test-date').value;
+					const time  = document.getElementById('ajc-test-time').value  || '10:00';
+
+					// Format date as MM/dd/yyyy.
+					let dateFmt = '';
+					if ( rawDate ) {
+						const parts = rawDate.split('-');
+						if ( parts.length === 3 ) { dateFmt = parts[1] + '/' + parts[2] + '/' + parts[0]; }
+					}
+					if ( ! dateFmt ) { dateFmt = '06/23/2026'; }
+
+					const replacements = {
+						'[name]':                    encodeURIComponent(name),
+						'[EmailId]':                 encodeURIComponent(email),
+						'[MM/dd/yyyy]':              encodeURIComponent(dateFmt),
+						'[13:00]':                   encodeURIComponent(time),
+						'[Reason for Appointment]':  encodeURIComponent('Conference Room Reservation'),
+					};
+					let url = urlTemplate;
+					for ( const [key, val] of Object.entries(replacements) ) {
+						url = url.split(key).join(val);
+					}
+					previewDisp.textContent      = url;
+					previewDisp.style.display    = 'block';
+					previewLink.href             = url;
+					previewLink.style.display    = 'inline-flex';
+				});
+			}
+		})();
+		</script>
 		<?php
 	}
 

@@ -930,6 +930,7 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_pay_portal_ledger', array( $this, 'ajax_pay_portal_ledger' ) );
 		add_action( 'wp_ajax_ajcore_reservation_check_availability', array( $this, 'ajax_reservation_check_availability' ) );
 		add_action( 'wp_ajax_ajcore_reservation_create_checkout', array( $this, 'ajax_reservation_create_checkout' ) );
+		add_action( 'wp_ajax_ajcore_test_zoho_connection', array( $this, 'ajax_test_zoho_connection' ) );
 	}
 
 	private function get_custom_login_logo_url() {
@@ -12368,6 +12369,56 @@ class AJForms {
 		) );
 
 		wp_send_json_success( array( 'checkout_url' => $checkout_url ) );
+	}
+
+	public function ajax_test_zoho_connection() {
+		check_ajax_referer( 'ajcore_test_zoho_connection', 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ) );
+		}
+
+		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$api_token = ! empty( $settings['zoho_api_token'] ) ? trim( $settings['zoho_api_token'] ) : '';
+
+		if ( '' === $api_token ) {
+			wp_send_json_error( array( 'message' => __( 'No API token saved. Save your token first, then test.', 'ajforms' ) ) );
+		}
+
+		$response = wp_remote_get(
+			'https://calendar.zoho.com/api/v1/calendars',
+			array(
+				'timeout' => 15,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $api_token,
+					'Accept'        => 'application/json',
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( array( 'message' => $response->get_error_message() ) );
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( 200 === (int) $code ) {
+			$count = 0;
+			if ( ! empty( $body['calendars'] ) && is_array( $body['calendars'] ) ) {
+				$count = count( $body['calendars'] );
+			}
+			wp_send_json_success( array(
+				'message' => sprintf(
+					/* translators: %d: number of calendars */
+					_n( 'Connected! Found %d calendar.', 'Connected! Found %d calendars.', $count, 'ajforms' ),
+					$count
+				),
+			) );
+		}
+
+		$err = ! empty( $body['message'] ) ? $body['message'] : sprintf( __( 'Zoho returned HTTP %d. Check your token.', 'ajforms' ), $code );
+		wp_send_json_error( array( 'message' => $err ) );
 	}
 
 	/**
