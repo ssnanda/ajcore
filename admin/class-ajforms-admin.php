@@ -4068,9 +4068,11 @@ class AJForms_Admin {
 
 		// Handle reservation payment before other checkout processing.
 		if ( 'checkout.session.completed' === $type && is_array( $object ) && class_exists( 'AJCore_Reservations' ) ) {
-			$session_meta     = ! empty( $object['metadata'] ) && is_array( $object['metadata'] ) ? $object['metadata'] : array();
-			$reservation_uuid = ! empty( $session_meta['reservation_uuid'] ) ? sanitize_text_field( (string) $session_meta['reservation_uuid'] ) : '';
-			if ( '' !== $reservation_uuid ) {
+			$session_meta      = ! empty( $object['metadata'] ) && is_array( $object['metadata'] ) ? $object['metadata'] : array();
+			$reservation_uuid  = ! empty( $session_meta['reservation_uuid'] )  ? sanitize_text_field( (string) $session_meta['reservation_uuid'] )  : '';
+			$reservation_uuids = ! empty( $session_meta['reservation_uuids'] ) ? sanitize_text_field( (string) $session_meta['reservation_uuids'] ) : '';
+			$is_reservation    = '' !== $reservation_uuid || '' !== $reservation_uuids;
+			if ( $is_reservation ) {
 				$res_settings    = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
 				$res_result      = AJCore_Reservations::handle_payment_success( $object['id'], $object, $res_settings );
 				$this->log_portal_event(
@@ -4078,10 +4080,11 @@ class AJForms_Admin {
 					array(
 						'source'  => 'webhook',
 						'details' => array(
-							'event_id'         => $event_id,
-							'reservation_uuid' => $reservation_uuid,
-							'session_id'       => $object['id'],
-							'error'            => is_wp_error( $res_result ) ? $res_result->get_error_message() : null,
+							'event_id'          => $event_id,
+							'reservation_uuid'  => $reservation_uuid,
+							'reservation_uuids' => $reservation_uuids,
+							'session_id'        => $object['id'],
+							'error'             => is_wp_error( $res_result ) ? $res_result->get_error_message() : null,
 						),
 					)
 				);

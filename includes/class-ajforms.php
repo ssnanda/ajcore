@@ -929,8 +929,13 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_cancel_portal_service_request', array( $this, 'ajax_cancel_portal_service_request' ) );
 		add_action( 'wp_ajax_ajcore_pay_portal_ledger', array( $this, 'ajax_pay_portal_ledger' ) );
 		add_action( 'wp_ajax_ajcore_reservation_check_availability', array( $this, 'ajax_reservation_check_availability' ) );
-		add_action( 'wp_ajax_ajcore_reservation_create_checkout', array( $this, 'ajax_reservation_create_checkout' ) );
-		add_action( 'wp_ajax_ajcore_reservation_request', array( $this, 'ajax_reservation_request' ) );
+		add_action( 'wp_ajax_ajcore_reservation_create_checkout',  array( $this, 'ajax_reservation_create_checkout' ) );
+		add_action( 'wp_ajax_ajcore_reservation_request',          array( $this, 'ajax_reservation_request' ) );
+		add_action( 'wp_ajax_ajcore_reservation_add_to_cart',      array( $this, 'ajax_reservation_add_to_cart' ) );
+		add_action( 'wp_ajax_ajcore_reservation_cart_checkout',    array( $this, 'ajax_reservation_cart_checkout' ) );
+		add_action( 'wp_ajax_ajcore_reservation_cart_remove',      array( $this, 'ajax_reservation_cart_remove' ) );
+		add_action( 'wp_ajax_ajcore_reservation_get_cart',         array( $this, 'ajax_reservation_get_cart' ) );
+		add_action( 'wp_ajax_ajcore_stripe_customer_portal',       array( $this, 'ajax_stripe_customer_portal' ) );
 		add_action( 'wp_ajax_ajcore_test_zoho_connection', array( $this, 'ajax_test_zoho_connection' ) );
 		add_action( 'wp_ajax_ajcore_get_reservation_events', array( $this, 'ajax_get_reservation_events' ) );
 		add_action( 'wp_ajax_nopriv_ajcore_get_reservation_events', array( $this, 'ajax_get_reservation_events' ) );
@@ -11711,10 +11716,14 @@ class AJForms {
 		}
 
 		ob_start();
-		$ajax_url    = esc_url( admin_url( 'admin-ajax.php' ) );
-		$check_nonce = wp_create_nonce( 'ajcore_reservation_check_availability' );
+		$ajax_url     = esc_url( admin_url( 'admin-ajax.php' ) );
+		$check_nonce  = wp_create_nonce( 'ajcore_reservation_check_availability' );
 		$chkout_nonce = wp_create_nonce( 'ajcore_reservation_create_checkout' );
-		$pub_key     = isset( $stripe_settings['publishable_key'] ) ? $stripe_settings['publishable_key'] : '';
+		$cart_nonce   = wp_create_nonce( 'ajcore_reservation_add_to_cart' );
+		$cart_chkout_nonce = wp_create_nonce( 'ajcore_reservation_cart_checkout' );
+		$remove_nonce = wp_create_nonce( 'ajcore_reservation_cart_remove' );
+		$portal_nonce = wp_create_nonce( 'ajcore_stripe_customer_portal' );
+		$pub_key      = isset( $stripe_settings['publishable_key'] ) ? $stripe_settings['publishable_key'] : '';
 		?>
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
 		<style>
@@ -11760,6 +11769,10 @@ class AJForms {
 			.aj-res-fc-wrap .fc{padding:6px}
 			.fc .fc-toolbar{flex-wrap:wrap;gap:6px}
 		}
+		/* Reservation Cart */
+		.aj-res-cart-item{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;font-size:13px}
+		.aj-res-cart-item .aj-res-cart-remove{background:none;border:none;color:#dc2626;cursor:pointer;font-size:12px;font-weight:600;padding:2px 6px;text-decoration:underline}
+		.aj-res-cart-total{font-size:13px;font-weight:700;text-align:right;padding:4px 0;color:#166534}
 		</style>
 		<section class="aj-customer-portal-panel aj-reservations-panel">
 			<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
@@ -11768,9 +11781,15 @@ class AJForms {
 					<p style="margin:0 0 2px;font-size:13px"><strong style="color:#dc2626"><?php esc_html_e( 'No cancellations, no rescheduling — reservations are final.', 'ajforms' ); ?></strong></p>
 					<p style="margin:0;font-size:13px;color:#334155"><?php esc_html_e( 'Virtual Office Clients get 2 free hours yearly.', 'ajforms' ); ?></p>
 				</div>
-				<button type="button" id="aj-res-new-btn" class="button button-primary" style="font-size:14px;padding:6px 16px">
-					<?php esc_html_e( '+ New Reservation', 'ajforms' ); ?>
-				</button>
+				<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+					<button type="button" id="aj-res-new-btn" class="button button-primary" style="font-size:14px;padding:6px 16px">
+						<?php esc_html_e( '+ New Reservation', 'ajforms' ); ?>
+					</button>
+					<button type="button" id="aj-res-billing-portal-btn" class="button" style="font-size:13px;padding:4px 12px"
+						data-portal-nonce="<?php echo esc_attr( $portal_nonce ); ?>">
+						<?php esc_html_e( 'Manage Payment Methods', 'ajforms' ); ?>
+					</button>
+				</div>
 			</div>
 
 			<!-- My Reservations — shown only when the customer has bookings -->
@@ -11815,12 +11834,29 @@ class AJForms {
 			</div>
 			<?php endif; // end: has reservations ?>
 
+			<!-- Reservation Cart (in_cart items for this user) -->
+			<div id="aj-res-cart-wrap" style="margin-bottom:16px;display:none">
+				<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+					<h3 style="margin:0;font-size:15px"><?php esc_html_e( 'Your Reservation Cart', 'ajforms' ); ?></h3>
+					<div style="display:flex;gap:8px">
+						<button type="button" id="aj-res-cart-checkout-btn" class="button button-primary" style="font-size:13px;padding:4px 14px"
+							data-checkout-nonce="<?php echo esc_attr( $cart_chkout_nonce ); ?>">
+							<?php esc_html_e( 'Checkout →', 'ajforms' ); ?>
+						</button>
+					</div>
+				</div>
+				<div id="aj-res-cart-items"></div>
+				<p id="aj-res-cart-msg" style="display:none;font-size:13px;margin:6px 0 0;color:#dc2626"></p>
+			</div>
+
 			<div class="aj-res-fc-wrap">
 				<div id="aj-res-fullcalendar"
 					data-timezone="<?php echo esc_attr( $timezone ); ?>"
 					data-resource-key="<?php echo esc_attr( $resource_key ); ?>"
 					data-check-nonce="<?php echo esc_attr( $check_nonce ); ?>"
 					data-checkout-nonce="<?php echo esc_attr( $chkout_nonce ); ?>"
+					data-cart-nonce="<?php echo esc_attr( $cart_nonce ); ?>"
+					data-remove-nonce="<?php echo esc_attr( $remove_nonce ); ?>"
 					data-publishable-key="<?php echo esc_attr( $pub_key ); ?>"
 					data-business-label="<?php echo esc_attr( $business_hours_label ); ?>"
 					data-after-label="<?php echo esc_attr( $after_hours_label ); ?>"
@@ -11852,8 +11888,8 @@ class AJForms {
 						<span><?php esc_html_e( 'Notes (optional)', 'ajforms' ); ?></span>
 						<textarea id="aj-res-field-notes" rows="3"></textarea>
 					</label>
-					<button type="button" class="button button-primary aj-res-pay-button" id="aj-res-pay-button"><?php esc_html_e( 'Pay Now →', 'ajforms' ); ?></button>
-					<span class="aj-res-spinner" id="aj-res-spinner"><?php esc_html_e( 'Redirecting to payment…', 'ajforms' ); ?></span>
+					<button type="button" class="button button-primary aj-res-pay-button" id="aj-res-pay-button"><?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></button>
+					<span class="aj-res-spinner" id="aj-res-spinner"><?php esc_html_e( 'Adding to cart…', 'ajforms' ); ?></span>
 					<p class="aj-res-error-msg" id="aj-res-error-msg"></p>
 					<div class="aj-res-success-msg" id="aj-res-success-msg" style="display:none"></div>
 				</div>
@@ -11882,6 +11918,8 @@ class AJForms {
 			var resourceKey   = calEl.dataset.resourceKey;
 			var checkNonce    = calEl.dataset.checkNonce;
 			var checkoutNonce = calEl.dataset.checkoutNonce;
+			var cartNonce     = calEl.dataset.cartNonce;
+			var removeNonce   = calEl.dataset.removeNonce;
 			var bizLabel      = calEl.dataset.businessLabel;
 			var afterLabel    = calEl.dataset.afterLabel;
 			var bizRate       = parseInt(calEl.dataset.bizRate, 10) || 40;
@@ -12016,7 +12054,7 @@ class AJForms {
 			overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
 			document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && overlay.style.display !== 'none') closeModal(); });
 
-			// ── Pay Now ─────────────────────────────────────────────────
+			// ── Add to Cart ─────────────────────────────────────────────
 			if (payBtn) {
 				payBtn.addEventListener('click', function() {
 					var name  = nameField.value.trim();
@@ -12038,8 +12076,8 @@ class AJForms {
 					payBtn.style.display = 'none';
 					spinner.style.display = 'block';
 					var fd = new FormData();
-					fd.append('action',         'ajcore_reservation_create_checkout');
-					fd.append('nonce',          checkoutNonce);
+					fd.append('action',         'ajcore_reservation_add_to_cart');
+					fd.append('nonce',          cartNonce);
 					fd.append('resource_key',   resourceKey);
 					fd.append('start_at',       selectedStartStr);
 					fd.append('end_at',         selectedEndStr);
@@ -12050,16 +12088,16 @@ class AJForms {
 					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: fd })
 					.then(function(r) { return r.json(); })
 					.then(function(payload) {
+						spinner.style.display = 'none';
+						payBtn.disabled = false;
+						payBtn.style.display = 'block';
 						if (!payload.success) {
-							spinner.style.display = 'none';
-							payBtn.disabled = false;
-							payBtn.style.display = 'block';
-							errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to start checkout. Please try again.', 'ajforms' ) ); ?>';
+							errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to add to cart. Please try again.', 'ajforms' ) ); ?>';
 							errMsg.style.display = 'block';
 							return;
 						}
-						// Redirect to Stripe checkout.
-						window.location.href = payload.data.checkout_url;
+						closeModal();
+						loadCart();
 					})
 					.catch(function() {
 						spinner.style.display = 'none';
@@ -12070,6 +12108,127 @@ class AJForms {
 					});
 				});
 			}
+
+			// ── Cart functions ───────────────────────────────────────────
+			function loadCart() {
+				fetch(ajaxUrl + '?' + new URLSearchParams({action: 'ajcore_reservation_get_cart', nonce: cartNonce}), {credentials: 'same-origin'})
+				.then(function(r) { return r.json(); })
+				.then(function(payload) {
+					var items = (payload.success && payload.data && payload.data.items) ? payload.data.items : [];
+					renderCart(items);
+				})
+				.catch(function() { /* silently fail cart load */ });
+			}
+
+			function renderCart(items) {
+				var cartWrap  = document.getElementById('aj-res-cart-wrap');
+				var cartItems = document.getElementById('aj-res-cart-items');
+				if (!cartWrap || !cartItems) return;
+				if (!items || items.length === 0) {
+					cartWrap.style.display = 'none';
+					cartItems.innerHTML = '';
+					return;
+				}
+				cartWrap.style.display = 'block';
+				var html = '';
+				var grandTotal = 0;
+				for (var i = 0; i < items.length; i++) {
+					var it = items[i];
+					grandTotal += (it.total || 0);
+					html += '<div class="aj-res-cart-item">' +
+						'<div>' +
+							'<strong>' + escH(it.date || '') + '</strong><br>' +
+							'<span style="color:#64748b">' + escH(it.time || '') + '</span><br>' +
+							'<span style="color:#64748b">' + escH(it.label || '') + ' &mdash; ' + (it.hours || 0) + ' hr &times; $' + (it.rate || 0) + '/hr</span>' +
+						'</div>' +
+						'<div style="display:flex;align-items:center;gap:10px">' +
+							'<strong style="color:#166534">$' + (it.total || 0) + '</strong>' +
+							'<button type="button" class="aj-res-cart-remove" data-uuid="' + escH(it.uuid || '') + '">' +
+								'<?php echo esc_js( __( 'Remove', 'ajforms' ) ); ?>' +
+							'</button>' +
+						'</div>' +
+					'</div>';
+				}
+				html += '<div class="aj-res-cart-total"><?php echo esc_js( __( 'Total', 'ajforms' ) ); ?>: $' + grandTotal + '</div>';
+				cartItems.innerHTML = html;
+				// Attach remove handlers.
+				var removeBtns = cartItems.querySelectorAll('.aj-res-cart-remove');
+				for (var j = 0; j < removeBtns.length; j++) {
+					removeBtns[j].addEventListener('click', function() {
+						var uuid = this.dataset.uuid;
+						this.disabled = true;
+						var fd = new FormData();
+						fd.append('action',            'ajcore_reservation_cart_remove');
+						fd.append('nonce',             removeNonce);
+						fd.append('reservation_uuid',  uuid);
+						fetch(ajaxUrl, {method: 'POST', credentials: 'same-origin', body: fd})
+						.then(function(r) { return r.json(); })
+						.then(function(payload) {
+							var newItems = (payload.success && payload.data && payload.data.items) ? payload.data.items : [];
+							renderCart(newItems);
+						})
+						.catch(function() { loadCart(); });
+					});
+				}
+			}
+
+			// ── Cart Checkout button ─────────────────────────────────────
+			var cartCheckoutBtn = document.getElementById('aj-res-cart-checkout-btn');
+			if (cartCheckoutBtn) {
+				var cartCheckoutNonce = cartCheckoutBtn.dataset.checkoutNonce;
+				cartCheckoutBtn.addEventListener('click', function() {
+					cartCheckoutBtn.disabled = true;
+					var cartMsg = document.getElementById('aj-res-cart-msg');
+					if (cartMsg) cartMsg.style.display = 'none';
+					var fd = new FormData();
+					fd.append('action', 'ajcore_reservation_cart_checkout');
+					fd.append('nonce',  cartCheckoutNonce);
+					fetch(ajaxUrl, {method: 'POST', credentials: 'same-origin', body: fd})
+					.then(function(r) { return r.json(); })
+					.then(function(payload) {
+						cartCheckoutBtn.disabled = false;
+						if (!payload.success) {
+							if (cartMsg) {
+								cartMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Checkout failed.', 'ajforms' ) ); ?>';
+								cartMsg.style.display = 'block';
+							}
+							return;
+						}
+						window.location.href = payload.data.checkout_url;
+					})
+					.catch(function() {
+						cartCheckoutBtn.disabled = false;
+						if (cartMsg) {
+							cartMsg.textContent = '<?php echo esc_js( __( 'Network error. Please try again.', 'ajforms' ) ); ?>';
+							cartMsg.style.display = 'block';
+						}
+					});
+				});
+			}
+
+			// ── Manage Payment Methods (Stripe Customer Portal) ──────────
+			var billingBtn = document.getElementById('aj-res-billing-portal-btn');
+			if (billingBtn) {
+				var portalNonceVal = billingBtn.dataset.portalNonce;
+				billingBtn.addEventListener('click', function() {
+					billingBtn.disabled = true;
+					var fd = new FormData();
+					fd.append('action', 'ajcore_stripe_customer_portal');
+					fd.append('nonce',  portalNonceVal);
+					fetch(ajaxUrl, {method: 'POST', credentials: 'same-origin', body: fd})
+					.then(function(r) { return r.json(); })
+					.then(function(payload) {
+						billingBtn.disabled = false;
+						if (payload.success && payload.data && payload.data.portal_url) {
+							window.location.href = payload.data.portal_url;
+						}
+					})
+					.catch(function() { billingBtn.disabled = false; });
+				});
+			}
+
+			// Load cart on page load.
+			loadCart();
 
 	// ── Helpers ─────────────────────────────────────────────────
 	function getLocalHour(iso) {
@@ -12104,11 +12263,28 @@ class AJForms {
 
 	// "New Reservation" button — smooth-scrolls to the calendar
 	(function(){
-		var newBtn = document.getElementById('aj-res-new-btn');
+		var newBtn     = document.getElementById('aj-res-new-btn');
+		var calHint    = null;
+		var calHintTimer = null;
 		if ( newBtn ) {
 			newBtn.addEventListener('click', function(){
-				var cal = document.getElementById('aj-res-fullcalendar');
-				if ( cal ) { cal.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+				var wrap = document.querySelector('.aj-res-fc-wrap');
+				if ( wrap ) { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+				// Show a hint banner above the calendar if no slot is selected yet.
+				if ( !selectedStartStr ) {
+					if ( !calHint ) {
+						calHint = document.createElement('p');
+						calHint.style.cssText = 'margin:0 0 8px;padding:8px 14px;background:#fef9c3;border:1px solid #fde047;border-radius:8px;font-size:13px;font-weight:600;color:#713f12;transition:opacity .4s';
+						calHint.textContent = '<?php echo esc_js( __( 'Click and drag on the calendar below to select your time slot first, then fill in your details.', 'ajforms' ) ); ?>';
+						if ( wrap ) { wrap.parentNode.insertBefore( calHint, wrap ); }
+					}
+					calHint.style.opacity = '1';
+					if ( calHintTimer ) clearTimeout( calHintTimer );
+					calHintTimer = setTimeout(function(){
+						calHint.style.opacity = '0';
+						setTimeout(function(){ if(calHint){ calHint.parentNode && calHint.parentNode.removeChild(calHint); calHint = null; } }, 450);
+					}, 4000);
+				}
 			});
 		}
 	})();
@@ -12601,6 +12777,510 @@ class AJForms {
 		) );
 
 		wp_send_json_success( array( 'checkout_url' => $checkout_url ) );
+	}
+
+	// =========================================================================
+	// Cart AJAX Handlers
+	// =========================================================================
+
+	/**
+	 * Add a reservation slot to the cart (status: in_cart).
+	 */
+	public function ajax_reservation_add_to_cart() {
+		check_ajax_referer( 'ajcore_reservation_add_to_cart', 'nonce' );
+
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( array( 'message' => __( 'You must be logged in to make a reservation.', 'ajforms' ) ) );
+		}
+
+		$resource_key   = isset( $_POST['resource_key'] ) ? sanitize_key( wp_unslash( $_POST['resource_key'] ) ) : '';
+		$start_at_raw   = isset( $_POST['start_at'] ) ? sanitize_text_field( wp_unslash( $_POST['start_at'] ) ) : '';
+		$end_at_raw     = isset( $_POST['end_at'] ) ? sanitize_text_field( wp_unslash( $_POST['end_at'] ) ) : '';
+		$customer_name  = isset( $_POST['customer_name'] ) ? sanitize_text_field( wp_unslash( $_POST['customer_name'] ) ) : '';
+		$customer_email = isset( $_POST['customer_email'] ) ? sanitize_email( wp_unslash( $_POST['customer_email'] ) ) : '';
+		$customer_phone = isset( $_POST['customer_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['customer_phone'] ) ) : '';
+		$customer_notes = isset( $_POST['customer_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['customer_notes'] ) ) : '';
+
+		if ( ! $resource_key || ! $start_at_raw || ! $end_at_raw || ! $customer_name || ! $customer_email || ! $customer_phone ) {
+			wp_send_json_error( array( 'message' => __( 'Missing required fields.', 'ajforms' ) ) );
+		}
+
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Reservation system unavailable.', 'ajforms' ) ) );
+		}
+
+		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$timezone  = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$wp_user_id = get_current_user_id();
+
+		try {
+			$start_dt = $this->parse_reservation_datetime_to_utc( $start_at_raw, $timezone );
+			$end_dt   = $this->parse_reservation_datetime_to_utc( $end_at_raw, $timezone );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => __( 'Invalid date/time format.', 'ajforms' ) ) );
+		}
+
+		$whole_hour_check = $this->validate_reservation_whole_hour_slot( $start_dt, $end_dt, $timezone );
+		if ( is_wp_error( $whole_hour_check ) ) {
+			wp_send_json_error( array( 'message' => $whole_hour_check->get_error_message() ) );
+		}
+
+		$start_at_utc = $start_dt->format( 'Y-m-d H:i:s' );
+		$end_at_utc   = $end_dt->format( 'Y-m-d H:i:s' );
+
+		$window_check = AJCore_Reservations::validate_booking_window( $start_at_utc, $end_at_utc, $timezone );
+		if ( is_wp_error( $window_check ) ) {
+			wp_send_json_error( array( 'message' => $window_check->get_error_message() ) );
+		}
+
+		$resource = $this->get_configured_reservation_resource( $resource_key, $settings );
+		if ( ! $resource ) {
+			wp_send_json_error( array( 'message' => __( 'Resource not found.', 'ajforms' ) ) );
+		}
+
+		$conflict = AJCore_Reservations::check_local_conflict( (int) $resource->id, $start_at_utc, $end_at_utc, '' );
+		if ( is_wp_error( $conflict ) ) {
+			wp_send_json_error( array( 'message' => $conflict->get_error_message() ) );
+		}
+
+		$availability = $this->get_reservation_slot_availability( $resource, $start_dt, $end_dt, $timezone, $settings );
+		if ( empty( $availability['available'] ) ) {
+			wp_send_json_error( array( 'message' => ! empty( $availability['message'] ) ? $availability['message'] : __( 'This slot is not available.', 'ajforms' ) ) );
+		}
+
+		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
+
+		$biz_rate_dollars   = max( 1, (int) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate_dollars = max( 1, (int) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+		$unit_rate_dollars  = 'business_hours' === $pricing_type ? $biz_rate_dollars : $after_rate_dollars;
+		$duration_hours     = (int) round( ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) / 3600 );
+		$duration_hours     = max( 1, min( 14, $duration_hours ) );
+		$total_amount       = $unit_rate_dollars * $duration_hours;
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$stored_notes       = trim( sprintf( "Phone: %s\n%s", $customer_phone, $customer_notes ) );
+
+		// Create the reservation record (initially pending_payment).
+		$pending = AJCore_Reservations::create_pending_reservation( array(
+			'resource_id'       => (int) $resource->id,
+			'resource_key'      => sanitize_key( (string) $resource->resource_key ),
+			'resource_name'     => sanitize_text_field( (string) $resource->resource_name ),
+			'stripe_customer_id'=> $stripe_customer_id,
+			'wp_user_id'        => $wp_user_id,
+			'start_at'          => $start_at_utc,
+			'end_at'            => $end_at_utc,
+			'timezone'          => $timezone,
+			'pricing_type'      => $pricing_type,
+			'amount'            => $total_amount,
+			'currency'          => 'usd',
+			'customer_name'     => $customer_name,
+			'customer_email'    => $customer_email,
+			'customer_notes'    => $stored_notes,
+			'zoho_calendar_id'  => ! empty( $settings['zoho_calendar_id'] ) ? $settings['zoho_calendar_id'] : '',
+			'zoho_resource_uid' => ! empty( $settings['zoho_resource_uid'] ) ? $settings['zoho_resource_uid'] : '',
+		) );
+
+		if ( is_wp_error( $pending ) ) {
+			wp_send_json_error( array( 'message' => $pending->get_error_message() ) );
+		}
+
+		// Immediately update status to 'in_cart'.
+		global $wpdb;
+		$res_table = AJCore_Reservations::get_reservations_table();
+		$wpdb->update(
+			$res_table,
+			array( 'status' => 'in_cart', 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => (int) $pending['id'] ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+
+		AJCore_Reservations::log_reservation_event(
+			'reservation_added_to_cart',
+			array(
+				'reservation_uuid'   => $pending['reservation_uuid'],
+				'reservation_id'     => $pending['id'],
+				'stripe_customer_id' => $stripe_customer_id,
+				'wp_user_id'         => $wp_user_id,
+				'resource_key'       => $resource_key,
+				'pricing_type'       => $pricing_type,
+				'start_at'           => $start_at_utc,
+				'end_at'             => $end_at_utc,
+			)
+		);
+
+		$cart_items = AJCore_Reservations::get_cart_reservations( $stripe_customer_id, $wp_user_id );
+
+		wp_send_json_success( array(
+			'cart_count' => count( $cart_items ),
+			'message'    => __( 'Added to cart!', 'ajforms' ),
+		) );
+	}
+
+	/**
+	 * Get cart items formatted for JS rendering.
+	 */
+	public function ajax_reservation_get_cart() {
+		check_ajax_referer( 'ajcore_reservation_add_to_cart', 'nonce' );
+
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( array( 'message' => __( 'Not logged in.', 'ajforms' ) ) );
+		}
+
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			wp_send_json_success( array( 'items' => array() ) );
+		}
+
+		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$timezone   = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$wp_user_id = get_current_user_id();
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+
+		$items     = AJCore_Reservations::get_cart_reservations( $stripe_customer_id, $wp_user_id );
+		$formatted = array();
+		$biz_rate  = max( 1, (int) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate = max( 1, (int) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+
+		foreach ( $items as $item ) {
+			$item  = (array) $item;
+			$rate  = 'business_hours' === $item['pricing_type'] ? $biz_rate : $after_rate;
+			try {
+				$start = new DateTime( $item['start_at'], new DateTimeZone( 'UTC' ) );
+				$end   = new DateTime( $item['end_at'], new DateTimeZone( 'UTC' ) );
+				$start->setTimezone( new DateTimeZone( $timezone ) );
+				$end->setTimezone( new DateTimeZone( $timezone ) );
+			} catch ( Exception $e ) {
+				continue;
+			}
+			$hours = max( 1, (int) round( ( $end->getTimestamp() - $start->getTimestamp() ) / 3600 ) );
+			$total = $hours * $rate;
+			$formatted[] = array(
+				'uuid'  => $item['reservation_uuid'],
+				'date'  => $start->format( 'M j, Y' ),
+				'time'  => $start->format( 'g:i A' ) . ' – ' . $end->format( 'g:i A T' ),
+				'hours' => $hours,
+				'rate'  => $rate,
+				'total' => $total,
+				'label' => 'business_hours' === $item['pricing_type']
+					? ( $settings['reservation_business_hours_label'] ?? 'Business Hours' )
+					: ( $settings['reservation_after_hours_label'] ?? 'After-Hours / Weekend' ),
+			);
+		}
+
+		wp_send_json_success( array( 'items' => $formatted ) );
+	}
+
+	/**
+	 * Remove a reservation from the cart.
+	 */
+	public function ajax_reservation_cart_remove() {
+		check_ajax_referer( 'ajcore_reservation_cart_remove', 'nonce' );
+
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( array( 'message' => __( 'Not logged in.', 'ajforms' ) ) );
+		}
+
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Reservation system unavailable.', 'ajforms' ) ) );
+		}
+
+		$uuid = isset( $_POST['reservation_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_uuid'] ) ) : '';
+		if ( '' === $uuid ) {
+			wp_send_json_error( array( 'message' => __( 'Missing reservation ID.', 'ajforms' ) ) );
+		}
+
+		global $wpdb;
+		$res_table  = AJCore_Reservations::get_reservations_table();
+		$wp_user_id = get_current_user_id();
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+
+		// Verify the reservation belongs to this user and is in_cart.
+		$reservation = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM `{$res_table}` WHERE reservation_uuid = %s AND status = 'in_cart' AND (wp_user_id = %d OR stripe_customer_id = %s) LIMIT 1",
+				$uuid, $wp_user_id, $stripe_customer_id
+			)
+		);
+
+		if ( ! $reservation ) {
+			wp_send_json_error( array( 'message' => __( 'Reservation not found or already removed.', 'ajforms' ) ) );
+		}
+
+		$wpdb->delete( $res_table, array( 'id' => (int) $reservation->id ), array( '%d' ) );
+
+		AJCore_Reservations::log_reservation_event(
+			'reservation_removed_from_cart',
+			array(
+				'reservation_uuid'   => $uuid,
+				'reservation_id'     => $reservation->id,
+				'stripe_customer_id' => $stripe_customer_id,
+				'wp_user_id'         => $wp_user_id,
+			)
+		);
+
+		// Return updated cart.
+		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$timezone   = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$items      = AJCore_Reservations::get_cart_reservations( $stripe_customer_id, $wp_user_id );
+		$formatted  = array();
+		$biz_rate   = max( 1, (int) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate = max( 1, (int) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+
+		foreach ( $items as $item ) {
+			$item = (array) $item;
+			$rate = 'business_hours' === $item['pricing_type'] ? $biz_rate : $after_rate;
+			try {
+				$start = new DateTime( $item['start_at'], new DateTimeZone( 'UTC' ) );
+				$end   = new DateTime( $item['end_at'], new DateTimeZone( 'UTC' ) );
+				$start->setTimezone( new DateTimeZone( $timezone ) );
+				$end->setTimezone( new DateTimeZone( $timezone ) );
+			} catch ( Exception $e ) {
+				continue;
+			}
+			$hours = max( 1, (int) round( ( $end->getTimestamp() - $start->getTimestamp() ) / 3600 ) );
+			$formatted[] = array(
+				'uuid'  => $item['reservation_uuid'],
+				'date'  => $start->format( 'M j, Y' ),
+				'time'  => $start->format( 'g:i A' ) . ' – ' . $end->format( 'g:i A T' ),
+				'hours' => $hours,
+				'rate'  => $rate,
+				'total' => $hours * $rate,
+				'label' => 'business_hours' === $item['pricing_type']
+					? ( $settings['reservation_business_hours_label'] ?? 'Business Hours' )
+					: ( $settings['reservation_after_hours_label'] ?? 'After-Hours / Weekend' ),
+			);
+		}
+
+		wp_send_json_success( array( 'items' => $formatted ) );
+	}
+
+	/**
+	 * Cart checkout: build one Stripe session for all in_cart items.
+	 */
+	public function ajax_reservation_cart_checkout() {
+		check_ajax_referer( 'ajcore_reservation_cart_checkout', 'nonce' );
+
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( array( 'message' => __( 'You must be logged in to checkout.', 'ajforms' ) ) );
+		}
+
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Reservation system unavailable.', 'ajforms' ) ) );
+		}
+
+		$settings           = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$timezone           = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$wp_user_id         = get_current_user_id();
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+
+		$cart_items = AJCore_Reservations::get_cart_reservations( $stripe_customer_id, $wp_user_id );
+
+		if ( empty( $cart_items ) ) {
+			wp_send_json_error( array( 'message' => __( 'Your cart is empty.', 'ajforms' ) ) );
+		}
+
+		$biz_rate   = max( 1, (int) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate = max( 1, (int) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+		$biz_label  = ! empty( $settings['reservation_business_hours_label'] ) ? $settings['reservation_business_hours_label'] : 'Business Hours';
+		$aft_label  = ! empty( $settings['reservation_after_hours_label'] ) ? $settings['reservation_after_hours_label'] : 'After-Hours / Weekend';
+		$res_name   = ! empty( $settings['reservation_resource_name'] ) ? $settings['reservation_resource_name'] : __( 'Conference Room', 'ajforms' );
+
+		global $wpdb;
+		$res_table  = AJCore_Reservations::get_reservations_table();
+		$line_items = array();
+		$uuids      = array();
+
+		foreach ( $cart_items as $item ) {
+			$item_uuid = sanitize_text_field( (string) $item->reservation_uuid );
+
+			// Re-check availability, excluding itself.
+			$start_at_utc = sanitize_text_field( (string) $item->start_at );
+			$end_at_utc   = sanitize_text_field( (string) $item->end_at );
+			$resource_id  = (int) $item->resource_id;
+
+			$conflict = AJCore_Reservations::check_local_conflict( $resource_id, $start_at_utc, $end_at_utc, $item_uuid );
+			if ( is_wp_error( $conflict ) ) {
+				wp_send_json_error( array( 'message' => sprintf(
+					/* translators: %s reservation reference */
+					__( 'A slot in your cart is no longer available: %s. Please remove it and try again.', 'ajforms' ),
+					$start_at_utc
+				) ) );
+			}
+
+			$pricing_type       = sanitize_key( (string) $item->pricing_type );
+			$unit_rate_dollars  = 'business_hours' === $pricing_type ? $biz_rate : $after_rate;
+			$unit_amount_cents  = $unit_rate_dollars * 100;
+			$rate_label         = 'business_hours' === $pricing_type ? $biz_label : $aft_label;
+
+			try {
+				$start_dt = new DateTime( $start_at_utc, new DateTimeZone( 'UTC' ) );
+				$end_dt   = new DateTime( $end_at_utc, new DateTimeZone( 'UTC' ) );
+			} catch ( Exception $e ) {
+				continue;
+			}
+			$duration_hours = (int) round( ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) / 3600 );
+			$duration_hours = max( 1, min( 14, $duration_hours ) );
+
+			$start_dt->setTimezone( new DateTimeZone( $timezone ) );
+			$date_label = $start_dt->format( 'M j, Y g:i A' );
+
+			$line_items[] = array(
+				'price_data' => array(
+					'currency'     => 'usd',
+					'unit_amount'  => $unit_amount_cents,
+					'product_data' => array(
+						'name' => sprintf( '%s — %s — %s', $res_name, $rate_label, $date_label ),
+					),
+				),
+				'quantity' => $duration_hours,
+			);
+			$uuids[] = $item_uuid;
+		}
+
+		if ( empty( $line_items ) ) {
+			wp_send_json_error( array( 'message' => __( 'No valid items in cart.', 'ajforms' ) ) );
+		}
+
+		$stripe_settings = $this->get_stripe_settings();
+		$secret_key      = ! empty( $stripe_settings['secret_key'] ) ? $stripe_settings['secret_key'] : '';
+		if ( ! $secret_key ) {
+			wp_send_json_error( array( 'message' => __( 'Payment gateway is not configured.', 'ajforms' ) ) );
+		}
+
+		$portal_url  = $this->get_customer_portal_url();
+		$success_url = add_query_arg( array( 'portal_tab' => 'reservations', 'res_success' => '1' ), $portal_url );
+		$cancel_url  = add_query_arg( array( 'portal_tab' => 'reservations', 'res_cancel' => '1' ), $portal_url );
+
+		$uuids_str = implode( ',', $uuids );
+
+		$checkout_payload = array(
+			'payment_method_types' => array( 'card' ),
+			'mode'                 => 'payment',
+			'line_items'           => $line_items,
+			'success_url'          => $success_url,
+			'cancel_url'           => $cancel_url,
+			'metadata'             => array(
+				'reservation_uuids' => $uuids_str,
+				'ajcore_source'     => 'reservation_cart',
+			),
+		);
+
+		if ( $stripe_customer_id && 0 === strpos( $stripe_customer_id, 'cus_' ) ) {
+			$checkout_payload['customer'] = $stripe_customer_id;
+		} else {
+			$first_item = (array) $cart_items[0];
+			$checkout_payload['customer_email'] = sanitize_email( (string) ( $first_item['customer_email'] ?? '' ) );
+		}
+
+		$response = wp_remote_post(
+			'https://api.stripe.com/v1/checkout/sessions',
+			array(
+				'timeout' => 20,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $secret_key,
+					'Content-Type'  => 'application/x-www-form-urlencoded',
+				),
+				'body' => $this->flatten_array_for_stripe( $checkout_payload ),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( array( 'message' => __( 'Payment gateway error. Please try again.', 'ajforms' ) ) );
+		}
+
+		$code         = wp_remote_retrieve_response_code( $response );
+		$body         = json_decode( wp_remote_retrieve_body( $response ), true );
+		$session_id   = ! empty( $body['id'] ) ? sanitize_text_field( (string) $body['id'] ) : '';
+		$checkout_url = ! empty( $body['url'] ) ? esc_url_raw( $body['url'] ) : '';
+
+		if ( 200 !== (int) $code || ! $session_id || ! $checkout_url ) {
+			$err_msg = ! empty( $body['error']['message'] ) ? $body['error']['message'] : __( 'Could not create checkout session.', 'ajforms' );
+			wp_send_json_error( array( 'message' => $err_msg ) );
+		}
+
+		// Update all cart reservations to pending_payment and attach session_id.
+		foreach ( $uuids as $uuid ) {
+			$wpdb->update(
+				$res_table,
+				array(
+					'status'                     => 'pending_payment',
+					'stripe_checkout_session_id' => $session_id,
+					'updated_at'                 => current_time( 'mysql' ),
+				),
+				array( 'reservation_uuid' => $uuid ),
+				array( '%s', '%s', '%s' ),
+				array( '%s' )
+			);
+		}
+
+		AJCore_Reservations::log_reservation_event(
+			'reservation_cart_checkout_started',
+			array(
+				'reservation_uuids'          => $uuids_str,
+				'stripe_customer_id'         => $stripe_customer_id,
+				'wp_user_id'                 => $wp_user_id,
+				'stripe_checkout_session_id' => $session_id,
+				'item_count'                 => count( $uuids ),
+			)
+		);
+
+		wp_send_json_success( array( 'checkout_url' => $checkout_url ) );
+	}
+
+	/**
+	 * Open the Stripe Customer Portal (lets users manage payment methods).
+	 *
+	 * Note: Requires the Stripe Customer Portal to be configured in the Stripe
+	 * Dashboard (Stripe > Settings > Customer Portal) before use.
+	 */
+	public function ajax_stripe_customer_portal() {
+		check_ajax_referer( 'ajcore_stripe_customer_portal', 'nonce' );
+
+		if ( ! is_user_logged_in() ) {
+			wp_send_json_error( array( 'message' => __( 'Not logged in.', 'ajforms' ) ) );
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( ! $stripe_customer_id || 0 !== strpos( $stripe_customer_id, 'cus_' ) ) {
+			wp_send_json_error( array( 'message' => __( 'No payment account found for this user.', 'ajforms' ) ) );
+		}
+
+		$stripe_settings = $this->get_stripe_settings();
+		$secret_key      = ! empty( $stripe_settings['secret_key'] ) ? $stripe_settings['secret_key'] : '';
+		if ( ! $secret_key ) {
+			wp_send_json_error( array( 'message' => __( 'Payment gateway is not configured.', 'ajforms' ) ) );
+		}
+
+		$return_url = $this->get_customer_portal_url();
+
+		$response = wp_remote_post(
+			'https://api.stripe.com/v1/billing_portal/sessions',
+			array(
+				'timeout' => 20,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $secret_key,
+					'Content-Type'  => 'application/x-www-form-urlencoded',
+				),
+				'body' => array(
+					'customer'   => $stripe_customer_id,
+					'return_url' => $return_url,
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( array( 'message' => __( 'Could not open billing portal. Please try again.', 'ajforms' ) ) );
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( 200 !== (int) $code || empty( $body['url'] ) ) {
+			$err_msg = ! empty( $body['error']['message'] ) ? $body['error']['message'] : __( 'Could not open billing portal.', 'ajforms' );
+			wp_send_json_error( array( 'message' => $err_msg ) );
+		}
+
+		wp_send_json_success( array( 'portal_url' => esc_url_raw( (string) $body['url'] ) ) );
 	}
 
 	public function ajax_test_zoho_connection() {

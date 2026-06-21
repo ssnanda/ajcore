@@ -157,7 +157,7 @@ class AJCore_Reservations {
 			 FROM `{$table}`
 			 WHERE (
 			     status IN ({$status_placeholders})
-			     OR (status = 'pending_payment' AND created_at >= %s)
+			     OR (status IN ('pending_payment', 'in_cart') AND created_at >= %s)
 			 )
 			 AND resource_id = %d
 			 AND start_at < %s
@@ -348,26 +348,38 @@ class AJCore_Reservations {
 
 		$table = self::get_reservations_table();
 
-		$reservation = $wpdb->get_row(
+		// First try: look up all reservations by stripe_checkout_session_id.
+		$reservations = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM `{$table}` WHERE stripe_checkout_session_id = %s LIMIT 1",
+				"SELECT * FROM `{$table}` WHERE stripe_checkout_session_id = %s",
 				sanitize_text_field( (string) $session_id )
 			)
 		);
 
-		if ( ! $reservation ) {
-			$uuid = isset( $session['metadata']['reservation_uuid'] ) ? sanitize_text_field( (string) $session['metadata']['reservation_uuid'] ) : '';
-			if ( '' !== $uuid ) {
-				$reservation = $wpdb->get_row(
-					$wpdb->prepare(
-						"SELECT * FROM `{$table}` WHERE reservation_uuid = %s LIMIT 1",
-						$uuid
-					)
-				);
+		if ( empty( $reservations ) ) {
+			// Fallback: look up by reservation_uuids in metadata (cart checkout).
+			$uuids_raw = isset( $session['metadata']['reservation_uuids'] ) ? sanitize_text_field( (string) $session['metadata']['reservation_uuids'] ) : '';
+			if ( '' !== $uuids_raw ) {
+				$uuids = array_filter( array_map( 'trim', explode( ',', $uuids_raw ) ) );
+				if ( ! empty( $uuids ) ) {
+					$placeholders = implode( ',', array_fill( 0, count( $uuids ), '%s' ) );
+					$reservations = $wpdb->get_results(
+						$wpdb->prepare( "SELECT * FROM `{$table}` WHERE reservation_uuid IN ({$placeholders})", $uuids )
+					);
+				}
+			}
+			// Legacy single-UUID fallback.
+			if ( empty( $reservations ) ) {
+				$uuid = isset( $session['metadata']['reservation_uuid'] ) ? sanitize_text_field( (string) $session['metadata']['reservation_uuid'] ) : '';
+				if ( '' !== $uuid ) {
+					$reservations = $wpdb->get_results(
+						$wpdb->prepare( "SELECT * FROM `{$table}` WHERE reservation_uuid = %s LIMIT 1", $uuid )
+					);
+				}
 			}
 		}
 
-		if ( ! $reservation ) {
+		if ( empty( $reservations ) ) {
 			return new WP_Error( 'reservation_not_found', __( 'No reservation found for this payment session.', 'ajforms' ) );
 		}
 
@@ -377,88 +389,103 @@ class AJCore_Reservations {
 		$invoice_id        = isset( $session['invoice'] ) && is_string( $session['invoice'] )
 		                     ? sanitize_text_field( $session['invoice'] )
 		                     : '';
-		$amount_total      = isset( $session['amount_total'] ) ? round( (float) $session['amount_total'] / 100, 2 ) : (float) $reservation->amount;
-		$currency          = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : (string) $reservation->currency;
+		$currency          = isset( $session['currency'] ) ? strtolower( sanitize_key( $session['currency'] ) ) : 'usd';
 
-		$wpdb->update(
-			$table,
-			array(
-				'status'                   => 'paid',
-				'stripe_payment_intent_id' => $payment_intent_id,
-				'stripe_invoice_id'        => $invoice_id,
-				'amount'                   => $amount_total,
-				'currency'                 => $currency,
-				'raw_stripe_data'          => wp_json_encode( $session ),
-				'updated_at'               => current_time( 'mysql' ),
-			),
-			array( 'id' => (int) $reservation->id ),
-			array( '%s', '%s', '%s', '%f', '%s', '%s', '%s' ),
-			array( '%d' )
-		);
+		$any_success = false;
+		$last_error  = null;
 
-		self::log_reservation_event(
-			'reservation_payment_succeeded',
-			array(
-				'reservation_uuid'           => $reservation->reservation_uuid,
-				'reservation_id'             => $reservation->id,
-				'stripe_customer_id'         => $reservation->stripe_customer_id,
-				'stripe_checkout_session_id' => $session_id,
-				'stripe_payment_intent_id'   => $payment_intent_id,
-				'amount'                     => $amount_total,
-				'currency'                   => $currency,
-			)
-		);
+		foreach ( $reservations as $reservation ) {
+			// Per-reservation amount: use reservation's stored amount (correct for multi-item carts).
+			$amount_total = (float) $reservation->amount;
 
-		$res_array = (array) $reservation;
-
-		// Attempt Zoho calendar creation.
-		$zoho_result = self::attempt_zoho_calendar_event( $res_array, $settings );
-
-		if ( is_wp_error( $zoho_result ) ) {
 			$wpdb->update(
 				$table,
-				array( 'status' => 'paid_pending_calendar', 'updated_at' => current_time( 'mysql' ) ),
+				array(
+					'status'                   => 'paid',
+					'stripe_payment_intent_id' => $payment_intent_id,
+					'stripe_invoice_id'        => $invoice_id,
+					'amount'                   => $amount_total,
+					'currency'                 => $currency,
+					'raw_stripe_data'          => wp_json_encode( $session ),
+					'updated_at'               => current_time( 'mysql' ),
+				),
 				array( 'id' => (int) $reservation->id ),
-				array( '%s', '%s' ),
+				array( '%s', '%s', '%s', '%f', '%s', '%s', '%s' ),
 				array( '%d' )
 			);
 
 			self::log_reservation_event(
-				'reservation_paid_pending_calendar',
+				'reservation_payment_succeeded',
 				array(
-					'reservation_uuid' => $reservation->reservation_uuid,
-					'reservation_id'   => $reservation->id,
-					'error'            => $zoho_result->get_error_message(),
+					'reservation_uuid'           => $reservation->reservation_uuid,
+					'reservation_id'             => $reservation->id,
+					'stripe_customer_id'         => $reservation->stripe_customer_id,
+					'stripe_checkout_session_id' => $session_id,
+					'stripe_payment_intent_id'   => $payment_intent_id,
+					'amount'                     => $amount_total,
+					'currency'                   => $currency,
 				)
 			);
 
-			return true;
+			$res_array = (array) $reservation;
+
+			// Attempt Zoho calendar creation.
+			$zoho_result = self::attempt_zoho_calendar_event( $res_array, $settings );
+
+			if ( is_wp_error( $zoho_result ) ) {
+				$wpdb->update(
+					$table,
+					array( 'status' => 'paid_pending_calendar', 'updated_at' => current_time( 'mysql' ) ),
+					array( 'id' => (int) $reservation->id ),
+					array( '%s', '%s' ),
+					array( '%d' )
+				);
+
+				self::log_reservation_event(
+					'reservation_paid_pending_calendar',
+					array(
+						'reservation_uuid' => $reservation->reservation_uuid,
+						'reservation_id'   => $reservation->id,
+						'error'            => $zoho_result->get_error_message(),
+					)
+				);
+
+				$last_error  = $zoho_result;
+				$any_success = true; // Payment succeeded even if calendar failed.
+				continue;
+			}
+
+			$event_id      = $zoho_result['event_id'] ?? '';
+			$zoho_raw_data = wp_json_encode( $zoho_result['raw_data'] ?? array() );
+
+			$wpdb->update(
+				$table,
+				array(
+					'status'         => 'confirmed',
+					'zoho_event_id'  => sanitize_text_field( $event_id ),
+					'raw_zoho_data'  => $zoho_raw_data,
+					'updated_at'     => current_time( 'mysql' ),
+				),
+				array( 'id' => (int) $reservation->id ),
+				array( '%s', '%s', '%s', '%s' ),
+				array( '%d' )
+			);
+
+			self::log_reservation_event(
+				'reservation_confirmed',
+				array(
+					'reservation_uuid' => $reservation->reservation_uuid,
+					'reservation_id'   => $reservation->id,
+					'zoho_event_id'    => $event_id,
+				)
+			);
+
+			$any_success = true;
 		}
 
-		$event_id      = $zoho_result['event_id'] ?? '';
-		$zoho_raw_data = wp_json_encode( $zoho_result['raw_data'] ?? array() );
-
-		$wpdb->update(
-			$table,
-			array(
-				'status'         => 'confirmed',
-				'zoho_event_id'  => sanitize_text_field( $event_id ),
-				'raw_zoho_data'  => $zoho_raw_data,
-				'updated_at'     => current_time( 'mysql' ),
-			),
-			array( 'id' => (int) $reservation->id ),
-			array( '%s', '%s', '%s', '%s' ),
-			array( '%d' )
-		);
-
-		self::log_reservation_event(
-			'reservation_confirmed',
-			array(
-				'reservation_uuid' => $reservation->reservation_uuid,
-				'reservation_id'   => $reservation->id,
-				'zoho_event_id'    => $event_id,
-			)
-		);
+		if ( ! $any_success && null !== $last_error ) {
+			return $last_error;
+		}
 
 		return true;
 	}
@@ -574,7 +601,7 @@ class AJCore_Reservations {
 		if ( '' !== $stripe_customer_id && $wp_user_id > 0 ) {
 			return $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT * FROM `{$table}` WHERE stripe_customer_id = %s OR wp_user_id = %d ORDER BY start_at DESC LIMIT 100",
+					"SELECT * FROM `{$table}` WHERE status <> 'in_cart' AND (stripe_customer_id = %s OR wp_user_id = %d) ORDER BY start_at DESC LIMIT 100",
 					$stripe_customer_id,
 					$wp_user_id
 				)
@@ -584,7 +611,7 @@ class AJCore_Reservations {
 		if ( '' !== $stripe_customer_id ) {
 			return $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT * FROM `{$table}` WHERE stripe_customer_id = %s ORDER BY start_at DESC LIMIT 100",
+					"SELECT * FROM `{$table}` WHERE status <> 'in_cart' AND stripe_customer_id = %s ORDER BY start_at DESC LIMIT 100",
 					$stripe_customer_id
 				)
 			);
@@ -593,12 +620,54 @@ class AJCore_Reservations {
 		if ( $wp_user_id > 0 ) {
 			return $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT * FROM `{$table}` WHERE wp_user_id = %d ORDER BY start_at DESC LIMIT 100",
+					"SELECT * FROM `{$table}` WHERE status <> 'in_cart' AND wp_user_id = %d ORDER BY start_at DESC LIMIT 100",
 					$wp_user_id
 				)
 			);
 		}
 
+		return array();
+	}
+
+	/**
+	 * Get all in-cart reservations for a customer (within the hold period).
+	 *
+	 * @param string $stripe_customer_id
+	 * @param int    $wp_user_id
+	 * @return array
+	 */
+	public static function get_cart_reservations( $stripe_customer_id, $wp_user_id = 0 ) {
+		global $wpdb;
+
+		$table              = self::get_reservations_table();
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$wp_user_id         = absint( $wp_user_id );
+		$hold_cutoff        = gmdate( 'Y-m-d H:i:s', time() - ( self::PENDING_HOLD_MINUTES * 60 ) );
+
+		if ( '' !== $stripe_customer_id && $wp_user_id > 0 ) {
+			return $wpdb->get_results(
+				$wpdb->prepare(
+					"SELECT * FROM `{$table}` WHERE status = 'in_cart' AND created_at >= %s AND (stripe_customer_id = %s OR wp_user_id = %d) ORDER BY start_at ASC LIMIT 20",
+					$hold_cutoff, $stripe_customer_id, $wp_user_id
+				)
+			);
+		}
+		if ( '' !== $stripe_customer_id ) {
+			return $wpdb->get_results(
+				$wpdb->prepare(
+					"SELECT * FROM `{$table}` WHERE status = 'in_cart' AND created_at >= %s AND stripe_customer_id = %s ORDER BY start_at ASC LIMIT 20",
+					$hold_cutoff, $stripe_customer_id
+				)
+			);
+		}
+		if ( $wp_user_id > 0 ) {
+			return $wpdb->get_results(
+				$wpdb->prepare(
+					"SELECT * FROM `{$table}` WHERE status = 'in_cart' AND created_at >= %s AND wp_user_id = %d ORDER BY start_at ASC LIMIT 20",
+					$hold_cutoff, $wp_user_id
+				)
+			);
+		}
 		return array();
 	}
 
@@ -769,6 +838,7 @@ class AJCore_Reservations {
 	 */
 	public static function get_reservation_status_label( $status ) {
 		$labels = array(
+			'in_cart'               => __( 'In Cart', 'ajforms' ),
 			'pending_payment'       => __( 'Pending Payment', 'ajforms' ),
 			'paid'                  => __( 'Paid', 'ajforms' ),
 			'confirmed'             => __( 'Confirmed', 'ajforms' ),
