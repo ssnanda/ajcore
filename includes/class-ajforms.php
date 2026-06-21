@@ -12690,11 +12690,70 @@ class AJForms {
 			wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ) );
 		}
 
-		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
-		$api_token = ! empty( $settings['zoho_api_token'] ) ? trim( $settings['zoho_api_token'] ) : '';
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+
+		$client_id     = isset( $_POST['zoho_oauth_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_id'] ) ) : ( $settings['zoho_oauth_client_id'] ?? '' );
+		$client_secret = isset( $_POST['zoho_oauth_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_secret'] ) ) : ( $settings['zoho_oauth_client_secret'] ?? '' );
+		$auth_code     = isset( $_POST['zoho_oauth_authorization_code'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_authorization_code'] ) ) : '';
+		$api_token     = isset( $_POST['zoho_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token'] ) ) : ( $settings['zoho_api_token'] ?? '' );
+		$token_saved   = false;
+
+		if ( '' !== trim( $auth_code ) ) {
+			if ( '' === trim( $client_id ) || '' === trim( $client_secret ) ) {
+				wp_send_json_error( array( 'message' => __( 'Client ID and Client Secret are required to exchange a generated code.', 'ajforms' ) ) );
+			}
+
+			$token_response = wp_remote_post(
+				add_query_arg(
+					array(
+						'grant_type'    => 'authorization_code',
+						'client_id'     => $client_id,
+						'client_secret' => $client_secret,
+						'code'          => $auth_code,
+					),
+					'https://accounts.zoho.com/oauth/v2/token'
+				),
+				array( 'timeout' => 20 )
+			);
+
+			if ( is_wp_error( $token_response ) ) {
+				wp_send_json_error( array( 'message' => $token_response->get_error_message() ) );
+			}
+
+			$token_code = wp_remote_retrieve_response_code( $token_response );
+			$token_body = json_decode( wp_remote_retrieve_body( $token_response ), true );
+
+			if ( 200 !== (int) $token_code || empty( $token_body['access_token'] ) ) {
+				$token_err = ! empty( $token_body['error'] ) ? $token_body['error'] : sprintf( __( 'Zoho token exchange returned HTTP %d.', 'ajforms' ), $token_code );
+				wp_send_json_error( array( 'message' => $token_err ) );
+			}
+
+			$api_token  = sanitize_text_field( (string) $token_body['access_token'] );
+			$expires_in = ! empty( $token_body['expires_in'] ) ? absint( $token_body['expires_in'] ) : 3600;
+			$expires_at = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
+
+			$settings['zoho_oauth_client_id']          = $client_id;
+			$settings['zoho_oauth_client_secret']      = $client_secret;
+			$settings['zoho_oauth_authorization_code'] = '';
+			$settings['zoho_api_token']                = $api_token;
+			$settings['zoho_api_token_expires_at']     = $expires_at;
+			$settings['zoho_oauth_api_domain']         = ! empty( $token_body['api_domain'] ) ? esc_url_raw( (string) $token_body['api_domain'] ) : '';
+			if ( ! empty( $token_body['refresh_token'] ) ) {
+				$settings['zoho_refresh_token'] = sanitize_text_field( (string) $token_body['refresh_token'] );
+			}
+			if ( isset( $_POST['zoho_resource_uid'] ) ) {
+				$settings['zoho_resource_uid'] = sanitize_text_field( wp_unslash( $_POST['zoho_resource_uid'] ) );
+			}
+			if ( isset( $_POST['zoho_resource_freebusy_url'] ) ) {
+				$settings['zoho_resource_freebusy_url'] = sanitize_text_field( wp_unslash( $_POST['zoho_resource_freebusy_url'] ) );
+			}
+
+			update_option( 'ajforms_settings', $settings, false );
+			$token_saved = true;
+		}
 
 		if ( '' === $api_token ) {
-			wp_send_json_error( array( 'message' => __( 'No API token saved. Save your token first, then test.', 'ajforms' ) ) );
+			wp_send_json_error( array( 'message' => __( 'No access token saved. Enter Client ID, Client Secret, and a fresh generated code, then test.', 'ajforms' ) ) );
 		}
 
 		$response = wp_remote_get(
@@ -12720,12 +12779,42 @@ class AJForms {
 			if ( ! empty( $body['calendars'] ) && is_array( $body['calendars'] ) ) {
 				$count = count( $body['calendars'] );
 			}
+			$branch_count = null;
+			$branches = wp_remote_get(
+				'https://calendar.zoho.com/api/v1/branches',
+				array(
+					'timeout' => 15,
+					'headers' => array(
+						'Authorization' => 'Bearer ' . $api_token,
+						'Accept'        => 'application/json',
+					),
+				)
+			);
+			if ( ! is_wp_error( $branches ) && 200 === (int) wp_remote_retrieve_response_code( $branches ) ) {
+				$branch_body = json_decode( wp_remote_retrieve_body( $branches ), true );
+				if ( is_array( $branch_body ) ) {
+					$branch_count = isset( $branch_body['branches'] ) && is_array( $branch_body['branches'] ) ? count( $branch_body['branches'] ) : count( $branch_body );
+				}
+			}
+
+			$message = sprintf(
+				/* translators: %d: number of calendars */
+				_n( 'Connected! Found %d calendar.', 'Connected! Found %d calendars.', $count, 'ajforms' ),
+				$count
+			);
+			if ( null !== $branch_count ) {
+				$message .= ' ' . sprintf(
+					/* translators: %d: number of branches */
+					_n( 'Found %d resource branch.', 'Found %d resource branches.', $branch_count, 'ajforms' ),
+					$branch_count
+				);
+			}
+
 			wp_send_json_success( array(
-				'message' => sprintf(
-					/* translators: %d: number of calendars */
-					_n( 'Connected! Found %d calendar.', 'Connected! Found %d calendars.', $count, 'ajforms' ),
-					$count
-				),
+				'message'            => $message,
+				'access_token_saved' => $token_saved,
+				'expires_at'         => ! empty( $settings['zoho_api_token_expires_at'] ) ? $settings['zoho_api_token_expires_at'] : '',
+				'api_domain'         => ! empty( $settings['zoho_oauth_api_domain'] ) ? $settings['zoho_oauth_api_domain'] : '',
 			) );
 		}
 

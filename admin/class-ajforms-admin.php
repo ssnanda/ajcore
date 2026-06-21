@@ -19238,18 +19238,43 @@ class AJForms_Admin {
 				<p style="margin:10px 0 8px;font-size:13px;color:#475569"><?php esc_html_e( 'You do NOT need this if you only want the post-payment Zoho appointment form. Add these API fields when the customer picker should mark existing Zoho calendar busy times as unavailable before checkout.', 'ajforms' ); ?></p>
 
 				<div class="ajc-hint">
-					<b><?php esc_html_e( 'How to get one:', 'ajforms' ); ?></b>
-					<?php esc_html_e( 'Go to', 'ajforms' ); ?> <code>https://api-console.zoho.com</code>
-					<?php esc_html_e( '→ Create a Self Client → grant scope', 'ajforms' ); ?>
-					<code>ZohoCalendar.event.CREATE,ZohoCalendar.calendar.READ</code>
-					<?php esc_html_e( '→ generate and copy the access token. Token is stored in WordPress DB only, never in synced-settings.json.', 'ajforms' ); ?>
+					<b><?php esc_html_e( 'Where to get these:', 'ajforms' ); ?></b>
+					<?php esc_html_e( 'Open', 'ajforms' ); ?> <code>https://api-console.zoho.com/</code>
+					<?php esc_html_e( '→ Self Client → copy Client ID and Client Secret → Generate Code with scope', 'ajforms' ); ?>
+					<code>ZohoCalendar.resources.READ,ZohoCalendar.calendar.READ,ZohoCalendar.branches.READ</code>
+					<?php esc_html_e( '→ paste the generated code below. The generated code is one-time use; this button exchanges it for an access token and saves it.', 'ajforms' ); ?>
 				</div>
 
 				<table class="form-table ajc-table-compact" style="margin:8px 0 0">
 					<tr>
-						<th><?php esc_html_e( 'API Token', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Client ID', 'ajforms' ); ?></th>
 						<td>
-							<input type="password" name="zoho_api_token" value="<?php echo esc_attr( $settings['zoho_api_token'] ?? '' ); ?>" class="regular-text" autocomplete="new-password" placeholder="<?php esc_attr_e( 'Leave blank — not needed for URL mode', 'ajforms' ); ?>">
+							<input type="text" name="zoho_oauth_client_id" value="<?php echo esc_attr( $settings['zoho_oauth_client_id'] ?? '' ); ?>" class="regular-text" autocomplete="off" placeholder="1000.xxxxx">
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Client Secret', 'ajforms' ); ?></th>
+						<td>
+							<input type="password" name="zoho_oauth_client_secret" value="<?php echo esc_attr( $settings['zoho_oauth_client_secret'] ?? '' ); ?>" class="regular-text" autocomplete="new-password">
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Generated Code', 'ajforms' ); ?></th>
+						<td>
+							<input type="password" name="zoho_oauth_authorization_code" value="<?php echo esc_attr( $settings['zoho_oauth_authorization_code'] ?? '' ); ?>" class="large-text" autocomplete="off" placeholder="<?php esc_attr_e( 'Paste fresh one-time generated code from Zoho Self Client', 'ajforms' ); ?>">
+							<p class="description"><?php esc_html_e( 'Use a fresh code when exchanging. After a successful exchange, AJCore clears this field because Zoho codes cannot be reused.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Access Token', 'ajforms' ); ?></th>
+						<td>
+							<input type="password" name="zoho_api_token" value="<?php echo esc_attr( $settings['zoho_api_token'] ?? '' ); ?>" class="regular-text" autocomplete="new-password" placeholder="<?php esc_attr_e( 'Generated automatically after exchange', 'ajforms' ); ?>">
+							<input type="hidden" name="zoho_refresh_token" value="<?php echo esc_attr( $settings['zoho_refresh_token'] ?? '' ); ?>">
+							<input type="hidden" name="zoho_oauth_api_domain" value="<?php echo esc_attr( $settings['zoho_oauth_api_domain'] ?? '' ); ?>">
+							<input type="hidden" name="zoho_api_token_expires_at" value="<?php echo esc_attr( $settings['zoho_api_token_expires_at'] ?? '' ); ?>">
+							<?php if ( ! empty( $settings['zoho_api_token_expires_at'] ) ) : ?>
+								<p class="description"><?php echo esc_html( sprintf( __( 'Current token expires around %s UTC.', 'ajforms' ), $settings['zoho_api_token_expires_at'] ) ); ?></p>
+							<?php endif; ?>
 						</td>
 					</tr>
 					<tr>
@@ -19270,7 +19295,7 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></th>
 						<td>
 							<button type="button" class="button" id="ajc-test-zoho-btn" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_test_zoho_connection' ) ); ?>">
-								<?php esc_html_e( 'Test API Connection', 'ajforms' ); ?>
+								<?php esc_html_e( 'Exchange Code & Test API', 'ajforms' ); ?>
 							</button>
 							<span id="ajc-test-zoho-result" style="margin-left:10px;font-weight:600"></span>
 						</td>
@@ -19318,11 +19343,29 @@ class AJForms_Admin {
 					const fd = new FormData();
 					fd.append('action','ajcore_test_zoho_connection');
 					fd.append('nonce', testBtn.dataset.nonce);
+					['zoho_oauth_client_id','zoho_oauth_client_secret','zoho_oauth_authorization_code','zoho_api_token','zoho_resource_uid','zoho_resource_freebusy_url'].forEach(function(name){
+						const field = document.querySelector('[name="'+name+'"]');
+						if ( field ) fd.append(name, field.value);
+					});
 					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>',{method:'POST',credentials:'same-origin',body:fd})
 					.then(r=>r.json()).then(p=>{
 						testBtn.disabled=false;
 						testRes.textContent = p.success ? '✓ '+(p.data&&p.data.message||'<?php echo esc_js( __( 'Connected.', 'ajforms' ) ); ?>') : '✗ '+((p.data&&p.data.message)||'<?php echo esc_js( __( 'Failed.', 'ajforms' ) ); ?>');
 						testRes.style.color = p.success ? '#166534' : '#dc2626';
+						if ( p.success && p.data ) {
+							if ( p.data.access_token_saved ) {
+								const codeField = document.querySelector('[name="zoho_oauth_authorization_code"]');
+								if ( codeField ) codeField.value = '';
+							}
+							if ( p.data.expires_at ) {
+								const expField = document.querySelector('[name="zoho_api_token_expires_at"]');
+								if ( expField ) expField.value = p.data.expires_at;
+							}
+							if ( p.data.api_domain ) {
+								const domainField = document.querySelector('[name="zoho_oauth_api_domain"]');
+								if ( domainField ) domainField.value = p.data.api_domain;
+							}
+						}
 					}).catch(()=>{ testBtn.disabled=false; testRes.textContent='<?php echo esc_js( __( 'Request failed.', 'ajforms' ) ); ?>'; testRes.style.color='#dc2626'; });
 				});
 			}
