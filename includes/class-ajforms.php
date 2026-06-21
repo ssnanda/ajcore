@@ -11742,14 +11742,97 @@ class AJForms {
 
 		ob_start();
 		?>
+		<style>
+		/* ── Reservations: Calendar grid ─────────────────────────────── */
+		.aj-reservations-calendar-nav{display:flex;align-items:center;gap:10px;margin:10px 0 14px;flex-wrap:wrap}
+		.aj-reservations-month-label{font-size:15px;font-weight:700;flex:1;text-align:center}
+		.aj-res-nav-btn{border-radius:999px!important;padding:4px 14px!important;font-size:13px!important}
+		.aj-reservations-calendar-grid{border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;background:#fff;margin-bottom:20px}
+		.aj-res-cal-header{display:grid;grid-template-columns:repeat(7,1fr);background:#f8fafc;border-bottom:1px solid #e2e8f0}
+		.aj-res-cal-dow{padding:8px 4px;text-align:center;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+		.aj-res-cal-body{display:grid;grid-template-columns:repeat(7,1fr)}
+		.aj-res-cal-day{min-height:58px;padding:6px;border-right:1px solid #f1f5f9;border-bottom:1px solid #f1f5f9;position:relative;cursor:default}
+		.aj-res-cal-day:nth-child(7n){border-right:none}
+		.aj-res-cal-empty{background:#fafafa}
+		.aj-res-cal-day-num{font-size:13px;font-weight:600;color:#334155;display:block}
+		.aj-res-cal-day-dot{display:block;width:6px;height:6px;border-radius:50%;margin:4px auto 0;background:transparent}
+		.aj-res-day-past .aj-res-cal-day-num{color:#cbd5e1}
+		.aj-res-day-past{background:#fafafa;cursor:not-allowed}
+		.aj-res-day-available{cursor:pointer;transition:background .12s}
+		.aj-res-day-available:hover,.aj-res-day-today:hover{background:#eff6ff}
+		.aj-res-day-available .aj-res-cal-day-dot,.aj-res-day-today .aj-res-cal-day-dot{background:#3157ff}
+		.aj-res-day-today{background:#f0f9ff;cursor:pointer}
+		.aj-res-day-today .aj-res-cal-day-num{color:#3157ff;font-weight:800}
+		.aj-res-day-selected{background:#3157ff!important}
+		.aj-res-day-selected .aj-res-cal-day-num{color:#fff!important}
+		.aj-res-day-selected .aj-res-cal-day-dot{background:#fff!important}
+		.aj-res-day-weekend.aj-res-day-available .aj-res-cal-day-num{color:#7c3aed}
+		/* ── Time slots ──────────────────────────────────────────────── */
+		.aj-reservations-slot-panel{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:16px}
+		.aj-res-slot-heading{margin:0 0 4px;font-size:15px;font-weight:700}
+		.aj-res-slot-subheading{margin:0 0 12px;color:#64748b;font-size:13px}
+		.aj-res-slot-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+		.aj-res-slot-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;font-size:13px;font-weight:600;cursor:pointer;color:#334155;transition:all .12s}
+		.aj-res-slot-btn:hover{border-color:#3157ff;color:#3157ff;background:#eff6ff}
+		.aj-res-slot-selected{border-color:#3157ff!important;background:#3157ff!important;color:#fff!important}
+		.aj-res-slot-busy{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+		.aj-res-slot-notice{padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:10px}
+		.aj-notice-error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+		.aj-notice-info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
+		/* ── Booking form ────────────────────────────────────────────── */
+		.aj-res-booking-form{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-top:10px}
+		.aj-res-booking-form h4{margin:0 0 10px;font-size:14px;font-weight:700}
+		.aj-res-booking-summary{background:#f8fafc;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+		.aj-res-booking-summary p{margin:3px 0}
+		.aj-res-booking-form label{display:block;margin-bottom:10px;font-size:13px;font-weight:600;color:#334155}
+		.aj-res-booking-form label span{display:block;margin-bottom:3px}
+		.aj-res-booking-form input,.aj-res-booking-form textarea{width:100%;max-width:420px;border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:13px;box-sizing:border-box}
+		.aj-res-no-cancel-notice{font-size:12px;color:#92400e;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;margin:10px 0}
+		.aj-res-pay-button{margin-top:4px}
+		.aj-res-spinner{font-size:13px;color:#64748b;margin-left:8px}
+		.aj-res-error-msg{color:#dc2626;font-size:13px;margin-top:6px}
+		/* ── My Reservations table ───────────────────────────────────── */
+		.aj-reservations-my-list{margin-top:24px}
+		.aj-reservations-my-list h3{margin-bottom:10px}
+		.aj-portal-status-badge{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700}
+		.aj-status-good{background:#dcfce7;color:#166534}
+		.aj-status-warn{background:#fef3c7;color:#92400e}
+		.aj-status-bad{background:#fee2e2;color:#991b1b}
+		@media(max-width:600px){
+			.aj-res-cal-dow,.aj-res-cal-day-num{font-size:11px}
+			.aj-res-cal-day{min-height:40px;padding:4px}
+			.aj-res-slot-btn{padding:5px 10px;font-size:12px}
+		}
+		</style>
 		<section class="aj-customer-portal-panel aj-reservations-panel">
-			<h2><?php echo esc_html( $resource_name ); ?> &mdash; <?php esc_html_e( 'Book a Reservation', 'ajforms' ); ?></h2>
-			<p class="aj-reservations-hours-note">
+			<h2><?php echo esc_html( $resource_name ); ?></h2>
+
+			<?php
+			// Embed calendar view (shows existing bookings from Zoho if configured).
+			$embed_url = ! empty( $settings['zoho_calendar_embed_url'] ) ? esc_url( $settings['zoho_calendar_embed_url'] ) : '';
+			if ( $embed_url ) :
+			?>
+			<div class="aj-res-embed-wrap" style="margin-bottom:20px">
+				<h3 style="margin:0 0 8px;font-size:14px;font-weight:700"><?php esc_html_e( 'Current Availability', 'ajforms' ); ?></h3>
+				<p style="margin:0 0 8px;font-size:13px;color:#64748b"><?php esc_html_e( 'Existing bookings are shown below. Choose a free slot then use the booking calendar to reserve.', 'ajforms' ); ?></p>
+				<iframe
+					src="<?php echo $embed_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>"
+					style="width:100%;height:500px;border:1px solid #e2e8f0;border-radius:12px"
+					frameborder="0"
+					title="<?php echo esc_attr( $resource_name ); ?> Calendar"
+				></iframe>
+			</div>
+			<hr style="margin:0 0 20px;border:none;border-top:1px solid #e2e8f0">
+			<?php endif; ?>
+
+			<h3 style="margin:0 0 4px;font-size:15px;font-weight:700"><?php esc_html_e( 'Make a Reservation', 'ajforms' ); ?></h3>
+			<p class="aj-reservations-hours-note" style="margin:0 0 14px;font-size:13px;color:#64748b">
 				<?php
-				/* translators: 1: booking window start, 2: booking window end */
-				printf( esc_html__( 'Booking window: 8:00 AM – 10:00 PM daily. %1$s applies Mon–Fri 9:00 AM – 5:00 PM; %2$s applies all other times.', 'ajforms' ), esc_html( $business_hours_label ), esc_html( $after_hours_label ) );
+				/* translators: 1: business hours label, 2: after-hours label */
+				printf( esc_html__( 'Booking window: 8:00 AM – 10:00 PM daily. %1$s rate applies Mon–Fri 9am–5pm; %2$s rate applies all other times.', 'ajforms' ), esc_html( $business_hours_label ), esc_html( $after_hours_label ) );
 				?>
 			</p>
+			<p style="font-size:13px;color:#64748b;margin:0 0 14px"><?php esc_html_e( 'Pick a date below, choose your start and end time, then complete payment to confirm.', 'ajforms' ); ?></p>
 
 			<div class="aj-reservations-calendar-nav">
 				<?php if ( $show_prev ) : ?>
