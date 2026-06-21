@@ -1456,10 +1456,16 @@ class AJForms {
 			),
 			array(
 				'id'      => 'reservations',
-				'label'   => __( 'Reservations', 'ajforms' ),
+				'label'   => ( function() {
+					$s = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+					return ! empty( $s['reservation_menu_label'] ) ? $s['reservation_menu_label'] : __( 'Conference Room', 'ajforms' );
+				} )(),
 				'type'    => 'built_in',
 				'url'     => '',
-				'enabled' => true,
+				'enabled' => ( function() {
+					$s = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+					return ! empty( $s['zoho_reservations_enabled'] );
+				} )(),
 			),
 		);
 

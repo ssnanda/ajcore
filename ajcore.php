@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.3.2
+ * Version: 0.3.3
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.3.2' );
+	define( 'AJCORE_VERSION', '0.3.3' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -105,6 +105,7 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'zoho_default_timezone'             => 'America/New_York',
 			'zoho_calendar_uid'                 => '',
 			'zoho_calendar_id'                  => '',
+			'zoho_calendar_embed_url'           => '',
 			'zoho_resource_uid'                 => '',
 			'zoho_schedule_appointment_url'     => '',
 			'zoho_resource_freebusy_url'        => '',
@@ -112,6 +113,7 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'zoho_api_token'                    => '',
 			'reservation_resource_name'         => 'Conference Room',
 			'reservation_resource_key'          => 'conference_room',
+			'reservation_menu_label'            => 'Conference Room',
 			'reservation_business_hours_label'  => 'Business Hours (Mon–Fri 9am–5pm)',
 			'reservation_after_hours_label'     => 'After-Hours / Weekend',
 		);
