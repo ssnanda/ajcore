@@ -11729,6 +11729,8 @@ class AJForms {
 			$display_start = clone $now_dt;
 		}
 		$display_start->setTime( 0, 0, 0 );
+		$first_dow_raw = (int) $display_start->format( 'w' );
+		$first_dow     = ( $first_dow_raw + 6 ) % 7; // Mon=0 ... Sun=6.
 		$month_label   = $month_dt->format( 'F Y' );
 
 		// Prev / next URLs.
@@ -11751,16 +11753,17 @@ class AJForms {
 		.aj-reservations-calendar-nav{display:flex;align-items:center;gap:10px;margin:10px 0 14px;flex-wrap:wrap}
 		.aj-reservations-month-label{font-size:15px;font-weight:700;flex:1;text-align:center}
 		.aj-res-nav-btn{border-radius:999px!important;padding:4px 14px!important;font-size:13px!important}
-		.aj-reservations-calendar-grid{border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff;margin-bottom:20px}
-		.aj-res-cal-header{display:grid;grid-template-columns:repeat(7,1fr);background:#f8fafc;border-bottom:1px solid #e2e8f0}
-		.aj-res-cal-dow{padding:8px 4px;text-align:center;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+		.aj-reservations-calendar-grid{border:1px solid #dbe4f0;border-radius:8px;overflow:hidden;background:#fff;margin-bottom:20px}
+		.aj-res-cal-header{display:grid;grid-template-columns:repeat(7,1fr);background:#eef4ff;border-bottom:1px solid #dbe4f0}
+		.aj-res-cal-dow{padding:14px 6px;text-align:center;font-size:15px;font-weight:900;color:#1e293b;text-transform:uppercase;letter-spacing:.04em}
+		.aj-res-cal-dow-weekend{background:#fff7ed;color:#9a3412}
 		.aj-res-cal-body{display:grid;grid-template-columns:repeat(7,1fr)}
-		.aj-res-cal-day{min-height:64px;padding:7px;border-right:1px solid #f1f5f9;border-bottom:1px solid #f1f5f9;position:relative;cursor:default}
+		.aj-res-cal-day{min-height:88px;padding:10px;border-right:1px solid #eef2f7;border-bottom:1px solid #eef2f7;position:relative;cursor:default}
 		.aj-res-cal-day:nth-child(7n){border-right:none}
 		.aj-res-cal-empty{background:#fafafa}
-		.aj-res-cal-day-num{font-size:13px;font-weight:600;color:#334155;display:block}
-		.aj-res-cal-day-month{font-size:11px;color:#94a3b8;display:block;margin-top:2px}
-		.aj-res-cal-day-dot{display:block;width:6px;height:6px;border-radius:50%;margin:4px auto 0;background:transparent}
+		.aj-res-cal-day-num{font-size:20px;font-weight:900;color:#1e293b;display:block;line-height:1.1}
+		.aj-res-cal-day-month{font-size:13px;font-weight:700;color:#64748b;display:block;margin-top:4px}
+		.aj-res-cal-day-dot{display:block;width:8px;height:8px;border-radius:50%;margin:12px auto 0;background:transparent}
 		.aj-res-day-available{cursor:pointer;transition:background .12s}
 		.aj-res-day-available:hover,.aj-res-day-today:hover{background:#eff6ff}
 		.aj-res-day-available .aj-res-cal-day-dot,.aj-res-day-today .aj-res-cal-day-dot{background:#3157ff}
@@ -11768,8 +11771,11 @@ class AJForms {
 		.aj-res-day-today .aj-res-cal-day-num{color:#3157ff;font-weight:800}
 		.aj-res-day-selected{background:#3157ff!important}
 		.aj-res-day-selected .aj-res-cal-day-num{color:#fff!important}
+		.aj-res-day-selected .aj-res-cal-day-month{color:#dbeafe!important}
 		.aj-res-day-selected .aj-res-cal-day-dot{background:#fff!important}
-		.aj-res-day-weekend.aj-res-day-available .aj-res-cal-day-num{color:#7c3aed}
+		.aj-res-day-weekend{background:#fffaf3}
+		.aj-res-day-weekend.aj-res-day-available .aj-res-cal-day-num{color:#9a3412}
+		.aj-res-day-weekend.aj-res-day-available .aj-res-cal-day-month{color:#c2410c}
 		/* ── Time slots ──────────────────────────────────────────────── */
 		.aj-reservations-slot-panel{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:16px}
 		.aj-res-slot-heading{margin:0 0 4px;font-size:15px;font-weight:700}
@@ -11803,8 +11809,9 @@ class AJForms {
 		.aj-status-warn{background:#fef3c7;color:#92400e}
 		.aj-status-bad{background:#fee2e2;color:#991b1b}
 		@media(max-width:600px){
-			.aj-res-cal-dow,.aj-res-cal-day-num{font-size:11px}
-			.aj-res-cal-day{min-height:40px;padding:4px}
+			.aj-res-cal-dow{font-size:12px;padding:10px 4px}
+			.aj-res-cal-day-num{font-size:16px}
+			.aj-res-cal-day{min-height:58px;padding:6px}
 			.aj-res-slot-btn{padding:5px 10px;font-size:12px}
 		}
 		</style>
@@ -11844,26 +11851,28 @@ class AJForms {
 			>
 				<?php
 				$dow_labels = array(
-					__( 'Sun', 'ajforms' ),
 					__( 'Mon', 'ajforms' ),
 					__( 'Tue', 'ajforms' ),
 					__( 'Wed', 'ajforms' ),
 					__( 'Thu', 'ajforms' ),
 					__( 'Fri', 'ajforms' ),
 					__( 'Sat', 'ajforms' ),
+					__( 'Sun', 'ajforms' ),
 				);
 				?>
 				<div class="aj-res-cal-header">
-					<?php for ( $i = 0; $i < 7; $i++ ) :
-						$label_dt = clone $display_start;
-						$label_dt->modify( '+' . $i . ' day' );
-						$lbl = $dow_labels[ (int) $label_dt->format( 'w' ) ];
+					<?php foreach ( $dow_labels as $idx => $lbl ) :
+						$is_weekend_header = $idx >= 5;
 						?>
-						<div class="aj-res-cal-dow"><?php echo esc_html( $lbl ); ?></div>
-					<?php endfor; ?>
+						<div class="aj-res-cal-dow <?php echo $is_weekend_header ? 'aj-res-cal-dow-weekend' : ''; ?>"><?php echo esc_html( $lbl ); ?></div>
+					<?php endforeach; ?>
 				</div>
 				<div class="aj-res-cal-body">
 					<?php
+					for ( $i = 0; $i < $first_dow; $i++ ) {
+						echo '<div class="aj-res-cal-day aj-res-cal-empty"></div>';
+					}
+
 					$display_day = clone $display_start;
 					while ( (int) $display_day->format( 'n' ) === $view_month && (int) $display_day->format( 'Y' ) === $view_year ) {
 						$day_dt    = clone $display_day;
@@ -11889,7 +11898,7 @@ class AJForms {
 						$display_day->modify( '+1 day' );
 					}
 					// Trailing empties to complete last row.
-					$total_cells = (int) $display_start->diff( $display_day )->days;
+					$total_cells = $first_dow + (int) $display_start->diff( $display_day )->days;
 					$trailing    = ( 7 - ( $total_cells % 7 ) ) % 7;
 					for ( $i = 0; $i < $trailing; $i++ ) {
 						echo '<div class="aj-res-cal-day aj-res-cal-empty"></div>';
@@ -12315,6 +12324,100 @@ class AJForms {
 		return true;
 	}
 
+	private function get_reservation_price_ids_for_resource( $resource_key ) {
+		global $wpdb;
+
+		$table = $wpdb->prefix . 'aj_portal_product_catalog';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return array(
+				'business_hours_price_id' => '',
+				'after_hours_price_id'    => '',
+			);
+		}
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT reservation_business_hours_price_id, reservation_after_hours_price_id
+				 FROM `{$table}`
+				 WHERE product_type = 'reservation'
+				 AND reservation_resource_key = %s
+				 ORDER BY id DESC
+				 LIMIT 1",
+				sanitize_key( (string) $resource_key )
+			)
+		);
+
+		return array(
+			'business_hours_price_id' => $row && ! empty( $row->reservation_business_hours_price_id ) ? sanitize_text_field( (string) $row->reservation_business_hours_price_id ) : '',
+			'after_hours_price_id'    => $row && ! empty( $row->reservation_after_hours_price_id ) ? sanitize_text_field( (string) $row->reservation_after_hours_price_id ) : '',
+		);
+	}
+
+	private function get_configured_reservation_resource( $resource_key, $settings ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return null;
+		}
+
+		global $wpdb;
+
+		$resource_key = sanitize_key( (string) $resource_key );
+		if ( '' === $resource_key ) {
+			return null;
+		}
+
+		$table = AJCore_Reservations::get_resources_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return null;
+		}
+
+		$resource = AJCore_Reservations::get_resource_by_key( $resource_key );
+		$prices   = $this->get_reservation_price_ids_for_resource( $resource_key );
+
+		$data = array(
+			'resource_key'            => $resource_key,
+			'resource_name'           => ! empty( $settings['reservation_resource_name'] ) ? sanitize_text_field( (string) $settings['reservation_resource_name'] ) : __( 'Conference Room', 'ajforms' ),
+			'zoho_calendar_uid'       => ! empty( $settings['zoho_calendar_uid'] ) ? sanitize_text_field( (string) $settings['zoho_calendar_uid'] ) : '',
+			'zoho_calendar_id'        => ! empty( $settings['zoho_calendar_id'] ) ? sanitize_text_field( (string) $settings['zoho_calendar_id'] ) : '',
+			'zoho_resource_uid'       => ! empty( $settings['zoho_resource_uid'] ) ? sanitize_text_field( (string) $settings['zoho_resource_uid'] ) : '',
+			'zoho_schedule_url'       => ! empty( $settings['zoho_schedule_appointment_url'] ) ? esc_url_raw( (string) $settings['zoho_schedule_appointment_url'] ) : '',
+			'zoho_freebusy_url'       => ! empty( $settings['zoho_resource_freebusy_url'] ) ? sanitize_text_field( (string) $settings['zoho_resource_freebusy_url'] ) : '',
+			'business_hours_price_id' => $prices['business_hours_price_id'],
+			'after_hours_price_id'    => $prices['after_hours_price_id'],
+			'duration_minutes'        => 60,
+			'min_duration_minutes'    => 60,
+			'max_duration_minutes'    => 60,
+			'active'                  => 1,
+			'updated_at'              => current_time( 'mysql' ),
+		);
+
+		if ( $resource ) {
+			$update = $data;
+			if ( empty( $update['business_hours_price_id'] ) && ! empty( $resource->business_hours_price_id ) ) {
+				$update['business_hours_price_id'] = $resource->business_hours_price_id;
+			}
+			if ( empty( $update['after_hours_price_id'] ) && ! empty( $resource->after_hours_price_id ) ) {
+				$update['after_hours_price_id'] = $resource->after_hours_price_id;
+			}
+			unset( $update['resource_key'] );
+			$wpdb->update(
+				$table,
+				$update,
+				array( 'id' => (int) $resource->id ),
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s' ),
+				array( '%d' )
+			);
+		} else {
+			$data['created_at'] = current_time( 'mysql' );
+			$wpdb->insert(
+				$table,
+				$data,
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s' )
+			);
+		}
+
+		return AJCore_Reservations::get_resource_by_key( $resource_key );
+	}
+
 	public function ajax_reservation_check_availability() {
 		check_ajax_referer( 'ajcore_reservation_check_availability', 'nonce' );
 
@@ -12336,7 +12439,7 @@ class AJForms {
 		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
 
 		// Get resource.
-		$resource = AJCore_Reservations::get_resource_by_key( $resource_key );
+		$resource = $this->get_configured_reservation_resource( $resource_key, $settings );
 		if ( ! $resource ) {
 			wp_send_json_error( array( 'message' => __( 'Resource not found.', 'ajforms' ) ) );
 		}
@@ -12445,7 +12548,7 @@ class AJForms {
 			wp_send_json_error( array( 'message' => $window_check->get_error_message() ) );
 		}
 
-		$resource = AJCore_Reservations::get_resource_by_key( $resource_key );
+		$resource = $this->get_configured_reservation_resource( $resource_key, $settings );
 		if ( ! $resource ) {
 			wp_send_json_error( array( 'message' => __( 'Resource not found.', 'ajforms' ) ) );
 		}
@@ -12464,9 +12567,9 @@ class AJForms {
 		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
 		$stripe_price_id = '';
 		if ( 'business_hours' === $pricing_type ) {
-			$stripe_price_id = ! empty( $resource->stripe_business_price_id ) ? $resource->stripe_business_price_id : '';
+			$stripe_price_id = ! empty( $resource->business_hours_price_id ) ? $resource->business_hours_price_id : '';
 		} else {
-			$stripe_price_id = ! empty( $resource->stripe_after_hours_price_id ) ? $resource->stripe_after_hours_price_id : '';
+			$stripe_price_id = ! empty( $resource->after_hours_price_id ) ? $resource->after_hours_price_id : '';
 		}
 
 		if ( ! $stripe_price_id ) {
