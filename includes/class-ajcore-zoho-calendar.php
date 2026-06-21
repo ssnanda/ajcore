@@ -539,34 +539,33 @@ class AJCore_Zoho_Calendar {
 			$notes
 		);
 
+		$event_tz = isset( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+
+		// Zoho Calendar API expects local time in YYYYMMDDTHHmmss format (no Z/offset)
+		// paired with a separate timezone field — NOT a UTC Z-suffix string.
 		$event_body = array(
 			'dateandtime' => array(
-				'start'    => self::format_zoho_datetime( $start_at ),
-				'end'      => self::format_zoho_datetime( $end_at ),
-				'timezone' => isset( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York',
+				'start'    => self::format_zoho_datetime_local( $start_at, $event_tz ),
+				'end'      => self::format_zoho_datetime_local( $end_at, $event_tz ),
+				'timezone' => $event_tz,
 			),
 			'title'       => $title,
 			'description' => $description,
-			'attendees'   => array(
-				array(
-					'email' => $customer_email,
-					'name'  => $customer_name,
-				),
-			),
 		);
 
 		$api_url = 'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( $res_calendar_uid ) . '/events';
 
+		// Zoho Calendar REST API requires form-encoded body with eventdata=<json_string>.
 		$response = wp_remote_post(
 			$api_url,
 			array(
 				'timeout' => 20,
 				'headers' => array(
 					'Authorization' => 'Bearer ' . $api_token,
-					'Content-Type'  => 'application/json',
+					'Content-Type'  => 'application/x-www-form-urlencoded',
 					'Accept'        => 'application/json',
 				),
-				'body'    => wp_json_encode( $event_body ),
+				'body'    => 'eventdata=' . rawurlencode( wp_json_encode( $event_body ) ),
 			)
 		);
 
@@ -598,17 +597,59 @@ class AJCore_Zoho_Calendar {
 	}
 
 	/**
-	 * Format a MySQL datetime string to Zoho's expected ISO 8601 format.
+	 * Convert a UTC MySQL datetime to Zoho's local-time format (YYYYMMDDTHHmmss, no offset).
+	 * Zoho Calendar REST API expects this paired with a separate "timezone" field.
 	 *
-	 * @param string $datetime MySQL datetime 'Y-m-d H:i:s'.
-	 * @return string ISO 8601 string.
+	 * @param string $datetime_utc MySQL datetime stored as UTC ('Y-m-d H:i:s').
+	 * @param string $timezone     IANA timezone name (e.g. 'America/New_York').
+	 * @return string '20260622T080000'
 	 */
-	private static function format_zoho_datetime( $datetime ) {
+	private static function format_zoho_datetime_local( $datetime_utc, $timezone = 'America/New_York' ) {
 		try {
-			$dt = new DateTime( $datetime, new DateTimeZone( 'UTC' ) );
-			return $dt->format( 'Y-m-d\TH:i:s\Z' );
+			$dt = new DateTime( $datetime_utc, new DateTimeZone( 'UTC' ) );
+			$dt->setTimezone( new DateTimeZone( $timezone ) );
+			return $dt->format( 'Ymd\THis' );
 		} catch ( Exception $e ) {
-			return $datetime;
+			return str_replace( array( '-', ' ', ':' ), array( '', 'T', '' ), $datetime_utc );
 		}
+	}
+
+	/**
+	 * Delete a Zoho Calendar event.
+	 *
+	 * @param string $calendar_uid Zoho calendar UID.
+	 * @param string $event_uid    Zoho event UID (from create response).
+	 * @param string $api_token    Valid Zoho access token.
+	 * @return true|WP_Error
+	 */
+	public static function delete_zoho_calendar_event( $calendar_uid, $event_uid, $api_token ) {
+		$api_url  = 'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( $calendar_uid )
+			. '/events/' . rawurlencode( $event_uid );
+
+		$response = wp_remote_request(
+			$api_url,
+			array(
+				'method'  => 'DELETE',
+				'timeout' => 15,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $api_token,
+					'Accept'        => 'application/json',
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		if ( $code < 200 || $code >= 300 ) {
+			$body = json_decode( wp_remote_retrieve_body( $response ), true );
+			$msg  = ! empty( $body['error'][0]['description'] ) ? $body['error'][0]['description']
+				: sprintf( 'Zoho DELETE returned HTTP %d.', $code );
+			return new WP_Error( 'zoho_delete_error', $msg );
+		}
+
+		return true;
 	}
 }

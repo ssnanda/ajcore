@@ -19482,6 +19482,7 @@ class AJForms_Admin {
 			return;
 		}
 
+		// Save admin note.
 		if ( isset( $_POST['ajcore_reservation_admin_note_nonce'], $_POST['reservation_id'], $_POST['admin_notes'] ) ) {
 			$reservation_id = absint( $_POST['reservation_id'] );
 			check_admin_referer( 'ajcore_reservation_admin_note_' . $reservation_id, 'ajcore_reservation_admin_note_nonce' );
@@ -19499,6 +19500,19 @@ class AJForms_Admin {
 			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'reservation-saved' => '1' ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
+
+		// Delete reservation.
+		if ( isset( $_GET['ajcore_delete_reservation'], $_GET['reservation_id'], $_GET['_wpnonce'] ) ) {
+			$reservation_id = absint( $_GET['reservation_id'] );
+			check_admin_referer( 'ajcore_delete_reservation_' . $reservation_id );
+
+			global $wpdb;
+			$table = $wpdb->prefix . 'aj_portal_reservations';
+			$wpdb->delete( $table, array( 'id' => $reservation_id ), array( '%d' ) );
+
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'reservation-deleted' => '1' ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
 	}
 
 	private function display_portal_reservations_admin_tab() {
@@ -19514,7 +19528,8 @@ class AJForms_Admin {
 			return;
 		}
 
-		$saved = ! empty( $_GET['reservation-saved'] );
+		$saved   = ! empty( $_GET['reservation-saved'] );
+		$deleted = ! empty( $_GET['reservation-deleted'] );
 
 		$filter_status       = isset( $_GET['filter_status'] ) ? sanitize_key( wp_unslash( $_GET['filter_status'] ) ) : '';
 		$filter_resource_key = isset( $_GET['filter_resource'] ) ? sanitize_key( wp_unslash( $_GET['filter_resource'] ) ) : '';
@@ -19552,6 +19567,9 @@ class AJForms_Admin {
 
 		if ( $saved ) {
 			echo '<div class="notice notice-success inline"><p>' . esc_html__( 'Reservation notes saved.', 'ajforms' ) . '</p></div>';
+		}
+		if ( $deleted ) {
+			echo '<div class="notice notice-success inline"><p>' . esc_html__( 'Reservation deleted.', 'ajforms' ) . '</p></div>';
 		}
 
 		if ( $detail_id > 0 ) {
@@ -19635,7 +19653,21 @@ class AJForms_Admin {
 									<td><span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700;background:<?php echo esc_attr( $badge_css ); ?>"><?php echo esc_html( $status_lbl ); ?></span></td>
 									<td><?php echo esc_html( $cal_status ); ?></td>
 									<td><?php echo esc_html( $r->created_at ); ?></td>
-									<td><a href="<?php echo esc_url( $detail_url ); ?>" class="button button-small"><?php esc_html_e( 'View', 'ajforms' ); ?></a></td>
+									<td style="white-space:nowrap">
+									<a href="<?php echo esc_url( $detail_url ); ?>" class="button button-small"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
+									<?php
+									$del_url = wp_nonce_url(
+										add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'ajcore_delete_reservation' => '1', 'reservation_id' => $r->id ), admin_url( 'admin.php' ) ),
+										'ajcore_delete_reservation_' . $r->id
+									);
+									?>
+									<a href="<?php echo esc_url( $del_url ); ?>"
+									   class="button button-small"
+									   style="color:#b91c1c;border-color:#fca5a5;margin-left:4px"
+									   onclick="return confirm('<?php echo esc_js( sprintf( __( 'Delete reservation %s? This cannot be undone.', 'ajforms' ), AJCore_Reservations::generate_friendly_reference( $r->id ) ) ); ?>')">
+										<?php esc_html_e( 'Delete', 'ajforms' ); ?>
+									</a>
+								</td>
 								</tr>
 							<?php endforeach; ?>
 						</tbody>
