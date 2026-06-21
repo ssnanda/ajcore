@@ -13508,7 +13508,7 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $tab : 'dashboard';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		$stripe_mode = $this->get_stripe_mode_badge_data();
 		$stripe_settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
