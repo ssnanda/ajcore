@@ -567,13 +567,25 @@ class AJCore_Reservations {
 	public static function get_customer_reservations( $stripe_customer_id, $wp_user_id = 0 ) {
 		global $wpdb;
 
-		$table = self::get_reservations_table();
+		$table              = self::get_reservations_table();
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$wp_user_id         = absint( $wp_user_id );
+
+		if ( '' !== $stripe_customer_id && $wp_user_id > 0 ) {
+			return $wpdb->get_results(
+				$wpdb->prepare(
+					"SELECT * FROM `{$table}` WHERE stripe_customer_id = %s OR wp_user_id = %d ORDER BY start_at DESC LIMIT 100",
+					$stripe_customer_id,
+					$wp_user_id
+				)
+			);
+		}
 
 		if ( '' !== $stripe_customer_id ) {
 			return $wpdb->get_results(
 				$wpdb->prepare(
 					"SELECT * FROM `{$table}` WHERE stripe_customer_id = %s ORDER BY start_at DESC LIMIT 100",
-					sanitize_text_field( $stripe_customer_id )
+					$stripe_customer_id
 				)
 			);
 		}
@@ -582,7 +594,7 @@ class AJCore_Reservations {
 			return $wpdb->get_results(
 				$wpdb->prepare(
 					"SELECT * FROM `{$table}` WHERE wp_user_id = %d ORDER BY start_at DESC LIMIT 100",
-					absint( $wp_user_id )
+					$wp_user_id
 				)
 			);
 		}

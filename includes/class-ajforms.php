@@ -11824,6 +11824,8 @@ class AJForms {
 					data-publishable-key="<?php echo esc_attr( $pub_key ); ?>"
 					data-business-label="<?php echo esc_attr( $business_hours_label ); ?>"
 					data-after-label="<?php echo esc_attr( $after_hours_label ); ?>"
+					data-biz-rate="<?php echo esc_attr( $settings['reservation_business_hours_rate'] ?? '40' ); ?>"
+					data-after-rate="<?php echo esc_attr( $settings['reservation_after_hours_rate'] ?? '80' ); ?>"
 					data-ajax-url="<?php echo esc_attr( $ajax_url ); ?>"
 				></div>
 			</div>
@@ -11850,8 +11852,8 @@ class AJForms {
 						<span><?php esc_html_e( 'Notes (optional)', 'ajforms' ); ?></span>
 						<textarea id="aj-res-field-notes" rows="3"></textarea>
 					</label>
-					<button type="button" class="button button-primary aj-res-pay-button" id="aj-res-pay-button"><?php esc_html_e( 'Submit Request', 'ajforms' ); ?></button>
-					<span class="aj-res-spinner" id="aj-res-spinner"><?php esc_html_e( 'Submitting…', 'ajforms' ); ?></span>
+					<button type="button" class="button button-primary aj-res-pay-button" id="aj-res-pay-button"><?php esc_html_e( 'Pay Now →', 'ajforms' ); ?></button>
+					<span class="aj-res-spinner" id="aj-res-spinner"><?php esc_html_e( 'Redirecting to payment…', 'ajforms' ); ?></span>
 					<p class="aj-res-error-msg" id="aj-res-error-msg"></p>
 					<div class="aj-res-success-msg" id="aj-res-success-msg" style="display:none"></div>
 				</div>
@@ -11882,6 +11884,8 @@ class AJForms {
 			var checkoutNonce = calEl.dataset.checkoutNonce;
 			var bizLabel      = calEl.dataset.businessLabel;
 			var afterLabel    = calEl.dataset.afterLabel;
+			var bizRate       = parseInt(calEl.dataset.bizRate, 10) || 40;
+			var afterRate     = parseInt(calEl.dataset.afterRate, 10) || 80;
 			var ajaxUrl       = calEl.dataset.ajaxUrl;
 
 			var selectedStartStr = null;
@@ -11965,6 +11969,8 @@ class AJForms {
 			calendar.render();
 
 			// ── Modal ───────────────────────────────────────────────────
+			var pendingIsBiz = false;
+
 			function openModal(startStr, endStr, startDate, endDate) {
 				selectedStartStr = startStr;
 				selectedEndStr   = endStr;
@@ -11975,11 +11981,15 @@ class AJForms {
 				var startH   = getLocalHour(startStr);
 				var startDow = startDate.getDay();
 				var isBiz    = (startDow >= 1 && startDow <= 5) && (startH >= 9 && startH < 17);
+				pendingIsBiz = isBiz;
+				var rate     = isBiz ? bizRate : afterRate;
+				var total    = hours * rate;
 				summary.innerHTML =
 					'<p><strong><?php echo esc_js( __( 'Date', 'ajforms' ) ); ?>:</strong> ' + escH(dateFmt) + '</p>' +
 					'<p><strong><?php echo esc_js( __( 'Time', 'ajforms' ) ); ?>:</strong> ' + escH(startFmt) + ' &ndash; ' + escH(endFmt) + '</p>' +
 					'<p><strong><?php echo esc_js( __( 'Duration', 'ajforms' ) ); ?>:</strong> ' + hours + (hours === 1 ? ' <?php echo esc_js( __( 'hour', 'ajforms' ) ); ?>' : ' <?php echo esc_js( __( 'hours', 'ajforms' ) ); ?>') + '</p>' +
-					'<p><strong><?php echo esc_js( __( 'Rate', 'ajforms' ) ); ?>:</strong> ' + escH(isBiz ? bizLabel : afterLabel) + '</p>';
+					'<p><strong><?php echo esc_js( __( 'Rate', 'ajforms' ) ); ?>:</strong> $' + rate + '/hr &mdash; ' + escH(isBiz ? bizLabel : afterLabel) + '</p>' +
+					'<p><strong><?php echo esc_js( __( 'Total', 'ajforms' ) ); ?>:</strong> <span style="font-size:16px;color:#166534">$' + total + '</span></p>';
 				errMsg.style.display    = 'none';
 				errMsg.textContent      = '';
 				successMsg.style.display = 'none';
@@ -12028,8 +12038,8 @@ class AJForms {
 					payBtn.style.display = 'none';
 					spinner.style.display = 'block';
 					var fd = new FormData();
-					fd.append('action',         'ajcore_reservation_request');
-					fd.append('nonce',          checkNonce);
+					fd.append('action',         'ajcore_reservation_create_checkout');
+					fd.append('nonce',          checkoutNonce);
 					fd.append('resource_key',   resourceKey);
 					fd.append('start_at',       selectedStartStr);
 					fd.append('end_at',         selectedEndStr);
@@ -12040,22 +12050,16 @@ class AJForms {
 					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: fd })
 					.then(function(r) { return r.json(); })
 					.then(function(payload) {
-						spinner.style.display = 'none';
 						if (!payload.success) {
+							spinner.style.display = 'none';
 							payBtn.disabled = false;
 							payBtn.style.display = 'block';
-							errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to submit reservation. Please try again.', 'ajforms' ) ); ?>';
+							errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to start checkout. Please try again.', 'ajforms' ) ); ?>';
 							errMsg.style.display = 'block';
 							return;
 						}
-						// Success: clear selection so the slot cannot be double-submitted.
-						selectedStartStr = null;
-						selectedEndStr   = null;
-						successMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Reservation confirmed!', 'ajforms' ) ); ?>';
-						successMsg.style.display = 'block';
-						calendar.refetchEvents();
-						// Close faster (1 s) to prevent accidental resubmission.
-						setTimeout(function() { closeModal(); location.reload(); }, 1200);
+						// Redirect to Stripe checkout.
+						window.location.href = payload.data.checkout_url;
 					})
 					.catch(function() {
 						spinner.style.display = 'none';
@@ -12473,16 +12477,16 @@ class AJForms {
 		}
 
 		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
-		$stripe_price_id = '';
-		if ( 'business_hours' === $pricing_type ) {
-			$stripe_price_id = ! empty( $resource->business_hours_price_id ) ? $resource->business_hours_price_id : '';
-		} else {
-			$stripe_price_id = ! empty( $resource->after_hours_price_id ) ? $resource->after_hours_price_id : '';
-		}
 
-		if ( ! $stripe_price_id ) {
-			wp_send_json_error( array( 'message' => __( 'Pricing for this resource is not configured. Please contact support.', 'ajforms' ) ) );
-		}
+		// Hourly rates from settings (dollars); default $40 business, $80 after-hours.
+		$biz_rate_dollars   = max( 1, (int) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate_dollars = max( 1, (int) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+		$unit_rate_dollars  = 'business_hours' === $pricing_type ? $biz_rate_dollars : $after_rate_dollars;
+		$unit_amount_cents  = $unit_rate_dollars * 100;
+
+		$rate_label = 'business_hours' === $pricing_type
+			? ( ! empty( $settings['reservation_business_hours_label'] ) ? $settings['reservation_business_hours_label'] : 'Business Hours' )
+			: ( ! empty( $settings['reservation_after_hours_label'] ) ? $settings['reservation_after_hours_label'] : 'After-Hours / Weekend' );
 
 		$stored_notes = trim( sprintf( "Phone: %s\n%s", $customer_phone, $customer_notes ) );
 
@@ -12500,7 +12504,6 @@ class AJForms {
 			'end_at'            => $end_at_utc,
 			'timezone'          => $timezone,
 			'pricing_type'      => $pricing_type,
-			'stripe_price_id'   => $stripe_price_id,
 			'customer_name'     => $customer_name,
 			'customer_email'    => $customer_email,
 			'customer_notes'    => $stored_notes,
@@ -12534,7 +12537,13 @@ class AJForms {
 			'mode'                 => 'payment',
 			'line_items'           => array(
 				array(
-					'price'    => $stripe_price_id,
+					'price_data' => array(
+						'currency'     => 'usd',
+						'unit_amount'  => $unit_amount_cents,
+						'product_data' => array(
+							'name' => sprintf( 'Conference Room — %s', $rate_label ),
+						),
+					),
 					'quantity' => $duration_hours,
 				),
 			),

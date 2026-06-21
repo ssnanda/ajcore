@@ -18999,6 +18999,8 @@ class AJForms_Admin {
 		$settings['reservation_menu_label']           = isset( $_POST['reservation_menu_label'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_menu_label'] ) ) : 'Conference Room';
 		$settings['reservation_business_hours_label'] = isset( $_POST['reservation_business_hours_label'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_business_hours_label'] ) ) : 'Business Hours (Mon–Fri 9am–5pm)';
 		$settings['reservation_after_hours_label']    = isset( $_POST['reservation_after_hours_label'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_after_hours_label'] ) ) : 'After-Hours / Weekend';
+		$settings['reservation_business_hours_rate']  = isset( $_POST['reservation_business_hours_rate'] ) ? max( 1, absint( wp_unslash( $_POST['reservation_business_hours_rate'] ) ) ) : 40;
+		$settings['reservation_after_hours_rate']     = isset( $_POST['reservation_after_hours_rate'] ) ? max( 1, absint( wp_unslash( $_POST['reservation_after_hours_rate'] ) ) ) : 80;
 		$settings['zoho_schedule_appointment_url']    = isset( $_POST['zoho_schedule_appointment_url'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_schedule_appointment_url'] ) ) : '';
 		$settings['zoho_calendar_uid']                = isset( $_POST['zoho_calendar_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_uid'] ) ) : '';
 		$settings['zoho_calendar_id']                 = isset( $_POST['zoho_calendar_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_id'] ) ) : '';
@@ -19155,6 +19157,20 @@ class AJForms_Admin {
 						<td>
 							<input type="text" name="reservation_after_hours_label" value="<?php echo esc_attr( $settings['reservation_after_hours_label'] ?? '' ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'After-Hours / Weekend', 'ajforms' ); ?>">
 							<p class="description"><?php esc_html_e( 'Rate label for evenings and weekends.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Business Hours Rate', 'ajforms' ); ?></th>
+						<td>
+							$<input type="number" name="reservation_business_hours_rate" value="<?php echo esc_attr( $settings['reservation_business_hours_rate'] ?? '40' ); ?>" min="1" step="1" style="width:80px;margin:0 4px"> /hr
+							<p class="description"><?php esc_html_e( 'Hourly rate for Mon–Fri 9am–5pm slots. Default: $40.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'After-Hours Rate', 'ajforms' ); ?></th>
+						<td>
+							$<input type="number" name="reservation_after_hours_rate" value="<?php echo esc_attr( $settings['reservation_after_hours_rate'] ?? '80' ); ?>" min="1" step="1" style="width:80px;margin:0 4px"> /hr
+							<p class="description"><?php esc_html_e( 'Hourly rate for evenings and weekends. Default: $80.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>

@@ -531,13 +531,19 @@ class AJCore_Zoho_Calendar {
 		$notes          = isset( $reservation['customer_notes'] ) ? sanitize_text_field( (string) $reservation['customer_notes'] ) : '';
 
 		$title       = sprintf( '%s - %s', $resource_name, $customer_name );
-		$description = sprintf(
-			"Reservation UUID: %s\nCustomer: %s <%s>\n%s",
-			$uuid,
-			$customer_name,
-			$customer_email,
-			$notes
+		$description_parts = array(
+			'Conference Room — University Place Office Suites',
+			'1914 J N Pease Pl, Charlotte, NC 28262, United States',
+			'Web: https://universityofficesuites.com/',
+			'',
+			'Customer: ' . $customer_name . ' <' . $customer_email . '>',
+			'Reservation UUID: ' . $uuid,
 		);
+		if ( '' !== $notes ) {
+			$description_parts[] = '';
+			$description_parts[] = 'Notes: ' . $notes;
+		}
+		$description = implode( "\n", $description_parts );
 
 		$event_tz = isset( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
 
@@ -551,6 +557,8 @@ class AJCore_Zoho_Calendar {
 			),
 			'title'       => $title,
 			'description' => $description,
+			'location'    => 'University Place Office Suites 1914 J N Pease Pl, Charlotte, NC 28262, United States',
+			'url'         => 'https://universityofficesuites.com/',
 		);
 
 		$api_url = 'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( $res_calendar_uid ) . '/events';
