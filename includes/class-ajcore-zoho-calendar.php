@@ -200,6 +200,100 @@ class AJCore_Zoho_Calendar {
 	 * @param string $api_token
 	 * @return array|WP_Error
 	 */
+	/**
+	 * Fetch all Zoho Calendar events for a date range, for display on the booking calendar.
+	 *
+	 * @param string $calendar_uid Zoho calendar UID.
+	 * @param string $start_at     Range start (ISO 8601).
+	 * @param string $end_at       Range end (ISO 8601).
+	 * @param string $timezone     PHP timezone string.
+	 * @param string $api_token    Bearer token.
+	 * @return array|WP_Error Array of ['start'=>DateTime,'end'=>DateTime,'title'=>string], or WP_Error.
+	 */
+	public static function get_events_for_range( $calendar_uid, $start_at, $end_at, $timezone = 'America/New_York', $api_token = '' ) {
+		if ( '' === trim( (string) $calendar_uid ) || '' === trim( (string) $api_token ) ) {
+			return new WP_Error( 'zoho_unavailable', 'Zoho not configured.' );
+		}
+
+		try {
+			$utc_start = ( new DateTime( $start_at ) )->setTimezone( new DateTimeZone( 'UTC' ) );
+			$utc_end   = ( new DateTime( $end_at ) )->setTimezone( new DateTimeZone( 'UTC' ) );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'zoho_datetime_error', 'Invalid date range.' );
+		}
+
+		$url = add_query_arg(
+			array(
+				'range'      => wp_json_encode(
+					array(
+						'start' => $utc_start->format( 'Ymd\THis\Z' ),
+						'end'   => $utc_end->format( 'Ymd\THis\Z' ),
+					)
+				),
+				'byinstance' => 'true',
+				'timezone'   => $timezone,
+			),
+			'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( sanitize_text_field( (string) $calendar_uid ) ) . '/events'
+		);
+
+		$response = wp_remote_get(
+			$url,
+			array(
+				'timeout' => 15,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $api_token,
+					'Accept'        => 'application/json',
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( 200 !== (int) $code || ! is_array( $body ) ) {
+			return new WP_Error( 'zoho_api_error', sprintf( 'Zoho Calendar API returned HTTP %d.', $code ) );
+		}
+
+		$raw_events = array();
+		if ( isset( $body['events'] ) && is_array( $body['events'] ) ) {
+			$raw_events = $body['events'];
+		} elseif ( isset( $body['data']['events'] ) && is_array( $body['data']['events'] ) ) {
+			$raw_events = $body['data']['events'];
+		} elseif ( isset( $body['data'] ) && is_array( $body['data'] ) ) {
+			$raw_events = $body['data'];
+		} elseif ( ! empty( $body ) && array_keys( $body ) === range( 0, count( $body ) - 1 ) ) {
+			$raw_events = $body;
+		}
+
+		$result = array();
+		foreach ( $raw_events as $event ) {
+			if ( ! is_array( $event ) ) {
+				continue;
+			}
+			$slot = self::extract_calendar_event_range( $event, $timezone );
+			if ( ! $slot ) {
+				continue;
+			}
+			$title = '';
+			if ( ! empty( $event['title'] ) ) {
+				$title = (string) $event['title'];
+			} elseif ( ! empty( $event['summary'] ) ) {
+				$title = (string) $event['summary'];
+			}
+			$result[] = array(
+				'start' => $slot['start'],
+				'end'   => $slot['end'],
+				'title' => $title,
+			);
+		}
+
+		return $result;
+	}
+
 	public static function get_zoho_availability(
 		$resource_uid,
 		$freebusy_url,

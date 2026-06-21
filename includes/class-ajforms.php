@@ -11950,6 +11950,11 @@ class AJForms {
 					info.el.style.cursor = 'not-allowed';
 					info.el.title = '<?php echo esc_js( __( 'Already booked', 'ajforms' ) ); ?>';
 				},
+				dateClick: function(info) {
+					if (calendar.view.type === 'dayGridMonth') {
+						calendar.changeView('timeGridDay', info.dateStr);
+					}
+				},
 				select: function(info) {
 					openModal(info.startStr, info.endStr, info.start, info.end);
 					calendar.unselect();
@@ -12734,7 +12739,7 @@ class AJForms {
 		$events = array();
 		foreach ( $rows as $r ) {
 			$events[] = array(
-				'title'           => 'Booked',
+				'title'           => __( 'Booked', 'ajforms' ),
 				'start'           => str_replace( ' ', 'T', $r->start_at ) . 'Z',
 				'end'             => str_replace( ' ', 'T', $r->end_at ) . 'Z',
 				'backgroundColor' => '#fee2e2',
@@ -12742,6 +12747,31 @@ class AJForms {
 				'textColor'       => '#991b1b',
 				'display'         => 'block',
 			);
+		}
+
+		// Also show Zoho Calendar events as unavailable blocks.
+		$settings      = get_option( 'ajforms_settings', array() );
+		$zoho_token    = ! empty( $settings['zoho_api_token'] )   ? trim( (string) $settings['zoho_api_token'] )   : '';
+		$zoho_cal_id   = ! empty( $settings['zoho_calendar_id'] ) ? trim( (string) $settings['zoho_calendar_id'] ) : '';
+		$site_tz       = get_option( 'timezone_string', 'America/New_York' );
+		if ( '' !== $zoho_token && '' !== $zoho_cal_id && class_exists( 'AJCore_Zoho_Calendar' ) ) {
+			$zoho_events = AJCore_Zoho_Calendar::get_events_for_range( $zoho_cal_id, $start_raw, $end_raw, $site_tz, $zoho_token );
+			if ( ! is_wp_error( $zoho_events ) ) {
+				$utc_tz = new DateTimeZone( 'UTC' );
+				foreach ( $zoho_events as $ze ) {
+					$ze['start']->setTimezone( $utc_tz );
+					$ze['end']->setTimezone( $utc_tz );
+					$events[] = array(
+						'title'           => __( 'Unavailable', 'ajforms' ),
+						'start'           => $ze['start']->format( 'Y-m-d\TH:i:s\Z' ),
+						'end'             => $ze['end']->format( 'Y-m-d\TH:i:s\Z' ),
+						'backgroundColor' => '#fef3c7',
+						'borderColor'     => '#d97706',
+						'textColor'       => '#92400e',
+						'display'         => 'block',
+					);
+				}
+			}
 		}
 
 		wp_send_json( $events );
