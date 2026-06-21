@@ -19011,7 +19011,9 @@ class AJForms_Admin {
 		$settings['zoho_oauth_api_domain']            = isset( $_POST['zoho_oauth_api_domain'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_oauth_api_domain'] ) ) : ( $settings['zoho_oauth_api_domain'] ?? '' );
 		$settings['zoho_api_token_expires_at']        = isset( $_POST['zoho_api_token_expires_at'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token_expires_at'] ) ) : ( $settings['zoho_api_token_expires_at'] ?? '' );
 		$settings['zoho_resource_uid']                = isset( $_POST['zoho_resource_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_resource_uid'] ) ) : '';
-		$settings['zoho_resource_freebusy_url']       = isset( $_POST['zoho_resource_freebusy_url'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_resource_freebusy_url'] ) ) : '';
+		$settings['zoho_resource_freebusy_url']       = isset( $_POST['zoho_resource_freebusy_url'] ) && '' !== trim( (string) wp_unslash( $_POST['zoho_resource_freebusy_url'] ) )
+			? sanitize_text_field( wp_unslash( $_POST['zoho_resource_freebusy_url'] ) )
+			: 'https://calendar.zoho.com/api/v1/resources/{resourceuid}/freebusy';
 		// Preserve auth mode for compatibility with older installs.
 		if ( ! isset( $settings['zoho_api_auth_mode'] ) )       { $settings['zoho_api_auth_mode']       = 'bearer_token'; }
 
@@ -19241,8 +19243,8 @@ class AJForms_Admin {
 					<b><?php esc_html_e( 'Where to get these:', 'ajforms' ); ?></b>
 					<?php esc_html_e( 'Open', 'ajforms' ); ?> <code>https://api-console.zoho.com/</code>
 					<?php esc_html_e( '→ Self Client → copy Client ID and Client Secret → Generate Code with scope', 'ajforms' ); ?>
-					<code>ZohoCalendar.resources.READ,ZohoCalendar.calendar.READ,ZohoCalendar.branches.READ</code>
-					<?php esc_html_e( '→ paste the generated code below. The generated code is one-time use; this button exchanges it for an access token and saves it.', 'ajforms' ); ?>
+					<code>ZohoCalendar.event.READ,ZohoCalendar.calendar.READ</code>
+					<?php esc_html_e( '→ paste the generated code below. AJCore uses your Calendar UID from Step 4 to read events and mark matching hours unavailable.', 'ajforms' ); ?>
 				</div>
 
 				<table class="form-table ajc-table-compact" style="margin:8px 0 0">
@@ -19278,17 +19280,17 @@ class AJForms_Admin {
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Resource UID', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Calendar UID', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" name="zoho_resource_uid" value="<?php echo esc_attr( $settings['zoho_resource_uid'] ?? '' ); ?>" class="regular-text" placeholder="Conference room resource UID">
-							<p class="description"><?php esc_html_e( 'Required for live free/busy checks. This is the Zoho resource whose busy calendar should block booking times.', 'ajforms' ); ?></p>
+							<input type="text" value="<?php echo esc_attr( $settings['zoho_calendar_uid'] ?? '' ); ?>" class="regular-text" readonly>
+							<p class="description"><?php esc_html_e( 'This comes from Step 4. For your regular Zoho Calendar, this is the ID in the CalDAV URL.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Free/Busy URL', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Availability Source', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" name="zoho_resource_freebusy_url" value="<?php echo esc_attr( $settings['zoho_resource_freebusy_url'] ?? '' ); ?>" class="large-text" placeholder="https://calendar.zoho.com/api/v1/resources/{resourceuid}/freebusy">
-							<p class="description"><?php esc_html_e( 'Required for live free/busy checks. Include {resourceuid} where AJCore should insert the Resource UID.', 'ajforms' ); ?></p>
+							<input type="text" value="<?php echo esc_attr( 'https://calendar.zoho.com/api/v1/calendars/{calendar_uid}/events' ); ?>" class="large-text" readonly>
+							<p class="description"><?php esc_html_e( 'No Resource UID is needed. AJCore checks regular calendar events for overlapping busy times.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -19343,7 +19345,7 @@ class AJForms_Admin {
 					const fd = new FormData();
 					fd.append('action','ajcore_test_zoho_connection');
 					fd.append('nonce', testBtn.dataset.nonce);
-					['zoho_oauth_client_id','zoho_oauth_client_secret','zoho_oauth_authorization_code','zoho_api_token','zoho_resource_uid','zoho_resource_freebusy_url'].forEach(function(name){
+					['zoho_oauth_client_id','zoho_oauth_client_secret','zoho_oauth_authorization_code','zoho_api_token'].forEach(function(name){
 						const field = document.querySelector('[name="'+name+'"]');
 						if ( field ) fd.append(name, field.value);
 					});

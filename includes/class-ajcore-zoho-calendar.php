@@ -211,6 +211,160 @@ class AJCore_Zoho_Calendar {
 	}
 
 	/**
+	 * Check a regular Zoho Calendar for events that overlap a requested slot.
+	 *
+	 * @param string $calendar_uid Calendar UID from Zoho Calendar/CalDAV settings.
+	 * @param string $start_at     Requested start datetime.
+	 * @param string $end_at       Requested end datetime.
+	 * @param string $timezone     PHP timezone string.
+	 * @param string $api_token    Bearer token for Zoho API auth.
+	 * @return array|WP_Error Array with 'is_free' bool, or WP_Error on failure.
+	 */
+	public static function check_zoho_calendar_events_availability(
+		$calendar_uid,
+		$start_at,
+		$end_at,
+		$timezone = 'America/New_York',
+		$api_token = ''
+	) {
+		if ( '' === trim( (string) $calendar_uid ) ) {
+			return new WP_Error( 'zoho_unavailable', __( 'Zoho Calendar UID is not configured.', 'ajforms' ) );
+		}
+
+		if ( '' === trim( (string) $api_token ) ) {
+			return new WP_Error( 'zoho_unavailable', __( 'Zoho API token is not configured. Cannot check availability.', 'ajforms' ) );
+		}
+
+		try {
+			$req_start = new DateTime( $start_at );
+			$req_end   = new DateTime( $end_at );
+			$utc_start = clone $req_start;
+			$utc_end   = clone $req_end;
+			$utc_start->setTimezone( new DateTimeZone( 'UTC' ) );
+			$utc_end->setTimezone( new DateTimeZone( 'UTC' ) );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'zoho_datetime_error', __( 'Invalid reservation date/time for Zoho availability check.', 'ajforms' ) );
+		}
+
+		$url = add_query_arg(
+			array(
+				'range'      => wp_json_encode(
+					array(
+						'start' => $utc_start->format( 'Ymd\THis\Z' ),
+						'end'   => $utc_end->format( 'Ymd\THis\Z' ),
+					)
+				),
+				'byinstance' => 'true',
+				'timezone'   => $timezone,
+			),
+			'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( sanitize_text_field( (string) $calendar_uid ) ) . '/events'
+		);
+
+		$response = wp_remote_get(
+			$url,
+			array(
+				'timeout' => 15,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $api_token,
+					'Accept'        => 'application/json',
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'zoho_api_error', $response->get_error_message() );
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( 200 !== (int) $code || ! is_array( $body ) ) {
+			return new WP_Error(
+				'zoho_api_error',
+				sprintf( __( 'Zoho Calendar events API returned HTTP %d.', 'ajforms' ), $code )
+			);
+		}
+
+		$is_free = self::parse_calendar_events_response( $body, $req_start, $req_end, $timezone );
+
+		return array(
+			'is_free'  => $is_free,
+			'raw_data' => $body,
+		);
+	}
+
+	private static function parse_calendar_events_response( $body, $req_start, $req_end, $timezone ) {
+		$events = array();
+		if ( isset( $body['events'] ) && is_array( $body['events'] ) ) {
+			$events = $body['events'];
+		} elseif ( isset( $body['data'] ) && is_array( $body['data'] ) ) {
+			$events = $body['data'];
+		} elseif ( array_keys( $body ) === range( 0, count( $body ) - 1 ) ) {
+			$events = $body;
+		}
+
+		if ( empty( $events ) ) {
+			return true;
+		}
+
+		foreach ( $events as $event ) {
+			if ( ! is_array( $event ) ) {
+				continue;
+			}
+
+			$slot = self::extract_calendar_event_range( $event, $timezone );
+			if ( ! $slot ) {
+				continue;
+			}
+
+			if ( $slot['start'] < $req_end && $slot['end'] > $req_start ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private static function extract_calendar_event_range( $event, $timezone ) {
+		$date_data = isset( $event['dateandtime'] ) && is_array( $event['dateandtime'] ) ? $event['dateandtime'] : $event;
+		$start = $date_data['start'] ?? $date_data['start_time'] ?? $event['start'] ?? '';
+		$end   = $date_data['end'] ?? $date_data['end_time'] ?? $event['end'] ?? '';
+
+		if ( '' === $start || '' === $end ) {
+			return null;
+		}
+
+		try {
+			$tz = new DateTimeZone( $timezone );
+			$start_dt = self::parse_zoho_calendar_event_datetime( (string) $start, $tz );
+			$end_dt   = self::parse_zoho_calendar_event_datetime( (string) $end, $tz );
+		} catch ( Exception $e ) {
+			return null;
+		}
+
+		return array(
+			'start' => $start_dt,
+			'end'   => $end_dt,
+		);
+	}
+
+	private static function parse_zoho_calendar_event_datetime( $value, $timezone ) {
+		if ( preg_match( '/^\d{8}T\d{6}Z$/', $value ) ) {
+			return new DateTime( $value, new DateTimeZone( 'UTC' ) );
+		}
+
+		if ( preg_match( '/^\d{8}T\d{6}$/', $value ) ) {
+			return DateTime::createFromFormat( 'Ymd\THis', $value, $timezone );
+		}
+
+		if ( preg_match( '/^\d{8}$/', $value ) ) {
+			return DateTime::createFromFormat( 'Ymd', $value, $timezone );
+		}
+
+		return new DateTime( $value, $timezone );
+	}
+
+	/**
 	 * Create a Zoho Calendar event for a confirmed reservation.
 	 *
 	 * When full OAuth-based event creation is not yet available, this method

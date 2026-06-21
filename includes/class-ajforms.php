@@ -12281,10 +12281,25 @@ class AJForms {
 		}
 
 		$zoho_api_token   = ! empty( $settings['zoho_api_token'] ) ? $settings['zoho_api_token'] : '';
+		$zoho_calendar_uid = ! empty( $settings['zoho_calendar_uid'] ) ? $settings['zoho_calendar_uid'] : '';
 		$zoho_resource_uid = ! empty( $settings['zoho_resource_uid'] ) ? $settings['zoho_resource_uid'] : '';
 		$zoho_freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';
 
-		if ( $zoho_api_token && $zoho_resource_uid && $zoho_freebusy_url && class_exists( 'AJCore_Zoho_Calendar' ) ) {
+		if ( $zoho_api_token && $zoho_calendar_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
+			$calendar_check = AJCore_Zoho_Calendar::check_zoho_calendar_events_availability(
+				$zoho_calendar_uid,
+				$start_dt->format( 'c' ),
+				$end_dt->format( 'c' ),
+				$timezone,
+				$zoho_api_token
+			);
+			if ( ! is_wp_error( $calendar_check ) && isset( $calendar_check['is_free'] ) && ! (bool) $calendar_check['is_free'] ) {
+				return array(
+					'available' => false,
+					'message'   => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ),
+				);
+			}
+		} elseif ( $zoho_api_token && $zoho_resource_uid && $zoho_freebusy_url && class_exists( 'AJCore_Zoho_Calendar' ) ) {
 			$freebusy = AJCore_Zoho_Calendar::check_zoho_resource_freebusy(
 				$zoho_resource_uid,
 				$zoho_freebusy_url,
@@ -12741,13 +12756,6 @@ class AJForms {
 			if ( ! empty( $token_body['refresh_token'] ) ) {
 				$settings['zoho_refresh_token'] = sanitize_text_field( (string) $token_body['refresh_token'] );
 			}
-			if ( isset( $_POST['zoho_resource_uid'] ) ) {
-				$settings['zoho_resource_uid'] = sanitize_text_field( wp_unslash( $_POST['zoho_resource_uid'] ) );
-			}
-			if ( isset( $_POST['zoho_resource_freebusy_url'] ) ) {
-				$settings['zoho_resource_freebusy_url'] = sanitize_text_field( wp_unslash( $_POST['zoho_resource_freebusy_url'] ) );
-			}
-
 			update_option( 'ajforms_settings', $settings, false );
 			$token_saved = true;
 		}
@@ -12779,35 +12787,27 @@ class AJForms {
 			if ( ! empty( $body['calendars'] ) && is_array( $body['calendars'] ) ) {
 				$count = count( $body['calendars'] );
 			}
-			$branch_count = null;
-			$branches = wp_remote_get(
-				'https://calendar.zoho.com/api/v1/branches',
-				array(
-					'timeout' => 15,
-					'headers' => array(
-						'Authorization' => 'Bearer ' . $api_token,
-						'Accept'        => 'application/json',
-					),
-				)
-			);
-			if ( ! is_wp_error( $branches ) && 200 === (int) wp_remote_retrieve_response_code( $branches ) ) {
-				$branch_body = json_decode( wp_remote_retrieve_body( $branches ), true );
-				if ( is_array( $branch_body ) ) {
-					$branch_count = isset( $branch_body['branches'] ) && is_array( $branch_body['branches'] ) ? count( $branch_body['branches'] ) : count( $branch_body );
-				}
-			}
 
 			$message = sprintf(
 				/* translators: %d: number of calendars */
 				_n( 'Connected! Found %d calendar.', 'Connected! Found %d calendars.', $count, 'ajforms' ),
 				$count
 			);
-			if ( null !== $branch_count ) {
-				$message .= ' ' . sprintf(
-					/* translators: %d: number of branches */
-					_n( 'Found %d resource branch.', 'Found %d resource branches.', $branch_count, 'ajforms' ),
-					$branch_count
+
+			if ( ! empty( $settings['zoho_calendar_uid'] ) ) {
+				$calendar_check = wp_remote_get(
+					'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( sanitize_text_field( (string) $settings['zoho_calendar_uid'] ) ),
+					array(
+						'timeout' => 15,
+						'headers' => array(
+							'Authorization' => 'Bearer ' . $api_token,
+							'Accept'        => 'application/json',
+						),
+					)
 				);
+				$message .= ( ! is_wp_error( $calendar_check ) && 200 === (int) wp_remote_retrieve_response_code( $calendar_check ) )
+					? ' ' . __( 'Configured Calendar UID is readable.', 'ajforms' )
+					: ' ' . __( 'Connected, but configured Calendar UID could not be read. Check Step 4.', 'ajforms' );
 			}
 
 			wp_send_json_success( array(
