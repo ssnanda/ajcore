@@ -299,6 +299,9 @@ class AJCore_Zoho_Calendar {
 			$events = $body['events'];
 		} elseif ( isset( $body['data'] ) && is_array( $body['data'] ) ) {
 			$events = $body['data'];
+			if ( isset( $body['data']['events'] ) && is_array( $body['data']['events'] ) ) {
+				$events = $body['data']['events'];
+			}
 		} elseif ( array_keys( $body ) === range( 0, count( $body ) - 1 ) ) {
 			$events = $body;
 		}
@@ -327,8 +330,19 @@ class AJCore_Zoho_Calendar {
 
 	private static function extract_calendar_event_range( $event, $timezone ) {
 		$date_data = isset( $event['dateandtime'] ) && is_array( $event['dateandtime'] ) ? $event['dateandtime'] : $event;
-		$start = $date_data['start'] ?? $date_data['start_time'] ?? $event['start'] ?? '';
-		$end   = $date_data['end'] ?? $date_data['end_time'] ?? $event['end'] ?? '';
+		$start = $date_data['start'] ?? $date_data['start_time'] ?? $date_data['startTime'] ?? $event['start'] ?? $event['start_time'] ?? $event['startTime'] ?? '';
+		$end   = $date_data['end'] ?? $date_data['end_time'] ?? $date_data['endTime'] ?? $event['end'] ?? $event['end_time'] ?? $event['endTime'] ?? '';
+
+		if ( '' === $start || '' === $end ) {
+			return null;
+		}
+
+		if ( is_array( $start ) ) {
+			$start = $start['dateTime'] ?? $start['datetime'] ?? $start['date'] ?? '';
+		}
+		if ( is_array( $end ) ) {
+			$end = $end['dateTime'] ?? $end['datetime'] ?? $end['date'] ?? '';
+		}
 
 		if ( '' === $start || '' === $end ) {
 			return null;
@@ -353,12 +367,32 @@ class AJCore_Zoho_Calendar {
 			return new DateTime( $value, new DateTimeZone( 'UTC' ) );
 		}
 
+		if ( preg_match( '/^\d{8}T\d{6}[+-]\d{4}$/', $value ) ) {
+			$parsed = DateTime::createFromFormat( 'Ymd\THisO', $value );
+			if ( false !== $parsed ) {
+				return $parsed;
+			}
+		}
+
+		if ( preg_match( '/^\d{8}T\d{6}[+-]\d{2}:\d{2}$/', $value ) ) {
+			$parsed = DateTime::createFromFormat( 'Ymd\THisP', $value );
+			if ( false !== $parsed ) {
+				return $parsed;
+			}
+		}
+
 		if ( preg_match( '/^\d{8}T\d{6}$/', $value ) ) {
-			return DateTime::createFromFormat( 'Ymd\THis', $value, $timezone );
+			$parsed = DateTime::createFromFormat( 'Ymd\THis', $value, $timezone );
+			if ( false !== $parsed ) {
+				return $parsed;
+			}
 		}
 
 		if ( preg_match( '/^\d{8}$/', $value ) ) {
-			return DateTime::createFromFormat( 'Ymd', $value, $timezone );
+			$parsed = DateTime::createFromFormat( 'Ymd', $value, $timezone );
+			if ( false !== $parsed ) {
+				return $parsed;
+			}
 		}
 
 		return new DateTime( $value, $timezone );

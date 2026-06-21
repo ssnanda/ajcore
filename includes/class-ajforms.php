@@ -12293,7 +12293,17 @@ class AJForms {
 				$timezone,
 				$zoho_api_token
 			);
-			if ( ! is_wp_error( $calendar_check ) && isset( $calendar_check['is_free'] ) && ! (bool) $calendar_check['is_free'] ) {
+			if ( is_wp_error( $calendar_check ) ) {
+				return array(
+					'available' => false,
+					'message'   => sprintf(
+						/* translators: %s: Zoho API error message. */
+						__( 'Could not verify Zoho Calendar availability: %s', 'ajforms' ),
+						$calendar_check->get_error_message()
+					),
+				);
+			}
+			if ( isset( $calendar_check['is_free'] ) && ! (bool) $calendar_check['is_free'] ) {
 				return array(
 					'available' => false,
 					'message'   => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ),
@@ -12307,7 +12317,17 @@ class AJForms {
 				$end_dt->format( 'c' ),
 				$zoho_api_token
 			);
-			if ( ! is_wp_error( $freebusy ) && isset( $freebusy['is_free'] ) && ! (bool) $freebusy['is_free'] ) {
+			if ( is_wp_error( $freebusy ) ) {
+				return array(
+					'available' => false,
+					'message'   => sprintf(
+						/* translators: %s: Zoho API error message. */
+						__( 'Could not verify Zoho availability: %s', 'ajforms' ),
+						$freebusy->get_error_message()
+					),
+				);
+			}
+			if ( isset( $freebusy['is_free'] ) && ! (bool) $freebusy['is_free'] ) {
 				return array(
 					'available' => false,
 					'message'   => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ),
@@ -12361,6 +12381,18 @@ class AJForms {
 				sanitize_key( (string) $resource_key )
 			)
 		);
+
+		if ( ! $row ) {
+			$row = $wpdb->get_row(
+				"SELECT reservation_business_hours_price_id, reservation_after_hours_price_id
+				 FROM `{$table}`
+				 WHERE product_type = 'reservation'
+				 AND reservation_business_hours_price_id <> ''
+				 AND reservation_after_hours_price_id <> ''
+				 ORDER BY id DESC
+				 LIMIT 1"
+			);
+		}
 
 		return array(
 			'business_hours_price_id' => $row && ! empty( $row->reservation_business_hours_price_id ) ? sanitize_text_field( (string) $row->reservation_business_hours_price_id ) : '',
