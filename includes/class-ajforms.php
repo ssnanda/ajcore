@@ -11720,11 +11720,13 @@ class AJForms {
 		<style>
 		/* ── Reservations: FullCalendar wrapper ─────────────────────── */
 		/* FullCalendar chrome */
-		.aj-res-fc-wrap{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:24px;background:#fff}
-		.aj-res-fc-wrap .fc{padding:12px}
-		.fc .fc-toolbar-title{font-size:16px!important;font-weight:700}
-		.fc .fc-button{font-size:13px!important}
-		.fc .fc-timegrid-slot{height:2.4em}
+		.aj-res-fc-wrap{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:16px;background:#fff}
+		.aj-res-fc-wrap .fc{padding:10px}
+		.fc .fc-toolbar{margin-bottom:8px!important}
+		.fc .fc-toolbar-title{font-size:17px!important;font-weight:700}
+		.fc .fc-button{font-size:14px!important;padding:5px 12px!important;font-weight:600!important}
+		.fc .fc-button-group .fc-button{font-size:14px!important;padding:5px 11px!important}
+		.fc .fc-timegrid-slot{height:2.2em}
 		.fc .fc-timegrid-slot-label{font-size:12px;color:#64748b}
 		.fc .fc-col-header-cell-cushion{font-size:13px;font-weight:700}
 		.fc .fc-highlight{background:#dbeafe!important;opacity:.85}
@@ -11760,62 +11762,58 @@ class AJForms {
 		}
 		</style>
 		<section class="aj-customer-portal-panel aj-reservations-panel">
-			<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px">
-				<h2 style="margin:0"><?php echo esc_html( $resource_name ); ?></h2>
+			<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+				<div>
+					<p style="margin:0 0 4px;font-size:13px;color:#64748b"><strong><?php esc_html_e( 'To book:', 'ajforms' ); ?></strong> <?php esc_html_e( 'Click and drag on the calendar below to select your time slot (8am–10pm). Red = already booked, amber = unavailable.', 'ajforms' ); ?></p>
+					<p style="margin:0 0 2px;font-size:13px"><strong style="color:#dc2626"><?php esc_html_e( 'No cancellations, no rescheduling — reservations are final.', 'ajforms' ); ?></strong></p>
+					<p style="margin:0;font-size:13px;color:#334155"><?php esc_html_e( 'Virtual Office Clients get 2 free hours yearly.', 'ajforms' ); ?></p>
+				</div>
 				<button type="button" id="aj-res-new-btn" class="button button-primary" style="font-size:14px;padding:6px 16px">
 					<?php esc_html_e( '+ New Reservation', 'ajforms' ); ?>
 				</button>
 			</div>
 
-			<!-- My Reservations — shown first so customers see their bookings immediately -->
-			<div class="aj-reservations-my-list" style="margin-bottom:28px">
+			<!-- My Reservations — shown only when the customer has bookings -->
+			<?php if ( ! empty( $my_reservations ) ) : ?>
+			<div class="aj-reservations-my-list" style="margin-bottom:20px">
 				<h3 style="margin:0 0 8px"><?php esc_html_e( 'My Reservations', 'ajforms' ); ?></h3>
-				<?php if ( empty( $my_reservations ) ) : ?>
-					<p style="font-size:13px;color:#64748b"><?php esc_html_e( 'You have no reservations yet. Use the calendar below to book a time.', 'ajforms' ); ?></p>
-				<?php else : ?>
-					<div class="aj-portal-table-wrap">
-						<table class="aj-portal-table">
-							<thead>
+				<div class="aj-portal-table-wrap">
+					<table class="aj-portal-table">
+						<thead>
+							<tr>
+								<th><?php esc_html_e( 'Reference', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Time', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Rate', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $my_reservations as $res ) :
+								$res          = (array) $res;
+								$res_ref      = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( (int) $res['id'] ) : ( 'RES-' . $res['id'] );
+								$start_dt     = new DateTime( $res['start_at'], new DateTimeZone( 'UTC' ) );
+								$end_dt       = new DateTime( $res['end_at'], new DateTimeZone( 'UTC' ) );
+								$tz_obj       = new DateTimeZone( $timezone );
+								$start_dt->setTimezone( $tz_obj );
+								$end_dt->setTimezone( $tz_obj );
+								$status_label  = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_label( $res['status'] ) : ucfirst( $res['status'] );
+								$status_class  = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_class( $res['status'] ) : 'warn';
+								$pricing_label = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_pricing_type_label( $res['pricing_type'], $settings ) : $res['pricing_type'];
+								?>
 								<tr>
-									<th><?php esc_html_e( 'Reference', 'ajforms' ); ?></th>
-									<th><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
-									<th><?php esc_html_e( 'Time', 'ajforms' ); ?></th>
-									<th><?php esc_html_e( 'Rate', 'ajforms' ); ?></th>
-									<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+									<td><strong><?php echo esc_html( $res_ref ); ?></strong></td>
+									<td><?php echo esc_html( $start_dt->format( 'M j, Y' ) ); ?></td>
+									<td><?php echo esc_html( $start_dt->format( 'g:i A' ) . ' – ' . $end_dt->format( 'g:i A T' ) ); ?></td>
+									<td><?php echo esc_html( $pricing_label ); ?></td>
+									<td><span class="aj-portal-status-badge aj-status-<?php echo esc_attr( $status_class ); ?>"><?php echo esc_html( $status_label ); ?></span></td>
 								</tr>
-							</thead>
-							<tbody>
-								<?php foreach ( $my_reservations as $res ) :
-									$res          = (array) $res;
-									$res_ref      = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( (int) $res['id'] ) : ( 'RES-' . $res['id'] );
-									$start_dt     = new DateTime( $res['start_at'], new DateTimeZone( 'UTC' ) );
-									$end_dt       = new DateTime( $res['end_at'], new DateTimeZone( 'UTC' ) );
-									$tz_obj       = new DateTimeZone( $timezone );
-									$start_dt->setTimezone( $tz_obj );
-									$end_dt->setTimezone( $tz_obj );
-									$status_label  = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_label( $res['status'] ) : ucfirst( $res['status'] );
-									$status_class  = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_class( $res['status'] ) : 'warn';
-									$pricing_label = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_pricing_type_label( $res['pricing_type'], $settings ) : $res['pricing_type'];
-									?>
-									<tr>
-										<td><strong><?php echo esc_html( $res_ref ); ?></strong></td>
-										<td><?php echo esc_html( $start_dt->format( 'M j, Y' ) ); ?></td>
-										<td><?php echo esc_html( $start_dt->format( 'g:i A' ) . ' – ' . $end_dt->format( 'g:i A T' ) ); ?></td>
-										<td><?php echo esc_html( $pricing_label ); ?></td>
-										<td><span class="aj-portal-status-badge aj-status-<?php echo esc_attr( $status_class ); ?>"><?php echo esc_html( $status_label ); ?></span></td>
-									</tr>
-								<?php endforeach; ?>
-							</tbody>
-						</table>
-					</div>
-				<?php endif; ?>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
 			</div>
-
-			<!-- Calendar — click and drag to create a new reservation -->
-			<p style="margin:0 0 10px;font-size:13px;color:#64748b">
-				<strong><?php esc_html_e( 'To book:', 'ajforms' ); ?></strong>
-				<?php esc_html_e( 'Click and drag on the calendar below to select your time slot (8am–10pm). Red = already booked, amber = unavailable.', 'ajforms' ); ?>
-			</p>
+			<?php endif; // end: has reservations ?>
 
 			<div class="aj-res-fc-wrap">
 				<div id="aj-res-fullcalendar"
@@ -11892,7 +11890,7 @@ class AJForms {
 			// ── FullCalendar ────────────────────────────────────────────
 			var calendar = new FullCalendar.Calendar(calEl, {
 				timeZone:       tz,
-				initialView:    'timeGridWeek',
+				initialView:    'timeGridWorkWeek',
 				firstDay:       1,
 				height:         'auto',
 				headerToolbar: {

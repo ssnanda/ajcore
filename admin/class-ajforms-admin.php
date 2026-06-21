@@ -19274,7 +19274,7 @@ class AJForms_Admin {
 					<ol style="margin:6px 0 2px 16px;padding:0;line-height:1.9">
 						<li><?php esc_html_e( 'Open', 'ajforms' ); ?> <code>https://api-console.zoho.com/</code> → <b>Self Client</b></li>
 						<li><?php esc_html_e( 'Copy your', 'ajforms' ); ?> <b><?php esc_html_e( 'Client ID', 'ajforms' ); ?></b> <?php esc_html_e( 'and', 'ajforms' ); ?> <b><?php esc_html_e( 'Client Secret', 'ajforms' ); ?></b> <?php esc_html_e( 'and paste below, then Save Settings.', 'ajforms' ); ?></li>
-						<li><?php esc_html_e( 'Click', 'ajforms' ); ?> <b><?php esc_html_e( 'Generate Code', 'ajforms' ); ?></b> <?php esc_html_e( 'with scope:', 'ajforms' ); ?> <code>ZohoCalendar.calendar.Read,ZohoCalendar.event.Read,ZohoCalendar.event.Create</code></li>
+						<li><?php esc_html_e( 'Click', 'ajforms' ); ?> <b><?php esc_html_e( 'Generate Code', 'ajforms' ); ?></b> <?php esc_html_e( 'with scope:', 'ajforms' ); ?> <code>ZohoCalendar.calendar.Read,ZohoCalendar.event.Read,ZohoCalendar.event.Create,ZohoCalendar.event.Delete</code></li>
 						<li><?php esc_html_e( 'Paste the generated code into the field below and click', 'ajforms' ); ?> <b><?php esc_html_e( 'Exchange Code & Test API', 'ajforms' ); ?></b>.</li>
 						<li><?php esc_html_e( 'AJCore exchanges it for a refresh token and saves everything. You\'re done — no need to repeat this.', 'ajforms' ); ?></li>
 					</ol>
@@ -19508,6 +19508,45 @@ class AJForms_Admin {
 
 			global $wpdb;
 			$table = $wpdb->prefix . 'aj_portal_reservations';
+
+			// If the reservation has a Zoho event, delete it there too.
+			$row = $wpdb->get_row( $wpdb->prepare( "SELECT zoho_event_id FROM `{$table}` WHERE id = %d LIMIT 1", $reservation_id ) );
+			if ( $row && ! empty( $row->zoho_event_id ) && class_exists( 'AJCore_Zoho_Calendar' ) ) {
+				$s      = $this->get_plugin_settings();
+				$token  = ! empty( $s['zoho_access_token'] ) ? $s['zoho_access_token'] : ( $s['zoho_api_token'] ?? '' );
+				$exp    = ! empty( $s['zoho_token_expires_at'] ) ? strtotime( $s['zoho_token_expires_at'] )
+					: ( ! empty( $s['zoho_api_token_expires_at'] ) ? strtotime( $s['zoho_api_token_expires_at'] ) : 0 );
+
+				// Refresh the access token if it is expired or close to expiry.
+				if ( '' === $token || $exp <= time() + 60 ) {
+					$refresh = $s['zoho_refresh_token'] ?? '';
+					$cid     = $s['zoho_client_id'] ?? $s['zoho_oauth_client_id'] ?? '';
+					$csec    = $s['zoho_client_secret'] ?? $s['zoho_oauth_client_secret'] ?? '';
+					if ( $refresh && $cid && $csec ) {
+						$tr = wp_remote_post(
+							add_query_arg( array( 'grant_type' => 'refresh_token', 'client_id' => $cid, 'client_secret' => $csec, 'refresh_token' => $refresh ), 'https://accounts.zoho.com/oauth/v2/token' ),
+							array( 'timeout' => 15 )
+						);
+						$tb = json_decode( wp_remote_retrieve_body( $tr ), true );
+						if ( ! empty( $tb['access_token'] ) ) {
+							$token = sanitize_text_field( (string) $tb['access_token'] );
+							$ei    = absint( $tb['expires_in'] ?? 3600 );
+							$s['zoho_access_token']        = $token;
+							$s['zoho_api_token']           = $token;
+							$s['zoho_token_expires_at']    = gmdate( 'Y-m-d H:i:s', time() + max( 0, $ei - 60 ) );
+							$s['zoho_api_token_expires_at']= $s['zoho_token_expires_at'];
+							update_option( 'ajforms_settings', $s, false );
+						}
+					}
+				}
+
+				if ( '' !== $token ) {
+					$cal_uid = $s['zoho_calendar_uid'] ?? '';
+					AJCore_Zoho_Calendar::delete_zoho_calendar_event( $cal_uid, $row->zoho_event_id, $token );
+					// Failure is silent — DB row is deleted regardless so the slot opens up.
+				}
+			}
+
 			$wpdb->delete( $table, array( 'id' => $reservation_id ), array( '%d' ) );
 
 			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'reservation-deleted' => '1' ), admin_url( 'admin.php' ) ) );
