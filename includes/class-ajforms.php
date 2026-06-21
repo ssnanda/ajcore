@@ -11729,8 +11729,8 @@ class AJForms {
 		.fc .fc-highlight{background:#dbeafe!important;opacity:.85}
 		.fc .fc-non-business{background:rgba(241,245,249,.6)}
 		.fc-direction-ltr .fc-timegrid-col-events{margin:0}
-		/* Booking modal */
-		.aj-res-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;display:flex;align-items:center;justify-content:center}
+		/* Booking modal — display:none by default; JS sets display:flex to open */
+		.aj-res-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;align-items:center;justify-content:center}
 		.aj-res-modal-box{background:#fff;border-radius:14px;padding:24px 26px;max-width:480px;width:92%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25);position:relative}
 		.aj-res-modal-close{position:absolute;top:14px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#64748b;line-height:1;padding:0}
 		.aj-res-modal-close:hover{color:#0f172a}
@@ -11743,8 +11743,8 @@ class AJForms {
 		.aj-res-modal-box input:focus,.aj-res-modal-box textarea:focus{border-color:#3157ff;outline:none;box-shadow:0 0 0 3px rgba(49,87,255,.12)}
 		.aj-res-no-cancel-notice{font-size:12px;color:#92400e;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;margin:10px 0}
 		.aj-res-pay-button{width:100%!important;padding:10px!important;font-size:14px!important;font-weight:700!important}
-		.aj-res-spinner{font-size:13px;color:#64748b;display:block;margin-top:8px}
-		.aj-res-error-msg{color:#dc2626;font-size:13px;margin-top:8px}
+		.aj-res-spinner{display:none;font-size:13px;color:#64748b;margin-top:8px}
+		.aj-res-error-msg{display:none;color:#dc2626;font-size:13px;margin-top:8px}
 		/* My Reservations */
 		.aj-reservations-my-list{margin-top:24px}
 		.aj-reservations-my-list h3{margin-bottom:10px}
@@ -11785,7 +11785,7 @@ class AJForms {
 			</div>
 
 			<!-- Booking modal -->
-			<div class="aj-res-modal-overlay" id="aj-res-modal-overlay" hidden aria-modal="true" role="dialog">
+			<div class="aj-res-modal-overlay" id="aj-res-modal-overlay" aria-modal="true" role="dialog">
 				<div class="aj-res-modal-box">
 					<button class="aj-res-modal-close" id="aj-res-modal-close" aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&#x2715;</button>
 					<h3><?php esc_html_e( 'New Reservation', 'ajforms' ); ?></h3>
@@ -11973,28 +11973,28 @@ class AJForms {
 					'<p><strong><?php echo esc_js( __( 'Time', 'ajforms' ) ); ?>:</strong> ' + escH(startFmt) + ' &ndash; ' + escH(endFmt) + '</p>' +
 					'<p><strong><?php echo esc_js( __( 'Duration', 'ajforms' ) ); ?>:</strong> ' + hours + (hours === 1 ? ' <?php echo esc_js( __( 'hour', 'ajforms' ) ); ?>' : ' <?php echo esc_js( __( 'hours', 'ajforms' ) ); ?>') + '</p>' +
 					'<p><strong><?php echo esc_js( __( 'Rate', 'ajforms' ) ); ?>:</strong> ' + escH(isBiz ? bizLabel : afterLabel) + '</p>';
-				errMsg.hidden      = true;
+				errMsg.style.display = 'none';
 				errMsg.textContent = '';
 				nameField.value    = '';
 				emailField.value   = '';
 				phoneField.value   = '';
 				notesField.value   = '';
 				payBtn.disabled    = false;
-				spinner.hidden     = true;
-				overlay.hidden     = false;
+				spinner.style.display = 'none';
+				overlay.style.display = 'flex';
 				document.body.style.overflow = 'hidden';
 				setTimeout(function() { nameField.focus(); }, 50);
 			}
 
 			function closeModal() {
-				overlay.hidden = true;
+				overlay.style.display = 'none';
 				document.body.style.overflow = '';
 				selectedStartStr = selectedEndStr = null;
 			}
 
 			if (closeBtn) closeBtn.addEventListener('click', closeModal);
 			overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
-			document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && !overlay.hidden) closeModal(); });
+			document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && overlay.style.display !== 'none') closeModal(); });
 
 			// ── Pay Now ─────────────────────────────────────────────────
 			if (payBtn) {
@@ -12003,19 +12003,19 @@ class AJForms {
 					var email = emailField.value.trim();
 					var phone = phoneField.value.trim();
 					var notes = notesField.value.trim();
-					errMsg.hidden = true;
+					errMsg.style.display = 'none';
 					if (!selectedStartStr || !selectedEndStr) {
 						errMsg.textContent = '<?php echo esc_js( __( 'Please select a time slot first.', 'ajforms' ) ); ?>';
-						errMsg.hidden = false;
+						errMsg.style.display = 'block';
 						return;
 					}
 					if (!name || !email || !phone) {
 						errMsg.textContent = '<?php echo esc_js( __( 'Please enter your name, email, and phone.', 'ajforms' ) ); ?>';
-						errMsg.hidden = false;
+						errMsg.style.display = 'block';
 						return;
 					}
 					payBtn.disabled = true;
-					spinner.hidden  = false;
+					spinner.style.display = 'block';
 					var fd = new FormData();
 					fd.append('action',         'ajcore_reservation_create_checkout');
 					fd.append('nonce',          checkoutNonce);
@@ -12030,82 +12030,22 @@ class AJForms {
 					.then(function(r) { return r.json(); })
 					.then(function(payload) {
 						payBtn.disabled = false;
-						spinner.hidden  = true;
+						spinner.style.display = 'none';
 						if (!payload.success || !payload.data || !payload.data.checkout_url) {
-			const bookForm    = panel.querySelector('.aj-res-booking-form');
-			const payBtn      = panel.querySelector('.aj-res-pay-button');
-			const spinner     = panel.querySelector('.aj-res-spinner');
-			const errMsg      = panel.querySelector('.aj-res-error-msg');
-			const bookSummary = panel.querySelector('.aj-res-booking-summary');
-
-
-			const tz           = calGrid.dataset.timezone;
-			const resourceKey  = calGrid.dataset.resourceKey;
-			const checkNonce   = calGrid.dataset.checkNonce;
-			const checkoutNonce = calGrid.dataset.checkoutNonce;
-			const pubKey       = calGrid.dataset.publishableKey;
-			const bizLabel     = calGrid.dataset.businessLabel;
-			const afterLabel   = calGrid.dataset.afterLabel;
-
-			let selectedDate = null;
-			let selectedStart = null;
-			let selectedEnd   = null;
-			let pricingType   = null;
-			let availabilityRequest = 0;
-
-			function buildSlots(date) {
-				const requestId = ++availabilityRequest;
-				slotGrid.innerHTML = '';
-				slotPanel.hidden = false;
-				setTimeout(function(){ slotPanel.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
-				slotHeading.textContent = new Date(date + 'T12:00:00').toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric', year:'numeric'});
-				bookForm.hidden = true;
-				slotNotice.hidden = true;
-				errMsg.hidden = true;
-				selectedStart = null;
-				selectedEnd   = null;
-
-				for (let h = 8; h <= 21; h++) {
-					const hour    = String(h).padStart(2,'0') + ':00';
-					const hourEnd = String(h + 1).padStart(2,'0') + ':00';
-					const label   = formatHour(h) + ' – ' + formatHour(h + 1);
-					const btn     = document.createElement('button');
-					btn.type      = 'button';
-					btn.className = 'aj-res-slot-btn';
-					btn.dataset.hour     = h;
-					btn.dataset.startIso = date + 'T' + hour + ':00';
-					btn.dataset.endIso   = date + 'T' + hourEnd + ':00';
-					btn.textContent      = label + ' ...';
-					btn.disabled         = true;
-					btn.classList.add('aj-res-slot-loading');
-					slotGrid.appendChild(btn);
-				}
-
-				loadDayAvailability(date, requestId);
+							errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to start checkout. Please try again.', 'ajforms' ) ); ?>';
+							errMsg.style.display = 'block';
+							return;
+						}
+						window.location.href = payload.data.checkout_url;
+					})
+					.catch(function() {
+						payBtn.disabled = false;
+						spinner.style.display = 'none';
+						errMsg.textContent = '<?php echo esc_js( __( 'Network error. Please try again.', 'ajforms' ) ); ?>';
+						errMsg.style.display = 'block';
+					});
+				});
 			}
-
-			function formatHour(h) {
-				const ampm = h < 12 ? 'AM' : 'PM';
-				const h12  = h % 12 === 0 ? 12 : h % 12;
-				return h12 + ':00 ' + ampm;
-			}
-
-			function loadDayAvailability(date, requestId) {
-				slotNotice.hidden = true;
-					errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to start checkout. Please try again.', 'ajforms' ) ); ?>';
-					errMsg.hidden = false;
-					return;
-				}
-				window.location.href = payload.data.checkout_url;
-			})
-			.catch(function() {
-				payBtn.disabled = false;
-				spinner.hidden  = true;
-				errMsg.textContent = '<?php echo esc_js( __( 'Network error. Please try again.', 'ajforms' ) ); ?>';
-				errMsg.hidden = false;
-			});
-		});
-	}
 
 	// ── Helpers ─────────────────────────────────────────────────
 	function getLocalHour(iso) {
