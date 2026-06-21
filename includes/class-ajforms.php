@@ -931,6 +931,8 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_reservation_check_availability', array( $this, 'ajax_reservation_check_availability' ) );
 		add_action( 'wp_ajax_ajcore_reservation_create_checkout', array( $this, 'ajax_reservation_create_checkout' ) );
 		add_action( 'wp_ajax_ajcore_test_zoho_connection', array( $this, 'ajax_test_zoho_connection' ) );
+		add_action( 'wp_ajax_ajcore_get_reservation_events', array( $this, 'ajax_get_reservation_events' ) );
+		add_action( 'wp_ajax_nopriv_ajcore_get_reservation_events', array( $this, 'ajax_get_reservation_events' ) );
 	}
 
 	private function get_custom_login_logo_url() {
@@ -11707,235 +11709,107 @@ class AJForms {
 			$my_reservations = AJCore_Reservations::get_customer_reservations( $stripe_customer_id, $wp_user_id );
 		}
 
-		$now_dt           = new DateTime( 'now', new DateTimeZone( $timezone ) );
-		$current_month    = (int) $now_dt->format( 'n' );
-		$current_year     = (int) $now_dt->format( 'Y' );
-		$view_month       = isset( $_GET['res_month'] ) ? absint( $_GET['res_month'] ) : $current_month; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		$view_year        = isset( $_GET['res_year'] ) ? absint( $_GET['res_year'] ) : $current_year;   // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		// Clamp to sane range.
-		if ( $view_year < $current_year || ( $view_year === $current_year && $view_month < $current_month ) ) {
-			$view_month = $current_month;
-			$view_year  = $current_year;
-		}
-		if ( $view_year > $current_year + 1 ) {
-			$view_year  = $current_year + 1;
-			$view_month = 12;
-		}
-
-		$month_dt       = new DateTime( sprintf( '%04d-%02d-01', $view_year, $view_month ), new DateTimeZone( $timezone ) );
-		$today_str      = $now_dt->format( 'Y-m-d' );
-		$display_start  = clone $month_dt;
-		if ( $view_year === $current_year && $view_month === $current_month ) {
-			$display_start = clone $now_dt;
-		}
-		$display_start->setTime( 0, 0, 0 );
-		$first_dow_raw = (int) $display_start->format( 'w' );
-		$first_dow     = ( $first_dow_raw + 6 ) % 7; // Mon=0 ... Sun=6.
-		$month_label   = $month_dt->format( 'F Y' );
-
-		// Prev / next URLs.
-		$prev_dt = clone $month_dt;
-		$prev_dt->modify( '-1 month' );
-		$next_dt = clone $month_dt;
-		$next_dt->modify( '+1 month' );
-
-		$base_url   = $this->get_customer_portal_url();
-		$tab_url    = add_query_arg( 'portal_tab', 'reservations', $base_url );
-		$prev_url   = add_query_arg( array( 'res_month' => $prev_dt->format( 'n' ), 'res_year' => $prev_dt->format( 'Y' ) ), $tab_url );
-		$next_url   = add_query_arg( array( 'res_month' => $next_dt->format( 'n' ), 'res_year' => $next_dt->format( 'Y' ) ), $tab_url );
-		$show_prev  = ! ( (int) $prev_dt->format( 'Y' ) === $current_year && (int) $prev_dt->format( 'n' ) < $current_month )
-		              && ! ( (int) $prev_dt->format( 'Y' ) < $current_year );
-
 		ob_start();
+		$ajax_url    = esc_url( admin_url( 'admin-ajax.php' ) );
+		$check_nonce = wp_create_nonce( 'ajcore_reservation_check_availability' );
+		$chkout_nonce = wp_create_nonce( 'ajcore_reservation_create_checkout' );
+		$pub_key     = isset( $stripe_settings['publishable_key'] ) ? $stripe_settings['publishable_key'] : '';
 		?>
+		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
 		<style>
-		/* ── Reservations: Calendar grid ─────────────────────────────── */
-		.aj-reservations-calendar-nav{display:flex;align-items:center;gap:10px;margin:10px 0 14px;flex-wrap:wrap}
-		.aj-reservations-month-label{font-size:15px;font-weight:700;flex:1;text-align:center}
-		.aj-res-nav-btn{border-radius:999px!important;padding:4px 14px!important;font-size:13px!important}
-		.aj-reservations-calendar-grid{border:1px solid #dbe4f0;border-radius:8px;overflow:hidden;background:#fff;margin-bottom:20px}
-		.aj-res-cal-header{display:grid;grid-template-columns:repeat(7,1fr);background:#eef4ff;border-bottom:1px solid #dbe4f0}
-		.aj-res-cal-dow{padding:14px 6px;text-align:center;font-size:15px;font-weight:900;color:#1e293b;text-transform:uppercase;letter-spacing:.04em}
-		.aj-res-cal-dow-weekend{background:#fff7ed;color:#9a3412}
-		.aj-res-cal-body{display:grid;grid-template-columns:repeat(7,1fr)}
-		.aj-res-cal-day{min-height:88px;padding:10px;border-right:1px solid #eef2f7;border-bottom:1px solid #eef2f7;position:relative;cursor:default}
-		.aj-res-cal-day:nth-child(7n){border-right:none}
-		.aj-res-cal-empty{background:#fafafa}
-		.aj-res-cal-day-num{font-size:20px;font-weight:900;color:#1e293b;display:block;line-height:1.1}
-		.aj-res-cal-day-month{font-size:13px;font-weight:700;color:#64748b;display:block;margin-top:4px}
-		.aj-res-cal-day-dot{display:block;width:8px;height:8px;border-radius:50%;margin:12px auto 0;background:transparent}
-		.aj-res-day-available{cursor:pointer;transition:background .12s}
-		.aj-res-day-available:hover,.aj-res-day-today:hover{background:#eff6ff}
-		.aj-res-day-available .aj-res-cal-day-dot,.aj-res-day-today .aj-res-cal-day-dot{background:#3157ff}
-		.aj-res-day-today{background:#f0f9ff;cursor:pointer}
-		.aj-res-day-today .aj-res-cal-day-num{color:#3157ff;font-weight:800}
-		.aj-res-day-selected{background:#3157ff!important}
-		.aj-res-day-selected .aj-res-cal-day-num{color:#fff!important}
-		.aj-res-day-selected .aj-res-cal-day-month{color:#dbeafe!important}
-		.aj-res-day-selected .aj-res-cal-day-dot{background:#fff!important}
-		.aj-res-day-weekend{background:#fffaf3}
-		.aj-res-day-weekend.aj-res-day-available .aj-res-cal-day-num{color:#9a3412}
-		.aj-res-day-weekend.aj-res-day-available .aj-res-cal-day-month{color:#c2410c}
-		/* ── Time slots ──────────────────────────────────────────────── */
-		.aj-reservations-slot-panel{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:16px}
-		.aj-res-slot-heading{margin:0 0 4px;font-size:15px;font-weight:700}
-		.aj-res-slot-subheading{margin:0 0 12px;color:#64748b;font-size:13px}
-		.aj-res-slot-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-		.aj-res-slot-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;font-size:13px;font-weight:600;cursor:pointer;color:#334155;transition:all .12s}
-		.aj-res-slot-btn:hover{border-color:#3157ff;color:#3157ff;background:#eff6ff}
-		.aj-res-slot-selected{border-color:#3157ff!important;background:#3157ff!important;color:#fff!important}
-		.aj-res-slot-busy{opacity:.48;cursor:not-allowed;text-decoration:line-through;background:#f1f5f9;color:#64748b}
-		.aj-res-slot-loading{opacity:.7;cursor:wait}
-		.aj-res-slot-notice{padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:10px}
-		.aj-notice-error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
-		.aj-notice-info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
-		/* ── Booking form ────────────────────────────────────────────── */
-		.aj-res-booking-form{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-top:10px}
-		.aj-res-booking-form h4{margin:0 0 10px;font-size:14px;font-weight:700}
-		.aj-res-booking-summary{background:#f8fafc;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+		/* ── Reservations: FullCalendar wrapper ─────────────────────── */
+		/* FullCalendar chrome */
+		.aj-res-fc-wrap{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:24px;background:#fff}
+		.aj-res-fc-wrap .fc{padding:12px}
+		.fc .fc-toolbar-title{font-size:16px!important;font-weight:700}
+		.fc .fc-button{font-size:13px!important}
+		.fc .fc-timegrid-slot{height:2.4em}
+		.fc .fc-timegrid-slot-label{font-size:12px;color:#64748b}
+		.fc .fc-col-header-cell-cushion{font-size:13px;font-weight:700}
+		.fc .fc-highlight{background:#dbeafe!important;opacity:.85}
+		.fc .fc-non-business{background:rgba(241,245,249,.6)}
+		.fc-direction-ltr .fc-timegrid-col-events{margin:0}
+		/* Booking modal */
+		.aj-res-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;display:flex;align-items:center;justify-content:center}
+		.aj-res-modal-box{background:#fff;border-radius:14px;padding:24px 26px;max-width:480px;width:92%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25);position:relative}
+		.aj-res-modal-close{position:absolute;top:14px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#64748b;line-height:1;padding:0}
+		.aj-res-modal-close:hover{color:#0f172a}
+		.aj-res-modal-box h3{margin:0 0 14px;font-size:17px;font-weight:700}
+		.aj-res-booking-summary{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px}
 		.aj-res-booking-summary p{margin:3px 0}
-		.aj-res-booking-form label{display:block;margin-bottom:10px;font-size:13px;font-weight:600;color:#334155}
-		.aj-res-booking-form label span{display:block;margin-bottom:3px}
-		.aj-res-booking-form input,.aj-res-booking-form textarea{width:100%;max-width:420px;border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:13px;box-sizing:border-box}
+		.aj-res-modal-box label{display:block;margin-bottom:12px;font-size:13px;font-weight:600;color:#334155}
+		.aj-res-modal-box label span{display:block;margin-bottom:4px}
+		.aj-res-modal-box input,.aj-res-modal-box textarea{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;font-size:13px;box-sizing:border-box}
+		.aj-res-modal-box input:focus,.aj-res-modal-box textarea:focus{border-color:#3157ff;outline:none;box-shadow:0 0 0 3px rgba(49,87,255,.12)}
 		.aj-res-no-cancel-notice{font-size:12px;color:#92400e;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;margin:10px 0}
-		.aj-res-pay-button{margin-top:4px}
-		.aj-res-spinner{font-size:13px;color:#64748b;margin-left:8px}
-		.aj-res-error-msg{color:#dc2626;font-size:13px;margin-top:6px}
-		/* ── My Reservations table ───────────────────────────────────── */
+		.aj-res-pay-button{width:100%!important;padding:10px!important;font-size:14px!important;font-weight:700!important}
+		.aj-res-spinner{font-size:13px;color:#64748b;display:block;margin-top:8px}
+		.aj-res-error-msg{color:#dc2626;font-size:13px;margin-top:8px}
+		/* My Reservations */
 		.aj-reservations-my-list{margin-top:24px}
 		.aj-reservations-my-list h3{margin-bottom:10px}
 		.aj-portal-status-badge{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700}
 		.aj-status-good{background:#dcfce7;color:#166534}
 		.aj-status-warn{background:#fef3c7;color:#92400e}
 		.aj-status-bad{background:#fee2e2;color:#991b1b}
-		@media(max-width:600px){
-			.aj-res-cal-dow{font-size:12px;padding:10px 4px}
-			.aj-res-cal-day-num{font-size:16px}
-			.aj-res-cal-day{min-height:58px;padding:6px}
-			.aj-res-slot-btn{padding:5px 10px;font-size:12px}
+		@media(max-width:640px){
+			.aj-res-fc-wrap .fc{padding:6px}
+			.fc .fc-toolbar{flex-wrap:wrap;gap:6px}
 		}
 		</style>
 		<section class="aj-customer-portal-panel aj-reservations-panel">
 			<h2><?php echo esc_html( $resource_name ); ?></h2>
 
-			<p style="margin:0 0 10px;font-size:13px;color:#64748b">
+			<p style="margin:0 0 14px;font-size:13px;color:#64748b">
 				<?php
 				printf(
 					/* translators: 1: business hours label, 2: after-hours label */
-					esc_html__( 'Window: 8am–10pm daily. %1$s rate Mon–Fri 9am–5pm · %2$s rate all other times. Pick a date to see that day\'s available times. Prepay only — no refunds.', 'ajforms' ),
+					esc_html__( 'Click and drag on any free time to make a reservation. %1$s: Mon–Fri 9am–5pm · %2$s: all other times. Prepay only — no refunds.', 'ajforms' ),
 					esc_html( $business_hours_label ),
 					esc_html( $after_hours_label )
 				);
 				?>
 			</p>
 
-			<div class="aj-reservations-calendar-nav">
-				<?php if ( $show_prev ) : ?>
-					<a href="<?php echo esc_url( $prev_url ); ?>" class="button aj-res-nav-btn">&lsaquo; <?php echo esc_html( $prev_dt->format( 'M Y' ) ); ?></a>
-				<?php else : ?>
-					<span class="button aj-res-nav-btn" aria-disabled="true" style="opacity:.4;">&lsaquo; <?php echo esc_html( $prev_dt->format( 'M Y' ) ); ?></span>
-				<?php endif; ?>
-				<strong class="aj-reservations-month-label"><?php echo esc_html( $month_label ); ?></strong>
-				<a href="<?php echo esc_url( $next_url ); ?>" class="button aj-res-nav-btn"><?php echo esc_html( $next_dt->format( 'M Y' ) ); ?> &rsaquo;</a>
+			<div class="aj-res-fc-wrap">
+				<div id="aj-res-fullcalendar"
+					data-timezone="<?php echo esc_attr( $timezone ); ?>"
+					data-resource-key="<?php echo esc_attr( $resource_key ); ?>"
+					data-check-nonce="<?php echo esc_attr( $check_nonce ); ?>"
+					data-checkout-nonce="<?php echo esc_attr( $chkout_nonce ); ?>"
+					data-publishable-key="<?php echo esc_attr( $pub_key ); ?>"
+					data-business-label="<?php echo esc_attr( $business_hours_label ); ?>"
+					data-after-label="<?php echo esc_attr( $after_hours_label ); ?>"
+					data-ajax-url="<?php echo esc_attr( $ajax_url ); ?>"
+				></div>
 			</div>
 
-			<div
-				class="aj-reservations-calendar-grid"
-				data-timezone="<?php echo esc_attr( $timezone ); ?>"
-				data-resource-key="<?php echo esc_attr( $resource_key ); ?>"
-				data-check-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_reservation_check_availability' ) ); ?>"
-				data-checkout-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_reservation_create_checkout' ) ); ?>"
-				data-publishable-key="<?php echo esc_attr( isset( $stripe_settings['publishable_key'] ) ? $stripe_settings['publishable_key'] : '' ); ?>"
-				data-business-label="<?php echo esc_attr( $business_hours_label ); ?>"
-				data-after-label="<?php echo esc_attr( $after_hours_label ); ?>"
-			>
-				<?php
-				$dow_labels = array(
-					__( 'Mon', 'ajforms' ),
-					__( 'Tue', 'ajforms' ),
-					__( 'Wed', 'ajforms' ),
-					__( 'Thu', 'ajforms' ),
-					__( 'Fri', 'ajforms' ),
-					__( 'Sat', 'ajforms' ),
-					__( 'Sun', 'ajforms' ),
-				);
-				?>
-				<div class="aj-res-cal-header">
-					<?php foreach ( $dow_labels as $idx => $lbl ) :
-						$is_weekend_header = $idx >= 5;
-						?>
-						<div class="aj-res-cal-dow <?php echo $is_weekend_header ? 'aj-res-cal-dow-weekend' : ''; ?>"><?php echo esc_html( $lbl ); ?></div>
-					<?php endforeach; ?>
-				</div>
-				<div class="aj-res-cal-body">
-					<?php
-					for ( $i = 0; $i < $first_dow; $i++ ) {
-						echo '<div class="aj-res-cal-day aj-res-cal-empty"></div>';
-					}
-
-					$display_day = clone $display_start;
-					while ( (int) $display_day->format( 'n' ) === $view_month && (int) $display_day->format( 'Y' ) === $view_year ) {
-						$day_dt    = clone $display_day;
-						$day_str   = $day_dt->format( 'Y-m-d' );
-						$is_today  = $day_str === $today_str;
-						$dow        = (int) $day_dt->format( 'w' ); // 0=Sun,6=Sat
-						$is_weekend = ( 0 === $dow || 6 === $dow );
-						$class     = 'aj-res-cal-day';
-						if ( $is_today ) {
-							$class .= ' aj-res-day-today';
-						} else {
-							$class .= ' aj-res-day-available';
-						}
-						if ( $is_weekend ) {
-							$class .= ' aj-res-day-weekend';
-						}
-						$aria_label = $day_dt->format( 'F j, Y' );
-						echo '<div class="' . esc_attr( $class ) . '" data-date="' . esc_attr( $day_str ) . '" aria-label="' . esc_attr( $aria_label ) . '" role="button" tabindex="0">';
-						echo '<span class="aj-res-cal-day-num">' . esc_html( $day_dt->format( 'j' ) ) . '</span>';
-						echo '<span class="aj-res-cal-day-month">' . esc_html( $day_dt->format( 'M' ) ) . '</span>';
-						echo '<span class="aj-res-cal-day-dot"></span>';
-						echo '</div>';
-						$display_day->modify( '+1 day' );
-					}
-					// Trailing empties to complete last row.
-					$total_cells = $first_dow + (int) $display_start->diff( $display_day )->days;
-					$trailing    = ( 7 - ( $total_cells % 7 ) ) % 7;
-					for ( $i = 0; $i < $trailing; $i++ ) {
-						echo '<div class="aj-res-cal-day aj-res-cal-empty"></div>';
-					}
-					?>
-				</div>
-			</div>
-
-			<!-- Time-slot picker panel (shown when a day is selected) -->
-			<div class="aj-reservations-slot-panel" hidden>
-				<h3 class="aj-res-slot-heading"></h3>
-				<p class="aj-res-slot-subheading"><?php esc_html_e( 'Available times for the full selected date are shown below. Choose a time, then complete your booking details.', 'ajforms' ); ?></p>
-				<div class="aj-res-slot-grid"></div>
-				<div class="aj-res-slot-notice" hidden></div>
-				<div class="aj-res-booking-form" hidden>
-					<h4><?php esc_html_e( 'Complete Your Booking', 'ajforms' ); ?></h4>
-					<div class="aj-res-booking-summary"></div>
+			<!-- Booking modal -->
+			<div class="aj-res-modal-overlay" id="aj-res-modal-overlay" hidden aria-modal="true" role="dialog">
+				<div class="aj-res-modal-box">
+					<button class="aj-res-modal-close" id="aj-res-modal-close" aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&#x2715;</button>
+					<h3><?php esc_html_e( 'New Reservation', 'ajforms' ); ?></h3>
+					<div class="aj-res-booking-summary" id="aj-res-booking-summary"></div>
 					<label>
 						<span><?php esc_html_e( 'Your Name', 'ajforms' ); ?></span>
-						<input type="text" class="aj-res-field-name" required>
+						<input type="text" id="aj-res-field-name" autocomplete="name" required>
 					</label>
 					<label>
 						<span><?php esc_html_e( 'Your Email', 'ajforms' ); ?></span>
-						<input type="email" class="aj-res-field-email" required>
+						<input type="email" id="aj-res-field-email" autocomplete="email" required>
 					</label>
 					<label>
 						<span><?php esc_html_e( 'Phone', 'ajforms' ); ?></span>
-						<input type="tel" class="aj-res-field-phone" required>
+						<input type="tel" id="aj-res-field-phone" autocomplete="tel" required>
 					</label>
 					<label>
 						<span><?php esc_html_e( 'Notes (optional)', 'ajforms' ); ?></span>
-						<textarea class="aj-res-field-notes" rows="3"></textarea>
+						<textarea id="aj-res-field-notes" rows="3"></textarea>
 					</label>
 					<p class="aj-res-no-cancel-notice"><?php esc_html_e( 'Reservations are prepaid and non-refundable. No cancellations or rescheduling.', 'ajforms' ); ?></p>
-					<button type="button" class="button button-primary aj-res-pay-button"><?php esc_html_e( 'Pay Now', 'ajforms' ); ?></button>
-					<span class="aj-res-spinner" hidden><?php esc_html_e( 'Processing…', 'ajforms' ); ?></span>
-					<p class="aj-res-error-msg" hidden></p>
+					<button type="button" class="button button-primary aj-res-pay-button" id="aj-res-pay-button"><?php esc_html_e( 'Pay Now', 'ajforms' ); ?></button>
+					<span class="aj-res-spinner" id="aj-res-spinner" hidden><?php esc_html_e( 'Processing…', 'ajforms' ); ?></span>
+					<p class="aj-res-error-msg" id="aj-res-error-msg" hidden></p>
 				</div>
 			</div>
 
@@ -11958,18 +11832,19 @@ class AJForms {
 							</thead>
 							<tbody>
 								<?php foreach ( $my_reservations as $res ) :
-									$res      = (array) $res;
-									$start_dt = new DateTime( $res['start_at'], new DateTimeZone( 'UTC' ) );
-									$end_dt   = new DateTime( $res['end_at'], new DateTimeZone( 'UTC' ) );
-									$tz_obj   = new DateTimeZone( $timezone );
+									$res          = (array) $res;
+									$res_ref      = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( (int) $res['id'] ) : ( 'RES-' . $res['id'] );
+									$start_dt     = new DateTime( $res['start_at'], new DateTimeZone( 'UTC' ) );
+									$end_dt       = new DateTime( $res['end_at'], new DateTimeZone( 'UTC' ) );
+									$tz_obj       = new DateTimeZone( $timezone );
 									$start_dt->setTimezone( $tz_obj );
 									$end_dt->setTimezone( $tz_obj );
-									$status_label = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_label( $res['status'] ) : ucfirst( $res['status'] );
-									$status_class = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_class( $res['status'] ) : 'warn';
+									$status_label  = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_label( $res['status'] ) : ucfirst( $res['status'] );
+									$status_class  = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_class( $res['status'] ) : 'warn';
 									$pricing_label = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_pricing_type_label( $res['pricing_type'], $settings ) : $res['pricing_type'];
 									?>
 									<tr>
-										<td><strong><?php echo esc_html( $res['friendly_reference'] ); ?></strong></td>
+										<td><strong><?php echo esc_html( $res_ref ); ?></strong></td>
 										<td><?php echo esc_html( $start_dt->format( 'M j, Y' ) ); ?></td>
 										<td><?php echo esc_html( $start_dt->format( 'g:i A' ) . ' – ' . $end_dt->format( 'g:i A T' ) ); ?></td>
 										<td><?php echo esc_html( $pricing_label ); ?></td>
@@ -11982,16 +11857,181 @@ class AJForms {
 				<?php endif; ?>
 			</div>
 		</section>
+		<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
 		<script>
 		(function() {
-			const panel = document.querySelector('.aj-reservations-panel');
-			if (!panel) return;
+			var calEl      = document.getElementById('aj-res-fullcalendar');
+			var overlay    = document.getElementById('aj-res-modal-overlay');
+			var closeBtn   = document.getElementById('aj-res-modal-close');
+			var summary    = document.getElementById('aj-res-booking-summary');
+			var payBtn     = document.getElementById('aj-res-pay-button');
+			var spinner    = document.getElementById('aj-res-spinner');
+			var errMsg     = document.getElementById('aj-res-error-msg');
+			var nameField  = document.getElementById('aj-res-field-name');
+			var emailField = document.getElementById('aj-res-field-email');
+			var phoneField = document.getElementById('aj-res-field-phone');
+			var notesField = document.getElementById('aj-res-field-notes');
 
-			const calGrid     = panel.querySelector('.aj-reservations-calendar-grid');
-			const slotPanel   = panel.querySelector('.aj-reservations-slot-panel');
-			const slotHeading = panel.querySelector('.aj-res-slot-heading');
-			const slotGrid    = panel.querySelector('.aj-res-slot-grid');
-			const slotNotice  = panel.querySelector('.aj-res-slot-notice');
+			if (!calEl || typeof FullCalendar === 'undefined') return;
+
+			var tz            = calEl.dataset.timezone;
+			var resourceKey   = calEl.dataset.resourceKey;
+			var checkNonce    = calEl.dataset.checkNonce;
+			var checkoutNonce = calEl.dataset.checkoutNonce;
+			var bizLabel      = calEl.dataset.businessLabel;
+			var afterLabel    = calEl.dataset.afterLabel;
+			var ajaxUrl       = calEl.dataset.ajaxUrl;
+
+			var selectedStartStr = null;
+			var selectedEndStr   = null;
+
+			// ── FullCalendar ────────────────────────────────────────────
+			var calendar = new FullCalendar.Calendar(calEl, {
+				timeZone:       tz,
+				initialView:    'timeGridWeek',
+				firstDay:       1,
+				height:         'auto',
+				headerToolbar: {
+					left:   'prev,next today',
+					center: 'title',
+					right:  'dayGridMonth,timeGridWeek,timeGridWorkWeek,timeGridDay'
+				},
+				views: {
+					timeGridWorkWeek: {
+						type:       'timeGrid',
+						duration:   { weeks: 1 },
+						hiddenDays: [0, 6],
+						buttonText: 'Work Wk'
+					}
+				},
+				slotMinTime:     '08:00:00',
+				slotMaxTime:     '22:00:00',
+				slotDuration:    '01:00:00',
+				snapDuration:    '01:00:00',
+				slotLabelFormat: { hour: 'numeric', minute: '2-digit', omitZeroMinute: true, meridiem: 'short' },
+				allDaySlot:     false,
+				nowIndicator:   true,
+				businessHours: { daysOfWeek: [1, 2, 3, 4, 5], startTime: '09:00', endTime: '17:00' },
+				selectable:     true,
+				selectMirror:   true,
+				selectOverlap:  false,
+				selectAllow: function(info) {
+					var now    = new Date();
+					if (info.start <= now) return false;
+					var startH = getLocalHour(info.startStr);
+					var endH   = getLocalHour(info.endStr);
+					var startM = getLocalMin(info.startStr);
+					var endM   = getLocalMin(info.endStr);
+					if (startM !== 0 || endM !== 0) return false;
+					if (startH < 8 || endH > 22) return false;
+					var durMs = info.end - info.start;
+					if (durMs < 3600000 || durMs > 50400000) return false;
+					return true;
+				},
+				validRange: { start: new Date().toISOString().split('T')[0] },
+				events: function(fetchInfo, successCb, failureCb) {
+					fetch(ajaxUrl + '?' + new URLSearchParams({
+						action: 'ajcore_get_reservation_events',
+						nonce:  checkNonce,
+						start:  fetchInfo.startStr,
+						end:    fetchInfo.endStr
+					}), { credentials: 'same-origin' })
+					.then(function(r) { return r.json(); })
+					.then(successCb)
+					.catch(failureCb);
+				},
+				eventContent: function(arg) {
+					var el = document.createElement('div');
+					el.style.cssText = 'padding:2px 4px;font-size:11px;font-weight:700;overflow:hidden;';
+					el.textContent = arg.event.title || 'Booked';
+					return { domNodes: [el] };
+				},
+				eventDidMount: function(info) {
+					info.el.style.cursor = 'not-allowed';
+					info.el.title = '<?php echo esc_js( __( 'Already booked', 'ajforms' ) ); ?>';
+				},
+				select: function(info) {
+					openModal(info.startStr, info.endStr, info.start, info.end);
+					calendar.unselect();
+				}
+			});
+			calendar.render();
+
+			// ── Modal ───────────────────────────────────────────────────
+			function openModal(startStr, endStr, startDate, endDate) {
+				selectedStartStr = startStr;
+				selectedEndStr   = endStr;
+				var hours    = Math.round((endDate - startDate) / 3600000);
+				var startFmt = isoTimeLabel(startStr);
+				var endFmt   = isoTimeLabel(endStr);
+				var dateFmt  = isoDateLabel(startStr);
+				var startH   = getLocalHour(startStr);
+				var startDow = startDate.getDay();
+				var isBiz    = (startDow >= 1 && startDow <= 5) && (startH >= 9 && startH < 17);
+				summary.innerHTML =
+					'<p><strong><?php echo esc_js( __( 'Date', 'ajforms' ) ); ?>:</strong> ' + escH(dateFmt) + '</p>' +
+					'<p><strong><?php echo esc_js( __( 'Time', 'ajforms' ) ); ?>:</strong> ' + escH(startFmt) + ' &ndash; ' + escH(endFmt) + '</p>' +
+					'<p><strong><?php echo esc_js( __( 'Duration', 'ajforms' ) ); ?>:</strong> ' + hours + (hours === 1 ? ' <?php echo esc_js( __( 'hour', 'ajforms' ) ); ?>' : ' <?php echo esc_js( __( 'hours', 'ajforms' ) ); ?>') + '</p>' +
+					'<p><strong><?php echo esc_js( __( 'Rate', 'ajforms' ) ); ?>:</strong> ' + escH(isBiz ? bizLabel : afterLabel) + '</p>';
+				errMsg.hidden      = true;
+				errMsg.textContent = '';
+				nameField.value    = '';
+				emailField.value   = '';
+				phoneField.value   = '';
+				notesField.value   = '';
+				payBtn.disabled    = false;
+				spinner.hidden     = true;
+				overlay.hidden     = false;
+				document.body.style.overflow = 'hidden';
+				setTimeout(function() { nameField.focus(); }, 50);
+			}
+
+			function closeModal() {
+				overlay.hidden = true;
+				document.body.style.overflow = '';
+				selectedStartStr = selectedEndStr = null;
+			}
+
+			if (closeBtn) closeBtn.addEventListener('click', closeModal);
+			overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
+			document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && !overlay.hidden) closeModal(); });
+
+			// ── Pay Now ─────────────────────────────────────────────────
+			if (payBtn) {
+				payBtn.addEventListener('click', function() {
+					var name  = nameField.value.trim();
+					var email = emailField.value.trim();
+					var phone = phoneField.value.trim();
+					var notes = notesField.value.trim();
+					errMsg.hidden = true;
+					if (!selectedStartStr || !selectedEndStr) {
+						errMsg.textContent = '<?php echo esc_js( __( 'Please select a time slot first.', 'ajforms' ) ); ?>';
+						errMsg.hidden = false;
+						return;
+					}
+					if (!name || !email || !phone) {
+						errMsg.textContent = '<?php echo esc_js( __( 'Please enter your name, email, and phone.', 'ajforms' ) ); ?>';
+						errMsg.hidden = false;
+						return;
+					}
+					payBtn.disabled = true;
+					spinner.hidden  = false;
+					var fd = new FormData();
+					fd.append('action',         'ajcore_reservation_create_checkout');
+					fd.append('nonce',          checkoutNonce);
+					fd.append('resource_key',   resourceKey);
+					fd.append('start_at',       selectedStartStr);
+					fd.append('end_at',         selectedEndStr);
+					fd.append('customer_name',  name);
+					fd.append('customer_email', email);
+					fd.append('customer_phone', phone);
+					fd.append('customer_notes', notes);
+					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: fd })
+					.then(function(r) { return r.json(); })
+					.then(function(payload) {
+						payBtn.disabled = false;
+						spinner.hidden  = true;
+						if (!payload.success || !payload.data || !payload.data.checkout_url) {
 			const bookForm    = panel.querySelector('.aj-res-booking-form');
 			const payBtn      = panel.querySelector('.aj-res-pay-button');
 			const spinner     = panel.querySelector('.aj-res-spinner');
@@ -12052,195 +12092,55 @@ class AJForms {
 
 			function loadDayAvailability(date, requestId) {
 				slotNotice.hidden = true;
-				bookForm.hidden   = true;
-				errMsg.hidden     = true;
-
-				const fd = new FormData();
-				fd.append('action',       'ajcore_reservation_check_availability');
-				fd.append('nonce',        checkNonce);
-				fd.append('resource_key', resourceKey);
-				fd.append('date',         date);
-				fd.append('mode',         'day');
-
-				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
-					method: 'POST',
-					credentials: 'same-origin',
-					body: fd
-				})
-				.then(r => r.json())
-				.then(payload => {
-					if (requestId !== availabilityRequest) return;
-					if (!payload.success) {
-						slotGrid.querySelectorAll('.aj-res-slot-btn').forEach(function(btn) {
-							btn.disabled = true;
-							btn.classList.remove('aj-res-slot-loading');
-							btn.classList.add('aj-res-slot-busy');
-							btn.textContent = slotBaseLabel(btn) + ' unavailable';
-						});
-						showNotice((payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to load availability for this date.', 'ajforms' ) ); ?>', 'error');
-						return;
-					}
-					renderAvailability(payload.data && payload.data.slots ? payload.data.slots : []);
-				})
-				.catch(() => {
-					if (requestId !== availabilityRequest) return;
-					showNotice('<?php echo esc_js( __( 'Unable to load availability. Please try again.', 'ajforms' ) ); ?>', 'error');
-				});
-			}
-
-			function renderAvailability(slots) {
-				const byStart = {};
-				slots.forEach(function(slot) {
-					byStart[slot.start_at] = slot;
-				});
-
-				let availableCount = 0;
-				slotGrid.querySelectorAll('.aj-res-slot-btn').forEach(function(btn) {
-					const slot = byStart[btn.dataset.startIso];
-					btn.classList.remove('aj-res-slot-loading', 'aj-res-slot-selected', 'aj-res-slot-busy');
-					btn.removeEventListener('click', onAvailableSlotClick);
-					btn.textContent = slotBaseLabel(btn);
-
-					if (!slot || !slot.available) {
-						btn.disabled = true;
-						btn.classList.add('aj-res-slot-busy');
-						btn.title = slot && slot.message ? slot.message : '<?php echo esc_js( __( 'Unavailable', 'ajforms' ) ); ?>';
-						return;
-					}
-
-					availableCount++;
-					btn.disabled = false;
-					btn.dataset.pricingType = slot.pricing_type || '';
-					btn.addEventListener('click', onAvailableSlotClick);
-				});
-
-				if (!availableCount) {
-					showNotice('<?php echo esc_js( __( 'No available times remain for this date. Please choose another date.', 'ajforms' ) ); ?>', 'error');
+					errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to start checkout. Please try again.', 'ajforms' ) ); ?>';
+					errMsg.hidden = false;
+					return;
 				}
-			}
-
-			function onAvailableSlotClick(e) {
-				const btn = e.currentTarget;
-				panel.querySelectorAll('.aj-res-slot-btn').forEach(b => b.classList.remove('aj-res-slot-selected'));
-				btn.classList.add('aj-res-slot-selected');
-				slotNotice.hidden = true;
-				selectedStart = btn.dataset.startIso;
-				selectedEnd = btn.dataset.endIso;
-				pricingType = btn.dataset.pricingType;
-				const priceLabel = pricingType === 'business_hours' ? bizLabel : afterLabel;
-				bookSummary.innerHTML =
-					'<p><strong><?php echo esc_js( __( 'Date', 'ajforms' ) ); ?>:</strong> ' + formatDateFromIso(selectedStart) + '</p>' +
-					'<p><strong><?php echo esc_js( __( 'Time', 'ajforms' ) ); ?>:</strong> ' + formatTimeFromIso(selectedStart) + ' &ndash; ' + formatTimeFromIso(selectedEnd) + '</p>' +
-					'<p><strong><?php echo esc_js( __( 'Rate', 'ajforms' ) ); ?>:</strong> ' + escHtml(priceLabel) + '</p>';
-				bookForm.hidden = false;
-			}
-
-			function slotBaseLabel(btn) {
-				return formatHour(parseInt(btn.dataset.hour, 10)) + ' – ' + formatHour(parseInt(btn.dataset.hour, 10) + 1);
-			}
-
-			function showNotice(msg, type) {
-				slotNotice.textContent = msg;
-				slotNotice.className   = 'aj-res-slot-notice aj-notice-' + (type || 'info');
-				slotNotice.hidden      = false;
-			}
-
-			function formatDateFromIso(iso) {
-				const d = new Date(iso);
-				return d.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric', year:'numeric'});
-			}
-
-			function formatTimeFromIso(iso) {
-				const d    = new Date(iso);
-				let h      = d.getHours();
-				const ampm = h < 12 ? 'AM' : 'PM';
-				h          = h % 12 === 0 ? 12 : h % 12;
-				return h + ':00 ' + ampm;
-			}
-
-			function escHtml(str) {
-				const d = document.createElement('div');
-				d.appendChild(document.createTextNode(str));
-				return d.innerHTML;
-			}
-
-			// Calendar day click.
-			panel.querySelectorAll('.aj-res-cal-day.aj-res-day-available, .aj-res-cal-day.aj-res-day-today').forEach(function(day) {
-				day.addEventListener('click', function() {
-					panel.querySelectorAll('.aj-res-cal-day').forEach(d => d.classList.remove('aj-res-day-selected'));
-					day.classList.add('aj-res-day-selected');
-					selectedDate = day.dataset.date;
-					buildSlots(selectedDate);
-				});
-				day.addEventListener('keydown', function(e) {
-					if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); day.click(); }
-				});
+				window.location.href = payload.data.checkout_url;
+			})
+			.catch(function() {
+				payBtn.disabled = false;
+				spinner.hidden  = true;
+				errMsg.textContent = '<?php echo esc_js( __( 'Network error. Please try again.', 'ajforms' ) ); ?>';
+				errMsg.hidden = false;
 			});
-
-			// Pay Now button.
-			if (payBtn) {
-				payBtn.addEventListener('click', function() {
-					const name  = panel.querySelector('.aj-res-field-name').value.trim();
-					const email = panel.querySelector('.aj-res-field-email').value.trim();
-					const phone = panel.querySelector('.aj-res-field-phone').value.trim();
-					const notes = panel.querySelector('.aj-res-field-notes').value.trim();
-					errMsg.hidden = true;
-
-					if (!selectedStart || !selectedEnd) {
-						errMsg.textContent = '<?php echo esc_js( __( 'Please choose an available time.', 'ajforms' ) ); ?>';
-						errMsg.hidden = false;
-						return;
-					}
-
-					if (!name || !email || !phone) {
-						errMsg.textContent = '<?php echo esc_js( __( 'Please enter your name, email, and phone.', 'ajforms' ) ); ?>';
-						errMsg.hidden = false;
-						return;
-					}
-
-					payBtn.disabled  = true;
-					spinner.hidden   = false;
-
-					const fd = new FormData();
-					fd.append('action',         'ajcore_reservation_create_checkout');
-					fd.append('nonce',          checkoutNonce);
-					fd.append('resource_key',   resourceKey);
-					fd.append('start_at',       selectedStart);
-					fd.append('end_at',         selectedEnd);
-					fd.append('customer_name',  name);
-					fd.append('customer_email', email);
-					fd.append('customer_phone', phone);
-					fd.append('customer_notes', notes);
-
-					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
-						method: 'POST',
-						credentials: 'same-origin',
-						body: fd
-					})
-					.then(r => r.json())
-					.then(payload => {
-						payBtn.disabled = false;
-						spinner.hidden  = true;
-						if (!payload.success || !payload.data || !payload.data.checkout_url) {
-							errMsg.textContent = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to start checkout. Please try again.', 'ajforms' ) ); ?>';
-							errMsg.hidden = false;
-							return;
-						}
-						window.location.href = payload.data.checkout_url;
-					})
-					.catch(() => {
-						payBtn.disabled = false;
-						spinner.hidden  = true;
-						errMsg.textContent = '<?php echo esc_js( __( 'Network error. Please try again.', 'ajforms' ) ); ?>';
-						errMsg.hidden = false;
-					});
-				});
-			}
-		})();
-		</script>
-		<?php
-		return ob_get_clean();
+		});
 	}
+
+	// ── Helpers ─────────────────────────────────────────────────
+	function getLocalHour(iso) {
+		var t = iso.replace(/([+-]\d{2}:?\d{2}|Z)$/, '').split('T')[1] || '00:00:00';
+		return parseInt(t.split(':')[0], 10);
+	}
+	function getLocalMin(iso) {
+		var t = iso.replace(/([+-]\d{2}:?\d{2}|Z)$/, '').split('T')[1] || '00:00:00';
+		return parseInt(t.split(':')[1] || '0', 10);
+	}
+	function isoTimeLabel(iso) {
+		var h    = getLocalHour(iso);
+		var ampm = h < 12 ? 'AM' : 'PM';
+		var h12  = h % 12 === 0 ? 12 : h % 12;
+		return h12 + ':00 ' + ampm;
+	}
+	function isoDateLabel(iso) {
+		var d    = iso.replace(/([+-]\d{2}:?\d{2}|Z)$/, '').split('T')[0];
+		var pts  = d.split('-');
+		var y = parseInt(pts[0], 10), m = parseInt(pts[1], 10) - 1, day = parseInt(pts[2], 10);
+		var months   = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+		var weekdays = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+		var dow = new Date(y, m, day).getDay();
+		return weekdays[dow] + ', ' + months[m] + ' ' + day + ', ' + y;
+	}
+	function escH(str) {
+		var d = document.createElement('div');
+		d.appendChild(document.createTextNode(str));
+		return d.innerHTML;
+	}
+	})();
+	</script>
+	<?php
+	return ob_get_clean();
+}
 
 	// =========================================================================
 	// Reservation AJAX Handlers
@@ -12293,17 +12193,8 @@ class AJForms {
 				$timezone,
 				$zoho_api_token
 			);
-			if ( is_wp_error( $calendar_check ) ) {
-				return array(
-					'available' => false,
-					'message'   => sprintf(
-						/* translators: %s: Zoho API error message. */
-						__( 'Could not verify Zoho Calendar availability: %s', 'ajforms' ),
-						$calendar_check->get_error_message()
-					),
-				);
-			}
-			if ( isset( $calendar_check['is_free'] ) && ! (bool) $calendar_check['is_free'] ) {
+			// Only block on Zoho if the API succeeded and confirmed busy. API errors fall through.
+			if ( ! is_wp_error( $calendar_check ) && isset( $calendar_check['is_free'] ) && ! (bool) $calendar_check['is_free'] ) {
 				return array(
 					'available' => false,
 					'message'   => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ),
@@ -12317,17 +12208,8 @@ class AJForms {
 				$end_dt->format( 'c' ),
 				$zoho_api_token
 			);
-			if ( is_wp_error( $freebusy ) ) {
-				return array(
-					'available' => false,
-					'message'   => sprintf(
-						/* translators: %s: Zoho API error message. */
-						__( 'Could not verify Zoho availability: %s', 'ajforms' ),
-						$freebusy->get_error_message()
-					),
-				);
-			}
-			if ( isset( $freebusy['is_free'] ) && ! (bool) $freebusy['is_free'] ) {
+			// Only block on Zoho if the API succeeded and confirmed busy. API errors fall through.
+			if ( ! is_wp_error( $freebusy ) && isset( $freebusy['is_free'] ) && ! (bool) $freebusy['is_free'] ) {
 				return array(
 					'available' => false,
 					'message'   => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ),
@@ -12352,8 +12234,15 @@ class AJForms {
 			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must start and end on the hour.', 'ajforms' ) );
 		}
 
-		if ( 3600 !== ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) ) {
-			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must be exactly one hour.', 'ajforms' ) );
+		$duration_secs = $end_dt->getTimestamp() - $start_dt->getTimestamp();
+		if ( $duration_secs < 3600 ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must be at least one hour.', 'ajforms' ) );
+		}
+		if ( $duration_secs > 50400 ) { // 14 hours max
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations cannot exceed 14 hours.', 'ajforms' ) );
+		}
+		if ( 0 !== ( $duration_secs % 3600 ) ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must be in whole-hour increments.', 'ajforms' ) );
 		}
 
 		return true;
@@ -12665,13 +12554,16 @@ class AJForms {
 		$success_url       = add_query_arg( array( 'portal_tab' => 'reservations', 'res_success' => '1', 'res_uuid' => rawurlencode( $reservation_uuid ) ), $portal_url );
 		$cancel_url        = add_query_arg( array( 'portal_tab' => 'reservations', 'res_cancel' => '1' ), $portal_url );
 
+		$duration_hours = (int) round( ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) / 3600 );
+		$duration_hours = max( 1, min( 14, $duration_hours ) );
+
 		$checkout_payload = array(
 			'payment_method_types' => array( 'card' ),
 			'mode'                 => 'payment',
 			'line_items'           => array(
 				array(
 					'price'    => $stripe_price_id,
-					'quantity' => 1,
+					'quantity' => $duration_hours,
 				),
 			),
 			'success_url'          => $success_url,
@@ -12852,6 +12744,67 @@ class AJForms {
 
 		$err = ! empty( $body['message'] ) ? $body['message'] : sprintf( __( 'Zoho returned HTTP %d. Check your token.', 'ajforms' ), $code );
 		wp_send_json_error( array( 'message' => $err ) );
+	}
+
+	/**
+	 * Return booked reservation events for a given date range — used by FullCalendar events feed.
+	 * Returns JSON array of FullCalendar-compatible event objects.
+	 */
+	public function ajax_get_reservation_events() {
+		check_ajax_referer( 'ajcore_reservation_check_availability', 'nonce' );
+
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			wp_send_json( array() );
+		}
+
+		global $wpdb;
+		$table = AJCore_Reservations::get_reservations_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			wp_send_json( array() );
+		}
+
+		$start_raw = isset( $_GET['start'] ) ? sanitize_text_field( wp_unslash( $_GET['start'] ) ) : '';
+		$end_raw   = isset( $_GET['end'] )   ? sanitize_text_field( wp_unslash( $_GET['end'] ) )   : '';
+
+		try {
+			$start_utc = '' !== $start_raw ? ( new DateTime( $start_raw ) )->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' ) : gmdate( 'Y-m-d H:i:s' );
+			$end_utc   = '' !== $end_raw   ? ( new DateTime( $end_raw ) )->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' )   : gmdate( 'Y-m-d H:i:s', strtotime( '+1 year' ) );
+		} catch ( Exception $e ) {
+			wp_send_json( array() );
+		}
+
+		$hold_cutoff = gmdate( 'Y-m-d H:i:s', time() - ( AJCore_Reservations::PENDING_HOLD_MINUTES * 60 ) );
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT start_at, end_at, status
+				 FROM `{$table}`
+				 WHERE (
+				     status IN ('confirmed','paid','paid_pending_calendar')
+				     OR (status = 'pending_payment' AND created_at >= %s)
+				 )
+				 AND start_at < %s
+				 AND end_at   > %s",
+				$hold_cutoff,
+				$end_utc,
+				$start_utc
+			)
+		);
+
+		$events = array();
+		foreach ( $rows as $r ) {
+			$events[] = array(
+				'title'           => 'Booked',
+				'start'           => str_replace( ' ', 'T', $r->start_at ) . 'Z',
+				'end'             => str_replace( ' ', 'T', $r->end_at ) . 'Z',
+				'backgroundColor' => '#fee2e2',
+				'borderColor'     => '#ef4444',
+				'textColor'       => '#991b1b',
+				'display'         => 'block',
+			);
+		}
+
+		wp_send_json( $events );
 	}
 
 	/**
