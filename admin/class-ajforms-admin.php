@@ -19004,9 +19004,9 @@ class AJForms_Admin {
 		$settings['zoho_calendar_id']                 = isset( $_POST['zoho_calendar_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_id'] ) ) : '';
 		$settings['zoho_calendar_embed_url']          = isset( $_POST['zoho_calendar_embed_url'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_calendar_embed_url'] ) ) : '';
 		$settings['zoho_api_token']                   = isset( $_POST['zoho_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token'] ) ) : '';
-		// preserve existing zoho_resource_uid / zoho_resource_freebusy_url / zoho_api_auth_mode without exposing them in UI
-		if ( ! isset( $settings['zoho_resource_uid'] ) )        { $settings['zoho_resource_uid']        = ''; }
-		if ( ! isset( $settings['zoho_resource_freebusy_url'] ) ){ $settings['zoho_resource_freebusy_url']= ''; }
+		$settings['zoho_resource_uid']                = isset( $_POST['zoho_resource_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_resource_uid'] ) ) : '';
+		$settings['zoho_resource_freebusy_url']       = isset( $_POST['zoho_resource_freebusy_url'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_resource_freebusy_url'] ) ) : '';
+		// Preserve auth mode for compatibility with older installs.
 		if ( ! isset( $settings['zoho_api_auth_mode'] ) )       { $settings['zoho_api_auth_mode']       = 'bearer_token'; }
 
 		update_option( 'ajforms_settings', $settings, false );
@@ -19069,6 +19069,7 @@ class AJForms_Admin {
 		$s_biz           = ! empty( $settings['reservation_business_hours_label'] );
 		$s_after         = ! empty( $settings['reservation_after_hours_label'] );
 		$s_embed         = ! empty( $settings['zoho_calendar_embed_url'] );
+		$s_freebusy      = ! empty( $settings['zoho_api_token'] ) && ! empty( $settings['zoho_resource_uid'] ) && ! empty( $settings['zoho_resource_freebusy_url'] );
 		$catalog_url     = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) );
 		?>
 
@@ -19228,7 +19229,7 @@ class AJForms_Admin {
 					<?php esc_html_e( 'Zoho API Token', 'ajforms' ); ?>
 					<span class="ajc-badge ajc-badge-opt"><?php esc_html_e( 'Optional – not needed for URL mode', 'ajforms' ); ?></span>
 				</summary>
-				<p style="margin:10px 0 8px;font-size:13px;color:#475569"><?php esc_html_e( 'You do NOT need this if you filled in Step 2. The API token is only used if you want AJCore to create Zoho calendar events automatically (without the customer filling a form), or for live free/busy checks.', 'ajforms' ); ?></p>
+				<p style="margin:10px 0 8px;font-size:13px;color:#475569"><?php esc_html_e( 'You do NOT need this if you only want the post-payment Zoho appointment form. Add these API fields when the customer picker should mark existing Zoho calendar busy times as unavailable before checkout.', 'ajforms' ); ?></p>
 
 				<div class="ajc-hint">
 					<b><?php esc_html_e( 'How to get one:', 'ajforms' ); ?></b>
@@ -19243,6 +19244,20 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'API Token', 'ajforms' ); ?></th>
 						<td>
 							<input type="password" name="zoho_api_token" value="<?php echo esc_attr( $settings['zoho_api_token'] ?? '' ); ?>" class="regular-text" autocomplete="new-password" placeholder="<?php esc_attr_e( 'Leave blank — not needed for URL mode', 'ajforms' ); ?>">
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Resource UID', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="zoho_resource_uid" value="<?php echo esc_attr( $settings['zoho_resource_uid'] ?? '' ); ?>" class="regular-text" placeholder="Conference room resource UID">
+							<p class="description"><?php esc_html_e( 'Required for live free/busy checks. This is the Zoho resource whose busy calendar should block booking times.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Free/Busy URL', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="zoho_resource_freebusy_url" value="<?php echo esc_attr( $settings['zoho_resource_freebusy_url'] ?? '' ); ?>" class="large-text" placeholder="https://calendar.zoho.com/api/v1/resources/{resourceuid}/freebusy">
+							<p class="description"><?php esc_html_e( 'Required for live free/busy checks. Include {resourceuid} where AJCore should insert the Resource UID.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -19268,6 +19283,7 @@ class AJForms_Admin {
 					<li style="color:<?php echo $s_enabled ? '#166534' : '#64748b'; ?>"><?php echo $s_enabled ? '✓' : '○'; ?> <?php esc_html_e( 'Enable reservations (Step 1)', 'ajforms' ); ?></li>
 					<li style="color:<?php echo $s_appt_url ? '#166534' : '#64748b'; ?>"><?php echo $s_appt_url ? '✓' : '○'; ?> <?php esc_html_e( 'Paste Zoho Schedule Appointment URL (Step 2)', 'ajforms' ); ?></li>
 					<li style="color:<?php echo ( $s_biz && $s_after ) ? '#166534' : '#64748b'; ?>"><?php echo ( $s_biz && $s_after ) ? '✓' : '○'; ?> <?php esc_html_e( 'Set pricing labels (Step 1)', 'ajforms' ); ?></li>
+					<li style="color:<?php echo $s_freebusy ? '#166534' : '#64748b'; ?>"><?php echo $s_freebusy ? '✓' : '○'; ?> <?php esc_html_e( 'Optional: configure live Zoho free/busy checks (Step 5)', 'ajforms' ); ?></li>
 					<li style="color:#64748b">○ <?php printf( esc_html__( 'Add Stripe Price IDs in %s', 'ajforms' ), '<a href="' . esc_url( $catalog_url ) . '">' . esc_html__( 'Product Catalog', 'ajforms' ) . '</a>' ); ?></li>
 					<li style="color:#64748b">○ <?php esc_html_e( 'Test appointment URL with sample data (button in Step 2 after saving)', 'ajforms' ); ?></li>
 					<li style="color:#64748b">○ <?php esc_html_e( 'Do an end-to-end test booking as a customer', 'ajforms' ); ?></li>

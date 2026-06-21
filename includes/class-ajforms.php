@@ -11722,11 +11722,13 @@ class AJForms {
 			$view_month = 12;
 		}
 
-		$month_dt     = new DateTime( sprintf( '%04d-%02d-01', $view_year, $view_month ), new DateTimeZone( $timezone ) );
-		$days_in_month = (int) $month_dt->format( 't' );
-		// Monday-first: PHP w gives 0=Sun…6=Sat. Convert so Mon=0…Sun=6.
-		$first_dow_raw = (int) $month_dt->format( 'w' );
-		$first_dow     = ( $first_dow_raw + 6 ) % 7;
+		$month_dt       = new DateTime( sprintf( '%04d-%02d-01', $view_year, $view_month ), new DateTimeZone( $timezone ) );
+		$today_str      = $now_dt->format( 'Y-m-d' );
+		$display_start  = clone $month_dt;
+		if ( $view_year === $current_year && $view_month === $current_month ) {
+			$display_start = clone $now_dt;
+		}
+		$display_start->setTime( 0, 0, 0 );
 		$month_label   = $month_dt->format( 'F Y' );
 
 		// Prev / next URLs.
@@ -11749,17 +11751,16 @@ class AJForms {
 		.aj-reservations-calendar-nav{display:flex;align-items:center;gap:10px;margin:10px 0 14px;flex-wrap:wrap}
 		.aj-reservations-month-label{font-size:15px;font-weight:700;flex:1;text-align:center}
 		.aj-res-nav-btn{border-radius:999px!important;padding:4px 14px!important;font-size:13px!important}
-		.aj-reservations-calendar-grid{border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;background:#fff;margin-bottom:20px}
+		.aj-reservations-calendar-grid{border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff;margin-bottom:20px}
 		.aj-res-cal-header{display:grid;grid-template-columns:repeat(7,1fr);background:#f8fafc;border-bottom:1px solid #e2e8f0}
 		.aj-res-cal-dow{padding:8px 4px;text-align:center;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
 		.aj-res-cal-body{display:grid;grid-template-columns:repeat(7,1fr)}
-		.aj-res-cal-day{min-height:58px;padding:6px;border-right:1px solid #f1f5f9;border-bottom:1px solid #f1f5f9;position:relative;cursor:default}
+		.aj-res-cal-day{min-height:64px;padding:7px;border-right:1px solid #f1f5f9;border-bottom:1px solid #f1f5f9;position:relative;cursor:default}
 		.aj-res-cal-day:nth-child(7n){border-right:none}
 		.aj-res-cal-empty{background:#fafafa}
 		.aj-res-cal-day-num{font-size:13px;font-weight:600;color:#334155;display:block}
+		.aj-res-cal-day-month{font-size:11px;color:#94a3b8;display:block;margin-top:2px}
 		.aj-res-cal-day-dot{display:block;width:6px;height:6px;border-radius:50%;margin:4px auto 0;background:transparent}
-		.aj-res-day-past .aj-res-cal-day-num{color:#cbd5e1}
-		.aj-res-day-past{background:#fafafa;cursor:not-allowed}
 		.aj-res-day-available{cursor:pointer;transition:background .12s}
 		.aj-res-day-available:hover,.aj-res-day-today:hover{background:#eff6ff}
 		.aj-res-day-available .aj-res-cal-day-dot,.aj-res-day-today .aj-res-cal-day-dot{background:#3157ff}
@@ -11777,7 +11778,8 @@ class AJForms {
 		.aj-res-slot-btn{padding:7px 14px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;font-size:13px;font-weight:600;cursor:pointer;color:#334155;transition:all .12s}
 		.aj-res-slot-btn:hover{border-color:#3157ff;color:#3157ff;background:#eff6ff}
 		.aj-res-slot-selected{border-color:#3157ff!important;background:#3157ff!important;color:#fff!important}
-		.aj-res-slot-busy{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+		.aj-res-slot-busy{opacity:.48;cursor:not-allowed;text-decoration:line-through;background:#f1f5f9;color:#64748b}
+		.aj-res-slot-loading{opacity:.7;cursor:wait}
 		.aj-res-slot-notice{padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:10px}
 		.aj-notice-error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
 		.aj-notice-info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
@@ -11813,7 +11815,7 @@ class AJForms {
 				<?php
 				printf(
 					/* translators: 1: business hours label, 2: after-hours label */
-					esc_html__( 'Window: 8am–10pm daily. %1$s rate Mon–Fri 9am–5pm · %2$s rate all other times. Prepay only — no refunds.', 'ajforms' ),
+					esc_html__( 'Window: 8am–10pm daily. %1$s rate Mon–Fri 9am–5pm · %2$s rate all other times. Pick a date to see that day\'s available times. Prepay only — no refunds.', 'ajforms' ),
 					esc_html( $business_hours_label ),
 					esc_html( $after_hours_label )
 				);
@@ -11842,39 +11844,35 @@ class AJForms {
 			>
 				<?php
 				$dow_labels = array(
+					__( 'Sun', 'ajforms' ),
 					__( 'Mon', 'ajforms' ),
 					__( 'Tue', 'ajforms' ),
 					__( 'Wed', 'ajforms' ),
 					__( 'Thu', 'ajforms' ),
 					__( 'Fri', 'ajforms' ),
 					__( 'Sat', 'ajforms' ),
-					__( 'Sun', 'ajforms' ),
 				);
 				?>
 				<div class="aj-res-cal-header">
-					<?php foreach ( $dow_labels as $lbl ) : ?>
+					<?php for ( $i = 0; $i < 7; $i++ ) :
+						$label_dt = clone $display_start;
+						$label_dt->modify( '+' . $i . ' day' );
+						$lbl = $dow_labels[ (int) $label_dt->format( 'w' ) ];
+						?>
 						<div class="aj-res-cal-dow"><?php echo esc_html( $lbl ); ?></div>
-					<?php endforeach; ?>
+					<?php endfor; ?>
 				</div>
 				<div class="aj-res-cal-body">
 					<?php
-					// Leading empty cells.
-					for ( $i = 0; $i < $first_dow; $i++ ) {
-						echo '<div class="aj-res-cal-day aj-res-cal-empty"></div>';
-					}
-
-					$today_str = $now_dt->format( 'Y-m-d' );
-					for ( $day = 1; $day <= $days_in_month; $day++ ) {
-						$day_dt    = new DateTime( sprintf( '%04d-%02d-%02d', $view_year, $view_month, $day ), new DateTimeZone( $timezone ) );
+					$display_day = clone $display_start;
+					while ( (int) $display_day->format( 'n' ) === $view_month && (int) $display_day->format( 'Y' ) === $view_year ) {
+						$day_dt    = clone $display_day;
 						$day_str   = $day_dt->format( 'Y-m-d' );
-						$is_past   = $day_str < $today_str;
 						$is_today  = $day_str === $today_str;
 						$dow        = (int) $day_dt->format( 'w' ); // 0=Sun,6=Sat
 						$is_weekend = ( 0 === $dow || 6 === $dow );
 						$class     = 'aj-res-cal-day';
-						if ( $is_past ) {
-							$class .= ' aj-res-day-past';
-						} elseif ( $is_today ) {
+						if ( $is_today ) {
 							$class .= ' aj-res-day-today';
 						} else {
 							$class .= ' aj-res-day-available';
@@ -11882,14 +11880,16 @@ class AJForms {
 						if ( $is_weekend ) {
 							$class .= ' aj-res-day-weekend';
 						}
-						$aria_label = $day_dt->format( 'F j, Y' ) . ( $is_past ? ' (' . __( 'past', 'ajforms' ) . ')' : '' );
-						echo '<div class="' . esc_attr( $class ) . '" data-date="' . esc_attr( $day_str ) . '" aria-label="' . esc_attr( $aria_label ) . '" role="button" tabindex="' . ( $is_past ? '-1' : '0' ) . '">';
-						echo '<span class="aj-res-cal-day-num">' . esc_html( $day ) . '</span>';
+						$aria_label = $day_dt->format( 'F j, Y' );
+						echo '<div class="' . esc_attr( $class ) . '" data-date="' . esc_attr( $day_str ) . '" aria-label="' . esc_attr( $aria_label ) . '" role="button" tabindex="0">';
+						echo '<span class="aj-res-cal-day-num">' . esc_html( $day_dt->format( 'j' ) ) . '</span>';
+						echo '<span class="aj-res-cal-day-month">' . esc_html( $day_dt->format( 'M' ) ) . '</span>';
 						echo '<span class="aj-res-cal-day-dot"></span>';
 						echo '</div>';
+						$display_day->modify( '+1 day' );
 					}
 					// Trailing empties to complete last row.
-					$total_cells = $first_dow + $days_in_month;
+					$total_cells = (int) $display_start->diff( $display_day )->days;
 					$trailing    = ( 7 - ( $total_cells % 7 ) ) % 7;
 					for ( $i = 0; $i < $trailing; $i++ ) {
 						echo '<div class="aj-res-cal-day aj-res-cal-empty"></div>';
@@ -11901,7 +11901,7 @@ class AJForms {
 			<!-- Time-slot picker panel (shown when a day is selected) -->
 			<div class="aj-reservations-slot-panel" hidden>
 				<h3 class="aj-res-slot-heading"></h3>
-				<p class="aj-res-slot-subheading"><?php esc_html_e( 'Select an available time block. Click once to check availability, then complete your booking below.', 'ajforms' ); ?></p>
+				<p class="aj-res-slot-subheading"><?php esc_html_e( 'Available times for the full selected date are shown below. Choose a time, then complete your booking details.', 'ajforms' ); ?></p>
 				<div class="aj-res-slot-grid"></div>
 				<div class="aj-res-slot-notice" hidden></div>
 				<div class="aj-res-booking-form" hidden>
@@ -11914,6 +11914,10 @@ class AJForms {
 					<label>
 						<span><?php esc_html_e( 'Your Email', 'ajforms' ); ?></span>
 						<input type="email" class="aj-res-field-email" required>
+					</label>
+					<label>
+						<span><?php esc_html_e( 'Phone', 'ajforms' ); ?></span>
+						<input type="tel" class="aj-res-field-phone" required>
 					</label>
 					<label>
 						<span><?php esc_html_e( 'Notes (optional)', 'ajforms' ); ?></span>
@@ -11998,9 +12002,10 @@ class AJForms {
 			let selectedStart = null;
 			let selectedEnd   = null;
 			let pricingType   = null;
+			let availabilityRequest = 0;
 
-			// Build hourly slots 8..21 (8 AM to 9 PM start, ending 10 PM max).
 			function buildSlots(date) {
+				const requestId = ++availabilityRequest;
 				slotGrid.innerHTML = '';
 				slotPanel.hidden = false;
 				setTimeout(function(){ slotPanel.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
@@ -12021,10 +12026,13 @@ class AJForms {
 					btn.dataset.hour     = h;
 					btn.dataset.startIso = date + 'T' + hour + ':00';
 					btn.dataset.endIso   = date + 'T' + hourEnd + ':00';
-					btn.textContent      = label;
-					btn.addEventListener('click', onSlotClick);
+					btn.textContent      = label + ' ...';
+					btn.disabled         = true;
+					btn.classList.add('aj-res-slot-loading');
 					slotGrid.appendChild(btn);
 				}
+
+				loadDayAvailability(date, requestId);
 			}
 
 			function formatHour(h) {
@@ -12033,24 +12041,7 @@ class AJForms {
 				return h12 + ':00 ' + ampm;
 			}
 
-			function onSlotClick(e) {
-				const btn = e.currentTarget;
-				// Toggle selection.
-				if (!selectedStart) {
-					selectedStart = btn.dataset.startIso;
-					btn.classList.add('aj-res-slot-selected');
-					checkAvailability(selectedStart, btn.dataset.endIso, btn);
-				} else {
-					// Clear.
-					panel.querySelectorAll('.aj-res-slot-btn').forEach(b => b.classList.remove('aj-res-slot-selected', 'aj-res-slot-busy'));
-					selectedStart = null;
-					selectedEnd   = null;
-					bookForm.hidden = true;
-					slotNotice.hidden = true;
-				}
-			}
-
-			function checkAvailability(startIso, endIso, btn) {
+			function loadDayAvailability(date, requestId) {
 				slotNotice.hidden = true;
 				bookForm.hidden   = true;
 				errMsg.hidden     = true;
@@ -12059,10 +12050,9 @@ class AJForms {
 				fd.append('action',       'ajcore_reservation_check_availability');
 				fd.append('nonce',        checkNonce);
 				fd.append('resource_key', resourceKey);
-				fd.append('start_at',     startIso);
-				fd.append('end_at',       endIso);
+				fd.append('date',         date);
+				fd.append('mode',         'day');
 
-				btn.disabled = true;
 				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 					method: 'POST',
 					credentials: 'same-origin',
@@ -12070,29 +12060,74 @@ class AJForms {
 				})
 				.then(r => r.json())
 				.then(payload => {
-					btn.disabled = false;
+					if (requestId !== availabilityRequest) return;
 					if (!payload.success) {
-						btn.classList.remove('aj-res-slot-selected');
-						selectedStart = null;
-						showNotice(payload.data || '<?php echo esc_js( __( 'This slot is not available.', 'ajforms' ) ); ?>', 'error');
+						slotGrid.querySelectorAll('.aj-res-slot-btn').forEach(function(btn) {
+							btn.disabled = true;
+							btn.classList.remove('aj-res-slot-loading');
+							btn.classList.add('aj-res-slot-busy');
+							btn.textContent = slotBaseLabel(btn) + ' unavailable';
+						});
+						showNotice((payload.data && payload.data.message) || '<?php echo esc_js( __( 'Unable to load availability for this date.', 'ajforms' ) ); ?>', 'error');
 						return;
 					}
-					selectedEnd = endIso;
-					pricingType = payload.data.pricing_type;
-					const priceLabel = pricingType === 'business_hours' ? bizLabel : afterLabel;
-					bookSummary.innerHTML =
-						'<p><strong><?php echo esc_js( __( 'Date', 'ajforms' ) ); ?>:</strong> ' + formatDateFromIso(startIso) + '</p>' +
-						'<p><strong><?php echo esc_js( __( 'Time', 'ajforms' ) ); ?>:</strong> ' + formatTimeFromIso(startIso) + ' &ndash; ' + formatTimeFromIso(endIso) + '</p>' +
-						'<p><strong><?php echo esc_js( __( 'Rate', 'ajforms' ) ); ?>:</strong> ' + escHtml(priceLabel) + '</p>' +
-						(payload.data.amount_display ? '<p><strong><?php echo esc_js( __( 'Amount', 'ajforms' ) ); ?>:</strong> ' + escHtml(payload.data.amount_display) + '</p>' : '');
-					bookForm.hidden = false;
+					renderAvailability(payload.data && payload.data.slots ? payload.data.slots : []);
 				})
 				.catch(() => {
-					btn.disabled = false;
-					btn.classList.remove('aj-res-slot-selected');
-					selectedStart = null;
-					showNotice('<?php echo esc_js( __( 'Unable to check availability. Please try again.', 'ajforms' ) ); ?>', 'error');
+					if (requestId !== availabilityRequest) return;
+					showNotice('<?php echo esc_js( __( 'Unable to load availability. Please try again.', 'ajforms' ) ); ?>', 'error');
 				});
+			}
+
+			function renderAvailability(slots) {
+				const byStart = {};
+				slots.forEach(function(slot) {
+					byStart[slot.start_at] = slot;
+				});
+
+				let availableCount = 0;
+				slotGrid.querySelectorAll('.aj-res-slot-btn').forEach(function(btn) {
+					const slot = byStart[btn.dataset.startIso];
+					btn.classList.remove('aj-res-slot-loading', 'aj-res-slot-selected', 'aj-res-slot-busy');
+					btn.removeEventListener('click', onAvailableSlotClick);
+					btn.textContent = slotBaseLabel(btn);
+
+					if (!slot || !slot.available) {
+						btn.disabled = true;
+						btn.classList.add('aj-res-slot-busy');
+						btn.title = slot && slot.message ? slot.message : '<?php echo esc_js( __( 'Unavailable', 'ajforms' ) ); ?>';
+						return;
+					}
+
+					availableCount++;
+					btn.disabled = false;
+					btn.dataset.pricingType = slot.pricing_type || '';
+					btn.addEventListener('click', onAvailableSlotClick);
+				});
+
+				if (!availableCount) {
+					showNotice('<?php echo esc_js( __( 'No available times remain for this date. Please choose another date.', 'ajforms' ) ); ?>', 'error');
+				}
+			}
+
+			function onAvailableSlotClick(e) {
+				const btn = e.currentTarget;
+				panel.querySelectorAll('.aj-res-slot-btn').forEach(b => b.classList.remove('aj-res-slot-selected'));
+				btn.classList.add('aj-res-slot-selected');
+				slotNotice.hidden = true;
+				selectedStart = btn.dataset.startIso;
+				selectedEnd = btn.dataset.endIso;
+				pricingType = btn.dataset.pricingType;
+				const priceLabel = pricingType === 'business_hours' ? bizLabel : afterLabel;
+				bookSummary.innerHTML =
+					'<p><strong><?php echo esc_js( __( 'Date', 'ajforms' ) ); ?>:</strong> ' + formatDateFromIso(selectedStart) + '</p>' +
+					'<p><strong><?php echo esc_js( __( 'Time', 'ajforms' ) ); ?>:</strong> ' + formatTimeFromIso(selectedStart) + ' &ndash; ' + formatTimeFromIso(selectedEnd) + '</p>' +
+					'<p><strong><?php echo esc_js( __( 'Rate', 'ajforms' ) ); ?>:</strong> ' + escHtml(priceLabel) + '</p>';
+				bookForm.hidden = false;
+			}
+
+			function slotBaseLabel(btn) {
+				return formatHour(parseInt(btn.dataset.hour, 10)) + ' – ' + formatHour(parseInt(btn.dataset.hour, 10) + 1);
 			}
 
 			function showNotice(msg, type) {
@@ -12138,11 +12173,18 @@ class AJForms {
 				payBtn.addEventListener('click', function() {
 					const name  = panel.querySelector('.aj-res-field-name').value.trim();
 					const email = panel.querySelector('.aj-res-field-email').value.trim();
+					const phone = panel.querySelector('.aj-res-field-phone').value.trim();
 					const notes = panel.querySelector('.aj-res-field-notes').value.trim();
 					errMsg.hidden = true;
 
-					if (!name || !email) {
-						errMsg.textContent = '<?php echo esc_js( __( 'Please enter your name and email.', 'ajforms' ) ); ?>';
+					if (!selectedStart || !selectedEnd) {
+						errMsg.textContent = '<?php echo esc_js( __( 'Please choose an available time.', 'ajforms' ) ); ?>';
+						errMsg.hidden = false;
+						return;
+					}
+
+					if (!name || !email || !phone) {
+						errMsg.textContent = '<?php echo esc_js( __( 'Please enter your name, email, and phone.', 'ajforms' ) ); ?>';
 						errMsg.hidden = false;
 						return;
 					}
@@ -12158,6 +12200,7 @@ class AJForms {
 					fd.append('end_at',         selectedEnd);
 					fd.append('customer_name',  name);
 					fd.append('customer_email', email);
+					fd.append('customer_phone', phone);
 					fd.append('customer_notes', notes);
 
 					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
@@ -12194,55 +12237,40 @@ class AJForms {
 	// Reservation AJAX Handlers
 	// =========================================================================
 
-	public function ajax_reservation_check_availability() {
-		check_ajax_referer( 'ajcore_reservation_check_availability', 'nonce' );
+	private function parse_reservation_datetime_to_utc( $datetime_raw, $timezone ) {
+		$timezone = ! empty( $timezone ) ? $timezone : 'America/New_York';
+		$tz       = new DateTimeZone( $timezone );
 
-		$resource_key = isset( $_POST['resource_key'] ) ? sanitize_key( wp_unslash( $_POST['resource_key'] ) ) : '';
-		$start_at_raw = isset( $_POST['start_at'] ) ? sanitize_text_field( wp_unslash( $_POST['start_at'] ) ) : '';
-		$end_at_raw   = isset( $_POST['end_at'] ) ? sanitize_text_field( wp_unslash( $_POST['end_at'] ) ) : '';
-
-		if ( ! $resource_key || ! $start_at_raw || ! $end_at_raw ) {
-			wp_send_json_error( array( 'message' => __( 'Missing required fields.', 'ajforms' ) ) );
+		if ( preg_match( '/(?:Z|[+-]\d{2}:?\d{2})$/', (string) $datetime_raw ) ) {
+			$dt = new DateTime( (string) $datetime_raw );
+		} else {
+			$dt = new DateTime( (string) $datetime_raw, $tz );
 		}
 
-		// Normalize to UTC MySQL datetime.
-		try {
-			$start_dt = new DateTime( $start_at_raw, new DateTimeZone( 'UTC' ) );
-			$end_dt   = new DateTime( $end_at_raw, new DateTimeZone( 'UTC' ) );
-		} catch ( Exception $e ) {
-			wp_send_json_error( array( 'message' => __( 'Invalid date/time format.', 'ajforms' ) ) );
-		}
+		$dt->setTimezone( new DateTimeZone( 'UTC' ) );
+		return $dt;
+	}
 
+	private function get_reservation_slot_availability( $resource, $start_dt, $end_dt, $timezone, $settings ) {
 		$start_at_utc = $start_dt->format( 'Y-m-d H:i:s' );
 		$end_at_utc   = $end_dt->format( 'Y-m-d H:i:s' );
 
-		if ( ! class_exists( 'AJCore_Reservations' ) ) {
-			wp_send_json_error( array( 'message' => __( 'Reservation system unavailable.', 'ajforms' ) ) );
-		}
-
-		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
-		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
-
-		// Validate booking window.
 		$window_check = AJCore_Reservations::validate_booking_window( $start_at_utc, $end_at_utc, $timezone );
 		if ( is_wp_error( $window_check ) ) {
-			wp_send_json_error( array( 'message' => $window_check->get_error_message() ) );
+			return array(
+				'available' => false,
+				'message'   => $window_check->get_error_message(),
+			);
 		}
 
-		// Get resource.
-		$resource = AJCore_Reservations::get_resource_by_key( $resource_key );
-		if ( ! $resource ) {
-			wp_send_json_error( array( 'message' => __( 'Resource not found.', 'ajforms' ) ) );
-		}
-
-		// Local conflict check.
 		$conflict = AJCore_Reservations::check_local_conflict( (int) $resource->id, $start_at_utc, $end_at_utc, '' );
 		if ( is_wp_error( $conflict ) ) {
-			wp_send_json_error( array( 'message' => $conflict->get_error_message() ) );
+			return array(
+				'available' => false,
+				'message'   => $conflict->get_error_message(),
+			);
 		}
 
-		// Optional Zoho free/busy check.
-		$is_free_zoho = true;
 		$zoho_api_token   = ! empty( $settings['zoho_api_token'] ) ? $settings['zoho_api_token'] : '';
 		$zoho_resource_uid = ! empty( $settings['zoho_resource_uid'] ) ? $settings['zoho_resource_uid'] : '';
 		$zoho_freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';
@@ -12255,27 +12283,117 @@ class AJForms {
 				$end_dt->format( 'c' ),
 				$zoho_api_token
 			);
-			if ( ! is_wp_error( $freebusy ) && isset( $freebusy['is_free'] ) ) {
-				$is_free_zoho = (bool) $freebusy['is_free'];
+			if ( ! is_wp_error( $freebusy ) && isset( $freebusy['is_free'] ) && ! (bool) $freebusy['is_free'] ) {
+				return array(
+					'available' => false,
+					'message'   => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ),
+				);
 			}
 		}
 
-		if ( ! $is_free_zoho ) {
-			wp_send_json_error( array( 'message' => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ) ) );
+		return array(
+			'available'    => true,
+			'pricing_type' => AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone ),
+		);
+	}
+
+	private function validate_reservation_whole_hour_slot( $start_dt, $end_dt, $timezone ) {
+		$tz          = new DateTimeZone( ! empty( $timezone ) ? $timezone : 'America/New_York' );
+		$start_local = clone $start_dt;
+		$end_local   = clone $end_dt;
+		$start_local->setTimezone( $tz );
+		$end_local->setTimezone( $tz );
+
+		if ( '00' !== $start_local->format( 'i' ) || '00' !== $end_local->format( 'i' ) ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must start and end on the hour.', 'ajforms' ) );
 		}
 
-		// Determine pricing type.
-		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
+		if ( 3600 !== ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must be exactly one hour.', 'ajforms' ) );
+		}
 
-		// Determine amount to display.
-		$amount_display = '';
-		$price_id_field = 'business_hours' === $pricing_type ? 'stripe_business_price_id' : 'stripe_after_hours_price_id';
-		// Amount is looked up at checkout time; show rate tier label here only.
+		return true;
+	}
+
+	public function ajax_reservation_check_availability() {
+		check_ajax_referer( 'ajcore_reservation_check_availability', 'nonce' );
+
+		$resource_key = isset( $_POST['resource_key'] ) ? sanitize_key( wp_unslash( $_POST['resource_key'] ) ) : '';
+		$mode         = isset( $_POST['mode'] ) ? sanitize_key( wp_unslash( $_POST['mode'] ) ) : 'slot';
+		$date_raw     = isset( $_POST['date'] ) ? sanitize_text_field( wp_unslash( $_POST['date'] ) ) : '';
+		$start_at_raw = isset( $_POST['start_at'] ) ? sanitize_text_field( wp_unslash( $_POST['start_at'] ) ) : '';
+		$end_at_raw   = isset( $_POST['end_at'] ) ? sanitize_text_field( wp_unslash( $_POST['end_at'] ) ) : '';
+
+		if ( ! $resource_key || ( 'day' === $mode ? ! $date_raw : ( ! $start_at_raw || ! $end_at_raw ) ) ) {
+			wp_send_json_error( array( 'message' => __( 'Missing required fields.', 'ajforms' ) ) );
+		}
+
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Reservation system unavailable.', 'ajforms' ) ) );
+		}
+
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+
+		// Get resource.
+		$resource = AJCore_Reservations::get_resource_by_key( $resource_key );
+		if ( ! $resource ) {
+			wp_send_json_error( array( 'message' => __( 'Resource not found.', 'ajforms' ) ) );
+		}
+
+		if ( 'day' === $mode ) {
+			try {
+				$day_dt = new DateTime( $date_raw . ' 00:00:00', new DateTimeZone( $timezone ) );
+			} catch ( Exception $e ) {
+				wp_send_json_error( array( 'message' => __( 'Invalid date format.', 'ajforms' ) ) );
+			}
+
+			$slots = array();
+			for ( $hour = AJCore_Reservations::BOOKING_WINDOW_START_HOUR; $hour < AJCore_Reservations::BOOKING_WINDOW_END_HOUR; $hour++ ) {
+				$slot_start_local = clone $day_dt;
+				$slot_start_local->setTime( $hour, 0, 0 );
+				$slot_end_local = clone $slot_start_local;
+				$slot_end_local->modify( '+1 hour' );
+
+				$slot_start_utc = clone $slot_start_local;
+				$slot_start_utc->setTimezone( new DateTimeZone( 'UTC' ) );
+				$slot_end_utc = clone $slot_end_local;
+				$slot_end_utc->setTimezone( new DateTimeZone( 'UTC' ) );
+
+				$availability = $this->get_reservation_slot_availability( $resource, $slot_start_utc, $slot_end_utc, $timezone, $settings );
+				$slots[] = array(
+					'start_at'     => $slot_start_local->format( 'Y-m-d\TH:i:s' ),
+					'end_at'       => $slot_end_local->format( 'Y-m-d\TH:i:s' ),
+					'available'    => ! empty( $availability['available'] ),
+					'pricing_type' => ! empty( $availability['pricing_type'] ) ? $availability['pricing_type'] : '',
+					'message'      => ! empty( $availability['message'] ) ? $availability['message'] : '',
+				);
+			}
+
+			wp_send_json_success( array( 'slots' => $slots ) );
+		}
+
+		try {
+			$start_dt = $this->parse_reservation_datetime_to_utc( $start_at_raw, $timezone );
+			$end_dt   = $this->parse_reservation_datetime_to_utc( $end_at_raw, $timezone );
+		} catch ( Exception $e ) {
+			wp_send_json_error( array( 'message' => __( 'Invalid date/time format.', 'ajforms' ) ) );
+		}
+
+		$whole_hour_check = $this->validate_reservation_whole_hour_slot( $start_dt, $end_dt, $timezone );
+		if ( is_wp_error( $whole_hour_check ) ) {
+			wp_send_json_error( array( 'message' => $whole_hour_check->get_error_message() ) );
+		}
+
+		$availability = $this->get_reservation_slot_availability( $resource, $start_dt, $end_dt, $timezone, $settings );
+		if ( empty( $availability['available'] ) ) {
+			wp_send_json_error( array( 'message' => ! empty( $availability['message'] ) ? $availability['message'] : __( 'This slot is not available.', 'ajforms' ) ) );
+		}
 
 		wp_send_json_success( array(
 			'available'      => true,
-			'pricing_type'   => $pricing_type,
-			'amount_display' => $amount_display,
+			'pricing_type'   => $availability['pricing_type'],
+			'amount_display' => '',
 		) );
 	}
 
@@ -12291,9 +12409,10 @@ class AJForms {
 		$end_at_raw      = isset( $_POST['end_at'] ) ? sanitize_text_field( wp_unslash( $_POST['end_at'] ) ) : '';
 		$customer_name   = isset( $_POST['customer_name'] ) ? sanitize_text_field( wp_unslash( $_POST['customer_name'] ) ) : '';
 		$customer_email  = isset( $_POST['customer_email'] ) ? sanitize_email( wp_unslash( $_POST['customer_email'] ) ) : '';
+		$customer_phone  = isset( $_POST['customer_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['customer_phone'] ) ) : '';
 		$customer_notes  = isset( $_POST['customer_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['customer_notes'] ) ) : '';
 
-		if ( ! $resource_key || ! $start_at_raw || ! $end_at_raw || ! $customer_name || ! $customer_email ) {
+		if ( ! $resource_key || ! $start_at_raw || ! $end_at_raw || ! $customer_name || ! $customer_email || ! $customer_phone ) {
 			wp_send_json_error( array( 'message' => __( 'Missing required fields.', 'ajforms' ) ) );
 		}
 
@@ -12301,19 +12420,24 @@ class AJForms {
 			wp_send_json_error( array( 'message' => __( 'Reservation system unavailable.', 'ajforms' ) ) );
 		}
 
+		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$timezone  = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$wp_user_id = get_current_user_id();
+
 		try {
-			$start_dt = new DateTime( $start_at_raw, new DateTimeZone( 'UTC' ) );
-			$end_dt   = new DateTime( $end_at_raw, new DateTimeZone( 'UTC' ) );
+			$start_dt = $this->parse_reservation_datetime_to_utc( $start_at_raw, $timezone );
+			$end_dt   = $this->parse_reservation_datetime_to_utc( $end_at_raw, $timezone );
 		} catch ( Exception $e ) {
 			wp_send_json_error( array( 'message' => __( 'Invalid date/time format.', 'ajforms' ) ) );
 		}
 
+		$whole_hour_check = $this->validate_reservation_whole_hour_slot( $start_dt, $end_dt, $timezone );
+		if ( is_wp_error( $whole_hour_check ) ) {
+			wp_send_json_error( array( 'message' => $whole_hour_check->get_error_message() ) );
+		}
+
 		$start_at_utc = $start_dt->format( 'Y-m-d H:i:s' );
 		$end_at_utc   = $end_dt->format( 'Y-m-d H:i:s' );
-
-		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
-		$timezone  = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
-		$wp_user_id = get_current_user_id();
 
 		// Validate booking window.
 		$window_check = AJCore_Reservations::validate_booking_window( $start_at_utc, $end_at_utc, $timezone );
@@ -12332,6 +12456,11 @@ class AJForms {
 			wp_send_json_error( array( 'message' => $conflict->get_error_message() ) );
 		}
 
+		$availability = $this->get_reservation_slot_availability( $resource, $start_dt, $end_dt, $timezone, $settings );
+		if ( empty( $availability['available'] ) ) {
+			wp_send_json_error( array( 'message' => ! empty( $availability['message'] ) ? $availability['message'] : __( 'This slot is not available.', 'ajforms' ) ) );
+		}
+
 		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
 		$stripe_price_id = '';
 		if ( 'business_hours' === $pricing_type ) {
@@ -12343,6 +12472,8 @@ class AJForms {
 		if ( ! $stripe_price_id ) {
 			wp_send_json_error( array( 'message' => __( 'Pricing for this resource is not configured. Please contact support.', 'ajforms' ) ) );
 		}
+
+		$stored_notes = trim( sprintf( "Phone: %s\n%s", $customer_phone, $customer_notes ) );
 
 		// Get Stripe customer for logged-in user.
 		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
@@ -12361,7 +12492,7 @@ class AJForms {
 			'stripe_price_id'   => $stripe_price_id,
 			'customer_name'     => $customer_name,
 			'customer_email'    => $customer_email,
-			'customer_notes'    => $customer_notes,
+			'customer_notes'    => $stored_notes,
 			'zoho_calendar_id'  => ! empty( $settings['zoho_calendar_id'] ) ? $settings['zoho_calendar_id'] : '',
 			'zoho_resource_uid' => ! empty( $settings['zoho_resource_uid'] ) ? $settings['zoho_resource_uid'] : '',
 		) );
@@ -12400,6 +12531,7 @@ class AJForms {
 				'ajcore_source'        => 'reservation',
 				'resource_key'         => sanitize_key( (string) $resource->resource_key ),
 				'reservation_start_at' => $start_at_utc,
+				'customer_phone'       => $customer_phone,
 			),
 		);
 
