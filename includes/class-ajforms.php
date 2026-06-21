@@ -11809,30 +11809,6 @@ class AJForms {
 		<section class="aj-customer-portal-panel aj-reservations-panel">
 			<h2><?php echo esc_html( $resource_name ); ?></h2>
 
-			<?php
-			// Embed calendar view — collapsible, shows existing Zoho bookings.
-			$embed_url = ! empty( $settings['zoho_calendar_embed_url'] ) ? esc_url( $settings['zoho_calendar_embed_url'] ) : '';
-			if ( $embed_url ) :
-			?>
-			<div class="aj-res-embed-wrap" style="margin-bottom:22px">
-				<button type="button" class="aj-res-embed-toggle" aria-expanded="true"
-					style="display:flex;align-items:center;gap:10px;width:100%;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px 12px 0 0;padding:12px 18px;cursor:pointer;font-size:14px;font-weight:700;color:#0f172a;text-align:left">
-					<span style="font-size:18px">📅</span>
-					<?php esc_html_e( 'Current Availability', 'ajforms' ); ?>
-					<span style="margin-left:8px;font-size:12px;font-weight:400;color:#64748b"><?php esc_html_e( '— see what\'s already booked before choosing a date below', 'ajforms' ); ?></span>
-					<span class="aj-res-embed-chevron" style="margin-left:auto;font-size:18px;transition:transform .2s;transform:rotate(180deg)">&#9660;</span>
-				</button>
-				<div class="aj-res-embed-body" style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;overflow:hidden">
-					<iframe
-						src="<?php echo $embed_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>"
-						style="width:100%;height:480px;display:block"
-						frameborder="0"
-						title="<?php echo esc_attr( $resource_name ); ?> Calendar"
-					></iframe>
-				</div>
-			</div>
-			<?php endif; ?>
-
 			<p style="margin:0 0 10px;font-size:13px;color:#64748b">
 				<?php
 				printf(
@@ -12009,19 +11985,6 @@ class AJForms {
 			const errMsg      = panel.querySelector('.aj-res-error-msg');
 			const bookSummary = panel.querySelector('.aj-res-booking-summary');
 
-			// Embed calendar toggle (default open).
-			const embedToggle  = panel.querySelector('.aj-res-embed-toggle');
-			const embedBody    = panel.querySelector('.aj-res-embed-body');
-			const embedChevron = panel.querySelector('.aj-res-embed-chevron');
-			if (embedToggle && embedBody) {
-				embedToggle.addEventListener('click', function(){
-					const isOpen = embedToggle.getAttribute('aria-expanded') === 'true';
-					embedBody.style.display = isOpen ? 'none' : '';
-					embedToggle.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
-					embedToggle.style.borderRadius = isOpen ? '12px' : '12px 12px 0 0';
-					if (embedChevron) embedChevron.style.transform = isOpen ? '' : 'rotate(180deg)';
-				});
-			}
 
 			const tz           = calGrid.dataset.timezone;
 			const resourceKey  = calGrid.dataset.resourceKey;
