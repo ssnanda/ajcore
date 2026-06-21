@@ -11789,6 +11789,7 @@ class AJForms {
 						data-portal-nonce="<?php echo esc_attr( $portal_nonce ); ?>">
 						<?php esc_html_e( 'Manage Payment Methods', 'ajforms' ); ?>
 					</button>
+					<span id="aj-res-billing-err" style="display:none;font-size:12px;color:#dc2626;margin-left:6px"></span>
 				</div>
 			</div>
 
@@ -12207,11 +12208,14 @@ class AJForms {
 			}
 
 			// ── Manage Payment Methods (Stripe Customer Portal) ──────────
-			var billingBtn = document.getElementById('aj-res-billing-portal-btn');
+			var billingBtn     = document.getElementById('aj-res-billing-portal-btn');
+			var billingErrSpan = document.getElementById('aj-res-billing-err');
 			if (billingBtn) {
 				var portalNonceVal = billingBtn.dataset.portalNonce;
 				billingBtn.addEventListener('click', function() {
 					billingBtn.disabled = true;
+					billingBtn.textContent = '<?php echo esc_js( __( 'Opening…', 'ajforms' ) ); ?>';
+					if (billingErrSpan) { billingErrSpan.style.display = 'none'; billingErrSpan.textContent = ''; }
 					var fd = new FormData();
 					fd.append('action', 'ajcore_stripe_customer_portal');
 					fd.append('nonce',  portalNonceVal);
@@ -12219,11 +12223,19 @@ class AJForms {
 					.then(function(r) { return r.json(); })
 					.then(function(payload) {
 						billingBtn.disabled = false;
+						billingBtn.textContent = '<?php echo esc_js( __( 'Manage Payment Methods', 'ajforms' ) ); ?>';
 						if (payload.success && payload.data && payload.data.portal_url) {
 							window.location.href = payload.data.portal_url;
+						} else {
+							var msg = (payload.data && payload.data.message) || '<?php echo esc_js( __( 'Could not open billing portal. Please try again.', 'ajforms' ) ); ?>';
+							if (billingErrSpan) { billingErrSpan.textContent = msg; billingErrSpan.style.display = 'inline'; }
 						}
 					})
-					.catch(function() { billingBtn.disabled = false; });
+					.catch(function() {
+						billingBtn.disabled = false;
+						billingBtn.textContent = '<?php echo esc_js( __( 'Manage Payment Methods', 'ajforms' ) ); ?>';
+						if (billingErrSpan) { billingErrSpan.textContent = '<?php echo esc_js( __( 'Network error. Please try again.', 'ajforms' ) ); ?>'; billingErrSpan.style.display = 'inline'; }
+					});
 				});
 			}
 
