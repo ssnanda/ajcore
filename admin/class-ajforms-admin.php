@@ -19003,7 +19003,13 @@ class AJForms_Admin {
 		$settings['zoho_calendar_uid']                = isset( $_POST['zoho_calendar_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_uid'] ) ) : '';
 		$settings['zoho_calendar_id']                 = isset( $_POST['zoho_calendar_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_id'] ) ) : '';
 		$settings['zoho_calendar_embed_url']          = isset( $_POST['zoho_calendar_embed_url'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_calendar_embed_url'] ) ) : '';
+		$settings['zoho_oauth_client_id']             = isset( $_POST['zoho_oauth_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_id'] ) ) : '';
+		$settings['zoho_oauth_client_secret']         = isset( $_POST['zoho_oauth_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_secret'] ) ) : '';
+		$settings['zoho_oauth_authorization_code']    = isset( $_POST['zoho_oauth_authorization_code'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_authorization_code'] ) ) : '';
 		$settings['zoho_api_token']                   = isset( $_POST['zoho_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token'] ) ) : '';
+		$settings['zoho_refresh_token']               = isset( $_POST['zoho_refresh_token'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_refresh_token'] ) ) : ( $settings['zoho_refresh_token'] ?? '' );
+		$settings['zoho_oauth_api_domain']            = isset( $_POST['zoho_oauth_api_domain'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_oauth_api_domain'] ) ) : ( $settings['zoho_oauth_api_domain'] ?? '' );
+		$settings['zoho_api_token_expires_at']        = isset( $_POST['zoho_api_token_expires_at'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token_expires_at'] ) ) : ( $settings['zoho_api_token_expires_at'] ?? '' );
 		$settings['zoho_resource_uid']                = isset( $_POST['zoho_resource_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_resource_uid'] ) ) : '';
 		$settings['zoho_resource_freebusy_url']       = isset( $_POST['zoho_resource_freebusy_url'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_resource_freebusy_url'] ) ) : '';
 		// Preserve auth mode for compatibility with older installs.
