@@ -572,6 +572,19 @@ class AJForms_Activator {
 			KEY object_id (object_id),
 			KEY processing_status (processing_status),
 			KEY first_seen_at (first_seen_at)
+		) $charset_collate;
+
+		CREATE TABLE IF NOT EXISTS {$wpdb->prefix}aj_portal_carts (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			stripe_customer_id varchar(100) NOT NULL,
+			wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			price_id varchar(100) NOT NULL,
+			quantity int(11) NOT NULL DEFAULT 1,
+			added_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY unique_customer_price (stripe_customer_id, price_id),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY wp_user_id (wp_user_id)
 		) $charset_collate;";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -782,6 +795,7 @@ class AJForms_Activator {
 		$t_service_requests     = $prefix . 'aj_portal_service_requests';
 		$t_event_log            = $prefix . 'aj_portal_event_log';
 		$t_stripe_events        = $prefix . 'aj_portal_stripe_events';
+		$t_carts                = $prefix . 'aj_portal_carts';
 
 		return "CREATE TABLE $t_shared_sites (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,

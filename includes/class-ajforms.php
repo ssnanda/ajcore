@@ -2,10 +2,13 @@
 
 class AJForms {
 
+	public static $instance = null;
+
 	private $plugin_name;
 	private $version;
 
 	public function __construct() {
+		self::$instance = $this;
 		$this->plugin_name = 'ajforms';
 		$this->version     = AJFORMS_VERSION;
 
@@ -19,6 +22,7 @@ class AJForms {
 
 	private function load_dependencies() {
 		require_once AJFORMS_PLUGIN_DIR . 'admin/class-ajforms-admin.php';
+		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-jwt.php';
 		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-rest-api.php';
 	}
 
@@ -102,6 +106,795 @@ class AJForms {
 	private function define_rest_hooks() {
 		$rest_api = new AJCore_REST_API();
 		add_action( 'rest_api_init', array( $rest_api, 'register_routes' ) );
+		add_filter( 'determine_current_user', array( $this, 'authenticate_mobile_bearer_token' ), 25 );
+	}
+
+	public function authenticate_mobile_bearer_token( $user_id ) {
+		if ( ! empty( $user_id ) ) {
+			return $user_id;
+		}
+		$auth_header = '';
+		if ( isset( $_SERVER['HTTP_AUTHORIZATION'] ) ) {
+			$auth_header = $_SERVER['HTTP_AUTHORIZATION'];
+		} elseif ( function_exists( 'apache_request_headers' ) ) {
+			$headers     = apache_request_headers();
+			$auth_header = isset( $headers['Authorization'] ) ? $headers['Authorization'] : '';
+		}
+		if ( empty( $auth_header ) || 0 !== stripos( $auth_header, 'Bearer ' ) ) {
+			return $user_id;
+		}
+		$token = trim( substr( $auth_header, 7 ) );
+		$uid   = AJCore_JWT::validate( $token );
+		if ( false !== $uid && $uid > 0 ) {
+			return $uid;
+		}
+		return $user_id;
+	}
+
+	// ── Public API methods called by AJCore_REST_API ──────────────────────────
+
+	public function api_get_portal_services() {
+		$context = $this->get_current_user_portal_billing_context();
+		if ( '' === $context['stripe_customer_id'] || ! $context['customer'] ) {
+			return array( 'services' => array() );
+		}
+		$subscriptions          = $context['subscriptions'];
+		$ledger                 = $context['ledger'];
+		$current_subscriptions  = array_values( array_filter( $subscriptions, array( $this, 'is_current_portal_subscription' ) ) );
+		$displayable_snapshots  = $this->dedupe_portal_service_snapshots_for_display(
+			array_values(
+				array_filter(
+					$context['service_snapshots'],
+					function ( $snapshot ) use ( $current_subscriptions ) {
+						return $this->is_displayable_customer_portal_snapshot( $snapshot )
+							&& ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $current_subscriptions );
+					}
+				)
+			)
+		);
+		$current_snapshots  = array_values( array_filter( $displayable_snapshots, array( $this, 'is_current_portal_service_snapshot' ) ) );
+		$past_subscriptions = array_values( array_filter( $subscriptions, function ( $sub ) {
+			return ! $this->is_current_portal_subscription( $sub );
+		} ) );
+		$past_snapshots = array_values( array_filter( $displayable_snapshots, function ( $snap ) {
+			return ! $this->is_current_portal_service_snapshot( $snap );
+		} ) );
+
+		$services = array();
+		foreach ( $current_subscriptions as $subscription ) {
+			$ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger );
+			$services[] = array(
+				'id'                => isset( $subscription->stripe_subscription_id ) ? sanitize_text_field( (string) $subscription->stripe_subscription_id ) : '',
+				'type'              => 'subscription',
+				'name'              => $this->get_subscription_service_name( $subscription, $ledger_entry ),
+				'status'            => isset( $subscription->status ) ? sanitize_key( (string) $subscription->status ) : 'active',
+				'service_period'    => $this->get_subscription_service_period( $subscription, $ledger_entry ),
+				'next_billing_date' => $this->get_subscription_next_billing_date( $subscription, $ledger_entry ),
+				'amount'            => $this->get_subscription_amount_label( $subscription ),
+				'is_current'        => true,
+			);
+		}
+		foreach ( $current_snapshots as $snapshot ) {
+			$services[] = array(
+				'id'                => isset( $snapshot->id ) ? (int) $snapshot->id : 0,
+				'type'              => 'snapshot',
+				'name'              => $this->get_snapshot_service_name( $snapshot ),
+				'status'            => isset( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : 'active',
+				'service_period'    => $this->get_snapshot_service_period_label( $snapshot ),
+				'next_billing_date' => isset( $snapshot->next_billing_date ) ? sanitize_text_field( (string) $snapshot->next_billing_date ) : '',
+				'amount'            => $this->get_snapshot_service_amount_label( $snapshot ),
+				'is_current'        => true,
+			);
+		}
+		foreach ( $past_subscriptions as $subscription ) {
+			$ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger );
+			$services[] = array(
+				'id'                => isset( $subscription->stripe_subscription_id ) ? sanitize_text_field( (string) $subscription->stripe_subscription_id ) : '',
+				'type'              => 'subscription',
+				'name'              => $this->get_subscription_service_name( $subscription, $ledger_entry ),
+				'status'            => isset( $subscription->status ) ? sanitize_key( (string) $subscription->status ) : 'canceled',
+				'service_period'    => $this->get_subscription_service_period( $subscription, $ledger_entry ),
+				'next_billing_date' => '',
+				'amount'            => $this->get_subscription_amount_label( $subscription ),
+				'is_current'        => false,
+			);
+		}
+		foreach ( $past_snapshots as $snapshot ) {
+			$services[] = array(
+				'id'                => isset( $snapshot->id ) ? (int) $snapshot->id : 0,
+				'type'              => 'snapshot',
+				'name'              => $this->get_snapshot_service_name( $snapshot ),
+				'status'            => isset( $snapshot->status ) ? sanitize_key( (string) $snapshot->status ) : 'canceled',
+				'service_period'    => $this->get_snapshot_service_period_label( $snapshot ),
+				'next_billing_date' => '',
+				'amount'            => $this->get_snapshot_service_amount_label( $snapshot ),
+				'is_current'        => false,
+			);
+		}
+		return array( 'services' => $services );
+	}
+
+	public function api_get_portal_ledger() {
+		$context = $this->get_current_user_portal_billing_context();
+		if ( '' === $context['stripe_customer_id'] || ! $context['customer'] ) {
+			return array( 'transactions' => array() );
+		}
+		$transactions = array();
+		foreach ( $context['ledger'] as $entry ) {
+			$transactions[] = array(
+				'id'               => isset( $entry->id ) ? (int) $entry->id : 0,
+				'source_type'      => isset( $entry->source_type ) ? sanitize_text_field( (string) $entry->source_type ) : '',
+				'source_object_id' => isset( $entry->source_object_id ) ? sanitize_text_field( (string) $entry->source_object_id ) : '',
+				'invoice_id'       => isset( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : '',
+				'description'      => $this->get_portal_ledger_display_description( $entry ),
+				'amount'           => isset( $entry->amount ) ? (float) $entry->amount : 0,
+				'currency'         => isset( $entry->currency ) ? sanitize_key( (string) $entry->currency ) : 'usd',
+				'status'           => isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '',
+				'ledger_date'      => isset( $entry->ledger_date ) ? sanitize_text_field( (string) $entry->ledger_date ) : '',
+				'created_at'       => isset( $entry->created_at ) ? sanitize_text_field( (string) $entry->created_at ) : '',
+			);
+		}
+		return array( 'transactions' => $transactions );
+	}
+
+	public function api_get_portal_overview() {
+		$services_data = $this->api_get_portal_services();
+		$services      = isset( $services_data['services'] ) ? (array) $services_data['services'] : array();
+		$active_count  = count( array_filter( $services, function ( $s ) {
+			return ! empty( $s['is_current'] );
+		} ) );
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$pdb                = $this->get_pdb();
+
+		$open_tasks = 0;
+		if ( '' !== $stripe_customer_id ) {
+			$open_tasks = (int) $pdb->get_var( $pdb->prepare(
+				"SELECT COUNT(*) FROM `{$pdb->prefix}aj_portal_task_statuses` WHERE stripe_customer_id = %s AND status != 'completed'",
+				$stripe_customer_id
+			) );
+		}
+
+		$pending_invoices = 0;
+		if ( '' !== $stripe_customer_id ) {
+			$pending_invoices = (int) $pdb->get_var( $pdb->prepare(
+				"SELECT COUNT(*) FROM `{$pdb->prefix}aj_portal_ledger` WHERE stripe_customer_id = %s AND status IN ('open', 'pending', 'unpaid')",
+				$stripe_customer_id
+			) );
+		}
+
+		$open_service_requests = 0;
+		if ( '' !== $stripe_customer_id ) {
+			$open_service_requests = (int) $pdb->get_var( $pdb->prepare(
+				"SELECT COUNT(*) FROM `{$pdb->prefix}aj_portal_service_requests` WHERE stripe_customer_id = %s AND request_type = 'support_request' AND status NOT IN ('closed', 'completed', 'resolved')",
+				$stripe_customer_id
+			) );
+		}
+
+		$user = wp_get_current_user();
+		$name = $user->display_name ?: $user->user_login;
+		return array(
+			'active_services'       => $active_count,
+			'open_tasks'            => $open_tasks,
+			'pending_invoices'      => $pending_invoices,
+			'open_service_requests' => $open_service_requests,
+			'welcome_message'       => 'Welcome back, ' . $name . '!',
+		);
+	}
+
+	public function api_get_portal_tasks() {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return array( 'tasks' => array() );
+		}
+		$rows   = $this->get_current_user_portal_tasks();
+		$tasks  = array();
+		foreach ( (array) $rows as $row ) {
+			$tasks[] = array(
+				'id'             => isset( $row->id ) ? (int) $row->id : 0,
+				'title'          => isset( $row->title ) ? sanitize_text_field( (string) $row->title ) : '',
+				'description'    => isset( $row->action_required ) ? wp_kses_post( (string) $row->action_required ) : '',
+				'status'         => isset( $row->portal_status ) && '' !== (string) $row->portal_status ? sanitize_key( (string) $row->portal_status ) : ( isset( $row->status ) ? sanitize_key( (string) $row->status ) : 'open' ),
+				'due_date'       => isset( $row->due_date ) && $row->due_date ? sanitize_text_field( (string) $row->due_date ) : null,
+				'task_scope'     => isset( $row->task_scope ) ? sanitize_key( (string) $row->task_scope ) : 'client',
+				'completed_at'   => isset( $row->portal_completed_at ) ? sanitize_text_field( (string) $row->portal_completed_at ) : null,
+			);
+		}
+		return array( 'tasks' => $tasks );
+	}
+
+	/**
+	 * Returns only client-created service requests (support_request type).
+	 * This is the canonical definition of what clients are allowed to see.
+	 * Both the web portal renderer and the REST API delegate here so the
+	 * visibility rules live in exactly one place.
+	 */
+	public function api_get_client_service_requests() {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return array( 'service_requests' => array() );
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_service_requests_table();
+		$rows  = $pdb->get_results(
+			$pdb->prepare(
+				"SELECT * FROM `{$table}` WHERE stripe_customer_id = %s AND request_type = 'support_request' ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 100",
+				$stripe_customer_id
+			)
+		);
+		return array( 'service_requests' => is_array( $rows ) ? $rows : array() );
+	}
+
+	public function api_create_portal_service_request( $title, $description, $priority = 'normal' ) {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return new WP_Error( 'no_customer', __( 'Your account is not linked to a customer profile.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+		$id = $this->upsert_portal_service_request( array(
+			'wp_user_id'         => get_current_user_id(),
+			'stripe_customer_id' => $stripe_customer_id,
+			'service_name'       => sanitize_text_field( (string) $title ),
+			'client_notes'       => sanitize_textarea_field( (string) $description . ( '' !== $priority && 'normal' !== $priority ? "\n\nPriority: " . ucfirst( $priority ) : '' ) ),
+			'request_type'       => 'support_request',
+			'status'             => 'draft',
+			'source'             => 'client_portal',
+			'created_by'         => get_current_user_id(),
+		) );
+		if ( ! $id ) {
+			return new WP_Error( 'insert_failed', __( 'Failed to create service request.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		return array(
+			'id'             => $id,
+			'title'          => sanitize_text_field( (string) $title ),
+			'description'    => sanitize_textarea_field( (string) $description ),
+			'status'         => 'draft',
+			'service_status' => 'new',
+			'created_at'     => current_time( 'mysql' ),
+		);
+	}
+
+	public function api_get_portal_store() {
+		$context = $this->get_current_user_portal_billing_context();
+		if ( '' === $context['stripe_customer_id'] || ! $context['customer'] ) {
+			return array( 'products' => array() );
+		}
+		$products = $this->get_portal_available_service_products( $context['subscriptions'], $context['ledger'] );
+		$result   = array();
+		foreach ( $products as $product ) {
+			$price_id = isset( $product->stripe_price_id ) ? sanitize_text_field( (string) $product->stripe_price_id ) : '';
+			if ( '' === $price_id ) {
+				continue;
+			}
+			$result[] = array(
+				'price_id'           => $price_id,
+				'product_id'         => isset( $product->stripe_product_id ) ? sanitize_text_field( (string) $product->stripe_product_id ) : '',
+				'name'               => ! empty( $product->custom_label ) ? sanitize_text_field( (string) $product->custom_label ) : ( isset( $product->name ) ? sanitize_text_field( (string) $product->name ) : '' ),
+				'description'        => isset( $product->description ) ? sanitize_text_field( (string) $product->description ) : '',
+				'amount'             => isset( $product->price_amount ) ? (float) $product->price_amount : 0,
+				'currency'           => isset( $product->currency ) ? sanitize_key( (string) $product->currency ) : 'usd',
+				'recurring_interval' => isset( $product->recurring_interval ) ? sanitize_key( (string) $product->recurring_interval ) : '',
+				'amount_label'       => $this->get_portal_product_amount_label( $product ),
+				'can_add'            => ! empty( $product->portal_can_add ),
+				'is_owned'           => ! empty( $product->portal_is_owned ),
+				'has_open_request'   => ! empty( $product->portal_open_request ),
+				'is_upgrade'         => ! empty( $product->portal_is_upgrade ),
+			);
+		}
+		return array( 'products' => $result );
+	}
+
+	/**
+	 * Cart checkout: create one Stripe checkout session for multiple price IDs.
+	 * Delegates to api_portal_add_service when cart has a single item.
+	 */
+	public function api_portal_checkout_cart( array $price_ids ) {
+		$price_ids = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', $price_ids ) ) ) );
+		if ( empty( $price_ids ) ) {
+			return new WP_Error( 'invalid_cart', __( 'Cart is empty.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( 1 === count( $price_ids ) ) {
+			return $this->api_portal_add_service( $price_ids[0] );
+		}
+
+		if ( ! is_user_logged_in() ) {
+			return new WP_Error( 'not_logged_in', __( 'Authentication required.', 'ajforms' ), array( 'status' => 401 ) );
+		}
+
+		$portal_context  = $this->get_current_user_portal_billing_context();
+		$portal_products = ( '' !== $portal_context['stripe_customer_id'] && $portal_context['customer'] )
+			? $this->get_portal_available_service_products( $portal_context['subscriptions'], $portal_context['ledger'] )
+			: array();
+
+		$allowed_price_map = array();
+		foreach ( $portal_products as $available_product ) {
+			if ( empty( $available_product->portal_can_add ) ) {
+				continue;
+			}
+			$apid = isset( $available_product->stripe_price_id ) ? sanitize_text_field( (string) $available_product->stripe_price_id ) : '';
+			if ( '' === $apid ) {
+				continue;
+			}
+			$allowed_price_map[ $apid ] = array(
+				'id'               => $apid,
+				'product_id'       => isset( $available_product->stripe_product_id ) ? sanitize_text_field( (string) $available_product->stripe_product_id ) : '',
+				'product_name'     => ! empty( $available_product->custom_label ) ? sanitize_text_field( (string) $available_product->custom_label ) : ( isset( $available_product->name ) ? sanitize_text_field( (string) $available_product->name ) : '' ),
+				'amount'           => isset( $available_product->price_amount ) ? (float) $available_product->price_amount : 0,
+				'currency'         => isset( $available_product->currency ) ? sanitize_key( (string) $available_product->currency ) : 'usd',
+				'recurring_interval' => isset( $available_product->recurring_interval ) ? sanitize_key( (string) $available_product->recurring_interval ) : '',
+			);
+		}
+
+		// Validate every cart item exists in allowed products.
+		foreach ( $price_ids as $pid ) {
+			if ( empty( $allowed_price_map[ $pid ] ) ) {
+				return new WP_Error( 'service_unavailable', sprintf( __( 'Service %s is not available.', 'ajforms' ), $pid ), array( 'status' => 404 ) );
+			}
+		}
+
+		$stripe_settings = $this->get_stripe_settings();
+		$mode_error      = $this->get_stripe_mode_blocking_error( $stripe_settings );
+		if ( '' !== $mode_error ) {
+			return new WP_Error( 'stripe_error', $mode_error, array( 'status' => 400 ) );
+		}
+		if ( empty( $stripe_settings['secret_key'] ) ) {
+			return new WP_Error( 'stripe_not_connected', __( 'Stripe is not connected.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		// Use subscription mode if any item is recurring.
+		$has_recurring = false;
+		foreach ( $price_ids as $pid ) {
+			if ( ! empty( $allowed_price_map[ $pid ]['recurring_interval'] ) ) {
+				$has_recurring = true;
+				break;
+			}
+		}
+		$checkout_mode = $has_recurring ? 'subscription' : 'payment';
+
+		$return_url  = home_url( '/' );
+		$success_url = str_replace(
+			'%7BCHECKOUT_SESSION_ID%7D',
+			'{CHECKOUT_SESSION_ID}',
+			add_query_arg( array( 'ajcore_checkout' => 'success', 'session_id' => '{CHECKOUT_SESSION_ID}' ), $return_url )
+		);
+		$cancel_url = add_query_arg( 'ajcore_checkout', 'cancelled', $return_url );
+
+		$body = array(
+			'mode'        => $checkout_mode,
+			'success_url' => $success_url,
+			'cancel_url'  => $cancel_url,
+		);
+
+		$mapped_stripe_customer_id = $portal_context['stripe_customer_id'];
+		if ( 0 === strpos( $mapped_stripe_customer_id, 'cus_' ) ) {
+			$body['customer'] = $mapped_stripe_customer_id;
+		} elseif ( 'payment' === $checkout_mode ) {
+			$body['customer_creation'] = 'always';
+		}
+
+		$total_amount = 0;
+		$currency     = 'usd';
+		$names        = array();
+		foreach ( array_values( $price_ids ) as $i => $pid ) {
+			$body[ "line_items[{$i}][price]" ]    = $pid;
+			$body[ "line_items[{$i}][quantity]" ] = 1;
+			$total_amount += isset( $allowed_price_map[ $pid ]['amount'] ) ? (float) $allowed_price_map[ $pid ]['amount'] : 0;
+			$currency      = isset( $allowed_price_map[ $pid ]['currency'] ) ? sanitize_key( $allowed_price_map[ $pid ]['currency'] ) : $currency;
+			$names[]       = isset( $allowed_price_map[ $pid ]['product_name'] ) ? $allowed_price_map[ $pid ]['product_name'] : $pid;
+		}
+		$body['metadata[price_ids]']   = implode( ',', $price_ids );
+		$body['metadata[source]']      = 'ajcore_portal_cart';
+		if ( '' !== $mapped_stripe_customer_id ) {
+			$body['metadata[stripe_customer_id]'] = $mapped_stripe_customer_id;
+		}
+
+		$response = $this->stripe_api_request( 'checkout/sessions', $stripe_settings['secret_key'], $body, 'POST' );
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'stripe_request_failed', $response->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		if ( ! empty( $response['id'] ) && '' !== $mapped_stripe_customer_id ) {
+			$session_id  = sanitize_text_field( (string) $response['id'] );
+			$checkout_url = ! empty( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '';
+			$cart_description = implode( ', ', $names );
+			$metadata = array(
+				'checkout_url' => $checkout_url,
+				'price_ids'    => $price_ids,
+				'product_names'=> $names,
+				'source'       => 'portal_cart',
+			);
+			$this->get_pdb()->replace(
+				$this->get_portal_ledger_table(),
+				array(
+					'stripe_customer_id' => $mapped_stripe_customer_id,
+					'source_object_id'   => $session_id,
+					'source_type'        => 'checkout_session',
+					'ledger_date'        => current_time( 'mysql' ),
+					'description'        => sprintf( __( 'Cart checkout: %s', 'ajforms' ), $cart_description ),
+					'amount'             => $total_amount,
+					'currency'           => $currency,
+					'status'             => 'unpaid',
+					'invoice_id'         => '',
+					'payment_intent_id'  => '',
+					'charge_id'          => '',
+					'metadata'           => wp_json_encode( $metadata ),
+					'created_at'         => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			);
+			// One service request per cart item for admin tracking.
+			foreach ( $price_ids as $pid ) {
+				$p = $allowed_price_map[ $pid ];
+				$this->upsert_portal_service_request( array(
+					'wp_user_id'         => get_current_user_id(),
+					'stripe_customer_id' => $mapped_stripe_customer_id,
+					'stripe_price_id'    => $pid,
+					'stripe_product_id'  => isset( $p['product_id'] ) ? $p['product_id'] : '',
+					'service_name'       => isset( $p['product_name'] ) ? $p['product_name'] : $pid,
+					'request_type'       => 'add_service',
+					'status'             => 'pending_payment',
+					'amount'             => isset( $p['amount'] ) ? (float) $p['amount'] : 0,
+					'currency'           => isset( $p['currency'] ) ? sanitize_key( $p['currency'] ) : 'usd',
+					'source_object_id'   => $session_id,
+					'source_type'        => 'checkout_session',
+					'source'             => 'client_portal',
+					'created_by'         => get_current_user_id(),
+					'raw_data'           => $response,
+				) );
+			}
+		}
+
+		return array(
+			'url'             => isset( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
+			'session_id'      => isset( $response['id'] ) ? sanitize_text_field( (string) $response['id'] ) : '',
+			'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? trim( sanitize_text_field( (string) $stripe_settings['publishable_key'] ) ) : '',
+		);
+	}
+
+	// ── Server-side cart ──────────────────────────────────────────────────
+
+	private function get_portal_carts_table() {
+		return $this->get_pdb()->prefix . 'aj_portal_carts';
+	}
+
+	private function ensure_carts_table() {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_carts_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			$charset_collate = $pdb->get_charset_collate();
+			$pdb->query( "CREATE TABLE IF NOT EXISTS {$table} (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				stripe_customer_id varchar(100) NOT NULL,
+				wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+				price_id varchar(100) NOT NULL,
+				quantity int(11) NOT NULL DEFAULT 1,
+				added_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				PRIMARY KEY  (id),
+				UNIQUE KEY unique_customer_price (stripe_customer_id, price_id),
+				KEY stripe_customer_id (stripe_customer_id),
+				KEY wp_user_id (wp_user_id)
+			) {$charset_collate}" );
+		}
+	}
+
+	public function api_get_portal_cart() {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return array( 'items' => array(), 'total' => 0, 'currency' => 'usd', 'count' => 0 );
+		}
+		$this->ensure_carts_table();
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_carts_table();
+		$rows  = $pdb->get_results( $pdb->prepare( "SELECT price_id, quantity, added_at FROM {$table} WHERE stripe_customer_id = %s ORDER BY added_at ASC", $stripe_customer_id ) );
+
+		// Enrich cart rows with product details from the store catalog.
+		$portal_context = $this->get_current_user_portal_billing_context();
+		$all_products   = ( $portal_context['customer'] )
+			? $this->get_portal_available_service_products( $portal_context['subscriptions'], $portal_context['ledger'] )
+			: array();
+		$product_map = array();
+		foreach ( $all_products as $p ) {
+			$pid = isset( $p->stripe_price_id ) ? (string) $p->stripe_price_id : '';
+			if ( '' !== $pid ) {
+				$product_map[ $pid ] = $p;
+			}
+		}
+
+		$items    = array();
+		$total    = 0.0;
+		$currency = 'usd';
+		foreach ( (array) $rows as $row ) {
+			$pid = (string) $row->price_id;
+			$p   = isset( $product_map[ $pid ] ) ? $product_map[ $pid ] : null;
+			$amount = $p ? (float) $p->price_amount : 0.0;
+			$currency = $p && isset( $p->currency ) ? sanitize_key( (string) $p->currency ) : $currency;
+			$total   += $amount * (int) $row->quantity;
+			$items[] = array(
+				'price_id'           => $pid,
+				'product_id'         => $p ? (string) $p->stripe_product_id : '',
+				'name'               => $p ? ( ! empty( $p->custom_label ) ? (string) $p->custom_label : (string) $p->name ) : $pid,
+				'description'        => $p ? (string) ( $p->description ?? '' ) : '',
+				'amount'             => $amount,
+				'amount_label'       => $p ? (string) ( $p->amount_label ?? '' ) : '',
+				'currency'           => $currency,
+				'recurring_interval' => $p ? (string) ( $p->recurring_interval ?? '' ) : '',
+				'quantity'           => (int) $row->quantity,
+				'added_at'           => (string) $row->added_at,
+			);
+		}
+		return array( 'items' => $items, 'total' => $total, 'currency' => $currency, 'count' => count( $items ) );
+	}
+
+	public function api_portal_cart_add( $price_id ) {
+		$price_id = sanitize_text_field( (string) $price_id );
+		if ( '' === $price_id ) {
+			return new WP_Error( 'invalid_price', __( 'A price_id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return new WP_Error( 'no_customer', __( 'No Stripe customer found for this account.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		// Validate the price exists and is addable.
+		$portal_context = $this->get_current_user_portal_billing_context();
+		$all_products   = ( $portal_context['customer'] )
+			? $this->get_portal_available_service_products( $portal_context['subscriptions'], $portal_context['ledger'] )
+			: array();
+		$found = false;
+		foreach ( $all_products as $p ) {
+			if ( isset( $p->stripe_price_id ) && (string) $p->stripe_price_id === $price_id && ! empty( $p->portal_can_add ) ) {
+				$found = true;
+				break;
+			}
+		}
+		if ( ! $found ) {
+			return new WP_Error( 'service_unavailable', __( 'Service is not available for your account.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$this->ensure_carts_table();
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_carts_table();
+		$pdb->replace( $table, array(
+			'stripe_customer_id' => $stripe_customer_id,
+			'wp_user_id'         => get_current_user_id(),
+			'price_id'           => $price_id,
+			'quantity'           => 1,
+			'added_at'           => current_time( 'mysql' ),
+		), array( '%s', '%d', '%s', '%d', '%s' ) );
+
+		return $this->api_get_portal_cart();
+	}
+
+	public function api_portal_cart_remove( $price_id ) {
+		$price_id = sanitize_text_field( (string) $price_id );
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id || '' === $price_id ) {
+			return new WP_Error( 'invalid_request', __( 'Invalid request.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$this->ensure_carts_table();
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_carts_table();
+		$pdb->delete( $table, array( 'stripe_customer_id' => $stripe_customer_id, 'price_id' => $price_id ), array( '%s', '%s' ) );
+		return $this->api_get_portal_cart();
+	}
+
+	public function api_portal_cart_clear() {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return array( 'items' => array(), 'total' => 0, 'currency' => 'usd', 'count' => 0 );
+		}
+		$this->ensure_carts_table();
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_carts_table();
+		$pdb->delete( $table, array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s' ) );
+		return array( 'items' => array(), 'total' => 0, 'currency' => 'usd', 'count' => 0 );
+	}
+
+	public function api_portal_cart_checkout() {
+		$cart = $this->api_get_portal_cart();
+		if ( empty( $cart['items'] ) ) {
+			return new WP_Error( 'empty_cart', __( 'Your cart is empty.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$price_ids = array_column( $cart['items'], 'price_id' );
+		$result    = $this->api_portal_checkout_cart( $price_ids );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		// Clear the cart on successful session creation.
+		$this->api_portal_cart_clear();
+		return $result;
+	}
+
+	public function api_portal_add_service( $price_id ) {
+		$price_id = sanitize_text_field( (string) $price_id );
+		if ( '' === $price_id ) {
+			return new WP_Error( 'invalid_price', __( 'A price ID is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( ! is_user_logged_in() ) {
+			return new WP_Error( 'not_logged_in', __( 'Authentication required.', 'ajforms' ), array( 'status' => 401 ) );
+		}
+
+		$portal_context  = $this->get_current_user_portal_billing_context();
+		$portal_products = ( '' !== $portal_context['stripe_customer_id'] && $portal_context['customer'] )
+			? $this->get_portal_available_service_products( $portal_context['subscriptions'], $portal_context['ledger'] )
+			: array();
+
+		$allowed_price_map    = array();
+		$portal_upgrade_items = array();
+
+		foreach ( $portal_products as $available_product ) {
+			if ( empty( $available_product->portal_can_add ) ) {
+				continue;
+			}
+			$available_price_id = isset( $available_product->stripe_price_id ) ? sanitize_text_field( (string) $available_product->stripe_price_id ) : '';
+			if ( '' === $available_price_id ) {
+				continue;
+			}
+			$allowed_price_map[ $available_price_id ] = array(
+				'id'                           => $available_price_id,
+				'product_id'                   => isset( $available_product->stripe_product_id ) ? sanitize_text_field( (string) $available_product->stripe_product_id ) : '',
+				'product_name'                 => ! empty( $available_product->custom_label ) ? sanitize_text_field( (string) $available_product->custom_label ) : ( isset( $available_product->name ) ? sanitize_text_field( (string) $available_product->name ) : '' ),
+				'amount'                       => isset( $available_product->price_amount ) ? (float) $available_product->price_amount : 0,
+				'currency'                     => isset( $available_product->currency ) ? sanitize_key( (string) $available_product->currency ) : 'usd',
+				'recurring_interval'           => isset( $available_product->recurring_interval ) ? sanitize_key( (string) $available_product->recurring_interval ) : '',
+				'duplicate_behavior'           => $this->get_portal_product_duplicate_behavior( $available_product ),
+				'upgrade_from_product_id'      => ! empty( $available_product->portal_upgrade_from_product_id ) ? sanitize_text_field( (string) $available_product->portal_upgrade_from_product_id ) : '',
+				'upgrade_from_subscription_id' => ! empty( $available_product->portal_upgrade_from_subscription_id ) ? sanitize_text_field( (string) $available_product->portal_upgrade_from_subscription_id ) : '',
+			);
+		}
+		$allowed_price_map = array_column( $this->apply_public_product_dependency_settings_to_prices( array_values( $allowed_price_map ) ), null, 'id' );
+		foreach ( array_values( $allowed_price_map ) as $allowed_price ) {
+			$required_price_id = ! empty( $allowed_price['requires_price_id'] ) ? sanitize_text_field( (string) $allowed_price['requires_price_id'] ) : '';
+			if ( '' === $required_price_id || ! empty( $allowed_price_map[ $required_price_id ] ) ) {
+				continue;
+			}
+			$required_price = $this->get_portal_dependency_price_checkout_data( $required_price_id );
+			if ( $required_price ) {
+				$allowed_price_map[ $required_price_id ] = $required_price;
+			}
+		}
+
+		$portal_product = $this->get_portal_product_by_price_id( $price_id );
+		if ( ! $portal_product || empty( $allowed_price_map[ $price_id ] ) ) {
+			return new WP_Error( 'service_unavailable', __( 'Service is not available.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$price         = $allowed_price_map[ $price_id ];
+		$checkout_mode = ! empty( $price['recurring_interval'] ) ? 'subscription' : 'payment';
+
+		if ( 'upgrade' === ( isset( $price['duplicate_behavior'] ) ? sanitize_key( (string) $price['duplicate_behavior'] ) : '' ) ) {
+			$upgrade_from_subscription_id = ! empty( $price['upgrade_from_subscription_id'] ) ? sanitize_text_field( (string) $price['upgrade_from_subscription_id'] ) : '';
+			if ( '' === $upgrade_from_subscription_id || 0 !== strpos( $upgrade_from_subscription_id, 'sub_' ) ) {
+				return new WP_Error( 'upgrade_unavailable', __( 'This upgrade is not available for your current services.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+			$portal_upgrade_items[] = array(
+				'from_product_id'      => ! empty( $price['upgrade_from_product_id'] ) ? sanitize_text_field( (string) $price['upgrade_from_product_id'] ) : '',
+				'from_subscription_id' => $upgrade_from_subscription_id,
+				'to_product_id'        => ! empty( $price['product_id'] ) ? sanitize_text_field( (string) $price['product_id'] ) : '',
+				'to_price_id'          => $price_id,
+			);
+		}
+
+		$stripe_settings = $this->get_stripe_settings();
+		$mode_error      = $this->get_stripe_mode_blocking_error( $stripe_settings );
+		if ( '' !== $mode_error ) {
+			return new WP_Error( 'stripe_error', $mode_error, array( 'status' => 400 ) );
+		}
+		if ( empty( $stripe_settings['secret_key'] ) ) {
+			return new WP_Error( 'stripe_not_connected', __( 'Stripe is not connected.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$return_url  = home_url( '/' );
+		$success_url = str_replace(
+			'%7BCHECKOUT_SESSION_ID%7D',
+			'{CHECKOUT_SESSION_ID}',
+			add_query_arg( array( 'ajcore_checkout' => 'success', 'session_id' => '{CHECKOUT_SESSION_ID}' ), $return_url )
+		);
+		$cancel_url = add_query_arg( 'ajcore_checkout', 'cancelled', $return_url );
+
+		$body = array(
+			'mode'        => $checkout_mode,
+			'success_url' => $success_url,
+			'cancel_url'  => $cancel_url,
+		);
+
+		$mapped_stripe_customer_id = $portal_context['stripe_customer_id'];
+		if ( 0 === strpos( $mapped_stripe_customer_id, 'cus_' ) ) {
+			$body['customer'] = $mapped_stripe_customer_id;
+		} elseif ( 'payment' === $checkout_mode ) {
+			$body['customer_creation'] = 'always';
+		}
+
+		$body['line_items[0][price]']    = $price_id;
+		$body['line_items[0][quantity]'] = 1;
+		$body['metadata[price_id]']      = $price_id;
+		$body['metadata[product_id]']    = isset( $price['product_id'] ) ? $price['product_id'] : '';
+		$body['metadata[source]']        = 'ajcore_portal_add_service';
+		if ( '' !== $mapped_stripe_customer_id ) {
+			$body['metadata[stripe_customer_id]'] = $mapped_stripe_customer_id;
+		}
+
+		if ( ! empty( $portal_upgrade_items ) ) {
+			$primary_upgrade = reset( $portal_upgrade_items );
+			$body['metadata[ajcore_upgrade]']                              = '1';
+			$body['metadata[ajcore_upgrade_items]']                        = wp_json_encode( $portal_upgrade_items );
+			$body['metadata[ajcore_upgrade_from_product_id]']              = $primary_upgrade['from_product_id'];
+			$body['metadata[ajcore_upgrade_from_subscription_id]']         = $primary_upgrade['from_subscription_id'];
+			$body['metadata[ajcore_upgrade_to_product_id]']                = $primary_upgrade['to_product_id'];
+			$body['metadata[ajcore_upgrade_to_price_id]']                  = $primary_upgrade['to_price_id'];
+			if ( 'subscription' === $checkout_mode ) {
+				$body['subscription_data[metadata][ajcore_upgrade]']                          = '1';
+				$body['subscription_data[metadata][ajcore_upgrade_items]']                    = wp_json_encode( $portal_upgrade_items );
+				$body['subscription_data[metadata][ajcore_upgrade_from_subscription_id]']     = $primary_upgrade['from_subscription_id'];
+			}
+		}
+
+		$response = $this->stripe_api_request( 'checkout/sessions', $stripe_settings['secret_key'], $body, 'POST' );
+
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'stripe_request_failed', $response->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		if ( ! empty( $response['id'] ) && '' !== $mapped_stripe_customer_id ) {
+			global $wpdb;
+			$line_product       = $this->get_portal_product_by_price_id( $price_id );
+			$product_name       = $line_product
+				? ( ! empty( $line_product->custom_label ) ? sanitize_text_field( (string) $line_product->custom_label ) : ( ! empty( $line_product->name ) ? sanitize_text_field( (string) $line_product->name ) : $price_id ) )
+				: __( 'Additional services', 'ajforms' );
+			$total_amount       = isset( $price['amount'] ) ? (float) $price['amount'] : 0;
+			$currency           = isset( $price['currency'] ) ? sanitize_key( (string) $price['currency'] ) : 'usd';
+			$checkout_url       = ! empty( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '';
+			$product_description = sprintf( __( 'Service request: %s', 'ajforms' ), $product_name );
+			$metadata = array(
+				'checkout_url'                   => $checkout_url,
+				'checkout_session_client_secret' => ! empty( $response['client_secret'] ) ? sanitize_text_field( (string) $response['client_secret'] ) : '',
+				'price_id'                       => $price_id,
+				'price_ids'                      => array( $price_id ),
+				'product_id'                     => isset( $price['product_id'] ) ? $price['product_id'] : '',
+				'product_name'                   => $product_name,
+				'source'                         => 'portal_add_service',
+				'upgrade_items'                  => $portal_upgrade_items,
+			);
+			$wpdb->replace(
+				$this->get_portal_ledger_table(),
+				array(
+					'stripe_customer_id' => $mapped_stripe_customer_id,
+					'source_object_id'   => sanitize_text_field( (string) $response['id'] ),
+					'source_type'        => 'checkout_session',
+					'ledger_date'        => current_time( 'mysql' ),
+					'description'        => $product_description,
+					'amount'             => $total_amount,
+					'currency'           => $currency,
+					'status'             => 'unpaid',
+					'invoice_id'         => '',
+					'payment_intent_id'  => '',
+					'charge_id'          => '',
+					'metadata'           => wp_json_encode( $metadata ),
+					'created_at'         => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			);
+			$this->upsert_portal_service_request( array(
+				'wp_user_id'         => get_current_user_id(),
+				'stripe_customer_id' => $mapped_stripe_customer_id,
+				'stripe_price_id'    => $price_id,
+				'stripe_product_id'  => isset( $price['product_id'] ) ? $price['product_id'] : '',
+				'service_name'       => $product_name,
+				'request_type'       => 'add_service',
+				'status'             => 'pending_payment',
+				'amount'             => $total_amount,
+				'currency'           => $currency,
+				'source_object_id'   => sanitize_text_field( (string) $response['id'] ),
+				'source_type'        => 'checkout_session',
+				'source'             => 'client_portal',
+				'created_by'         => get_current_user_id(),
+				'raw_data'           => $response,
+			) );
+		}
+
+		return array(
+			'url'             => isset( $response['url'] ) ? esc_url_raw( (string) $response['url'] ) : '',
+			'session_id'      => isset( $response['id'] ) ? sanitize_text_field( (string) $response['id'] ) : '',
+			'publishable_key' => isset( $stripe_settings['publishable_key'] ) ? trim( sanitize_text_field( (string) $stripe_settings['publishable_key'] ) ) : '',
+		);
 	}
 
 	private function define_public_hooks() {
@@ -843,13 +1636,8 @@ class AJForms {
 			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Service Requests', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked yet.', 'ajforms' ) . '</p></section>';
 		}
 
-		$pdb      = $this->get_pdb();
-		$requests = $pdb->get_results(
-			$pdb->prepare(
-				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE stripe_customer_id = %s ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 100",
-				$stripe_customer_id
-			)
-		);
+		$data     = $this->api_get_client_service_requests();
+		$requests = $data['service_requests'];
 
 		$new_sr_nonce = wp_create_nonce( 'ajcore_submit_portal_service_request' );
 

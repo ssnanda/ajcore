@@ -72,13 +72,32 @@ class AJCore_REST_API {
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
-			'/portal/me' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_me', 'permission' => 'can_use_portal_api' ),
-			'/portal/dashboard' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_dashboard', 'permission' => 'can_use_portal_api' ),
-			'/portal/services' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_services', 'permission' => 'can_use_portal_api' ),
-			'/portal/billing' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_billing', 'permission' => 'can_use_portal_api' ),
-			'/portal/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_tasks', 'permission' => 'can_use_portal_api' ),
-			'/portal/files' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_files', 'permission' => 'can_use_portal_api' ),
-			'/portal/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_service_requests', 'permission' => 'can_use_portal_api' ),
+			// Mobile auth (login is public so anyone can obtain a JWT)
+			'/portal/auth/login'  => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_auth_login',  'permission' => 'public_permission' ),
+			'/portal/auth/logout' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_auth_logout', 'permission' => 'can_use_portal_api' ),
+			'/portal/auth/me'     => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_me',      'permission' => 'can_use_portal_api' ),
+			// Portal data routes used by the mobile app
+			'/portal/me'              => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_me',       'permission' => 'can_use_portal_api' ),
+			'/portal/profile'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_me',       'permission' => 'can_use_portal_api' ),
+			'/portal/overview'        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_overview', 'permission' => 'can_use_portal_api' ),
+			'/portal/dashboard'       => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_dashboard','permission' => 'can_use_portal_api' ),
+			'/portal/services'        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_services', 'permission' => 'can_use_portal_api' ),
+			'/portal/billing/invoices'     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_billing_invoices',     'permission' => 'can_use_portal_api' ),
+			'/portal/billing/transactions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_billing_transactions',  'permission' => 'can_use_portal_api' ),
+			'/portal/billing'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_billing', 'permission' => 'can_use_portal_api' ),
+			'/portal/tasks'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_tasks',              'permission' => 'can_use_portal_api' ),
+			'/portal/service-requests/create' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'create_portal_service_request', 'permission' => 'can_use_portal_api' ),
+			'/portal/files'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_files',         'permission' => 'can_use_portal_api' ),
+			'/portal/service-requests'=> array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_service_requests', 'permission' => 'can_use_portal_api' ),
+			'/portal/store'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_store',       'permission' => 'can_use_portal_api' ),
+			'/portal/store/checkout'  => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_store_checkout', 'permission' => 'can_use_portal_api' ),
+			'/portal/cart'            => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_cart',      'permission' => 'can_use_portal_api' ),
+			'/portal/cart/add'        => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_cart_add',      'permission' => 'can_use_portal_api' ),
+			'/portal/cart/remove'     => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_cart_remove',   'permission' => 'can_use_portal_api' ),
+			'/portal/cart/clear'      => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_cart_clear',    'permission' => 'can_use_portal_api' ),
+			'/portal/cart/checkout'   => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_cart_checkout', 'permission' => 'can_use_portal_api' ),
+			// Public (no auth) — product catalog for the non-logged-in home screen
+			'/public/services'        => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_public_services',      'permission' => 'public_permission' ),
 		);
 	}
 
@@ -120,6 +139,10 @@ class AJCore_REST_API {
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/files', 'auth' => 'Portal user or Admin', 'purpose' => 'Current user assigned/uploaded files metadata.', 'app' => 'iOS files' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/service-requests', 'auth' => 'Portal user or Admin', 'purpose' => 'Current user service requests.', 'app' => 'iOS service requests' ),
 		);
+	}
+
+	public function public_permission() {
+		return true;
 	}
 
 	public function can_view_status() {
@@ -293,18 +316,11 @@ class AJCore_REST_API {
 
 	public function get_portal_me() {
 		$user = wp_get_current_user();
-		return rest_ensure_response(
-			array(
-				'user' => array(
-					'id'           => (int) $user->ID,
-					'display_name' => $user->display_name,
-					'email'        => $user->user_email,
-					'roles'        => array_values( (array) $user->roles ),
-				),
-				'site_uuid'          => get_option( 'ajcore_site_uuid', '' ),
-				'stripe_customer_id' => $this->get_current_user_stripe_customer_id(),
-			)
-		);
+		return rest_ensure_response( array(
+			'user'               => $this->format_user( $user ),
+			'site_uuid'          => get_option( 'ajcore_site_uuid', '' ),
+			'stripe_customer_id' => $this->get_current_user_stripe_customer_id(),
+		) );
 	}
 
 	public function get_portal_dashboard() {
@@ -324,12 +340,10 @@ class AJCore_REST_API {
 	}
 
 	public function get_portal_services() {
-		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
-		$rows = $this->get_customer_rows( 'aj_portal_service_snapshots', array( 'id', 'stripe_customer_id', 'stripe_subscription_id', 'service_name', 'service_status', 'service_period', 'current_period_start', 'current_period_end', 'next_billing_date', 'amount', 'currency', 'updated_at' ), $stripe_customer_id );
-		if ( empty( $rows ) ) {
-			$rows = $this->get_customer_rows( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'items', 'synced_at' ), $stripe_customer_id );
+		if ( AJForms::$instance ) {
+			return rest_ensure_response( AJForms::$instance->api_get_portal_services() );
 		}
-		return rest_ensure_response( array( 'services' => $rows ) );
+		return rest_ensure_response( array( 'services' => array() ) );
 	}
 
 	public function get_portal_billing() {
@@ -338,8 +352,10 @@ class AJCore_REST_API {
 	}
 
 	public function get_portal_tasks() {
-		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
-		return rest_ensure_response( array( 'tasks' => $this->get_customer_rows( 'aj_portal_task_statuses', array( 'id', 'task_id', 'stripe_customer_id', 'status', 'completed_at', 'updated_at' ), $stripe_customer_id, 'updated_at DESC, id DESC' ) ) );
+		if ( AJForms::$instance ) {
+			return rest_ensure_response( AJForms::$instance->api_get_portal_tasks() );
+		}
+		return rest_ensure_response( array( 'tasks' => array() ) );
 	}
 
 	public function get_portal_files() {
@@ -347,8 +363,127 @@ class AJCore_REST_API {
 	}
 
 	public function get_portal_service_requests() {
-		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
-		return rest_ensure_response( array( 'service_requests' => $this->get_customer_rows( 'aj_portal_service_requests', array( 'id', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'created_at', 'updated_at' ), $stripe_customer_id, 'updated_at DESC, id DESC' ) ) );
+		if ( ! AJForms::$instance ) {
+			return rest_ensure_response( array( 'service_requests' => array() ) );
+		}
+		$data = AJForms::$instance->api_get_client_service_requests();
+		$rows = isset( $data['service_requests'] ) ? (array) $data['service_requests'] : array();
+		$mapped = array_map( function ( $row ) {
+			$row = (array) $row;
+			$row['title']       = isset( $row['service_name'] ) ? $row['service_name'] : '';
+			$row['description'] = isset( $row['client_notes'] ) ? $row['client_notes'] : '';
+			return $row;
+		}, $rows );
+		return rest_ensure_response( array( 'service_requests' => $mapped ) );
+	}
+
+	public function create_portal_service_request( WP_REST_Request $request ) {
+		$title       = sanitize_text_field( (string) $request->get_param( 'title' ) );
+		$description = sanitize_textarea_field( (string) $request->get_param( 'description' ) );
+		$priority    = sanitize_key( (string) ( $request->get_param( 'priority' ) ?: 'normal' ) );
+
+		if ( '' === $title ) {
+			return new WP_Error( 'missing_title', __( 'Title is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( ! AJForms::$instance ) {
+			return new WP_Error( 'ajcore_unavailable', __( 'Portal service unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$result = AJForms::$instance->api_create_portal_service_request( $title, $description, $priority );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
+	}
+
+	public function get_portal_store() {
+		if ( AJForms::$instance ) {
+			return rest_ensure_response( AJForms::$instance->api_get_portal_store() );
+		}
+		return rest_ensure_response( array( 'products' => array() ) );
+	}
+
+	public function get_portal_cart() {
+		if ( AJForms::$instance ) {
+			return rest_ensure_response( AJForms::$instance->api_get_portal_cart() );
+		}
+		return rest_ensure_response( array( 'items' => array(), 'total' => 0, 'currency' => 'usd', 'count' => 0 ) );
+	}
+
+	public function portal_cart_add( WP_REST_Request $request ) {
+		$price_id = sanitize_text_field( (string) $request->get_param( 'price_id' ) );
+		if ( '' === $price_id ) {
+			return new WP_Error( 'invalid_price', __( 'A price_id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( ! AJForms::$instance ) {
+			return new WP_Error( 'ajcore_unavailable', __( 'Portal service unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$result = AJForms::$instance->api_portal_cart_add( $price_id );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
+	}
+
+	public function portal_cart_remove( WP_REST_Request $request ) {
+		$price_id = sanitize_text_field( (string) $request->get_param( 'price_id' ) );
+		if ( '' === $price_id ) {
+			return new WP_Error( 'invalid_price', __( 'A price_id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( ! AJForms::$instance ) {
+			return new WP_Error( 'ajcore_unavailable', __( 'Portal service unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		return rest_ensure_response( AJForms::$instance->api_portal_cart_remove( $price_id ) );
+	}
+
+	public function portal_cart_clear() {
+		if ( AJForms::$instance ) {
+			return rest_ensure_response( AJForms::$instance->api_portal_cart_clear() );
+		}
+		return rest_ensure_response( array( 'items' => array(), 'total' => 0, 'currency' => 'usd', 'count' => 0 ) );
+	}
+
+	public function portal_cart_checkout() {
+		if ( ! AJForms::$instance ) {
+			return new WP_Error( 'ajcore_unavailable', __( 'Portal service unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$result = AJForms::$instance->api_portal_cart_checkout();
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
+	}
+
+	public function get_public_services() {
+		// Returns the product catalog without requiring authentication.
+		// Products are shown to non-logged-in users on the home screen.
+		if ( AJForms::$instance ) {
+			$data = AJForms::$instance->api_get_portal_store();
+			// Strip any user-personalised flags before returning publicly.
+			if ( isset( $data['products'] ) && is_array( $data['products'] ) ) {
+				$data['products'] = array_map( function( $p ) {
+					unset( $p['isOwned'], $p['hasOpenRequest'] );
+					$p['canAdd'] = true;
+					return $p;
+				}, $data['products'] );
+			}
+			return rest_ensure_response( $data );
+		}
+		return rest_ensure_response( array( 'products' => array() ) );
+	}
+
+	public function portal_store_checkout( WP_REST_Request $request ) {
+		$price_id = sanitize_text_field( (string) $request->get_param( 'price_id' ) );
+		if ( '' === $price_id ) {
+			return new WP_Error( 'invalid_price', __( 'A price_id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( ! AJForms::$instance ) {
+			return new WP_Error( 'ajcore_unavailable', __( 'Portal service unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$result = AJForms::$instance->api_portal_add_service( $price_id );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
 	}
 
 	private function get_portal_db() {
@@ -494,5 +629,109 @@ class AJCore_REST_API {
 			ARRAY_A
 		);
 		return is_array( $rows ) ? $rows : array();
+	}
+
+	// ── Mobile auth endpoints ─────────────────────────────────────────────────
+
+	public function portal_auth_login( WP_REST_Request $request ) {
+		$username = sanitize_user( (string) $request->get_param( 'username' ) );
+		$password = (string) $request->get_param( 'password' );
+		if ( ! empty( $username ) && ! empty( $password ) ) {
+			$user = wp_authenticate_username_password( null, $username, $password );
+			if ( is_wp_error( $user ) || ! ( $user instanceof WP_User ) ) {
+				return new WP_Error( 'ajcore_auth_failed', 'Invalid username or password.', array( 'status' => 401 ) );
+			}
+		} else {
+			$user = wp_get_current_user();
+			if ( ! $user || ! $user->ID ) {
+				return new WP_Error( 'ajcore_auth_required', 'Username and password are required.', array( 'status' => 401 ) );
+			}
+		}
+		$token = AJCore_JWT::generate( $user->ID );
+		return rest_ensure_response( array(
+			'token'              => $token,
+			'user'               => $this->format_user( $user ),
+			'stripe_customer_id' => $this->get_stripe_customer_id_for_user( $user ),
+			'site_uuid'          => get_option( 'ajcore_site_uuid', '' ),
+		) );
+	}
+
+	public function portal_auth_logout( WP_REST_Request $request ) {
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	// ── Portal overview (flat counts for the mobile home screen) ─────────────
+
+	public function get_portal_overview() {
+		if ( AJForms::$instance ) {
+			return rest_ensure_response( AJForms::$instance->api_get_portal_overview() );
+		}
+		$user = wp_get_current_user();
+		$name = $user->display_name ?: $user->user_login;
+		return rest_ensure_response( array(
+			'active_services'       => 0,
+			'open_tasks'            => 0,
+			'pending_invoices'      => 0,
+			'open_service_requests' => 0,
+			'welcome_message'       => 'Welcome back, ' . $name . '!',
+		) );
+	}
+
+	// ── Billing sub-routes ────────────────────────────────────────────────────
+
+	public function get_portal_billing_invoices() {
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$rows = $this->get_customer_rows(
+			'aj_portal_ledger',
+			array( 'id', 'stripe_customer_id', 'source_type', 'source_object_id', 'description', 'amount', 'currency', 'status', 'ledger_date', 'invoice_id', 'created_at' ),
+			$stripe_customer_id,
+			'ledger_date DESC, created_at DESC, id DESC'
+		);
+		return rest_ensure_response( array( 'invoices' => $rows ) );
+	}
+
+	public function get_portal_billing_transactions() {
+		if ( AJForms::$instance ) {
+			return rest_ensure_response( AJForms::$instance->api_get_portal_ledger() );
+		}
+		return rest_ensure_response( array( 'transactions' => array() ) );
+	}
+
+	// ── Private helpers ───────────────────────────────────────────────────────
+
+	private function format_user( WP_User $user ) {
+		return array(
+			'id'           => (int) $user->ID,
+			'user_login'   => $user->user_login,
+			'display_name' => $user->display_name,
+			'email'        => $user->user_email,
+			'roles'        => array_values( (array) $user->roles ),
+		);
+	}
+
+	private function get_stripe_customer_id_for_user( WP_User $user ) {
+		global $wpdb;
+		$mapping_table = $wpdb->prefix . 'aj_auth_user_mappings';
+		if ( $this->table_exists( $wpdb, $mapping_table ) ) {
+			$customer_id = $wpdb->get_var( $wpdb->prepare(
+				"SELECT stripe_customer_id FROM `{$mapping_table}` WHERE user_id = %d OR portal_user_email = %s OR customer_email = %s ORDER BY updated_at DESC, id DESC LIMIT 1",
+				(int) $user->ID, $user->user_email, $user->user_email
+			) );
+			if ( $customer_id ) {
+				return sanitize_text_field( (string) $customer_id );
+			}
+		}
+		$pdb             = $this->get_portal_db();
+		$customers_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		if ( $this->table_exists( $pdb, $customers_table ) ) {
+			$customer_id = $pdb->get_var( $pdb->prepare(
+				"SELECT stripe_customer_id FROM `{$customers_table}` WHERE email = %s LIMIT 1",
+				$user->user_email
+			) );
+			if ( $customer_id ) {
+				return sanitize_text_field( (string) $customer_id );
+			}
+		}
+		return '';
 	}
 }
