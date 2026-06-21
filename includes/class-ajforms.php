@@ -12914,7 +12914,7 @@ class AJForms {
 			: $customer_notes;
 
 		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
-		$result = AJCore_Reservations::create_reservation( array(
+		$result = AJCore_Reservations::create_pending_reservation( array(
 			'wp_user_id'       => get_current_user_id(),
 			'resource_id'      => (int) $resource->id,
 			'resource_key'     => $resource_key,
