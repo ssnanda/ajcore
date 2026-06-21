@@ -504,19 +504,21 @@ class AJCore_Zoho_Calendar {
 	 * @return array|WP_Error Array with 'event_id' on success, WP_Error otherwise.
 	 */
 	public static function create_zoho_calendar_event( $reservation, $settings ) {
-		$api_token  = ! empty( $settings['zoho_api_token'] ) ? trim( (string) $settings['zoho_api_token'] ) : '';
-		$calendar_id = ! empty( $settings['zoho_calendar_id'] ) ? trim( (string) $settings['zoho_calendar_id'] ) : '';
+		$api_token = ! empty( $settings['zoho_access_token'] ) ? trim( (string) $settings['zoho_access_token'] )
+			: ( ! empty( $settings['zoho_api_token'] ) ? trim( (string) $settings['zoho_api_token'] ) : '' );
 
 		if ( is_object( $reservation ) ) {
 			$reservation = (array) $reservation;
 		}
 
-		$res_calendar_id = ! empty( $reservation['zoho_calendar_id'] ) ? trim( (string) $reservation['zoho_calendar_id'] ) : $calendar_id;
+		// Use calendar UID (short form) for the REST API endpoint — same as the GET events endpoint.
+		$res_calendar_uid = ! empty( $reservation['zoho_calendar_uid'] ) ? trim( (string) $reservation['zoho_calendar_uid'] )
+		                  : ( ! empty( $settings['zoho_calendar_uid'] ) ? trim( (string) $settings['zoho_calendar_uid'] ) : '' );
 
-		if ( '' === $api_token || '' === $res_calendar_id ) {
+		if ( '' === $api_token || '' === $res_calendar_uid ) {
 			return new WP_Error(
 				'zoho_unavailable',
-				__( 'Zoho API token or Calendar ID is not configured. Reservation marked as paid_pending_calendar.', 'ajforms' )
+				__( 'Zoho API token or Calendar UID is not configured. Reservation marked as paid_pending_calendar.', 'ajforms' )
 			);
 		}
 
@@ -553,7 +555,7 @@ class AJCore_Zoho_Calendar {
 			),
 		);
 
-		$api_url = 'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( $res_calendar_id ) . '/events';
+		$api_url = 'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( $res_calendar_uid ) . '/events';
 
 		$response = wp_remote_post(
 			$api_url,

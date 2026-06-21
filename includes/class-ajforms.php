@@ -12137,7 +12137,8 @@ class AJForms {
 			);
 		}
 
-		$zoho_api_token   = ! empty( $settings['zoho_api_token'] ) ? $settings['zoho_api_token'] : '';
+		$zoho_api_token   = ! empty( $settings['zoho_access_token'] ) ? $settings['zoho_access_token']
+			: ( ! empty( $settings['zoho_api_token'] ) ? $settings['zoho_api_token'] : '' );
 		$zoho_calendar_uid = ! empty( $settings['zoho_calendar_uid'] ) ? $settings['zoho_calendar_uid'] : '';
 		$zoho_resource_uid = ! empty( $settings['zoho_resource_uid'] ) ? $settings['zoho_resource_uid'] : '';
 		$zoho_freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';
@@ -12588,24 +12589,37 @@ class AJForms {
 
 		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
 
-		$client_id     = isset( $_POST['zoho_oauth_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_id'] ) ) : ( $settings['zoho_oauth_client_id'] ?? '' );
-		$client_secret = isset( $_POST['zoho_oauth_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_secret'] ) ) : ( $settings['zoho_oauth_client_secret'] ?? '' );
-		$auth_code     = isset( $_POST['zoho_oauth_authorization_code'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_authorization_code'] ) ) : '';
-		$api_token     = isset( $_POST['zoho_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token'] ) ) : ( $settings['zoho_api_token'] ?? '' );
-		$token_saved   = false;
+		// Read credentials — accept both new and old POST field names.
+		$client_id     = isset( $_POST['zoho_client_id'] )     ? sanitize_text_field( wp_unslash( $_POST['zoho_client_id'] ) )
+			: ( isset( $_POST['zoho_oauth_client_id'] )         ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_id'] ) )
+			: ( $settings['zoho_client_id'] ?? $settings['zoho_oauth_client_id'] ?? '' ) );
 
-		if ( '' !== trim( $auth_code ) ) {
-			if ( '' === trim( $client_id ) || '' === trim( $client_secret ) ) {
-				wp_send_json_error( array( 'message' => __( 'Client ID and Client Secret are required to exchange a generated code.', 'ajforms' ) ) );
-			}
+		$client_secret = isset( $_POST['zoho_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_client_secret'] ) )
+			: ( isset( $_POST['zoho_oauth_client_secret'] )     ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_secret'] ) )
+			: ( $settings['zoho_client_secret'] ?? $settings['zoho_oauth_client_secret'] ?? '' ) );
 
+		$code_or_token = isset( $_POST['zoho_code_or_refresh'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_code_or_refresh'] ) ) : '';
+		$token_mode    = isset( $_POST['token_mode'] )           ? sanitize_key( wp_unslash( $_POST['token_mode'] ) ) : 'auto';
+
+		$access_token       = '';
+		$refresh_token_new  = false; // true when a new refresh token was returned by Zoho
+
+		if ( '' === $client_id || '' === $client_secret ) {
+			wp_send_json_error( array( 'message' => __( 'Client ID and Client Secret are required. Save them first, then test.', 'ajforms' ) ) );
+		}
+
+		// ── Determine flow: code exchange vs. token refresh ───────────────────
+		$use_code_exchange = ( 'code' === $token_mode && '' !== $code_or_token );
+
+		if ( $use_code_exchange ) {
+			// Exchange a one-time generated code for access_token + refresh_token.
 			$token_response = wp_remote_post(
 				add_query_arg(
 					array(
 						'grant_type'    => 'authorization_code',
 						'client_id'     => $client_id,
 						'client_secret' => $client_secret,
-						'code'          => $auth_code,
+						'code'          => $code_or_token,
 						'access_type'   => 'offline',
 					),
 					'https://accounts.zoho.com/oauth/v2/token'
@@ -12617,41 +12631,95 @@ class AJForms {
 				wp_send_json_error( array( 'message' => $token_response->get_error_message() ) );
 			}
 
-			$token_code = wp_remote_retrieve_response_code( $token_response );
+			$token_http = wp_remote_retrieve_response_code( $token_response );
 			$token_body = json_decode( wp_remote_retrieve_body( $token_response ), true );
 
-			if ( 200 !== (int) $token_code || empty( $token_body['access_token'] ) ) {
-				$token_err = ! empty( $token_body['error'] ) ? $token_body['error'] : sprintf( __( 'Zoho token exchange returned HTTP %d.', 'ajforms' ), $token_code );
+			if ( 200 !== (int) $token_http || empty( $token_body['access_token'] ) ) {
+				$token_err = ! empty( $token_body['error'] ) ? $token_body['error']
+					: sprintf( /* translators: %d HTTP status */ __( 'Zoho token exchange returned HTTP %d.', 'ajforms' ), $token_http );
 				wp_send_json_error( array( 'message' => $token_err ) );
 			}
 
-			$api_token  = sanitize_text_field( (string) $token_body['access_token'] );
-			$expires_in = ! empty( $token_body['expires_in'] ) ? absint( $token_body['expires_in'] ) : 3600;
-			$expires_at = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
+			$access_token  = sanitize_text_field( (string) $token_body['access_token'] );
+			$expires_in    = ! empty( $token_body['expires_in'] ) ? absint( $token_body['expires_in'] ) : 3600;
+			$expires_at    = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
+			$api_domain    = ! empty( $token_body['api_domain'] ) ? esc_url_raw( (string) $token_body['api_domain'] ) : ( $settings['zoho_api_domain'] ?? '' );
 
-			$settings['zoho_oauth_client_id']          = $client_id;
-			$settings['zoho_oauth_client_secret']      = $client_secret;
-			$settings['zoho_oauth_authorization_code'] = '';
-			$settings['zoho_api_token']                = $api_token;
-			$settings['zoho_api_token_expires_at']     = $expires_at;
-			$settings['zoho_oauth_api_domain']         = ! empty( $token_body['api_domain'] ) ? esc_url_raw( (string) $token_body['api_domain'] ) : '';
+			// Save new key names + backward compat aliases.
+			$settings['zoho_client_id']           = $client_id;
+			$settings['zoho_client_secret']       = $client_secret;
+			$settings['zoho_access_token']        = $access_token;
+			$settings['zoho_token_expires_at']    = $expires_at;
+			$settings['zoho_api_domain']          = $api_domain;
 			if ( ! empty( $token_body['refresh_token'] ) ) {
 				$settings['zoho_refresh_token'] = sanitize_text_field( (string) $token_body['refresh_token'] );
+				$refresh_token_new = true;
 			}
+			$settings['zoho_oauth_client_id']      = $client_id;
+			$settings['zoho_oauth_client_secret']  = $client_secret;
+			$settings['zoho_api_token']            = $access_token;
+			$settings['zoho_api_token_expires_at'] = $expires_at;
+			$settings['zoho_oauth_api_domain']     = $api_domain;
+			unset( $settings['zoho_oauth_authorization_code'] );
 			update_option( 'ajforms_settings', $settings, false );
-			$token_saved = true;
+
+		} else {
+			// Use the stored refresh token to obtain a fresh access token.
+			$stored_refresh = $settings['zoho_refresh_token'] ?? '';
+			if ( '' === $stored_refresh ) {
+				wp_send_json_error( array( 'message' => __( 'No refresh token stored. Paste a generated code from Zoho Self Client and click Exchange Code & Test API.', 'ajforms' ) ) );
+			}
+
+			$refresh_response = wp_remote_post(
+				add_query_arg(
+					array(
+						'grant_type'    => 'refresh_token',
+						'client_id'     => $client_id,
+						'client_secret' => $client_secret,
+						'refresh_token' => $stored_refresh,
+					),
+					'https://accounts.zoho.com/oauth/v2/token'
+				),
+				array( 'timeout' => 20 )
+			);
+
+			if ( is_wp_error( $refresh_response ) ) {
+				wp_send_json_error( array( 'message' => $refresh_response->get_error_message() ) );
+			}
+
+			$refresh_http = wp_remote_retrieve_response_code( $refresh_response );
+			$refresh_body = json_decode( wp_remote_retrieve_body( $refresh_response ), true );
+
+			if ( 200 !== (int) $refresh_http || empty( $refresh_body['access_token'] ) ) {
+				$err_msg = ! empty( $refresh_body['error'] ) ? $refresh_body['error']
+					: sprintf( /* translators: %d HTTP status */ __( 'Token refresh returned HTTP %d.', 'ajforms' ), $refresh_http );
+				wp_send_json_error( array( 'message' => $err_msg ) );
+			}
+
+			$access_token = sanitize_text_field( (string) $refresh_body['access_token'] );
+			$expires_in   = ! empty( $refresh_body['expires_in'] ) ? absint( $refresh_body['expires_in'] ) : 3600;
+			$expires_at   = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
+
+			$settings['zoho_access_token']        = $access_token;
+			$settings['zoho_token_expires_at']    = $expires_at;
+			$settings['zoho_api_token']           = $access_token;
+			$settings['zoho_api_token_expires_at']= $expires_at;
+			if ( '' !== $client_id ) { $settings['zoho_client_id'] = $client_id; $settings['zoho_oauth_client_id'] = $client_id; }
+			if ( '' !== $client_secret ) { $settings['zoho_client_secret'] = $client_secret; $settings['zoho_oauth_client_secret'] = $client_secret; }
+			update_option( 'ajforms_settings', $settings, false );
 		}
 
-		if ( '' === $api_token ) {
-			wp_send_json_error( array( 'message' => __( 'No access token saved. Enter Client ID, Client Secret, and a fresh generated code, then test.', 'ajforms' ) ) );
+		if ( '' === $access_token ) {
+			wp_send_json_error( array( 'message' => __( 'Could not obtain an access token. Check Client ID and Client Secret.', 'ajforms' ) ) );
 		}
 
+		// ── Test the Calendar API ─────────────────────────────────────────────
 		$response = wp_remote_get(
 			'https://calendar.zoho.com/api/v1/calendars',
 			array(
 				'timeout' => 15,
 				'headers' => array(
-					'Authorization' => 'Bearer ' . $api_token,
+					'Authorization' => 'Bearer ' . $access_token,
 					'Accept'        => 'application/json',
 				),
 			)
@@ -12661,14 +12729,11 @@ class AJForms {
 			wp_send_json_error( array( 'message' => $response->get_error_message() ) );
 		}
 
-		$code = wp_remote_retrieve_response_code( $response );
-		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+		$cal_code = wp_remote_retrieve_response_code( $response );
+		$cal_body = json_decode( wp_remote_retrieve_body( $response ), true );
 
-		if ( 200 === (int) $code ) {
-			$count = 0;
-			if ( ! empty( $body['calendars'] ) && is_array( $body['calendars'] ) ) {
-				$count = count( $body['calendars'] );
-			}
+		if ( 200 === (int) $cal_code ) {
+			$count = ! empty( $cal_body['calendars'] ) && is_array( $cal_body['calendars'] ) ? count( $cal_body['calendars'] ) : 0;
 
 			$message = sprintf(
 				/* translators: %d: number of calendars */
@@ -12677,30 +12742,30 @@ class AJForms {
 			);
 
 			if ( ! empty( $settings['zoho_calendar_uid'] ) ) {
-				$calendar_check = wp_remote_get(
+				$uid_check = wp_remote_get(
 					'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( sanitize_text_field( (string) $settings['zoho_calendar_uid'] ) ),
 					array(
 						'timeout' => 15,
-						'headers' => array(
-							'Authorization' => 'Bearer ' . $api_token,
-							'Accept'        => 'application/json',
-						),
+						'headers' => array( 'Authorization' => 'Bearer ' . $access_token, 'Accept' => 'application/json' ),
 					)
 				);
-				$message .= ( ! is_wp_error( $calendar_check ) && 200 === (int) wp_remote_retrieve_response_code( $calendar_check ) )
+				$message .= ( ! is_wp_error( $uid_check ) && 200 === (int) wp_remote_retrieve_response_code( $uid_check ) )
 					? ' ' . __( 'Configured Calendar UID is readable.', 'ajforms' )
-					: ' ' . __( 'Connected, but configured Calendar UID could not be read. Check Step 4.', 'ajforms' );
+					: ' ' . __( 'Connected, but configured Calendar UID could not be read — check Step 4.', 'ajforms' );
 			}
 
+			$final_expires = $settings['zoho_token_expires_at'] ?? $settings['zoho_api_token_expires_at'] ?? '';
+
 			wp_send_json_success( array(
-				'message'            => $message,
-				'access_token_saved' => $token_saved,
-				'expires_at'         => ! empty( $settings['zoho_api_token_expires_at'] ) ? $settings['zoho_api_token_expires_at'] : '',
-				'api_domain'         => ! empty( $settings['zoho_oauth_api_domain'] ) ? $settings['zoho_oauth_api_domain'] : '',
+				'message'             => $message,
+				'refresh_token_saved' => $refresh_token_new,
+				'expires_at'          => $final_expires,
+				'api_domain'          => $settings['zoho_api_domain'] ?? $settings['zoho_oauth_api_domain'] ?? '',
 			) );
 		}
 
-		$err = ! empty( $body['message'] ) ? $body['message'] : sprintf( __( 'Zoho returned HTTP %d. Check your token.', 'ajforms' ), $code );
+		$err = ! empty( $cal_body['message'] ) ? $cal_body['message']
+			: sprintf( /* translators: %d HTTP status */ __( 'Zoho returned HTTP %d. Check your token.', 'ajforms' ), $cal_code );
 		wp_send_json_error( array( 'message' => $err ) );
 	}
 
@@ -12801,18 +12866,23 @@ class AJForms {
 			$settings = get_option( 'ajforms_settings', array() );
 		}
 
-		$token      = ! empty( $settings['zoho_api_token'] ) ? trim( (string) $settings['zoho_api_token'] ) : '';
-		$expires_at = ! empty( $settings['zoho_api_token_expires_at'] ) ? strtotime( $settings['zoho_api_token_expires_at'] ) : 0;
+		// Read using new key names, fall back to old ones for backward compat.
+		$token      = ! empty( $settings['zoho_access_token'] )     ? trim( (string) $settings['zoho_access_token'] )
+			: ( ! empty( $settings['zoho_api_token'] )              ? trim( (string) $settings['zoho_api_token'] ) : '' );
+		$exp_raw    = $settings['zoho_token_expires_at']             ?? $settings['zoho_api_token_expires_at'] ?? '';
+		$expires_at = '' !== $exp_raw ? strtotime( $exp_raw ) : 0;
 
 		// Token still valid (with 60-second buffer).
 		if ( '' !== $token && $expires_at > time() + 60 ) {
 			return $token;
 		}
 
-		// Try to refresh using the refresh token.
-		$refresh_token = ! empty( $settings['zoho_refresh_token'] ) ? trim( (string) $settings['zoho_refresh_token'] ) : '';
-		$client_id     = ! empty( $settings['zoho_oauth_client_id'] ) ? trim( (string) $settings['zoho_oauth_client_id'] ) : '';
-		$client_secret = ! empty( $settings['zoho_oauth_client_secret'] ) ? trim( (string) $settings['zoho_oauth_client_secret'] ) : '';
+		// Try to refresh using the stored refresh token.
+		$refresh_token = ! empty( $settings['zoho_refresh_token'] )    ? trim( (string) $settings['zoho_refresh_token'] ) : '';
+		$client_id     = ! empty( $settings['zoho_client_id'] )        ? trim( (string) $settings['zoho_client_id'] )
+			: ( ! empty( $settings['zoho_oauth_client_id'] )           ? trim( (string) $settings['zoho_oauth_client_id'] ) : '' );
+		$client_secret = ! empty( $settings['zoho_client_secret'] )    ? trim( (string) $settings['zoho_client_secret'] )
+			: ( ! empty( $settings['zoho_oauth_client_secret'] )       ? trim( (string) $settings['zoho_oauth_client_secret'] ) : '' );
 
 		if ( '' === $refresh_token || '' === $client_id || '' === $client_secret ) {
 			return '';
@@ -12840,10 +12910,15 @@ class AJForms {
 			return '';
 		}
 
-		$new_token  = sanitize_text_field( (string) $body['access_token'] );
-		$expires_in = ! empty( $body['expires_in'] ) ? absint( $body['expires_in'] ) : 3600;
-		$settings['zoho_api_token']            = $new_token;
-		$settings['zoho_api_token_expires_at'] = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
+		$new_token   = sanitize_text_field( (string) $body['access_token'] );
+		$expires_in  = ! empty( $body['expires_in'] ) ? absint( $body['expires_in'] ) : 3600;
+		$new_exp     = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
+
+		// Save using new key names + backward compat aliases.
+		$settings['zoho_access_token']        = $new_token;
+		$settings['zoho_token_expires_at']    = $new_exp;
+		$settings['zoho_api_token']           = $new_token;
+		$settings['zoho_api_token_expires_at']= $new_exp;
 		update_option( 'ajforms_settings', $settings, false );
 
 		return $new_token;
@@ -12932,6 +13007,44 @@ class AJForms {
 
 		if ( is_wp_error( $result ) ) {
 			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+		}
+
+		$res_id   = (int) $result['id'];
+		$res_uuid = (string) $result['reservation_uuid'];
+
+		// Update status to confirmed (no payment required in request flow).
+		global $wpdb;
+		$res_table = AJCore_Reservations::get_reservations_table();
+		$wpdb->update(
+			$res_table,
+			array( 'status' => 'confirmed', 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => $res_id ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+
+		// Attempt Zoho calendar event with a fresh token.
+		$fresh_token = $this->get_valid_zoho_token( $settings );
+		if ( '' !== $fresh_token ) {
+			$settings['zoho_api_token'] = $fresh_token;
+			$reservation_row = AJCore_Reservations::get_reservation_by_uuid( $res_uuid );
+			if ( $reservation_row ) {
+				$res_array   = (array) $reservation_row;
+				$zoho_result = AJCore_Reservations::attempt_zoho_calendar_event( $res_array, $settings );
+				if ( ! is_wp_error( $zoho_result ) ) {
+					$wpdb->update(
+						$res_table,
+						array(
+							'zoho_event_id' => sanitize_text_field( $zoho_result['event_id'] ?? '' ),
+							'raw_zoho_data' => wp_json_encode( $zoho_result['raw_data'] ?? array() ),
+							'updated_at'    => current_time( 'mysql' ),
+						),
+						array( 'id' => $res_id ),
+						array( '%s', '%s', '%s' ),
+						array( '%d' )
+					);
+				}
+			}
 		}
 
 		wp_send_json_success( array(

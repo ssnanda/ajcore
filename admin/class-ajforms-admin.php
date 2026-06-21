@@ -19003,13 +19003,31 @@ class AJForms_Admin {
 		$settings['zoho_calendar_uid']                = isset( $_POST['zoho_calendar_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_uid'] ) ) : '';
 		$settings['zoho_calendar_id']                 = isset( $_POST['zoho_calendar_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_id'] ) ) : '';
 		$settings['zoho_calendar_embed_url']          = isset( $_POST['zoho_calendar_embed_url'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_calendar_embed_url'] ) ) : '';
-		$settings['zoho_oauth_client_id']             = isset( $_POST['zoho_oauth_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_id'] ) ) : '';
-		$settings['zoho_oauth_client_secret']         = isset( $_POST['zoho_oauth_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_secret'] ) ) : '';
-		$settings['zoho_oauth_authorization_code']    = isset( $_POST['zoho_oauth_authorization_code'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_authorization_code'] ) ) : '';
-		$settings['zoho_api_token']                   = isset( $_POST['zoho_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token'] ) ) : '';
-		$settings['zoho_refresh_token']               = isset( $_POST['zoho_refresh_token'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_refresh_token'] ) ) : ( $settings['zoho_refresh_token'] ?? '' );
-		$settings['zoho_oauth_api_domain']            = isset( $_POST['zoho_oauth_api_domain'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_oauth_api_domain'] ) ) : ( $settings['zoho_oauth_api_domain'] ?? '' );
-		$settings['zoho_api_token_expires_at']        = isset( $_POST['zoho_api_token_expires_at'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token_expires_at'] ) ) : ( $settings['zoho_api_token_expires_at'] ?? '' );
+		// ── Zoho OAuth credentials (editable in the form) ─────────────────────
+		$_submitted_client_id = isset( $_POST['zoho_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_client_id'] ) )
+			: ( isset( $_POST['zoho_oauth_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_id'] ) ) : '' );
+		$_submitted_secret    = isset( $_POST['zoho_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_client_secret'] ) )
+			: ( isset( $_POST['zoho_oauth_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_oauth_client_secret'] ) ) : '' );
+
+		$settings['zoho_client_id']           = '' !== $_submitted_client_id ? $_submitted_client_id : ( $settings['zoho_client_id'] ?? $settings['zoho_oauth_client_id'] ?? '' );
+		$settings['zoho_client_secret']       = '' !== $_submitted_secret    ? $_submitted_secret    : ( $settings['zoho_client_secret'] ?? $settings['zoho_oauth_client_secret'] ?? '' );
+		$settings['zoho_availability_source'] = isset( $_POST['zoho_availability_source'] )
+			? sanitize_key( wp_unslash( $_POST['zoho_availability_source'] ) ) : ( $settings['zoho_availability_source'] ?? 'calendar_events' );
+
+		// ── Zoho OAuth tokens — managed exclusively by AJAX, never from form POST ──
+		// Migrate old key names to new ones on first save; preserve if already set.
+		$settings['zoho_refresh_token']    = $settings['zoho_refresh_token']    ?? '';
+		$settings['zoho_access_token']     = $settings['zoho_access_token']     ?? ( $settings['zoho_api_token'] ?? '' );
+		$settings['zoho_token_expires_at'] = $settings['zoho_token_expires_at'] ?? ( $settings['zoho_api_token_expires_at'] ?? '' );
+		$settings['zoho_api_domain']       = $settings['zoho_api_domain']       ?? ( $settings['zoho_oauth_api_domain'] ?? '' );
+
+		// Backward-compat aliases so older code paths still work without changes.
+		$settings['zoho_oauth_client_id']      = $settings['zoho_client_id'];
+		$settings['zoho_oauth_client_secret']  = $settings['zoho_client_secret'];
+		$settings['zoho_api_token']            = $settings['zoho_access_token'];
+		$settings['zoho_api_token_expires_at'] = $settings['zoho_token_expires_at'];
+		$settings['zoho_oauth_api_domain']     = $settings['zoho_api_domain'];
+		unset( $settings['zoho_oauth_authorization_code'] );
 		$settings['zoho_resource_uid']                = isset( $_POST['zoho_resource_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_resource_uid'] ) ) : '';
 		$settings['zoho_resource_freebusy_url']       = isset( $_POST['zoho_resource_freebusy_url'] ) && '' !== trim( (string) wp_unslash( $_POST['zoho_resource_freebusy_url'] ) )
 			? sanitize_text_field( wp_unslash( $_POST['zoho_resource_freebusy_url'] ) )
@@ -19077,7 +19095,8 @@ class AJForms_Admin {
 		$s_biz           = ! empty( $settings['reservation_business_hours_label'] );
 		$s_after         = ! empty( $settings['reservation_after_hours_label'] );
 		$s_embed         = ! empty( $settings['zoho_calendar_embed_url'] );
-		$s_freebusy      = ! empty( $settings['zoho_api_token'] ) && ! empty( $settings['zoho_resource_uid'] ) && ! empty( $settings['zoho_resource_freebusy_url'] );
+		$s_oauth         = ! empty( $settings['zoho_access_token'] ) || ! empty( $settings['zoho_api_token'] ) || ! empty( $settings['zoho_refresh_token'] );
+		$s_freebusy      = $s_oauth && ! empty( $settings['zoho_resource_uid'] ) && ! empty( $settings['zoho_resource_freebusy_url'] );
 		$catalog_url     = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) );
 		?>
 
@@ -19230,74 +19249,92 @@ class AJForms_Admin {
 				</table>
 			</details>
 
-			<!-- STEP 5 ── API Token (fully optional) ────────────────────────── -->
-			<details class="ajc-step-card" style="border-style:dashed">
+			<!-- STEP 5 ── Zoho OAuth (live busy-time blocking) ────────────────── -->
+			<?php
+			$_has_refresh  = ! empty( $settings['zoho_refresh_token'] );
+			$_has_token    = ! empty( $settings['zoho_access_token'] ) || ! empty( $settings['zoho_api_token'] );
+			$_expires_at   = $settings['zoho_token_expires_at'] ?? $settings['zoho_api_token_expires_at'] ?? '';
+			$_token_ok     = $_has_token && '' !== $_expires_at && strtotime( $_expires_at ) > time();
+			?>
+			<details class="ajc-step-card" style="border-style:dashed" <?php echo ( $_has_refresh || $_has_token ) ? 'open' : ''; ?>>
 				<summary style="cursor:pointer;font-weight:700;font-size:14px;list-style:none;display:flex;align-items:center;gap:10px">
-					<span class="ajc-step-num opt">5</span>
-					<?php esc_html_e( 'Zoho API Token', 'ajforms' ); ?>
-					<span class="ajc-badge ajc-badge-opt"><?php esc_html_e( 'Optional – not needed for URL mode', 'ajforms' ); ?></span>
+					<span class="ajc-step-num <?php echo $_has_refresh ? 'done' : 'opt'; ?>">5</span>
+					<?php esc_html_e( 'Zoho OAuth — Live Busy-Time Blocking', 'ajforms' ); ?>
+					<span class="ajc-badge <?php echo $_has_refresh ? 'ajc-badge-req' : 'ajc-badge-opt'; ?>">
+						<?php echo $_has_refresh ? esc_html__( 'Connected', 'ajforms' ) : esc_html__( 'Not configured', 'ajforms' ); ?>
+					</span>
 				</summary>
-				<p style="margin:10px 0 8px;font-size:13px;color:#475569"><?php esc_html_e( 'You do NOT need this if you only want the post-payment Zoho appointment form. Add these API fields when the customer picker should mark existing Zoho calendar busy times as unavailable before checkout.', 'ajforms' ); ?></p>
+
+				<p style="margin:10px 0 8px;font-size:13px;color:#475569">
+					<?php esc_html_e( 'When configured, the reservation calendar will block times that already have events in your Zoho Calendar, preventing double-bookings. The access token refreshes automatically — you only need to exchange a generated code once.', 'ajforms' ); ?>
+				</p>
 
 				<div class="ajc-hint">
-					<b><?php esc_html_e( 'Where to get these:', 'ajforms' ); ?></b>
-					<?php esc_html_e( 'Open', 'ajforms' ); ?> <code>https://api-console.zoho.com/</code>
-					<?php esc_html_e( '→ Self Client → copy Client ID and Client Secret → Generate Code with scope', 'ajforms' ); ?>
-					<code>ZohoCalendar.event.READ,ZohoCalendar.calendar.READ</code>
-					<?php esc_html_e( '→ paste the generated code below. AJCore uses your Calendar UID from Step 4 to read events and mark matching hours unavailable.', 'ajforms' ); ?>
+					<b><?php esc_html_e( 'One-time setup:', 'ajforms' ); ?></b>
+					<ol style="margin:6px 0 2px 16px;padding:0;line-height:1.9">
+						<li><?php esc_html_e( 'Open', 'ajforms' ); ?> <code>https://api-console.zoho.com/</code> → <b>Self Client</b></li>
+						<li><?php esc_html_e( 'Copy your', 'ajforms' ); ?> <b><?php esc_html_e( 'Client ID', 'ajforms' ); ?></b> <?php esc_html_e( 'and', 'ajforms' ); ?> <b><?php esc_html_e( 'Client Secret', 'ajforms' ); ?></b> <?php esc_html_e( 'and paste below, then Save Settings.', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Click', 'ajforms' ); ?> <b><?php esc_html_e( 'Generate Code', 'ajforms' ); ?></b> <?php esc_html_e( 'with scope:', 'ajforms' ); ?> <code>ZohoCalendar.calendar.Read,ZohoCalendar.event.Read,ZohoCalendar.event.Create</code></li>
+						<li><?php esc_html_e( 'Paste the generated code into the field below and click', 'ajforms' ); ?> <b><?php esc_html_e( 'Exchange Code & Test API', 'ajforms' ); ?></b>.</li>
+						<li><?php esc_html_e( 'AJCore exchanges it for a refresh token and saves everything. You\'re done — no need to repeat this.', 'ajforms' ); ?></li>
+					</ol>
+					<p style="margin:4px 0 0;font-size:12px;color:#1d4ed8"><b><?php esc_html_e( 'Note:', 'ajforms' ); ?></b> <?php esc_html_e( 'Generated codes are single-use. Once exchanged, AJCore stores a refresh token and auto-renews the access token silently.', 'ajforms' ); ?></p>
 				</div>
 
 				<table class="form-table ajc-table-compact" style="margin:8px 0 0">
 					<tr>
 						<th><?php esc_html_e( 'Client ID', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" name="zoho_oauth_client_id" value="<?php echo esc_attr( $settings['zoho_oauth_client_id'] ?? '' ); ?>" class="regular-text" autocomplete="off" placeholder="1000.xxxxx">
+							<input type="text" name="zoho_client_id" value="<?php echo esc_attr( $settings['zoho_client_id'] ?? $settings['zoho_oauth_client_id'] ?? '' ); ?>" class="regular-text" autocomplete="off" placeholder="1000.xxxxx">
 						</td>
 					</tr>
 					<tr>
 						<th><?php esc_html_e( 'Client Secret', 'ajforms' ); ?></th>
 						<td>
-							<input type="password" name="zoho_oauth_client_secret" value="<?php echo esc_attr( $settings['zoho_oauth_client_secret'] ?? '' ); ?>" class="regular-text" autocomplete="new-password">
+							<input type="password" name="zoho_client_secret" id="zoho_client_secret" value="<?php echo esc_attr( $settings['zoho_client_secret'] ?? $settings['zoho_oauth_client_secret'] ?? '' ); ?>" class="regular-text" autocomplete="new-password">
+							<p class="description"><?php esc_html_e( 'Saved in WordPress options. Never exposed in logs or to customers.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Generated Code', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Generated Code / Refresh Token', 'ajforms' ); ?></th>
 						<td>
-							<input type="password" name="zoho_oauth_authorization_code" value="<?php echo esc_attr( $settings['zoho_oauth_authorization_code'] ?? '' ); ?>" class="large-text" autocomplete="off" placeholder="<?php esc_attr_e( 'Paste fresh one-time generated code from Zoho Self Client', 'ajforms' ); ?>">
-							<p class="description"><?php esc_html_e( 'Use a fresh code when exchanging. After a successful exchange, AJCore clears this field because Zoho codes cannot be reused.', 'ajforms' ); ?></p>
-						</td>
-					</tr>
-					<tr>
-						<th><?php esc_html_e( 'Access Token', 'ajforms' ); ?></th>
-						<td>
-							<input type="password" name="zoho_api_token" value="<?php echo esc_attr( $settings['zoho_api_token'] ?? '' ); ?>" class="regular-text" autocomplete="new-password" placeholder="<?php esc_attr_e( 'Generated automatically after exchange', 'ajforms' ); ?>">
-							<input type="hidden" name="zoho_refresh_token" value="<?php echo esc_attr( $settings['zoho_refresh_token'] ?? '' ); ?>">
-							<input type="hidden" name="zoho_oauth_api_domain" value="<?php echo esc_attr( $settings['zoho_oauth_api_domain'] ?? '' ); ?>">
-							<input type="hidden" name="zoho_api_token_expires_at" value="<?php echo esc_attr( $settings['zoho_api_token_expires_at'] ?? '' ); ?>">
-							<?php if ( ! empty( $settings['zoho_api_token_expires_at'] ) ) : ?>
-								<p class="description"><?php echo esc_html( sprintf( __( 'Current token expires around %s UTC.', 'ajforms' ), $settings['zoho_api_token_expires_at'] ) ); ?></p>
-							<?php endif; ?>
-						</td>
-					</tr>
-					<tr>
-						<th><?php esc_html_e( 'Calendar UID', 'ajforms' ); ?></th>
-						<td>
-							<input type="text" value="<?php echo esc_attr( $settings['zoho_calendar_uid'] ?? '' ); ?>" class="regular-text" readonly>
-							<p class="description"><?php esc_html_e( 'This comes from Step 4. For your regular Zoho Calendar, this is the ID in the CalDAV URL.', 'ajforms' ); ?></p>
+							<input type="password" id="ajc-zoho-code-input" class="large-text" autocomplete="off"
+								placeholder="<?php echo $_has_refresh
+									? esc_attr__( '(refresh token stored) — paste a fresh generated code only to re-exchange', 'ajforms' )
+									: esc_attr__( 'Paste generated code from Zoho Self Client (one-time)', 'ajforms' ); ?>">
+							<p class="description">
+								<?php if ( $_has_refresh ) : ?>
+									<span style="color:#166534;font-weight:600">✓ <?php esc_html_e( 'Refresh token stored.', 'ajforms' ); ?></span>
+									<?php if ( $_token_ok ) : ?>
+										<?php echo esc_html( sprintf( __( 'Access token valid until %s UTC.', 'ajforms' ), $_expires_at ) ); ?>
+									<?php elseif ( '' !== $_expires_at ) : ?>
+										<?php esc_html_e( 'Access token expired — will auto-refresh on next calendar load.', 'ajforms' ); ?>
+									<?php endif; ?>
+									<br><?php esc_html_e( 'Leave blank and click the button to use the stored refresh token.', 'ajforms' ); ?>
+								<?php else : ?>
+									<?php esc_html_e( 'No refresh token yet. Paste a generated code and click Exchange Code & Test API.', 'ajforms' ); ?>
+								<?php endif; ?>
+							</p>
 						</td>
 					</tr>
 					<tr>
 						<th><?php esc_html_e( 'Availability Source', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" value="<?php echo esc_attr( 'https://calendar.zoho.com/api/v1/calendars/{calendar_uid}/events' ); ?>" class="large-text" readonly>
-							<p class="description"><?php esc_html_e( 'No Resource UID is needed. AJCore checks regular calendar events for overlapping busy times.', 'ajforms' ); ?></p>
+							<select name="zoho_availability_source">
+								<option value="calendar_events" <?php selected( $settings['zoho_availability_source'] ?? 'calendar_events', 'calendar_events' ); ?>>
+									<?php esc_html_e( 'Zoho Calendar Events (recommended)', 'ajforms' ); ?>
+								</option>
+							</select>
+							<p class="description"><?php esc_html_e( 'AJCore reads events from your calendar (UID from Step 4) and blocks those times. No resource UID needed.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Test / Exchange', 'ajforms' ); ?></th>
 						<td>
-							<button type="button" class="button" id="ajc-test-zoho-btn" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_test_zoho_connection' ) ); ?>">
-								<?php esc_html_e( 'Exchange Code & Test API', 'ajforms' ); ?>
+							<button type="button" class="button" id="ajc-test-zoho-btn"
+								data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_test_zoho_connection' ) ); ?>"
+								data-has-refresh="<?php echo esc_attr( $_has_refresh ? '1' : '0' ); ?>">
+								<?php echo $_has_refresh ? esc_html__( 'Refresh Token & Test API', 'ajforms' ) : esc_html__( 'Exchange Code & Test API', 'ajforms' ); ?>
 							</button>
 							<span id="ajc-test-zoho-result" style="margin-left:10px;font-weight:600"></span>
 						</td>
@@ -19334,43 +19371,86 @@ class AJForms_Admin {
 
 		<script>
 		(function(){
-			// API connection test
-			const testBtn = document.getElementById('ajc-test-zoho-btn');
-			const testRes = document.getElementById('ajc-test-zoho-result');
-			if ( testBtn ) {
+			// Zoho OAuth — Exchange Code / Refresh Token & Test API
+			(function(){
+				const testBtn  = document.getElementById('ajc-test-zoho-btn');
+				const testRes  = document.getElementById('ajc-test-zoho-result');
+				const codeInp  = document.getElementById('ajc-zoho-code-input');
+				if ( ! testBtn ) return;
+
+				// Mode: 'refresh' if a refresh token is already stored, 'code' otherwise.
+				// Switches to 'code' as soon as the user types something in the field.
+				let tokenMode = testBtn.dataset.hasRefresh === '1' ? 'refresh' : 'code';
+
+				const updateBtnLabel = function(){
+					testBtn.textContent = tokenMode === 'refresh'
+						? '<?php echo esc_js( __( 'Refresh Token & Test API', 'ajforms' ) ); ?>'
+						: '<?php echo esc_js( __( 'Exchange Code & Test API', 'ajforms' ) ); ?>';
+				};
+
+				if ( codeInp ) {
+					codeInp.addEventListener('input', function(){
+						if ( this.value.trim() !== '' ) {
+							tokenMode = 'code';
+						} else {
+							// Field cleared — fall back to refresh if one is stored
+							tokenMode = testBtn.dataset.hasRefresh === '1' ? 'refresh' : 'code';
+						}
+						updateBtnLabel();
+					});
+				}
+
 				testBtn.addEventListener('click', function(){
-					testRes.textContent = '<?php echo esc_js( __( 'Testing…', 'ajforms' ) ); ?>';
+					testRes.textContent = tokenMode === 'refresh'
+						? '<?php echo esc_js( __( 'Refreshing token…', 'ajforms' ) ); ?>'
+						: '<?php echo esc_js( __( 'Exchanging code…', 'ajforms' ) ); ?>';
 					testRes.style.color = '#555';
 					testBtn.disabled = true;
+
 					const fd = new FormData();
-					fd.append('action','ajcore_test_zoho_connection');
+					fd.append('action', 'ajcore_test_zoho_connection');
 					fd.append('nonce', testBtn.dataset.nonce);
-					['zoho_oauth_client_id','zoho_oauth_client_secret','zoho_oauth_authorization_code','zoho_api_token'].forEach(function(name){
-						const field = document.querySelector('[name="'+name+'"]');
-						if ( field ) fd.append(name, field.value);
-					});
-					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>',{method:'POST',credentials:'same-origin',body:fd})
-					.then(r=>r.json()).then(p=>{
-						testBtn.disabled=false;
-						testRes.textContent = p.success ? '✓ '+(p.data&&p.data.message||'<?php echo esc_js( __( 'Connected.', 'ajforms' ) ); ?>') : '✗ '+((p.data&&p.data.message)||'<?php echo esc_js( __( 'Failed.', 'ajforms' ) ); ?>');
-						testRes.style.color = p.success ? '#166534' : '#dc2626';
+					fd.append('token_mode', tokenMode);
+					// Current credentials from the saved form fields
+					const clientIdFld = document.querySelector('[name="zoho_client_id"]');
+					const secretFld   = document.querySelector('[name="zoho_client_secret"]');
+					if ( clientIdFld ) fd.append('zoho_client_id',     clientIdFld.value);
+					if ( secretFld )   fd.append('zoho_client_secret', secretFld.value);
+					// Generated code or empty (empty = use stored refresh token)
+					if ( codeInp ) fd.append('zoho_code_or_refresh', codeInp.value.trim());
+
+					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {method:'POST', credentials:'same-origin', body:fd})
+					.then(function(r){ return r.json(); })
+					.then(function(p){
+						testBtn.disabled = false;
 						if ( p.success && p.data ) {
-							if ( p.data.access_token_saved ) {
-								const codeField = document.querySelector('[name="zoho_oauth_authorization_code"]');
-								if ( codeField ) codeField.value = '';
+							testRes.style.color = '#166534';
+							let msg = '✓ ' + ( p.data.message || '<?php echo esc_js( __( 'Connected.', 'ajforms' ) ); ?>' );
+							if ( p.data.expires_at ) msg += '  (<?php echo esc_js( __( 'token expires', 'ajforms' ) ); ?> ' + p.data.expires_at + ' UTC)';
+							testRes.textContent = msg;
+
+							if ( p.data.refresh_token_saved ) {
+								// A fresh exchange returned a new refresh token — update UI state
+								testBtn.dataset.hasRefresh = '1';
+								tokenMode = 'refresh';
+								updateBtnLabel();
+								if ( codeInp ) {
+									codeInp.value = '';
+									codeInp.placeholder = '<?php echo esc_js( __( '(refresh token stored) — paste a fresh generated code only to re-exchange', 'ajforms' ) ); ?>';
+								}
 							}
-							if ( p.data.expires_at ) {
-								const expField = document.querySelector('[name="zoho_api_token_expires_at"]');
-								if ( expField ) expField.value = p.data.expires_at;
-							}
-							if ( p.data.api_domain ) {
-								const domainField = document.querySelector('[name="zoho_oauth_api_domain"]');
-								if ( domainField ) domainField.value = p.data.api_domain;
-							}
+						} else {
+							testRes.style.color = '#dc2626';
+							testRes.textContent = '✗ ' + ( (p.data && p.data.message) || '<?php echo esc_js( __( 'Failed.', 'ajforms' ) ); ?>' );
 						}
-					}).catch(()=>{ testBtn.disabled=false; testRes.textContent='<?php echo esc_js( __( 'Request failed.', 'ajforms' ) ); ?>'; testRes.style.color='#dc2626'; });
+					})
+					.catch(function(){
+						testBtn.disabled = false;
+						testRes.textContent = '<?php echo esc_js( __( 'Request failed.', 'ajforms' ) ); ?>';
+						testRes.style.color = '#dc2626';
+					});
 				});
-			}
+			})();
 			// Appointment URL tester
 			const previewBtn  = document.getElementById('ajc-preview-url-btn');
 			const previewLink = document.getElementById('ajc-preview-url-link');

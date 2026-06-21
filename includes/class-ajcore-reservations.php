@@ -478,10 +478,11 @@ class AJCore_Reservations {
 			return new WP_Error( 'zoho_unavailable', __( 'Zoho Calendar class not loaded.', 'ajforms' ) );
 		}
 
-		$api_token   = ! empty( $settings['zoho_api_token'] ) ? trim( (string) $settings['zoho_api_token'] ) : '';
-		$calendar_id = ! empty( $reservation['zoho_calendar_id'] ) ? $reservation['zoho_calendar_id'] : ( $settings['zoho_calendar_id'] ?? '' );
+		$api_token    = ! empty( $settings['zoho_access_token'] ) ? trim( (string) $settings['zoho_access_token'] )
+			: ( ! empty( $settings['zoho_api_token'] ) ? trim( (string) $settings['zoho_api_token'] ) : '' );
+		$calendar_uid = ! empty( $reservation['zoho_calendar_uid'] ) ? $reservation['zoho_calendar_uid'] : ( $settings['zoho_calendar_uid'] ?? '' );
 
-		if ( '' !== $api_token && '' !== $calendar_id ) {
+		if ( '' !== $api_token && '' !== $calendar_uid ) {
 			return AJCore_Zoho_Calendar::create_zoho_calendar_event( $reservation, $settings );
 		}
 
