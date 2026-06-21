@@ -789,6 +789,9 @@ class AJCore_Reservations {
 		if ( ! empty( $filters['status'] ) ) {
 			$where[]  = 'status = %s';
 			$params[] = sanitize_key( $filters['status'] );
+		} else {
+			// Exclude in_cart from the default list — they are not confirmed reservations.
+			$where[] = "status <> 'in_cart'";
 		}
 
 		if ( ! empty( $filters['resource_key'] ) ) {

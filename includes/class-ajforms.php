@@ -11727,8 +11727,31 @@ class AJForms {
 		?>
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
 		<style>
-		/* ── Reservations: FullCalendar wrapper ─────────────────────── */
-		/* FullCalendar chrome */
+		/* ── Conference Room — Info Card ─────────────────────────────── */
+		.aj-res-info-card{background:linear-gradient(135deg,#f0f4ff 0%,#fafbff 100%);border:1px solid #c7d4f5;border-radius:14px;padding:20px 22px;margin-bottom:18px}
+		.aj-res-info-top{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start;justify-content:space-between;margin-bottom:16px}
+		.aj-res-steps{flex:1 1 260px}
+		.aj-res-steps-title{font-size:15px;font-weight:700;color:#1e293b;margin:0 0 10px}
+		.aj-res-step{display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;font-size:14px;color:#334155;line-height:1.45}
+		.aj-res-step-num{flex-shrink:0;width:24px;height:24px;border-radius:50%;background:#3157ff;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+		.aj-res-rates-block{display:flex;gap:10px;flex-shrink:0;flex-wrap:wrap}
+		.aj-res-rate-card{border-radius:10px;padding:12px 16px;min-width:110px;text-align:center}
+		.aj-res-rate-card.biz{background:#dbeafe;border:1px solid #93c5fd}
+		.aj-res-rate-card.after{background:#ede9fe;border:1px solid #c4b5fd}
+		.aj-res-rate-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#475569;margin-bottom:4px}
+		.aj-res-rate-amount{font-size:24px;font-weight:800;color:#1e293b;line-height:1}
+		.aj-res-rate-amount span{font-size:13px;font-weight:600;color:#64748b}
+		.aj-res-rate-sub{font-size:11px;color:#64748b;margin-top:3px}
+		.aj-res-info-bottom{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding-top:12px;border-top:1px solid #dbe4fb}
+		.aj-res-legend{display:flex;align-items:center;gap:14px;font-size:12px;color:#475569}
+		.aj-res-legend-dot{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:4px;vertical-align:middle}
+		.aj-res-legend-dot.red{background:#ef4444}
+		.aj-res-legend-dot.amber{background:#f59e0b}
+		.aj-res-notices{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;font-size:13px}
+		.aj-res-policy{margin:0;font-weight:700;color:#dc2626}
+		.aj-res-voffice{margin:0;color:#166534;font-weight:600}
+		.aj-res-header-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+		/* ── FullCalendar chrome ─────────────────────────────────────── */
 		.aj-res-fc-wrap{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:16px;background:#fff}
 		.aj-res-fc-wrap .fc{padding:10px}
 		.fc .fc-toolbar{margin-bottom:8px!important}
@@ -11741,7 +11764,7 @@ class AJForms {
 		.fc .fc-highlight{background:#dbeafe!important;opacity:.85}
 		.fc .fc-non-business{background:rgba(241,245,249,.6)}
 		.fc-direction-ltr .fc-timegrid-col-events{margin:0}
-		/* Booking modal — display:none by default; JS sets display:flex to open */
+		/* ── Booking modal ───────────────────────────────────────────── */
 		.aj-res-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99998;align-items:center;justify-content:center}
 		.aj-res-modal-box{background:#fff;border-radius:14px;padding:24px 26px;max-width:480px;width:92%;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25);position:relative}
 		.aj-res-modal-close{position:absolute;top:14px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#64748b;line-height:1;padding:0}
@@ -11753,43 +11776,79 @@ class AJForms {
 		.aj-res-modal-box label span{display:block;margin-bottom:4px}
 		.aj-res-modal-box input,.aj-res-modal-box textarea{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;font-size:13px;box-sizing:border-box}
 		.aj-res-modal-box input:focus,.aj-res-modal-box textarea:focus{border-color:#3157ff;outline:none;box-shadow:0 0 0 3px rgba(49,87,255,.12)}
-		.aj-res-no-cancel-notice{font-size:12px;color:#92400e;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:6px 10px;margin:10px 0}
 		.aj-res-pay-button{width:100%!important;padding:10px!important;font-size:14px!important;font-weight:700!important}
 		.aj-res-spinner{display:none;font-size:13px;color:#64748b;margin-top:8px}
 		.aj-res-error-msg{display:none;color:#dc2626;font-size:13px;margin-top:8px}
 		.aj-res-success-msg{background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:14px 16px;color:#166534;font-size:14px;margin-top:10px;text-align:center}
-		/* My Reservations */
-		.aj-reservations-my-list{margin-top:24px}
+		/* ── My Reservations ─────────────────────────────────────────── */
 		.aj-reservations-my-list h3{margin-bottom:10px}
 		.aj-portal-status-badge{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700}
 		.aj-status-good{background:#dcfce7;color:#166534}
 		.aj-status-warn{background:#fef3c7;color:#92400e}
 		.aj-status-bad{background:#fee2e2;color:#991b1b}
+		/* ── Reservation Cart ────────────────────────────────────────── */
+		.aj-res-cart-wrap-inner{background:#fff;border:1px solid #c7d4f5;border-radius:12px;padding:14px 16px}
+		.aj-res-cart-item{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;font-size:13px}
+		.aj-res-cart-item .aj-res-cart-remove{background:none;border:none;color:#dc2626;cursor:pointer;font-size:12px;font-weight:600;padding:2px 6px;text-decoration:underline}
+		.aj-res-cart-total{font-size:13px;font-weight:700;text-align:right;padding:6px 0 2px;color:#166534}
 		@media(max-width:640px){
 			.aj-res-fc-wrap .fc{padding:6px}
 			.fc .fc-toolbar{flex-wrap:wrap;gap:6px}
+			.aj-res-info-top{flex-direction:column}
+			.aj-res-rates-block{flex-direction:row}
 		}
-		/* Reservation Cart */
-		.aj-res-cart-item{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;font-size:13px}
-		.aj-res-cart-item .aj-res-cart-remove{background:none;border:none;color:#dc2626;cursor:pointer;font-size:12px;font-weight:600;padding:2px 6px;text-decoration:underline}
-		.aj-res-cart-total{font-size:13px;font-weight:700;text-align:right;padding:4px 0;color:#166534}
 		</style>
 		<section class="aj-customer-portal-panel aj-reservations-panel">
-			<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
-				<div>
-					<p style="margin:0 0 4px;font-size:13px;color:#64748b"><strong><?php esc_html_e( 'To book:', 'ajforms' ); ?></strong> <?php esc_html_e( 'Click and drag on the calendar below to select your time slot (8am–10pm). Red = already booked, amber = unavailable.', 'ajforms' ); ?></p>
-					<p style="margin:0 0 2px;font-size:13px"><strong style="color:#dc2626"><?php esc_html_e( 'No cancellations, no rescheduling — reservations are final.', 'ajforms' ); ?></strong></p>
-					<p style="margin:0;font-size:13px;color:#334155"><?php esc_html_e( 'Virtual Office Clients get 2 free hours yearly.', 'ajforms' ); ?></p>
+
+			<!-- ── Info Card ─────────────────────────────────────────────── -->
+			<div class="aj-res-info-card">
+				<div class="aj-res-info-top">
+					<!-- How-to steps -->
+					<div class="aj-res-steps">
+						<p class="aj-res-steps-title"><?php esc_html_e( 'How to Book a Conference Room', 'ajforms' ); ?></p>
+						<div class="aj-res-step">
+							<span class="aj-res-step-num">1</span>
+							<span><?php esc_html_e( 'Click and drag on the calendar below to select your time slot (8 AM – 10 PM).', 'ajforms' ); ?></span>
+						</div>
+						<div class="aj-res-step">
+							<span class="aj-res-step-num">2</span>
+							<span><?php esc_html_e( 'A booking form will appear — fill in your name, email, and phone, then click', 'ajforms' ); ?> <strong><?php esc_html_e( 'Add to Cart.', 'ajforms' ); ?></strong></span>
+						</div>
+						<div class="aj-res-step">
+							<span class="aj-res-step-num">3</span>
+							<span><?php esc_html_e( 'Add as many slots as you need, then click', 'ajforms' ); ?> <strong><?php esc_html_e( 'Checkout', 'ajforms' ); ?></strong> <?php esc_html_e( 'to pay securely.', 'ajforms' ); ?></span>
+						</div>
+					</div>
+					<!-- Rate cards -->
+					<div class="aj-res-rates-block">
+						<div class="aj-res-rate-card biz">
+							<div class="aj-res-rate-label"><?php echo esc_html( $business_hours_label ); ?></div>
+							<div class="aj-res-rate-amount">$<?php echo esc_html( $settings['reservation_business_hours_rate'] ?? '40' ); ?><span>/hr</span></div>
+							<div class="aj-res-rate-sub"><?php esc_html_e( 'Mon–Fri, 9am–5pm', 'ajforms' ); ?></div>
+						</div>
+						<div class="aj-res-rate-card after">
+							<div class="aj-res-rate-label"><?php echo esc_html( $after_hours_label ); ?></div>
+							<div class="aj-res-rate-amount">$<?php echo esc_html( $settings['reservation_after_hours_rate'] ?? '80' ); ?><span>/hr</span></div>
+							<div class="aj-res-rate-sub"><?php esc_html_e( 'Evenings &amp; Weekends', 'ajforms' ); ?></div>
+						</div>
+					</div>
 				</div>
-				<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-					<button type="button" id="aj-res-new-btn" class="button button-primary" style="font-size:14px;padding:6px 16px">
-						<?php esc_html_e( '+ New Reservation', 'ajforms' ); ?>
-					</button>
-					<button type="button" id="aj-res-billing-portal-btn" class="button" style="font-size:13px;padding:4px 12px"
-						data-portal-nonce="<?php echo esc_attr( $portal_nonce ); ?>">
-						<?php esc_html_e( 'Manage Payment Methods', 'ajforms' ); ?>
-					</button>
-					<span id="aj-res-billing-err" style="display:none;font-size:12px;color:#dc2626;margin-left:6px"></span>
+				<div class="aj-res-info-bottom">
+					<div class="aj-res-legend">
+						<span><span class="aj-res-legend-dot red"></span><?php esc_html_e( 'Already Booked', 'ajforms' ); ?></span>
+						<span><span class="aj-res-legend-dot amber"></span><?php esc_html_e( 'Unavailable', 'ajforms' ); ?></span>
+					</div>
+					<div class="aj-res-notices">
+						<p class="aj-res-policy"><?php esc_html_e( 'No cancellations, no rescheduling — reservations are final.', 'ajforms' ); ?></p>
+						<p class="aj-res-voffice"><?php esc_html_e( 'Virtual Office Clients get 2 free hours yearly.', 'ajforms' ); ?></p>
+					</div>
+					<div>
+						<button type="button" id="aj-res-billing-portal-btn" class="button" style="font-size:13px;white-space:nowrap"
+							data-portal-nonce="<?php echo esc_attr( $portal_nonce ); ?>">
+							<?php esc_html_e( 'Manage Payment Methods', 'ajforms' ); ?>
+						</button>
+						<span id="aj-res-billing-err" style="display:none;font-size:12px;color:#dc2626;display:block;margin-top:4px"></span>
+					</div>
 				</div>
 			</div>
 
@@ -11837,17 +11896,17 @@ class AJForms {
 
 			<!-- Reservation Cart (in_cart items for this user) -->
 			<div id="aj-res-cart-wrap" style="margin-bottom:16px;display:none">
-				<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-					<h3 style="margin:0;font-size:15px"><?php esc_html_e( 'Your Reservation Cart', 'ajforms' ); ?></h3>
-					<div style="display:flex;gap:8px">
-						<button type="button" id="aj-res-cart-checkout-btn" class="button button-primary" style="font-size:13px;padding:4px 14px"
+				<div class="aj-res-cart-wrap-inner">
+					<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+						<h3 style="margin:0;font-size:15px;font-weight:700;color:#1e293b"><?php esc_html_e( 'Your Reservation Cart', 'ajforms' ); ?></h3>
+						<button type="button" id="aj-res-cart-checkout-btn" class="button button-primary" style="font-size:13px;padding:5px 16px;font-weight:700"
 							data-checkout-nonce="<?php echo esc_attr( $cart_chkout_nonce ); ?>">
-							<?php esc_html_e( 'Checkout →', 'ajforms' ); ?>
+							<?php esc_html_e( 'Checkout &rarr;', 'ajforms' ); ?>
 						</button>
 					</div>
+					<div id="aj-res-cart-items"></div>
+					<p id="aj-res-cart-msg" style="display:none;font-size:13px;margin:6px 0 0;color:#dc2626"></p>
 				</div>
-				<div id="aj-res-cart-items"></div>
-				<p id="aj-res-cart-msg" style="display:none;font-size:13px;margin:6px 0 0;color:#dc2626"></p>
 			</div>
 
 			<div class="aj-res-fc-wrap">
@@ -12275,30 +12334,6 @@ class AJForms {
 
 	// "New Reservation" button — smooth-scrolls to the calendar
 	(function(){
-		var newBtn     = document.getElementById('aj-res-new-btn');
-		var calHint    = null;
-		var calHintTimer = null;
-		if ( newBtn ) {
-			newBtn.addEventListener('click', function(){
-				var wrap = document.querySelector('.aj-res-fc-wrap');
-				if ( wrap ) { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-				// Show a hint banner above the calendar if no slot is selected yet.
-				if ( !selectedStartStr ) {
-					if ( !calHint ) {
-						calHint = document.createElement('p');
-						calHint.style.cssText = 'margin:0 0 8px;padding:8px 14px;background:#fef9c3;border:1px solid #fde047;border-radius:8px;font-size:13px;font-weight:600;color:#713f12;transition:opacity .4s';
-						calHint.textContent = '<?php echo esc_js( __( 'Click and drag on the calendar below to select your time slot first, then fill in your details.', 'ajforms' ) ); ?>';
-						if ( wrap ) { wrap.parentNode.insertBefore( calHint, wrap ); }
-					}
-					calHint.style.opacity = '1';
-					if ( calHintTimer ) clearTimeout( calHintTimer );
-					calHintTimer = setTimeout(function(){
-						calHint.style.opacity = '0';
-						setTimeout(function(){ if(calHint){ calHint.parentNode && calHint.parentNode.removeChild(calHint); calHint = null; } }, 450);
-					}, 4000);
-				}
-			});
-		}
 	})();
 	</script>
 	<?php
@@ -13210,17 +13245,18 @@ class AJForms {
 			wp_send_json_error( array( 'message' => $err_msg ) );
 		}
 
-		// Update all cart reservations to pending_payment and attach session_id.
+		// Attach the Stripe session ID but keep status as 'in_cart' so abandoned checkouts
+		// don't show as Pending Payment — the cart remains intact if the user comes back.
+		// The webhook changes status to 'paid' on successful payment.
 		foreach ( $uuids as $uuid ) {
 			$wpdb->update(
 				$res_table,
 				array(
-					'status'                     => 'pending_payment',
 					'stripe_checkout_session_id' => $session_id,
 					'updated_at'                 => current_time( 'mysql' ),
 				),
 				array( 'reservation_uuid' => $uuid ),
-				array( '%s', '%s', '%s' ),
+				array( '%s', '%s' ),
 				array( '%s' )
 			);
 		}
