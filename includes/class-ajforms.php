@@ -11724,7 +11724,9 @@ class AJForms {
 
 		$month_dt     = new DateTime( sprintf( '%04d-%02d-01', $view_year, $view_month ), new DateTimeZone( $timezone ) );
 		$days_in_month = (int) $month_dt->format( 't' );
-		$first_dow     = (int) $month_dt->format( 'w' ); // 0=Sun
+		// Monday-first: PHP w gives 0=Sun…6=Sat. Convert so Mon=0…Sun=6.
+		$first_dow_raw = (int) $month_dt->format( 'w' );
+		$first_dow     = ( $first_dow_raw + 6 ) % 7;
 		$month_label   = $month_dt->format( 'F Y' );
 
 		// Prev / next URLs.
@@ -11808,31 +11810,40 @@ class AJForms {
 			<h2><?php echo esc_html( $resource_name ); ?></h2>
 
 			<?php
-			// Embed calendar view (shows existing bookings from Zoho if configured).
+			// Embed calendar view — collapsible, shows existing Zoho bookings.
 			$embed_url = ! empty( $settings['zoho_calendar_embed_url'] ) ? esc_url( $settings['zoho_calendar_embed_url'] ) : '';
 			if ( $embed_url ) :
 			?>
-			<div class="aj-res-embed-wrap" style="margin-bottom:20px">
-				<h3 style="margin:0 0 8px;font-size:14px;font-weight:700"><?php esc_html_e( 'Current Availability', 'ajforms' ); ?></h3>
-				<p style="margin:0 0 8px;font-size:13px;color:#64748b"><?php esc_html_e( 'Existing bookings are shown below. Choose a free slot then use the booking calendar to reserve.', 'ajforms' ); ?></p>
-				<iframe
-					src="<?php echo $embed_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>"
-					style="width:100%;height:500px;border:1px solid #e2e8f0;border-radius:12px"
-					frameborder="0"
-					title="<?php echo esc_attr( $resource_name ); ?> Calendar"
-				></iframe>
+			<div class="aj-res-embed-wrap" style="margin-bottom:22px">
+				<button type="button" class="aj-res-embed-toggle" aria-expanded="false"
+					style="display:flex;align-items:center;gap:10px;width:100%;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;cursor:pointer;font-size:14px;font-weight:700;color:#0f172a;text-align:left">
+					<span style="font-size:20px">📅</span>
+					<?php esc_html_e( 'View Current Availability', 'ajforms' ); ?>
+					<span class="aj-res-embed-chevron" style="margin-left:auto;font-size:18px;transition:transform .2s">&#9660;</span>
+				</button>
+				<div class="aj-res-embed-body" hidden style="margin-top:8px">
+					<p style="margin:0 0 8px;font-size:13px;color:#64748b"><?php esc_html_e( 'Existing bookings are shown below. Use the booking calendar below to reserve a free slot.', 'ajforms' ); ?></p>
+					<iframe
+						src="<?php echo $embed_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>"
+						style="width:100%;height:480px;border:1px solid #e2e8f0;border-radius:12px"
+						frameborder="0"
+						title="<?php echo esc_attr( $resource_name ); ?> Calendar"
+						loading="lazy"
+					></iframe>
+				</div>
 			</div>
-			<hr style="margin:0 0 20px;border:none;border-top:1px solid #e2e8f0">
 			<?php endif; ?>
 
-			<h3 style="margin:0 0 4px;font-size:15px;font-weight:700"><?php esc_html_e( 'Make a Reservation', 'ajforms' ); ?></h3>
-			<p class="aj-reservations-hours-note" style="margin:0 0 14px;font-size:13px;color:#64748b">
+			<p style="margin:0 0 10px;font-size:13px;color:#64748b">
 				<?php
-				/* translators: 1: business hours label, 2: after-hours label */
-				printf( esc_html__( 'Booking window: 8:00 AM – 10:00 PM daily. %1$s rate applies Mon–Fri 9am–5pm; %2$s rate applies all other times.', 'ajforms' ), esc_html( $business_hours_label ), esc_html( $after_hours_label ) );
+				printf(
+					/* translators: 1: business hours label, 2: after-hours label */
+					esc_html__( 'Window: 8am–10pm daily. %1$s rate Mon–Fri 9am–5pm · %2$s rate all other times. Prepay only — no refunds.', 'ajforms' ),
+					esc_html( $business_hours_label ),
+					esc_html( $after_hours_label )
+				);
 				?>
 			</p>
-			<p style="font-size:13px;color:#64748b;margin:0 0 14px"><?php esc_html_e( 'Pick a date below, choose your start and end time, then complete payment to confirm.', 'ajforms' ); ?></p>
 
 			<div class="aj-reservations-calendar-nav">
 				<?php if ( $show_prev ) : ?>
@@ -11856,13 +11867,13 @@ class AJForms {
 			>
 				<?php
 				$dow_labels = array(
-					__( 'Sun', 'ajforms' ),
 					__( 'Mon', 'ajforms' ),
 					__( 'Tue', 'ajforms' ),
 					__( 'Wed', 'ajforms' ),
 					__( 'Thu', 'ajforms' ),
 					__( 'Fri', 'ajforms' ),
 					__( 'Sat', 'ajforms' ),
+					__( 'Sun', 'ajforms' ),
 				);
 				?>
 				<div class="aj-res-cal-header">
@@ -11883,7 +11894,7 @@ class AJForms {
 						$day_str   = $day_dt->format( 'Y-m-d' );
 						$is_past   = $day_str < $today_str;
 						$is_today  = $day_str === $today_str;
-						$dow       = (int) $day_dt->format( 'w' );
+						$dow        = (int) $day_dt->format( 'w' ); // 0=Sun,6=Sat
 						$is_weekend = ( 0 === $dow || 6 === $dow );
 						$class     = 'aj-res-cal-day';
 						if ( $is_past ) {
@@ -11915,7 +11926,7 @@ class AJForms {
 			<!-- Time-slot picker panel (shown when a day is selected) -->
 			<div class="aj-reservations-slot-panel" hidden>
 				<h3 class="aj-res-slot-heading"></h3>
-				<p class="aj-res-slot-subheading"><?php esc_html_e( 'Select a start and end time (hourly blocks, 8 AM – 10 PM).', 'ajforms' ); ?></p>
+				<p class="aj-res-slot-subheading"><?php esc_html_e( 'Select an available time block. Click once to check availability, then complete your booking below.', 'ajforms' ); ?></p>
 				<div class="aj-res-slot-grid"></div>
 				<div class="aj-res-slot-notice" hidden></div>
 				<div class="aj-res-booking-form" hidden>
@@ -11999,6 +12010,19 @@ class AJForms {
 			const errMsg      = panel.querySelector('.aj-res-error-msg');
 			const bookSummary = panel.querySelector('.aj-res-booking-summary');
 
+			// Embed calendar toggle.
+			const embedToggle = panel.querySelector('.aj-res-embed-toggle');
+			const embedBody   = panel.querySelector('.aj-res-embed-body');
+			const embedChevron = panel.querySelector('.aj-res-embed-chevron');
+			if (embedToggle && embedBody) {
+				embedToggle.addEventListener('click', function(){
+					const open = embedBody.hidden;
+					embedBody.hidden = !open;
+					embedToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+					if (embedChevron) embedChevron.style.transform = open ? 'rotate(180deg)' : '';
+				});
+			}
+
 			const tz           = calGrid.dataset.timezone;
 			const resourceKey  = calGrid.dataset.resourceKey;
 			const checkNonce   = calGrid.dataset.checkNonce;
@@ -12016,6 +12040,7 @@ class AJForms {
 			function buildSlots(date) {
 				slotGrid.innerHTML = '';
 				slotPanel.hidden = false;
+				setTimeout(function(){ slotPanel.scrollIntoView({behavior:'smooth', block:'start'}); }, 60);
 				slotHeading.textContent = new Date(date + 'T12:00:00').toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric', year:'numeric'});
 				bookForm.hidden = true;
 				slotNotice.hidden = true;
