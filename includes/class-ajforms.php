@@ -4161,7 +4161,7 @@ class AJForms {
 			$res_enabled    = ! empty( $res_settings['zoho_reservations_enabled'] );
 			$res_name       = ! empty( $res_settings['reservation_resource_name'] ) ? $res_settings['reservation_resource_name'] : __( 'Conference Room', 'ajforms' );
 			if ( $res_enabled ) :
-				$reservations_url = add_query_arg( array( 'tab' => 'reservations' ), $this->get_customer_portal_url() );
+				$reservations_url = add_query_arg( array( 'portal_tab' => 'reservations' ), $this->get_customer_portal_url() );
 			?>
 			<h3><?php esc_html_e( 'Resource Booking', 'ajforms' ); ?></h3>
 			<div class="aj-portal-add-service-grid">
@@ -11736,7 +11736,7 @@ class AJForms {
 		$next_dt->modify( '+1 month' );
 
 		$base_url   = $this->get_customer_portal_url();
-		$tab_url    = add_query_arg( 'tab', 'reservations', $base_url );
+		$tab_url    = add_query_arg( 'portal_tab', 'reservations', $base_url );
 		$prev_url   = add_query_arg( array( 'res_month' => $prev_dt->format( 'n' ), 'res_year' => $prev_dt->format( 'Y' ) ), $tab_url );
 		$next_url   = add_query_arg( array( 'res_month' => $next_dt->format( 'n' ), 'res_year' => $next_dt->format( 'Y' ) ), $tab_url );
 		$show_prev  = ! ( (int) $prev_dt->format( 'Y' ) === $current_year && (int) $prev_dt->format( 'n' ) < $current_month )
@@ -11815,20 +11815,19 @@ class AJForms {
 			if ( $embed_url ) :
 			?>
 			<div class="aj-res-embed-wrap" style="margin-bottom:22px">
-				<button type="button" class="aj-res-embed-toggle" aria-expanded="false"
-					style="display:flex;align-items:center;gap:10px;width:100%;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;cursor:pointer;font-size:14px;font-weight:700;color:#0f172a;text-align:left">
-					<span style="font-size:20px">📅</span>
-					<?php esc_html_e( 'View Current Availability', 'ajforms' ); ?>
-					<span class="aj-res-embed-chevron" style="margin-left:auto;font-size:18px;transition:transform .2s">&#9660;</span>
+				<button type="button" class="aj-res-embed-toggle" aria-expanded="true"
+					style="display:flex;align-items:center;gap:10px;width:100%;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px 12px 0 0;padding:12px 18px;cursor:pointer;font-size:14px;font-weight:700;color:#0f172a;text-align:left">
+					<span style="font-size:18px">📅</span>
+					<?php esc_html_e( 'Current Availability', 'ajforms' ); ?>
+					<span style="margin-left:8px;font-size:12px;font-weight:400;color:#64748b"><?php esc_html_e( '— see what\'s already booked before choosing a date below', 'ajforms' ); ?></span>
+					<span class="aj-res-embed-chevron" style="margin-left:auto;font-size:18px;transition:transform .2s;transform:rotate(180deg)">&#9660;</span>
 				</button>
-				<div class="aj-res-embed-body" hidden style="margin-top:8px">
-					<p style="margin:0 0 8px;font-size:13px;color:#64748b"><?php esc_html_e( 'Existing bookings are shown below. Use the booking calendar below to reserve a free slot.', 'ajforms' ); ?></p>
+				<div class="aj-res-embed-body" style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;overflow:hidden">
 					<iframe
 						src="<?php echo $embed_url; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>"
-						style="width:100%;height:480px;border:1px solid #e2e8f0;border-radius:12px"
+						style="width:100%;height:480px;display:block"
 						frameborder="0"
 						title="<?php echo esc_attr( $resource_name ); ?> Calendar"
-						loading="lazy"
 					></iframe>
 				</div>
 			</div>
@@ -12010,16 +12009,17 @@ class AJForms {
 			const errMsg      = panel.querySelector('.aj-res-error-msg');
 			const bookSummary = panel.querySelector('.aj-res-booking-summary');
 
-			// Embed calendar toggle.
-			const embedToggle = panel.querySelector('.aj-res-embed-toggle');
-			const embedBody   = panel.querySelector('.aj-res-embed-body');
+			// Embed calendar toggle (default open).
+			const embedToggle  = panel.querySelector('.aj-res-embed-toggle');
+			const embedBody    = panel.querySelector('.aj-res-embed-body');
 			const embedChevron = panel.querySelector('.aj-res-embed-chevron');
 			if (embedToggle && embedBody) {
 				embedToggle.addEventListener('click', function(){
-					const open = embedBody.hidden;
-					embedBody.hidden = !open;
-					embedToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-					if (embedChevron) embedChevron.style.transform = open ? 'rotate(180deg)' : '';
+					const isOpen = embedToggle.getAttribute('aria-expanded') === 'true';
+					embedBody.style.display = isOpen ? 'none' : '';
+					embedToggle.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+					embedToggle.style.borderRadius = isOpen ? '12px' : '12px 12px 0 0';
+					if (embedChevron) embedChevron.style.transform = isOpen ? '' : 'rotate(180deg)';
 				});
 			}
 
@@ -12418,8 +12418,8 @@ class AJForms {
 		}
 
 		$portal_url        = $this->get_customer_portal_url();
-		$success_url       = add_query_arg( array( 'tab' => 'reservations', 'res_success' => '1', 'res_uuid' => rawurlencode( $reservation_uuid ) ), $portal_url );
-		$cancel_url        = add_query_arg( array( 'tab' => 'reservations', 'res_cancel' => '1' ), $portal_url );
+		$success_url       = add_query_arg( array( 'portal_tab' => 'reservations', 'res_success' => '1', 'res_uuid' => rawurlencode( $reservation_uuid ) ), $portal_url );
+		$cancel_url        = add_query_arg( array( 'portal_tab' => 'reservations', 'res_cancel' => '1' ), $portal_url );
 
 		$checkout_payload = array(
 			'payment_method_types' => array( 'card' ),
