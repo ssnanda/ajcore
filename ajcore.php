@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.2.101
+ * Version: 0.3.0
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.2.101' );
+	define( 'AJCORE_VERSION', '0.3.0' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -99,8 +99,21 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'stripe_secret_key'             => '',
 			'stripe_products_mode'          => 'all',
 			'stripe_selected_prices'        => array(),
-			'portal_event_log_retention_days' => 180,
-			'portal_event_log_max_rows'     => 50000,
+			'portal_event_log_retention_days'   => 180,
+			'portal_event_log_max_rows'         => 50000,
+			'zoho_reservations_enabled'         => '0',
+			'zoho_default_timezone'             => 'America/New_York',
+			'zoho_calendar_uid'                 => '',
+			'zoho_calendar_id'                  => '',
+			'zoho_resource_uid'                 => '',
+			'zoho_schedule_appointment_url'     => '',
+			'zoho_resource_freebusy_url'        => '',
+			'zoho_api_auth_mode'                => '',
+			'zoho_api_token'                    => '',
+			'reservation_resource_name'         => 'Conference Room',
+			'reservation_resource_key'          => 'conference_room',
+			'reservation_business_hours_label'  => 'Business Hours (Mon–Fri 9am–5pm)',
+			'reservation_after_hours_label'     => 'After-Hours / Weekend',
 		);
 	}
 }
@@ -603,7 +616,7 @@ function ajforms_maybe_upgrade() {
 	$installed_version = get_option( 'ajforms_version', '' );
 	$portal_schema_version = get_option( 'ajforms_portal_schema_version', '' );
 
-	if ( AJFORMS_VERSION === $installed_version && '8' === $portal_schema_version ) {
+	if ( AJFORMS_VERSION === $installed_version && '13' === $portal_schema_version ) {
 		return;
 	}
 

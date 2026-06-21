@@ -2973,19 +2973,40 @@ class AJForms_Admin {
 			);
 		}
 
+		$product_type = isset( $settings['product_type'] ) && 'reservation' === sanitize_key( (string) $settings['product_type'] ) ? 'reservation' : 'normal';
+
 		$data = array(
-			'stripe_product_id'           => $stripe_product_id,
-			'visibility'                  => $visibility,
-			'custom_label'                => isset( $settings['custom_label'] ) ? sanitize_text_field( (string) $settings['custom_label'] ) : '',
-			'sort_order'                  => isset( $settings['sort_order'] ) ? intval( $settings['sort_order'] ) : 0,
-			'description_override'        => isset( $settings['description_override'] ) ? sanitize_textarea_field( (string) $settings['description_override'] ) : '',
-			'duplicate_behavior'          => $duplicate_behavior,
-			'upgrade_from_product_id'     => isset( $settings['upgrade_from_product_id'] ) ? sanitize_text_field( (string) $settings['upgrade_from_product_id'] ) : '',
-			'custom_request_title'        => isset( $settings['custom_request_title'] ) ? sanitize_text_field( (string) $settings['custom_request_title'] ) : '',
-			'custom_request_message'      => isset( $settings['custom_request_message'] ) ? sanitize_textarea_field( (string) $settings['custom_request_message'] ) : '',
-			'custom_request_button_label' => isset( $settings['custom_request_button_label'] ) ? sanitize_text_field( (string) $settings['custom_request_button_label'] ) : '',
-			'price_settings'              => ! empty( $clean_price_settings ) ? wp_json_encode( $clean_price_settings ) : '',
+			'stripe_product_id'                   => $stripe_product_id,
+			'visibility'                          => $visibility,
+			'custom_label'                        => isset( $settings['custom_label'] ) ? sanitize_text_field( (string) $settings['custom_label'] ) : '',
+			'sort_order'                          => isset( $settings['sort_order'] ) ? intval( $settings['sort_order'] ) : 0,
+			'description_override'                => isset( $settings['description_override'] ) ? sanitize_textarea_field( (string) $settings['description_override'] ) : '',
+			'duplicate_behavior'                  => $duplicate_behavior,
+			'upgrade_from_product_id'             => isset( $settings['upgrade_from_product_id'] ) ? sanitize_text_field( (string) $settings['upgrade_from_product_id'] ) : '',
+			'custom_request_title'                => isset( $settings['custom_request_title'] ) ? sanitize_text_field( (string) $settings['custom_request_title'] ) : '',
+			'custom_request_message'              => isset( $settings['custom_request_message'] ) ? sanitize_textarea_field( (string) $settings['custom_request_message'] ) : '',
+			'custom_request_button_label'         => isset( $settings['custom_request_button_label'] ) ? sanitize_text_field( (string) $settings['custom_request_button_label'] ) : '',
+			'price_settings'                      => ! empty( $clean_price_settings ) ? wp_json_encode( $clean_price_settings ) : '',
+			'product_type'                        => $product_type,
+			'reservation_resource_id'             => isset( $settings['reservation_resource_id'] ) ? absint( $settings['reservation_resource_id'] ) : 0,
+			'reservation_resource_key'            => isset( $settings['reservation_resource_key'] ) ? sanitize_key( (string) $settings['reservation_resource_key'] ) : '',
+			'reservation_business_hours_price_id' => isset( $settings['reservation_business_hours_price_id'] ) ? sanitize_text_field( (string) $settings['reservation_business_hours_price_id'] ) : '',
+			'reservation_after_hours_price_id'    => isset( $settings['reservation_after_hours_price_id'] ) ? sanitize_text_field( (string) $settings['reservation_after_hours_price_id'] ) : '',
+			'reservation_duration_minutes'        => isset( $settings['reservation_duration_minutes'] ) ? absint( $settings['reservation_duration_minutes'] ) : 60,
+			'reservation_buffer_before_minutes'   => isset( $settings['reservation_buffer_before_minutes'] ) ? absint( $settings['reservation_buffer_before_minutes'] ) : 0,
+			'reservation_buffer_after_minutes'    => isset( $settings['reservation_buffer_after_minutes'] ) ? absint( $settings['reservation_buffer_after_minutes'] ) : 0,
+			'reservation_min_duration_minutes'    => isset( $settings['reservation_min_duration_minutes'] ) ? absint( $settings['reservation_min_duration_minutes'] ) : 60,
+			'reservation_max_duration_minutes'    => isset( $settings['reservation_max_duration_minutes'] ) ? absint( $settings['reservation_max_duration_minutes'] ) : 60,
+			'reservation_zoho_calendar_uid'       => isset( $settings['reservation_zoho_calendar_uid'] ) ? sanitize_text_field( (string) $settings['reservation_zoho_calendar_uid'] ) : '',
+			'reservation_zoho_calendar_id'        => isset( $settings['reservation_zoho_calendar_id'] ) ? sanitize_text_field( (string) $settings['reservation_zoho_calendar_id'] ) : '',
+			'reservation_zoho_resource_uid'       => isset( $settings['reservation_zoho_resource_uid'] ) ? sanitize_text_field( (string) $settings['reservation_zoho_resource_uid'] ) : '',
+			'reservation_zoho_schedule_url'       => isset( $settings['reservation_zoho_schedule_url'] ) ? esc_url_raw( (string) $settings['reservation_zoho_schedule_url'] ) : '',
+			'reservation_zoho_freebusy_url'       => isset( $settings['reservation_zoho_freebusy_url'] ) ? esc_url_raw( (string) $settings['reservation_zoho_freebusy_url'] ) : '',
 		);
+
+		$base_formats = array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' );
+		$res_formats  = array( '%s', '%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s' );
+		$formats = array_merge( $base_formats, $res_formats );
 
 		$existing_id = $wpdb->get_var(
 			$wpdb->prepare(
@@ -2999,7 +3020,7 @@ class AJForms_Admin {
 				$this->get_portal_product_catalog_table(),
 				$data,
 				array( 'id' => absint( $existing_id ) ),
-				array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+				$formats,
 				array( '%d' )
 			);
 		}
@@ -3007,7 +3028,7 @@ class AJForms_Admin {
 		return false !== $wpdb->insert(
 			$this->get_portal_product_catalog_table(),
 			$data,
-			array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			$formats
 		);
 	}
 
@@ -4043,6 +4064,34 @@ class AJForms_Admin {
 		$stripe_customer_id = '';
 		if ( ! empty( $object['customer'] ) && is_string( $object['customer'] ) ) {
 			$stripe_customer_id = sanitize_text_field( (string) $object['customer'] );
+		}
+
+		// Handle reservation payment before other checkout processing.
+		if ( 'checkout.session.completed' === $type && is_array( $object ) && class_exists( 'AJCore_Reservations' ) ) {
+			$session_meta     = ! empty( $object['metadata'] ) && is_array( $object['metadata'] ) ? $object['metadata'] : array();
+			$reservation_uuid = ! empty( $session_meta['reservation_uuid'] ) ? sanitize_text_field( (string) $session_meta['reservation_uuid'] ) : '';
+			if ( '' !== $reservation_uuid ) {
+				$res_settings    = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+				$res_result      = AJCore_Reservations::handle_payment_success( $object['id'], $object, $res_settings );
+				$this->log_portal_event(
+					is_wp_error( $res_result ) ? 'reservation_payment_failed' : 'reservation_payment_succeeded',
+					array(
+						'source'  => 'webhook',
+						'details' => array(
+							'event_id'         => $event_id,
+							'reservation_uuid' => $reservation_uuid,
+							'session_id'       => $object['id'],
+							'error'            => is_wp_error( $res_result ) ? $res_result->get_error_message() : null,
+						),
+					)
+				);
+				// If reservation payment processed successfully, acknowledge and exit — skip normal portal sync for this event.
+				if ( ! is_wp_error( $res_result ) ) {
+					$this->mark_stripe_event_processed( $event_id );
+					wp_send_json_success( array( 'message' => 'reservation_processed' ) );
+				}
+				// On failure, fall through so the event is still synced normally.
+			}
 		}
 
 		$deferred_one_time_result = 0;
@@ -8862,6 +8911,10 @@ class AJForms_Admin {
 				$this->handle_service_requests_actions();
 			} elseif ( 'billing' === $tab || isset( $_POST['ajcore_billing_action'] ) ) {
 				$this->handle_portal_billing_actions();
+			} elseif ( 'calendar' === $tab ) {
+				$this->handle_portal_calendar_settings_save();
+			} elseif ( 'reservations' === $tab ) {
+				$this->handle_portal_reservations_admin_actions();
 			} elseif ( in_array( $tab, array( 'sync', 'menu', 'portal-users', 'sold-items', 'products-services', 'tasks' ), true ) ) {
 				$this->handle_client_portal_settings_save();
 			} elseif ( 'event-log' === $tab ) {
@@ -13463,6 +13516,7 @@ class AJForms_Admin {
 			'dashboard'          => __( 'Dashboard', 'ajforms' ),
 			'service-requests'   => __( 'Service Requests', 'ajforms' ),
 			'billing'            => __( 'Billing', 'ajforms' ),
+			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'portal-users'       => __( 'Customers', 'ajforms' ),
 			'sold-items'         => __( 'Sold Products', 'ajforms' ),
 			'products-services'  => __( 'Product Catalog', 'ajforms' ),
@@ -13471,6 +13525,7 @@ class AJForms_Admin {
 			'sync'               => __( 'Sync', 'ajforms' ),
 			'event-log'          => __( 'Event Log', 'ajforms' ),
 			'menu'               => __( 'Menu', 'ajforms' ),
+			'calendar'           => __( 'Calendar / Reservations', 'ajforms' ),
 			'api'                => __( 'API', 'ajforms' ),
 			'settings'           => __( 'Settings', 'ajforms' ),
 		);
@@ -13550,6 +13605,10 @@ class AJForms_Admin {
 				$this->display_portal_tasks_tab();
 			} elseif ( 'menu' === $tab ) {
 				$this->display_client_portal_settings_tab( 'menu', true );
+			} elseif ( 'reservations' === $tab ) {
+				$this->display_portal_reservations_admin_tab();
+			} elseif ( 'calendar' === $tab ) {
+				$this->display_portal_calendar_settings_tab();
 			} elseif ( 'api' === $tab ) {
 				$this->display_portal_api_tab();
 			} elseif ( 'settings' === $tab ) {
@@ -18914,5 +18973,454 @@ class AJForms_Admin {
 
 		mysqli_close( $conn );
 		wp_send_json_success( __( 'Connection successful.', 'ajforms' ) );
+	}
+
+	// ──────────────────────────────────────────────────────────────────────────
+	// Calendar / Zoho Reservations settings tab
+	// ──────────────────────────────────────────────────────────────────────────
+
+	private function handle_portal_calendar_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		if ( ! isset( $_POST['ajcore_calendar_settings_nonce'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajcore_save_calendar_settings', 'ajcore_calendar_settings_nonce' );
+
+		$settings = $this->get_plugin_settings();
+
+		$settings['zoho_reservations_enabled']        = ! empty( $_POST['zoho_reservations_enabled'] ) ? '1' : '0';
+		$settings['zoho_default_timezone']            = isset( $_POST['zoho_default_timezone'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_default_timezone'] ) ) : 'America/New_York';
+		$settings['zoho_calendar_uid']                = isset( $_POST['zoho_calendar_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_uid'] ) ) : '';
+		$settings['zoho_calendar_id']                 = isset( $_POST['zoho_calendar_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_id'] ) ) : '';
+		$settings['zoho_resource_uid']                = isset( $_POST['zoho_resource_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_resource_uid'] ) ) : '';
+		$settings['zoho_schedule_appointment_url']    = isset( $_POST['zoho_schedule_appointment_url'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_schedule_appointment_url'] ) ) : '';
+		$settings['zoho_resource_freebusy_url']       = isset( $_POST['zoho_resource_freebusy_url'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_resource_freebusy_url'] ) ) : '';
+		$settings['zoho_api_auth_mode']               = isset( $_POST['zoho_api_auth_mode'] ) ? sanitize_key( wp_unslash( $_POST['zoho_api_auth_mode'] ) ) : '';
+		$settings['zoho_api_token']                   = isset( $_POST['zoho_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_api_token'] ) ) : '';
+		$settings['reservation_resource_name']        = isset( $_POST['reservation_resource_name'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_resource_name'] ) ) : 'Conference Room';
+		$settings['reservation_resource_key']         = isset( $_POST['reservation_resource_key'] ) ? sanitize_key( wp_unslash( $_POST['reservation_resource_key'] ) ) : 'conference_room';
+		$settings['reservation_business_hours_label'] = isset( $_POST['reservation_business_hours_label'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_business_hours_label'] ) ) : 'Business Hours (Mon–Fri 9am–5pm)';
+		$settings['reservation_after_hours_label']    = isset( $_POST['reservation_after_hours_label'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_after_hours_label'] ) ) : 'After-Hours / Weekend';
+
+		update_option( 'ajforms_settings', $settings, false );
+
+		$this->log_portal_event(
+			'calendar_settings_updated',
+			array(
+				'source'                   => 'calendar_settings',
+				'zoho_reservations_enabled' => $settings['zoho_reservations_enabled'],
+				'reservation_resource_key'  => $settings['reservation_resource_key'],
+			)
+		);
+
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar', 'calendar-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private function display_portal_calendar_settings_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$settings = $this->get_plugin_settings();
+		$saved    = ! empty( $_GET['calendar-settings-saved'] );
+
+		$timezones = array(
+			'America/New_York'    => 'Eastern Time (ET)',
+			'America/Chicago'     => 'Central Time (CT)',
+			'America/Denver'      => 'Mountain Time (MT)',
+			'America/Los_Angeles' => 'Pacific Time (PT)',
+			'America/Phoenix'     => 'Arizona (no DST)',
+			'America/Anchorage'   => 'Alaska Time',
+			'Pacific/Honolulu'    => 'Hawaii Time',
+			'UTC'                 => 'UTC',
+		);
+
+		?>
+		<?php if ( $saved ) : ?>
+			<div class="notice notice-success inline"><p><?php esc_html_e( 'Calendar / Reservations settings saved.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+
+		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
+			<?php wp_nonce_field( 'ajcore_save_calendar_settings', 'ajcore_calendar_settings_nonce' ); ?>
+
+			<div class="ajforms-settings-card">
+				<h2><?php esc_html_e( 'Calendar / Reservations Settings', 'ajforms' ); ?></h2>
+				<p><?php esc_html_e( 'Configure Zoho Calendar integration and reservation defaults. Zoho API token is stored in the WordPress database only — never in synced-settings.json.', 'ajforms' ); ?></p>
+
+				<h3><?php esc_html_e( 'General', 'ajforms' ); ?></h3>
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Enable Zoho Reservations', 'ajforms' ); ?></th>
+						<td>
+							<label>
+								<input type="checkbox" name="zoho_reservations_enabled" value="1" <?php checked( '1', $settings['zoho_reservations_enabled'] ?? '0' ); ?>>
+								<?php esc_html_e( 'Enable reservation products and calendar integration', 'ajforms' ); ?>
+							</label>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Default Timezone', 'ajforms' ); ?></th>
+						<td>
+							<select name="zoho_default_timezone">
+								<?php foreach ( $timezones as $tz_key => $tz_label ) : ?>
+									<option value="<?php echo esc_attr( $tz_key ); ?>" <?php selected( $settings['zoho_default_timezone'] ?? 'America/New_York', $tz_key ); ?>><?php echo esc_html( $tz_label ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Default Resource Name', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="reservation_resource_name" value="<?php echo esc_attr( $settings['reservation_resource_name'] ?? 'Conference Room' ); ?>" class="regular-text">
+							<p class="description"><?php esc_html_e( 'Shown to customers on the portal.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Default Resource Key', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="reservation_resource_key" value="<?php echo esc_attr( $settings['reservation_resource_key'] ?? 'conference_room' ); ?>" class="regular-text">
+							<p class="description"><?php esc_html_e( 'Lowercase slug, e.g. conference_room. Used internally.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Business Hours Pricing Label', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="reservation_business_hours_label" value="<?php echo esc_attr( $settings['reservation_business_hours_label'] ?? '' ); ?>" class="regular-text">
+							<p class="description"><?php esc_html_e( 'Mon–Fri 9am–5pm. Shown to customers during booking.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'After-Hours / Weekend Pricing Label', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="reservation_after_hours_label" value="<?php echo esc_attr( $settings['reservation_after_hours_label'] ?? '' ); ?>" class="regular-text">
+							<p class="description"><?php esc_html_e( 'Mon–Fri before 9am or after 5pm, and all weekend.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+				</table>
+
+				<hr>
+				<h3><?php esc_html_e( 'Zoho Calendar Identifiers', 'ajforms' ); ?></h3>
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Zoho Calendar UID', 'ajforms' ); ?></th>
+						<td><input type="text" name="zoho_calendar_uid" value="<?php echo esc_attr( $settings['zoho_calendar_uid'] ?? '' ); ?>" class="regular-text"></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Zoho Calendar ID', 'ajforms' ); ?></th>
+						<td><input type="text" name="zoho_calendar_id" value="<?php echo esc_attr( $settings['zoho_calendar_id'] ?? '' ); ?>" class="regular-text"></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Zoho Resource UID', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="zoho_resource_uid" value="<?php echo esc_attr( $settings['zoho_resource_uid'] ?? '' ); ?>" class="regular-text">
+							<p class="description"><?php esc_html_e( 'Used for free/busy availability checks via the Zoho Resource API.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+				</table>
+
+				<hr>
+				<h3><?php esc_html_e( 'Zoho Schedule Appointment URL', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'Paste your Zoho appointment URL. AJCore will replace the placeholders below with real customer and booking data.', 'ajforms' ); ?></p>
+				<p><strong><?php esc_html_e( 'Supported placeholders:', 'ajforms' ); ?></strong>
+					<code>[name]</code>, <code>[EmailId]</code>, <code>[MM/dd/yyyy]</code>, <code>[13:00]</code>, <code>[Reason for Appointment]</code>
+				</p>
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Schedule Appointment URL', 'ajforms' ); ?></th>
+						<td>
+							<textarea name="zoho_schedule_appointment_url" rows="4" class="large-text"><?php echo esc_textarea( $settings['zoho_schedule_appointment_url'] ?? '' ); ?></textarea>
+						</td>
+					</tr>
+				</table>
+
+				<hr>
+				<h3><?php esc_html_e( 'Zoho Resource Free/Busy API', 'ajforms' ); ?></h3>
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Free/Busy API URL', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="zoho_resource_freebusy_url" value="<?php echo esc_attr( $settings['zoho_resource_freebusy_url'] ?? '' ); ?>" class="large-text">
+							<p class="description"><?php esc_html_e( 'Use {resourceuid} as a placeholder for the Zoho Resource UID, e.g. https://calendar.zoho.com/api/v1/resources/{resourceuid}/freebusy', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+				</table>
+
+				<hr>
+				<h3><?php esc_html_e( 'Zoho API Authentication', 'ajforms' ); ?></h3>
+				<p class="description"><?php esc_html_e( 'Zoho API token is stored in WordPress database only. It is never written to synced-settings.json or exposed in customer-facing pages.', 'ajforms' ); ?></p>
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'API Auth Mode', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="zoho_api_auth_mode" value="<?php echo esc_attr( $settings['zoho_api_auth_mode'] ?? '' ); ?>" class="regular-text" placeholder="e.g. bearer_token">
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Zoho API Token', 'ajforms' ); ?></th>
+						<td>
+							<input type="password" name="zoho_api_token" value="<?php echo esc_attr( $settings['zoho_api_token'] ?? '' ); ?>" class="regular-text" autocomplete="new-password">
+							<p class="description"><?php esc_html_e( 'Bearer token for Zoho Calendar API. Leave blank to use URL-only (appointment link) mode.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></th>
+						<td>
+							<button type="button" class="button" disabled><?php esc_html_e( 'Test Zoho Connection (coming soon)', 'ajforms' ); ?></button>
+							<p class="description"><?php esc_html_e( 'Save settings first, then test the connection.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+				</table>
+
+				<p class="submit"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save Calendar Settings', 'ajforms' ); ?></button></p>
+			</div>
+
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Booking Rules (Read-only)', 'ajforms' ); ?></h3>
+				<ul>
+					<li><?php esc_html_e( 'Booking window: 8:00 AM – 10:00 PM', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Business hours: Monday–Friday, 9:00 AM – 5:00 PM', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'After-hours/weekend: Mon–Fri before 9 AM or after 5 PM, and all Saturday/Sunday', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Prepay only — no cancellation, no refund, no rescheduling', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Pending reservations hold the slot for 15 minutes before expiring', 'ajforms' ); ?></li>
+				</ul>
+			</div>
+		</form>
+		<?php
+	}
+
+	// ──────────────────────────────────────────────────────────────────────────
+	// Reservations admin view
+	// ──────────────────────────────────────────────────────────────────────────
+
+	private function handle_portal_reservations_admin_actions() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		if ( isset( $_POST['ajcore_reservation_admin_note_nonce'], $_POST['reservation_id'], $_POST['admin_notes'] ) ) {
+			$reservation_id = absint( $_POST['reservation_id'] );
+			check_admin_referer( 'ajcore_reservation_admin_note_' . $reservation_id, 'ajcore_reservation_admin_note_nonce' );
+
+			global $wpdb;
+			$table = $wpdb->prefix . 'aj_portal_reservations';
+			$wpdb->update(
+				$table,
+				array( 'admin_notes' => sanitize_textarea_field( wp_unslash( $_POST['admin_notes'] ) ), 'updated_at' => current_time( 'mysql' ) ),
+				array( 'id' => $reservation_id ),
+				array( '%s', '%s' ),
+				array( '%d' )
+			);
+
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'reservation-saved' => '1' ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+	}
+
+	private function display_portal_reservations_admin_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		global $wpdb;
+		$table = $wpdb->prefix . 'aj_portal_reservations';
+
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			echo '<div class="notice notice-warning inline"><p>' . esc_html__( 'Reservations table not yet created. Please deactivate and reactivate the plugin to run the schema update.', 'ajforms' ) . '</p></div>';
+			return;
+		}
+
+		$saved = ! empty( $_GET['reservation-saved'] );
+
+		$filter_status       = isset( $_GET['filter_status'] ) ? sanitize_key( wp_unslash( $_GET['filter_status'] ) ) : '';
+		$filter_resource_key = isset( $_GET['filter_resource'] ) ? sanitize_key( wp_unslash( $_GET['filter_resource'] ) ) : '';
+		$filter_pricing_type = isset( $_GET['filter_pricing'] ) ? sanitize_key( wp_unslash( $_GET['filter_pricing'] ) ) : '';
+		$filter_date_from    = isset( $_GET['filter_date_from'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_date_from'] ) ) : '';
+		$filter_date_to      = isset( $_GET['filter_date_to'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_date_to'] ) ) : '';
+		$detail_id           = isset( $_GET['reservation_id'] ) ? absint( $_GET['reservation_id'] ) : 0;
+
+		$filters = array_filter( array(
+			'status'       => $filter_status,
+			'resource_key' => $filter_resource_key,
+			'pricing_type' => $filter_pricing_type,
+			'date_from'    => $filter_date_from,
+			'date_to'      => $filter_date_to,
+		) );
+
+		$reservations = class_exists( 'AJCore_Reservations' )
+			? AJCore_Reservations::get_all_reservations( $filters )
+			: array();
+
+		$settings = $this->get_plugin_settings();
+
+		$statuses = array(
+			''                      => __( 'All Statuses', 'ajforms' ),
+			'pending_payment'       => __( 'Pending Payment', 'ajforms' ),
+			'paid'                  => __( 'Paid', 'ajforms' ),
+			'confirmed'             => __( 'Confirmed', 'ajforms' ),
+			'paid_pending_calendar' => __( 'Paid – Pending Calendar', 'ajforms' ),
+			'cancelled'             => __( 'Cancelled', 'ajforms' ),
+			'failed'                => __( 'Failed', 'ajforms' ),
+			'refunded'              => __( 'Refunded', 'ajforms' ),
+		);
+
+		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations' ), admin_url( 'admin.php' ) );
+
+		if ( $saved ) {
+			echo '<div class="notice notice-success inline"><p>' . esc_html__( 'Reservation notes saved.', 'ajforms' ) . '</p></div>';
+		}
+
+		if ( $detail_id > 0 ) {
+			$reservation = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d LIMIT 1", $detail_id ) );
+			if ( $reservation ) {
+				$this->render_reservation_admin_detail( $reservation, $settings, $base_url );
+				return;
+			}
+		}
+
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'Reservations', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'Manage all prepaid conference room and resource reservations. Zoho IDs and Stripe session IDs are visible only here.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+
+			<form method="get" class="ajcore-filter-bar" style="margin-bottom:14px;">
+				<input type="hidden" name="page" value="ajforms-client-portal">
+				<input type="hidden" name="tab" value="reservations">
+				<select name="filter_status">
+					<?php foreach ( $statuses as $s_key => $s_label ) : ?>
+						<option value="<?php echo esc_attr( $s_key ); ?>" <?php selected( $filter_status, $s_key ); ?>><?php echo esc_html( $s_label ); ?></option>
+					<?php endforeach; ?>
+				</select>
+				<select name="filter_pricing">
+					<option value="" <?php selected( $filter_pricing_type, '' ); ?>><?php esc_html_e( 'All Pricing', 'ajforms' ); ?></option>
+					<option value="business_hours" <?php selected( $filter_pricing_type, 'business_hours' ); ?>><?php esc_html_e( 'Business Hours', 'ajforms' ); ?></option>
+					<option value="after_hours_weekend" <?php selected( $filter_pricing_type, 'after_hours_weekend' ); ?>><?php esc_html_e( 'After-Hours / Weekend', 'ajforms' ); ?></option>
+				</select>
+				<input type="date" name="filter_date_from" value="<?php echo esc_attr( $filter_date_from ); ?>" placeholder="<?php esc_attr_e( 'From date', 'ajforms' ); ?>">
+				<input type="date" name="filter_date_to" value="<?php echo esc_attr( $filter_date_to ); ?>" placeholder="<?php esc_attr_e( 'To date', 'ajforms' ); ?>">
+				<button type="submit" class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
+				<a href="<?php echo esc_url( $base_url ); ?>" class="button"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
+			</form>
+
+			<?php if ( empty( $reservations ) ) : ?>
+				<p><?php esc_html_e( 'No reservations found.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div style="overflow-x:auto;">
+					<table class="widefat" style="min-width:900px;">
+						<thead>
+							<tr>
+								<th><?php esc_html_e( 'Ref', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Resource', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Start', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'End', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Pricing', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Calendar', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Created', 'ajforms' ); ?></th>
+								<th></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $reservations as $r ) :
+								$ref        = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( $r->id ) : ( 'RES-' . $r->id );
+								$status_cls = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_class( $r->status ) : 'warn';
+								$status_lbl = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_label( $r->status ) : $r->status;
+								$pricing_lbl = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_pricing_type_label( $r->pricing_type, $settings ) : $r->pricing_type;
+								$badge_map  = array( 'good' => '#dcfce7;color:#166534', 'warn' => '#fef3c7;color:#92400e', 'bad' => '#fee2e2;color:#991b1b' );
+								$badge_css  = $badge_map[ $status_cls ] ?? $badge_map['warn'];
+								$cal_status = '' !== $r->zoho_event_id ? __( 'Confirmed', 'ajforms' ) : ( 'paid_pending_calendar' === $r->status ? __( 'Pending', 'ajforms' ) : '—' );
+								$detail_url = add_query_arg( 'reservation_id', $r->id, $base_url );
+							?>
+								<tr>
+									<td><a href="<?php echo esc_url( $detail_url ); ?>"><?php echo esc_html( $ref ); ?></a></td>
+									<td>
+										<?php echo esc_html( $r->customer_name ); ?><br>
+										<small><?php echo esc_html( $r->customer_email ); ?></small>
+									</td>
+									<td><?php echo esc_html( $r->resource_name ); ?></td>
+									<td><?php echo esc_html( $r->start_at ); ?></td>
+									<td><?php echo esc_html( $r->end_at ); ?></td>
+									<td><?php echo esc_html( $pricing_lbl ); ?></td>
+									<td><?php echo esc_html( strtoupper( $r->currency ) . ' ' . number_format( (float) $r->amount, 2 ) ); ?></td>
+									<td><span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:700;background:<?php echo esc_attr( $badge_css ); ?>"><?php echo esc_html( $status_lbl ); ?></span></td>
+									<td><?php echo esc_html( $cal_status ); ?></td>
+									<td><?php echo esc_html( $r->created_at ); ?></td>
+									<td><a href="<?php echo esc_url( $detail_url ); ?>" class="button button-small"><?php esc_html_e( 'View', 'ajforms' ); ?></a></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	private function render_reservation_admin_detail( $reservation, $settings, $back_url ) {
+		$ref        = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( $reservation->id ) : ( 'RES-' . $reservation->id );
+		$status_lbl = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_label( $reservation->status ) : $reservation->status;
+		$pricing_lbl = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_pricing_type_label( $reservation->pricing_type, $settings ) : $reservation->pricing_type;
+
+		$zoho_appointment_url = '';
+		if ( ! empty( $reservation->raw_zoho_data ) ) {
+			$raw = json_decode( $reservation->raw_zoho_data, true );
+			if ( is_array( $raw ) && ! empty( $raw['schedule_appointment_url'] ) ) {
+				$zoho_appointment_url = esc_url( $raw['schedule_appointment_url'] );
+			}
+		}
+		?>
+		<div class="ajforms-settings-card">
+			<p><a href="<?php echo esc_url( $back_url ); ?>">&larr; <?php esc_html_e( 'Back to Reservations', 'ajforms' ); ?></a></p>
+			<h2><?php echo esc_html( sprintf( __( 'Reservation %s', 'ajforms' ), $ref ) ); ?></h2>
+
+			<table class="form-table">
+				<tr><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><td><?php echo esc_html( $status_lbl ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Customer Name', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->customer_name ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Customer Email', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->customer_email ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Resource', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->resource_name ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Start', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->start_at . ' UTC' ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'End', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->end_at . ' UTC' ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Timezone', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->timezone ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Pricing Type', 'ajforms' ); ?></th><td><?php echo esc_html( $pricing_lbl ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th><td><?php echo esc_html( strtoupper( $reservation->currency ) . ' ' . number_format( (float) $reservation->amount, 2 ) ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Customer Notes', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->customer_notes ?: '—' ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'UUID', 'ajforms' ); ?></th><td><code><?php echo esc_html( $reservation->reservation_uuid ); ?></code></td></tr>
+				<tr><th><?php esc_html_e( 'Stripe Price ID', 'ajforms' ); ?></th><td><code><?php echo esc_html( $reservation->stripe_price_id ); ?></code></td></tr>
+				<tr><th><?php esc_html_e( 'Stripe Checkout Session', 'ajforms' ); ?></th><td><code><?php echo esc_html( $reservation->stripe_checkout_session_id ?: '—' ); ?></code></td></tr>
+				<tr><th><?php esc_html_e( 'Stripe Payment Intent', 'ajforms' ); ?></th><td><code><?php echo esc_html( $reservation->stripe_payment_intent_id ?: '—' ); ?></code></td></tr>
+				<tr><th><?php esc_html_e( 'Zoho Calendar ID', 'ajforms' ); ?></th><td><code><?php echo esc_html( $reservation->zoho_calendar_id ?: '—' ); ?></code></td></tr>
+				<tr><th><?php esc_html_e( 'Zoho Resource UID', 'ajforms' ); ?></th><td><code><?php echo esc_html( $reservation->zoho_resource_uid ?: '—' ); ?></code></td></tr>
+				<tr><th><?php esc_html_e( 'Zoho Event ID', 'ajforms' ); ?></th><td><code><?php echo esc_html( $reservation->zoho_event_id ?: '—' ); ?></code></td></tr>
+				<?php if ( $zoho_appointment_url ) : ?>
+					<tr>
+						<th><?php esc_html_e( 'Zoho Appointment URL', 'ajforms' ); ?></th>
+						<td><a href="<?php echo esc_url( $zoho_appointment_url ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'Open prefilled appointment link', 'ajforms' ); ?></a></td>
+					</tr>
+				<?php endif; ?>
+				<tr><th><?php esc_html_e( 'Created', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->created_at ); ?></td></tr>
+				<tr><th><?php esc_html_e( 'Updated', 'ajforms' ); ?></th><td><?php echo esc_html( $reservation->updated_at ); ?></td></tr>
+			</table>
+		</div>
+
+		<div class="ajforms-settings-card">
+			<h3><?php esc_html_e( 'Admin Notes', 'ajforms' ); ?></h3>
+			<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'reservation_id' => $reservation->id ), admin_url( 'admin.php' ) ) ); ?>">
+				<?php wp_nonce_field( 'ajcore_reservation_admin_note_' . $reservation->id, 'ajcore_reservation_admin_note_nonce' ); ?>
+				<input type="hidden" name="reservation_id" value="<?php echo absint( $reservation->id ); ?>">
+				<textarea name="admin_notes" rows="4" class="large-text"><?php echo esc_textarea( $reservation->admin_notes ); ?></textarea>
+				<p class="submit"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save Notes', 'ajforms' ); ?></button></p>
+			</form>
+		</div>
+		<?php
 	}
 }

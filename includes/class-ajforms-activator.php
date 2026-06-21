@@ -32,6 +32,8 @@ class AJForms_Activator {
 		$table_service_snapshots    = $wpdb->prefix . 'aj_portal_service_snapshots';
 		$table_service_states       = $wpdb->prefix . 'aj_portal_service_states';
 		$table_customer_states      = $wpdb->prefix . 'aj_portal_customer_states';
+		$table_reservation_resources = $wpdb->prefix . 'aj_portal_reservation_resources';
+		$table_reservations          = $wpdb->prefix . 'aj_portal_reservations';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -180,12 +182,99 @@ class AJForms_Activator {
 			custom_request_message longtext NULL,
 			custom_request_button_label varchar(255) DEFAULT '' NOT NULL,
 			price_settings longtext NULL,
+			product_type varchar(50) DEFAULT 'normal' NOT NULL,
+			reservation_resource_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			reservation_resource_key varchar(100) DEFAULT '' NOT NULL,
+			reservation_business_hours_price_id varchar(100) DEFAULT '' NOT NULL,
+			reservation_after_hours_price_id varchar(100) DEFAULT '' NOT NULL,
+			reservation_duration_minutes int(11) NOT NULL DEFAULT 60,
+			reservation_buffer_before_minutes int(11) NOT NULL DEFAULT 0,
+			reservation_buffer_after_minutes int(11) NOT NULL DEFAULT 0,
+			reservation_min_duration_minutes int(11) NOT NULL DEFAULT 60,
+			reservation_max_duration_minutes int(11) NOT NULL DEFAULT 60,
+			reservation_zoho_calendar_uid varchar(255) DEFAULT '' NOT NULL,
+			reservation_zoho_calendar_id varchar(255) DEFAULT '' NOT NULL,
+			reservation_zoho_resource_uid varchar(255) DEFAULT '' NOT NULL,
+			reservation_zoho_schedule_url longtext NULL,
+			reservation_zoho_freebusy_url longtext NULL,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_product_id (stripe_product_id),
 			KEY visibility (visibility),
-			KEY duplicate_behavior (duplicate_behavior)
+			KEY duplicate_behavior (duplicate_behavior),
+			KEY product_type (product_type),
+			KEY reservation_resource_key (reservation_resource_key)
+		) $charset_collate;
+
+		CREATE TABLE $table_reservation_resources (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			resource_key varchar(100) NOT NULL,
+			resource_name varchar(255) NOT NULL,
+			zoho_calendar_uid varchar(255) DEFAULT '' NOT NULL,
+			zoho_calendar_id varchar(255) DEFAULT '' NOT NULL,
+			zoho_resource_uid varchar(255) DEFAULT '' NOT NULL,
+			zoho_schedule_url longtext NULL,
+			zoho_freebusy_url longtext NULL,
+			business_hours_price_id varchar(100) DEFAULT '' NOT NULL,
+			after_hours_price_id varchar(100) DEFAULT '' NOT NULL,
+			duration_minutes int(11) NOT NULL DEFAULT 60,
+			buffer_before_minutes int(11) NOT NULL DEFAULT 0,
+			buffer_after_minutes int(11) NOT NULL DEFAULT 0,
+			min_duration_minutes int(11) NOT NULL DEFAULT 60,
+			max_duration_minutes int(11) NOT NULL DEFAULT 60,
+			active tinyint(1) NOT NULL DEFAULT 1,
+			settings_json longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY resource_key (resource_key),
+			KEY active (active)
+		) $charset_collate;
+
+		CREATE TABLE $table_reservations (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			reservation_uuid varchar(100) NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			resource_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			resource_key varchar(100) DEFAULT '' NOT NULL,
+			resource_name varchar(255) DEFAULT '' NOT NULL,
+			zoho_calendar_uid varchar(255) DEFAULT '' NOT NULL,
+			zoho_calendar_id varchar(255) DEFAULT '' NOT NULL,
+			zoho_resource_uid varchar(255) DEFAULT '' NOT NULL,
+			zoho_event_id varchar(255) DEFAULT '' NOT NULL,
+			stripe_checkout_session_id varchar(100) DEFAULT '' NOT NULL,
+			stripe_payment_intent_id varchar(100) DEFAULT '' NOT NULL,
+			stripe_invoice_id varchar(100) DEFAULT '' NOT NULL,
+			stripe_price_id varchar(100) DEFAULT '' NOT NULL,
+			pricing_type varchar(50) DEFAULT 'after_hours_weekend' NOT NULL,
+			amount decimal(12,2) DEFAULT 0 NOT NULL,
+			currency varchar(12) DEFAULT 'usd' NOT NULL,
+			start_at datetime NOT NULL,
+			end_at datetime NOT NULL,
+			timezone varchar(100) DEFAULT 'America/New_York' NOT NULL,
+			status varchar(50) DEFAULT 'pending_payment' NOT NULL,
+			customer_name varchar(255) DEFAULT '' NOT NULL,
+			customer_email varchar(190) DEFAULT '' NOT NULL,
+			customer_notes longtext NULL,
+			admin_notes longtext NULL,
+			raw_zoho_data longtext NULL,
+			raw_stripe_data longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY reservation_uuid (reservation_uuid),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY wp_user_id (wp_user_id),
+			KEY resource_id (resource_id),
+			KEY resource_key (resource_key),
+			KEY stripe_checkout_session_id (stripe_checkout_session_id),
+			KEY stripe_payment_intent_id (stripe_payment_intent_id),
+			KEY status (status),
+			KEY pricing_type (pricing_type),
+			KEY start_at (start_at),
+			KEY customer_email (customer_email)
 		) $charset_collate;
 
 		CREATE TABLE $table_stripe_subscriptions (
@@ -767,7 +856,7 @@ class AJForms_Activator {
 			$portal_role->add_cap( 'ajcore_customer_portal_access' );
 		}
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '12', false );
+		update_option( 'ajforms_portal_schema_version', '13', false );
 	}
 
 	/**
