@@ -9930,6 +9930,13 @@ class AJForms_Admin {
 
 		update_option( 'ajcore_customer_portal_menu_items', $items, false );
 
+		$allowed_bgs = array( 'default', 'ocean', 'sunset', 'mint', 'slate', 'none' );
+		$portal_bg   = isset( $_POST['portal_background'] ) ? sanitize_key( wp_unslash( $_POST['portal_background'] ) ) : 'default';
+		if ( ! in_array( $portal_bg, $allowed_bgs, true ) ) {
+			$portal_bg = 'default';
+		}
+		update_option( 'ajcore_portal_background', $portal_bg, false );
+
 		wp_safe_redirect(
 			add_query_arg(
 				array(
@@ -16597,6 +16604,31 @@ class AJForms_Admin {
 						</tbody>
 					</table>
 
+
+					<div class="ajforms-settings-card" style="margin-top:18px;">
+						<h3><?php esc_html_e( 'Portal Background', 'ajforms' ); ?></h3>
+						<p><?php esc_html_e( 'Choose a decorative background accent that appears across all portal pages.', 'ajforms' ); ?></p>
+						<?php
+						$current_bg = get_option( 'ajcore_portal_background', 'default' );
+						$bg_options = array(
+							'default' => array( 'label' => __( 'Default (Blue / Purple)', 'ajforms' ), 'preview' => 'radial-gradient(circle at 18% 50%,rgba(49,87,255,.45),transparent 60%),radial-gradient(circle at 82% 50%,rgba(124,58,237,.40),transparent 60%)' ),
+							'ocean'   => array( 'label' => __( 'Ocean Blue', 'ajforms' ), 'preview' => 'radial-gradient(circle at 20% 50%,rgba(14,165,233,.50),transparent 60%),radial-gradient(circle at 80% 50%,rgba(6,182,212,.45),transparent 60%)' ),
+							'sunset'  => array( 'label' => __( 'Warm Sunset', 'ajforms' ), 'preview' => 'radial-gradient(circle at 20% 50%,rgba(251,146,60,.55),transparent 60%),radial-gradient(circle at 80% 50%,rgba(244,63,94,.45),transparent 60%)' ),
+							'mint'    => array( 'label' => __( 'Mint Green', 'ajforms' ), 'preview' => 'radial-gradient(circle at 18% 50%,rgba(16,185,129,.50),transparent 60%),radial-gradient(circle at 82% 50%,rgba(6,182,212,.40),transparent 60%)' ),
+							'slate'   => array( 'label' => __( 'Cool Slate', 'ajforms' ), 'preview' => 'radial-gradient(circle at 18% 50%,rgba(100,116,139,.40),transparent 60%),radial-gradient(circle at 82% 50%,rgba(71,85,105,.35),transparent 60%)' ),
+							'none'    => array( 'label' => __( 'None (Plain)', 'ajforms' ), 'preview' => '' ),
+						);
+						?>
+						<div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px;">
+							<?php foreach ( $bg_options as $key => $opt ) : ?>
+								<label style="display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;">
+									<input type="radio" name="portal_background" value="<?php echo esc_attr( $key ); ?>" <?php checked( $current_bg, $key ); ?> style="margin:0;">
+									<span style="display:block;width:120px;height:56px;border-radius:10px;border:2px solid <?php echo $current_bg === $key ? '#3157ff' : '#dbe7f3'; ?>;background:<?php echo '' !== $opt['preview'] ? esc_attr( $opt['preview'] ) : '#f8fafc'; ?>;transition:border-color .15s;"></span>
+									<span style="font-size:12px;font-weight:600;color:#334155;text-align:center;"><?php echo esc_html( $opt['label'] ); ?></span>
+								</label>
+							<?php endforeach; ?>
+						</div>
+					</div>
 
 					<div class="ajforms-settings-card" style="margin-top:18px;">
 						<h3><?php esc_html_e( 'My Services Page Controls', 'ajforms' ); ?></h3>

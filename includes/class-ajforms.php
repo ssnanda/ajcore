@@ -5437,6 +5437,17 @@ class AJForms {
 			$active_tab = 'overview';
 		}
 
+		$portal_bg_preset = sanitize_key( get_option( 'ajcore_portal_background', 'default' ) );
+		$portal_bg_presets = array(
+			'default' => 'radial-gradient(circle at 18% 22%,rgba(49,87,255,.18),transparent 30%),radial-gradient(circle at 82% 8%,rgba(124,58,237,.17),transparent 28%),radial-gradient(circle at 50% 64%,rgba(6,182,212,.11),transparent 35%)',
+			'ocean'   => 'radial-gradient(circle at 20% 30%,rgba(14,165,233,.22),transparent 35%),radial-gradient(circle at 80% 10%,rgba(6,182,212,.18),transparent 30%),radial-gradient(circle at 50% 70%,rgba(99,102,241,.10),transparent 30%)',
+			'sunset'  => 'radial-gradient(circle at 20% 30%,rgba(251,146,60,.20),transparent 35%),radial-gradient(circle at 80% 10%,rgba(244,63,94,.16),transparent 30%),radial-gradient(circle at 55% 65%,rgba(251,191,36,.10),transparent 35%)',
+			'mint'    => 'radial-gradient(circle at 18% 22%,rgba(16,185,129,.18),transparent 30%),radial-gradient(circle at 82% 8%,rgba(6,182,212,.16),transparent 28%),radial-gradient(circle at 50% 64%,rgba(5,150,105,.10),transparent 35%)',
+			'slate'   => 'radial-gradient(circle at 18% 22%,rgba(100,116,139,.14),transparent 30%),radial-gradient(circle at 82% 8%,rgba(71,85,105,.12),transparent 28%)',
+			'none'    => 'none',
+		);
+		$portal_shell_bg = isset( $portal_bg_presets[ $portal_bg_preset ] ) ? $portal_bg_presets[ $portal_bg_preset ] : $portal_bg_presets['default'];
+
 		ob_start();
 		?>
 		<div class="ajcore-portal-shell">
@@ -5469,10 +5480,7 @@ class AJForms {
 					z-index:-1;
 					inset:-34px -28px auto;
 					height:170px;
-					background:
-						radial-gradient(circle at 18% 22%,rgba(49,87,255,.18),transparent 30%),
-						radial-gradient(circle at 82% 8%,rgba(124,58,237,.17),transparent 28%),
-						radial-gradient(circle at 50% 64%,rgba(6,182,212,.11),transparent 35%);
+					background:<?php echo esc_html( $portal_shell_bg ); ?>;
 					filter:blur(8px);
 					pointer-events:none;
 				}
@@ -11728,33 +11736,33 @@ class AJForms {
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
 		<style>
 		/* ── Conference Room — Hero Card ────────────────────────────── */
-		.aj-res-hero{background:linear-gradient(135deg,#1e3a8a 0%,#3157ff 55%,#7c3aed 100%);border-radius:16px;padding:26px 26px 20px;margin-bottom:20px;position:relative;overflow:hidden;color:#fff}
-		.aj-res-hero::before{content:'';position:absolute;top:-50px;right:-30px;width:220px;height:220px;background:rgba(255,255,255,.06);border-radius:50%;pointer-events:none}
-		.aj-res-hero::after{content:'';position:absolute;bottom:-70px;right:80px;width:160px;height:160px;background:rgba(255,255,255,.04);border-radius:50%;pointer-events:none}
-		.aj-res-hero-title{font-size:21px;font-weight:800;margin:0 0 3px;letter-spacing:-.3px;position:relative;z-index:1}
-		.aj-res-hero-sub{font-size:12px;opacity:.7;margin:0 0 18px;position:relative;z-index:1}
-		.aj-res-hero-body{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start;justify-content:space-between;position:relative;z-index:1}
-		.aj-res-steps-wrap{flex:1 1 240px}
-		.aj-res-hero-steps-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;opacity:.65;margin:0 0 11px}
-		.aj-res-step{display:flex;align-items:flex-start;gap:11px;margin-bottom:9px}
+		.aj-res-hero{background:linear-gradient(135deg,#1e3a8a 0%,#3157ff 55%,#7c3aed 100%);border-radius:12px;padding:12px 16px 10px;margin-bottom:16px;position:relative;overflow:hidden;color:#fff}
+		.aj-res-hero::before{content:'';position:absolute;top:-30px;right:-20px;width:120px;height:120px;background:rgba(255,255,255,.05);border-radius:50%;pointer-events:none}
+		.aj-res-hero::after{content:'';position:absolute;bottom:-40px;right:60px;width:80px;height:80px;background:rgba(255,255,255,.04);border-radius:50%;pointer-events:none}
+		.aj-res-hero-title{font-size:17px;font-weight:800;margin:0 0 2px;letter-spacing:-.3px;position:relative;z-index:1}
+		.aj-res-hero-sub{font-size:11px;opacity:.7;margin:0 0 10px;position:relative;z-index:1}
+		.aj-res-hero-body{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;position:relative;z-index:1}
+		.aj-res-steps-wrap{flex:1 1 220px}
+		.aj-res-hero-steps-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;opacity:.65;margin:0 0 7px}
+		.aj-res-step{display:flex;align-items:flex-start;gap:8px;margin-bottom:5px}
 		.aj-res-step:last-child{margin-bottom:0}
-		.aj-res-step-num{flex-shrink:0;width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,.18);border:1.5px solid rgba(255,255,255,.45);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
-		.aj-res-step-text{font-size:13px;opacity:.9;line-height:1.5;padding-top:4px}
-		.aj-res-rates-block{display:flex;gap:10px;flex-shrink:0;align-self:flex-start;flex-wrap:wrap}
-		.aj-res-rate-card{border-radius:12px;padding:14px 16px;min-width:112px;text-align:center;position:relative}
+		.aj-res-step-num{flex-shrink:0;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.18);border:1.5px solid rgba(255,255,255,.45);color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center}
+		.aj-res-step-text{font-size:11px;opacity:.9;line-height:1.4;padding-top:2px}
+		.aj-res-rates-block{display:flex;gap:8px;flex-shrink:0;align-self:center;flex-wrap:wrap}
+		.aj-res-rate-card{border-radius:10px;padding:8px 12px;min-width:96px;text-align:center;position:relative}
 		.aj-res-rate-card.biz{background:rgba(219,234,254,.13);border:1px solid rgba(147,197,253,.35)}
 		.aj-res-rate-card.after{background:rgba(237,233,254,.11);border:1px solid rgba(196,181,253,.3)}
-		.aj-res-rate-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;opacity:.7;margin-bottom:6px}
-		.aj-res-rate-amount{font-size:30px;font-weight:900;color:#fff;line-height:1}
-		.aj-res-rate-amount span{font-size:14px;font-weight:600;opacity:.75}
-		.aj-res-rate-sub{font-size:10px;opacity:.6;margin-top:4px;line-height:1.3}
+		.aj-res-rate-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;opacity:.7;margin-bottom:4px}
+		.aj-res-rate-amount{font-size:22px;font-weight:900;color:#fff;line-height:1}
+		.aj-res-rate-amount span{font-size:12px;font-weight:600;opacity:.75}
+		.aj-res-rate-sub{font-size:10px;opacity:.6;margin-top:3px;line-height:1.3}
 		/* ── Hero bottom bar ─────────────────────────────────────────── */
-		.aj-res-hero-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding-top:14px;margin-top:14px;border-top:1px solid rgba(255,255,255,.14);position:relative;z-index:1}
-		.aj-res-legend{display:flex;align-items:center;gap:16px;font-size:12px;opacity:.82}
+		.aj-res-hero-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding-top:8px;margin-top:8px;border-top:1px solid rgba(255,255,255,.14);position:relative;z-index:1}
+		.aj-res-legend{display:flex;align-items:center;gap:12px;font-size:11px;opacity:.82}
 		.aj-res-legend-dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:middle}
 		.aj-res-legend-dot.red{background:#f87171}
 		.aj-res-legend-dot.amber{background:#fbbf24}
-		.aj-res-notices{display:flex;flex-wrap:wrap;gap:3px 14px;font-size:12px}
+		.aj-res-notices{display:flex;flex-wrap:wrap;gap:3px 12px;font-size:11px}
 		.aj-res-policy{margin:0;font-weight:700;color:#fca5a5}
 		.aj-res-voffice{margin:0;color:#86efac;font-weight:600}
 		.aj-res-billing-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
