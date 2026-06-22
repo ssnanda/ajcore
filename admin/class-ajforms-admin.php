@@ -19079,8 +19079,10 @@ class AJForms_Admin {
 		$settings['reservation_menu_label']           = isset( $_POST['reservation_menu_label'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_menu_label'] ) ) : 'Conference Room';
 		$settings['reservation_business_hours_label'] = isset( $_POST['reservation_business_hours_label'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_business_hours_label'] ) ) : 'Business Hours (Mon–Fri 9am–5pm)';
 		$settings['reservation_after_hours_label']    = isset( $_POST['reservation_after_hours_label'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_after_hours_label'] ) ) : 'After-Hours / Weekend';
-		$settings['reservation_business_hours_rate']  = isset( $_POST['reservation_business_hours_rate'] ) ? max( 1, absint( wp_unslash( $_POST['reservation_business_hours_rate'] ) ) ) : 40;
-		$settings['reservation_after_hours_rate']     = isset( $_POST['reservation_after_hours_rate'] ) ? max( 1, absint( wp_unslash( $_POST['reservation_after_hours_rate'] ) ) ) : 80;
+		$settings['reservation_business_hours_rate']     = isset( $_POST['reservation_business_hours_rate'] ) ? max( 1, absint( wp_unslash( $_POST['reservation_business_hours_rate'] ) ) ) : 40;
+		$settings['reservation_after_hours_rate']        = isset( $_POST['reservation_after_hours_rate'] ) ? max( 1, absint( wp_unslash( $_POST['reservation_after_hours_rate'] ) ) ) : 80;
+		$settings['reservation_business_hours_price_id'] = isset( $_POST['reservation_business_hours_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_business_hours_price_id'] ) ) : ( $settings['reservation_business_hours_price_id'] ?? '' );
+		$settings['reservation_after_hours_price_id']    = isset( $_POST['reservation_after_hours_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['reservation_after_hours_price_id'] ) ) : ( $settings['reservation_after_hours_price_id'] ?? '' );
 		$settings['zoho_schedule_appointment_url']    = isset( $_POST['zoho_schedule_appointment_url'] ) ? esc_url_raw( wp_unslash( $_POST['zoho_schedule_appointment_url'] ) ) : '';
 		$settings['zoho_calendar_uid']                = isset( $_POST['zoho_calendar_uid'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_uid'] ) ) : '';
 		$settings['zoho_calendar_id']                 = isset( $_POST['zoho_calendar_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_calendar_id'] ) ) : '';
@@ -19262,6 +19264,20 @@ class AJForms_Admin {
 						<td>
 							<input type="text" name="reservation_resource_key" value="<?php echo esc_attr( $settings['reservation_resource_key'] ?? 'conference_room' ); ?>" class="regular-text">
 							<p class="description"><?php esc_html_e( 'Internal slug, e.g. conference_room. No spaces.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Business Hours Stripe Price ID', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="reservation_business_hours_price_id" value="<?php echo esc_attr( $settings['reservation_business_hours_price_id'] ?? '' ); ?>" class="regular-text" placeholder="price_xxx">
+							<p class="description"><?php esc_html_e( 'Stripe Price ID for Mon–Fri 9am–5pm slots (e.g. price_1Abc…). Create in Stripe Dashboard → Products.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'After-Hours Stripe Price ID', 'ajforms' ); ?></th>
+						<td>
+							<input type="text" name="reservation_after_hours_price_id" value="<?php echo esc_attr( $settings['reservation_after_hours_price_id'] ?? '' ); ?>" class="regular-text" placeholder="price_xxx">
+							<p class="description"><?php esc_html_e( 'Stripe Price ID for evenings and weekends (e.g. price_2Def…). Create in Stripe Dashboard → Products.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 				</table>

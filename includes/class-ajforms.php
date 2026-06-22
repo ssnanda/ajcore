@@ -12559,9 +12559,23 @@ class AJForms {
 			);
 		}
 
+		$biz_id   = $row && ! empty( $row->reservation_business_hours_price_id ) ? sanitize_text_field( (string) $row->reservation_business_hours_price_id ) : '';
+		$after_id = $row && ! empty( $row->reservation_after_hours_price_id ) ? sanitize_text_field( (string) $row->reservation_after_hours_price_id ) : '';
+
+		// Fall back to ajforms_settings when the product catalog has no configured Price IDs.
+		if ( '' === $biz_id || '' === $after_id ) {
+			$s = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+			if ( '' === $biz_id && ! empty( $s['reservation_business_hours_price_id'] ) ) {
+				$biz_id = sanitize_text_field( (string) $s['reservation_business_hours_price_id'] );
+			}
+			if ( '' === $after_id && ! empty( $s['reservation_after_hours_price_id'] ) ) {
+				$after_id = sanitize_text_field( (string) $s['reservation_after_hours_price_id'] );
+			}
+		}
+
 		return array(
-			'business_hours_price_id' => $row && ! empty( $row->reservation_business_hours_price_id ) ? sanitize_text_field( (string) $row->reservation_business_hours_price_id ) : '',
-			'after_hours_price_id'    => $row && ! empty( $row->reservation_after_hours_price_id ) ? sanitize_text_field( (string) $row->reservation_after_hours_price_id ) : '',
+			'business_hours_price_id' => $biz_id,
+			'after_hours_price_id'    => $after_id,
 		);
 	}
 
