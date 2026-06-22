@@ -98,6 +98,19 @@ class AJCore_REST_API {
 			'/portal/cart/checkout'   => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_cart_checkout', 'permission' => 'can_use_portal_api' ),
 			// Public (no auth) — product catalog for the non-logged-in home screen
 			'/public/services'        => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_public_services',      'permission' => 'public_permission' ),
+			// Portal reservation endpoints (sub-routes before bare /portal/reservations)
+			'/portal/reservations/config'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'portal_reservations_config',       'permission' => 'can_use_portal_api' ),
+			'/portal/reservations/availability'     => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'portal_reservations_availability',  'permission' => 'can_use_portal_api' ),
+			'/portal/reservations/quote'            => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_reservations_quote',         'permission' => 'can_use_portal_api' ),
+			'/portal/reservations/cart/add'         => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_reservations_cart_add',      'permission' => 'can_use_portal_api' ),
+			'/portal/reservations/cart/remove'      => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_reservations_cart_remove',   'permission' => 'can_use_portal_api' ),
+			'/portal/reservations/cart/checkout'    => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_reservations_cart_checkout', 'permission' => 'can_use_portal_api' ),
+			'/portal/reservations/cart'             => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'portal_reservations_get_cart',      'permission' => 'can_use_portal_api' ),
+			'/portal/reservations/(?P<id>[0-9]+)'   => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'portal_get_reservation',            'permission' => 'can_use_portal_api' ),
+			'/portal/reservations'                  => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'portal_get_reservations',            'permission' => 'can_use_portal_api' ),
+			// OPS read-only reservation endpoints
+			'/ops/reservations/(?P<id>[0-9]+)'      => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'ops_get_reservation',               'permission' => 'can_manage_ops_api' ),
+			'/ops/reservations'                     => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'ops_get_reservations',               'permission' => 'can_manage_ops_api' ),
 		);
 	}
 
@@ -138,6 +151,19 @@ class AJCore_REST_API {
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/tasks', 'auth' => 'Portal user or Admin', 'purpose' => 'Current user tasks and statuses.', 'app' => 'iOS tasks' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/files', 'auth' => 'Portal user or Admin', 'purpose' => 'Current user assigned/uploaded files metadata.', 'app' => 'iOS files' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/service-requests', 'auth' => 'Portal user or Admin', 'purpose' => 'Current user service requests.', 'app' => 'iOS service requests' ),
+			// Reservation portal endpoints
+			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations/config',        'auth' => 'Portal user', 'purpose' => 'Reservation config: enabled status, resource name, timezone, rates, booking window, hold minutes, policy text, Zoho configured flag.', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations',               'auth' => 'Portal user', 'purpose' => 'Current user reservations (excludes in_cart and admin_archived rows).', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations/availability',  'auth' => 'Portal user', 'purpose' => 'Slot availability check (booking window + local conflict + Zoho). Query params: resource_key, start_at, end_at.', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'POST', 'path' => '/portal/reservations/quote',         'auth' => 'Portal user', 'purpose' => 'Pricing quote for a slot: pricing_type, pricing_label, duration_minutes, amount, currency, availability, message.', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'POST', 'path' => '/portal/reservations/cart/add',      'auth' => 'Portal user', 'purpose' => 'Add slot to reservation cart. Body: resource_key, start_at, end_at, customer_phone, customer_notes.', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations/cart',          'auth' => 'Portal user', 'purpose' => 'Cart items with per-item and grand total pricing.', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'POST', 'path' => '/portal/reservations/cart/remove',   'auth' => 'Portal user', 'purpose' => 'Remove slot from cart. Body: reservation_uuid.', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'POST', 'path' => '/portal/reservations/cart/checkout', 'auth' => 'Portal user', 'purpose' => 'Stripe checkout for all cart items. Returns checkout_url, session_id, publishable_key.', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations/{id}',          'auth' => 'Portal user', 'purpose' => 'Single reservation by numeric ID — only returned if it belongs to the current portal user.', 'app' => 'iOS app' ),
+			// Reservation OPS endpoints
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/reservations',       'auth' => 'Admin', 'purpose' => 'All reservations with optional filters: status, resource_key, date_from, date_to, per_page.', 'app' => 'OPS reservations' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/reservations/{id}',  'auth' => 'Admin', 'purpose' => 'Single reservation detail (admin view — includes Stripe/Zoho IDs, customer notes, admin notes).', 'app' => 'OPS reservations' ),
 		);
 	}
 
@@ -486,6 +512,604 @@ class AJCore_REST_API {
 		return rest_ensure_response( $result );
 	}
 
+	// ── Portal Reservation Endpoints ─────────────────────────────────────────────
+
+	public function portal_reservations_config() {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$enabled   = ! empty( $settings['zoho_reservations_enabled'] );
+		$has_token = ! empty( $settings['zoho_access_token'] ) || ! empty( $settings['zoho_api_token'] );
+
+		return rest_ensure_response( array(
+			'enabled'              => (bool) $enabled,
+			'resource_name'        => ! empty( $settings['reservation_resource_name'] )        ? sanitize_text_field( $settings['reservation_resource_name'] )        : 'Conference Room',
+			'resource_key'         => ! empty( $settings['reservation_resource_key'] )         ? sanitize_key( $settings['reservation_resource_key'] )                : 'conference_room',
+			'timezone'             => ! empty( $settings['zoho_default_timezone'] )            ? sanitize_text_field( $settings['zoho_default_timezone'] )            : 'America/New_York',
+			'business_hours_label' => ! empty( $settings['reservation_business_hours_label'] ) ? sanitize_text_field( $settings['reservation_business_hours_label'] ) : 'Business Hours (Mon–Fri 9am–5pm)',
+			'after_hours_label'    => ! empty( $settings['reservation_after_hours_label'] )    ? sanitize_text_field( $settings['reservation_after_hours_label'] )    : 'After-Hours / Weekend',
+			'business_hours_rate'  => isset( $settings['reservation_business_hours_rate'] )    ? (float) $settings['reservation_business_hours_rate']                 : 40.0,
+			'after_hours_rate'     => isset( $settings['reservation_after_hours_rate'] )       ? (float) $settings['reservation_after_hours_rate']                    : 80.0,
+			'currency'             => 'usd',
+			'booking_window_start' => AJCore_Reservations::BOOKING_WINDOW_START_HOUR,
+			'booking_window_end'   => AJCore_Reservations::BOOKING_WINDOW_END_HOUR,
+			'min_duration_minutes' => 60,
+			'max_duration_minutes' => 840,
+			'pending_hold_minutes' => AJCore_Reservations::PENDING_HOLD_MINUTES,
+			'policy_text'          => __( 'No cancellations, no rescheduling — reservations are final.', 'ajforms' ),
+			'zoho_configured'      => (bool) ( $has_token && ! empty( $settings['zoho_calendar_uid'] ) ),
+		) );
+	}
+
+	public function portal_get_reservations() {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return rest_ensure_response( array( 'reservations' => array() ) );
+		}
+		$settings           = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone           = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$wp_user_id         = get_current_user_id();
+		$rows               = AJCore_Reservations::get_customer_reservations( $stripe_customer_id, $wp_user_id );
+
+		$formatted = array_map( function( $row ) use ( $timezone ) {
+			return $this->format_reservation_row( (array) $row, $timezone, false );
+		}, is_array( $rows ) ? $rows : array() );
+
+		return rest_ensure_response( array( 'reservations' => array_values( $formatted ) ) );
+	}
+
+	public function portal_reservations_availability( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$resource_key = sanitize_key( (string) ( $request->get_param( 'resource_key' ) ?: '' ) );
+		$start_at_raw = sanitize_text_field( (string) ( $request->get_param( 'start_at' ) ?: '' ) );
+		$end_at_raw   = sanitize_text_field( (string) ( $request->get_param( 'end_at' ) ?: '' ) );
+
+		if ( '' === $resource_key || '' === $start_at_raw || '' === $end_at_raw ) {
+			return new WP_Error( 'missing_params', __( 'resource_key, start_at, and end_at are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+
+		try {
+			$start_dt = $this->res_parse_dt( $start_at_raw, $timezone );
+			$end_dt   = $this->res_parse_dt( $end_at_raw, $timezone );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'invalid_datetime', __( 'Invalid date/time format.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$slot_check = $this->res_validate_slot( $start_dt, $end_dt, $timezone );
+		if ( is_wp_error( $slot_check ) ) {
+			return rest_ensure_response( array( 'available' => false, 'message' => $slot_check->get_error_message() ) );
+		}
+
+		$resource = AJCore_Reservations::get_resource_by_key( $resource_key );
+		if ( ! $resource ) {
+			return new WP_Error( 'resource_not_found', __( 'Resource not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$avail = $this->res_check_slot_availability( $resource, $start_dt, $end_dt, $timezone, $settings );
+
+		return rest_ensure_response( array(
+			'available'    => (bool) $avail['available'],
+			'message'      => isset( $avail['message'] )      ? $avail['message']      : '',
+			'pricing_type' => isset( $avail['pricing_type'] ) ? $avail['pricing_type'] : '',
+		) );
+	}
+
+	public function portal_reservations_quote( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$resource_key = sanitize_key( (string) ( $request->get_param( 'resource_key' ) ?: '' ) );
+		$start_at_raw = sanitize_text_field( (string) ( $request->get_param( 'start_at' ) ?: '' ) );
+		$end_at_raw   = sanitize_text_field( (string) ( $request->get_param( 'end_at' ) ?: '' ) );
+
+		if ( '' === $resource_key || '' === $start_at_raw || '' === $end_at_raw ) {
+			return new WP_Error( 'missing_params', __( 'resource_key, start_at, and end_at are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+
+		try {
+			$start_dt = $this->res_parse_dt( $start_at_raw, $timezone );
+			$end_dt   = $this->res_parse_dt( $end_at_raw, $timezone );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'invalid_datetime', __( 'Invalid date/time format.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$slot_check = $this->res_validate_slot( $start_dt, $end_dt, $timezone );
+		if ( is_wp_error( $slot_check ) ) {
+			return new WP_Error( $slot_check->get_error_code(), $slot_check->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		$start_at_utc = $start_dt->format( 'Y-m-d H:i:s' );
+		$end_at_utc   = $end_dt->format( 'Y-m-d H:i:s' );
+
+		$resource = AJCore_Reservations::get_resource_by_key( $resource_key );
+		if ( ! $resource ) {
+			return new WP_Error( 'resource_not_found', __( 'Resource not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$breakdown = AJCore_Reservations::calculate_pricing_breakdown( $start_at_utc, $end_at_utc, $timezone );
+		if ( is_wp_error( $breakdown ) ) {
+			return new WP_Error( $breakdown->get_error_code(), $breakdown->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		$avail      = $this->res_check_slot_availability( $resource, $start_dt, $end_dt, $timezone, $settings );
+		$biz_rate   = max( 1.0, (float) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate = max( 1.0, (float) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+		$biz_label  = ! empty( $settings['reservation_business_hours_label'] ) ? $settings['reservation_business_hours_label'] : 'Business Hours (Mon–Fri 9am–5pm)';
+		$aft_label  = ! empty( $settings['reservation_after_hours_label'] )    ? $settings['reservation_after_hours_label']    : 'After-Hours / Weekend';
+
+		$biz_amount   = round( ( $breakdown['business_minutes'] / 60 ) * $biz_rate, 2 );
+		$after_amount = round( ( $breakdown['after_hours_minutes'] / 60 ) * $after_rate, 2 );
+		$total_amount = $biz_amount + $after_amount;
+
+		if ( 'business_hours' === $breakdown['pricing_type'] ) {
+			$pricing_label = $biz_label;
+		} elseif ( 'after_hours_weekend' === $breakdown['pricing_type'] ) {
+			$pricing_label = $aft_label;
+		} else {
+			$pricing_label = __( 'Mixed (Business + After-Hours)', 'ajforms' );
+		}
+
+		return rest_ensure_response( array(
+			'pricing_type'        => $breakdown['pricing_type'],
+			'pricing_label'       => $pricing_label,
+			'duration_minutes'    => (int) $breakdown['total_minutes'],
+			'business_minutes'    => (int) $breakdown['business_minutes'],
+			'after_hours_minutes' => (int) $breakdown['after_hours_minutes'],
+			'business_amount'     => $biz_amount,
+			'after_hours_amount'  => $after_amount,
+			'amount'              => $total_amount,
+			'currency'            => 'usd',
+			'availability'        => (bool) $avail['available'],
+			'message'             => isset( $avail['message'] ) ? $avail['message'] : '',
+		) );
+	}
+
+	public function portal_reservations_cart_add( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$resource_key   = sanitize_key( (string) ( $request->get_param( 'resource_key' ) ?: '' ) );
+		$start_at_raw   = sanitize_text_field( (string) ( $request->get_param( 'start_at' ) ?: '' ) );
+		$end_at_raw     = sanitize_text_field( (string) ( $request->get_param( 'end_at' ) ?: '' ) );
+		$customer_phone = sanitize_text_field( (string) ( $request->get_param( 'customer_phone' ) ?: '' ) );
+		$customer_notes = sanitize_textarea_field( (string) ( $request->get_param( 'customer_notes' ) ?: '' ) );
+
+		if ( '' === $resource_key || '' === $start_at_raw || '' === $end_at_raw ) {
+			return new WP_Error( 'missing_params', __( 'resource_key, start_at, and end_at are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone   = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$wp_user    = wp_get_current_user();
+		$wp_user_id = (int) $wp_user->ID;
+
+		try {
+			$start_dt = $this->res_parse_dt( $start_at_raw, $timezone );
+			$end_dt   = $this->res_parse_dt( $end_at_raw, $timezone );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'invalid_datetime', __( 'Invalid date/time format.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$slot_check = $this->res_validate_slot( $start_dt, $end_dt, $timezone );
+		if ( is_wp_error( $slot_check ) ) {
+			return new WP_Error( $slot_check->get_error_code(), $slot_check->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		$start_at_utc = $start_dt->format( 'Y-m-d H:i:s' );
+		$end_at_utc   = $end_dt->format( 'Y-m-d H:i:s' );
+
+		$window_check = AJCore_Reservations::validate_booking_window( $start_at_utc, $end_at_utc, $timezone );
+		if ( is_wp_error( $window_check ) ) {
+			return new WP_Error( $window_check->get_error_code(), $window_check->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		$resource = AJCore_Reservations::get_resource_by_key( $resource_key );
+		if ( ! $resource ) {
+			return new WP_Error( 'resource_not_found', __( 'Resource not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$avail = $this->res_check_slot_availability( $resource, $start_dt, $end_dt, $timezone, $settings );
+		if ( empty( $avail['available'] ) ) {
+			return new WP_Error( 'not_available', isset( $avail['message'] ) ? $avail['message'] : __( 'This slot is not available.', 'ajforms' ), array( 'status' => 409 ) );
+		}
+
+		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
+		$biz_rate     = max( 1.0, (float) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate   = max( 1.0, (float) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+		$unit_rate    = 'business_hours' === $pricing_type ? $biz_rate : $after_rate;
+		$duration_hrs = max( 1, (int) round( ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) / 3600 ) );
+		$total_amount = $unit_rate * $duration_hrs;
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$customer_name      = sanitize_text_field( $wp_user->display_name ? $wp_user->display_name : $wp_user->user_login );
+		$customer_email     = sanitize_email( $wp_user->user_email );
+		$stored_notes       = trim( sprintf( "Phone: %s\n%s", $customer_phone, $customer_notes ) );
+
+		$pending = AJCore_Reservations::create_pending_reservation( array(
+			'resource_id'        => (int) $resource->id,
+			'resource_key'       => sanitize_key( (string) $resource->resource_key ),
+			'resource_name'      => sanitize_text_field( (string) $resource->resource_name ),
+			'stripe_customer_id' => $stripe_customer_id,
+			'wp_user_id'         => $wp_user_id,
+			'start_at'           => $start_at_utc,
+			'end_at'             => $end_at_utc,
+			'timezone'           => $timezone,
+			'pricing_type'       => $pricing_type,
+			'amount'             => $total_amount,
+			'currency'           => 'usd',
+			'customer_name'      => $customer_name,
+			'customer_email'     => $customer_email,
+			'customer_notes'     => $stored_notes,
+			'zoho_calendar_id'   => ! empty( $settings['zoho_calendar_id'] )   ? $settings['zoho_calendar_id']   : '',
+			'zoho_resource_uid'  => ! empty( $settings['zoho_resource_uid'] )   ? $settings['zoho_resource_uid']   : '',
+		) );
+
+		if ( is_wp_error( $pending ) ) {
+			return new WP_Error( $pending->get_error_code(), $pending->get_error_message(), array( 'status' => 500 ) );
+		}
+
+		$pdb_res   = AJCore_Reservations::get_pdb();
+		$res_table = AJCore_Reservations::get_reservations_table();
+		$pdb_res->update(
+			$res_table,
+			array( 'status' => 'in_cart', 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => (int) $pending['id'] ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+
+		AJCore_Reservations::log_reservation_event( 'reservation_added_to_cart', array(
+			'reservation_uuid'   => $pending['reservation_uuid'],
+			'reservation_id'     => $pending['id'],
+			'stripe_customer_id' => $stripe_customer_id,
+			'wp_user_id'         => $wp_user_id,
+			'resource_key'       => $resource_key,
+			'pricing_type'       => $pricing_type,
+			'start_at'           => $start_at_utc,
+			'end_at'             => $end_at_utc,
+			'source'             => 'portal_api',
+		) );
+
+		$cart_items = AJCore_Reservations::get_cart_reservations( $stripe_customer_id, $wp_user_id );
+
+		return rest_ensure_response( array(
+			'reservation_uuid' => $pending['reservation_uuid'],
+			'reservation_id'   => (int) $pending['id'],
+			'cart_count'       => count( $cart_items ),
+			'message'          => __( 'Added to cart.', 'ajforms' ),
+		) );
+	}
+
+	public function portal_reservations_get_cart() {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return rest_ensure_response( array( 'items' => array(), 'total' => 0.0, 'currency' => 'usd', 'count' => 0 ) );
+		}
+		$settings           = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone           = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$wp_user_id         = get_current_user_id();
+		$items              = AJCore_Reservations::get_cart_reservations( $stripe_customer_id, $wp_user_id );
+
+		$formatted   = array();
+		$grand_total = 0.0;
+		$biz_rate    = max( 1.0, (float) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate  = max( 1.0, (float) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+
+		foreach ( $items as $item ) {
+			$row = $this->res_format_cart_item( (array) $item, $settings, $timezone, $biz_rate, $after_rate );
+			if ( $row ) {
+				$formatted[]  = $row;
+				$grand_total += (float) $row['total'];
+			}
+		}
+
+		return rest_ensure_response( array(
+			'items'    => $formatted,
+			'total'    => round( $grand_total, 2 ),
+			'currency' => 'usd',
+			'count'    => count( $formatted ),
+		) );
+	}
+
+	public function portal_reservations_cart_remove( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$uuid = sanitize_text_field( (string) ( $request->get_param( 'reservation_uuid' ) ?: '' ) );
+		if ( '' === $uuid ) {
+			return new WP_Error( 'missing_param', __( 'reservation_uuid is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$wp_user_id         = get_current_user_id();
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$pdb_res            = AJCore_Reservations::get_pdb();
+		$res_table          = AJCore_Reservations::get_reservations_table();
+
+		$reservation = $pdb_res->get_row( $pdb_res->prepare(
+			"SELECT * FROM `{$res_table}` WHERE reservation_uuid = %s AND status = 'in_cart' AND (wp_user_id = %d OR stripe_customer_id = %s) LIMIT 1",
+			$uuid, $wp_user_id, $stripe_customer_id
+		) );
+
+		if ( ! $reservation ) {
+			return new WP_Error( 'not_found', __( 'Reservation not found or already removed.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		if ( ! AJCore_Reservations::is_hard_delete_allowed( $reservation ) ) {
+			return new WP_Error( 'cannot_remove', __( 'This reservation cannot be removed from cart.', 'ajforms' ), array( 'status' => 409 ) );
+		}
+
+		$pdb_res->delete( $res_table, array( 'id' => (int) $reservation->id ), array( '%d' ) );
+
+		AJCore_Reservations::log_reservation_event( 'reservation_removed_from_cart', array(
+			'reservation_uuid'   => $uuid,
+			'reservation_id'     => $reservation->id,
+			'stripe_customer_id' => $stripe_customer_id,
+			'wp_user_id'         => $wp_user_id,
+			'source'             => 'portal_api',
+		) );
+
+		$settings    = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone    = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$biz_rate    = max( 1.0, (float) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate  = max( 1.0, (float) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+		$items       = AJCore_Reservations::get_cart_reservations( $stripe_customer_id, $wp_user_id );
+		$formatted   = array();
+		$grand_total = 0.0;
+
+		foreach ( $items as $item ) {
+			$row = $this->res_format_cart_item( (array) $item, $settings, $timezone, $biz_rate, $after_rate );
+			if ( $row ) {
+				$formatted[]  = $row;
+				$grand_total += (float) $row['total'];
+			}
+		}
+
+		return rest_ensure_response( array(
+			'success'  => true,
+			'items'    => $formatted,
+			'total'    => round( $grand_total, 2 ),
+			'currency' => 'usd',
+			'count'    => count( $formatted ),
+		) );
+	}
+
+	public function portal_reservations_cart_checkout() {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$settings           = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone           = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$wp_user_id         = get_current_user_id();
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$cart_items         = AJCore_Reservations::get_cart_reservations( $stripe_customer_id, $wp_user_id );
+
+		if ( empty( $cart_items ) ) {
+			return new WP_Error( 'empty_cart', __( 'Your cart is empty.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$line_items = array();
+		$uuids      = array();
+
+		foreach ( $cart_items as $item ) {
+			$item_uuid    = sanitize_text_field( (string) $item->reservation_uuid );
+			$start_at_utc = sanitize_text_field( (string) $item->start_at );
+			$end_at_utc   = sanitize_text_field( (string) $item->end_at );
+			$resource_id  = (int) $item->resource_id;
+
+			$conflict = AJCore_Reservations::check_local_conflict( $resource_id, $start_at_utc, $end_at_utc, $item_uuid );
+			if ( is_wp_error( $conflict ) ) {
+				return new WP_Error( 'cart_conflict', sprintf(
+					/* translators: %s: reservation start time */
+					__( 'A slot in your cart is no longer available: %s. Please remove it and try again.', 'ajforms' ),
+					$start_at_utc
+				), array( 'status' => 409 ) );
+			}
+
+			$breakdown = AJCore_Reservations::calculate_pricing_breakdown( $start_at_utc, $end_at_utc, $timezone );
+			if ( is_wp_error( $breakdown ) ) {
+				continue;
+			}
+
+			$item_prices         = $this->res_get_price_ids( sanitize_key( (string) $item->resource_key ), $settings );
+			$item_biz_price_id   = $item_prices['business_hours_price_id'];
+			$item_after_price_id = $item_prices['after_hours_price_id'];
+
+			if ( '' === $item_biz_price_id || '' === $item_after_price_id ) {
+				return new WP_Error( 'pricing_not_configured', __( 'Conference room pricing is not fully configured. Please contact support.', 'ajforms' ), array( 'status' => 503 ) );
+			}
+
+			$biz_qty   = (int) round( $breakdown['business_minutes'] / 60 );
+			$after_qty = (int) round( $breakdown['after_hours_minutes'] / 60 );
+
+			if ( $biz_qty > 0 ) {
+				$line_items[] = array( 'price' => $item_biz_price_id, 'quantity' => $biz_qty );
+			}
+			if ( $after_qty > 0 ) {
+				$line_items[] = array( 'price' => $item_after_price_id, 'quantity' => $after_qty );
+			}
+			if ( 0 === $biz_qty && 0 === $after_qty ) {
+				$total_qty    = max( 1, (int) round( $breakdown['total_minutes'] / 60 ) );
+				$line_items[] = array(
+					'price'    => 'business_hours' === $breakdown['pricing_type'] ? $item_biz_price_id : $item_after_price_id,
+					'quantity' => $total_qty,
+				);
+			}
+			$uuids[] = $item_uuid;
+		}
+
+		if ( empty( $line_items ) ) {
+			return new WP_Error( 'empty_cart', __( 'No valid items in cart.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$stripe_settings = $this->res_get_stripe_settings( $settings );
+		$secret_key      = $stripe_settings['secret_key'];
+		$pub_key         = $stripe_settings['publishable_key'];
+
+		if ( '' === $secret_key ) {
+			return new WP_Error( 'payment_not_configured', __( 'Payment gateway is not configured.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		$portal_url  = home_url( '/' );
+		$success_url = add_query_arg( array( 'portal_tab' => 'reservations', 'res_success' => '1' ), $portal_url );
+		$cancel_url  = add_query_arg( array( 'portal_tab' => 'reservations', 'res_cancel' => '1' ), $portal_url );
+		$uuids_str   = implode( ',', $uuids );
+
+		$checkout_payload = array(
+			'payment_method_types' => array( 'card' ),
+			'mode'                 => 'payment',
+			'line_items'           => $line_items,
+			'success_url'          => $success_url,
+			'cancel_url'           => $cancel_url,
+			'metadata'             => array(
+				'reservation_uuids' => $uuids_str,
+				'ajcore_source'     => 'reservation_cart',
+			),
+		);
+
+		if ( $stripe_customer_id && 0 === strpos( $stripe_customer_id, 'cus_' ) ) {
+			$checkout_payload['customer'] = $stripe_customer_id;
+		} else {
+			$first_item                         = (array) $cart_items[0];
+			$checkout_payload['customer_email'] = sanitize_email( (string) ( $first_item['customer_email'] ?? '' ) );
+		}
+
+		$response = wp_remote_post(
+			'https://api.stripe.com/v1/checkout/sessions',
+			array(
+				'timeout' => 20,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $secret_key,
+					'Content-Type'  => 'application/x-www-form-urlencoded',
+				),
+				'body' => $this->res_flatten_for_stripe( $checkout_payload ),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'stripe_error', __( 'Payment gateway error. Please try again.', 'ajforms' ), array( 'status' => 502 ) );
+		}
+
+		$code         = wp_remote_retrieve_response_code( $response );
+		$body         = json_decode( wp_remote_retrieve_body( $response ), true );
+		$session_id   = ! empty( $body['id'] )  ? sanitize_text_field( (string) $body['id'] )  : '';
+		$checkout_url = ! empty( $body['url'] ) ? esc_url_raw( (string) $body['url'] )          : '';
+
+		if ( 200 !== (int) $code || ! $session_id || ! $checkout_url ) {
+			$err_msg = ! empty( $body['error']['message'] ) ? $body['error']['message'] : __( 'Could not create checkout session.', 'ajforms' );
+			return new WP_Error( 'stripe_session_error', $err_msg, array( 'status' => 502 ) );
+		}
+
+		$pdb       = AJCore_Reservations::get_pdb();
+		$res_table = AJCore_Reservations::get_reservations_table();
+		foreach ( $uuids as $uuid ) {
+			$pdb->update(
+				$res_table,
+				array( 'stripe_checkout_session_id' => $session_id, 'updated_at' => current_time( 'mysql' ) ),
+				array( 'reservation_uuid' => $uuid ),
+				array( '%s', '%s' ),
+				array( '%s' )
+			);
+		}
+
+		AJCore_Reservations::log_reservation_event( 'reservation_cart_checkout_started', array(
+			'reservation_uuids'          => $uuids_str,
+			'stripe_customer_id'         => $stripe_customer_id,
+			'wp_user_id'                 => $wp_user_id,
+			'stripe_checkout_session_id' => $session_id,
+			'item_count'                 => count( $uuids ),
+			'source'                     => 'portal_api',
+		) );
+
+		return rest_ensure_response( array(
+			'checkout_url'    => $checkout_url,
+			'session_id'      => $session_id,
+			'publishable_key' => $pub_key,
+		) );
+	}
+
+	public function portal_get_reservation( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$id                 = absint( $request->get_param( 'id' ) );
+		$wp_user_id         = get_current_user_id();
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$pdb                = AJCore_Reservations::get_pdb();
+		$res_table          = AJCore_Reservations::get_reservations_table();
+
+		$reservation = $pdb->get_row( $pdb->prepare(
+			"SELECT * FROM `{$res_table}` WHERE id = %d AND status <> 'admin_archived' AND (wp_user_id = %d OR stripe_customer_id = %s) LIMIT 1",
+			$id, $wp_user_id, $stripe_customer_id
+		) );
+
+		if ( ! $reservation ) {
+			return new WP_Error( 'not_found', __( 'Reservation not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+
+		return rest_ensure_response( array(
+			'reservation' => $this->format_reservation_row( (array) $reservation, $timezone, false ),
+		) );
+	}
+
+	// ── OPS Reservation Endpoints ─────────────────────────────────────────────
+
+	public function ops_get_reservations( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return rest_ensure_response( array( 'reservations' => array() ) );
+		}
+		$status       = sanitize_key( (string) ( $request->get_param( 'status' ) ?: '' ) );
+		$resource_key = sanitize_key( (string) ( $request->get_param( 'resource_key' ) ?: '' ) );
+		$date_from    = sanitize_text_field( (string) ( $request->get_param( 'date_from' ) ?: '' ) );
+		$date_to      = sanitize_text_field( (string) ( $request->get_param( 'date_to' ) ?: '' ) );
+		$limit        = min( 200, max( 1, absint( $request->get_param( 'per_page' ) ?: 50 ) ) );
+
+		$filters = array( 'limit' => $limit );
+		if ( '' !== $status )       { $filters['status']       = $status; }
+		if ( '' !== $resource_key ) { $filters['resource_key'] = $resource_key; }
+		if ( '' !== $date_from )    { $filters['date_from']    = $date_from; }
+		if ( '' !== $date_to )      { $filters['date_to']      = $date_to; }
+
+		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone  = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$rows      = AJCore_Reservations::get_all_reservations( $filters );
+
+		$formatted = array_map( function( $row ) use ( $timezone ) {
+			return $this->format_reservation_row( (array) $row, $timezone, true );
+		}, is_array( $rows ) ? $rows : array() );
+
+		return rest_ensure_response( array( 'reservations' => array_values( $formatted ) ) );
+	}
+
+	public function ops_get_reservation( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$id        = absint( $request->get_param( 'id' ) );
+		$pdb       = AJCore_Reservations::get_pdb();
+		$res_table = AJCore_Reservations::get_reservations_table();
+
+		$reservation = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$res_table}` WHERE id = %d LIMIT 1", $id ) );
+		if ( ! $reservation ) {
+			return new WP_Error( 'not_found', __( 'Reservation not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+
+		return rest_ensure_response( array(
+			'reservation' => $this->format_reservation_row( (array) $reservation, $timezone, true ),
+		) );
+	}
+
 	private function get_portal_db() {
 		if ( function_exists( 'ajcore_get_portal_db' ) ) {
 			return ajcore_get_portal_db();
@@ -585,6 +1209,236 @@ class AJCore_REST_API {
 				}
 			}
 		}
+		return $row;
+	}
+
+	// ── Reservation private helpers ───────────────────────────────────────────────
+
+	private function res_parse_dt( $raw, $timezone ) {
+		$timezone = ! empty( $timezone ) ? $timezone : 'America/New_York';
+		$tz       = new DateTimeZone( $timezone );
+		if ( preg_match( '/(?:Z|[+-]\d{2}:?\d{2})$/', (string) $raw ) ) {
+			$dt = new DateTime( (string) $raw );
+		} else {
+			$dt = new DateTime( (string) $raw, $tz );
+		}
+		$dt->setTimezone( new DateTimeZone( 'UTC' ) );
+		return $dt;
+	}
+
+	private function res_validate_slot( $start_dt, $end_dt, $timezone ) {
+		$tz    = new DateTimeZone( ! empty( $timezone ) ? $timezone : 'America/New_York' );
+		$start = clone $start_dt;
+		$end   = clone $end_dt;
+		$start->setTimezone( $tz );
+		$end->setTimezone( $tz );
+
+		if ( '00' !== $start->format( 'i' ) || '00' !== $end->format( 'i' ) ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must start and end on the hour.', 'ajforms' ) );
+		}
+		$secs = $end_dt->getTimestamp() - $start_dt->getTimestamp();
+		if ( $secs < 3600 ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must be at least one hour.', 'ajforms' ) );
+		}
+		if ( $secs > 50400 ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations cannot exceed 14 hours.', 'ajforms' ) );
+		}
+		if ( 0 !== ( $secs % 3600 ) ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservations must be in whole-hour increments.', 'ajforms' ) );
+		}
+		return true;
+	}
+
+	private function res_check_slot_availability( $resource, $start_dt, $end_dt, $timezone, $settings ) {
+		$start_at_utc = $start_dt->format( 'Y-m-d H:i:s' );
+		$end_at_utc   = $end_dt->format( 'Y-m-d H:i:s' );
+
+		$window = AJCore_Reservations::validate_booking_window( $start_at_utc, $end_at_utc, $timezone );
+		if ( is_wp_error( $window ) ) {
+			return array( 'available' => false, 'message' => $window->get_error_message() );
+		}
+
+		$conflict = AJCore_Reservations::check_local_conflict( (int) $resource->id, $start_at_utc, $end_at_utc, '' );
+		if ( is_wp_error( $conflict ) ) {
+			return array( 'available' => false, 'message' => $conflict->get_error_message() );
+		}
+
+		$api_token    = ! empty( $settings['zoho_access_token'] ) ? $settings['zoho_access_token'] : ( ! empty( $settings['zoho_api_token'] ) ? $settings['zoho_api_token'] : '' );
+		$calendar_uid = ! empty( $settings['zoho_calendar_uid'] )         ? $settings['zoho_calendar_uid']         : '';
+		$resource_uid = ! empty( $settings['zoho_resource_uid'] )         ? $settings['zoho_resource_uid']         : '';
+		$freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';
+		$failure_mode = ! empty( $settings['zoho_availability_failure_mode'] ) ? $settings['zoho_availability_failure_mode'] : 'strict';
+
+		if ( $api_token && $calendar_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
+			$check = AJCore_Zoho_Calendar::check_zoho_calendar_events_availability( $calendar_uid, $start_dt->format( 'c' ), $end_dt->format( 'c' ), $timezone, $api_token );
+			if ( is_wp_error( $check ) ) {
+				if ( 'lenient' !== $failure_mode ) {
+					return array( 'available' => false, 'message' => __( 'Could not verify calendar availability. Please try again or contact support.', 'ajforms' ) );
+				}
+				AJCore_Reservations::log_reservation_event( 'reservation_zoho_check_failed', array( 'severity' => 'warning', 'error' => $check->get_error_message(), 'mode' => 'lenient', 'source' => 'portal_api' ) );
+			} elseif ( isset( $check['is_free'] ) && ! (bool) $check['is_free'] ) {
+				return array( 'available' => false, 'message' => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ) );
+			}
+		} elseif ( $api_token && $resource_uid && $freebusy_url && class_exists( 'AJCore_Zoho_Calendar' ) ) {
+			$freebusy = AJCore_Zoho_Calendar::check_zoho_resource_freebusy( $resource_uid, $freebusy_url, $start_dt->format( 'c' ), $end_dt->format( 'c' ), $api_token );
+			if ( is_wp_error( $freebusy ) ) {
+				if ( 'lenient' !== $failure_mode ) {
+					return array( 'available' => false, 'message' => __( 'Could not verify calendar availability. Please try again or contact support.', 'ajforms' ) );
+				}
+				AJCore_Reservations::log_reservation_event( 'reservation_zoho_check_failed', array( 'severity' => 'warning', 'error' => $freebusy->get_error_message(), 'mode' => 'lenient', 'source' => 'portal_api' ) );
+			} elseif ( isset( $freebusy['is_free'] ) && ! (bool) $freebusy['is_free'] ) {
+				return array( 'available' => false, 'message' => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ) );
+			}
+		}
+
+		return array(
+			'available'    => true,
+			'pricing_type' => AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone ),
+		);
+	}
+
+	private function res_get_price_ids( $resource_key, $settings = array() ) {
+		$pdb   = AJCore_Reservations::get_pdb();
+		$table = $pdb->prefix . 'aj_portal_product_catalog';
+
+		$biz_id   = '';
+		$after_id = '';
+
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) {
+			$row = $pdb->get_row( $pdb->prepare(
+				"SELECT reservation_business_hours_price_id, reservation_after_hours_price_id FROM `{$table}` WHERE product_type = 'reservation' AND reservation_resource_key = %s ORDER BY id DESC LIMIT 1",
+				sanitize_key( (string) $resource_key )
+			) );
+			if ( ! $row ) {
+				$row = $pdb->get_row(
+					"SELECT reservation_business_hours_price_id, reservation_after_hours_price_id FROM `{$table}` WHERE product_type = 'reservation' AND reservation_business_hours_price_id <> '' AND reservation_after_hours_price_id <> '' ORDER BY id DESC LIMIT 1"
+				);
+			}
+			if ( $row ) {
+				$biz_id   = ! empty( $row->reservation_business_hours_price_id ) ? sanitize_text_field( (string) $row->reservation_business_hours_price_id ) : '';
+				$after_id = ! empty( $row->reservation_after_hours_price_id )     ? sanitize_text_field( (string) $row->reservation_after_hours_price_id )    : '';
+			}
+		}
+
+		if ( '' === $biz_id && ! empty( $settings['reservation_business_hours_price_id'] ) ) {
+			$biz_id = sanitize_text_field( (string) $settings['reservation_business_hours_price_id'] );
+		}
+		if ( '' === $after_id && ! empty( $settings['reservation_after_hours_price_id'] ) ) {
+			$after_id = sanitize_text_field( (string) $settings['reservation_after_hours_price_id'] );
+		}
+
+		return array( 'business_hours_price_id' => $biz_id, 'after_hours_price_id' => $after_id );
+	}
+
+	private function res_get_stripe_settings( $settings = array() ) {
+		if ( empty( $settings ) ) {
+			$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		}
+		return array(
+			'publishable_key' => ! empty( $settings['stripe_publishable_key'] ) ? sanitize_text_field( (string) $settings['stripe_publishable_key'] ) : '',
+			'secret_key'      => ! empty( $settings['stripe_secret_key'] )      ? sanitize_text_field( (string) $settings['stripe_secret_key'] )      : '',
+		);
+	}
+
+	private function res_flatten_for_stripe( $array, $prefix = '' ) {
+		$result = array();
+		foreach ( $array as $key => $value ) {
+			$full_key = '' !== $prefix ? $prefix . '[' . $key . ']' : (string) $key;
+			if ( is_array( $value ) ) {
+				$result = array_merge( $result, $this->res_flatten_for_stripe( $value, $full_key ) );
+			} else {
+				$result[ $full_key ] = $value;
+			}
+		}
+		return $result;
+	}
+
+	private function res_format_cart_item( $item, $settings, $timezone, $biz_rate, $after_rate ) {
+		try {
+			$tz    = new DateTimeZone( ! empty( $timezone ) ? $timezone : 'America/New_York' );
+			$start = new DateTime( (string) ( $item['start_at'] ?? 'now' ), new DateTimeZone( 'UTC' ) );
+			$end   = new DateTime( (string) ( $item['end_at'] ?? 'now' ), new DateTimeZone( 'UTC' ) );
+			$start->setTimezone( $tz );
+			$end->setTimezone( $tz );
+		} catch ( Exception $e ) {
+			return null;
+		}
+		$pricing_type = isset( $item['pricing_type'] ) ? (string) $item['pricing_type'] : 'after_hours_weekend';
+		$rate         = 'business_hours' === $pricing_type ? $biz_rate : $after_rate;
+		$hours        = max( 1, (int) round( ( $end->getTimestamp() - $start->getTimestamp() ) / 3600 ) );
+		$biz_label    = ! empty( $settings['reservation_business_hours_label'] ) ? $settings['reservation_business_hours_label'] : 'Business Hours';
+		$aft_label    = ! empty( $settings['reservation_after_hours_label'] )    ? $settings['reservation_after_hours_label']    : 'After-Hours / Weekend';
+
+		return array(
+			'reservation_uuid' => isset( $item['reservation_uuid'] ) ? (string) $item['reservation_uuid'] : '',
+			'reservation_id'   => isset( $item['id'] )               ? (int) $item['id']                  : 0,
+			'resource_key'     => isset( $item['resource_key'] )     ? (string) $item['resource_key']     : '',
+			'resource_name'    => isset( $item['resource_name'] )    ? (string) $item['resource_name']    : '',
+			'start_at_utc'     => isset( $item['start_at'] )         ? (string) $item['start_at']         : '',
+			'end_at_utc'       => isset( $item['end_at'] )           ? (string) $item['end_at']           : '',
+			'start_at_local'   => $start->format( 'Y-m-d\TH:i:s' ),
+			'end_at_local'     => $end->format( 'Y-m-d\TH:i:s' ),
+			'timezone'         => $timezone,
+			'date_display'     => $start->format( 'M j, Y' ),
+			'time_display'     => $start->format( 'g:i A' ) . ' – ' . $end->format( 'g:i A T' ),
+			'duration_hours'   => $hours,
+			'pricing_type'     => $pricing_type,
+			'pricing_label'    => 'business_hours' === $pricing_type ? $biz_label : $aft_label,
+			'rate'             => $rate,
+			'total'            => round( $hours * $rate, 2 ),
+			'currency'         => 'usd',
+		);
+	}
+
+	private function format_reservation_row( $res, $timezone, $is_ops = false ) {
+		$res_timezone = ! empty( $res['timezone'] ) ? $res['timezone'] : $timezone;
+		$row          = array(
+			'id'               => (int) ( $res['id'] ?? 0 ),
+			'reservation_uuid' => (string) ( $res['reservation_uuid'] ?? '' ),
+			'reservation_ref'  => class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( (int) ( $res['id'] ?? 0 ) ) : '',
+			'resource_key'     => (string) ( $res['resource_key'] ?? '' ),
+			'resource_name'    => (string) ( $res['resource_name'] ?? '' ),
+			'start_at_utc'     => (string) ( $res['start_at'] ?? '' ),
+			'end_at_utc'       => (string) ( $res['end_at'] ?? '' ),
+			'timezone'         => $res_timezone,
+			'status'           => (string) ( $res['status'] ?? '' ),
+			'status_label'     => class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_label( (string) ( $res['status'] ?? '' ) ) : (string) ( $res['status'] ?? '' ),
+			'pricing_type'     => (string) ( $res['pricing_type'] ?? '' ),
+			'amount'           => isset( $res['amount'] ) ? (float) $res['amount'] : 0.0,
+			'currency'         => (string) ( $res['currency'] ?? 'usd' ),
+			'customer_name'    => (string) ( $res['customer_name'] ?? '' ),
+			'customer_email'   => (string) ( $res['customer_email'] ?? '' ),
+			'created_at'       => (string) ( $res['created_at'] ?? '' ),
+			'updated_at'       => (string) ( $res['updated_at'] ?? '' ),
+		);
+
+		try {
+			$tz    = new DateTimeZone( $res_timezone );
+			$start = new DateTime( (string) ( $res['start_at'] ?? 'now' ), new DateTimeZone( 'UTC' ) );
+			$end   = new DateTime( (string) ( $res['end_at'] ?? 'now' ), new DateTimeZone( 'UTC' ) );
+			$start->setTimezone( $tz );
+			$end->setTimezone( $tz );
+			$row['start_at_local'] = $start->format( 'Y-m-d\TH:i:s' );
+			$row['end_at_local']   = $end->format( 'Y-m-d\TH:i:s' );
+			$row['date_display']   = $start->format( 'M j, Y' );
+			$row['time_display']   = $start->format( 'g:i A' ) . ' – ' . $end->format( 'g:i A T' );
+		} catch ( Exception $e ) {
+			$row['start_at_local'] = '';
+			$row['end_at_local']   = '';
+			$row['date_display']   = '';
+			$row['time_display']   = '';
+		}
+
+		if ( $is_ops ) {
+			$row['wp_user_id']                 = (int) ( $res['wp_user_id'] ?? 0 );
+			$row['stripe_customer_id']         = (string) ( $res['stripe_customer_id'] ?? '' );
+			$row['stripe_checkout_session_id'] = (string) ( $res['stripe_checkout_session_id'] ?? '' );
+			$row['stripe_payment_intent_id']   = (string) ( $res['stripe_payment_intent_id'] ?? '' );
+			$row['zoho_event_id']              = (string) ( $res['zoho_event_id'] ?? '' );
+			$row['customer_notes']             = (string) ( $res['customer_notes'] ?? '' );
+			$row['admin_notes']                = (string) ( $res['admin_notes'] ?? '' );
+		}
+
 		return $row;
 	}
 

@@ -24,10 +24,10 @@ cp -v \
   admin/partials/ajforms-builder.css \
   includes/class-ajforms.php \
   includes/class-ajforms-activator.php \
-  includes/class-ajcore-jwt.php \
   includes/class-ajcore-rest-api.php \
-  includes/class-ajcore-zoho-calendar.php \
+  includes/class-ajcore-jwt.php \
   includes/class-ajcore-reservations.php \
+  includes/class-ajcore-zoho-calendar.php \
   config/synced-settings.json \
   bin/build-release.sh \
   "$DEST_DIR/"

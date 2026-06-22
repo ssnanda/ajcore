@@ -19266,18 +19266,55 @@ class AJForms_Admin {
 							<p class="description"><?php esc_html_e( 'Internal slug, e.g. conference_room. No spaces.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
+					<?php
+						$_pdb_pc      = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_pdb() : $GLOBALS['wpdb'];
+						$_sp_table    = $_pdb_pc->prefix . 'aj_stripe_products';
+						$_synced_products = array();
+						if ( $_pdb_pc->get_var( $_pdb_pc->prepare( 'SHOW TABLES LIKE %s', $_sp_table ) ) === $_sp_table ) {
+							$_synced_products = $_pdb_pc->get_results(
+								"SELECT stripe_price_id, name, price_amount, currency
+								 FROM `{$_sp_table}`
+								 WHERE active = 1
+								   AND stripe_price_id <> ''
+								   AND recurring_interval = ''
+								 ORDER BY name ASC"
+							);
+						}
+						$_biz_selected   = $settings['reservation_business_hours_price_id'] ?? '';
+						$_after_selected = $settings['reservation_after_hours_price_id'] ?? '';
+					?>
 					<tr>
-						<th><?php esc_html_e( 'Business Hours Stripe Price ID', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Business Hours Stripe Price', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" name="reservation_business_hours_price_id" value="<?php echo esc_attr( $settings['reservation_business_hours_price_id'] ?? '' ); ?>" class="regular-text" placeholder="price_xxx">
-							<p class="description"><?php esc_html_e( 'Stripe Price ID for Mon–Fri 9am–5pm slots (e.g. price_1Abc…). Create in Stripe Dashboard → Products.', 'ajforms' ); ?></p>
+							<select name="reservation_business_hours_price_id" style="max-width:400px">
+								<option value=""><?php esc_html_e( '— select a product —', 'ajforms' ); ?></option>
+								<?php foreach ( $_synced_products as $_sp ) : ?>
+									<option value="<?php echo esc_attr( $_sp->stripe_price_id ); ?>"<?php selected( $_biz_selected, $_sp->stripe_price_id ); ?>>
+										<?php echo esc_html( $_sp->name . ' — $' . number_format( (float) $_sp->price_amount, 2 ) . ' ' . strtoupper( $_sp->currency ) ); ?>
+									</option>
+								<?php endforeach; ?>
+								<?php if ( $_biz_selected && ! in_array( $_biz_selected, array_column( (array) $_synced_products, 'stripe_price_id' ), true ) ) : ?>
+									<option value="<?php echo esc_attr( $_biz_selected ); ?>" selected><?php echo esc_html( $_biz_selected ); ?></option>
+								<?php endif; ?>
+							</select>
+							<p class="description"><?php esc_html_e( 'One-time Stripe product charged per hour for Mon–Fri 9am–5pm slots. Run a product sync first if your products are not listed.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th><?php esc_html_e( 'After-Hours Stripe Price ID', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'After-Hours Stripe Price', 'ajforms' ); ?></th>
 						<td>
-							<input type="text" name="reservation_after_hours_price_id" value="<?php echo esc_attr( $settings['reservation_after_hours_price_id'] ?? '' ); ?>" class="regular-text" placeholder="price_xxx">
-							<p class="description"><?php esc_html_e( 'Stripe Price ID for evenings and weekends (e.g. price_2Def…). Create in Stripe Dashboard → Products.', 'ajforms' ); ?></p>
+							<select name="reservation_after_hours_price_id" style="max-width:400px">
+								<option value=""><?php esc_html_e( '— select a product —', 'ajforms' ); ?></option>
+								<?php foreach ( $_synced_products as $_sp ) : ?>
+									<option value="<?php echo esc_attr( $_sp->stripe_price_id ); ?>"<?php selected( $_after_selected, $_sp->stripe_price_id ); ?>>
+										<?php echo esc_html( $_sp->name . ' — $' . number_format( (float) $_sp->price_amount, 2 ) . ' ' . strtoupper( $_sp->currency ) ); ?>
+									</option>
+								<?php endforeach; ?>
+								<?php if ( $_after_selected && ! in_array( $_after_selected, array_column( (array) $_synced_products, 'stripe_price_id' ), true ) ) : ?>
+									<option value="<?php echo esc_attr( $_after_selected ); ?>" selected><?php echo esc_html( $_after_selected ); ?></option>
+								<?php endif; ?>
+							</select>
+							<p class="description"><?php esc_html_e( 'One-time Stripe product charged per hour for evenings and weekends. Run a product sync first if your products are not listed.', 'ajforms' ); ?></p>
 						</td>
 					</tr>
 				</table>
