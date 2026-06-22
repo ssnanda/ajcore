@@ -2859,7 +2859,7 @@ class AJForms {
 			return null;
 		}
 
-		$open_statuses = array( 'draft', 'pending_payment', 'awaiting_payment', 'paid', 'admin_review_required' );
+		$open_statuses = array( 'pending_payment', 'awaiting_payment', 'paid', 'admin_review_required' );
 		$status_placeholders = implode( ',', array_fill( 0, count( $open_statuses ), '%s' ) );
 		$params = array_merge( array( $stripe_customer_id ), $open_statuses );
 		$where = "stripe_customer_id = %s AND status IN ({$status_placeholders})";
@@ -4165,7 +4165,7 @@ class AJForms {
 			<?php endif; ?>
 
 			<?php
-			$res_settings   = $this->get_settings();
+			$res_settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
 			$res_enabled    = ! empty( $res_settings['zoho_reservations_enabled'] );
 			$res_name       = ! empty( $res_settings['reservation_resource_name'] ) ? $res_settings['reservation_resource_name'] : __( 'Conference Room', 'ajforms' );
 			if ( $res_enabled ) :
@@ -11736,6 +11736,7 @@ class AJForms {
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
 		<style>
 		/* ── Conference Room — Hero Card ────────────────────────────── */
+		.aj-res-hero h1,.aj-res-hero h2,.aj-res-hero h3{background:none!important;-webkit-background-clip:initial!important;background-clip:initial!important;color:#fff!important}
 		.aj-res-hero{background:linear-gradient(135deg,#1e3a8a 0%,#3157ff 55%,#7c3aed 100%);border-radius:12px;padding:12px 16px 10px;margin-bottom:16px;position:relative;overflow:hidden;color:#fff}
 		.aj-res-hero::before{content:'';position:absolute;top:-30px;right:-20px;width:120px;height:120px;background:rgba(255,255,255,.05);border-radius:50%;pointer-events:none}
 		.aj-res-hero::after{content:'';position:absolute;bottom:-40px;right:60px;width:80px;height:80px;background:rgba(255,255,255,.04);border-radius:50%;pointer-events:none}
@@ -11779,8 +11780,8 @@ class AJForms {
 		.aj-res-cart-badge.has-items{background:#3157ff}
 		.aj-res-cart-badge.pulse{animation:aj-badge-pop .28s ease}
 		@keyframes aj-badge-pop{0%{transform:scale(1)}50%{transform:scale(1.45)}100%{transform:scale(1)}}
-		.aj-res-cart-empty{text-align:center;padding:22px 0 18px;color:#94a3b8}
-		.aj-res-cart-empty-icon{font-size:28px;margin-bottom:8px;opacity:.45;line-height:1}
+		.aj-res-cart-empty{text-align:center;padding:10px 0 8px;color:#94a3b8}
+		.aj-res-cart-empty-icon{font-size:20px;margin-bottom:4px;opacity:.45;line-height:1}
 		.aj-res-cart-empty-text{font-size:13px;line-height:1.5}
 		.aj-res-cart-item{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 12px;background:#f8fafc;border:1px solid #e8edf5;border-radius:10px;margin-bottom:6px;font-size:13px;transition:background .15s,border-color .15s}
 		.aj-res-cart-item:hover{background:#f0f4ff;border-color:#c7d4f5}

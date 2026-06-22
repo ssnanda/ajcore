@@ -8959,6 +8959,11 @@ class AJForms_Admin {
 			array( 'id' => 'billing', 'label' => __( 'Billing', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'file-library', 'label' => __( 'File Library', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'profile', 'label' => __( 'Profile', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
+			array( 'id' => 'service-requests', 'label' => __( 'Service Requests', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
+			( function () {
+				$s = get_option( 'ajforms_settings', array() );
+				return array( 'id' => 'reservations', 'label' => ! empty( $s['reservation_menu_label'] ) ? $s['reservation_menu_label'] : __( 'Conference Room', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => ! empty( $s['zoho_reservations_enabled'] ) );
+			} )(),
 		);
 
 		$built_in_ids    = wp_list_pluck( $default_items, 'id' );
