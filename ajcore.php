@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.3.32
+ * Version: 0.3.33
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.3.32' );
+	define( 'AJCORE_VERSION', '0.3.33' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -110,13 +110,24 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'zoho_schedule_appointment_url'     => '',
 			'zoho_resource_freebusy_url'        => 'https://calendar.zoho.com/api/v1/resources/{resourceuid}/freebusy',
 			'zoho_api_auth_mode'                => '',
+			// Canonical Zoho OAuth setting names.
+			'zoho_client_id'                    => '',
+			'zoho_client_secret'                => '',
+			'zoho_access_token'                 => '',
+			'zoho_refresh_token'                => '',
+			'zoho_token_expires_at'             => '',
+			'zoho_api_domain'                   => '',
+			// Legacy aliases kept for backward compatibility (populated from canonical on save).
 			'zoho_oauth_client_id'              => '',
 			'zoho_oauth_client_secret'          => '',
-			'zoho_oauth_authorization_code'     => '',
 			'zoho_oauth_api_domain'             => '',
-			'zoho_api_token_expires_at'         => '',
-			'zoho_refresh_token'                => '',
 			'zoho_api_token'                    => '',
+			'zoho_api_token_expires_at'         => '',
+			// One-time code: never stored after successful exchange.
+			'zoho_oauth_authorization_code'     => '',
+			// Availability failure behavior: 'strict' blocks booking if Zoho check fails;
+			// 'lenient' allows it and logs a warning.
+			'zoho_availability_failure_mode'    => 'strict',
 			'reservation_resource_name'         => 'Conference Room',
 			'reservation_resource_key'          => 'conference_room',
 			'reservation_menu_label'            => 'Conference Room',

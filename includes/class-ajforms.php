@@ -12437,6 +12437,7 @@ class AJForms {
 		$zoho_calendar_uid = ! empty( $settings['zoho_calendar_uid'] ) ? $settings['zoho_calendar_uid'] : '';
 		$zoho_resource_uid = ! empty( $settings['zoho_resource_uid'] ) ? $settings['zoho_resource_uid'] : '';
 		$zoho_freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';
+		$failure_mode      = ! empty( $settings['zoho_availability_failure_mode'] ) ? $settings['zoho_availability_failure_mode'] : 'strict';
 
 		if ( $zoho_api_token && $zoho_calendar_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
 			$calendar_check = AJCore_Zoho_Calendar::check_zoho_calendar_events_availability(
@@ -12446,8 +12447,19 @@ class AJForms {
 				$timezone,
 				$zoho_api_token
 			);
-			// Only block on Zoho if the API succeeded and confirmed busy. API errors fall through.
-			if ( ! is_wp_error( $calendar_check ) && isset( $calendar_check['is_free'] ) && ! (bool) $calendar_check['is_free'] ) {
+			if ( is_wp_error( $calendar_check ) ) {
+				if ( 'lenient' !== $failure_mode ) {
+					return array(
+						'available' => false,
+						'message'   => __( 'Could not verify calendar availability. Please try again or contact support.', 'ajforms' ),
+					);
+				}
+				AJCore_Reservations::log_reservation_event( 'reservation_zoho_check_failed', array(
+					'severity' => 'warning',
+					'error'    => $calendar_check->get_error_message(),
+					'mode'     => 'lenient',
+				) );
+			} elseif ( isset( $calendar_check['is_free'] ) && ! (bool) $calendar_check['is_free'] ) {
 				return array(
 					'available' => false,
 					'message'   => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ),
@@ -12461,8 +12473,19 @@ class AJForms {
 				$end_dt->format( 'c' ),
 				$zoho_api_token
 			);
-			// Only block on Zoho if the API succeeded and confirmed busy. API errors fall through.
-			if ( ! is_wp_error( $freebusy ) && isset( $freebusy['is_free'] ) && ! (bool) $freebusy['is_free'] ) {
+			if ( is_wp_error( $freebusy ) ) {
+				if ( 'lenient' !== $failure_mode ) {
+					return array(
+						'available' => false,
+						'message'   => __( 'Could not verify calendar availability. Please try again or contact support.', 'ajforms' ),
+					);
+				}
+				AJCore_Reservations::log_reservation_event( 'reservation_zoho_check_failed', array(
+					'severity' => 'warning',
+					'error'    => $freebusy->get_error_message(),
+					'mode'     => 'lenient',
+				) );
+			} elseif ( isset( $freebusy['is_free'] ) && ! (bool) $freebusy['is_free'] ) {
 				return array(
 					'available' => false,
 					'message'   => __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ),
@@ -12502,18 +12525,18 @@ class AJForms {
 	}
 
 	private function get_reservation_price_ids_for_resource( $resource_key ) {
-		global $wpdb;
+		$pdb = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_pdb() : $GLOBALS['wpdb'];
 
-		$table = $wpdb->prefix . 'aj_portal_product_catalog';
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+		$table = $pdb->prefix . 'aj_portal_product_catalog';
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
 			return array(
 				'business_hours_price_id' => '',
 				'after_hours_price_id'    => '',
 			);
 		}
 
-		$row = $wpdb->get_row(
-			$wpdb->prepare(
+		$row = $pdb->get_row(
+			$pdb->prepare(
 				"SELECT reservation_business_hours_price_id, reservation_after_hours_price_id
 				 FROM `{$table}`
 				 WHERE product_type = 'reservation'
@@ -12525,7 +12548,7 @@ class AJForms {
 		);
 
 		if ( ! $row ) {
-			$row = $wpdb->get_row(
+			$row = $pdb->get_row(
 				"SELECT reservation_business_hours_price_id, reservation_after_hours_price_id
 				 FROM `{$table}`
 				 WHERE product_type = 'reservation'
@@ -12547,7 +12570,7 @@ class AJForms {
 			return null;
 		}
 
-		global $wpdb;
+		$pdb = AJCore_Reservations::get_pdb();
 
 		$resource_key = sanitize_key( (string) $resource_key );
 		if ( '' === $resource_key ) {
@@ -12555,7 +12578,7 @@ class AJForms {
 		}
 
 		$table = AJCore_Reservations::get_resources_table();
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
 			return null;
 		}
 
@@ -12588,7 +12611,7 @@ class AJForms {
 				$update['after_hours_price_id'] = $resource->after_hours_price_id;
 			}
 			unset( $update['resource_key'] );
-			$wpdb->update(
+			$pdb->update(
 				$table,
 				$update,
 				array( 'id' => (int) $resource->id ),
@@ -12597,7 +12620,7 @@ class AJForms {
 			);
 		} else {
 			$data['created_at'] = current_time( 'mysql' );
-			$wpdb->insert(
+			$pdb->insert(
 				$table,
 				$data,
 				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s' )
@@ -12753,17 +12776,46 @@ class AJForms {
 			wp_send_json_error( array( 'message' => ! empty( $availability['message'] ) ? $availability['message'] : __( 'This slot is not available.', 'ajforms' ) ) );
 		}
 
-		$pricing_type = AJCore_Reservations::determine_pricing_type( $start_at_utc, $timezone );
+		// Compute full pricing breakdown (handles mixed-rate slots correctly).
+		$pricing_breakdown = AJCore_Reservations::calculate_pricing_breakdown( $start_at_utc, $end_at_utc, $timezone );
+		if ( is_wp_error( $pricing_breakdown ) ) {
+			wp_send_json_error( array( 'message' => $pricing_breakdown->get_error_message() ) );
+		}
+		$pricing_type = $pricing_breakdown['pricing_type'];
 
-		// Hourly rates from settings (dollars); default $40 business, $80 after-hours.
-		$biz_rate_dollars   = max( 1, (int) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
-		$after_rate_dollars = max( 1, (int) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
-		$unit_rate_dollars  = 'business_hours' === $pricing_type ? $biz_rate_dollars : $after_rate_dollars;
-		$unit_amount_cents  = $unit_rate_dollars * 100;
+		// Require configured Stripe Price IDs — do not silently fall back to dynamic price_data.
+		$biz_price_id   = ! empty( $resource->business_hours_price_id ) ? (string) $resource->business_hours_price_id : '';
+		$after_price_id = ! empty( $resource->after_hours_price_id )    ? (string) $resource->after_hours_price_id    : '';
+		if ( '' === $biz_price_id || '' === $after_price_id ) {
+			wp_send_json_error( array(
+				'message' => __( 'Conference room pricing is not fully configured. Please contact support.', 'ajforms' ),
+			) );
+		}
 
-		$rate_label = 'business_hours' === $pricing_type
-			? ( ! empty( $settings['reservation_business_hours_label'] ) ? $settings['reservation_business_hours_label'] : 'Business Hours' )
-			: ( ! empty( $settings['reservation_after_hours_label'] ) ? $settings['reservation_after_hours_label'] : 'After-Hours / Weekend' );
+		// Build one or two line items based on pricing breakdown (split for mixed-rate reservations).
+		$biz_hours_qty   = (int) round( $pricing_breakdown['business_minutes'] / 60 );
+		$after_hours_qty = (int) round( $pricing_breakdown['after_hours_minutes'] / 60 );
+		$checkout_line_items = array();
+		if ( $biz_hours_qty > 0 ) {
+			$checkout_line_items[] = array( 'price' => $biz_price_id, 'quantity' => $biz_hours_qty );
+		}
+		if ( $after_hours_qty > 0 ) {
+			$checkout_line_items[] = array( 'price' => $after_price_id, 'quantity' => $after_hours_qty );
+		}
+		if ( empty( $checkout_line_items ) ) {
+			$total_qty = max( 1, (int) round( $pricing_breakdown['total_minutes'] / 60 ) );
+			$checkout_line_items[] = array(
+				'price'    => 'business_hours' === $pricing_type ? $biz_price_id : $after_price_id,
+				'quantity' => $total_qty,
+			);
+		}
+
+		// Compute estimated amounts for record storage (actual charge comes from Stripe).
+		$biz_rate_dollars    = max( 1, (int) ( $settings['reservation_business_hours_rate'] ?? 40 ) );
+		$after_rate_dollars  = max( 1, (int) ( $settings['reservation_after_hours_rate'] ?? 80 ) );
+		$business_amount     = round( $biz_hours_qty * $biz_rate_dollars, 2 );
+		$after_hours_amount  = round( $after_hours_qty * $after_rate_dollars, 2 );
+		$total_amount        = $business_amount + $after_hours_amount;
 
 		$stored_notes = trim( sprintf( "Phone: %s\n%s", $customer_phone, $customer_notes ) );
 
@@ -12781,11 +12833,22 @@ class AJForms {
 			'end_at'            => $end_at_utc,
 			'timezone'          => $timezone,
 			'pricing_type'      => $pricing_type,
+			'stripe_price_id'   => $biz_hours_qty > 0 ? $biz_price_id : $after_price_id,
+			'amount'            => $total_amount,
+			'currency'          => 'usd',
 			'customer_name'     => $customer_name,
 			'customer_email'    => $customer_email,
 			'customer_notes'    => $stored_notes,
 			'zoho_calendar_id'  => ! empty( $settings['zoho_calendar_id'] ) ? $settings['zoho_calendar_id'] : '',
 			'zoho_resource_uid' => ! empty( $settings['zoho_resource_uid'] ) ? $settings['zoho_resource_uid'] : '',
+			'pricing_breakdown' => array(
+				'business_minutes'    => $pricing_breakdown['business_minutes'],
+				'after_hours_minutes' => $pricing_breakdown['after_hours_minutes'],
+				'total_minutes'       => $pricing_breakdown['total_minutes'],
+				'business_amount'     => $business_amount,
+				'after_hours_amount'  => $after_hours_amount,
+				'total_amount'        => $total_amount,
+			),
 		) );
 
 		if ( is_wp_error( $pending ) ) {
@@ -12812,18 +12875,7 @@ class AJForms {
 		$checkout_payload = array(
 			'payment_method_types' => array( 'card' ),
 			'mode'                 => 'payment',
-			'line_items'           => array(
-				array(
-					'price_data' => array(
-						'currency'     => 'usd',
-						'unit_amount'  => $unit_amount_cents,
-						'product_data' => array(
-							'name' => sprintf( 'Conference Room — %s', $rate_label ),
-						),
-					),
-					'quantity' => $duration_hours,
-				),
-			),
+			'line_items'           => $checkout_line_items,
 			'success_url'          => $success_url,
 			'cancel_url'           => $cancel_url,
 			'metadata'             => array(
@@ -12986,9 +13038,9 @@ class AJForms {
 		}
 
 		// Immediately update status to 'in_cart'.
-		global $wpdb;
+		$pdb_res   = AJCore_Reservations::get_pdb();
 		$res_table = AJCore_Reservations::get_reservations_table();
-		$wpdb->update(
+		$pdb_res->update(
 			$res_table,
 			array( 'status' => 'in_cart', 'updated_at' => current_time( 'mysql' ) ),
 			array( 'id' => (int) $pending['id'] ),
@@ -13090,14 +13142,14 @@ class AJForms {
 			wp_send_json_error( array( 'message' => __( 'Missing reservation ID.', 'ajforms' ) ) );
 		}
 
-		global $wpdb;
+		$pdb_res    = AJCore_Reservations::get_pdb();
 		$res_table  = AJCore_Reservations::get_reservations_table();
 		$wp_user_id = get_current_user_id();
 		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
 
 		// Verify the reservation belongs to this user and is in_cart.
-		$reservation = $wpdb->get_row(
-			$wpdb->prepare(
+		$reservation = $pdb_res->get_row(
+			$pdb_res->prepare(
 				"SELECT * FROM `{$res_table}` WHERE reservation_uuid = %s AND status = 'in_cart' AND (wp_user_id = %d OR stripe_customer_id = %s) LIMIT 1",
 				$uuid, $wp_user_id, $stripe_customer_id
 			)
@@ -13107,7 +13159,7 @@ class AJForms {
 			wp_send_json_error( array( 'message' => __( 'Reservation not found or already removed.', 'ajforms' ) ) );
 		}
 
-		$wpdb->delete( $res_table, array( 'id' => (int) $reservation->id ), array( '%d' ) );
+		$pdb_res->delete( $res_table, array( 'id' => (int) $reservation->id ), array( '%d' ) );
 
 		AJCore_Reservations::log_reservation_event(
 			'reservation_removed_from_cart',
@@ -13186,7 +13238,7 @@ class AJForms {
 		$aft_label  = ! empty( $settings['reservation_after_hours_label'] ) ? $settings['reservation_after_hours_label'] : 'After-Hours / Weekend';
 		$res_name   = ! empty( $settings['reservation_resource_name'] ) ? $settings['reservation_resource_name'] : __( 'Conference Room', 'ajforms' );
 
-		global $wpdb;
+		$pdb        = AJCore_Reservations::get_pdb();
 		$res_table  = AJCore_Reservations::get_reservations_table();
 		$line_items = array();
 		$uuids      = array();
@@ -13208,33 +13260,38 @@ class AJForms {
 				) ) );
 			}
 
-			$pricing_type       = sanitize_key( (string) $item->pricing_type );
-			$unit_rate_dollars  = 'business_hours' === $pricing_type ? $biz_rate : $after_rate;
-			$unit_amount_cents  = $unit_rate_dollars * 100;
-			$rate_label         = 'business_hours' === $pricing_type ? $biz_label : $aft_label;
-
-			try {
-				$start_dt = new DateTime( $start_at_utc, new DateTimeZone( 'UTC' ) );
-				$end_dt   = new DateTime( $end_at_utc, new DateTimeZone( 'UTC' ) );
-			} catch ( Exception $e ) {
+			// Full breakdown for mixed-rate support.
+			$item_breakdown = AJCore_Reservations::calculate_pricing_breakdown( $start_at_utc, $end_at_utc, $timezone );
+			if ( is_wp_error( $item_breakdown ) ) {
 				continue;
 			}
-			$duration_hours = (int) round( ( $end_dt->getTimestamp() - $start_dt->getTimestamp() ) / 3600 );
-			$duration_hours = max( 1, min( 14, $duration_hours ) );
 
-			$start_dt->setTimezone( new DateTimeZone( $timezone ) );
-			$date_label = $start_dt->format( 'M j, Y g:i A' );
+			// Require configured Stripe Price IDs — do not silently fall back to dynamic price_data.
+			$item_resource_key   = sanitize_key( (string) $item->resource_key );
+			$item_prices         = $this->get_reservation_price_ids_for_resource( $item_resource_key );
+			$item_biz_price_id   = $item_prices['business_hours_price_id'];
+			$item_after_price_id = $item_prices['after_hours_price_id'];
+			if ( '' === $item_biz_price_id || '' === $item_after_price_id ) {
+				wp_send_json_error( array(
+					'message' => __( 'Conference room pricing is not fully configured. Please contact support.', 'ajforms' ),
+				) );
+			}
 
-			$line_items[] = array(
-				'price_data' => array(
-					'currency'     => 'usd',
-					'unit_amount'  => $unit_amount_cents,
-					'product_data' => array(
-						'name' => sprintf( '%s — %s — %s', $res_name, $rate_label, $date_label ),
-					),
-				),
-				'quantity' => $duration_hours,
-			);
+			$item_biz_qty   = (int) round( $item_breakdown['business_minutes'] / 60 );
+			$item_after_qty = (int) round( $item_breakdown['after_hours_minutes'] / 60 );
+			if ( $item_biz_qty > 0 ) {
+				$line_items[] = array( 'price' => $item_biz_price_id, 'quantity' => $item_biz_qty );
+			}
+			if ( $item_after_qty > 0 ) {
+				$line_items[] = array( 'price' => $item_after_price_id, 'quantity' => $item_after_qty );
+			}
+			if ( 0 === $item_biz_qty && 0 === $item_after_qty ) {
+				$total_qty = max( 1, (int) round( $item_breakdown['total_minutes'] / 60 ) );
+				$line_items[] = array(
+					'price'    => 'business_hours' === $item_breakdown['pricing_type'] ? $item_biz_price_id : $item_after_price_id,
+					'quantity' => $total_qty,
+				);
+			}
 			$uuids[] = $item_uuid;
 		}
 
@@ -13303,7 +13360,7 @@ class AJForms {
 		// don't show as Pending Payment — the cart remains intact if the user comes back.
 		// The webhook changes status to 'paid' on successful payment.
 		foreach ( $uuids as $uuid ) {
-			$wpdb->update(
+			$pdb->update(
 				$res_table,
 				array(
 					'stripe_checkout_session_id' => $session_id,
@@ -13585,9 +13642,9 @@ class AJForms {
 			wp_send_json( array() );
 		}
 
-		global $wpdb;
+		$pdb   = AJCore_Reservations::get_pdb();
 		$table = AJCore_Reservations::get_reservations_table();
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
 			wp_send_json( array() );
 		}
 
@@ -13603,8 +13660,8 @@ class AJForms {
 
 		$hold_cutoff = gmdate( 'Y-m-d H:i:s', time() - ( AJCore_Reservations::PENDING_HOLD_MINUTES * 60 ) );
 
-		$rows = $wpdb->get_results(
-			$wpdb->prepare(
+		$rows = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT start_at, end_at, status
 				 FROM `{$table}`
 				 WHERE (
@@ -13746,8 +13803,10 @@ class AJForms {
 	public function ajax_reservation_request() {
 		check_ajax_referer( 'ajcore_reservation_check_availability', 'nonce' );
 
-		if ( ! is_user_logged_in() ) {
-			wp_send_json_error( array( 'message' => __( 'You must be logged in to make a reservation.', 'ajforms' ) ) );
+		// Admin-only: this flow bypasses Stripe and confirms without payment.
+		// Portal users must go through ajax_reservation_create_checkout (prepay-only).
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
 		}
 
 		$resource_key   = isset( $_POST['resource_key'] )   ? sanitize_key( wp_unslash( $_POST['resource_key'] ) )          : '';
@@ -13829,9 +13888,9 @@ class AJForms {
 		$res_uuid = (string) $result['reservation_uuid'];
 
 		// Update status to confirmed (no payment required in request flow).
-		global $wpdb;
+		$pdb_req   = AJCore_Reservations::get_pdb();
 		$res_table = AJCore_Reservations::get_reservations_table();
-		$wpdb->update(
+		$pdb_req->update(
 			$res_table,
 			array( 'status' => 'confirmed', 'updated_at' => current_time( 'mysql' ) ),
 			array( 'id' => $res_id ),
@@ -13850,7 +13909,7 @@ class AJForms {
 				$res_array   = (array) $reservation_row;
 				$zoho_result = AJCore_Reservations::attempt_zoho_calendar_event( $res_array, $settings );
 				if ( ! is_wp_error( $zoho_result ) ) {
-					$wpdb->update(
+					$pdb_req->update(
 						$res_table,
 						array(
 							'zoho_event_id' => sanitize_text_field( $zoho_result['event_id'] ?? '' ),

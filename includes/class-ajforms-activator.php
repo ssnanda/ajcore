@@ -679,6 +679,15 @@ class AJForms_Activator {
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
 
+		// In shared DB mode, also create reservation tables in the portal/shared DB.
+		if ( function_exists( 'ajcore_get_portal_db' ) ) {
+			$pdb = ajcore_get_portal_db();
+			if ( $pdb !== $wpdb ) {
+				$pdb_charset = $pdb->get_charset_collate();
+				self::create_reservation_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
+			}
+		}
+
 		$legacy_table_migrations = array(
 			$wpdb->prefix . 'ajforms_forms'         => $table_forms,
 			$wpdb->prefix . 'ajforms_leads'         => $table_leads,
@@ -857,6 +866,90 @@ class AJForms_Activator {
 		}
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
 		update_option( 'ajforms_portal_schema_version', '13', false );
+	}
+
+	/**
+	 * Create reservation tables directly in the given portal DB connection.
+	 * Uses CREATE TABLE IF NOT EXISTS so it is safe to call repeatedly.
+	 * Called when the portal DB differs from the local $wpdb instance.
+	 *
+	 * @param string $prefix          DB table prefix for the portal DB.
+	 * @param string $charset_collate Charset/collate string from portal DB.
+	 * @param object $pdb             Portal wpdb instance.
+	 */
+	public static function create_reservation_tables_in_portal_db( $prefix, $charset_collate, $pdb ) {
+		$res_resources = $prefix . 'aj_portal_reservation_resources';
+		$res_table     = $prefix . 'aj_portal_reservations';
+
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$res_resources} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			resource_key varchar(100) NOT NULL,
+			resource_name varchar(255) NOT NULL,
+			zoho_calendar_uid varchar(255) DEFAULT '' NOT NULL,
+			zoho_calendar_id varchar(255) DEFAULT '' NOT NULL,
+			zoho_resource_uid varchar(255) DEFAULT '' NOT NULL,
+			zoho_schedule_url longtext NULL,
+			zoho_freebusy_url longtext NULL,
+			business_hours_price_id varchar(100) DEFAULT '' NOT NULL,
+			after_hours_price_id varchar(100) DEFAULT '' NOT NULL,
+			duration_minutes int(11) NOT NULL DEFAULT 60,
+			buffer_before_minutes int(11) NOT NULL DEFAULT 0,
+			buffer_after_minutes int(11) NOT NULL DEFAULT 0,
+			min_duration_minutes int(11) NOT NULL DEFAULT 60,
+			max_duration_minutes int(11) NOT NULL DEFAULT 60,
+			active tinyint(1) NOT NULL DEFAULT 1,
+			settings_json longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY resource_key (resource_key),
+			KEY active (active)
+		) {$charset_collate}" );
+
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$res_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			reservation_uuid varchar(100) NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			resource_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			resource_key varchar(100) DEFAULT '' NOT NULL,
+			resource_name varchar(255) DEFAULT '' NOT NULL,
+			zoho_calendar_uid varchar(255) DEFAULT '' NOT NULL,
+			zoho_calendar_id varchar(255) DEFAULT '' NOT NULL,
+			zoho_resource_uid varchar(255) DEFAULT '' NOT NULL,
+			zoho_event_id varchar(255) DEFAULT '' NOT NULL,
+			stripe_checkout_session_id varchar(100) DEFAULT '' NOT NULL,
+			stripe_payment_intent_id varchar(100) DEFAULT '' NOT NULL,
+			stripe_invoice_id varchar(100) DEFAULT '' NOT NULL,
+			stripe_price_id varchar(100) DEFAULT '' NOT NULL,
+			pricing_type varchar(50) DEFAULT 'after_hours_weekend' NOT NULL,
+			amount decimal(12,2) DEFAULT 0 NOT NULL,
+			currency varchar(12) DEFAULT 'usd' NOT NULL,
+			start_at datetime NOT NULL,
+			end_at datetime NOT NULL,
+			timezone varchar(100) DEFAULT 'America/New_York' NOT NULL,
+			status varchar(50) DEFAULT 'pending_payment' NOT NULL,
+			customer_name varchar(255) DEFAULT '' NOT NULL,
+			customer_email varchar(190) DEFAULT '' NOT NULL,
+			customer_notes longtext NULL,
+			admin_notes longtext NULL,
+			raw_zoho_data longtext NULL,
+			raw_stripe_data longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY reservation_uuid (reservation_uuid),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY wp_user_id (wp_user_id),
+			KEY resource_id (resource_id),
+			KEY resource_key (resource_key),
+			KEY stripe_checkout_session_id (stripe_checkout_session_id),
+			KEY stripe_payment_intent_id (stripe_payment_intent_id),
+			KEY status (status),
+			KEY pricing_type (pricing_type),
+			KEY start_at (start_at),
+			KEY customer_email (customer_email)
+		) {$charset_collate}" );
 	}
 
 	/**

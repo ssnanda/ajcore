@@ -716,6 +716,46 @@ class AJForms_Admin {
 			AJForms_Activator::activate();
 		}
 
+		// ── Reservation tables and columns ────────────────────────────────────
+		$res_resources_table = $pdb->prefix . 'aj_portal_reservation_resources';
+		$res_table           = $pdb->prefix . 'aj_portal_reservations';
+		if (
+			$pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $res_resources_table ) ) !== $res_resources_table
+			|| $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $res_table ) ) !== $res_table
+		) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+			AJForms_Activator::activate();
+		}
+
+		// Ensure product_catalog reservation columns exist (added in later schema versions).
+		$pc_table   = $this->get_portal_product_catalog_table();
+		$pc_columns = $pdb->get_col( "SHOW COLUMNS FROM {$pc_table}", 0 );
+		if ( is_array( $pc_columns ) ) {
+			$pc_reservation_columns = array(
+				'product_type'                        => "ALTER TABLE {$pc_table} ADD COLUMN product_type VARCHAR(50) NOT NULL DEFAULT 'normal' AFTER price_settings",
+				'reservation_resource_id'             => "ALTER TABLE {$pc_table} ADD COLUMN reservation_resource_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0 AFTER product_type",
+				'reservation_resource_key'            => "ALTER TABLE {$pc_table} ADD COLUMN reservation_resource_key VARCHAR(100) NOT NULL DEFAULT '' AFTER reservation_resource_id",
+				'reservation_business_hours_price_id' => "ALTER TABLE {$pc_table} ADD COLUMN reservation_business_hours_price_id VARCHAR(100) NOT NULL DEFAULT '' AFTER reservation_resource_key",
+				'reservation_after_hours_price_id'    => "ALTER TABLE {$pc_table} ADD COLUMN reservation_after_hours_price_id VARCHAR(100) NOT NULL DEFAULT '' AFTER reservation_business_hours_price_id",
+				'reservation_duration_minutes'        => "ALTER TABLE {$pc_table} ADD COLUMN reservation_duration_minutes INT(11) NOT NULL DEFAULT 60 AFTER reservation_after_hours_price_id",
+				'reservation_buffer_before_minutes'   => "ALTER TABLE {$pc_table} ADD COLUMN reservation_buffer_before_minutes INT(11) NOT NULL DEFAULT 0 AFTER reservation_duration_minutes",
+				'reservation_buffer_after_minutes'    => "ALTER TABLE {$pc_table} ADD COLUMN reservation_buffer_after_minutes INT(11) NOT NULL DEFAULT 0 AFTER reservation_buffer_before_minutes",
+				'reservation_min_duration_minutes'    => "ALTER TABLE {$pc_table} ADD COLUMN reservation_min_duration_minutes INT(11) NOT NULL DEFAULT 60 AFTER reservation_buffer_after_minutes",
+				'reservation_max_duration_minutes'    => "ALTER TABLE {$pc_table} ADD COLUMN reservation_max_duration_minutes INT(11) NOT NULL DEFAULT 60 AFTER reservation_min_duration_minutes",
+				'reservation_zoho_calendar_uid'       => "ALTER TABLE {$pc_table} ADD COLUMN reservation_zoho_calendar_uid VARCHAR(255) NOT NULL DEFAULT '' AFTER reservation_max_duration_minutes",
+				'reservation_zoho_calendar_id'        => "ALTER TABLE {$pc_table} ADD COLUMN reservation_zoho_calendar_id VARCHAR(255) NOT NULL DEFAULT '' AFTER reservation_zoho_calendar_uid",
+				'reservation_zoho_resource_uid'       => "ALTER TABLE {$pc_table} ADD COLUMN reservation_zoho_resource_uid VARCHAR(255) NOT NULL DEFAULT '' AFTER reservation_zoho_calendar_id",
+				'reservation_zoho_schedule_url'       => "ALTER TABLE {$pc_table} ADD COLUMN reservation_zoho_schedule_url LONGTEXT NULL AFTER reservation_zoho_resource_uid",
+				'reservation_zoho_freebusy_url'       => "ALTER TABLE {$pc_table} ADD COLUMN reservation_zoho_freebusy_url LONGTEXT NULL AFTER reservation_zoho_schedule_url",
+			);
+
+			foreach ( $pc_reservation_columns as $col => $alter_sql ) {
+				if ( ! in_array( $col, $pc_columns, true ) ) {
+					$pdb->query( $alter_sql );
+				}
+			}
+		}
+
 		$this->seed_portal_customer_states_from_existing_customers();
 		$this->ensure_aj_portal_user_role();
 		$this->repair_portal_user_links_and_roles( false, false, false );
@@ -19056,6 +19096,10 @@ class AJForms_Admin {
 		$settings['zoho_availability_source'] = isset( $_POST['zoho_availability_source'] )
 			? sanitize_key( wp_unslash( $_POST['zoho_availability_source'] ) ) : ( $settings['zoho_availability_source'] ?? 'calendar_events' );
 
+		$_submitted_failure_mode = isset( $_POST['zoho_availability_failure_mode'] ) ? sanitize_key( wp_unslash( $_POST['zoho_availability_failure_mode'] ) ) : '';
+		$settings['zoho_availability_failure_mode'] = in_array( $_submitted_failure_mode, array( 'strict', 'lenient' ), true )
+			? $_submitted_failure_mode : ( $settings['zoho_availability_failure_mode'] ?? 'strict' );
+
 		// ── Zoho OAuth tokens — managed exclusively by AJAX, never from form POST ──
 		// Migrate old key names to new ones on first save; preserve if already set.
 		$settings['zoho_refresh_token']    = $settings['zoho_refresh_token']    ?? '';
@@ -19385,6 +19429,21 @@ class AJForms_Admin {
 						</td>
 					</tr>
 					<tr>
+						<th><?php esc_html_e( 'Availability Failure Behavior', 'ajforms' ); ?></th>
+						<td>
+							<?php $fail_mode = $settings['zoho_availability_failure_mode'] ?? 'strict'; ?>
+							<select name="zoho_availability_failure_mode">
+								<option value="strict" <?php selected( $fail_mode, 'strict' ); ?>>
+									<?php esc_html_e( 'Strict — block booking if Zoho check fails (recommended)', 'ajforms' ); ?>
+								</option>
+								<option value="lenient" <?php selected( $fail_mode, 'lenient' ); ?>>
+									<?php esc_html_e( 'Lenient — allow booking if Zoho check fails but local has no conflict (log warning)', 'ajforms' ); ?>
+								</option>
+							</select>
+							<p class="description"><?php esc_html_e( 'Controls what happens when the Zoho free/busy API cannot be reached. Strict is recommended for production — it prevents double-bookings even if Zoho is temporarily unavailable.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
 						<th><?php esc_html_e( 'Test / Exchange', 'ajforms' ); ?></th>
 						<td>
 							<button type="button" class="button" id="ajc-test-zoho-btn"
@@ -19543,9 +19602,9 @@ class AJForms_Admin {
 			$reservation_id = absint( $_POST['reservation_id'] );
 			check_admin_referer( 'ajcore_reservation_admin_note_' . $reservation_id, 'ajcore_reservation_admin_note_nonce' );
 
-			global $wpdb;
-			$table = $wpdb->prefix . 'aj_portal_reservations';
-			$wpdb->update(
+			$pdb   = $this->get_pdb();
+			$table = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservations_table() : $pdb->prefix . 'aj_portal_reservations';
+			$pdb->update(
 				$table,
 				array( 'admin_notes' => sanitize_textarea_field( wp_unslash( $_POST['admin_notes'] ) ), 'updated_at' => current_time( 'mysql' ) ),
 				array( 'id' => $reservation_id ),
@@ -19557,23 +19616,44 @@ class AJForms_Admin {
 			exit;
 		}
 
-		// Delete reservation.
+		// Archive reservation (audit-safe status change for paid/confirmed records).
+		if ( isset( $_GET['ajcore_archive_reservation'], $_GET['reservation_id'], $_GET['_wpnonce'] ) ) {
+			$reservation_id = absint( $_GET['reservation_id'] );
+			check_admin_referer( 'ajcore_archive_reservation_' . $reservation_id );
+
+			$reason = isset( $_GET['archive_reason'] ) ? sanitize_textarea_field( wp_unslash( $_GET['archive_reason'] ) ) : '';
+
+			if ( class_exists( 'AJCore_Reservations' ) ) {
+				AJCore_Reservations::archive_reservation( $reservation_id, $reason, get_current_user_id() );
+			}
+
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'reservation-archived' => '1' ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		// Hard-delete reservation (only allowed for abandoned pre-payment holds).
 		if ( isset( $_GET['ajcore_delete_reservation'], $_GET['reservation_id'], $_GET['_wpnonce'] ) ) {
 			$reservation_id = absint( $_GET['reservation_id'] );
 			check_admin_referer( 'ajcore_delete_reservation_' . $reservation_id );
 
-			global $wpdb;
-			$table = $wpdb->prefix . 'aj_portal_reservations';
+			$pdb   = $this->get_pdb();
+			$table = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservations_table() : $pdb->prefix . 'aj_portal_reservations';
 
-			// If the reservation has a Zoho event, delete it there too.
-			$row = $wpdb->get_row( $wpdb->prepare( "SELECT zoho_event_id FROM `{$table}` WHERE id = %d LIMIT 1", $reservation_id ) );
+			$row = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d LIMIT 1", $reservation_id ) );
+
+			// Refuse to hard-delete paid/confirmed/auditable reservations.
+			if ( $row && class_exists( 'AJCore_Reservations' ) && ! AJCore_Reservations::is_hard_delete_allowed( $row ) ) {
+				wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'reservation-delete-blocked' => '1', 'reservation_id' => $reservation_id ), admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			// Safe to delete: abandon pre-payment hold. If a Zoho event exists, attempt removal.
 			if ( $row && ! empty( $row->zoho_event_id ) && class_exists( 'AJCore_Zoho_Calendar' ) ) {
 				$s      = $this->get_plugin_settings();
 				$token  = ! empty( $s['zoho_access_token'] ) ? $s['zoho_access_token'] : ( $s['zoho_api_token'] ?? '' );
 				$exp    = ! empty( $s['zoho_token_expires_at'] ) ? strtotime( $s['zoho_token_expires_at'] )
 					: ( ! empty( $s['zoho_api_token_expires_at'] ) ? strtotime( $s['zoho_api_token_expires_at'] ) : 0 );
 
-				// Refresh the access token if it is expired or close to expiry.
 				if ( '' === $token || $exp <= time() + 60 ) {
 					$refresh = $s['zoho_refresh_token'] ?? '';
 					$cid     = $s['zoho_client_id'] ?? $s['zoho_oauth_client_id'] ?? '';
@@ -19587,10 +19667,10 @@ class AJForms_Admin {
 						if ( ! empty( $tb['access_token'] ) ) {
 							$token = sanitize_text_field( (string) $tb['access_token'] );
 							$ei    = absint( $tb['expires_in'] ?? 3600 );
-							$s['zoho_access_token']        = $token;
-							$s['zoho_api_token']           = $token;
-							$s['zoho_token_expires_at']    = gmdate( 'Y-m-d H:i:s', time() + max( 0, $ei - 60 ) );
-							$s['zoho_api_token_expires_at']= $s['zoho_token_expires_at'];
+							$s['zoho_access_token']         = $token;
+							$s['zoho_api_token']            = $token;
+							$s['zoho_token_expires_at']     = gmdate( 'Y-m-d H:i:s', time() + max( 0, $ei - 60 ) );
+							$s['zoho_api_token_expires_at'] = $s['zoho_token_expires_at'];
 							update_option( 'ajforms_settings', $s, false );
 						}
 					}
@@ -19599,11 +19679,10 @@ class AJForms_Admin {
 				if ( '' !== $token ) {
 					$cal_uid = $s['zoho_calendar_uid'] ?? '';
 					AJCore_Zoho_Calendar::delete_zoho_calendar_event( $cal_uid, $row->zoho_event_id, $token );
-					// Failure is silent — DB row is deleted regardless so the slot opens up.
 				}
 			}
 
-			$wpdb->delete( $table, array( 'id' => $reservation_id ), array( '%d' ) );
+			$pdb->delete( $table, array( 'id' => $reservation_id ), array( '%d' ) );
 
 			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'reservation-deleted' => '1' ), admin_url( 'admin.php' ) ) );
 			exit;
@@ -19615,16 +19694,18 @@ class AJForms_Admin {
 			return;
 		}
 
-		global $wpdb;
-		$table = $wpdb->prefix . 'aj_portal_reservations';
+		$pdb   = $this->get_pdb();
+		$table = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservations_table() : $pdb->prefix . 'aj_portal_reservations';
 
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
 			echo '<div class="notice notice-warning inline"><p>' . esc_html__( 'Reservations table not yet created. Please deactivate and reactivate the plugin to run the schema update.', 'ajforms' ) . '</p></div>';
 			return;
 		}
 
-		$saved   = ! empty( $_GET['reservation-saved'] );
-		$deleted = ! empty( $_GET['reservation-deleted'] );
+		$saved    = ! empty( $_GET['reservation-saved'] );
+		$deleted  = ! empty( $_GET['reservation-deleted'] );
+		$archived = ! empty( $_GET['reservation-archived'] );
+		$del_blocked = ! empty( $_GET['reservation-delete-blocked'] );
 
 		$filter_status       = isset( $_GET['filter_status'] ) ? sanitize_key( wp_unslash( $_GET['filter_status'] ) ) : '';
 		$filter_resource_key = isset( $_GET['filter_resource'] ) ? sanitize_key( wp_unslash( $_GET['filter_resource'] ) ) : '';
@@ -19656,6 +19737,7 @@ class AJForms_Admin {
 			'cancelled'             => __( 'Cancelled', 'ajforms' ),
 			'failed'                => __( 'Failed', 'ajforms' ),
 			'refunded'              => __( 'Refunded', 'ajforms' ),
+			'admin_archived'        => __( 'Archived (Admin)', 'ajforms' ),
 		);
 
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations' ), admin_url( 'admin.php' ) );
@@ -19666,9 +19748,19 @@ class AJForms_Admin {
 		if ( $deleted ) {
 			echo '<div class="notice notice-success inline"><p>' . esc_html__( 'Reservation deleted.', 'ajforms' ) . '</p></div>';
 		}
+		if ( $archived ) {
+			echo '<div class="notice notice-success inline"><p>' . esc_html__( 'Reservation archived. Record retained for audit purposes.', 'ajforms' ) . '</p></div>';
+		}
+		if ( $del_blocked ) {
+			$blocked_id = isset( $_GET['reservation_id'] ) ? absint( $_GET['reservation_id'] ) : 0;
+			$ref        = $blocked_id > 0 && class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( $blocked_id ) : '';
+			echo '<div class="notice notice-error inline"><p>'
+				. esc_html( sprintf( __( 'Reservation %s cannot be deleted because it has payment activity. Use Archive instead to hide it while preserving the audit record.', 'ajforms' ), $ref ) )
+				. '</p></div>';
+		}
 
 		if ( $detail_id > 0 ) {
-			$reservation = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d LIMIT 1", $detail_id ) );
+			$reservation = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d LIMIT 1", $detail_id ) );
 			if ( $reservation ) {
 				$this->render_reservation_admin_detail( $reservation, $settings, $base_url );
 				return;
@@ -19751,17 +19843,35 @@ class AJForms_Admin {
 									<td style="white-space:nowrap">
 									<a href="<?php echo esc_url( $detail_url ); ?>" class="button button-small"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
 									<?php
-									$del_url = wp_nonce_url(
-										add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'ajcore_delete_reservation' => '1', 'reservation_id' => $r->id ), admin_url( 'admin.php' ) ),
-										'ajcore_delete_reservation_' . $r->id
-									);
-									?>
-									<a href="<?php echo esc_url( $del_url ); ?>"
-									   class="button button-small"
-									   style="color:#b91c1c;border-color:#fca5a5;margin-left:4px"
-									   onclick="return confirm('<?php echo esc_js( sprintf( __( 'Delete reservation %s? This cannot be undone.', 'ajforms' ), AJCore_Reservations::generate_friendly_reference( $r->id ) ) ); ?>')">
-										<?php esc_html_e( 'Delete', 'ajforms' ); ?>
-									</a>
+									$hard_delete_ok = class_exists( 'AJCore_Reservations' ) && AJCore_Reservations::is_hard_delete_allowed( $r );
+									if ( $hard_delete_ok ) :
+										$del_url = wp_nonce_url(
+											add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'ajcore_delete_reservation' => '1', 'reservation_id' => $r->id ), admin_url( 'admin.php' ) ),
+											'ajcore_delete_reservation_' . $r->id
+										);
+										?>
+										<a href="<?php echo esc_url( $del_url ); ?>"
+										   class="button button-small"
+										   style="color:#b91c1c;border-color:#fca5a5;margin-left:4px"
+										   onclick="return confirm('<?php echo esc_js( sprintf( __( 'Delete reservation %s? This cannot be undone.', 'ajforms' ), AJCore_Reservations::generate_friendly_reference( $r->id ) ) ); ?>')">
+											<?php esc_html_e( 'Delete', 'ajforms' ); ?>
+										</a>
+									<?php else : ?>
+										<?php if ( 'admin_archived' !== $r->status ) : ?>
+											<?php
+											$archive_url = wp_nonce_url(
+												add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'reservations', 'ajcore_archive_reservation' => '1', 'reservation_id' => $r->id ), admin_url( 'admin.php' ) ),
+												'ajcore_archive_reservation_' . $r->id
+											);
+											?>
+											<a href="<?php echo esc_url( $archive_url ); ?>"
+											   class="button button-small"
+											   style="color:#92400e;border-color:#fcd34d;margin-left:4px"
+											   onclick="return confirm('<?php echo esc_js( sprintf( __( 'Archive reservation %s? The record will be retained for audit purposes.', 'ajforms' ), AJCore_Reservations::generate_friendly_reference( $r->id ) ) ); ?>')">
+												<?php esc_html_e( 'Archive', 'ajforms' ); ?>
+											</a>
+										<?php endif; ?>
+									<?php endif; ?>
 								</td>
 								</tr>
 							<?php endforeach; ?>

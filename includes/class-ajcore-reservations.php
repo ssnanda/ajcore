@@ -9,9 +9,12 @@
  *   - Overall availability window: 8:00 AM – 10:00 PM in configured timezone.
  *   - Business hours (Mon–Fri 9:00 AM – 5:00 PM) → business_hours pricing.
  *   - Everything else → after_hours_weekend pricing.
+ *   - Mixed bookings crossing a pricing boundary → mixed pricing (blocked pending
+ *     split-checkout support; customer shown a helpful message).
  *   - Local conflict check blocks: confirmed, paid, paid_pending_calendar.
- *   - Pending_payment blocks for 15 minutes then expires.
+ *   - Pending_payment / in_cart blocks for 15 minutes then expires.
  *   - No cancellation, no refund, no rescheduling.
+ *   - Paid/confirmed reservations are audit-safe: never hard-deleted.
  */
 
 if ( ! defined( 'WPINC' ) ) {
@@ -27,17 +30,32 @@ class AJCore_Reservations {
 	const PENDING_HOLD_MINUTES      = 15;
 
 	// ──────────────────────────────────────────────────────────────────────────
+	// Portal DB helper
+	// ──────────────────────────────────────────────────────────────────────────
+
+	/**
+	 * Returns the portal (shared) DB connection if available, else local $wpdb.
+	 * All reservation and event-log queries must go through this so that data
+	 * lands in the same database as the rest of AJCore portal business data.
+	 */
+	public static function get_pdb() {
+		if ( function_exists( 'ajcore_get_portal_db' ) ) {
+			return ajcore_get_portal_db();
+		}
+		global $wpdb;
+		return $wpdb;
+	}
+
+	// ──────────────────────────────────────────────────────────────────────────
 	// Table helpers
 	// ──────────────────────────────────────────────────────────────────────────
 
 	public static function get_reservations_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_reservations';
+		return self::get_pdb()->prefix . 'aj_portal_reservations';
 	}
 
 	public static function get_resources_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_portal_reservation_resources';
+		return self::get_pdb()->prefix . 'aj_portal_reservation_resources';
 	}
 
 	// ──────────────────────────────────────────────────────────────────────────
@@ -45,7 +63,81 @@ class AJCore_Reservations {
 	// ──────────────────────────────────────────────────────────────────────────
 
 	/**
+	 * Calculate a full pricing breakdown for a reservation slot.
+	 *
+	 * Returns an array with:
+	 *   pricing_type        – 'business_hours', 'after_hours_weekend', or 'mixed'
+	 *   business_minutes    – integer
+	 *   after_hours_minutes – integer
+	 *   total_minutes       – integer
+	 *
+	 * @param string $start_at_utc UTC datetime string.
+	 * @param string $end_at_utc   UTC datetime string.
+	 * @param string $timezone     PHP timezone string.
+	 * @return array|WP_Error
+	 */
+	public static function calculate_pricing_breakdown( $start_at_utc, $end_at_utc, $timezone = 'America/New_York' ) {
+		try {
+			$tz       = new DateTimeZone( $timezone );
+			$dt_start = new DateTime( $start_at_utc, new DateTimeZone( 'UTC' ) );
+			$dt_end   = new DateTime( $end_at_utc, new DateTimeZone( 'UTC' ) );
+			$dt_start->setTimezone( $tz );
+			$dt_end->setTimezone( $tz );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Invalid reservation date or time.', 'ajforms' ) );
+		}
+
+		if ( $dt_start >= $dt_end ) {
+			return new WP_Error( 'reservation_invalid_time', __( 'Reservation end time must be after start time.', 'ajforms' ) );
+		}
+
+		$business_minutes    = 0;
+		$after_hours_minutes = 0;
+
+		// Walk minute-by-minute across the slot and classify each minute.
+		$cursor = clone $dt_start;
+		$interval = new DateInterval( 'PT1M' );
+
+		while ( $cursor < $dt_end ) {
+			$dow  = (int) $cursor->format( 'N' );
+			$hour = (int) $cursor->format( 'G' );
+			$min  = (int) $cursor->format( 'i' );
+
+			$hour_decimal = $hour + ( $min / 60 );
+			$is_weekday   = $dow >= 1 && $dow <= 5;
+			$in_biz_hours = $hour_decimal >= self::BUSINESS_START_HOUR && $hour_decimal < self::BUSINESS_END_HOUR;
+
+			if ( $is_weekday && $in_biz_hours ) {
+				$business_minutes++;
+			} else {
+				$after_hours_minutes++;
+			}
+
+			$cursor->add( $interval );
+		}
+
+		$total_minutes = $business_minutes + $after_hours_minutes;
+
+		if ( $business_minutes > 0 && $after_hours_minutes > 0 ) {
+			$pricing_type = 'mixed';
+		} elseif ( $business_minutes > 0 ) {
+			$pricing_type = 'business_hours';
+		} else {
+			$pricing_type = 'after_hours_weekend';
+		}
+
+		return array(
+			'pricing_type'        => $pricing_type,
+			'business_minutes'    => $business_minutes,
+			'after_hours_minutes' => $after_hours_minutes,
+			'total_minutes'       => $total_minutes,
+		);
+	}
+
+	/**
 	 * Determine whether a start time falls in business hours or after-hours/weekend.
+	 * Uses only the start time for backwards compatibility with callers that do not
+	 * need mixed-rate awareness. New code should call calculate_pricing_breakdown().
 	 *
 	 * @param string $start_at_utc MySQL datetime string in UTC.
 	 * @param string $timezone     PHP timezone string.
@@ -125,22 +217,23 @@ class AJCore_Reservations {
 	 * Check for local reservation conflicts for a resource.
 	 *
 	 * Blocks statuses: confirmed, paid, paid_pending_calendar.
-	 * Also blocks pending_payment records created within the last PENDING_HOLD_MINUTES.
+	 * Also blocks pending_payment / in_cart records created within the last
+	 * PENDING_HOLD_MINUTES — expired holds do not block new bookings.
 	 *
 	 * @param int    $resource_id   DB ID of the reservation resource.
 	 * @param string $start_at      MySQL datetime (UTC).
 	 * @param string $end_at        MySQL datetime (UTC).
-	 * @param string $exclude_uuid  Reservation UUID to exclude (for checking own record).
+	 * @param string $exclude_uuid  Reservation UUID to exclude (for rechecking own record).
 	 * @return true|WP_Error True if no conflict; WP_Error with code 'reservation_conflict'.
 	 */
 	public static function check_local_conflict( $resource_id, $start_at, $end_at, $exclude_uuid = '' ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
 		$table = self::get_reservations_table();
 
-		$hard_block_statuses   = array( 'confirmed', 'paid', 'paid_pending_calendar' );
-		$status_placeholders   = implode( ',', array_fill( 0, count( $hard_block_statuses ), '%s' ) );
-		$hold_cutoff           = gmdate( 'Y-m-d H:i:s', time() - ( self::PENDING_HOLD_MINUTES * 60 ) );
+		$hard_block_statuses = array( 'confirmed', 'paid', 'paid_pending_calendar' );
+		$status_placeholders = implode( ',', array_fill( 0, count( $hard_block_statuses ), '%s' ) );
+		$hold_cutoff         = gmdate( 'Y-m-d H:i:s', time() - ( self::PENDING_HOLD_MINUTES * 60 ) );
 
 		$params = array_merge(
 			$hard_block_statuses,
@@ -149,10 +242,10 @@ class AJCore_Reservations {
 
 		$where_uuid = '';
 		if ( '' !== $exclude_uuid ) {
-			$where_uuid = $wpdb->prepare( ' AND reservation_uuid <> %s', sanitize_text_field( $exclude_uuid ) );
+			$where_uuid = $pdb->prepare( ' AND reservation_uuid <> %s', sanitize_text_field( $exclude_uuid ) );
 		}
 
-		$sql = $wpdb->prepare(
+		$sql = $pdb->prepare(
 			"SELECT id, reservation_uuid, start_at, end_at, status
 			 FROM `{$table}`
 			 WHERE (
@@ -166,7 +259,7 @@ class AJCore_Reservations {
 			$params
 		);
 
-		$conflict = $wpdb->get_row( $sql . $where_uuid );
+		$conflict = $pdb->get_row( $sql . $where_uuid );
 
 		if ( $conflict ) {
 			return new WP_Error(
@@ -194,6 +287,35 @@ class AJCore_Reservations {
 	}
 
 	/**
+	 * Statuses that have completed or attempted payment — these rows must never
+	 * be hard-deleted and must remain fully auditable.
+	 *
+	 * @return string[]
+	 */
+	public static function get_audit_protected_statuses() {
+		return array( 'paid', 'confirmed', 'paid_pending_calendar', 'refunded', 'failed' );
+	}
+
+	/**
+	 * Returns true if a reservation row is safe to hard-delete.
+	 * Only abandoned pre-payment holds with no Stripe session/payment IDs qualify.
+	 *
+	 * @param object $reservation DB row.
+	 * @return bool
+	 */
+	public static function is_hard_delete_allowed( $reservation ) {
+		$protected = self::get_audit_protected_statuses();
+		if ( in_array( $reservation->status, $protected, true ) ) {
+			return false;
+		}
+		// Even pending/in_cart rows with a Stripe session or payment intent attached
+		// should not be hard-deleted — payment may have been attempted.
+		$has_payment_meta = ( ! empty( $reservation->stripe_checkout_session_id )
+		                      || ! empty( $reservation->stripe_payment_intent_id ) );
+		return ! $has_payment_meta;
+	}
+
+	/**
 	 * Create a new reservation record in pending_payment status.
 	 *
 	 * @param array $data {
@@ -204,7 +326,7 @@ class AJCore_Reservations {
 	 *     @type string $resource_key
 	 *     @type string $resource_name
 	 *     @type string $stripe_price_id
-	 *     @type string $pricing_type          'business_hours' or 'after_hours_weekend'
+	 *     @type string $pricing_type          'business_hours', 'after_hours_weekend', or 'mixed'
 	 *     @type float  $amount
 	 *     @type string $currency
 	 *     @type string $start_at              UTC datetime
@@ -217,15 +339,25 @@ class AJCore_Reservations {
 	 *     @type string $zoho_calendar_uid
 	 *     @type string $zoho_calendar_id
 	 *     @type string $zoho_resource_uid
+	 *     @type array  $pricing_breakdown     Output of calculate_pricing_breakdown().
 	 * }
 	 * @return array|WP_Error Array with 'reservation_uuid' and 'id', or WP_Error.
 	 */
 	public static function create_pending_reservation( $data ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
 		$table = self::get_reservations_table();
 
 		$uuid = wp_generate_uuid4();
+
+		$allowed_pricing_types = array( 'business_hours', 'after_hours_weekend', 'mixed' );
+		$pricing_type = in_array( $data['pricing_type'] ?? '', $allowed_pricing_types, true )
+		                ? sanitize_key( $data['pricing_type'] )
+		                : 'after_hours_weekend';
+
+		// Store pricing breakdown alongside any existing raw_stripe_data.
+		$pricing_breakdown = isset( $data['pricing_breakdown'] ) && is_array( $data['pricing_breakdown'] )
+			? $data['pricing_breakdown'] : array();
 
 		$insert = array(
 			'reservation_uuid'     => $uuid,
@@ -242,9 +374,7 @@ class AJCore_Reservations {
 			'stripe_payment_intent_id'   => '',
 			'stripe_invoice_id'          => '',
 			'stripe_price_id'      => sanitize_text_field( (string) ( $data['stripe_price_id'] ?? '' ) ),
-			'pricing_type'         => in_array( $data['pricing_type'] ?? '', array( 'business_hours', 'after_hours_weekend' ), true )
-			                          ? sanitize_key( $data['pricing_type'] )
-			                          : 'after_hours_weekend',
+			'pricing_type'         => $pricing_type,
 			'amount'               => round( (float) ( $data['amount'] ?? 0 ), 2 ),
 			'currency'             => strtolower( sanitize_key( $data['currency'] ?? 'usd' ) ),
 			'start_at'             => sanitize_text_field( (string) ( $data['start_at'] ?? '' ) ),
@@ -256,7 +386,7 @@ class AJCore_Reservations {
 			'customer_notes'       => sanitize_textarea_field( (string) ( $data['customer_notes'] ?? '' ) ),
 			'admin_notes'          => '',
 			'raw_zoho_data'        => '',
-			'raw_stripe_data'      => '',
+			'raw_stripe_data'      => ! empty( $pricing_breakdown ) ? wp_json_encode( array( 'pricing_breakdown' => $pricing_breakdown ) ) : '',
 			'created_at'           => current_time( 'mysql' ),
 			'updated_at'           => current_time( 'mysql' ),
 		);
@@ -269,13 +399,13 @@ class AJCore_Reservations {
 			'%s', '%s', '%s', '%s', '%s',
 		);
 
-		$result = $wpdb->insert( $table, $insert, $formats );
+		$result = $pdb->insert( $table, $insert, $formats );
 
 		if ( false === $result ) {
 			return new WP_Error( 'reservation_db_error', __( 'Could not create reservation record.', 'ajforms' ) );
 		}
 
-		$id = (int) $wpdb->insert_id;
+		$id = (int) $pdb->insert_id;
 
 		self::log_reservation_event(
 			'reservation_created',
@@ -305,11 +435,11 @@ class AJCore_Reservations {
 	 * @return bool
 	 */
 	public static function attach_stripe_checkout_session( $reservation_uuid, $session_id ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
 		$table = self::get_reservations_table();
 
-		$updated = $wpdb->update(
+		$updated = $pdb->update(
 			$table,
 			array(
 				'stripe_checkout_session_id' => sanitize_text_field( (string) $session_id ),
@@ -344,13 +474,13 @@ class AJCore_Reservations {
 	 * @return true|WP_Error
 	 */
 	public static function handle_payment_success( $session_id, $session, $settings ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
 		$table = self::get_reservations_table();
 
 		// First try: look up all reservations by stripe_checkout_session_id.
-		$reservations = $wpdb->get_results(
-			$wpdb->prepare(
+		$reservations = $pdb->get_results(
+			$pdb->prepare(
 				"SELECT * FROM `{$table}` WHERE stripe_checkout_session_id = %s",
 				sanitize_text_field( (string) $session_id )
 			)
@@ -363,8 +493,8 @@ class AJCore_Reservations {
 				$uuids = array_filter( array_map( 'trim', explode( ',', $uuids_raw ) ) );
 				if ( ! empty( $uuids ) ) {
 					$placeholders = implode( ',', array_fill( 0, count( $uuids ), '%s' ) );
-					$reservations = $wpdb->get_results(
-						$wpdb->prepare( "SELECT * FROM `{$table}` WHERE reservation_uuid IN ({$placeholders})", $uuids )
+					$reservations = $pdb->get_results(
+						$pdb->prepare( "SELECT * FROM `{$table}` WHERE reservation_uuid IN ({$placeholders})", $uuids )
 					);
 				}
 			}
@@ -372,8 +502,8 @@ class AJCore_Reservations {
 			if ( empty( $reservations ) ) {
 				$uuid = isset( $session['metadata']['reservation_uuid'] ) ? sanitize_text_field( (string) $session['metadata']['reservation_uuid'] ) : '';
 				if ( '' !== $uuid ) {
-					$reservations = $wpdb->get_results(
-						$wpdb->prepare( "SELECT * FROM `{$table}` WHERE reservation_uuid = %s LIMIT 1", $uuid )
+					$reservations = $pdb->get_results(
+						$pdb->prepare( "SELECT * FROM `{$table}` WHERE reservation_uuid = %s LIMIT 1", $uuid )
 					);
 				}
 			}
@@ -398,7 +528,7 @@ class AJCore_Reservations {
 			// Per-reservation amount: use reservation's stored amount (correct for multi-item carts).
 			$amount_total = (float) $reservation->amount;
 
-			$wpdb->update(
+			$pdb->update(
 				$table,
 				array(
 					'status'                   => 'paid',
@@ -433,7 +563,7 @@ class AJCore_Reservations {
 			$zoho_result = self::attempt_zoho_calendar_event( $res_array, $settings );
 
 			if ( is_wp_error( $zoho_result ) ) {
-				$wpdb->update(
+				$pdb->update(
 					$table,
 					array( 'status' => 'paid_pending_calendar', 'updated_at' => current_time( 'mysql' ) ),
 					array( 'id' => (int) $reservation->id ),
@@ -458,7 +588,7 @@ class AJCore_Reservations {
 			$event_id      = $zoho_result['event_id'] ?? '';
 			$zoho_raw_data = wp_json_encode( $zoho_result['raw_data'] ?? array() );
 
-			$wpdb->update(
+			$pdb->update(
 				$table,
 				array(
 					'status'         => 'confirmed',
@@ -557,10 +687,10 @@ class AJCore_Reservations {
 	 * @param string $url
 	 */
 	public static function store_zoho_appointment_url( $reservation_id, $url ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
-		$table = self::get_reservations_table();
-		$existing = $wpdb->get_row( $wpdb->prepare( "SELECT raw_zoho_data FROM `{$table}` WHERE id = %d LIMIT 1", absint( $reservation_id ) ) );
+		$table    = self::get_reservations_table();
+		$existing = $pdb->get_row( $pdb->prepare( "SELECT raw_zoho_data FROM `{$table}` WHERE id = %d LIMIT 1", absint( $reservation_id ) ) );
 
 		$raw = array();
 		if ( $existing && ! empty( $existing->raw_zoho_data ) ) {
@@ -571,7 +701,7 @@ class AJCore_Reservations {
 		}
 		$raw['schedule_appointment_url'] = esc_url_raw( $url );
 
-		$wpdb->update(
+		$pdb->update(
 			$table,
 			array( 'raw_zoho_data' => wp_json_encode( $raw ), 'updated_at' => current_time( 'mysql' ) ),
 			array( 'id' => absint( $reservation_id ) ),
@@ -580,28 +710,85 @@ class AJCore_Reservations {
 		);
 	}
 
+	/**
+	 * Archive a paid/confirmed reservation without deleting it.
+	 * Keeps all Stripe and Zoho metadata intact for audit purposes.
+	 *
+	 * @param int    $reservation_id
+	 * @param string $reason Admin-provided reason for the archive action.
+	 * @param int    $actor_user_id WP user ID performing the action.
+	 * @return bool
+	 */
+	public static function archive_reservation( $reservation_id, $reason = '', $actor_user_id = 0 ) {
+		$pdb   = self::get_pdb();
+		$table = self::get_reservations_table();
+
+		$existing = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d LIMIT 1", absint( $reservation_id ) ) );
+		if ( ! $existing ) {
+			return false;
+		}
+
+		$existing_notes = trim( (string) $existing->admin_notes );
+		$archive_stamp  = sprintf(
+			'[ARCHIVED %s by user #%d] %s',
+			gmdate( 'Y-m-d H:i:s' ),
+			absint( $actor_user_id ),
+			sanitize_textarea_field( $reason )
+		);
+		$new_notes = '' !== $existing_notes ? $existing_notes . "\n" . $archive_stamp : $archive_stamp;
+
+		$updated = $pdb->update(
+			$table,
+			array(
+				'status'      => 'admin_archived',
+				'admin_notes' => $new_notes,
+				'updated_at'  => current_time( 'mysql' ),
+			),
+			array( 'id' => absint( $reservation_id ) ),
+			array( '%s', '%s', '%s' ),
+			array( '%d' )
+		);
+
+		if ( false !== $updated ) {
+			self::log_reservation_event(
+				'reservation_admin_archived',
+				array(
+					'reservation_uuid' => $existing->reservation_uuid,
+					'reservation_id'   => $reservation_id,
+					'actor_user_id'    => $actor_user_id,
+					'reason'           => $reason,
+					'previous_status'  => $existing->status,
+					'zoho_event_id'    => $existing->zoho_event_id ?? '',
+				)
+			);
+		}
+
+		return false !== $updated;
+	}
+
 	// ──────────────────────────────────────────────────────────────────────────
 	// Data retrieval
 	// ──────────────────────────────────────────────────────────────────────────
 
 	/**
 	 * Get all reservations for a customer.
+	 * Excludes admin_archived records from the customer-facing view.
 	 *
 	 * @param string $stripe_customer_id
 	 * @param int    $wp_user_id Fallback if stripe_customer_id is empty.
 	 * @return array
 	 */
 	public static function get_customer_reservations( $stripe_customer_id, $wp_user_id = 0 ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
 		$table              = self::get_reservations_table();
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		$wp_user_id         = absint( $wp_user_id );
 
 		if ( '' !== $stripe_customer_id && $wp_user_id > 0 ) {
-			return $wpdb->get_results(
-				$wpdb->prepare(
-					"SELECT * FROM `{$table}` WHERE status <> 'in_cart' AND (stripe_customer_id = %s OR wp_user_id = %d) ORDER BY start_at DESC LIMIT 100",
+			return $pdb->get_results(
+				$pdb->prepare(
+					"SELECT * FROM `{$table}` WHERE status NOT IN ('in_cart','admin_archived') AND (stripe_customer_id = %s OR wp_user_id = %d) ORDER BY start_at DESC LIMIT 100",
 					$stripe_customer_id,
 					$wp_user_id
 				)
@@ -609,18 +796,18 @@ class AJCore_Reservations {
 		}
 
 		if ( '' !== $stripe_customer_id ) {
-			return $wpdb->get_results(
-				$wpdb->prepare(
-					"SELECT * FROM `{$table}` WHERE status <> 'in_cart' AND stripe_customer_id = %s ORDER BY start_at DESC LIMIT 100",
+			return $pdb->get_results(
+				$pdb->prepare(
+					"SELECT * FROM `{$table}` WHERE status NOT IN ('in_cart','admin_archived') AND stripe_customer_id = %s ORDER BY start_at DESC LIMIT 100",
 					$stripe_customer_id
 				)
 			);
 		}
 
 		if ( $wp_user_id > 0 ) {
-			return $wpdb->get_results(
-				$wpdb->prepare(
-					"SELECT * FROM `{$table}` WHERE status <> 'in_cart' AND wp_user_id = %d ORDER BY start_at DESC LIMIT 100",
+			return $pdb->get_results(
+				$pdb->prepare(
+					"SELECT * FROM `{$table}` WHERE status NOT IN ('in_cart','admin_archived') AND wp_user_id = %d ORDER BY start_at DESC LIMIT 100",
 					$wp_user_id
 				)
 			);
@@ -637,7 +824,7 @@ class AJCore_Reservations {
 	 * @return array
 	 */
 	public static function get_cart_reservations( $stripe_customer_id, $wp_user_id = 0 ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
 		$table              = self::get_reservations_table();
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
@@ -645,24 +832,24 @@ class AJCore_Reservations {
 		$hold_cutoff        = gmdate( 'Y-m-d H:i:s', time() - ( self::PENDING_HOLD_MINUTES * 60 ) );
 
 		if ( '' !== $stripe_customer_id && $wp_user_id > 0 ) {
-			return $wpdb->get_results(
-				$wpdb->prepare(
+			return $pdb->get_results(
+				$pdb->prepare(
 					"SELECT * FROM `{$table}` WHERE status = 'in_cart' AND created_at >= %s AND (stripe_customer_id = %s OR wp_user_id = %d) ORDER BY start_at ASC LIMIT 20",
 					$hold_cutoff, $stripe_customer_id, $wp_user_id
 				)
 			);
 		}
 		if ( '' !== $stripe_customer_id ) {
-			return $wpdb->get_results(
-				$wpdb->prepare(
+			return $pdb->get_results(
+				$pdb->prepare(
 					"SELECT * FROM `{$table}` WHERE status = 'in_cart' AND created_at >= %s AND stripe_customer_id = %s ORDER BY start_at ASC LIMIT 20",
 					$hold_cutoff, $stripe_customer_id
 				)
 			);
 		}
 		if ( $wp_user_id > 0 ) {
-			return $wpdb->get_results(
-				$wpdb->prepare(
+			return $pdb->get_results(
+				$pdb->prepare(
 					"SELECT * FROM `{$table}` WHERE status = 'in_cart' AND created_at >= %s AND wp_user_id = %d ORDER BY start_at ASC LIMIT 20",
 					$hold_cutoff, $wp_user_id
 				)
@@ -678,12 +865,11 @@ class AJCore_Reservations {
 	 * @return object|null
 	 */
 	public static function get_reservation_by_uuid( $uuid ) {
-		global $wpdb;
-
+		$pdb   = self::get_pdb();
 		$table = self::get_reservations_table();
 
-		return $wpdb->get_row(
-			$wpdb->prepare(
+		return $pdb->get_row(
+			$pdb->prepare(
 				"SELECT * FROM `{$table}` WHERE reservation_uuid = %s LIMIT 1",
 				sanitize_text_field( (string) $uuid )
 			)
@@ -697,12 +883,11 @@ class AJCore_Reservations {
 	 * @return object|null
 	 */
 	public static function get_reservation_by_session_id( $session_id ) {
-		global $wpdb;
-
+		$pdb   = self::get_pdb();
 		$table = self::get_reservations_table();
 
-		return $wpdb->get_row(
-			$wpdb->prepare(
+		return $pdb->get_row(
+			$pdb->prepare(
 				"SELECT * FROM `{$table}` WHERE stripe_checkout_session_id = %s LIMIT 1",
 				sanitize_text_field( (string) $session_id )
 			)
@@ -715,11 +900,10 @@ class AJCore_Reservations {
 	 * @return array
 	 */
 	public static function get_all_resources() {
-		global $wpdb;
-
+		$pdb   = self::get_pdb();
 		$table = self::get_resources_table();
 
-		return $wpdb->get_results(
+		return $pdb->get_results(
 			"SELECT * FROM `{$table}` WHERE active = 1 ORDER BY id ASC"
 		);
 	}
@@ -731,12 +915,11 @@ class AJCore_Reservations {
 	 * @return object|null
 	 */
 	public static function get_resource_by_key( $resource_key ) {
-		global $wpdb;
-
+		$pdb   = self::get_pdb();
 		$table = self::get_resources_table();
 
-		return $wpdb->get_row(
-			$wpdb->prepare(
+		return $pdb->get_row(
+			$pdb->prepare(
 				"SELECT * FROM `{$table}` WHERE resource_key = %s LIMIT 1",
 				sanitize_key( (string) $resource_key )
 			)
@@ -750,12 +933,11 @@ class AJCore_Reservations {
 	 * @return object|null
 	 */
 	public static function get_resource_by_id( $resource_id ) {
-		global $wpdb;
-
+		$pdb   = self::get_pdb();
 		$table = self::get_resources_table();
 
-		return $wpdb->get_row(
-			$wpdb->prepare(
+		return $pdb->get_row(
+			$pdb->prepare(
 				"SELECT * FROM `{$table}` WHERE id = %d LIMIT 1",
 				absint( $resource_id )
 			)
@@ -780,7 +962,7 @@ class AJCore_Reservations {
 	 * @return array
 	 */
 	public static function get_all_reservations( $filters = array() ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
 		$table  = self::get_reservations_table();
 		$where  = array( '1=1' );
@@ -790,7 +972,7 @@ class AJCore_Reservations {
 			$where[]  = 'status = %s';
 			$params[] = sanitize_key( $filters['status'] );
 		} else {
-			// Exclude in_cart from the default list — they are not confirmed reservations.
+			// Exclude in_cart from the default admin list — they are pre-payment holds.
 			$where[] = "status <> 'in_cart'";
 		}
 
@@ -799,7 +981,8 @@ class AJCore_Reservations {
 			$params[] = sanitize_key( $filters['resource_key'] );
 		}
 
-		if ( ! empty( $filters['pricing_type'] ) && in_array( $filters['pricing_type'], array( 'business_hours', 'after_hours_weekend' ), true ) ) {
+		$valid_pricing_types = array( 'business_hours', 'after_hours_weekend', 'mixed' );
+		if ( ! empty( $filters['pricing_type'] ) && in_array( $filters['pricing_type'], $valid_pricing_types, true ) ) {
 			$where[]  = 'pricing_type = %s';
 			$params[] = $filters['pricing_type'];
 		}
@@ -823,10 +1006,10 @@ class AJCore_Reservations {
 		$sql       = "SELECT * FROM `{$table}` WHERE {$where_sql} ORDER BY start_at DESC LIMIT {$limit}";
 
 		if ( ! empty( $params ) ) {
-			return $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
+			return $pdb->get_results( $pdb->prepare( $sql, $params ) );
 		}
 
-		return $wpdb->get_results( $sql );
+		return $pdb->get_results( $sql );
 	}
 
 	// ──────────────────────────────────────────────────────────────────────────
@@ -849,6 +1032,8 @@ class AJCore_Reservations {
 			'cancelled'             => __( 'Cancelled', 'ajforms' ),
 			'failed'                => __( 'Failed', 'ajforms' ),
 			'refunded'              => __( 'Refunded', 'ajforms' ),
+			'admin_archived'        => __( 'Archived (Admin)', 'ajforms' ),
+			'void_internal'         => __( 'Voided (Internal)', 'ajforms' ),
 		);
 
 		return isset( $labels[ $status ] ) ? $labels[ $status ] : ucfirst( str_replace( '_', ' ', sanitize_key( (string) $status ) ) );
@@ -863,7 +1048,7 @@ class AJCore_Reservations {
 	public static function get_reservation_status_class( $status ) {
 		$good = array( 'confirmed', 'paid' );
 		$warn = array( 'pending_payment', 'paid_pending_calendar' );
-		$bad  = array( 'cancelled', 'failed', 'refunded' );
+		$bad  = array( 'cancelled', 'failed', 'refunded', 'admin_archived', 'void_internal' );
 
 		if ( in_array( $status, $good, true ) ) {
 			return 'good';
@@ -891,6 +1076,10 @@ class AJCore_Reservations {
 				: __( 'Business Hours (Mon–Fri 9am–5pm)', 'ajforms' );
 		}
 
+		if ( 'mixed' === $pricing_type ) {
+			return __( 'Mixed (Business + After-Hours)', 'ajforms' );
+		}
+
 		return ! empty( $settings['reservation_after_hours_label'] )
 			? sanitize_text_field( $settings['reservation_after_hours_label'] )
 			: __( 'After-Hours / Weekend', 'ajforms' );
@@ -903,17 +1092,18 @@ class AJCore_Reservations {
 	/**
 	 * Log a reservation event to the AJCore portal event log.
 	 *
-	 * Piggybacks on the existing aj_portal_event_log table.
+	 * Uses the portal DB connection so event log entries land in the same
+	 * database as the reservation records.
 	 *
 	 * @param string $event_type
 	 * @param array  $args
 	 */
 	public static function log_reservation_event( $event_type, $args = array() ) {
-		global $wpdb;
+		$pdb = self::get_pdb();
 
-		$table = $wpdb->prefix . 'aj_portal_event_log';
+		$table = $pdb->prefix . 'aj_portal_event_log';
 
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
 			return;
 		}
 
@@ -924,7 +1114,7 @@ class AJCore_Reservations {
 			$severity = 'info';
 		}
 
-		$wpdb->insert(
+		$pdb->insert(
 			$table,
 			array(
 				'event_type'        => sanitize_text_field( 'reservation_' . ltrim( (string) $event_type, 'reservation_' ) ),
