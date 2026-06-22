@@ -11738,6 +11738,7 @@ class AJForms {
 		/* ── Conference Room — Top Bar ───────────────────────────────── */
 		.aj-res-topbar{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px}
 		.aj-res-topbar-left{}
+		h2.aj-res-page-title{background:none!important;-webkit-background-clip:initial!important;background-clip:initial!important;color:#1e293b!important;font-size:18px;font-weight:800;margin:0 0 2px;letter-spacing:-.3px}
 		.aj-res-page-title{font-size:18px;font-weight:800;color:#1e293b;margin:0 0 2px;letter-spacing:-.3px}
 		.aj-res-page-sub{font-size:12px;color:#64748b;margin:0}
 		.aj-res-topbar-right{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
@@ -11859,7 +11860,7 @@ class AJForms {
 				<div class="aj-res-topbar-right">
 					<span class="aj-res-rate-pill"><?php echo esc_html( $business_hours_label ); ?> &mdash; $<?php echo esc_html( $settings['reservation_business_hours_rate'] ?? '40' ); ?>/hr<small><?php esc_html_e( 'Mon–Fri 9am–5pm', 'ajforms' ); ?></small></span>
 					<span class="aj-res-rate-pill"><?php echo esc_html( $after_hours_label ); ?> &mdash; $<?php echo esc_html( $settings['reservation_after_hours_rate'] ?? '80' ); ?>/hr<small><?php esc_html_e( 'Evenings &amp; Weekends', 'ajforms' ); ?></small></span>
-					<button type="button" id="aj-res-billing-portal-btn" class="button aj-res-billing-btn"
+					<button type="button" id="aj-res-billing-portal-btn" class="aj-res-billing-btn"
 						data-portal-nonce="<?php echo esc_attr( $portal_nonce ); ?>">
 						<?php esc_html_e( 'Manage Payment Methods', 'ajforms' ); ?>
 					</button>
