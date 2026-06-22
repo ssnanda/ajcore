@@ -11735,41 +11735,26 @@ class AJForms {
 		?>
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
 		<style>
-		/* ── Conference Room — Hero Card ────────────────────────────── */
-		.aj-res-hero h1,.aj-res-hero h2,.aj-res-hero h3{background:none!important;-webkit-background-clip:initial!important;background-clip:initial!important;color:#fff!important}
-		.aj-res-hero{background:linear-gradient(135deg,#1e3a8a 0%,#3157ff 55%,#7c3aed 100%);border-radius:12px;padding:12px 16px 10px;margin-bottom:16px;position:relative;overflow:hidden;color:#fff}
-		.aj-res-hero::before{content:'';position:absolute;top:-30px;right:-20px;width:120px;height:120px;background:rgba(255,255,255,.05);border-radius:50%;pointer-events:none}
-		.aj-res-hero::after{content:'';position:absolute;bottom:-40px;right:60px;width:80px;height:80px;background:rgba(255,255,255,.04);border-radius:50%;pointer-events:none}
-		.aj-res-hero-title{font-size:17px;font-weight:800;margin:0 0 2px;letter-spacing:-.3px;position:relative;z-index:1}
-		.aj-res-hero-sub{font-size:11px;opacity:.7;margin:0 0 10px;position:relative;z-index:1}
-		.aj-res-hero-body{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;position:relative;z-index:1}
-		.aj-res-steps-wrap{flex:1 1 220px}
-		.aj-res-hero-steps-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;opacity:.65;margin:0 0 7px}
-		.aj-res-step{display:flex;align-items:flex-start;gap:8px;margin-bottom:5px}
-		.aj-res-step:last-child{margin-bottom:0}
-		.aj-res-step-num{flex-shrink:0;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.18);border:1.5px solid rgba(255,255,255,.45);color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center}
-		.aj-res-step-text{font-size:11px;opacity:.9;line-height:1.4;padding-top:2px}
-		.aj-res-rates-block{display:flex;gap:8px;flex-shrink:0;align-self:center;flex-wrap:wrap}
-		.aj-res-rate-card{border-radius:10px;padding:8px 12px;min-width:96px;text-align:center;position:relative}
-		.aj-res-rate-card.biz{background:rgba(219,234,254,.13);border:1px solid rgba(147,197,253,.35)}
-		.aj-res-rate-card.after{background:rgba(237,233,254,.11);border:1px solid rgba(196,181,253,.3)}
-		.aj-res-rate-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;opacity:.7;margin-bottom:4px}
-		.aj-res-rate-amount{font-size:22px;font-weight:900;color:#fff;line-height:1}
-		.aj-res-rate-amount span{font-size:12px;font-weight:600;opacity:.75}
-		.aj-res-rate-sub{font-size:10px;opacity:.6;margin-top:3px;line-height:1.3}
-		/* ── Hero bottom bar ─────────────────────────────────────────── */
-		.aj-res-hero-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding-top:8px;margin-top:8px;border-top:1px solid rgba(255,255,255,.14);position:relative;z-index:1}
-		.aj-res-legend{display:flex;align-items:center;gap:12px;font-size:11px;opacity:.82}
-		.aj-res-legend-dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:middle}
+		/* ── Conference Room — Top Bar ───────────────────────────────── */
+		.aj-res-topbar{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+		.aj-res-topbar-left{}
+		.aj-res-page-title{font-size:18px;font-weight:800;color:#1e293b;margin:0 0 2px;letter-spacing:-.3px}
+		.aj-res-page-sub{font-size:12px;color:#64748b;margin:0}
+		.aj-res-topbar-right{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+		.aj-res-rate-pill{display:inline-flex;flex-direction:column;align-items:center;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:5px 12px;font-size:13px;font-weight:700;color:#1e293b;line-height:1.3}
+		.aj-res-rate-pill small{font-size:10px;font-weight:500;color:#64748b;margin-top:1px}
+		.aj-res-billing-btn{background:#f8fafc!important;border:1px solid #e2e8f0!important;color:#334155!important;border-radius:8px!important;font-size:12px!important;padding:5px 14px!important;font-weight:600!important;white-space:nowrap;transition:background .15s,border-color .15s;text-shadow:none!important;box-shadow:none!important}
+		.aj-res-billing-btn:hover{background:#f1f5f9!important;border-color:#c7d4f5!important;color:#3157ff!important}
+		.aj-res-billing-err{font-size:11px;color:#991b1b;margin-top:2px}
+		/* ── Info bar (legend + notices) ─────────────────────────────── */
+		.aj-res-infobar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 14px;margin-bottom:10px;padding:7px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;font-size:12px;color:#475569}
+		.aj-res-legend{display:flex;align-items:center;gap:12px}
+		.aj-res-legend-dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:middle}
 		.aj-res-legend-dot.red{background:#f87171}
 		.aj-res-legend-dot.amber{background:#fbbf24}
-		.aj-res-notices{display:flex;flex-wrap:wrap;gap:3px 12px;font-size:11px}
-		.aj-res-policy{margin:0;font-weight:700;color:#fca5a5}
-		.aj-res-voffice{margin:0;color:#86efac;font-weight:600}
-		.aj-res-billing-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
-		.aj-res-billing-btn{background:rgba(255,255,255,.14)!important;border:1px solid rgba(255,255,255,.32)!important;color:#fff!important;border-radius:8px!important;font-size:12px!important;padding:5px 14px!important;font-weight:600!important;white-space:nowrap;transition:background .15s;text-shadow:none!important;box-shadow:none!important}
-		.aj-res-billing-btn:hover{background:rgba(255,255,255,.24)!important}
-		.aj-res-billing-err{font-size:11px;color:#fca5a5;margin-top:2px}
+		.aj-res-notices{display:flex;flex-wrap:wrap;gap:3px 12px}
+		.aj-res-policy{margin:0;font-weight:700;color:#b45309}
+		.aj-res-voffice{margin:0;color:#15803d;font-weight:600}
 		/* ── Cart panel ──────────────────────────────────────────────── */
 		.aj-res-cart-panel{background:#fff;border:2px solid #e0e7ff;border-radius:14px;padding:16px 18px;margin-bottom:16px;transition:border-color .25s,box-shadow .25s}
 		.aj-res-cart-panel.has-items{border-color:#3157ff;box-shadow:0 4px 24px rgba(49,87,255,.1)}
@@ -11857,64 +11842,40 @@ class AJForms {
 		@media(max-width:640px){
 			.aj-res-fc-wrap .fc{padding:6px}
 			.fc .fc-toolbar{flex-wrap:wrap;gap:6px}
-			.aj-res-hero-body{flex-direction:column}
-			.aj-res-rates-block{flex-direction:row;flex-wrap:wrap}
-			.aj-res-hero-bar{flex-direction:column;align-items:flex-start;gap:10px}
-			.aj-res-billing-wrap{align-items:flex-start}
+			.aj-res-topbar{flex-direction:column}
+			.aj-res-topbar-right{flex-wrap:wrap}
+			.aj-res-infobar{flex-direction:column;align-items:flex-start}
 			.aj-res-cart-header{flex-direction:column;align-items:flex-start}
 		}
 		</style>
 		<section class="aj-customer-portal-panel aj-reservations-panel">
 
-			<!-- ── Hero Card ─────────────────────────────────────────────── -->
-			<div class="aj-res-hero">
-				<h2 class="aj-res-hero-title"><?php echo esc_html( $resource_name ); ?></h2>
-				<p class="aj-res-hero-sub">University Place Office Suites &mdash; 1914 J N Pease Pl, Charlotte, NC 28262</p>
-				<div class="aj-res-hero-body">
-					<div class="aj-res-steps-wrap">
-						<p class="aj-res-hero-steps-title"><?php esc_html_e( 'How to Book', 'ajforms' ); ?></p>
-						<div class="aj-res-step">
-							<span class="aj-res-step-num">1</span>
-							<span class="aj-res-step-text"><?php esc_html_e( 'Click and drag on the calendar below to select your time slot (8 AM – 10 PM).', 'ajforms' ); ?></span>
-						</div>
-						<div class="aj-res-step">
-							<span class="aj-res-step-num">2</span>
-							<span class="aj-res-step-text"><?php esc_html_e( 'Fill in your details and click', 'ajforms' ); ?> <strong><?php esc_html_e( 'Add to Cart.', 'ajforms' ); ?></strong> <?php esc_html_e( 'Repeat for more slots.', 'ajforms' ); ?></span>
-						</div>
-						<div class="aj-res-step">
-							<span class="aj-res-step-num">3</span>
-							<span class="aj-res-step-text"><?php esc_html_e( 'When ready, click', 'ajforms' ); ?> <strong><?php esc_html_e( 'Checkout', 'ajforms' ); ?></strong> <?php esc_html_e( 'in your cart to pay securely.', 'ajforms' ); ?></span>
-						</div>
-					</div>
-					<div class="aj-res-rates-block">
-						<div class="aj-res-rate-card biz">
-							<div class="aj-res-rate-label"><?php echo esc_html( $business_hours_label ); ?></div>
-							<div class="aj-res-rate-amount">$<?php echo esc_html( $settings['reservation_business_hours_rate'] ?? '40' ); ?><span>/hr</span></div>
-							<div class="aj-res-rate-sub"><?php esc_html_e( 'Mon–Fri, 9am–5pm', 'ajforms' ); ?></div>
-						</div>
-						<div class="aj-res-rate-card after">
-							<div class="aj-res-rate-label"><?php echo esc_html( $after_hours_label ); ?></div>
-							<div class="aj-res-rate-amount">$<?php echo esc_html( $settings['reservation_after_hours_rate'] ?? '80' ); ?><span>/hr</span></div>
-							<div class="aj-res-rate-sub"><?php esc_html_e( 'Evenings &amp; Weekends', 'ajforms' ); ?></div>
-						</div>
-					</div>
+			<!-- ── Page header ───────────────────────────────────────────── -->
+			<div class="aj-res-topbar">
+				<div class="aj-res-topbar-left">
+					<h2 class="aj-res-page-title"><?php echo esc_html( $resource_name ); ?></h2>
+					<p class="aj-res-page-sub">University Place Office Suites &mdash; 1914 J N Pease Pl, Charlotte, NC 28262</p>
 				</div>
-				<div class="aj-res-hero-bar">
-					<div class="aj-res-legend">
-						<span><span class="aj-res-legend-dot red"></span><?php esc_html_e( 'Already Booked', 'ajforms' ); ?></span>
-						<span><span class="aj-res-legend-dot amber"></span><?php esc_html_e( 'Unavailable', 'ajforms' ); ?></span>
-					</div>
-					<div class="aj-res-notices">
-						<p class="aj-res-policy"><?php esc_html_e( 'No cancellations, no rescheduling — reservations are final.', 'ajforms' ); ?></p>
-						<p class="aj-res-voffice"><?php esc_html_e( 'Virtual Office Clients get 2 free hours yearly.', 'ajforms' ); ?></p>
-					</div>
-					<div class="aj-res-billing-wrap">
-						<button type="button" id="aj-res-billing-portal-btn" class="button aj-res-billing-btn"
-							data-portal-nonce="<?php echo esc_attr( $portal_nonce ); ?>">
-							<?php esc_html_e( 'Manage Payment Methods', 'ajforms' ); ?>
-						</button>
-						<span id="aj-res-billing-err" class="aj-res-billing-err" style="display:none"></span>
-					</div>
+				<div class="aj-res-topbar-right">
+					<span class="aj-res-rate-pill"><?php echo esc_html( $business_hours_label ); ?> &mdash; $<?php echo esc_html( $settings['reservation_business_hours_rate'] ?? '40' ); ?>/hr<small><?php esc_html_e( 'Mon–Fri 9am–5pm', 'ajforms' ); ?></small></span>
+					<span class="aj-res-rate-pill"><?php echo esc_html( $after_hours_label ); ?> &mdash; $<?php echo esc_html( $settings['reservation_after_hours_rate'] ?? '80' ); ?>/hr<small><?php esc_html_e( 'Evenings &amp; Weekends', 'ajforms' ); ?></small></span>
+					<button type="button" id="aj-res-billing-portal-btn" class="button aj-res-billing-btn"
+						data-portal-nonce="<?php echo esc_attr( $portal_nonce ); ?>">
+						<?php esc_html_e( 'Manage Payment Methods', 'ajforms' ); ?>
+					</button>
+					<span id="aj-res-billing-err" class="aj-res-billing-err" style="display:none"></span>
+				</div>
+			</div>
+
+			<!-- ── Info bar ───────────────────────────────────────────────── -->
+			<div class="aj-res-infobar">
+				<div class="aj-res-legend">
+					<span><span class="aj-res-legend-dot red"></span><?php esc_html_e( 'Already Booked', 'ajforms' ); ?></span>
+					<span><span class="aj-res-legend-dot amber"></span><?php esc_html_e( 'Unavailable', 'ajforms' ); ?></span>
+				</div>
+				<div class="aj-res-notices">
+					<p class="aj-res-policy"><?php esc_html_e( 'No cancellations, no rescheduling — reservations are final.', 'ajforms' ); ?></p>
+					<p class="aj-res-voffice"><?php esc_html_e( 'Virtual Office Clients get 2 free hours yearly.', 'ajforms' ); ?></p>
 				</div>
 			</div>
 
