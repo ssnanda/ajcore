@@ -13629,11 +13629,7 @@ class AJForms_Admin {
 					<?php foreach ( $tabs as $tab_key => $tab_label ) : ?>
 						<?php
 						$sync_owner = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true;
-						if ( 'sync' === $tab_key && ! $sync_owner ) : ?>
-							<span class="ajcore-tab-link" title="<?php esc_attr_e( 'Stripe sync runs on the Master site only.', 'ajforms' ); ?>" style="opacity:.45;cursor:not-allowed;"><?php echo esc_html( $tab_label ); ?></span>
-						<?php else : ?>
-							<a class="ajcore-tab-link <?php echo $tab === $tab_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', $tab_key, $base_url ) ); ?>"><?php echo esc_html( $tab_label ); ?></a>
-						<?php endif; ?>
+						<a class="ajcore-tab-link <?php echo $tab === $tab_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', $tab_key, $base_url ) ); ?>"><?php echo esc_html( $tab_label ); ?></a>
 					<?php endforeach; ?>
 				</nav>
 			<?php endif; ?>
@@ -15094,7 +15090,13 @@ class AJForms_Admin {
 			</div>
 
 			<?php if ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() ) : ?>
-				<div class="notice notice-warning inline" style="margin-top:12px;"><p><?php esc_html_e( 'Stripe sync is owned by another AJ Core site. This site reads shared portal data only.', 'ajforms' ); ?></p></div>
+				<div class="notice notice-warning inline" style="display:flex;align-items:center;gap:10px;padding:12px 16px;margin-top:12px;border-left-color:#f59e0b">
+					<span style="font-size:20px">🔒</span>
+					<div>
+						<strong><?php esc_html_e( 'Read-only on this site', 'ajforms' ); ?></strong> —
+						<?php esc_html_e( 'Stripe sync runs on the Master site only. This site reads from the shared database. You can view sync history and cache counts below.', 'ajforms' ); ?>
+					</div>
+				</div>
 			<?php else : ?>
 				<div class="ajforms-settings-inline-actions" style="margin-top:12px;">
 					<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Run Selected Sync Now', 'ajforms' ); ?></a>
