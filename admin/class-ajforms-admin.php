@@ -13627,8 +13627,6 @@ class AJForms_Admin {
 						<?php endforeach; ?>
 					</select>
 					<?php foreach ( $tabs as $tab_key => $tab_label ) : ?>
-						<?php
-						$sync_owner = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true;
 						<a class="ajcore-tab-link <?php echo $tab === $tab_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'tab', $tab_key, $base_url ) ); ?>"><?php echo esc_html( $tab_label ); ?></a>
 					<?php endforeach; ?>
 				</nav>
