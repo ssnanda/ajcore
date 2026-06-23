@@ -13743,24 +13743,86 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		$settings = $this->get_portal_api_settings();
-		$catalog  = $this->get_portal_api_endpoint_catalog();
-		$base_url = rest_url( 'ajcore/v1' );
-		$is_master = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true;
-		$shared_enabled = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
-		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
+		$settings                = $this->get_portal_api_settings();
+		$catalog                 = $this->get_portal_api_endpoint_catalog();
+		$base_url                = rest_url( 'ajcore/v1' );
+		$is_master               = function_exists( 'ajcore_is_stripe_sync_owner' ) ? ajcore_is_stripe_sync_owner() : true;
+		$shared_enabled          = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
+		$ms_enabled              = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
 		$app_passwords_available = function_exists( 'wp_is_application_passwords_available' ) ? wp_is_application_passwords_available() : true;
-		$profile_url = admin_url( 'profile.php#application-passwords-section' );
-		$role_manager_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'role-manager' ), admin_url( 'admin.php' ) );
-		$status_url = rest_url( 'ajcore/v1/status' );
-		$ops_summary_url = rest_url( 'ajcore/v1/ops/summary' );
-		$portal_me_url = rest_url( 'ajcore/v1/portal/me' );
+		$profile_url             = admin_url( 'profile.php#application-passwords-section' );
+		$role_manager_url        = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'role-manager' ), admin_url( 'admin.php' ) );
+		$status_url              = rest_url( 'ajcore/v1/status' );
+		$ops_summary_url         = rest_url( 'ajcore/v1/ops/summary' );
+		$portal_me_url           = rest_url( 'ajcore/v1/portal/me' );
+
+		$total_endpoints  = count( $catalog );
+		$system_count     = count( array_filter( $catalog, fn( $e ) => 'System' === $e['surface'] ) );
+		$ops_count        = count( array_filter( $catalog, fn( $e ) => 'OPS' === $e['surface'] ) );
+		$portal_count     = count( array_filter( $catalog, fn( $e ) => 'Portal' === $e['surface'] ) );
+		$get_count        = count( array_filter( $catalog, fn( $e ) => 'GET' === $e['method'] ) );
+		$post_count       = count( array_filter( $catalog, fn( $e ) => 'POST' === $e['method'] ) );
+
+		$surfaces_enabled = array(
+			'System' => '1' === (string) $settings['enabled'],
+			'OPS'    => '1' === (string) $settings['enabled'] && '1' === (string) $settings['ops_enabled'],
+			'Portal' => '1' === (string) $settings['enabled'] && '1' === (string) $settings['portal_enabled'],
+		);
 		?>
+		<style>
+		.ajcore-api-method-badge{display:inline-flex;align-items:center;justify-content:center;min-width:44px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+		.ajcore-api-method-badge.get{background:#dbeafe;color:#1d4ed8}
+		.ajcore-api-method-badge.post{background:#dcfce7;color:#15803d}
+		.ajcore-api-surface-badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.03em;white-space:nowrap}
+		.ajcore-api-surface-badge.system{background:#f1f5f9;color:#475569}
+		.ajcore-api-surface-badge.ops{background:#ede9fe;color:#6d28d9}
+		.ajcore-api-surface-badge.portal{background:#dbeafe;color:#1d4ed8}
+		.ajcore-api-auth-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+		.ajcore-api-auth-badge.public{background:#fef9c3;color:#854d0e}
+		.ajcore-api-auth-badge.admin{background:#fee2e2;color:#991b1b}
+		.ajcore-api-auth-badge.portal-user{background:#dcfce7;color:#166534}
+		.ajcore-api-auth-badge.mixed{background:#e0f2fe;color:#0369a1}
+		.ajcore-api-enabled-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
+		.ajcore-api-enabled-dot.on{background:#22c55e}
+		.ajcore-api-enabled-dot.off{background:#d1d5db}
+		#ajcore-api-filter-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 10px}
+		#ajcore-api-search{flex:1 1 220px;max-width:320px;padding:7px 11px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;line-height:1.4}
+		#ajcore-api-search:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.12)}
+		.ajcore-api-filter-pill{display:inline-flex;align-items:center;gap:4px;padding:5px 12px;border-radius:999px;border:1px solid #e2e8f0;background:#fff;font-size:12px;font-weight:700;cursor:pointer;transition:all .15s;color:#475569}
+		.ajcore-api-filter-pill:hover{border-color:#6366f1;color:#4f46e5}
+		.ajcore-api-filter-pill.active{background:#6366f1;border-color:#6366f1;color:#fff}
+		.ajcore-api-filter-pill .pill-count{opacity:.7;font-weight:600}
+		#ajcore-api-count-badge{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;background:#f1f5f9;color:#64748b;font-size:12px;font-weight:700;margin-left:auto}
+		.ajcore-api-section-header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:linear-gradient(90deg,#f8fafc,#fff);border-left:4px solid #e2e8f0;border-radius:0 8px 8px 0;margin:18px 0 0}
+		.ajcore-api-section-header.system-hdr{border-left-color:#94a3b8}
+		.ajcore-api-section-header.ops-hdr{border-left-color:#7c3aed}
+		.ajcore-api-section-header.portal-hdr{border-left-color:#2563eb}
+		.ajcore-api-section-header h3{margin:0;font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#334155}
+		.ajcore-api-section-header .hdr-count{font-size:11px;font-weight:600;color:#94a3b8}
+		.ajcore-api-table{width:100%;border-collapse:collapse;font-size:13px}
+		.ajcore-api-table th{background:#f8fafc;border-bottom:2px solid #e2e8f0;padding:9px 12px;text-align:left;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#64748b;cursor:pointer;user-select:none;white-space:nowrap}
+		.ajcore-api-table th:hover{background:#f1f5f9;color:#334155}
+		.ajcore-api-table th .sort-icon{opacity:.4;margin-left:3px;font-style:normal}
+		.ajcore-api-table th.sort-asc .sort-icon::after{content:'▲'}
+		.ajcore-api-table th.sort-desc .sort-icon::after{content:'▼'}
+		.ajcore-api-table th:not(.sort-asc):not(.sort-desc) .sort-icon::after{content:'⇅'}
+		.ajcore-api-table td{padding:9px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+		.ajcore-api-table tr:last-child td{border-bottom:none}
+		.ajcore-api-table tr:hover td{background:#fafbff}
+		.ajcore-api-table tr[data-hidden]{display:none}
+		.ajcore-api-endpoint-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#1e293b;word-break:break-all}
+		.ajcore-api-copy-btn{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#fff;font-size:10px;font-weight:600;color:#64748b;cursor:pointer;margin-left:6px;vertical-align:middle;transition:all .12s}
+		.ajcore-api-copy-btn:hover{background:#f1f5f9;border-color:#94a3b8;color:#334155}
+		.ajcore-api-copy-btn.copied{background:#dcfce7;border-color:#86efac;color:#166534}
+		.ajcore-api-purpose{color:#64748b;font-size:12px;line-height:1.45}
+		.ajcore-api-no-results{text-align:center;padding:32px;color:#94a3b8;font-style:italic}
+		</style>
+
 		<div class="ajcore-admin-panel">
 			<div class="ajcore-section-head">
 				<div>
-					<h2><?php esc_html_e( 'AJ Core API', 'ajforms' ); ?></h2>
-					<p><?php esc_html_e( 'Use these REST endpoints for the OPS portal, iOS app, and future integrations. In multi-site portal mode, protected API routes should run from the Master site only.', 'ajforms' ); ?></p>
+					<h2><?php esc_html_e( 'AJ Core REST API', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'REST endpoints for the customer portal app, OPS dashboard, and future integrations. In multi-site mode, protected routes run from the Master site only.', 'ajforms' ); ?></p>
 				</div>
 			</div>
 
@@ -13768,11 +13830,35 @@ class AJForms_Admin {
 				<div class="notice notice-success inline"><p><?php esc_html_e( 'API settings saved.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 
-			<div class="ajcore-kpi-grid">
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Protected API', 'ajforms' ); ?></span><strong><?php echo '1' === (string) $settings['enabled'] ? esc_html__( 'Enabled', 'ajforms' ) : esc_html__( 'Disabled', 'ajforms' ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Master Site', 'ajforms' ); ?></span><strong><?php echo $is_master ? esc_html__( 'Yes', 'ajforms' ) : esc_html__( 'No', 'ajforms' ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Shared DB', 'ajforms' ); ?></span><strong><?php echo $shared_enabled ? esc_html__( 'On', 'ajforms' ) : esc_html__( 'Off', 'ajforms' ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Multi Site Portal', 'ajforms' ); ?></span><strong><?php echo $ms_enabled ? esc_html__( 'On', 'ajforms' ) : esc_html__( 'Off', 'ajforms' ); ?></strong></div>
+			<div class="ajcore-kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+				<div class="ajcore-kpi-card">
+					<span><?php esc_html_e( 'Protected API', 'ajforms' ); ?></span>
+					<strong><?php echo '1' === (string) $settings['enabled'] ? esc_html__( 'Enabled', 'ajforms' ) : esc_html__( 'Disabled', 'ajforms' ); ?></strong>
+				</div>
+				<div class="ajcore-kpi-card">
+					<span><?php esc_html_e( 'OPS API', 'ajforms' ); ?></span>
+					<strong><?php echo '1' === (string) $settings['ops_enabled'] ? esc_html__( 'On', 'ajforms' ) : esc_html__( 'Off', 'ajforms' ); ?></strong>
+				</div>
+				<div class="ajcore-kpi-card">
+					<span><?php esc_html_e( 'Portal API', 'ajforms' ); ?></span>
+					<strong><?php echo '1' === (string) $settings['portal_enabled'] ? esc_html__( 'On', 'ajforms' ) : esc_html__( 'Off', 'ajforms' ); ?></strong>
+				</div>
+				<div class="ajcore-kpi-card">
+					<span><?php esc_html_e( 'Master Site', 'ajforms' ); ?></span>
+					<strong><?php echo $is_master ? esc_html__( 'Yes', 'ajforms' ) : esc_html__( 'No', 'ajforms' ); ?></strong>
+				</div>
+				<div class="ajcore-kpi-card">
+					<span><?php esc_html_e( 'Total Endpoints', 'ajforms' ); ?></span>
+					<strong><?php echo esc_html( $total_endpoints ); ?></strong>
+				</div>
+				<div class="ajcore-kpi-card">
+					<span><?php esc_html_e( 'Shared DB', 'ajforms' ); ?></span>
+					<strong><?php echo $shared_enabled ? esc_html__( 'On', 'ajforms' ) : esc_html__( 'Off', 'ajforms' ); ?></strong>
+				</div>
+				<div class="ajcore-kpi-card">
+					<span><?php esc_html_e( 'Multi-site Portal', 'ajforms' ); ?></span>
+					<strong><?php echo $ms_enabled ? esc_html__( 'On', 'ajforms' ) : esc_html__( 'Off', 'ajforms' ); ?></strong>
+				</div>
 			</div>
 		</div>
 
@@ -13794,7 +13880,7 @@ class AJForms_Admin {
 					</tr>
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Customer Portal API', 'ajforms' ); ?></th>
-						<td><label><input type="checkbox" name="portal_enabled" value="1" <?php checked( $settings['portal_enabled'], '1' ); ?>> <?php esc_html_e( 'Allow customer-facing portal/iOS endpoints', 'ajforms' ); ?></label></td>
+						<td><label><input type="checkbox" name="portal_enabled" value="1" <?php checked( $settings['portal_enabled'], '1' ); ?>> <?php esc_html_e( 'Allow customer-facing portal/app endpoints', 'ajforms' ); ?></label></td>
 					</tr>
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Status endpoint', 'ajforms' ); ?></th>
@@ -13823,42 +13909,197 @@ class AJForms_Admin {
 			<h2><?php esc_html_e( 'How to Test', 'ajforms' ); ?></h2>
 			<table class="widefat striped">
 				<tbody>
-					<tr><th><?php esc_html_e( 'Public status', 'ajforms' ); ?></th><td><code><?php echo esc_html( $status_url ); ?></code></td></tr>
-					<tr><th><?php esc_html_e( 'Admin browser console', 'ajforms' ); ?></th><td><code>fetch('<?php echo esc_js( wp_parse_url( $ops_summary_url, PHP_URL_PATH ) ); ?>', { headers: { 'X-WP-Nonce': wpApiSettings.nonce } }).then(r =&gt; r.json()).then(console.log)</code></td></tr>
-					<tr><th><?php esc_html_e( 'Customer browser console', 'ajforms' ); ?></th><td><code>fetch('<?php echo esc_js( wp_parse_url( $portal_me_url, PHP_URL_PATH ) ); ?>', { headers: { 'X-WP-Nonce': wpApiSettings.nonce } }).then(r =&gt; r.json()).then(console.log)</code></td></tr>
-					<tr><th><?php esc_html_e( 'External app auth', 'ajforms' ); ?></th><td><?php esc_html_e( 'Use HTTPS plus a WordPress username and Application Password for Basic Auth. OPS calls require an administrator account. Portal calls require an AJ portal user or administrator account.', 'ajforms' ); ?></td></tr>
+					<tr>
+						<th style="width:180px"><?php esc_html_e( 'Public status check', 'ajforms' ); ?></th>
+						<td><code><?php echo esc_html( $status_url ); ?></code></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Admin browser console', 'ajforms' ); ?></th>
+						<td><code>fetch('<?php echo esc_js( wp_parse_url( $ops_summary_url, PHP_URL_PATH ) ); ?>', { headers: { 'X-WP-Nonce': wpApiSettings.nonce } }).then(r =&gt; r.json()).then(console.log)</code></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Customer browser console', 'ajforms' ); ?></th>
+						<td><code>fetch('<?php echo esc_js( wp_parse_url( $portal_me_url, PHP_URL_PATH ) ); ?>', { headers: { 'X-WP-Nonce': wpApiSettings.nonce } }).then(r =&gt; r.json()).then(console.log)</code></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Flutter / external app', 'ajforms' ); ?></th>
+						<td><?php esc_html_e( 'HTTPS + WordPress Application Password (Basic Auth). OPS endpoints require administrator. Portal endpoints require portal user or administrator.', 'ajforms' ); ?></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Base URL', 'ajforms' ); ?></th>
+						<td><code><?php echo esc_html( $base_url ); ?></code></td>
+					</tr>
 				</tbody>
 			</table>
 		</div>
 
 		<div class="ajcore-admin-panel">
-			<h2><?php esc_html_e( 'Available Endpoints', 'ajforms' ); ?></h2>
-			<p><?php echo esc_html( sprintf( __( 'Base URL: %s', 'ajforms' ), $base_url ) ); ?></p>
-			<table class="widefat striped">
+			<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">
+				<h2 style="margin:0"><?php esc_html_e( 'Available Endpoints', 'ajforms' ); ?></h2>
+				<span id="ajcore-api-count-badge"><?php echo esc_html( $total_endpoints ); ?> <?php esc_html_e( 'endpoints', 'ajforms' ); ?></span>
+			</div>
+			<p style="margin-top:4px"><?php esc_html_e( 'Use the search and filters to find endpoints. Click any column header to sort.', 'ajforms' ); ?></p>
+
+			<div id="ajcore-api-filter-bar">
+				<input type="search" id="ajcore-api-search" placeholder="<?php echo esc_attr__( 'Search endpoints…', 'ajforms' ); ?>" autocomplete="off">
+
+				<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;padding-left:4px"><?php esc_html_e( 'Surface', 'ajforms' ); ?></span>
+				<button type="button" class="ajcore-api-filter-pill active" data-filter="surface" data-value=""><?php esc_html_e( 'All', 'ajforms' ); ?> <span class="pill-count"><?php echo esc_html( $total_endpoints ); ?></span></button>
+				<button type="button" class="ajcore-api-filter-pill" data-filter="surface" data-value="System"><?php esc_html_e( 'System', 'ajforms' ); ?> <span class="pill-count"><?php echo esc_html( $system_count ); ?></span></button>
+				<button type="button" class="ajcore-api-filter-pill" data-filter="surface" data-value="OPS"><?php esc_html_e( 'OPS', 'ajforms' ); ?> <span class="pill-count"><?php echo esc_html( $ops_count ); ?></span></button>
+				<button type="button" class="ajcore-api-filter-pill" data-filter="surface" data-value="Portal"><?php esc_html_e( 'Portal', 'ajforms' ); ?> <span class="pill-count"><?php echo esc_html( $portal_count ); ?></span></button>
+
+				<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;padding-left:4px"><?php esc_html_e( 'Method', 'ajforms' ); ?></span>
+				<button type="button" class="ajcore-api-filter-pill active" data-filter="method" data-value=""><?php esc_html_e( 'All', 'ajforms' ); ?></button>
+				<button type="button" class="ajcore-api-filter-pill" data-filter="method" data-value="GET">GET <span class="pill-count"><?php echo esc_html( $get_count ); ?></span></button>
+				<button type="button" class="ajcore-api-filter-pill" data-filter="method" data-value="POST">POST <span class="pill-count"><?php echo esc_html( $post_count ); ?></span></button>
+			</div>
+
+			<table class="ajcore-api-table" id="ajcore-api-table">
 				<thead>
 					<tr>
-						<th><?php esc_html_e( 'Surface', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Method', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Endpoint', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Auth', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Used By', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Purpose', 'ajforms' ); ?></th>
+						<th data-col="surface"><?php esc_html_e( 'Surface', 'ajforms' ); ?> <i class="sort-icon"></i></th>
+						<th data-col="method"><?php esc_html_e( 'Method', 'ajforms' ); ?> <i class="sort-icon"></i></th>
+						<th data-col="path" style="min-width:260px"><?php esc_html_e( 'Endpoint', 'ajforms' ); ?> <i class="sort-icon"></i></th>
+						<th data-col="auth"><?php esc_html_e( 'Auth', 'ajforms' ); ?> <i class="sort-icon"></i></th>
+						<th data-col="app"><?php esc_html_e( 'Used By', 'ajforms' ); ?> <i class="sort-icon"></i></th>
+						<th data-col="purpose" style="min-width:220px"><?php esc_html_e( 'Purpose', 'ajforms' ); ?> <i class="sort-icon"></i></th>
 					</tr>
 				</thead>
 				<tbody>
-					<?php foreach ( $catalog as $endpoint ) : ?>
-						<tr>
-							<td><?php echo esc_html( $endpoint['surface'] ); ?></td>
-							<td><code><?php echo esc_html( $endpoint['method'] ); ?></code></td>
-							<td><code><?php echo esc_html( rest_url( 'ajcore/v1' . $endpoint['path'] ) ); ?></code></td>
-							<td><?php echo esc_html( $endpoint['auth'] ); ?></td>
-							<td><?php echo esc_html( $endpoint['app'] ); ?></td>
-							<td><?php echo esc_html( $endpoint['purpose'] ); ?></td>
-						</tr>
+					<?php
+					foreach ( $catalog as $endpoint ) :
+						$surface    = $endpoint['surface'];
+						$method     = $endpoint['method'];
+						$path       = $endpoint['path'];
+						$auth       = $endpoint['auth'];
+						$app        = $endpoint['app'];
+						$purpose    = $endpoint['purpose'];
+						$full_url   = rest_url( 'ajcore/v1' . $path );
+						$is_enabled = $surfaces_enabled[ $surface ] ?? false;
+
+						$surface_cls = strtolower( $surface );
+						$method_cls  = strtolower( $method );
+
+						if ( stripos( $auth, 'public' ) !== false ) {
+							$auth_cls = 'public';
+						} elseif ( stripos( $auth, 'admin' ) !== false && stripos( $auth, 'portal' ) !== false ) {
+							$auth_cls = 'mixed';
+						} elseif ( stripos( $auth, 'admin' ) !== false ) {
+							$auth_cls = 'admin';
+						} else {
+							$auth_cls = 'portal-user';
+						}
+					?>
+					<tr
+						data-surface="<?php echo esc_attr( $surface ); ?>"
+						data-method="<?php echo esc_attr( $method ); ?>"
+						data-path="<?php echo esc_attr( $path ); ?>"
+						data-app="<?php echo esc_attr( $app ); ?>"
+						data-search="<?php echo esc_attr( strtolower( "$surface $method $path $auth $app $purpose" ) ); ?>"
+					>
+						<td>
+							<span class="ajcore-api-enabled-dot <?php echo $is_enabled ? 'on' : 'off'; ?>" title="<?php echo $is_enabled ? esc_attr__( 'Enabled', 'ajforms' ) : esc_attr__( 'Disabled in API settings', 'ajforms' ); ?>"></span>
+							<span class="ajcore-api-surface-badge <?php echo esc_attr( $surface_cls ); ?>"><?php echo esc_html( $surface ); ?></span>
+						</td>
+						<td><span class="ajcore-api-method-badge <?php echo esc_attr( $method_cls ); ?>"><?php echo esc_html( $method ); ?></span></td>
+						<td>
+							<span class="ajcore-api-endpoint-path"><?php echo esc_html( $path ); ?></span>
+							<button type="button" class="ajcore-api-copy-btn" data-url="<?php echo esc_attr( $full_url ); ?>" title="<?php echo esc_attr__( 'Copy full URL', 'ajforms' ); ?>">copy</button>
+						</td>
+						<td><span class="ajcore-api-auth-badge <?php echo esc_attr( $auth_cls ); ?>"><?php echo esc_html( $auth ); ?></span></td>
+						<td style="white-space:nowrap;color:#64748b;font-size:12px"><?php echo esc_html( $app ); ?></td>
+						<td class="ajcore-api-purpose"><?php echo esc_html( $purpose ); ?></td>
+					</tr>
 					<?php endforeach; ?>
+					<tr id="ajcore-api-no-results" style="display:none">
+						<td colspan="6" class="ajcore-api-no-results"><?php esc_html_e( 'No endpoints match your search or filters.', 'ajforms' ); ?></td>
+					</tr>
 				</tbody>
 			</table>
 		</div>
+
+		<script>
+		(function() {
+			var table   = document.getElementById('ajcore-api-table');
+			var search  = document.getElementById('ajcore-api-search');
+			var badge   = document.getElementById('ajcore-api-count-badge');
+			var noRes   = document.getElementById('ajcore-api-no-results');
+			var rows    = Array.from(table.querySelectorAll('tbody tr:not(#ajcore-api-no-results)'));
+			var filters = { surface: '', method: '' };
+			var sortCol = null, sortDir = 1;
+
+			function applyFilters() {
+				var q = search.value.toLowerCase().trim();
+				var vis = 0;
+				rows.forEach(function(row) {
+					var ok = true;
+					if (filters.surface && row.dataset.surface !== filters.surface) ok = false;
+					if (filters.method  && row.dataset.method  !== filters.method)  ok = false;
+					if (ok && q && row.dataset.search.indexOf(q) === -1) ok = false;
+					row.style.display = ok ? '' : 'none';
+					if (ok) vis++;
+				});
+				badge.textContent = vis + ' endpoint' + (vis !== 1 ? 's' : '');
+				noRes.style.display = vis === 0 ? '' : 'none';
+			}
+
+			// Filter pills
+			document.querySelectorAll('.ajcore-api-filter-pill').forEach(function(btn) {
+				btn.addEventListener('click', function() {
+					var ftype = btn.dataset.filter;
+					var fval  = btn.dataset.value;
+					filters[ftype] = fval;
+					document.querySelectorAll('.ajcore-api-filter-pill[data-filter="' + ftype + '"]').forEach(function(b) {
+						b.classList.toggle('active', b.dataset.value === fval);
+					});
+					applyFilters();
+				});
+			});
+
+			// Search
+			search.addEventListener('input', applyFilters);
+
+			// Sort
+			var headers = table.querySelectorAll('thead th[data-col]');
+			headers.forEach(function(th) {
+				th.addEventListener('click', function() {
+					var col = th.dataset.col;
+					if (sortCol === col) {
+						sortDir *= -1;
+					} else {
+						sortCol = col;
+						sortDir = 1;
+					}
+					headers.forEach(function(h) { h.classList.remove('sort-asc','sort-desc'); });
+					th.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+
+					var tbody = table.querySelector('tbody');
+					rows.slice().sort(function(a, b) {
+						var av = (a.dataset[col] || '').toLowerCase();
+						var bv = (b.dataset[col] || '').toLowerCase();
+						if (av < bv) return -1 * sortDir;
+						if (av > bv) return  1 * sortDir;
+						return 0;
+					}).forEach(function(r) { tbody.insertBefore(r, noRes); });
+				});
+			});
+
+			// Copy buttons
+			table.querySelectorAll('.ajcore-api-copy-btn').forEach(function(btn) {
+				btn.addEventListener('click', function() {
+					var url = btn.dataset.url;
+					if (navigator.clipboard) {
+						navigator.clipboard.writeText(url).then(function() {
+							btn.textContent = 'copied!';
+							btn.classList.add('copied');
+							setTimeout(function() { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1800);
+						});
+					}
+				});
+			});
+		})();
+		</script>
 		<?php
 	}
 
