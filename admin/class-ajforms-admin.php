@@ -19383,6 +19383,8 @@ class AJForms_Admin {
 			ajcore_write_shared_calendar_settings( $settings );
 		}
 
+		$this->upsert_reservation_resource_from_settings( $settings );
+
 		$this->log_portal_event(
 			'calendar_settings_updated',
 			array(
@@ -19394,6 +19396,46 @@ class AJForms_Admin {
 
 		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar', 'calendar-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
 		exit;
+	}
+
+	private function upsert_reservation_resource_from_settings( $settings ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return;
+		}
+		$resource_key = sanitize_key( (string) ( $settings['reservation_resource_key'] ?? 'conference_room' ) );
+		if ( '' === $resource_key ) {
+			return;
+		}
+
+		$pdb   = AJCore_Reservations::get_pdb();
+		$table = AJCore_Reservations::get_resources_table();
+
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return;
+		}
+
+		$data = array(
+			'resource_name'           => sanitize_text_field( (string) ( $settings['reservation_resource_name'] ?? 'Conference Room' ) ),
+			'zoho_calendar_uid'       => sanitize_text_field( (string) ( $settings['zoho_calendar_uid'] ?? '' ) ),
+			'zoho_calendar_id'        => sanitize_text_field( (string) ( $settings['zoho_calendar_id'] ?? '' ) ),
+			'zoho_resource_uid'       => sanitize_text_field( (string) ( $settings['zoho_resource_uid'] ?? '' ) ),
+			'zoho_schedule_url'       => sanitize_text_field( (string) ( $settings['zoho_schedule_appointment_url'] ?? '' ) ),
+			'zoho_freebusy_url'       => sanitize_text_field( (string) ( $settings['zoho_resource_freebusy_url'] ?? '' ) ),
+			'business_hours_price_id' => sanitize_text_field( (string) ( $settings['reservation_business_hours_price_id'] ?? '' ) ),
+			'after_hours_price_id'    => sanitize_text_field( (string) ( $settings['reservation_after_hours_price_id'] ?? '' ) ),
+			'active'                  => 1,
+			'updated_at'              => current_time( 'mysql' ),
+		);
+
+		$existing_id = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE resource_key = %s LIMIT 1", $resource_key ) );
+
+		if ( $existing_id ) {
+			$pdb->update( $table, $data, array( 'resource_key' => $resource_key ) );
+		} else {
+			$data['resource_key'] = $resource_key;
+			$data['created_at']   = current_time( 'mysql' );
+			$pdb->insert( $table, $data );
+		}
 	}
 
 	private function display_portal_calendar_settings_tab() {
