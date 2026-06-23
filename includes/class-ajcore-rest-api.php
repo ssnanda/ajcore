@@ -155,7 +155,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations/config',        'auth' => 'Portal user', 'purpose' => 'Reservation config: enabled status, resource name, timezone, rates, booking window, hold minutes, policy text, Zoho configured flag.', 'app' => 'iOS app' ),
 			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations',               'auth' => 'Portal user', 'purpose' => 'Current user reservations (excludes in_cart and admin_archived rows).', 'app' => 'iOS app' ),
 			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations/availability',  'auth' => 'Portal user', 'purpose' => 'Slot availability check (booking window + local conflict + Zoho). Query params: resource_key, start_at, end_at.', 'app' => 'iOS app' ),
-			array( 'surface' => 'Portal', 'method' => 'POST', 'path' => '/portal/reservations/quote',         'auth' => 'Portal user', 'purpose' => 'Pricing quote for a slot: pricing_type, pricing_label, duration_minutes, amount, currency, availability, message.', 'app' => 'iOS app' ),
+			array( 'surface' => 'Portal', 'method' => 'POST', 'path' => '/portal/reservations/quote',         'auth' => 'Portal user', 'purpose' => 'Pricing quote for a slot: pricing_type, pricing_label, duration_minutes, amount, currency, available (bool), message. Zoho calendar check uses lenient mode — failures are logged, not surfaced to the user.', 'app' => 'iOS app' ),
 			array( 'surface' => 'Portal', 'method' => 'POST', 'path' => '/portal/reservations/cart/add',      'auth' => 'Portal user', 'purpose' => 'Add slot to reservation cart. Body: resource_key, start_at, end_at, customer_phone, customer_notes.', 'app' => 'iOS app' ),
 			array( 'surface' => 'Portal', 'method' => 'GET',  'path' => '/portal/reservations/cart',          'auth' => 'Portal user', 'purpose' => 'Cart items with per-item and grand total pricing.', 'app' => 'iOS app' ),
 			array( 'surface' => 'Portal', 'method' => 'POST', 'path' => '/portal/reservations/cart/remove',   'auth' => 'Portal user', 'purpose' => 'Remove slot from cart. Body: reservation_uuid.', 'app' => 'iOS app' ),
@@ -666,7 +666,7 @@ class AJCore_REST_API {
 			'after_hours_amount'  => $after_amount,
 			'amount'              => $total_amount,
 			'currency'            => 'usd',
-			'availability'        => (bool) $avail['available'],
+			'available'           => (bool) $avail['available'],
 			'message'             => isset( $avail['message'] ) ? $avail['message'] : '',
 		) );
 	}
@@ -1267,7 +1267,9 @@ class AJCore_REST_API {
 		$calendar_uid = ! empty( $settings['zoho_calendar_uid'] )         ? $settings['zoho_calendar_uid']         : '';
 		$resource_uid = ! empty( $settings['zoho_resource_uid'] )         ? $settings['zoho_resource_uid']         : '';
 		$freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';
-		$failure_mode = ! empty( $settings['zoho_availability_failure_mode'] ) ? $settings['zoho_availability_failure_mode'] : 'strict';
+		// Portal API defaults to lenient: Zoho outages should not block customers from requesting quotes.
+		// Local DB conflict check (above) remains the hard gate against double-bookings.
+		$failure_mode = ! empty( $settings['zoho_availability_failure_mode'] ) ? $settings['zoho_availability_failure_mode'] : 'lenient';
 
 		if ( $api_token && $calendar_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
 			$check = AJCore_Zoho_Calendar::check_zoho_calendar_events_availability( $calendar_uid, $start_dt->format( 'c' ), $end_dt->format( 'c' ), $timezone, $api_token );
