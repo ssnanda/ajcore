@@ -19372,6 +19372,10 @@ class AJForms_Admin {
 
 		update_option( 'ajforms_settings', $settings, false );
 
+		if ( function_exists( 'ajcore_write_shared_calendar_settings' ) ) {
+			ajcore_write_shared_calendar_settings( $settings );
+		}
+
 		$this->log_portal_event(
 			'calendar_settings_updated',
 			array(
@@ -19972,6 +19976,9 @@ class AJForms_Admin {
 							$s['zoho_token_expires_at']     = gmdate( 'Y-m-d H:i:s', time() + max( 0, $ei - 60 ) );
 							$s['zoho_api_token_expires_at'] = $s['zoho_token_expires_at'];
 							update_option( 'ajforms_settings', $s, false );
+							if ( function_exists( 'ajcore_write_shared_calendar_settings' ) ) {
+								ajcore_write_shared_calendar_settings( $s );
+							}
 						}
 					}
 				}

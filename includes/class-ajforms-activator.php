@@ -950,6 +950,14 @@ class AJForms_Activator {
 			KEY start_at (start_at),
 			KEY customer_email (customer_email)
 		) {$charset_collate}" );
+
+		$shared_settings_table = $prefix . 'aj_shared_settings';
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$shared_settings_table} (
+			setting_name varchar(191) NOT NULL,
+			setting_value longtext NOT NULL DEFAULT '',
+			updated_at datetime NOT NULL,
+			PRIMARY KEY  (setting_name)
+		) {$charset_collate}" );
 	}
 
 	/**

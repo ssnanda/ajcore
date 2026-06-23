@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.3.42
+ * Version: 0.3.44
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.3.42' );
+	define( 'AJCORE_VERSION', '0.3.44' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -209,6 +209,15 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 
 		if ( ! $has_saved_settings && ! empty( $file_settings ) ) {
 			update_option( 'ajforms_settings', $settings );
+		}
+
+		// Overlay calendar/reservation settings from shared DB so all sites use the same values.
+		if ( function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled()
+			&& function_exists( 'ajcore_read_shared_calendar_settings' ) ) {
+			$shared_calendar = ajcore_read_shared_calendar_settings();
+			if ( ! empty( $shared_calendar ) ) {
+				$settings = array_merge( $settings, $shared_calendar );
+			}
 		}
 
 		return $settings;
@@ -613,6 +622,117 @@ if ( ! function_exists( 'ajcore_get_shared_db' ) ) {
 
 		$shared_db_cache = $db;
 		return $shared_db_cache;
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_calendar_setting_keys' ) ) {
+	function ajcore_get_calendar_setting_keys() {
+		return array(
+			'zoho_reservations_enabled',
+			'zoho_default_timezone',
+			'zoho_calendar_uid',
+			'zoho_calendar_id',
+			'zoho_calendar_embed_url',
+			'zoho_resource_uid',
+			'zoho_schedule_appointment_url',
+			'zoho_resource_freebusy_url',
+			'zoho_api_auth_mode',
+			'zoho_client_id',
+			'zoho_client_secret',
+			'zoho_access_token',
+			'zoho_refresh_token',
+			'zoho_token_expires_at',
+			'zoho_api_domain',
+			'zoho_oauth_client_id',
+			'zoho_oauth_client_secret',
+			'zoho_oauth_api_domain',
+			'zoho_api_token',
+			'zoho_api_token_expires_at',
+			'zoho_availability_failure_mode',
+			'zoho_availability_source',
+			'reservation_resource_name',
+			'reservation_resource_key',
+			'reservation_menu_label',
+			'reservation_business_hours_label',
+			'reservation_after_hours_label',
+			'reservation_business_hours_rate',
+			'reservation_after_hours_rate',
+			'reservation_business_hours_price_id',
+			'reservation_after_hours_price_id',
+		);
+	}
+}
+
+if ( ! function_exists( 'ajcore_read_shared_calendar_settings' ) ) {
+	function ajcore_read_shared_calendar_settings() {
+		static $cache     = null;
+		static $cache_set = false;
+
+		if ( $cache_set ) {
+			return is_array( $cache ) ? $cache : array();
+		}
+		$cache_set = true;
+
+		$shared_db = ajcore_get_shared_db();
+		if ( ! $shared_db ) {
+			return array();
+		}
+		$table = $shared_db->prefix . 'aj_shared_settings';
+		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return array();
+		}
+		$value = $shared_db->get_var(
+			$shared_db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_calendar_settings' )
+		);
+		if ( null === $value || '' === (string) $value ) {
+			return array();
+		}
+		$decoded = json_decode( (string) $value, true );
+		$cache   = is_array( $decoded ) ? $decoded : array();
+		return $cache;
+	}
+}
+
+if ( ! function_exists( 'ajcore_write_shared_calendar_settings' ) ) {
+	function ajcore_write_shared_calendar_settings( $settings ) {
+		if ( ! ajcore_is_shared_db_enabled() ) {
+			return false;
+		}
+		$shared_db = ajcore_get_shared_db();
+		if ( ! $shared_db ) {
+			return false;
+		}
+		$table = $shared_db->prefix . 'aj_shared_settings';
+		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return false;
+		}
+		$data = array();
+		foreach ( ajcore_get_calendar_setting_keys() as $key ) {
+			if ( array_key_exists( $key, $settings ) ) {
+				$data[ $key ] = $settings[ $key ];
+			}
+		}
+		$encoded = wp_json_encode( $data );
+		if ( false === $encoded ) {
+			return false;
+		}
+		$existing = $shared_db->get_var(
+			$shared_db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_calendar_settings' )
+		);
+		if ( $existing ) {
+			return false !== $shared_db->update(
+				$table,
+				array( 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
+				array( 'setting_name'  => 'ajcore_calendar_settings' ),
+				array( '%s', '%s' ),
+				array( '%s' )
+			);
+		}
+		return false !== $shared_db->insert(
+			$table,
+			array( 'setting_name' => 'ajcore_calendar_settings', 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
+			array( '%s', '%s', '%s' )
+		);
 	}
 }
 
