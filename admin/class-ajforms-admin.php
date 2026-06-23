@@ -13690,6 +13690,7 @@ class AJForms_Admin {
 			'portal_enabled'      => ! empty( $_POST['portal_enabled'] ) ? '1' : '0',
 			'public_status'       => ! empty( $_POST['public_status'] ) ? '1' : '0',
 			'master_only'         => ! empty( $_POST['master_only'] ) ? '1' : '0',
+			'portal_master_only'  => ! empty( $_POST['portal_master_only'] ) ? '1' : '0',
 			'require_https_notes' => ! empty( $_POST['require_https_notes'] ) ? '1' : '0',
 		);
 
@@ -13721,6 +13722,7 @@ class AJForms_Admin {
 				'portal_enabled'      => '1',
 				'public_status'       => '1',
 				'master_only'         => '1',
+				'portal_master_only'  => '0',
 				'require_https_notes' => '1',
 			)
 		);
@@ -13822,7 +13824,7 @@ class AJForms_Admin {
 			<div class="ajcore-section-head">
 				<div>
 					<h2><?php esc_html_e( 'AJ Core REST API', 'ajforms' ); ?></h2>
-					<p><?php esc_html_e( 'REST endpoints for the customer portal app, OPS dashboard, and future integrations. In multi-site mode, protected routes run from the Master site only.', 'ajforms' ); ?></p>
+					<p><?php esc_html_e( 'REST endpoints for the customer portal app, OPS dashboard, and future integrations. Portal API runs on all sites by default; OPS API can optionally be restricted to the Master site.', 'ajforms' ); ?></p>
 				</div>
 			</div>
 
@@ -13887,8 +13889,12 @@ class AJForms_Admin {
 						<td><label><input type="checkbox" name="public_status" value="1" <?php checked( $settings['public_status'], '1' ); ?>> <?php esc_html_e( 'Allow public health/status endpoint', 'ajforms' ); ?></label></td>
 					</tr>
 					<tr>
-						<th scope="row"><?php esc_html_e( 'Multi-site safety', 'ajforms' ); ?></th>
-						<td><label><input type="checkbox" name="master_only" value="1" <?php checked( $settings['master_only'], '1' ); ?>> <?php esc_html_e( 'Run protected API only on Master site when multi-site portal mode is enabled', 'ajforms' ); ?></label></td>
+						<th scope="row"><?php esc_html_e( 'OPS API: multi-site safety', 'ajforms' ); ?></th>
+						<td><label><input type="checkbox" name="master_only" value="1" <?php checked( $settings['master_only'], '1' ); ?>> <?php esc_html_e( 'Run OPS API only on Master site when multi-site portal mode is enabled', 'ajforms' ); ?></label></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Portal API: multi-site safety', 'ajforms' ); ?></th>
+						<td><label><input type="checkbox" name="portal_master_only" value="1" <?php checked( $settings['portal_master_only'], '1' ); ?>> <?php esc_html_e( 'Run Portal API only on Master site (uncheck to enable portal API on all sites)', 'ajforms' ); ?></label></td>
 					</tr>
 					<tr>
 						<th scope="row"><?php esc_html_e( 'HTTPS reminder', 'ajforms' ); ?></th>

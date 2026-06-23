@@ -121,6 +121,7 @@ class AJCore_REST_API {
 			'portal_enabled'      => '1',
 			'public_status'       => '1',
 			'master_only'         => '1',
+			'portal_master_only'  => '0',
 			'require_https_notes' => '1',
 		);
 	}
@@ -193,9 +194,10 @@ class AJCore_REST_API {
 		return true;
 	}
 
-	private function is_master_api_site() {
-		$settings = self::get_api_settings();
-		if ( '1' !== (string) $settings['master_only'] ) {
+	private function is_master_api_site( $surface = 'ops' ) {
+		$settings    = self::get_api_settings();
+		$setting_key = ( 'portal' === $surface ) ? 'portal_master_only' : 'master_only';
+		if ( '1' !== (string) $settings[ $setting_key ] ) {
 			return true;
 		}
 		if ( ! function_exists( 'ajcore_is_multisite_portal_enabled' ) || ! ajcore_is_multisite_portal_enabled() ) {
@@ -217,7 +219,7 @@ class AJCore_REST_API {
 		if ( is_wp_error( $enabled ) ) {
 			return $enabled;
 		}
-		if ( ! $this->is_master_api_site() ) {
+		if ( ! $this->is_master_api_site( 'ops' ) ) {
 			return $this->master_only_error();
 		}
 		return current_user_can( 'manage_options' );
@@ -228,7 +230,7 @@ class AJCore_REST_API {
 		if ( is_wp_error( $enabled ) ) {
 			return $enabled;
 		}
-		if ( ! $this->is_master_api_site() ) {
+		if ( ! $this->is_master_api_site( 'portal' ) ) {
 			return $this->master_only_error();
 		}
 		if ( ! is_user_logged_in() ) {
@@ -242,24 +244,27 @@ class AJCore_REST_API {
 	}
 
 	public function get_status() {
-		$shared_enabled = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
-		$ms_enabled     = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
-		$is_master      = $this->is_master_api_site();
-		$settings       = self::get_api_settings();
+		$shared_enabled    = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
+		$ms_enabled        = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
+		$ops_available     = $this->is_master_api_site( 'ops' );
+		$portal_available  = $this->is_master_api_site( 'portal' );
+		$settings          = self::get_api_settings();
 
 		return rest_ensure_response(
 			array(
-				'plugin'                     => 'ajcore',
-				'version'                    => defined( 'AJCORE_VERSION' ) ? AJCORE_VERSION : '',
-				'site_url'                   => home_url( '/' ),
-				'site_uuid'                  => get_option( 'ajcore_site_uuid', '' ),
-				'shared_db_enabled'          => (bool) $shared_enabled,
-				'multisite_portal_enabled'   => (bool) $ms_enabled,
-				'is_master_api_site'         => (bool) $is_master,
-				'api_available_on_this_site' => (bool) $is_master,
-				'api_enabled'                => '1' === (string) $settings['enabled'],
-				'ops_api_enabled'            => '1' === (string) $settings['ops_enabled'],
-				'portal_api_enabled'         => '1' === (string) $settings['portal_enabled'],
+				'plugin'                          => 'ajcore',
+				'version'                         => defined( 'AJCORE_VERSION' ) ? AJCORE_VERSION : '',
+				'site_url'                        => home_url( '/' ),
+				'site_uuid'                       => get_option( 'ajcore_site_uuid', '' ),
+				'shared_db_enabled'               => (bool) $shared_enabled,
+				'multisite_portal_enabled'        => (bool) $ms_enabled,
+				'is_master_api_site'              => (bool) $ops_available,
+				'api_available_on_this_site'      => (bool) $ops_available,
+				'ops_available_on_this_site'      => (bool) $ops_available,
+				'portal_available_on_this_site'   => (bool) $portal_available,
+				'api_enabled'                     => '1' === (string) $settings['enabled'],
+				'ops_api_enabled'                 => '1' === (string) $settings['ops_enabled'],
+				'portal_api_enabled'              => '1' === (string) $settings['portal_enabled'],
 			)
 		);
 	}
