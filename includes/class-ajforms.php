@@ -51,6 +51,11 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_toggle_multisite_portal', array( $plugin_admin, 'ajax_toggle_multisite_portal' ) );
 		add_action( 'ajforms_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
 		add_action( 'ajcore_portal_stripe_sync', array( $plugin_admin, 'run_scheduled_portal_sync_job' ) );
+
+		add_action( 'admin_enqueue_scripts',   array( $this, 'enqueue_username_edit_script' ) );
+		add_filter( 'user_profile_update_errors', array( $this, 'validate_username_change' ), 10, 3 );
+		add_action( 'personal_options_update',    array( $this, 'save_username_change' ) );
+		add_action( 'edit_user_profile_update',   array( $this, 'save_username_change' ) );
 	}
 
 	public function add_ajcore_cron_schedules( $schedules ) {
@@ -13958,6 +13963,68 @@ class AJForms {
 			}
 		}
 		return $result;
+	}
+
+	public function enqueue_username_edit_script( $hook ) {
+		if ( 'profile.php' !== $hook && 'user-edit.php' !== $hook ) {
+			return;
+		}
+		?>
+		<script>
+		document.addEventListener('DOMContentLoaded', function () {
+			var field = document.getElementById('user_login');
+			if (!field) return;
+			field.removeAttribute('disabled');
+			field.removeAttribute('readonly');
+			field.style.backgroundColor = '';
+			field.style.cursor = 'text';
+			var desc = document.createElement('p');
+			desc.className = 'description';
+			desc.textContent = 'Username can be changed. It must be unique across all users.';
+			field.closest('td').appendChild(desc);
+		});
+		</script>
+		<?php
+	}
+
+	public function validate_username_change( $errors, $update, $user ) {
+		if ( ! $update || ! isset( $_POST['user_login'] ) ) {
+			return $errors;
+		}
+		$new_login    = sanitize_user( wp_unslash( (string) $_POST['user_login'] ), true );
+		$current_user = get_userdata( $user->ID );
+		if ( ! $current_user || $current_user->user_login === $new_login ) {
+			return $errors;
+		}
+		if ( '' === $new_login ) {
+			$errors->add( 'user_login', __( '<strong>Error:</strong> Username cannot be empty.' ) );
+			return $errors;
+		}
+		if ( $new_login !== sanitize_user( $new_login, true ) ) {
+			$errors->add( 'user_login', __( '<strong>Error:</strong> This username contains invalid characters.' ) );
+			return $errors;
+		}
+		if ( username_exists( $new_login ) ) {
+			$errors->add( 'user_login', __( '<strong>Error:</strong> That username is already taken. Please choose another.' ) );
+		}
+		return $errors;
+	}
+
+	public function save_username_change( $user_id ) {
+		if ( ! current_user_can( 'edit_user', $user_id ) || ! isset( $_POST['user_login'] ) ) {
+			return;
+		}
+		$new_login    = sanitize_user( wp_unslash( (string) $_POST['user_login'] ), true );
+		$current_user = get_userdata( $user_id );
+		if ( ! $current_user || '' === $new_login || $current_user->user_login === $new_login ) {
+			return;
+		}
+		if ( username_exists( $new_login ) ) {
+			return;
+		}
+		global $wpdb;
+		$wpdb->update( $wpdb->users, array( 'user_login' => $new_login ), array( 'ID' => $user_id ) );
+		clean_user_cache( $user_id );
 	}
 
 	public function run() {
