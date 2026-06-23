@@ -72,7 +72,11 @@ class AJCore_REST_API {
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
-			// Mobile auth (login is public so anyone can obtain a JWT)
+			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
+			'/ops/auth/login'  => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_auth_login',  'permission' => 'public_permission' ),
+			'/ops/auth/logout' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_auth_logout', 'permission' => 'can_manage_ops_api' ),
+			'/ops/auth/me'     => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_ops_me',      'permission' => 'can_manage_ops_api' ),
+			// Mobile customer auth (login is public so anyone can obtain a JWT)
 			'/portal/auth/login'  => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_auth_login',  'permission' => 'public_permission' ),
 			'/portal/auth/logout' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_auth_logout', 'permission' => 'can_use_portal_api' ),
 			'/portal/auth/me'     => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_me',      'permission' => 'can_use_portal_api' ),
@@ -222,7 +226,17 @@ class AJCore_REST_API {
 		if ( ! $this->is_master_api_site( 'ops' ) ) {
 			return $this->master_only_error();
 		}
-		return current_user_can( 'manage_options' );
+		if ( ! is_user_logged_in() ) {
+			return new WP_Error( 'ajcore_api_auth_required', __( 'Authentication required.', 'ajforms' ), array( 'status' => 401 ) );
+		}
+		$user = wp_get_current_user();
+		if ( current_user_can( 'manage_options' )
+			|| user_can( $user, 'ajcore_ops_access' )
+			|| in_array( 'aj_ops_user', (array) $user->roles, true )
+		) {
+			return true;
+		}
+		return new WP_Error( 'ajcore_api_forbidden', __( 'This account does not have OPS API access.', 'ajforms' ), array( 'status' => 403 ) );
 	}
 
 	public function can_use_portal_api() {
@@ -1553,6 +1567,48 @@ class AJCore_REST_API {
 
 	public function portal_auth_logout( WP_REST_Request $request ) {
 		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	// ── OPS auth ─────────────────────────────────────────────────────────────
+
+	public function ops_auth_login( WP_REST_Request $request ) {
+		$username = sanitize_user( (string) $request->get_param( 'username' ) );
+		$password = (string) $request->get_param( 'password' );
+
+		if ( empty( $username ) || empty( $password ) ) {
+			return new WP_Error( 'ajcore_auth_required', 'Username and password are required.', array( 'status' => 400 ) );
+		}
+
+		$user = wp_authenticate_username_password( null, $username, $password );
+		if ( is_wp_error( $user ) || ! ( $user instanceof WP_User ) ) {
+			return new WP_Error( 'ajcore_auth_failed', 'Invalid username or password.', array( 'status' => 401 ) );
+		}
+
+		if ( ! user_can( $user, 'manage_options' )
+			&& ! user_can( $user, 'ajcore_ops_access' )
+			&& ! in_array( 'aj_ops_user', (array) $user->roles, true )
+		) {
+			return new WP_Error( 'ajcore_ops_forbidden', 'This account does not have OPS access.', array( 'status' => 403 ) );
+		}
+
+		$token = AJCore_JWT::generate( $user->ID );
+		return rest_ensure_response( array(
+			'token'     => $token,
+			'user'      => $this->format_user( $user ),
+			'site_uuid' => get_option( 'ajcore_site_uuid', '' ),
+		) );
+	}
+
+	public function ops_auth_logout( WP_REST_Request $request ) {
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	public function get_ops_me( WP_REST_Request $request ) {
+		$user = wp_get_current_user();
+		return rest_ensure_response( array(
+			'user'      => $this->format_user( $user ),
+			'site_uuid' => get_option( 'ajcore_site_uuid', '' ),
+		) );
 	}
 
 	// ── Portal overview (flat counts for the mobile home screen) ─────────────

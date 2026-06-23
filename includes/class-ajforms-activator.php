@@ -864,8 +864,25 @@ class AJForms_Activator {
 		if ( $portal_role && ! $portal_role->has_cap( 'ajcore_customer_portal_access' ) ) {
 			$portal_role->add_cap( 'ajcore_customer_portal_access' );
 		}
+
+		add_role(
+			'aj_ops_user',
+			__( 'AJ Ops User', 'ajforms' ),
+			array(
+				'read'              => true,
+				'ajcore_ops_access' => true,
+			)
+		);
+		$ops_role = get_role( 'aj_ops_user' );
+		if ( $ops_role && ! $ops_role->has_cap( 'read' ) ) {
+			$ops_role->add_cap( 'read' );
+		}
+		if ( $ops_role && ! $ops_role->has_cap( 'ajcore_ops_access' ) ) {
+			$ops_role->add_cap( 'ajcore_ops_access' );
+		}
+
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '13', false );
+		update_option( 'ajforms_portal_schema_version', '14', false );
 	}
 
 	/**
