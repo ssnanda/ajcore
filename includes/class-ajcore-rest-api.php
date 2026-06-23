@@ -522,21 +522,27 @@ class AJCore_REST_API {
 		$enabled   = ! empty( $settings['zoho_reservations_enabled'] );
 		$has_token = ! empty( $settings['zoho_access_token'] ) || ! empty( $settings['zoho_api_token'] );
 
+		$biz_label  = ! empty( $settings['reservation_business_hours_label'] ) ? sanitize_text_field( $settings['reservation_business_hours_label'] ) : 'Business Hours (Mon–Fri 9am–5pm)';
+		$aft_label  = ! empty( $settings['reservation_after_hours_label'] )    ? sanitize_text_field( $settings['reservation_after_hours_label'] )    : 'After-Hours / Weekend';
+
 		return rest_ensure_response( array(
 			'enabled'              => (bool) $enabled,
-			'resource_name'        => ! empty( $settings['reservation_resource_name'] )        ? sanitize_text_field( $settings['reservation_resource_name'] )        : 'Conference Room',
-			'resource_key'         => ! empty( $settings['reservation_resource_key'] )         ? sanitize_key( $settings['reservation_resource_key'] )                : 'conference_room',
-			'timezone'             => ! empty( $settings['zoho_default_timezone'] )            ? sanitize_text_field( $settings['zoho_default_timezone'] )            : 'America/New_York',
-			'business_hours_label' => ! empty( $settings['reservation_business_hours_label'] ) ? sanitize_text_field( $settings['reservation_business_hours_label'] ) : 'Business Hours (Mon–Fri 9am–5pm)',
-			'after_hours_label'    => ! empty( $settings['reservation_after_hours_label'] )    ? sanitize_text_field( $settings['reservation_after_hours_label'] )    : 'After-Hours / Weekend',
-			'business_hours_rate'  => isset( $settings['reservation_business_hours_rate'] )    ? (float) $settings['reservation_business_hours_rate']                 : 40.0,
-			'after_hours_rate'     => isset( $settings['reservation_after_hours_rate'] )       ? (float) $settings['reservation_after_hours_rate']                    : 80.0,
+			'resource_name'        => ! empty( $settings['reservation_resource_name'] )     ? sanitize_text_field( $settings['reservation_resource_name'] ) : 'Conference Room',
+			'resource_key'         => ! empty( $settings['reservation_resource_key'] )      ? sanitize_key( $settings['reservation_resource_key'] )         : 'conference_room',
+			'timezone'             => ! empty( $settings['zoho_default_timezone'] )         ? sanitize_text_field( $settings['zoho_default_timezone'] )      : 'America/New_York',
+			'business_hours_label' => $biz_label,
+			'after_hours_label'    => $aft_label,
+			'biz_rate_label'       => $biz_label,
+			'after_rate_label'     => $aft_label,
+			'business_hours_rate'  => isset( $settings['reservation_business_hours_rate'] ) ? (float) $settings['reservation_business_hours_rate']           : 40.0,
+			'after_hours_rate'     => isset( $settings['reservation_after_hours_rate'] )    ? (float) $settings['reservation_after_hours_rate']              : 80.0,
 			'currency'             => 'usd',
 			'booking_window_start' => AJCore_Reservations::BOOKING_WINDOW_START_HOUR,
 			'booking_window_end'   => AJCore_Reservations::BOOKING_WINDOW_END_HOUR,
 			'min_duration_minutes' => 60,
 			'max_duration_minutes' => 840,
 			'pending_hold_minutes' => AJCore_Reservations::PENDING_HOLD_MINUTES,
+			'hold_minutes'         => AJCore_Reservations::PENDING_HOLD_MINUTES,
 			'policy_text'          => __( 'No cancellations, no rescheduling — reservations are final.', 'ajforms' ),
 			'zoho_configured'      => (bool) ( $has_token && ! empty( $settings['zoho_calendar_uid'] ) ),
 		) );
@@ -810,10 +816,11 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( array(
-			'items'    => $formatted,
-			'total'    => round( $grand_total, 2 ),
-			'currency' => 'usd',
-			'count'    => count( $formatted ),
+			'items'       => $formatted,
+			'grand_total' => round( $grand_total, 2 ),
+			'total'       => round( $grand_total, 2 ),
+			'currency'    => 'usd',
+			'count'       => count( $formatted ),
 		) );
 	}
 
@@ -871,11 +878,12 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( array(
-			'success'  => true,
-			'items'    => $formatted,
-			'total'    => round( $grand_total, 2 ),
-			'currency' => 'usd',
-			'count'    => count( $formatted ),
+			'success'     => true,
+			'items'       => $formatted,
+			'grand_total' => round( $grand_total, 2 ),
+			'total'       => round( $grand_total, 2 ),
+			'currency'    => 'usd',
+			'count'       => count( $formatted ),
 		) );
 	}
 
@@ -956,8 +964,8 @@ class AJCore_REST_API {
 		}
 
 		$portal_url  = home_url( '/' );
-		$success_url = add_query_arg( array( 'portal_tab' => 'reservations', 'res_success' => '1' ), $portal_url );
-		$cancel_url  = add_query_arg( array( 'portal_tab' => 'reservations', 'res_cancel' => '1' ), $portal_url );
+		$success_url = add_query_arg( array( 'ajcore_checkout' => 'success',    'portal_tab' => 'reservations' ), $portal_url );
+		$cancel_url  = add_query_arg( array( 'ajcore_checkout' => 'cancelled',  'portal_tab' => 'reservations' ), $portal_url );
 		$uuids_str   = implode( ',', $uuids );
 
 		$checkout_payload = array(
@@ -1267,9 +1275,10 @@ class AJCore_REST_API {
 		$calendar_uid = ! empty( $settings['zoho_calendar_uid'] )         ? $settings['zoho_calendar_uid']         : '';
 		$resource_uid = ! empty( $settings['zoho_resource_uid'] )         ? $settings['zoho_resource_uid']         : '';
 		$freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';
-		// Portal API defaults to lenient: Zoho outages should not block customers from requesting quotes.
-		// Local DB conflict check (above) remains the hard gate against double-bookings.
-		$failure_mode = ! empty( $settings['zoho_availability_failure_mode'] ) ? $settings['zoho_availability_failure_mode'] : 'lenient';
+		// Portal REST API always uses lenient mode: Zoho outages must not block customers.
+		// Local DB conflict check (above) is the hard gate against double-bookings.
+		// The zoho_availability_failure_mode setting applies to the admin UI only.
+		$failure_mode = 'lenient';
 
 		if ( $api_token && $calendar_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
 			$check = AJCore_Zoho_Calendar::check_zoho_calendar_events_availability( $calendar_uid, $start_dt->format( 'c' ), $end_dt->format( 'c' ), $timezone, $api_token );
@@ -1371,53 +1380,78 @@ class AJCore_REST_API {
 		$biz_label    = ! empty( $settings['reservation_business_hours_label'] ) ? $settings['reservation_business_hours_label'] : 'Business Hours';
 		$aft_label    = ! empty( $settings['reservation_after_hours_label'] )    ? $settings['reservation_after_hours_label']    : 'After-Hours / Weekend';
 
+		$item_uuid  = isset( $item['reservation_uuid'] ) ? (string) $item['reservation_uuid'] : '';
+		$start_utc  = isset( $item['start_at'] ) ? (string) $item['start_at'] : '';
+		$end_utc    = isset( $item['end_at'] )   ? (string) $item['end_at']   : '';
+		$item_total = round( $hours * $rate, 2 );
+
 		return array(
-			'reservation_uuid' => isset( $item['reservation_uuid'] ) ? (string) $item['reservation_uuid'] : '',
-			'reservation_id'   => isset( $item['id'] )               ? (int) $item['id']                  : 0,
-			'resource_key'     => isset( $item['resource_key'] )     ? (string) $item['resource_key']     : '',
-			'resource_name'    => isset( $item['resource_name'] )    ? (string) $item['resource_name']    : '',
-			'start_at_utc'     => isset( $item['start_at'] )         ? (string) $item['start_at']         : '',
-			'end_at_utc'       => isset( $item['end_at'] )           ? (string) $item['end_at']           : '',
+			'uuid'             => $item_uuid,
+			'reservation_uuid' => $item_uuid,
+			'reservation_id'   => isset( $item['id'] ) ? (int) $item['id'] : 0,
+			'resource_key'     => isset( $item['resource_key'] )  ? (string) $item['resource_key']  : '',
+			'resource_name'    => isset( $item['resource_name'] ) ? (string) $item['resource_name'] : '',
+			'start_at'         => $start_utc,
+			'end_at'           => $end_utc,
+			'start_at_utc'     => $start_utc,
+			'end_at_utc'       => $end_utc,
 			'start_at_local'   => $start->format( 'Y-m-d\TH:i:s' ),
 			'end_at_local'     => $end->format( 'Y-m-d\TH:i:s' ),
 			'timezone'         => $timezone,
 			'date_display'     => $start->format( 'M j, Y' ),
 			'time_display'     => $start->format( 'g:i A' ) . ' – ' . $end->format( 'g:i A T' ),
 			'duration_hours'   => $hours,
+			'duration_minutes' => $hours * 60,
 			'pricing_type'     => $pricing_type,
 			'pricing_label'    => 'business_hours' === $pricing_type ? $biz_label : $aft_label,
 			'rate'             => $rate,
-			'total'            => round( $hours * $rate, 2 ),
+			'amount'           => $item_total,
+			'total'            => $item_total,
 			'currency'         => 'usd',
 		);
 	}
 
 	private function format_reservation_row( $res, $timezone, $is_ops = false ) {
 		$res_timezone = ! empty( $res['timezone'] ) ? $res['timezone'] : $timezone;
-		$row          = array(
-			'id'               => (int) ( $res['id'] ?? 0 ),
-			'reservation_uuid' => (string) ( $res['reservation_uuid'] ?? '' ),
-			'reservation_ref'  => class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( (int) ( $res['id'] ?? 0 ) ) : '',
+		$res_uuid     = (string) ( $res['reservation_uuid'] ?? '' );
+		$res_id       = (int) ( $res['id'] ?? 0 );
+		$start_utc    = (string) ( $res['start_at'] ?? '' );
+		$end_utc      = (string) ( $res['end_at'] ?? '' );
+		$friendly_ref = class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::generate_friendly_reference( $res_id ) : '';
+		$pricing_type = (string) ( $res['pricing_type'] ?? '' );
+
+		$row = array(
+			'id'               => $res_id,
+			'uuid'             => $res_uuid,
+			'reservation_uuid' => $res_uuid,
+			'friendly_ref'     => $friendly_ref,
+			'reservation_ref'  => $friendly_ref,
 			'resource_key'     => (string) ( $res['resource_key'] ?? '' ),
 			'resource_name'    => (string) ( $res['resource_name'] ?? '' ),
-			'start_at_utc'     => (string) ( $res['start_at'] ?? '' ),
-			'end_at_utc'       => (string) ( $res['end_at'] ?? '' ),
+			'start_at'         => $start_utc,
+			'end_at'           => $end_utc,
+			'start_at_utc'     => $start_utc,
+			'end_at_utc'       => $end_utc,
 			'timezone'         => $res_timezone,
 			'status'           => (string) ( $res['status'] ?? '' ),
 			'status_label'     => class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_reservation_status_label( (string) ( $res['status'] ?? '' ) ) : (string) ( $res['status'] ?? '' ),
-			'pricing_type'     => (string) ( $res['pricing_type'] ?? '' ),
+			'pricing_type'     => $pricing_type,
+			'pricing_label'    => class_exists( 'AJCore_Reservations' ) ? AJCore_Reservations::get_pricing_type_label( $pricing_type ) : $pricing_type,
 			'amount'           => isset( $res['amount'] ) ? (float) $res['amount'] : 0.0,
 			'currency'         => (string) ( $res['currency'] ?? 'usd' ),
 			'customer_name'    => (string) ( $res['customer_name'] ?? '' ),
 			'customer_email'   => (string) ( $res['customer_email'] ?? '' ),
+			'customer_phone'   => (string) ( $res['customer_phone'] ?? '' ),
+			'customer_notes'   => (string) ( $res['customer_notes'] ?? '' ),
 			'created_at'       => (string) ( $res['created_at'] ?? '' ),
 			'updated_at'       => (string) ( $res['updated_at'] ?? '' ),
 		);
 
 		try {
 			$tz    = new DateTimeZone( $res_timezone );
-			$start = new DateTime( (string) ( $res['start_at'] ?? 'now' ), new DateTimeZone( 'UTC' ) );
-			$end   = new DateTime( (string) ( $res['end_at'] ?? 'now' ), new DateTimeZone( 'UTC' ) );
+			$start = new DateTime( $start_utc ?: 'now', new DateTimeZone( 'UTC' ) );
+			$end   = new DateTime( $end_utc   ?: 'now', new DateTimeZone( 'UTC' ) );
+			$row['duration_minutes'] = (int) round( ( $end->getTimestamp() - $start->getTimestamp() ) / 60 );
 			$start->setTimezone( $tz );
 			$end->setTimezone( $tz );
 			$row['start_at_local'] = $start->format( 'Y-m-d\TH:i:s' );
@@ -1425,10 +1459,11 @@ class AJCore_REST_API {
 			$row['date_display']   = $start->format( 'M j, Y' );
 			$row['time_display']   = $start->format( 'g:i A' ) . ' – ' . $end->format( 'g:i A T' );
 		} catch ( Exception $e ) {
-			$row['start_at_local'] = '';
-			$row['end_at_local']   = '';
-			$row['date_display']   = '';
-			$row['time_display']   = '';
+			$row['duration_minutes'] = 0;
+			$row['start_at_local']   = '';
+			$row['end_at_local']     = '';
+			$row['date_display']     = '';
+			$row['time_display']     = '';
 		}
 
 		if ( $is_ops ) {
@@ -1437,7 +1472,6 @@ class AJCore_REST_API {
 			$row['stripe_checkout_session_id'] = (string) ( $res['stripe_checkout_session_id'] ?? '' );
 			$row['stripe_payment_intent_id']   = (string) ( $res['stripe_payment_intent_id'] ?? '' );
 			$row['zoho_event_id']              = (string) ( $res['zoho_event_id'] ?? '' );
-			$row['customer_notes']             = (string) ( $res['customer_notes'] ?? '' );
 			$row['admin_notes']                = (string) ( $res['admin_notes'] ?? '' );
 		}
 

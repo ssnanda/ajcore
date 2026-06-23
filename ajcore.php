@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.3.38
+ * Version: 0.3.39
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.3.38' );
+	define( 'AJCORE_VERSION', '0.3.39' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -126,8 +126,8 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// One-time code: never stored after successful exchange.
 			'zoho_oauth_authorization_code'     => '',
 			// Availability failure behavior: 'strict' blocks booking if Zoho check fails;
-			// 'lenient' allows it and logs a warning.
-			'zoho_availability_failure_mode'    => 'strict',
+			// 'lenient' allows it and logs a warning. Portal API defaults lenient.
+			'zoho_availability_failure_mode'    => 'lenient',
 			'reservation_resource_name'         => 'Conference Room',
 			'reservation_resource_key'          => 'conference_room',
 			'reservation_menu_label'            => 'Conference Room',
