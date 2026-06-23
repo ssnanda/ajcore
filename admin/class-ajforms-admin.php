@@ -19317,6 +19317,13 @@ class AJForms_Admin {
 
 		check_admin_referer( 'ajcore_save_calendar_settings', 'ajcore_calendar_settings_nonce' );
 
+		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
+		$is_master  = ! $ms_enabled || ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ajcore_is_stripe_sync_owner() );
+		if ( ! $is_master ) {
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar' ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		$settings = $this->get_plugin_settings();
 
 		$settings['zoho_reservations_enabled']        = ! empty( $_POST['zoho_reservations_enabled'] ) ? '1' : '0';
@@ -19394,6 +19401,9 @@ class AJForms_Admin {
 			return;
 		}
 
+		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
+		$is_master  = ! $ms_enabled || ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ajcore_is_stripe_sync_owner() );
+
 		$settings = $this->get_plugin_settings();
 		$saved    = ! empty( $_GET['calendar-settings-saved'] );
 
@@ -19424,6 +19434,16 @@ class AJForms_Admin {
 			.ajc-table-compact th{width:180px}
 		</style>
 
+		<?php if ( ! $is_master ) : ?>
+			<div class="notice notice-warning inline" style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-left-color:#f59e0b">
+				<span style="font-size:20px">🔒</span>
+				<div>
+					<strong><?php esc_html_e( 'Read-only on this site', 'ajforms' ); ?></strong> —
+					<?php esc_html_e( 'Calendar &amp; Reservation settings are managed on the Master site and synced here via the shared database. To make changes, log in to the Master site.', 'ajforms' ); ?>
+				</div>
+			</div>
+		<?php endif; ?>
+
 		<?php if ( $saved ) : ?>
 			<div class="notice notice-success inline"><p><?php esc_html_e( 'Calendar / Reservations settings saved.', 'ajforms' ); ?></p></div>
 		<?php endif; ?>
@@ -19441,6 +19461,9 @@ class AJForms_Admin {
 
 		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
 			<?php wp_nonce_field( 'ajcore_save_calendar_settings', 'ajcore_calendar_settings_nonce' ); ?>
+			<?php if ( ! $is_master ) : ?>
+			<fieldset disabled style="border:none;padding:0;margin:0;opacity:.55;pointer-events:none">
+			<?php endif; ?>
 
 			<!-- STEP 1 ── Enable & General ──────────────────────────────────── -->
 			<div class="ajc-step-card">
@@ -19761,9 +19784,13 @@ class AJForms_Admin {
 				</table>
 			</details>
 
+			<?php if ( ! $is_master ) : ?>
+			</fieldset>
+			<?php else : ?>
 			<p class="submit" style="margin-top:6px">
 				<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
 			</p>
+			<?php endif; ?>
 
 			<!-- Setup checklist ─────────────────────────────────────────────── -->
 			<div class="ajc-step-card" style="margin-top:8px">
