@@ -8,6 +8,7 @@ PLUGIN_FILE="$ROOT_DIR/ajcore.php"
 
 GITHUB_REPO="ssnanda/ajcore"
 TAG_PREFIX="v"
+SITES_ROOT="/Users/sandip/Projects/sites"
 
 GITHUB_RELEASE="ask"
 GIT_COMMIT="ask"
@@ -468,6 +469,92 @@ publish_github_release() {
   fi
 }
 
+find_local_sites_with_plugin() {
+  local site_dir
+  for site_dir in "$SITES_ROOT"/*/; do
+    [[ -d "${site_dir}wp-content/plugins/$PLUGIN_SLUG" ]] || continue
+    basename "$site_dir"
+  done
+}
+
+deploy_to_local_site() {
+  local site_name="$1"
+  local plugins_dir="$SITES_ROOT/$site_name/wp-content/plugins"
+  echo "  → $site_name ..."
+  rm -rf "${plugins_dir:?}/$PLUGIN_SLUG"
+  unzip -q "$VERSIONED_ZIP" -d "$plugins_dir/"
+  echo "  ✓ $site_name"
+}
+
+local_deploy_step() {
+  local available_sites=()
+  local site
+  while IFS= read -r site; do
+    [[ -n "$site" ]] && available_sites+=("$site")
+  done < <(find_local_sites_with_plugin)
+
+  if [[ ${#available_sites[@]} -eq 0 ]]; then
+    echo ""
+    echo "Local deploy: no DDEV sites with $PLUGIN_SLUG found under $SITES_ROOT"
+    return 0
+  fi
+
+  echo ""
+  echo "Local DDEV sites with AJ Core installed:"
+  local i
+  for i in "${!available_sites[@]}"; do
+    echo "  $((i+1))) ${available_sites[$i]}"
+  done
+  echo ""
+
+  local raw_input choice
+  read -r -p "Deploy to which sites? Enter numbers (e.g. 1 3), 'all', or Enter to skip: " raw_input
+
+  if [[ -z "$raw_input" ]]; then
+    echo "Local deploy: skipped"
+    return 0
+  fi
+
+  local selected_indices=()
+  if [[ "$raw_input" == "all" ]]; then
+    for i in "${!available_sites[@]}"; do
+      selected_indices+=("$i")
+    done
+  else
+    for choice in $raw_input; do
+      if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#available_sites[@]} )); then
+        selected_indices+=("$((choice - 1))")
+      else
+        echo "Warning: '$choice' is not a valid selection, ignoring" >&2
+      fi
+    done
+  fi
+
+  if [[ ${#selected_indices[@]} -eq 0 ]]; then
+    echo "Local deploy: no valid sites selected, skipped"
+    return 0
+  fi
+
+  echo ""
+  echo "Will deploy AJ Core $VERSION to:"
+  for i in "${selected_indices[@]}"; do
+    echo "  • ${available_sites[$i]}"
+  done
+  echo ""
+
+  if ! ask_yes_no "Confirm local deploy?" "y"; then
+    echo "Local deploy: cancelled"
+    return 0
+  fi
+
+  echo ""
+  for i in "${selected_indices[@]}"; do
+    deploy_to_local_site "${available_sites[$i]}"
+  done
+  echo ""
+  echo "Local deploy complete: AJ Core $VERSION installed in ${#selected_indices[@]} site(s)"
+}
+
 VERSION_OVERRIDE=""
 BUMP_PART=""
 NO_BUMP="false"
@@ -621,3 +708,5 @@ echo "  $PLUGIN_SLUG/ajcore.php"
 echo ""
 echo "Verify manually with:"
 echo "  unzip -l \"$VERSIONED_ZIP\" | head"
+
+local_deploy_step

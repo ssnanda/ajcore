@@ -395,13 +395,27 @@ class AJCore_REST_API {
 			return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
 		$decoded = $this->decode_json_fields( $customer, array( 'address', 'metadata' ) );
-		// Extract business_name / individual_name from metadata; fall back to raw_data if metadata column is empty.
+		// Build $meta from the metadata column; then overlay values from raw_data.
+		// business_name / individual_name are top-level Stripe customer fields, not inside raw_data.metadata.
 		$meta = is_array( $decoded['metadata'] ?? null ) ? $decoded['metadata'] : array();
-		if ( empty( $meta ) && ! empty( $customer['raw_data'] ) ) {
+		if ( ! empty( $customer['raw_data'] ) ) {
 			$raw_parsed = json_decode( (string) $customer['raw_data'], true );
-			if ( is_array( $raw_parsed ) && is_array( $raw_parsed['metadata'] ?? null ) ) {
-				$meta = $raw_parsed['metadata'];
-				$decoded['metadata'] = $meta;
+			if ( is_array( $raw_parsed ) ) {
+				// If metadata column was empty but raw_data.metadata has content, use it.
+				if ( empty( $meta ) && is_array( $raw_parsed['metadata'] ?? null ) && ! empty( $raw_parsed['metadata'] ) ) {
+					$meta = $raw_parsed['metadata'];
+				}
+				// Stripe stores business_name / individual_name as top-level customer fields.
+				if ( empty( $meta['business_name'] ) && ! empty( $raw_parsed['business_name'] ) ) {
+					$meta['business_name'] = $raw_parsed['business_name'];
+				}
+				if ( empty( $meta['individual_name'] ) && ! empty( $raw_parsed['individual_name'] ) ) {
+					$meta['individual_name'] = $raw_parsed['individual_name'];
+				}
+				// Backfill decoded metadata so legacy clients reading c.metadata?.business_name still work.
+				if ( ! empty( $meta ) ) {
+					$decoded['metadata'] = $meta;
+				}
 			}
 		}
 		$decoded['business_name']   = $meta['business_name'] ?? '';
