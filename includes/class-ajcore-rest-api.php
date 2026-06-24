@@ -35,6 +35,31 @@ class AJCore_REST_API {
 			)
 		);
 
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/customers',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_create_customer' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'name'  => array( 'required' => true,  'sanitize_callback' => 'sanitize_text_field' ),
+					'email' => array( 'required' => true,  'sanitize_callback' => 'sanitize_email' ),
+					'phone' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/sync',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_trigger_sync' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
 		foreach ( $this->get_route_map() as $route => $args ) {
 			register_rest_route(
 				self::NAMESPACE,
@@ -1609,6 +1634,95 @@ class AJCore_REST_API {
 			'user'      => $this->format_user( $user ),
 			'site_uuid' => get_option( 'ajcore_site_uuid', '' ),
 		) );
+	}
+
+	public function ops_create_customer( WP_REST_Request $request ) {
+		$name  = sanitize_text_field( (string) $request->get_param( 'name' ) );
+		$email = sanitize_email( (string) $request->get_param( 'email' ) );
+		$phone = sanitize_text_field( (string) ( $request->get_param( 'phone' ) ?? '' ) );
+
+		if ( empty( $name ) || empty( $email ) ) {
+			return new WP_Error( 'ajcore_missing_fields', 'Name and email are required.', array( 'status' => 400 ) );
+		}
+
+		// Get Stripe secret key from plugin settings.
+		$settings        = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$stripe_settings = ! empty( $settings['stripe'] ) ? $settings['stripe'] : array();
+		$secret_key      = ! empty( $stripe_settings['secret_key'] ) ? $stripe_settings['secret_key'] : '';
+
+		if ( empty( $secret_key ) ) {
+			return new WP_Error( 'ajcore_stripe_not_configured', 'Stripe is not configured.', array( 'status' => 503 ) );
+		}
+
+		// Create customer in Stripe.
+		$stripe_body = array( 'name' => $name, 'email' => $email );
+		if ( ! empty( $phone ) ) {
+			$stripe_body['phone'] = $phone;
+		}
+
+		$response = wp_remote_post(
+			'https://api.stripe.com/v1/customers',
+			array(
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $secret_key,
+					'Content-Type'  => 'application/x-www-form-urlencoded',
+				),
+				'body'    => http_build_query( $stripe_body ),
+				'timeout' => 30,
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'ajcore_stripe_request_failed', $response->get_error_message(), array( 'status' => 502 ) );
+		}
+
+		$decoded     = json_decode( wp_remote_retrieve_body( $response ), true );
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+
+		if ( $status_code >= 400 || ! empty( $decoded['error'] ) ) {
+			$message = ! empty( $decoded['error']['message'] ) ? $decoded['error']['message'] : __( 'Stripe error.', 'ajforms' );
+			return new WP_Error( 'ajcore_stripe_api_error', $message, array( 'status' => $status_code ?: 502 ) );
+		}
+
+		// Upsert into local portal DB.
+		$pdb            = $this->get_portal_db();
+		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+
+		if ( $this->table_exists( $pdb, $customer_table ) ) {
+			$pdb->replace(
+				$customer_table,
+				array(
+					'stripe_customer_id' => $decoded['id'],
+					'email'              => $decoded['email'] ?? '',
+					'name'               => $decoded['name'] ?? '',
+					'phone'              => $decoded['phone'] ?? '',
+					'portal_status'      => 'active',
+					'livemode'           => ! empty( $decoded['livemode'] ) ? 1 : 0,
+					'synced_at'          => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%d', '%s' )
+			);
+		}
+
+		$customer_row = array(
+			'stripe_customer_id' => $decoded['id'],
+			'email'              => $decoded['email'] ?? '',
+			'name'               => $decoded['name'] ?? '',
+			'phone'              => $decoded['phone'] ?? '',
+			'portal_status'      => 'active',
+			'synced_at'          => current_time( 'mysql' ),
+		);
+
+		return rest_ensure_response( array( 'success' => true, 'customer' => $customer_row ) );
+	}
+
+	public function ops_trigger_sync( WP_REST_Request $request ) {
+		// Schedule a single-run sync event to fire immediately.
+		if ( ! wp_next_scheduled( 'ajcore_portal_stripe_sync' ) ) {
+			wp_schedule_single_event( time() - 1, 'ajcore_portal_stripe_sync' );
+		}
+		spawn_cron();
+		return rest_ensure_response( array( 'success' => true, 'message' => 'Sync scheduled.' ) );
 	}
 
 	// ── Portal overview (flat counts for the mobile home screen) ─────────────
