@@ -1729,6 +1729,23 @@ class AJCore_REST_API {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
 		}
 
+		// Reject duplicate emails: check portal DB before calling Stripe.
+		$check_pdb   = $this->get_portal_db();
+		$check_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		if ( $this->table_exists( $check_pdb, $check_table ) ) {
+			$existing_id = $check_pdb->get_var( $check_pdb->prepare(
+				"SELECT stripe_customer_id FROM `{$check_table}` WHERE email = %s LIMIT 1",
+				$email
+			) );
+			if ( $existing_id ) {
+				return new WP_Error(
+					'ajcore_duplicate_email',
+					sprintf( 'A customer with email %s already exists.', $email ),
+					array( 'status' => 409 )
+				);
+			}
+		}
+
 		// Get Stripe secret key from plugin settings.
 		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 		$secret_key = trim( (string) ( $settings['stripe_secret_key'] ?? '' ) );
