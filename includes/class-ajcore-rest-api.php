@@ -388,15 +388,27 @@ class AJCore_REST_API {
 		$pdb = $this->get_portal_db();
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
-		$desired_cols   = array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'livemode', 'synced_at' );
+		$desired_cols   = array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'raw_data', 'portal_status', 'enabled_portal', 'livemode', 'synced_at' );
 		$select_cols    = $this->table_exists( $pdb, $customer_table ) ? $this->existing_columns( $pdb, $customer_table, $desired_cols ) : array();
 		$customer       = ! empty( $select_cols ) ? $pdb->get_row( $pdb->prepare( 'SELECT `' . implode( '`,`', $select_cols ) . "` FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ), ARRAY_A ) : null;
 		if ( ! $customer ) {
 			return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
+		$decoded = $this->decode_json_fields( $customer, array( 'address', 'metadata' ) );
+		// Extract business_name / individual_name from metadata; fall back to raw_data if metadata column is empty.
+		$meta = is_array( $decoded['metadata'] ?? null ) ? $decoded['metadata'] : array();
+		if ( empty( $meta ) && ! empty( $customer['raw_data'] ) ) {
+			$raw_parsed = json_decode( (string) $customer['raw_data'], true );
+			if ( is_array( $raw_parsed ) && is_array( $raw_parsed['metadata'] ?? null ) ) {
+				$meta = $raw_parsed['metadata'];
+			}
+		}
+		$decoded['business_name']   = $meta['business_name'] ?? '';
+		$decoded['individual_name'] = $meta['individual_name'] ?? '';
+		unset( $decoded['raw_data'] );
 		return rest_ensure_response(
 			array(
-				'customer'         => $this->decode_json_fields( $customer, array( 'address', 'metadata' ) ),
+				'customer'         => $decoded,
 				'subscriptions'    => $this->select_by_customer( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'items', 'synced_at' ), $stripe_customer_id, 'synced_at DESC, id DESC' ),
 				'ledger'           => $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_type', 'source_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'created_at' ), $stripe_customer_id, 'created_at DESC, id DESC' ),
 				'service_requests' => $this->select_by_customer( 'aj_portal_service_requests', array( 'id', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'created_at', 'updated_at' ), $stripe_customer_id, 'updated_at DESC, id DESC' ),
