@@ -1931,9 +1931,9 @@ class AJCore_REST_API {
 				$pdb->query( "ALTER TABLE `{$customer_table}` ADD COLUMN `description` varchar(500) NOT NULL DEFAULT '' AFTER `phone`" );
 			}
 
-			// Merge new metadata values into existing metadata.
+			// Merge new values into existing metadata and raw_data.
 			$existing = $pdb->get_row( $pdb->prepare(
-				"SELECT metadata FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1",
+				"SELECT metadata, raw_data FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1",
 				$stripe_customer_id
 			), ARRAY_A );
 			$meta = array();
@@ -1948,6 +1948,17 @@ class AJCore_REST_API {
 			}
 			if ( '' !== $individual_name ) {
 				$meta['individual_name'] = $individual_name;
+			}
+
+			// Build updated raw_data: start from fresh Stripe response, then overlay our explicit edits.
+			// Using the Stripe response keeps all other fields current; the overlay ensures business_name
+			// and individual_name are reflected immediately (Stripe stores these as top-level fields).
+			$raw_obj = is_array( $decoded ) ? $decoded : array();
+			if ( '' !== $business_name ) {
+				$raw_obj['business_name'] = $business_name;
+			}
+			if ( '' !== $individual_name ) {
+				$raw_obj['individual_name'] = $individual_name;
 			}
 
 			$address_data = array();
@@ -1966,10 +1977,11 @@ class AJCore_REST_API {
 					'description' => $description,
 					'address'     => ! empty( $address_data ) ? wp_json_encode( $address_data ) : '',
 					'metadata'    => ! empty( $meta ) ? wp_json_encode( $meta ) : '',
+					'raw_data'    => ! empty( $raw_obj ) ? wp_json_encode( $raw_obj ) : '',
 					'synced_at'   => current_time( 'mysql' ),
 				),
 				array( 'stripe_customer_id' => $stripe_customer_id ),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
 				array( '%s' )
 			);
 		}
