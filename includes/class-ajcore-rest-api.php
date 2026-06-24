@@ -1730,9 +1730,8 @@ class AJCore_REST_API {
 		}
 
 		// Get Stripe secret key from plugin settings.
-		$settings        = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$stripe_settings = ! empty( $settings['stripe'] ) ? $settings['stripe'] : array();
-		$secret_key      = ! empty( $stripe_settings['secret_key'] ) ? $stripe_settings['secret_key'] : '';
+		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$secret_key = trim( (string) ( $settings['stripe_secret_key'] ?? '' ) );
 
 		if ( empty( $secret_key ) ) {
 			return new WP_Error( 'ajcore_stripe_not_configured', 'Stripe is not configured.', array( 'status' => 503 ) );
@@ -1870,9 +1869,8 @@ class AJCore_REST_API {
 		}
 
 		// Get Stripe secret key.
-		$settings        = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$stripe_settings = ! empty( $settings['stripe'] ) ? $settings['stripe'] : array();
-		$secret_key      = ! empty( $stripe_settings['secret_key'] ) ? $stripe_settings['secret_key'] : '';
+		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$secret_key = trim( (string) ( $settings['stripe_secret_key'] ?? '' ) );
 
 		if ( empty( $secret_key ) ) {
 			return new WP_Error( 'ajcore_stripe_not_configured', 'Stripe is not configured.', array( 'status' => 503 ) );
