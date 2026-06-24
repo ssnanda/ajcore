@@ -1743,9 +1743,11 @@ class AJCore_REST_API {
 			$stripe_body['description'] = $description;
 		}
 		if ( '' !== $business_name ) {
+			$stripe_body['business_name']           = $business_name;
 			$stripe_body['metadata[business_name]'] = $business_name;
 		}
 		if ( '' !== $individual_name ) {
+			$stripe_body['individual_name']           = $individual_name;
 			$stripe_body['metadata[individual_name]'] = $individual_name;
 		}
 		if ( '' !== $addr_line1 ) {
@@ -1882,9 +1884,11 @@ class AJCore_REST_API {
 			$stripe_body['description'] = $description;
 		}
 		if ( '' !== $business_name ) {
+			$stripe_body['business_name']           = $business_name;
 			$stripe_body['metadata[business_name]'] = $business_name;
 		}
 		if ( '' !== $individual_name ) {
+			$stripe_body['individual_name']           = $individual_name;
 			$stripe_body['metadata[individual_name]'] = $individual_name;
 		}
 		if ( '' !== $addr_line1 ) {
