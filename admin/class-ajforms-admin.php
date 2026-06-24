@@ -2,12 +2,18 @@
 
 class AJForms_Admin {
 
+	public static $instance = null;
+
 	private $portal_db_error = '';
 	private $portal_sync_current_log_id = 0;
 	private $portal_sync_current_run_key = '';
 	private $portal_sync_current_job = '';
 	private $portal_sync_stats = array();
 	private $portal_service_display_skips = array();
+
+	public function __construct() {
+		self::$instance = $this;
+	}
 
 	private function get_latest_release_api_url() {
 		return 'https://api.github.com/repos/ssnanda/ajcore/releases/latest';
@@ -1404,7 +1410,7 @@ class AJForms_Admin {
 		);
 	}
 
-	private function repair_portal_user_links_and_roles( $log_items = true, $relink_matches = true, $activate_matches = false, $customer_ids = array() ) {
+	public function repair_portal_user_links_and_roles( $log_items = true, $relink_matches = true, $activate_matches = false, $customer_ids = array() ) {
 		global $wpdb;
 
 		$this->ensure_aj_portal_user_role();
@@ -4276,7 +4282,7 @@ class AJForms_Admin {
 		return 1 + absint( $subscription_count ) + absint( $transaction_count );
 	}
 
-	private function disable_stripe_customer_portal_access( $stripe_customer_id, $portal_status = 'disabled' ) {
+	public function disable_stripe_customer_portal_access( $stripe_customer_id, $portal_status = 'disabled' ) {
 		global $wpdb;
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
@@ -4313,7 +4319,7 @@ class AJForms_Admin {
 		);
 	}
 
-	private function send_portal_user_password_reset( $user_id ) {
+	public function send_portal_user_password_reset( $user_id ) {
 		$user = get_userdata( absint( $user_id ) );
 		if ( ! $user ) {
 			return new WP_Error( 'missing_user', __( 'WordPress user was not found.', 'ajforms' ) );
@@ -4384,7 +4390,7 @@ class AJForms_Admin {
 		return wp_mail( $user->user_email, $subject, $message, $headers );
 	}
 
-	private function send_portal_user_welcome_email( $user_id ) {
+	public function send_portal_user_welcome_email( $user_id ) {
 		$user = get_userdata( absint( $user_id ) );
 		if ( ! $user ) {
 			return new WP_Error( 'missing_user', __( 'WordPress user was not found.', 'ajforms' ) );
@@ -7863,7 +7869,7 @@ class AJForms_Admin {
 		return ucwords( str_replace( array( '.', '_' ), ' ', sanitize_text_field( (string) $field ) ) );
 	}
 
-	private function enable_stripe_customer_as_portal_user( $stripe_customer_id ) {
+	public function enable_stripe_customer_as_portal_user( $stripe_customer_id ) {
 		global $wpdb;
 		$pdb = $this->get_pdb();
 
@@ -10072,6 +10078,125 @@ class AJForms_Admin {
 				$redirect_args['portal-updated'] = 1;
 			}
 
+			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_customer_stripe_edit_nonce'] ) ) {
+			check_admin_referer( 'ajcore_customer_stripe_edit_' . $stripe_customer_id, 'ajcore_customer_stripe_edit_nonce' );
+
+			$name            = sanitize_text_field( wp_unslash( $_POST['customer_name'] ?? '' ) );
+			$email           = sanitize_email( wp_unslash( $_POST['customer_email'] ?? '' ) );
+			$phone           = sanitize_text_field( wp_unslash( $_POST['customer_phone'] ?? '' ) );
+			$description     = sanitize_text_field( wp_unslash( $_POST['customer_description'] ?? '' ) );
+			$business_name   = sanitize_text_field( wp_unslash( $_POST['customer_business_name'] ?? '' ) );
+			$individual_name = sanitize_text_field( wp_unslash( $_POST['customer_individual_name'] ?? '' ) );
+			$addr_line1      = sanitize_text_field( wp_unslash( $_POST['customer_addr_line1'] ?? '' ) );
+			$addr_line2      = sanitize_text_field( wp_unslash( $_POST['customer_addr_line2'] ?? '' ) );
+			$addr_city       = sanitize_text_field( wp_unslash( $_POST['customer_addr_city'] ?? '' ) );
+			$addr_state      = sanitize_text_field( wp_unslash( $_POST['customer_addr_state'] ?? '' ) );
+			$addr_postal     = sanitize_text_field( wp_unslash( $_POST['customer_addr_postal'] ?? '' ) );
+			$addr_country    = sanitize_text_field( wp_unslash( $_POST['customer_addr_country'] ?? '' ) );
+
+			if ( empty( $name ) || empty( $email ) || empty( $phone ) ) {
+				$redirect_args['portal-error'] = rawurlencode( __( 'Name, email, and phone are required.', 'ajforms' ) );
+				wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			$settings        = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+			$stripe_settings = ! empty( $settings['stripe'] ) ? $settings['stripe'] : array();
+			$secret_key      = ! empty( $stripe_settings['secret_key'] ) ? $stripe_settings['secret_key'] : '';
+
+			if ( empty( $secret_key ) ) {
+				$redirect_args['portal-error'] = rawurlencode( __( 'Stripe is not configured.', 'ajforms' ) );
+				wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			$stripe_body = array( 'name' => $name, 'email' => $email, 'phone' => $phone );
+			if ( '' !== $description ) {
+				$stripe_body['description'] = $description;
+			}
+			if ( '' !== $business_name ) {
+				$stripe_body['metadata[business_name]'] = $business_name;
+			}
+			if ( '' !== $individual_name ) {
+				$stripe_body['metadata[individual_name]'] = $individual_name;
+			}
+			if ( '' !== $addr_line1 ) {
+				$stripe_body['address[line1]']       = $addr_line1;
+				$stripe_body['address[line2]']       = $addr_line2;
+				$stripe_body['address[city]']        = $addr_city;
+				$stripe_body['address[state]']       = $addr_state;
+				$stripe_body['address[postal_code]'] = $addr_postal;
+				$stripe_body['address[country]']     = $addr_country;
+			}
+
+			$response    = wp_remote_post(
+				'https://api.stripe.com/v1/customers/' . $stripe_customer_id,
+				array(
+					'headers' => array(
+						'Authorization' => 'Bearer ' . $secret_key,
+						'Content-Type'  => 'application/x-www-form-urlencoded',
+					),
+					'body'    => http_build_query( $stripe_body ),
+					'timeout' => 30,
+				)
+			);
+			$decoded     = ! is_wp_error( $response ) ? json_decode( wp_remote_retrieve_body( $response ), true ) : null;
+			$status_code = ! is_wp_error( $response ) ? (int) wp_remote_retrieve_response_code( $response ) : 0;
+
+			if ( is_wp_error( $response ) || $status_code >= 400 || ! empty( $decoded['error'] ) ) {
+				$msg = is_wp_error( $response ) ? $response->get_error_message() : ( ! empty( $decoded['error']['message'] ) ? $decoded['error']['message'] : __( 'Stripe update failed.', 'ajforms' ) );
+				$redirect_args['portal-error'] = rawurlencode( $msg );
+				wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			$pdb            = $this->get_pdb();
+			$customer_table = $pdb->prefix . 'aj_portal_stripe_customers';
+			if ( $this->table_exists( $pdb, $customer_table ) ) {
+				$cols = $pdb->get_col( "SHOW COLUMNS FROM `{$customer_table}` LIKE 'description'" );
+				if ( empty( $cols ) ) {
+					$pdb->query( "ALTER TABLE `{$customer_table}` ADD COLUMN `description` varchar(500) NOT NULL DEFAULT '' AFTER `phone`" );
+				}
+				$existing = $pdb->get_row( $pdb->prepare( "SELECT metadata FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ), ARRAY_A );
+				$meta = array();
+				if ( ! empty( $existing['metadata'] ) ) {
+					$decoded_meta = json_decode( $existing['metadata'], true );
+					if ( is_array( $decoded_meta ) ) {
+						$meta = $decoded_meta;
+					}
+				}
+				if ( '' !== $business_name ) {
+					$meta['business_name'] = $business_name;
+				}
+				if ( '' !== $individual_name ) {
+					$meta['individual_name'] = $individual_name;
+				}
+				$address_data = array();
+				if ( '' !== $addr_line1 ) {
+					$address_data = array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country );
+				}
+				$pdb->update(
+					$customer_table,
+					array(
+						'name'        => $name,
+						'email'       => $email,
+						'phone'       => $phone,
+						'description' => $description,
+						'metadata'    => ! empty( $meta ) ? wp_json_encode( $meta ) : '',
+						'address'     => ! empty( $address_data ) ? wp_json_encode( $address_data ) : '',
+						'synced_at'   => current_time( 'mysql' ),
+					),
+					array( 'stripe_customer_id' => $stripe_customer_id ),
+					array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+					array( '%s' )
+				);
+			}
+
+			$redirect_args['portal-updated'] = 1;
 			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
 			exit;
 		}
@@ -14433,6 +14558,35 @@ class AJForms_Admin {
 						<dt><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></dt><dd><?php $this->render_portal_customer_field_value( $this->get_portal_customer_display_value( $customer, $field ) ); ?></dd>
 					<?php endforeach; ?>
 				</dl>
+			</div>
+
+			<div class="ajcore-customer-card">
+				<h3><?php esc_html_e( 'Edit Customer', 'ajforms' ); ?></h3>
+				<?php
+				$addr      = ! empty( $customer->address ) ? ( is_array( $customer->address ) ? $customer->address : json_decode( $customer->address, true ) ) : array();
+				$meta_data = ! empty( $customer->metadata ) ? ( is_array( $customer->metadata ) ? $customer->metadata : json_decode( $customer->metadata, true ) ) : array();
+				?>
+				<form method="post">
+					<?php wp_nonce_field( 'ajcore_customer_stripe_edit_' . $customer->stripe_customer_id, 'ajcore_customer_stripe_edit_nonce' ); ?>
+					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+					<input type="hidden" name="tab" value="portal-customer">
+					<input type="hidden" name="customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+					<table class="form-table" style="margin:0">
+						<tr><th style="width:140px"><?php esc_html_e( 'Name', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="text" name="customer_name" value="<?php echo esc_attr( $customer->name ?? '' ); ?>" required class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'Email', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="email" name="customer_email" value="<?php echo esc_attr( $customer->email ?? '' ); ?>" required class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'Phone', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="text" name="customer_phone" value="<?php echo esc_attr( $customer->phone ?? '' ); ?>" required class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'Business Name', 'ajforms' ); ?></th><td><input type="text" name="customer_business_name" value="<?php echo esc_attr( $meta_data['business_name'] ?? '' ); ?>" class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'Individual Name', 'ajforms' ); ?></th><td><input type="text" name="customer_individual_name" value="<?php echo esc_attr( $meta_data['individual_name'] ?? '' ); ?>" class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><td><input type="text" name="customer_description" value="<?php echo esc_attr( $customer->description ?? '' ); ?>" class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'Address Line 1', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_line1" value="<?php echo esc_attr( $addr['line1'] ?? '' ); ?>" class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'Address Line 2', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_line2" value="<?php echo esc_attr( $addr['line2'] ?? '' ); ?>" class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'City', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_city" value="<?php echo esc_attr( $addr['city'] ?? '' ); ?>" class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'State', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_state" value="<?php echo esc_attr( $addr['state'] ?? '' ); ?>" class="regular-text" style="width:80px"></td></tr>
+						<tr><th><?php esc_html_e( 'Postal Code', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_postal" value="<?php echo esc_attr( $addr['postal_code'] ?? '' ); ?>" class="regular-text" style="width:120px"></td></tr>
+						<tr><th><?php esc_html_e( 'Country', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_country" value="<?php echo esc_attr( $addr['country'] ?? '' ); ?>" class="regular-text" style="width:80px" placeholder="US"></td></tr>
+					</table>
+					<p style="margin-top:12px"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save & Update in Stripe', 'ajforms' ); ?></button></p>
+				</form>
 			</div>
 
 			<div class="ajcore-customer-card">

@@ -49,6 +49,12 @@ class AJCore_REST_API {
 					'description'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'business_name'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'individual_name' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_line1'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_line2'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_city'       => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_state'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_postal'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_country'    => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 				),
 			)
 		);
@@ -67,6 +73,25 @@ class AJCore_REST_API {
 					'description'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'business_name'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'individual_name' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_line1'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_line2'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_city'       => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_state'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_postal'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'addr_country'    => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/action',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_customer_action' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'action' => array( 'required' => true, 'sanitize_callback' => 'sanitize_key' ),
 				),
 			)
 		);
@@ -1666,6 +1691,12 @@ class AJCore_REST_API {
 		$description     = sanitize_text_field( (string) ( $request->get_param( 'description' ) ?? '' ) );
 		$business_name   = sanitize_text_field( (string) ( $request->get_param( 'business_name' ) ?? '' ) );
 		$individual_name = sanitize_text_field( (string) ( $request->get_param( 'individual_name' ) ?? '' ) );
+		$addr_line1      = sanitize_text_field( (string) ( $request->get_param( 'addr_line1' ) ?? '' ) );
+		$addr_line2      = sanitize_text_field( (string) ( $request->get_param( 'addr_line2' ) ?? '' ) );
+		$addr_city       = sanitize_text_field( (string) ( $request->get_param( 'addr_city' ) ?? '' ) );
+		$addr_state      = sanitize_text_field( (string) ( $request->get_param( 'addr_state' ) ?? '' ) );
+		$addr_postal     = sanitize_text_field( (string) ( $request->get_param( 'addr_postal' ) ?? '' ) );
+		$addr_country    = sanitize_text_field( (string) ( $request->get_param( 'addr_country' ) ?? '' ) );
 
 		if ( empty( $name ) || empty( $email ) || empty( $phone ) ) {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
@@ -1690,6 +1721,14 @@ class AJCore_REST_API {
 		}
 		if ( '' !== $individual_name ) {
 			$stripe_body['metadata[individual_name]'] = $individual_name;
+		}
+		if ( '' !== $addr_line1 ) {
+			$stripe_body['address[line1]']       = $addr_line1;
+			$stripe_body['address[line2]']       = $addr_line2;
+			$stripe_body['address[city]']        = $addr_city;
+			$stripe_body['address[state]']       = $addr_state;
+			$stripe_body['address[postal_code]'] = $addr_postal;
+			$stripe_body['address[country]']     = $addr_country;
 		}
 
 		$response = wp_remote_post(
@@ -1735,6 +1774,13 @@ class AJCore_REST_API {
 				$meta['individual_name'] = $individual_name;
 			}
 
+			$address_data = array();
+			if ( '' !== $addr_line1 ) {
+				$address_data = array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country );
+			} elseif ( ! empty( $decoded['address'] ) && is_array( $decoded['address'] ) ) {
+				$address_data = $decoded['address'];
+			}
+
 			$pdb->replace(
 				$customer_table,
 				array(
@@ -1743,12 +1789,13 @@ class AJCore_REST_API {
 					'name'               => $decoded['name'] ?? '',
 					'phone'              => $decoded['phone'] ?? '',
 					'description'        => $decoded['description'] ?? $description,
+					'address'            => ! empty( $address_data ) ? wp_json_encode( $address_data ) : '',
 					'metadata'           => ! empty( $meta ) ? wp_json_encode( $meta ) : '',
 					'portal_status'      => 'active',
 					'livemode'           => ! empty( $decoded['livemode'] ) ? 1 : 0,
 					'synced_at'          => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' )
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' )
 			);
 		}
 
@@ -1758,6 +1805,7 @@ class AJCore_REST_API {
 			'name'               => $decoded['name'] ?? '',
 			'phone'              => $decoded['phone'] ?? '',
 			'description'        => $decoded['description'] ?? $description,
+			'address'            => ! empty( $decoded['address'] ) ? $decoded['address'] : null,
 			'metadata'           => ! empty( $decoded['metadata'] ) ? $decoded['metadata'] : null,
 			'portal_status'      => 'active',
 			'synced_at'          => current_time( 'mysql' ),
@@ -1783,6 +1831,12 @@ class AJCore_REST_API {
 		$description        = sanitize_text_field( (string) ( $request->get_param( 'description' ) ?? '' ) );
 		$business_name      = sanitize_text_field( (string) ( $request->get_param( 'business_name' ) ?? '' ) );
 		$individual_name    = sanitize_text_field( (string) ( $request->get_param( 'individual_name' ) ?? '' ) );
+		$addr_line1         = sanitize_text_field( (string) ( $request->get_param( 'addr_line1' ) ?? '' ) );
+		$addr_line2         = sanitize_text_field( (string) ( $request->get_param( 'addr_line2' ) ?? '' ) );
+		$addr_city          = sanitize_text_field( (string) ( $request->get_param( 'addr_city' ) ?? '' ) );
+		$addr_state         = sanitize_text_field( (string) ( $request->get_param( 'addr_state' ) ?? '' ) );
+		$addr_postal        = sanitize_text_field( (string) ( $request->get_param( 'addr_postal' ) ?? '' ) );
+		$addr_country       = sanitize_text_field( (string) ( $request->get_param( 'addr_country' ) ?? '' ) );
 
 		if ( empty( $name ) || empty( $email ) || empty( $phone ) ) {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
@@ -1807,6 +1861,14 @@ class AJCore_REST_API {
 		}
 		if ( '' !== $individual_name ) {
 			$stripe_body['metadata[individual_name]'] = $individual_name;
+		}
+		if ( '' !== $addr_line1 ) {
+			$stripe_body['address[line1]']       = $addr_line1;
+			$stripe_body['address[line2]']       = $addr_line2;
+			$stripe_body['address[city]']        = $addr_city;
+			$stripe_body['address[state]']       = $addr_state;
+			$stripe_body['address[postal_code]'] = $addr_postal;
+			$stripe_body['address[country]']     = $addr_country;
 		}
 
 		$response = wp_remote_post(
@@ -1863,6 +1925,13 @@ class AJCore_REST_API {
 				$meta['individual_name'] = $individual_name;
 			}
 
+			$address_data = array();
+			if ( '' !== $addr_line1 ) {
+				$address_data = array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country );
+			} elseif ( ! empty( $decoded['address'] ) && is_array( $decoded['address'] ) ) {
+				$address_data = $decoded['address'];
+			}
+
 			$pdb->update(
 				$customer_table,
 				array(
@@ -1870,11 +1939,12 @@ class AJCore_REST_API {
 					'email'       => $email,
 					'phone'       => $phone,
 					'description' => $description,
+					'address'     => ! empty( $address_data ) ? wp_json_encode( $address_data ) : '',
 					'metadata'    => ! empty( $meta ) ? wp_json_encode( $meta ) : '',
 					'synced_at'   => current_time( 'mysql' ),
 				),
 				array( 'stripe_customer_id' => $stripe_customer_id ),
-				array( '%s', '%s', '%s', '%s', '%s', '%s' ),
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
 				array( '%s' )
 			);
 		}
@@ -1885,12 +1955,105 @@ class AJCore_REST_API {
 			'name'               => $decoded['name'] ?? $name,
 			'phone'              => $decoded['phone'] ?? $phone,
 			'description'        => $decoded['description'] ?? $description,
+			'address'            => ! empty( $decoded['address'] ) ? $decoded['address'] : null,
 			'metadata'           => ! empty( $decoded['metadata'] ) ? $decoded['metadata'] : null,
 			'portal_status'      => 'active',
 			'synced_at'          => current_time( 'mysql' ),
 		);
 
 		return rest_ensure_response( array( 'success' => true, 'customer' => $customer_row ) );
+	}
+
+	public function ops_customer_action( WP_REST_Request $request ) {
+		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$action             = sanitize_key( (string) $request->get_param( 'action' ) );
+		$allowed            = array( 'enable', 'disable', 'archive', 'restore', 'enable_repair', 'reset_password', 'send_welcome', 'delete_archived' );
+
+		if ( ! in_array( $action, $allowed, true ) ) {
+			return new WP_Error( 'invalid_action', 'Invalid action.', array( 'status' => 400 ) );
+		}
+		if ( ! class_exists( 'AJForms_Admin' ) || ! AJForms_Admin::$instance ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+
+		global $wpdb;
+		$pdb            = $this->get_portal_db();
+		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$customer       = null;
+
+		if ( 'enable_repair' === $action ) {
+			$stats = AJForms_Admin::$instance->repair_portal_user_links_and_roles( true, true, true, array( $stripe_customer_id ) );
+			return rest_ensure_response( array( 'success' => true, 'stats' => $stats ) );
+		}
+
+		$customer = $this->table_exists( $pdb, $customer_table )
+			? $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ) )
+			: null;
+
+		if ( ! $customer ) {
+			return new WP_Error( 'customer_not_found', 'Customer not found.', array( 'status' => 404 ) );
+		}
+
+		$mapping_table   = $wpdb->prefix . 'aj_portal_user_mappings';
+		$mapping         = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$mapping_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ) );
+		$customer->user_id           = $mapping ? $mapping->user_id : null;
+		$customer->portal_user_email = $mapping ? $mapping->portal_user_email : null;
+
+		$portal_status = ! empty( $customer->portal_status ) ? (string) $customer->portal_status : 'disabled';
+		$result        = true;
+
+		switch ( $action ) {
+			case 'enable':
+			case 'restore':
+				$result = AJForms_Admin::$instance->enable_stripe_customer_as_portal_user( $stripe_customer_id );
+				break;
+
+			case 'disable':
+				$result = AJForms_Admin::$instance->disable_stripe_customer_portal_access( $stripe_customer_id );
+				break;
+
+			case 'archive':
+				$result = AJForms_Admin::$instance->disable_stripe_customer_portal_access( $stripe_customer_id, 'archived' );
+				break;
+
+			case 'reset_password':
+				if ( empty( $customer->user_id ) ) {
+					return new WP_Error( 'no_wp_user', 'No linked WordPress user. Run Enable & Repair first.', array( 'status' => 400 ) );
+				}
+				$result = AJForms_Admin::$instance->send_portal_user_password_reset( (int) $customer->user_id );
+				if ( false === $result ) {
+					$result = new WP_Error( 'reset_failed', 'Password reset email could not be sent.' );
+				}
+				break;
+
+			case 'send_welcome':
+				if ( empty( $customer->user_id ) ) {
+					return new WP_Error( 'no_wp_user', 'No linked WordPress user. Run Enable & Repair first.', array( 'status' => 400 ) );
+				}
+				if ( 'active' !== $portal_status ) {
+					return new WP_Error( 'not_active', 'Customer must have active portal access to receive a welcome email.', array( 'status' => 400 ) );
+				}
+				$result = AJForms_Admin::$instance->send_portal_user_welcome_email( (int) $customer->user_id );
+				if ( false === $result ) {
+					$result = new WP_Error( 'welcome_failed', 'Welcome email could not be sent.' );
+				}
+				break;
+
+			case 'delete_archived':
+				if ( 'archived' !== $portal_status ) {
+					return new WP_Error( 'not_archived', 'Customer must be archived before deletion.', array( 'status' => 400 ) );
+				}
+				$wpdb->delete( $mapping_table, array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s' ) );
+				$pdb->delete( $this->portal_table( 'aj_portal_customer_states' ), array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s' ) );
+				$pdb->delete( $customer_table, array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s' ) );
+				return rest_ensure_response( array( 'success' => true, 'message' => 'Customer deleted from local portal cache.' ) );
+		}
+
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( 'action_failed', $result->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'message' => $action . ' completed.' ) );
 	}
 
 	// ── Portal overview (flat counts for the mobile home screen) ─────────────
