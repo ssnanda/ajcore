@@ -15625,6 +15625,7 @@ class AJForms_Admin {
 							<th><?php esc_html_e( 'Stripe Customer', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
 							<?php foreach ( $display_fields as $field ) : ?>
+								<?php if ( in_array( $field, array( 'name', 'email' ), true ) ) { continue; } ?>
 								<th><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></th>
 							<?php endforeach; ?>
 							<th><?php esc_html_e( 'WordPress User', 'ajforms' ); ?></th>
@@ -15683,6 +15684,7 @@ class AJForms_Admin {
 									</td>
 									<td><?php echo esc_html( $customer_email ); ?></td>
 									<?php foreach ( $display_fields as $field ) : ?>
+										<?php if ( in_array( $field, array( 'name', 'email' ), true ) ) { continue; } ?>
 										<td><?php echo esc_html( $this->get_portal_customer_display_value( $customer, $field ) ); ?></td>
 									<?php endforeach; ?>
 									<td>
