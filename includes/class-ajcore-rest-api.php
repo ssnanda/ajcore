@@ -401,6 +401,7 @@ class AJCore_REST_API {
 			$raw_parsed = json_decode( (string) $customer['raw_data'], true );
 			if ( is_array( $raw_parsed ) && is_array( $raw_parsed['metadata'] ?? null ) ) {
 				$meta = $raw_parsed['metadata'];
+				$decoded['metadata'] = $meta;
 			}
 		}
 		$decoded['business_name']   = $meta['business_name'] ?? '';
