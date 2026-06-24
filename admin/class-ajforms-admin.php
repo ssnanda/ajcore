@@ -2185,6 +2185,13 @@ class AJForms_Admin {
 			return $customers;
 		}
 
+		$pdb            = $this->get_pdb();
+		$customer_table = $this->get_portal_stripe_customers_table();
+		$cols           = $pdb->get_col( "SHOW COLUMNS FROM `{$customer_table}` LIKE 'description'" );
+		if ( empty( $cols ) ) {
+			$pdb->query( "ALTER TABLE `{$customer_table}` ADD COLUMN `description` varchar(500) NOT NULL DEFAULT '' AFTER `phone`" );
+		}
+
 		$count = 0;
 		foreach ( $customers as $customer ) {
 			if ( empty( $customer['id'] ) || ! empty( $customer['deleted'] ) ) {
@@ -4252,6 +4259,13 @@ class AJForms_Admin {
 
 		if ( empty( $customer['id'] ) || ! empty( $customer['deleted'] ) ) {
 			return new WP_Error( 'customer_not_found', __( 'Stripe customer was not found.', 'ajforms' ) );
+		}
+
+		$pdb            = $this->get_pdb();
+		$customer_table = $this->get_portal_stripe_customers_table();
+		$cols           = $pdb->get_col( "SHOW COLUMNS FROM `{$customer_table}` LIKE 'description'" );
+		if ( empty( $cols ) ) {
+			$pdb->query( "ALTER TABLE `{$customer_table}` ADD COLUMN `description` varchar(500) NOT NULL DEFAULT '' AFTER `phone`" );
 		}
 
 		$this->upsert_portal_stripe_customer_record(
