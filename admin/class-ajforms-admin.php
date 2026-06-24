@@ -2197,6 +2197,7 @@ class AJForms_Admin {
 					'email'              => ! empty( $customer['email'] ) ? sanitize_email( (string) $customer['email'] ) : '',
 					'name'               => ! empty( $customer['name'] ) ? sanitize_text_field( (string) $customer['name'] ) : '',
 					'phone'              => ! empty( $customer['phone'] ) ? sanitize_text_field( (string) $customer['phone'] ) : '',
+					'description'        => ! empty( $customer['description'] ) ? sanitize_text_field( (string) $customer['description'] ) : '',
 					'address'            => ! empty( $customer['address'] ) ? wp_json_encode( $customer['address'] ) : '',
 					'metadata'           => ! empty( $customer['metadata'] ) ? wp_json_encode( $customer['metadata'] ) : '',
 					'raw_data'           => wp_json_encode( $customer ),
@@ -2204,7 +2205,7 @@ class AJForms_Admin {
 					'created_at'         => ! empty( $customer['created'] ) ? $this->stripe_timestamp_to_mysql( $customer['created'] ) : null,
 					'synced_at'          => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 			);
 			if ( $upserted ) {
 				$count++;
@@ -4259,6 +4260,7 @@ class AJForms_Admin {
 				'email'              => ! empty( $customer['email'] ) ? sanitize_email( (string) $customer['email'] ) : '',
 				'name'               => ! empty( $customer['name'] ) ? sanitize_text_field( (string) $customer['name'] ) : '',
 				'phone'              => ! empty( $customer['phone'] ) ? sanitize_text_field( (string) $customer['phone'] ) : '',
+				'description'        => ! empty( $customer['description'] ) ? sanitize_text_field( (string) $customer['description'] ) : '',
 				'address'            => ! empty( $customer['address'] ) ? wp_json_encode( $customer['address'] ) : '',
 				'metadata'           => ! empty( $customer['metadata'] ) ? wp_json_encode( $customer['metadata'] ) : '',
 				'raw_data'           => wp_json_encode( $customer ),
@@ -4266,7 +4268,7 @@ class AJForms_Admin {
 				'created_at'         => ! empty( $customer['created'] ) ? $this->stripe_timestamp_to_mysql( $customer['created'] ) : null,
 				'synced_at'          => current_time( 'mysql' ),
 			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
 		$subscription_count = $this->sync_portal_stripe_subscriptions( $secret_key, $stripe_customer_id );
