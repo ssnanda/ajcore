@@ -63,7 +63,7 @@ class AJCore_REST_API {
 			self::NAMESPACE,
 			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)',
 			array(
-				'methods'             => WP_REST_Server::EDITABLE,
+				'methods'             => 'POST, PUT, PATCH',
 				'callback'            => array( $this, 'ops_update_customer' ),
 				'permission_callback' => array( $this, 'can_manage_ops_api' ),
 				'args'                => array(

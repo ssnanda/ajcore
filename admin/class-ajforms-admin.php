@@ -14555,6 +14555,7 @@ class AJForms_Admin {
 					<dt><?php esc_html_e( 'Created', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->created_at ) ); ?></dd>
 					<dt><?php esc_html_e( 'Last Synced', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></dd>
 					<?php foreach ( $display_fields as $field ) : ?>
+						<?php if ( in_array( $field, array( 'name', 'email', 'phone', 'livemode', 'created' ), true ) ) { continue; } ?>
 						<dt><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></dt><dd><?php $this->render_portal_customer_field_value( $this->get_portal_customer_display_value( $customer, $field ) ); ?></dd>
 					<?php endforeach; ?>
 				</dl>
