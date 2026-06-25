@@ -2270,6 +2270,32 @@ class AJCore_REST_API {
 		if ( ! is_array( $decoded ) ) {
 			return '';
 		}
+		$skip_types = array( 'radio', 'checkbox', 'select', 'hidden', 'file', 'button', 'submit' );
+
+		// First pass: text-input fields only — prevents a radio "Company yes/no" field
+		// from matching before a text "Business Name" field.
+		foreach ( $preferred_keys as $preferred_key ) {
+			foreach ( $decoded as $field_key => $field ) {
+				if ( ! is_array( $field ) || '_meta' === $field_key ) {
+					continue;
+				}
+				$type = isset( $field['type'] ) ? strtolower( trim( $field['type'] ) ) : '';
+				if ( in_array( $type, $skip_types, true ) ) {
+					continue;
+				}
+				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
+				$key   = strtolower( trim( (string) $field_key ) );
+				if ( false !== strpos( $label, $preferred_key ) || false !== strpos( $key, $preferred_key ) ) {
+					$value = isset( $field['value'] ) ? $field['value'] : '';
+					if ( is_array( $value ) ) {
+						$value = implode( ', ', $value );
+					}
+					return (string) $value;
+				}
+			}
+		}
+
+		// Second pass: any field type (fallback for forms that use select/radio for contact fields).
 		foreach ( $preferred_keys as $preferred_key ) {
 			foreach ( $decoded as $field_key => $field ) {
 				if ( ! is_array( $field ) || '_meta' === $field_key ) {
@@ -2286,6 +2312,7 @@ class AJCore_REST_API {
 				}
 			}
 		}
+
 		return '';
 	}
 
@@ -2304,7 +2331,7 @@ class AJCore_REST_API {
 			'name'       => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
 			'email'      => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
 			'phone'      => $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ),
-			'company'    => $this->extract_lead_field( $decoded, array( 'company', 'business', 'organization', 'organisation' ) ),
+			'company'    => $this->extract_lead_field( $decoded, array( 'business name', 'company name', 'company', 'business', 'organization', 'organisation' ) ),
 			'source'     => $source_val,
 			'notes'      => $this->extract_lead_field( $decoded, array( 'notes', 'message', 'comment', 'additional' ) ),
 			'source_url' => isset( $row['source_url'] ) ? (string) $row['source_url'] : '',
