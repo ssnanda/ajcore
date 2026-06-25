@@ -21,7 +21,10 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 			'cb'           => '<input type="checkbox" />',
 			'id'           => __( 'Record ID', 'ajforms' ),
 			'form_title'   => __( 'Form Name', 'ajforms' ),
-			'summary'      => __( 'Contact / Summary', 'ajforms' ),
+			'name'         => __( 'Name', 'ajforms' ),
+			'email'        => __( 'Email', 'ajforms' ),
+			'phone'        => __( 'Phone', 'ajforms' ),
+			'company'      => __( 'Company', 'ajforms' ),
 			'status'       => __( 'Status', 'ajforms' ),
 			'created_at'   => __( 'Date & Time', 'ajforms' ),
 			'actions'      => __( 'Actions', 'ajforms' ),
@@ -122,16 +125,46 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 		}
 	}
 
-	private function get_summary_value( $lead_data, $preferred_keys = array() ) {
-		if ( ! is_array( $lead_data ) ) {
+	/**
+	 * Two-pass fuzzy extraction — same logic as extract_lead_field() in the REST API.
+	 * Pass 1 skips non-text field types so a radio "yes/no" doesn't beat a text "Business Name".
+	 * Pass 2 falls back to any type.
+	 */
+	private function extract_field( $decoded, $preferred_keys ) {
+		if ( ! is_array( $decoded ) ) {
 			return '';
 		}
 
-		foreach ( $preferred_keys as $preferred_key ) {
-			foreach ( $lead_data as $field_key => $field ) {
-				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
-				$key   = strtolower( trim( $field_key ) );
+		$skip_types = array( 'radio', 'checkbox', 'select', 'hidden', 'file', 'button', 'submit' );
 
+		foreach ( $preferred_keys as $preferred_key ) {
+			foreach ( $decoded as $field_key => $field ) {
+				if ( ! is_array( $field ) || '_meta' === $field_key ) {
+					continue;
+				}
+				$type = isset( $field['type'] ) ? strtolower( trim( $field['type'] ) ) : '';
+				if ( in_array( $type, $skip_types, true ) ) {
+					continue;
+				}
+				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
+				$key   = strtolower( trim( (string) $field_key ) );
+				if ( false !== strpos( $label, $preferred_key ) || false !== strpos( $key, $preferred_key ) ) {
+					$value = isset( $field['value'] ) ? $field['value'] : '';
+					if ( is_array( $value ) ) {
+						$value = implode( ', ', $value );
+					}
+					return (string) $value;
+				}
+			}
+		}
+
+		foreach ( $preferred_keys as $preferred_key ) {
+			foreach ( $decoded as $field_key => $field ) {
+				if ( ! is_array( $field ) || '_meta' === $field_key ) {
+					continue;
+				}
+				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
+				$key   = strtolower( trim( (string) $field_key ) );
 				if ( false !== strpos( $label, $preferred_key ) || false !== strpos( $key, $preferred_key ) ) {
 					$value = isset( $field['value'] ) ? $field['value'] : '';
 					if ( is_array( $value ) ) {
@@ -153,31 +186,33 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 			case 'form_title':
 				return '<div class="ajforms-form-title-cell"><strong>' . esc_html( $item['form_title'] ? $item['form_title'] : __( '(Form deleted)', 'ajforms' ) ) . '</strong><span>' . esc_html__( 'Source form', 'ajforms' ) . '</span></div>';
 
-			case 'summary':
-				$data  = json_decode( $item['lead_data'], true );
-				$name  = $this->get_summary_value( $data, array( 'name', 'full name' ) );
-				$email = $this->get_summary_value( $data, array( 'email' ) );
-				$phone = $this->get_summary_value( $data, array( 'phone', 'mobile', 'tel' ) );
+			case 'name':
+				$name       = $item['_name'];
+				$detail_url = add_query_arg(
+					array(
+						'page'    => 'ajforms-leads',
+						'view'    => 'detail',
+						'lead_id' => absint( $item['id'] ),
+					),
+					admin_url( 'admin.php' )
+				);
+				$display = '' !== $name ? esc_html( $name ) : '<em>' . esc_html__( '(no name)', 'ajforms' ) . '</em>';
+				return '<a href="' . esc_url( $detail_url ) . '" class="ajforms-lead-name-link">' . $display . '</a>';
 
-				$out = '<div class="ajforms-summary-line">';
-				if ( '' !== $name ) {
-					$out .= '<strong>' . esc_html( $name ) . '</strong>';
-				} elseif ( '' !== $email ) {
-					$out .= '<strong>' . esc_html( $email ) . '</strong>';
-				} elseif ( '' !== $phone ) {
-					$out .= '<strong>' . esc_html( $phone ) . '</strong>';
-				} else {
-					$out .= '<strong>' . esc_html__( 'View details', 'ajforms' ) . '</strong>';
-				}
-				$out .= '</div>';
-
+			case 'email':
+				$email = $item['_email'];
 				if ( '' !== $email ) {
-					$out .= '<div class="ajforms-summary-line">' . esc_html( $email ) . '</div>';
-				} elseif ( '' !== $phone ) {
-					$out .= '<div class="ajforms-summary-line">' . esc_html( $phone ) . '</div>';
+					return '<a href="' . esc_url( 'mailto:' . $email ) . '">' . esc_html( $email ) . '</a>';
 				}
+				return '<span class="ajforms-empty">—</span>';
 
-				return $out;
+			case 'phone':
+				$phone = $item['_phone'];
+				return '' !== $phone ? esc_html( $phone ) : '<span class="ajforms-empty">—</span>';
+
+			case 'company':
+				$company = $item['_company'];
+				return '' !== $company ? esc_html( $company ) : '<span class="ajforms-empty">—</span>';
 
 			case 'status':
 				$status = sanitize_text_field( $item['status'] );
@@ -279,7 +314,19 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 		$query_params   = array_merge( $params, array( $per_page, $offset ) );
 		$prepared_query = $wpdb->prepare( $query_sql, $query_params );
 
-		$this->items = $wpdb->get_results( $prepared_query, ARRAY_A );
+		$raw_results = $wpdb->get_results( $prepared_query, ARRAY_A );
+
+		$boolean_values = array( 'yes', 'no', 'true', 'false', '1', '0' );
+		$this->items    = array();
+		foreach ( $raw_results as $row ) {
+			$data            = json_decode( (string) $row['lead_data'], true );
+			$company_raw     = $this->extract_field( $data, array( 'business name', 'company name', 'company', 'business', 'organization', 'organisation' ) );
+			$row['_name']    = $this->extract_field( $data, array( 'name', 'full name', 'your name' ) );
+			$row['_email']   = $this->extract_field( $data, array( 'email', 'e-mail' ) );
+			$row['_phone']   = $this->extract_field( $data, array( 'phone', 'mobile', 'tel', 'cell' ) );
+			$row['_company'] = in_array( strtolower( trim( $company_raw ) ), $boolean_values, true ) ? '' : $company_raw;
+			$this->items[]   = $row;
+		}
 
 		$this->_column_headers = array(
 			$this->get_columns(),
