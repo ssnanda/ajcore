@@ -430,42 +430,55 @@ class AJCore_REST_API {
 			}
 		}
 
-		// Fetch ledger (with payment IDs) so we can resolve generic transaction descriptions.
-		$ledger = $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_type', 'source_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'payment_intent_id', 'charge_id', 'created_at' ), $stripe_customer_id, 'created_at DESC, id DESC' );
+		// Fetch ledger (standard columns — payment_intent_id/charge_id may not exist in all installs).
+		$ledger = $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_type', 'source_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'created_at' ), $stripe_customer_id, 'created_at DESC, id DESC' );
 
-		// Build lookup: payment_intent_id / charge_id → resolved service name from service_charge entries.
-		$generic_descs  = array( 'payment for invoice', 'payment', 'website checkout payment', 'service checkout payment', 'balance payment', 'billing item' );
-		$pi_to_svc_name = array();
-		$cid_to_svc_name = array();
-		foreach ( (array) $ledger as $le ) {
-			if ( 'service_charge' !== ( isset( $le['source_type'] ) ? $le['source_type'] : '' ) ) {
-				continue;
-			}
-			$le_desc = trim( isset( $le['description'] ) ? (string) $le['description'] : '' );
-			if ( '' === $le_desc || in_array( strtolower( $le_desc ), $generic_descs, true ) ) {
-				continue;
-			}
-			if ( ! empty( $le['payment_intent_id'] ) ) {
-				$pi_to_svc_name[ $le['payment_intent_id'] ] = $le_desc;
-			}
-			if ( ! empty( $le['charge_id'] ) ) {
-				$cid_to_svc_name[ $le['charge_id'] ] = $le_desc;
+		// Build billing_type lookup from service snapshots: payment_intent_id / invoice_id → 'subscription' | 'one_time'.
+		$snapshots = $this->select_by_customer( 'aj_portal_service_snapshots', array( 'payment_intent_id', 'invoice_id', 'billing_type' ), $stripe_customer_id, 'created_at DESC' );
+		$pi_billing  = array();
+		$inv_billing = array();
+		foreach ( (array) $snapshots as $snap ) {
+			$pi  = isset( $snap['payment_intent_id'] ) ? (string) $snap['payment_intent_id'] : '';
+			$inv = isset( $snap['invoice_id'] ) ? (string) $snap['invoice_id'] : '';
+			$bt  = isset( $snap['billing_type'] ) ? (string) $snap['billing_type'] : 'one_time';
+			if ( '' !== $pi )  $pi_billing[ $pi ]   = $bt;
+			if ( '' !== $inv ) $inv_billing[ $inv ] = $bt;
+		}
+
+		// Fetch transactions and annotate with billing_type; remove charge duplicates of invoice transactions.
+		$transactions = $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $stripe_customer_id, 'transaction_date DESC, id DESC' );
+
+		// Collect payment_intent_ids that belong to invoice transactions so charge duplicates can be removed.
+		$invoice_pi_set = array();
+		foreach ( $transactions as $tx ) {
+			if ( 'invoice' === strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' ) ) {
+				$pi = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
+				if ( '' !== $pi ) {
+					$invoice_pi_set[ $pi ] = true;
+				}
 			}
 		}
 
-		// Fetch transactions and resolve generic descriptions (e.g. "Payment for Invoice") to real service names.
-		$transactions = $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $stripe_customer_id, 'transaction_date DESC, id DESC' );
-		foreach ( $transactions as &$tx ) {
-			$desc = strtolower( trim( isset( $tx['description'] ) ? (string) $tx['description'] : '' ) );
-			if ( ! in_array( $desc, $generic_descs, true ) ) {
-				continue;
+		$transactions = array_values( array_filter( $transactions, function( $tx ) use ( $invoice_pi_set ) {
+			// Drop charge transactions that are duplicates of an invoice transaction for the same payment.
+			if ( 'charge' === strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' ) ) {
+				$pi = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
+				if ( '' !== $pi && isset( $invoice_pi_set[ $pi ] ) ) {
+					return false;
+				}
 			}
+			return true;
+		} ) );
+
+		foreach ( $transactions as &$tx ) {
 			$pi  = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
-			$cid = isset( $tx['charge_id'] ) ? (string) $tx['charge_id'] : ( isset( $tx['stripe_object_id'] ) ? (string) $tx['stripe_object_id'] : '' );
-			if ( '' !== $pi && isset( $pi_to_svc_name[ $pi ] ) ) {
-				$tx['description'] = $pi_to_svc_name[ $pi ];
-			} elseif ( '' !== $cid && isset( $cid_to_svc_name[ $cid ] ) ) {
-				$tx['description'] = $cid_to_svc_name[ $cid ];
+			$inv = isset( $tx['stripe_object_id'] ) ? (string) $tx['stripe_object_id'] : '';
+			if ( '' !== $pi && isset( $pi_billing[ $pi ] ) ) {
+				$tx['billing_type'] = $pi_billing[ $pi ];
+			} elseif ( '' !== $inv && isset( $inv_billing[ $inv ] ) ) {
+				$tx['billing_type'] = $inv_billing[ $inv ];
+			} else {
+				$tx['billing_type'] = '';
 			}
 		}
 		unset( $tx );
