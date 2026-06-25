@@ -381,7 +381,7 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_customers( WP_REST_Request $request ) {
-		return rest_ensure_response( array( 'customers' => $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'metadata', 'portal_status', 'enabled_portal', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' ) ) );
+		return rest_ensure_response( array( 'customers' => $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' ) ) );
 	}
 
 	public function get_ops_customer( WP_REST_Request $request ) {
