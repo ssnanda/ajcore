@@ -6020,6 +6020,7 @@ class AJForms_Admin {
 			'customer',
 			'product',
 			'price',
+			'payment for invoice',
 			'ajcore_products_cart',
 			'ajcore_portal_add_service',
 			'ajcore_portal_balance_payment',
@@ -6414,13 +6415,19 @@ class AJForms_Admin {
 			return false;
 		}
 
-		return empty( $record->payment_intent_id )
-			&& empty( $existing_record->payment_intent_id )
-			&& empty( $record->checkout_session_id )
-			&& empty( $existing_record->checkout_session_id )
-			&& ! empty( $record->amount )
-			&& ! empty( $existing_record->amount )
-			&& (string) $record->amount === (string) $existing_record->amount;
+		if ( empty( $record->amount ) || empty( $existing_record->amount )
+			|| (string) $record->amount !== (string) $existing_record->amount ) {
+			return false;
+		}
+
+		// Same name + same amount: only treat as different transactions when BOTH sides carry
+		// strong payment IDs (payment_intent or checkout_session) that are known to differ
+		// (the equal-ID case already returned true above). A snapshot created before payment
+		// will have no IDs while the corresponding ledger record will — these are the same
+		// transaction and should be merged.
+		$record_has_pi   = ! empty( $record->payment_intent_id ) || ! empty( $record->checkout_session_id );
+		$existing_has_pi = ! empty( $existing_record->payment_intent_id ) || ! empty( $existing_record->checkout_session_id );
+		return ! $record_has_pi || ! $existing_has_pi;
 	}
 
 	private function dedupe_portal_one_time_service_records( $records ) {
@@ -7224,9 +7231,28 @@ class AJForms_Admin {
 		if ( empty( $stripe_customer_id ) ) {
 			return array( 'subscriptions' => array(), 'one_time_services' => array() );
 		}
+
+		$pdb = $this->get_pdb();
+		$raw_subscriptions = $pdb->get_results(
+			$pdb->prepare(
+				"SELECT * FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_customer_id = %s ORDER BY current_period_end DESC, id DESC",
+				$stripe_customer_id
+			)
+		);
+		$active_subscriptions = array_values( array_filter( (array) $raw_subscriptions, array( $this, 'is_active_portal_subscription' ) ) );
+		foreach ( $active_subscriptions as $subscription ) {
+			$subscription->billing_type = $this->get_portal_billing_type_label( 'subscription' );
+		}
+
+		$merged_subscriptions = $this->dedupe_portal_service_records( array_merge(
+			$this->get_portal_service_records_from_snapshots( 'recurring', $stripe_customer_id, 50 ),
+			$this->get_portal_service_records_from_subscriptions( $active_subscriptions ),
+			$this->get_portal_recurring_service_records_from_ledger( $stripe_customer_id, 50 )
+		) );
+
 		$to_array = function( $record ) { return (array) $record; };
 		return array(
-			'subscriptions'     => array_values( array_map( $to_array, $this->get_portal_service_records_from_snapshots( 'subscription', $stripe_customer_id, 50 ) ) ),
+			'subscriptions'     => array_values( array_map( $to_array, $merged_subscriptions ) ),
 			'one_time_services' => array_values( array_map( $to_array, $this->get_portal_one_time_paid_services( $stripe_customer_id, 50 ) ) ),
 		);
 	}
