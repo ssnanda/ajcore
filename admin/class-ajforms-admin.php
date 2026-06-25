@@ -7226,8 +7226,8 @@ class AJForms_Admin {
 		}
 		$to_array = function( $record ) { return (array) $record; };
 		return array(
-			'subscriptions'    => array_values( array_map( $to_array, $this->get_portal_service_records_from_snapshots( 'subscription', $stripe_customer_id, 50 ) ) ),
-			'one_time_services' => array_values( array_map( $to_array, $this->get_portal_service_records_from_snapshots( 'one_time', $stripe_customer_id, 50 ) ) ),
+			'subscriptions'     => array_values( array_map( $to_array, $this->get_portal_service_records_from_snapshots( 'subscription', $stripe_customer_id, 50 ) ) ),
+			'one_time_services' => array_values( array_map( $to_array, $this->get_portal_one_time_paid_services( $stripe_customer_id, 50 ) ) ),
 		);
 	}
 
