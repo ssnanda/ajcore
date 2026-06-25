@@ -13675,7 +13675,7 @@ class AJForms_Admin {
 
 			<div class="ajcore-dashboard-grid">
 				<?php $this->render_portal_dashboard_metric( __( 'Active Clients', 'ajforms' ), $active_customers, $this->get_portal_dashboard_url( 'portal-users', array( 'portal_user_status' => 'active' ) ) ); ?>
-			<?php $this->render_portal_dashboard_metric( __( 'Sold Products', 'ajforms' ), $active_services, $this->get_portal_dashboard_url( 'sold-items' ), sprintf( __( '%1$d auto-pay services, %2$d one-time paid.', 'ajforms' ), $auto_pay_services, $one_time_services ) ); ?>
+			<?php $this->render_portal_dashboard_metric( __( 'Transactions', 'ajforms' ), $active_services, $this->get_portal_dashboard_url( 'sold-items' ), sprintf( __( '%1$d auto-pay services, %2$d one-time paid.', 'ajforms' ), $auto_pay_services, $one_time_services ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Auto-Pay Subscriptions', 'ajforms' ), $auto_pay_services, $this->get_portal_dashboard_url( 'sold-items', array( 'sold_type' => 'recurring' ) ), sprintf( __( '%d active Stripe subscription records.', 'ajforms' ), $active_subscription_objects ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'open' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'overdue' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
@@ -13714,7 +13714,7 @@ class AJForms_Admin {
 			'billing'            => __( 'Billing', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'portal-users'       => __( 'Customers', 'ajforms' ),
-			'sold-items'         => __( 'Sold Products', 'ajforms' ),
+			'sold-items'         => __( 'Transactions', 'ajforms' ),
 			'products-services'  => __( 'Product Catalog', 'ajforms' ),
 			'tasks'              => __( 'Tasks', 'ajforms' ),
 			'file-library'       => __( 'File Library', 'ajforms' ),
@@ -14636,14 +14636,14 @@ class AJForms_Admin {
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
-				<h3><?php esc_html_e( 'Active Recurring Services', 'ajforms' ); ?></h3>
+				<h3><?php esc_html_e( 'Subscriptions', 'ajforms' ); ?></h3>
 				<?php
 				$this->render_portal_dataset_section(
 					'active_recurring_services',
-					__( 'Active Recurring Services', 'ajforms' ),
+					__( 'Subscriptions', 'ajforms' ),
 					$detail['active_recurring_services'],
 					array( 'service_name', 'price', 'billing_type', 'status', 'service_period', 'next_billing_date', 'stripe_subscription_id', 'stripe_price_id' ),
-					__( 'No active recurring services.', 'ajforms' )
+					__( 'No subscriptions.', 'ajforms' )
 				);
 				?>
 			</div>
@@ -14678,7 +14678,7 @@ class AJForms_Admin {
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
-				<h3><?php esc_html_e( 'Billing Balance / Ledger', 'ajforms' ); ?></h3>
+				<h3><?php esc_html_e( 'Payments', 'ajforms' ); ?></h3>
 				<p>
 					<strong><?php esc_html_e( 'Open:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_money( $detail['balance']['open_balance'], 'usd' ) ); ?>
 					&nbsp; <strong><?php esc_html_e( 'Credit:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_money( $detail['balance']['credit_balance'], 'usd' ) ); ?>
@@ -14688,10 +14688,10 @@ class AJForms_Admin {
 				<?php
 				$this->render_portal_dataset_section(
 					'ledger',
-					__( 'Recent Invoices / Charges Ledger', 'ajforms' ),
+					__( 'Payments', 'ajforms' ),
 					$detail['ledger'],
 					array( 'ledger_date', 'description', 'billing_type', 'metadata.service_period', 'amount', 'currency', 'status', 'invoice_id', 'charge_id' ),
-					__( 'No recent ledger records.', 'ajforms' )
+					__( 'No payment records.', 'ajforms' )
 				);
 				?>
 			</div>
@@ -15870,7 +15870,7 @@ class AJForms_Admin {
 				</thead>
 				<tbody>
 					<?php if ( empty( $sold_items ) ) : ?>
-						<tr><td colspan="9"><?php esc_html_e( 'No sold products found for this filter.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="9"><?php esc_html_e( 'No transactions found for this filter.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $sold_items as $item ) : ?>
 							<tr>
@@ -15988,10 +15988,10 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d active', 'ajforms' ), $active_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d visible in Add Services', 'ajforms' ), $visible_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
-			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sold Products', 'ajforms' ); ?></a>
+			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
-		<p class="description"><?php esc_html_e( 'Customer 360 opens from each customer link in Portal Users, Billing, Sold Products, Requests, Tasks, and Files.', 'ajforms' ); ?></p>
+		<p class="description"><?php esc_html_e( 'Customer 360 opens from each customer link in Portal Users, Billing, Transactions, Requests, Tasks, and Files.', 'ajforms' ); ?></p>
 
 			<form method="post">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
