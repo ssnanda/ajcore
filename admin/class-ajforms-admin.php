@@ -6396,14 +6396,22 @@ class AJForms_Admin {
 		if ( (string) $record->stripe_customer_id !== (string) $existing_record->stripe_customer_id ) {
 			return false;
 		}
-		if ( sanitize_title( (string) $record->service_name ) !== sanitize_title( (string) $existing_record->service_name ) ) {
-			return false;
-		}
 
+		// Payment IDs uniquely identify a transaction — match regardless of display name differences
+		// (e.g. a snapshot named "LLC Reinstatement" and a ledger fallback named "Payment for Invoice"
+		// are the same transaction when they share the same invoice_id or payment_intent_id).
 		foreach ( array( 'payment_intent_id', 'checkout_session_id', 'invoice_id' ) as $field ) {
 			if ( ! empty( $record->{$field} ) && ! empty( $existing_record->{$field} ) && (string) $record->{$field} === (string) $existing_record->{$field} ) {
 				return true;
 			}
+		}
+		if ( ! empty( $record->charge_id ) && ! empty( $existing_record->charge_id ) && (string) $record->charge_id === (string) $existing_record->charge_id ) {
+			return true;
+		}
+
+		// Without payment IDs, require matching service name and amount.
+		if ( sanitize_title( (string) $record->service_name ) !== sanitize_title( (string) $existing_record->service_name ) ) {
+			return false;
 		}
 
 		return empty( $record->payment_intent_id )
@@ -6726,9 +6734,9 @@ class AJForms_Admin {
 			FROM {$this->get_portal_service_snapshots_table()} s
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = s.stripe_customer_id
 			LEFT JOIN {$this->get_portal_stripe_products_table()} p ON p.stripe_price_id = s.price_id
-			WHERE " . implode( ' AND ', $where ) . '
-			ORDER BY s.updated_at DESC, s.id DESC
-			LIMIT %d';
+			WHERE " . implode( ' AND ', $where ) . "
+			ORDER BY COALESCE(NULLIF(s.service_period_start, ''), s.created_at) DESC, s.id DESC
+			LIMIT %d";
 		$params[] = absint( $limit );
 		$rows = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
 		$records = array();
@@ -7202,7 +7210,13 @@ class AJForms_Admin {
 	}
 
 	private function get_portal_one_time_paid_services( $stripe_customer_id = '', $limit = 300 ) {
-		return $this->get_portal_ledger_service_records( 'one_time', $stripe_customer_id, $limit );
+		$records = $this->get_portal_ledger_service_records( 'one_time', $stripe_customer_id, $limit );
+		usort( $records, function( $a, $b ) {
+			$da = ! empty( $a->paid_at ) ? $a->paid_at : ( ! empty( $a->synced_at ) ? $a->synced_at : '' );
+			$db = ! empty( $b->paid_at ) ? $b->paid_at : ( ! empty( $b->synced_at ) ? $b->synced_at : '' );
+			return strcmp( $db, $da );
+		} );
+		return $records;
 	}
 
 	public function api_get_ops_customer_services( $stripe_customer_id ) {
@@ -14654,7 +14668,7 @@ class AJForms_Admin {
 					'active_recurring_services',
 					__( 'Subscriptions', 'ajforms' ),
 					$detail['active_recurring_services'],
-					array( 'service_name', 'price', 'billing_type', 'status', 'service_period', 'next_billing_date', 'stripe_subscription_id', 'stripe_price_id' ),
+					array( 'service_period_start', 'service_name', 'price', 'billing_type', 'status', 'service_period', 'next_billing_date', 'stripe_subscription_id', 'stripe_price_id' ),
 					__( 'No subscriptions.', 'ajforms' )
 				);
 				?>
@@ -14667,7 +14681,7 @@ class AJForms_Admin {
 					'one_time_services',
 					__( 'One-Time Paid Services', 'ajforms' ),
 					$detail['one_time_services'],
-					array( 'service_name', 'billing_type', 'status', 'amount', 'service_period', 'next_billing_date', 'paid_at', 'next_action' ),
+					array( 'paid_at', 'service_name', 'billing_type', 'status', 'amount', 'service_period', 'next_billing_date', 'next_action' ),
 					__( 'No one-time paid services found.', 'ajforms' )
 				);
 				?>
