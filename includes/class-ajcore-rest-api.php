@@ -125,6 +125,19 @@ class AJCore_REST_API {
 			)
 		);
 
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/leads/(?P<id>\d+)/notes',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_add_lead_note' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'note' => array( 'required' => true, 'sanitize_callback' => 'sanitize_textarea_field' ),
+				),
+			)
+		);
+
 		foreach ( $this->get_route_map() as $route => $args ) {
 			register_rest_route(
 				self::NAMESPACE,
@@ -159,7 +172,8 @@ class AJCore_REST_API {
 			'/ops/subscriptions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_subscriptions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/ledger' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_ledger', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/transactions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_transactions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
-			'/ops/leads' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_leads', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/leads'              => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_leads',      'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/leads/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_lead_detail', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tasks', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -2252,50 +2266,205 @@ class AJCore_REST_API {
 
 	// ── Leads (aj_forms_leads — local WP table) ──────────────────────────────
 
+	private function extract_lead_field( $decoded, $preferred_keys ) {
+		if ( ! is_array( $decoded ) ) {
+			return '';
+		}
+		foreach ( $preferred_keys as $preferred_key ) {
+			foreach ( $decoded as $field_key => $field ) {
+				if ( ! is_array( $field ) || '_meta' === $field_key ) {
+					continue;
+				}
+				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
+				$key   = strtolower( trim( (string) $field_key ) );
+				if ( false !== strpos( $label, $preferred_key ) || false !== strpos( $key, $preferred_key ) ) {
+					$value = isset( $field['value'] ) ? $field['value'] : '';
+					if ( is_array( $value ) ) {
+						$value = implode( ', ', $value );
+					}
+					return (string) $value;
+				}
+			}
+		}
+		return '';
+	}
+
+	private function format_lead_row( $row ) {
+		$decoded    = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
+		$meta       = isset( $decoded['_meta'] ) && is_array( $decoded['_meta'] ) ? $decoded['_meta'] : array();
+		$source_val = $this->extract_lead_field( $decoded, array( 'source' ) );
+		if ( '' === $source_val ) {
+			$source_val = isset( $meta['source'] ) ? (string) $meta['source'] : '';
+		}
+		return array(
+			'id'         => (int) $row['id'],
+			'form_id'    => (int) $row['form_id'],
+			'form_title' => isset( $row['form_title'] ) ? (string) $row['form_title'] : '',
+			'status'     => isset( $row['status'] ) ? (string) $row['status'] : 'unread',
+			'name'       => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
+			'email'      => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
+			'phone'      => $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ),
+			'company'    => $this->extract_lead_field( $decoded, array( 'company', 'business', 'organization', 'organisation' ) ),
+			'source'     => $source_val,
+			'notes'      => $this->extract_lead_field( $decoded, array( 'notes', 'message', 'comment', 'additional' ) ),
+			'source_url' => isset( $row['source_url'] ) ? (string) $row['source_url'] : '',
+			'user_agent' => isset( $row['user_agent'] ) ? (string) $row['user_agent'] : '',
+			'created_at' => isset( $row['created_at'] ) ? (string) $row['created_at'] : '',
+		);
+	}
+
 	public function get_ops_leads( WP_REST_Request $request ) {
 		global $wpdb;
-		$table    = $wpdb->prefix . 'aj_forms_leads';
-		$per_page = min( 2000, max( 1, absint( $request->get_param( 'per_page' ) ) ) );
-		$search   = sanitize_text_field( (string) $request->get_param( 'search' ) );
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$forms_table = $wpdb->prefix . 'aj_forms_forms';
+		$per_page    = min( 2000, max( 1, absint( $request->get_param( 'per_page' ) ) ) );
+		$search      = sanitize_text_field( (string) $request->get_param( 'search' ) );
 
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $leads_table ) ) !== $leads_table ) {
 			return rest_ensure_response( array( 'leads' => array() ) );
 		}
 
 		$where  = '1=1';
 		$params = array();
 		if ( '' !== $search ) {
-			$like    = '%' . $wpdb->esc_like( $search ) . '%';
-			$where   = '( lead_data LIKE %s )';
-			$params[] = $like;
+			$where    = '( l.lead_data LIKE %s )';
+			$params[] = '%' . $wpdb->esc_like( $search ) . '%';
 		}
 		$params[] = $per_page;
 
 		$rows = $wpdb->get_results(
-			$wpdb->prepare( "SELECT id, form_id, lead_data, status, ip_address, source_url, user_agent, created_at FROM `{$table}` WHERE {$where} ORDER BY created_at DESC, id DESC LIMIT %d", $params ),
+			$wpdb->prepare(
+				"SELECT l.id, l.form_id, l.lead_data, l.status, l.source_url, l.user_agent, l.created_at, f.title AS form_title
+				 FROM `{$leads_table}` l
+				 LEFT JOIN `{$forms_table}` f ON l.form_id = f.id
+				 WHERE {$where}
+				 ORDER BY l.created_at DESC, l.id DESC
+				 LIMIT %d",
+				$params
+			),
 			ARRAY_A
 		);
 
 		$leads = array();
 		foreach ( (array) $rows as $row ) {
-			$decoded = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
-			$leads[] = array(
-				'id'         => (int) $row['id'],
-				'form_id'    => (int) $row['form_id'],
-				'status'     => $row['status'] ?? 'unread',
-				'name'       => isset( $decoded['name']['value'] )    ? (string) $decoded['name']['value']    : '',
-				'email'      => isset( $decoded['email']['value'] )   ? (string) $decoded['email']['value']   : '',
-				'phone'      => isset( $decoded['phone']['value'] )   ? (string) $decoded['phone']['value']   : '',
-				'company'    => isset( $decoded['company']['value'] ) ? (string) $decoded['company']['value'] : '',
-				'source'     => isset( $decoded['source']['value'] )  ? (string) $decoded['source']['value']  :
-				                ( isset( $decoded['_meta']['source'] ) ? (string) $decoded['_meta']['source'] : '' ),
-				'notes'      => isset( $decoded['notes']['value'] )   ? (string) $decoded['notes']['value']   : '',
-				'source_url' => $row['source_url'] ?? '',
-				'created_at' => $row['created_at'] ?? '',
-			);
+			$leads[] = $this->format_lead_row( $row );
 		}
 
 		return rest_ensure_response( array( 'leads' => $leads ) );
+	}
+
+	public function get_ops_lead_detail( WP_REST_Request $request ) {
+		global $wpdb;
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$forms_table = $wpdb->prefix . 'aj_forms_forms';
+		$notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
+		$lead_id     = absint( $request->get_param( 'id' ) );
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT l.*, f.title AS form_title
+				 FROM `{$leads_table}` l
+				 LEFT JOIN `{$forms_table}` f ON l.form_id = f.id
+				 WHERE l.id = %d",
+				$lead_id
+			),
+			ARRAY_A
+		);
+
+		if ( ! $row ) {
+			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$lead = $this->format_lead_row( $row );
+
+		$note_rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT n.id, n.note, n.created_by, n.created_at, u.display_name AS author_name
+				 FROM `{$notes_table}` n
+				 LEFT JOIN `{$wpdb->users}` u ON n.created_by = u.ID
+				 WHERE n.lead_id = %d
+				 ORDER BY n.created_at ASC",
+				$lead_id
+			),
+			ARRAY_A
+		);
+
+		$lead['notes_list'] = array();
+		foreach ( (array) $note_rows as $n ) {
+			$lead['notes_list'][] = array(
+				'id'          => (int) $n['id'],
+				'note'        => (string) $n['note'],
+				'created_by'  => (int) $n['created_by'],
+				'author_name' => isset( $n['author_name'] ) ? (string) $n['author_name'] : '',
+				'created_at'  => (string) $n['created_at'],
+			);
+		}
+
+		$decoded = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
+		$fields  = array();
+		if ( is_array( $decoded ) ) {
+			foreach ( $decoded as $key => $field ) {
+				if ( '_meta' === $key || ! is_array( $field ) ) {
+					continue;
+				}
+				$value = isset( $field['value'] ) ? $field['value'] : '';
+				if ( is_array( $value ) ) {
+					$value = implode( ', ', $value );
+				}
+				if ( '' !== (string) $value ) {
+					$fields[] = array(
+						'key'   => $key,
+						'label' => isset( $field['label'] ) ? (string) $field['label'] : $key,
+						'value' => (string) $value,
+					);
+				}
+			}
+		}
+		$lead['all_fields'] = $fields;
+
+		return rest_ensure_response( array( 'lead' => $lead ) );
+	}
+
+	public function ops_add_lead_note( WP_REST_Request $request ) {
+		global $wpdb;
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
+		$lead_id     = absint( $request->get_param( 'id' ) );
+		$note        = (string) $request->get_param( 'note' );
+
+		if ( '' === $note ) {
+			return new WP_Error( 'ajcore_empty_note', __( 'Note cannot be empty.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$exists = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$leads_table}` WHERE id = %d", $lead_id ) );
+		if ( ! $exists ) {
+			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$user = wp_get_current_user();
+		$wpdb->insert(
+			$notes_table,
+			array(
+				'lead_id'    => $lead_id,
+				'note'       => $note,
+				'created_by' => $user ? (int) $user->ID : 0,
+				'created_at' => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%d', '%s' )
+		);
+
+		$note_id     = (int) $wpdb->insert_id;
+		$author_name = $user ? $user->display_name : '';
+
+		return rest_ensure_response( array(
+			'note' => array(
+				'id'          => $note_id,
+				'note'        => $note,
+				'created_by'  => $user ? (int) $user->ID : 0,
+				'author_name' => $author_name,
+				'created_at'  => current_time( 'mysql' ),
+			),
+		) );
 	}
 
 	public function ops_create_lead( WP_REST_Request $request ) {
