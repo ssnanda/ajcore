@@ -448,25 +448,28 @@ class AJCore_REST_API {
 		// Fetch transactions and annotate with billing_type; remove charge duplicates of invoice transactions.
 		$transactions = $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $stripe_customer_id, 'transaction_date DESC, id DESC' );
 
-		// Collect payment_intent_ids that belong to invoice transactions so charge duplicates can be removed.
-		$invoice_pi_set = array();
+		// Build sets from invoice transactions so their duplicate charge records can be removed.
+		// A charge is a duplicate when: its invoice_id matches an invoice's stripe_object_id (primary),
+		// OR its payment_intent_id matches an invoice's payment_intent_id (fallback).
+		$invoice_obj_set = array();
+		$invoice_pi_set  = array();
 		foreach ( $transactions as $tx ) {
 			if ( 'invoice' === strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' ) ) {
-				$pi = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
-				if ( '' !== $pi ) {
-					$invoice_pi_set[ $pi ] = true;
-				}
+				$obj = isset( $tx['stripe_object_id'] ) ? (string) $tx['stripe_object_id'] : '';
+				$pi  = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
+				if ( '' !== $obj ) $invoice_obj_set[ $obj ] = true;
+				if ( '' !== $pi )  $invoice_pi_set[ $pi ]   = true;
 			}
 		}
 
-		$transactions = array_values( array_filter( $transactions, function( $tx ) use ( $invoice_pi_set ) {
-			// Drop charge transactions that are duplicates of an invoice transaction for the same payment.
-			if ( 'charge' === strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' ) ) {
-				$pi = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
-				if ( '' !== $pi && isset( $invoice_pi_set[ $pi ] ) ) {
-					return false;
-				}
+		$transactions = array_values( array_filter( $transactions, function( $tx ) use ( $invoice_obj_set, $invoice_pi_set ) {
+			if ( 'charge' !== strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' ) ) {
+				return true;
 			}
+			$inv_id = isset( $tx['invoice_id'] ) ? (string) $tx['invoice_id'] : '';
+			$pi     = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
+			if ( '' !== $inv_id && isset( $invoice_obj_set[ $inv_id ] ) ) return false;
+			if ( '' !== $pi && isset( $invoice_pi_set[ $pi ] ) )           return false;
 			return true;
 		} ) );
 
