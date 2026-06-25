@@ -422,9 +422,17 @@ class AJCore_REST_API {
 		$decoded['business_name']   = $meta['business_name'] ?? '';
 		$decoded['individual_name'] = $meta['individual_name'] ?? '';
 		unset( $decoded['raw_data'] );
+		$services = array( 'subscriptions' => array(), 'one_time_services' => array() );
+		if ( class_exists( 'AJForms_Admin' ) ) {
+			$admin = new AJForms_Admin();
+			if ( method_exists( $admin, 'api_get_ops_customer_services' ) ) {
+				$services = $admin->api_get_ops_customer_services( $stripe_customer_id );
+			}
+		}
 		return rest_ensure_response(
 			array(
 				'customer'         => $decoded,
+				'services'         => $services,
 				'subscriptions'    => $this->select_by_customer( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'items', 'livemode', 'synced_at' ), $stripe_customer_id, 'synced_at DESC, id DESC' ),
 				'transactions'     => $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $stripe_customer_id, 'transaction_date DESC, id DESC' ),
 				'ledger'           => $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_type', 'source_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'created_at' ), $stripe_customer_id, 'created_at DESC, id DESC' ),
@@ -1289,7 +1297,7 @@ class AJCore_REST_API {
 		if ( empty( $columns ) ) {
 			return array();
 		}
-		$per_page = min( 100, max( 1, absint( $request->get_param( 'per_page' ) ) ) );
+		$per_page = min( 2000, max( 1, absint( $request->get_param( 'per_page' ) ) ) );
 		$search   = sanitize_text_field( (string) $request->get_param( 'search' ) );
 		$where    = '1=1';
 		$params   = array();

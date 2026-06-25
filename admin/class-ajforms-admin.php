@@ -7205,6 +7205,18 @@ class AJForms_Admin {
 		return $this->get_portal_ledger_service_records( 'one_time', $stripe_customer_id, $limit );
 	}
 
+	public function api_get_ops_customer_services( $stripe_customer_id ) {
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		if ( empty( $stripe_customer_id ) ) {
+			return array( 'subscriptions' => array(), 'one_time_services' => array() );
+		}
+		$to_array = function( $record ) { return (array) $record; };
+		return array(
+			'subscriptions'    => array_values( array_map( $to_array, $this->get_portal_service_records_from_snapshots( 'subscription', $stripe_customer_id, 50 ) ) ),
+			'one_time_services' => array_values( array_map( $to_array, $this->get_portal_service_records_from_snapshots( 'one_time', $stripe_customer_id, 50 ) ) ),
+		);
+	}
+
 	private function get_portal_recurring_service_records_from_ledger( $stripe_customer_id = '', $limit = 300 ) {
 		return $this->get_portal_ledger_service_records( 'subscription', $stripe_customer_id, $limit );
 	}
