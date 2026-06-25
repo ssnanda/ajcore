@@ -4641,6 +4641,16 @@ class AJForms_Admin {
 				100
 			)
 		);
+		// Remove charge/payment entries whose description is generic (e.g. "Payment for Invoice")
+		// when a more descriptive service_charge or invoice entry exists for the same payment.
+		$ledger = array_values( array_filter( (array) $ledger, function ( $entry ) {
+			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+			if ( ! in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+				return true;
+			}
+			$description = isset( $entry->description ) ? (string) $entry->description : '';
+			return ! $this->is_generic_portal_service_label( $description );
+		} ) );
 
 		$requests = $pdb->get_results(
 			$pdb->prepare(

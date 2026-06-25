@@ -3881,6 +3881,7 @@ class AJForms {
 			'charge',
 			'invoice',
 			'checkout session',
+			'payment for invoice',
 		);
 
 		if ( in_array( $label, $generic, true ) ) {

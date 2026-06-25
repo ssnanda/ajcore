@@ -429,13 +429,54 @@ class AJCore_REST_API {
 				$services = $admin->api_get_ops_customer_services( $stripe_customer_id );
 			}
 		}
+
+		// Fetch ledger (with payment IDs) so we can resolve generic transaction descriptions.
+		$ledger = $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_type', 'source_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'payment_intent_id', 'charge_id', 'created_at' ), $stripe_customer_id, 'created_at DESC, id DESC' );
+
+		// Build lookup: payment_intent_id / charge_id → resolved service name from service_charge entries.
+		$generic_descs  = array( 'payment for invoice', 'payment', 'website checkout payment', 'service checkout payment', 'balance payment', 'billing item' );
+		$pi_to_svc_name = array();
+		$cid_to_svc_name = array();
+		foreach ( (array) $ledger as $le ) {
+			if ( 'service_charge' !== ( isset( $le['source_type'] ) ? $le['source_type'] : '' ) ) {
+				continue;
+			}
+			$le_desc = trim( isset( $le['description'] ) ? (string) $le['description'] : '' );
+			if ( '' === $le_desc || in_array( strtolower( $le_desc ), $generic_descs, true ) ) {
+				continue;
+			}
+			if ( ! empty( $le['payment_intent_id'] ) ) {
+				$pi_to_svc_name[ $le['payment_intent_id'] ] = $le_desc;
+			}
+			if ( ! empty( $le['charge_id'] ) ) {
+				$cid_to_svc_name[ $le['charge_id'] ] = $le_desc;
+			}
+		}
+
+		// Fetch transactions and resolve generic descriptions (e.g. "Payment for Invoice") to real service names.
+		$transactions = $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $stripe_customer_id, 'transaction_date DESC, id DESC' );
+		foreach ( $transactions as &$tx ) {
+			$desc = strtolower( trim( isset( $tx['description'] ) ? (string) $tx['description'] : '' ) );
+			if ( ! in_array( $desc, $generic_descs, true ) ) {
+				continue;
+			}
+			$pi  = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
+			$cid = isset( $tx['charge_id'] ) ? (string) $tx['charge_id'] : ( isset( $tx['stripe_object_id'] ) ? (string) $tx['stripe_object_id'] : '' );
+			if ( '' !== $pi && isset( $pi_to_svc_name[ $pi ] ) ) {
+				$tx['description'] = $pi_to_svc_name[ $pi ];
+			} elseif ( '' !== $cid && isset( $cid_to_svc_name[ $cid ] ) ) {
+				$tx['description'] = $cid_to_svc_name[ $cid ];
+			}
+		}
+		unset( $tx );
+
 		return rest_ensure_response(
 			array(
 				'customer'         => $decoded,
 				'services'         => $services,
 				'subscriptions'    => $this->select_by_customer( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'items', 'livemode', 'synced_at' ), $stripe_customer_id, 'synced_at DESC, id DESC' ),
-				'transactions'     => $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $stripe_customer_id, 'transaction_date DESC, id DESC' ),
-				'ledger'           => $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_type', 'source_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'created_at' ), $stripe_customer_id, 'created_at DESC, id DESC' ),
+				'transactions'     => $transactions,
+				'ledger'           => $ledger,
 				'service_requests' => $this->select_by_customer( 'aj_portal_service_requests', array( 'id', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'created_at', 'updated_at' ), $stripe_customer_id, 'updated_at DESC, id DESC' ),
 			)
 		);
