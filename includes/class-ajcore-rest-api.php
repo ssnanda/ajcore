@@ -138,6 +138,29 @@ class AJCore_REST_API {
 			)
 		);
 
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/ajphone/settings',
+			array(
+				array(
+					'methods'             => WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'get_ops_ajphone_settings' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'update_ops_ajphone_settings' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+					'args'                => array(
+						'account_id'    => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'client_id'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'client_secret' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'phone_number'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					),
+				),
+			)
+		);
+
 		foreach ( $this->get_route_map() as $route => $args ) {
 			register_rest_route(
 				self::NAMESPACE,
@@ -2497,6 +2520,36 @@ class AJCore_REST_API {
 				'created_at'  => current_time( 'mysql' ),
 			),
 		) );
+	}
+
+	public function get_ops_ajphone_settings( WP_REST_Request $request ) {
+		$secret = (string) get_option( 'ajcore_ajphone_client_secret', '' );
+		return rest_ensure_response( array(
+			'account_id'    => (string) get_option( 'ajcore_ajphone_account_id', '' ),
+			'client_id'     => (string) get_option( 'ajcore_ajphone_client_id', '' ),
+			'client_secret' => '' !== $secret ? '***' : '',
+			'phone_number'  => (string) get_option( 'ajcore_ajphone_phone_number', '' ),
+		) );
+	}
+
+	public function update_ops_ajphone_settings( WP_REST_Request $request ) {
+		$account_id    = (string) ( $request->get_param( 'account_id' )    ?? '' );
+		$client_id     = (string) ( $request->get_param( 'client_id' )     ?? '' );
+		$client_secret = (string) ( $request->get_param( 'client_secret' ) ?? '' );
+		$phone_number  = (string) ( $request->get_param( 'phone_number' )  ?? '' );
+
+		if ( '' !== $account_id ) {
+			update_option( 'ajcore_ajphone_account_id', $account_id, false );
+		}
+		if ( '' !== $client_id ) {
+			update_option( 'ajcore_ajphone_client_id', $client_id, false );
+		}
+		if ( '' !== $client_secret && '***' !== $client_secret ) {
+			update_option( 'ajcore_ajphone_client_secret', $client_secret, false );
+		}
+		update_option( 'ajcore_ajphone_phone_number', $phone_number, false );
+
+		return rest_ensure_response( array( 'success' => true ) );
 	}
 
 	public function update_ops_lead_status( WP_REST_Request $request ) {
