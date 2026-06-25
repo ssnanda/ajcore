@@ -172,8 +172,9 @@ class AJCore_REST_API {
 			'/ops/subscriptions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_subscriptions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/ledger' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_ledger', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/transactions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_transactions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
-			'/ops/leads'              => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_leads',      'permission' => 'can_manage_ops_api', 'args' => $read_args ),
-			'/ops/leads/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_lead_detail', 'permission' => 'can_manage_ops_api' ),
+			'/ops/leads'              => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_leads',         'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/leads/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_lead_detail',    'permission' => 'can_manage_ops_api' ),
+			'/ops/leads/(?P<id>\d+)/status' => array( 'methods' => 'PATCH',           'callback' => 'update_ops_lead_status', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tasks', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -2496,6 +2497,26 @@ class AJCore_REST_API {
 				'created_at'  => current_time( 'mysql' ),
 			),
 		) );
+	}
+
+	public function update_ops_lead_status( WP_REST_Request $request ) {
+		global $wpdb;
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$lead_id     = absint( $request->get_param( 'id' ) );
+		$status      = (string) $request->get_param( 'status' );
+
+		if ( ! in_array( $status, array( 'read', 'unread' ), true ) ) {
+			return new WP_Error( 'ajcore_invalid_status', __( 'Status must be "read" or "unread".', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$exists = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$leads_table}` WHERE id = %d", $lead_id ) );
+		if ( ! $exists ) {
+			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$wpdb->update( $leads_table, array( 'status' => $status ), array( 'id' => $lead_id ), array( '%s' ), array( '%d' ) );
+
+		return rest_ensure_response( array( 'id' => $lead_id, 'status' => $status ) );
 	}
 
 	public function ops_create_lead( WP_REST_Request $request ) {
