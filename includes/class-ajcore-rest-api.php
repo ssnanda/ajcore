@@ -2323,6 +2323,10 @@ class AJCore_REST_API {
 		if ( '' === $source_val ) {
 			$source_val = isset( $meta['source'] ) ? (string) $meta['source'] : '';
 		}
+		$company_raw    = $this->extract_lead_field( $decoded, array( 'business name', 'company name', 'company', 'business', 'organization', 'organisation' ) );
+		$boolean_values = array( 'yes', 'no', 'true', 'false', '1', '0' );
+		$company        = in_array( strtolower( trim( $company_raw ) ), $boolean_values, true ) ? '' : $company_raw;
+
 		return array(
 			'id'         => (int) $row['id'],
 			'form_id'    => (int) $row['form_id'],
@@ -2331,7 +2335,7 @@ class AJCore_REST_API {
 			'name'       => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
 			'email'      => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
 			'phone'      => $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ),
-			'company'    => $this->extract_lead_field( $decoded, array( 'business name', 'company name', 'company', 'business', 'organization', 'organisation' ) ),
+			'company'    => $company,
 			'source'     => $source_val,
 			'notes'      => $this->extract_lead_field( $decoded, array( 'notes', 'message', 'comment', 'additional' ) ),
 			'source_url' => isset( $row['source_url'] ) ? (string) $row['source_url'] : '',
