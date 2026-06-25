@@ -13093,8 +13093,8 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
-			__( 'CRM', 'ajforms' ),
-			__( 'CRM', 'ajforms' ),
+			__( 'Leads', 'ajforms' ),
+			__( 'Leads', 'ajforms' ),
 			'manage_options',
 			'ajforms-leads',
 			array( $this, 'display_leads_page' )
@@ -13200,6 +13200,11 @@ class AJForms_Admin {
 
 		if ( 'detail' === $view && $lead_id ) {
 			require_once AJFORMS_PLUGIN_DIR . 'admin/partials/ajforms-admin-lead-details.php';
+			return;
+		}
+
+		if ( 'new' === $view ) {
+			require_once AJFORMS_PLUGIN_DIR . 'admin/partials/ajforms-admin-lead-new.php';
 			return;
 		}
 
@@ -17553,6 +17558,52 @@ class AJForms_Admin {
 
 		$leads_table      = $this->get_leads_table();
 		$lead_notes_table = $this->get_lead_notes_table();
+
+		if ( isset( $_POST['ajf_create_lead_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajf_create_lead_nonce'] ) ), 'ajf_create_lead' ) ) {
+			$name    = isset( $_POST['lead_name'] )    ? sanitize_text_field( wp_unslash( $_POST['lead_name'] ) )    : '';
+			$email   = isset( $_POST['lead_email'] )   ? sanitize_email( wp_unslash( $_POST['lead_email'] ) )        : '';
+			$phone   = isset( $_POST['lead_phone'] )   ? sanitize_text_field( wp_unslash( $_POST['lead_phone'] ) )   : '';
+			$company = isset( $_POST['lead_company'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_company'] ) ) : '';
+			$source  = isset( $_POST['lead_source'] )  ? sanitize_text_field( wp_unslash( $_POST['lead_source'] ) )  : '';
+			$notes   = isset( $_POST['lead_notes'] )   ? sanitize_textarea_field( wp_unslash( $_POST['lead_notes'] ) ) : '';
+
+			$lead_data = array(
+				'name'    => array( 'label' => 'Name',    'type' => 'text',     'value' => $name ),
+				'email'   => array( 'label' => 'Email',   'type' => 'email',    'value' => $email ),
+				'phone'   => array( 'label' => 'Phone',   'type' => 'text',     'value' => $phone ),
+				'company' => array( 'label' => 'Company', 'type' => 'text',     'value' => $company ),
+				'source'  => array( 'label' => 'Source',  'type' => 'text',     'value' => $source ),
+				'notes'   => array( 'label' => 'Notes',   'type' => 'textarea', 'value' => $notes ),
+				'_meta'   => array( 'submitted_at' => current_time( 'mysql' ), 'source' => 'manual', 'created_by' => get_current_user_id() ),
+			);
+
+			$result = $wpdb->insert(
+				$leads_table,
+				array(
+					'form_id'    => 0,
+					'lead_data'  => wp_json_encode( $lead_data ),
+					'status'     => 'read',
+					'ip_address' => '',
+					'source_url' => '',
+					'user_agent' => 'manual',
+					'created_at' => current_time( 'mysql' ),
+				),
+				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+			);
+
+			$new_lead_id = $result ? (int) $wpdb->insert_id : 0;
+
+			wp_safe_redirect( add_query_arg(
+				array(
+					'page'    => 'ajforms-leads',
+					'view'    => $new_lead_id ? 'detail' : 'new',
+					'lead_id' => $new_lead_id,
+					'created' => $new_lead_id ? '1' : '0',
+				),
+				admin_url( 'admin.php' )
+			) );
+			exit;
+		}
 
 		if ( isset( $_POST['ajf_update_lead_id'], $_POST['ajf_update_lead_nonce'] ) ) {
 			$lead_id = absint( wp_unslash( $_POST['ajf_update_lead_id'] ) );

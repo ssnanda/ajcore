@@ -205,13 +205,18 @@ $lead_stats = array(
 	<div class="ajforms-admin-shell">
 		<div class="ajforms-admin-hero">
 			<div>
-				<h1><?php esc_html_e( 'CRM', 'ajforms' ); ?></h1>
-				<p><?php esc_html_e( 'Turn form submissions into customer records. Review contacts, source forms, entry status, notes, and follow-up activity from one place.', 'ajforms' ); ?></p>
+				<h1><?php esc_html_e( 'Leads', 'ajforms' ); ?></h1>
+				<p><?php esc_html_e( 'Manage leads from form submissions and manual entries. Review contacts, source, status, notes, and follow-up activity from one place.', 'ajforms' ); ?></p>
+			</div>
+			<div style="flex-shrink:0;">
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-leads&view=new' ) ); ?>" class="button button-primary" style="font-size:14px;padding:8px 18px;height:auto;">
+					+ <?php esc_html_e( 'New Lead', 'ajforms' ); ?>
+				</a>
 			</div>
 		</div>
 
 		<div class="ajforms-stats-grid">
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['total'] ); ?></strong><span><?php esc_html_e( 'CRM Records', 'ajforms' ); ?></span></div>
+			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['total'] ); ?></strong><span><?php esc_html_e( 'Total Leads', 'ajforms' ); ?></span></div>
 			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['unread'] ); ?></strong><span><?php esc_html_e( 'Unread', 'ajforms' ); ?></span></div>
 			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['read'] ); ?></strong><span><?php esc_html_e( 'Read', 'ajforms' ); ?></span></div>
 		</div>

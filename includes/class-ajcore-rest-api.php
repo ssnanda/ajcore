@@ -106,6 +106,25 @@ class AJCore_REST_API {
 			)
 		);
 
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/leads',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_create_lead' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'name'    => array( 'required' => true,  'sanitize_callback' => 'sanitize_text_field' ),
+					'email'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_email' ),
+					'phone'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'company' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'source'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'notes'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_textarea_field' ),
+					'status'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+				),
+			)
+		);
+
 		foreach ( $this->get_route_map() as $route => $args ) {
 			register_rest_route(
 				self::NAMESPACE,
@@ -140,6 +159,7 @@ class AJCore_REST_API {
 			'/ops/subscriptions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_subscriptions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/ledger' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_ledger', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/transactions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_transactions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/leads' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_leads', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tasks', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -2228,6 +2248,123 @@ class AJCore_REST_API {
 			return rest_ensure_response( AJForms::$instance->api_get_portal_ledger() );
 		}
 		return rest_ensure_response( array( 'transactions' => array() ) );
+	}
+
+	// ── Leads (aj_forms_leads — local WP table) ──────────────────────────────
+
+	public function get_ops_leads( WP_REST_Request $request ) {
+		global $wpdb;
+		$table    = $wpdb->prefix . 'aj_forms_leads';
+		$per_page = min( 2000, max( 1, absint( $request->get_param( 'per_page' ) ) ) );
+		$search   = sanitize_text_field( (string) $request->get_param( 'search' ) );
+
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return rest_ensure_response( array( 'leads' => array() ) );
+		}
+
+		$where  = '1=1';
+		$params = array();
+		if ( '' !== $search ) {
+			$like    = '%' . $wpdb->esc_like( $search ) . '%';
+			$where   = '( lead_data LIKE %s )';
+			$params[] = $like;
+		}
+		$params[] = $per_page;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare( "SELECT id, form_id, lead_data, status, ip_address, source_url, user_agent, created_at FROM `{$table}` WHERE {$where} ORDER BY created_at DESC, id DESC LIMIT %d", $params ),
+			ARRAY_A
+		);
+
+		$leads = array();
+		foreach ( (array) $rows as $row ) {
+			$decoded = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
+			$leads[] = array(
+				'id'         => (int) $row['id'],
+				'form_id'    => (int) $row['form_id'],
+				'status'     => $row['status'] ?? 'unread',
+				'name'       => isset( $decoded['name']['value'] )    ? (string) $decoded['name']['value']    : '',
+				'email'      => isset( $decoded['email']['value'] )   ? (string) $decoded['email']['value']   : '',
+				'phone'      => isset( $decoded['phone']['value'] )   ? (string) $decoded['phone']['value']   : '',
+				'company'    => isset( $decoded['company']['value'] ) ? (string) $decoded['company']['value'] : '',
+				'source'     => isset( $decoded['source']['value'] )  ? (string) $decoded['source']['value']  :
+				                ( isset( $decoded['_meta']['source'] ) ? (string) $decoded['_meta']['source'] : '' ),
+				'notes'      => isset( $decoded['notes']['value'] )   ? (string) $decoded['notes']['value']   : '',
+				'source_url' => $row['source_url'] ?? '',
+				'created_at' => $row['created_at'] ?? '',
+			);
+		}
+
+		return rest_ensure_response( array( 'leads' => $leads ) );
+	}
+
+	public function ops_create_lead( WP_REST_Request $request ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'aj_forms_leads';
+
+		$name    = (string) $request->get_param( 'name' );
+		$email   = (string) ( $request->get_param( 'email' ) ?? '' );
+		$phone   = (string) ( $request->get_param( 'phone' ) ?? '' );
+		$company = (string) ( $request->get_param( 'company' ) ?? '' );
+		$source  = (string) ( $request->get_param( 'source' ) ?? '' );
+		$notes   = (string) ( $request->get_param( 'notes' ) ?? '' );
+		$status  = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'read' ) );
+		if ( ! in_array( $status, array( 'read', 'unread' ), true ) ) {
+			$status = 'read';
+		}
+
+		if ( '' === $name ) {
+			return new WP_Error( 'ajcore_missing_name', __( 'Name is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$user     = wp_get_current_user();
+		$lead_data = array(
+			'name'    => array( 'label' => 'Name',    'type' => 'text',     'value' => $name ),
+			'email'   => array( 'label' => 'Email',   'type' => 'email',    'value' => $email ),
+			'phone'   => array( 'label' => 'Phone',   'type' => 'text',     'value' => $phone ),
+			'company' => array( 'label' => 'Company', 'type' => 'text',     'value' => $company ),
+			'source'  => array( 'label' => 'Source',  'type' => 'text',     'value' => $source ),
+			'notes'   => array( 'label' => 'Notes',   'type' => 'textarea', 'value' => $notes ),
+			'_meta'   => array(
+				'submitted_at' => current_time( 'mysql' ),
+				'source'       => '' !== $source ? $source : 'api',
+				'created_by'   => $user ? (int) $user->ID : 0,
+			),
+		);
+
+		$result = $wpdb->insert(
+			$table,
+			array(
+				'form_id'    => 0,
+				'lead_data'  => wp_json_encode( $lead_data ),
+				'status'     => $status,
+				'ip_address' => '',
+				'source_url' => '',
+				'user_agent' => 'api',
+				'created_at' => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+
+		if ( ! $result ) {
+			return new WP_Error( 'ajcore_lead_create_failed', __( 'Failed to create lead.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		return rest_ensure_response( array(
+			'success' => true,
+			'lead'    => array(
+				'id'         => (int) $wpdb->insert_id,
+				'form_id'    => 0,
+				'status'     => $status,
+				'name'       => $name,
+				'email'      => $email,
+				'phone'      => $phone,
+				'company'    => $company,
+				'source'     => $source,
+				'notes'      => $notes,
+				'created_at' => current_time( 'mysql' ),
+			),
+		) );
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────────────
