@@ -81,7 +81,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 				<div class="ajl-field-row">
 					<div class="ajl-field">
 						<label for="lead_phone"><?php esc_html_e( 'Phone', 'ajforms' ); ?></label>
-						<input type="text" id="lead_phone" name="lead_phone" placeholder="<?php esc_attr_e( '555-000-0000', 'ajforms' ); ?>" />
+						<input type="text" id="lead_phone" name="lead_phone" placeholder="<?php esc_attr_e( '+1 555 000-0000', 'ajforms' ); ?>" />
 					</div>
 					<div class="ajl-field">
 						<label for="lead_company"><?php esc_html_e( 'Company', 'ajforms' ); ?></label>
