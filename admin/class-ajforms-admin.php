@@ -50,7 +50,7 @@ class AJForms_Admin {
 		}
 
 		if ( 10 === strlen( $digits ) ) {
-			return substr( $digits, 0, 3 ) . '-' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
+			return '+1 ' . substr( $digits, 0, 3 ) . ' ' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
 		}
 
 		return $phone;
@@ -11075,6 +11075,16 @@ class AJForms_Admin {
 		if ( strpos( $hook_suffix, 'ajforms' ) === false ) {
 			return;
 		}
+
+		// Phone auto-formatter — loaded on all ajforms admin pages
+		$phone_js_path = AJFORMS_PLUGIN_DIR . 'admin/ajforms-phone.js';
+		wp_enqueue_script(
+			'ajforms-phone-js',
+			AJFORMS_PLUGIN_URL . 'admin/ajforms-phone.js',
+			array(),
+			file_exists( $phone_js_path ) ? filemtime( $phone_js_path ) : AJFORMS_VERSION,
+			true
+		);
 
 		$action = isset( $_GET['action'] ) ? sanitize_text_field( wp_unslash( $_GET['action'] ) ) : '';
 

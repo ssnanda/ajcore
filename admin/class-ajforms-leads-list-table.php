@@ -39,7 +39,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 		}
 
 		if ( 10 === strlen( $digits ) ) {
-			return substr( $digits, 0, 3 ) . '-' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
+			return '+1 ' . substr( $digits, 0, 3 ) . ' ' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
 		}
 
 		return $phone;

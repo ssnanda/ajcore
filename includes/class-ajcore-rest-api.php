@@ -2368,7 +2368,7 @@ class AJCore_REST_API {
 		}
 
 		if ( 10 === strlen( $digits ) ) {
-			return substr( $digits, 0, 3 ) . '-' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
+			return '+1 ' . substr( $digits, 0, 3 ) . ' ' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
 		}
 
 		return $phone;
