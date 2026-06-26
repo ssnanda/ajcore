@@ -20,6 +20,20 @@ class AJForms {
 		add_action( 'init', array( $this, 'schedule_recurring_events' ) );
 	}
 
+	private function format_us_phone_for_display( $phone ) {
+		$phone  = trim( (string) $phone );
+		$digits = preg_replace( '/\D+/', '', $phone );
+		if ( 11 === strlen( $digits ) && '1' === substr( $digits, 0, 1 ) ) {
+			$digits = substr( $digits, 1 );
+		}
+
+		if ( 10 === strlen( $digits ) ) {
+			return substr( $digits, 0, 3 ) . '-' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
+		}
+
+		return $phone;
+	}
+
 	private function load_dependencies() {
 		require_once AJFORMS_PLUGIN_DIR . 'admin/class-ajforms-admin.php';
 		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-jwt.php';
@@ -1625,7 +1639,7 @@ class AJForms {
 						<div><a href="<?php echo esc_url( 'mailto:' . $customer->email ); ?>"><?php echo esc_html( $customer->email ); ?></a></div>
 					<?php endif; ?>
 					<?php if ( $customer->phone ) : ?>
-						<div><?php echo esc_html( $customer->phone ); ?></div>
+						<div><?php echo esc_html( $this->format_us_phone_for_display( $customer->phone ) ); ?></div>
 					<?php endif; ?>
 					<?php if ( $business_address ) : ?>
 						<div><?php echo esc_html( $business_address ); ?></div>

@@ -440,7 +440,8 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_customers( WP_REST_Request $request ) {
-		return rest_ensure_response( array( 'customers' => $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' ) ) );
+		$customers = $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' );
+		return rest_ensure_response( array( 'customers' => array_map( array( $this, 'format_ops_customer_row' ), $customers ) ) );
 	}
 
 	public function get_ops_customer( WP_REST_Request $request ) {
@@ -453,7 +454,7 @@ class AJCore_REST_API {
 		if ( ! $customer ) {
 			return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
-		$decoded = $this->decode_json_fields( $customer, array( 'address', 'metadata' ) );
+		$decoded = $this->format_ops_customer_row( $this->decode_json_fields( $customer, array( 'address', 'metadata' ) ) );
 		// Build $meta from the metadata column; then overlay values from raw_data.
 		// business_name / individual_name are top-level Stripe customer fields, not inside raw_data.metadata.
 		$meta = is_array( $decoded['metadata'] ?? null ) ? $decoded['metadata'] : array();
@@ -1851,7 +1852,7 @@ class AJCore_REST_API {
 	public function ops_create_customer( WP_REST_Request $request ) {
 		$name            = sanitize_text_field( (string) $request->get_param( 'name' ) );
 		$email           = sanitize_email( (string) $request->get_param( 'email' ) );
-		$phone           = sanitize_text_field( (string) $request->get_param( 'phone' ) );
+		$phone           = $this->normalize_us_phone_for_storage( sanitize_text_field( (string) $request->get_param( 'phone' ) ) );
 		$description     = sanitize_text_field( (string) ( $request->get_param( 'description' ) ?? '' ) );
 		$business_name   = sanitize_text_field( (string) ( $request->get_param( 'business_name' ) ?? '' ) );
 		$individual_name = sanitize_text_field( (string) ( $request->get_param( 'individual_name' ) ?? '' ) );
@@ -1969,7 +1970,7 @@ class AJCore_REST_API {
 					'stripe_customer_id' => $decoded['id'],
 					'email'              => $decoded['email'] ?? '',
 					'name'               => $decoded['name'] ?? '',
-					'phone'              => $decoded['phone'] ?? '',
+					'phone'              => $this->normalize_us_phone_for_storage( $decoded['phone'] ?? $phone ),
 					'description'        => $decoded['description'] ?? $description,
 					'address'            => ! empty( $address_data ) ? wp_json_encode( $address_data ) : '',
 					'metadata'           => ! empty( $meta ) ? wp_json_encode( $meta ) : '',
@@ -1985,7 +1986,7 @@ class AJCore_REST_API {
 			'stripe_customer_id' => $decoded['id'],
 			'email'              => $decoded['email'] ?? '',
 			'name'               => $decoded['name'] ?? '',
-			'phone'              => $decoded['phone'] ?? '',
+			'phone'              => $this->format_us_phone_for_display( $decoded['phone'] ?? $phone ),
 			'description'        => $decoded['description'] ?? $description,
 			'address'            => ! empty( $decoded['address'] ) ? $decoded['address'] : null,
 			'metadata'           => ! empty( $decoded['metadata'] ) ? $decoded['metadata'] : null,
@@ -2009,7 +2010,7 @@ class AJCore_REST_API {
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$name               = sanitize_text_field( (string) $request->get_param( 'name' ) );
 		$email              = sanitize_email( (string) $request->get_param( 'email' ) );
-		$phone              = sanitize_text_field( (string) $request->get_param( 'phone' ) );
+		$phone              = $this->normalize_us_phone_for_storage( sanitize_text_field( (string) $request->get_param( 'phone' ) ) );
 		$description        = sanitize_text_field( (string) ( $request->get_param( 'description' ) ?? '' ) );
 		$business_name      = sanitize_text_field( (string) ( $request->get_param( 'business_name' ) ?? '' ) );
 		$individual_name    = sanitize_text_field( (string) ( $request->get_param( 'individual_name' ) ?? '' ) );
@@ -2148,7 +2149,7 @@ class AJCore_REST_API {
 			'stripe_customer_id' => $decoded['id'],
 			'email'              => $decoded['email'] ?? $email,
 			'name'               => $decoded['name'] ?? $name,
-			'phone'              => $decoded['phone'] ?? $phone,
+			'phone'              => $this->format_us_phone_for_display( $decoded['phone'] ?? $phone ),
 			'description'        => $decoded['description'] ?? $description,
 			'address'            => ! empty( $decoded['address'] ) ? $decoded['address'] : null,
 			'metadata'           => ! empty( $decoded['metadata'] ) ? $decoded['metadata'] : null,
@@ -2340,6 +2341,46 @@ class AJCore_REST_API {
 		return '';
 	}
 
+	private function phone_digits( $phone ) {
+		return preg_replace( '/\D+/', '', (string) $phone );
+	}
+
+	private function normalize_us_phone_for_storage( $phone ) {
+		$phone  = trim( (string) $phone );
+		$digits = $this->phone_digits( $phone );
+
+		if ( 10 === strlen( $digits ) ) {
+			return '+1' . $digits;
+		}
+
+		if ( 11 === strlen( $digits ) && '1' === substr( $digits, 0, 1 ) ) {
+			return '+' . $digits;
+		}
+
+		return $phone;
+	}
+
+	private function format_us_phone_for_display( $phone ) {
+		$phone  = trim( (string) $phone );
+		$digits = $this->phone_digits( $phone );
+		if ( 11 === strlen( $digits ) && '1' === substr( $digits, 0, 1 ) ) {
+			$digits = substr( $digits, 1 );
+		}
+
+		if ( 10 === strlen( $digits ) ) {
+			return substr( $digits, 0, 3 ) . '-' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
+		}
+
+		return $phone;
+	}
+
+	private function format_ops_customer_row( $row ) {
+		if ( is_array( $row ) && array_key_exists( 'phone', $row ) ) {
+			$row['phone'] = $this->format_us_phone_for_display( $row['phone'] );
+		}
+		return $row;
+	}
+
 	private function format_lead_row( $row ) {
 		$decoded    = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
 		$meta       = isset( $decoded['_meta'] ) && is_array( $decoded['_meta'] ) ? $decoded['_meta'] : array();
@@ -2358,7 +2399,7 @@ class AJCore_REST_API {
 			'status'     => isset( $row['status'] ) ? (string) $row['status'] : 'unread',
 			'name'       => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
 			'email'      => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
-			'phone'      => $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ),
+			'phone'      => $this->format_us_phone_for_display( $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) ),
 			'company'    => $company,
 			'source'     => $source_val,
 			'notes'      => $this->extract_lead_field( $decoded, array( 'notes', 'message', 'comment', 'additional' ) ),
@@ -2578,7 +2619,7 @@ class AJCore_REST_API {
 
 		$name    = (string) $request->get_param( 'name' );
 		$email   = (string) ( $request->get_param( 'email' ) ?? '' );
-		$phone   = (string) ( $request->get_param( 'phone' ) ?? '' );
+		$phone   = $this->normalize_us_phone_for_storage( (string) ( $request->get_param( 'phone' ) ?? '' ) );
 		$company = (string) ( $request->get_param( 'company' ) ?? '' );
 		$source  = (string) ( $request->get_param( 'source' ) ?? '' );
 		$notes   = (string) ( $request->get_param( 'notes' ) ?? '' );
@@ -2632,7 +2673,7 @@ class AJCore_REST_API {
 				'status'     => $status,
 				'name'       => $name,
 				'email'      => $email,
-				'phone'      => $phone,
+				'phone'      => $this->format_us_phone_for_display( $phone ),
 				'company'    => $company,
 				'source'     => $source,
 				'notes'      => $notes,

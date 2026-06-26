@@ -23,6 +23,39 @@ class AJForms_Admin {
 		return 'https://api.github.com/repos/ssnanda/ajcore/releases';
 	}
 
+	private function phone_digits( $phone ) {
+		return preg_replace( '/\D+/', '', (string) $phone );
+	}
+
+	private function normalize_us_phone_for_storage( $phone ) {
+		$phone  = trim( (string) $phone );
+		$digits = $this->phone_digits( $phone );
+
+		if ( 10 === strlen( $digits ) ) {
+			return '+1' . $digits;
+		}
+
+		if ( 11 === strlen( $digits ) && '1' === substr( $digits, 0, 1 ) ) {
+			return '+' . $digits;
+		}
+
+		return $phone;
+	}
+
+	private function format_us_phone_for_display( $phone ) {
+		$phone  = trim( (string) $phone );
+		$digits = $this->phone_digits( $phone );
+		if ( 11 === strlen( $digits ) && '1' === substr( $digits, 0, 1 ) ) {
+			$digits = substr( $digits, 1 );
+		}
+
+		if ( 10 === strlen( $digits ) ) {
+			return substr( $digits, 0, 3 ) . '-' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
+		}
+
+		return $phone;
+	}
+
 	private function get_update_cache_key() {
 		return $this->developer_updates_enabled() ? 'ajforms_latest_developer_release_info' : 'ajforms_latest_release_info';
 	}
@@ -7896,6 +7929,9 @@ class AJForms_Admin {
 		if ( is_numeric( $value ) && in_array( $field, array( 'created', 'created_at', 'synced_at' ), true ) ) {
 			return date_i18n( get_option( 'date_format' ), (int) $value );
 		}
+		if ( 'phone' === (string) $field ) {
+			return $this->format_us_phone_for_display( $value );
+		}
 
 		return null === $value || '' === $value ? '-' : sanitize_text_field( (string) $value );
 	}
@@ -7938,6 +7974,9 @@ class AJForms_Admin {
 			if ( '' !== $formatted ) {
 				return $formatted;
 			}
+		}
+		if ( 'phone' === (string) $field ) {
+			return $this->format_us_phone_for_display( $value );
 		}
 
 		return null === $value || '' === $value ? '-' : sanitize_text_field( (string) $value );
@@ -9350,7 +9389,7 @@ class AJForms_Admin {
 
 			$email         = isset( $_POST['stripe_customer_email'] ) ? sanitize_email( wp_unslash( $_POST['stripe_customer_email'] ) ) : '';
 			$name          = isset( $_POST['stripe_customer_name'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_name'] ) ) : '';
-			$phone         = isset( $_POST['stripe_customer_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_phone'] ) ) : '';
+			$phone         = isset( $_POST['stripe_customer_phone'] ) ? $this->normalize_us_phone_for_storage( sanitize_text_field( wp_unslash( $_POST['stripe_customer_phone'] ) ) ) : '';
 			$business_name = isset( $_POST['stripe_customer_business_name'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_business_name'] ) ) : '';
 			$description   = isset( $_POST['stripe_customer_description'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_description'] ) ) : '';
 
@@ -10165,7 +10204,7 @@ class AJForms_Admin {
 
 			$name            = sanitize_text_field( wp_unslash( $_POST['customer_name'] ?? '' ) );
 			$email           = sanitize_email( wp_unslash( $_POST['customer_email'] ?? '' ) );
-			$phone           = sanitize_text_field( wp_unslash( $_POST['customer_phone'] ?? '' ) );
+			$phone           = $this->normalize_us_phone_for_storage( sanitize_text_field( wp_unslash( $_POST['customer_phone'] ?? '' ) ) );
 			$description     = sanitize_text_field( wp_unslash( $_POST['customer_description'] ?? '' ) );
 			$business_name   = sanitize_text_field( wp_unslash( $_POST['customer_business_name'] ?? '' ) );
 			$individual_name = sanitize_text_field( wp_unslash( $_POST['customer_individual_name'] ?? '' ) );
@@ -14633,7 +14672,7 @@ class AJForms_Admin {
 				<dl class="ajcore-customer-meta">
 					<dt><?php esc_html_e( 'Name', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->name ); ?></dd>
 					<dt><?php esc_html_e( 'Email', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->email ); ?></dd>
-					<dt><?php esc_html_e( 'Phone', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->phone ); ?></dd>
+					<dt><?php esc_html_e( 'Phone', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_us_phone_for_display( $customer->phone ) ); ?></dd>
 					<dt><?php esc_html_e( 'Mode', 'ajforms' ); ?></dt><dd><?php echo ! empty( $customer->livemode ) ? esc_html__( 'Live', 'ajforms' ) : esc_html__( 'Sandbox', 'ajforms' ); ?></dd>
 					<dt><?php esc_html_e( 'Created', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->created_at ) ); ?></dd>
 					<dt><?php esc_html_e( 'Last Synced', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></dd>
@@ -14658,7 +14697,7 @@ class AJForms_Admin {
 					<table class="form-table" style="margin:0">
 						<tr><th style="width:140px"><?php esc_html_e( 'Name', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="text" name="customer_name" value="<?php echo esc_attr( $customer->name ?? '' ); ?>" required class="regular-text"></td></tr>
 						<tr><th><?php esc_html_e( 'Email', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="email" name="customer_email" value="<?php echo esc_attr( $customer->email ?? '' ); ?>" required class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'Phone', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="text" name="customer_phone" value="<?php echo esc_attr( $customer->phone ?? '' ); ?>" required class="regular-text"></td></tr>
+						<tr><th><?php esc_html_e( 'Phone', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="text" name="customer_phone" value="<?php echo esc_attr( $this->format_us_phone_for_display( $customer->phone ?? '' ) ); ?>" required class="regular-text" placeholder="555-000-0000"></td></tr>
 						<tr><th><?php esc_html_e( 'Business Name', 'ajforms' ); ?></th><td><input type="text" name="customer_business_name" value="<?php echo esc_attr( $meta_data['business_name'] ?? '' ); ?>" class="regular-text"></td></tr>
 						<tr><th><?php esc_html_e( 'Individual Name', 'ajforms' ); ?></th><td><input type="text" name="customer_individual_name" value="<?php echo esc_attr( $meta_data['individual_name'] ?? '' ); ?>" class="regular-text"></td></tr>
 						<tr><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><td><input type="text" name="customer_description" value="<?php echo esc_attr( $customer->description ?? '' ); ?>" class="regular-text"></td></tr>
@@ -17562,7 +17601,7 @@ class AJForms_Admin {
 		if ( isset( $_POST['ajf_create_lead_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajf_create_lead_nonce'] ) ), 'ajf_create_lead' ) ) {
 			$name    = isset( $_POST['lead_name'] )    ? sanitize_text_field( wp_unslash( $_POST['lead_name'] ) )    : '';
 			$email   = isset( $_POST['lead_email'] )   ? sanitize_email( wp_unslash( $_POST['lead_email'] ) )        : '';
-			$phone   = isset( $_POST['lead_phone'] )   ? sanitize_text_field( wp_unslash( $_POST['lead_phone'] ) )   : '';
+			$phone   = isset( $_POST['lead_phone'] )   ? $this->normalize_us_phone_for_storage( sanitize_text_field( wp_unslash( $_POST['lead_phone'] ) ) )   : '';
 			$company = isset( $_POST['lead_company'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_company'] ) ) : '';
 			$source  = isset( $_POST['lead_source'] )  ? sanitize_text_field( wp_unslash( $_POST['lead_source'] ) )  : '';
 			$notes   = isset( $_POST['lead_notes'] )   ? sanitize_textarea_field( wp_unslash( $_POST['lead_notes'] ) ) : '';

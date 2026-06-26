@@ -31,6 +31,20 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 		);
 	}
 
+	private function format_us_phone_for_display( $phone ) {
+		$phone  = trim( (string) $phone );
+		$digits = preg_replace( '/\D+/', '', $phone );
+		if ( 11 === strlen( $digits ) && '1' === substr( $digits, 0, 1 ) ) {
+			$digits = substr( $digits, 1 );
+		}
+
+		if ( 10 === strlen( $digits ) ) {
+			return substr( $digits, 0, 3 ) . '-' . substr( $digits, 3, 3 ) . '-' . substr( $digits, 6 );
+		}
+
+		return $phone;
+	}
+
 	public function get_sortable_columns() {
 		return array(
 			'id'         => array( 'l.id', true ),
@@ -208,7 +222,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 
 			case 'phone':
 				$phone = $item['_phone'];
-				return '' !== $phone ? esc_html( $phone ) : '<span class="ajforms-empty">—</span>';
+				return '' !== $phone ? esc_html( $this->format_us_phone_for_display( $phone ) ) : '<span class="ajforms-empty">—</span>';
 
 			case 'company':
 				$company = $item['_company'];
