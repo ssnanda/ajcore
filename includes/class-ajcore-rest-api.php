@@ -2564,12 +2564,15 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_ajphone_settings( WP_REST_Request $request ) {
-		$secret = (string) get_option( 'ajcore_ajphone_client_secret', '' );
+		$secret          = (string) get_option( 'ajcore_ajphone_client_secret', '' );
+		$monitored_raw   = (string) get_option( 'ajcore_ajphone_monitored_user_ids', '[]' );
+		$monitored_ids   = json_decode( $monitored_raw, true );
 		return rest_ensure_response( array(
-			'account_id'    => (string) get_option( 'ajcore_ajphone_account_id', '' ),
-			'client_id'     => (string) get_option( 'ajcore_ajphone_client_id', '' ),
-			'client_secret' => '' !== $secret ? '***' : '',
-			'phone_number'  => (string) get_option( 'ajcore_ajphone_phone_number', '' ),
+			'account_id'          => (string) get_option( 'ajcore_ajphone_account_id', '' ),
+			'client_id'           => (string) get_option( 'ajcore_ajphone_client_id', '' ),
+			'client_secret'       => '' !== $secret ? '***' : '',
+			'phone_number'        => (string) get_option( 'ajcore_ajphone_phone_number', '' ),
+			'monitored_user_ids'  => is_array( $monitored_ids ) ? $monitored_ids : array(),
 		) );
 	}
 
@@ -2589,6 +2592,11 @@ class AJCore_REST_API {
 			update_option( 'ajcore_ajphone_client_secret', $client_secret, false );
 		}
 		update_option( 'ajcore_ajphone_phone_number', $phone_number, false );
+
+		$monitored_user_ids = $request->get_param( 'monitored_user_ids' );
+		if ( is_array( $monitored_user_ids ) ) {
+			update_option( 'ajcore_ajphone_monitored_user_ids', wp_json_encode( array_map( 'strval', $monitored_user_ids ) ), false );
+		}
 
 		return rest_ensure_response( array( 'success' => true ) );
 	}
