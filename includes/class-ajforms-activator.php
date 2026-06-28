@@ -904,7 +904,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '14', false );
+		update_option( 'ajforms_portal_schema_version', '15', false );
 	}
 
 	/**
