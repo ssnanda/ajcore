@@ -152,10 +152,43 @@ class AJCore_REST_API {
 					'callback'            => array( $this, 'update_ops_ajphone_settings' ),
 					'permission_callback' => array( $this, 'can_manage_ops_api' ),
 					'args'                => array(
-						'account_id'    => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
-						'client_id'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
-						'client_secret' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
-						'phone_number'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'account_id'           => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'client_id'            => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'client_secret'        => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'phone_number'         => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'monitored_user_ids'   => array( 'required' => false ),
+						'account_id_2'         => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'client_id_2'          => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'client_secret_2'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'phone_number_2'       => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'monitored_user_ids_2' => array( 'required' => false ),
+						'account_label_2'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/ajphone/conversations',
+			array(
+				array(
+					'methods'             => WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'get_ops_ajphone_conversations' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'update_ops_ajphone_conversation' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+					'args'                => array(
+						'key'          => array( 'required' => true,  'sanitize_callback' => 'sanitize_text_field' ),
+						'account_key'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'own_number'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'peer_number'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'is_read'      => array( 'required' => false ),
+						'is_pinned'    => array( 'required' => false ),
+						'is_archived'  => array( 'required' => false ),
 					),
 				),
 			)
@@ -2564,15 +2597,24 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_ajphone_settings( WP_REST_Request $request ) {
-		$secret          = (string) get_option( 'ajcore_ajphone_client_secret', '' );
-		$monitored_raw   = (string) get_option( 'ajcore_ajphone_monitored_user_ids', '[]' );
-		$monitored_ids   = json_decode( $monitored_raw, true );
+		$secret            = (string) get_option( 'ajcore_ajphone_client_secret', '' );
+		$monitored_raw     = (string) get_option( 'ajcore_ajphone_monitored_user_ids', '[]' );
+		$monitored_ids     = json_decode( $monitored_raw, true );
+		$secret_2          = (string) get_option( 'ajcore_ajphone_client_secret_2', '' );
+		$monitored_raw_2   = (string) get_option( 'ajcore_ajphone_monitored_user_ids_2', '[]' );
+		$monitored_ids_2   = json_decode( $monitored_raw_2, true );
 		return rest_ensure_response( array(
-			'account_id'          => (string) get_option( 'ajcore_ajphone_account_id', '' ),
-			'client_id'           => (string) get_option( 'ajcore_ajphone_client_id', '' ),
-			'client_secret'       => '' !== $secret ? '***' : '',
-			'phone_number'        => (string) get_option( 'ajcore_ajphone_phone_number', '' ),
-			'monitored_user_ids'  => is_array( $monitored_ids ) ? $monitored_ids : array(),
+			'account_id'           => (string) get_option( 'ajcore_ajphone_account_id', '' ),
+			'client_id'            => (string) get_option( 'ajcore_ajphone_client_id', '' ),
+			'client_secret'        => '' !== $secret ? '***' : '',
+			'phone_number'         => (string) get_option( 'ajcore_ajphone_phone_number', '' ),
+			'monitored_user_ids'   => is_array( $monitored_ids ) ? $monitored_ids : array(),
+			'account_id_2'         => (string) get_option( 'ajcore_ajphone_account_id_2', '' ),
+			'client_id_2'          => (string) get_option( 'ajcore_ajphone_client_id_2', '' ),
+			'client_secret_2'      => '' !== $secret_2 ? '***' : '',
+			'phone_number_2'       => (string) get_option( 'ajcore_ajphone_phone_number_2', '' ),
+			'monitored_user_ids_2' => is_array( $monitored_ids_2 ) ? $monitored_ids_2 : array(),
+			'account_label_2'      => (string) get_option( 'ajcore_ajphone_account_label_2', '' ),
 		) );
 	}
 
@@ -2597,6 +2639,106 @@ class AJCore_REST_API {
 		if ( is_array( $monitored_user_ids ) ) {
 			update_option( 'ajcore_ajphone_monitored_user_ids', wp_json_encode( array_map( 'strval', $monitored_user_ids ) ), false );
 		}
+
+		// Second account — always overwrite to allow clearing when second account is disabled.
+		$account_id_2    = (string) ( $request->get_param( 'account_id_2' )    ?? '' );
+		$client_id_2     = (string) ( $request->get_param( 'client_id_2' )     ?? '' );
+		$client_secret_2 = (string) ( $request->get_param( 'client_secret_2' ) ?? '' );
+		$phone_number_2  = (string) ( $request->get_param( 'phone_number_2' )  ?? '' );
+		$account_label_2 = (string) ( $request->get_param( 'account_label_2' ) ?? '' );
+
+		update_option( 'ajcore_ajphone_account_id_2',   $account_id_2,   false );
+		update_option( 'ajcore_ajphone_client_id_2',    $client_id_2,    false );
+		update_option( 'ajcore_ajphone_phone_number_2', $phone_number_2, false );
+		update_option( 'ajcore_ajphone_account_label_2', $account_label_2, false );
+		if ( '' !== $client_secret_2 && '***' !== $client_secret_2 ) {
+			update_option( 'ajcore_ajphone_client_secret_2', $client_secret_2, false );
+		}
+
+		$monitored_user_ids_2 = $request->get_param( 'monitored_user_ids_2' );
+		if ( is_array( $monitored_user_ids_2 ) ) {
+			update_option( 'ajcore_ajphone_monitored_user_ids_2', wp_json_encode( array_map( 'strval', $monitored_user_ids_2 ) ), false );
+		}
+
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	public function get_ops_ajphone_conversations( WP_REST_Request $request ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'ajphone_conversations';
+
+		$keys = $request->get_param( 'keys' );
+		if ( empty( $keys ) || ! is_array( $keys ) ) {
+			return rest_ensure_response( array() );
+		}
+
+		$keys       = array_map( 'sanitize_text_field', $keys );
+		$keys       = array_slice( $keys, 0, 200 ); // hard cap
+		$placeholders = implode( ', ', array_fill( 0, count( $keys ), '%s' ) );
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $wpdb->get_results(
+			$wpdb->prepare( "SELECT conversation_key, is_read, is_pinned, is_archived FROM `{$table}` WHERE conversation_key IN ($placeholders)", $keys ),
+			ARRAY_A
+		);
+
+		$result = array();
+		if ( is_array( $rows ) ) {
+			foreach ( $rows as $row ) {
+				$result[ $row['conversation_key'] ] = array(
+					'isRead'     => (bool) $row['is_read'],
+					'isPinned'   => (bool) $row['is_pinned'],
+					'isArchived' => (bool) $row['is_archived'],
+				);
+			}
+		}
+
+		return rest_ensure_response( $result );
+	}
+
+	public function update_ops_ajphone_conversation( WP_REST_Request $request ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'ajphone_conversations';
+
+		$key         = (string) ( $request->get_param( 'key' )         ?? '' );
+		$account_key = (string) ( $request->get_param( 'account_key' ) ?? 'primary' );
+		$own_number  = (string) ( $request->get_param( 'own_number' )  ?? '' );
+		$peer_number = (string) ( $request->get_param( 'peer_number' ) ?? '' );
+
+		if ( '' === $key ) {
+			return new WP_Error( 'ajcore_missing_key', 'conversation key is required', array( 'status' => 400 ) );
+		}
+
+		$data    = array( 'conversation_key' => $key, 'updated_at' => current_time( 'mysql' ) );
+		$formats = array( '%s', '%s' );
+
+		if ( '' !== $account_key ) { $data['account_key'] = $account_key; $formats[] = '%s'; }
+		if ( '' !== $own_number )  { $data['own_number']  = $own_number;  $formats[] = '%s'; }
+		if ( '' !== $peer_number ) { $data['peer_number'] = $peer_number; $formats[] = '%s'; }
+
+		$is_read     = $request->get_param( 'is_read' );
+		$is_pinned   = $request->get_param( 'is_pinned' );
+		$is_archived = $request->get_param( 'is_archived' );
+
+		if ( null !== $is_read )     { $data['is_read']     = $is_read     ? 1 : 0; $formats[] = '%d'; }
+		if ( null !== $is_pinned )   { $data['is_pinned']   = $is_pinned   ? 1 : 0; $formats[] = '%d'; }
+		if ( null !== $is_archived ) { $data['is_archived'] = $is_archived ? 1 : 0; $formats[] = '%d'; }
+
+		// Build ON DUPLICATE KEY UPDATE clause manually (dbDelta doesn't handle upserts).
+		$set_parts = array();
+		foreach ( $data as $col => $val ) {
+			if ( 'conversation_key' === $col ) continue;
+			if ( is_int( $val ) ) {
+				$set_parts[] = "`$col` = " . intval( $val );
+			} else {
+				$set_parts[] = "`$col` = '" . esc_sql( $val ) . "'";
+			}
+		}
+		$set_clause = implode( ', ', $set_parts );
+		$key_escaped = esc_sql( $key );
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$wpdb->query( "INSERT INTO `{$table}` (`conversation_key`) VALUES ('{$key_escaped}') ON DUPLICATE KEY UPDATE {$set_clause}" );
 
 		return rest_ensure_response( array( 'success' => true ) );
 	}

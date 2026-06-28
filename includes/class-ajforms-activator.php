@@ -32,8 +32,9 @@ class AJForms_Activator {
 		$table_service_snapshots    = $wpdb->prefix . 'aj_portal_service_snapshots';
 		$table_service_states       = $wpdb->prefix . 'aj_portal_service_states';
 		$table_customer_states      = $wpdb->prefix . 'aj_portal_customer_states';
-		$table_reservation_resources = $wpdb->prefix . 'aj_portal_reservation_resources';
-		$table_reservations          = $wpdb->prefix . 'aj_portal_reservations';
+		$table_reservation_resources  = $wpdb->prefix . 'aj_portal_reservation_resources';
+		$table_reservations           = $wpdb->prefix . 'aj_portal_reservations';
+		$table_ajphone_conversations  = $wpdb->prefix . 'ajphone_conversations';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -675,6 +676,24 @@ class AJForms_Activator {
 			UNIQUE KEY unique_customer_price (stripe_customer_id, price_id),
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY wp_user_id (wp_user_id)
+		) $charset_collate;
+
+		CREATE TABLE $table_ajphone_conversations (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			conversation_key varchar(255) NOT NULL,
+			account_key varchar(50) NOT NULL DEFAULT 'primary',
+			own_number varchar(30) NOT NULL DEFAULT '',
+			peer_number varchar(30) NOT NULL DEFAULT '',
+			is_read tinyint(1) NOT NULL DEFAULT 0,
+			is_pinned tinyint(1) NOT NULL DEFAULT 0,
+			is_archived tinyint(1) NOT NULL DEFAULT 0,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY conversation_key (conversation_key),
+			KEY account_key (account_key),
+			KEY is_read (is_read),
+			KEY is_pinned (is_pinned),
+			KEY is_archived (is_archived)
 		) $charset_collate;";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
