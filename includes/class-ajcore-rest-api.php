@@ -166,6 +166,7 @@ class AJCore_REST_API {
 						'automation_enabled'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 						'automation_enabled_at' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 						'automation_rules'     => array( 'required' => false ),
+						'automation_logs'      => array( 'required' => false ),
 					),
 				),
 			)
@@ -2607,6 +2608,8 @@ class AJCore_REST_API {
 		$monitored_ids_2 = json_decode( $monitored_raw_2, true );
 		$automation_raw  = (string) get_option( 'ajcore_ajphone_automation_rules', '[]' );
 		$automation_rules = json_decode( $automation_raw, true );
+		$automation_logs_raw = (string) get_option( 'ajcore_ajphone_automation_logs', '[]' );
+		$automation_logs = json_decode( $automation_logs_raw, true );
 		return rest_ensure_response( array(
 			'account_id'           => (string) get_option( 'ajcore_ajphone_account_id', '' ),
 			'client_id'            => (string) get_option( 'ajcore_ajphone_client_id', '' ),
@@ -2622,6 +2625,7 @@ class AJCore_REST_API {
 			'automation_enabled'   => (string) get_option( 'ajcore_ajphone_automation_enabled', '0' ),
 			'automation_enabled_at' => (string) get_option( 'ajcore_ajphone_automation_enabled_at', '' ),
 			'automation_rules'     => is_array( $automation_rules ) ? $automation_rules : array(),
+			'automation_logs'      => is_array( $automation_logs ) ? $automation_logs : array(),
 		) );
 	}
 
@@ -2706,6 +2710,30 @@ class AJCore_REST_API {
 				);
 			}
 			update_option( 'ajcore_ajphone_automation_rules', wp_json_encode( $clean_rules ), false );
+		}
+
+		$automation_logs = $request->get_param( 'automation_logs' );
+		if ( is_array( $automation_logs ) ) {
+			$clean_logs = array();
+			foreach ( array_slice( $automation_logs, 0, 100 ) as $log ) {
+				if ( ! is_array( $log ) ) {
+					continue;
+				}
+				$clean_logs[] = array(
+					'id'           => sanitize_text_field( (string) ( $log['id'] ?? wp_generate_uuid4() ) ),
+					'ranAt'        => sanitize_text_field( (string) ( $log['ranAt'] ?? '' ) ),
+					'status'       => 'failed' === (string) ( $log['status'] ?? '' ) ? 'failed' : 'sent',
+					'ruleId'       => sanitize_text_field( (string) ( $log['ruleId'] ?? '' ) ),
+					'triggerText'  => sanitize_text_field( (string) ( $log['triggerText'] ?? '' ) ),
+					'inboundText'  => sanitize_textarea_field( (string) ( $log['inboundText'] ?? '' ) ),
+					'responseText' => sanitize_textarea_field( (string) ( $log['responseText'] ?? '' ) ),
+					'from'         => sanitize_text_field( (string) ( $log['from'] ?? '' ) ),
+					'to'           => sanitize_text_field( (string) ( $log['to'] ?? '' ) ),
+					'accountKey'   => sanitize_text_field( (string) ( $log['accountKey'] ?? '' ) ),
+					'error'        => sanitize_textarea_field( (string) ( $log['error'] ?? '' ) ),
+				);
+			}
+			update_option( 'ajcore_ajphone_automation_logs', wp_json_encode( $clean_logs ), false );
 		}
 
 		return rest_ensure_response( array( 'success' => true ) );
