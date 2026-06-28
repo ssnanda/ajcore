@@ -164,6 +164,7 @@ class AJCore_REST_API {
 						'monitored_user_ids_2' => array( 'required' => false ),
 						'account_label_2'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 						'automation_enabled'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'automation_enabled_at' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 						'automation_rules'     => array( 'required' => false ),
 					),
 				),
@@ -2619,6 +2620,7 @@ class AJCore_REST_API {
 			'monitored_user_ids_2' => is_array( $monitored_ids_2 ) ? $monitored_ids_2 : array(),
 			'account_label_2'      => (string) get_option( 'ajcore_ajphone_account_label_2', '' ),
 			'automation_enabled'   => (string) get_option( 'ajcore_ajphone_automation_enabled', '0' ),
+			'automation_enabled_at' => (string) get_option( 'ajcore_ajphone_automation_enabled_at', '' ),
 			'automation_rules'     => is_array( $automation_rules ) ? $automation_rules : array(),
 		) );
 	}
@@ -2678,6 +2680,9 @@ class AJCore_REST_API {
 		$automation_enabled = $request->get_param( 'automation_enabled' );
 		if ( null !== $automation_enabled ) {
 			update_option( 'ajcore_ajphone_automation_enabled', in_array( (string) $automation_enabled, array( '1', 'true', 'yes', 'on' ), true ) ? '1' : '0', false );
+		}
+		if ( $request->has_param( 'automation_enabled_at' ) ) {
+			update_option( 'ajcore_ajphone_automation_enabled_at', (string) $request->get_param( 'automation_enabled_at' ), false );
 		}
 
 		$automation_rules = $request->get_param( 'automation_rules' );
