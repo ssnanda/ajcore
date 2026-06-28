@@ -2597,21 +2597,19 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_ajphone_settings( WP_REST_Request $request ) {
-		$secret            = (string) get_option( 'ajcore_ajphone_client_secret', '' );
-		$monitored_raw     = (string) get_option( 'ajcore_ajphone_monitored_user_ids', '[]' );
-		$monitored_ids     = json_decode( $monitored_raw, true );
-		$secret_2          = (string) get_option( 'ajcore_ajphone_client_secret_2', '' );
-		$monitored_raw_2   = (string) get_option( 'ajcore_ajphone_monitored_user_ids_2', '[]' );
-		$monitored_ids_2   = json_decode( $monitored_raw_2, true );
+		$monitored_raw   = (string) get_option( 'ajcore_ajphone_monitored_user_ids', '[]' );
+		$monitored_ids   = json_decode( $monitored_raw, true );
+		$monitored_raw_2 = (string) get_option( 'ajcore_ajphone_monitored_user_ids_2', '[]' );
+		$monitored_ids_2 = json_decode( $monitored_raw_2, true );
 		return rest_ensure_response( array(
 			'account_id'           => (string) get_option( 'ajcore_ajphone_account_id', '' ),
 			'client_id'            => (string) get_option( 'ajcore_ajphone_client_id', '' ),
-			'client_secret'        => '' !== $secret ? '***' : '',
+			'client_secret'        => (string) get_option( 'ajcore_ajphone_client_secret', '' ),
 			'phone_number'         => (string) get_option( 'ajcore_ajphone_phone_number', '' ),
 			'monitored_user_ids'   => is_array( $monitored_ids ) ? $monitored_ids : array(),
 			'account_id_2'         => (string) get_option( 'ajcore_ajphone_account_id_2', '' ),
 			'client_id_2'          => (string) get_option( 'ajcore_ajphone_client_id_2', '' ),
-			'client_secret_2'      => '' !== $secret_2 ? '***' : '',
+			'client_secret_2'      => (string) get_option( 'ajcore_ajphone_client_secret_2', '' ),
 			'phone_number_2'       => (string) get_option( 'ajcore_ajphone_phone_number_2', '' ),
 			'monitored_user_ids_2' => is_array( $monitored_ids_2 ) ? $monitored_ids_2 : array(),
 			'account_label_2'      => (string) get_option( 'ajcore_ajphone_account_label_2', '' ),
