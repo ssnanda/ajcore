@@ -163,6 +163,8 @@ class AJCore_REST_API {
 						'phone_number_2'       => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 						'monitored_user_ids_2' => array( 'required' => false ),
 						'account_label_2'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'automation_enabled'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'automation_rules'     => array( 'required' => false ),
 					),
 				),
 			)
@@ -2602,6 +2604,8 @@ class AJCore_REST_API {
 		$monitored_ids   = json_decode( $monitored_raw, true );
 		$monitored_raw_2 = (string) get_option( 'ajcore_ajphone_monitored_user_ids_2', '[]' );
 		$monitored_ids_2 = json_decode( $monitored_raw_2, true );
+		$automation_raw  = (string) get_option( 'ajcore_ajphone_automation_rules', '[]' );
+		$automation_rules = json_decode( $automation_raw, true );
 		return rest_ensure_response( array(
 			'account_id'           => (string) get_option( 'ajcore_ajphone_account_id', '' ),
 			'client_id'            => (string) get_option( 'ajcore_ajphone_client_id', '' ),
@@ -2614,6 +2618,8 @@ class AJCore_REST_API {
 			'phone_number_2'       => (string) get_option( 'ajcore_ajphone_phone_number_2', '' ),
 			'monitored_user_ids_2' => is_array( $monitored_ids_2 ) ? $monitored_ids_2 : array(),
 			'account_label_2'      => (string) get_option( 'ajcore_ajphone_account_label_2', '' ),
+			'automation_enabled'   => (string) get_option( 'ajcore_ajphone_automation_enabled', '0' ),
+			'automation_rules'     => is_array( $automation_rules ) ? $automation_rules : array(),
 		) );
 	}
 
@@ -2632,7 +2638,9 @@ class AJCore_REST_API {
 		if ( '' !== $client_secret && '***' !== $client_secret ) {
 			update_option( 'ajcore_ajphone_client_secret', $client_secret, false );
 		}
-		update_option( 'ajcore_ajphone_phone_number', $phone_number, false );
+		if ( $request->has_param( 'phone_number' ) ) {
+			update_option( 'ajcore_ajphone_phone_number', $phone_number, false );
+		}
 
 		$monitored_user_ids = $request->get_param( 'monitored_user_ids' );
 		if ( is_array( $monitored_user_ids ) ) {
@@ -2646,10 +2654,18 @@ class AJCore_REST_API {
 		$phone_number_2  = (string) ( $request->get_param( 'phone_number_2' )  ?? '' );
 		$account_label_2 = (string) ( $request->get_param( 'account_label_2' ) ?? '' );
 
-		update_option( 'ajcore_ajphone_account_id_2',   $account_id_2,   false );
-		update_option( 'ajcore_ajphone_client_id_2',    $client_id_2,    false );
-		update_option( 'ajcore_ajphone_phone_number_2', $phone_number_2, false );
-		update_option( 'ajcore_ajphone_account_label_2', $account_label_2, false );
+		if ( $request->has_param( 'account_id_2' ) ) {
+			update_option( 'ajcore_ajphone_account_id_2', $account_id_2, false );
+		}
+		if ( $request->has_param( 'client_id_2' ) ) {
+			update_option( 'ajcore_ajphone_client_id_2', $client_id_2, false );
+		}
+		if ( $request->has_param( 'phone_number_2' ) ) {
+			update_option( 'ajcore_ajphone_phone_number_2', $phone_number_2, false );
+		}
+		if ( $request->has_param( 'account_label_2' ) ) {
+			update_option( 'ajcore_ajphone_account_label_2', $account_label_2, false );
+		}
 		if ( '' !== $client_secret_2 && '***' !== $client_secret_2 ) {
 			update_option( 'ajcore_ajphone_client_secret_2', $client_secret_2, false );
 		}
@@ -2657,6 +2673,34 @@ class AJCore_REST_API {
 		$monitored_user_ids_2 = $request->get_param( 'monitored_user_ids_2' );
 		if ( is_array( $monitored_user_ids_2 ) ) {
 			update_option( 'ajcore_ajphone_monitored_user_ids_2', wp_json_encode( array_map( 'strval', $monitored_user_ids_2 ) ), false );
+		}
+
+		$automation_enabled = $request->get_param( 'automation_enabled' );
+		if ( null !== $automation_enabled ) {
+			update_option( 'ajcore_ajphone_automation_enabled', in_array( (string) $automation_enabled, array( '1', 'true', 'yes', 'on' ), true ) ? '1' : '0', false );
+		}
+
+		$automation_rules = $request->get_param( 'automation_rules' );
+		if ( is_array( $automation_rules ) ) {
+			$clean_rules = array();
+			foreach ( $automation_rules as $rule ) {
+				if ( ! is_array( $rule ) ) {
+					continue;
+				}
+				$incoming_text = sanitize_text_field( (string) ( $rule['incomingText'] ?? '' ) );
+				$response_text = sanitize_textarea_field( (string) ( $rule['responseText'] ?? '' ) );
+				if ( '' === $incoming_text || '' === $response_text ) {
+					continue;
+				}
+				$clean_rules[] = array(
+					'id'           => sanitize_text_field( (string) ( $rule['id'] ?? wp_generate_uuid4() ) ),
+					'enabled'      => ! empty( $rule['enabled'] ),
+					'matchType'    => 'exact' === (string) ( $rule['matchType'] ?? '' ) ? 'exact' : 'contains',
+					'incomingText' => $incoming_text,
+					'responseText' => $response_text,
+				);
+			}
+			update_option( 'ajcore_ajphone_automation_rules', wp_json_encode( $clean_rules ), false );
 		}
 
 		return rest_ensure_response( array( 'success' => true ) );
