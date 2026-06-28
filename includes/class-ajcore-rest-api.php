@@ -189,6 +189,7 @@ class AJCore_REST_API {
 						'is_read'      => array( 'required' => false ),
 						'is_pinned'    => array( 'required' => false ),
 						'is_archived'  => array( 'required' => false ),
+						'is_deleted'   => array( 'required' => false ),
 					),
 				),
 			)
@@ -2676,7 +2677,7 @@ class AJCore_REST_API {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$rows = $wpdb->get_results(
-			$wpdb->prepare( "SELECT conversation_key, is_read, is_pinned, is_archived FROM `{$table}` WHERE conversation_key IN ($placeholders)", $keys ),
+			$wpdb->prepare( "SELECT conversation_key, is_read, is_pinned, is_archived, is_deleted FROM `{$table}` WHERE conversation_key IN ($placeholders)", $keys ),
 			ARRAY_A
 		);
 
@@ -2687,6 +2688,7 @@ class AJCore_REST_API {
 					'isRead'     => (bool) $row['is_read'],
 					'isPinned'   => (bool) $row['is_pinned'],
 					'isArchived' => (bool) $row['is_archived'],
+					'isDeleted'  => (bool) $row['is_deleted'],
 				);
 			}
 		}
@@ -2717,10 +2719,12 @@ class AJCore_REST_API {
 		$is_read     = $request->get_param( 'is_read' );
 		$is_pinned   = $request->get_param( 'is_pinned' );
 		$is_archived = $request->get_param( 'is_archived' );
+		$is_deleted  = $request->get_param( 'is_deleted' );
 
 		if ( null !== $is_read )     { $data['is_read']     = $is_read     ? 1 : 0; $formats[] = '%d'; }
 		if ( null !== $is_pinned )   { $data['is_pinned']   = $is_pinned   ? 1 : 0; $formats[] = '%d'; }
 		if ( null !== $is_archived ) { $data['is_archived'] = $is_archived ? 1 : 0; $formats[] = '%d'; }
+		if ( null !== $is_deleted )  { $data['is_deleted']  = $is_deleted  ? 1 : 0; $formats[] = '%d'; }
 
 		// Build ON DUPLICATE KEY UPDATE clause manually (dbDelta doesn't handle upserts).
 		$set_parts = array();
