@@ -255,6 +255,46 @@ class AJCore_REST_API {
 			)
 		);
 
+		// ── OPS Files (GET list + POST create + PATCH/DELETE by ID) ─────────────
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/files',
+			array(
+				array(
+					'methods'             => WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'get_ops_files' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+					'args'                => array(
+						'per_page' => array( 'default' => 200, 'sanitize_callback' => 'absint' ),
+						'search'   => array( 'default' => '',  'sanitize_callback' => 'sanitize_text_field' ),
+						'category' => array( 'default' => '',  'sanitize_callback' => 'sanitize_text_field' ),
+					),
+				),
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'create_ops_file' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/files/(?P<id>\d+)',
+			array(
+				array(
+					'methods'             => 'PATCH',
+					'callback'            => array( $this, 'update_ops_file' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+				array(
+					'methods'             => WP_REST_Server::DELETABLE,
+					'callback'            => array( $this, 'delete_ops_file' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+			)
+		);
+
 		foreach ( $this->get_route_map() as $route => $args ) {
 			register_rest_route(
 				self::NAMESPACE,
@@ -294,7 +334,6 @@ class AJCore_REST_API {
 			'/ops/leads/(?P<id>\d+)/status' => array( 'methods' => 'PATCH',           'callback' => 'update_ops_lead_status', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tasks', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
-			'/ops/files'            => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_files',            'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -1991,6 +2030,218 @@ class AJCore_REST_API {
 			'files' => $result,
 			'stats' => array( 'total' => $total ),
 		) );
+	}
+
+	public function create_ops_file( WP_REST_Request $request ) {
+		global $wpdb;
+
+		$files_table = $wpdb->prefix . 'aj_portal_files';
+
+		if ( ! $this->table_exists( $wpdb, $files_table ) ) {
+			return new WP_Error( 'no_table', 'Files table not found.', array( 'status' => 500 ) );
+		}
+
+		$file_params   = $request->get_file_params();
+		$attachment_id = 0;
+
+		if ( ! empty( $file_params['file'] ) && UPLOAD_ERR_OK === (int) $file_params['file']['error'] ) {
+			require_once ABSPATH . 'wp-admin/includes/image.php';
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+			require_once ABSPATH . 'wp-admin/includes/media.php';
+
+			$uploaded = wp_handle_upload( $file_params['file'], array( 'test_form' => false ) );
+
+			if ( isset( $uploaded['error'] ) ) {
+				return new WP_Error( 'upload_error', $uploaded['error'], array( 'status' => 400 ) );
+			}
+
+			$att_title = sanitize_text_field( $request['title'] ?: basename( $file_params['file']['name'] ) );
+
+			$attachment    = array(
+				'post_title'     => $att_title,
+				'post_content'   => '',
+				'post_status'    => 'inherit',
+				'post_mime_type' => $uploaded['type'],
+			);
+			$attachment_id = wp_insert_attachment( $attachment, $uploaded['file'], 0, true );
+
+			if ( is_wp_error( $attachment_id ) ) {
+				return $attachment_id;
+			}
+
+			wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $uploaded['file'] ) );
+
+		} elseif ( ! empty( $request['attachment_id'] ) ) {
+			$attachment_id = absint( $request['attachment_id'] );
+			if ( 'attachment' !== get_post_type( $attachment_id ) ) {
+				return new WP_Error( 'invalid_attachment', 'Attachment not found.', array( 'status' => 404 ) );
+			}
+		} else {
+			return new WP_Error( 'no_file', 'No file uploaded and no attachment_id provided.', array( 'status' => 400 ) );
+		}
+
+		$title       = sanitize_text_field( $request['title'] ?: get_the_title( $attachment_id ) ?: '' );
+		$category    = sanitize_text_field( $request['category'] ?: '' );
+		$description = sanitize_textarea_field( $request['description'] ?: '' );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$wpdb->insert(
+			$files_table,
+			array(
+				'attachment_id' => $attachment_id,
+				'title'         => $title,
+				'category'      => $category,
+				'description'   => $description,
+				'created_at'    => current_time( 'mysql' ),
+				'updated_at'    => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%s', '%s', '%s', '%s' )
+		);
+
+		$file_id = (int) $wpdb->insert_id;
+		if ( ! $file_id ) {
+			return new WP_Error( 'db_error', 'Could not create file record.', array( 'status' => 500 ) );
+		}
+
+		$this->ops_save_file_assignments( $file_id, $request['assigned_emails'] ?? '' );
+
+		return rest_ensure_response( $this->ops_get_file_row( $file_id ) );
+	}
+
+	public function update_ops_file( WP_REST_Request $request ) {
+		global $wpdb;
+
+		$files_table = $wpdb->prefix . 'aj_portal_files';
+		$file_id     = absint( $request['id'] );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+		$file = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM `{$files_table}` WHERE id = %d", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		if ( ! $file ) {
+			return new WP_Error( 'not_found', 'File not found.', array( 'status' => 404 ) );
+		}
+
+		$data = array( 'updated_at' => current_time( 'mysql' ) );
+		$fmt  = array( '%s' );
+
+		if ( null !== $request['title'] ) {
+			$data['title'] = sanitize_text_field( $request['title'] );
+			$fmt[]         = '%s';
+		}
+		if ( null !== $request['category'] ) {
+			$data['category'] = sanitize_text_field( $request['category'] );
+			$fmt[]            = '%s';
+		}
+		if ( null !== $request['description'] ) {
+			$data['description'] = sanitize_textarea_field( $request['description'] );
+			$fmt[]               = '%s';
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$wpdb->update( $files_table, $data, array( 'id' => $file_id ), $fmt, array( '%d' ) );
+
+		if ( null !== $request['assigned_emails'] ) {
+			$this->ops_save_file_assignments( $file_id, $request['assigned_emails'] );
+		}
+
+		return rest_ensure_response( $this->ops_get_file_row( $file_id ) );
+	}
+
+	public function delete_ops_file( WP_REST_Request $request ) {
+		global $wpdb;
+
+		$files_table = $wpdb->prefix . 'aj_portal_files';
+		$users_table = $wpdb->prefix . 'aj_portal_file_users';
+		$file_id     = absint( $request['id'] );
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+		$file = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM `{$files_table}` WHERE id = %d", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		if ( ! $file ) {
+			return new WP_Error( 'not_found', 'File not found.', array( 'status' => 404 ) );
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$wpdb->delete( $users_table, array( 'file_id' => $file_id ), array( '%d' ) );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$wpdb->delete( $files_table, array( 'id' => $file_id ), array( '%d' ) );
+
+		return rest_ensure_response( array( 'deleted' => true, 'id' => $file_id ) );
+	}
+
+	private function ops_save_file_assignments( $file_id, $raw_emails ) {
+		global $wpdb;
+
+		$users_table = $wpdb->prefix . 'aj_portal_file_users';
+		if ( ! $this->table_exists( $wpdb, $users_table ) ) {
+			return;
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+		$wpdb->delete( $users_table, array( 'file_id' => $file_id ), array( '%d' ) );
+
+		$parts = preg_split( '/[\s,;]+/', (string) $raw_emails );
+		foreach ( $parts as $email ) {
+			$email = sanitize_email( $email );
+			if ( '' !== $email && is_email( $email ) ) {
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				$wpdb->insert(
+					$users_table,
+					array(
+						'file_id'    => $file_id,
+						'user_id'    => 0,
+						'user_email' => strtolower( $email ),
+						'created_at' => current_time( 'mysql' ),
+					),
+					array( '%d', '%d', '%s', '%s' )
+				);
+			}
+		}
+	}
+
+	private function ops_get_file_row( $file_id ) {
+		global $wpdb;
+
+		$files_table = $wpdb->prefix . 'aj_portal_files';
+		$users_table = $wpdb->prefix . 'aj_portal_file_users';
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+		$file = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$files_table}` WHERE id = %d", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		if ( ! $file ) {
+			return null;
+		}
+
+		$attachment_url = wp_get_attachment_url( (int) $file->attachment_id );
+		$filename       = $attachment_url ? basename( wp_parse_url( $attachment_url, PHP_URL_PATH ) ) : '';
+		$assignments    = array();
+
+		if ( $this->table_exists( $wpdb, $users_table ) ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+			$rows = $wpdb->get_results( $wpdb->prepare( "SELECT user_id, user_email FROM `{$users_table}` WHERE file_id = %d ORDER BY user_email ASC", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			foreach ( $rows as $row ) {
+				if ( ! empty( $row->user_id ) ) {
+					$user = get_userdata( (int) $row->user_id );
+					if ( $user ) {
+						$assignments[] = array( 'type' => 'user', 'label' => $user->display_name . ' <' . $user->user_email . '>', 'email' => $user->user_email );
+						continue;
+					}
+				}
+				if ( ! empty( $row->user_email ) ) {
+					$assignments[] = array( 'type' => 'email', 'label' => (string) $row->user_email, 'email' => (string) $row->user_email );
+				}
+			}
+		}
+
+		return array(
+			'id'            => (int) $file->id,
+			'attachment_id' => (int) $file->attachment_id,
+			'title'         => (string) $file->title,
+			'category'      => (string) $file->category,
+			'description'   => (string) $file->description,
+			'file_url'      => $attachment_url ?: '',
+			'filename'      => $filename,
+			'assignments'   => $assignments,
+			'created_at'    => (string) $file->created_at,
+			'updated_at'    => (string) $file->updated_at,
+		);
 	}
 
 	// ── OPS Reservation Endpoints ─────────────────────────────────────────────

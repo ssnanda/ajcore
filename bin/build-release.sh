@@ -710,3 +710,33 @@ echo "Verify manually with:"
 echo "  unzip -l \"$VERSIONED_ZIP\" | head"
 
 local_deploy_step
+
+print_version_big() {
+  local version="${VERSION:-?}"
+
+  echo ""
+  if command -v figlet >/dev/null 2>&1; then
+    printf '\033[1;32m'
+    figlet -f big "v${version}"
+    printf '\033[0m'
+  else
+    local spaced="" char
+    for (( i=0; i<${#version}; i++ )); do
+      char="${version:$i:1}"
+      spaced+=" $char"
+    done
+    local inner="  v${spaced}  "
+    local bar
+    bar=$(printf '═%.0s' $(seq 1 ${#inner}))
+
+    echo ""
+    printf '  \033[1;32m╔%s╗\033[0m\n'              "$bar"
+    printf '  \033[1;32m║%s║\033[0m\n'              "$bar" | tr '═' ' '
+    printf '  \033[1;32m║\033[1;97m%s\033[1;32m║\033[0m\n' "$inner"
+    printf '  \033[1;32m║%s║\033[0m\n'              "$bar" | tr '═' ' '
+    printf '  \033[1;32m╚%s╝\033[0m\n'              "$bar"
+  fi
+  echo ""
+}
+
+print_version_big
