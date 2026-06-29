@@ -2601,31 +2601,101 @@ class AJCore_REST_API {
 		) );
 	}
 
+	/**
+	 * Scans wp-content/uploads/ajphone-rules/ for *.json files.
+	 * Returns merged rule array if any files exist, null if the folder is empty or missing.
+	 * Creates the folder (and a README) on first call.
+	 */
+	private function load_rules_from_folder() {
+		$upload_dir = wp_upload_dir();
+		$folder     = trailingslashit( $upload_dir['basedir'] ) . 'ajphone-rules';
+
+		if ( ! is_dir( $folder ) ) {
+			wp_mkdir_p( $folder );
+			// Deny direct HTTP access to raw JSON files.
+			file_put_contents( $folder . '/.htaccess', "Order deny,allow\nDeny from all\n" ); // phpcs:ignore
+			file_put_contents( $folder . '/README.txt', // phpcs:ignore
+				"AJPhone Automation Rules Folder\n" .
+				"================================\n" .
+				"Drop any number of .json files here. Filename does not matter — only the .json extension.\n" .
+				"Each file can be a plain JSON array of rules, or an object with a \"rules\" key.\n" .
+				"ALL files are merged together. When at least one file is present, these folder rules\n" .
+				"override whatever is saved in the database via the UI.\n\n" .
+				"Remove all .json files to fall back to the database rules.\n"
+			);
+			return null;
+		}
+
+		$json_files = glob( $folder . '/*.json' );
+		if ( empty( $json_files ) ) {
+			return null;
+		}
+
+		$all_rules = array();
+		foreach ( $json_files as $file ) {
+			$content = file_get_contents( $file ); // phpcs:ignore
+			if ( false === $content ) {
+				continue;
+			}
+			$decoded = json_decode( $content, true );
+			if ( ! is_array( $decoded ) ) {
+				continue;
+			}
+			// Support bare array [ {...}, ... ] or object { "rules": [ {...}, ... ] }
+			$rules = ( isset( $decoded['rules'] ) && is_array( $decoded['rules'] ) ) ? $decoded['rules'] : $decoded;
+			foreach ( $rules as $rule ) {
+				if ( is_array( $rule ) ) {
+					$all_rules[] = $rule;
+				}
+			}
+		}
+
+		return empty( $all_rules ) ? null : $all_rules;
+	}
+
 	public function get_ops_ajphone_settings( WP_REST_Request $request ) {
 		$monitored_raw   = (string) get_option( 'ajcore_ajphone_monitored_user_ids', '[]' );
 		$monitored_ids   = json_decode( $monitored_raw, true );
 		$monitored_raw_2 = (string) get_option( 'ajcore_ajphone_monitored_user_ids_2', '[]' );
 		$monitored_ids_2 = json_decode( $monitored_raw_2, true );
-		$automation_raw  = (string) get_option( 'ajcore_ajphone_automation_rules', '[]' );
-		$automation_rules = json_decode( $automation_raw, true );
+
+		// Folder-mode: .json files in uploads/ajphone-rules/ override the database.
+		$upload_dir          = wp_upload_dir();
+		$rules_folder_path   = trailingslashit( $upload_dir['basedir'] ) . 'ajphone-rules';
+		$folder_rules        = $this->load_rules_from_folder();
+		if ( null !== $folder_rules ) {
+			$automation_rules  = $folder_rules;
+			$rules_source      = 'folder';
+		} else {
+			$automation_raw    = (string) get_option( 'ajcore_ajphone_automation_rules', '[]' );
+			$automation_rules  = json_decode( $automation_raw, true );
+			if ( ! is_array( $automation_rules ) ) {
+				$automation_rules = array();
+			}
+			$rules_source = 'database';
+		}
+
 		$automation_logs_raw = (string) get_option( 'ajcore_ajphone_automation_logs', '[]' );
-		$automation_logs = json_decode( $automation_logs_raw, true );
+		$automation_logs     = json_decode( $automation_logs_raw, true );
+
 		return rest_ensure_response( array(
-			'account_id'           => (string) get_option( 'ajcore_ajphone_account_id', '' ),
-			'client_id'            => (string) get_option( 'ajcore_ajphone_client_id', '' ),
-			'client_secret'        => (string) get_option( 'ajcore_ajphone_client_secret', '' ),
-			'phone_number'         => (string) get_option( 'ajcore_ajphone_phone_number', '' ),
-			'monitored_user_ids'   => is_array( $monitored_ids ) ? $monitored_ids : array(),
-			'account_id_2'         => (string) get_option( 'ajcore_ajphone_account_id_2', '' ),
-			'client_id_2'          => (string) get_option( 'ajcore_ajphone_client_id_2', '' ),
-			'client_secret_2'      => (string) get_option( 'ajcore_ajphone_client_secret_2', '' ),
-			'phone_number_2'       => (string) get_option( 'ajcore_ajphone_phone_number_2', '' ),
-			'monitored_user_ids_2' => is_array( $monitored_ids_2 ) ? $monitored_ids_2 : array(),
-			'account_label_2'      => (string) get_option( 'ajcore_ajphone_account_label_2', '' ),
-			'automation_enabled'   => (string) get_option( 'ajcore_ajphone_automation_enabled', '0' ),
-			'automation_enabled_at' => (string) get_option( 'ajcore_ajphone_automation_enabled_at', '' ),
-			'automation_rules'     => is_array( $automation_rules ) ? $automation_rules : array(),
-			'automation_logs'      => is_array( $automation_logs ) ? $automation_logs : array(),
+			'account_id'                => (string) get_option( 'ajcore_ajphone_account_id', '' ),
+			'client_id'                 => (string) get_option( 'ajcore_ajphone_client_id', '' ),
+			'client_secret'             => (string) get_option( 'ajcore_ajphone_client_secret', '' ),
+			'phone_number'              => (string) get_option( 'ajcore_ajphone_phone_number', '' ),
+			'monitored_user_ids'        => is_array( $monitored_ids ) ? $monitored_ids : array(),
+			'account_id_2'              => (string) get_option( 'ajcore_ajphone_account_id_2', '' ),
+			'client_id_2'              => (string) get_option( 'ajcore_ajphone_client_id_2', '' ),
+			'client_secret_2'           => (string) get_option( 'ajcore_ajphone_client_secret_2', '' ),
+			'phone_number_2'            => (string) get_option( 'ajcore_ajphone_phone_number_2', '' ),
+			'monitored_user_ids_2'      => is_array( $monitored_ids_2 ) ? $monitored_ids_2 : array(),
+			'account_label_2'           => (string) get_option( 'ajcore_ajphone_account_label_2', '' ),
+			'automation_enabled'        => (string) get_option( 'ajcore_ajphone_automation_enabled', '0' ),
+			'automation_enabled_at'     => (string) get_option( 'ajcore_ajphone_automation_enabled_at', '' ),
+			'automation_rules'          => is_array( $automation_rules ) ? $automation_rules : array(),
+			'automation_logs'           => is_array( $automation_logs ) ? $automation_logs : array(),
+			'automation_rules_source'   => $rules_source,
+			'automation_rules_folder'   => $rules_folder_path,
 		) );
 	}
 
@@ -2691,22 +2761,43 @@ class AJCore_REST_API {
 
 		$automation_rules = $request->get_param( 'automation_rules' );
 		if ( is_array( $automation_rules ) ) {
-			$clean_rules = array();
+			$valid_match_types  = array( 'contains', 'exact', 'regex', 'fallback' );
+			$valid_hours_modes  = array( 'any', 'business_hours', 'after_hours' );
+			$clean_rules        = array();
 			foreach ( $automation_rules as $rule ) {
 				if ( ! is_array( $rule ) ) {
 					continue;
 				}
+				$match_type    = in_array( (string) ( $rule['matchType'] ?? '' ), $valid_match_types, true )
+					? (string) $rule['matchType'] : 'contains';
 				$incoming_text = sanitize_text_field( (string) ( $rule['incomingText'] ?? '' ) );
 				$response_text = sanitize_textarea_field( (string) ( $rule['responseText'] ?? '' ) );
-				if ( '' === $incoming_text || '' === $response_text ) {
+				// fallback rules have no trigger phrases — only response is required.
+				if ( 'fallback' !== $match_type && '' === $incoming_text ) {
 					continue;
 				}
+				if ( '' === $response_text ) {
+					continue;
+				}
+				$hours_mode = in_array( (string) ( $rule['businessHoursMode'] ?? '' ), $valid_hours_modes, true )
+					? (string) $rule['businessHoursMode'] : 'any';
+				$priority   = isset( $rule['priority'] ) && is_numeric( $rule['priority'] )
+					? max( 1, min( 999, (int) $rule['priority'] ) ) : 50;
+				$cooldown   = isset( $rule['cooldownMinutes'] ) && is_numeric( $rule['cooldownMinutes'] )
+					? max( 0, (int) $rule['cooldownMinutes'] ) : 0;
 				$clean_rules[] = array(
-					'id'           => sanitize_text_field( (string) ( $rule['id'] ?? wp_generate_uuid4() ) ),
-					'enabled'      => ! empty( $rule['enabled'] ),
-					'matchType'    => 'exact' === (string) ( $rule['matchType'] ?? '' ) ? 'exact' : 'contains',
-					'incomingText' => $incoming_text,
-					'responseText' => $response_text,
+					'id'                => sanitize_text_field( (string) ( $rule['id'] ?? wp_generate_uuid4() ) ),
+					'enabled'           => ! empty( $rule['enabled'] ),
+					'matchType'         => $match_type,
+					'incomingText'      => $incoming_text,
+					'responseText'      => $response_text,
+					'priority'          => $priority,
+					'category'          => sanitize_text_field( (string) ( $rule['category'] ?? 'General' ) ),
+					'title'             => sanitize_text_field( (string) ( $rule['title'] ?? '' ) ),
+					'staffReview'       => ! empty( $rule['staffReview'] ),
+					'cooldownMinutes'   => $cooldown,
+					'businessHoursMode' => $hours_mode,
+					'stopProcessing'    => ! empty( $rule['stopProcessing'] ),
 				);
 			}
 			update_option( 'ajcore_ajphone_automation_rules', wp_json_encode( $clean_rules ), false );
@@ -2714,16 +2805,19 @@ class AJCore_REST_API {
 
 		$automation_logs = $request->get_param( 'automation_logs' );
 		if ( is_array( $automation_logs ) ) {
-			$clean_logs = array();
+			$valid_statuses = array( 'sent', 'failed', 'skipped' );
+			$clean_logs     = array();
 			foreach ( array_slice( $automation_logs, 0, 100 ) as $log ) {
 				if ( ! is_array( $log ) ) {
 					continue;
 				}
+				$status      = (string) ( $log['status'] ?? 'sent' );
 				$clean_logs[] = array(
 					'id'           => sanitize_text_field( (string) ( $log['id'] ?? wp_generate_uuid4() ) ),
 					'ranAt'        => sanitize_text_field( (string) ( $log['ranAt'] ?? '' ) ),
-					'status'       => 'failed' === (string) ( $log['status'] ?? '' ) ? 'failed' : 'sent',
+					'status'       => in_array( $status, $valid_statuses, true ) ? $status : 'sent',
 					'ruleId'       => sanitize_text_field( (string) ( $log['ruleId'] ?? '' ) ),
+					'ruleName'     => sanitize_text_field( (string) ( $log['ruleName'] ?? '' ) ),
 					'triggerText'  => sanitize_text_field( (string) ( $log['triggerText'] ?? '' ) ),
 					'inboundText'  => sanitize_textarea_field( (string) ( $log['inboundText'] ?? '' ) ),
 					'responseText' => sanitize_textarea_field( (string) ( $log['responseText'] ?? '' ) ),
