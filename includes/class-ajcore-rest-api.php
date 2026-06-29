@@ -138,6 +138,62 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Tasks CRUD
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/tasks',
+			array(
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'create_ops_task' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+					'args'                => array(
+						'title'              => array( 'required' => true,  'sanitize_callback' => 'sanitize_text_field' ),
+						'task_scope'         => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+						'task_frequency'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+						'status'             => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+						'due_date'           => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'action_required'    => array( 'required' => false, 'sanitize_callback' => 'sanitize_textarea_field' ),
+						'client_visible'     => array( 'required' => false ),
+						'stripe_customer_id' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/tasks/(?P<id>\d+)',
+			array(
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'update_ops_task' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+				array(
+					'methods'             => WP_REST_Server::DELETABLE,
+					'callback'            => array( $this, 'delete_ops_task' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/tasks/bulk',
+			array(
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'bulk_ops_tasks' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+					'args'                => array(
+						'action' => array( 'required' => true, 'sanitize_callback' => 'sanitize_key' ),
+						'ids'    => array( 'required' => true ),
+					),
+				),
+			)
+		);
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/ops/ajphone/settings',
@@ -620,7 +676,312 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_tasks( WP_REST_Request $request ) {
-		return rest_ensure_response( array( 'tasks' => $this->select_rows( $this->portal_table( 'aj_portal_tasks' ), array( 'id', 'title', 'description', 'task_type', 'status', 'due_month', 'due_day', 'created_at', 'updated_at' ), $request, array( 'title', 'description', 'task_type', 'status' ), 'updated_at DESC, id DESC' ) ) );
+		$pdb              = $this->get_portal_db();
+		$t_tasks          = $this->portal_table( 'aj_portal_tasks' );
+		$t_customers      = $this->portal_table( 'aj_portal_stripe_customers' );
+		$t_statuses       = $this->portal_table( 'aj_portal_task_statuses' );
+		$t_comments       = $this->portal_table( 'aj_portal_task_comments' );
+
+		// Filters
+		$search     = sanitize_text_field( (string) $request->get_param( 'search' ) );
+		$scope      = sanitize_key( (string) $request->get_param( 'scope' ) );
+		$frequency  = sanitize_key( (string) $request->get_param( 'frequency' ) );
+		$status     = sanitize_key( (string) $request->get_param( 'status' ) );
+		$client     = sanitize_text_field( (string) $request->get_param( 'client' ) );
+		$due_from   = sanitize_text_field( (string) $request->get_param( 'due_from' ) );
+		$due_to     = sanitize_text_field( (string) $request->get_param( 'due_to' ) );
+
+		$valid_scopes     = array( 'global', 'client' );
+		$valid_freqs      = array( 'one_time', 'recurring' );
+		$valid_statuses   = array( 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled' );
+		$scope            = in_array( $scope, $valid_scopes, true ) ? $scope : '';
+		$frequency        = in_array( $frequency, $valid_freqs, true ) ? $frequency : '';
+		$status           = in_array( $status, $valid_statuses, true ) ? $status : '';
+		$due_from         = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $due_from ) ? $due_from : '';
+		$due_to           = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $due_to ) ? $due_to : '';
+
+		// Build WHERE
+		$where  = '1=1';
+		$params = array();
+		if ( '' !== $scope ) {
+			$where   .= ' AND t.task_scope = %s';
+			$params[] = $scope;
+		}
+		if ( '' !== $frequency ) {
+			$where   .= ' AND t.task_frequency = %s';
+			$params[] = $frequency;
+		}
+		if ( '' !== $status ) {
+			$where   .= ' AND t.status = %s';
+			$params[] = $status;
+		}
+		if ( '' !== $client ) {
+			$where   .= ' AND (t.stripe_customer_id = %s OR t.task_scope = \'global\')';
+			$params[] = $client;
+		}
+		if ( '' !== $due_from ) {
+			$where   .= ' AND t.due_date >= %s';
+			$params[] = $due_from;
+		}
+		if ( '' !== $due_to ) {
+			$where   .= ' AND t.due_date <= %s';
+			$params[] = $due_to;
+		}
+		if ( '' !== $search ) {
+			$like     = '%' . $pdb->esc_like( $search ) . '%';
+			$where   .= ' AND (t.title LIKE %s OR t.action_required LIKE %s OR c.name LIKE %s OR c.email LIKE %s)';
+			$params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like;
+		}
+
+		$sql  = "SELECT t.id, t.stripe_customer_id, t.task_scope, t.task_frequency, t.title, t.status, t.due_date, t.action_required, t.client_visible, t.created_at, t.updated_at,
+			c.name AS customer_name, c.email AS customer_email
+			FROM `{$t_tasks}` t
+			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = t.stripe_customer_id
+			WHERE {$where}
+			ORDER BY t.updated_at DESC, t.id DESC
+			LIMIT 1000";
+		$tasks_raw = $params ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
+		if ( ! is_array( $tasks_raw ) ) {
+			$tasks_raw = array();
+		}
+
+		// Comment counts + latest comment
+		$comment_counts  = array();
+		$latest_comments = array();
+		$all_ids         = wp_list_pluck( $tasks_raw, 'id' );
+		if ( ! empty( $all_ids ) ) {
+			$placeholders = implode( ',', array_fill( 0, count( $all_ids ), '%d' ) );
+			$comments_raw = $pdb->get_results( $pdb->prepare(
+				"SELECT task_id, comment, created_at FROM `{$t_comments}` WHERE task_id IN ({$placeholders}) ORDER BY created_at DESC, id DESC",
+				$all_ids
+			) );
+			foreach ( (array) $comments_raw as $cmt ) {
+				$tid = (int) $cmt->task_id;
+				$comment_counts[ $tid ] = isset( $comment_counts[ $tid ] ) ? $comment_counts[ $tid ] + 1 : 1;
+				if ( ! isset( $latest_comments[ $tid ] ) ) {
+					$latest_comments[ $tid ] = wp_trim_words( (string) $cmt->comment, 12, '…' );
+				}
+			}
+		}
+
+		// Global task progress (how many customers completed each task)
+		$total_customers = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_customers}` WHERE enabled_portal = 1" );
+		if ( $total_customers < 1 ) {
+			$total_customers = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_customers}`" );
+		}
+		$global_progress = array();
+		if ( ! empty( $all_ids ) ) {
+			$placeholders = implode( ',', array_fill( 0, count( $all_ids ), '%d' ) );
+			$status_rows  = $pdb->get_results( $pdb->prepare(
+				"SELECT task_id, status FROM `{$t_statuses}` WHERE task_id IN ({$placeholders})",
+				$all_ids
+			) );
+			foreach ( (array) $status_rows as $sr ) {
+				$tid = (int) $sr->task_id;
+				if ( ! isset( $global_progress[ $tid ] ) ) {
+					$global_progress[ $tid ] = array( 'completed' => 0, 'total' => 0 );
+				}
+				$global_progress[ $tid ]['total']++;
+				if ( 'completed' === $sr->status ) {
+					$global_progress[ $tid ]['completed']++;
+				}
+			}
+		}
+
+		$today         = gmdate( 'Y-m-d' );
+		$closed_status = array( 'completed', 'cancelled', 'canceled', 'closed', 'archived' );
+		$stats         = array( 'shown' => 0, 'open' => 0, 'overdue' => 0, 'completed' => 0, 'visible' => 0 );
+		$tasks         = array();
+		foreach ( $tasks_raw as $t ) {
+			$id       = (int) $t->id;
+			$eff_status = sanitize_key( (string) $t->status );
+
+			$progress = null;
+			if ( 'global' === $t->task_scope ) {
+				$prog_data = isset( $global_progress[ $id ] ) ? $global_progress[ $id ] : array( 'completed' => 0, 'total' => 0 );
+				$progress  = array(
+					'completed'       => $prog_data['completed'],
+					'total_customers' => $total_customers,
+				);
+			}
+
+			$tasks[] = array(
+				'id'               => $id,
+				'stripe_customer_id' => (string) $t->stripe_customer_id,
+				'task_scope'       => (string) $t->task_scope,
+				'task_frequency'   => (string) $t->task_frequency,
+				'title'            => (string) $t->title,
+				'status'           => $eff_status,
+				'due_date'         => (string) $t->due_date,
+				'action_required'  => (string) $t->action_required,
+				'client_visible'   => (bool) $t->client_visible,
+				'created_at'       => (string) $t->created_at,
+				'updated_at'       => (string) $t->updated_at,
+				'customer_name'    => (string) $t->customer_name,
+				'customer_email'   => (string) $t->customer_email,
+				'comments_count'   => $comment_counts[ $id ] ?? 0,
+				'latest_comment'   => $latest_comments[ $id ] ?? '',
+				'progress'         => $progress,
+			);
+
+			$stats['shown']++;
+			if ( ! empty( $t->client_visible ) ) {
+				$stats['visible']++;
+			}
+			if ( 'completed' === $eff_status ) {
+				$stats['completed']++;
+			} elseif ( in_array( $eff_status, array( 'open', 'waiting_on_client', 'in_progress', 'upcoming' ), true ) ) {
+				$stats['open']++;
+			}
+			if ( ! empty( $t->due_date ) && $t->due_date < $today && ! in_array( $eff_status, $closed_status, true ) ) {
+				$stats['overdue']++;
+			}
+		}
+
+		return rest_ensure_response( array( 'tasks' => $tasks, 'stats' => $stats, 'total_customers' => $total_customers ) );
+	}
+
+	public function create_ops_task( WP_REST_Request $request ) {
+		$pdb    = $this->get_portal_db();
+		$t_tasks = $this->portal_table( 'aj_portal_tasks' );
+
+		$scope     = in_array( $request->get_param( 'task_scope' ), array( 'global', 'client' ), true ) ? $request->get_param( 'task_scope' ) : 'client';
+		$freq      = in_array( $request->get_param( 'task_frequency' ), array( 'one_time', 'recurring' ), true ) ? $request->get_param( 'task_frequency' ) : 'one_time';
+		$valid_s   = array( 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled' );
+		$status    = in_array( $request->get_param( 'status' ), $valid_s, true ) ? $request->get_param( 'status' ) : 'open';
+		$title     = sanitize_text_field( (string) $request->get_param( 'title' ) );
+		$due_date  = sanitize_text_field( (string) $request->get_param( 'due_date' ) );
+		$due_date  = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $due_date ) ? $due_date : null;
+		$visible   = rest_sanitize_boolean( $request->get_param( 'client_visible' ) );
+		$customer  = 'global' === $scope ? '' : sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$desc      = sanitize_textarea_field( (string) $request->get_param( 'action_required' ) );
+
+		if ( '' === $title ) {
+			return new WP_Error( 'bad_request', 'Title is required.', array( 'status' => 400 ) );
+		}
+
+		$inserted = $pdb->insert( $t_tasks, array(
+			'stripe_customer_id' => $customer,
+			'task_scope'         => $scope,
+			'task_frequency'     => $freq,
+			'title'              => $title,
+			'status'             => $status,
+			'due_date'           => $due_date,
+			'action_required'    => $desc,
+			'client_visible'     => $visible ? 1 : 0,
+			'created_by'         => get_current_user_id(),
+		), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d' ) );
+
+		if ( ! $inserted ) {
+			return new WP_Error( 'db_error', 'Failed to create task.', array( 'status' => 500 ) );
+		}
+		return rest_ensure_response( array( 'success' => true, 'id' => $pdb->insert_id ) );
+	}
+
+	public function update_ops_task( WP_REST_Request $request ) {
+		$pdb     = $this->get_portal_db();
+		$t_tasks = $this->portal_table( 'aj_portal_tasks' );
+		$id      = absint( $request->get_param( 'id' ) );
+		if ( ! $id ) {
+			return new WP_Error( 'bad_request', 'Invalid task ID.', array( 'status' => 400 ) );
+		}
+
+		$valid_scopes = array( 'global', 'client' );
+		$valid_freqs  = array( 'one_time', 'recurring' );
+		$valid_status = array( 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled' );
+
+		$data    = array();
+		$formats = array();
+		$p       = $request->get_params();
+
+		if ( isset( $p['task_scope'] ) && in_array( $p['task_scope'], $valid_scopes, true ) ) {
+			$data['task_scope'] = $p['task_scope']; $formats[] = '%s';
+		}
+		if ( isset( $p['task_frequency'] ) && in_array( $p['task_frequency'], $valid_freqs, true ) ) {
+			$data['task_frequency'] = $p['task_frequency']; $formats[] = '%s';
+		}
+		if ( isset( $p['title'] ) && '' !== $p['title'] ) {
+			$data['title'] = sanitize_text_field( $p['title'] ); $formats[] = '%s';
+		}
+		if ( isset( $p['status'] ) && in_array( $p['status'], $valid_status, true ) ) {
+			$data['status'] = $p['status']; $formats[] = '%s';
+		}
+		if ( array_key_exists( 'due_date', $p ) ) {
+			$dd = sanitize_text_field( (string) $p['due_date'] );
+			$data['due_date'] = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $dd ) ? $dd : null;
+			$formats[] = '%s';
+		}
+		if ( array_key_exists( 'action_required', $p ) ) {
+			$data['action_required'] = sanitize_textarea_field( (string) $p['action_required'] ); $formats[] = '%s';
+		}
+		if ( isset( $p['client_visible'] ) ) {
+			$data['client_visible'] = rest_sanitize_boolean( $p['client_visible'] ) ? 1 : 0; $formats[] = '%d';
+		}
+		if ( isset( $p['stripe_customer_id'] ) ) {
+			$data['stripe_customer_id'] = sanitize_text_field( (string) $p['stripe_customer_id'] ); $formats[] = '%s';
+		}
+		if ( empty( $data ) ) {
+			return new WP_Error( 'bad_request', 'No fields to update.', array( 'status' => 400 ) );
+		}
+		$updated = $pdb->update( $t_tasks, $data, array( 'id' => $id ), $formats, array( '%d' ) );
+		if ( false === $updated ) {
+			return new WP_Error( 'db_error', 'Failed to update task.', array( 'status' => 500 ) );
+		}
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	public function delete_ops_task( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$id         = absint( $request->get_param( 'id' ) );
+		if ( ! $id ) {
+			return new WP_Error( 'bad_request', 'Invalid task ID.', array( 'status' => 400 ) );
+		}
+		$pdb->delete( $this->portal_table( 'aj_portal_task_comments' ), array( 'task_id' => $id ), array( '%d' ) );
+		$pdb->delete( $this->portal_table( 'aj_portal_task_statuses' ), array( 'task_id' => $id ), array( '%d' ) );
+		$pdb->delete( $this->portal_table( 'aj_portal_tasks' ), array( 'id' => $id ), array( '%d' ) );
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	public function bulk_ops_tasks( WP_REST_Request $request ) {
+		$pdb     = $this->get_portal_db();
+		$t_tasks = $this->portal_table( 'aj_portal_tasks' );
+		$action  = sanitize_key( (string) $request->get_param( 'action' ) );
+		$ids_raw = $request->get_param( 'ids' );
+		$ids     = array_filter( array_map( 'absint', (array) $ids_raw ) );
+		if ( empty( $ids ) ) {
+			return new WP_Error( 'bad_request', 'No task IDs provided.', array( 'status' => 400 ) );
+		}
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+
+		if ( 'delete' === $action ) {
+			$pdb->query( $pdb->prepare( "DELETE FROM `{$this->portal_table('aj_portal_task_comments')}` WHERE task_id IN ({$placeholders})", $ids ) );
+			$pdb->query( $pdb->prepare( "DELETE FROM `{$this->portal_table('aj_portal_task_statuses')}` WHERE task_id IN ({$placeholders})", $ids ) );
+			$pdb->query( $pdb->prepare( "DELETE FROM `{$t_tasks}` WHERE id IN ({$placeholders})", $ids ) );
+		} elseif ( 'complete' === $action ) {
+			$pdb->query( $pdb->prepare( "UPDATE `{$t_tasks}` SET status = 'completed', updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( current_time( 'mysql' ) ), $ids ) ) );
+		} elseif ( 'reopen' === $action ) {
+			$pdb->query( $pdb->prepare( "UPDATE `{$t_tasks}` SET status = 'open', updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( current_time( 'mysql' ) ), $ids ) ) );
+		} elseif ( 'set_status' === $action ) {
+			$valid_s = array( 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled' );
+			$new_s   = sanitize_key( (string) $request->get_param( 'status' ) );
+			if ( ! in_array( $new_s, $valid_s, true ) ) {
+				return new WP_Error( 'bad_request', 'Invalid status.', array( 'status' => 400 ) );
+			}
+			$pdb->query( $pdb->prepare( "UPDATE `{$t_tasks}` SET status = %s, updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( $new_s, current_time( 'mysql' ) ), $ids ) ) );
+		} elseif ( 'set_visibility' === $action ) {
+			$vis = rest_sanitize_boolean( $request->get_param( 'client_visible' ) ) ? 1 : 0;
+			$pdb->query( $pdb->prepare( "UPDATE `{$t_tasks}` SET client_visible = %d, updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( $vis, current_time( 'mysql' ) ), $ids ) ) );
+		} elseif ( 'set_due_date' === $action ) {
+			$dd = sanitize_text_field( (string) $request->get_param( 'due_date' ) );
+			$dd = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $dd ) ? $dd : null;
+			if ( null === $dd ) {
+				return new WP_Error( 'bad_request', 'Invalid due date.', array( 'status' => 400 ) );
+			}
+			$pdb->query( $pdb->prepare( "UPDATE `{$t_tasks}` SET due_date = %s, updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( $dd, current_time( 'mysql' ) ), $ids ) ) );
+		} else {
+			return new WP_Error( 'bad_request', 'Unknown bulk action.', array( 'status' => 400 ) );
+		}
+		return rest_ensure_response( array( 'success' => true, 'affected' => count( $ids ) ) );
 	}
 
 	public function get_ops_service_requests( WP_REST_Request $request ) {
