@@ -668,7 +668,91 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_ledger( WP_REST_Request $request ) {
-		return rest_ensure_response( array( 'ledger' => $this->select_rows( $this->portal_table( 'aj_portal_ledger' ), array( 'id', 'stripe_customer_id', 'source_type', 'source_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'created_at' ), $request, array( 'stripe_customer_id', 'description', 'status' ), 'created_at DESC, id DESC' ) ) );
+		$pdb         = $this->get_portal_db();
+		$t_ledger    = $this->portal_table( 'aj_portal_ledger' );
+		$t_customers = $this->portal_table( 'aj_portal_stripe_customers' );
+
+		if ( ! $this->table_exists( $pdb, $t_ledger ) ) {
+			return rest_ensure_response( array( 'ledger' => array(), 'stats' => array( 'total' => 0, 'charges' => 0, 'payments' => 0, 'balance' => 0 ) ) );
+		}
+
+		$search      = sanitize_text_field( (string) $request->get_param( 'search' ) );
+		$status      = sanitize_key( (string) $request->get_param( 'status' ) );
+		$source_type = sanitize_key( (string) $request->get_param( 'source_type' ) );
+		$customer    = sanitize_text_field( (string) $request->get_param( 'customer' ) );
+		$limit       = min( 500, max( 1, absint( $request->get_param( 'per_page' ) ?: 300 ) ) );
+
+		$where  = array( '1=1' );
+		$params = array();
+
+		if ( '' !== $customer ) {
+			$where[]  = 'l.stripe_customer_id = %s';
+			$params[] = $customer;
+		}
+		if ( '' !== $status ) {
+			$where[]  = 'l.status = %s';
+			$params[] = $status;
+		}
+		if ( '' !== $source_type ) {
+			$where[]  = 'l.source_type = %s';
+			$params[] = $source_type;
+		}
+		if ( '' !== $search ) {
+			$like     = '%' . $pdb->esc_like( $search ) . '%';
+			$where[]  = '(l.description LIKE %s OR l.stripe_customer_id LIKE %s OR l.invoice_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s)';
+			$params   = array_merge( $params, array( $like, $like, $like, $like, $like ) );
+		}
+
+		$where_sql = implode( ' AND ', $where );
+		$sql       = "SELECT l.id, l.stripe_customer_id, l.source_object_id, l.source_type, l.ledger_date, l.description, l.amount, l.currency, l.status, l.invoice_id, l.payment_intent_id, l.charge_id, l.created_at,
+			c.name AS customer_name, c.email AS customer_email
+			FROM `{$t_ledger}` l
+			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = l.stripe_customer_id
+			WHERE {$where_sql}
+			ORDER BY l.ledger_date DESC, l.id DESC
+			LIMIT %d";
+
+		$params_with_limit = array_merge( $params, array( $limit ) );
+		$rows = $pdb->get_results( $pdb->prepare( $sql, $params_with_limit ) );
+		if ( ! is_array( $rows ) ) {
+			$rows = array();
+		}
+
+		$ledger = array();
+		foreach ( $rows as $r ) {
+			$ledger[] = array(
+				'id'                => (int) $r->id,
+				'stripe_customer_id' => (string) $r->stripe_customer_id,
+				'source_object_id'  => (string) $r->source_object_id,
+				'source_type'       => (string) $r->source_type,
+				'ledger_date'       => (string) $r->ledger_date,
+				'description'       => (string) $r->description,
+				'amount'            => (float) $r->amount,
+				'currency'          => (string) $r->currency,
+				'status'            => (string) $r->status,
+				'invoice_id'        => (string) $r->invoice_id,
+				'payment_intent_id' => (string) $r->payment_intent_id,
+				'charge_id'         => (string) $r->charge_id,
+				'created_at'        => (string) $r->created_at,
+				'customer_name'     => (string) $r->customer_name,
+				'customer_email'    => (string) $r->customer_email,
+			);
+		}
+
+		// Global stats (not affected by current filter)
+		$total    = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_ledger}`" );
+		$charges  = (float) $pdb->get_var( "SELECT COALESCE(SUM(amount),0) FROM `{$t_ledger}` WHERE source_type IN ('service_charge','invoice_line_item','checkout_line_item','manual_charge','invoice') AND status NOT IN ('cancelled','canceled','failed','void','voided','draft')" );
+		$payments = (float) $pdb->get_var( "SELECT COALESCE(SUM(amount),0) FROM `{$t_ledger}` WHERE source_type IN ('charge','payment') AND status IN ('paid','succeeded')" );
+
+		return rest_ensure_response( array(
+			'ledger' => $ledger,
+			'stats'  => array(
+				'total'    => $total,
+				'charges'  => round( $charges, 2 ),
+				'payments' => round( $payments, 2 ),
+				'balance'  => round( $charges - $payments, 2 ),
+			),
+		) );
 	}
 
 	public function get_ops_transactions( WP_REST_Request $request ) {
@@ -1815,17 +1899,19 @@ class AJCore_REST_API {
 
 	public function ops_get_reservations( WP_REST_Request $request ) {
 		if ( ! class_exists( 'AJCore_Reservations' ) ) {
-			return rest_ensure_response( array( 'reservations' => array() ) );
+			return rest_ensure_response( array( 'reservations' => array(), 'stats' => array( 'total' => 0, 'upcoming' => 0, 'confirmed' => 0, 'cancelled' => 0 ) ) );
 		}
 		$status       = sanitize_key( (string) ( $request->get_param( 'status' ) ?: '' ) );
 		$resource_key = sanitize_key( (string) ( $request->get_param( 'resource_key' ) ?: '' ) );
+		$pricing_type = sanitize_key( (string) ( $request->get_param( 'pricing_type' ) ?: '' ) );
 		$date_from    = sanitize_text_field( (string) ( $request->get_param( 'date_from' ) ?: '' ) );
 		$date_to      = sanitize_text_field( (string) ( $request->get_param( 'date_to' ) ?: '' ) );
-		$limit        = min( 200, max( 1, absint( $request->get_param( 'per_page' ) ?: 50 ) ) );
+		$limit        = min( 200, max( 1, absint( $request->get_param( 'per_page' ) ?: 100 ) ) );
 
 		$filters = array( 'limit' => $limit );
 		if ( '' !== $status )       { $filters['status']       = $status; }
 		if ( '' !== $resource_key ) { $filters['resource_key'] = $resource_key; }
+		if ( '' !== $pricing_type ) { $filters['pricing_type'] = $pricing_type; }
 		if ( '' !== $date_from )    { $filters['date_from']    = $date_from; }
 		if ( '' !== $date_to )      { $filters['date_to']      = $date_to; }
 
@@ -1837,7 +1923,33 @@ class AJCore_REST_API {
 			return $this->format_reservation_row( (array) $row, $timezone, true );
 		}, is_array( $rows ) ? $rows : array() );
 
-		return rest_ensure_response( array( 'reservations' => array_values( $formatted ) ) );
+		// Stats from full set (unfiltered)
+		$all_rows  = AJCore_Reservations::get_all_reservations( array( 'limit' => 2000 ) );
+		$all_rows  = is_array( $all_rows ) ? $all_rows : array();
+		$total     = count( $all_rows );
+		$upcoming  = 0;
+		$confirmed = 0;
+		$cancelled = 0;
+		foreach ( $all_rows as $r ) {
+			$s = isset( $r->status ) ? (string) $r->status : '';
+			if ( in_array( $s, array( 'pending_payment', 'paid', 'paid_pending_calendar' ), true ) ) {
+				$upcoming++;
+			} elseif ( 'confirmed' === $s ) {
+				$confirmed++;
+			} elseif ( in_array( $s, array( 'cancelled', 'admin_archived' ), true ) ) {
+				$cancelled++;
+			}
+		}
+
+		return rest_ensure_response( array(
+			'reservations' => array_values( $formatted ),
+			'stats'        => array(
+				'total'     => $total,
+				'upcoming'  => $upcoming,
+				'confirmed' => $confirmed,
+				'cancelled' => $cancelled,
+			),
+		) );
 	}
 
 	public function ops_get_reservation( WP_REST_Request $request ) {
