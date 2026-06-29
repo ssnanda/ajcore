@@ -985,7 +985,94 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_service_requests( WP_REST_Request $request ) {
-		return rest_ensure_response( array( 'service_requests' => $this->select_rows( $this->portal_table( 'aj_portal_service_requests' ), array( 'id', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'source', 'created_by', 'created_at', 'updated_at' ), $request, array( 'stripe_customer_id', 'title', 'status', 'service_status' ), 'updated_at DESC, id DESC' ) ) );
+		$pdb         = $this->get_portal_db();
+		$t_sr        = $this->portal_table( 'aj_portal_service_requests' );
+		$t_customers = $this->portal_table( 'aj_portal_stripe_customers' );
+
+		$search        = sanitize_text_field( (string) $request->get_param( 'search' ) );
+		$status_filter = sanitize_key( (string) $request->get_param( 'status' ) );
+		$source_filter = sanitize_key( (string) $request->get_param( 'source' ) );
+
+		$valid_statuses = array( 'draft', 'pending_payment', 'awaiting_payment', 'paid', 'updating_sosn', 'signing_cmra', 'active', 'cancelled', 'failed', 'admin_review_required', 'completed' );
+
+		$where  = array( '1=1' );
+		$params = array();
+
+		// Source filter (default: hide unpaid checkout leads)
+		if ( 'checkout_only' === $source_filter ) {
+			$where[] = "(r.source_type = 'checkout_session' OR r.source = 'checkout_session')";
+		} elseif ( 'show_all' !== $source_filter ) {
+			$where[] = "NOT ((r.source_type = 'checkout_session' OR r.source = 'checkout_session') AND r.status NOT IN ('paid','completed','active'))";
+		}
+
+		// Status filter (default: needs action)
+		if ( 'all' === $status_filter ) {
+			// no filter
+		} elseif ( in_array( $status_filter, $valid_statuses, true ) ) {
+			$where[]  = 'r.status = %s';
+			$params[] = $status_filter;
+		} else {
+			$where[] = "(r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR r.service_status IN ('new','under_review','pending_customer','pending_agent','meeting_scheduled','sosnc_filing','signing_cmra','id_proof_needed','address_proof_needed','vo_setup_required','sosnc_client','updating_sosn','included_with_llc_setup'))";
+		}
+
+		// Search
+		if ( '' !== $search ) {
+			$like     = '%' . $pdb->esc_like( $search ) . '%';
+			$where[]  = '(r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s OR r.client_notes LIKE %s OR r.admin_notes LIKE %s)';
+			$params   = array_merge( $params, array( $like, $like, $like, $like, $like, $like ) );
+		}
+
+		$where_sql = implode( ' AND ', $where );
+		$sql       = "SELECT r.id, r.stripe_customer_id, r.service_name, r.request_type, r.status, r.service_status,
+			r.amount, r.currency, r.source, r.source_type, r.client_notes, r.admin_notes, r.created_at, r.updated_at,
+			c.name AS customer_name, c.email AS customer_email
+			FROM `{$t_sr}` r
+			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = r.stripe_customer_id
+			WHERE {$where_sql}
+			ORDER BY r.updated_at DESC, r.created_at DESC, r.id DESC
+			LIMIT 200";
+		$rows = $params ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
+		if ( ! is_array( $rows ) ) {
+			$rows = array();
+		}
+
+		$service_requests = array();
+		foreach ( $rows as $r ) {
+			$service_requests[] = array(
+				'id'                => (int) $r->id,
+				'stripe_customer_id' => (string) $r->stripe_customer_id,
+				'service_name'      => (string) $r->service_name,
+				'request_type'      => (string) $r->request_type,
+				'status'            => (string) $r->status,
+				'service_status'    => (string) $r->service_status,
+				'amount'            => (float) $r->amount,
+				'currency'          => (string) $r->currency,
+				'source'            => (string) $r->source,
+				'source_type'       => (string) $r->source_type,
+				'client_notes'      => (string) $r->client_notes,
+				'admin_notes'       => (string) $r->admin_notes,
+				'created_at'        => (string) $r->created_at,
+				'updated_at'        => (string) $r->updated_at,
+				'customer_name'     => (string) $r->customer_name,
+				'customer_email'    => (string) $r->customer_email,
+			);
+		}
+
+		$total_count     = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_sr}`" );
+		$action_count    = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_sr}` WHERE status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR service_status IN ('new','under_review','pending_customer','pending_agent','meeting_scheduled','sosnc_filing','signing_cmra','id_proof_needed','address_proof_needed','vo_setup_required','sosnc_client','updating_sosn','included_with_llc_setup')" );
+		$active_count    = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_sr}` WHERE status = 'active' OR service_status = 'active'" );
+		$completed_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_sr}` WHERE status = 'completed' OR service_status = 'completed'" );
+
+		return rest_ensure_response( array(
+			'service_requests' => $service_requests,
+			'stats'            => array(
+				'total'        => $total_count,
+				'needs_action' => $action_count,
+				'active'       => $active_count,
+				'completed'    => $completed_count,
+				'shown'        => count( $service_requests ),
+			),
+		) );
 	}
 
 	public function get_ops_sync_logs( WP_REST_Request $request ) {
