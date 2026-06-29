@@ -10674,6 +10674,35 @@ class AJForms_Admin {
 			exit;
 		}
 
+		// Bulk delete via POST form.
+		if ( isset( $_POST['ajf_file_bulk_nonce'], $_POST['ajf_file_bulk_action'] ) && 'delete' === sanitize_key( wp_unslash( $_POST['ajf_file_bulk_action'] ) ) ) {
+			check_admin_referer( 'ajf_file_bulk_action', 'ajf_file_bulk_nonce' );
+
+			$raw_ids  = isset( $_POST['file_ids'] ) && is_array( $_POST['file_ids'] ) ? $_POST['file_ids'] : array();
+			$file_ids = array_map( 'absint', $raw_ids );
+			$deleted  = 0;
+
+			foreach ( $file_ids as $fid ) {
+				if ( $fid > 0 ) {
+					$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $fid ), array( '%d' ) );
+					$wpdb->delete( $this->get_portal_files_table(), array( 'id' => $fid ), array( '%d' ) );
+					$deleted++;
+				}
+			}
+
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'    => 'ajforms-client-portal',
+						'tab'     => 'file-library',
+						'deleted' => $deleted,
+					),
+					admin_url( 'admin.php' )
+				)
+			);
+			exit;
+		}
+
 		if ( ! isset( $_POST['ajf_portal_file_nonce'] ) ) {
 			return;
 		}
@@ -16719,9 +16748,26 @@ class AJForms_Admin {
 
 				<div class="ajforms-file-card">
 					<h2><?php esc_html_e( 'Shared Files', 'ajforms' ); ?></h2>
+
+					<form method="post" id="ajf-file-bulk-form" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-client-portal&tab=file-library' ) ); ?>">
+						<?php wp_nonce_field( 'ajf_file_bulk_action', 'ajf_file_bulk_nonce' ); ?>
+						<input type="hidden" name="ajf_file_bulk_action" value="delete">
+
+						<div class="ajf-file-bulk-bar" id="ajf-file-bulk-bar" style="display:none;align-items:center;gap:10px;margin-bottom:10px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
+							<span id="ajf-file-sel-count" style="font-weight:700;color:#991b1b;"></span>
+							<button type="button" id="ajf-file-deselect-all" style="font-size:12px;color:#2563eb;background:none;border:none;cursor:pointer;padding:0;"><?php esc_html_e( 'Deselect all', 'ajforms' ); ?></button>
+							<div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+								<button type="submit" id="ajf-file-bulk-delete-btn" style="padding:6px 16px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;"
+									onclick="return confirm('<?php echo esc_js( __( 'Delete selected file records? This removes DB records only — media files stay in WordPress.', 'ajforms' ) ); ?>');">
+									<?php esc_html_e( 'Delete Selected', 'ajforms' ); ?>
+								</button>
+							</div>
+						</div>
+
 					<table class="widefat striped ajforms-file-table">
 						<thead>
 							<tr>
+								<th style="width:36px;"><input type="checkbox" id="ajf-select-all-files" style="cursor:pointer;" title="<?php esc_attr_e( 'Select all', 'ajforms' ); ?>"></th>
 								<th><?php esc_html_e( 'Title', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Category', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'File', 'ajforms' ); ?></th>
@@ -16731,7 +16777,7 @@ class AJForms_Admin {
 						</thead>
 						<tbody>
 							<?php if ( empty( $files ) ) : ?>
-								<tr><td colspan="5"><?php esc_html_e( 'No files have been shared yet.', 'ajforms' ); ?></td></tr>
+								<tr><td colspan="6"><?php esc_html_e( 'No files have been shared yet.', 'ajforms' ); ?></td></tr>
 							<?php else : ?>
 								<?php foreach ( $files as $file ) : ?>
 									<?php
@@ -16740,6 +16786,7 @@ class AJForms_Admin {
 									$customer_links = $this->get_portal_file_customer_links( (int) $file->id );
 									?>
 									<tr>
+										<td style="width:36px;"><input type="checkbox" name="file_ids[]" value="<?php echo esc_attr( (int) $file->id ); ?>" class="ajf-file-row-checkbox" style="cursor:pointer;"></td>
 										<td><strong><?php echo esc_html( $file->title ); ?></strong><br><span class="description"><?php echo esc_html( wp_trim_words( (string) $file->description, 16 ) ); ?></span></td>
 										<td><?php echo esc_html( $file->category ); ?></td>
 										<td><?php echo $file_url ? esc_html( basename( parse_url( $file_url, PHP_URL_PATH ) ) ) : esc_html__( 'Missing attachment', 'ajforms' ); ?></td>
@@ -16761,16 +16808,17 @@ class AJForms_Admin {
 												<?php endif; ?>
 											<?php endif; ?>
 										</td>
-										<td>
-											<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'edit_file_id' => (int) $file->id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
-											|
-											<a class="submitdelete" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => 'delete', 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_delete_portal_file_' . (int) $file->id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this file record?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
+										<td style="white-space:nowrap;">
+											<a class="button button-small" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'edit_file_id' => (int) $file->id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+											&nbsp;
+											<a class="button button-small" style="color:#b91c1c;border-color:#fca5a5;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => 'delete', 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_delete_portal_file_' . (int) $file->id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this file record?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 										</td>
 									</tr>
 								<?php endforeach; ?>
 							<?php endif; ?>
 						</tbody>
 					</table>
+					</form>
 				</div>
 			</div>
 		</div>
@@ -16811,6 +16859,36 @@ class AJForms_Admin {
 				event.preventDefault();
 				attachmentInput.val('');
 				selectedFile.text('<?php echo esc_js( __( 'No file selected.', 'ajforms' ) ); ?>');
+			});
+
+			// Bulk checkbox logic
+			const bulkBar    = $('#ajf-file-bulk-bar');
+			const selCount   = $('#ajf-file-sel-count');
+			const selectAll  = $('#ajf-select-all-files');
+
+			function updateBulkBar() {
+				const checked = $('.ajf-file-row-checkbox:checked');
+				const n = checked.length;
+				if (n > 0) {
+					selCount.text(n + ' file' + (n === 1 ? '' : 's') + ' selected');
+					bulkBar.css('display', 'flex');
+				} else {
+					bulkBar.hide();
+				}
+				selectAll.prop('indeterminate', n > 0 && n < $('.ajf-file-row-checkbox').length);
+				selectAll.prop('checked', n > 0 && n === $('.ajf-file-row-checkbox').length);
+			}
+
+			selectAll.on('change', function() {
+				$('.ajf-file-row-checkbox').prop('checked', $(this).is(':checked'));
+				updateBulkBar();
+			});
+
+			$(document).on('change', '.ajf-file-row-checkbox', updateBulkBar);
+
+			$('#ajf-file-deselect-all').on('click', function() {
+				$('.ajf-file-row-checkbox, #ajf-select-all-files').prop('checked', false);
+				bulkBar.hide();
 			});
 		})(jQuery);
 		</script>
