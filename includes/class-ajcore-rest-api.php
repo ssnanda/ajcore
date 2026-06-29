@@ -3825,21 +3825,23 @@ class AJCore_REST_API {
 		if ( null !== $is_deleted )  { $data['is_deleted']  = $is_deleted  ? 1 : 0; $formats[] = '%d'; }
 		if ( null !== $queue && in_array( $queue, array( 'ai', 'human' ), true ) ) { $data['queue'] = $queue; $formats[] = '%s'; }
 
-		// Build ON DUPLICATE KEY UPDATE clause manually (dbDelta doesn't handle upserts).
-		$set_parts = array();
-		foreach ( $data as $col => $val ) {
-			if ( 'conversation_key' === $col ) continue;
-			if ( is_int( $val ) ) {
-				$set_parts[] = "`$col` = " . intval( $val );
-			} else {
-				$set_parts[] = "`$col` = '" . esc_sql( $val ) . "'";
+		$columns      = array_keys( $data );
+		$column_sql   = implode( ', ', array_map( static function ( $col ) { return "`{$col}`"; }, $columns ) );
+		$values_sql   = implode( ', ', $formats );
+		$set_parts    = array();
+		foreach ( $columns as $col ) {
+			if ( 'conversation_key' === $col ) {
+				continue;
 			}
+			$set_parts[] = "`{$col}` = VALUES(`{$col}`)";
 		}
 		$set_clause = implode( ', ', $set_parts );
-		$key_escaped = esc_sql( $key );
 
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-		$wpdb->query( "INSERT INTO `{$table}` (`conversation_key`) VALUES ('{$key_escaped}') ON DUPLICATE KEY UPDATE {$set_clause}" );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$wpdb->query( $wpdb->prepare(
+			"INSERT INTO `{$table}` ({$column_sql}) VALUES ({$values_sql}) ON DUPLICATE KEY UPDATE {$set_clause}",
+			array_values( $data )
+		) );
 
 		return rest_ensure_response( array( 'success' => true ) );
 	}
