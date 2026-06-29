@@ -250,6 +250,7 @@ class AJCore_REST_API {
 						'is_pinned'    => array( 'required' => false ),
 						'is_archived'  => array( 'required' => false ),
 						'is_deleted'   => array( 'required' => false ),
+						'queue'        => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
 					),
 				),
 			)
@@ -3772,7 +3773,7 @@ class AJCore_REST_API {
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$rows = $wpdb->get_results(
-			$wpdb->prepare( "SELECT conversation_key, is_read, is_pinned, is_archived, is_deleted FROM `{$table}` WHERE conversation_key IN ($placeholders)", $keys ),
+			$wpdb->prepare( "SELECT conversation_key, is_read, is_pinned, is_archived, is_deleted, queue FROM `{$table}` WHERE conversation_key IN ($placeholders)", $keys ),
 			ARRAY_A
 		);
 
@@ -3784,6 +3785,7 @@ class AJCore_REST_API {
 					'isPinned'   => (bool) $row['is_pinned'],
 					'isArchived' => (bool) $row['is_archived'],
 					'isDeleted'  => (bool) $row['is_deleted'],
+					'queue'      => in_array( $row['queue'], array( 'ai', 'human' ), true ) ? $row['queue'] : 'ai',
 				);
 			}
 		}
@@ -3815,11 +3817,13 @@ class AJCore_REST_API {
 		$is_pinned   = $request->get_param( 'is_pinned' );
 		$is_archived = $request->get_param( 'is_archived' );
 		$is_deleted  = $request->get_param( 'is_deleted' );
+		$queue       = $request->get_param( 'queue' );
 
 		if ( null !== $is_read )     { $data['is_read']     = $is_read     ? 1 : 0; $formats[] = '%d'; }
 		if ( null !== $is_pinned )   { $data['is_pinned']   = $is_pinned   ? 1 : 0; $formats[] = '%d'; }
 		if ( null !== $is_archived ) { $data['is_archived'] = $is_archived ? 1 : 0; $formats[] = '%d'; }
 		if ( null !== $is_deleted )  { $data['is_deleted']  = $is_deleted  ? 1 : 0; $formats[] = '%d'; }
+		if ( null !== $queue && in_array( $queue, array( 'ai', 'human' ), true ) ) { $data['queue'] = $queue; $formats[] = '%s'; }
 
 		// Build ON DUPLICATE KEY UPDATE clause manually (dbDelta doesn't handle upserts).
 		$set_parts = array();

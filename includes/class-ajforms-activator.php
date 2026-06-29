@@ -688,6 +688,7 @@ class AJForms_Activator {
 			is_pinned tinyint(1) NOT NULL DEFAULT 0,
 			is_archived tinyint(1) NOT NULL DEFAULT 0,
 			is_deleted tinyint(1) NOT NULL DEFAULT 0,
+			queue varchar(10) NOT NULL DEFAULT 'ai',
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY conversation_key (conversation_key),
@@ -695,7 +696,8 @@ class AJForms_Activator {
 			KEY is_read (is_read),
 			KEY is_pinned (is_pinned),
 			KEY is_archived (is_archived),
-			KEY is_deleted (is_deleted)
+			KEY is_deleted (is_deleted),
+			KEY queue (queue)
 		) $charset_collate;";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
