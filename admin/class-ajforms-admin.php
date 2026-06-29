@@ -13833,7 +13833,7 @@ class AJForms_Admin {
 			'sold-items'         => __( 'Transactions', 'ajforms' ),
 			'products-services'  => __( 'Product Catalog', 'ajforms' ),
 			'tasks'              => __( 'Tasks', 'ajforms' ),
-			'file-library'       => __( 'File Library', 'ajforms' ),
+			'file-library'       => __( 'Files', 'ajforms' ),
 			'sync'               => __( 'Sync', 'ajforms' ),
 			'event-log'          => __( 'Event Log', 'ajforms' ),
 			'menu'               => __( 'Menu', 'ajforms' ),
@@ -16636,7 +16636,7 @@ class AJForms_Admin {
 		?>
 		<div class="<?php echo $embedded ? 'ajforms-file-library' : 'wrap ajforms-file-library'; ?>">
 			<?php if ( ! $embedded ) : ?>
-				<h1><?php esc_html_e( 'File Library', 'ajforms' ); ?></h1>
+				<h1><?php esc_html_e( 'Files', 'ajforms' ); ?></h1>
 			<?php endif; ?>
 
 			<?php if ( isset( $_GET['saved'] ) ) : ?>

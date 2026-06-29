@@ -294,6 +294,7 @@ class AJCore_REST_API {
 			'/ops/leads/(?P<id>\d+)/status' => array( 'methods' => 'PATCH',           'callback' => 'update_ops_lead_status', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tasks', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/files'            => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_files',            'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -371,6 +372,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/ledger', 'auth' => 'Admin', 'purpose' => 'Billing ledger entries.', 'app' => 'OPS billing' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tasks', 'auth' => 'Admin', 'purpose' => 'Task definitions and customer task statuses.', 'app' => 'OPS tasks' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/service-requests', 'auth' => 'Admin', 'purpose' => 'Service request queue.', 'app' => 'OPS service desk' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/files', 'auth' => 'Admin', 'purpose' => 'Shared files list with assignment labels.', 'app' => 'OPS files' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -1892,6 +1894,102 @@ class AJCore_REST_API {
 
 		return rest_ensure_response( array(
 			'reservation' => $this->format_reservation_row( (array) $reservation, $timezone, false ),
+		) );
+	}
+
+	// ── OPS Files Endpoint ────────────────────────────────────────────────────
+
+	public function get_ops_files( WP_REST_Request $request ) {
+		global $wpdb;
+
+		$files_table = $wpdb->prefix . 'aj_portal_files';
+		$users_table = $wpdb->prefix . 'aj_portal_file_users';
+
+		if ( ! $this->table_exists( $wpdb, $files_table ) ) {
+			return rest_ensure_response( array( 'files' => array(), 'stats' => array( 'total' => 0 ) ) );
+		}
+
+		$search   = isset( $request['search'] )   ? sanitize_text_field( $request['search'] )   : '';
+		$category = isset( $request['category'] ) ? sanitize_text_field( $request['category'] ) : '';
+		$per_page = min( absint( $request['per_page'] ?? 200 ), 500 );
+		if ( $per_page < 1 ) {
+			$per_page = 200;
+		}
+
+		$where  = array( '1=1' );
+		$params = array();
+
+		if ( $search ) {
+			$like      = '%' . $wpdb->esc_like( $search ) . '%';
+			$where[]   = '( f.title LIKE %s OR f.description LIKE %s OR f.category LIKE %s )';
+			$params[]  = $like;
+			$params[]  = $like;
+			$params[]  = $like;
+		}
+
+		if ( $category ) {
+			$where[]  = 'f.category = %s';
+			$params[] = $category;
+		}
+
+		$where_sql = implode( ' AND ', $where );
+		$params[]  = $per_page;
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$files = $wpdb->get_results( $wpdb->prepare( "SELECT f.* FROM `{$files_table}` f WHERE {$where_sql} ORDER BY f.created_at DESC LIMIT %d", $params ) );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$files_table}`" );
+
+		$has_users_table = $this->table_exists( $wpdb, $users_table );
+		$result          = array();
+
+		foreach ( $files as $file ) {
+			$attachment_url = wp_get_attachment_url( (int) $file->attachment_id );
+			$filename       = $attachment_url ? basename( wp_parse_url( $attachment_url, PHP_URL_PATH ) ) : '';
+
+			$assignments = array();
+			if ( $has_users_table ) {
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$rows = $wpdb->get_results( $wpdb->prepare( "SELECT user_id, user_email FROM `{$users_table}` WHERE file_id = %d ORDER BY user_email ASC, user_id ASC", (int) $file->id ) );
+				foreach ( $rows as $row ) {
+					if ( ! empty( $row->user_id ) ) {
+						$user = get_userdata( (int) $row->user_id );
+						if ( $user ) {
+							$assignments[] = array(
+								'type'  => 'user',
+								'label' => $user->display_name . ' <' . $user->user_email . '>',
+								'email' => $user->user_email,
+							);
+							continue;
+						}
+					}
+					if ( ! empty( $row->user_email ) ) {
+						$assignments[] = array(
+							'type'  => 'email',
+							'label' => (string) $row->user_email,
+							'email' => (string) $row->user_email,
+						);
+					}
+				}
+			}
+
+			$result[] = array(
+				'id'            => (int) $file->id,
+				'attachment_id' => (int) $file->attachment_id,
+				'title'         => (string) $file->title,
+				'category'      => (string) $file->category,
+				'description'   => (string) $file->description,
+				'file_url'      => $attachment_url ? (string) $attachment_url : '',
+				'filename'      => $filename,
+				'assignments'   => $assignments,
+				'created_at'    => (string) $file->created_at,
+				'updated_at'    => (string) $file->updated_at,
+			);
+		}
+
+		return rest_ensure_response( array(
+			'files' => $result,
+			'stats' => array( 'total' => $total ),
 		) );
 	}
 
