@@ -138,6 +138,30 @@ class AJCore_REST_API {
 			)
 		);
 
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/leads/(?P<id>\d+)',
+			array(
+				'methods'             => WP_REST_Server::DELETABLE,
+				'callback'            => array( $this, 'delete_ops_lead' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/leads/bulk',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'bulk_ops_leads' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'action' => array( 'required' => true, 'sanitize_callback' => 'sanitize_key' ),
+					'ids'    => array( 'required' => true ),
+				),
+			)
+		);
+
 		// Tasks CRUD
 		register_rest_route(
 			self::NAMESPACE,
@@ -3609,6 +3633,12 @@ class AJCore_REST_API {
 			'automation_rules_source'            => $rules_source,
 			'automation_rules_folder'            => $rules_folder_path,
 			'automation_last_run_at'             => (string) get_option( 'ajcore_ajphone_automation_last_run_at', '' ),
+			'lead_auto_outreach_enabled'         => (string) get_option( 'ajcore_lead_auto_outreach_enabled', '0' ),
+			'lead_auto_outreach_baseline_id'     => (int) get_option( 'ajcore_lead_auto_outreach_baseline_id', 0 ),
+			'lead_auto_outreach_last_processed_id' => (int) get_option( 'ajcore_lead_auto_outreach_last_processed_id', 0 ),
+			'lead_auto_outreach_from_number'     => (string) get_option( 'ajcore_lead_auto_outreach_from_number', '' ),
+			'lead_auto_outreach_account_key'     => (string) get_option( 'ajcore_lead_auto_outreach_account_key', '' ),
+			'lead_auto_outreach_template'        => (string) get_option( 'ajcore_lead_auto_outreach_template', '' ),
 		) );
 	}
 
@@ -3682,6 +3712,28 @@ class AJCore_REST_API {
 		$bypass_review = $request->get_param( 'automation_bypass_staff_review' );
 		if ( null !== $bypass_review ) {
 			update_option( 'ajcore_ajphone_automation_bypass_staff_review', in_array( (string) $bypass_review, array( '1', 'true', 'yes', 'on' ), true ), false );
+		}
+
+		$lead_auto_enabled = $request->get_param( 'lead_auto_outreach_enabled' );
+		if ( null !== $lead_auto_enabled ) {
+			update_option( 'ajcore_lead_auto_outreach_enabled', in_array( (string) $lead_auto_enabled, array( '1', 'true', 'yes', 'on' ), true ) ? '1' : '0', false );
+		}
+		$lead_auto_baseline = $request->get_param( 'lead_auto_outreach_baseline_id' );
+		if ( null !== $lead_auto_baseline && is_numeric( $lead_auto_baseline ) ) {
+			update_option( 'ajcore_lead_auto_outreach_baseline_id', max( 0, (int) $lead_auto_baseline ), false );
+		}
+		$lead_auto_last = $request->get_param( 'lead_auto_outreach_last_processed_id' );
+		if ( null !== $lead_auto_last && is_numeric( $lead_auto_last ) ) {
+			update_option( 'ajcore_lead_auto_outreach_last_processed_id', max( 0, (int) $lead_auto_last ), false );
+		}
+		if ( $request->has_param( 'lead_auto_outreach_from_number' ) ) {
+			update_option( 'ajcore_lead_auto_outreach_from_number', sanitize_text_field( (string) $request->get_param( 'lead_auto_outreach_from_number' ) ), false );
+		}
+		if ( $request->has_param( 'lead_auto_outreach_account_key' ) ) {
+			update_option( 'ajcore_lead_auto_outreach_account_key', sanitize_key( (string) $request->get_param( 'lead_auto_outreach_account_key' ) ), false );
+		}
+		if ( $request->has_param( 'lead_auto_outreach_template' ) ) {
+			update_option( 'ajcore_lead_auto_outreach_template', sanitize_textarea_field( (string) $request->get_param( 'lead_auto_outreach_template' ) ), false );
 		}
 
 		$automation_rules = $request->get_param( 'automation_rules' );
@@ -3864,6 +3916,56 @@ class AJCore_REST_API {
 		$wpdb->update( $leads_table, array( 'status' => $status ), array( 'id' => $lead_id ), array( '%s' ), array( '%d' ) );
 
 		return rest_ensure_response( array( 'id' => $lead_id, 'status' => $status ) );
+	}
+
+	public function delete_ops_lead( WP_REST_Request $request ) {
+		global $wpdb;
+		$leads_table      = $wpdb->prefix . 'aj_forms_leads';
+		$lead_notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
+		$lead_id          = absint( $request->get_param( 'id' ) );
+
+		if ( ! $lead_id ) {
+			return new WP_Error( 'ajcore_invalid_lead_id', __( 'Invalid lead ID.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$exists = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$leads_table}` WHERE id = %d", $lead_id ) );
+		if ( ! $exists ) {
+			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$wpdb->delete( $lead_notes_table, array( 'lead_id' => $lead_id ), array( '%d' ) );
+		$wpdb->delete( $leads_table, array( 'id' => $lead_id ), array( '%d' ) );
+
+		return rest_ensure_response( array( 'success' => true, 'id' => $lead_id ) );
+	}
+
+	public function bulk_ops_leads( WP_REST_Request $request ) {
+		global $wpdb;
+		$leads_table      = $wpdb->prefix . 'aj_forms_leads';
+		$lead_notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
+		$action           = sanitize_key( (string) $request->get_param( 'action' ) );
+		$ids              = array_values( array_unique( array_filter( array_map( 'absint', (array) $request->get_param( 'ids' ) ) ) ) );
+
+		if ( empty( $ids ) ) {
+			return new WP_Error( 'ajcore_no_lead_ids', __( 'No lead IDs provided.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+
+		if ( 'delete' === $action ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$lead_notes_table}` WHERE lead_id IN ({$placeholders})", $ids ) );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$leads_table}` WHERE id IN ({$placeholders})", $ids ) );
+		} elseif ( 'mark_read' === $action || 'mark_unread' === $action ) {
+			$status = 'mark_read' === $action ? 'read' : 'unread';
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( $wpdb->prepare( "UPDATE `{$leads_table}` SET status = %s WHERE id IN ({$placeholders})", array_merge( array( $status ), $ids ) ) );
+		} else {
+			return new WP_Error( 'ajcore_unknown_lead_bulk_action', __( 'Unknown lead bulk action.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'affected' => count( $ids ) ) );
 	}
 
 	public function ops_create_lead( WP_REST_Request $request ) {
