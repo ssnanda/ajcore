@@ -2690,12 +2690,15 @@ class AJCore_REST_API {
 			'phone_number_2'            => (string) get_option( 'ajcore_ajphone_phone_number_2', '' ),
 			'monitored_user_ids_2'      => is_array( $monitored_ids_2 ) ? $monitored_ids_2 : array(),
 			'account_label_2'           => (string) get_option( 'ajcore_ajphone_account_label_2', '' ),
-			'automation_enabled'        => (string) get_option( 'ajcore_ajphone_automation_enabled', '0' ),
-			'automation_enabled_at'     => (string) get_option( 'ajcore_ajphone_automation_enabled_at', '' ),
-			'automation_rules'          => is_array( $automation_rules ) ? $automation_rules : array(),
-			'automation_logs'           => is_array( $automation_logs ) ? $automation_logs : array(),
-			'automation_rules_source'   => $rules_source,
-			'automation_rules_folder'   => $rules_folder_path,
+			'automation_enabled'                 => (string) get_option( 'ajcore_ajphone_automation_enabled', '0' ),
+			'automation_enabled_at'              => (string) get_option( 'ajcore_ajphone_automation_enabled_at', '' ),
+			'automation_default_cooldown_minutes' => (int) get_option( 'ajcore_ajphone_automation_default_cooldown_minutes', 15 ),
+			'automation_bypass_staff_review'      => (bool) get_option( 'ajcore_ajphone_automation_bypass_staff_review', false ),
+			'automation_rules'                   => is_array( $automation_rules ) ? $automation_rules : array(),
+			'automation_logs'                    => is_array( $automation_logs ) ? $automation_logs : array(),
+			'automation_rules_source'            => $rules_source,
+			'automation_rules_folder'            => $rules_folder_path,
+			'automation_last_run_at'             => (string) get_option( 'ajcore_ajphone_automation_last_run_at', '' ),
 		) );
 	}
 
@@ -2757,6 +2760,18 @@ class AJCore_REST_API {
 		}
 		if ( $request->has_param( 'automation_enabled_at' ) ) {
 			update_option( 'ajcore_ajphone_automation_enabled_at', (string) $request->get_param( 'automation_enabled_at' ), false );
+		}
+		$default_cooldown = $request->get_param( 'automation_default_cooldown_minutes' );
+		if ( null !== $default_cooldown && is_numeric( $default_cooldown ) ) {
+			update_option( 'ajcore_ajphone_automation_default_cooldown_minutes', max( 0, (int) $default_cooldown ), false );
+		}
+		$last_run_at = $request->get_param( 'automation_last_run_at' );
+		if ( null !== $last_run_at && '' !== (string) $last_run_at ) {
+			update_option( 'ajcore_ajphone_automation_last_run_at', sanitize_text_field( (string) $last_run_at ), false );
+		}
+		$bypass_review = $request->get_param( 'automation_bypass_staff_review' );
+		if ( null !== $bypass_review ) {
+			update_option( 'ajcore_ajphone_automation_bypass_staff_review', in_array( (string) $bypass_review, array( '1', 'true', 'yes', 'on' ), true ), false );
 		}
 
 		$automation_rules = $request->get_param( 'automation_rules' );
