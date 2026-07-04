@@ -10221,9 +10221,7 @@ class AJForms_Admin {
 				exit;
 			}
 
-			$settings        = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-			$stripe_settings = ! empty( $settings['stripe'] ) ? $settings['stripe'] : array();
-			$secret_key      = ! empty( $stripe_settings['secret_key'] ) ? $stripe_settings['secret_key'] : '';
+			$secret_key = $this->get_stripe_secret_key_for_portal();
 
 			if ( empty( $secret_key ) ) {
 				$redirect_args['portal-error'] = rawurlencode( __( 'Stripe is not configured.', 'ajforms' ) );
