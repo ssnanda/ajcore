@@ -14854,6 +14854,7 @@ class AJForms_Admin {
 			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(240px,1fr) 90px 170px 120px 140px 120px auto;gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
 			.ajcore-subscription-form label{display:block;font-weight:600;color:#50575e}
 			.ajcore-subscription-form select,.ajcore-subscription-form input{width:100%;margin-top:4px}
+			.ajcore-subscription-form[data-collection-method="charge_automatically"] .ajcore-subscription-due-days{display:none}
 			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}}
 			@media (max-width: 960px){.ajcore-customer-edit-grid{grid-template-columns:1fr}.ajcore-customer-edit-actions{justify-content:flex-start}.ajcore-subscription-form{grid-template-columns:1fr}}
 		</style>
@@ -15000,7 +15001,7 @@ class AJForms_Admin {
 				<?php if ( empty( $subscription_products ) ) : ?>
 					<p class="description"><?php esc_html_e( 'No active recurring Stripe prices are available. Sync products from Stripe first.', 'ajforms' ); ?></p>
 				<?php else : ?>
-					<form method="post" class="ajcore-subscription-form">
+					<form method="post" class="ajcore-subscription-form" data-collection-method="send_invoice">
 						<?php wp_nonce_field( 'ajcore_customer_subscription_' . $customer->stripe_customer_id, 'ajcore_customer_subscription_nonce' ); ?>
 						<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
 						<label>
@@ -15029,12 +15030,12 @@ class AJForms_Admin {
 						</label>
 						<label>
 							<?php esc_html_e( 'Collection', 'ajforms' ); ?>
-							<select name="subscription_collection_method">
+							<select name="subscription_collection_method" class="ajcore-subscription-collection-method">
+								<option value="send_invoice" selected><?php esc_html_e( 'Send invoice', 'ajforms' ); ?></option>
 								<option value="charge_automatically"><?php esc_html_e( 'Auto charge', 'ajforms' ); ?></option>
-								<option value="send_invoice"><?php esc_html_e( 'Send invoice', 'ajforms' ); ?></option>
 							</select>
 						</label>
-						<label>
+						<label class="ajcore-subscription-due-days">
 							<?php esc_html_e( 'Due Days', 'ajforms' ); ?>
 							<input type="number" name="subscription_days_until_due" min="1" value="30">
 						</label>
@@ -15049,6 +15050,25 @@ class AJForms_Admin {
 						<p id="ajcore-subscription-billing-start-help" class="screen-reader-text"><?php esc_html_e( 'Use a future bill starting date when the customer already paid outside Stripe. This delays the first Stripe bill until that date.', 'ajforms' ); ?></p>
 						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Subscription', 'ajforms' ); ?></button>
 					</form>
+					<script>
+					(function() {
+						var forms = document.querySelectorAll('.ajcore-subscription-form');
+						forms.forEach(function(form) {
+							var collection = form.querySelector('.ajcore-subscription-collection-method');
+							var dueDays = form.querySelector('input[name="subscription_days_until_due"]');
+							if (!collection || !dueDays) {
+								return;
+							}
+							var syncDueDays = function() {
+								var method = collection.value || 'charge_automatically';
+								form.setAttribute('data-collection-method', method);
+								dueDays.disabled = method !== 'send_invoice';
+							};
+							collection.addEventListener('change', syncDueDays);
+							syncDueDays();
+						});
+					})();
+					</script>
 				<?php endif; ?>
 				<?php
 				$this->render_portal_dataset_section(
