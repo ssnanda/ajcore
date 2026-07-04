@@ -7320,6 +7320,8 @@ class AJForms_Admin {
 		$collection_method  = ! empty( $args['collection_method'] ) ? sanitize_key( (string) $args['collection_method'] ) : 'charge_automatically';
 		$days_until_due     = ! empty( $args['days_until_due'] ) ? max( 1, absint( $args['days_until_due'] ) ) : 30;
 		$trial_days         = ! empty( $args['trial_days'] ) ? absint( $args['trial_days'] ) : 0;
+		$billing_start_date = ! empty( $args['billing_start_date'] ) ? sanitize_text_field( (string) $args['billing_start_date'] ) : '';
+		$billing_start_ts   = 0;
 
 		if ( '' === $stripe_customer_id || 0 !== strpos( $stripe_customer_id, 'cus_' ) ) {
 			return new WP_Error( 'invalid_customer', __( 'A valid Stripe customer is required.', 'ajforms' ) );
@@ -7331,6 +7333,13 @@ class AJForms_Admin {
 
 		if ( ! in_array( $collection_method, array( 'charge_automatically', 'send_invoice' ), true ) ) {
 			$collection_method = 'charge_automatically';
+		}
+
+		if ( '' !== $billing_start_date ) {
+			$billing_start_ts = $this->get_portal_subscription_billing_start_timestamp( $billing_start_date );
+			if ( ! $billing_start_ts ) {
+				return new WP_Error( 'invalid_billing_start_date', __( 'Enter a valid future billing start date.', 'ajforms' ) );
+			}
 		}
 
 		$pdb           = $this->get_pdb();
@@ -7370,7 +7379,10 @@ class AJForms_Admin {
 			$body['payment_behavior'] = 'allow_incomplete';
 		}
 
-		if ( $trial_days > 0 ) {
+		if ( $billing_start_ts > 0 ) {
+			$body['trial_end'] = $billing_start_ts;
+			$body['metadata[ajcore_billing_start_date]'] = $billing_start_date;
+		} elseif ( $trial_days > 0 ) {
 			$body['trial_period_days'] = $trial_days;
 		}
 
@@ -7386,6 +7398,26 @@ class AJForms_Admin {
 			'subscription_id' => ! empty( $subscription['id'] ) ? sanitize_text_field( (string) $subscription['id'] ) : '',
 			'status'          => ! empty( $subscription['status'] ) ? sanitize_key( (string) $subscription['status'] ) : '',
 		);
+	}
+
+	private function get_portal_subscription_billing_start_timestamp( $billing_start_date ) {
+		if ( ! is_string( $billing_start_date ) || ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $billing_start_date ) ) {
+			return 0;
+		}
+
+		try {
+			$date = new DateTimeImmutable( $billing_start_date . ' 00:00:00', wp_timezone() );
+		} catch ( Exception $e ) {
+			return 0;
+		}
+
+		$normalized = $date->format( 'Y-m-d' );
+		if ( $normalized !== $billing_start_date ) {
+			return 0;
+		}
+
+		$timestamp = $date->getTimestamp();
+		return $timestamp > time() ? $timestamp : 0;
 	}
 
 	private function upsert_portal_subscription_cache_row( $subscription, $fallback_customer_id = '' ) {
@@ -10455,6 +10487,7 @@ class AJForms_Admin {
 					'collection_method' => isset( $_POST['subscription_collection_method'] ) ? sanitize_key( wp_unslash( $_POST['subscription_collection_method'] ) ) : 'charge_automatically',
 					'days_until_due'    => isset( $_POST['subscription_days_until_due'] ) ? absint( wp_unslash( $_POST['subscription_days_until_due'] ) ) : 30,
 					'trial_days'        => isset( $_POST['subscription_trial_days'] ) ? absint( wp_unslash( $_POST['subscription_trial_days'] ) ) : 0,
+					'billing_start_date' => isset( $_POST['subscription_billing_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_billing_start_date'] ) ) : '',
 				)
 			);
 
@@ -14818,7 +14851,7 @@ class AJForms_Admin {
 			.ajcore-customer-edit-grid label{font-weight:600;color:#50575e}
 			.ajcore-customer-edit-grid .regular-text{width:100%;max-width:420px}
 			.ajcore-customer-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
-			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(240px,1fr) 90px 170px 120px 120px auto;gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
+			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(240px,1fr) 90px 170px 120px 140px 120px auto;gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
 			.ajcore-subscription-form label{display:block;font-weight:600;color:#50575e}
 			.ajcore-subscription-form select,.ajcore-subscription-form input{width:100%;margin-top:4px}
 			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}}
@@ -15006,9 +15039,14 @@ class AJForms_Admin {
 							<input type="number" name="subscription_days_until_due" min="1" value="30">
 						</label>
 						<label>
+							<?php esc_html_e( 'Bill starting', 'ajforms' ); ?>
+							<input type="date" name="subscription_billing_start_date" aria-describedby="ajcore-subscription-billing-start-help">
+						</label>
+						<label>
 							<?php esc_html_e( 'Trial Days', 'ajforms' ); ?>
 							<input type="number" name="subscription_trial_days" min="0" value="0">
 						</label>
+						<p id="ajcore-subscription-billing-start-help" class="screen-reader-text"><?php esc_html_e( 'Use a future bill starting date when the customer already paid outside Stripe. This delays the first Stripe bill until that date.', 'ajforms' ); ?></p>
 						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Subscription', 'ajforms' ); ?></button>
 					</form>
 				<?php endif; ?>

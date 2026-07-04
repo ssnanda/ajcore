@@ -109,6 +109,7 @@ class AJCore_REST_API {
 					'collection_method' => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
 					'days_until_due'    => array( 'required' => false, 'sanitize_callback' => 'absint' ),
 					'trial_days'        => array( 'required' => false, 'sanitize_callback' => 'absint' ),
+					'billing_start_date' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 				),
 			)
 		);
@@ -770,6 +771,7 @@ class AJCore_REST_API {
 				'collection_method' => sanitize_key( (string) $request->get_param( 'collection_method' ) ),
 				'days_until_due'    => absint( $request->get_param( 'days_until_due' ) ),
 				'trial_days'        => absint( $request->get_param( 'trial_days' ) ),
+				'billing_start_date' => sanitize_text_field( (string) $request->get_param( 'billing_start_date' ) ),
 			)
 		);
 
