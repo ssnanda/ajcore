@@ -7322,7 +7322,11 @@ class AJForms_Admin {
 		$collection_method  = ! empty( $args['collection_method'] ) ? sanitize_key( (string) $args['collection_method'] ) : 'charge_automatically';
 		$days_until_due     = ! empty( $args['days_until_due'] ) ? max( 1, absint( $args['days_until_due'] ) ) : 30;
 		$trial_days         = ! empty( $args['trial_days'] ) ? absint( $args['trial_days'] ) : 0;
+		$service_start_date = ! empty( $args['service_start_date'] ) ? sanitize_text_field( (string) $args['service_start_date'] ) : '';
+		$service_end_date   = ! empty( $args['service_end_date'] ) ? sanitize_text_field( (string) $args['service_end_date'] ) : '';
 		$billing_start_date = ! empty( $args['billing_start_date'] ) ? sanitize_text_field( (string) $args['billing_start_date'] ) : '';
+		$service_start_ts   = 0;
+		$service_end_ts     = 0;
 		$billing_start_ts   = 0;
 
 		if ( '' === $stripe_customer_id || 0 !== strpos( $stripe_customer_id, 'cus_' ) ) {
@@ -7335,6 +7339,26 @@ class AJForms_Admin {
 
 		if ( ! in_array( $collection_method, array( 'charge_automatically', 'send_invoice' ), true ) ) {
 			$collection_method = 'charge_automatically';
+		}
+
+		if ( '' !== $service_start_date ) {
+			$service_start_ts = $this->get_portal_subscription_date_timestamp( $service_start_date, 'start' );
+			if ( ! $service_start_ts ) {
+				return new WP_Error( 'invalid_service_start_date', __( 'Enter a valid service start date.', 'ajforms' ) );
+			}
+			if ( $service_start_ts > time() ) {
+				return new WP_Error( 'future_service_start_date', __( 'Service start date cannot be in the future. Use Bill starting for the future invoice date.', 'ajforms' ) );
+			}
+		}
+
+		if ( '' !== $service_end_date ) {
+			$service_end_ts = $this->get_portal_subscription_date_timestamp( $service_end_date, 'end' );
+			if ( ! $service_end_ts || $service_end_ts <= time() ) {
+				return new WP_Error( 'invalid_service_end_date', __( 'Enter a valid future service end date, or leave it blank for Forever.', 'ajforms' ) );
+			}
+			if ( $service_start_ts > 0 && $service_end_ts <= $service_start_ts ) {
+				return new WP_Error( 'invalid_service_duration', __( 'Service end date must be after the service start date.', 'ajforms' ) );
+			}
 		}
 
 		if ( '' !== $billing_start_date ) {
@@ -7370,10 +7394,17 @@ class AJForms_Admin {
 			'items[0][price]'          => $price_id,
 			'items[0][quantity]'       => $quantity,
 			'collection_method'        => $collection_method,
-			'metadata[created_by]'     => 'ajcore_ops',
-			'metadata[stripe_price_id]' => $price_id,
 			'expand[0]'                => 'items.data.price.product',
 		);
+
+		if ( $service_start_ts > 0 && $service_start_ts < $this->get_portal_subscription_today_timestamp() ) {
+			$body['backdate_start_date'] = $service_start_ts;
+			$body['proration_behavior']  = 'none';
+		}
+
+		if ( $service_end_ts > 0 ) {
+			$body['cancel_at'] = $service_end_ts;
+		}
 
 		if ( 'send_invoice' === $collection_method ) {
 			$body['days_until_due'] = $days_until_due;
@@ -7384,7 +7415,6 @@ class AJForms_Admin {
 		if ( $billing_start_ts > 0 ) {
 			$body['billing_cycle_anchor'] = $billing_start_ts;
 			$body['proration_behavior']   = 'none';
-			$body['metadata[ajcore_billing_start_date]'] = $billing_start_date;
 		} elseif ( $trial_days > 0 ) {
 			$body['trial_period_days'] = $trial_days;
 		}
@@ -7455,7 +7485,6 @@ class AJForms_Admin {
 
 		$subscription_body = array(
 			'collection_method' => $collection_method,
-			'metadata[updated_by]' => 'ajcore_ops',
 		);
 		if ( 'send_invoice' === $collection_method ) {
 			$subscription_body['days_until_due'] = $days_until_due;
@@ -7463,7 +7492,6 @@ class AJForms_Admin {
 		if ( $billing_start_ts > 0 ) {
 			$subscription_body['billing_cycle_anchor'] = $billing_start_ts;
 			$subscription_body['proration_behavior']   = 'none';
-			$subscription_body['metadata[ajcore_billing_start_date]'] = $billing_start_date;
 		}
 
 		$subscription = $this->stripe_api_request( 'subscriptions/' . rawurlencode( $stripe_subscription_id ), $secret_key, $subscription_body, 'POST' );
@@ -7531,7 +7559,6 @@ class AJForms_Admin {
 			$secret_key,
 			array(
 				'cancel_at_period_end' => 'true',
-				'metadata[canceled_by]' => 'ajcore_ops',
 			),
 			'POST'
 		);
@@ -7584,6 +7611,36 @@ class AJForms_Admin {
 			array( '%s', '%s' ),
 			array( '%s', '%s' )
 		);
+	}
+
+	private function get_portal_subscription_date_timestamp( $date_value, $boundary = 'start' ) {
+		if ( ! is_string( $date_value ) || ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date_value ) ) {
+			return 0;
+		}
+
+		$time = 'end' === $boundary ? '23:59:59' : '00:00:00';
+		try {
+			$date = new DateTimeImmutable( $date_value . ' ' . $time, wp_timezone() );
+		} catch ( Exception $e ) {
+			return 0;
+		}
+
+		return $date->format( 'Y-m-d' ) === $date_value ? $date->getTimestamp() : 0;
+	}
+
+	private function get_portal_subscription_today_timestamp() {
+		try {
+			$today = new DateTimeImmutable( 'today', wp_timezone() );
+		} catch ( Exception $e ) {
+			return strtotime( 'today' );
+		}
+
+		return $today->getTimestamp();
+	}
+
+	private function format_portal_subscription_date_input_value( $timestamp ) {
+		$timestamp = absint( $timestamp );
+		return $timestamp > 0 ? wp_date( 'Y-m-d', $timestamp ) : '';
 	}
 
 	private function get_portal_subscription_billing_start_timestamp( $billing_start_date ) {
@@ -10673,6 +10730,8 @@ class AJForms_Admin {
 					'collection_method' => isset( $_POST['subscription_collection_method'] ) ? sanitize_key( wp_unslash( $_POST['subscription_collection_method'] ) ) : 'charge_automatically',
 					'days_until_due'    => isset( $_POST['subscription_days_until_due'] ) ? absint( wp_unslash( $_POST['subscription_days_until_due'] ) ) : 30,
 					'trial_days'        => isset( $_POST['subscription_trial_days'] ) ? absint( wp_unslash( $_POST['subscription_trial_days'] ) ) : 0,
+					'service_start_date' => isset( $_POST['subscription_service_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_service_start_date'] ) ) : '',
+					'service_end_date'  => isset( $_POST['subscription_service_end_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_service_end_date'] ) ) : '',
 					'billing_start_date' => isset( $_POST['subscription_billing_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_billing_start_date'] ) ) : '',
 				)
 			);
@@ -15103,7 +15162,7 @@ class AJForms_Admin {
 			.ajcore-customer-edit-grid label{font-weight:600;color:#50575e}
 			.ajcore-customer-edit-grid .regular-text{width:100%;max-width:420px}
 			.ajcore-customer-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
-			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(240px,1fr) 90px 170px 120px 140px 120px auto;gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
+			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(240px,1fr) 90px 170px 120px 130px 130px 140px 120px auto;gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
 			.ajcore-subscription-form label{display:block;font-weight:600;color:#50575e}
 			.ajcore-subscription-form select,.ajcore-subscription-form input{width:100%;margin-top:4px}
 			.ajcore-subscription-form[data-collection-method="charge_automatically"] .ajcore-subscription-due-days{display:none}
@@ -15305,6 +15364,14 @@ class AJForms_Admin {
 						<label class="ajcore-subscription-due-days">
 							<?php esc_html_e( 'Due Days', 'ajforms' ); ?>
 							<input type="number" name="subscription_days_until_due" min="1" value="30">
+						</label>
+						<label>
+							<?php esc_html_e( 'Start date', 'ajforms' ); ?>
+							<input type="date" name="subscription_service_start_date" value="<?php echo esc_attr( wp_date( 'Y-m-d' ) ); ?>">
+						</label>
+						<label>
+							<?php esc_html_e( 'End date', 'ajforms' ); ?>
+							<input type="date" name="subscription_service_end_date" placeholder="<?php esc_attr_e( 'Forever', 'ajforms' ); ?>">
 						</label>
 						<label>
 							<?php esc_html_e( 'Bill starting', 'ajforms' ); ?>
@@ -15773,8 +15840,7 @@ class AJForms_Admin {
 		$raw                  = is_array( $raw ) ? $raw : array();
 		$collection_method    = ! empty( $raw['collection_method'] ) ? sanitize_key( (string) $raw['collection_method'] ) : 'send_invoice';
 		$days_until_due       = ! empty( $raw['days_until_due'] ) ? absint( $raw['days_until_due'] ) : 30;
-		$metadata             = ! empty( $raw['metadata'] ) && is_array( $raw['metadata'] ) ? $raw['metadata'] : array();
-		$billing_start_date   = ! empty( $metadata['ajcore_billing_start_date'] ) ? sanitize_text_field( (string) $metadata['ajcore_billing_start_date'] ) : '';
+		$billing_start_date   = ! empty( $raw['billing_cycle_anchor'] ) && is_numeric( $raw['billing_cycle_anchor'] ) ? $this->format_portal_subscription_date_input_value( (int) $raw['billing_cycle_anchor'] ) : '';
 		$products             = $this->api_get_ops_subscription_products();
 		$product_price_ids    = array_map(
 			function ( $product ) {
