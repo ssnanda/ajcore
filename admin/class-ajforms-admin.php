@@ -10270,8 +10270,8 @@ class AJForms_Admin {
 			}
 
 			$pdb            = $this->get_pdb();
-			$customer_table = $pdb->prefix . 'aj_portal_stripe_customers';
-			if ( $this->table_exists( $pdb, $customer_table ) ) {
+			$customer_table = $this->get_portal_stripe_customers_table();
+			if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $customer_table ) ) === $customer_table ) {
 				$cols = $pdb->get_col( "SHOW COLUMNS FROM `{$customer_table}` LIKE 'description'" );
 				if ( empty( $cols ) ) {
 					$pdb->query( "ALTER TABLE `{$customer_table}` ADD COLUMN `description` varchar(500) NOT NULL DEFAULT '' AFTER `phone`" );
