@@ -7380,7 +7380,8 @@ class AJForms_Admin {
 		}
 
 		if ( $billing_start_ts > 0 ) {
-			$body['trial_end'] = $billing_start_ts;
+			$body['billing_cycle_anchor'] = $billing_start_ts;
+			$body['proration_behavior']   = 'none';
 			$body['metadata[ajcore_billing_start_date]'] = $billing_start_date;
 		} elseif ( $trial_days > 0 ) {
 			$body['trial_period_days'] = $trial_days;
