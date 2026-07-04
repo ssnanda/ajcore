@@ -15162,9 +15162,10 @@ class AJForms_Admin {
 			.ajcore-customer-edit-grid label{font-weight:600;color:#50575e}
 			.ajcore-customer-edit-grid .regular-text{width:100%;max-width:420px}
 			.ajcore-customer-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
-			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(240px,1fr) 90px 170px 120px 130px 130px 140px 120px auto;gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
+			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(220px,2fr) repeat(auto-fit,minmax(110px,1fr));gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
 			.ajcore-subscription-form label{display:block;font-weight:600;color:#50575e}
 			.ajcore-subscription-form select,.ajcore-subscription-form input{width:100%;margin-top:4px}
+			.ajcore-subscription-form button[type="submit"]{justify-self:end;min-width:150px}
 			.ajcore-subscription-form[data-collection-method="charge_automatically"] .ajcore-subscription-due-days{display:none}
 			.ajcore-subscription-form[data-end-mode="forever"] .ajcore-subscription-end-date-custom{display:none}
 			.ajcore-subscription-actions{min-width:320px}
