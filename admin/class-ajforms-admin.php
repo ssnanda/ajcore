@@ -10731,7 +10731,7 @@ class AJForms_Admin {
 					'days_until_due'    => isset( $_POST['subscription_days_until_due'] ) ? absint( wp_unslash( $_POST['subscription_days_until_due'] ) ) : 30,
 					'trial_days'        => isset( $_POST['subscription_trial_days'] ) ? absint( wp_unslash( $_POST['subscription_trial_days'] ) ) : 0,
 					'service_start_date' => isset( $_POST['subscription_service_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_service_start_date'] ) ) : '',
-					'service_end_date'  => isset( $_POST['subscription_service_end_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_service_end_date'] ) ) : '',
+					'service_end_date'  => isset( $_POST['subscription_service_end_mode'], $_POST['subscription_service_end_date'] ) && 'custom' === sanitize_key( wp_unslash( $_POST['subscription_service_end_mode'] ) ) ? sanitize_text_field( wp_unslash( $_POST['subscription_service_end_date'] ) ) : '',
 					'billing_start_date' => isset( $_POST['subscription_billing_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_billing_start_date'] ) ) : '',
 				)
 			);
@@ -15166,6 +15166,7 @@ class AJForms_Admin {
 			.ajcore-subscription-form label{display:block;font-weight:600;color:#50575e}
 			.ajcore-subscription-form select,.ajcore-subscription-form input{width:100%;margin-top:4px}
 			.ajcore-subscription-form[data-collection-method="charge_automatically"] .ajcore-subscription-due-days{display:none}
+			.ajcore-subscription-form[data-end-mode="forever"] .ajcore-subscription-end-date-custom{display:none}
 			.ajcore-subscription-actions{min-width:320px}
 			.ajcore-subscription-actions details{margin:0 0 8px}
 			.ajcore-subscription-actions summary{cursor:pointer;font-weight:600}
@@ -15327,7 +15328,7 @@ class AJForms_Admin {
 				<?php if ( empty( $subscription_products ) ) : ?>
 					<p class="description"><?php esc_html_e( 'No active recurring Stripe prices are available. Sync products from Stripe first.', 'ajforms' ); ?></p>
 				<?php else : ?>
-					<form method="post" class="ajcore-subscription-form" data-collection-method="send_invoice">
+					<form method="post" class="ajcore-subscription-form" data-collection-method="send_invoice" data-end-mode="forever">
 						<?php wp_nonce_field( 'ajcore_customer_subscription_' . $customer->stripe_customer_id, 'ajcore_customer_subscription_nonce' ); ?>
 						<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
 						<label>
@@ -15370,8 +15371,15 @@ class AJForms_Admin {
 							<input type="date" name="subscription_service_start_date" value="<?php echo esc_attr( wp_date( 'Y-m-d' ) ); ?>">
 						</label>
 						<label>
+							<?php esc_html_e( 'End', 'ajforms' ); ?>
+							<select name="subscription_service_end_mode" class="ajcore-subscription-end-mode">
+								<option value="forever" selected><?php esc_html_e( 'Forever', 'ajforms' ); ?></option>
+								<option value="custom"><?php esc_html_e( 'Custom date', 'ajforms' ); ?></option>
+							</select>
+						</label>
+						<label class="ajcore-subscription-end-date-custom">
 							<?php esc_html_e( 'End date', 'ajforms' ); ?>
-							<input type="date" name="subscription_service_end_date" placeholder="<?php esc_attr_e( 'Forever', 'ajforms' ); ?>">
+							<input type="date" name="subscription_service_end_date" disabled>
 						</label>
 						<label>
 							<?php esc_html_e( 'Bill starting', 'ajforms' ); ?>
@@ -15390,7 +15398,9 @@ class AJForms_Admin {
 						forms.forEach(function(form) {
 							var collection = form.querySelector('.ajcore-subscription-collection-method');
 							var dueDays = form.querySelector('input[name="subscription_days_until_due"]');
-							if (!collection || !dueDays) {
+							var endMode = form.querySelector('.ajcore-subscription-end-mode');
+							var endDate = form.querySelector('input[name="subscription_service_end_date"]');
+							if (!collection || !dueDays || !endMode || !endDate) {
 								return;
 							}
 							var syncDueDays = function() {
@@ -15398,8 +15408,18 @@ class AJForms_Admin {
 								form.setAttribute('data-collection-method', method);
 								dueDays.disabled = method !== 'send_invoice';
 							};
+							var syncEndDate = function() {
+								var mode = endMode.value || 'forever';
+								form.setAttribute('data-end-mode', mode);
+								endDate.disabled = mode !== 'custom';
+								if ('custom' !== mode) {
+									endDate.value = '';
+								}
+							};
 							collection.addEventListener('change', syncDueDays);
+							endMode.addEventListener('change', syncEndDate);
 							syncDueDays();
+							syncEndDate();
 						});
 					})();
 					</script>
