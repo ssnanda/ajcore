@@ -1461,20 +1461,31 @@ class AJForms_Admin {
 			);
 		}
 
+		$pdb = $this->get_pdb();
 		$where = '1=1';
 		$params = array();
 		$customer_ids = array_values( array_filter( array_map( 'sanitize_text_field', (array) $customer_ids ) ) );
 		if ( ! empty( $customer_ids ) ) {
-			$where = 'c.stripe_customer_id IN (' . implode( ',', array_fill( 0, count( $customer_ids ), '%s' ) ) . ')';
+			$where = 'stripe_customer_id IN (' . implode( ',', array_fill( 0, count( $customer_ids ), '%s' ) ) . ')';
 			$params = $customer_ids;
 		}
 
-		$sql = "SELECT c.*, m.id AS mapping_id, m.user_id, m.customer_email AS mapped_email, m.portal_user_email, m.site_uuid AS mapping_site_uuid
-			FROM {$this->get_portal_stripe_customers_table()} c
-			LEFT JOIN {$this->get_portal_user_mappings_table()} m ON m.stripe_customer_id = c.stripe_customer_id
-			WHERE {$where}
-			ORDER BY c.id ASC";
-		$customers = ! empty( $params ) ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
+		// Fetch customers from shared DB, mappings from local DB, merge in PHP.
+		$sql = "SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE {$where} ORDER BY id ASC";
+		$customers = ! empty( $params ) ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
+
+		$mappings = array();
+		foreach ( (array) $wpdb->get_results( "SELECT * FROM {$this->get_portal_user_mappings_table()}" ) as $mapping_row ) {
+			$mappings[ $mapping_row->stripe_customer_id ] = $mapping_row;
+		}
+		foreach ( (array) $customers as $customer_row ) {
+			$m = isset( $mappings[ $customer_row->stripe_customer_id ] ) ? $mappings[ $customer_row->stripe_customer_id ] : null;
+			$customer_row->mapping_id        = $m ? $m->id : null;
+			$customer_row->user_id           = $m ? $m->user_id : null;
+			$customer_row->mapped_email      = $m ? $m->customer_email : null;
+			$customer_row->portal_user_email = $m ? $m->portal_user_email : null;
+			$customer_row->mapping_site_uuid = $m ? $m->site_uuid : null;
+		}
 
 		$stats = array( 'cleared' => 0, 'relinked' => 0, 'roles' => 0, 'skipped' => 0 );
 		foreach ( (array) $customers as $customer ) {

@@ -3203,6 +3203,11 @@ class AJCore_REST_API {
 		$customer       = null;
 
 		if ( 'enable_repair' === $action ) {
+			// Ensure the WP user + mapping exist first; repair alone only relinks existing users.
+			$enabled = AJForms_Admin::$instance->enable_stripe_customer_as_portal_user( $stripe_customer_id );
+			if ( is_wp_error( $enabled ) ) {
+				return new WP_Error( 'action_failed', $enabled->get_error_message(), array( 'status' => 400 ) );
+			}
 			$stats = AJForms_Admin::$instance->repair_portal_user_links_and_roles( true, true, true, array( $stripe_customer_id ) );
 			return rest_ensure_response( array( 'success' => true, 'stats' => $stats ) );
 		}
@@ -3215,7 +3220,7 @@ class AJCore_REST_API {
 			return new WP_Error( 'customer_not_found', 'Customer not found.', array( 'status' => 404 ) );
 		}
 
-		$mapping_table   = $wpdb->prefix . 'aj_portal_user_mappings';
+		$mapping_table   = $wpdb->prefix . 'aj_auth_user_mappings';
 		$mapping         = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$mapping_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ) );
 		$customer->user_id           = $mapping ? $mapping->user_id : null;
 		$customer->portal_user_email = $mapping ? $mapping->portal_user_email : null;
