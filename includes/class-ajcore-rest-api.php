@@ -245,6 +245,7 @@ class AJCore_REST_API {
 						'account_label_2'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 						'automation_enabled'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 						'automation_enabled_at' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+						'automation_staff_notify_number' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 						'automation_rules'     => array( 'required' => false ),
 						'automation_logs'      => array( 'required' => false ),
 					),
@@ -3628,6 +3629,7 @@ class AJCore_REST_API {
 			'automation_enabled_at'              => (string) get_option( 'ajcore_ajphone_automation_enabled_at', '' ),
 			'automation_default_cooldown_minutes' => (int) get_option( 'ajcore_ajphone_automation_default_cooldown_minutes', 15 ),
 			'automation_bypass_staff_review'      => (bool) get_option( 'ajcore_ajphone_automation_bypass_staff_review', false ),
+			'automation_staff_notify_number'      => (string) get_option( 'ajcore_ajphone_automation_staff_notify_number', '' ),
 			'automation_rules'                   => is_array( $automation_rules ) ? $automation_rules : array(),
 			'automation_logs'                    => is_array( $automation_logs ) ? $automation_logs : array(),
 			'automation_rules_source'            => $rules_source,
@@ -3712,6 +3714,9 @@ class AJCore_REST_API {
 		$bypass_review = $request->get_param( 'automation_bypass_staff_review' );
 		if ( null !== $bypass_review ) {
 			update_option( 'ajcore_ajphone_automation_bypass_staff_review', in_array( (string) $bypass_review, array( '1', 'true', 'yes', 'on' ), true ), false );
+		}
+		if ( $request->has_param( 'automation_staff_notify_number' ) ) {
+			update_option( 'ajcore_ajphone_automation_staff_notify_number', sanitize_text_field( (string) $request->get_param( 'automation_staff_notify_number' ) ), false );
 		}
 
 		$lead_auto_enabled = $request->get_param( 'lead_auto_outreach_enabled' );
