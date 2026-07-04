@@ -98,6 +98,23 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/subscriptions',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_create_customer_subscription' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'price_id'          => array( 'required' => true,  'sanitize_callback' => 'sanitize_text_field' ),
+					'quantity'          => array( 'required' => false, 'sanitize_callback' => 'absint' ),
+					'collection_method' => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+					'days_until_due'    => array( 'required' => false, 'sanitize_callback' => 'absint' ),
+					'trial_days'        => array( 'required' => false, 'sanitize_callback' => 'absint' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/sync',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -432,6 +449,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/summary', 'auth' => 'Admin', 'purpose' => 'Counts for customers, products, subscriptions, ledger, tasks, service requests and sync logs.', 'app' => 'OPS dashboard' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers', 'auth' => 'Admin', 'purpose' => 'Customer list with portal status and Stripe customer references.', 'app' => 'OPS customers' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers/{stripe_customer_id}', 'auth' => 'Admin', 'purpose' => 'Single customer profile with subscriptions, ledger, service requests and tasks.', 'app' => 'OPS customer view' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/customers/{stripe_customer_id}/subscriptions', 'auth' => 'Admin', 'purpose' => 'Create a Stripe subscription for a customer from a synced recurring price.', 'app' => 'OPS customer view' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/products', 'auth' => 'Admin', 'purpose' => 'Synced Stripe/product catalog rows for product management.', 'app' => 'OPS catalog' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/subscriptions', 'auth' => 'Admin', 'purpose' => 'Subscription list for services and renewals.', 'app' => 'OPS services' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/ledger', 'auth' => 'Admin', 'purpose' => 'Billing ledger entries.', 'app' => 'OPS billing' ),
@@ -732,6 +750,34 @@ class AJCore_REST_API {
 
 	public function get_ops_subscriptions( WP_REST_Request $request ) {
 		return rest_ensure_response( array( 'subscriptions' => $this->select_rows( $this->portal_table( 'aj_portal_stripe_subscriptions' ), array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'livemode', 'synced_at' ), $request, array( 'stripe_subscription_id', 'stripe_customer_id', 'status' ), 'synced_at DESC, id DESC' ) ) );
+	}
+
+	public function ops_create_customer_subscription( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'ajcore_admin_unavailable', __( 'AJCore admin services are unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		$admin = new AJForms_Admin();
+		if ( ! method_exists( $admin, 'api_create_ops_customer_subscription' ) ) {
+			return new WP_Error( 'ajcore_subscription_unavailable', __( 'Subscription creation is unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		$result = $admin->api_create_ops_customer_subscription(
+			sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) ),
+			array(
+				'price_id'          => sanitize_text_field( (string) $request->get_param( 'price_id' ) ),
+				'quantity'          => absint( $request->get_param( 'quantity' ) ),
+				'collection_method' => sanitize_key( (string) $request->get_param( 'collection_method' ) ),
+				'days_until_due'    => absint( $request->get_param( 'days_until_due' ) ),
+				'trial_days'        => absint( $request->get_param( 'trial_days' ) ),
+			)
+		);
+
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		return rest_ensure_response( $result );
 	}
 
 	public function get_ops_ledger( WP_REST_Request $request ) {

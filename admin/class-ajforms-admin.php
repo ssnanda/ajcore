@@ -7300,6 +7300,134 @@ class AJForms_Admin {
 		);
 	}
 
+	public function api_get_ops_subscription_products() {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_stripe_products_table();
+
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return array();
+		}
+
+		return (array) $pdb->get_results(
+			"SELECT stripe_product_id, stripe_price_id, name, price_amount, currency, recurring_interval, active, livemode FROM {$table} WHERE active = 1 AND stripe_price_id <> '' AND recurring_interval <> '' ORDER BY sort_order ASC, name ASC, id DESC"
+		);
+	}
+
+	public function api_create_ops_customer_subscription( $stripe_customer_id, $args = array() ) {
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$price_id           = ! empty( $args['price_id'] ) ? sanitize_text_field( (string) $args['price_id'] ) : '';
+		$quantity           = ! empty( $args['quantity'] ) ? max( 1, absint( $args['quantity'] ) ) : 1;
+		$collection_method  = ! empty( $args['collection_method'] ) ? sanitize_key( (string) $args['collection_method'] ) : 'charge_automatically';
+		$days_until_due     = ! empty( $args['days_until_due'] ) ? max( 1, absint( $args['days_until_due'] ) ) : 30;
+		$trial_days         = ! empty( $args['trial_days'] ) ? absint( $args['trial_days'] ) : 0;
+
+		if ( '' === $stripe_customer_id || 0 !== strpos( $stripe_customer_id, 'cus_' ) ) {
+			return new WP_Error( 'invalid_customer', __( 'A valid Stripe customer is required.', 'ajforms' ) );
+		}
+
+		if ( '' === $price_id ) {
+			return new WP_Error( 'invalid_price', __( 'Select a recurring Stripe price.', 'ajforms' ) );
+		}
+
+		if ( ! in_array( $collection_method, array( 'charge_automatically', 'send_invoice' ), true ) ) {
+			$collection_method = 'charge_automatically';
+		}
+
+		$pdb           = $this->get_pdb();
+		$product_table = $this->get_portal_stripe_products_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $product_table ) ) !== $product_table ) {
+			return new WP_Error( 'products_unavailable', __( 'Synced Stripe products are not available.', 'ajforms' ) );
+		}
+		$product       = $pdb->get_row(
+			$pdb->prepare(
+				"SELECT * FROM {$product_table} WHERE stripe_price_id = %s AND active = 1 AND recurring_interval <> '' LIMIT 1",
+				$price_id
+			)
+		);
+
+		if ( ! $product ) {
+			return new WP_Error( 'invalid_price', __( 'That recurring Stripe price is not available in the synced product cache.', 'ajforms' ) );
+		}
+
+		$secret_key = $this->get_stripe_secret_key_for_portal();
+		if ( '' === $secret_key ) {
+			return new WP_Error( 'stripe_not_configured', __( 'Stripe is not configured.', 'ajforms' ) );
+		}
+
+		$body = array(
+			'customer'                  => $stripe_customer_id,
+			'items[0][price]'          => $price_id,
+			'items[0][quantity]'       => $quantity,
+			'collection_method'        => $collection_method,
+			'metadata[created_by]'     => 'ajcore_ops',
+			'metadata[stripe_price_id]' => $price_id,
+			'expand[0]'                => 'items.data.price.product',
+		);
+
+		if ( 'send_invoice' === $collection_method ) {
+			$body['days_until_due'] = $days_until_due;
+		} else {
+			$body['payment_behavior'] = 'allow_incomplete';
+		}
+
+		if ( $trial_days > 0 ) {
+			$body['trial_period_days'] = $trial_days;
+		}
+
+		$subscription = $this->stripe_api_request( 'subscriptions', $secret_key, $body );
+		if ( is_wp_error( $subscription ) ) {
+			return $subscription;
+		}
+
+		$this->upsert_portal_subscription_cache_row( $subscription, $stripe_customer_id );
+
+		return array(
+			'success'         => true,
+			'subscription_id' => ! empty( $subscription['id'] ) ? sanitize_text_field( (string) $subscription['id'] ) : '',
+			'status'          => ! empty( $subscription['status'] ) ? sanitize_key( (string) $subscription['status'] ) : '',
+		);
+	}
+
+	private function upsert_portal_subscription_cache_row( $subscription, $fallback_customer_id = '' ) {
+		if ( ! is_array( $subscription ) || empty( $subscription['id'] ) ) {
+			return false;
+		}
+
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_stripe_subscriptions_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return false;
+		}
+
+		$items = array();
+		if ( ! empty( $subscription['items']['data'] ) && is_array( $subscription['items']['data'] ) ) {
+			$items = $subscription['items']['data'];
+		}
+
+		$current_period_end = null;
+		if ( ! empty( $subscription['current_period_end'] ) ) {
+			$current_period_end = $this->stripe_timestamp_to_mysql( $subscription['current_period_end'] );
+		}
+
+		$customer_id = ! empty( $subscription['customer'] ) ? sanitize_text_field( (string) $subscription['customer'] ) : sanitize_text_field( (string) $fallback_customer_id );
+
+		return false !== $pdb->replace(
+			$table,
+			array(
+				'stripe_subscription_id' => sanitize_text_field( (string) $subscription['id'] ),
+				'stripe_customer_id'     => $customer_id,
+				'status'                 => ! empty( $subscription['status'] ) ? sanitize_key( (string) $subscription['status'] ) : '',
+				'current_period_end'     => $current_period_end,
+				'cancel_at_period_end'   => ! empty( $subscription['cancel_at_period_end'] ) ? 1 : 0,
+				'items'                  => wp_json_encode( $items ),
+				'raw_data'               => wp_json_encode( $subscription ),
+				'livemode'               => ! empty( $subscription['livemode'] ) ? 1 : 0,
+				'synced_at'              => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%d', '%s' )
+		);
+	}
+
 	private function get_portal_recurring_service_records_from_ledger( $stripe_customer_id = '', $limit = 300 ) {
 		return $this->get_portal_ledger_service_records( 'subscription', $stripe_customer_id, $limit );
 	}
@@ -10312,6 +10440,30 @@ class AJForms_Admin {
 			}
 
 			$redirect_args['portal-updated'] = 1;
+			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_customer_subscription_nonce'] ) ) {
+			check_admin_referer( 'ajcore_customer_subscription_' . $stripe_customer_id, 'ajcore_customer_subscription_nonce' );
+
+			$result = $this->api_create_ops_customer_subscription(
+				$stripe_customer_id,
+				array(
+					'price_id'          => isset( $_POST['subscription_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_price_id'] ) ) : '',
+					'quantity'          => isset( $_POST['subscription_quantity'] ) ? absint( wp_unslash( $_POST['subscription_quantity'] ) ) : 1,
+					'collection_method' => isset( $_POST['subscription_collection_method'] ) ? sanitize_key( wp_unslash( $_POST['subscription_collection_method'] ) ) : 'charge_automatically',
+					'days_until_due'    => isset( $_POST['subscription_days_until_due'] ) ? absint( wp_unslash( $_POST['subscription_days_until_due'] ) ) : 30,
+					'trial_days'        => isset( $_POST['subscription_trial_days'] ) ? absint( wp_unslash( $_POST['subscription_trial_days'] ) ) : 0,
+				)
+			);
+
+			if ( is_wp_error( $result ) ) {
+				$redirect_args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$redirect_args['subscription-created'] = ! empty( $result['subscription_id'] ) ? sanitize_text_field( $result['subscription_id'] ) : 1;
+			}
+
 			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
 			exit;
 		}
@@ -14614,6 +14766,7 @@ class AJForms_Admin {
 		$addr         = is_array( $addr ) ? $addr : array();
 		$meta_data    = ! empty( $customer->metadata ) ? ( is_array( $customer->metadata ) ? $customer->metadata : json_decode( $customer->metadata, true ) ) : array();
 		$meta_data    = is_array( $meta_data ) ? $meta_data : array();
+		$subscription_products = $this->api_get_ops_subscription_products();
 		$sync_url     = wp_nonce_url(
 			add_query_arg(
 				array(
@@ -14665,12 +14818,18 @@ class AJForms_Admin {
 			.ajcore-customer-edit-grid label{font-weight:600;color:#50575e}
 			.ajcore-customer-edit-grid .regular-text{width:100%;max-width:420px}
 			.ajcore-customer-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(240px,1fr) 90px 170px 120px 120px auto;gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
+			.ajcore-subscription-form label{display:block;font-weight:600;color:#50575e}
+			.ajcore-subscription-form select,.ajcore-subscription-form input{width:100%;margin-top:4px}
 			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}}
-			@media (max-width: 960px){.ajcore-customer-edit-grid{grid-template-columns:1fr}.ajcore-customer-edit-actions{justify-content:flex-start}}
+			@media (max-width: 960px){.ajcore-customer-edit-grid{grid-template-columns:1fr}.ajcore-customer-edit-actions{justify-content:flex-start}.ajcore-subscription-form{grid-template-columns:1fr}}
 		</style>
 
 		<?php if ( isset( $_GET['portal-updated'] ) ) : ?>
 			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Portal customer updated.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+		<?php if ( isset( $_GET['subscription-created'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Subscription created: %s', 'ajforms' ), sanitize_text_field( wp_unslash( $_GET['subscription-created'] ) ) ) ); ?></p></div>
 		<?php endif; ?>
 		<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
 			<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records for this customer.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
@@ -14805,6 +14964,54 @@ class AJForms_Admin {
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'Subscriptions', 'ajforms' ); ?></h3>
+				<?php if ( empty( $subscription_products ) ) : ?>
+					<p class="description"><?php esc_html_e( 'No active recurring Stripe prices are available. Sync products from Stripe first.', 'ajforms' ); ?></p>
+				<?php else : ?>
+					<form method="post" class="ajcore-subscription-form">
+						<?php wp_nonce_field( 'ajcore_customer_subscription_' . $customer->stripe_customer_id, 'ajcore_customer_subscription_nonce' ); ?>
+						<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+						<label>
+							<?php esc_html_e( 'Item', 'ajforms' ); ?>
+							<select name="subscription_price_id" required>
+								<option value=""><?php esc_html_e( 'Select recurring item', 'ajforms' ); ?></option>
+								<?php foreach ( $subscription_products as $product ) : ?>
+									<option value="<?php echo esc_attr( $product->stripe_price_id ); ?>">
+										<?php
+										echo esc_html(
+											sprintf(
+												'%1$s - %2$s/%3$s',
+												$product->name ? $product->name : $product->stripe_price_id,
+												$this->format_portal_money( $product->price_amount, $product->currency ),
+												$product->recurring_interval
+											)
+										);
+										?>
+									</option>
+								<?php endforeach; ?>
+							</select>
+						</label>
+						<label>
+							<?php esc_html_e( 'Qty', 'ajforms' ); ?>
+							<input type="number" name="subscription_quantity" min="1" value="1">
+						</label>
+						<label>
+							<?php esc_html_e( 'Collection', 'ajforms' ); ?>
+							<select name="subscription_collection_method">
+								<option value="charge_automatically"><?php esc_html_e( 'Auto charge', 'ajforms' ); ?></option>
+								<option value="send_invoice"><?php esc_html_e( 'Send invoice', 'ajforms' ); ?></option>
+							</select>
+						</label>
+						<label>
+							<?php esc_html_e( 'Due Days', 'ajforms' ); ?>
+							<input type="number" name="subscription_days_until_due" min="1" value="30">
+						</label>
+						<label>
+							<?php esc_html_e( 'Trial Days', 'ajforms' ); ?>
+							<input type="number" name="subscription_trial_days" min="0" value="0">
+						</label>
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Subscription', 'ajforms' ); ?></button>
+					</form>
+				<?php endif; ?>
 				<?php
 				$this->render_portal_dataset_section(
 					'active_recurring_services',
