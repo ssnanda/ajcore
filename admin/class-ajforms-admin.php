@@ -13627,7 +13627,7 @@ class AJForms_Admin {
 						<?php $entry_debit_credit = $this->get_portal_ledger_debit_credit( $entry ); ?>
 						<tr>
 							<td><?php echo esc_html( $entry->ledger_date ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $entry->ledger_date . ' UTC' ) ) : '-' ); ?></td>
-							<td><?php echo esc_html( $customer_label ); ?><br><small><?php echo esc_html( $entry->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $entry->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a></td>
+							<td><?php echo esc_html( $customer_label ); ?><br><small><?php echo esc_html( $entry->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $entry->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a></td>
 							<td><?php echo esc_html( $this->get_portal_ledger_display_description( $entry ) ); ?></td>
 							<td><code><?php echo esc_html( $this->get_portal_ledger_transaction_id( $entry ) ? $this->get_portal_ledger_transaction_id( $entry ) : '-' ); ?></code></td>
 							<td><?php echo esc_html( $entry->source_type ); ?></td>
@@ -14611,6 +14611,11 @@ class AJForms_Admin {
 		$portal_status = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' );
 		$portal_on    = 'active' === $portal_status && ! empty( $customer->enabled_portal ) && $user;
 		$display_fields = $this->get_portal_customer_display_fields();
+		$is_editing   = isset( $_GET['edit_customer'] ) && '1' === (string) wp_unslash( $_GET['edit_customer'] );
+		$addr         = ! empty( $customer->address ) ? ( is_array( $customer->address ) ? $customer->address : json_decode( $customer->address, true ) ) : array();
+		$addr         = is_array( $addr ) ? $addr : array();
+		$meta_data    = ! empty( $customer->metadata ) ? ( is_array( $customer->metadata ) ? $customer->metadata : json_decode( $customer->metadata, true ) ) : array();
+		$meta_data    = is_array( $meta_data ) ? $meta_data : array();
 		$sync_url     = wp_nonce_url(
 			add_query_arg(
 				array(
@@ -14631,6 +14636,8 @@ class AJForms_Admin {
 			.ajcore-customer-grid{display:grid;grid-template-columns:repeat(2,minmax(320px,1fr));gap:16px}
 			.ajcore-customer-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px;overflow:hidden}
 			.ajcore-customer-card h3{margin:0 0 14px;font-size:16px}
+			.ajcore-customer-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px}
+			.ajcore-customer-card-head h3{margin:0}
 			.ajcore-customer-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:0 0 16px}
 			.ajcore-customer-summary div{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:14px}
 			.ajcore-customer-summary span{display:block;color:#646970;font-weight:600}
@@ -14653,7 +14660,15 @@ class AJForms_Admin {
 			.ajcore-customer-activity{margin:0;padding:0;list-style:none}
 			.ajcore-customer-activity li{border-left:3px solid #dbeafe;padding:8px 0 8px 12px;margin:0 0 10px}
 			.ajcore-customer-quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+			.ajcore-customer-edit-form{display:none;margin-top:14px;padding-top:14px;border-top:1px solid #dcdcde}
+			.ajcore-customer-profile-card.is-editing .ajcore-customer-view{display:none}
+			.ajcore-customer-profile-card.is-editing .ajcore-customer-edit-form{display:block}
+			.ajcore-customer-edit-grid{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px 14px;align-items:center}
+			.ajcore-customer-edit-grid label{font-weight:600;color:#50575e}
+			.ajcore-customer-edit-grid .regular-text{width:100%;max-width:420px}
+			.ajcore-customer-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}}
+			@media (max-width: 960px){.ajcore-customer-edit-grid{grid-template-columns:1fr}.ajcore-customer-edit-actions{justify-content:flex-start}}
 		</style>
 
 		<?php if ( isset( $_GET['portal-updated'] ) ) : ?>
@@ -14673,7 +14688,7 @@ class AJForms_Admin {
 		<div class="ajcore-customer-head">
 			<div>
 				<p><a href="<?php echo esc_url( $back_url ); ?>">&larr; <?php esc_html_e( 'Back to Client Portal', 'ajforms' ); ?></a></p>
-				<h2><?php esc_html_e( 'Customer 360', 'ajforms' ); ?>: <?php echo esc_html( ! empty( $customer->name ) ? $customer->name : $customer->email ); ?></h2>
+				<h2><?php esc_html_e( 'Customer View', 'ajforms' ); ?>: <?php echo esc_html( ! empty( $customer->name ) ? $customer->name : $customer->email ); ?></h2>
 				<code><?php echo esc_html( $customer->stripe_customer_id ); ?></code>
 			</div>
 			<div class="ajcore-customer-actions">
@@ -14706,12 +14721,27 @@ class AJForms_Admin {
 		</div>
 
 		<div class="ajcore-customer-grid">
-			<div class="ajcore-customer-card">
-				<h3><?php esc_html_e( 'Stripe Customer Profile', 'ajforms' ); ?></h3>
-				<dl class="ajcore-customer-meta">
+			<div class="ajcore-customer-card ajcore-customer-profile-card <?php echo $is_editing ? 'is-editing' : ''; ?>">
+				<div class="ajcore-customer-card-head">
+					<h3><?php esc_html_e( 'Stripe Customer Profile', 'ajforms' ); ?></h3>
+					<button type="button" class="button ajcore-customer-edit-toggle"><?php esc_html_e( 'Edit Customer', 'ajforms' ); ?></button>
+				</div>
+				<dl class="ajcore-customer-meta ajcore-customer-view">
 					<dt><?php esc_html_e( 'Name', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->name ); ?></dd>
 					<dt><?php esc_html_e( 'Email', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->email ); ?></dd>
 					<dt><?php esc_html_e( 'Phone', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_us_phone_for_display( $customer->phone ) ); ?></dd>
+					<?php if ( ! empty( $meta_data['business_name'] ) ) : ?><dt><?php esc_html_e( 'Business Name', 'ajforms' ); ?></dt><dd><?php echo esc_html( $meta_data['business_name'] ); ?></dd><?php endif; ?>
+					<?php if ( ! empty( $meta_data['individual_name'] ) ) : ?><dt><?php esc_html_e( 'Individual Name', 'ajforms' ); ?></dt><dd><?php echo esc_html( $meta_data['individual_name'] ); ?></dd><?php endif; ?>
+					<?php if ( ! empty( $customer->description ) ) : ?><dt><?php esc_html_e( 'Description', 'ajforms' ); ?></dt><dd><?php echo esc_html( $customer->description ); ?></dd><?php endif; ?>
+					<?php if ( ! empty( $addr['line1'] ) || ! empty( $addr['city'] ) ) : ?>
+						<dt><?php esc_html_e( 'Billing Address', 'ajforms' ); ?></dt>
+						<dd>
+							<?php if ( ! empty( $addr['line1'] ) ) : ?><div><?php echo esc_html( $addr['line1'] ); ?></div><?php endif; ?>
+							<?php if ( ! empty( $addr['line2'] ) ) : ?><div><?php echo esc_html( $addr['line2'] ); ?></div><?php endif; ?>
+							<?php if ( ! empty( $addr['city'] ) || ! empty( $addr['state'] ) || ! empty( $addr['postal_code'] ) ) : ?><div><?php echo esc_html( implode( ', ', array_filter( array( $addr['city'] ?? '', $addr['state'] ?? '', $addr['postal_code'] ?? '' ) ) ) ); ?></div><?php endif; ?>
+							<?php if ( ! empty( $addr['country'] ) ) : ?><div><?php echo esc_html( $addr['country'] ); ?></div><?php endif; ?>
+						</dd>
+					<?php endif; ?>
 					<dt><?php esc_html_e( 'Mode', 'ajforms' ); ?></dt><dd><?php echo ! empty( $customer->livemode ) ? esc_html__( 'Live', 'ajforms' ) : esc_html__( 'Sandbox', 'ajforms' ); ?></dd>
 					<dt><?php esc_html_e( 'Created', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->created_at ) ); ?></dd>
 					<dt><?php esc_html_e( 'Last Synced', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></dd>
@@ -14720,34 +14750,29 @@ class AJForms_Admin {
 						<dt><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></dt><dd><?php $this->render_portal_customer_field_value( $this->get_portal_customer_display_value( $customer, $field ) ); ?></dd>
 					<?php endforeach; ?>
 				</dl>
-			</div>
-
-			<div class="ajcore-customer-card">
-				<h3><?php esc_html_e( 'Edit Customer', 'ajforms' ); ?></h3>
-				<?php
-				$addr      = ! empty( $customer->address ) ? ( is_array( $customer->address ) ? $customer->address : json_decode( $customer->address, true ) ) : array();
-				$meta_data = ! empty( $customer->metadata ) ? ( is_array( $customer->metadata ) ? $customer->metadata : json_decode( $customer->metadata, true ) ) : array();
-				?>
-				<form method="post">
+				<form method="post" class="ajcore-customer-edit-form">
 					<?php wp_nonce_field( 'ajcore_customer_stripe_edit_' . $customer->stripe_customer_id, 'ajcore_customer_stripe_edit_nonce' ); ?>
 					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
 					<input type="hidden" name="tab" value="portal-customer">
 					<input type="hidden" name="customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
-					<table class="form-table" style="margin:0">
-						<tr><th style="width:140px"><?php esc_html_e( 'Name', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="text" name="customer_name" value="<?php echo esc_attr( $customer->name ?? '' ); ?>" required class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'Email', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="email" name="customer_email" value="<?php echo esc_attr( $customer->email ?? '' ); ?>" required class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'Phone', 'ajforms' ); ?> <span style="color:red">*</span></th><td><input type="text" name="customer_phone" value="<?php echo esc_attr( $this->format_us_phone_for_display( $customer->phone ?? '' ) ); ?>" required class="regular-text" placeholder="+1 555 000-0000"></td></tr>
-						<tr><th><?php esc_html_e( 'Business Name', 'ajforms' ); ?></th><td><input type="text" name="customer_business_name" value="<?php echo esc_attr( $meta_data['business_name'] ?? '' ); ?>" class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'Individual Name', 'ajforms' ); ?></th><td><input type="text" name="customer_individual_name" value="<?php echo esc_attr( $meta_data['individual_name'] ?? '' ); ?>" class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><td><input type="text" name="customer_description" value="<?php echo esc_attr( $customer->description ?? '' ); ?>" class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'Address Line 1', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_line1" value="<?php echo esc_attr( $addr['line1'] ?? '' ); ?>" class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'Address Line 2', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_line2" value="<?php echo esc_attr( $addr['line2'] ?? '' ); ?>" class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'City', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_city" value="<?php echo esc_attr( $addr['city'] ?? '' ); ?>" class="regular-text"></td></tr>
-						<tr><th><?php esc_html_e( 'State', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_state" value="<?php echo esc_attr( $addr['state'] ?? '' ); ?>" class="regular-text" style="width:80px"></td></tr>
-						<tr><th><?php esc_html_e( 'Postal Code', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_postal" value="<?php echo esc_attr( $addr['postal_code'] ?? '' ); ?>" class="regular-text" style="width:120px"></td></tr>
-						<tr><th><?php esc_html_e( 'Country', 'ajforms' ); ?></th><td><input type="text" name="customer_addr_country" value="<?php echo esc_attr( $addr['country'] ?? '' ); ?>" class="regular-text" style="width:80px" placeholder="US"></td></tr>
-					</table>
-					<p style="margin-top:12px"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save & Update in Stripe', 'ajforms' ); ?></button></p>
+					<div class="ajcore-customer-edit-grid">
+						<label><?php esc_html_e( 'Name', 'ajforms' ); ?> <span style="color:red">*</span></label><input type="text" name="customer_name" value="<?php echo esc_attr( $customer->name ?? '' ); ?>" required class="regular-text">
+						<label><?php esc_html_e( 'Email', 'ajforms' ); ?> <span style="color:red">*</span></label><input type="email" name="customer_email" value="<?php echo esc_attr( $customer->email ?? '' ); ?>" required class="regular-text">
+						<label><?php esc_html_e( 'Phone', 'ajforms' ); ?> <span style="color:red">*</span></label><input type="text" name="customer_phone" value="<?php echo esc_attr( $this->format_us_phone_for_display( $customer->phone ?? '' ) ); ?>" required class="regular-text" placeholder="+1 555 000-0000">
+						<label><?php esc_html_e( 'Business Name', 'ajforms' ); ?></label><input type="text" name="customer_business_name" value="<?php echo esc_attr( $meta_data['business_name'] ?? '' ); ?>" class="regular-text">
+						<label><?php esc_html_e( 'Individual Name', 'ajforms' ); ?></label><input type="text" name="customer_individual_name" value="<?php echo esc_attr( $meta_data['individual_name'] ?? '' ); ?>" class="regular-text">
+						<label><?php esc_html_e( 'Description', 'ajforms' ); ?></label><input type="text" name="customer_description" value="<?php echo esc_attr( $customer->description ?? '' ); ?>" class="regular-text">
+						<label><?php esc_html_e( 'Address Line 1', 'ajforms' ); ?></label><input type="text" name="customer_addr_line1" value="<?php echo esc_attr( $addr['line1'] ?? '' ); ?>" class="regular-text">
+						<label><?php esc_html_e( 'Address Line 2', 'ajforms' ); ?></label><input type="text" name="customer_addr_line2" value="<?php echo esc_attr( $addr['line2'] ?? '' ); ?>" class="regular-text">
+						<label><?php esc_html_e( 'City', 'ajforms' ); ?></label><input type="text" name="customer_addr_city" value="<?php echo esc_attr( $addr['city'] ?? '' ); ?>" class="regular-text">
+						<label><?php esc_html_e( 'State', 'ajforms' ); ?></label><input type="text" name="customer_addr_state" value="<?php echo esc_attr( $addr['state'] ?? '' ); ?>" class="regular-text">
+						<label><?php esc_html_e( 'Postal Code', 'ajforms' ); ?></label><input type="text" name="customer_addr_postal" value="<?php echo esc_attr( $addr['postal_code'] ?? '' ); ?>" class="regular-text">
+						<label><?php esc_html_e( 'Country', 'ajforms' ); ?></label><input type="text" name="customer_addr_country" value="<?php echo esc_attr( $addr['country'] ?? '' ); ?>" class="regular-text" placeholder="US">
+					</div>
+					<div class="ajcore-customer-edit-actions">
+						<button type="button" class="button ajcore-customer-edit-cancel"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button>
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save & Update in Stripe', 'ajforms' ); ?></button>
+					</div>
 				</form>
 			</div>
 
@@ -14909,6 +14934,24 @@ class AJForms_Admin {
 			</div>
 		</div>
 		</div>
+		<script>
+		(function(){
+			var card = document.querySelector('.ajcore-customer-profile-card');
+			if (!card) return;
+			var edit = card.querySelector('.ajcore-customer-edit-toggle');
+			var cancel = card.querySelector('.ajcore-customer-edit-cancel');
+			if (edit) {
+				edit.addEventListener('click', function(){
+					card.classList.add('is-editing');
+				});
+			}
+			if (cancel) {
+				cancel.addEventListener('click', function(){
+					card.classList.remove('is-editing');
+				});
+			}
+		})();
+		</script>
 		<?php $this->render_portal_field_picker_script(); ?>
 		<?php
 	}
@@ -15663,7 +15706,7 @@ class AJForms_Admin {
 		}
 		?>
 		<div class="ajforms-settings-card ajcore-customers-panel">
-			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Stripe customer records with portal access, WordPress user links, lifecycle status, and Customer 360 shortcuts.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a></div>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Stripe customer records with portal access, WordPress user links, lifecycle status, and customer view shortcuts.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a></div>
 
 			<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled for portal access.', 'ajforms' ); ?></p></div>
@@ -15841,7 +15884,7 @@ class AJForms_Admin {
 									<td>
 										<strong><?php echo esc_html( ! empty( $customer->name ) ? $customer->name : __( 'Unnamed customer', 'ajforms' ) ); ?></strong><br>
 										<small><?php echo esc_html( sprintf( __( 'Unique: %s', 'ajforms' ), $customer_unique_key ) ); ?></small><br>
-										<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $customer->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a>
+										<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $customer->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
 									</td>
 									<td><?php echo esc_html( $customer_email ); ?></td>
 									<?php foreach ( $display_fields as $field ) : ?>
@@ -16022,7 +16065,7 @@ class AJForms_Admin {
 								<td><strong><?php echo esc_html( $item->sold_item_type_label ); ?></strong></td>
 								<td><?php echo esc_html( $item->service_name ); ?></td>
 								<td><code><?php echo esc_html( ! empty( $item->sold_item_source_id ) ? $item->sold_item_source_id : '-' ); ?></code></td>
-								<td><?php echo esc_html( $item->customer ); ?><br><small><?php echo esc_html( $item->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $item->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a></td>
+								<td><?php echo esc_html( $item->customer ); ?><br><small><?php echo esc_html( $item->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $item->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a></td>
 								<td><span class="ajcore-status-pill active"><?php echo esc_html( 'recurring' === $item->sold_item_type ? ucwords( str_replace( '_', ' ', $item->status ) ) : __( 'Paid', 'ajforms' ) ); ?></span></td>
 								<td><?php echo esc_html( ! empty( $item->amount ) ? $item->amount : $item->price ); ?></td>
 								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_period_label( $item ) ) : '-'; ?></td>
@@ -16136,7 +16179,7 @@ class AJForms_Admin {
 			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
-		<p class="description"><?php esc_html_e( 'Customer 360 opens from each customer link in Portal Users, Billing, Transactions, Requests, Tasks, and Files.', 'ajforms' ); ?></p>
+		<p class="description"><?php esc_html_e( 'Customer View opens from each customer link in Portal Users, Billing, Transactions, Requests, Tasks, and Files.', 'ajforms' ); ?></p>
 
 			<form method="post">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
@@ -16562,7 +16605,7 @@ class AJForms_Admin {
 												<?php endif; ?>
 											</details>
 										<?php else : ?>
-											<?php echo esc_html( $task->customer_name ? $task->customer_name : $task->customer_email ); ?><?php if ( ! empty( $task->stripe_customer_id ) ) : ?><br><code><?php echo esc_html( $task->stripe_customer_id ); ?></code><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $task->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Customer 360', 'ajforms' ); ?></a><?php endif; ?>
+											<?php echo esc_html( $task->customer_name ? $task->customer_name : $task->customer_email ); ?><?php if ( ! empty( $task->stripe_customer_id ) ) : ?><br><code><?php echo esc_html( $task->stripe_customer_id ); ?></code><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $task->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a><?php endif; ?>
 										<?php endif; ?>
 									</td>
 									<td><strong><?php echo esc_html( $task->title ); ?></strong><br><span class="description"><?php echo esc_html( wp_trim_words( (string) $task->action_required, 18 ) ); ?></span></td>
@@ -16802,7 +16845,7 @@ class AJForms_Admin {
 												<?php if ( ! empty( $customer_links ) ) : ?>
 													<p style="margin:8px 0 0;">
 														<?php foreach ( $customer_links as $customer_link ) : ?>
-															<a href="<?php echo esc_url( $customer_link['url'] ); ?>"><?php echo esc_html( sprintf( __( 'Customer 360: %s', 'ajforms' ), $customer_link['label'] ) ); ?></a><br>
+															<a href="<?php echo esc_url( $customer_link['url'] ); ?>"><?php echo esc_html( sprintf( __( 'Customer View: %s', 'ajforms' ), $customer_link['label'] ) ); ?></a><br>
 														<?php endforeach; ?>
 													</p>
 												<?php endif; ?>
