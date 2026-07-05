@@ -4766,8 +4766,9 @@ class AJForms_Admin {
 		if ( $user || ! empty( $customer->email ) ) {
 			$user_id = $user ? (int) $user->ID : 0;
 			$email   = ! empty( $customer->email ) ? strtolower( sanitize_email( $customer->email ) ) : '';
-			$files   = $pdb->get_results(
-				$pdb->prepare(
+			// Files and their assignments are always local tables — query on $wpdb, not the shared portal DB.
+			$files   = $wpdb->get_results(
+				$wpdb->prepare(
 					"SELECT DISTINCT f.* FROM {$this->get_portal_files_table()} f INNER JOIN {$this->get_portal_file_users_table()} fu ON fu.file_id = f.id WHERE fu.user_id = %d OR LOWER(fu.user_email) = %s ORDER BY f.created_at DESC",
 					$user_id,
 					$email
@@ -10556,6 +10557,131 @@ class AJForms_Admin {
 		exit;
 	}
 
+	/**
+	 * Uploads one or more files and shares them with the given customer.
+	 * $files takes a PHP multi-file $_FILES entry (name/type/tmp_name/error/size arrays or scalars).
+	 * Returns the number of files created, or WP_Error when nothing could be uploaded.
+	 */
+	public function upload_files_for_portal_customer( $stripe_customer_id, $files, $category = '' ) {
+		global $wpdb;
+
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$customer           = $this->get_pdb()->get_row(
+			$this->get_pdb()->prepare(
+				"SELECT stripe_customer_id, email, name FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+		if ( ! $customer ) {
+			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajforms' ) );
+		}
+		$email = ! empty( $customer->email ) ? strtolower( sanitize_email( $customer->email ) ) : '';
+		if ( '' === $email ) {
+			return new WP_Error( 'missing_email', __( 'Customer has no email to share files with.', 'ajforms' ) );
+		}
+		$user_id = (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT user_id FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+
+		if ( empty( $files ) || ! is_array( $files ) || ! isset( $files['name'] ) ) {
+			return new WP_Error( 'no_files', __( 'No files were uploaded.', 'ajforms' ) );
+		}
+
+		// Normalize single-file entries to the multi-file array shape.
+		$names = is_array( $files['name'] ) ? $files['name'] : array( $files['name'] );
+		$count = count( $names );
+		$get   = function ( $key, $index ) use ( $files ) {
+			return is_array( $files[ $key ] ) ? ( isset( $files[ $key ][ $index ] ) ? $files[ $key ][ $index ] : null ) : $files[ $key ];
+		};
+
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+		require_once ABSPATH . 'wp-admin/includes/media.php';
+
+		$category    = sanitize_text_field( (string) $category );
+		$files_table = $this->get_portal_files_table();
+		$users_table = $this->get_portal_file_users_table();
+		$created     = 0;
+		$last_error  = '';
+
+		for ( $i = 0; $i < $count; $i++ ) {
+			$name = (string) $get( 'name', $i );
+			if ( '' === $name || UPLOAD_ERR_OK !== (int) $get( 'error', $i ) ) {
+				continue;
+			}
+			$single = array(
+				'name'     => $name,
+				'type'     => (string) $get( 'type', $i ),
+				'tmp_name' => (string) $get( 'tmp_name', $i ),
+				'error'    => (int) $get( 'error', $i ),
+				'size'     => (int) $get( 'size', $i ),
+			);
+
+			$uploaded = wp_handle_upload( $single, array( 'test_form' => false ) );
+			if ( isset( $uploaded['error'] ) ) {
+				$last_error = (string) $uploaded['error'];
+				continue;
+			}
+
+			$title         = sanitize_text_field( preg_replace( '/\.[^.]+$/', '', $name ) );
+			$attachment_id = wp_insert_attachment(
+				array(
+					'post_title'     => $title,
+					'post_content'   => '',
+					'post_status'    => 'inherit',
+					'post_mime_type' => $uploaded['type'],
+				),
+				$uploaded['file'],
+				0,
+				true
+			);
+			if ( is_wp_error( $attachment_id ) ) {
+				$last_error = $attachment_id->get_error_message();
+				continue;
+			}
+			wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $uploaded['file'] ) );
+
+			$wpdb->insert(
+				$files_table,
+				array(
+					'attachment_id' => (int) $attachment_id,
+					'title'         => $title,
+					'category'      => $category,
+					'description'   => '',
+					'created_at'    => current_time( 'mysql' ),
+					'updated_at'    => current_time( 'mysql' ),
+				),
+				array( '%d', '%s', '%s', '%s', '%s', '%s' )
+			);
+			$file_id = (int) $wpdb->insert_id;
+			if ( ! $file_id ) {
+				$last_error = __( 'Could not create the file record.', 'ajforms' );
+				continue;
+			}
+
+			$wpdb->insert(
+				$users_table,
+				array(
+					'file_id'    => $file_id,
+					'user_id'    => $user_id,
+					'user_email' => $email,
+					'created_at' => current_time( 'mysql' ),
+				),
+				array( '%d', '%d', '%s', '%s' )
+			);
+			$created++;
+		}
+
+		if ( 0 === $created ) {
+			return new WP_Error( 'upload_failed', '' !== $last_error ? $last_error : __( 'No files could be uploaded.', 'ajforms' ) );
+		}
+
+		return $created;
+	}
+
 	private function handle_portal_customer_detail_actions() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -10613,6 +10739,25 @@ class AJForms_Admin {
 				$redirect_args['portal-error'] = rawurlencode( $result->get_error_message() );
 			} else {
 				$redirect_args['portal-updated'] = 1;
+			}
+
+			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_customer_files_nonce'] ) ) {
+			check_admin_referer( 'ajcore_customer_files_' . $stripe_customer_id, 'ajcore_customer_files_nonce' );
+
+			$result = $this->upload_files_for_portal_customer(
+				$stripe_customer_id,
+				isset( $_FILES['ajcore_customer_files'] ) ? $_FILES['ajcore_customer_files'] : array(), // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+				isset( $_POST['customer_file_category'] ) ? sanitize_text_field( wp_unslash( $_POST['customer_file_category'] ) ) : ''
+			);
+
+			if ( is_wp_error( $result ) ) {
+				$redirect_args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$redirect_args['portal-files-added'] = absint( $result );
 			}
 
 			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
@@ -15481,6 +15626,9 @@ class AJForms_Admin {
 		<?php if ( isset( $_GET['portal-fields-updated'] ) ) : ?>
 			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Display fields saved.', 'ajforms' ); ?></p></div>
 		<?php endif; ?>
+		<?php if ( isset( $_GET['portal-files-added'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( '%d file(s) uploaded and shared with this customer.', 'ajforms' ), absint( wp_unslash( $_GET['portal-files-added'] ) ) ) ); ?></p></div>
+		<?php endif; ?>
 
 		<div class="ajcore-customer-360">
 		<div class="ajcore-customer-head">
@@ -15809,6 +15957,14 @@ class AJForms_Admin {
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'Linked Files', 'ajforms' ); ?></h3>
+				<form method="post" enctype="multipart/form-data" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px;padding:12px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:8px;">
+					<?php wp_nonce_field( 'ajcore_customer_files_' . $customer->stripe_customer_id, 'ajcore_customer_files_nonce' ); ?>
+					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+					<input type="file" name="ajcore_customer_files[]" multiple required>
+					<input type="text" name="customer_file_category" placeholder="<?php esc_attr_e( 'Category (optional)', 'ajforms' ); ?>">
+					<button type="submit" class="button button-primary"><?php esc_html_e( 'Upload & Share With Customer', 'ajforms' ); ?></button>
+					<span class="description"><?php esc_html_e( 'Select one or more files — they are shared with this customer automatically.', 'ajforms' ); ?></span>
+				</form>
 				<?php $this->render_portal_customer_files_table( $detail['files'] ); ?>
 			</div>
 
@@ -16370,14 +16526,23 @@ class AJForms_Admin {
 					<th><?php esc_html_e( 'Title', 'ajforms' ); ?></th>
 					<th><?php esc_html_e( 'Category', 'ajforms' ); ?></th>
 					<th><?php esc_html_e( 'Created', 'ajforms' ); ?></th>
+					<th><?php esc_html_e( 'File', 'ajforms' ); ?></th>
 				</tr>
 			</thead>
 			<tbody>
 				<?php foreach ( $files as $file ) : ?>
+					<?php $file_url = ! empty( $file->attachment_id ) ? wp_get_attachment_url( (int) $file->attachment_id ) : ''; ?>
 					<tr>
 						<td><?php echo esc_html( $file->title ); ?></td>
 						<td><?php echo esc_html( $file->category ); ?></td>
 						<td><?php echo esc_html( $this->format_portal_date( $file->created_at ) ); ?></td>
+						<td>
+							<?php if ( $file_url ) : ?>
+								<a href="<?php echo esc_url( $file_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open', 'ajforms' ); ?></a>
+							<?php else : ?>
+								&mdash;
+							<?php endif; ?>
+						</td>
 					</tr>
 				<?php endforeach; ?>
 			</tbody>
