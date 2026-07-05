@@ -1892,10 +1892,18 @@ class AJForms_Admin {
 					),
 				)
 			);
-		} elseif ( $existing && in_array( $this->normalize_portal_customer_status( $existing->portal_status ), array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ) {
+		} elseif ( $existing ) {
 			unset( $data['enabled_portal'], $data['portal_status'] );
 			$formats = array_slice( $formats, 0, count( $data ) );
-			$preserved_status = $this->normalize_portal_customer_status( $existing->portal_status );
+			$existing_status = sanitize_key( (string) $existing->portal_status );
+			if ( 'without_login' === $existing_status ) {
+				$existing_status = 'without_portal_login';
+			}
+			// Legacy rows hold '0' / '1' / '' in portal_status — derive from enabled_portal instead of
+			// letting normalize collapse them to 'disabled', which would disable enabled customers on sync.
+			$preserved_status = in_array( $existing_status, array( 'active', 'disabled', 'archived', 'without_portal_login' ), true )
+				? $existing_status
+				: ( ! empty( $existing->enabled_portal ) ? 'active' : 'disabled' );
 			$this->set_portal_customer_status( $data['stripe_customer_id'], $preserved_status, 'sync_preserve_status', 'stripe_sync' );
 			$this->record_portal_sync_item(
 				'preserved',

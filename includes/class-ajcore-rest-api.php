@@ -3433,6 +3433,17 @@ class AJCore_REST_API {
 		if ( is_array( $row ) && array_key_exists( 'phone', $row ) ) {
 			$row['phone'] = $this->format_us_phone_for_display( $row['phone'] );
 		}
+		if ( is_array( $row ) && array_key_exists( 'portal_status', $row ) ) {
+			$status = sanitize_key( (string) $row['portal_status'] );
+			if ( 'without_login' === $status ) {
+				$status = 'without_portal_login';
+			}
+			if ( ! in_array( $status, array( 'active', 'disabled', 'archived', 'without_portal_login' ), true ) ) {
+				// Legacy rows hold '0' / '1' / '' here — derive from enabled_portal like wp-admin does.
+				$status = ! empty( $row['enabled_portal'] ) ? 'active' : 'disabled';
+			}
+			$row['portal_status'] = $status;
+		}
 		return $row;
 	}
 

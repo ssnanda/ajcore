@@ -787,10 +787,25 @@ class AJForms_Activator {
 			}
 		}
 
-		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'active' WHERE enabled_portal = 1 AND (portal_status = '' OR portal_status IS NULL)" );
-		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'disabled' WHERE enabled_portal = 0 AND (portal_status = '' OR portal_status IS NULL)" );
+		// Legacy rows may hold '0' / '1' (old enabled_portal values) in portal_status — treat them as unset too.
+		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'active' WHERE enabled_portal = 1 AND (portal_status IN ('', '0', '1') OR portal_status IS NULL)" );
+		$wpdb->query( "UPDATE $table_stripe_customers SET portal_status = 'disabled' WHERE enabled_portal = 0 AND (portal_status IN ('', '0', '1') OR portal_status IS NULL)" );
 		$wpdb->query( "UPDATE $table_stripe_customers SET enabled_portal = 1 WHERE portal_status = 'active'" );
 		$wpdb->query( "UPDATE $table_stripe_customers SET enabled_portal = 0 WHERE portal_status IN ('disabled','archived','without_portal_login')" );
+
+		// In shared DB mode the live customers table is in the portal DB — apply the same normalization there.
+		if ( function_exists( 'ajcore_get_portal_db' ) ) {
+			$pdb = ajcore_get_portal_db();
+			if ( $pdb !== $wpdb ) {
+				$shared_customers = $pdb->prefix . 'aj_portal_stripe_customers';
+				if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $shared_customers ) ) === $shared_customers ) {
+					$pdb->query( "UPDATE $shared_customers SET portal_status = 'active' WHERE enabled_portal = 1 AND (portal_status IN ('', '0', '1') OR portal_status IS NULL)" );
+					$pdb->query( "UPDATE $shared_customers SET portal_status = 'disabled' WHERE enabled_portal = 0 AND (portal_status IN ('', '0', '1') OR portal_status IS NULL)" );
+					$pdb->query( "UPDATE $shared_customers SET enabled_portal = 1 WHERE portal_status = 'active'" );
+					$pdb->query( "UPDATE $shared_customers SET enabled_portal = 0 WHERE portal_status IN ('disabled','archived','without_portal_login')" );
+				}
+			}
+		}
 
 		$now = current_time( 'mysql' );
 		$wpdb->query(
@@ -906,7 +921,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '15', false );
+		update_option( 'ajforms_portal_schema_version', '16', false );
 	}
 
 	/**
