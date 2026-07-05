@@ -2755,8 +2755,24 @@ class AJForms_Admin {
 			$session = $this->enrich_checkout_session_with_line_items( $session, $secret_key );
 			$customer_id = $this->get_payment_customer_id( $session );
 			if ( ! $this->is_real_stripe_customer_id( $customer_id ) ) {
-				$this->record_portal_sync_item( 'skipped', 'checkout_session', $session['id'], 'skipped', __( 'Skipped guest checkout session because portal transaction sync now imports Stripe Customer records only.', 'ajforms' ), $session );
-				continue;
+				// Stripe leaves session.customer empty on payment-mode guest checkouts even when the payer
+				// is a known customer — resolve by the checkout email before treating it as a guest.
+				$session_email = ! empty( $session['customer_details']['email'] ) ? sanitize_email( (string) $session['customer_details']['email'] ) : '';
+				$resolved_customer_id = '';
+				if ( is_email( $session_email ) ) {
+					$resolved_customer_id = (string) $this->get_pdb()->get_var(
+						$this->get_pdb()->prepare(
+							"SELECT stripe_customer_id FROM {$this->get_portal_stripe_customers_table()} WHERE email = %s ORDER BY id ASC LIMIT 1",
+							$session_email
+						)
+					);
+				}
+				if ( $this->is_real_stripe_customer_id( $resolved_customer_id ) ) {
+					$customer_id = sanitize_text_field( $resolved_customer_id );
+				} else {
+					$this->record_portal_sync_item( 'skipped', 'checkout_session', $session['id'], 'skipped', __( 'Skipped guest checkout session because portal transaction sync now imports Stripe Customer records only.', 'ajforms' ), $session );
+					continue;
+				}
 			}
 
 			$this->update_portal_customer_checkout_custom_fields( $customer_id, $session );
@@ -12140,6 +12156,99 @@ class AJForms_Admin {
 		return $options;
 	}
 
+	/** Public entry point for the ops REST API — returns the workflow status options for a request. */
+	public function get_service_request_service_status_options_for_ops( $request ) {
+		return $this->get_portal_service_request_service_status_options( $request );
+	}
+
+	/**
+	 * Focused update used by the ops REST API: payment status, workflow service_status, admin notes,
+	 * and an optional history note. Mirrors the WP admin details-save side effects (ledger sync + history).
+	 */
+	public function update_service_request_from_ops( $request_id, $fields ) {
+		$pdb        = $this->get_pdb();
+		$request_id = absint( $request_id );
+		$request    = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
+		if ( ! $request ) {
+			return new WP_Error( 'not_found', __( 'Service request not found.', 'ajforms' ) );
+		}
+
+		$fields             = is_array( $fields ) ? $fields : array();
+		$old_status         = sanitize_key( (string) $request->status );
+		$old_service_status = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+
+		$status         = $old_status;
+		$service_status = $old_service_status;
+		if ( ! empty( $fields['status'] ) && isset( $this->get_portal_service_request_status_labels()[ sanitize_key( (string) $fields['status'] ) ] ) ) {
+			$status = sanitize_key( (string) $fields['status'] );
+		}
+		if ( ! empty( $fields['service_status'] ) && isset( $this->get_portal_sr_service_status_labels()[ sanitize_key( (string) $fields['service_status'] ) ] ) ) {
+			$service_status = sanitize_key( (string) $fields['service_status'] );
+		}
+		$admin_notes = array_key_exists( 'admin_notes', $fields ) && null !== $fields['admin_notes']
+			? sanitize_textarea_field( (string) $fields['admin_notes'] )
+			: (string) $request->admin_notes;
+		$note        = ! empty( $fields['note'] ) ? sanitize_textarea_field( (string) $fields['note'] ) : '';
+
+		$pdb->update(
+			$this->get_portal_service_requests_table(),
+			array(
+				'status'         => $status,
+				'service_status' => $service_status,
+				'admin_notes'    => $admin_notes,
+				'updated_at'     => current_time( 'mysql' ),
+			),
+			array( 'id' => $request_id ),
+			array( '%s', '%s', '%s', '%s' ),
+			array( '%d' )
+		);
+
+		$request->status         = $status;
+		$request->service_status = $service_status;
+		$request->admin_notes    = $admin_notes;
+
+		$this->sync_portal_service_request_to_ledger(
+			$request,
+			array(
+				'amount'       => (float) $request->amount,
+				'currency'     => (string) $request->currency,
+				'status'       => $status,
+				'client_notes' => (string) $request->client_notes,
+				'request_id'   => $request_id,
+			)
+		);
+
+		if ( $old_status !== $status || $old_service_status !== $service_status ) {
+			$this->add_portal_service_request_history(
+				$request_id,
+				'status_changed',
+				array(
+					'status_before'         => $old_status,
+					'status_after'          => $status,
+					'service_status_before' => $old_service_status,
+					'service_status_after'  => $service_status,
+					'note'                  => __( 'Status updated from AJ Ops.', 'ajforms' ),
+					'details'               => array( 'source' => 'ops_api' ),
+				)
+			);
+		}
+		if ( '' !== $note ) {
+			$this->add_portal_service_request_history(
+				$request_id,
+				'note',
+				array(
+					'note'                  => $note,
+					'status_before'         => $old_status,
+					'status_after'          => $status,
+					'service_status_before' => $old_service_status,
+					'service_status_after'  => $service_status,
+				)
+			);
+		}
+
+		return $request;
+	}
+
 	private function get_portal_service_request_product_type( $request ) {
 		$name_parts = array();
 		if ( ! empty( $request->service_name ) ) {
@@ -13068,6 +13177,8 @@ class AJForms_Admin {
 			);
 		}
 
+		$this->backfill_portal_service_requests_from_first_invoices();
+
 		// Repair orphaned service requests: records whose ledger_id points to a non-existent ledger entry.
 		// This happens after a master reset — the ledger is wiped and re-synced with new IDs, but service
 		// requests are intentionally kept. Their ledger_id values become stale (pointing to deleted rows).
@@ -13164,6 +13275,113 @@ class AJForms_Admin {
 					array( '%d' )
 				);
 			}
+		}
+	}
+
+	/**
+	 * Some purchases never get a synced checkout session (Stripe attributes the session to a guest,
+	 * or the session is missing entirely), so the session-based backfill above skips them. Create
+	 * service requests for paid first-purchase invoices that no session or request covers yet.
+	 */
+	private function backfill_portal_service_requests_from_first_invoices() {
+		global $wpdb;
+		$pdb = $this->get_pdb();
+
+		$invoice_rows = $pdb->get_results(
+			"SELECT l.* FROM {$this->get_portal_ledger_table()} l
+			WHERE l.source_type = 'invoice' AND l.status = 'paid' AND l.stripe_customer_id LIKE 'cus_%'
+			ORDER BY l.id ASC"
+		);
+
+		foreach ( (array) $invoice_rows as $entry ) {
+			$invoice_id = sanitize_text_field( (string) $entry->source_object_id );
+			if ( '' === $invoice_id ) {
+				continue;
+			}
+
+			$existing = $pdb->get_var(
+				$pdb->prepare(
+					"SELECT id FROM {$this->get_portal_service_requests_table()} WHERE source_object_id = %s LIMIT 1",
+					$invoice_id
+				)
+			);
+			if ( $existing ) {
+				continue;
+			}
+
+			// Covered by a synced checkout session — its own SR is created from the session row.
+			$session_covered = $pdb->get_var(
+				$pdb->prepare(
+					"SELECT id FROM {$this->get_portal_stripe_transactions_table()} WHERE object_type = 'checkout_session' AND invoice_id = %s LIMIT 1",
+					$invoice_id
+				)
+			);
+			if ( $session_covered ) {
+				continue;
+			}
+
+			// Only first-purchase invoices — renewals and manual invoices are not new service requests.
+			$invoice_raw_json = $pdb->get_var(
+				$pdb->prepare(
+					"SELECT raw_data FROM {$this->get_portal_stripe_transactions_table()} WHERE stripe_object_id = %s LIMIT 1",
+					$invoice_id
+				)
+			);
+			$invoice_raw = $invoice_raw_json ? json_decode( (string) $invoice_raw_json, true ) : null;
+			if ( ! is_array( $invoice_raw ) ) {
+				continue;
+			}
+			$billing_reason = isset( $invoice_raw['billing_reason'] ) ? sanitize_key( (string) $invoice_raw['billing_reason'] ) : '';
+			if ( 'subscription_create' !== $billing_reason ) {
+				continue;
+			}
+
+			$stripe_customer_id = sanitize_text_field( (string) $entry->stripe_customer_id );
+			$wp_user_id         = (int) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT user_id FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s LIMIT 1",
+					$stripe_customer_id
+				)
+			);
+
+			// Resolve service name and price IDs from the invoice line items.
+			$price_ids = array();
+			$this->collect_portal_service_request_price_ids_from_data( $invoice_raw, $price_ids );
+			$names = array();
+			foreach ( $price_ids as $pid ) {
+				$product = $this->get_portal_product_by_price_id( $pid );
+				if ( $product ) {
+					$label = ! empty( $product->custom_label ) ? $product->custom_label : ( ! empty( $product->name ) ? $product->name : '' );
+					if ( '' !== $label ) {
+						$names[] = sanitize_text_field( (string) $label );
+					}
+				}
+			}
+			$service_name = ! empty( $names ) ? implode( ', ', array_unique( $names ) ) : sanitize_text_field( (string) $entry->description );
+
+			$pdb->insert(
+				$this->get_portal_service_requests_table(),
+				array(
+					'wp_user_id'         => $wp_user_id,
+					'stripe_customer_id' => $stripe_customer_id,
+					'stripe_price_id'    => ! empty( $price_ids ) ? sanitize_text_field( (string) reset( $price_ids ) ) : '',
+					'stripe_product_id'  => '',
+					'service_name'       => $service_name,
+					'request_type'       => 'add_service',
+					'status'             => 'paid',
+					'amount'             => (float) $entry->amount,
+					'currency'           => sanitize_key( (string) $entry->currency ),
+					'source_object_id'   => $invoice_id,
+					'source_type'        => 'invoice',
+					'ledger_id'          => (int) $entry->id,
+					'source'             => 'ledger_backfill',
+					'created_by'         => 0,
+					'raw_data'           => wp_json_encode( array( 'billing_reason' => $billing_reason ) ),
+					'updated_at'         => current_time( 'mysql' ),
+					'created_at'         => ! empty( $entry->created_at ) ? $entry->created_at : current_time( 'mysql' ),
+				),
+				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%d', '%s', '%d', '%s', '%s', '%s' )
+			);
 		}
 	}
 
@@ -13983,6 +14201,48 @@ class AJForms_Admin {
 		fclose( $output );
 	}
 
+
+	/** Billing KPIs for the ops REST API — same math as the WP admin Billing tab. */
+	public function get_ops_billing_stats() {
+		$pdb = $this->get_pdb();
+		$this->ensure_portal_schema();
+
+		$filters = $this->get_portal_billing_filter_data();
+		$sql     = "SELECT l.*, c.email AS customer_email, c.name AS customer_name
+			FROM {$this->get_portal_ledger_table()} l
+			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = l.stripe_customer_id
+			WHERE " . implode( ' AND ', $filters['where'] ) . "
+			ORDER BY l.ledger_date ASC, l.id ASC
+			LIMIT 2000";
+		$ledger  = ! empty( $filters['params'] ) ? $pdb->get_results( $pdb->prepare( $sql, $filters['params'] ) ) : $pdb->get_results( $sql );
+		$ledger  = $this->get_admin_portal_display_ledger( $ledger );
+
+		$balance_data   = $this->get_portal_ledger_running_balances( $ledger );
+		$open_balance   = 0.0;
+		$credit_balance = 0.0;
+		$paid_total     = 0.0;
+		foreach ( $ledger as $entry ) {
+			$effect = $this->get_portal_ledger_balance_effect( $entry );
+			if ( $effect < 0 && in_array( sanitize_key( (string) $entry->status ), array( 'paid', 'succeeded', 'partially_refunded', 'partial_refund' ), true ) ) {
+				$paid_total += abs( $effect );
+			}
+		}
+		foreach ( $balance_data['totals'] as $customer_balance ) {
+			$customer_balance = (float) $customer_balance;
+			if ( $customer_balance > 0.00001 ) {
+				$open_balance += $customer_balance;
+			} elseif ( $customer_balance < -0.00001 ) {
+				$credit_balance += abs( $customer_balance );
+			}
+		}
+
+		return array(
+			'records'        => (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_ledger_table()}" ),
+			'open_balance'   => round( $open_balance, 2 ),
+			'credit_balance' => round( $credit_balance, 2 ),
+			'paid_total'     => round( $paid_total, 2 ),
+		);
+	}
 
 	private function display_portal_billing_tab() {
 		global $wpdb;
@@ -16786,6 +17046,16 @@ class AJForms_Admin {
 			);
 		}
 
+		// Newest purchases first.
+		usort(
+			$sold_items,
+			function ( $a, $b ) {
+				$a_date = ! empty( $a->service_period_start ) ? strtotime( (string) $a->service_period_start ) : ( ! empty( $a->paid_at ) ? strtotime( (string) $a->paid_at ) : 0 );
+				$b_date = ! empty( $b->service_period_start ) ? strtotime( (string) $b->service_period_start ) : ( ! empty( $b->paid_at ) ? strtotime( (string) $b->paid_at ) : 0 );
+				return $b_date <=> $a_date;
+			}
+		);
+
 		?>
 		<div class="ajforms-settings-card">
 			<form method="get" id="ajcore-sold-items-filter" class="ajforms-settings-inline-actions" style="align-items:center;gap:12px;">
@@ -17530,14 +17800,47 @@ class AJForms_Admin {
 
 					<div class="ajforms-file-field">
 						<label><?php esc_html_e( 'Share With Users', 'ajforms' ); ?></label>
-						<div class="ajforms-user-list">
+						<input type="search" id="ajforms-user-list-search" placeholder="<?php esc_attr_e( 'Search users by name or email…', 'ajforms' ); ?>" style="width:100%;max-width:420px;margin-bottom:8px;" autocomplete="off">
+						<div class="ajforms-user-list" id="ajforms-user-list" style="max-height:240px;overflow-y:auto;">
 							<?php foreach ( $users as $user ) : ?>
-								<label>
+								<label class="ajforms-user-list-item" data-search="<?php echo esc_attr( strtolower( $user->display_name . ' ' . $user->user_email ) ); ?>" style="display:block;">
 									<input type="checkbox" name="assigned_user_ids[]" value="<?php echo esc_attr( (int) $user->ID ); ?>" <?php checked( in_array( (int) $user->ID, $assigned_users, true ) ); ?>>
 									<?php echo esc_html( $user->display_name . ' <' . $user->user_email . '>' ); ?>
 								</label>
 							<?php endforeach; ?>
+							<p class="ajforms-user-list-empty" style="display:none;color:#64748b;margin:6px 0 0;"><?php esc_html_e( 'No users match your search.', 'ajforms' ); ?></p>
 						</div>
+						<p class="description" id="ajforms-user-list-selected" style="margin-top:6px;"></p>
+						<script>
+						(function(){
+							var search = document.getElementById('ajforms-user-list-search');
+							var list = document.getElementById('ajforms-user-list');
+							if(!search || !list){ return; }
+							var items = Array.prototype.slice.call(list.querySelectorAll('.ajforms-user-list-item'));
+							var empty = list.querySelector('.ajforms-user-list-empty');
+							var summary = document.getElementById('ajforms-user-list-selected');
+							function updateSummary(){
+								var checked = items.filter(function(item){ return item.querySelector('input').checked; });
+								summary.textContent = checked.length
+									? '<?php echo esc_js( __( 'Selected:', 'ajforms' ) ); ?> ' + checked.map(function(item){ return item.textContent.trim(); }).join(', ')
+									: '';
+							}
+							function filter(){
+								var q = search.value.toLowerCase().trim();
+								var shown = 0;
+								items.forEach(function(item){
+									// Keep checked users visible so a search never hides an active selection.
+									var match = !q || item.getAttribute('data-search').indexOf(q) !== -1 || item.querySelector('input').checked;
+									item.style.display = match ? 'block' : 'none';
+									if(match){ shown++; }
+								});
+								if(empty){ empty.style.display = shown ? 'none' : 'block'; }
+							}
+							search.addEventListener('input', filter);
+							list.addEventListener('change', function(){ updateSummary(); });
+							updateSummary();
+						})();
+						</script>
 					</div>
 
 					<div class="ajforms-file-field">

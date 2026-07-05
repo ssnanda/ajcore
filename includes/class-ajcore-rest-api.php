@@ -380,6 +380,7 @@ class AJCore_REST_API {
 			'/ops/leads/(?P<id>\d+)/status' => array( 'methods' => 'PATCH',           'callback' => 'update_ops_lead_status', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tasks', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/service-requests/(?P<id>\d+)' => array( 'methods' => 'POST', 'callback' => 'update_ops_service_request', 'permission' => 'can_manage_ops_api' ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -827,25 +828,50 @@ class AJCore_REST_API {
 			);
 		}
 
-		// Global stats (not affected by current filter)
-		$total    = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_ledger}`" );
-		$charges  = (float) $pdb->get_var( "SELECT COALESCE(SUM(amount),0) FROM `{$t_ledger}` WHERE source_type IN ('service_charge','invoice_line_item','checkout_line_item','manual_charge','invoice') AND status NOT IN ('cancelled','canceled','failed','void','voided','draft')" );
-		$payments = (float) $pdb->get_var( "SELECT COALESCE(SUM(amount),0) FROM `{$t_ledger}` WHERE source_type IN ('charge','payment') AND status IN ('paid','succeeded')" );
+		// Global stats (not affected by current filter) — same KPIs as the WP admin Billing tab.
+		$total = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_ledger}`" );
+		$kpis  = array( 'records' => $total, 'open_balance' => 0.0, 'credit_balance' => 0.0, 'paid_total' => 0.0 );
+		if ( class_exists( 'AJForms_Admin' ) ) {
+			$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+			$kpis  = $admin->get_ops_billing_stats();
+		}
 
 		return rest_ensure_response( array(
 			'ledger' => $ledger,
 			'stats'  => array(
-				'total'    => $total,
-				'charges'  => round( $charges, 2 ),
-				'payments' => round( $payments, 2 ),
-				'balance'  => round( $charges - $payments, 2 ),
+				'total'          => $total,
+				// Legacy keys kept for older clients: charges = billed, payments = paid, balance = open.
+				'charges'        => round( $kpis['paid_total'] + $kpis['open_balance'], 2 ),
+				'payments'       => $kpis['paid_total'],
+				'balance'        => $kpis['open_balance'],
+				'open_balance'   => $kpis['open_balance'],
+				'credit_balance' => $kpis['credit_balance'],
+				'paid_total'     => $kpis['paid_total'],
 			),
 		) );
 	}
 
 	public function get_ops_transactions( WP_REST_Request $request ) {
 		$transactions = $this->select_rows( $this->portal_table( 'aj_portal_stripe_transactions' ), array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $request, array( 'stripe_customer_id', 'description', 'status', 'object_type', 'stripe_object_id' ), 'transaction_date DESC, id DESC' );
-		return rest_ensure_response( array( 'transactions' => $this->dedupe_stripe_transaction_rows( $transactions ) ) );
+		$transactions = $this->dedupe_stripe_transaction_rows( $transactions );
+
+		// Attach customer name/email for display.
+		$pdb            = $this->get_portal_db();
+		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$customers      = array();
+		if ( $this->table_exists( $pdb, $customer_table ) ) {
+			foreach ( (array) $pdb->get_results( "SELECT stripe_customer_id, name, email FROM `{$customer_table}`", ARRAY_A ) as $c ) {
+				$customers[ (string) $c['stripe_customer_id'] ] = $c;
+			}
+		}
+		foreach ( $transactions as &$tx ) {
+			$cid = isset( $tx['stripe_customer_id'] ) ? (string) $tx['stripe_customer_id'] : '';
+			$tx['customer_name']  = isset( $customers[ $cid ] ) ? (string) $customers[ $cid ]['name'] : '';
+			$tx['customer_email'] = isset( $customers[ $cid ] ) ? (string) $customers[ $cid ]['email'] : '';
+		}
+		unset( $tx );
+
+		return rest_ensure_response( array( 'transactions' => $transactions ) );
 	}
 
 	/**
@@ -1264,6 +1290,7 @@ class AJCore_REST_API {
 		$where_sql = implode( ' AND ', $where );
 		$sql       = "SELECT r.id, r.stripe_customer_id, r.service_name, r.request_type, r.status, r.service_status,
 			r.amount, r.currency, r.source, r.source_type, r.client_notes, r.admin_notes, r.created_at, r.updated_at,
+			r.stripe_price_id, r.stripe_product_id,
 			c.name AS customer_name, c.email AS customer_email
 			FROM `{$t_sr}` r
 			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = r.stripe_customer_id
@@ -1274,6 +1301,8 @@ class AJCore_REST_API {
 		if ( ! is_array( $rows ) ) {
 			$rows = array();
 		}
+
+		$admin = class_exists( 'AJForms_Admin' ) ? ( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() ) : null;
 
 		$service_requests = array();
 		foreach ( $rows as $r ) {
@@ -1294,6 +1323,7 @@ class AJCore_REST_API {
 				'updated_at'        => (string) $r->updated_at,
 				'customer_name'     => (string) $r->customer_name,
 				'customer_email'    => (string) $r->customer_email,
+				'service_status_options' => $admin ? $admin->get_service_request_service_status_options_for_ops( $r ) : array(),
 			);
 		}
 
@@ -1310,6 +1340,34 @@ class AJCore_REST_API {
 				'active'       => $active_count,
 				'completed'    => $completed_count,
 				'shown'        => count( $service_requests ),
+			),
+		) );
+	}
+
+	public function update_ops_service_request( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->update_service_request_from_ops(
+			(int) $request->get_param( 'id' ),
+			array(
+				'status'         => $request->get_param( 'status' ),
+				'service_status' => $request->get_param( 'service_status' ),
+				'admin_notes'    => $request->get_param( 'admin_notes' ),
+				'note'           => $request->get_param( 'note' ),
+			)
+		);
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( 'update_failed', $result->get_error_message(), array( 'status' => 'not_found' === $result->get_error_code() ? 404 : 400 ) );
+		}
+		return rest_ensure_response( array(
+			'success'         => true,
+			'service_request' => array(
+				'id'             => (int) $result->id,
+				'status'         => (string) $result->status,
+				'service_status' => (string) $result->service_status,
+				'admin_notes'    => (string) $result->admin_notes,
 			),
 		) );
 	}
