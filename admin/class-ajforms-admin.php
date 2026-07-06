@@ -12300,7 +12300,6 @@ class AJForms_Admin {
 		$sets = array(
 			'llc_setup' => array(
 				'new',
-				'under_review',
 				'meeting_scheduled',
 				'sosnc_filing',
 				'llc_documents_emailed',
