@@ -412,6 +412,7 @@ class AJCore_REST_API {
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/partners' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_partners', 'permission' => 'can_manage_ops_api' ),
+			'/ops/product-counts' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_product_counts', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/delete-all' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'delete_ops_email_log_all', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
@@ -1559,6 +1560,14 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( array( 'success' => true, 'partner_key' => $partner_key ) );
+	}
+
+	public function get_ops_product_counts() {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return rest_ensure_response( array( 'counts' => array( 'registered_agent_subscription' => 0, 'virtual_office_subscription' => 0 ) ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		return rest_ensure_response( array( 'counts' => $admin->get_portal_core_subscription_product_counts() ) );
 	}
 
 	public function get_ops_partners() {

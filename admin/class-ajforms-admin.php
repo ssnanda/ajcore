@@ -12313,18 +12313,18 @@ class AJForms_Admin {
 				'completed',
 				'cancelled',
 			),
+			// Buying this subscription means one thing: get the CMRA signed, then it's active — no other steps.
 			'virtual_office_subscription' => array(
 				'new',
-				'vo_setup_required',
+				'signing_cmra',
 				'active',
 				'cancelled',
 			),
+			// Buying this subscription means one thing: update the registered agent on SOS/NC (we do it, or the
+			// customer does it), then it's active — no other steps.
 			'registered_agent_subscription' => array(
 				'new',
-				'under_review',
-				'sosnc_client',
 				'updating_sosn',
-				'included_with_llc_setup',
 				'active',
 				'cancelled',
 			),
@@ -12573,12 +12573,11 @@ class AJForms_Admin {
 				} elseif ( 'virtual_office_setup' === $product_type ) {
 					$actions['sign_cmra'] = __( 'Send CMRA for Signing', 'ajforms' );
 				} elseif ( 'virtual_office_subscription' === $product_type ) {
-					$actions['require_vo_setup'] = __( 'Require Virtual Office Setup', 'ajforms' );
-					$actions['activate'] = __( 'Mark Active', 'ajforms' );
+					// One step: get the CMRA signed. Once signed, mark active — no further action.
+					$actions['sign_cmra'] = __( 'Send CMRA for Signing', 'ajforms' );
 				} elseif ( 'registered_agent_subscription' === $product_type ) {
-					$actions['customer_sosnc'] = __( 'Customer Will Update SOS/NC', 'ajforms' );
-					$actions['update_sosn'] = __( 'We Update SOS/NC', 'ajforms' );
-					$actions['included_llc_setup'] = __( 'Included with LLC Setup', 'ajforms' );
+					// One step: update the registered agent on SOS/NC (staff or customer). Once done, mark active.
+					$actions['update_sosn'] = __( 'Update RA on SOS/NC', 'ajforms' );
 				} else {
 					if ( 'new' === $service_status || '' === $service_status ) {
 						$actions['under_review'] = __( 'Start Review', 'ajforms' );
@@ -12595,7 +12594,12 @@ class AJForms_Admin {
 			} elseif ( 'llc_documents_emailed' === $service_status ) {
 				$actions['complete'] = __( 'Mark Completed', 'ajforms' );
 			} elseif ( 'signing_cmra' === $service_status ) {
-				$actions['collect_id_proof'] = __( 'Collect ID Proof', 'ajforms' );
+				if ( 'virtual_office_subscription' === $product_type ) {
+					// Subscription flow ends here: CMRA signed → active, no ID/address proof collection step.
+					$actions['activate'] = __( 'Mark Active', 'ajforms' );
+				} else {
+					$actions['collect_id_proof'] = __( 'Collect ID Proof', 'ajforms' );
+				}
 			} elseif ( 'id_proof_needed' === $service_status ) {
 				$actions['collect_address_proof'] = __( 'Collect Address Proof', 'ajforms' );
 			} elseif ( 'address_proof_needed' === $service_status ) {
@@ -13761,6 +13765,7 @@ class AJForms_Admin {
 						'details'               => array( 'action' => $action ),
 					)
 				);
+				$this->send_service_request_status_email( $request, $old_service_status, $new_service_status );
 			}
 
 			if ( $is_payment_action ) {
@@ -15523,6 +15528,55 @@ class AJForms_Admin {
 		return array(
 			'fixed_per_account' => __( 'Fixed per account (partner pays us, no invoicing)', 'ajforms' ),
 			'invoiced_report'   => __( 'Invoiced via monthly report (we bill the partner)', 'ajforms' ),
+		);
+	}
+
+	/**
+	 * Counts distinct customers with an active/trialing subscription to each of the two core
+	 * recurring products — Registered Agent Subscription and Virtual Office Subscription (the
+	 * subscription, not the one-time setup). Matched by product name, so F&F / yearly variants
+	 * still count toward the same bucket.
+	 */
+	public function get_portal_core_subscription_product_counts() {
+		$pdb  = $this->get_pdb();
+		$rows = $pdb->get_results( "SELECT stripe_customer_id, items FROM {$this->get_portal_stripe_subscriptions_table()} WHERE status IN ('active','trialing')" );
+
+		$ra_customers = array();
+		$vo_customers = array();
+		foreach ( (array) $rows as $row ) {
+			$items = json_decode( (string) $row->items, true );
+			if ( ! is_array( $items ) ) {
+				continue;
+			}
+			foreach ( $items as $item ) {
+				if ( ! is_array( $item ) ) {
+					continue;
+				}
+				$price_id = '';
+				if ( ! empty( $item['plan']['id'] ) ) {
+					$price_id = (string) $item['plan']['id'];
+				} elseif ( ! empty( $item['price']['id'] ) ) {
+					$price_id = (string) $item['price']['id'];
+				}
+				if ( '' === $price_id ) {
+					continue;
+				}
+				$product = $this->get_portal_product_by_price_id( $price_id );
+				if ( ! $product ) {
+					continue;
+				}
+				$name = strtolower( ! empty( $product->custom_label ) ? (string) $product->custom_label : (string) $product->name );
+				if ( false !== strpos( $name, 'registered agent' ) ) {
+					$ra_customers[ (string) $row->stripe_customer_id ] = true;
+				} elseif ( false !== strpos( $name, 'virtual office' ) && false === strpos( $name, 'setup' ) ) {
+					$vo_customers[ (string) $row->stripe_customer_id ] = true;
+				}
+			}
+		}
+
+		return array(
+			'registered_agent_subscription' => count( $ra_customers ),
+			'virtual_office_subscription'   => count( $vo_customers ),
 		);
 	}
 
@@ -17495,7 +17549,43 @@ class AJForms_Admin {
 			<div class="ajforms-settings-inline-actions">
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d synced customers', 'ajforms' ), $total_customers ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d with portal access', 'ajforms' ), $enabled_count ) ); ?></span>
+				<?php
+				$product_counts = $this->get_portal_core_subscription_product_counts();
+				?>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d Registered Agent Subscription', 'ajforms' ), $product_counts['registered_agent_subscription'] ) ); ?></span>
+				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d Virtual Office Subscription', 'ajforms' ), $product_counts['virtual_office_subscription'] ) ); ?></span>
 			</div>
+
+			<?php
+			$partners_summary_table = $this->get_portal_partners_table();
+			$partners_summary       = $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $partners_summary_table ) ) === $partners_summary_table
+				? $pdb->get_results( "SELECT * FROM `{$partners_summary_table}` ORDER BY name ASC" )
+				: array();
+			if ( ! empty( $partners_summary ) ) :
+				$partner_price_map_summary = $this->get_partner_price_map();
+				?>
+				<div class="ajcore-customer-summary" style="margin:0 0 16px;">
+					<?php foreach ( $partners_summary as $partner_summary ) : ?>
+						<?php
+						$partner_accounts_summary = $pdb->get_results(
+							$pdb->prepare(
+								"SELECT partner_price_id FROM {$this->get_portal_stripe_customers_table()} WHERE partner_key = %s",
+								$partner_summary->partner_key
+							)
+						);
+						$partner_total_summary = 0.0;
+						foreach ( $partner_accounts_summary as $partner_account_summary ) {
+							$partner_total_summary += $this->get_partner_account_rate( $partner_summary, $partner_account_summary, $partner_price_map_summary );
+						}
+						?>
+						<div>
+							<span><?php echo esc_html( $partner_summary->name ); ?></span>
+							<strong><?php echo esc_html( number_format_i18n( count( $partner_accounts_summary ) ) ); ?></strong>
+							<small><?php echo esc_html( sprintf( __( 'accounts · %s/mo', 'ajforms' ), $this->format_portal_money( $partner_total_summary, 'usd' ) ) ); ?></small>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
 
 			<details class="ajforms-settings-card ajcore-inline-drawer">
 				<summary><strong><?php esc_html_e( 'Add Stripe Customer', 'ajforms' ); ?></strong></summary>
