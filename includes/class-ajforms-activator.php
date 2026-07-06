@@ -12,6 +12,7 @@ class AJForms_Activator {
 		$table_lead_notes = $wpdb->prefix . 'aj_forms_lead_notes';
 		$table_portal_files      = $wpdb->prefix . 'aj_portal_files';
 		$table_portal_file_users = $wpdb->prefix . 'aj_portal_file_users';
+		$table_email_log         = $wpdb->prefix . 'aj_portal_email_log';
 		$table_stripe_customers     = $wpdb->prefix . 'aj_portal_stripe_customers';
 		$table_stripe_products      = $wpdb->prefix . 'aj_portal_stripe_products';
 		$table_product_catalog      = $wpdb->prefix . 'aj_portal_product_catalog';
@@ -94,6 +95,21 @@ class AJForms_Activator {
 			KEY file_id (file_id),
 			KEY user_id (user_id),
 			KEY user_email (user_email)
+		) $charset_collate;
+
+		CREATE TABLE $table_email_log (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			to_email varchar(190) DEFAULT '' NOT NULL,
+			subject varchar(255) DEFAULT '' NOT NULL,
+			headers text NULL,
+			message longtext NULL,
+			status varchar(20) DEFAULT 'sent' NOT NULL,
+			error_message text NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY to_email (to_email),
+			KEY status (status),
+			KEY created_at (created_at)
 		) $charset_collate;
 
 		CREATE TABLE $table_stripe_customers (
@@ -921,7 +937,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '16', false );
+		update_option( 'ajforms_portal_schema_version', '17', false );
 	}
 
 	/**

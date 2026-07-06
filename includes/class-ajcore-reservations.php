@@ -235,9 +235,10 @@ class AJCore_Reservations {
 		$status_placeholders = implode( ',', array_fill( 0, count( $hard_block_statuses ), '%s' ) );
 		$hold_cutoff         = gmdate( 'Y-m-d H:i:s', time() - ( self::PENDING_HOLD_MINUTES * 60 ) );
 
+		// Overlap: existing.start_at < new end AND existing.end_at > new start.
 		$params = array_merge(
 			$hard_block_statuses,
-			array( $hold_cutoff, (int) $resource_id, $start_at, $end_at )
+			array( $hold_cutoff, (int) $resource_id, $end_at, $start_at )
 		);
 
 		$where_uuid = '';
@@ -425,6 +426,123 @@ class AJCore_Reservations {
 			'id'               => $id,
 			'reservation_uuid' => $uuid,
 		);
+	}
+
+	/**
+	 * Staff-created reservation: skips checkout and is confirmed immediately.
+	 *
+	 * $args: date (Y-m-d), start_time (H:i), end_time (H:i) in $args['timezone'] (defaults to the
+	 * configured Zoho timezone), plus customer_name and optionally customer_email,
+	 * stripe_customer_id, resource_key, amount, notes.
+	 *
+	 * @return object|WP_Error The created reservation row.
+	 */
+	public static function create_manual_reservation( $args ) {
+		$args     = is_array( $args ) ? $args : array();
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone = ! empty( $args['timezone'] ) ? sanitize_text_field( (string) $args['timezone'] ) : ( ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York' );
+
+		$date       = sanitize_text_field( (string) ( $args['date'] ?? '' ) );
+		$start_time = sanitize_text_field( (string) ( $args['start_time'] ?? '' ) );
+		$end_time   = sanitize_text_field( (string) ( $args['end_time'] ?? '' ) );
+		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) || ! preg_match( '/^\d{2}:\d{2}$/', $start_time ) || ! preg_match( '/^\d{2}:\d{2}$/', $end_time ) ) {
+			return new WP_Error( 'invalid_datetime', __( 'A valid date, start time, and end time are required.', 'ajforms' ) );
+		}
+
+		try {
+			$tz    = new DateTimeZone( $timezone );
+			$start = new DateTime( $date . ' ' . $start_time, $tz );
+			$end   = new DateTime( $date . ' ' . $end_time, $tz );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'invalid_timezone', __( 'Invalid timezone or date.', 'ajforms' ) );
+		}
+		if ( $end <= $start ) {
+			return new WP_Error( 'invalid_range', __( 'End time must be after the start time.', 'ajforms' ) );
+		}
+		$utc = new DateTimeZone( 'UTC' );
+		$start_at_utc = $start->setTimezone( $utc )->format( 'Y-m-d H:i:s' );
+		$end_at_utc   = $end->setTimezone( $utc )->format( 'Y-m-d H:i:s' );
+
+		$resource = ! empty( $args['resource_key'] ) ? self::get_resource_by_key( sanitize_key( (string) $args['resource_key'] ) ) : null;
+		if ( ! $resource ) {
+			$resources = self::get_all_resources();
+			$resource  = ! empty( $resources ) ? $resources[0] : null;
+		}
+		if ( ! $resource ) {
+			return new WP_Error( 'no_resource', __( 'No active reservation resource is configured.', 'ajforms' ) );
+		}
+
+		$conflict = self::check_local_conflict( (int) $resource->id, $start_at_utc, $end_at_utc );
+		if ( is_wp_error( $conflict ) ) {
+			return $conflict;
+		}
+
+		$customer_name = sanitize_text_field( (string) ( $args['customer_name'] ?? '' ) );
+		if ( '' === $customer_name ) {
+			return new WP_Error( 'missing_customer', __( 'Customer name is required.', 'ajforms' ) );
+		}
+
+		$created = self::create_pending_reservation(
+			array(
+				'stripe_customer_id' => sanitize_text_field( (string) ( $args['stripe_customer_id'] ?? '' ) ),
+				'wp_user_id'         => 0,
+				'resource_id'        => (int) $resource->id,
+				'resource_key'       => (string) $resource->resource_key,
+				'resource_name'      => (string) $resource->resource_name,
+				'zoho_calendar_uid'  => (string) $resource->zoho_calendar_uid,
+				'zoho_calendar_id'   => (string) $resource->zoho_calendar_id,
+				'zoho_resource_uid'  => (string) $resource->zoho_resource_uid,
+				'pricing_type'       => self::determine_pricing_type( $start_at_utc, $timezone ),
+				'amount'             => round( (float) ( $args['amount'] ?? 0 ), 2 ),
+				'currency'           => 'usd',
+				'start_at'           => $start_at_utc,
+				'end_at'             => $end_at_utc,
+				'timezone'           => $timezone,
+				'customer_name'      => $customer_name,
+				'customer_email'     => sanitize_email( (string) ( $args['customer_email'] ?? '' ) ),
+				'customer_notes'     => '',
+			)
+		);
+		if ( is_wp_error( $created ) ) {
+			return $created;
+		}
+
+		$pdb   = self::get_pdb();
+		$table = self::get_reservations_table();
+		$actor = wp_get_current_user();
+		$pdb->update(
+			$table,
+			array(
+				'status'      => 'confirmed',
+				'admin_notes' => trim( sanitize_textarea_field( (string) ( $args['notes'] ?? '' ) ) . "\n" . sprintf( __( 'Created manually by %s.', 'ajforms' ), $actor && $actor->exists() ? $actor->display_name : 'staff' ) ),
+				'updated_at'  => current_time( 'mysql' ),
+			),
+			array( 'id' => (int) $created['id'] ),
+			array( '%s', '%s', '%s' ),
+			array( '%d' )
+		);
+
+		self::log_reservation_event(
+			'reservation_confirmed_manual',
+			array(
+				'reservation_uuid'   => $created['reservation_uuid'],
+				'reservation_id'     => (int) $created['id'],
+				'stripe_customer_id' => sanitize_text_field( (string) ( $args['stripe_customer_id'] ?? '' ) ),
+				'resource_key'       => (string) $resource->resource_key,
+				'start_at'           => $start_at_utc,
+				'end_at'             => $end_at_utc,
+			)
+		);
+
+		$reservation = self::get_reservation_by_uuid( $created['reservation_uuid'] );
+
+		// Best effort: push the booking to the Zoho calendar when configured.
+		if ( $reservation && ! empty( $settings['zoho_reservations_enabled'] ) && '1' === (string) $settings['zoho_reservations_enabled'] ) {
+			self::attempt_zoho_calendar_event( (array) $reservation, $settings );
+			$reservation = self::get_reservation_by_uuid( $created['reservation_uuid'] );
+		}
+
+		return $reservation;
 	}
 
 	/**

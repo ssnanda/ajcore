@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.4.81
+ * Version: 0.5.0
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.4.81' );
+	define( 'AJCORE_VERSION', '0.5.0' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -755,7 +755,7 @@ function ajforms_maybe_upgrade() {
 	$installed_version = get_option( 'ajforms_version', '' );
 	$portal_schema_version = get_option( 'ajforms_portal_schema_version', '' );
 
-	if ( AJFORMS_VERSION === $installed_version && '16' === $portal_schema_version ) {
+	if ( AJFORMS_VERSION === $installed_version && '17' === $portal_schema_version ) {
 		return;
 	}
 
@@ -764,6 +764,114 @@ function ajforms_maybe_upgrade() {
 	update_option( 'ajforms_version', AJFORMS_VERSION, false );
 }
 add_action( 'plugins_loaded', 'ajforms_maybe_upgrade', 5 );
+
+/**
+ * Login tracking: stores the user's last login time in user meta and records
+ * every login (WP form + AJ Ops API) in the portal event log.
+ */
+if ( ! function_exists( 'ajcore_record_user_login' ) ) {
+	function ajcore_record_user_login( $user, $source = 'wp_login' ) {
+		if ( ! ( $user instanceof WP_User ) ) {
+			return;
+		}
+		update_user_meta( $user->ID, 'ajcore_last_login', current_time( 'mysql' ) );
+
+		$pdb   = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+		$table = $pdb->prefix . 'aj_portal_event_log';
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) {
+			$pdb->insert(
+				$table,
+				array(
+					'event_type'    => 'user_login',
+					'severity'      => 'info',
+					'source'        => sanitize_key( (string) $source ),
+					'site_uuid'     => (string) get_option( 'ajcore_site_uuid', '' ),
+					'actor_user_id' => (int) $user->ID,
+					'actor_email'   => (string) $user->user_email,
+					'created_at'    => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+			);
+		}
+	}
+	add_action(
+		'wp_login',
+		function ( $user_login, $user ) {
+			ajcore_record_user_login( $user, 'wp_login' );
+		},
+		10,
+		2
+	);
+}
+
+/**
+ * Outgoing email log: every wp_mail() call is recorded in aj_portal_email_log
+ * (local table) so staff can audit what was sent from both AJ Core and WordPress.
+ */
+if ( ! function_exists( 'ajcore_email_log_table_exists' ) ) {
+	function ajcore_email_log_table_exists() {
+		static $exists = null;
+		if ( null === $exists ) {
+			global $wpdb;
+			$table  = $wpdb->prefix . 'aj_portal_email_log';
+			$exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+		}
+		return $exists;
+	}
+}
+
+if ( ! function_exists( 'ajcore_log_outgoing_mail' ) ) {
+	function ajcore_log_outgoing_mail( $atts ) {
+		if ( is_array( $atts ) && ajcore_email_log_table_exists() ) {
+			global $wpdb;
+			$to      = isset( $atts['to'] ) ? $atts['to'] : '';
+			$to      = is_array( $to ) ? implode( ', ', array_map( 'sanitize_text_field', $to ) ) : sanitize_text_field( (string) $to );
+			$headers = isset( $atts['headers'] ) ? $atts['headers'] : '';
+			$headers = is_array( $headers ) ? implode( "\n", array_map( 'sanitize_text_field', $headers ) ) : sanitize_text_field( (string) $headers );
+			$wpdb->insert(
+				$wpdb->prefix . 'aj_portal_email_log',
+				array(
+					'to_email'   => substr( $to, 0, 190 ),
+					'subject'    => substr( sanitize_text_field( (string) ( isset( $atts['subject'] ) ? $atts['subject'] : '' ) ), 0, 255 ),
+					'headers'    => $headers,
+					'message'    => (string) ( isset( $atts['message'] ) ? $atts['message'] : '' ),
+					'status'     => 'sent',
+					'created_at' => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%s' )
+			);
+		}
+		return $atts;
+	}
+	add_filter( 'wp_mail', 'ajcore_log_outgoing_mail', 999 );
+}
+
+if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
+	function ajcore_log_outgoing_mail_failed( $error ) {
+		if ( ! is_wp_error( $error ) || ! ajcore_email_log_table_exists() ) {
+			return;
+		}
+		global $wpdb;
+		$data = $error->get_error_data( 'wp_mail_failed' );
+		$data = is_array( $data ) ? $data : array();
+		$to   = isset( $data['to'] ) ? $data['to'] : '';
+		$to   = is_array( $to ) ? implode( ', ', array_map( 'sanitize_text_field', $to ) ) : sanitize_text_field( (string) $to );
+		$wpdb->insert(
+			$wpdb->prefix . 'aj_portal_email_log',
+			array(
+				'to_email'      => substr( $to, 0, 190 ),
+				'subject'       => substr( sanitize_text_field( (string) ( isset( $data['subject'] ) ? $data['subject'] : '' ) ), 0, 255 ),
+				'headers'       => '',
+				'message'       => '',
+				'status'        => 'failed',
+				'error_message' => sanitize_text_field( $error->get_error_message() ),
+				'created_at'    => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+	}
+	add_action( 'wp_mail_failed', 'ajcore_log_outgoing_mail_failed' );
+}
 
 /**
  * Begins execution of the plugin.

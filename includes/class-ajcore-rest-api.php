@@ -301,6 +301,33 @@ class AJCore_REST_API {
 			)
 		);
 
+		// ── OPS Staff (GET list + POST create + PATCH access by ID) ─────────────
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/staff',
+			array(
+				array(
+					'methods'             => WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'get_ops_staff' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'create_ops_staff' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/staff/(?P<id>\d+)',
+			array(
+				'methods'             => 'PATCH',
+				'callback'            => array( $this, 'update_ops_staff' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
 		// ── OPS Files (GET list + POST create + PATCH/DELETE by ID) ─────────────
 		register_rest_route(
 			self::NAMESPACE,
@@ -383,6 +410,7 @@ class AJCore_REST_API {
 			'/ops/service-requests/(?P<id>\d+)' => array( 'methods' => 'POST', 'callback' => 'update_ops_service_request', 'permission' => 'can_manage_ops_api' ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
 			'/ops/auth/login'  => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_auth_login',  'permission' => 'public_permission' ),
 			'/ops/auth/logout' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_auth_logout', 'permission' => 'can_manage_ops_api' ),
@@ -426,6 +454,7 @@ class AJCore_REST_API {
 			// OPS read-only reservation endpoints
 			'/ops/reservations/(?P<id>[0-9]+)'      => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'ops_get_reservation',               'permission' => 'can_manage_ops_api' ),
 			'/ops/reservations'                     => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'ops_get_reservations',               'permission' => 'can_manage_ops_api' ),
+			'/ops/reservations/create'              => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_create_reservation',             'permission' => 'can_manage_ops_api' ),
 		);
 	}
 
@@ -1374,6 +1403,135 @@ class AJCore_REST_API {
 
 	public function get_ops_sync_logs( WP_REST_Request $request ) {
 		return rest_ensure_response( array( 'sync_logs' => $this->select_rows( $this->portal_table( 'aj_portal_sync_logs' ), array( 'id', 'run_key', 'job_name', 'status', 'message', 'started_at', 'finished_at', 'created_at' ), $request, array( 'run_key', 'job_name', 'status', 'message' ), 'created_at DESC, id DESC' ) ) );
+	}
+
+	private function format_ops_staff_user( $user ) {
+		$is_admin = user_can( $user, 'manage_options' );
+
+		$recent_logins = array();
+		$pdb           = $this->get_portal_db();
+		$event_table   = $this->portal_table( 'aj_portal_event_log' );
+		if ( $this->table_exists( $pdb, $event_table ) ) {
+			$rows = $pdb->get_results(
+				$pdb->prepare(
+					"SELECT source, created_at FROM `{$event_table}` WHERE event_type = 'user_login' AND actor_user_id = %d ORDER BY id DESC LIMIT 10",
+					(int) $user->ID
+				),
+				ARRAY_A
+			);
+			$recent_logins = is_array( $rows ) ? $rows : array();
+		}
+
+		return array(
+			'id'            => (int) $user->ID,
+			'username'      => (string) $user->user_login,
+			'display_name'  => (string) $user->display_name,
+			'email'         => (string) $user->user_email,
+			'roles'         => array_values( (array) $user->roles ),
+			'is_admin'      => $is_admin,
+			'ops_access'    => $is_admin || user_can( $user, 'ajcore_ops_access' ) || in_array( 'aj_ops_user', (array) $user->roles, true ),
+			'last_login'    => (string) get_user_meta( $user->ID, 'ajcore_last_login', true ),
+			'recent_logins' => $recent_logins,
+		);
+	}
+
+	public function get_ops_staff() {
+		$users = get_users( array( 'role__in' => array( 'administrator', 'aj_ops_user' ), 'number' => 200, 'orderby' => 'display_name' ) );
+		return rest_ensure_response( array( 'staff' => array_map( array( $this, 'format_ops_staff_user' ), $users ) ) );
+	}
+
+	public function create_ops_staff( WP_REST_Request $request ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return new WP_Error( 'forbidden', __( 'Only administrators can manage staff accounts.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+
+		$email        = sanitize_email( (string) $request->get_param( 'email' ) );
+		$display_name = sanitize_text_field( (string) $request->get_param( 'display_name' ) );
+		$username     = sanitize_user( (string) $request->get_param( 'username' ), true );
+
+		if ( ! is_email( $email ) ) {
+			return new WP_Error( 'invalid_email', __( 'A valid email address is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( email_exists( $email ) ) {
+			return new WP_Error( 'email_exists', __( 'A user with this email already exists.', 'ajforms' ), array( 'status' => 409 ) );
+		}
+		if ( '' === $username ) {
+			$username = sanitize_user( current( explode( '@', $email ) ), true );
+		}
+		if ( username_exists( $username ) ) {
+			$username .= wp_rand( 100, 999 );
+		}
+
+		$user_id = wp_create_user( $username, wp_generate_password( 24, true, true ), $email );
+		if ( is_wp_error( $user_id ) ) {
+			return new WP_Error( 'create_failed', $user_id->get_error_message(), array( 'status' => 400 ) );
+		}
+		wp_update_user( array( 'ID' => $user_id, 'display_name' => '' !== $display_name ? $display_name : $username ) );
+
+		$user = get_user_by( 'id', $user_id );
+		$user->set_role( 'aj_ops_user' );
+
+		// Send a set-your-password email so the new staff member can log in.
+		if ( class_exists( 'AJForms_Admin' ) ) {
+			$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+			$admin->send_portal_user_password_reset( $user_id );
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'staff' => $this->format_ops_staff_user( $user ) ) );
+	}
+
+	public function update_ops_staff( WP_REST_Request $request ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return new WP_Error( 'forbidden', __( 'Only administrators can manage staff accounts.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+
+		$user = get_userdata( absint( $request->get_param( 'id' ) ) );
+		if ( ! $user ) {
+			return new WP_Error( 'not_found', __( 'User not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		if ( user_can( $user, 'manage_options' ) ) {
+			return new WP_Error( 'cannot_modify_admin', __( 'Administrators always have ops access — manage them in WordPress.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( get_current_user_id() === (int) $user->ID ) {
+			return new WP_Error( 'cannot_modify_self', __( 'You cannot change your own access.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$grant = rest_sanitize_boolean( $request->get_param( 'ops_access' ) );
+		if ( $grant ) {
+			$user->add_role( 'aj_ops_user' );
+			$user->add_cap( 'ajcore_ops_access' );
+		} else {
+			$user->remove_role( 'aj_ops_user' );
+			$user->remove_cap( 'ajcore_ops_access' );
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'staff' => $this->format_ops_staff_user( get_userdata( $user->ID ) ) ) );
+	}
+
+	public function get_ops_email_log( WP_REST_Request $request ) {
+		global $wpdb;
+		// The email log is always a local table (mail is sent by this WordPress install).
+		$table = $wpdb->prefix . 'aj_portal_email_log';
+		if ( ! $this->table_exists( $wpdb, $table ) ) {
+			return rest_ensure_response( array( 'emails' => array() ) );
+		}
+
+		$per_page = min( 2000, max( 1, absint( $request->get_param( 'per_page' ) ) ) );
+		$search   = sanitize_text_field( (string) $request->get_param( 'search' ) );
+		$where    = '1=1';
+		$params   = array();
+		if ( '' !== $search ) {
+			$like   = '%' . $wpdb->esc_like( $search ) . '%';
+			$where  = '(to_email LIKE %s OR subject LIKE %s)';
+			$params = array( $like, $like );
+		}
+		$params[] = $per_page;
+		$rows = $wpdb->get_results(
+			$wpdb->prepare( "SELECT id, to_email, subject, status, error_message, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT %d", $params ),
+			ARRAY_A
+		);
+
+		return rest_ensure_response( array( 'emails' => is_array( $rows ) ? $rows : array() ) );
 	}
 
 	public function get_ops_event_log( WP_REST_Request $request ) {
@@ -2473,6 +2631,38 @@ class AJCore_REST_API {
 		) );
 	}
 
+	public function ops_create_reservation( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		$reservation = AJCore_Reservations::create_manual_reservation(
+			array(
+				'date'               => $request->get_param( 'date' ),
+				'start_time'         => $request->get_param( 'start_time' ),
+				'end_time'           => $request->get_param( 'end_time' ),
+				'timezone'           => $request->get_param( 'timezone' ),
+				'resource_key'       => $request->get_param( 'resource_key' ),
+				'stripe_customer_id' => $request->get_param( 'stripe_customer_id' ),
+				'customer_name'      => $request->get_param( 'customer_name' ),
+				'customer_email'     => $request->get_param( 'customer_email' ),
+				'amount'             => $request->get_param( 'amount' ),
+				'notes'              => $request->get_param( 'notes' ),
+			)
+		);
+		if ( is_wp_error( $reservation ) ) {
+			return new WP_Error( 'create_failed', $reservation->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$timezone = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+
+		return rest_ensure_response( array(
+			'success'     => true,
+			'reservation' => $this->format_reservation_row( (array) $reservation, $timezone, true ),
+		) );
+	}
+
 	public function ops_get_reservation( WP_REST_Request $request ) {
 		if ( ! class_exists( 'AJCore_Reservations' ) ) {
 			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
@@ -2946,6 +3136,10 @@ class AJCore_REST_API {
 			&& ! in_array( 'aj_ops_user', (array) $user->roles, true )
 		) {
 			return new WP_Error( 'ajcore_ops_forbidden', 'This account does not have OPS access.', array( 'status' => 403 ) );
+		}
+
+		if ( function_exists( 'ajcore_record_user_login' ) ) {
+			ajcore_record_user_login( $user, 'ops_login' );
 		}
 
 		$token = AJCore_JWT::generate( $user->ID );
