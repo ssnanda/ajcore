@@ -411,6 +411,8 @@ class AJCore_REST_API {
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/partners' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_partners', 'permission' => 'can_manage_ops_api' ),
+			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
 			'/ops/auth/login'  => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_auth_login',  'permission' => 'public_permission' ),
 			'/ops/auth/logout' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_auth_logout', 'permission' => 'can_manage_ops_api' ),
@@ -1532,6 +1534,58 @@ class AJCore_REST_API {
 		);
 
 		return rest_ensure_response( array( 'emails' => is_array( $rows ) ? $rows : array() ) );
+	}
+
+	public function get_ops_partners() {
+		$pdb            = $this->get_portal_db();
+		$partners_table = $this->portal_table( 'aj_portal_partners' );
+		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		if ( ! $this->table_exists( $pdb, $partners_table ) ) {
+			return rest_ensure_response( array( 'partners' => array() ) );
+		}
+
+		$partners = array();
+		foreach ( (array) $pdb->get_results( "SELECT * FROM `{$partners_table}` ORDER BY name ASC" ) as $p ) {
+			$accounts = $pdb->get_results(
+				$pdb->prepare(
+					"SELECT stripe_customer_id, name, email, portal_status FROM `{$customer_table}` WHERE partner_key = %s ORDER BY name ASC",
+					$p->partner_key
+				),
+				ARRAY_A
+			);
+			$count = is_array( $accounts ) ? count( $accounts ) : 0;
+
+			$partners[] = array(
+				'id'                 => (int) $p->id,
+				'partner_key'        => (string) $p->partner_key,
+				'name'               => (string) $p->name,
+				'billing_mode'       => (string) $p->billing_mode,
+				'per_account_amount' => (float) $p->per_account_amount,
+				'currency'           => (string) $p->currency,
+				'notes'              => (string) $p->notes,
+				'account_count'      => $count,
+				'monthly_total'      => round( $count * (float) $p->per_account_amount, 2 ),
+				'accounts'           => is_array( $accounts ) ? $accounts : array(),
+			);
+		}
+
+		return rest_ensure_response( array( 'partners' => $partners ) );
+	}
+
+	public function get_ops_email_log_entry( WP_REST_Request $request ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'aj_portal_email_log';
+		if ( ! $this->table_exists( $wpdb, $table ) ) {
+			return new WP_Error( 'not_found', __( 'Email not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$row = $wpdb->get_row(
+			$wpdb->prepare( "SELECT id, to_email, subject, headers, message, status, error_message, created_at FROM `{$table}` WHERE id = %d LIMIT 1", absint( $request->get_param( 'id' ) ) ),
+			ARRAY_A
+		);
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Email not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		return rest_ensure_response( array( 'email' => $row ) );
 	}
 
 	public function get_ops_event_log( WP_REST_Request $request ) {

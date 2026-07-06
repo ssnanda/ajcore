@@ -13,6 +13,7 @@ class AJForms_Activator {
 		$table_portal_files      = $wpdb->prefix . 'aj_portal_files';
 		$table_portal_file_users = $wpdb->prefix . 'aj_portal_file_users';
 		$table_email_log         = $wpdb->prefix . 'aj_portal_email_log';
+		$table_partners          = $wpdb->prefix . 'aj_portal_partners';
 		$table_stripe_customers     = $wpdb->prefix . 'aj_portal_stripe_customers';
 		$table_stripe_products      = $wpdb->prefix . 'aj_portal_stripe_products';
 		$table_product_catalog      = $wpdb->prefix . 'aj_portal_product_catalog';
@@ -95,6 +96,21 @@ class AJForms_Activator {
 			KEY file_id (file_id),
 			KEY user_id (user_id),
 			KEY user_email (user_email)
+		) $charset_collate;
+
+		CREATE TABLE $table_partners (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			partner_key varchar(100) NOT NULL,
+			name varchar(255) DEFAULT '' NOT NULL,
+			billing_mode varchar(30) DEFAULT 'invoiced_report' NOT NULL,
+			per_account_amount decimal(10,2) DEFAULT 0 NOT NULL,
+			currency varchar(10) DEFAULT 'usd' NOT NULL,
+			stripe_price_id varchar(100) DEFAULT '' NOT NULL,
+			notes text NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY partner_key (partner_key)
 		) $charset_collate;
 
 		CREATE TABLE $table_email_log (
@@ -823,6 +839,64 @@ class AJForms_Activator {
 			}
 		}
 
+		// Payer/partner accounts: partners table + partner_key on customers, in the local AND portal DB.
+		$partner_dbs = array( $wpdb );
+		if ( function_exists( 'ajcore_get_portal_db' ) && ajcore_get_portal_db() !== $wpdb ) {
+			$partner_dbs[] = ajcore_get_portal_db();
+		}
+		foreach ( $partner_dbs as $partner_db ) {
+			$db_partners  = $partner_db->prefix . 'aj_portal_partners';
+			$db_customers = $partner_db->prefix . 'aj_portal_stripe_customers';
+			$db_charset   = $partner_db->get_charset_collate();
+
+			$partner_db->query(
+				"CREATE TABLE IF NOT EXISTS $db_partners (
+					id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					partner_key varchar(100) NOT NULL,
+					name varchar(255) DEFAULT '' NOT NULL,
+					billing_mode varchar(30) DEFAULT 'invoiced_report' NOT NULL,
+					per_account_amount decimal(10,2) DEFAULT 0 NOT NULL,
+					currency varchar(10) DEFAULT 'usd' NOT NULL,
+					stripe_price_id varchar(100) DEFAULT '' NOT NULL,
+					notes text NULL,
+					created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+					updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+					PRIMARY KEY (id),
+					UNIQUE KEY partner_key (partner_key)
+				) $db_charset"
+			);
+
+			if ( $partner_db->get_var( $partner_db->prepare( 'SHOW TABLES LIKE %s', $db_customers ) ) === $db_customers ) {
+				$has_partner_col = $partner_db->get_var( "SHOW COLUMNS FROM $db_customers LIKE 'partner_key'" );
+				if ( ! $has_partner_col ) {
+					$partner_db->query( "ALTER TABLE $db_customers ADD COLUMN partner_key varchar(100) DEFAULT '' NOT NULL, ADD KEY partner_key (partner_key)" );
+				}
+			}
+
+			// Seed the two known partners when missing.
+			$seed_partners = array(
+				array( 'opus', 'OPUS', 'fixed_per_account', 'OPUS pays a fixed rate per account — no invoicing by us. Extra services are upsold and charged to their account.' ),
+				array( 'alliance_vo', 'Alliance VO', 'invoiced_report', 'We bill Alliance from a monthly report (accounts × rate). All end-customer billing goes through Alliance.' ),
+			);
+			foreach ( $seed_partners as $seed ) {
+				$exists = $partner_db->get_var( $partner_db->prepare( "SELECT id FROM $db_partners WHERE partner_key = %s LIMIT 1", $seed[0] ) );
+				if ( ! $exists ) {
+					$partner_db->insert(
+						$db_partners,
+						array(
+							'partner_key'  => $seed[0],
+							'name'         => $seed[1],
+							'billing_mode' => $seed[2],
+							'notes'        => $seed[3],
+							'created_at'   => current_time( 'mysql' ),
+							'updated_at'   => current_time( 'mysql' ),
+						),
+						array( '%s', '%s', '%s', '%s', '%s', '%s' )
+					);
+				}
+			}
+		}
+
 		$now = current_time( 'mysql' );
 		$wpdb->query(
 			$wpdb->prepare(
@@ -937,7 +1011,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '17', false );
+		update_option( 'ajforms_portal_schema_version', '18', false );
 	}
 
 	/**

@@ -10745,6 +10745,24 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_customer_partner_nonce'] ) ) {
+			check_admin_referer( 'ajcore_customer_partner_' . $stripe_customer_id, 'ajcore_customer_partner_nonce' );
+
+			$partner_key = isset( $_POST['customer_partner_key'] ) ? sanitize_key( wp_unslash( $_POST['customer_partner_key'] ) ) : '';
+			$pdb         = $this->get_pdb();
+			$pdb->update(
+				$this->get_portal_stripe_customers_table(),
+				array( 'partner_key' => $partner_key ),
+				array( 'stripe_customer_id' => $stripe_customer_id ),
+				array( '%s' ),
+				array( '%s' )
+			);
+			$redirect_args['portal-updated'] = 1;
+
+			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_customer_task_nonce'], $_POST['customer_task_title'] ) ) {
 			check_admin_referer( 'ajcore_customer_task_' . $stripe_customer_id, 'ajcore_customer_task_nonce' );
 
@@ -14944,7 +14962,7 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $tab : 'dashboard';
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		$stripe_mode = $this->get_stripe_mode_badge_data();
 		$stripe_settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
@@ -14953,6 +14971,7 @@ class AJForms_Admin {
 			'service-requests'   => __( 'Service Requests', 'ajforms' ),
 			'leads'              => __( 'Leads', 'ajforms' ),
 			'billing'            => __( 'Billing', 'ajforms' ),
+			'partners'           => __( 'Partners', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'portal-users'       => __( 'Customers', 'ajforms' ),
 			'sold-items'         => __( 'Transactions', 'ajforms' ),
@@ -15030,6 +15049,8 @@ class AJForms_Admin {
 				$this->display_portal_event_log_tab();
 			} elseif ( 'emails' === $tab ) {
 				$this->display_portal_emails_tab();
+			} elseif ( 'partners' === $tab ) {
+				$this->display_portal_partners_tab();
 			} elseif ( 'portal-users' === $tab ) {
 				$this->display_portal_users_tab();
 			} elseif ( 'sold-items' === $tab ) {
@@ -15494,6 +15515,132 @@ class AJForms_Admin {
 	}
 
 
+	private function get_portal_partners_table() {
+		return $this->get_pdb()->prefix . 'aj_portal_partners';
+	}
+
+	private function get_portal_partner_billing_mode_labels() {
+		return array(
+			'fixed_per_account' => __( 'Fixed per account (partner pays us, no invoicing)', 'ajforms' ),
+			'invoiced_report'   => __( 'Invoiced via monthly report (we bill the partner)', 'ajforms' ),
+		);
+	}
+
+	private function display_portal_partners_tab() {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_partners_table();
+
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			echo '<div class="ajforms-settings-card"><p>' . esc_html__( 'Partners table not found yet — it is created automatically on the next plugin upgrade check.', 'ajforms' ) . '</p></div>';
+			return;
+		}
+
+		// Save partner settings.
+		if ( isset( $_POST['ajcore_partner_save_nonce'], $_POST['partner_id'] ) ) {
+			check_admin_referer( 'ajcore_partner_save', 'ajcore_partner_save_nonce' );
+			$modes = array_keys( $this->get_portal_partner_billing_mode_labels() );
+			$mode  = isset( $_POST['partner_billing_mode'] ) ? sanitize_key( wp_unslash( $_POST['partner_billing_mode'] ) ) : '';
+			$pdb->update(
+				$table,
+				array(
+					'name'               => isset( $_POST['partner_name'] ) ? sanitize_text_field( wp_unslash( $_POST['partner_name'] ) ) : '',
+					'billing_mode'       => in_array( $mode, $modes, true ) ? $mode : 'invoiced_report',
+					'per_account_amount' => isset( $_POST['partner_rate'] ) ? round( (float) wp_unslash( $_POST['partner_rate'] ), 2 ) : 0,
+					'notes'              => isset( $_POST['partner_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['partner_notes'] ) ) : '',
+					'updated_at'         => current_time( 'mysql' ),
+				),
+				array( 'id' => absint( $_POST['partner_id'] ) ),
+				array( '%s', '%s', '%f', '%s', '%s' ),
+				array( '%d' )
+			);
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Partner saved.', 'ajforms' ) . '</p></div>';
+		}
+
+		$partners       = $pdb->get_results( "SELECT * FROM `{$table}` ORDER BY name ASC" );
+		$customer_table = $this->get_portal_stripe_customers_table();
+		$mode_labels    = $this->get_portal_partner_billing_mode_labels();
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'Payer / Partner Accounts', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'Partners whose end customers we service. Assign customers to a partner from the customer view page. Fixed partners (OPUS) pay a set rate per account; invoiced partners (Alliance VO) are billed from the monthly report below.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+
+			<?php foreach ( $partners as $partner ) : ?>
+				<?php
+				$accounts = $pdb->get_results(
+					$pdb->prepare(
+						"SELECT stripe_customer_id, name, email, portal_status FROM `{$customer_table}` WHERE partner_key = %s ORDER BY name ASC",
+						$partner->partner_key
+					)
+				);
+				$count = count( $accounts );
+				$total = round( $count * (float) $partner->per_account_amount, 2 );
+				?>
+				<div class="ajcore-admin-panel" style="margin-bottom:16px;">
+					<div class="ajcore-section-head">
+						<div>
+							<h3 style="margin:0 0 4px;"><?php echo esc_html( $partner->name ); ?> <code><?php echo esc_html( $partner->partner_key ); ?></code></h3>
+							<p style="margin:0;"><?php echo esc_html( isset( $mode_labels[ $partner->billing_mode ] ) ? $mode_labels[ $partner->billing_mode ] : $partner->billing_mode ); ?></p>
+						</div>
+						<span class="ajforms-settings-pill">
+							<?php echo esc_html( sprintf( __( '%1$d accounts × %2$s = %3$s / month', 'ajforms' ), $count, $this->format_portal_money( (float) $partner->per_account_amount, 'usd' ), $this->format_portal_money( $total, 'usd' ) ) ); ?>
+						</span>
+					</div>
+
+					<form method="post" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:0 0 14px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+						<?php wp_nonce_field( 'ajcore_partner_save', 'ajcore_partner_save_nonce' ); ?>
+						<input type="hidden" name="partner_id" value="<?php echo esc_attr( (int) $partner->id ); ?>">
+						<label><?php esc_html_e( 'Name', 'ajforms' ); ?><br><input type="text" name="partner_name" value="<?php echo esc_attr( $partner->name ); ?>"></label>
+						<label><?php esc_html_e( 'Billing mode', 'ajforms' ); ?><br>
+							<select name="partner_billing_mode">
+								<?php foreach ( $mode_labels as $mode_key => $mode_label ) : ?>
+									<option value="<?php echo esc_attr( $mode_key ); ?>" <?php selected( $partner->billing_mode, $mode_key ); ?>><?php echo esc_html( $mode_label ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</label>
+						<label><?php esc_html_e( 'Rate per account (USD)', 'ajforms' ); ?><br><input type="number" step="0.01" min="0" name="partner_rate" value="<?php echo esc_attr( number_format( (float) $partner->per_account_amount, 2, '.', '' ) ); ?>" style="width:120px;"></label>
+						<label style="flex:1;min-width:240px;"><?php esc_html_e( 'Notes', 'ajforms' ); ?><br><input type="text" name="partner_notes" value="<?php echo esc_attr( (string) $partner->notes ); ?>" style="width:100%;"></label>
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
+					</form>
+
+					<?php if ( empty( $accounts ) ) : ?>
+						<p class="description"><?php esc_html_e( 'No customers assigned yet — open a customer and set their Partner / Payer.', 'ajforms' ); ?></p>
+					<?php else : ?>
+						<table class="widefat striped">
+							<thead>
+								<tr>
+									<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+									<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
+									<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+									<th><?php esc_html_e( 'Monthly Rate', 'ajforms' ); ?></th>
+								</tr>
+							</thead>
+							<tbody>
+								<?php foreach ( $accounts as $account ) : ?>
+									<tr>
+										<td><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $account->stripe_customer_id ) ); ?>"><?php echo esc_html( $account->name ? $account->name : $account->stripe_customer_id ); ?></a></td>
+										<td><?php echo esc_html( $account->email ); ?></td>
+										<td><?php echo esc_html( $account->portal_status ); ?></td>
+										<td><?php echo esc_html( $this->format_portal_money( (float) $partner->per_account_amount, 'usd' ) ); ?></td>
+									</tr>
+								<?php endforeach; ?>
+							</tbody>
+						</table>
+						<?php if ( 'fixed_per_account' === $partner->billing_mode ) : ?>
+							<p class="description" style="margin-top:8px;"><?php esc_html_e( 'This partner pays the per-account rate directly — no invoice needed. Upsold services for these accounts are charged separately through their Stripe customer records.', 'ajforms' ); ?></p>
+						<?php else : ?>
+							<p class="description" style="margin-top:8px;"><?php echo esc_html( sprintf( __( 'Monthly amount to bill this partner: %s. End customers are never billed directly by us.', 'ajforms' ), $this->format_portal_money( $total, 'usd' ) ) ); ?></p>
+						<?php endif; ?>
+					<?php endif; ?>
+				</div>
+			<?php endforeach; ?>
+		</div>
+		<?php
+	}
+
 	private function display_portal_emails_tab() {
 		global $wpdb;
 		$table = $wpdb->prefix . 'aj_portal_email_log';
@@ -15512,7 +15659,7 @@ class AJForms_Admin {
 			$params = array( $like, $like );
 		}
 
-		$sql  = "SELECT id, to_email, subject, status, error_message, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT 200";
+		$sql  = "SELECT id, to_email, subject, status, error_message, message, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT 200";
 		$rows = $params ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
 		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
 		?>
@@ -15552,6 +15699,12 @@ class AJForms_Admin {
 									<?php echo esc_html( $row->subject ); ?>
 									<?php if ( 'failed' === $row->status && ! empty( $row->error_message ) ) : ?>
 										<br><span class="description" style="color:#b91c1c;"><?php echo esc_html( $row->error_message ); ?></span>
+									<?php endif; ?>
+									<?php if ( ! empty( $row->message ) ) : ?>
+										<details style="margin-top:6px;">
+											<summary style="cursor:pointer;color:#2563eb;"><?php esc_html_e( 'View email', 'ajforms' ); ?></summary>
+											<iframe sandbox="" srcdoc="<?php echo esc_attr( $row->message ); ?>" style="width:100%;max-width:720px;height:420px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;margin-top:8px;"></iframe>
+										</details>
 									<?php endif; ?>
 								</td>
 								<td><span class="ajcore-status-pill <?php echo 'failed' === $row->status ? 'archived' : 'active'; ?>"><?php echo esc_html( ucfirst( $row->status ) ); ?></span></td>
@@ -15996,6 +16149,28 @@ class AJForms_Admin {
 						<dt><?php esc_html_e( 'Last Login', 'ajforms' ); ?></dt>
 						<dd><?php echo $ajcore_last_login ? esc_html( $this->format_portal_date( $ajcore_last_login ) ) : esc_html__( 'No logins recorded yet', 'ajforms' ); ?></dd>
 					<?php endif; ?>
+					<dt><?php esc_html_e( 'Partner / Payer', 'ajforms' ); ?></dt>
+					<dd>
+						<?php
+						$partner_pdb      = $this->get_pdb();
+						$partners_table   = $this->get_portal_partners_table();
+						$partner_options  = $partner_pdb->get_var( $partner_pdb->prepare( 'SHOW TABLES LIKE %s', $partners_table ) ) === $partners_table
+							? $partner_pdb->get_results( "SELECT partner_key, name FROM `{$partners_table}` ORDER BY name ASC" )
+							: array();
+						$current_partner  = isset( $customer->partner_key ) ? (string) $customer->partner_key : '';
+						?>
+						<form method="post" style="display:flex;gap:8px;align-items:center;margin:0;">
+							<?php wp_nonce_field( 'ajcore_customer_partner_' . $customer->stripe_customer_id, 'ajcore_customer_partner_nonce' ); ?>
+							<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+							<select name="customer_partner_key">
+								<option value=""><?php esc_html_e( '— Direct customer —', 'ajforms' ); ?></option>
+								<?php foreach ( $partner_options as $partner_option ) : ?>
+									<option value="<?php echo esc_attr( $partner_option->partner_key ); ?>" <?php selected( $current_partner, $partner_option->partner_key ); ?>><?php echo esc_html( $partner_option->name ); ?></option>
+								<?php endforeach; ?>
+							</select>
+							<button type="submit" class="button button-small"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
+						</form>
+					</dd>
 				</dl>
 				<hr>
 				<form method="post" class="ajcore-customer-actions">
