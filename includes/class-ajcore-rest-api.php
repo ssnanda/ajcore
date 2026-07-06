@@ -1290,6 +1290,12 @@ class AJCore_REST_API {
 		$t_sr        = $this->portal_table( 'aj_portal_service_requests' );
 		$t_customers = $this->portal_table( 'aj_portal_stripe_customers' );
 
+		// Keep requests honest against Stripe (e.g. a subscription canceled after the request was
+		// created) without requiring someone to load the WP admin tab first.
+		if ( class_exists( 'AJForms_Admin' ) ) {
+			( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() )->reconcile_service_requests_for_ops();
+		}
+
 		$search        = sanitize_text_field( (string) $request->get_param( 'search' ) );
 		$status_filter = sanitize_key( (string) $request->get_param( 'status' ) );
 		$source_filter = sanitize_key( (string) $request->get_param( 'source' ) );

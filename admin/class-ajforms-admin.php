@@ -12708,9 +12708,130 @@ class AJForms_Admin {
 			$this->add_portal_service_request_price_id_candidates( $data['price']['id'], $price_ids );
 		}
 
+		// Stripe API 2025-03-31+ ("Basil") moved invoice/subscription line item pricing under
+		// pricing.price_details.price (a plain string) instead of the legacy price.id object.
+		if ( ! empty( $data['pricing']['price_details']['price'] ) ) {
+			$this->add_portal_service_request_price_id_candidates( $data['pricing']['price_details']['price'], $price_ids );
+		}
+
 		foreach ( $data as $value ) {
 			if ( is_array( $value ) ) {
 				$this->collect_portal_service_request_price_ids_from_data( $value, $price_ids );
+			}
+		}
+	}
+
+	/**
+	 * Resolves the subscription ID a Stripe invoice belongs to, across API versions: Basil
+	 * (2025-03-31+) nests it under parent.subscription_details.subscription; older invoices carry
+	 * a direct "subscription" field (sometimes expanded to an object).
+	 */
+	private function get_invoice_subscription_id_from_raw_data( $invoice_raw ) {
+		if ( ! is_array( $invoice_raw ) ) {
+			return '';
+		}
+		if ( ! empty( $invoice_raw['parent']['subscription_details']['subscription'] ) ) {
+			return sanitize_text_field( (string) $invoice_raw['parent']['subscription_details']['subscription'] );
+		}
+		if ( ! empty( $invoice_raw['subscription'] ) ) {
+			$sub = $invoice_raw['subscription'];
+			return sanitize_text_field( (string) ( is_array( $sub ) ? ( $sub['id'] ?? '' ) : $sub ) );
+		}
+		return '';
+	}
+
+	/**
+	 * Keeps invoice-sourced service requests honest against Stripe: if the subscription an
+	 * invoice belongs to has since been canceled, the request's workflow status is moved to
+	 * "Cancelled" so staff stop seeing follow-up actions for a subscription that no longer exists —
+	 * matching what the Stripe dashboard itself shows for that subscription. Also re-resolves the
+	 * service name for auto-generated rows now that Basil-era price IDs are recognized (see
+	 * collect_portal_service_request_price_ids_from_data): older invoices synced before that fix
+	 * fell back to Stripe's frozen, sometimes stale, invoice line-item description text.
+	 */
+	private function reconcile_invoice_sourced_service_requests() {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_service_requests_table();
+
+		$rows = $pdb->get_results(
+			"SELECT * FROM {$table} WHERE source_type = 'invoice' AND service_status NOT IN ('completed','cancelled') ORDER BY id ASC LIMIT 500"
+		);
+
+		foreach ( (array) $rows as $row ) {
+			$invoice_id = sanitize_text_field( (string) $row->source_object_id );
+			if ( '' === $invoice_id ) {
+				continue;
+			}
+			$invoice_raw_json = $pdb->get_var(
+				$pdb->prepare(
+					"SELECT raw_data FROM {$this->get_portal_stripe_transactions_table()} WHERE stripe_object_id = %s LIMIT 1",
+					$invoice_id
+				)
+			);
+			$invoice_raw = $invoice_raw_json ? json_decode( (string) $invoice_raw_json, true ) : null;
+			if ( ! is_array( $invoice_raw ) ) {
+				continue;
+			}
+
+			$update      = array();
+			$formats     = array();
+			$old_service_status = isset( $row->service_status ) && '' !== $row->service_status ? sanitize_key( (string) $row->service_status ) : 'new';
+
+			$subscription_id = $this->get_invoice_subscription_id_from_raw_data( $invoice_raw );
+			if ( '' !== $subscription_id ) {
+				$sub_status = $this->get_synced_portal_subscription_status( $subscription_id );
+				if ( in_array( $sub_status, array( 'canceled', 'incomplete_expired' ), true ) && 'cancelled' !== $old_service_status ) {
+					$update['service_status'] = 'cancelled';
+					$formats[]                = '%s';
+				}
+			}
+
+			// Only auto-generated, never-manually-edited rows get their name re-resolved.
+			if ( 'ledger_backfill' === sanitize_key( (string) $row->source ) ) {
+				$price_ids = array();
+				$this->collect_portal_service_request_price_ids_from_data( $invoice_raw, $price_ids );
+				$names = array();
+				foreach ( $price_ids as $pid ) {
+					$product = $this->get_portal_product_by_price_id( $pid );
+					if ( $product ) {
+						$label = ! empty( $product->custom_label ) ? $product->custom_label : ( ! empty( $product->name ) ? $product->name : '' );
+						if ( '' !== $label && ! in_array( $label, $names, true ) ) {
+							$names[] = sanitize_text_field( (string) $label );
+						}
+					}
+				}
+				$resolved_name = ! empty( $names ) ? implode( ', ', $names ) : '';
+				if ( '' !== $resolved_name && $resolved_name !== $row->service_name ) {
+					$update['service_name'] = $resolved_name;
+					$formats[]              = '%s';
+					if ( empty( $row->stripe_price_id ) && ! empty( $price_ids ) ) {
+						$update['stripe_price_id'] = sanitize_text_field( (string) reset( $price_ids ) );
+						$formats[]                 = '%s';
+					}
+				}
+			}
+
+			if ( empty( $update ) ) {
+				continue;
+			}
+
+			$update['updated_at'] = current_time( 'mysql' );
+			$formats[]            = '%s';
+			$pdb->update( $table, $update, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
+
+			if ( isset( $update['service_status'] ) ) {
+				$this->add_portal_service_request_history(
+					(int) $row->id,
+					'status_changed',
+					array(
+						'status_before'         => sanitize_key( (string) $row->status ),
+						'status_after'          => sanitize_key( (string) $row->status ),
+						'service_status_before' => $old_service_status,
+						'service_status_after'  => 'cancelled',
+						'note'                  => __( 'Reconciled automatically: the linked Stripe subscription is canceled.', 'ajforms' ),
+						'details'               => array( 'source' => 'subscription_reconcile', 'subscription_id' => $subscription_id ),
+					)
+				);
 			}
 		}
 	}
@@ -13545,6 +13666,13 @@ class AJForms_Admin {
 				);
 			}
 		}
+
+		$this->reconcile_invoice_sourced_service_requests();
+	}
+
+	/** Public entry point for the ops REST API — same reconciliation the WP admin page triggers. */
+	public function reconcile_service_requests_for_ops() {
+		$this->reconcile_invoice_sourced_service_requests();
 	}
 
 	/**
@@ -13972,7 +14100,7 @@ class AJForms_Admin {
 			.aj-sr-td-customer{min-width:150px;max-width:220px}
 			.aj-sr-td-customer strong{display:block;font-weight:700;color:#0f172a;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 			.aj-sr-td-customer span{display:block;color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-			.aj-sr-td-service{font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:180px;max-width:340px}
+			.aj-sr-td-service{font-weight:700;color:#0f172a;white-space:normal;overflow-wrap:break-word;line-height:1.35;min-width:180px;max-width:360px}
 			.aj-sr-td-pay-status,.aj-sr-td-svc-status{min-width:90px;max-width:150px}
 			.aj-sr-td-note{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:32px;max-width:160px}
 			.aj-sr-td-amount{min-width:80px;max-width:110px;font-weight:700;color:#0f172a;text-align:right!important;white-space:nowrap}
