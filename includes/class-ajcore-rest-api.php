@@ -409,6 +409,8 @@ class AJCore_REST_API {
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests/(?P<id>\d+)' => array( 'methods' => 'POST', 'callback' => 'update_ops_service_request', 'permission' => 'can_manage_ops_api' ),
 			'/ops/service-requests/(?P<id>\d+)/quick-action' => array( 'methods' => 'POST', 'callback' => 'apply_ops_service_request_quick_action', 'permission' => 'can_manage_ops_api' ),
+			'/ops/service-requests/(?P<id>\d+)/history' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_request_history', 'permission' => 'can_manage_ops_api' ),
+			'/ops/service-requests/bulk' => array( 'methods' => 'POST', 'callback' => 'bulk_update_ops_service_requests', 'permission' => 'can_manage_ops_api' ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -1338,7 +1340,7 @@ class AJCore_REST_API {
 		$where_sql = implode( ' AND ', $where );
 		$sql       = "SELECT r.id, r.stripe_customer_id, r.service_name, r.request_type, r.status, r.service_status,
 			r.amount, r.currency, r.source, r.source_type, r.client_notes, r.admin_notes, r.created_at, r.updated_at,
-			r.stripe_price_id, r.stripe_product_id,
+			r.stripe_price_id, r.stripe_product_id, r.assigned_user_id,
 			c.name AS customer_name, c.email AS customer_email
 			FROM `{$t_sr}` r
 			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = r.stripe_customer_id
@@ -1352,12 +1354,24 @@ class AJCore_REST_API {
 
 		$admin = class_exists( 'AJForms_Admin' ) ? ( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() ) : null;
 
+		// Resolve assignee display info in one query rather than one per row.
+		global $wpdb;
+		$assignee_ids = array_values( array_unique( array_filter( array_map( function ( $r ) { return (int) $r->assigned_user_id; }, $rows ) ) ) );
+		$assignees    = array();
+		if ( ! empty( $assignee_ids ) ) {
+			$id_placeholders = implode( ',', array_fill( 0, count( $assignee_ids ), '%d' ) );
+			foreach ( $wpdb->get_results( $wpdb->prepare( "SELECT ID, display_name, user_email FROM {$wpdb->users} WHERE ID IN ({$id_placeholders})", $assignee_ids ) ) as $u ) {
+				$assignees[ (int) $u->ID ] = array( 'name' => (string) $u->display_name, 'email' => (string) $u->user_email );
+			}
+		}
+
 		$service_requests = array();
 		foreach ( $rows as $r ) {
 			$needs_action = $admin ? $admin->service_request_needs_action_for_ops( $r ) : false;
 			if ( $needs_action_filter && ! $needs_action ) {
 				continue;
 			}
+			$assigned_user_id = (int) $r->assigned_user_id;
 			$service_requests[] = array(
 				'id'                => (int) $r->id,
 				'stripe_customer_id' => (string) $r->stripe_customer_id,
@@ -1376,6 +1390,9 @@ class AJCore_REST_API {
 				'customer_name'     => (string) $r->customer_name,
 				'customer_email'    => (string) $r->customer_email,
 				'needs_action'      => $needs_action,
+				'assigned_user_id'  => $assigned_user_id,
+				'assigned_user_name'  => $assigned_user_id && isset( $assignees[ $assigned_user_id ] ) ? $assignees[ $assigned_user_id ]['name'] : '',
+				'assigned_user_email' => $assigned_user_id && isset( $assignees[ $assigned_user_id ] ) ? $assignees[ $assigned_user_id ]['email'] : '',
 				'service_status_options' => $admin ? $admin->get_service_request_service_status_options_for_ops( $r ) : array(),
 				'quick_actions'     => $admin ? $admin->get_service_request_quick_actions_for_ops( $r ) : array(),
 			);
@@ -1423,10 +1440,11 @@ class AJCore_REST_API {
 		$result = $admin->update_service_request_from_ops(
 			(int) $request->get_param( 'id' ),
 			array(
-				'status'         => $request->get_param( 'status' ),
-				'service_status' => $request->get_param( 'service_status' ),
-				'admin_notes'    => $request->get_param( 'admin_notes' ),
-				'note'           => $request->get_param( 'note' ),
+				'status'           => $request->get_param( 'status' ),
+				'service_status'   => $request->get_param( 'service_status' ),
+				'admin_notes'      => $request->get_param( 'admin_notes' ),
+				'note'             => $request->get_param( 'note' ),
+				'assigned_user_id' => $request->get_param( 'assigned_user_id' ),
 			)
 		);
 		if ( is_wp_error( $result ) ) {
@@ -1435,10 +1453,11 @@ class AJCore_REST_API {
 		return rest_ensure_response( array(
 			'success'         => true,
 			'service_request' => array(
-				'id'             => (int) $result->id,
-				'status'         => (string) $result->status,
-				'service_status' => (string) $result->service_status,
-				'admin_notes'    => (string) $result->admin_notes,
+				'id'               => (int) $result->id,
+				'status'           => (string) $result->status,
+				'service_status'   => (string) $result->service_status,
+				'admin_notes'      => (string) $result->admin_notes,
+				'assigned_user_id' => (int) $result->assigned_user_id,
 			),
 		) );
 	}
@@ -1457,6 +1476,40 @@ class AJCore_REST_API {
 			return new WP_Error( 'action_failed', $result->get_error_message(), array( 'status' => $status ) );
 		}
 		return rest_ensure_response( array( 'success' => true, 'result' => $result ) );
+	}
+
+	public function get_ops_service_request_history( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		return rest_ensure_response( array(
+			'history' => $admin->get_service_request_history_for_ops( (int) $request->get_param( 'id' ) ),
+		) );
+	}
+
+	public function bulk_update_ops_service_requests( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$ids = $request->get_param( 'ids' );
+		if ( empty( $ids ) || ! is_array( $ids ) ) {
+			return new WP_Error( 'bad_request', __( 'At least one request id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$admin   = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$fields  = array(
+			'service_status'   => $request->get_param( 'service_status' ),
+			'assigned_user_id' => $request->get_param( 'assigned_user_id' ),
+		);
+		$results = $admin->bulk_update_service_requests_for_ops( $ids, $fields );
+		$failed  = array_filter( $results, function ( $r ) { return empty( $r['success'] ); } );
+
+		return rest_ensure_response( array(
+			'success' => empty( $failed ),
+			'updated' => count( $results ) - count( $failed ),
+			'failed'  => count( $failed ),
+			'results' => $results,
+		) );
 	}
 
 	public function get_ops_sync_logs( WP_REST_Request $request ) {

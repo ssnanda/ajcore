@@ -901,6 +901,51 @@ class AJForms_Activator {
 			}
 		}
 
+		// Service request history + assignee: the history table was added to the plugin after shared
+		// DB mode already existed for some installs, so it only ever got created locally — writes to
+		// it via the shared connection were silently failing. Also add an assignee column so a
+		// request can be handed to a specific staff member. Create/patch on the local AND portal DB.
+		$sr_dbs = array( $wpdb );
+		if ( function_exists( 'ajcore_get_portal_db' ) && ajcore_get_portal_db() !== $wpdb ) {
+			$sr_dbs[] = ajcore_get_portal_db();
+		}
+		foreach ( $sr_dbs as $sr_db ) {
+			$db_sr_history = $sr_db->prefix . 'aj_portal_service_request_history';
+			$db_sr         = $sr_db->prefix . 'aj_portal_service_requests';
+			$sr_charset    = $sr_db->get_charset_collate();
+
+			$sr_db->query(
+				"CREATE TABLE IF NOT EXISTS $db_sr_history (
+					id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					request_id bigint(20) unsigned NOT NULL,
+					event_type varchar(50) DEFAULT 'note' NOT NULL,
+					status_before varchar(50) DEFAULT '' NOT NULL,
+					status_after varchar(50) DEFAULT '' NOT NULL,
+					service_status_before varchar(50) DEFAULT '' NOT NULL,
+					service_status_after varchar(50) DEFAULT '' NOT NULL,
+					note longtext NULL,
+					visibility varchar(30) DEFAULT 'internal' NOT NULL,
+					actor_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+					actor_email varchar(190) DEFAULT '' NOT NULL,
+					details longtext NULL,
+					created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+					PRIMARY KEY (id),
+					KEY request_id (request_id),
+					KEY event_type (event_type),
+					KEY visibility (visibility),
+					KEY actor_user_id (actor_user_id),
+					KEY created_at (created_at)
+				) $sr_charset"
+			);
+
+			if ( $sr_db->get_var( $sr_db->prepare( 'SHOW TABLES LIKE %s', $db_sr ) ) === $db_sr ) {
+				$has_assignee_col = $sr_db->get_var( "SHOW COLUMNS FROM $db_sr LIKE 'assigned_user_id'" );
+				if ( ! $has_assignee_col ) {
+					$sr_db->query( "ALTER TABLE $db_sr ADD COLUMN assigned_user_id bigint(20) unsigned NOT NULL DEFAULT 0, ADD KEY assigned_user_id (assigned_user_id)" );
+				}
+			}
+		}
+
 		$now = current_time( 'mysql' );
 		$wpdb->query(
 			$wpdb->prepare(
@@ -1015,7 +1060,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '19', false );
+		update_option( 'ajforms_portal_schema_version', '20', false );
 	}
 
 	/**
