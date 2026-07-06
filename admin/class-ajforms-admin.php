@@ -14208,19 +14208,19 @@ class AJForms_Admin {
 			.aj-sr-bulk-count{font-weight:700;color:#1d4ed8;font-size:13px;white-space:nowrap}
 			.aj-sr-td-assignee{min-width:110px;max-width:160px}
 			.aj-sr-td-assignee select{width:100%;min-height:30px;border-radius:8px;border:1px solid #cbd5e1;font-size:12px}
-			.aj-sr-stepper{display:flex;flex-direction:column;gap:3px}
+			.aj-sr-stepper{display:flex;flex-direction:column;gap:5px}
 			.aj-sr-stepper-dots{display:flex;align-items:center}
-			.aj-sr-stepper-dot{width:16px;height:16px;flex:none;border-radius:999px;border:none;background:#e2e8f0;font-size:8px;line-height:1;color:#fff;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+			.aj-sr-stepper-dot{width:24px;height:24px;flex:none;border-radius:999px;border:none;background:#e2e8f0;font-size:12px;font-weight:700;line-height:1;color:#fff;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;transition:background .15s}
 			.aj-sr-stepper-dot:hover{background:#cbd5e1}
 			.aj-sr-stepper-dot.is-done{background:#22c55e}
 			.aj-sr-stepper-dot.is-done:hover{background:#16a34a}
-			.aj-sr-stepper-dot.is-current{background:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.2)}
-			.aj-sr-stepper-line{width:10px;height:2px;flex:none;background:#e2e8f0}
+			.aj-sr-stepper-dot.is-current{background:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.2)}
+			.aj-sr-stepper-line{width:16px;height:3px;flex:none;background:#e2e8f0}
 			.aj-sr-stepper-line.is-done{background:#86efac}
-			.aj-sr-stepper-cancel{margin-left:6px;border:none;background:none;color:#fca5a5;font-size:10px;font-weight:700;cursor:pointer;padding:0}
-			.aj-sr-stepper-cancel:hover{color:#dc2626}
-			.aj-sr-stepper-label{font-size:11px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
+			.aj-sr-stepper-label{font-size:12px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
 			.aj-sr-cancelled-badge{border:none;cursor:pointer}
+			.aj-sr-manage-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #e5edf5}
+			.aj-sr-manage-actions .button-link-delete{color:#b91c1c;border-color:#fecaca;background:#fef2f2}
 			.aj-sr-search{min-width:260px;flex:1}
 			.aj-sr-search input{width:100%;min-height:36px;border-radius:999px;border:1px solid #cbd5e1;padding:0 14px;font-size:13px}
 			.aj-sr-toolbar select{min-height:36px;border-radius:999px;border-color:#cbd5e1;font-weight:600;font-size:13px;padding:0 10px}
@@ -14250,12 +14250,13 @@ class AJForms_Admin {
 			.aj-sr-td-customer span{display:block;color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 			.aj-sr-td-service{font-weight:700;color:#0f172a;white-space:normal;overflow-wrap:break-word;line-height:1.35;min-width:180px;max-width:360px}
 			.aj-sr-td-pay-status{min-width:90px;max-width:150px}
-			.aj-sr-td-svc-status{min-width:140px;max-width:190px}
+			.aj-sr-td-svc-status{min-width:170px;max-width:220px}
 			.aj-sr-td-note{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:32px;max-width:160px}
 			.aj-sr-td-amount{min-width:80px;max-width:110px;font-weight:700;color:#0f172a;text-align:right!important;white-space:nowrap}
 			.aj-sr-td-source{min-width:88px;max-width:130px;font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-			.aj-sr-td-actions{min-width:170px;max-width:260px;text-align:right!important}
-			.aj-sr-td-actions .button{border-radius:8px;font-size:11px;padding:2px 8px;line-height:2}
+			.aj-sr-td-actions{width:36px;text-align:center!important}
+			.aj-sr-kebab-btn{background:none;border:1px solid #e2e8f0;border-radius:8px;width:28px;height:28px;font-size:14px;line-height:1;cursor:pointer;color:#64748b;display:flex;align-items:center;justify-content:center}
+			.aj-sr-kebab-btn:hover{background:#f1f5f9;color:#0f172a}
 			table.aj-sr-table tbody tr.aj-sr-detail-row td{padding:0}
 			.aj-sr-detail-panel{padding:16px;background:#f8fafc;border-top:1px dashed #cbd5e1}
 			.aj-sr-detail-grid{display:grid;grid-template-columns:minmax(260px,.85fr) minmax(300px,1.15fr);gap:14px}
@@ -14338,7 +14339,7 @@ class AJForms_Admin {
 									<th class="aj-sr-td-assignee"><?php esc_html_e( 'Assignee', 'ajforms' ); ?></th>
 									<th class="aj-sr-td-amount" data-sort="amount" style="text-align:right"><?php esc_html_e( 'Amount', 'ajforms' ); ?><i class="aj-sort-icon"></i></th>
 									<th class="aj-sr-td-source"><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
-									<th class="aj-sr-td-actions" style="text-align:right"><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+									<th class="aj-sr-td-actions"></th>
 								</tr>
 							</thead>
 							<tbody>
@@ -14376,7 +14377,6 @@ class AJForms_Admin {
 													$svc_pipeline[ $opt_key ] = $opt_label;
 												}
 											}
-											$has_cancel_option  = isset( $service_options['cancelled'] );
 											$pipeline_keys      = array_keys( $svc_pipeline );
 											$current_step_index = array_search( $svc_status, $pipeline_keys, true );
 											$full_path          = implode( ' → ', array_values( $svc_pipeline ) );
@@ -14398,9 +14398,6 @@ class AJForms_Admin {
 															<?php if ( $i > 0 ) : ?><span class="aj-sr-stepper-line <?php echo $i <= $current_step_index ? 'is-done' : ''; ?>"></span><?php endif; ?>
 															<button type="submit" name="after_service_status" value="<?php echo esc_attr( $key ); ?>" class="aj-sr-stepper-dot <?php echo $i < $current_step_index ? 'is-done' : ( $i === $current_step_index ? 'is-current' : '' ); ?>" title="<?php echo esc_attr( $svc_pipeline[ $key ] ); ?>"><?php echo $i < $current_step_index ? '✓' : ''; ?></button>
 														<?php endforeach; ?>
-														<?php if ( $has_cancel_option ) : ?>
-															<button type="submit" name="after_service_status" value="cancelled" class="aj-sr-stepper-cancel" title="<?php esc_attr_e( 'Cancel this request', 'ajforms' ); ?>" onclick="return confirm('<?php echo esc_js( sprintf( __( 'Cancel "%s"?', 'ajforms' ), $request_display_name ) ); ?>');">✕</button>
-														<?php endif; ?>
 													</div>
 													<span class="aj-sr-stepper-label"><?php echo esc_html( $svc_label ); ?></span>
 												</form>
@@ -14423,11 +14420,7 @@ class AJForms_Admin {
 										<td class="aj-sr-td-amount"><?php echo esc_html( $amount_str ); ?></td>
 										<td class="aj-sr-td-source" title="<?php echo esc_attr( $source_label ); ?>"><?php echo esc_html( $source_label ); ?></td>
 										<td class="aj-sr-td-actions" onclick="event.stopPropagation()">
-											<button type="button" class="button button-small aj-sr-history-btn" data-aj-sr-target="<?php echo esc_attr( $detail_id ); ?>"><?php esc_html_e( 'View History', 'ajforms' ); ?></button>
-											<?php foreach ( $actions as $action_key => $action_label ) : ?>
-												<?php $action_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service_request_action' => $action_key, 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ); ?>
-												<a class="button button-small" href="<?php echo esc_url( $action_url ); ?>"<?php echo 'delete' === $action_key ? ' onclick="return confirm(\'' . esc_js( __( 'Delete this request? Safe linked non-Stripe ledger rows may also be removed.', 'ajforms' ) ) . '\');"' : ''; ?>><?php echo esc_html( $action_label ); ?></a>
-											<?php endforeach; ?>
+											<button type="button" class="aj-sr-kebab-btn aj-sr-history-btn" data-aj-sr-target="<?php echo esc_attr( $detail_id ); ?>" title="<?php esc_attr_e( 'View history & manage', 'ajforms' ); ?>" aria-label="<?php esc_attr_e( 'View history & manage', 'ajforms' ); ?>">⋮</button>
 										</td>
 									</tr>
 									<tr class="aj-sr-detail-row aj-sr-hidden" id="<?php echo esc_attr( $detail_id ); ?>">
@@ -14441,11 +14434,42 @@ class AJForms_Admin {
 															<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
 															<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
 															<label><span><?php esc_html_e( 'Pay Status', 'ajforms' ); ?></span><select name="after_save_status"><?php foreach ( $labels as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $status_key, $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
-															<label><span><?php esc_html_e( 'Service Status', 'ajforms' ); ?></span><select name="after_service_status"><?php foreach ( $service_options as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $svc_status, $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
+															<?php
+															// Cancelling is a deliberate, confirmed action via the Cancel Request button below,
+															// not a value to casually pick here — excluded unless already cancelled.
+															$forward_service_options = 'cancelled' === $svc_status ? $service_options : $svc_pipeline;
+															?>
+															<label><span><?php esc_html_e( 'Service Status', 'ajforms' ); ?></span><select name="after_service_status"><?php foreach ( $forward_service_options as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $svc_status, $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
 															<label><span><?php esc_html_e( 'Admin Notes', 'ajforms' ); ?></span><textarea name="admin_notes" rows="3" placeholder="<?php esc_attr_e( 'Internal notes about this request.', 'ajforms' ); ?>"><?php echo esc_textarea( (string) $request->admin_notes ); ?></textarea></label>
 															<label><span><?php esc_html_e( 'Add History Note', 'ajforms' ); ?></span><textarea name="service_request_note" rows="3" placeholder="<?php esc_attr_e( 'Add a note. It will be timestamped in history.', 'ajforms' ); ?>"></textarea></label>
 															<button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
 														</form>
+														<?php
+														// The stepper only ever shows the forward pipeline (see $svc_pipeline above) — cancelling
+														// is available here instead, as a deliberate, confirmed action, whenever "cancelled" is a
+														// reachable status for this product and the request isn't already done/cancelled.
+														$can_cancel = isset( $service_options['cancelled'] ) && ! in_array( $svc_status, array( 'cancelled', 'completed' ), true );
+														?>
+														<?php if ( $can_cancel || isset( $actions['delete'] ) || isset( $actions['apply_billing_change'] ) ) : ?>
+															<div class="aj-sr-manage-actions">
+																<?php if ( $can_cancel ) : ?>
+																	<form method="post" onsubmit="return confirm('<?php echo esc_js( sprintf( __( 'Cancel "%s"? This can be reopened later if needed.', 'ajforms' ), $request_display_name ) ); ?>');">
+																		<input type="hidden" name="service_request_action" value="save_details">
+																		<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
+																		<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
+																		<button type="submit" name="after_service_status" value="cancelled" class="button"><?php esc_html_e( 'Cancel Request', 'ajforms' ); ?></button>
+																	</form>
+																<?php endif; ?>
+																<?php if ( isset( $actions['apply_billing_change'] ) ) : ?>
+																	<?php $billing_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service_request_action' => 'apply_billing_change', 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ); ?>
+																	<a class="button" href="<?php echo esc_url( $billing_url ); ?>"><?php echo esc_html( $actions['apply_billing_change'] ); ?></a>
+																<?php endif; ?>
+																<?php if ( isset( $actions['delete'] ) ) : ?>
+																	<?php $delete_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service_request_action' => 'delete', 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ); ?>
+																	<a class="button button-link-delete" href="<?php echo esc_url( $delete_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this request? Safe linked non-Stripe ledger rows may also be removed.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
+																<?php endif; ?>
+															</div>
+														<?php endif; ?>
 													</div>
 													<div class="aj-sr-history-card">
 														<h3><?php esc_html_e( 'History', 'ajforms' ); ?></h3>
