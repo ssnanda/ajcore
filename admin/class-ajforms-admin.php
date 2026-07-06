@@ -13654,43 +13654,32 @@ class AJForms_Admin {
 		}
 	}
 
-	private function handle_service_requests_actions() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-
-		$this->ensure_portal_schema();
-		$this->backfill_portal_service_requests_from_ledger();
-		$this->cleanup_stale_pending_checkout_service_requests();
-		$this->handle_portal_service_request_details_save();
-
-		if ( ! isset( $_GET['service_request_action'], $_GET['request_id'], $_GET['_wpnonce'] ) ) {
-			return;
-		}
-
-		$request_id = absint( wp_unslash( $_GET['request_id'] ) );
-		$action     = sanitize_key( wp_unslash( $_GET['service_request_action'] ) );
-		check_admin_referer( 'ajcore_service_request_' . $request_id );
+	/**
+	 * Applies one quick-action key (see get_portal_service_request_quick_actions) to a service
+	 * request: updates status/service_status, records history, syncs the ledger for payment
+	 * actions, and emails the customer on service_status changes. Shared by the WP admin quick
+	 * action links and the AJ Ops API, so both surfaces behave identically.
+	 *
+	 * @return array|WP_Error array( 'request_id', 'status', 'service_status' ) plus a 'deleted' or
+	 *                        'billing_change_applied' flag for those two special actions.
+	 */
+	private function apply_service_request_quick_action( $request_id, $action ) {
+		$request_id = absint( $request_id );
+		$action     = sanitize_key( (string) $action );
 
 		if ( 'delete' === $action ) {
 			$this->add_portal_service_request_history( $request_id, 'deleted', array( 'note' => __( 'Service request was deleted from the admin queue.', 'ajforms' ) ) );
 			$this->handle_portal_service_request_delete( $request_id );
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-deleted' => 1 ), admin_url( 'admin.php' ) ) );
-			exit;
+			return array( 'request_id' => $request_id, 'deleted' => true );
 		}
 
 		if ( 'apply_billing_change' === $action ) {
 			$result = $this->apply_portal_billing_change_request( $request_id );
-			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' );
 			if ( is_wp_error( $result ) ) {
-				$args['service-request-error'] = rawurlencode( $result->get_error_message() );
-			} else {
-				$this->add_portal_service_request_history( $request_id, 'billing_change', array( 'note' => __( 'Billing change was applied.', 'ajforms' ) ) );
-				$args['service-request-updated'] = 1;
-				$args['billing-change-applied'] = 1;
+				return $result;
 			}
-			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
-			exit;
+			$this->add_portal_service_request_history( $request_id, 'billing_change', array( 'note' => __( 'Billing change was applied.', 'ajforms' ) ) );
+			return array( 'request_id' => $request_id, 'billing_change_applied' => true );
 		}
 
 		$payment_action_map = array(
@@ -13720,62 +13709,130 @@ class AJForms_Admin {
 		$is_payment_action = isset( $payment_action_map[ $action ] );
 		$is_service_action = isset( $service_action_map[ $action ] );
 		if ( ! $is_payment_action && ! $is_service_action ) {
-			return;
+			return new WP_Error( 'invalid_action', __( 'Unknown quick action.', 'ajforms' ) );
 		}
 
 		$pdb     = $this->get_pdb();
 		$request = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
-		if ( $request ) {
-			$old_status = sanitize_key( (string) $request->status );
-			$old_service_status = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
-			$update_data    = array( 'updated_at' => current_time( 'mysql' ) );
-			$update_formats = array( '%s' );
-			$new_status     = $old_status;
-			$new_service_status = $old_service_status;
+		if ( ! $request ) {
+			return new WP_Error( 'not_found', __( 'Service request not found.', 'ajforms' ) );
+		}
 
-			if ( $is_payment_action ) {
-				$new_status             = $payment_action_map[ $action ];
-				$update_data['status']  = $new_status;
-				$update_formats[]       = '%s';
-			}
-			if ( $is_service_action ) {
-				$new_service_status = $service_action_map[ $action ];
-				$update_data['service_status'] = $new_service_status;
-				$update_formats[]              = '%s';
-			}
+		$old_status         = sanitize_key( (string) $request->status );
+		$old_service_status = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+		$update_data        = array( 'updated_at' => current_time( 'mysql' ) );
+		$update_formats     = array( '%s' );
+		$new_status         = $old_status;
+		$new_service_status = $old_service_status;
 
-			$pdb->update(
-				$this->get_portal_service_requests_table(),
-				$update_data,
-				array( 'id' => $request_id ),
-				$update_formats,
-				array( '%d' )
+		if ( $is_payment_action ) {
+			$new_status             = $payment_action_map[ $action ];
+			$update_data['status']  = $new_status;
+			$update_formats[]       = '%s';
+		}
+		if ( $is_service_action ) {
+			$new_service_status             = $service_action_map[ $action ];
+			$update_data['service_status']  = $new_service_status;
+			$update_formats[]               = '%s';
+		}
+
+		$pdb->update(
+			$this->get_portal_service_requests_table(),
+			$update_data,
+			array( 'id' => $request_id ),
+			$update_formats,
+			array( '%d' )
+		);
+
+		if ( $old_status !== $new_status || $old_service_status !== $new_service_status ) {
+			$this->add_portal_service_request_history(
+				$request_id,
+				'status_changed',
+				array(
+					'status_before'         => $old_status,
+					'status_after'          => $new_status,
+					'service_status_before' => $old_service_status,
+					'service_status_after'  => $new_service_status,
+					'note'                  => sprintf( __( 'Quick action: %s', 'ajforms' ), ucwords( str_replace( '_', ' ', $action ) ) ),
+					'details'               => array( 'action' => $action ),
+				)
 			);
+			$this->send_service_request_status_email( $request, $old_service_status, $new_service_status );
+		}
 
-			if ( $old_status !== $new_status || $old_service_status !== $new_service_status ) {
-				$this->add_portal_service_request_history(
-					$request_id,
-					'status_changed',
-					array(
-						'status_before'         => $old_status,
-						'status_after'          => $new_status,
-						'service_status_before' => $old_service_status,
-						'service_status_after'  => $new_service_status,
-						'note'                  => sprintf( __( 'Quick action: %s', 'ajforms' ), ucwords( str_replace( '_', ' ', $action ) ) ),
-						'details'               => array( 'action' => $action ),
-					)
-				);
-				$this->send_service_request_status_email( $request, $old_service_status, $new_service_status );
-			}
+		if ( $is_payment_action ) {
+			$ledger_status   = 'awaiting_payment' === $new_status ? 'unpaid' : $new_status;
+			$request->status = $new_status;
+			$this->sync_portal_service_request_to_ledger( $request, array( 'status' => $ledger_status ) );
+		}
 
-			if ( $is_payment_action ) {
-				$ledger_status   = 'awaiting_payment' === $new_status ? 'unpaid' : $new_status;
-				$request->status = $new_status;
-				$this->sync_portal_service_request_to_ledger( $request, array( 'status' => $ledger_status ) );
+		return array(
+			'request_id'     => $request_id,
+			'status'         => $new_status,
+			'service_status' => $new_service_status,
+		);
+	}
+
+	/** Public entry point for the ops REST API — applies a quick action key directly (e.g. "update_sosn"). */
+	public function apply_service_request_quick_action_for_ops( $request_id, $action ) {
+		return $this->apply_service_request_quick_action( $request_id, $action );
+	}
+
+	/** Public entry point for the ops REST API — the same button set the WP admin list shows for this row. */
+	public function get_service_request_quick_actions_for_ops( $request, $raw_data = array() ) {
+		return $this->get_portal_service_request_quick_actions( $request, $raw_data );
+	}
+
+	/**
+	 * True when this request has a real next step (per get_portal_service_request_quick_actions)
+	 * beyond just "cancel" or "delete" — used for the Needs Action stat and default filter so a
+	 * request that is fully active/completed no longer counts, regardless of its raw status value.
+	 */
+	public function service_request_needs_action_for_ops( $request, $raw_data = array() ) {
+		// Friends & Family / internal accounts (e.g. "Registered Agent Subscription F&F") are
+		// complimentary accounts — no follow-up action is ever required for them.
+		$service_name = isset( $request->service_name ) ? (string) $request->service_name : '';
+		if ( false !== stripos( $service_name, 'f&f' ) ) {
+			return false;
+		}
+		$actions = $this->get_portal_service_request_quick_actions( $request, $raw_data );
+		unset( $actions['cancel'], $actions['delete'] );
+		return ! empty( $actions );
+	}
+
+	private function handle_service_requests_actions() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$this->ensure_portal_schema();
+		$this->backfill_portal_service_requests_from_ledger();
+		$this->cleanup_stale_pending_checkout_service_requests();
+		$this->handle_portal_service_request_details_save();
+
+		if ( ! isset( $_GET['service_request_action'], $_GET['request_id'], $_GET['_wpnonce'] ) ) {
+			return;
+		}
+
+		$request_id = absint( wp_unslash( $_GET['request_id'] ) );
+		$action     = sanitize_key( wp_unslash( $_GET['service_request_action'] ) );
+		check_admin_referer( 'ajcore_service_request_' . $request_id );
+
+		$result = $this->apply_service_request_quick_action( $request_id, $action );
+		$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' );
+
+		if ( is_wp_error( $result ) ) {
+			$args['service-request-error'] = rawurlencode( $result->get_error_message() );
+		} elseif ( ! empty( $result['deleted'] ) ) {
+			$args['service-request-deleted'] = 1;
+		} else {
+			$args['service-request-updated'] = 1;
+			if ( ! empty( $result['billing_change_applied'] ) ) {
+				$args['billing-change-applied'] = 1;
 			}
 		}
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -13797,15 +13854,15 @@ class AJForms_Admin {
 		$params        = array();
 		$show_actionable_default = '' === $status_filter && '' === $search;
 
-		$actionable_service_statuses = array( 'new', 'under_review', 'pending_customer', 'pending_agent', 'meeting_scheduled', 'sosnc_filing', 'signing_cmra', 'id_proof_needed', 'address_proof_needed', 'vo_setup_required', 'sosnc_client', 'updating_sosn', 'included_with_llc_setup' );
 		if ( 'all' === $status_filter ) {
 			$status_filter = 'all';
 		} elseif ( '' !== $status_filter && isset( $labels[ $status_filter ] ) ) {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
-		} elseif ( $show_actionable_default ) {
-			$where[] = "(r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR r.service_status IN ('" . implode( "','", array_map( 'esc_sql', $actionable_service_statuses ) ) . "'))";
 		}
+		// $show_actionable_default is applied in PHP below (via service_request_needs_action_for_ops),
+		// not SQL — a literal status like 'paid' isn't enough on its own once the service_status has
+		// reached active/completed, and that requires the same button logic the quick actions use.
 
 		if ( 'checkout_only' === $source_filter ) {
 			$where[] = "(r.source_type = 'checkout_session' OR r.source = 'checkout_session')";
@@ -13827,7 +13884,7 @@ class AJForms_Admin {
 			LEFT JOIN {$this->get_portal_stripe_transactions_table()} t ON t.stripe_object_id = r.source_object_id
 			WHERE " . implode( ' AND ', $where ) . "
 			ORDER BY r.updated_at DESC, r.created_at DESC, r.id DESC
-			LIMIT 200";
+			LIMIT 500";
 		$requests_raw = ! empty( $params ) ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
 		$user_ids     = array_values( array_unique( array_filter( array_map( function( $r ) { return (int) $r->wp_user_id; }, (array) $requests_raw ) ) ) );
 		$users_by_id  = array();
@@ -13839,18 +13896,40 @@ class AJForms_Admin {
 		}
 		$requests = array();
 		foreach ( (array) $requests_raw as $r ) {
+			if ( $show_actionable_default && ! $this->service_request_needs_action_for_ops( $r, $this->get_portal_service_request_raw_data( $r ) ) ) {
+				continue;
+			}
 			$u                  = isset( $users_by_id[ (int) $r->wp_user_id ] ) ? $users_by_id[ (int) $r->wp_user_id ] : null;
 			$r->wp_user_email   = $u ? $u->user_email : '';
 			$r->wp_display_name = $u ? $u->display_name : '';
 			$requests[]         = $r;
+			if ( count( $requests ) >= 200 ) {
+				break;
+			}
 		}
 
 		$counts = $pdb->get_results( "SELECT status, COUNT(*) AS total FROM {$this->get_portal_service_requests_table()} GROUP BY status", OBJECT_K );
-		$total_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()}" );
-		$needs_action_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()} WHERE status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR service_status IN ('" . implode( "','", array_map( 'esc_sql', $actionable_service_statuses ) ) . "')" );
-		$completed_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()} WHERE status = 'completed' OR service_status = 'completed'" );
-		$active_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()} WHERE status = 'active' OR service_status = 'active'" );
 		$checkout_source_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_service_requests_table()} WHERE source_type = 'checkout_session' OR source = 'checkout_session'" );
+
+		// Stats reflect the whole table (not just the current filter) and use the same
+		// needs-action logic as the quick-action buttons, so the numbers and the default list
+		// never disagree — see service_request_needs_action_for_ops().
+		$all_rows_for_stats = $pdb->get_results( "SELECT id, service_name, stripe_price_id, status, service_status FROM {$this->get_portal_service_requests_table()}" );
+		$total_count        = count( $all_rows_for_stats );
+		$needs_action_count = 0;
+		$active_count       = 0;
+		$completed_count    = 0;
+		foreach ( $all_rows_for_stats as $stat_row ) {
+			if ( $this->service_request_needs_action_for_ops( $stat_row ) ) {
+				$needs_action_count++;
+			}
+			if ( 'active' === $stat_row->status || 'active' === $stat_row->service_status ) {
+				$active_count++;
+			}
+			if ( 'completed' === $stat_row->status || 'completed' === $stat_row->service_status ) {
+				$completed_count++;
+			}
+		}
 
 		$is_standalone = 'standalone' === $context;
 		$base_url = $is_standalone ? add_query_arg( array( 'page' => 'ajforms-service-requests' ), admin_url( 'admin.php' ) ) : add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' ), admin_url( 'admin.php' ) );

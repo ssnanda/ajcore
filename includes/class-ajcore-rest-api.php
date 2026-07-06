@@ -408,6 +408,7 @@ class AJCore_REST_API {
 			'/ops/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tasks', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests/(?P<id>\d+)' => array( 'methods' => 'POST', 'callback' => 'update_ops_service_request', 'permission' => 'can_manage_ops_api' ),
+			'/ops/service-requests/(?P<id>\d+)/quick-action' => array( 'methods' => 'POST', 'callback' => 'apply_ops_service_request_quick_action', 'permission' => 'can_manage_ops_api' ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -1305,14 +1306,20 @@ class AJCore_REST_API {
 			$where[] = "NOT ((r.source_type = 'checkout_session' OR r.source = 'checkout_session') AND r.status NOT IN ('paid','completed','active'))";
 		}
 
-		// Status filter (default: needs action)
+		// Status filter (default: needs action — applied in PHP below via the same logic that
+		// drives the quick-action buttons, so a row only counts as "needs action" when there's
+		// actually a next-step button for it; a literal status like 'paid' is not enough on its
+		// own once the service_status has reached active/completed).
+		$needs_action_filter = false;
 		if ( 'all' === $status_filter ) {
 			// no filter
 		} elseif ( in_array( $status_filter, $valid_statuses, true ) ) {
 			$where[]  = 'r.status = %s';
 			$params[] = $status_filter;
-		} else {
-			$where[] = "(r.status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR r.service_status IN ('new','under_review','pending_customer','pending_agent','meeting_scheduled','sosnc_filing','signing_cmra','id_proof_needed','address_proof_needed','vo_setup_required','sosnc_client','updating_sosn','included_with_llc_setup'))";
+		} elseif ( '' === $search ) {
+			// Only default to "needs action" when there's no search term — a search should look
+			// across every request, not just the ones still awaiting a next step.
+			$needs_action_filter = true;
 		}
 
 		// Search
@@ -1331,7 +1338,7 @@ class AJCore_REST_API {
 			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = r.stripe_customer_id
 			WHERE {$where_sql}
 			ORDER BY r.updated_at DESC, r.created_at DESC, r.id DESC
-			LIMIT 200";
+			LIMIT 500";
 		$rows = $params ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
 		if ( ! is_array( $rows ) ) {
 			$rows = array();
@@ -1341,6 +1348,10 @@ class AJCore_REST_API {
 
 		$service_requests = array();
 		foreach ( $rows as $r ) {
+			$needs_action = $admin ? $admin->service_request_needs_action_for_ops( $r ) : false;
+			if ( $needs_action_filter && ! $needs_action ) {
+				continue;
+			}
 			$service_requests[] = array(
 				'id'                => (int) $r->id,
 				'stripe_customer_id' => (string) $r->stripe_customer_id,
@@ -1358,14 +1369,33 @@ class AJCore_REST_API {
 				'updated_at'        => (string) $r->updated_at,
 				'customer_name'     => (string) $r->customer_name,
 				'customer_email'    => (string) $r->customer_email,
+				'needs_action'      => $needs_action,
 				'service_status_options' => $admin ? $admin->get_service_request_service_status_options_for_ops( $r ) : array(),
+				'quick_actions'     => $admin ? $admin->get_service_request_quick_actions_for_ops( $r ) : array(),
 			);
+			if ( count( $service_requests ) >= 200 ) {
+				break;
+			}
 		}
 
-		$total_count     = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_sr}`" );
-		$action_count    = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_sr}` WHERE status IN ('admin_review_required','pending_payment','awaiting_payment','paid','failed') OR service_status IN ('new','under_review','pending_customer','pending_agent','meeting_scheduled','sosnc_filing','signing_cmra','id_proof_needed','address_proof_needed','vo_setup_required','sosnc_client','updating_sosn','included_with_llc_setup')" );
-		$active_count    = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_sr}` WHERE status = 'active' OR service_status = 'active'" );
-		$completed_count = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$t_sr}` WHERE status = 'completed' OR service_status = 'completed'" );
+		// Stats are computed over the whole table (not just the current filter/page) using the
+		// same needs-action logic as above, so the stat cards and the default list never disagree.
+		$all_rows_for_stats = $pdb->get_results( "SELECT id, service_name, stripe_price_id, status, service_status FROM `{$t_sr}`" );
+		$total_count        = count( $all_rows_for_stats );
+		$action_count        = 0;
+		$active_count        = 0;
+		$completed_count     = 0;
+		foreach ( $all_rows_for_stats as $stat_row ) {
+			if ( $admin && $admin->service_request_needs_action_for_ops( $stat_row ) ) {
+				$action_count++;
+			}
+			if ( 'active' === $stat_row->status || 'active' === $stat_row->service_status ) {
+				$active_count++;
+			}
+			if ( 'completed' === $stat_row->status || 'completed' === $stat_row->service_status ) {
+				$completed_count++;
+			}
+		}
 
 		return rest_ensure_response( array(
 			'service_requests' => $service_requests,
@@ -1405,6 +1435,22 @@ class AJCore_REST_API {
 				'admin_notes'    => (string) $result->admin_notes,
 			),
 		) );
+	}
+
+	public function apply_ops_service_request_quick_action( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->apply_service_request_quick_action_for_ops(
+			(int) $request->get_param( 'id' ),
+			(string) $request->get_param( 'action' )
+		);
+		if ( is_wp_error( $result ) ) {
+			$status = 'not_found' === $result->get_error_code() ? 404 : 400;
+			return new WP_Error( 'action_failed', $result->get_error_message(), array( 'status' => $status ) );
+		}
+		return rest_ensure_response( array( 'success' => true, 'result' => $result ) );
 	}
 
 	public function get_ops_sync_logs( WP_REST_Request $request ) {
