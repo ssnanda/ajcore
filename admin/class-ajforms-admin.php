@@ -14206,18 +14206,18 @@ class AJForms_Admin {
 			.aj-sr-bulk-bar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:10px 14px}
 			.aj-sr-bulk-bar select{min-height:36px;border-radius:8px;border-color:#bfdbfe;font-size:13px}
 			.aj-sr-bulk-count{font-weight:700;color:#1d4ed8;font-size:13px;white-space:nowrap}
-			.aj-sr-td-assignee{min-width:110px;max-width:160px}
-			.aj-sr-td-assignee select{width:100%;min-height:30px;border-radius:8px;border:1px solid #cbd5e1;font-size:12px}
+			.aj-sr-td-assignee{min-width:76px;max-width:98px}
+			.aj-sr-td-assignee select{width:100%;min-height:26px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px;padding:0 2px}
 			.aj-sr-stepper{display:flex;flex-direction:column;gap:5px}
 			.aj-sr-stepper-dots{display:flex;align-items:center}
-			.aj-sr-stepper-dot{width:24px;height:24px;flex:none;border-radius:999px;border:none;background:#e2e8f0;font-size:12px;font-weight:700;line-height:1;color:#fff;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;transition:background .15s}
+			.aj-sr-stepper-dot{width:34px;height:34px;flex:none;border-radius:999px;border:none;background:#e2e8f0;font-size:15px;font-weight:700;line-height:1;color:#fff;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;transition:background .15s}
 			.aj-sr-stepper-dot:hover{background:#cbd5e1}
 			.aj-sr-stepper-dot.is-done{background:#22c55e}
 			.aj-sr-stepper-dot.is-done:hover{background:#16a34a}
-			.aj-sr-stepper-dot.is-current{background:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.2)}
-			.aj-sr-stepper-line{width:16px;height:3px;flex:none;background:#e2e8f0}
+			.aj-sr-stepper-dot.is-current{background:#2563eb;box-shadow:0 0 0 5px rgba(37,99,235,.2)}
+			.aj-sr-stepper-line{width:22px;height:4px;flex:none;background:#e2e8f0}
 			.aj-sr-stepper-line.is-done{background:#86efac}
-			.aj-sr-stepper-label{font-size:12px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
+			.aj-sr-stepper-label{font-size:14px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
 			.aj-sr-cancelled-badge{border:none;cursor:pointer}
 			.aj-sr-manage-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #e5edf5}
 			.aj-sr-manage-actions .button-link-delete{color:#b91c1c;border-color:#fecaca;background:#fef2f2}
@@ -14250,9 +14250,9 @@ class AJForms_Admin {
 			.aj-sr-td-customer span{display:block;color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 			.aj-sr-td-service{font-weight:700;color:#0f172a;white-space:normal;overflow-wrap:break-word;line-height:1.35;min-width:180px;max-width:360px}
 			.aj-sr-td-pay-status{min-width:90px;max-width:150px}
-			.aj-sr-td-svc-status{min-width:170px;max-width:220px}
+			.aj-sr-td-svc-status{min-width:230px;max-width:320px}
 			.aj-sr-td-note{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:32px;max-width:160px}
-			.aj-sr-td-amount{min-width:80px;max-width:110px;font-weight:700;color:#0f172a;text-align:right!important;white-space:nowrap}
+			.aj-sr-td-amount{min-width:60px;max-width:85px;font-weight:700;color:#0f172a;text-align:right!important;white-space:nowrap;font-size:11px}
 			.aj-sr-td-source{min-width:88px;max-width:130px;font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 			.aj-sr-td-actions{width:36px;text-align:center!important}
 			.aj-sr-kebab-btn{background:none;border:1px solid #e2e8f0;border-radius:8px;width:28px;height:28px;font-size:14px;line-height:1;cursor:pointer;color:#64748b;display:flex;align-items:center;justify-content:center}
@@ -14359,7 +14359,7 @@ class AJForms_Admin {
 									$service_options      = $this->get_portal_service_request_service_status_options( $request );
 									$date_str             = $request->created_at ? date_i18n( 'M j, Y', strtotime( $request->created_at . ' UTC' ) ) : '-';
 									$time_str             = $request->created_at ? date_i18n( 'g:i a', strtotime( $request->created_at . ' UTC' ) ) : '';
-									$amount_str           = (float) $request->amount > 0 ? strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) : '—';
+									$amount_str           = (float) $request->amount > 0 ? ( 'usd' === strtolower( (string) $request->currency ) ? '$' . number_format_i18n( (float) $request->amount, 2 ) : strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ) : '—';
 									$search_blob          = strtolower( implode( ' ', array( $request_display_name, $customer_labels['name'], $customer_labels['email'], $request->stripe_customer_id, $request->client_notes, $request->admin_notes, $status_label, $svc_label, $source_label, $source_key, $request->source_object_id ) ) );
 									$detail_id            = 'aj-sr-detail-' . (int) $request->id;
 									?>
