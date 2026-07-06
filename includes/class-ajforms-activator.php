@@ -871,6 +871,10 @@ class AJForms_Activator {
 				if ( ! $has_partner_col ) {
 					$partner_db->query( "ALTER TABLE $db_customers ADD COLUMN partner_key varchar(100) DEFAULT '' NOT NULL, ADD KEY partner_key (partner_key)" );
 				}
+				$has_partner_price_col = $partner_db->get_var( "SHOW COLUMNS FROM $db_customers LIKE 'partner_price_id'" );
+				if ( ! $has_partner_price_col ) {
+					$partner_db->query( "ALTER TABLE $db_customers ADD COLUMN partner_price_id varchar(100) DEFAULT '' NOT NULL" );
+				}
 			}
 
 			// Seed the two known partners when missing.
@@ -1011,7 +1015,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '18', false );
+		update_option( 'ajforms_portal_schema_version', '19', false );
 	}
 
 	/**

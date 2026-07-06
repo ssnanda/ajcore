@@ -412,7 +412,10 @@ class AJCore_REST_API {
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/partners' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_partners', 'permission' => 'can_manage_ops_api' ),
+			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
+			'/ops/email-log/delete-all' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'delete_ops_email_log_all', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
+			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
 			'/ops/auth/login'  => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_auth_login',  'permission' => 'public_permission' ),
 			'/ops/auth/logout' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_auth_logout', 'permission' => 'can_manage_ops_api' ),
@@ -654,7 +657,7 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_customers( WP_REST_Request $request ) {
-		$customers = $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' );
+		$customers = $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' );
 		return rest_ensure_response( array( 'customers' => array_map( array( $this, 'format_ops_customer_row' ), $customers ) ) );
 	}
 
@@ -662,7 +665,7 @@ class AJCore_REST_API {
 		$pdb = $this->get_portal_db();
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
-		$desired_cols   = array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'raw_data', 'portal_status', 'enabled_portal', 'livemode', 'synced_at' );
+		$desired_cols   = array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'raw_data', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' );
 		$select_cols    = $this->table_exists( $pdb, $customer_table ) ? $this->existing_columns( $pdb, $customer_table, $desired_cols ) : array();
 		$customer       = ! empty( $select_cols ) ? $pdb->get_row( $pdb->prepare( 'SELECT `' . implode( '`,`', $select_cols ) . "` FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ), ARRAY_A ) : null;
 		if ( ! $customer ) {
@@ -1536,6 +1539,28 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'emails' => is_array( $rows ) ? $rows : array() ) );
 	}
 
+	public function update_ops_customer_partner( WP_REST_Request $request ) {
+		$pdb            = $this->get_portal_db();
+		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$partners_table = $this->portal_table( 'aj_portal_partners' );
+		$customer_id    = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$partner_key    = sanitize_key( (string) $request->get_param( 'partner_key' ) );
+
+		if ( '' !== $partner_key && $this->table_exists( $pdb, $partners_table ) ) {
+			$exists = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$partners_table}` WHERE partner_key = %s LIMIT 1", $partner_key ) );
+			if ( ! $exists ) {
+				return new WP_Error( 'invalid_partner', __( 'Unknown partner.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+		}
+
+		$updated = $pdb->update( $customer_table, array( 'partner_key' => $partner_key ), array( 'stripe_customer_id' => $customer_id ), array( '%s' ), array( '%s' ) );
+		if ( false === $updated ) {
+			return new WP_Error( 'update_failed', __( 'Could not update the customer partner.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'partner_key' => $partner_key ) );
+	}
+
 	public function get_ops_partners() {
 		$pdb            = $this->get_portal_db();
 		$partners_table = $this->portal_table( 'aj_portal_partners' );
@@ -1544,32 +1569,71 @@ class AJCore_REST_API {
 			return rest_ensure_response( array( 'partners' => array() ) );
 		}
 
+		$admin     = class_exists( 'AJForms_Admin' ) ? ( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() ) : null;
+		$price_map = $admin ? $admin->get_partner_price_map() : array();
+
 		$partners = array();
 		foreach ( (array) $pdb->get_results( "SELECT * FROM `{$partners_table}` ORDER BY name ASC" ) as $p ) {
 			$accounts = $pdb->get_results(
 				$pdb->prepare(
-					"SELECT stripe_customer_id, name, email, portal_status FROM `{$customer_table}` WHERE partner_key = %s ORDER BY name ASC",
+					"SELECT stripe_customer_id, name, email, portal_status, partner_price_id FROM `{$customer_table}` WHERE partner_key = %s ORDER BY name ASC",
 					$p->partner_key
-				),
-				ARRAY_A
+				)
 			);
-			$count = is_array( $accounts ) ? count( $accounts ) : 0;
+			$accounts = is_array( $accounts ) ? $accounts : array();
+
+			$total        = 0.0;
+			$account_rows = array();
+			foreach ( $accounts as $account ) {
+				$rate   = $admin ? $admin->get_partner_account_rate( $p, $account, $price_map ) : (float) $p->per_account_amount;
+				$total += $rate;
+				$account_rows[] = array(
+					'stripe_customer_id' => (string) $account->stripe_customer_id,
+					'name'               => (string) $account->name,
+					'email'              => (string) $account->email,
+					'portal_status'      => (string) $account->portal_status,
+					'partner_price_id'   => (string) $account->partner_price_id,
+					'rate'               => round( $rate, 2 ),
+				);
+			}
+
+			$default_rate = $admin ? $admin->get_partner_account_rate( $p, (object) array( 'partner_price_id' => '' ), $price_map ) : (float) $p->per_account_amount;
 
 			$partners[] = array(
 				'id'                 => (int) $p->id,
 				'partner_key'        => (string) $p->partner_key,
 				'name'               => (string) $p->name,
 				'billing_mode'       => (string) $p->billing_mode,
-				'per_account_amount' => (float) $p->per_account_amount,
+				'per_account_amount' => round( $default_rate, 2 ),
+				'stripe_price_id'    => (string) $p->stripe_price_id,
 				'currency'           => (string) $p->currency,
 				'notes'              => (string) $p->notes,
-				'account_count'      => $count,
-				'monthly_total'      => round( $count * (float) $p->per_account_amount, 2 ),
-				'accounts'           => is_array( $accounts ) ? $accounts : array(),
+				'account_count'      => count( $accounts ),
+				'monthly_total'      => round( $total, 2 ),
+				'accounts'           => $account_rows,
 			);
 		}
 
 		return rest_ensure_response( array( 'partners' => $partners ) );
+	}
+
+	public function delete_ops_email_log_entry( WP_REST_Request $request ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'aj_portal_email_log';
+		if ( ! $this->table_exists( $wpdb, $table ) ) {
+			return new WP_Error( 'not_found', __( 'Email not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$wpdb->delete( $table, array( 'id' => absint( $request->get_param( 'id' ) ) ), array( '%d' ) );
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	public function delete_ops_email_log_all() {
+		global $wpdb;
+		$table = $wpdb->prefix . 'aj_portal_email_log';
+		if ( $this->table_exists( $wpdb, $table ) ) {
+			$wpdb->query( "TRUNCATE TABLE `{$table}`" );
+		}
+		return rest_ensure_response( array( 'success' => true ) );
 	}
 
 	public function get_ops_email_log_entry( WP_REST_Request $request ) {

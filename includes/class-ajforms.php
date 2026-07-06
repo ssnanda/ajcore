@@ -232,6 +232,17 @@ class AJForms {
 				'is_current'        => false,
 			);
 		}
+
+		// Partner-billed customers (OPUS, Alliance VO, …) see their services without prices —
+		// the partner pays, so amounts are never shown to the end customer.
+		$customer_partner_key = isset( $context['customer']->partner_key ) ? (string) $context['customer']->partner_key : '';
+		if ( '' !== $customer_partner_key ) {
+			foreach ( $services as &$service ) {
+				$service['amount'] = '';
+			}
+			unset( $service );
+		}
+
 		return array( 'services' => $services );
 	}
 

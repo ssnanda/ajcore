@@ -15526,6 +15526,56 @@ class AJForms_Admin {
 		);
 	}
 
+	/** Synced Stripe prices used for partner rates: price_id → label/amount/currency/interval. */
+	public function get_partner_price_map() {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_stripe_products_table();
+		$map   = array();
+		foreach ( (array) $pdb->get_results( "SELECT stripe_price_id, name, custom_label, price_amount, currency, recurring_interval FROM `{$table}` WHERE active = 1 ORDER BY name ASC, price_amount ASC" ) as $p ) {
+			if ( empty( $p->stripe_price_id ) || isset( $map[ $p->stripe_price_id ] ) ) {
+				continue;
+			}
+			$label = ( ! empty( $p->custom_label ) ? $p->custom_label : $p->name )
+				. ' — $' . number_format( (float) $p->price_amount, 2 )
+				. ( $p->recurring_interval ? '/' . $p->recurring_interval : '' );
+			$map[ $p->stripe_price_id ] = array(
+				'label'    => $label,
+				'amount'   => (float) $p->price_amount,
+				'currency' => $p->currency ? $p->currency : 'usd',
+				'interval' => (string) $p->recurring_interval,
+			);
+		}
+		return $map;
+	}
+
+	/** Effective rate for one partner account: per-account Stripe price → partner Stripe price → manual fallback. */
+	public function get_partner_account_rate( $partner, $account, $price_map ) {
+		$account_price = isset( $account->partner_price_id ) ? (string) $account->partner_price_id : '';
+		if ( '' !== $account_price && isset( $price_map[ $account_price ] ) ) {
+			return $price_map[ $account_price ]['amount'];
+		}
+		$partner_price = isset( $partner->stripe_price_id ) ? (string) $partner->stripe_price_id : '';
+		if ( '' !== $partner_price && isset( $price_map[ $partner_price ] ) ) {
+			return $price_map[ $partner_price ]['amount'];
+		}
+		return (float) $partner->per_account_amount;
+	}
+
+	/** All Stripe price ids used for partner billing — these prices are hidden from end customers. */
+	public function get_partner_reserved_price_ids() {
+		$pdb            = $this->get_pdb();
+		$partners_table = $this->get_portal_partners_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $partners_table ) ) !== $partners_table ) {
+			return array();
+		}
+		$ids = $pdb->get_col( "SELECT stripe_price_id FROM `{$partners_table}` WHERE stripe_price_id <> ''" );
+		$customer_table = $this->get_portal_stripe_customers_table();
+		if ( $pdb->get_var( "SHOW COLUMNS FROM `{$customer_table}` LIKE 'partner_price_id'" ) ) {
+			$ids = array_merge( $ids, (array) $pdb->get_col( "SELECT DISTINCT partner_price_id FROM `{$customer_table}` WHERE partner_price_id <> ''" ) );
+		}
+		return array_values( array_unique( array_filter( array_map( 'sanitize_text_field', $ids ) ) ) );
+	}
+
 	private function display_portal_partners_tab() {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_portal_partners_table();
@@ -15545,20 +15595,35 @@ class AJForms_Admin {
 				array(
 					'name'               => isset( $_POST['partner_name'] ) ? sanitize_text_field( wp_unslash( $_POST['partner_name'] ) ) : '',
 					'billing_mode'       => in_array( $mode, $modes, true ) ? $mode : 'invoiced_report',
+					'stripe_price_id'    => isset( $_POST['partner_stripe_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['partner_stripe_price_id'] ) ) : '',
 					'per_account_amount' => isset( $_POST['partner_rate'] ) ? round( (float) wp_unslash( $_POST['partner_rate'] ), 2 ) : 0,
 					'notes'              => isset( $_POST['partner_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['partner_notes'] ) ) : '',
 					'updated_at'         => current_time( 'mysql' ),
 				),
 				array( 'id' => absint( $_POST['partner_id'] ) ),
-				array( '%s', '%s', '%f', '%s', '%s' ),
+				array( '%s', '%s', '%s', '%f', '%s', '%s' ),
 				array( '%d' )
 			);
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Partner saved.', 'ajforms' ) . '</p></div>';
 		}
 
+		// Save a per-account price override.
+		if ( isset( $_POST['ajcore_partner_account_price_nonce'], $_POST['account_customer_id'] ) ) {
+			check_admin_referer( 'ajcore_partner_account_price', 'ajcore_partner_account_price_nonce' );
+			$pdb->update(
+				$this->get_portal_stripe_customers_table(),
+				array( 'partner_price_id' => isset( $_POST['account_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['account_price_id'] ) ) : '' ),
+				array( 'stripe_customer_id' => sanitize_text_field( wp_unslash( $_POST['account_customer_id'] ) ) ),
+				array( '%s' ),
+				array( '%s' )
+			);
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Account rate saved.', 'ajforms' ) . '</p></div>';
+		}
+
 		$partners       = $pdb->get_results( "SELECT * FROM `{$table}` ORDER BY name ASC" );
 		$customer_table = $this->get_portal_stripe_customers_table();
 		$mode_labels    = $this->get_portal_partner_billing_mode_labels();
+		$price_map      = $this->get_partner_price_map();
 		?>
 		<div class="ajforms-settings-card">
 			<div class="ajcore-section-head">
@@ -15572,12 +15637,17 @@ class AJForms_Admin {
 				<?php
 				$accounts = $pdb->get_results(
 					$pdb->prepare(
-						"SELECT stripe_customer_id, name, email, portal_status FROM `{$customer_table}` WHERE partner_key = %s ORDER BY name ASC",
+						"SELECT stripe_customer_id, name, email, portal_status, partner_price_id FROM `{$customer_table}` WHERE partner_key = %s ORDER BY name ASC",
 						$partner->partner_key
 					)
 				);
 				$count = count( $accounts );
-				$total = round( $count * (float) $partner->per_account_amount, 2 );
+				$total = 0.0;
+				foreach ( $accounts as $account ) {
+					$total += $this->get_partner_account_rate( $partner, $account, $price_map );
+				}
+				$total = round( $total, 2 );
+				$partner_default_rate = $this->get_partner_account_rate( $partner, (object) array( 'partner_price_id' => '' ), $price_map );
 				?>
 				<div class="ajcore-admin-panel" style="margin-bottom:16px;">
 					<div class="ajcore-section-head">
@@ -15586,7 +15656,7 @@ class AJForms_Admin {
 							<p style="margin:0;"><?php echo esc_html( isset( $mode_labels[ $partner->billing_mode ] ) ? $mode_labels[ $partner->billing_mode ] : $partner->billing_mode ); ?></p>
 						</div>
 						<span class="ajforms-settings-pill">
-							<?php echo esc_html( sprintf( __( '%1$d accounts × %2$s = %3$s / month', 'ajforms' ), $count, $this->format_portal_money( (float) $partner->per_account_amount, 'usd' ), $this->format_portal_money( $total, 'usd' ) ) ); ?>
+							<?php echo esc_html( sprintf( __( '%1$d accounts · %2$s / month', 'ajforms' ), $count, $this->format_portal_money( $total, 'usd' ) ) ); ?>
 						</span>
 					</div>
 
@@ -15601,7 +15671,15 @@ class AJForms_Admin {
 								<?php endforeach; ?>
 							</select>
 						</label>
-						<label><?php esc_html_e( 'Rate per account (USD)', 'ajforms' ); ?><br><input type="number" step="0.01" min="0" name="partner_rate" value="<?php echo esc_attr( number_format( (float) $partner->per_account_amount, 2, '.', '' ) ); ?>" style="width:120px;"></label>
+						<label><?php esc_html_e( 'Default rate — Stripe price (synced)', 'ajforms' ); ?><br>
+						<select name="partner_stripe_price_id" style="max-width:320px;">
+							<option value=""><?php esc_html_e( '— No Stripe price (use manual rate) —', 'ajforms' ); ?></option>
+							<?php foreach ( $price_map as $price_id => $price ) : ?>
+								<option value="<?php echo esc_attr( $price_id ); ?>" <?php selected( (string) $partner->stripe_price_id, $price_id ); ?>><?php echo esc_html( $price['label'] ); ?></option>
+							<?php endforeach; ?>
+						</select>
+					</label>
+					<label><?php esc_html_e( 'Manual fallback rate (USD)', 'ajforms' ); ?><br><input type="number" step="0.01" min="0" name="partner_rate" value="<?php echo esc_attr( number_format( (float) $partner->per_account_amount, 2, '.', '' ) ); ?>" style="width:120px;"></label>
 						<label style="flex:1;min-width:240px;"><?php esc_html_e( 'Notes', 'ajforms' ); ?><br><input type="text" name="partner_notes" value="<?php echo esc_attr( (string) $partner->notes ); ?>" style="width:100%;"></label>
 						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
 					</form>
@@ -15616,15 +15694,35 @@ class AJForms_Admin {
 									<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
 									<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
 									<th><?php esc_html_e( 'Monthly Rate', 'ajforms' ); ?></th>
+									<th><?php esc_html_e( 'Rate Override (Stripe price)', 'ajforms' ); ?></th>
 								</tr>
 							</thead>
 							<tbody>
 								<?php foreach ( $accounts as $account ) : ?>
+									<?php $account_rate = $this->get_partner_account_rate( $partner, $account, $price_map ); ?>
 									<tr>
 										<td><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $account->stripe_customer_id ) ); ?>"><?php echo esc_html( $account->name ? $account->name : $account->stripe_customer_id ); ?></a></td>
 										<td><?php echo esc_html( $account->email ); ?></td>
 										<td><?php echo esc_html( $account->portal_status ); ?></td>
-										<td><?php echo esc_html( $this->format_portal_money( (float) $partner->per_account_amount, 'usd' ) ); ?></td>
+										<td>
+											<?php echo esc_html( $this->format_portal_money( $account_rate, 'usd' ) ); ?>
+											<?php if ( empty( $account->partner_price_id ) ) : ?>
+												<span class="description"><?php esc_html_e( '(default)', 'ajforms' ); ?></span>
+											<?php endif; ?>
+										</td>
+										<td>
+											<form method="post" style="display:flex;gap:6px;align-items:center;margin:0;">
+												<?php wp_nonce_field( 'ajcore_partner_account_price', 'ajcore_partner_account_price_nonce' ); ?>
+												<input type="hidden" name="account_customer_id" value="<?php echo esc_attr( $account->stripe_customer_id ); ?>">
+												<select name="account_price_id" style="max-width:260px;">
+													<option value=""><?php esc_html_e( '— Partner default —', 'ajforms' ); ?></option>
+													<?php foreach ( $price_map as $price_id => $price ) : ?>
+														<option value="<?php echo esc_attr( $price_id ); ?>" <?php selected( (string) $account->partner_price_id, $price_id ); ?>><?php echo esc_html( $price['label'] ); ?></option>
+													<?php endforeach; ?>
+												</select>
+												<button type="submit" class="button button-small"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
+											</form>
+										</td>
 									</tr>
 								<?php endforeach; ?>
 							</tbody>
@@ -15648,6 +15746,18 @@ class AJForms_Admin {
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
 			echo '<div class="ajforms-settings-card"><p>' . esc_html__( 'Email log table not found yet — it is created automatically on the next plugin upgrade check.', 'ajforms' ) . '</p></div>';
 			return;
+		}
+
+		// Delete one / delete all.
+		if ( isset( $_POST['ajcore_email_log_delete_nonce'] ) ) {
+			check_admin_referer( 'ajcore_email_log_delete', 'ajcore_email_log_delete_nonce' );
+			if ( isset( $_POST['delete_all_emails'] ) ) {
+				$wpdb->query( "TRUNCATE TABLE `{$table}`" );
+				echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'All logged emails deleted.', 'ajforms' ) . '</p></div>';
+			} elseif ( isset( $_POST['delete_email_id'] ) ) {
+				$wpdb->delete( $table, array( 'id' => absint( $_POST['delete_email_id'] ) ), array( '%d' ) );
+				echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Email deleted from the log.', 'ajforms' ) . '</p></div>';
+			}
 		}
 
 		$search = isset( $_GET['email_search'] ) ? sanitize_text_field( wp_unslash( $_GET['email_search'] ) ) : '';
@@ -15678,6 +15788,10 @@ class AJForms_Admin {
 				<button class="button"><?php esc_html_e( 'Search', 'ajforms' ); ?></button>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'emails' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
 			</form>
+			<form method="post" style="margin:0 0 6px;" onsubmit="return window.confirm('<?php echo esc_js( __( 'Delete ALL logged emails? This cannot be undone.', 'ajforms' ) ); ?>');">
+				<?php wp_nonce_field( 'ajcore_email_log_delete', 'ajcore_email_log_delete_nonce' ); ?>
+				<button type="submit" name="delete_all_emails" value="1" class="button" style="color:#b91c1c;border-color:#fca5a5;"><?php esc_html_e( 'Delete All Emails', 'ajforms' ); ?></button>
+			</form>
 			<table class="widefat striped" style="margin-top:14px;">
 				<thead>
 					<tr>
@@ -15707,7 +15821,13 @@ class AJForms_Admin {
 										</details>
 									<?php endif; ?>
 								</td>
-								<td><span class="ajcore-status-pill <?php echo 'failed' === $row->status ? 'archived' : 'active'; ?>"><?php echo esc_html( ucfirst( $row->status ) ); ?></span></td>
+								<td>
+									<span class="ajcore-status-pill <?php echo 'failed' === $row->status ? 'archived' : 'active'; ?>"><?php echo esc_html( ucfirst( $row->status ) ); ?></span>
+									<form method="post" style="margin-top:6px;" onsubmit="return window.confirm('<?php echo esc_js( __( 'Delete this email from the log?', 'ajforms' ) ); ?>');">
+										<?php wp_nonce_field( 'ajcore_email_log_delete', 'ajcore_email_log_delete_nonce' ); ?>
+										<button type="submit" name="delete_email_id" value="<?php echo esc_attr( (int) $row->id ); ?>" class="button-link" style="color:#b91c1c;cursor:pointer;"><?php esc_html_e( 'Delete', 'ajforms' ); ?></button>
+									</form>
+								</td>
 							</tr>
 						<?php endforeach; ?>
 					<?php endif; ?>
