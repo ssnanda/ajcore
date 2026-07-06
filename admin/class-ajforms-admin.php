@@ -14207,16 +14207,20 @@ class AJForms_Admin {
 			.aj-sr-bulk-count{font-weight:700;color:#1d4ed8;font-size:13px;white-space:nowrap}
 			.aj-sr-td-assignee{min-width:76px;max-width:98px}
 			.aj-sr-td-assignee select{width:100%;min-height:26px;border-radius:6px;border:1px solid #cbd5e1;font-size:11px;padding:0 2px}
-			.aj-sr-stepper{display:flex;flex-direction:column;gap:5px}
-			.aj-sr-stepper-dots{display:flex;align-items:center}
+			.aj-sr-stepper{display:flex;align-items:flex-start;width:100%}
+			.aj-sr-stepper-step{display:flex;align-items:flex-start}
+			.aj-sr-stepper-step.is-grow{flex:1 1 0}
+			.aj-sr-stepper-step:first-child{flex:none}
+			.aj-sr-stepper-line{flex:1 1 0;min-width:10px;height:4px;margin-top:15px;background:#e2e8f0}
+			.aj-sr-stepper-line.is-done{background:#86efac}
+			.aj-sr-stepper-col{display:flex;flex-direction:column;align-items:center;gap:6px;width:76px;flex:none}
 			.aj-sr-stepper-dot{width:34px;height:34px;flex:none;border-radius:999px;border:none;background:#e2e8f0;font-size:15px;font-weight:700;line-height:1;color:#fff;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;transition:background .15s}
 			.aj-sr-stepper-dot:hover{background:#cbd5e1}
 			.aj-sr-stepper-dot.is-done{background:#22c55e}
 			.aj-sr-stepper-dot.is-done:hover{background:#16a34a}
 			.aj-sr-stepper-dot.is-current{background:#2563eb;box-shadow:0 0 0 5px rgba(37,99,235,.2)}
-			.aj-sr-stepper-line{width:22px;height:4px;flex:none;background:#e2e8f0}
-			.aj-sr-stepper-line.is-done{background:#86efac}
-			.aj-sr-stepper-label{font-size:14px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+			.aj-sr-stepper-label{font-size:11px;font-weight:700;color:#94a3b8;text-align:center;line-height:1.2}
+			.aj-sr-stepper-label.is-current{color:#0f172a}
 			.aj-sr-cancelled-badge{border:none;cursor:pointer}
 			.aj-sr-manage-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #e5edf5}
 			.aj-sr-manage-actions .button-link-delete{color:#b91c1c;border-color:#fecaca;background:#fef2f2}
@@ -14249,10 +14253,9 @@ class AJForms_Admin {
 			.aj-sr-td-customer span{display:block;color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 			.aj-sr-td-service{font-weight:700;color:#0f172a;white-space:normal;overflow-wrap:break-word;line-height:1.35;min-width:180px;max-width:360px}
 			.aj-sr-td-pay-status{min-width:90px;max-width:150px}
-			.aj-sr-td-svc-status{min-width:230px;max-width:320px}
-			.aj-sr-td-note{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:32px;max-width:160px}
+			.aj-sr-td-svc-status{min-width:340px;max-width:460px}
+			.aj-sr-td-note{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:80px;max-width:220px}
 			.aj-sr-td-amount{min-width:60px;max-width:85px;font-weight:700;color:#0f172a;text-align:right!important;white-space:nowrap;font-size:11px}
-			.aj-sr-td-source{min-width:88px;max-width:130px;font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 			.aj-sr-td-actions{width:36px;text-align:center!important}
 			.aj-sr-kebab-btn{background:none;border:1px solid #e2e8f0;border-radius:8px;width:28px;height:28px;font-size:14px;line-height:1;cursor:pointer;color:#64748b;display:flex;align-items:center;justify-content:center}
 			.aj-sr-kebab-btn:hover{background:#f1f5f9;color:#0f172a}
@@ -14271,7 +14274,7 @@ class AJForms_Admin {
 			.aj-sr-timeline-item p{margin:0 0 4px;color:#334155;font-size:13px}
 			.aj-sr-empty{border:1px dashed #cbd5e1;border-radius:14px;padding:24px;text-align:center;background:#fff;color:#64748b}
 			.aj-sr-hidden{display:none!important}
-			@media(max-width:1100px){.aj-sr-stats{grid-template-columns:repeat(2,1fr)}.aj-sr-detail-grid{grid-template-columns:1fr}.aj-sr-td-note,.aj-sr-td-source{display:none}}
+			@media(max-width:1100px){.aj-sr-stats{grid-template-columns:repeat(2,1fr)}.aj-sr-detail-grid{grid-template-columns:1fr}.aj-sr-td-note{display:none}}
 		</style>
 		<div class="<?php echo $is_standalone ? 'wrap ajforms-service-requests-admin' : 'ajcore-admin-panel'; ?>">
 			<div class="aj-sr-shell" data-aj-sr-shell>
@@ -14337,7 +14340,7 @@ class AJForms_Admin {
 									<th class="aj-sr-td-svc-status"><?php esc_html_e( 'Svc Status', 'ajforms' ); ?></th>
 									<th class="aj-sr-td-assignee"><?php esc_html_e( 'Assignee', 'ajforms' ); ?></th>
 									<th class="aj-sr-td-amount" data-sort="amount" style="text-align:right"><?php esc_html_e( 'Amount', 'ajforms' ); ?><i class="aj-sort-icon"></i></th>
-									<th class="aj-sr-td-source"><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
+									<th class="aj-sr-td-note"><?php esc_html_e( 'Notes', 'ajforms' ); ?></th>
 									<th class="aj-sr-td-actions"></th>
 								</tr>
 							</thead>
@@ -14392,13 +14395,15 @@ class AJForms_Admin {
 													<input type="hidden" name="service_request_action" value="save_details">
 													<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
 													<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
-													<div class="aj-sr-stepper-dots">
-														<?php foreach ( $pipeline_keys as $i => $key ) : ?>
+													<?php foreach ( $pipeline_keys as $i => $key ) : ?>
+														<div class="aj-sr-stepper-step <?php echo 0 === $i ? '' : 'is-grow'; ?>">
 															<?php if ( $i > 0 ) : ?><span class="aj-sr-stepper-line <?php echo $i <= $current_step_index ? 'is-done' : ''; ?>"></span><?php endif; ?>
-															<button type="submit" name="after_service_status" value="<?php echo esc_attr( $key ); ?>" class="aj-sr-stepper-dot <?php echo $i < $current_step_index ? 'is-done' : ( $i === $current_step_index ? 'is-current' : '' ); ?>" title="<?php echo esc_attr( $svc_pipeline[ $key ] ); ?>"><?php echo $i < $current_step_index ? '✓' : ''; ?></button>
-														<?php endforeach; ?>
-													</div>
-													<span class="aj-sr-stepper-label"><?php echo esc_html( $svc_label ); ?></span>
+															<div class="aj-sr-stepper-col">
+																<button type="submit" name="after_service_status" value="<?php echo esc_attr( $key ); ?>" class="aj-sr-stepper-dot <?php echo $i < $current_step_index ? 'is-done' : ( $i === $current_step_index ? 'is-current' : '' ); ?>"><?php echo $i < $current_step_index ? '✓' : ''; ?></button>
+																<span class="aj-sr-stepper-label <?php echo $i === $current_step_index ? 'is-current' : ''; ?>"><?php echo esc_html( $svc_pipeline[ $key ] ); ?></span>
+															</div>
+														</div>
+													<?php endforeach; ?>
 												</form>
 											<?php endif; ?>
 										</td>
@@ -14417,7 +14422,8 @@ class AJForms_Admin {
 											</form>
 										</td>
 										<td class="aj-sr-td-amount"><?php echo esc_html( $amount_str ); ?></td>
-										<td class="aj-sr-td-source" title="<?php echo esc_attr( $source_label ); ?>"><?php echo esc_html( $source_label ); ?></td>
+										<?php $note_preview = '' !== (string) $request->admin_notes ? (string) $request->admin_notes : (string) $request->client_notes; ?>
+										<td class="aj-sr-td-note" title="<?php echo esc_attr( $note_preview ); ?>"><?php echo '' !== $note_preview ? esc_html( $note_preview ) : '—'; ?></td>
 										<td class="aj-sr-td-actions" onclick="event.stopPropagation()">
 											<button type="button" class="aj-sr-kebab-btn aj-sr-history-btn" data-aj-sr-target="<?php echo esc_attr( $detail_id ); ?>" title="<?php esc_attr_e( 'View history & manage', 'ajforms' ); ?>" aria-label="<?php esc_attr_e( 'View history & manage', 'ajforms' ); ?>">⋮</button>
 										</td>
@@ -14472,6 +14478,9 @@ class AJForms_Admin {
 													</div>
 													<div class="aj-sr-history-card">
 														<h3><?php esc_html_e( 'History', 'ajforms' ); ?></h3>
+														<?php if ( $this->is_portal_service_request_stripe_import( $request ) ) : ?>
+															<p style="margin:0 0 10px;font-size:12px;color:#94a3b8"><?php echo esc_html( sprintf( __( 'Source: %s', 'ajforms' ), $source_label ) ); ?></p>
+														<?php endif; ?>
 														<?php if ( empty( $history ) ) : ?>
 															<p style="color:#64748b;font-size:13px"><?php esc_html_e( 'No history yet. Status changes and notes will appear here.', 'ajforms' ); ?></p>
 														<?php else : ?>
