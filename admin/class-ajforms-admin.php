@@ -13952,7 +13952,7 @@ class AJForms_Admin {
 			.aj-sr-badge.is-cancelled,.aj-sr-badge.is-failed{background:#fee2e2;color:#b91c1c}
 			.aj-sr-badge.is-draft,.aj-sr-badge.is-pending_agent,.aj-sr-badge.is-pending_customer,.aj-sr-badge.is-admin_review_required{background:#e0f2fe;color:#0369a1}
 			.aj-sr-table-wrap{background:#fff;border:1px solid #e4ebf3;border-radius:14px;box-shadow:0 2px 8px rgba(15,23,42,.05);overflow:hidden}
-			table.aj-sr-table{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed}
+			table.aj-sr-table{border-collapse:collapse;width:100%;font-size:13px;table-layout:auto}
 			table.aj-sr-table thead tr{background:#f8fafc;border-bottom:2px solid #e2e8f0}
 			table.aj-sr-table thead th{padding:9px 10px;text-align:left;font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;cursor:pointer;user-select:none}
 			table.aj-sr-table thead th .aj-sort-icon{margin-left:4px;opacity:.4;font-style:normal}
@@ -13968,15 +13968,16 @@ class AJForms_Admin {
 			.aj-sr-expand-btn{background:none;border:1px solid #cbd5e1;border-radius:6px;width:24px;height:24px;font-size:14px;line-height:1;cursor:pointer;color:#64748b;display:flex;align-items:center;justify-content:center;transition:all .15s}
 			.aj-sr-expand-btn:hover{background:#e0f2fe;border-color:#7dd3fc;color:#0369a1}
 			.aj-sr-expand-btn.open{background:#dbeafe;border-color:#93c5fd;color:#1d4ed8}
-			.aj-sr-td-date{width:130px;color:#64748b;font-size:12px;white-space:nowrap}
-			.aj-sr-td-customer{width:180px}
+			.aj-sr-td-date{min-width:88px;max-width:120px;color:#64748b;font-size:12px;white-space:nowrap}
+			.aj-sr-td-customer{min-width:150px;max-width:220px}
 			.aj-sr-td-customer strong{display:block;font-weight:700;color:#0f172a;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 			.aj-sr-td-customer span{display:block;color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-			.aj-sr-td-service{font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
-			.aj-sr-td-note{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
-			.aj-sr-td-amount{width:90px;font-weight:700;color:#0f172a;text-align:right!important;white-space:nowrap}
-			.aj-sr-td-source{width:110px;font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-			.aj-sr-td-actions{width:180px;text-align:right!important}
+			.aj-sr-td-service{font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:180px;max-width:340px}
+			.aj-sr-td-pay-status,.aj-sr-td-svc-status{min-width:90px;max-width:150px}
+			.aj-sr-td-note{font-size:12px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:32px;max-width:160px}
+			.aj-sr-td-amount{min-width:80px;max-width:110px;font-weight:700;color:#0f172a;text-align:right!important;white-space:nowrap}
+			.aj-sr-td-source{min-width:88px;max-width:130px;font-size:11px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+			.aj-sr-td-actions{min-width:170px;max-width:260px;text-align:right!important}
 			.aj-sr-td-actions .button{border-radius:8px;font-size:11px;padding:2px 8px;line-height:2}
 			table.aj-sr-table tbody tr.aj-sr-detail-row td{padding:0}
 			.aj-sr-detail-panel{padding:16px;background:#f8fafc;border-top:1px dashed #cbd5e1}
@@ -14036,15 +14037,15 @@ class AJForms_Admin {
 							<thead>
 								<tr>
 									<th class="aj-sr-td-toggle"></th>
-									<th data-sort="date"><?php esc_html_e( 'Date', 'ajforms' ); ?><i class="aj-sort-icon"></i></th>
-									<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
-									<th data-sort="service"><?php esc_html_e( 'Service', 'ajforms' ); ?><i class="aj-sort-icon"></i></th>
-									<th><?php esc_html_e( 'Pay Status', 'ajforms' ); ?></th>
-									<th><?php esc_html_e( 'Svc Status', 'ajforms' ); ?></th>
+									<th class="aj-sr-td-date" data-sort="date"><?php esc_html_e( 'Date', 'ajforms' ); ?><i class="aj-sort-icon"></i></th>
+									<th class="aj-sr-td-customer"><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+									<th class="aj-sr-td-service" data-sort="service"><?php esc_html_e( 'Service', 'ajforms' ); ?><i class="aj-sort-icon"></i></th>
+									<th class="aj-sr-td-pay-status"><?php esc_html_e( 'Pay Status', 'ajforms' ); ?></th>
+									<th class="aj-sr-td-svc-status"><?php esc_html_e( 'Svc Status', 'ajforms' ); ?></th>
 									<th class="aj-sr-td-note"><?php esc_html_e( 'Notes', 'ajforms' ); ?></th>
-									<th data-sort="amount" style="text-align:right"><?php esc_html_e( 'Amount', 'ajforms' ); ?><i class="aj-sort-icon"></i></th>
+									<th class="aj-sr-td-amount" data-sort="amount" style="text-align:right"><?php esc_html_e( 'Amount', 'ajforms' ); ?><i class="aj-sort-icon"></i></th>
 									<th class="aj-sr-td-source"><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
-									<th style="text-align:right"><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+									<th class="aj-sr-td-actions" style="text-align:right"><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 								</tr>
 							</thead>
 							<tbody>
@@ -14075,8 +14076,8 @@ class AJForms_Admin {
 										<td class="aj-sr-td-date"><?php echo esc_html( $date_str ); ?><?php if ( $time_str ) : ?><br><span style="font-size:11px;color:#94a3b8"><?php echo esc_html( $time_str ); ?></span><?php endif; ?></td>
 										<td class="aj-sr-td-customer"><strong><?php echo esc_html( $customer_labels['name'] ); ?></strong><span><?php echo esc_html( $customer_labels['email'] ); ?></span></td>
 										<td class="aj-sr-td-service" title="<?php echo esc_attr( $request_display_name ); ?>"><?php echo esc_html( $request_display_name ); ?></td>
-										<td><span class="aj-sr-badge is-<?php echo esc_attr( $status_key ); ?>"><?php echo esc_html( $status_label ); ?></span></td>
-										<td><span class="aj-sr-badge is-<?php echo esc_attr( $svc_status ); ?>"><?php echo esc_html( $svc_label ); ?></span></td>
+										<td class="aj-sr-td-pay-status"><span class="aj-sr-badge is-<?php echo esc_attr( $status_key ); ?>"><?php echo esc_html( $status_label ); ?></span></td>
+										<td class="aj-sr-td-svc-status"><span class="aj-sr-badge is-<?php echo esc_attr( $svc_status ); ?>"><?php echo esc_html( $svc_label ); ?></span></td>
 										<td class="aj-sr-td-note" title="<?php echo esc_attr( $short_note ); ?>"><?php echo esc_html( $short_note ); ?></td>
 										<td class="aj-sr-td-amount"><?php echo esc_html( $amount_str ); ?></td>
 										<td class="aj-sr-td-source" title="<?php echo esc_attr( $source_label ); ?>"><?php echo esc_html( $source_label ); ?></td>
