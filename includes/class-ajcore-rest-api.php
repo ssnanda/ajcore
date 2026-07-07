@@ -4680,6 +4680,24 @@ class AJCore_REST_API {
 			$status = $status_map[ $action ];
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			$wpdb->query( $wpdb->prepare( "UPDATE `{$leads_table}` SET status = %s, updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( $status, current_time( 'mysql' ) ), $ids ) ) );
+		} elseif ( 'send_followup_email' === $action ) {
+			if ( ! class_exists( 'AJForms_Admin' ) ) {
+				return new WP_Error( 'ajcore_admin_unavailable', __( 'Email sending is unavailable right now.', 'ajforms' ), array( 'status' => 500 ) );
+			}
+			$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+			$sent   = array();
+			$failed = array();
+			foreach ( $ids as $lead_id ) {
+				$result = $admin->send_lead_followup_email( $lead_id );
+				if ( is_wp_error( $result ) ) {
+					$failed[] = array( 'id' => $lead_id, 'error' => $result->get_error_message() );
+				} elseif ( $result ) {
+					$sent[] = $lead_id;
+				} else {
+					$failed[] = array( 'id' => $lead_id, 'error' => __( 'The email could not be sent.', 'ajforms' ) );
+				}
+			}
+			return rest_ensure_response( array( 'success' => true, 'sent' => $sent, 'failed' => $failed ) );
 		} else {
 			return new WP_Error( 'ajcore_unknown_lead_bulk_action', __( 'Unknown lead bulk action.', 'ajforms' ), array( 'status' => 400 ) );
 		}

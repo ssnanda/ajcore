@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.5.16
+ * Version: 0.5.17
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.5.16' );
+	define( 'AJCORE_VERSION', '0.5.17' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -74,6 +74,8 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'wp_email_from_name'            => get_bloginfo( 'name' ),
 			'wp_password_reset_subject'     => 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
+			'wp_service_status_subject'     => 'Update on {service_name}: {status_label}',
+			'lead_followup_email_subject'   => 'Following up from NC LLC Agents',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
