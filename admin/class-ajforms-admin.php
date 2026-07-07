@@ -16183,13 +16183,20 @@ class AJForms_Admin {
 	 * subscription, not the one-time setup). Matched by product name, so F&F / yearly variants
 	 * still count toward the same bucket.
 	 */
+	/** Also returns the customer-id lists (not just counts) so the ops UI can filter the
+	 *  customer list down to "has RA" / "has VO" / "no subscription at all". */
 	public function get_portal_core_subscription_product_counts() {
 		$pdb  = $this->get_pdb();
 		$rows = $pdb->get_results( "SELECT stripe_customer_id, items FROM {$this->get_portal_stripe_subscriptions_table()} WHERE status IN ('active','trialing')" );
 
-		$ra_customers = array();
-		$vo_customers = array();
+		$ra_customers  = array();
+		$vo_customers  = array();
+		$any_customers = array();
 		foreach ( (array) $rows as $row ) {
+			// Any active/trialing subscription row at all counts as "has a subscription",
+			// even if its price doesn't match a known RA/VO product below.
+			$any_customers[ (string) $row->stripe_customer_id ] = true;
+
 			$items = json_decode( (string) $row->items, true );
 			if ( ! is_array( $items ) ) {
 				continue;
@@ -16221,8 +16228,11 @@ class AJForms_Admin {
 		}
 
 		return array(
-			'registered_agent_subscription' => count( $ra_customers ),
-			'virtual_office_subscription'   => count( $vo_customers ),
+			'registered_agent_subscription'           => count( $ra_customers ),
+			'virtual_office_subscription'              => count( $vo_customers ),
+			'registered_agent_subscription_customers' => array_keys( $ra_customers ),
+			'virtual_office_subscription_customers'    => array_keys( $vo_customers ),
+			'any_subscription_customers'                => array_keys( $any_customers ),
 		);
 	}
 
