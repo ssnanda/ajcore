@@ -1148,6 +1148,7 @@ class AJForms_Activator {
 				site_uuid varchar(100) DEFAULT '' NOT NULL,
 				stripe_customer_id varchar(191) DEFAULT '' NOT NULL,
 				merged_into_lead_id bigint(20) unsigned NOT NULL DEFAULT 0,
+				legacy_local_id bigint(20) unsigned NOT NULL DEFAULT 0,
 				created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 				updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 				PRIMARY KEY (id),
@@ -1155,7 +1156,8 @@ class AJForms_Activator {
 				KEY status (status),
 				KEY site_uuid (site_uuid),
 				KEY stripe_customer_id (stripe_customer_id),
-				KEY merged_into_lead_id (merged_into_lead_id)
+				KEY merged_into_lead_id (merged_into_lead_id),
+				KEY legacy_local_id (legacy_local_id)
 			) $charset"
 		);
 		$pdb->query(
@@ -1171,12 +1173,30 @@ class AJForms_Activator {
 			) $charset"
 		);
 
-		// 3. One-time local → shared migration for this site's existing leads.
-		if ( '1' === (string) get_option( 'ajcore_leads_migrated_to_shared', '' ) ) {
-			return;
-		}
 		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $shared_leads ) ) !== $shared_leads ) {
-			return; // Shared table creation failed — try again next activation, don't set the flag.
+			update_option(
+				'ajcore_leads_shared_migration_errors',
+				array( sprintf( 'Could not create the shared leads table (%s): %s', $shared_leads, (string) $pdb->last_error ) ),
+				false
+			);
+			return; // Try again next activation — flag stays unset.
+		}
+
+		// Shared table may pre-date the tracking column (created by an earlier plugin version).
+		if ( ! $pdb->get_var( "SHOW COLUMNS FROM $shared_leads LIKE 'legacy_local_id'" ) ) {
+			$pdb->query( "ALTER TABLE $shared_leads ADD COLUMN legacy_local_id bigint(20) unsigned NOT NULL DEFAULT 0, ADD KEY legacy_local_id (legacy_local_id)" );
+		}
+
+		// 3. Local → shared migration for this site's existing leads. Idempotent: each copied
+		//    row records its source local id (legacy_local_id), so re-runs skip already-copied
+		//    leads instead of duplicating them, and rows copied by the earlier migration version
+		//    (before the tracking column existed) are adopted by exact content match. Every
+		//    per-row DB error is captured to the ajcore_leads_shared_migration_errors option
+		//    (surfaced on the wp-admin Leads page) and the done-flag is only set when every
+		//    local lead is verifiably in the shared table — so a failed run retries on the
+		//    next activation instead of silently stranding leads in the local DB.
+		if ( '2' === (string) get_option( 'ajcore_leads_migrated_to_shared', '' ) ) {
+			return;
 		}
 
 		$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
@@ -1186,12 +1206,42 @@ class AJForms_Activator {
 			$form_titles[ (int) $f->id ] = (string) $f->title;
 		}
 
-		$id_map = array();
-		$rows   = $wpdb->get_results( "SELECT * FROM `{$local_leads}` ORDER BY id ASC", ARRAY_A );
+		$errors      = array();
+		$id_map      = array(); // old local id => new shared id (freshly inserted this run only)
+		$accounted   = 0;
+		$rows        = $wpdb->get_results( "SELECT * FROM `{$local_leads}` ORDER BY id ASC", ARRAY_A );
+		$total_local = count( (array) $rows );
+
 		foreach ( (array) $rows as $row ) {
 			$old_id  = (int) $row['id'];
 			$form_id = (int) $row['form_id'];
-			$pdb->insert(
+
+			// Already copied by a previous (partial) run?
+			$existing = $pdb->get_var( $pdb->prepare( "SELECT id FROM $shared_leads WHERE site_uuid = %s AND legacy_local_id = %d LIMIT 1", $site_uuid, $old_id ) );
+			if ( $existing ) {
+				$accounted++;
+				continue;
+			}
+
+			// Copied by the earlier migration version (no tracking column then)? Adopt it.
+			$adoptable = $pdb->get_var( $pdb->prepare( "SELECT id FROM $shared_leads WHERE site_uuid = %s AND legacy_local_id = 0 AND created_at = %s AND lead_data = %s LIMIT 1", $site_uuid, (string) $row['created_at'], (string) $row['lead_data'] ) );
+			if ( $adoptable ) {
+				$pdb->update( $shared_leads, array( 'legacy_local_id' => $old_id ), array( 'id' => (int) $adoptable ), array( '%d' ), array( '%d' ) );
+				$accounted++;
+				continue;
+			}
+
+			// Old rows can hold zero/blank datetimes, which strict-mode MySQL rejects outright.
+			$created_at = (string) $row['created_at'];
+			if ( '' === $created_at || 0 === strpos( $created_at, '0000-00-00' ) ) {
+				$created_at = current_time( 'mysql' );
+			}
+			$updated_at = ! empty( $row['updated_at'] ) ? (string) $row['updated_at'] : $created_at;
+			if ( 0 === strpos( $updated_at, '0000-00-00' ) ) {
+				$updated_at = $created_at;
+			}
+
+			$inserted = $pdb->insert(
 				$shared_leads,
 				array(
 					'form_id'             => $form_id,
@@ -1204,40 +1254,63 @@ class AJForms_Activator {
 					'site_uuid'           => $site_uuid,
 					'stripe_customer_id'  => isset( $row['stripe_customer_id'] ) ? (string) $row['stripe_customer_id'] : '',
 					'merged_into_lead_id' => isset( $row['merged_into_lead_id'] ) ? (int) $row['merged_into_lead_id'] : 0,
-					'created_at'          => (string) $row['created_at'],
-					'updated_at'          => ! empty( $row['updated_at'] ) ? (string) $row['updated_at'] : (string) $row['created_at'],
+					'legacy_local_id'     => $old_id,
+					'created_at'          => $created_at,
+					'updated_at'          => $updated_at,
 				),
-				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s' )
 			);
+
+			if ( false === $inserted || ! $pdb->insert_id ) {
+				$errors[] = sprintf( 'Lead #%d: %s', $old_id, '' !== (string) $pdb->last_error ? (string) $pdb->last_error : 'insert failed' );
+				continue;
+			}
 			$id_map[ $old_id ] = (int) $pdb->insert_id;
+			$accounted++;
 		}
 
-		// Remap merged_into_lead_id references to the new shared IDs.
+		// Remap merged_into_lead_id references to the new shared IDs (fresh inserts only).
 		foreach ( $id_map as $old_id => $new_id ) {
-			$pdb->query( $pdb->prepare( "UPDATE $shared_leads SET merged_into_lead_id = %d WHERE merged_into_lead_id = %d AND site_uuid = %s", $new_id, $old_id, $site_uuid ) );
+			$pdb->query( $pdb->prepare( "UPDATE $shared_leads SET merged_into_lead_id = %d WHERE merged_into_lead_id = %d AND site_uuid = %s AND legacy_local_id != 0", $new_id, $old_id, $site_uuid ) );
 		}
 
+		// Notes: only for leads freshly inserted this run — adopted/skipped ones already have theirs.
 		$note_rows = $wpdb->get_results( "SELECT * FROM `{$local_notes}` ORDER BY id ASC", ARRAY_A );
 		foreach ( (array) $note_rows as $n ) {
 			$old_lead_id = (int) $n['lead_id'];
 			if ( ! isset( $id_map[ $old_lead_id ] ) ) {
 				continue;
 			}
+			$note_created = (string) $n['created_at'];
+			if ( '' === $note_created || 0 === strpos( $note_created, '0000-00-00' ) ) {
+				$note_created = current_time( 'mysql' );
+			}
 			$author = get_userdata( (int) $n['created_by'] );
-			$pdb->insert(
+			$note_inserted = $pdb->insert(
 				$shared_notes,
 				array(
 					'lead_id'     => $id_map[ $old_lead_id ],
 					'note'        => (string) $n['note'],
 					'created_by'  => (int) $n['created_by'],
 					'author_name' => $author ? (string) $author->display_name : '',
-					'created_at'  => (string) $n['created_at'],
+					'created_at'  => $note_created,
 				),
 				array( '%d', '%s', '%d', '%s', '%s' )
 			);
+			if ( false === $note_inserted ) {
+				$errors[] = sprintf( 'Note #%d (lead #%d): %s', (int) $n['id'], $old_lead_id, '' !== (string) $pdb->last_error ? (string) $pdb->last_error : 'insert failed' );
+			}
 		}
 
-		update_option( 'ajcore_leads_migrated_to_shared', '1', false );
+		if ( empty( $errors ) && $accounted === $total_local ) {
+			update_option( 'ajcore_leads_migrated_to_shared', '2', false );
+			delete_option( 'ajcore_leads_shared_migration_errors' );
+		} else {
+			if ( $accounted !== $total_local && empty( $errors ) ) {
+				$errors[] = sprintf( 'Only %d of %d local leads reached the shared DB.', $accounted, $total_local );
+			}
+			update_option( 'ajcore_leads_shared_migration_errors', array_slice( $errors, 0, 20 ), false );
+		}
 	}
 
 	/**
