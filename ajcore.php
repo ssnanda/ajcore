@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.5.17
+ * Version: 0.5.18
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.5.17' );
+	define( 'AJCORE_VERSION', '0.5.18' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -76,6 +76,14 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
 			'wp_service_status_subject'     => 'Update on {service_name}: {status_label}',
 			'lead_followup_email_subject'   => 'Following up from NC LLC Agents',
+			'wp_password_reset_heading'     => 'Set your client portal password',
+			'wp_password_reset_body'        => "Hi {name},\nUse the secure button below to create a new password for your client portal account. This link is private and should only be used by you.",
+			'wp_welcome_heading'            => 'Welcome to your client portal',
+			'wp_welcome_body'               => "Hi {name},\nYour client portal access has been enabled. Use the button below to set your password and sign in securely.",
+			'wp_service_status_heading'     => 'Your service request was updated',
+			'wp_service_status_body'        => "Hi {name},\nThe status of \"{service_name}\" has changed.",
+			'lead_followup_heading'         => "We'd love to hear from you",
+			'lead_followup_body'            => "Hi {name},\nWe wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
