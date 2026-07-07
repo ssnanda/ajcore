@@ -4308,9 +4308,32 @@ class AJCore_REST_API {
 		);
 
 		$customers_by_id = $this->get_customers_by_id_for_leads( $rows );
-		$leads           = array();
+
+		// Batch-fetch every listed lead's notes (one query) so the list can show activity —
+		// latest note, call/text logs, and the "Follow-up email sent" timestamp.
+		$notes_by_lead = array();
+		$lead_ids      = array_values( array_filter( array_map( function ( $r ) { return (int) $r['id']; }, (array) $rows ) ) );
+		if ( ! empty( $lead_ids ) ) {
+			$notes_table  = $wpdb->prefix . 'aj_forms_lead_notes';
+			$placeholders = implode( ',', array_fill( 0, count( $lead_ids ), '%d' ) );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$note_rows = $wpdb->get_results( $wpdb->prepare( "SELECT id, lead_id, note, created_by, author_name, created_at FROM `{$notes_table}` WHERE lead_id IN ({$placeholders}) ORDER BY created_at ASC, id ASC", $lead_ids ), ARRAY_A );
+			foreach ( (array) $note_rows as $n ) {
+				$notes_by_lead[ (int) $n['lead_id'] ][] = array(
+					'id'          => (int) $n['id'],
+					'note'        => (string) $n['note'],
+					'created_by'  => (int) $n['created_by'],
+					'author_name' => isset( $n['author_name'] ) ? (string) $n['author_name'] : '',
+					'created_at'  => (string) $n['created_at'],
+				);
+			}
+		}
+
+		$leads = array();
 		foreach ( (array) $rows as $row ) {
-			$leads[] = $this->format_lead_row( $row, $customers_by_id );
+			$lead               = $this->format_lead_row( $row, $customers_by_id );
+			$lead['notes_list'] = isset( $notes_by_lead[ (int) $row['id'] ] ) ? $notes_by_lead[ (int) $row['id'] ] : array();
+			$leads[]            = $lead;
 		}
 
 		return rest_ensure_response( array( 'leads' => $leads ) );
