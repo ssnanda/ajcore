@@ -669,17 +669,44 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_summary() {
+		global $wpdb;
 		$pdb = $this->get_portal_db();
+
+		$customers_table     = $this->portal_table( 'aj_portal_stripe_customers' );
+		$subscriptions_table = $this->portal_table( 'aj_portal_stripe_subscriptions' );
+		$leads_table         = $wpdb->prefix . 'aj_forms_leads';
+
+		$customers_with_active_subscription = (int) $pdb->get_var(
+			"SELECT COUNT(DISTINCT stripe_customer_id) FROM `{$subscriptions_table}` WHERE status = 'active'"
+		);
+
+		$leads_total  = 0;
+		$leads_unread = 0;
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $leads_table ) ) === $leads_table ) {
+			$leads_total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}`" );
+			$leads_unread = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}` WHERE status = 'unread'" );
+		}
+
+		$sr_stats   = $this->get_service_request_stats_for_ops();
+		$tasks_table = $this->portal_table( 'aj_portal_tasks' );
+		$tasks_total = $this->count_table( $pdb, $tasks_table );
+		$tasks_open  = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$tasks_table}` WHERE status NOT IN ('completed','cancelled')" );
+
 		return rest_ensure_response(
 			array(
-				'customers'        => $this->count_table( $pdb, $this->portal_table( 'aj_portal_stripe_customers' ) ),
-				'customer_states'  => $this->count_table( $pdb, $this->portal_table( 'aj_portal_customer_states' ) ),
-				'products'         => $this->count_table( $pdb, $this->portal_table( 'aj_portal_stripe_products' ) ),
-				'subscriptions'    => $this->count_table( $pdb, $this->portal_table( 'aj_portal_stripe_subscriptions' ) ),
-				'ledger'           => $this->count_table( $pdb, $this->portal_table( 'aj_portal_ledger' ) ),
-				'tasks'            => $this->count_table( $pdb, $this->portal_table( 'aj_portal_tasks' ) ),
-				'service_requests' => $this->count_table( $pdb, $this->portal_table( 'aj_portal_service_requests' ) ),
-				'sync_logs'        => $this->count_table( $pdb, $this->portal_table( 'aj_portal_sync_logs' ) ),
+				'customers'                          => $this->count_table( $pdb, $customers_table ),
+				'customers_with_active_subscription' => $customers_with_active_subscription,
+				'customer_states'                    => $this->count_table( $pdb, $this->portal_table( 'aj_portal_customer_states' ) ),
+				'products'                            => $this->count_table( $pdb, $this->portal_table( 'aj_portal_stripe_products' ) ),
+				'subscriptions'                       => $this->count_table( $pdb, $subscriptions_table ),
+				'ledger'                              => $this->count_table( $pdb, $this->portal_table( 'aj_portal_ledger' ) ),
+				'tasks'                               => $tasks_total,
+				'tasks_open'                          => $tasks_open,
+				'service_requests'                    => $sr_stats['total'],
+				'service_requests_needs_action'       => $sr_stats['needs_action'],
+				'leads'                               => $leads_total,
+				'leads_unread'                        => $leads_unread,
+				'sync_logs'                           => $this->count_table( $pdb, $this->portal_table( 'aj_portal_sync_logs' ) ),
 			)
 		);
 	}
@@ -1427,11 +1454,26 @@ class AJCore_REST_API {
 
 		// Stats are computed over the whole table (not just the current filter/page) using the
 		// same needs-action logic as above, so the stat cards and the default list never disagree.
+		$stats = $this->get_service_request_stats_for_ops();
+
+		return rest_ensure_response( array(
+			'service_requests' => $service_requests,
+			'stats'            => array_merge( $stats, array( 'shown' => count( $service_requests ) ) ),
+		) );
+	}
+
+	/** Shared by get_ops_service_requests() (table stat cards) and get_ops_summary() (dashboard
+	 *  tile) so "Needs Action" never disagrees between the two. */
+	private function get_service_request_stats_for_ops() {
+		$pdb  = $this->get_portal_db();
+		$t_sr = $this->portal_table( 'aj_portal_service_requests' );
+		$admin = class_exists( 'AJForms_Admin' ) ? ( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() ) : null;
+
 		$all_rows_for_stats = $pdb->get_results( "SELECT id, service_name, stripe_price_id, status, service_status FROM `{$t_sr}`" );
 		$total_count        = count( $all_rows_for_stats );
-		$action_count        = 0;
-		$active_count        = 0;
-		$completed_count     = 0;
+		$action_count       = 0;
+		$active_count       = 0;
+		$completed_count    = 0;
 		foreach ( $all_rows_for_stats as $stat_row ) {
 			if ( $admin && $admin->service_request_needs_action_for_ops( $stat_row ) ) {
 				$action_count++;
@@ -1444,16 +1486,12 @@ class AJCore_REST_API {
 			}
 		}
 
-		return rest_ensure_response( array(
-			'service_requests' => $service_requests,
-			'stats'            => array(
-				'total'        => $total_count,
-				'needs_action' => $action_count,
-				'active'       => $active_count,
-				'completed'    => $completed_count,
-				'shown'        => count( $service_requests ),
-			),
-		) );
+		return array(
+			'total'        => $total_count,
+			'needs_action' => $action_count,
+			'active'       => $active_count,
+			'completed'    => $completed_count,
+		);
 	}
 
 	public function update_ops_service_request( WP_REST_Request $request ) {
