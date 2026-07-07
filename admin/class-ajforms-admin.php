@@ -12298,20 +12298,25 @@ class AJForms_Admin {
 		$labels       = $this->get_portal_sr_service_status_labels();
 
 		$sets = array(
+			// This bundle always includes a year of Registered Agent service alongside the one-time
+			// entity setup, so it never truly "completes" — it settles into "active" like a standalone
+			// Registered Agent Subscription would.
 			'llc_setup' => array(
 				'new',
 				'meeting_scheduled',
 				'sosnc_filing',
 				'llc_documents_emailed',
-				'completed',
+				'active',
 				'cancelled',
 			),
+			// Also always bundled with a year of Virtual Office Subscription — settles into "active"
+			// once the one-time ID/address proof setup is done, same reasoning as llc_setup above.
 			'virtual_office_setup' => array(
 				'new',
 				'signing_cmra',
 				'id_proof_needed',
 				'address_proof_needed',
-				'completed',
+				'active',
 				'cancelled',
 			),
 			// Buying this subscription means one thing: get the CMRA signed, then it's active — no other steps.
@@ -12638,7 +12643,9 @@ class AJForms_Admin {
 			} elseif ( 'sosnc_filing' === $service_status ) {
 				$actions['email_llc_documents'] = __( 'Email LLC Documents', 'ajforms' );
 			} elseif ( 'llc_documents_emailed' === $service_status ) {
-				$actions['complete'] = __( 'Mark Completed', 'ajforms' );
+				// The one-time setup work is done, but the bundled Registered Agent year keeps this
+				// request ongoing — settle into "active", not "completed".
+				$actions['activate'] = __( 'Mark Active', 'ajforms' );
 			} elseif ( 'signing_cmra' === $service_status ) {
 				if ( 'virtual_office_subscription' === $product_type ) {
 					// Subscription flow ends here: CMRA signed → active, no ID/address proof collection step.
@@ -12649,7 +12656,12 @@ class AJForms_Admin {
 			} elseif ( 'id_proof_needed' === $service_status ) {
 				$actions['collect_address_proof'] = __( 'Collect Address Proof', 'ajforms' );
 			} elseif ( 'address_proof_needed' === $service_status ) {
-				$actions['complete'] = 'virtual_office_setup' === $product_type ? __( 'Complete Setup', 'ajforms' ) : __( 'Mark Completed', 'ajforms' );
+				if ( 'virtual_office_setup' === $product_type ) {
+					// Bundled with a year of Virtual Office Subscription — settles into "active", not "completed".
+					$actions['activate'] = __( 'Complete Setup', 'ajforms' );
+				} else {
+					$actions['complete'] = __( 'Mark Completed', 'ajforms' );
+				}
 			} elseif ( 'vo_setup_required' === $service_status ) {
 				$actions['activate'] = __( 'Mark Active', 'ajforms' );
 			} elseif ( in_array( $service_status, array( 'sosnc_client', 'updating_sosn', 'included_with_llc_setup' ), true ) ) {
