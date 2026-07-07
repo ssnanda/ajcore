@@ -969,6 +969,8 @@ class AJForms_Activator {
 			$wpdb->query( "UPDATE $table_leads SET status = 'new' WHERE status = 'unread'" );
 		}
 
+		self::ensure_shared_leads_tables_and_migrate();
+
 		$now = current_time( 'mysql' );
 		$wpdb->query(
 			$wpdb->prepare(
@@ -1083,7 +1085,159 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '22', false );
+		update_option( 'ajforms_portal_schema_version', '23', false );
+	}
+
+	/**
+	 * Leads on the shared portal DB: leads used to live only on each site's local DB, which
+	 * meant AJ Ops (talking to the master site) never saw leads captured by forms on the other
+	 * sites. Now the leads + lead_notes tables also exist on the shared DB (with a site_uuid
+	 * column recording which site captured each lead) and all lead reads/writes go through
+	 * ajcore_get_portal_db(). This method:
+	 *   1. Patches the LOCAL tables with the new columns (site_uuid, form_title, author_name)
+	 *      so local-only installs keep an identical schema.
+	 *   2. Creates the shared tables when a shared DB is connected.
+	 *   3. One-time-migrates this site's existing local leads into the shared DB, remapping
+	 *      lead IDs (multiple sites' local IDs collide) for notes and merged_into_lead_id.
+	 *      Non-destructive: local rows are left in place, guarded by an option flag.
+	 */
+	private static function ensure_shared_leads_tables_and_migrate() {
+		global $wpdb;
+
+		$local_leads = $wpdb->prefix . 'aj_forms_leads';
+		$local_notes = $wpdb->prefix . 'aj_forms_lead_notes';
+
+		// 1. Patch local tables (columns must match the shared schema for local mode).
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $local_leads ) ) === $local_leads ) {
+			if ( ! $wpdb->get_var( "SHOW COLUMNS FROM $local_leads LIKE 'site_uuid'" ) ) {
+				$wpdb->query( "ALTER TABLE $local_leads ADD COLUMN site_uuid varchar(100) DEFAULT '' NOT NULL, ADD KEY site_uuid (site_uuid)" );
+			}
+			if ( ! $wpdb->get_var( "SHOW COLUMNS FROM $local_leads LIKE 'form_title'" ) ) {
+				$wpdb->query( "ALTER TABLE $local_leads ADD COLUMN form_title varchar(255) DEFAULT '' NOT NULL" );
+			}
+		}
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $local_notes ) ) === $local_notes ) {
+			if ( ! $wpdb->get_var( "SHOW COLUMNS FROM $local_notes LIKE 'author_name'" ) ) {
+				$wpdb->query( "ALTER TABLE $local_notes ADD COLUMN author_name varchar(190) DEFAULT '' NOT NULL" );
+			}
+		}
+
+		if ( ! function_exists( 'ajcore_get_portal_db' ) ) {
+			return;
+		}
+		$pdb = ajcore_get_portal_db();
+		if ( $pdb === $wpdb ) {
+			return; // Local mode — nothing shared to create or migrate.
+		}
+
+		// 2. Create the shared tables (mirrors get_shared_portal_table_sql, IF NOT EXISTS form).
+		$shared_leads = $pdb->prefix . 'aj_forms_leads';
+		$shared_notes = $pdb->prefix . 'aj_forms_lead_notes';
+		$charset      = $pdb->get_charset_collate();
+
+		$pdb->query(
+			"CREATE TABLE IF NOT EXISTS $shared_leads (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				form_id bigint(20) unsigned NOT NULL,
+				form_title varchar(255) DEFAULT '' NOT NULL,
+				lead_data longtext NOT NULL,
+				status varchar(50) DEFAULT 'new' NOT NULL,
+				ip_address varchar(100) DEFAULT '' NOT NULL,
+				source_url text NULL,
+				user_agent text NULL,
+				site_uuid varchar(100) DEFAULT '' NOT NULL,
+				stripe_customer_id varchar(191) DEFAULT '' NOT NULL,
+				merged_into_lead_id bigint(20) unsigned NOT NULL DEFAULT 0,
+				created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				PRIMARY KEY (id),
+				KEY form_id (form_id),
+				KEY status (status),
+				KEY site_uuid (site_uuid),
+				KEY stripe_customer_id (stripe_customer_id),
+				KEY merged_into_lead_id (merged_into_lead_id)
+			) $charset"
+		);
+		$pdb->query(
+			"CREATE TABLE IF NOT EXISTS $shared_notes (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				lead_id bigint(20) unsigned NOT NULL,
+				note longtext NOT NULL,
+				created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+				author_name varchar(190) DEFAULT '' NOT NULL,
+				created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				PRIMARY KEY (id),
+				KEY lead_id (lead_id)
+			) $charset"
+		);
+
+		// 3. One-time local → shared migration for this site's existing leads.
+		if ( '1' === (string) get_option( 'ajcore_leads_migrated_to_shared', '' ) ) {
+			return;
+		}
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $shared_leads ) ) !== $shared_leads ) {
+			return; // Shared table creation failed — try again next activation, don't set the flag.
+		}
+
+		$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
+		$forms_table = $wpdb->prefix . 'aj_forms_forms';
+		$form_titles = array();
+		foreach ( (array) $wpdb->get_results( "SELECT id, title FROM `{$forms_table}`" ) as $f ) {
+			$form_titles[ (int) $f->id ] = (string) $f->title;
+		}
+
+		$id_map = array();
+		$rows   = $wpdb->get_results( "SELECT * FROM `{$local_leads}` ORDER BY id ASC", ARRAY_A );
+		foreach ( (array) $rows as $row ) {
+			$old_id  = (int) $row['id'];
+			$form_id = (int) $row['form_id'];
+			$pdb->insert(
+				$shared_leads,
+				array(
+					'form_id'             => $form_id,
+					'form_title'          => isset( $form_titles[ $form_id ] ) ? $form_titles[ $form_id ] : '',
+					'lead_data'           => (string) $row['lead_data'],
+					'status'              => (string) $row['status'],
+					'ip_address'          => isset( $row['ip_address'] ) ? (string) $row['ip_address'] : '',
+					'source_url'          => isset( $row['source_url'] ) ? (string) $row['source_url'] : '',
+					'user_agent'          => isset( $row['user_agent'] ) ? (string) $row['user_agent'] : '',
+					'site_uuid'           => $site_uuid,
+					'stripe_customer_id'  => isset( $row['stripe_customer_id'] ) ? (string) $row['stripe_customer_id'] : '',
+					'merged_into_lead_id' => isset( $row['merged_into_lead_id'] ) ? (int) $row['merged_into_lead_id'] : 0,
+					'created_at'          => (string) $row['created_at'],
+					'updated_at'          => ! empty( $row['updated_at'] ) ? (string) $row['updated_at'] : (string) $row['created_at'],
+				),
+				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+			);
+			$id_map[ $old_id ] = (int) $pdb->insert_id;
+		}
+
+		// Remap merged_into_lead_id references to the new shared IDs.
+		foreach ( $id_map as $old_id => $new_id ) {
+			$pdb->query( $pdb->prepare( "UPDATE $shared_leads SET merged_into_lead_id = %d WHERE merged_into_lead_id = %d AND site_uuid = %s", $new_id, $old_id, $site_uuid ) );
+		}
+
+		$note_rows = $wpdb->get_results( "SELECT * FROM `{$local_notes}` ORDER BY id ASC", ARRAY_A );
+		foreach ( (array) $note_rows as $n ) {
+			$old_lead_id = (int) $n['lead_id'];
+			if ( ! isset( $id_map[ $old_lead_id ] ) ) {
+				continue;
+			}
+			$author = get_userdata( (int) $n['created_by'] );
+			$pdb->insert(
+				$shared_notes,
+				array(
+					'lead_id'     => $id_map[ $old_lead_id ],
+					'note'        => (string) $n['note'],
+					'created_by'  => (int) $n['created_by'],
+					'author_name' => $author ? (string) $author->display_name : '',
+					'created_at'  => (string) $n['created_at'],
+				),
+				array( '%d', '%s', '%d', '%s', '%s' )
+			);
+		}
+
+		update_option( 'ajcore_leads_migrated_to_shared', '1', false );
 	}
 
 	/**
@@ -1204,6 +1358,8 @@ class AJForms_Activator {
 		$t_event_log            = $prefix . 'aj_portal_event_log';
 		$t_stripe_events        = $prefix . 'aj_portal_stripe_events';
 		$t_carts                = $prefix . 'aj_portal_carts';
+		$t_leads                = $prefix . 'aj_forms_leads';
+		$t_lead_notes           = $prefix . 'aj_forms_lead_notes';
 
 		return "CREATE TABLE $t_shared_sites (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -1658,6 +1814,39 @@ class AJForms_Activator {
 			KEY object_id (object_id),
 			KEY processing_status (processing_status),
 			KEY first_seen_at (first_seen_at)
+		) $charset_collate;
+
+		CREATE TABLE $t_leads (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			form_id bigint(20) unsigned NOT NULL,
+			form_title varchar(255) DEFAULT '' NOT NULL,
+			lead_data longtext NOT NULL,
+			status varchar(50) DEFAULT 'new' NOT NULL,
+			ip_address varchar(100) DEFAULT '' NOT NULL,
+			source_url text NULL,
+			user_agent text NULL,
+			site_uuid varchar(100) DEFAULT '' NOT NULL,
+			stripe_customer_id varchar(191) DEFAULT '' NOT NULL,
+			merged_into_lead_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY form_id (form_id),
+			KEY status (status),
+			KEY site_uuid (site_uuid),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY merged_into_lead_id (merged_into_lead_id)
+		) $charset_collate;
+
+		CREATE TABLE $t_lead_notes (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			lead_id bigint(20) unsigned NOT NULL,
+			note longtext NOT NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			author_name varchar(190) DEFAULT '' NOT NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY lead_id (lead_id)
 		) $charset_collate;";
 	}
 }

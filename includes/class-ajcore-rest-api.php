@@ -684,7 +684,7 @@ class AJCore_REST_API {
 
 		$customers_table     = $this->portal_table( 'aj_portal_stripe_customers' );
 		$subscriptions_table = $this->portal_table( 'aj_portal_stripe_subscriptions' );
-		$leads_table         = $wpdb->prefix . 'aj_forms_leads';
+		$leads_table         = $pdb->prefix . 'aj_forms_leads';
 
 		$customers_with_active_subscription = (int) $pdb->get_var(
 			"SELECT COUNT(DISTINCT stripe_customer_id) FROM `{$subscriptions_table}` WHERE status = 'active'"
@@ -692,9 +692,9 @@ class AJCore_REST_API {
 
 		$leads_total  = 0;
 		$leads_unread = 0;
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $leads_table ) ) === $leads_table ) {
-			$leads_total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}`" );
-			$leads_unread = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}` WHERE status = 'new'" );
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $leads_table ) ) === $leads_table ) {
+			$leads_total  = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}`" );
+			$leads_unread = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}` WHERE status = 'new'" );
 		}
 
 		$sr_stats   = $this->get_service_request_stats_for_ops();
@@ -723,7 +723,43 @@ class AJCore_REST_API {
 
 	public function get_ops_customers( WP_REST_Request $request ) {
 		$customers = $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' );
-		return rest_ensure_response( array( 'customers' => array_map( array( $this, 'format_ops_customer_row' ), $customers ) ) );
+		$customers = $this->attach_customer_site_labels( array_map( array( $this, 'format_ops_customer_row' ), $customers ) );
+		return rest_ensure_response( array( 'customers' => $customers ) );
+	}
+
+	/** Attaches site_uuid + site_label to customer rows from aj_portal_customer_states, which
+	 *  records the site each customer's portal user belongs to (stamped on portal enable /
+	 *  welcome email / status changes). One batch query, not N. */
+	private function attach_customer_site_labels( $customers ) {
+		$customers = (array) $customers;
+		$ids       = array_values( array_unique( array_filter( array_map(
+			function ( $c ) { return isset( $c['stripe_customer_id'] ) ? (string) $c['stripe_customer_id'] : ''; },
+			$customers
+		) ) ) );
+
+		$site_by_customer = array();
+		if ( ! empty( $ids ) ) {
+			$pdb          = $this->get_portal_db();
+			$states_table = $this->portal_table( 'aj_portal_customer_states' );
+			if ( $this->table_exists( $pdb, $states_table ) ) {
+				$placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$state_rows = $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id, site_uuid FROM `{$states_table}` WHERE stripe_customer_id IN ({$placeholders})", $ids ) );
+				foreach ( (array) $state_rows as $s ) {
+					$site_by_customer[ (string) $s->stripe_customer_id ] = (string) $s->site_uuid;
+				}
+			}
+		}
+
+		foreach ( $customers as &$c ) {
+			$cid              = isset( $c['stripe_customer_id'] ) ? (string) $c['stripe_customer_id'] : '';
+			$site_uuid        = isset( $site_by_customer[ $cid ] ) ? $site_by_customer[ $cid ] : '';
+			$c['site_uuid']   = $site_uuid;
+			$c['site_label']  = $this->get_site_label( $site_uuid );
+		}
+		unset( $c );
+
+		return $customers;
 	}
 
 	public function get_ops_customer( WP_REST_Request $request ) {
@@ -737,6 +773,8 @@ class AJCore_REST_API {
 			return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
 		$decoded = $this->format_ops_customer_row( $this->decode_json_fields( $customer, array( 'address', 'metadata' ) ) );
+		$with_site = $this->attach_customer_site_labels( array( $decoded ) );
+		$decoded   = $with_site[0];
 		// Build $meta from the metadata column; then overlay values from raw_data.
 		// business_name / individual_name are top-level Stripe customer fields, not inside raw_data.metadata.
 		$meta = is_array( $decoded['metadata'] ?? null ) ? $decoded['metadata'] : array();
@@ -3911,7 +3949,8 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'transactions' => array() ) );
 	}
 
-	// ── Leads (aj_forms_leads — local WP table) ──────────────────────────────
+	// ── Leads (aj_forms_leads — on the shared portal DB in multi-site mode, so
+	//    leads captured by forms on every site are visible here; local otherwise) ──
 
 	private function extract_lead_field( $decoded, $preferred_keys ) {
 		if ( ! is_array( $decoded ) ) {
@@ -4011,7 +4050,7 @@ class AJCore_REST_API {
 	 *  structure instead of accumulating duplicate synthetic keys. Only params actually present
 	 *  in the request are touched — omitted fields are left alone. */
 	public function update_ops_lead_fields( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb        = $this->get_portal_db();
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
 		$lead_id     = absint( $request->get_param( 'id' ) );
 
@@ -4074,12 +4113,8 @@ class AJCore_REST_API {
 			array( '%d' )
 		);
 
-		$forms_table = $wpdb->prefix . 'aj_forms_forms';
-		$fresh_row   = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT l.*, f.title AS form_title FROM `{$leads_table}` l LEFT JOIN `{$forms_table}` f ON l.form_id = f.id WHERE l.id = %d",
-				$lead_id
-			),
+		$fresh_row = $wpdb->get_row(
+			$wpdb->prepare( "SELECT l.* FROM `{$leads_table}` l WHERE l.id = %d", $lead_id ),
 			ARRAY_A
 		);
 		$lead = $this->format_lead_row( $fresh_row, $this->get_customers_by_id_for_leads( array( $fresh_row ) ) );
@@ -4164,6 +4199,7 @@ class AJCore_REST_API {
 
 		$stripe_customer_id = isset( $row['stripe_customer_id'] ) ? (string) $row['stripe_customer_id'] : '';
 		$customer           = '' !== $stripe_customer_id && isset( $customers_by_id[ $stripe_customer_id ] ) ? $customers_by_id[ $stripe_customer_id ] : null;
+		$site_uuid          = isset( $row['site_uuid'] ) ? (string) $row['site_uuid'] : '';
 
 		return array(
 			'id'                  => (int) $row['id'],
@@ -4184,7 +4220,34 @@ class AJCore_REST_API {
 			'customer_name'       => $customer ? (string) $customer->name : '',
 			'customer_email'      => $customer ? (string) $customer->email : '',
 			'merged_into_lead_id' => isset( $row['merged_into_lead_id'] ) ? (int) $row['merged_into_lead_id'] : 0,
+			'site_uuid'           => $site_uuid,
+			'site_label'          => $this->get_site_label( $site_uuid ),
 		);
+	}
+
+	/** Human label for a site_uuid, resolved from the shared aj_shared_sites control table
+	 *  (its domain column, stripped to a bare hostname). Cached per request — leads/customers
+	 *  lists resolve the same handful of sites over and over. */
+	private function get_site_label( $site_uuid ) {
+		$site_uuid = (string) $site_uuid;
+		if ( '' === $site_uuid ) {
+			return '';
+		}
+
+		static $labels = null;
+		if ( null === $labels ) {
+			$labels = array();
+			$pdb    = $this->get_portal_db();
+			$table  = $pdb->prefix . 'aj_shared_sites';
+			if ( $this->table_exists( $pdb, $table ) ) {
+				foreach ( (array) $pdb->get_results( "SELECT site_uuid, domain FROM `{$table}`" ) as $site ) {
+					$host = (string) wp_parse_url( (string) $site->domain, PHP_URL_HOST );
+					$labels[ (string) $site->site_uuid ] = '' !== $host ? $host : trim( (string) $site->domain, '/' );
+				}
+			}
+		}
+
+		return isset( $labels[ $site_uuid ] ) ? $labels[ $site_uuid ] : '';
 	}
 
 	/** Batch-resolves stripe_customer_id => {name,email} for a set of lead rows, matching the
@@ -4213,9 +4276,8 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_leads( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb        = $this->get_portal_db();
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
-		$forms_table = $wpdb->prefix . 'aj_forms_forms';
 		$per_page    = min( 2000, max( 1, absint( $request->get_param( 'per_page' ) ) ) );
 		$search      = sanitize_text_field( (string) $request->get_param( 'search' ) );
 
@@ -4231,11 +4293,12 @@ class AJCore_REST_API {
 		}
 		$params[] = $per_page;
 
+		// form_title is stored on the lead row itself (stamped at insert) — the forms table is
+		// per-site/local, so a JOIN can't resolve titles for leads captured on other sites.
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT l.id, l.form_id, l.lead_data, l.status, l.source_url, l.user_agent, l.created_at, l.updated_at, l.stripe_customer_id, l.merged_into_lead_id, f.title AS form_title
+				"SELECT l.id, l.form_id, l.form_title, l.lead_data, l.status, l.source_url, l.user_agent, l.created_at, l.updated_at, l.site_uuid, l.stripe_customer_id, l.merged_into_lead_id
 				 FROM `{$leads_table}` l
-				 LEFT JOIN `{$forms_table}` f ON l.form_id = f.id
 				 WHERE {$where}
 				 ORDER BY l.created_at DESC, l.id DESC
 				 LIMIT %d",
@@ -4254,20 +4317,13 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_lead_detail( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb        = $this->get_portal_db();
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
-		$forms_table = $wpdb->prefix . 'aj_forms_forms';
 		$notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 		$lead_id     = absint( $request->get_param( 'id' ) );
 
 		$row = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT l.*, f.title AS form_title
-				 FROM `{$leads_table}` l
-				 LEFT JOIN `{$forms_table}` f ON l.form_id = f.id
-				 WHERE l.id = %d",
-				$lead_id
-			),
+			$wpdb->prepare( "SELECT l.* FROM `{$leads_table}` l WHERE l.id = %d", $lead_id ),
 			ARRAY_A
 		);
 
@@ -4277,11 +4333,13 @@ class AJCore_REST_API {
 
 		$lead = $this->format_lead_row( $row, $this->get_customers_by_id_for_leads( array( $row ) ) );
 
+		// Notes carry their own author_name (stamped at insert) — the users table is per-site,
+		// so a JOIN can't resolve authors for notes written on other sites. Fall back to a local
+		// user lookup for legacy rows saved before the column existed.
 		$note_rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT n.id, n.note, n.created_by, n.created_at, u.display_name AS author_name
+				"SELECT n.id, n.note, n.created_by, n.author_name, n.created_at
 				 FROM `{$notes_table}` n
-				 LEFT JOIN `{$wpdb->users}` u ON n.created_by = u.ID
 				 WHERE n.lead_id = %d
 				 ORDER BY n.created_at ASC",
 				$lead_id
@@ -4291,11 +4349,16 @@ class AJCore_REST_API {
 
 		$lead['notes_list'] = array();
 		foreach ( (array) $note_rows as $n ) {
+			$author_name = isset( $n['author_name'] ) ? (string) $n['author_name'] : '';
+			if ( '' === $author_name && ! empty( $n['created_by'] ) ) {
+				$author       = get_userdata( (int) $n['created_by'] );
+				$author_name  = $author ? (string) $author->display_name : '';
+			}
 			$lead['notes_list'][] = array(
 				'id'          => (int) $n['id'],
 				'note'        => (string) $n['note'],
 				'created_by'  => (int) $n['created_by'],
-				'author_name' => isset( $n['author_name'] ) ? (string) $n['author_name'] : '',
+				'author_name' => $author_name,
 				'created_at'  => (string) $n['created_at'],
 			);
 		}
@@ -4326,7 +4389,7 @@ class AJCore_REST_API {
 	}
 
 	public function ops_add_lead_note( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb        = $this->get_portal_db();
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
 		$notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 		$lead_id     = absint( $request->get_param( 'id' ) );
@@ -4345,12 +4408,13 @@ class AJCore_REST_API {
 		$wpdb->insert(
 			$notes_table,
 			array(
-				'lead_id'    => $lead_id,
-				'note'       => $note,
-				'created_by' => $user ? (int) $user->ID : 0,
-				'created_at' => current_time( 'mysql' ),
+				'lead_id'     => $lead_id,
+				'note'        => $note,
+				'created_by'  => $user ? (int) $user->ID : 0,
+				'author_name' => $user ? (string) $user->display_name : '',
+				'created_at'  => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%d', '%s' )
+			array( '%d', '%s', '%d', '%s', '%s' )
 		);
 
 		$note_id     = (int) $wpdb->insert_id;
@@ -4735,7 +4799,7 @@ class AJCore_REST_API {
 	}
 
 	public function update_ops_lead_status( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb               = $this->get_portal_db();
 		$leads_table        = $wpdb->prefix . 'aj_forms_leads';
 		$lead_id            = absint( $request->get_param( 'id' ) );
 		$status             = sanitize_key( (string) $request->get_param( 'status' ) );
@@ -4767,7 +4831,7 @@ class AJCore_REST_API {
 	}
 
 	public function delete_ops_lead( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb             = $this->get_portal_db();
 		$leads_table      = $wpdb->prefix . 'aj_forms_leads';
 		$lead_notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 		$lead_id          = absint( $request->get_param( 'id' ) );
@@ -4788,7 +4852,7 @@ class AJCore_REST_API {
 	}
 
 	public function bulk_ops_leads( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb             = $this->get_portal_db();
 		$leads_table      = $wpdb->prefix . 'aj_forms_leads';
 		$lead_notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 		$action           = sanitize_key( (string) $request->get_param( 'action' ) );
@@ -4845,35 +4909,38 @@ class AJCore_REST_API {
 	 *  changing its status back. Shared by the manual "Merge Duplicates" action and the
 	 *  automatic "Fix Duplicates" scan below. */
 	private function merge_lead_into( $primary_id, $duplicate_id ) {
-		global $wpdb;
+		$wpdb = $this->get_portal_db();
 		if ( $primary_id === $duplicate_id ) {
 			return;
 		}
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
 		$notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 
-		$note_rows = $wpdb->get_results( $wpdb->prepare( "SELECT note, created_by, created_at FROM `{$notes_table}` WHERE lead_id = %d ORDER BY created_at ASC", $duplicate_id ) );
+		$note_rows = $wpdb->get_results( $wpdb->prepare( "SELECT note, created_by, author_name, created_at FROM `{$notes_table}` WHERE lead_id = %d ORDER BY created_at ASC", $duplicate_id ) );
 		foreach ( (array) $note_rows as $n ) {
 			$wpdb->insert(
 				$notes_table,
 				array(
-					'lead_id'    => $primary_id,
-					'note'       => sprintf( "[Merged from lead #%d]\n%s", $duplicate_id, (string) $n->note ),
-					'created_by' => (int) $n->created_by,
-					'created_at' => (string) $n->created_at,
+					'lead_id'     => $primary_id,
+					'note'        => sprintf( "[Merged from lead #%d]\n%s", $duplicate_id, (string) $n->note ),
+					'created_by'  => (int) $n->created_by,
+					'author_name' => isset( $n->author_name ) ? (string) $n->author_name : '',
+					'created_at'  => (string) $n->created_at,
 				),
-				array( '%d', '%s', '%d', '%s' )
+				array( '%d', '%s', '%d', '%s', '%s' )
 			);
 		}
+		$actor = wp_get_current_user();
 		$wpdb->insert(
 			$notes_table,
 			array(
-				'lead_id'    => $primary_id,
-				'note'       => sprintf( __( 'Lead #%d was merged into this one as a duplicate.', 'ajforms' ), $duplicate_id ),
-				'created_by' => get_current_user_id(),
-				'created_at' => current_time( 'mysql' ),
+				'lead_id'     => $primary_id,
+				'note'        => sprintf( __( 'Lead #%d was merged into this one as a duplicate.', 'ajforms' ), $duplicate_id ),
+				'created_by'  => get_current_user_id(),
+				'author_name' => $actor ? (string) $actor->display_name : '',
+				'created_at'  => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%d', '%s' )
+			array( '%d', '%s', '%d', '%s', '%s' )
 		);
 
 		$wpdb->update(
@@ -4888,7 +4955,7 @@ class AJCore_REST_API {
 	/** Manual merge: staff selects 2+ leads they know are duplicates and picks (or we default to
 	 *  the earliest) which one survives. */
 	public function merge_ops_leads( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb        = $this->get_portal_db();
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
 		$ids         = array_values( array_unique( array_filter( array_map( 'absint', (array) $request->get_param( 'ids' ) ) ) ) );
 		$primary_id  = absint( $request->get_param( 'primary_id' ) );
@@ -4924,7 +4991,7 @@ class AJCore_REST_API {
 	 *  falling back to phone when email is blank. Keeps the earliest submission per group and
 	 *  archives the rest as duplicates in one pass — this is the "Fix Duplicates" button. */
 	public function fix_ops_lead_duplicates( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb        = $this->get_portal_db();
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
 
 		$rows = $wpdb->get_results(
@@ -4968,7 +5035,7 @@ class AJCore_REST_API {
 	}
 
 	public function ops_create_lead( WP_REST_Request $request ) {
-		global $wpdb;
+		$wpdb  = $this->get_portal_db();
 		$table = $wpdb->prefix . 'aj_forms_leads';
 
 		$name    = (string) $request->get_param( 'name' );
@@ -5010,9 +5077,10 @@ class AJCore_REST_API {
 				'ip_address' => '',
 				'source_url' => '',
 				'user_agent' => 'api',
+				'site_uuid'  => (string) get_option( 'ajcore_site_uuid', '' ),
 				'created_at' => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 
 		if ( ! $result ) {

@@ -9673,9 +9673,18 @@ class AJForms {
 		return ob_get_clean();
 	}
 
-	private function get_leads_table() {
+	/** Leads live on the shared portal DB in multi-site mode (so every site's form
+	 *  submissions land in one inbox); use get_leads_db() for queries against it. */
+	private function get_leads_db() {
+		if ( function_exists( 'ajcore_get_portal_db' ) ) {
+			return ajcore_get_portal_db();
+		}
 		global $wpdb;
-		return $wpdb->prefix . 'aj_forms_leads';
+		return $wpdb;
+	}
+
+	private function get_leads_table() {
+		return $this->get_leads_db()->prefix . 'aj_forms_leads';
 	}
 
 	private function get_form_by_id( $form_id ) {
@@ -10630,21 +10639,23 @@ class AJForms {
 		$submission_meta = $this->get_submission_meta();
 		$lead_data['_meta'] = $submission_meta;
 
-		global $wpdb;
+		$leads_db    = $this->get_leads_db();
 		$leads_table = $this->get_leads_table();
 
-		$inserted = $wpdb->insert(
+		$inserted = $leads_db->insert(
 			$leads_table,
 			array(
 				'form_id'    => $form_id,
+				'form_title' => isset( $form->title ) ? (string) $form->title : '',
 				'lead_data'  => wp_json_encode( $lead_data ),
 				'status'     => 'new',
 				'ip_address' => isset( $submission_meta['ip_address'] ) ? $submission_meta['ip_address'] : '',
 				'source_url' => isset( $submission_meta['page_url'] ) ? $submission_meta['page_url'] : '',
 				'user_agent' => isset( $submission_meta['user_agent'] ) ? $submission_meta['user_agent'] : '',
+				'site_uuid'  => (string) get_option( 'ajcore_site_uuid', '' ),
 				'created_at' => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 
 		if ( false === $inserted ) {

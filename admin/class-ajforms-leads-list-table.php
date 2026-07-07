@@ -104,7 +104,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 
 		check_admin_referer( 'bulk-' . $this->_args['plural'] );
 
-		global $wpdb;
+		$wpdb             = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
 		$leads_table      = $wpdb->prefix . 'aj_forms_leads';
 		$lead_notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 		$placeholders     = implode( ',', array_fill( 0, count( $lead_ids ), '%d' ) );
@@ -311,10 +311,11 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 	}
 
 	public function prepare_items() {
-		global $wpdb;
+		// Leads live on the shared portal DB in multi-site mode; form_title is stored on
+		// the lead row itself (forms are per-site, so a JOIN can't resolve cross-site titles).
+		$wpdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
 
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
-		$forms_table = $wpdb->prefix . 'aj_forms_forms';
 
 		$per_page = 20;
 		$paged    = $this->get_pagenum();
@@ -358,16 +359,15 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 			$where_sql = ' WHERE ' . implode( ' AND ', $where );
 		}
 
-		$count_sql = "SELECT COUNT(l.id) FROM {$leads_table} l LEFT JOIN {$forms_table} f ON l.form_id = f.id {$where_sql}";
+		$count_sql = "SELECT COUNT(l.id) FROM {$leads_table} l {$where_sql}";
 		if ( ! empty( $params ) ) {
 			$count_sql = $wpdb->prepare( $count_sql, $params );
 		}
 		$total_items = (int) $wpdb->get_var( $count_sql );
 
 		$query_sql = "
-			SELECT l.*, f.title AS form_title
+			SELECT l.*
 			FROM {$leads_table} l
-			LEFT JOIN {$forms_table} f ON l.form_id = f.id
 			{$where_sql}
 			ORDER BY {$orderby} {$order}
 			LIMIT %d OFFSET %d

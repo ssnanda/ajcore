@@ -4664,12 +4664,12 @@ class AJForms_Admin {
 		return wp_mail( $user->user_email, $subject, $message, $headers );
 	}
 
-	/** Sends a branded follow-up email to a Lead (aj_forms_leads — local table). Used by the
-	 *  AJOps "Send Follow-up Email" lead action (single + bulk). On success, appends a lead
-	 *  note so the follow-up shows up in the lead's activity timeline. */
+	/** Sends a branded follow-up email to a Lead. Used by the AJOps "Send Follow-up Email"
+	 *  lead action (single + bulk). On success, appends a lead note so the follow-up shows
+	 *  up in the lead's activity timeline. */
 	public function send_lead_followup_email( $lead_id ) {
-		global $wpdb;
-		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$wpdb        = $this->get_leads_db();
+		$leads_table = $this->get_leads_table();
 		$row         = $wpdb->get_row( $wpdb->prepare( "SELECT id, lead_data FROM `{$leads_table}` WHERE id = %d", absint( $lead_id ) ), ARRAY_A );
 		if ( ! $row ) {
 			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ) );
@@ -4724,15 +4724,17 @@ class AJForms_Admin {
 
 		$sent = wp_mail( $email, $subject, $message, $headers );
 		if ( $sent ) {
+			$actor = wp_get_current_user();
 			$wpdb->insert(
-				$wpdb->prefix . 'aj_forms_lead_notes',
+				$this->get_lead_notes_table(),
 				array(
-					'lead_id'    => absint( $lead_id ),
-					'note'       => __( 'Follow-up email sent.', 'ajforms' ),
-					'created_by' => get_current_user_id(),
-					'created_at' => current_time( 'mysql' ),
+					'lead_id'     => absint( $lead_id ),
+					'note'        => __( 'Follow-up email sent.', 'ajforms' ),
+					'created_by'  => get_current_user_id(),
+					'author_name' => $actor ? (string) $actor->display_name : '',
+					'created_at'  => current_time( 'mysql' ),
 				),
-				array( '%d', '%s', '%d', '%s' )
+				array( '%d', '%s', '%d', '%s', '%s' )
 			);
 		}
 		return $sent;
@@ -9476,17 +9478,23 @@ class AJForms_Admin {
 		$lead_notes_table = $this->get_lead_notes_table();
 		$placeholders     = implode( ',', array_fill( 0, count( $form_ids ), '%d' ) );
 
-		$lead_ids = $wpdb->get_col(
-			$wpdb->prepare(
-				"SELECT id FROM {$leads_table} WHERE form_id IN ({$placeholders})",
-				$form_ids
+		// Forms are per-site (local DB) but leads live on the shared portal DB where form_id
+		// values collide across sites — scope every lead query to this site's uuid so deleting
+		// a form here never wipes another site's leads.
+		$ldb       = $this->get_leads_db();
+		$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
+
+		$lead_ids = $ldb->get_col(
+			$ldb->prepare(
+				"SELECT id FROM {$leads_table} WHERE site_uuid = %s AND form_id IN ({$placeholders})",
+				array_merge( array( $site_uuid ), $form_ids )
 			)
 		);
 
 		if ( $permanent && ! empty( $lead_ids ) ) {
 			$lead_placeholders = implode( ',', array_fill( 0, count( $lead_ids ), '%d' ) );
-			$wpdb->query(
-				$wpdb->prepare(
+			$ldb->query(
+				$ldb->prepare(
 					"DELETE FROM {$lead_notes_table} WHERE lead_id IN ({$lead_placeholders})",
 					$lead_ids
 				)
@@ -9494,10 +9502,10 @@ class AJForms_Admin {
 		}
 
 		if ( $permanent ) {
-			$wpdb->query(
-				$wpdb->prepare(
-					"DELETE FROM {$leads_table} WHERE form_id IN ({$placeholders})",
-					$form_ids
+			$ldb->query(
+				$ldb->prepare(
+					"DELETE FROM {$leads_table} WHERE site_uuid = %s AND form_id IN ({$placeholders})",
+					array_merge( array( $site_uuid ), $form_ids )
 				)
 			);
 
@@ -12073,14 +12081,21 @@ class AJForms_Admin {
 		return $wpdb->prefix . 'aj_forms_forms';
 	}
 
-	private function get_leads_table() {
+	/** Leads live on the shared portal DB in multi-site mode; query them via get_leads_db(). */
+	private function get_leads_db() {
+		if ( function_exists( 'ajcore_get_portal_db' ) ) {
+			return ajcore_get_portal_db();
+		}
 		global $wpdb;
-		return $wpdb->prefix . 'aj_forms_leads';
+		return $wpdb;
+	}
+
+	private function get_leads_table() {
+		return $this->get_leads_db()->prefix . 'aj_forms_leads';
 	}
 
 	private function get_lead_notes_table() {
-		global $wpdb;
-		return $wpdb->prefix . 'aj_forms_lead_notes';
+		return $this->get_leads_db()->prefix . 'aj_forms_lead_notes';
 	}
 
 	/** Statuses a lead can be in — see get_lead_status_labels() in class-ajcore-rest-api.php
@@ -12148,37 +12163,40 @@ class AJForms_Admin {
 	 *  archives the duplicate — non-destructive, mirrors merge_lead_into() in
 	 *  class-ajcore-rest-api.php so the WP-admin UI and AJOps behave identically. */
 	public function merge_portal_lead_into( $primary_id, $duplicate_id ) {
-		global $wpdb;
 		$primary_id   = absint( $primary_id );
 		$duplicate_id = absint( $duplicate_id );
 		if ( ! $primary_id || ! $duplicate_id || $primary_id === $duplicate_id ) {
 			return;
 		}
+		$wpdb        = $this->get_leads_db();
 		$leads_table = $this->get_leads_table();
 		$notes_table = $this->get_lead_notes_table();
 
-		$note_rows = $wpdb->get_results( $wpdb->prepare( "SELECT note, created_by, created_at FROM `{$notes_table}` WHERE lead_id = %d ORDER BY created_at ASC", $duplicate_id ) );
+		$note_rows = $wpdb->get_results( $wpdb->prepare( "SELECT note, created_by, author_name, created_at FROM `{$notes_table}` WHERE lead_id = %d ORDER BY created_at ASC", $duplicate_id ) );
 		foreach ( (array) $note_rows as $n ) {
 			$wpdb->insert(
 				$notes_table,
 				array(
-					'lead_id'    => $primary_id,
-					'note'       => sprintf( "[Merged from lead #%d]\n%s", $duplicate_id, (string) $n->note ),
-					'created_by' => (int) $n->created_by,
-					'created_at' => (string) $n->created_at,
+					'lead_id'     => $primary_id,
+					'note'        => sprintf( "[Merged from lead #%d]\n%s", $duplicate_id, (string) $n->note ),
+					'created_by'  => (int) $n->created_by,
+					'author_name' => isset( $n->author_name ) ? (string) $n->author_name : '',
+					'created_at'  => (string) $n->created_at,
 				),
-				array( '%d', '%s', '%d', '%s' )
+				array( '%d', '%s', '%d', '%s', '%s' )
 			);
 		}
+		$actor = wp_get_current_user();
 		$wpdb->insert(
 			$notes_table,
 			array(
-				'lead_id'    => $primary_id,
-				'note'       => sprintf( __( 'Lead #%d was merged into this one as a duplicate.', 'ajforms' ), $duplicate_id ),
-				'created_by' => get_current_user_id(),
-				'created_at' => current_time( 'mysql' ),
+				'lead_id'     => $primary_id,
+				'note'        => sprintf( __( 'Lead #%d was merged into this one as a duplicate.', 'ajforms' ), $duplicate_id ),
+				'created_by'  => get_current_user_id(),
+				'author_name' => $actor ? (string) $actor->display_name : '',
+				'created_at'  => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%d', '%s' )
+			array( '%d', '%s', '%d', '%s', '%s' )
 		);
 
 		$wpdb->update(
@@ -12195,7 +12213,7 @@ class AJForms_Admin {
 	 *  group and archives the rest — mirrors fix_ops_lead_duplicates() in class-ajcore-rest-api.php.
 	 *  Returns array( groups_merged, archived_ids ). */
 	public function fix_portal_lead_duplicates() {
-		global $wpdb;
+		$wpdb        = $this->get_leads_db();
 		$leads_table = $this->get_leads_table();
 
 		$rows = $wpdb->get_results(
@@ -12552,7 +12570,7 @@ class AJForms_Admin {
 	}
 
 	private function update_lead_entry( $lead_id ) {
-		global $wpdb;
+		$wpdb = $this->get_leads_db();
 
 		$lead = $wpdb->get_row(
 			$wpdb->prepare(
@@ -20485,7 +20503,7 @@ class AJForms_Admin {
 	}
 
 	private function handle_lead_actions() {
-		global $wpdb;
+		$wpdb = $this->get_leads_db();
 
 		$leads_table      = $this->get_leads_table();
 		$lead_notes_table = $this->get_lead_notes_table();
@@ -20517,9 +20535,10 @@ class AJForms_Admin {
 					'ip_address' => '',
 					'source_url' => '',
 					'user_agent' => 'manual',
+					'site_uuid'  => (string) get_option( 'ajcore_site_uuid', '' ),
 					'created_at' => current_time( 'mysql' ),
 				),
-				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
+				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 			);
 
 			$new_lead_id = $result ? (int) $wpdb->insert_id : 0;
@@ -20564,15 +20583,17 @@ class AJForms_Admin {
 				$note = sanitize_textarea_field( wp_unslash( $_POST['ajf_lead_note'] ) );
 
 				if ( '' !== $note ) {
+					$note_actor = wp_get_current_user();
 					$wpdb->insert(
 						$lead_notes_table,
 						array(
 							'lead_id'     => $lead_id,
 							'note'        => $note,
 							'created_by'  => get_current_user_id(),
+							'author_name' => $note_actor ? (string) $note_actor->display_name : '',
 							'created_at'  => current_time( 'mysql' ),
 						),
-						array( '%d', '%s', '%d', '%s' )
+						array( '%d', '%s', '%d', '%s', '%s' )
 					);
 				}
 
@@ -22438,6 +22459,8 @@ class AJForms_Admin {
 			'aj_portal_service_requests',
 			'aj_portal_event_log',
 			'aj_portal_stripe_events',
+			'aj_forms_leads',
+			'aj_forms_lead_notes',
 		);
 	}
 
@@ -22476,7 +22499,7 @@ class AJForms_Admin {
 
 		wp_send_json_success(
 			sprintf(
-				__( 'Schema ready. %d of 18 shared tables exist in the shared DB.', 'ajforms' ),
+				__( 'Schema ready. %d of 20 shared tables exist in the shared DB.', 'ajforms' ),
 				count( $found )
 			)
 		);

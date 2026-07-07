@@ -3,20 +3,18 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-global $wpdb;
+// Leads live on the shared portal DB in multi-site mode; form_title is stored on the lead
+// row itself (forms are per-site, so a JOIN can't resolve titles for other sites' leads).
+$wpdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
 
 $lead_id          = isset( $_GET['lead_id'] ) ? absint( wp_unslash( $_GET['lead_id'] ) ) : 0;
 $leads_table      = $wpdb->prefix . 'aj_forms_leads';
-$forms_table      = $wpdb->prefix . 'aj_forms_forms';
 $lead_notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
 $admin            = new AJForms_Admin();
 
 $lead = $wpdb->get_row(
 	$wpdb->prepare(
-		"SELECT l.*, f.title AS form_title
-		FROM {$leads_table} l
-		LEFT JOIN {$forms_table} f ON l.form_id = f.id
-		WHERE l.id = %d",
+		"SELECT l.* FROM {$leads_table} l WHERE l.id = %d",
 		$lead_id
 	)
 );

@@ -16,14 +16,16 @@ $leads_list_table = new AJForms_Leads_List_Table();
 $leads_list_table->process_bulk_action();
 $leads_list_table->prepare_items();
 
-$leads_table_name = $wpdb->prefix . 'aj_forms_leads';
+// Leads live on the shared portal DB in multi-site mode (all sites' leads in one inbox).
+$leads_db         = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $wpdb;
+$leads_table_name = $leads_db->prefix . 'aj_forms_leads';
 $lead_stats = array(
-	'total'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$leads_table_name}" ),
-	'new'      => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'new' ) ),
-	'read'     => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'read' ) ),
-	'lost'     => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'lost' ) ),
-	'won'      => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'won' ) ),
-	'duplicate'=> (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'duplicate' ) ),
+	'total'    => (int) $leads_db->get_var( "SELECT COUNT(*) FROM {$leads_table_name}" ),
+	'new'      => (int) $leads_db->get_var( $leads_db->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'new' ) ),
+	'read'     => (int) $leads_db->get_var( $leads_db->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'read' ) ),
+	'lost'     => (int) $leads_db->get_var( $leads_db->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'lost' ) ),
+	'won'      => (int) $leads_db->get_var( $leads_db->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'won' ) ),
+	'duplicate'=> (int) $leads_db->get_var( $leads_db->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'duplicate' ) ),
 );
 $lead_stats['inbox']    = $lead_stats['new'] + $lead_stats['read'];
 $lead_stats['archived'] = $lead_stats['won'] + $lead_stats['duplicate'];
