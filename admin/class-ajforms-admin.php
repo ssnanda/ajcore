@@ -4403,6 +4403,40 @@ class AJForms_Admin {
 		);
 	}
 
+	/** Resolves the From email/name for a branded email, preferring a per-email-type override
+	 *  (e.g. lead_followup_from_email) when set and valid, otherwise falling back to the global
+	 *  "System From Email/Name" settings (and finally hardcoded safe defaults). Lets an admin route
+	 *  one email type — e.g. Lead Follow-up — through a different inbox like contactus@ without
+	 *  affecting the others. */
+	private function resolve_email_sender( $settings, $from_email_key = '', $from_name_key = '' ) {
+		$from_email = '';
+		if ( '' !== $from_email_key && ! empty( $settings[ $from_email_key ] ) ) {
+			$candidate = sanitize_email( (string) $settings[ $from_email_key ] );
+			if ( is_email( $candidate ) ) {
+				$from_email = $candidate;
+			}
+		}
+		if ( '' === $from_email ) {
+			$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
+		}
+		if ( ! is_email( $from_email ) ) {
+			$from_email = 'donotreply@ncllcagents.com';
+		}
+
+		$from_name = '';
+		if ( '' !== $from_name_key && ! empty( $settings[ $from_name_key ] ) ) {
+			$from_name = sanitize_text_field( (string) $settings[ $from_name_key ] );
+		}
+		if ( '' === $from_name ) {
+			$from_name = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : ( ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
+		}
+
+		return array(
+			'from_email' => $from_email,
+			'from_name'  => $from_name,
+		);
+	}
+
 	/** Resolves the editable heading + body-paragraphs for a branded email from plugin settings,
 	 *  falling back to the built-in defaults when the admin hasn't customized them. Body text is
 	 *  stored as one paragraph per line in a textarea; tokens like {name} are substituted in both
@@ -4541,11 +4575,9 @@ class AJForms_Admin {
 		);
 		$settings = $this->get_plugin_settings();
 		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
-		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
-		if ( ! is_email( $from_email ) ) {
-			$from_email = 'donotreply@ncllcagents.com';
-		}
-		$from_name = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : ( ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
+		$sender     = $this->resolve_email_sender( $settings, 'wp_password_reset_from_email', 'wp_password_reset_from_name' );
+		$from_email = $sender['from_email'];
+		$from_name  = $sender['from_name'];
 		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 		$copy      = $this->resolve_email_copy(
 			$settings,
@@ -4595,11 +4627,9 @@ class AJForms_Admin {
 		);
 		$settings = $this->get_plugin_settings();
 		$subject = ! empty( $settings['wp_welcome_email_subject'] ) ? sanitize_text_field( (string) $settings['wp_welcome_email_subject'] ) : __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
-		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
-		if ( ! is_email( $from_email ) ) {
-			$from_email = 'donotreply@ncllcagents.com';
-		}
-		$from_name = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : ( ! empty( $settings['default_from_name'] ) ? sanitize_text_field( (string) $settings['default_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) );
+		$sender     = $this->resolve_email_sender( $settings, 'wp_welcome_from_email', 'wp_welcome_from_name' );
+		$from_email = $sender['from_email'];
+		$from_name  = $sender['from_name'];
 		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 		$copy      = $this->resolve_email_copy(
 			$settings,
@@ -4653,11 +4683,9 @@ class AJForms_Admin {
 		}
 
 		$settings   = $this->get_plugin_settings();
-		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
-		if ( ! is_email( $from_email ) ) {
-			$from_email = 'donotreply@ncllcagents.com';
-		}
-		$from_name = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$sender     = $this->resolve_email_sender( $settings, 'lead_followup_from_email', 'lead_followup_from_name' );
+		$from_email = $sender['from_email'];
+		$from_name  = $sender['from_name'];
 		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 		$subject   = ! empty( $settings['lead_followup_email_subject'] ) ? sanitize_text_field( (string) $settings['lead_followup_email_subject'] ) : __( 'Following up from NC LLC Agents', 'ajforms' );
 
@@ -11289,6 +11317,14 @@ class AJForms_Admin {
 			'wp_service_status_body'         => isset( $_POST['wp_service_status_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['wp_service_status_body'] ) ) : "Hi {name},\nThe status of \"{service_name}\" has changed.",
 			'lead_followup_heading'          => isset( $_POST['lead_followup_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_heading'] ) ) : "We'd love to hear from you",
 			'lead_followup_body'             => isset( $_POST['lead_followup_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['lead_followup_body'] ) ) : "Hi {name},\nWe wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
+			'wp_password_reset_from_email'   => isset( $_POST['wp_password_reset_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_password_reset_from_email'] ) ) : '',
+			'wp_password_reset_from_name'    => isset( $_POST['wp_password_reset_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_from_name'] ) ) : '',
+			'wp_welcome_from_email'          => isset( $_POST['wp_welcome_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_welcome_from_email'] ) ) : '',
+			'wp_welcome_from_name'           => isset( $_POST['wp_welcome_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_from_name'] ) ) : '',
+			'wp_service_status_from_email'   => isset( $_POST['wp_service_status_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_service_status_from_email'] ) ) : '',
+			'wp_service_status_from_name'    => isset( $_POST['wp_service_status_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_service_status_from_name'] ) ) : '',
+			'lead_followup_from_email'       => isset( $_POST['lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['lead_followup_from_email'] ) ) : 'contactus@ncllcagents.com',
+			'lead_followup_from_name'        => isset( $_POST['lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_from_name'] ) ) : '',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -11322,7 +11358,7 @@ class AJForms_Admin {
 
 		$section_keys = array(
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
-			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body' ),
+			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices' ),
@@ -12713,8 +12749,9 @@ class AJForms_Admin {
 		}
 
 		$settings   = $this->get_plugin_settings();
-		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : '' );
-		$from_name  = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$sender     = $this->resolve_email_sender( $settings, 'wp_service_status_from_email', 'wp_service_status_from_name' );
+		$from_email = $sender['from_email'];
+		$from_name  = $sender['from_name'];
 		$site_name  = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 
 		$service_name    = sanitize_text_field( (string) $request->service_name );
@@ -21052,8 +21089,10 @@ class AJForms_Admin {
 										'id'           => 'password_reset',
 										'label'        => __( 'Password Reset', 'ajforms' ),
 										'description'  => __( 'Sent when a client portal user (or, if enabled above, a WordPress user) requests a password reset.', 'ajforms' ),
-										'subject_key'  => 'wp_password_reset_subject',
-										'subject_help' => __( 'Used for WordPress Users reset password and AJ Core portal reset password.', 'ajforms' ),
+										'subject_key'   => 'wp_password_reset_subject',
+										'subject_help'  => __( 'Used for WordPress Users reset password and AJ Core portal reset password.', 'ajforms' ),
+										'from_email_key' => 'wp_password_reset_from_email',
+										'from_name_key'  => 'wp_password_reset_from_name',
 										'heading_key'  => 'wp_password_reset_heading',
 										'body_key'     => 'wp_password_reset_body',
 										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
@@ -21073,8 +21112,10 @@ class AJForms_Admin {
 										'id'           => 'welcome',
 										'label'        => __( 'Portal Welcome', 'ajforms' ),
 										'description'  => __( 'Sent when staff enable portal access for a customer, or via the Portal Users bulk "Send Welcome Email" action.', 'ajforms' ),
-										'subject_key'  => 'wp_welcome_email_subject',
-										'subject_help' => __( 'Used by the Portal Users bulk Send Welcome Email action.', 'ajforms' ),
+										'subject_key'   => 'wp_welcome_email_subject',
+										'subject_help'  => __( 'Used by the Portal Users bulk Send Welcome Email action.', 'ajforms' ),
+										'from_email_key' => 'wp_welcome_from_email',
+										'from_name_key'  => 'wp_welcome_from_name',
 										'heading_key'  => 'wp_welcome_heading',
 										'body_key'     => 'wp_welcome_body',
 										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
@@ -21096,8 +21137,10 @@ class AJForms_Admin {
 										'id'           => 'service_status',
 										'label'        => __( 'Service Request Status Update', 'ajforms' ),
 										'description'  => __( 'Sent to a customer automatically whenever staff change the workflow status of one of their service requests — for example "Update on Registered Agent - 1 year: Active".', 'ajforms' ),
-										'subject_key'  => 'wp_service_status_subject',
-										'subject_help' => __( 'Use {service_name} and {status_label} as placeholders — each is filled in per email.', 'ajforms' ),
+										'subject_key'   => 'wp_service_status_subject',
+										'subject_help'  => __( 'Use {service_name} and {status_label} as placeholders — each is filled in per email.', 'ajforms' ),
+										'from_email_key' => 'wp_service_status_from_email',
+										'from_name_key'  => 'wp_service_status_from_name',
 										'heading_key'  => 'wp_service_status_heading',
 										'body_key'     => 'wp_service_status_body',
 										'tokens_help'  => __( 'Available placeholders: {name}, {service_name}, {status_label}. One paragraph per line.', 'ajforms' ),
@@ -21115,8 +21158,10 @@ class AJForms_Admin {
 										'id'           => 'lead_followup',
 										'label'        => __( 'Lead Follow-up', 'ajforms' ),
 										'description'  => __( 'Sent from the AJ Ops Leads page ("Send Follow-up Email" action, single or bulk) to nudge a lead to reach out or purchase.', 'ajforms' ),
-										'subject_key'  => 'lead_followup_email_subject',
-										'subject_help' => __( 'Used by the AJ Ops Leads "Send Follow-up Email" action.', 'ajforms' ),
+										'subject_key'   => 'lead_followup_email_subject',
+										'subject_help'  => __( 'Used by the AJ Ops Leads "Send Follow-up Email" action.', 'ajforms' ),
+										'from_email_key' => 'lead_followup_from_email',
+										'from_name_key'  => 'lead_followup_from_name',
 										'heading_key'  => 'lead_followup_heading',
 										'body_key'     => 'lead_followup_body',
 										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
@@ -21144,8 +21189,19 @@ class AJForms_Admin {
 										<div style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;">
 											<h4 style="margin:0 0 6px;font-size:15px;"><?php echo esc_html( $type['label'] ); ?></h4>
 											<p class="description" style="margin:0 0 10px;"><?php echo esc_html( $type['description'] ); ?></p>
-											<p class="description" style="margin:0 0 10px;"><strong><?php esc_html_e( 'Sent from:', 'ajforms' ); ?></strong> <?php echo esc_html( trim( $settings['wp_email_from_name'] . ' <' . $settings['wp_email_from_email'] . '>' ) ); ?></p>
-											<div class="ajforms-settings-field" style="max-width:520px;">
+											<div class="ajforms-settings-grid" style="max-width:520px;">
+												<div class="ajforms-settings-field">
+													<label for="<?php echo esc_attr( $type['from_email_key'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
+													<input name="<?php echo esc_attr( $type['from_email_key'] ); ?>" id="<?php echo esc_attr( $type['from_email_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email_key'] ] ); ?>">
+													<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Email above.', 'ajforms' ); ?></div>
+												</div>
+												<div class="ajforms-settings-field">
+													<label for="<?php echo esc_attr( $type['from_name_key'] ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
+													<input name="<?php echo esc_attr( $type['from_name_key'] ); ?>" id="<?php echo esc_attr( $type['from_name_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_name_key'] ] ); ?>">
+													<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Name above.', 'ajforms' ); ?></div>
+												</div>
+											</div>
+											<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
 												<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
 												<input name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['subject_key'] ] ); ?>">
 												<div class="ajforms-settings-help"><?php echo esc_html( $type['subject_help'] ); ?></div>
