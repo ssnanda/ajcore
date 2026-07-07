@@ -170,6 +170,16 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/leads/(?P<id>\d+)',
+			array(
+				'methods'             => 'PATCH',
+				'callback'            => array( $this, 'update_ops_lead_fields' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/leads/bulk',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -684,7 +694,7 @@ class AJCore_REST_API {
 		$leads_unread = 0;
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $leads_table ) ) === $leads_table ) {
 			$leads_total  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}`" );
-			$leads_unread = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}` WHERE status = 'unread'" );
+			$leads_unread = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}` WHERE status = 'new'" );
 		}
 
 		$sr_stats   = $this->get_service_request_stats_for_ops();
@@ -3953,6 +3963,130 @@ class AJCore_REST_API {
 		return '';
 	}
 
+	/** Companion to extract_lead_field() — same two-pass fuzzy match, but returns the matching
+	 *  field's key (or null) instead of its value, so an edit can update that exact field in
+	 *  place rather than bolting on a new, possibly-duplicate key. */
+	private function find_lead_field_key( $decoded, $preferred_keys ) {
+		if ( ! is_array( $decoded ) ) {
+			return null;
+		}
+		$skip_types = array( 'radio', 'checkbox', 'select', 'hidden', 'file', 'button', 'submit' );
+
+		foreach ( $preferred_keys as $preferred_key ) {
+			foreach ( $decoded as $field_key => $field ) {
+				if ( ! is_array( $field ) || '_meta' === $field_key ) {
+					continue;
+				}
+				$type = isset( $field['type'] ) ? strtolower( trim( $field['type'] ) ) : '';
+				if ( in_array( $type, $skip_types, true ) ) {
+					continue;
+				}
+				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
+				$key   = strtolower( trim( (string) $field_key ) );
+				if ( false !== strpos( $label, $preferred_key ) || false !== strpos( $key, $preferred_key ) ) {
+					return $field_key;
+				}
+			}
+		}
+
+		foreach ( $preferred_keys as $preferred_key ) {
+			foreach ( $decoded as $field_key => $field ) {
+				if ( ! is_array( $field ) || '_meta' === $field_key ) {
+					continue;
+				}
+				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
+				$key   = strtolower( trim( (string) $field_key ) );
+				if ( false !== strpos( $label, $preferred_key ) || false !== strpos( $key, $preferred_key ) ) {
+					return $field_key;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/** Updates a lead's editable core fields (name/email/phone/company/source/notes) in place.
+	 *  Locates the field already supplying each value (via the same fuzzy matching read uses)
+	 *  and overwrites just its 'value', so form-submitted leads keep their original field/label
+	 *  structure instead of accumulating duplicate synthetic keys. Only params actually present
+	 *  in the request are touched — omitted fields are left alone. */
+	public function update_ops_lead_fields( WP_REST_Request $request ) {
+		global $wpdb;
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$lead_id     = absint( $request->get_param( 'id' ) );
+
+		$row = $wpdb->get_row( $wpdb->prepare( "SELECT id, lead_data FROM `{$leads_table}` WHERE id = %d", $lead_id ), ARRAY_A );
+		if ( ! $row ) {
+			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$decoded = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
+		$decoded = is_array( $decoded ) ? $decoded : array();
+
+		$field_map = array(
+			'name'    => array( 'label' => 'Name',    'type' => 'text',     'preferred_keys' => array( 'name', 'full name', 'your name' ) ),
+			'email'   => array( 'label' => 'Email',   'type' => 'email',    'preferred_keys' => array( 'email', 'e-mail' ) ),
+			'phone'   => array( 'label' => 'Phone',   'type' => 'text',     'preferred_keys' => array( 'phone', 'mobile', 'tel', 'cell' ) ),
+			'company' => array( 'label' => 'Company', 'type' => 'text',     'preferred_keys' => array( 'business name', 'company name', 'company', 'business', 'organization', 'organisation' ) ),
+			'source'  => array( 'label' => 'Source',  'type' => 'text',     'preferred_keys' => array( 'source' ) ),
+			'notes'   => array( 'label' => 'Notes',   'type' => 'textarea', 'preferred_keys' => array( 'notes', 'message', 'comment', 'additional' ) ),
+		);
+		$skip_types = array( 'radio', 'checkbox', 'select', 'hidden', 'file', 'button', 'submit' );
+
+		$updated_any = false;
+		foreach ( $field_map as $param => $spec ) {
+			if ( null === $request->get_param( $param ) ) {
+				continue;
+			}
+			$raw = (string) $request->get_param( $param );
+			if ( 'email' === $param ) {
+				$value = sanitize_email( $raw );
+			} elseif ( 'phone' === $param ) {
+				$value = '' !== trim( $raw ) ? $this->normalize_us_phone_for_storage( $raw ) : '';
+			} elseif ( 'notes' === $param ) {
+				$value = sanitize_textarea_field( $raw );
+			} else {
+				$value = sanitize_text_field( $raw );
+			}
+
+			$existing_key = $this->find_lead_field_key( $decoded, $spec['preferred_keys'] );
+			$target_key   = $existing_key ? $existing_key : $param;
+			$existing     = isset( $decoded[ $target_key ] ) && is_array( $decoded[ $target_key ] ) ? $decoded[ $target_key ] : array();
+			$existing_type = isset( $existing['type'] ) ? strtolower( trim( (string) $existing['type'] ) ) : '';
+
+			$decoded[ $target_key ] = array(
+				'label' => isset( $existing['label'] ) && '' !== $existing['label'] ? $existing['label'] : $spec['label'],
+				'type'  => ( '' !== $existing_type && ! in_array( $existing_type, $skip_types, true ) ) ? $existing['type'] : $spec['type'],
+				'value' => $value,
+			);
+			$updated_any = true;
+		}
+
+		if ( ! $updated_any ) {
+			return new WP_Error( 'ajcore_no_lead_fields', __( 'No editable fields were provided.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$wpdb->update(
+			$leads_table,
+			array( 'lead_data' => wp_json_encode( $decoded ), 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => $lead_id ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+
+		$forms_table = $wpdb->prefix . 'aj_forms_forms';
+		$fresh_row   = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT l.*, f.title AS form_title FROM `{$leads_table}` l LEFT JOIN `{$forms_table}` f ON l.form_id = f.id WHERE l.id = %d",
+				$lead_id
+			),
+			ARRAY_A
+		);
+		$lead = $this->format_lead_row( $fresh_row, $this->get_customers_by_id_for_leads( array( $fresh_row ) ) );
+
+		return rest_ensure_response( array( 'success' => true, 'lead' => $lead ) );
+	}
+
 	private function phone_digits( $phone ) {
 		return preg_replace( '/\D+/', '', (string) $phone );
 	}
@@ -4005,10 +4139,11 @@ class AJCore_REST_API {
 	}
 
 	/** Statuses a lead can be in. "won"/"duplicate" collapse into the Archived queue on the
-	 *  client; "lost" is its own queue; "unread"/"read" are the active Inbox. */
+	 *  client; "lost" is its own queue; "new"/"read" are the active Inbox. "new" is the default
+	 *  status on creation; "read" is set automatically when staff open the lead (not manually). */
 	private function get_lead_status_labels() {
 		return array(
-			'unread'    => __( 'Unread', 'ajforms' ),
+			'new'       => __( 'New', 'ajforms' ),
 			'read'      => __( 'Read', 'ajforms' ),
 			'won'       => __( 'Won', 'ajforms' ),
 			'lost'      => __( 'Lost', 'ajforms' ),
@@ -4034,7 +4169,7 @@ class AJCore_REST_API {
 			'id'                  => (int) $row['id'],
 			'form_id'             => (int) $row['form_id'],
 			'form_title'          => isset( $row['form_title'] ) ? (string) $row['form_title'] : '',
-			'status'              => isset( $row['status'] ) ? (string) $row['status'] : 'unread',
+			'status'              => isset( $row['status'] ) ? (string) $row['status'] : 'new',
 			'name'                => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
 			'email'               => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
 			'phone'               => $this->format_us_phone_for_display( $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) ),
@@ -4607,7 +4742,7 @@ class AJCore_REST_API {
 		$stripe_customer_id = sanitize_text_field( (string) ( $request->get_param( 'stripe_customer_id' ) ?? '' ) );
 
 		if ( ! isset( $this->get_lead_status_labels()[ $status ] ) ) {
-			return new WP_Error( 'ajcore_invalid_status', __( 'Status must be one of: unread, read, won, lost, duplicate.', 'ajforms' ), array( 'status' => 400 ) );
+			return new WP_Error( 'ajcore_invalid_status', __( 'Status must be one of: new, read, won, lost, duplicate.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 
 		if ( 'won' === $status && '' === $stripe_customer_id ) {
@@ -4670,10 +4805,10 @@ class AJCore_REST_API {
 			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$lead_notes_table}` WHERE lead_id IN ({$placeholders})", $ids ) );
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$leads_table}` WHERE id IN ({$placeholders})", $ids ) );
-		} elseif ( in_array( $action, array( 'mark_read', 'mark_unread', 'mark_lost', 'mark_duplicate' ), true ) ) {
+		} elseif ( in_array( $action, array( 'mark_read', 'mark_new', 'mark_lost', 'mark_duplicate' ), true ) ) {
 			$status_map = array(
 				'mark_read'      => 'read',
-				'mark_unread'    => 'unread',
+				'mark_new'       => 'new',
 				'mark_lost'      => 'lost',
 				'mark_duplicate' => 'duplicate',
 			);
@@ -4784,7 +4919,7 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'success' => true, 'primary_id' => $primary_id, 'merged' => $merged ) );
 	}
 
-	/** Auto-detects duplicates within the active Inbox (unread/read only — leads already marked
+	/** Auto-detects duplicates within the active Inbox (new/read only — leads already marked
 	 *  won/lost/duplicate are resolved outcomes and left alone) by exact, normalized email match,
 	 *  falling back to phone when email is blank. Keeps the earliest submission per group and
 	 *  archives the rest as duplicates in one pass — this is the "Fix Duplicates" button. */
@@ -4793,7 +4928,7 @@ class AJCore_REST_API {
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
 
 		$rows = $wpdb->get_results(
-			"SELECT id, lead_data, created_at FROM `{$leads_table}` WHERE status IN ('read','unread') ORDER BY created_at ASC, id ASC",
+			"SELECT id, lead_data, created_at FROM `{$leads_table}` WHERE status IN ('read','new') ORDER BY created_at ASC, id ASC",
 			ARRAY_A
 		);
 
@@ -4843,7 +4978,7 @@ class AJCore_REST_API {
 		$source  = (string) ( $request->get_param( 'source' ) ?? '' );
 		$notes   = (string) ( $request->get_param( 'notes' ) ?? '' );
 		$status  = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'read' ) );
-		if ( ! in_array( $status, array( 'read', 'unread' ), true ) ) {
+		if ( ! in_array( $status, array( 'read', 'new' ), true ) ) {
 			$status = 'read';
 		}
 

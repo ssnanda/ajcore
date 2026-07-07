@@ -19,13 +19,13 @@ $leads_list_table->prepare_items();
 $leads_table_name = $wpdb->prefix . 'aj_forms_leads';
 $lead_stats = array(
 	'total'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$leads_table_name}" ),
-	'unread'   => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'unread' ) ),
+	'new'      => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'new' ) ),
 	'read'     => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'read' ) ),
 	'lost'     => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'lost' ) ),
 	'won'      => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'won' ) ),
 	'duplicate'=> (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'duplicate' ) ),
 );
-$lead_stats['inbox']    = $lead_stats['unread'] + $lead_stats['read'];
+$lead_stats['inbox']    = $lead_stats['new'] + $lead_stats['read'];
 $lead_stats['archived'] = $lead_stats['won'] + $lead_stats['duplicate'];
 $leads_base_url = admin_url( 'admin.php?page=ajforms-leads' );
 ?>
@@ -182,7 +182,7 @@ $leads_base_url = admin_url( 'admin.php?page=ajforms-leads' );
 			font-weight: 700;
 		}
 
-		.ajforms-status-badge.unread {
+		.ajforms-status-badge.new {
 			background: #fef3c7;
 			color: #92400e;
 		}
@@ -303,7 +303,7 @@ $leads_base_url = admin_url( 'admin.php?page=ajforms-leads' );
 						<span><?php esc_html_e( 'Status', 'ajforms' ); ?></span>
 						<select name="lead_status">
 							<option value=""><?php esc_html_e( 'All statuses', 'ajforms' ); ?></option>
-							<option value="unread" <?php selected( $selected_status, 'unread' ); ?>><?php esc_html_e( 'Unread', 'ajforms' ); ?></option>
+							<option value="new" <?php selected( $selected_status, 'new' ); ?>><?php esc_html_e( 'New', 'ajforms' ); ?></option>
 							<option value="read" <?php selected( $selected_status, 'read' ); ?>><?php esc_html_e( 'Read', 'ajforms' ); ?></option>
 						</select>
 					</label>

@@ -64,7 +64,7 @@ $form_edit_url = $form ? add_query_arg(
 	admin_url( 'admin.php' )
 ) : '';
 
-$status_labels = array( 'unread' => __( 'Unread', 'ajforms' ), 'read' => __( 'Read', 'ajforms' ), 'won' => __( 'Won', 'ajforms' ), 'lost' => __( 'Lost', 'ajforms' ), 'duplicate' => __( 'Duplicate', 'ajforms' ) );
+$status_labels = array( 'new' => __( 'New', 'ajforms' ), 'read' => __( 'Read', 'ajforms' ), 'won' => __( 'Won', 'ajforms' ), 'lost' => __( 'Lost', 'ajforms' ), 'duplicate' => __( 'Duplicate', 'ajforms' ) );
 
 $lead_action_url = function ( $action ) use ( $lead_id ) {
 	return wp_nonce_url(
@@ -77,8 +77,8 @@ $lead_action_url = function ( $action ) use ( $lead_id ) {
 };
 
 $status_actions = array();
-if ( in_array( $lead->status, array( 'unread', 'read' ), true ) ) {
-	$status_actions['mark_unread']   = __( 'Mark Unread', 'ajforms' );
+if ( in_array( $lead->status, array( 'new', 'read' ), true ) ) {
+	$status_actions['mark_new']      = __( 'Mark New', 'ajforms' );
 	$status_actions['mark_read']     = __( 'Mark Read', 'ajforms' );
 	$status_actions['mark_lost']     = __( 'Mark Lost', 'ajforms' );
 	$status_actions['mark_duplicate']= __( 'Mark Duplicate', 'ajforms' );
@@ -255,7 +255,7 @@ $delete_url = wp_nonce_url(
 			color: #1d4ed8;
 		}
 
-		.ajforms-status-badge.unread {
+		.ajforms-status-badge.new {
 			background: #fef3c7;
 			color: #92400e;
 		}
@@ -378,7 +378,7 @@ $delete_url = wp_nonce_url(
 						<option value="<?php echo esc_url( $lead_action_url( $action_key ) ); ?>"><?php echo esc_html( $action_label ); ?></option>
 					<?php endforeach; ?>
 				</select>
-				<?php if ( in_array( $lead->status, array( 'unread', 'read' ), true ) ) : ?>
+				<?php if ( in_array( $lead->status, array( 'new', 'read' ), true ) ) : ?>
 					<button type="button" class="button" onclick="document.getElementById('ajf-mark-won-panel').classList.toggle('is-visible');"><?php esc_html_e( 'Mark Won…', 'ajforms' ); ?></button>
 				<?php endif; ?>
 				<?php if ( $form_edit_url ) : ?>

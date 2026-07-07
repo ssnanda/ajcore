@@ -12002,7 +12002,7 @@ class AJForms_Admin {
 				'wp-admin',
 				'
 				.ajforms-status-badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600}
-				.ajforms-status-badge.unread{background:#fff4e5;color:#b26a00;border:1px solid #f0c36d}
+				.ajforms-status-badge.new{background:#fff4e5;color:#b26a00;border:1px solid #f0c36d}
 				.ajforms-status-badge.read{background:#ecf7ed;color:#1e7e34;border:1px solid #9ad3a3}
 				.ajforms-lead-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px;margin-top:16px}
 				.ajforms-lead-grid{display:grid;grid-template-columns:2fr 1fr;gap:20px}
@@ -12087,7 +12087,7 @@ class AJForms_Admin {
 	 *  for the REST-facing equivalent; kept in sync manually since leads have no shared model class. */
 	public function get_lead_status_labels() {
 		return array(
-			'unread'    => __( 'Unread', 'ajforms' ),
+			'new'       => __( 'New', 'ajforms' ),
 			'read'      => __( 'Read', 'ajforms' ),
 			'won'       => __( 'Won', 'ajforms' ),
 			'lost'      => __( 'Lost', 'ajforms' ),
@@ -12190,7 +12190,7 @@ class AJForms_Admin {
 		);
 	}
 
-	/** Auto-detects duplicates within the active Inbox (unread/read only) by exact, normalized
+	/** Auto-detects duplicates within the active Inbox (new/read only) by exact, normalized
 	 *  email match, falling back to phone when email is blank. Keeps the earliest submission per
 	 *  group and archives the rest — mirrors fix_ops_lead_duplicates() in class-ajcore-rest-api.php.
 	 *  Returns array( groups_merged, archived_ids ). */
@@ -12199,7 +12199,7 @@ class AJForms_Admin {
 		$leads_table = $this->get_leads_table();
 
 		$rows = $wpdb->get_results(
-			"SELECT id, lead_data, created_at FROM `{$leads_table}` WHERE status IN ('read','unread') ORDER BY created_at ASC, id ASC",
+			"SELECT id, lead_data, created_at FROM `{$leads_table}` WHERE status IN ('read','new') ORDER BY created_at ASC, id ASC",
 			ARRAY_A
 		);
 
@@ -20637,10 +20637,10 @@ class AJForms_Admin {
 				return;
 			}
 
-			if ( in_array( $action, array( 'mark_read', 'mark_unread', 'mark_lost', 'mark_duplicate', 'reopen' ), true ) ) {
+			if ( in_array( $action, array( 'mark_read', 'mark_new', 'mark_lost', 'mark_duplicate', 'reopen' ), true ) ) {
 				$status_map = array(
 					'mark_read'      => 'read',
-					'mark_unread'    => 'unread',
+					'mark_new'       => 'new',
 					'mark_lost'      => 'lost',
 					'mark_duplicate' => 'duplicate',
 					'reopen'         => 'read',

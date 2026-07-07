@@ -52,7 +52,7 @@ class AJForms_Activator {
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			form_id bigint(20) unsigned NOT NULL,
 			lead_data longtext NOT NULL,
-			status varchar(50) DEFAULT 'unread' NOT NULL,
+			status varchar(50) DEFAULT 'new' NOT NULL,
 			ip_address varchar(100) DEFAULT '' NOT NULL,
 			source_url text NULL,
 			user_agent text NULL,
@@ -962,6 +962,11 @@ class AJForms_Activator {
 			if ( ! $has_lead_updated_col ) {
 				$wpdb->query( "ALTER TABLE $table_leads ADD COLUMN updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL" );
 			}
+
+			// "unread" renamed to "new" (default status for a fresh lead — "read" is now set
+			// automatically when staff open the lead, not via a manual dropdown).
+			$wpdb->query( "ALTER TABLE $table_leads MODIFY status varchar(50) DEFAULT 'new' NOT NULL" );
+			$wpdb->query( "UPDATE $table_leads SET status = 'new' WHERE status = 'unread'" );
 		}
 
 		$now = current_time( 'mysql' );
@@ -1078,7 +1083,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '21', false );
+		update_option( 'ajforms_portal_schema_version', '22', false );
 	}
 
 	/**

@@ -10638,7 +10638,7 @@ class AJForms {
 			array(
 				'form_id'    => $form_id,
 				'lead_data'  => wp_json_encode( $lead_data ),
-				'status'     => 'unread',
+				'status'     => 'new',
 				'ip_address' => isset( $submission_meta['ip_address'] ) ? $submission_meta['ip_address'] : '',
 				'source_url' => isset( $submission_meta['page_url'] ) ? $submission_meta['page_url'] : '',
 				'user_agent' => isset( $submission_meta['user_agent'] ) ? $submission_meta['user_agent'] : '',

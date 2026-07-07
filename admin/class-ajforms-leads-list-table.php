@@ -82,7 +82,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 	public function get_bulk_actions() {
 		return array(
 			'mark_read'       => __( 'Mark as Read', 'ajforms' ),
-			'mark_unread'     => __( 'Mark as Unread', 'ajforms' ),
+			'mark_new'        => __( 'Mark as New', 'ajforms' ),
 			'mark_lost'       => __( 'Mark as Lost', 'ajforms' ),
 			'mark_duplicate'  => __( 'Mark as Duplicate', 'ajforms' ),
 			'merge_duplicates'=> __( 'Merge Duplicates (keep earliest)', 'ajforms' ),
@@ -111,7 +111,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 
 		$status_map = array(
 			'mark_read'      => 'read',
-			'mark_unread'    => 'unread',
+			'mark_new'       => 'new',
 			'mark_lost'      => 'lost',
 			'mark_duplicate' => 'duplicate',
 		);
@@ -245,7 +245,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 
 			case 'status':
 				$status = sanitize_text_field( $item['status'] );
-				$labels = array( 'unread' => __( 'Unread', 'ajforms' ), 'read' => __( 'Read', 'ajforms' ), 'won' => __( 'Won', 'ajforms' ), 'lost' => __( 'Lost', 'ajforms' ), 'duplicate' => __( 'Duplicate', 'ajforms' ) );
+				$labels = array( 'new' => __( 'New', 'ajforms' ), 'read' => __( 'Read', 'ajforms' ), 'won' => __( 'Won', 'ajforms' ), 'lost' => __( 'Lost', 'ajforms' ), 'duplicate' => __( 'Duplicate', 'ajforms' ) );
 				$label  = isset( $labels[ $status ] ) ? $labels[ $status ] : ucfirst( $status );
 				$out    = '<span class="ajforms-status-badge ' . esc_attr( $status ) . '">' . esc_html( $label ) . '</span>';
 				if ( 'won' === $status && ! empty( $item['stripe_customer_id'] ) ) {
@@ -292,9 +292,9 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 
 				$out = '<div class="ajforms-inline-actions"><a class="button button-small" href="' . esc_url( $detail_url ) . '">' . esc_html__( 'Open', 'ajforms' ) . '</a>';
 
-				if ( in_array( $status, array( 'unread', 'read' ), true ) ) {
-					$toggle_action = ( 'unread' === $status ) ? 'mark_read' : 'mark_unread';
-					$toggle_label  = ( 'unread' === $status ) ? __( 'Mark Read', 'ajforms' ) : __( 'Mark Unread', 'ajforms' );
+				if ( in_array( $status, array( 'new', 'read' ), true ) ) {
+					$toggle_action = ( 'new' === $status ) ? 'mark_read' : 'mark_new';
+					$toggle_label  = ( 'new' === $status ) ? __( 'Mark Read', 'ajforms' ) : __( 'Mark New', 'ajforms' );
 					$out          .= $quick_link( $toggle_action, $toggle_label );
 					$out          .= $quick_link( 'mark_lost', __( 'Lost', 'ajforms' ) );
 					$out          .= $quick_link( 'mark_duplicate', __( 'Dup', 'ajforms' ) );
@@ -346,8 +346,8 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 		} elseif ( 'archived' === $queue ) {
 			$where[] = "l.status IN ('won','duplicate')";
 		} else {
-			$where[] = "l.status IN ('unread','read')";
-			if ( in_array( $status, array( 'read', 'unread' ), true ) ) {
+			$where[] = "l.status IN ('new','read')";
+			if ( in_array( $status, array( 'read', 'new' ), true ) ) {
 				$where[]  = 'l.status = %s';
 				$params[] = $status;
 			}
