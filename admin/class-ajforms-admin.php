@@ -11873,6 +11873,161 @@ class AJForms_Admin {
 		return $wpdb->prefix . 'aj_forms_lead_notes';
 	}
 
+	/** Statuses a lead can be in — see get_lead_status_labels() in class-ajcore-rest-api.php
+	 *  for the REST-facing equivalent; kept in sync manually since leads have no shared model class. */
+	public function get_lead_status_labels() {
+		return array(
+			'unread'    => __( 'Unread', 'ajforms' ),
+			'read'      => __( 'Read', 'ajforms' ),
+			'won'       => __( 'Won', 'ajforms' ),
+			'lost'      => __( 'Lost', 'ajforms' ),
+			'duplicate' => __( 'Duplicate', 'ajforms' ),
+		);
+	}
+
+	/** Same two-pass fuzzy field extraction as REST API's extract_lead_field() / the list
+	 *  table's extract_field() — used here only for pulling email/phone for duplicate matching. */
+	private function extract_lead_field( $decoded, $preferred_keys ) {
+		if ( ! is_array( $decoded ) ) {
+			return '';
+		}
+		$skip_types = array( 'radio', 'checkbox', 'select', 'hidden', 'file', 'button', 'submit' );
+
+		foreach ( $preferred_keys as $preferred_key ) {
+			foreach ( $decoded as $field_key => $field ) {
+				if ( ! is_array( $field ) || '_meta' === $field_key ) {
+					continue;
+				}
+				$type = isset( $field['type'] ) ? strtolower( trim( $field['type'] ) ) : '';
+				if ( in_array( $type, $skip_types, true ) ) {
+					continue;
+				}
+				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
+				$key   = strtolower( trim( (string) $field_key ) );
+				if ( false !== strpos( $label, $preferred_key ) || false !== strpos( $key, $preferred_key ) ) {
+					$value = isset( $field['value'] ) ? $field['value'] : '';
+					if ( is_array( $value ) ) {
+						$value = implode( ', ', $value );
+					}
+					return (string) $value;
+				}
+			}
+		}
+
+		foreach ( $preferred_keys as $preferred_key ) {
+			foreach ( $decoded as $field_key => $field ) {
+				if ( ! is_array( $field ) || '_meta' === $field_key ) {
+					continue;
+				}
+				$label = isset( $field['label'] ) ? strtolower( trim( $field['label'] ) ) : '';
+				$key   = strtolower( trim( (string) $field_key ) );
+				if ( false !== strpos( $label, $preferred_key ) || false !== strpos( $key, $preferred_key ) ) {
+					$value = isset( $field['value'] ) ? $field['value'] : '';
+					if ( is_array( $value ) ) {
+						$value = implode( ', ', $value );
+					}
+					return (string) $value;
+				}
+			}
+		}
+
+		return '';
+	}
+
+	/** Copies a duplicate lead's notes onto the primary lead (tagged with its origin), then
+	 *  archives the duplicate — non-destructive, mirrors merge_lead_into() in
+	 *  class-ajcore-rest-api.php so the WP-admin UI and AJOps behave identically. */
+	public function merge_portal_lead_into( $primary_id, $duplicate_id ) {
+		global $wpdb;
+		$primary_id   = absint( $primary_id );
+		$duplicate_id = absint( $duplicate_id );
+		if ( ! $primary_id || ! $duplicate_id || $primary_id === $duplicate_id ) {
+			return;
+		}
+		$leads_table = $this->get_leads_table();
+		$notes_table = $this->get_lead_notes_table();
+
+		$note_rows = $wpdb->get_results( $wpdb->prepare( "SELECT note, created_by, created_at FROM `{$notes_table}` WHERE lead_id = %d ORDER BY created_at ASC", $duplicate_id ) );
+		foreach ( (array) $note_rows as $n ) {
+			$wpdb->insert(
+				$notes_table,
+				array(
+					'lead_id'    => $primary_id,
+					'note'       => sprintf( "[Merged from lead #%d]\n%s", $duplicate_id, (string) $n->note ),
+					'created_by' => (int) $n->created_by,
+					'created_at' => (string) $n->created_at,
+				),
+				array( '%d', '%s', '%d', '%s' )
+			);
+		}
+		$wpdb->insert(
+			$notes_table,
+			array(
+				'lead_id'    => $primary_id,
+				'note'       => sprintf( __( 'Lead #%d was merged into this one as a duplicate.', 'ajforms' ), $duplicate_id ),
+				'created_by' => get_current_user_id(),
+				'created_at' => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%d', '%s' )
+		);
+
+		$wpdb->update(
+			$leads_table,
+			array( 'status' => 'duplicate', 'merged_into_lead_id' => $primary_id, 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => $duplicate_id ),
+			array( '%s', '%d', '%s' ),
+			array( '%d' )
+		);
+	}
+
+	/** Auto-detects duplicates within the active Inbox (unread/read only) by exact, normalized
+	 *  email match, falling back to phone when email is blank. Keeps the earliest submission per
+	 *  group and archives the rest — mirrors fix_ops_lead_duplicates() in class-ajcore-rest-api.php.
+	 *  Returns array( groups_merged, archived_ids ). */
+	public function fix_portal_lead_duplicates() {
+		global $wpdb;
+		$leads_table = $this->get_leads_table();
+
+		$rows = $wpdb->get_results(
+			"SELECT id, lead_data, created_at FROM `{$leads_table}` WHERE status IN ('read','unread') ORDER BY created_at ASC, id ASC",
+			ARRAY_A
+		);
+
+		$groups = array();
+		foreach ( (array) $rows as $row ) {
+			$decoded = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
+			$email   = strtolower( trim( $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ) ) );
+			$phone   = preg_replace( '/\D/', '', $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) );
+
+			$key = '';
+			if ( '' !== $email ) {
+				$key = 'email:' . $email;
+			} elseif ( '' !== $phone ) {
+				$key = 'phone:' . $phone;
+			} else {
+				continue;
+			}
+
+			$groups[ $key ][] = (int) $row['id'];
+		}
+
+		$groups_merged = 0;
+		$archived_ids  = array();
+		foreach ( $groups as $ids ) {
+			if ( count( $ids ) < 2 ) {
+				continue;
+			}
+			$primary_id = $ids[0];
+			foreach ( array_slice( $ids, 1 ) as $duplicate_id ) {
+				$this->merge_portal_lead_into( $primary_id, $duplicate_id );
+				$archived_ids[] = $duplicate_id;
+			}
+			$groups_merged++;
+		}
+
+		return array( 'groups_merged' => $groups_merged, 'archived_ids' => $archived_ids );
+	}
+
 	private function get_portal_files_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_files';
@@ -14400,7 +14555,7 @@ class AJForms_Admin {
 													<input type="hidden" name="service_request_action" value="save_details">
 													<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
 													<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
-													<button type="submit" name="after_service_status" value="<?php echo esc_attr( ! empty( $pipeline_keys ) ? $pipeline_keys[0] : 'new' ); ?>" class="aj-sr-badge is-cancelled aj-sr-cancelled-badge" title="<?php esc_attr_e( 'Cancelled — click to reopen', 'ajforms' ); ?>"><?php esc_html_e( 'Cancelled', 'ajforms' ); ?></button>
+													<button type="submit" name="after_service_status" value="<?php echo esc_attr( ! empty( $pipeline_keys ) ? $pipeline_keys[0] : 'new' ); ?>" class="aj-sr-badge is-cancelled aj-sr-cancelled-badge" title="<?php esc_attr_e( 'Cancelled — click to reopen', 'ajforms' ); ?>" onclick="return confirm('<?php echo esc_js( __( 'This will email the customer to let them know the request was reopened. Continue?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Cancelled', 'ajforms' ); ?></button>
 												</form>
 											<?php else : ?>
 												<form method="post" class="aj-sr-stepper" title="<?php echo esc_attr( $full_path ); ?>">
@@ -14411,7 +14566,7 @@ class AJForms_Admin {
 														<div class="aj-sr-stepper-step <?php echo 0 === $i ? '' : 'is-grow'; ?>">
 															<?php if ( $i > 0 ) : ?><span class="aj-sr-stepper-line <?php echo $i <= $current_step_index ? 'is-done' : ''; ?>"></span><?php endif; ?>
 															<div class="aj-sr-stepper-col">
-																<button type="submit" name="after_service_status" value="<?php echo esc_attr( $key ); ?>" class="aj-sr-stepper-dot <?php echo $i < $current_step_index ? 'is-done' : ( $i === $current_step_index ? 'is-current' : '' ); ?>"><?php echo $i < $current_step_index ? '✓' : ''; ?></button>
+																<button type="submit" name="after_service_status" value="<?php echo esc_attr( $key ); ?>" class="aj-sr-stepper-dot <?php echo $i < $current_step_index ? 'is-done' : ( $i === $current_step_index ? 'is-current' : '' ); ?>"<?php echo $i === $current_step_index ? '' : ' onclick="return confirm(\'' . esc_js( sprintf( __( 'This will email the customer to let them know the status changed to "%s". Continue?', 'ajforms' ), $svc_pipeline[ $key ] ) ) . '\');"'; ?>><?php echo $i < $current_step_index ? '✓' : ''; ?></button>
 																<span class="aj-sr-stepper-label <?php echo $i === $current_step_index ? 'is-current' : ''; ?>"><?php echo esc_html( $svc_pipeline[ $key ] ); ?></span>
 															</div>
 														</div>
@@ -14446,7 +14601,7 @@ class AJForms_Admin {
 												<div class="aj-sr-detail-grid">
 													<div class="aj-sr-edit-card">
 														<h3><?php esc_html_e( 'Update Workflow', 'ajforms' ); ?></h3>
-														<form method="post">
+														<form method="post" onsubmit="var s=this.querySelector('[name=after_service_status]'); if(s && s.value!==s.getAttribute('data-original')){ return confirm('<?php echo esc_js( __( 'This will email the customer about the status change. Continue?', 'ajforms' ) ); ?>'); } return true;">
 															<input type="hidden" name="service_request_action" value="save_details">
 															<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
 															<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
@@ -14456,7 +14611,7 @@ class AJForms_Admin {
 															// not a value to casually pick here — excluded unless already cancelled.
 															$forward_service_options = 'cancelled' === $svc_status ? $service_options : $svc_pipeline;
 															?>
-															<label><span><?php esc_html_e( 'Service Status', 'ajforms' ); ?></span><select name="after_service_status"><?php foreach ( $forward_service_options as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $svc_status, $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
+															<label><span><?php esc_html_e( 'Service Status', 'ajforms' ); ?></span><select name="after_service_status" data-original="<?php echo esc_attr( $svc_status ); ?>"><?php foreach ( $forward_service_options as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $svc_status, $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
 															<label><span><?php esc_html_e( 'Admin Notes', 'ajforms' ); ?></span><textarea name="admin_notes" rows="3" placeholder="<?php esc_attr_e( 'Internal notes about this request.', 'ajforms' ); ?>"><?php echo esc_textarea( (string) $request->admin_notes ); ?></textarea></label>
 															<label><span><?php esc_html_e( 'Add History Note', 'ajforms' ); ?></span><textarea name="service_request_note" rows="3" placeholder="<?php esc_attr_e( 'Add a note. It will be timestamped in history.', 'ajforms' ); ?>"></textarea></label>
 															<button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
@@ -14470,7 +14625,7 @@ class AJForms_Admin {
 														<?php if ( $can_cancel || isset( $actions['delete'] ) || isset( $actions['apply_billing_change'] ) ) : ?>
 															<div class="aj-sr-manage-actions">
 																<?php if ( $can_cancel ) : ?>
-																	<form method="post" onsubmit="return confirm('<?php echo esc_js( sprintf( __( 'Cancel "%s"? This can be reopened later if needed.', 'ajforms' ), $request_display_name ) ); ?>');">
+																	<form method="post" onsubmit="return confirm('<?php echo esc_js( sprintf( __( 'Cancel "%s"? This will email the customer and can be reopened later if needed.', 'ajforms' ), $request_display_name ) ); ?>');">
 																		<input type="hidden" name="service_request_action" value="save_details">
 																		<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
 																		<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
@@ -20212,6 +20367,41 @@ class AJForms_Admin {
 
 	}
 
+		if ( isset( $_POST['ajf_fix_lead_duplicates_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajf_fix_lead_duplicates_nonce'] ) ), 'ajf_fix_lead_duplicates' ) ) {
+			$result = $this->fix_portal_lead_duplicates();
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'            => 'ajforms-leads',
+						'duplicates_fixed'=> count( $result['archived_ids'] ),
+					),
+					admin_url( 'admin.php' )
+				)
+			);
+			exit;
+		}
+
+		if ( isset( $_POST['ajf_merge_leads_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajf_merge_leads_nonce'] ) ), 'ajf_merge_leads' ) ) {
+			$ids = isset( $_POST['lead_id'] ) ? array_values( array_unique( array_filter( array_map( 'absint', (array) wp_unslash( $_POST['lead_id'] ) ) ) ) ) : array();
+			if ( count( $ids ) >= 2 ) {
+				sort( $ids );
+				$rows_by_id = array();
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+				$rows         = $wpdb->get_results( $wpdb->prepare( "SELECT id, created_at FROM `{$leads_table}` WHERE id IN ({$placeholders}) ORDER BY created_at ASC, id ASC", $ids ) );
+				$primary_id   = ! empty( $rows ) ? (int) $rows[0]->id : 0;
+				if ( $primary_id ) {
+					foreach ( $ids as $id ) {
+						if ( $id !== $primary_id ) {
+							$this->merge_portal_lead_into( $primary_id, $id );
+						}
+					}
+				}
+			}
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-leads' ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( isset( $_GET['lead_action'], $_GET['lead_id'], $_GET['_wpnonce'] ) ) {
 			$action  = sanitize_text_field( wp_unslash( $_GET['lead_action'] ) );
 			$lead_id = absint( wp_unslash( $_GET['lead_id'] ) );
@@ -20221,22 +20411,32 @@ class AJForms_Admin {
 				return;
 			}
 
-			if ( 'mark_read' === $action ) {
+			if ( in_array( $action, array( 'mark_read', 'mark_unread', 'mark_lost', 'mark_duplicate', 'reopen' ), true ) ) {
+				$status_map = array(
+					'mark_read'      => 'read',
+					'mark_unread'    => 'unread',
+					'mark_lost'      => 'lost',
+					'mark_duplicate' => 'duplicate',
+					'reopen'         => 'read',
+				);
 				$wpdb->update(
 					$leads_table,
-					array( 'status' => 'read' ),
+					array( 'status' => $status_map[ $action ], 'updated_at' => current_time( 'mysql' ) ),
 					array( 'id' => $lead_id ),
-					array( '%s' ),
+					array( '%s', '%s' ),
 					array( '%d' )
 				);
-			} elseif ( 'mark_unread' === $action ) {
-				$wpdb->update(
-					$leads_table,
-					array( 'status' => 'unread' ),
-					array( 'id' => $lead_id ),
-					array( '%s' ),
-					array( '%d' )
-				);
+			} elseif ( 'mark_won' === $action ) {
+				$stripe_customer_id = isset( $_GET['customer_id'] ) ? sanitize_text_field( wp_unslash( $_GET['customer_id'] ) ) : '';
+				if ( '' !== $stripe_customer_id ) {
+					$wpdb->update(
+						$leads_table,
+						array( 'status' => 'won', 'stripe_customer_id' => $stripe_customer_id, 'updated_at' => current_time( 'mysql' ) ),
+						array( 'id' => $lead_id ),
+						array( '%s', '%s', '%s' ),
+						array( '%d' )
+					);
+				}
 			} elseif ( 'delete' === $action ) {
 				$wpdb->delete( $lead_notes_table, array( 'lead_id' => $lead_id ), array( '%d' ) );
 				$wpdb->delete( $leads_table, array( 'id' => $lead_id ), array( '%d' ) );

@@ -10,6 +10,7 @@ $forms       = $wpdb->get_results( "SELECT id, title FROM {$forms_table} ORDER B
 
 $selected_form   = isset( $_GET['form_id'] ) ? absint( wp_unslash( $_GET['form_id'] ) ) : 0;
 $selected_status = isset( $_GET['lead_status'] ) ? sanitize_text_field( wp_unslash( $_GET['lead_status'] ) ) : '';
+$selected_queue  = isset( $_GET['lead_queue'] ) ? sanitize_key( wp_unslash( $_GET['lead_queue'] ) ) : 'inbox';
 
 $leads_list_table = new AJForms_Leads_List_Table();
 $leads_list_table->process_bulk_action();
@@ -17,10 +18,16 @@ $leads_list_table->prepare_items();
 
 $leads_table_name = $wpdb->prefix . 'aj_forms_leads';
 $lead_stats = array(
-	'total'  => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$leads_table_name}" ),
-	'unread' => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'unread' ) ),
-	'read'   => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'read' ) ),
+	'total'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$leads_table_name}" ),
+	'unread'   => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'unread' ) ),
+	'read'     => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'read' ) ),
+	'lost'     => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'lost' ) ),
+	'won'      => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'won' ) ),
+	'duplicate'=> (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE status = %s", 'duplicate' ) ),
 );
+$lead_stats['inbox']    = $lead_stats['unread'] + $lead_stats['read'];
+$lead_stats['archived'] = $lead_stats['won'] + $lead_stats['duplicate'];
+$leads_base_url = admin_url( 'admin.php?page=ajforms-leads' );
 ?>
 
 <div class="wrap">
@@ -185,6 +192,42 @@ $lead_stats = array(
 			color: #1d4ed8;
 		}
 
+		.ajforms-status-badge.won {
+			background: #dcfce7;
+			color: #166534;
+		}
+
+		.ajforms-status-badge.lost {
+			background: #fee2e2;
+			color: #b91c1c;
+		}
+
+		.ajforms-status-badge.duplicate {
+			background: #f1f5f9;
+			color: #475569;
+		}
+
+		.ajforms-queue-tabs {
+			display: flex;
+			border: 1px solid #cbd5e1;
+			border-radius: 999px;
+			overflow: hidden;
+			background: #fff;
+		}
+
+		.ajforms-queue-tabs a {
+			padding: 8px 16px;
+			font-weight: 600;
+			font-size: 13px;
+			color: #334155;
+			text-decoration: none;
+		}
+
+		.ajforms-queue-tabs a.is-active {
+			background: #2563eb;
+			color: #fff;
+		}
+
 		.ajforms-inline-note {
 			margin-top: 14px;
 			color: #64748b;
@@ -208,33 +251,63 @@ $lead_stats = array(
 				<h1><?php esc_html_e( 'Leads', 'ajforms' ); ?></h1>
 				<p><?php esc_html_e( 'Manage leads from form submissions and manual entries. Review contacts, source, status, notes, and follow-up activity from one place.', 'ajforms' ); ?></p>
 			</div>
-			<div style="flex-shrink:0;">
+			<div style="flex-shrink:0;display:flex;gap:8px;align-items:center;">
+				<form method="post" onsubmit="return confirm('<?php echo esc_js( __( 'Scan the Inbox for leads with matching email/phone and archive the newer ones as duplicates?', 'ajforms' ) ); ?>');">
+					<?php wp_nonce_field( 'ajf_fix_lead_duplicates', 'ajf_fix_lead_duplicates_nonce' ); ?>
+					<button type="submit" class="button" style="font-size:14px;padding:8px 18px;height:auto;">
+						<?php esc_html_e( 'Fix Duplicates', 'ajforms' ); ?>
+					</button>
+				</form>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-leads&view=new' ) ); ?>" class="button button-primary" style="font-size:14px;padding:8px 18px;height:auto;">
 					+ <?php esc_html_e( 'New Lead', 'ajforms' ); ?>
 				</a>
 			</div>
 		</div>
 
+		<?php if ( isset( $_GET['duplicates_fixed'] ) ) : ?>
+			<div class="notice notice-success is-dismissible" style="margin:16px 0 0;">
+				<p>
+					<?php
+					$fixed_count = absint( wp_unslash( $_GET['duplicates_fixed'] ) );
+					echo esc_html( $fixed_count > 0
+						? sprintf( _n( 'Archived %d duplicate lead.', 'Archived %d duplicate leads.', $fixed_count, 'ajforms' ), $fixed_count )
+						: __( 'No duplicates found in the Inbox.', 'ajforms' ) );
+					?>
+				</p>
+			</div>
+		<?php endif; ?>
+
 		<div class="ajforms-stats-grid">
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['total'] ); ?></strong><span><?php esc_html_e( 'Total Leads', 'ajforms' ); ?></span></div>
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['unread'] ); ?></strong><span><?php esc_html_e( 'Unread', 'ajforms' ); ?></span></div>
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $lead_stats['read'] ); ?></strong><span><?php esc_html_e( 'Read', 'ajforms' ); ?></span></div>
+			<a href="<?php echo esc_url( $leads_base_url ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['total'] ); ?></strong><span><?php esc_html_e( 'Total Leads', 'ajforms' ); ?></span></a>
+			<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'inbox', $leads_base_url ) ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['inbox'] ); ?></strong><span><?php esc_html_e( 'Inbox', 'ajforms' ); ?></span></a>
+			<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'lost', $leads_base_url ) ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['lost'] ); ?></strong><span><?php esc_html_e( 'Lost', 'ajforms' ); ?></span></a>
+			<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'archived', $leads_base_url ) ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['archived'] ); ?></strong><span><?php esc_html_e( 'Archived (Won + Duplicate)', 'ajforms' ); ?></span></a>
 		</div>
 	</div>
 
 	<div class="ajforms-filter-shell">
+		<div class="ajforms-filter-grid" style="margin-bottom:14px;">
+			<div class="ajforms-queue-tabs">
+				<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'inbox', $leads_base_url ) ); ?>" class="<?php echo 'inbox' === $selected_queue ? 'is-active' : ''; ?>"><?php esc_html_e( 'Inbox', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'lost', $leads_base_url ) ); ?>" class="<?php echo 'lost' === $selected_queue ? 'is-active' : ''; ?>"><?php esc_html_e( 'Lost', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'archived', $leads_base_url ) ); ?>" class="<?php echo 'archived' === $selected_queue ? 'is-active' : ''; ?>"><?php esc_html_e( 'Archived', 'ajforms' ); ?></a>
+			</div>
+		</div>
 		<form method="get">
 			<input type="hidden" name="page" value="ajforms-leads" />
+			<input type="hidden" name="lead_queue" value="<?php echo esc_attr( $selected_queue ); ?>" />
 
 			<div class="ajforms-filter-grid">
-				<label>
-					<span><?php esc_html_e( 'Status', 'ajforms' ); ?></span>
-					<select name="lead_status">
-						<option value=""><?php esc_html_e( 'All statuses', 'ajforms' ); ?></option>
-						<option value="unread" <?php selected( $selected_status, 'unread' ); ?>><?php esc_html_e( 'Unread', 'ajforms' ); ?></option>
-						<option value="read" <?php selected( $selected_status, 'read' ); ?>><?php esc_html_e( 'Read', 'ajforms' ); ?></option>
-					</select>
-				</label>
+				<?php if ( 'inbox' === $selected_queue ) : ?>
+					<label>
+						<span><?php esc_html_e( 'Status', 'ajforms' ); ?></span>
+						<select name="lead_status">
+							<option value=""><?php esc_html_e( 'All statuses', 'ajforms' ); ?></option>
+							<option value="unread" <?php selected( $selected_status, 'unread' ); ?>><?php esc_html_e( 'Unread', 'ajforms' ); ?></option>
+							<option value="read" <?php selected( $selected_status, 'read' ); ?>><?php esc_html_e( 'Read', 'ajforms' ); ?></option>
+						</select>
+					</label>
+				<?php endif; ?>
 
 				<label>
 					<span><?php esc_html_e( 'Form', 'ajforms' ); ?></span>

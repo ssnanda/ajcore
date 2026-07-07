@@ -946,6 +946,24 @@ class AJForms_Activator {
 			}
 		}
 
+		// Leads: expanded status set (won/lost/duplicate) needs a link to the customer a "won"
+		// lead converted to, and duplicate-merge tracking. Leads live only on the local $wpdb
+		// (never shared-DB), so a single ALTER is enough — no dual-connection pass needed.
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_leads ) ) === $table_leads ) {
+			$has_lead_customer_col = $wpdb->get_var( "SHOW COLUMNS FROM $table_leads LIKE 'stripe_customer_id'" );
+			if ( ! $has_lead_customer_col ) {
+				$wpdb->query( "ALTER TABLE $table_leads ADD COLUMN stripe_customer_id varchar(191) DEFAULT '' NOT NULL, ADD KEY stripe_customer_id (stripe_customer_id)" );
+			}
+			$has_lead_merged_col = $wpdb->get_var( "SHOW COLUMNS FROM $table_leads LIKE 'merged_into_lead_id'" );
+			if ( ! $has_lead_merged_col ) {
+				$wpdb->query( "ALTER TABLE $table_leads ADD COLUMN merged_into_lead_id bigint(20) unsigned NOT NULL DEFAULT 0, ADD KEY merged_into_lead_id (merged_into_lead_id)" );
+			}
+			$has_lead_updated_col = $wpdb->get_var( "SHOW COLUMNS FROM $table_leads LIKE 'updated_at'" );
+			if ( ! $has_lead_updated_col ) {
+				$wpdb->query( "ALTER TABLE $table_leads ADD COLUMN updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL" );
+			}
+		}
+
 		$now = current_time( 'mysql' );
 		$wpdb->query(
 			$wpdb->prepare(
@@ -1060,7 +1078,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '20', false );
+		update_option( 'ajforms_portal_schema_version', '21', false );
 	}
 
 	/**

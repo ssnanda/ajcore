@@ -182,6 +182,30 @@ class AJCore_REST_API {
 			)
 		);
 
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/leads/merge',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'merge_ops_leads' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'ids'        => array( 'required' => true ),
+					'primary_id' => array( 'required' => false ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/leads/fix-duplicates',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'fix_ops_lead_duplicates' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
 		// Tasks CRUD
 		register_rest_route(
 			self::NAMESPACE,
@@ -3942,7 +3966,19 @@ class AJCore_REST_API {
 		return $row;
 	}
 
-	private function format_lead_row( $row ) {
+	/** Statuses a lead can be in. "won"/"duplicate" collapse into the Archived queue on the
+	 *  client; "lost" is its own queue; "unread"/"read" are the active Inbox. */
+	private function get_lead_status_labels() {
+		return array(
+			'unread'    => __( 'Unread', 'ajforms' ),
+			'read'      => __( 'Read', 'ajforms' ),
+			'won'       => __( 'Won', 'ajforms' ),
+			'lost'      => __( 'Lost', 'ajforms' ),
+			'duplicate' => __( 'Duplicate', 'ajforms' ),
+		);
+	}
+
+	private function format_lead_row( $row, $customers_by_id = array() ) {
 		$decoded    = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
 		$meta       = isset( $decoded['_meta'] ) && is_array( $decoded['_meta'] ) ? $decoded['_meta'] : array();
 		$source_val = $this->extract_lead_field( $decoded, array( 'source' ) );
@@ -3953,21 +3989,54 @@ class AJCore_REST_API {
 		$boolean_values = array( 'yes', 'no', 'true', 'false', '1', '0' );
 		$company        = in_array( strtolower( trim( $company_raw ) ), $boolean_values, true ) ? '' : $company_raw;
 
+		$stripe_customer_id = isset( $row['stripe_customer_id'] ) ? (string) $row['stripe_customer_id'] : '';
+		$customer           = '' !== $stripe_customer_id && isset( $customers_by_id[ $stripe_customer_id ] ) ? $customers_by_id[ $stripe_customer_id ] : null;
+
 		return array(
-			'id'         => (int) $row['id'],
-			'form_id'    => (int) $row['form_id'],
-			'form_title' => isset( $row['form_title'] ) ? (string) $row['form_title'] : '',
-			'status'     => isset( $row['status'] ) ? (string) $row['status'] : 'unread',
-			'name'       => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
-			'email'      => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
-			'phone'      => $this->format_us_phone_for_display( $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) ),
-			'company'    => $company,
-			'source'     => $source_val,
-			'notes'      => $this->extract_lead_field( $decoded, array( 'notes', 'message', 'comment', 'additional' ) ),
-			'source_url' => isset( $row['source_url'] ) ? (string) $row['source_url'] : '',
-			'user_agent' => isset( $row['user_agent'] ) ? (string) $row['user_agent'] : '',
-			'created_at' => isset( $row['created_at'] ) ? (string) $row['created_at'] : '',
+			'id'                  => (int) $row['id'],
+			'form_id'             => (int) $row['form_id'],
+			'form_title'          => isset( $row['form_title'] ) ? (string) $row['form_title'] : '',
+			'status'              => isset( $row['status'] ) ? (string) $row['status'] : 'unread',
+			'name'                => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
+			'email'               => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
+			'phone'               => $this->format_us_phone_for_display( $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) ),
+			'company'             => $company,
+			'source'              => $source_val,
+			'notes'               => $this->extract_lead_field( $decoded, array( 'notes', 'message', 'comment', 'additional' ) ),
+			'source_url'          => isset( $row['source_url'] ) ? (string) $row['source_url'] : '',
+			'user_agent'          => isset( $row['user_agent'] ) ? (string) $row['user_agent'] : '',
+			'created_at'          => isset( $row['created_at'] ) ? (string) $row['created_at'] : '',
+			'updated_at'          => isset( $row['updated_at'] ) ? (string) $row['updated_at'] : '',
+			'stripe_customer_id'  => $stripe_customer_id,
+			'customer_name'       => $customer ? (string) $customer->name : '',
+			'customer_email'      => $customer ? (string) $customer->email : '',
+			'merged_into_lead_id' => isset( $row['merged_into_lead_id'] ) ? (int) $row['merged_into_lead_id'] : 0,
 		);
+	}
+
+	/** Batch-resolves stripe_customer_id => {name,email} for a set of lead rows, matching the
+	 *  assignee-resolution pattern used by get_ops_service_requests (one query, not N). */
+	private function get_customers_by_id_for_leads( $rows ) {
+		$ids = array_values( array_unique( array_filter( array_map(
+			function ( $r ) { return isset( $r['stripe_customer_id'] ) ? (string) $r['stripe_customer_id'] : ''; },
+			(array) $rows
+		) ) ) );
+		if ( empty( $ids ) ) {
+			return array();
+		}
+		$pdb   = $this->get_portal_db();
+		$table = $this->portal_table( 'aj_portal_stripe_customers' );
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return array();
+		}
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows_out = $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id, name, email FROM `{$table}` WHERE stripe_customer_id IN ({$placeholders})", $ids ) );
+		$by_id    = array();
+		foreach ( (array) $rows_out as $c ) {
+			$by_id[ (string) $c->stripe_customer_id ] = $c;
+		}
+		return $by_id;
 	}
 
 	public function get_ops_leads( WP_REST_Request $request ) {
@@ -3991,7 +4060,7 @@ class AJCore_REST_API {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT l.id, l.form_id, l.lead_data, l.status, l.source_url, l.user_agent, l.created_at, f.title AS form_title
+				"SELECT l.id, l.form_id, l.lead_data, l.status, l.source_url, l.user_agent, l.created_at, l.updated_at, l.stripe_customer_id, l.merged_into_lead_id, f.title AS form_title
 				 FROM `{$leads_table}` l
 				 LEFT JOIN `{$forms_table}` f ON l.form_id = f.id
 				 WHERE {$where}
@@ -4002,9 +4071,10 @@ class AJCore_REST_API {
 			ARRAY_A
 		);
 
-		$leads = array();
+		$customers_by_id = $this->get_customers_by_id_for_leads( $rows );
+		$leads           = array();
 		foreach ( (array) $rows as $row ) {
-			$leads[] = $this->format_lead_row( $row );
+			$leads[] = $this->format_lead_row( $row, $customers_by_id );
 		}
 
 		return rest_ensure_response( array( 'leads' => $leads ) );
@@ -4032,7 +4102,7 @@ class AJCore_REST_API {
 			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
 
-		$lead = $this->format_lead_row( $row );
+		$lead = $this->format_lead_row( $row, $this->get_customers_by_id_for_leads( array( $row ) ) );
 
 		$note_rows = $wpdb->get_results(
 			$wpdb->prepare(
@@ -4493,12 +4563,17 @@ class AJCore_REST_API {
 
 	public function update_ops_lead_status( WP_REST_Request $request ) {
 		global $wpdb;
-		$leads_table = $wpdb->prefix . 'aj_forms_leads';
-		$lead_id     = absint( $request->get_param( 'id' ) );
-		$status      = (string) $request->get_param( 'status' );
+		$leads_table        = $wpdb->prefix . 'aj_forms_leads';
+		$lead_id            = absint( $request->get_param( 'id' ) );
+		$status             = sanitize_key( (string) $request->get_param( 'status' ) );
+		$stripe_customer_id = sanitize_text_field( (string) ( $request->get_param( 'stripe_customer_id' ) ?? '' ) );
 
-		if ( ! in_array( $status, array( 'read', 'unread' ), true ) ) {
-			return new WP_Error( 'ajcore_invalid_status', __( 'Status must be "read" or "unread".', 'ajforms' ), array( 'status' => 400 ) );
+		if ( ! isset( $this->get_lead_status_labels()[ $status ] ) ) {
+			return new WP_Error( 'ajcore_invalid_status', __( 'Status must be one of: unread, read, won, lost, duplicate.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		if ( 'won' === $status && '' === $stripe_customer_id ) {
+			return new WP_Error( 'ajcore_lead_missing_customer', __( 'Pick a customer to link this lead to before marking it Won.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 
 		$exists = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$leads_table}` WHERE id = %d", $lead_id ) );
@@ -4506,9 +4581,16 @@ class AJCore_REST_API {
 			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
 
-		$wpdb->update( $leads_table, array( 'status' => $status ), array( 'id' => $lead_id ), array( '%s' ), array( '%d' ) );
+		$update_data    = array( 'status' => $status, 'updated_at' => current_time( 'mysql' ) );
+		$update_formats = array( '%s', '%s' );
+		if ( 'won' === $status ) {
+			$update_data['stripe_customer_id'] = $stripe_customer_id;
+			$update_formats[]                  = '%s';
+		}
 
-		return rest_ensure_response( array( 'id' => $lead_id, 'status' => $status ) );
+		$wpdb->update( $leads_table, $update_data, array( 'id' => $lead_id ), $update_formats, array( '%d' ) );
+
+		return rest_ensure_response( array( 'id' => $lead_id, 'status' => $status, 'stripe_customer_id' => 'won' === $status ? $stripe_customer_id : '' ) );
 	}
 
 	public function delete_ops_lead( WP_REST_Request $request ) {
@@ -4550,15 +4632,148 @@ class AJCore_REST_API {
 			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$lead_notes_table}` WHERE lead_id IN ({$placeholders})", $ids ) );
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			$wpdb->query( $wpdb->prepare( "DELETE FROM `{$leads_table}` WHERE id IN ({$placeholders})", $ids ) );
-		} elseif ( 'mark_read' === $action || 'mark_unread' === $action ) {
-			$status = 'mark_read' === $action ? 'read' : 'unread';
+		} elseif ( in_array( $action, array( 'mark_read', 'mark_unread', 'mark_lost', 'mark_duplicate' ), true ) ) {
+			$status_map = array(
+				'mark_read'      => 'read',
+				'mark_unread'    => 'unread',
+				'mark_lost'      => 'lost',
+				'mark_duplicate' => 'duplicate',
+			);
+			$status = $status_map[ $action ];
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$wpdb->query( $wpdb->prepare( "UPDATE `{$leads_table}` SET status = %s WHERE id IN ({$placeholders})", array_merge( array( $status ), $ids ) ) );
+			$wpdb->query( $wpdb->prepare( "UPDATE `{$leads_table}` SET status = %s, updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( $status, current_time( 'mysql' ) ), $ids ) ) );
 		} else {
 			return new WP_Error( 'ajcore_unknown_lead_bulk_action', __( 'Unknown lead bulk action.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 
 		return rest_ensure_response( array( 'success' => true, 'affected' => count( $ids ) ) );
+	}
+
+	/** Copies a duplicate lead's notes onto the primary lead (tagged with its origin), then
+	 *  archives the duplicate — non-destructive, so a bad auto-match can be manually undone by
+	 *  changing its status back. Shared by the manual "Merge Duplicates" action and the
+	 *  automatic "Fix Duplicates" scan below. */
+	private function merge_lead_into( $primary_id, $duplicate_id ) {
+		global $wpdb;
+		if ( $primary_id === $duplicate_id ) {
+			return;
+		}
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$notes_table = $wpdb->prefix . 'aj_forms_lead_notes';
+
+		$note_rows = $wpdb->get_results( $wpdb->prepare( "SELECT note, created_by, created_at FROM `{$notes_table}` WHERE lead_id = %d ORDER BY created_at ASC", $duplicate_id ) );
+		foreach ( (array) $note_rows as $n ) {
+			$wpdb->insert(
+				$notes_table,
+				array(
+					'lead_id'    => $primary_id,
+					'note'       => sprintf( "[Merged from lead #%d]\n%s", $duplicate_id, (string) $n->note ),
+					'created_by' => (int) $n->created_by,
+					'created_at' => (string) $n->created_at,
+				),
+				array( '%d', '%s', '%d', '%s' )
+			);
+		}
+		$wpdb->insert(
+			$notes_table,
+			array(
+				'lead_id'    => $primary_id,
+				'note'       => sprintf( __( 'Lead #%d was merged into this one as a duplicate.', 'ajforms' ), $duplicate_id ),
+				'created_by' => get_current_user_id(),
+				'created_at' => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%d', '%s' )
+		);
+
+		$wpdb->update(
+			$leads_table,
+			array( 'status' => 'duplicate', 'merged_into_lead_id' => $primary_id, 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => $duplicate_id ),
+			array( '%s', '%d', '%s' ),
+			array( '%d' )
+		);
+	}
+
+	/** Manual merge: staff selects 2+ leads they know are duplicates and picks (or we default to
+	 *  the earliest) which one survives. */
+	public function merge_ops_leads( WP_REST_Request $request ) {
+		global $wpdb;
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+		$ids         = array_values( array_unique( array_filter( array_map( 'absint', (array) $request->get_param( 'ids' ) ) ) ) );
+		$primary_id  = absint( $request->get_param( 'primary_id' ) );
+
+		if ( count( $ids ) < 2 ) {
+			return new WP_Error( 'ajcore_merge_needs_two', __( 'Select at least two leads to merge.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		if ( ! $primary_id || ! in_array( $primary_id, $ids, true ) ) {
+			$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$primary_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$leads_table}` WHERE id IN ({$placeholders}) ORDER BY created_at ASC, id ASC LIMIT 1", $ids ) );
+		}
+
+		if ( ! $primary_id ) {
+			return new WP_Error( 'ajcore_lead_not_found', __( 'Could not determine which lead to keep.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$merged = 0;
+		foreach ( $ids as $id ) {
+			if ( $id === $primary_id ) {
+				continue;
+			}
+			$this->merge_lead_into( $primary_id, $id );
+			$merged++;
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'primary_id' => $primary_id, 'merged' => $merged ) );
+	}
+
+	/** Auto-detects duplicates within the active Inbox (unread/read only — leads already marked
+	 *  won/lost/duplicate are resolved outcomes and left alone) by exact, normalized email match,
+	 *  falling back to phone when email is blank. Keeps the earliest submission per group and
+	 *  archives the rest as duplicates in one pass — this is the "Fix Duplicates" button. */
+	public function fix_ops_lead_duplicates( WP_REST_Request $request ) {
+		global $wpdb;
+		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+
+		$rows = $wpdb->get_results(
+			"SELECT id, lead_data, created_at FROM `{$leads_table}` WHERE status IN ('read','unread') ORDER BY created_at ASC, id ASC",
+			ARRAY_A
+		);
+
+		$groups = array();
+		foreach ( (array) $rows as $row ) {
+			$decoded = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
+			$email   = strtolower( trim( $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ) ) );
+			$phone   = preg_replace( '/\D/', '', $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) );
+
+			$key = '';
+			if ( '' !== $email ) {
+				$key = 'email:' . $email;
+			} elseif ( '' !== $phone ) {
+				$key = 'phone:' . $phone;
+			} else {
+				continue; // Nothing to match on — leave it alone.
+			}
+
+			$groups[ $key ][] = (int) $row['id'];
+		}
+
+		$groups_merged = 0;
+		$archived_ids  = array();
+		foreach ( $groups as $ids ) {
+			if ( count( $ids ) < 2 ) {
+				continue;
+			}
+			$primary_id = $ids[0]; // Rows are already ordered by created_at ASC above.
+			foreach ( array_slice( $ids, 1 ) as $duplicate_id ) {
+				$this->merge_lead_into( $primary_id, $duplicate_id );
+				$archived_ids[] = $duplicate_id;
+			}
+			$groups_merged++;
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'groups_merged' => $groups_merged, 'leads_archived' => count( $archived_ids ), 'archived_ids' => $archived_ids ) );
 	}
 
 	public function ops_create_lead( WP_REST_Request $request ) {

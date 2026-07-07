@@ -64,20 +64,43 @@ $form_edit_url = $form ? add_query_arg(
 	admin_url( 'admin.php' )
 ) : '';
 
-$toggle_action = ( 'unread' === $lead->status ) ? 'mark_read' : 'mark_unread';
-$toggle_label  = ( 'unread' === $lead->status ) ? __( 'Mark as Read', 'ajforms' ) : __( 'Mark as Unread', 'ajforms' );
-$toggle_url    = wp_nonce_url(
-	add_query_arg(
-		array(
-			'page'        => 'ajforms-leads',
-			'view'        => 'detail',
-			'lead_action' => $toggle_action,
-			'lead_id'     => $lead_id,
+$status_labels = array( 'unread' => __( 'Unread', 'ajforms' ), 'read' => __( 'Read', 'ajforms' ), 'won' => __( 'Won', 'ajforms' ), 'lost' => __( 'Lost', 'ajforms' ), 'duplicate' => __( 'Duplicate', 'ajforms' ) );
+
+$lead_action_url = function ( $action ) use ( $lead_id ) {
+	return wp_nonce_url(
+		add_query_arg(
+			array( 'page' => 'ajforms-leads', 'view' => 'detail', 'lead_action' => $action, 'lead_id' => $lead_id ),
+			admin_url( 'admin.php' )
 		),
-		admin_url( 'admin.php' )
-	),
-	'ajf_lead_action_' . $lead_id
-);
+		'ajf_lead_action_' . $lead_id
+	);
+};
+
+$status_actions = array();
+if ( in_array( $lead->status, array( 'unread', 'read' ), true ) ) {
+	$status_actions['mark_unread']   = __( 'Mark Unread', 'ajforms' );
+	$status_actions['mark_read']     = __( 'Mark Read', 'ajforms' );
+	$status_actions['mark_lost']     = __( 'Mark Lost', 'ajforms' );
+	$status_actions['mark_duplicate']= __( 'Mark Duplicate', 'ajforms' );
+} else {
+	$status_actions['reopen'] = __( 'Reopen to Inbox', 'ajforms' );
+}
+
+$linked_customer_name = '';
+if ( 'won' === $lead->status && ! empty( $lead->stripe_customer_id ) ) {
+	$pdb_lookup = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $wpdb;
+	$linked_customer_name = (string) $pdb_lookup->get_var( $pdb_lookup->prepare( "SELECT name FROM {$pdb_lookup->prefix}aj_portal_stripe_customers WHERE stripe_customer_id = %s", $lead->stripe_customer_id ) );
+}
+
+$merged_into_lead_link = '';
+if ( ! empty( $lead->merged_into_lead_id ) ) {
+	$merged_into_lead_link = add_query_arg( array( 'page' => 'ajforms-leads', 'view' => 'detail', 'lead_id' => absint( $lead->merged_into_lead_id ) ), admin_url( 'admin.php' ) );
+}
+
+// All customers, for the "Mark Won" picker — a plain select is enough for an internal admin tool
+// (AJOps has the richer searchable picker for day-to-day use).
+$pdb_for_customers = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $wpdb;
+$won_customers      = $pdb_for_customers->get_results( "SELECT stripe_customer_id, name, email FROM {$pdb_for_customers->prefix}aj_portal_stripe_customers ORDER BY name ASC LIMIT 3000" );
 
 $delete_url = wp_nonce_url(
 	add_query_arg(
@@ -237,6 +260,46 @@ $delete_url = wp_nonce_url(
 			color: #92400e;
 		}
 
+		.ajforms-status-badge.won {
+			background: #dcfce7;
+			color: #166534;
+		}
+
+		.ajforms-status-badge.lost {
+			background: #fee2e2;
+			color: #b91c1c;
+		}
+
+		.ajforms-status-badge.duplicate {
+			background: #f1f5f9;
+			color: #475569;
+		}
+
+		.ajforms-mark-won-panel {
+			display: none;
+			margin-top: 14px;
+			padding: 14px 18px;
+			background: #f0fdf4;
+			border: 1px solid #bbf7d0;
+			border-radius: 14px;
+		}
+
+		.ajforms-mark-won-panel.is-visible {
+			display: block;
+		}
+
+		.ajforms-mark-won-panel form {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			flex-wrap: wrap;
+		}
+
+		.ajforms-mark-won-panel label {
+			font-weight: 600;
+			color: #166534;
+		}
+
 		.ajforms-entry-note {
 			color: #64748b;
 			font-size: 14px;
@@ -298,17 +361,49 @@ $delete_url = wp_nonce_url(
 				<h1><?php echo esc_html( 'Entry #' . $lead_id ); ?></h1>
 				<p><?php esc_html_e( 'Update saved values, replace uploaded files, review the submission context, and leave internal notes without losing track of the linked form.', 'ajforms' ); ?></p>
 				<div class="ajforms-entry-status-row">
-					<span class="ajforms-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( ucfirst( $lead->status ) ); ?></span>
+					<span class="ajforms-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( isset( $status_labels[ $lead->status ] ) ? $status_labels[ $lead->status ] : ucfirst( $lead->status ) ); ?></span>
+					<?php if ( 'won' === $lead->status && $linked_customer_name ) : ?>
+						<span class="ajforms-entry-note">&rarr; <?php echo esc_html( $linked_customer_name ); ?></span>
+					<?php endif; ?>
+					<?php if ( $merged_into_lead_link ) : ?>
+						<span class="ajforms-entry-note"><?php esc_html_e( 'Merged into', 'ajforms' ); ?> <a href="<?php echo esc_url( $merged_into_lead_link ); ?>">#<?php echo absint( $lead->merged_into_lead_id ); ?></a></span>
+					<?php endif; ?>
 					<span class="ajforms-entry-note"><?php echo esc_html( $lead->form_title ? $lead->form_title : __( '(Form deleted)', 'ajforms' ) ); ?></span>
 				</div>
 			</div>
 			<div class="ajforms-entry-hero-actions">
-				<a class="button" href="<?php echo esc_url( $toggle_url ); ?>"><?php echo esc_html( $toggle_label ); ?></a>
+				<select id="ajf-lead-status-select" onchange="if(this.value){ location.href = this.value; }">
+					<option value=""><?php esc_html_e( 'Change status…', 'ajforms' ); ?></option>
+					<?php foreach ( $status_actions as $action_key => $action_label ) : ?>
+						<option value="<?php echo esc_url( $lead_action_url( $action_key ) ); ?>"><?php echo esc_html( $action_label ); ?></option>
+					<?php endforeach; ?>
+				</select>
+				<?php if ( in_array( $lead->status, array( 'unread', 'read' ), true ) ) : ?>
+					<button type="button" class="button" onclick="document.getElementById('ajf-mark-won-panel').classList.toggle('is-visible');"><?php esc_html_e( 'Mark Won…', 'ajforms' ); ?></button>
+				<?php endif; ?>
 				<?php if ( $form_edit_url ) : ?>
 					<a class="button" href="<?php echo esc_url( $form_edit_url ); ?>"><?php esc_html_e( 'Edit Form', 'ajforms' ); ?></a>
 				<?php endif; ?>
 				<a class="button button-link-delete" href="<?php echo esc_url( $delete_url ); ?>" onclick="return confirm('Delete this lead?');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 			</div>
+		</div>
+
+		<div id="ajf-mark-won-panel" class="ajforms-mark-won-panel">
+			<form method="get">
+				<input type="hidden" name="page" value="ajforms-leads" />
+				<input type="hidden" name="view" value="detail" />
+				<input type="hidden" name="lead_id" value="<?php echo esc_attr( $lead_id ); ?>" />
+				<input type="hidden" name="lead_action" value="mark_won" />
+				<input type="hidden" name="_wpnonce" value="<?php echo esc_attr( wp_create_nonce( 'ajf_lead_action_' . $lead_id ) ); ?>" />
+				<label><?php esc_html_e( 'Customer this lead became:', 'ajforms' ); ?></label>
+				<select name="customer_id" required style="min-width:320px;">
+					<option value=""><?php esc_html_e( '— Select customer —', 'ajforms' ); ?></option>
+					<?php foreach ( $won_customers as $c ) : ?>
+						<option value="<?php echo esc_attr( $c->stripe_customer_id ); ?>"><?php echo esc_html( ( $c->name ? $c->name : $c->stripe_customer_id ) . ' — ' . $c->email ); ?></option>
+					<?php endforeach; ?>
+				</select>
+				<button type="submit" class="button button-primary"><?php esc_html_e( 'Mark Won', 'ajforms' ); ?></button>
+			</form>
 		</div>
 	</div>
 
@@ -515,7 +610,7 @@ $delete_url = wp_nonce_url(
 						</tr>
 						<tr>
 							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
-							<td><span class="ajforms-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( ucfirst( $lead->status ) ); ?></span></td>
+							<td><span class="ajforms-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( isset( $status_labels[ $lead->status ] ) ? $status_labels[ $lead->status ] : ucfirst( $lead->status ) ); ?></span></td>
 						</tr>
 						<tr>
 							<th><?php esc_html_e( 'Submitted on', 'ajforms' ); ?></th>
