@@ -1195,15 +1195,25 @@ class AJForms_Activator {
 		//    (surfaced on the wp-admin Leads page) and the done-flag is only set when every
 		//    local lead is verifiably in the shared table — so a failed run retries on the
 		//    next activation instead of silently stranding leads in the local DB.
-		if ( '2' === (string) get_option( 'ajcore_leads_migrated_to_shared', '' ) ) {
-			return;
-		}
-
 		$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
 		$forms_table = $wpdb->prefix . 'aj_forms_forms';
 		$form_titles = array();
 		foreach ( (array) $wpdb->get_results( "SELECT id, title FROM `{$forms_table}`" ) as $f ) {
 			$form_titles[ (int) $f->id ] = (string) $f->title;
+		}
+
+		// Heal blank form titles on this site's already-copied rows (e.g., rows migrated while
+		// the forms lookup failed, or before form_title stamping existed). Runs every time —
+		// it's a no-op once titles are filled.
+		foreach ( $form_titles as $fid => $ftitle ) {
+			if ( '' === $ftitle ) {
+				continue;
+			}
+			$pdb->query( $pdb->prepare( "UPDATE $shared_leads SET form_title = %s WHERE site_uuid = %s AND form_id = %d AND form_title = ''", $ftitle, $site_uuid, $fid ) );
+		}
+
+		if ( '2' === (string) get_option( 'ajcore_leads_migrated_to_shared', '' ) ) {
+			return;
 		}
 
 		$errors      = array();

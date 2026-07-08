@@ -24,8 +24,18 @@ if ( ! $lead ) {
 	return;
 }
 
-$form        = $lead->form_id ? $admin->get_form_record( $lead->form_id ) : null;
-$form_fields = $lead->form_id ? $admin->get_form_schema_fields( $lead->form_id ) : array();
+// Only look up the form locally for this site's own leads — form IDs collide across sites.
+$lead_site_uuid  = isset( $lead->site_uuid ) ? (string) $lead->site_uuid : '';
+$is_local_lead   = ( '' === $lead_site_uuid || $lead_site_uuid === (string) get_option( 'ajcore_site_uuid', '' ) );
+$form        = ( $lead->form_id && $is_local_lead ) ? $admin->get_form_record( $lead->form_id ) : null;
+$form_fields = ( $lead->form_id && $is_local_lead ) ? $admin->get_form_schema_fields( $lead->form_id ) : array();
+if ( ( ! isset( $lead->form_title ) || '' === (string) $lead->form_title ) ) {
+	if ( $form && ! empty( $form->title ) ) {
+		$lead->form_title = (string) $form->title;
+	} else {
+		$lead->form_title = $lead->form_id ? sprintf( __( 'Form #%d', 'ajforms' ), (int) $lead->form_id ) : __( 'Manual entry', 'ajforms' );
+	}
+}
 $notes       = $wpdb->get_results(
 	$wpdb->prepare(
 		"SELECT * FROM {$lead_notes_table} WHERE lead_id = %d ORDER BY created_at DESC",

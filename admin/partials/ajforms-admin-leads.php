@@ -77,7 +77,7 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 }
 ?>
 <?php if ( current_user_can( 'manage_options' ) ) : ?>
-	<details style="margin:12px 0;padding:10px 14px;background:#fff;border:1px solid #dcdcde;border-radius:8px;" <?php echo ( 0 === $lead_stats['total'] ) ? 'open' : ''; ?>>
+	<details style="margin:12px 0;padding:10px 14px;background:#fff;border:1px solid #dcdcde;border-radius:8px;" <?php echo ( 0 === $lead_stats['total'] || ! $leads_migration_done || ! empty( $leads_migration_errors ) || $leads_migration_rerun ) ? 'open' : ''; ?>>
 		<summary style="cursor:pointer;font-weight:600;"><?php esc_html_e( 'Leads storage diagnostics', 'ajforms' ); ?></summary>
 		<table class="widefat striped" style="max-width:760px;margin-top:10px;">
 			<tbody>

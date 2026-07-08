@@ -6,6 +6,13 @@ if ( ! class_exists( 'WP_List_Table' ) ) {
 
 class AJForms_Leads_List_Table extends WP_List_Table {
 
+	/** form_id => title from this site's local forms table (fallback when a lead row's
+	 *  stored form_title is blank — e.g., rows migrated before titles resolved). */
+	protected $local_form_titles = array();
+
+	/** site_uuid => bare hostname from the shared aj_shared_sites table. */
+	protected $site_labels = array();
+
 	public function __construct() {
 		parent::__construct(
 			array(
@@ -213,7 +220,19 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 				return '<span class="ajforms-entry-id-chip">#' . absint( $item['id'] ) . '</span>';
 
 			case 'form_title':
-				return '<div class="ajforms-form-title-cell"><strong>' . esc_html( $item['form_title'] ? $item['form_title'] : __( '(Form deleted)', 'ajforms' ) ) . '</strong><span>' . esc_html__( 'Source form', 'ajforms' ) . '</span></div>';
+				$form_id        = absint( $item['form_id'] );
+				$form_title     = isset( $item['form_title'] ) ? (string) $item['form_title'] : '';
+				$lead_site      = isset( $item['site_uuid'] ) ? (string) $item['site_uuid'] : '';
+				$this_site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
+				// Local titles only apply to this site's own leads — form IDs collide across sites.
+				if ( '' === $form_title && $form_id && ( '' === $lead_site || $lead_site === $this_site_uuid ) && isset( $this->local_form_titles[ $form_id ] ) ) {
+					$form_title = $this->local_form_titles[ $form_id ];
+				}
+				if ( '' === $form_title ) {
+					$form_title = $form_id ? sprintf( __( 'Form #%d', 'ajforms' ), $form_id ) : __( 'Manual entry', 'ajforms' );
+				}
+				$site_label = ( '' !== $lead_site && isset( $this->site_labels[ $lead_site ] ) ) ? $this->site_labels[ $lead_site ] : '';
+				return '<div class="ajforms-form-title-cell"><strong>' . esc_html( $form_title ) . '</strong><span>' . esc_html( '' !== $site_label ? $site_label : __( 'Source form', 'ajforms' ) ) . '</span></div>';
 
 			case 'name':
 				$name       = $item['_name'];
@@ -316,6 +335,23 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 		$wpdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
 
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
+
+		// Fallback titles from this site's local forms, and site labels from the shared
+		// control table, for the Form Name column.
+		$local_db          = $GLOBALS['wpdb'];
+		$local_forms_table = $local_db->prefix . 'aj_forms_forms';
+		if ( $local_db->get_var( $local_db->prepare( 'SHOW TABLES LIKE %s', $local_forms_table ) ) === $local_forms_table ) {
+			foreach ( (array) $local_db->get_results( "SELECT id, title FROM `{$local_forms_table}`" ) as $f ) {
+				$this->local_form_titles[ (int) $f->id ] = (string) $f->title;
+			}
+		}
+		$sites_table = $wpdb->prefix . 'aj_shared_sites';
+		if ( $wpdb !== $local_db && $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $sites_table ) ) === $sites_table ) {
+			foreach ( (array) $wpdb->get_results( "SELECT site_uuid, domain FROM `{$sites_table}`" ) as $site ) {
+				$host = (string) wp_parse_url( (string) $site->domain, PHP_URL_HOST );
+				$this->site_labels[ (string) $site->site_uuid ] = '' !== $host ? $host : trim( (string) $site->domain, '/' );
+			}
+		}
 
 		$per_page = 20;
 		$paged    = $this->get_pagenum();
