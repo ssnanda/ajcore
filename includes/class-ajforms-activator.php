@@ -1085,7 +1085,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '23', false );
+		update_option( 'ajforms_portal_schema_version', '24', false );
 	}
 
 	/**
@@ -1901,6 +1901,7 @@ class AJForms_Activator {
 			site_uuid varchar(100) DEFAULT '' NOT NULL,
 			stripe_customer_id varchar(191) DEFAULT '' NOT NULL,
 			merged_into_lead_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			legacy_local_id bigint(20) unsigned NOT NULL DEFAULT 0,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
@@ -1908,7 +1909,8 @@ class AJForms_Activator {
 			KEY status (status),
 			KEY site_uuid (site_uuid),
 			KEY stripe_customer_id (stripe_customer_id),
-			KEY merged_into_lead_id (merged_into_lead_id)
+			KEY merged_into_lead_id (merged_into_lead_id),
+			KEY legacy_local_id (legacy_local_id)
 		) $charset_collate;
 
 		CREATE TABLE $t_lead_notes (

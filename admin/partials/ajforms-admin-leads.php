@@ -30,7 +30,36 @@ $lead_stats = array(
 $lead_stats['inbox']    = $lead_stats['new'] + $lead_stats['read'];
 $lead_stats['archived'] = $lead_stats['won'] + $lead_stats['duplicate'];
 $leads_base_url = admin_url( 'admin.php?page=ajforms-leads' );
+
+// Shared-DB migration diagnostics: if this site's old local leads could not be copied to the
+// shared portal DB, say so loudly instead of silently showing an empty list. The migration
+// retries automatically on every plugin upgrade check until it fully succeeds.
+$leads_migration_errors = get_option( 'ajcore_leads_shared_migration_errors', array() );
+$leads_migration_errors = is_array( $leads_migration_errors ) ? $leads_migration_errors : array();
+$leads_migration_done   = ( '2' === (string) get_option( 'ajcore_leads_migrated_to_shared', '' ) );
+$leads_local_pending    = 0;
+if ( $leads_db !== $wpdb && ! $leads_migration_done ) {
+	$local_leads_table = $wpdb->prefix . 'aj_forms_leads';
+	if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $local_leads_table ) ) === $local_leads_table ) {
+		$leads_local_pending = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$local_leads_table}" );
+	}
+}
 ?>
+<?php if ( ! empty( $leads_migration_errors ) ) : ?>
+	<div class="notice notice-error">
+		<p><strong><?php esc_html_e( 'Some leads could not be migrated to the shared portal database.', 'ajforms' ); ?></strong>
+		<?php esc_html_e( 'They are still safe in this site\'s local database and the migration will retry automatically. Last errors:', 'ajforms' ); ?></p>
+		<ul style="margin:4px 0 8px 20px;list-style:disc;">
+			<?php foreach ( array_slice( $leads_migration_errors, 0, 5 ) as $mig_err ) : ?>
+				<li><code><?php echo esc_html( $mig_err ); ?></code></li>
+			<?php endforeach; ?>
+		</ul>
+	</div>
+<?php elseif ( $leads_local_pending > 0 ) : ?>
+	<div class="notice notice-warning">
+		<p><?php echo esc_html( sprintf( __( '%d leads from this site\'s local database have not been migrated to the shared portal database yet. The migration runs automatically on the next plugin upgrade check — reload this page in a moment.', 'ajforms' ), $leads_local_pending ) ); ?></p>
+	</div>
+<?php endif; ?>
 
 <div class="wrap">
 	<style>
