@@ -12,6 +12,16 @@ $selected_form   = isset( $_GET['form_id'] ) ? absint( wp_unslash( $_GET['form_i
 $selected_status = isset( $_GET['lead_status'] ) ? sanitize_text_field( wp_unslash( $_GET['lead_status'] ) ) : '';
 $selected_queue  = isset( $_GET['lead_queue'] ) ? sanitize_key( wp_unslash( $_GET['lead_queue'] ) ) : 'inbox';
 
+// Manual re-run of the local→shared leads migration (button in the diagnostics panel below).
+// Runs BEFORE the list/stats are computed so this page render already shows the result.
+$leads_migration_rerun = false;
+if ( isset( $_POST['ajf_migrate_leads_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajf_migrate_leads_nonce'] ) ), 'ajf_migrate_leads' ) && current_user_can( 'manage_options' ) ) {
+	update_option( 'ajcore_leads_migrated_to_shared', '', false ); // force a full re-run (idempotent — already-copied leads are skipped)
+	require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+	AJForms_Activator::ensure_shared_leads_tables_and_migrate();
+	$leads_migration_rerun = true;
+}
+
 $leads_list_table = new AJForms_Leads_List_Table();
 $leads_list_table->process_bulk_action();
 $leads_list_table->prepare_items();
@@ -31,20 +41,73 @@ $lead_stats['inbox']    = $lead_stats['new'] + $lead_stats['read'];
 $lead_stats['archived'] = $lead_stats['won'] + $lead_stats['duplicate'];
 $leads_base_url = admin_url( 'admin.php?page=ajforms-leads' );
 
+if ( $leads_migration_rerun ) {
+	echo '<div class="notice notice-info is-dismissible"><p>' . esc_html__( 'Leads migration re-run finished — results below.', 'ajforms' ) . '</p></div>';
+}
+
 // Shared-DB migration diagnostics: if this site's old local leads could not be copied to the
 // shared portal DB, say so loudly instead of silently showing an empty list. The migration
 // retries automatically on every plugin upgrade check until it fully succeeds.
 $leads_migration_errors = get_option( 'ajcore_leads_shared_migration_errors', array() );
 $leads_migration_errors = is_array( $leads_migration_errors ) ? $leads_migration_errors : array();
-$leads_migration_done   = ( '2' === (string) get_option( 'ajcore_leads_migrated_to_shared', '' ) );
-$leads_local_pending    = 0;
-if ( $leads_db !== $wpdb && ! $leads_migration_done ) {
-	$local_leads_table = $wpdb->prefix . 'aj_forms_leads';
-	if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $local_leads_table ) ) === $local_leads_table ) {
-		$leads_local_pending = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$local_leads_table}" );
+$leads_migration_flag   = (string) get_option( 'ajcore_leads_migrated_to_shared', '' );
+$leads_migration_done   = ( '2' === $leads_migration_flag );
+$local_leads_table      = $wpdb->prefix . 'aj_forms_leads';
+$local_leads_exists     = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $local_leads_table ) ) === $local_leads_table );
+$local_leads_count      = $local_leads_exists ? (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$local_leads_table}" ) : 0;
+$leads_local_pending    = ( $leads_db !== $wpdb && ! $leads_migration_done ) ? $local_leads_count : 0;
+
+// Diagnostics values for the panel.
+$diag_site_uuid    = (string) get_option( 'ajcore_site_uuid', '' );
+$diag_shared_mode  = ( $leads_db !== $wpdb );
+$diag_shared_count = null;
+$diag_site_count   = null;
+if ( $diag_shared_mode ) {
+	$shared_exists = ( $leads_db->get_var( $leads_db->prepare( 'SHOW TABLES LIKE %s', $leads_table_name ) ) === $leads_table_name );
+	if ( $shared_exists ) {
+		$diag_shared_count = (int) $leads_db->get_var( "SELECT COUNT(*) FROM {$leads_table_name}" );
+		$diag_site_count   = (int) $leads_db->get_var( $leads_db->prepare( "SELECT COUNT(*) FROM {$leads_table_name} WHERE site_uuid = %s", $diag_site_uuid ) );
 	}
 }
+// Any lead-ish tables lurking under other names/prefixes on the local DB (legacy names,
+// changed prefixes) — catches "the leads are actually over there" situations.
+$diag_candidate_tables = array();
+foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand ) {
+	$diag_candidate_tables[ $cand ] = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$cand}`" );
+}
 ?>
+<?php if ( current_user_can( 'manage_options' ) ) : ?>
+	<details style="margin:12px 0;padding:10px 14px;background:#fff;border:1px solid #dcdcde;border-radius:8px;" <?php echo ( 0 === $lead_stats['total'] ) ? 'open' : ''; ?>>
+		<summary style="cursor:pointer;font-weight:600;"><?php esc_html_e( 'Leads storage diagnostics', 'ajforms' ); ?></summary>
+		<table class="widefat striped" style="max-width:760px;margin-top:10px;">
+			<tbody>
+				<tr><td><?php esc_html_e( 'Plugin version', 'ajforms' ); ?></td><td><code><?php echo esc_html( defined( 'AJCORE_VERSION' ) ? AJCORE_VERSION : '?' ); ?></code> (schema <code><?php echo esc_html( (string) get_option( 'ajforms_portal_schema_version', '?' ) ); ?></code>)</td></tr>
+				<tr><td><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></td><td><code><?php echo esc_html( $diag_site_uuid ); ?></code></td></tr>
+				<tr><td><?php esc_html_e( 'Shared portal DB mode', 'ajforms' ); ?></td><td><?php echo $diag_shared_mode ? '<span style="color:#166534;">ACTIVE</span> — leads read from shared DB' : '<span style="color:#92400e;">OFF</span> — leads read from local DB'; ?></td></tr>
+				<tr><td><?php esc_html_e( 'Local leads table', 'ajforms' ); ?></td><td><code><?php echo esc_html( $local_leads_table ); ?></code> — <?php echo $local_leads_exists ? esc_html( sprintf( __( '%d rows', 'ajforms' ), $local_leads_count ) ) : esc_html__( 'missing', 'ajforms' ); ?></td></tr>
+				<?php if ( $diag_shared_mode ) : ?>
+					<tr><td><?php esc_html_e( 'Shared leads table', 'ajforms' ); ?></td><td><code><?php echo esc_html( $leads_table_name ); ?></code> — <?php echo null === $diag_shared_count ? '<span style="color:#b91c1c;">MISSING</span>' : esc_html( sprintf( __( '%1$d rows total, %2$d from this site', 'ajforms' ), $diag_shared_count, $diag_site_count ) ); ?></td></tr>
+				<?php endif; ?>
+				<tr><td><?php esc_html_e( 'Migration flag', 'ajforms' ); ?></td><td><code><?php echo esc_html( '' !== $leads_migration_flag ? $leads_migration_flag : '(unset)' ); ?></code> <?php echo $leads_migration_done ? esc_html__( '(complete)', 'ajforms' ) : esc_html__( '(will retry on next upgrade check)', 'ajforms' ); ?></td></tr>
+				<tr><td><?php esc_html_e( 'Last migration errors', 'ajforms' ); ?></td><td><?php echo empty( $leads_migration_errors ) ? esc_html__( 'none', 'ajforms' ) : '<code>' . esc_html( implode( ' | ', array_slice( $leads_migration_errors, 0, 3 ) ) ) . '</code>'; ?></td></tr>
+				<tr><td><?php esc_html_e( 'Lead-like tables on local DB', 'ajforms' ); ?></td><td><?php
+					$cand_bits = array();
+					foreach ( $diag_candidate_tables as $cand_table => $cand_count ) {
+						$cand_bits[] = '<code>' . esc_html( $cand_table ) . '</code> (' . (int) $cand_count . ')';
+					}
+					echo $cand_bits ? wp_kses_post( implode( ', ', $cand_bits ) ) : esc_html__( 'none found', 'ajforms' );
+				?></td></tr>
+			</tbody>
+		</table>
+		<?php if ( $diag_shared_mode ) : ?>
+			<form method="post" style="margin-top:10px;">
+				<?php wp_nonce_field( 'ajf_migrate_leads', 'ajf_migrate_leads_nonce' ); ?>
+				<button type="submit" class="button button-primary"><?php esc_html_e( 'Re-run local → shared leads migration now', 'ajforms' ); ?></button>
+				<span class="description" style="margin-left:8px;"><?php esc_html_e( 'Safe to click repeatedly — already-copied leads are skipped, never duplicated.', 'ajforms' ); ?></span>
+			</form>
+		<?php endif; ?>
+	</details>
+<?php endif; ?>
 <?php if ( ! empty( $leads_migration_errors ) ) : ?>
 	<div class="notice notice-error">
 		<p><strong><?php esc_html_e( 'Some leads could not be migrated to the shared portal database.', 'ajforms' ); ?></strong>

@@ -1101,7 +1101,7 @@ class AJForms_Activator {
 	 *      lead IDs (multiple sites' local IDs collide) for notes and merged_into_lead_id.
 	 *      Non-destructive: local rows are left in place, guarded by an option flag.
 	 */
-	private static function ensure_shared_leads_tables_and_migrate() {
+	public static function ensure_shared_leads_tables_and_migrate() {
 		global $wpdb;
 
 		$local_leads = $wpdb->prefix . 'aj_forms_leads';
