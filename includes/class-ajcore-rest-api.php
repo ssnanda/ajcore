@@ -4559,6 +4559,7 @@ class AJCore_REST_API {
 			'lead_auto_outreach_from_number'     => (string) get_option( 'ajcore_lead_auto_outreach_from_number', '' ),
 			'lead_auto_outreach_account_key'     => (string) get_option( 'ajcore_lead_auto_outreach_account_key', '' ),
 			'lead_auto_outreach_template'        => (string) get_option( 'ajcore_lead_auto_outreach_template', '' ),
+			'lead_auto_outreach_sites'           => (string) get_option( 'ajcore_lead_auto_outreach_sites', '' ),
 		) );
 	}
 
@@ -4657,6 +4658,18 @@ class AJCore_REST_API {
 		}
 		if ( $request->has_param( 'lead_auto_outreach_template' ) ) {
 			update_option( 'ajcore_lead_auto_outreach_template', sanitize_textarea_field( (string) $request->get_param( 'lead_auto_outreach_template' ) ), false );
+		}
+		// Per-site auto-outreach configs: JSON map of site_uuid => settings. Stored opaque —
+		// AJ Ops owns the shape; we just validate it parses as JSON before persisting.
+		if ( $request->has_param( 'lead_auto_outreach_sites' ) ) {
+			$sites_raw = $request->get_param( 'lead_auto_outreach_sites' );
+			if ( is_array( $sites_raw ) ) {
+				$sites_raw = wp_json_encode( $sites_raw );
+			}
+			$sites_raw = (string) $sites_raw;
+			if ( '' === $sites_raw || null !== json_decode( $sites_raw, true ) ) {
+				update_option( 'ajcore_lead_auto_outreach_sites', $sites_raw, false );
+			}
 		}
 
 		$automation_rules = $request->get_param( 'automation_rules' );
