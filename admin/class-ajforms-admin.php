@@ -9813,7 +9813,7 @@ class AJForms_Admin {
 				$this->handle_portal_api_settings_save();
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
-			} elseif ( 'billing' === $tab || isset( $_POST['ajcore_billing_action'] ) ) {
+			} elseif ( 'billing' === $tab || 'payments' === $tab || isset( $_POST['ajcore_billing_action'] ) ) {
 				$this->handle_portal_billing_actions();
 			} elseif ( 'calendar' === $tab ) {
 				$this->handle_portal_calendar_settings_save();
@@ -15316,7 +15316,7 @@ class AJForms_Admin {
 		$redirect = add_query_arg(
 			array(
 				'page' => 'ajforms-client-portal',
-				'tab'  => 'billing',
+				'tab'  => 'payments',
 			),
 			admin_url( 'admin.php' )
 		);
@@ -15525,68 +15525,182 @@ class AJForms_Admin {
 		);
 	}
 
-	private function display_portal_billing_tab() {
-		global $wpdb;
-		$pdb = $this->get_pdb();
+	/**
+	 * Business grouping for a payment row: did the customer pay, or not?
+	 */
+	private function get_portal_payment_status_group( $row ) {
+		$refund = isset( $row['refund_status'] ) ? (string) $row['refund_status'] : '';
+		if ( 'refunded' === $refund || 'partially_refunded' === $refund ) {
+			return 'refunded';
+		}
+		$status = sanitize_key( isset( $row['status'] ) ? (string) $row['status'] : '' );
+		$map    = array(
+			'paid'                    => 'paid',
+			'succeeded'               => 'paid',
+			'pending'                 => 'pending',
+			'pending_payment'         => 'pending',
+			'processing'              => 'pending',
+			'open'                    => 'unpaid',
+			'unpaid'                  => 'unpaid',
+			'uncollectible'           => 'unpaid',
+			'awaiting_payment'        => 'unpaid',
+			'requires_payment_method' => 'unpaid',
+			'failed'                  => 'failed',
+			'void'                    => 'canceled',
+			'canceled'                => 'canceled',
+			'cancelled'               => 'canceled',
+			'draft'                   => 'canceled',
+			'refunded'                => 'refunded',
+			'partially_refunded'      => 'refunded',
+			'partial_refund'          => 'refunded',
+		);
+		return isset( $map[ $status ] ) ? $map[ $status ] : 'other';
+	}
 
+	private function get_portal_payment_status_display( $row ) {
+		$refund = isset( $row['refund_status'] ) ? (string) $row['refund_status'] : '';
+		if ( 'refunded' === $refund ) {
+			return array( __( 'Refunded', 'ajforms' ), 'off' );
+		}
+		if ( 'partially_refunded' === $refund ) {
+			return array( __( 'Partial Refund', 'ajforms' ), 'disabled' );
+		}
+		$status = sanitize_key( isset( $row['status'] ) ? (string) $row['status'] : '' );
+		switch ( $this->get_portal_payment_status_group( $row ) ) {
+			case 'paid':
+				return array( __( 'Paid', 'ajforms' ), 'active' );
+			case 'pending':
+				return array( __( 'Pending', 'ajforms' ), 'disabled' );
+			case 'unpaid':
+				return array( __( 'Unpaid', 'ajforms' ), 'archived' );
+			case 'failed':
+				return array( __( 'Failed', 'ajforms' ), 'archived' );
+			case 'canceled':
+				return 'draft' === $status ? array( __( 'Draft', 'ajforms' ), 'off' ) : array( __( 'Canceled', 'ajforms' ), 'off' );
+			case 'refunded':
+				return array( __( 'Refunded', 'ajforms' ), 'off' );
+		}
+		return array( '' !== $status ? ucwords( str_replace( '_', ' ', $status ) ) : '—', 'off' );
+	}
+
+	/**
+	 * Payments tab — replaces the old Billing (ledger) and Transactions (sold items) tabs
+	 * with one staff-facing view: who paid, for what service/product, how much, how it was
+	 * paid, when, and refund status. Same framing as the AJOps Payments screen.
+	 */
+	private function display_portal_payments_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$pdb = $this->get_pdb();
 		$this->ensure_portal_schema();
 		$this->cleanup_unpaid_portal_checkout_sessions();
 		$this->backfill_portal_ledger_service_charges_from_snapshots();
 
-		$filters         = $this->get_portal_billing_filter_data();
-		$status_filter   = $filters['status'];
-		$source_filter   = $filters['source'];
-		$customer_filter = $filters['customer'];
-		$view_filter     = $filters['view'];
-		$search          = $filters['search'];
+		$search          = isset( $_GET['pay_search'] ) ? sanitize_text_field( wp_unslash( $_GET['pay_search'] ) ) : '';
+		$status_filter   = isset( $_GET['pay_status'] ) ? sanitize_key( wp_unslash( $_GET['pay_status'] ) ) : '';
+		$status_filter   = in_array( $status_filter, array( 'paid', 'unpaid', 'pending', 'refunded', 'failed', 'canceled' ), true ) ? $status_filter : '';
+		$customer_filter = isset( $_GET['pay_customer'] ) ? sanitize_text_field( wp_unslash( $_GET['pay_customer'] ) ) : '';
 
-		$sql = "SELECT l.*, c.email AS customer_email, c.name AS customer_name
+		$rows = $pdb->get_results(
+			"SELECT t.id, t.stripe_object_id, t.object_type, t.stripe_customer_id, t.description, t.amount, t.currency, t.status, t.transaction_date, t.invoice_id, t.payment_intent_id, t.charge_id, t.raw_data, c.name AS customer_name, c.email AS customer_email
+			FROM {$this->get_portal_stripe_transactions_table()} t
+			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = t.stripe_customer_id
+			ORDER BY t.transaction_date DESC, t.id DESC
+			LIMIT 500",
+			ARRAY_A
+		);
+		$rows = is_array( $rows ) ? $rows : array();
+		if ( class_exists( 'AJCore_REST_API' ) ) {
+			$api  = new AJCore_REST_API();
+			$rows = $api->dedupe_stripe_transaction_rows( $rows );
+			$rows = $api->attach_payment_display_fields( $rows );
+		}
+
+		// Staff-recorded manual charges live in the ledger, not in synced Stripe transactions.
+		$manual_rows = $pdb->get_results(
+			"SELECT l.ledger_date AS transaction_date, l.stripe_customer_id, l.description, l.amount, l.currency, l.status, c.name AS customer_name, c.email AS customer_email
 			FROM {$this->get_portal_ledger_table()} l
 			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = l.stripe_customer_id
-			WHERE " . implode( ' AND ', $filters['where'] ) . "
-			ORDER BY l.ledger_date ASC, l.id ASC
-			LIMIT 300";
-		$ledger = ! empty( $filters['params'] ) ? $pdb->get_results( $pdb->prepare( $sql, $filters['params'] ) ) : $pdb->get_results( $sql );
-		$ledger = $this->get_admin_portal_display_ledger( $ledger );
-		$balance_data = $this->get_portal_ledger_running_balances( $ledger );
-		$running_balances = $balance_data['balances'];
-		$customer_running_totals = $balance_data['totals'];
-		$selected_customer_balance = '' !== $customer_filter && isset( $customer_running_totals[ $customer_filter ] ) ? (float) $customer_running_totals[ $customer_filter ] : 0.0;
-		$open_balance = 0.0;
-		$credit_balance = 0.0;
-		$paid_total = 0.0;
-		foreach ( $ledger as $entry ) {
-			$effect = $this->get_portal_ledger_balance_effect( $entry );
-			if ( $effect < 0 && in_array( sanitize_key( (string) $entry->status ), array( 'paid', 'succeeded', 'partially_refunded', 'partial_refund' ), true ) ) {
-				$paid_total += abs( $effect );
+			WHERE l.source_type = 'manual_charge'
+			ORDER BY l.ledger_date DESC
+			LIMIT 200",
+			ARRAY_A
+		);
+		foreach ( (array) $manual_rows as $entry ) {
+			$entry['object_type']     = 'manual_charge';
+			$entry['service_name']    = (string) $entry['description'];
+			$entry['payment_method']  = '';
+			$entry['refund_status']   = '';
+			$entry['refunded_amount'] = 0;
+			$entry['refunded_at']     = '';
+			$rows[] = $entry;
+		}
+		usort(
+			$rows,
+			function ( $a, $b ) {
+				$a_ts = ! empty( $a['transaction_date'] ) ? strtotime( (string) $a['transaction_date'] ) : 0;
+				$b_ts = ! empty( $b['transaction_date'] ) ? strtotime( (string) $b['transaction_date'] ) : 0;
+				return $b_ts <=> $a_ts;
+			}
+		);
+
+		$paid_count = 0;
+		$collected  = 0.0;
+		$refunded   = 0.0;
+		foreach ( $rows as $row ) {
+			if ( 'paid' === $this->get_portal_payment_status_group( $row ) || in_array( sanitize_key( (string) $row['status'] ), array( 'paid', 'succeeded' ), true ) ) {
+				$paid_count++;
+				$collected += (float) $row['amount'];
+			}
+			if ( ! empty( $row['refunded_amount'] ) ) {
+				$refunded += (float) $row['refunded_amount'];
 			}
 		}
-		foreach ( $customer_running_totals as $customer_balance ) {
-			$customer_balance = (float) $customer_balance;
-			if ( $customer_balance > 0.00001 ) {
-				$open_balance += $customer_balance;
-			} elseif ( $customer_balance < -0.00001 ) {
-				$credit_balance += abs( $customer_balance );
+		$collected -= $refunded;
+
+		$filtered = array();
+		foreach ( $rows as $row ) {
+			if ( '' !== $customer_filter && (string) $row['stripe_customer_id'] !== $customer_filter ) {
+				continue;
 			}
+			if ( '' !== $status_filter && $this->get_portal_payment_status_group( $row ) !== $status_filter ) {
+				continue;
+			}
+			if ( '' !== $search ) {
+				$haystack = strtolower(
+					implode(
+						' ',
+						array(
+							isset( $row['service_name'] ) ? (string) $row['service_name'] : '',
+							isset( $row['description'] ) ? (string) $row['description'] : '',
+							isset( $row['customer_name'] ) ? (string) $row['customer_name'] : '',
+							isset( $row['customer_email'] ) ? (string) $row['customer_email'] : '',
+							isset( $row['stripe_customer_id'] ) ? (string) $row['stripe_customer_id'] : '',
+							isset( $row['payment_method'] ) ? (string) $row['payment_method'] : '',
+							isset( $row['status'] ) ? (string) $row['status'] : '',
+						)
+					)
+				);
+				if ( false === strpos( $haystack, strtolower( $search ) ) ) {
+					continue;
+				}
+			}
+			$filtered[] = $row;
 		}
-		$totals = $pdb->get_row( "SELECT COUNT(*) AS total_rows, COALESCE(SUM(amount),0) AS total_amount FROM {$this->get_portal_ledger_table()}" );
-		$customers = $pdb->get_results( "SELECT stripe_customer_id, email, name FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC, stripe_customer_id ASC LIMIT 500" );
-		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'billing' ), admin_url( 'admin.php' ) );
+
+		$customers  = $pdb->get_results( "SELECT stripe_customer_id, email, name FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC, email ASC, stripe_customer_id ASC LIMIT 500" );
+		$base_url   = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'payments' ), admin_url( 'admin.php' ) );
 		$export_url = wp_nonce_url( add_query_arg( array_merge( $_GET, array( 'billing_export' => 'csv' ) ), admin_url( 'admin.php' ) ), 'ajcore_export_billing_ledger' );
 		?>
 		<div class="ajcore-admin-panel">
-			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Billing', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Ledger view of customer charges, payments, credits, checkout sessions, invoices, and manual billing activity.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( $export_url ); ?>"><?php esc_html_e( 'Export CSV', 'ajforms' ); ?></a></div>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Payments', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Customer payment activity from Stripe — what was purchased, how much, how it was paid, and refunds. Staff-recorded charges are included.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( $export_url ); ?>"><?php esc_html_e( 'Export Ledger CSV', 'ajforms' ); ?></a></div>
 			<div class="ajcore-kpi-grid">
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Records', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( (int) $totals->total_rows ) ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $open_balance, 'usd' ) ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Credit Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $credit_balance, 'usd' ) ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Paid Total', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $paid_total, 'usd' ) ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Payments Received', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( $paid_count ) ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Collected', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $collected, 'usd' ) ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Refunded', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $refunded, 'usd' ) ); ?></strong></div>
 			</div>
-			<?php if ( '' !== $customer_filter ) : ?>
-				<p><strong><?php esc_html_e( 'Filtered Customer Balance:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_balance_amount( $selected_customer_balance, 'usd' ) ); ?></p>
-			<?php else : ?>
-				<p><em><?php esc_html_e( 'Select a customer filter to view that customer’s running ledger balance.', 'ajforms' ); ?></em></p>
-			<?php endif; ?>
 
 			<?php if ( isset( $_GET['manual-charge-added'] ) ) : ?>
 				<div class="notice notice-success inline"><p><?php esc_html_e( 'Customer charge added.', 'ajforms' ); ?></p></div>
@@ -15598,7 +15712,7 @@ class AJForms_Admin {
 				<summary style="font-weight:700;cursor:pointer;"><?php esc_html_e( 'Add Customer Charge', 'ajforms' ); ?></summary>
 				<form method="post" style="margin-top:14px;display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px;max-width:920px;">
 					<input type="hidden" name="page" value="ajforms-client-portal">
-					<input type="hidden" name="tab" value="billing">
+					<input type="hidden" name="tab" value="payments">
 					<input type="hidden" name="ajcore_billing_action" value="add_manual_charge">
 					<?php wp_nonce_field( 'ajcore_add_manual_charge', 'ajcore_manual_charge_nonce' ); ?>
 					<label style="display:flex;flex-direction:column;gap:6px;grid-column:1/-1;"><?php esc_html_e( 'Customer', 'ajforms' ); ?>
@@ -15620,12 +15734,18 @@ class AJForms_Admin {
 
 			<form method="get" style="margin:14px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
 				<input type="hidden" name="page" value="ajforms-client-portal">
-				<input type="hidden" name="tab" value="billing">
-				<?php if ( '' !== $view_filter ) : ?><input type="hidden" name="billing_view" value="<?php echo esc_attr( $view_filter ); ?>"><?php endif; ?>
-				<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer, invoice, or description', 'ajforms' ); ?>">
-				<input type="text" name="billing_status" value="<?php echo esc_attr( $status_filter ); ?>" placeholder="<?php esc_attr_e( 'Status', 'ajforms' ); ?>">
-				<input type="text" name="billing_source" value="<?php echo esc_attr( $source_filter ); ?>" placeholder="<?php esc_attr_e( 'Source type', 'ajforms' ); ?>">
-				<select name="billing_customer">
+				<input type="hidden" name="tab" value="payments">
+				<input type="search" name="pay_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer, service, payment method', 'ajforms' ); ?>" style="min-width:280px;">
+				<select name="pay_status">
+					<option value=""><?php esc_html_e( 'All statuses', 'ajforms' ); ?></option>
+					<option value="paid" <?php selected( $status_filter, 'paid' ); ?>><?php esc_html_e( 'Paid', 'ajforms' ); ?></option>
+					<option value="unpaid" <?php selected( $status_filter, 'unpaid' ); ?>><?php esc_html_e( 'Unpaid', 'ajforms' ); ?></option>
+					<option value="pending" <?php selected( $status_filter, 'pending' ); ?>><?php esc_html_e( 'Pending', 'ajforms' ); ?></option>
+					<option value="refunded" <?php selected( $status_filter, 'refunded' ); ?>><?php esc_html_e( 'Refunded', 'ajforms' ); ?></option>
+					<option value="failed" <?php selected( $status_filter, 'failed' ); ?>><?php esc_html_e( 'Failed', 'ajforms' ); ?></option>
+					<option value="canceled" <?php selected( $status_filter, 'canceled' ); ?>><?php esc_html_e( 'Canceled', 'ajforms' ); ?></option>
+				</select>
+				<select name="pay_customer">
 					<option value=""><?php esc_html_e( 'All customers', 'ajforms' ); ?></option>
 					<?php foreach ( $customers as $customer ) : ?>
 						<?php $customer_label = $customer->name ? $customer->name : ( $customer->email ? $customer->email : $customer->stripe_customer_id ); ?>
@@ -15634,6 +15754,7 @@ class AJForms_Admin {
 				</select>
 				<button class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
 				<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
+				<span style="color:#64748b;font-size:12px;font-weight:700;"><?php echo esc_html( sprintf( _n( '%d payment shown', '%d payments shown', count( $filtered ), 'ajforms' ), count( $filtered ) ) ); ?></span>
 			</form>
 
 			<table class="widefat striped">
@@ -15641,36 +15762,37 @@ class AJForms_Admin {
 					<tr>
 						<th><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Description', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Transaction ID', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Source', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Service / Product', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Payment Method', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Debit', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Credit', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Invoice / Charge', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Refund', 'ajforms' ); ?></th>
 					</tr>
 				</thead>
 				<tbody>
-				<?php if ( empty( $ledger ) ) : ?>
-					<tr><td colspan="10"><?php esc_html_e( 'No billing records found.', 'ajforms' ); ?></td></tr>
+				<?php if ( empty( $filtered ) ) : ?>
+					<tr><td colspan="7"><?php esc_html_e( 'No payments found for this filter.', 'ajforms' ); ?></td></tr>
 				<?php else : ?>
-					<?php foreach ( $ledger as $entry ) : ?>
-						<?php $customer_label = $entry->customer_name ? $entry->customer_name : ( $entry->customer_email ? $entry->customer_email : $entry->stripe_customer_id ); ?>
-						<?php $entry_debit_credit = $this->get_portal_ledger_debit_credit( $entry ); ?>
+					<?php foreach ( $filtered as $row ) : ?>
+						<?php
+						$customer_label = ! empty( $row['customer_name'] ) ? $row['customer_name'] : ( ! empty( $row['customer_email'] ) ? $row['customer_email'] : $row['stripe_customer_id'] );
+						$status_display = $this->get_portal_payment_status_display( $row );
+						$service_label  = ! empty( $row['service_name'] ) ? $row['service_name'] : ( ! empty( $row['description'] ) ? $row['description'] : '—' );
+						?>
 						<tr>
-							<td><?php echo esc_html( $entry->ledger_date ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $entry->ledger_date . ' UTC' ) ) : '-' ); ?></td>
-							<td><?php echo esc_html( $customer_label ); ?><br><small><?php echo esc_html( $entry->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $entry->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a></td>
-							<td><?php echo esc_html( $this->get_portal_ledger_display_description( $entry ) ); ?></td>
-							<td><code><?php echo esc_html( $this->get_portal_ledger_transaction_id( $entry ) ? $this->get_portal_ledger_transaction_id( $entry ) : '-' ); ?></code></td>
-							<td><?php echo esc_html( $entry->source_type ); ?></td>
-							<td><strong><?php echo esc_html( $entry->status ); ?></strong></td>
-							<td><?php echo esc_html( $entry_debit_credit['debit'] ? $entry_debit_credit['debit'] : '-' ); ?></td>
-							<td><?php echo esc_html( $entry_debit_credit['credit'] ? $entry_debit_credit['credit'] : '-' ); ?></td>
-							<td><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
+							<td><?php echo esc_html( ! empty( $row['transaction_date'] ) ? date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $row['transaction_date'] . ' UTC' ) ) : '-' ); ?></td>
+							<td><?php echo esc_html( $customer_label ); ?><br><small><?php echo esc_html( ! empty( $row['customer_email'] ) && $customer_label !== $row['customer_email'] ? $row['customer_email'] : (string) $row['stripe_customer_id'] ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $row['stripe_customer_id'] ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a></td>
+							<td><?php echo esc_html( $service_label ); ?><?php if ( 'manual_charge' === $row['object_type'] ) : ?><br><small><?php esc_html_e( 'Staff-recorded charge', 'ajforms' ); ?></small><?php endif; ?></td>
+							<td><strong><?php echo esc_html( $this->format_portal_money( (float) $row['amount'], (string) $row['currency'] ) ); ?></strong></td>
+							<td><?php echo ! empty( $row['payment_method'] ) ? esc_html( $row['payment_method'] ) : '<span style="color:#94a3b8;">—</span>'; ?></td>
+							<td><span class="ajcore-status-pill <?php echo esc_attr( $status_display[1] ); ?>"><?php echo esc_html( $status_display[0] ); ?></span></td>
 							<td>
-								<?php if ( $entry->invoice_id ) : ?><code><?php echo esc_html( $entry->invoice_id ); ?></code><br><?php endif; ?>
-								<?php if ( $entry->charge_id ) : ?><code><?php echo esc_html( $entry->charge_id ); ?></code><?php endif; ?>
+								<?php if ( ! empty( $row['refunded_amount'] ) ) : ?>
+									<?php echo esc_html( $this->format_portal_money( (float) $row['refunded_amount'], (string) $row['currency'] ) ); ?>
+									<?php if ( ! empty( $row['refunded_at'] ) ) : ?><br><small><?php echo esc_html( date_i18n( get_option( 'date_format' ), strtotime( $row['refunded_at'] . ' UTC' ) ) ); ?></small><?php endif; ?>
+								<?php else : ?>
+									<span style="color:#94a3b8;">—</span>
+								<?php endif; ?>
 							</td>
 						</tr>
 					<?php endforeach; ?>
@@ -15678,27 +15800,6 @@ class AJForms_Admin {
 				</tbody>
 			</table>
 		</div>
-		<?php if ( $show_subscription_actions ) : ?>
-			<script>
-			(function() {
-				var forms = document.querySelectorAll('.ajcore-subscription-update-form');
-				forms.forEach(function(form) {
-					var collection = form.querySelector('.ajcore-subscription-update-collection-method');
-					var dueDays = form.querySelector('input[name="update_subscription_days_until_due"]');
-					if (!collection || !dueDays) {
-						return;
-					}
-					var syncDueDays = function() {
-						var method = collection.value || 'send_invoice';
-						form.setAttribute('data-collection-method', method);
-						dueDays.disabled = method !== 'send_invoice';
-					};
-					collection.addEventListener('change', syncDueDays);
-					syncDueDays();
-				});
-			})();
-			</script>
-		<?php endif; ?>
 		<?php
 	}
 
@@ -15849,7 +15950,7 @@ class AJForms_Admin {
 			array( __( 'Service Requests', 'ajforms' ), $requests, function ( $row ) {
 				return '<a href="' . esc_url( $this->get_portal_dashboard_url( 'service-requests' ) ) . '">' . esc_html( $row->service_name ? $row->service_name : sprintf( __( 'Request #%d', 'ajforms' ), $row->id ) ) . '</a> <span class="description">' . esc_html( trim( ( $row->customer_name ? $row->customer_name . ' · ' : '' ) . $row->status . ( $row->service_status ? ' / ' . $row->service_status : '' ) ) ) . '</span>';
 			} ),
-			array( __( 'Transactions', 'ajforms' ), $txns, function ( $row ) {
+			array( __( 'Payments', 'ajforms' ), $txns, function ( $row ) {
 				return '<a href="' . esc_url( $this->get_portal_customer_360_url( $row->stripe_customer_id ) ) . '">' . esc_html( $row->description ? $row->description : $row->stripe_object_id ) . '</a> <span class="description">' . esc_html( strtoupper( (string) $row->currency ) . ' ' . number_format( (float) $row->amount, 2 ) . ' · ' . $row->status ) . '</span>';
 			} ),
 			array( __( 'Tasks', 'ajforms' ), $tasks, function ( $row ) {
@@ -15949,21 +16050,21 @@ class AJForms_Admin {
 
 			<div class="ajcore-dashboard-grid">
 				<?php $this->render_portal_dashboard_metric( __( 'Active Clients', 'ajforms' ), $active_customers, $this->get_portal_dashboard_url( 'portal-users', array( 'portal_user_status' => 'active' ) ) ); ?>
-			<?php $this->render_portal_dashboard_metric( __( 'Transactions', 'ajforms' ), $active_services, $this->get_portal_dashboard_url( 'sold-items' ), sprintf( __( '%1$d auto-pay services, %2$d one-time paid.', 'ajforms' ), $auto_pay_services, $one_time_services ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Auto-Pay Subscriptions', 'ajforms' ), $auto_pay_services, $this->get_portal_dashboard_url( 'sold-items', array( 'sold_type' => 'recurring' ) ), sprintf( __( '%d active Stripe subscription records.', 'ajforms' ), $active_subscription_objects ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'open' ) ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'overdue' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
+			<?php $this->render_portal_dashboard_metric( __( 'Active Services', 'ajforms' ), $active_services, $this->get_portal_dashboard_url( 'payments' ), sprintf( __( '%1$d auto-pay services, %2$d one-time paid.', 'ajforms' ), $auto_pay_services, $one_time_services ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Auto-Pay Subscriptions', 'ajforms' ), $auto_pay_services, $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'paid' ) ), sprintf( __( '%d active Stripe subscription records.', 'ajforms' ), $active_subscription_objects ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'unpaid' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'unpaid' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Tasks', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_view' => 'overdue' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Paid Needs Fulfillment', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'paid' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Admin Review Required', 'ajforms' ), $admin_review_required, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'admin_review_required' ) ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'billing', array( 'billing_view' => 'failed' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'failed' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Sync / Webhook Health', 'ajforms' ), $health_has_issue ? __( 'Review', 'ajforms' ) : __( 'OK', 'ajforms' ), $this->get_portal_dashboard_url( 'sync', $last_failed ? array( 'sync_log_id' => (int) $last_failed->id ) : array() ), $health_note ); ?>
 			</div>
 
 			<div class="ajcore-dashboard-context">
 				<strong><?php echo esc_html( sprintf( __( 'Stripe mode: %s', 'ajforms' ), $stripe_mode['label'] ) ); ?></strong>
 				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'sync' ) ); ?>"><?php esc_html_e( 'View Sync History', 'ajforms' ); ?></a>
-				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'billing' ) ); ?>"><?php esc_html_e( 'Open Billing Workspace', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'payments' ) ); ?>"><?php esc_html_e( 'Open Payments', 'ajforms' ); ?></a>
 				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests' ) ); ?>"><?php esc_html_e( 'Review Service Requests', 'ajforms' ); ?></a>
 			</div>
 		</div>
@@ -15978,7 +16079,11 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $tab : 'dashboard';
+		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
+		if ( 'billing' === $tab || 'sold-items' === $tab ) {
+			$tab = 'payments';
+		}
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		$stripe_mode = $this->get_stripe_mode_badge_data();
 		$stripe_settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
@@ -15986,11 +16091,10 @@ class AJForms_Admin {
 			'dashboard'          => __( 'Dashboard', 'ajforms' ),
 			'service-requests'   => __( 'Service Requests', 'ajforms' ),
 			'leads'              => __( 'Leads', 'ajforms' ),
-			'billing'            => __( 'Billing', 'ajforms' ),
+			'payments'           => __( 'Payments', 'ajforms' ),
 			'partners'           => __( 'Partners', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'portal-users'       => __( 'Customers', 'ajforms' ),
-			'sold-items'         => __( 'Transactions', 'ajforms' ),
 			'products-services'  => __( 'Product Catalog', 'ajforms' ),
 			'tasks'              => __( 'Tasks', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
@@ -16069,12 +16173,10 @@ class AJForms_Admin {
 				$this->display_portal_partners_tab();
 			} elseif ( 'portal-users' === $tab ) {
 				$this->display_portal_users_tab();
-			} elseif ( 'sold-items' === $tab ) {
-				$this->display_portal_sold_items_tab();
 			} elseif ( 'products-services' === $tab ) {
 				$this->display_portal_products_services_tab();
-			} elseif ( 'billing' === $tab ) {
-				$this->display_portal_billing_tab();
+			} elseif ( 'payments' === $tab ) {
+				$this->display_portal_payments_tab();
 			} elseif ( 'service-requests' === $tab ) {
 				$this->display_portal_service_requests_tab();
 			} elseif ( 'tasks' === $tab ) {
@@ -17375,7 +17477,7 @@ class AJForms_Admin {
 					<button type="submit" class="button"><?php esc_html_e( 'Relink User', 'ajforms' ); ?></button>
 				</form>
 				<div class="ajcore-customer-quick-actions">
-					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'billing', array( 'billing_customer' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Billing Ledger', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'payments', array( 'pay_customer' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Payments', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'file-library' ) ); ?>"><?php esc_html_e( 'Files', 'ajforms' ); ?></a>
@@ -18820,146 +18922,6 @@ class AJForms_Admin {
 			})();
 			</script>
 			<?php $this->render_portal_field_picker_script(); ?>
-		</div>
-		<?php
-	}
-
-	private function display_portal_sold_items_tab() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
-		}
-
-		$pdb = $this->get_pdb();
-
-		$type_filter = isset( $_GET['sold_type'] ) ? wp_unslash( $_GET['sold_type'] ) : array( 'recurring', 'one_time' );
-		$type_filter = is_array( $type_filter ) ? array_map( 'sanitize_key', $type_filter ) : array( sanitize_key( (string) $type_filter ) );
-		$type_filter = array_values( array_intersect( array( 'recurring', 'one_time' ), $type_filter ) );
-		if ( empty( $type_filter ) ) {
-			$type_filter = array( 'recurring', 'one_time' );
-		}
-
-		$search = isset( $_GET['sold_search'] ) ? sanitize_text_field( wp_unslash( $_GET['sold_search'] ) ) : '';
-		$this->portal_service_display_skips = array();
-
-		$active_subscriptions = $pdb->get_results(
-			"SELECT s.*, c.name AS customer_name, c.email AS customer_email
-			FROM {$this->get_portal_stripe_subscriptions_table()} s
-			LEFT JOIN {$this->get_portal_stripe_customers_table()} c ON c.stripe_customer_id = s.stripe_customer_id
-			WHERE s.status IN ('active','trialing')
-			ORDER BY s.current_period_end ASC, s.synced_at DESC
-			LIMIT 1000"
-		);
-		$recurring_services = $this->get_portal_service_records_from_subscriptions( $active_subscriptions );
-		$one_time_services  = $this->get_portal_one_time_paid_services( '', 1000 );
-		$sold_items         = array();
-
-		if ( in_array( 'recurring', $type_filter, true ) ) {
-			foreach ( $recurring_services as $service ) {
-				$service->sold_item_type = 'recurring';
-				$service->sold_item_type_label = __( 'Recurring / Auto-Pay', 'ajforms' );
-				$service->sold_item_source_id = ! empty( $service->stripe_subscription_id ) ? $service->stripe_subscription_id : '';
-				$sold_items[] = $service;
-			}
-		}
-		if ( in_array( 'one_time', $type_filter, true ) ) {
-			foreach ( $one_time_services as $service ) {
-				$service->sold_item_type = 'one_time';
-				$service->sold_item_type_label = __( 'One-Time', 'ajforms' );
-				$service->sold_item_source_id = $this->get_portal_one_time_service_source_id( $service );
-				$sold_items[] = $service;
-			}
-		}
-
-		if ( '' !== $search ) {
-			$needle = strtolower( $search );
-			$sold_items = array_values(
-				array_filter(
-					$sold_items,
-					function ( $item ) use ( $needle ) {
-						$haystack = strtolower(
-							implode(
-								' ',
-								array(
-									isset( $item->service_name ) ? $item->service_name : '',
-									isset( $item->customer ) ? $item->customer : '',
-									isset( $item->stripe_customer_id ) ? $item->stripe_customer_id : '',
-									isset( $item->sold_item_source_id ) ? $item->sold_item_source_id : '',
-									isset( $item->status ) ? $item->status : '',
-								)
-							)
-						);
-						return false !== strpos( $haystack, $needle );
-					}
-				)
-			);
-		}
-
-		// Newest purchases first.
-		usort(
-			$sold_items,
-			function ( $a, $b ) {
-				$a_date = ! empty( $a->service_period_start ) ? strtotime( (string) $a->service_period_start ) : ( ! empty( $a->paid_at ) ? strtotime( (string) $a->paid_at ) : 0 );
-				$b_date = ! empty( $b->service_period_start ) ? strtotime( (string) $b->service_period_start ) : ( ! empty( $b->paid_at ) ? strtotime( (string) $b->paid_at ) : 0 );
-				return $b_date <=> $a_date;
-			}
-		);
-
-		?>
-		<div class="ajforms-settings-card">
-			<form method="get" id="ajcore-sold-items-filter" class="ajforms-settings-inline-actions" style="align-items:center;gap:12px;">
-				<input type="hidden" name="page" value="ajforms-client-portal">
-				<input type="hidden" name="tab" value="sold-items">
-				<label><input type="checkbox" name="sold_type[]" value="recurring" <?php checked( in_array( 'recurring', $type_filter, true ) ); ?>> <?php esc_html_e( 'Recurring', 'ajforms' ); ?></label>
-				<label><input type="checkbox" name="sold_type[]" value="one_time" <?php checked( in_array( 'one_time', $type_filter, true ) ); ?>> <?php esc_html_e( 'One-time', 'ajforms' ); ?></label>
-				<input type="search" name="sold_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer, service, ID', 'ajforms' ); ?>" style="min-width:280px;">
-				<button class="button"><?php esc_html_e( 'Search', 'ajforms' ); ?></button>
-				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
-			</form>
-			<script>
-			(function(){
-				var form = document.getElementById('ajcore-sold-items-filter');
-				if(!form){return;}
-				form.querySelectorAll('input[type="checkbox"]').forEach(function(box){
-					box.addEventListener('change', function(){ form.submit(); });
-				});
-			})();
-			</script>
-
-			<table class="widefat striped" style="margin:16px 0;">
-				<thead>
-					<tr>
-						<th><?php esc_html_e( 'Type', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Service', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Source ID', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Next Billing / Paid', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Synced', 'ajforms' ); ?></th>
-					</tr>
-				</thead>
-				<tbody>
-					<?php if ( empty( $sold_items ) ) : ?>
-						<tr><td colspan="9"><?php esc_html_e( 'No transactions found for this filter.', 'ajforms' ); ?></td></tr>
-					<?php else : ?>
-						<?php foreach ( $sold_items as $item ) : ?>
-							<tr>
-								<td><strong><?php echo esc_html( $item->sold_item_type_label ); ?></strong></td>
-								<td><?php echo esc_html( $item->service_name ); ?></td>
-								<td><code><?php echo esc_html( ! empty( $item->sold_item_source_id ) ? $item->sold_item_source_id : '-' ); ?></code></td>
-								<td><?php echo esc_html( $item->customer ); ?><br><small><?php echo esc_html( $item->stripe_customer_id ); ?></small><br><a href="<?php echo esc_url( $this->get_portal_customer_360_url( $item->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a></td>
-								<td><span class="ajcore-status-pill active"><?php echo esc_html( 'recurring' === $item->sold_item_type ? ucwords( str_replace( '_', ' ', $item->status ) ) : __( 'Paid', 'ajforms' ) ); ?></span></td>
-								<td><?php echo esc_html( ! empty( $item->amount ) ? $item->amount : $item->price ); ?></td>
-								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_period_label( $item ) ) : '-'; ?></td>
-								<td><?php echo 'recurring' === $item->sold_item_type ? esc_html( $this->get_portal_service_record_next_billing_date_label( $item ) ) : '-'; ?></td>
-								<td><?php echo esc_html( $this->format_portal_date( $item->synced_at ) ); ?></td>
-							</tr>
-						<?php endforeach; ?>
-					<?php endif; ?>
-				</tbody>
-			</table>
-			<?php $this->render_portal_service_display_reconciliation_notes(); ?>
 		</div>
 		<?php
 	}

@@ -1067,7 +1067,7 @@ class AJCore_REST_API {
 	 * One Stripe payment can surface as several synced objects (invoice, charge, checkout_session).
 	 * Keep the most descriptive record per payment and drop the duplicate representations.
 	 */
-	private function dedupe_stripe_transaction_rows( $transactions ) {
+	public function dedupe_stripe_transaction_rows( $transactions ) {
 		$transactions = is_array( $transactions ) ? $transactions : array();
 
 		// Build sets from invoice transactions so their duplicate charge records can be removed.
@@ -1208,7 +1208,7 @@ class AJCore_REST_API {
 	 * (customer, amount, nearest date) because Stripe API 2025-03-31+ no longer exposes
 	 * invoice/payment_intent cross-links on charge objects.
 	 */
-	private function attach_payment_display_fields( $transactions ) {
+	public function attach_payment_display_fields( $transactions ) {
 		$transactions = is_array( $transactions ) ? $transactions : array();
 		if ( empty( $transactions ) ) {
 			return $transactions;
