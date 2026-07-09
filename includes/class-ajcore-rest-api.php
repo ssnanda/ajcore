@@ -875,9 +875,10 @@ class AJCore_REST_API {
 		}
 
 		// Fetch transactions and annotate with billing_type; remove charge duplicates of invoice transactions.
-		$transactions = $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $stripe_customer_id, 'transaction_date DESC, id DESC' );
+		$transactions = $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at', 'raw_data' ), $stripe_customer_id, 'transaction_date DESC, id DESC' );
 
 		$transactions = $this->dedupe_stripe_transaction_rows( $transactions );
+		$transactions = $this->attach_payment_display_fields( $transactions );
 
 		foreach ( $transactions as &$tx ) {
 			$pi  = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
@@ -1039,8 +1040,9 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_transactions( WP_REST_Request $request ) {
-		$transactions = $this->select_rows( $this->portal_table( 'aj_portal_stripe_transactions' ), array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at' ), $request, array( 'stripe_customer_id', 'description', 'status', 'object_type', 'stripe_object_id' ), 'transaction_date DESC, id DESC' );
+		$transactions = $this->select_rows( $this->portal_table( 'aj_portal_stripe_transactions' ), array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at', 'raw_data' ), $request, array( 'stripe_customer_id', 'description', 'status', 'object_type', 'stripe_object_id' ), 'transaction_date DESC, id DESC' );
 		$transactions = $this->dedupe_stripe_transaction_rows( $transactions );
+		$transactions = $this->attach_payment_display_fields( $transactions );
 
 		// Attach customer name/email for display.
 		$pdb            = $this->get_portal_db();
@@ -1125,6 +1127,231 @@ class AJCore_REST_API {
 			if ( '' !== $pi && isset( $linked_ids[ $pi ] ) )          return false;
 			return true;
 		} ) );
+	}
+
+	private function stripe_minor_to_decimal( $amount, $currency ) {
+		$zero_decimal = array( 'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf', 'vnd', 'vuv', 'xaf', 'xof', 'xpf' );
+		$divisor      = in_array( strtolower( (string) $currency ), $zero_decimal, true ) ? 1 : 100;
+		return round( ( (float) $amount ) / $divisor, 2 );
+	}
+
+	/**
+	 * Human label for how a charge was paid, from the charge's payment_method_details.
+	 */
+	private function payment_method_label_from_charge( $charge ) {
+		$pmd  = isset( $charge['payment_method_details'] ) && is_array( $charge['payment_method_details'] ) ? $charge['payment_method_details'] : array();
+		$type = isset( $pmd['type'] ) ? (string) $pmd['type'] : '';
+		if ( 'card' === $type ) {
+			$card   = isset( $pmd['card'] ) && is_array( $pmd['card'] ) ? $pmd['card'] : array();
+			$wallet = isset( $card['wallet']['type'] ) ? (string) $card['wallet']['type'] : '';
+			$brand  = isset( $card['brand'] ) ? ucwords( str_replace( '_', ' ', (string) $card['brand'] ) ) : 'Card';
+			$last4  = isset( $card['last4'] ) ? (string) $card['last4'] : '';
+			$label  = trim( $brand . ( '' !== $last4 ? ' •••• ' . $last4 : '' ) );
+			if ( 'link' === $wallet ) {
+				$label = 'Link (' . $label . ')';
+			} elseif ( 'apple_pay' === $wallet ) {
+				$label = 'Apple Pay (' . $label . ')';
+			} elseif ( 'google_pay' === $wallet ) {
+				$label = 'Google Pay (' . $label . ')';
+			}
+			return $label;
+		}
+		if ( 'link' === $type ) {
+			return 'Link';
+		}
+		if ( 'us_bank_account' === $type || 'ach_debit' === $type ) {
+			$last4 = isset( $pmd[ $type ]['last4'] ) ? (string) $pmd[ $type ]['last4'] : '';
+			return trim( 'Bank account' . ( '' !== $last4 ? ' •••• ' . $last4 : '' ) );
+		}
+		if ( 'cashapp' === $type ) {
+			return 'Cash App Pay';
+		}
+		return '' !== $type ? ucwords( str_replace( '_', ' ', $type ) ) : '';
+	}
+
+	/**
+	 * Business-friendly "what was purchased" from an invoice's line items.
+	 * Stripe line descriptions look like "1 × Registered Agent (at $98.00 / year)".
+	 */
+	/**
+	 * Strip Stripe's quantity/pricing decoration: "1 × Registered Agent (at $98.00 / year)"
+	 * → "Registered Agent". Works mid-string too ("Free trial for 1 × Registered Agent").
+	 */
+	private function clean_line_item_name( $name ) {
+		$name = preg_replace( '/\s*\(at\s[^)]*\)\s*/u', ' ', (string) $name );
+		$name = preg_replace( '/(^|\s)\d+\s*×\s*/u', '$1', $name );
+		$name = preg_replace( '/^\s*\d+\s*x\s+/i', '', $name );
+		return trim( preg_replace( '/\s{2,}/', ' ', $name ) );
+	}
+
+	private function service_name_from_lines( $lines ) {
+		$names = array();
+		foreach ( (array) $lines as $line ) {
+			if ( ! is_array( $line ) || empty( $line['description'] ) ) {
+				continue;
+			}
+			$name = $this->clean_line_item_name( (string) $line['description'] );
+			if ( '' !== $name && ! in_array( $name, $names, true ) ) {
+				$names[] = $name;
+			}
+		}
+		return implode( ', ', $names );
+	}
+
+	/**
+	 * Attach staff-facing display fields (payment_method, refund_status, refunded_amount,
+	 * refunded_at, service_name) derived from synced Stripe raw_data. Rows must include
+	 * raw_data; it is removed from every row before returning.
+	 *
+	 * Invoices don't carry payment/refund details themselves — those live on the charge —
+	 * so charges for the same customers are loaded and matched by ID links first, then by
+	 * (customer, amount, nearest date) because Stripe API 2025-03-31+ no longer exposes
+	 * invoice/payment_intent cross-links on charge objects.
+	 */
+	private function attach_payment_display_fields( $transactions ) {
+		$transactions = is_array( $transactions ) ? $transactions : array();
+		if ( empty( $transactions ) ) {
+			return $transactions;
+		}
+
+		$customer_ids = array();
+		foreach ( $transactions as $tx ) {
+			$cid = isset( $tx['stripe_customer_id'] ) ? (string) $tx['stripe_customer_id'] : '';
+			if ( '' !== $cid ) {
+				$customer_ids[ $cid ] = true;
+			}
+		}
+
+		// Load all charge rows for these customers (dedupe hides them from the list, but
+		// they're still synced and carry payment_method_details + refund state).
+		$by_charge_id = array();
+		$by_invoice   = array();
+		$by_pi        = array();
+		$by_customer  = array();
+		if ( ! empty( $customer_ids ) ) {
+			$pdb          = $this->get_portal_db();
+			$table        = $this->portal_table( 'aj_portal_stripe_transactions' );
+			$placeholders = implode( ',', array_fill( 0, count( $customer_ids ), '%s' ) );
+			$charge_rows  = (array) $pdb->get_results(
+				$pdb->prepare(
+					"SELECT stripe_object_id, stripe_customer_id, invoice_id, payment_intent_id, amount, transaction_date, raw_data FROM `{$table}` WHERE object_type = 'charge' AND stripe_customer_id IN ({$placeholders})",
+					array_keys( $customer_ids )
+				),
+				ARRAY_A
+			);
+			foreach ( $charge_rows as $row ) {
+				$raw = ! empty( $row['raw_data'] ) ? json_decode( (string) $row['raw_data'], true ) : null;
+				if ( ! is_array( $raw ) ) {
+					continue;
+				}
+				$entry = array(
+					'raw'    => $raw,
+					'amount' => (float) $row['amount'],
+					'ts'     => ! empty( $row['transaction_date'] ) ? strtotime( (string) $row['transaction_date'] ) : 0,
+				);
+				if ( ! empty( $row['stripe_object_id'] ) )  $by_charge_id[ (string) $row['stripe_object_id'] ] = $entry;
+				if ( ! empty( $row['invoice_id'] ) )        $by_invoice[ (string) $row['invoice_id'] ]         = $entry;
+				if ( ! empty( $row['payment_intent_id'] ) ) $by_pi[ (string) $row['payment_intent_id'] ]       = $entry;
+				$cid = (string) $row['stripe_customer_id'];
+				if ( '' !== $cid ) {
+					$by_customer[ $cid ][] = $entry;
+				}
+			}
+		}
+
+		foreach ( $transactions as &$tx ) {
+			// select_rows()/select_by_customer() may have already JSON-decoded raw_data.
+			$raw = isset( $tx['raw_data'] ) ? $tx['raw_data'] : null;
+			if ( is_string( $raw ) && '' !== $raw ) {
+				$raw = json_decode( $raw, true );
+			}
+			$raw = is_array( $raw ) ? $raw : array();
+			unset( $tx['raw_data'] );
+
+			$type     = strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' );
+			$currency = isset( $tx['currency'] ) ? (string) $tx['currency'] : 'usd';
+
+			$tx['payment_method']  = '';
+			$tx['refund_status']   = '';
+			$tx['refunded_amount'] = 0;
+			$tx['refunded_at']     = '';
+			$tx['service_name']    = '';
+
+			// Resolve the charge object holding payment/refund details for this row.
+			$charge = null;
+			if ( 'charge' === $type ) {
+				$charge = $raw;
+			} else {
+				$charge_id = isset( $tx['charge_id'] ) ? (string) $tx['charge_id'] : '';
+				$obj_id    = isset( $tx['stripe_object_id'] ) ? (string) $tx['stripe_object_id'] : '';
+				$pi        = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
+				if ( '' !== $charge_id && isset( $by_charge_id[ $charge_id ] ) ) {
+					$charge = $by_charge_id[ $charge_id ]['raw'];
+				} elseif ( '' !== $obj_id && isset( $by_invoice[ $obj_id ] ) ) {
+					$charge = $by_invoice[ $obj_id ]['raw'];
+				} elseif ( '' !== $pi && isset( $by_pi[ $pi ] ) ) {
+					$charge = $by_pi[ $pi ]['raw'];
+				} else {
+					// Basil-era data has no cross-links: match by customer + amount + nearest date.
+					$cid       = isset( $tx['stripe_customer_id'] ) ? (string) $tx['stripe_customer_id'] : '';
+					$amount    = isset( $tx['amount'] ) ? (float) $tx['amount'] : 0;
+					$tx_ts     = ! empty( $tx['transaction_date'] ) ? strtotime( (string) $tx['transaction_date'] ) : 0;
+					$best      = null;
+					$best_diff = 172800; // 48h window
+					foreach ( isset( $by_customer[ $cid ] ) ? $by_customer[ $cid ] : array() as $entry ) {
+						if ( abs( $entry['amount'] - $amount ) > 0.005 || 0 === $entry['ts'] || 0 === $tx_ts ) {
+							continue;
+						}
+						$diff = abs( $entry['ts'] - $tx_ts );
+						if ( $diff <= $best_diff ) {
+							$best_diff = $diff;
+							$best      = $entry['raw'];
+						}
+					}
+					$charge = $best;
+				}
+			}
+
+			if ( is_array( $charge ) ) {
+				$tx['payment_method'] = $this->payment_method_label_from_charge( $charge );
+				$amount_refunded      = isset( $charge['amount_refunded'] ) ? (float) $charge['amount_refunded'] : 0;
+				if ( ! empty( $charge['refunded'] ) ) {
+					$tx['refund_status'] = 'refunded';
+				} elseif ( $amount_refunded > 0 ) {
+					$tx['refund_status'] = 'partially_refunded';
+				}
+				if ( $amount_refunded > 0 ) {
+					$tx['refunded_amount'] = $this->stripe_minor_to_decimal( $amount_refunded, $currency );
+				}
+				if ( ! empty( $charge['refunds']['data'][0]['created'] ) ) {
+					$tx['refunded_at'] = gmdate( 'Y-m-d H:i:s', (int) $charge['refunds']['data'][0]['created'] );
+				}
+			}
+
+			// Checkout sessions have no charge object of their own; show the offered method types.
+			if ( '' === $tx['payment_method'] && ! empty( $raw['payment_method_types'] ) && is_array( $raw['payment_method_types'] ) ) {
+				$tx['payment_method'] = implode( ', ', array_map( function( $t ) {
+					return ucwords( str_replace( '_', ' ', (string) $t ) );
+				}, $raw['payment_method_types'] ) );
+			}
+
+			// What was purchased, in business terms.
+			if ( 'invoice' === $type && ! empty( $raw['lines']['data'] ) ) {
+				$tx['service_name'] = $this->service_name_from_lines( $raw['lines']['data'] );
+			} elseif ( 'checkout_session' === $type && ! empty( $raw['line_items']['data'] ) ) {
+				$tx['service_name'] = $this->service_name_from_lines( $raw['line_items']['data'] );
+			}
+			if ( '' === $tx['service_name'] ) {
+				$desc    = trim( isset( $tx['description'] ) ? (string) $tx['description'] : '' );
+				$generic = array( 'payment for invoice', 'subscription creation', 'subscription update' );
+				if ( '' !== $desc && ! in_array( strtolower( $desc ), $generic, true ) && ! preg_match( '/^(invoice|charge|checkout session) (in_|ch_|py_|cs_)/i', $desc ) ) {
+					$tx['service_name'] = $this->clean_line_item_name( $desc );
+				}
+			}
+		}
+		unset( $tx );
+
+		return $transactions;
 	}
 
 	public function get_ops_tasks( WP_REST_Request $request ) {
