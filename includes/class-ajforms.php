@@ -8137,19 +8137,29 @@ class AJForms {
 		}
 
 		/*
-		 * Collect Business Name directly in Stripe Checkout as Stripe's native customer
-		 * business_name field, instead of using a custom field that only lives on the
-		 * Checkout Session. This keeps Stripe Dashboard's Customer > More options >
-		 * Business name populated when Checkout creates/updates the customer.
+		 * Collect contact details directly in Stripe Checkout as Stripe's native customer
+		 * fields, instead of custom fields that only live on the Checkout Session. This keeps
+		 * Stripe Dashboard's Customer record populated when Checkout creates/updates the
+		 * customer: Business name and Individual name land under Customer > More options,
+		 * phone on the customer itself. All three are required, matching email (which Stripe
+		 * always requires).
 		 */
 		if ( ! $portal_add_service ) {
-			$body['name_collection[business][enabled]']  = 'true';
-			$body['name_collection[business][optional]'] = 'false';
+			$body['name_collection[business][enabled]']    = 'true';
+			$body['name_collection[business][optional]']   = 'false';
+			$body['name_collection[individual][enabled]']  = 'true';
+			$body['name_collection[individual][optional]'] = 'false';
+			$body['phone_number_collection[enabled]']      = 'true';
 		}
 
 		$mapped_stripe_customer_id = is_user_logged_in() ? $this->get_current_user_stripe_customer_id() : '';
 		if ( 0 === strpos( $mapped_stripe_customer_id, 'cus_' ) ) {
 			$body['customer'] = $mapped_stripe_customer_id;
+			// Stripe requires customer_update[phone]=auto to collect a phone number when an
+			// existing Customer is attached to the session; without it session creation fails.
+			if ( ! empty( $body['phone_number_collection[enabled]'] ) ) {
+				$body['customer_update[phone]'] = 'auto';
+			}
 		} elseif ( 'payment' === $checkout_mode ) {
 			$body['customer_creation'] = 'always';
 		}
