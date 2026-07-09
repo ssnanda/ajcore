@@ -1385,12 +1385,111 @@ class AJForms_Admin {
 		return $user && ( $this->user_has_elevated_role( $user ) || in_array( 'aj_portal_user', (array) $user->roles, true ) || user_can( $user, 'ajcore_customer_portal_access' ) );
 	}
 
+	public function create_customer_impersonation_link( $stripe_customer_id, $source = 'ajcore_admin', $return_url = '' ) {
+		if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'ajcore_ops_access' ) && ! in_array( 'aj_ops_user', (array) wp_get_current_user()->roles, true ) ) {
+			return new WP_Error( 'forbidden', __( 'You do not have permission to impersonate portal users.', 'ajforms' ) );
+		}
+
+		global $wpdb;
+		$pdb                = $this->get_pdb();
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$source             = in_array( sanitize_key( (string) $source ), array( 'ajcore_admin', 'ajops' ), true ) ? sanitize_key( (string) $source ) : 'ajcore_admin';
+
+		$customer = $pdb->get_row(
+			$pdb->prepare(
+				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+		if ( ! $customer ) {
+			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajforms' ) );
+		}
+
+		$mappings = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s AND user_id > 0",
+				$stripe_customer_id
+			)
+		);
+		$mapping_user_ids = array_values( array_unique( array_map( 'absint', wp_list_pluck( (array) $mappings, 'user_id' ) ) ) );
+		if ( 1 !== count( $mapping_user_ids ) ) {
+			return new WP_Error( 'ambiguous_portal_user', __( 'This customer must have exactly one linked portal WordPress user.', 'ajforms' ) );
+		}
+
+		$mapping = null;
+		foreach ( (array) $mappings as $candidate_mapping ) {
+			if ( (int) $candidate_mapping->user_id === (int) $mapping_user_ids[0] ) {
+				$mapping = $candidate_mapping;
+				break;
+			}
+		}
+		$customer->user_id           = $mapping ? $mapping->user_id : null;
+		$customer->customer_email    = $mapping ? $mapping->customer_email : null;
+		$customer->mapped_email      = $mapping ? $mapping->customer_email : null;
+		$customer->portal_user_email = $mapping ? $mapping->portal_user_email : null;
+		$customer->mapping_site_uuid = $mapping ? $mapping->site_uuid : null;
+
+		$user = $this->get_valid_portal_mapping_user( $customer, $customer );
+		if ( ! $user ) {
+			return new WP_Error( 'invalid_portal_user', __( 'The linked WordPress user does not match this customer. Run Repair WP User Links & Roles first.', 'ajforms' ) );
+		}
+		if ( $this->user_has_elevated_role( $user ) || user_can( $user, 'manage_options' ) || user_can( $user, 'ajcore_ops_access' ) || in_array( 'aj_ops_user', (array) $user->roles, true ) || ( ! in_array( 'aj_portal_user', (array) $user->roles, true ) && ! user_can( $user, 'ajcore_customer_portal_access' ) ) ) {
+			return new WP_Error( 'unsafe_target_user', __( 'Only customer portal users can be impersonated.', 'ajforms' ) );
+		}
+
+		$token      = wp_generate_password( 48, false, false );
+		$token_hash = hash_hmac( 'sha256', $token, wp_salt( 'auth' ) );
+		$actor      = wp_get_current_user();
+		$customer_name = ! empty( $customer->name ) ? sanitize_text_field( (string) $customer->name ) : ( is_email( $customer->email ?? '' ) ? sanitize_email( (string) $customer->email ) : __( 'Client', 'ajforms' ) );
+		$return_url = '' !== $return_url ? esc_url_raw( $return_url ) : $this->get_portal_customer_360_url( $stripe_customer_id );
+		if ( '' === $return_url ) {
+			$return_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), admin_url( 'admin.php' ) );
+		}
+
+		set_transient(
+			'ajcore_impersonation_' . $token_hash,
+			array(
+				'actor_user_id'      => (int) $actor->ID,
+				'actor_email'        => (string) $actor->user_email,
+				'target_user_id'     => (int) $user->ID,
+				'target_email'       => (string) $user->user_email,
+				'stripe_customer_id' => $stripe_customer_id,
+				'customer_name'      => $customer_name,
+				'source'             => $source,
+				'return_url'         => $return_url,
+				'created_at'         => current_time( 'mysql' ),
+			),
+			5 * MINUTE_IN_SECONDS
+		);
+
+		$this->log_portal_event(
+			'impersonation_link_created',
+			array(
+				'source'             => $source,
+				'stripe_customer_id' => $stripe_customer_id,
+				'wp_user_id_after'   => (int) $user->ID,
+				'email_after'        => $user->user_email,
+				'details'            => array(
+					'actor_user_id'  => (int) $actor->ID,
+					'target_user_id' => (int) $user->ID,
+					'ip'             => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '',
+					'user_agent'     => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
+				),
+			)
+		);
+
+		$portal_page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
+		$portal_url     = $portal_page_id ? get_permalink( $portal_page_id ) : home_url( '/client-portal/' );
+
+		return add_query_arg( 'ajcore_impersonate', rawurlencode( $token ), $portal_url );
+	}
+
 	private function user_has_elevated_role( $user ) {
 		if ( ! $user ) {
 			return false;
 		}
 
-		$elevated_roles = array( 'administrator', 'editor', 'shop_manager' );
+		$elevated_roles = array( 'administrator', 'editor', 'shop_manager', 'aj_ops_user' );
 		return (bool) array_intersect( $elevated_roles, (array) $user->roles );
 	}
 
@@ -10252,6 +10351,29 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( isset( $_GET['ajcore_portal_user_action'], $_GET['stripe_customer_id'], $_GET['_wpnonce'] ) && 'impersonate' === sanitize_key( wp_unslash( $_GET['ajcore_portal_user_action'] ) ) ) {
+			$stripe_customer_id = sanitize_text_field( wp_unslash( $_GET['stripe_customer_id'] ) );
+			check_admin_referer( 'ajcore_portal_user_action_' . $stripe_customer_id );
+
+			$result = $this->create_customer_impersonation_link( $stripe_customer_id, 'ajcore_admin', $this->get_portal_customer_360_url( $stripe_customer_id ) );
+			if ( is_wp_error( $result ) ) {
+				wp_safe_redirect(
+					add_query_arg(
+						array(
+							'page'         => 'ajforms-client-portal',
+							'tab'          => 'portal-users',
+							'portal-error' => rawurlencode( $result->get_error_message() ),
+						),
+						admin_url( 'admin.php' )
+					)
+				);
+				exit;
+			}
+
+			wp_safe_redirect( $result );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_portal_user_action_nonce'], $_POST['stripe_customer_id'], $_POST['portal_user_action'] ) ) {
 			$stripe_customer_id = sanitize_text_field( wp_unslash( $_POST['stripe_customer_id'] ) );
 			check_admin_referer( 'ajcore_portal_user_action_' . $stripe_customer_id, 'ajcore_portal_user_action_nonce' );
@@ -10309,6 +10431,15 @@ class AJForms_Admin {
 					$args['portal-error'] = rawurlencode( __( 'Password reset email could not be sent.', 'ajforms' ) );
 				} else {
 					$args['portal-password-reset'] = 1;
+				}
+			} elseif ( 'impersonate' === $action ) {
+				$return_url = $this->get_portal_customer_360_url( $stripe_customer_id );
+				$result     = $this->create_customer_impersonation_link( $stripe_customer_id, 'ajcore_admin', $return_url );
+				if ( is_wp_error( $result ) ) {
+					$args['portal-error'] = rawurlencode( $result->get_error_message() );
+				} else {
+					wp_safe_redirect( $result );
+					exit;
 				}
 			}
 
@@ -18621,6 +18752,12 @@ class AJForms_Admin {
 										<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $customer->stripe_customer_id ) ); ?>"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
 										&nbsp;|&nbsp;
 										<a href="<?php echo esc_url( $this->get_portal_customer_360_url( $customer->stripe_customer_id ) . '#linked-files' ); ?>"><?php esc_html_e( 'Files', 'ajforms' ); ?></a>
+										<br>
+										<?php if ( $has_portal_login ) : ?>
+											<a class="button button-small" style="margin-top:6px;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'ajcore_portal_user_action' => 'impersonate', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ), 'ajcore_portal_user_action_' . $customer->stripe_customer_id ) ); ?>"><?php esc_html_e( 'Login as Client', 'ajforms' ); ?></a>
+										<?php else : ?>
+											<button type="button" class="button button-small" style="margin-top:6px;" disabled><?php esc_html_e( 'No portal login', 'ajforms' ); ?></button>
+										<?php endif; ?>
 									</td>
 									<td><?php echo esc_html( $customer_email ); ?></td>
 									<?php foreach ( $display_fields as $field ) : ?>

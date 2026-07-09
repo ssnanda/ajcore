@@ -943,6 +943,8 @@ class AJForms {
 		add_filter( 'login_headertext', array( $this, 'filter_login_header_text' ) );
 		add_action( 'init', array( $this, 'maybe_create_customer_portal_page' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
+		add_action( 'template_redirect', array( $this, 'maybe_handle_impersonation_request' ), 0 );
+		add_action( 'template_redirect', array( $this, 'maybe_handle_impersonation_return' ), 0 );
 		add_action( 'template_redirect', array( $this, 'maybe_redirect_guest_customer_portal' ), 1 );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_upload' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
@@ -1658,7 +1660,9 @@ class AJForms {
 				</div>
 
 				<div class="aj-portal-profile-actions">
-					<a class="button" href="<?php echo esc_url( wp_lostpassword_url( $this->get_customer_portal_url() ) ); ?>"><?php esc_html_e( 'Change Password', 'ajforms' ); ?></a>
+					<?php if ( ! $this->is_impersonating_client() ) : ?>
+						<a class="button" href="<?php echo esc_url( wp_lostpassword_url( $this->get_customer_portal_url() ) ); ?>"><?php esc_html_e( 'Change Password', 'ajforms' ); ?></a>
+					<?php endif; ?>
 					<a class="button" href="<?php echo esc_url( wp_logout_url( home_url( '/' ) ) ); ?>"><?php esc_html_e( 'Logout', 'ajforms' ); ?></a>
 				</div>
 			</div>
@@ -4850,6 +4854,193 @@ class AJForms {
 		return $uuid;
 	}
 
+	private function hash_impersonation_token( $token ) {
+		return hash_hmac( 'sha256', (string) $token, wp_salt( 'auth' ) );
+	}
+
+	private function get_impersonation_cookie_name() {
+		return 'ajcore_impersonation_return';
+	}
+
+	private function set_impersonation_cookie( $token, $expires ) {
+		$args = array(
+			'expires'  => (int) $expires,
+			'path'     => COOKIEPATH ? COOKIEPATH : '/',
+			'secure'   => is_ssl(),
+			'httponly' => true,
+			'samesite' => 'Lax',
+		);
+		if ( defined( 'COOKIE_DOMAIN' ) && COOKIE_DOMAIN ) {
+			$args['domain'] = COOKIE_DOMAIN;
+		}
+		setcookie( $this->get_impersonation_cookie_name(), (string) $token, $args );
+		$_COOKIE[ $this->get_impersonation_cookie_name() ] = (string) $token;
+	}
+
+	private function clear_impersonation_cookie() {
+		$args = array(
+			'expires'  => time() - HOUR_IN_SECONDS,
+			'path'     => COOKIEPATH ? COOKIEPATH : '/',
+			'secure'   => is_ssl(),
+			'httponly' => true,
+			'samesite' => 'Lax',
+		);
+		if ( defined( 'COOKIE_DOMAIN' ) && COOKIE_DOMAIN ) {
+			$args['domain'] = COOKIE_DOMAIN;
+		}
+		setcookie( $this->get_impersonation_cookie_name(), '', $args );
+		unset( $_COOKIE[ $this->get_impersonation_cookie_name() ] );
+	}
+
+	public function maybe_handle_impersonation_request() {
+		if ( empty( $_GET['ajcore_impersonate'] ) ) {
+			return;
+		}
+
+		$token = sanitize_text_field( wp_unslash( $_GET['ajcore_impersonate'] ) );
+		if ( '' === $token ) {
+			wp_safe_redirect( $this->get_customer_portal_url() );
+			exit;
+		}
+
+		$token_hash = $this->hash_impersonation_token( $token );
+		$payload    = get_transient( 'ajcore_impersonation_' . $token_hash );
+		if ( ! is_array( $payload ) || empty( $payload['target_user_id'] ) || empty( $payload['actor_user_id'] ) ) {
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'impersonation-invalid', $this->get_customer_portal_url() ) );
+			exit;
+		}
+		delete_transient( 'ajcore_impersonation_' . $token_hash );
+
+		$target = get_userdata( (int) $payload['target_user_id'] );
+		$actor  = get_userdata( (int) $payload['actor_user_id'] );
+		if ( ! $target || ! $actor || ! $this->user_has_customer_portal_role( $target ) || current_user_can( 'manage_options' ) && (int) $target->ID === get_current_user_id() ) {
+			wp_safe_redirect( add_query_arg( 'portal_notice', 'impersonation-invalid', $this->get_customer_portal_url() ) );
+			exit;
+		}
+
+		$return_token = wp_generate_password( 48, false, false );
+		$return_hash  = $this->hash_impersonation_token( $return_token );
+		$expires      = time() + ( 8 * HOUR_IN_SECONDS );
+		set_transient(
+			'ajcore_impersonation_return_' . $return_hash,
+			$payload,
+			8 * HOUR_IN_SECONDS
+		);
+
+		wp_logout();
+		wp_set_current_user( (int) $target->ID );
+		wp_set_auth_cookie( (int) $target->ID, false, is_ssl() );
+		$this->set_impersonation_cookie( $return_token, $expires );
+
+		$this->log_portal_event(
+			'impersonation_started',
+			array(
+				'source'             => ! empty( $payload['source'] ) ? sanitize_key( (string) $payload['source'] ) : 'ajcore_admin',
+				'stripe_customer_id' => ! empty( $payload['stripe_customer_id'] ) ? sanitize_text_field( (string) $payload['stripe_customer_id'] ) : '',
+				'wp_user_id_after'   => (int) $target->ID,
+				'email_after'        => (string) $target->user_email,
+				'actor_user_id'      => (int) $actor->ID,
+				'actor_email'        => (string) $actor->user_email,
+				'details'            => array(
+					'actor_user_id'  => (int) $actor->ID,
+					'target_user_id' => (int) $target->ID,
+					'ip'             => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '',
+					'user_agent'     => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
+				),
+			)
+		);
+
+		wp_safe_redirect( remove_query_arg( 'ajcore_impersonate', $this->get_customer_portal_url() ) );
+		exit;
+	}
+
+	public function maybe_handle_impersonation_return() {
+		if ( empty( $_GET['ajcore_end_impersonation'] ) ) {
+			return;
+		}
+
+		$token        = sanitize_text_field( wp_unslash( $_GET['ajcore_end_impersonation'] ) );
+		$cookie_token = isset( $_COOKIE[ $this->get_impersonation_cookie_name() ] ) ? sanitize_text_field( wp_unslash( $_COOKIE[ $this->get_impersonation_cookie_name() ] ) ) : '';
+		if ( '' === $token || ! hash_equals( $cookie_token, $token ) ) {
+			wp_safe_redirect( $this->get_customer_portal_url() );
+			exit;
+		}
+
+		$return_hash = $this->hash_impersonation_token( $token );
+		$payload     = get_transient( 'ajcore_impersonation_return_' . $return_hash );
+		if ( ! is_array( $payload ) || empty( $payload['actor_user_id'] ) || empty( $payload['target_user_id'] ) || (int) $payload['target_user_id'] !== get_current_user_id() ) {
+			$this->clear_impersonation_cookie();
+			wp_safe_redirect( $this->get_customer_portal_url() );
+			exit;
+		}
+		delete_transient( 'ajcore_impersonation_return_' . $return_hash );
+		$this->clear_impersonation_cookie();
+
+		$actor = get_userdata( (int) $payload['actor_user_id'] );
+		if ( ! $actor ) {
+			wp_logout();
+			wp_safe_redirect( wp_login_url( admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		$this->log_portal_event(
+			'impersonation_ended',
+			array(
+				'source'             => ! empty( $payload['source'] ) ? sanitize_key( (string) $payload['source'] ) : 'ajcore_admin',
+				'stripe_customer_id' => ! empty( $payload['stripe_customer_id'] ) ? sanitize_text_field( (string) $payload['stripe_customer_id'] ) : '',
+				'wp_user_id_before'  => (int) $payload['target_user_id'],
+				'wp_user_id_after'   => (int) $actor->ID,
+				'actor_user_id'      => (int) $actor->ID,
+				'actor_email'        => (string) $actor->user_email,
+				'details'            => array(
+					'actor_user_id'  => (int) $actor->ID,
+					'target_user_id' => (int) $payload['target_user_id'],
+					'ip'             => isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '',
+					'user_agent'     => isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '',
+				),
+			)
+		);
+
+		wp_logout();
+		wp_set_current_user( (int) $actor->ID );
+		wp_set_auth_cookie( (int) $actor->ID, false, is_ssl() );
+
+		$return_url = ! empty( $payload['return_url'] ) ? esc_url_raw( (string) $payload['return_url'] ) : admin_url( 'admin.php' );
+		wp_safe_redirect( wp_validate_redirect( $return_url, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private function get_active_impersonation_payload() {
+		if ( ! is_user_logged_in() || empty( $_COOKIE[ $this->get_impersonation_cookie_name() ] ) ) {
+			return null;
+		}
+
+		$token   = sanitize_text_field( wp_unslash( $_COOKIE[ $this->get_impersonation_cookie_name() ] ) );
+		$payload = get_transient( 'ajcore_impersonation_return_' . $this->hash_impersonation_token( $token ) );
+		if ( ! is_array( $payload ) || empty( $payload['target_user_id'] ) || (int) $payload['target_user_id'] !== get_current_user_id() ) {
+			return null;
+		}
+
+		$payload['return_token'] = $token;
+		return $payload;
+	}
+
+	private function is_impersonating_client() {
+		return null !== $this->get_active_impersonation_payload();
+	}
+
+	private function block_impersonated_portal_write( $message = '' ) {
+		if ( ! $this->is_impersonating_client() ) {
+			return false;
+		}
+		$message = '' !== $message ? $message : __( 'This action is disabled while viewing as a client.', 'ajforms' );
+		if ( wp_doing_ajax() ) {
+			wp_send_json_error( array( 'message' => $message ), 403 );
+		}
+		wp_safe_redirect( add_query_arg( 'portal_notice', 'impersonation-readonly', $this->get_customer_portal_url() ) );
+		exit;
+	}
+
 	private function log_site_uuid_created_event( $uuid ) {
 		$wpdb = $this->get_pdb();
 
@@ -5839,6 +6030,13 @@ class AJForms {
 			<?php if ( 'yes' === $atts['show_title'] ) : ?>
 				<h1><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></h1>
 			<?php endif; ?>
+			<?php $impersonation = $this->get_active_impersonation_payload(); ?>
+			<?php if ( $impersonation ) : ?>
+				<div class="ajcore-impersonation-banner" style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 18px;padding:12px 16px;border:1px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#92400e;font-weight:700;">
+					<span><?php echo esc_html( sprintf( __( 'Viewing as client: %s.', 'ajforms' ), ! empty( $impersonation['customer_name'] ) ? $impersonation['customer_name'] : __( 'Client', 'ajforms' ) ) ); ?></span>
+					<a class="button" href="<?php echo esc_url( add_query_arg( 'ajcore_end_impersonation', rawurlencode( $impersonation['return_token'] ), $this->get_customer_portal_url() ) ); ?>"><?php esc_html_e( 'Return to Admin', 'ajforms' ); ?></a>
+				</div>
+			<?php endif; ?>
 			<nav class="aj-customer-portal-tabs" aria-label="<?php esc_attr_e( 'Client Portal', 'ajforms' ); ?>">
 				<?php foreach ( $portal_items as $item ) : ?>
 					<?php
@@ -6548,6 +6746,7 @@ class AJForms {
 		if ( empty( $_GET['ajcore_remove_service_request'] ) ) {
 			return;
 		}
+		$this->block_impersonated_portal_write();
 
 		if ( ! is_user_logged_in() ) {
 			wp_safe_redirect( wp_login_url( $this->get_customer_portal_url() ) );
@@ -7277,6 +7476,7 @@ class AJForms {
 	}
 
 	public function ajax_create_stripe_payment_intent() {
+		$this->block_impersonated_portal_write();
 		$form_id = isset( $_POST['form_id'] ) ? absint( wp_unslash( $_POST['form_id'] ) ) : 0;
 		$nonce   = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
 
@@ -7336,6 +7536,7 @@ class AJForms {
 	}
 
 	public function ajax_submit_portal_service_request() {
+		$this->block_impersonated_portal_write();
 		if ( ! is_user_logged_in() ) {
 			wp_send_json_error( array( 'message' => __( 'Login required.', 'ajforms' ) ), 401 );
 		}
@@ -7388,6 +7589,7 @@ class AJForms {
 	}
 
 	public function ajax_cancel_portal_service_request() {
+		$this->block_impersonated_portal_write();
 		if ( ! is_user_logged_in() ) {
 			wp_send_json_error( __( 'Login required.', 'ajforms' ), 401 );
 		}
@@ -7434,6 +7636,7 @@ class AJForms {
 	}
 
 	public function ajax_create_custom_service_request() {
+		$this->block_impersonated_portal_write();
 		if ( ! is_user_logged_in() ) {
 			wp_send_json_error( __( 'Login required.', 'ajforms' ), 401 );
 		}
@@ -7678,6 +7881,7 @@ class AJForms {
 	}
 
 	public function ajax_create_checkout_session() {
+		$this->block_impersonated_portal_write();
 		$price_id = isset( $_POST['price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['price_id'] ) ) : '';
 		$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
 		$items    = isset( $_POST['items'] ) ? json_decode( wp_unslash( $_POST['items'] ), true ) : null; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
@@ -8135,6 +8339,7 @@ class AJForms {
 
 
 	public function ajax_pay_portal_ledger() {
+		$this->block_impersonated_portal_write();
 		if ( ! is_user_logged_in() ) {
 			wp_send_json_error( __( 'You must be logged in to pay this balance.', 'ajforms' ), 401 );
 		}
@@ -12769,6 +12974,7 @@ class AJForms {
 	}
 
 	public function ajax_reservation_create_checkout() {
+		$this->block_impersonated_portal_write();
 		check_ajax_referer( 'ajcore_reservation_create_checkout', 'nonce' );
 
 		if ( ! is_user_logged_in() ) {
@@ -13267,6 +13473,7 @@ class AJForms {
 	 * Cart checkout: build one Stripe session for all in_cart items.
 	 */
 	public function ajax_reservation_cart_checkout() {
+		$this->block_impersonated_portal_write();
 		check_ajax_referer( 'ajcore_reservation_cart_checkout', 'nonce' );
 
 		if ( ! is_user_logged_in() ) {
@@ -13449,6 +13656,7 @@ class AJForms {
 	 * Dashboard (Stripe > Settings > Customer Portal) before use.
 	 */
 	public function ajax_stripe_customer_portal() {
+		$this->block_impersonated_portal_write();
 		check_ajax_referer( 'ajcore_stripe_customer_portal', 'nonce' );
 
 		if ( ! is_user_logged_in() ) {

@@ -98,6 +98,16 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/impersonation-link',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_create_customer_impersonation_link' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/subscriptions',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -724,7 +734,45 @@ class AJCore_REST_API {
 	public function get_ops_customers( WP_REST_Request $request ) {
 		$customers = $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' );
 		$customers = $this->attach_customer_site_labels( array_map( array( $this, 'format_ops_customer_row' ), $customers ) );
+		$customers = $this->attach_customer_portal_user_links( $customers );
 		return rest_ensure_response( array( 'customers' => $customers ) );
+	}
+
+	private function attach_customer_portal_user_links( $customers ) {
+		$customers = (array) $customers;
+		$ids       = array_values( array_unique( array_filter( array_map(
+			function ( $c ) { return isset( $c['stripe_customer_id'] ) ? (string) $c['stripe_customer_id'] : ''; },
+			$customers
+		) ) ) );
+
+		$links_by_customer = array();
+		if ( ! empty( $ids ) ) {
+			global $wpdb;
+			$mapping_table = $wpdb->prefix . 'aj_auth_user_mappings';
+			if ( $this->table_exists( $wpdb, $mapping_table ) ) {
+				$placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$rows = $wpdb->get_results( $wpdb->prepare( "SELECT stripe_customer_id, user_id FROM `{$mapping_table}` WHERE user_id > 0 AND stripe_customer_id IN ({$placeholders})", $ids ) );
+				foreach ( (array) $rows as $row ) {
+					$cid = (string) $row->stripe_customer_id;
+					if ( ! isset( $links_by_customer[ $cid ] ) ) {
+						$links_by_customer[ $cid ] = array();
+					}
+					$links_by_customer[ $cid ][] = (int) $row->user_id;
+				}
+			}
+		}
+
+		foreach ( $customers as &$customer ) {
+			$cid    = isset( $customer['stripe_customer_id'] ) ? (string) $customer['stripe_customer_id'] : '';
+			$user_ids = isset( $links_by_customer[ $cid ] ) ? array_values( array_unique( $links_by_customer[ $cid ] ) ) : array();
+			$customer['portal_user_id']       = 1 === count( $user_ids ) ? (int) $user_ids[0] : 0;
+			$customer['portal_user_count']    = count( $user_ids );
+			$customer['has_portal_login']     = 1 === count( $user_ids );
+		}
+		unset( $customer );
+
+		return $customers;
 	}
 
 	/** Attaches site_uuid + site_label to customer rows from aj_portal_customer_states, which
@@ -775,6 +823,8 @@ class AJCore_REST_API {
 		$decoded = $this->format_ops_customer_row( $this->decode_json_fields( $customer, array( 'address', 'metadata' ) ) );
 		$with_site = $this->attach_customer_site_labels( array( $decoded ) );
 		$decoded   = $with_site[0];
+		$with_portal_user = $this->attach_customer_portal_user_links( array( $decoded ) );
+		$decoded          = $with_portal_user[0];
 		// Build $meta from the metadata column; then overlay values from raw_data.
 		// business_name / individual_name are top-level Stripe customer fields, not inside raw_data.metadata.
 		$meta = is_array( $decoded['metadata'] ?? null ) ? $decoded['metadata'] : array();
@@ -1944,6 +1994,10 @@ class AJCore_REST_API {
 	}
 
 	public function create_portal_service_request( WP_REST_Request $request ) {
+		$blocked = $this->block_impersonated_portal_write();
+		if ( is_wp_error( $blocked ) ) {
+			return $blocked;
+		}
 		$title       = sanitize_text_field( (string) $request->get_param( 'title' ) );
 		$description = sanitize_textarea_field( (string) $request->get_param( 'description' ) );
 		$priority    = sanitize_key( (string) ( $request->get_param( 'priority' ) ?: 'normal' ) );
@@ -2009,6 +2063,10 @@ class AJCore_REST_API {
 	}
 
 	public function portal_cart_checkout() {
+		$blocked = $this->block_impersonated_portal_write();
+		if ( is_wp_error( $blocked ) ) {
+			return $blocked;
+		}
 		if ( ! AJForms::$instance ) {
 			return new WP_Error( 'ajcore_unavailable', __( 'Portal service unavailable.', 'ajforms' ), array( 'status' => 503 ) );
 		}
@@ -2038,6 +2096,10 @@ class AJCore_REST_API {
 	}
 
 	public function portal_store_checkout( WP_REST_Request $request ) {
+		$blocked = $this->block_impersonated_portal_write();
+		if ( is_wp_error( $blocked ) ) {
+			return $blocked;
+		}
 		$price_id = sanitize_text_field( (string) $request->get_param( 'price_id' ) );
 		if ( '' === $price_id ) {
 			return new WP_Error( 'invalid_price', __( 'A price_id is required.', 'ajforms' ), array( 'status' => 400 ) );
@@ -2428,6 +2490,10 @@ class AJCore_REST_API {
 	}
 
 	public function portal_reservations_cart_checkout() {
+		$blocked = $this->block_impersonated_portal_write();
+		if ( is_wp_error( $blocked ) ) {
+			return $blocked;
+		}
 		if ( ! class_exists( 'AJCore_Reservations' ) ) {
 			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
 		}
@@ -3912,6 +3978,32 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'success' => true, 'message' => $action . ' completed.' ) );
 	}
 
+	public function ops_create_customer_impersonation_link( WP_REST_Request $request ) {
+		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+
+		$return_url = '';
+		$params     = $request->get_json_params();
+		if ( is_array( $params ) && ! empty( $params['return_url'] ) ) {
+			$return_url = esc_url_raw( (string) $params['return_url'] );
+		}
+
+		$result = $admin->create_customer_impersonation_link( $stripe_customer_id, 'ajops', $return_url );
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		return rest_ensure_response(
+			array(
+				'success' => true,
+				'url'     => esc_url_raw( $result ),
+			)
+		);
+	}
+
 	// ── Portal overview (flat counts for the mobile home screen) ─────────────
 
 	public function get_portal_overview() {
@@ -5141,6 +5233,26 @@ class AJCore_REST_API {
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────────────
+
+	private function block_impersonated_portal_write() {
+		$cookie_name = 'ajcore_impersonation_return';
+		if ( empty( $_COOKIE[ $cookie_name ] ) ) {
+			return true;
+		}
+
+		$token = sanitize_text_field( wp_unslash( $_COOKIE[ $cookie_name ] ) );
+		if ( '' === $token ) {
+			return true;
+		}
+
+		$hash    = hash_hmac( 'sha256', $token, wp_salt( 'auth' ) );
+		$payload = get_transient( 'ajcore_impersonation_return_' . $hash );
+		if ( is_array( $payload ) && ! empty( $payload['target_user_id'] ) && (int) $payload['target_user_id'] === get_current_user_id() ) {
+			return new WP_Error( 'ajcore_impersonation_readonly', __( 'This action is disabled while viewing as a client.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+
+		return true;
+	}
 
 	private function format_user( WP_User $user ) {
 		return array(
