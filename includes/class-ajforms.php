@@ -3893,6 +3893,59 @@ class AJForms {
 		return true;
 	}
 
+	/**
+	 * IDs (invoice / payment intent / charge) of this customer's fully refunded payments,
+	 * derived from synced Stripe charge data via the shared payment enrichment. Used to keep
+	 * refunded services out of Current Services.
+	 */
+	private function get_portal_refunded_payment_refs( $stripe_customer_id ) {
+		$refs = array();
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		if ( '' === $stripe_customer_id || ! class_exists( 'AJCore_REST_API' ) ) {
+			return $refs;
+		}
+
+		$pdb  = $this->get_pdb();
+		$rows = $pdb->get_results(
+			$pdb->prepare(
+				"SELECT id, stripe_object_id, object_type, stripe_customer_id, description, amount, currency, status, transaction_date, invoice_id, payment_intent_id, charge_id, raw_data FROM {$pdb->prefix}aj_portal_stripe_transactions WHERE stripe_customer_id = %s",
+				$stripe_customer_id
+			),
+			ARRAY_A
+		);
+		if ( empty( $rows ) ) {
+			return $refs;
+		}
+
+		$api  = new AJCore_REST_API();
+		$rows = $api->dedupe_stripe_transaction_rows( $rows );
+		$rows = $api->attach_payment_display_fields( $rows );
+		foreach ( $rows as $row ) {
+			if ( 'refunded' !== ( isset( $row['refund_status'] ) ? $row['refund_status'] : '' ) ) {
+				continue; // Partial refunds keep the service in place.
+			}
+			foreach ( array( 'stripe_object_id', 'invoice_id', 'payment_intent_id', 'charge_id' ) as $field ) {
+				if ( ! empty( $row[ $field ] ) ) {
+					$refs[ (string) $row[ $field ] ] = true;
+				}
+			}
+		}
+
+		return $refs;
+	}
+
+	private function portal_snapshot_payment_was_refunded( $snapshot, $refunded_refs ) {
+		if ( empty( $refunded_refs ) ) {
+			return false;
+		}
+		foreach ( array( 'invoice_id', 'payment_intent_id', 'checkout_session_id' ) as $field ) {
+			if ( ! empty( $snapshot->$field ) && isset( $refunded_refs[ (string) $snapshot->$field ] ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private function is_generic_customer_portal_service_label( $label ) {
 		$label = strtolower( trim( sanitize_text_field( (string) $label ) ) );
 		if ( '' === $label ) {
@@ -3930,17 +3983,6 @@ class AJForms {
 
 		$subscriptions      = $context['subscriptions'];
 		$current_services   = array_values( array_filter( $subscriptions, array( $this, 'is_current_portal_subscription' ) ) );
-		$displayable_snapshot_services = $this->dedupe_portal_service_snapshots_for_display(
-			array_values(
-				array_filter(
-					$context['service_snapshots'],
-					function ( $snapshot ) use ( $current_services ) {
-						return $this->is_displayable_customer_portal_snapshot( $snapshot ) && ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $current_services );
-					}
-				)
-			)
-		);
-		$snapshot_services  = array_values( array_filter( $displayable_snapshot_services, array( $this, 'is_current_portal_service_snapshot' ) ) );
 		$past_services      = array_values(
 			array_filter(
 				$subscriptions,
@@ -3949,14 +3991,35 @@ class AJForms {
 				}
 			)
 		);
-		$past_snapshot_services = array_values(
-			array_filter(
-				$displayable_snapshot_services,
-				function ( $snapshot ) {
-					return ! $this->is_current_portal_service_snapshot( $snapshot );
-				}
+		// The Stripe subscription rows drive Current vs Past. A snapshot represented by ANY
+		// known subscription is suppressed — active subscriptions render under Current, and a
+		// canceled subscription renders under Past, so its paid-invoice snapshot must not
+		// linger under Current Services as "Paid".
+		$displayable_snapshot_services = $this->dedupe_portal_service_snapshots_for_display(
+			array_values(
+				array_filter(
+					$context['service_snapshots'],
+					function ( $snapshot ) use ( $subscriptions ) {
+						return $this->is_displayable_customer_portal_snapshot( $snapshot ) && ! $this->recurring_snapshot_is_represented_by_active_subscription( $snapshot, $subscriptions );
+					}
+				)
 			)
 		);
+		$refunded_refs          = $this->get_portal_refunded_payment_refs( $context['stripe_customer_id'] );
+		$snapshot_services      = array();
+		$past_snapshot_services = array();
+		foreach ( $displayable_snapshot_services as $snapshot ) {
+			if ( $this->portal_snapshot_payment_was_refunded( $snapshot, $refunded_refs ) ) {
+				$snapshot->status         = 'refunded';
+				$past_snapshot_services[] = $snapshot;
+				continue;
+			}
+			if ( $this->is_current_portal_service_snapshot( $snapshot ) ) {
+				$snapshot_services[] = $snapshot;
+			} else {
+				$past_snapshot_services[] = $snapshot;
+			}
+		}
 		$ledger             = $context['ledger'];
 		$service_settings   = get_option( 'ajcore_customer_portal_services_display', array() );
 		$service_settings   = is_array( $service_settings ) ? $service_settings : array();
