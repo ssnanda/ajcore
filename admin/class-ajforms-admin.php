@@ -11491,6 +11491,13 @@ class AJForms_Admin {
 			'stripe_selected_prices'         => isset( $_POST['stripe_selected_prices'] ) && is_array( $_POST['stripe_selected_prices'] ) ? array_values( array_unique( array_map( 'sanitize_text_field', wp_unslash( $_POST['stripe_selected_prices'] ) ) ) ) : array(),
 		);
 
+		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key' ) as $secret_field ) {
+			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
+				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
+			}
+		}
+
 		$active_stripe_prefix = 'live' === $settings['stripe_mode'] ? 'stripe_live' : 'stripe_sandbox';
 		$settings['stripe_publishable_key'] = isset( $settings[ $active_stripe_prefix . '_publishable_key' ] ) ? $settings[ $active_stripe_prefix . '_publishable_key' ] : '';
 		$settings['stripe_secret_key']      = isset( $settings[ $active_stripe_prefix . '_secret_key' ] ) ? $settings[ $active_stripe_prefix . '_secret_key' ] : '';
@@ -21681,7 +21688,11 @@ class AJForms_Admin {
 										</div>
 										<div class="ajforms-settings-field">
 											<label for="stripe_sandbox_secret_key"><?php esc_html_e( 'Sandbox Secret Key', 'ajforms' ); ?></label>
-											<input name="stripe_sandbox_secret_key" id="stripe_sandbox_secret_key" type="text" value="<?php echo esc_attr( isset( $settings['stripe_sandbox_secret_key'] ) ? $settings['stripe_sandbox_secret_key'] : '' ); ?>" placeholder="sk_test_...">
+											<?php $sandbox_secret_saved = ! empty( $settings['stripe_sandbox_secret_key'] ); ?>
+											<input name="stripe_sandbox_secret_key" id="stripe_sandbox_secret_key" type="password" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $sandbox_secret_saved ? __( 'Saved — enter a new key to replace', 'ajforms' ) : 'sk_test_...' ); ?>">
+											<?php if ( $sandbox_secret_saved ) : ?>
+												<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings['stripe_sandbox_secret_key'] ) ) ); ?></p>
+											<?php endif; ?>
 										</div>
 										<div class="ajforms-settings-field">
 											<label for="stripe_live_publishable_key"><?php esc_html_e( 'Live Publishable Key', 'ajforms' ); ?></label>
@@ -21689,7 +21700,11 @@ class AJForms_Admin {
 										</div>
 										<div class="ajforms-settings-field">
 											<label for="stripe_live_secret_key"><?php esc_html_e( 'Live Secret Key', 'ajforms' ); ?></label>
-											<input name="stripe_live_secret_key" id="stripe_live_secret_key" type="text" value="<?php echo esc_attr( isset( $settings['stripe_live_secret_key'] ) ? $settings['stripe_live_secret_key'] : '' ); ?>" placeholder="sk_live_...">
+											<?php $live_secret_saved = ! empty( $settings['stripe_live_secret_key'] ); ?>
+											<input name="stripe_live_secret_key" id="stripe_live_secret_key" type="password" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $live_secret_saved ? __( 'Saved — enter a new key to replace', 'ajforms' ) : 'sk_live_...' ); ?>">
+											<?php if ( $live_secret_saved ) : ?>
+												<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings['stripe_live_secret_key'] ) ) ); ?></p>
+											<?php endif; ?>
 										</div>
 									</div>
 									<p class="ajforms-settings-help" style="margin-top:10px;"><?php esc_html_e( 'AJ Core stores Sandbox and Live keys separately. The Stripe Mode dropdown chooses which key pair is active, so switching modes does not overwrite the other environment.', 'ajforms' ); ?></p>

@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.6.4
+ * Version: 0.6.5
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.6.4' );
+	define( 'AJCORE_VERSION', '0.6.5' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -270,6 +270,139 @@ if ( ! function_exists( 'ajforms_get_stripe_setting_keys' ) ) {
 			'stripe_publishable_key',
 			'stripe_secret_key',
 		);
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_secret_setting_keys' ) ) {
+	/**
+	 * Settings fields that hold credentials and are encrypted at rest in wp_options.
+	 */
+	function ajcore_get_secret_setting_keys() {
+		return array(
+			'stripe_sandbox_secret_key',
+			'stripe_live_secret_key',
+			'stripe_secret_key',
+			'recaptcha_secret_key',
+			'hcaptcha_secret_key',
+			'turnstile_secret_key',
+			'asana_personal_access_token',
+		);
+	}
+}
+
+if ( ! function_exists( 'ajcore_encrypt_setting_value' ) ) {
+	/**
+	 * Encrypt one settings value with a key derived from this site's auth salt.
+	 * Format: "ajenc1:" + base64( nonce + secretbox ). Values that are empty or
+	 * already encrypted pass through unchanged, so the transform is idempotent.
+	 *
+	 * NOTE: rotating AUTH_KEY/AUTH_SALT in wp-config.php makes stored secrets
+	 * undecryptable — they must then be re-entered on the settings screen.
+	 */
+	function ajcore_encrypt_setting_value( $value ) {
+		$value = (string) $value;
+		if ( '' === $value || 0 === strpos( $value, 'ajenc1:' ) ) {
+			return $value;
+		}
+		if ( ! function_exists( 'sodium_crypto_secretbox' ) || ! function_exists( 'wp_salt' ) ) {
+			return $value;
+		}
+		$key   = hash( 'sha256', wp_salt( 'auth' ) . '|ajcore-settings-v1', true );
+		$nonce = random_bytes( SODIUM_CRYPTO_SECRETBOX_NONCEBYTES );
+		return 'ajenc1:' . base64_encode( $nonce . sodium_crypto_secretbox( $value, $nonce, $key ) );
+	}
+}
+
+if ( ! function_exists( 'ajcore_decrypt_setting_value' ) ) {
+	function ajcore_decrypt_setting_value( $value ) {
+		if ( ! is_string( $value ) || 0 !== strpos( $value, 'ajenc1:' ) ) {
+			return $value; // Plaintext (pre-migration) passes through.
+		}
+		if ( ! function_exists( 'sodium_crypto_secretbox_open' ) || ! function_exists( 'wp_salt' ) ) {
+			return '';
+		}
+		$raw = base64_decode( substr( $value, 7 ), true );
+		if ( false === $raw || strlen( $raw ) <= SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ) {
+			return '';
+		}
+		$key   = hash( 'sha256', wp_salt( 'auth' ) . '|ajcore-settings-v1', true );
+		$plain = sodium_crypto_secretbox_open(
+			substr( $raw, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ),
+			substr( $raw, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ),
+			$key
+		);
+		return false === $plain ? '' : $plain;
+	}
+}
+
+if ( ! function_exists( 'ajcore_encrypt_settings_secrets' ) ) {
+	/**
+	 * pre_update_option_ajforms_settings filter: every save path stores secrets encrypted.
+	 */
+	function ajcore_encrypt_settings_secrets( $settings ) {
+		if ( ! is_array( $settings ) ) {
+			return $settings;
+		}
+		foreach ( ajcore_get_secret_setting_keys() as $key ) {
+			if ( ! empty( $settings[ $key ] ) && is_string( $settings[ $key ] ) ) {
+				$settings[ $key ] = ajcore_encrypt_setting_value( $settings[ $key ] );
+			}
+		}
+		return $settings;
+	}
+}
+
+if ( ! function_exists( 'ajcore_decrypt_settings_secrets' ) ) {
+	/**
+	 * option_ajforms_settings filter: every read path sees decrypted secrets.
+	 */
+	function ajcore_decrypt_settings_secrets( $settings ) {
+		if ( ! is_array( $settings ) ) {
+			return $settings;
+		}
+		foreach ( ajcore_get_secret_setting_keys() as $key ) {
+			if ( ! empty( $settings[ $key ] ) && is_string( $settings[ $key ] ) ) {
+				$settings[ $key ] = ajcore_decrypt_setting_value( $settings[ $key ] );
+			}
+		}
+		return $settings;
+	}
+}
+
+add_filter( 'pre_update_option_ajforms_settings', 'ajcore_encrypt_settings_secrets' );
+add_filter( 'option_ajforms_settings', 'ajcore_decrypt_settings_secrets' );
+
+if ( ! function_exists( 'ajcore_maybe_encrypt_saved_settings_secrets' ) ) {
+	/**
+	 * One-time migration: re-save the settings option so existing plaintext secrets
+	 * pass through the encryption filter and land encrypted in the database.
+	 */
+	function ajcore_maybe_encrypt_saved_settings_secrets() {
+		if ( '1' === get_option( 'ajcore_settings_secrets_encrypted' ) ) {
+			return;
+		}
+		$settings = get_option( 'ajforms_settings', false );
+		if ( is_array( $settings ) && ! empty( $settings ) ) {
+			update_option( 'ajforms_settings', $settings );
+		}
+		update_option( 'ajcore_settings_secrets_encrypted', '1', false );
+	}
+}
+add_action( 'admin_init', 'ajcore_maybe_encrypt_saved_settings_secrets' );
+
+if ( ! function_exists( 'ajcore_mask_secret_for_display' ) ) {
+	/**
+	 * "sk_live_…82Uq" style hint for settings screens — never the full key.
+	 */
+	function ajcore_mask_secret_for_display( $value ) {
+		$value = (string) $value;
+		if ( '' === $value ) {
+			return '';
+		}
+		if ( strlen( $value ) <= 12 ) {
+			return '••••';
+		}
+		return substr( $value, 0, 8 ) . '••••' . substr( $value, -4 );
 	}
 }
 
