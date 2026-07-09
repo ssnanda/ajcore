@@ -471,7 +471,10 @@ publish_github_release() {
 
 find_local_sites_with_plugin() {
   local site_dir
+  [[ -d "$SITES_ROOT" ]] || return 0
+
   for site_dir in "$SITES_ROOT"/*/; do
+    [[ -d "$site_dir" ]] || continue
     [[ -d "${site_dir}wp-content/plugins/$PLUGIN_SLUG" ]] || continue
     basename "$site_dir"
   done
@@ -508,11 +511,10 @@ local_deploy_step() {
   echo ""
 
   local raw_input choice
-  read -r -p "Deploy to which sites? Enter numbers (e.g. 1 3), 'all', or Enter to skip: " raw_input
+  read -r -p "Deploy to which sites? Enter numbers (e.g. 1 3), 'all', or Enter for all: " raw_input
 
   if [[ -z "$raw_input" ]]; then
-    echo "Local deploy: skipped"
-    return 0
+    raw_input="all"
   fi
 
   local selected_indices=()
