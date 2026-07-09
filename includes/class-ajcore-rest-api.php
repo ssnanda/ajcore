@@ -1107,6 +1107,9 @@ class AJCore_REST_API {
 
 		// A checkout_session row is a receipt for a payment already represented by an invoice or
 		// payment_intent transaction — drop it when the object it links to survived the filtering above.
+		// Also drop sessions that were never completed (abandoned/expired carts): Stripe itself does
+		// not list those under Payments, only as customer events.
+		$paid_session_statuses = array( 'paid', 'complete', 'completed', 'succeeded' );
 		$linked_ids = array();
 		foreach ( $transactions as $tx ) {
 			if ( 'checkout_session' === strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' ) ) {
@@ -1117,9 +1120,12 @@ class AJCore_REST_API {
 			if ( '' !== $obj ) $linked_ids[ $obj ] = true;
 			if ( '' !== $pi )  $linked_ids[ $pi ]  = true;
 		}
-		return array_values( array_filter( $transactions, function( $tx ) use ( $linked_ids ) {
+		return array_values( array_filter( $transactions, function( $tx ) use ( $linked_ids, $paid_session_statuses ) {
 			if ( 'checkout_session' !== strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' ) ) {
 				return true;
+			}
+			if ( ! in_array( sanitize_key( isset( $tx['status'] ) ? (string) $tx['status'] : '' ), $paid_session_statuses, true ) ) {
+				return false;
 			}
 			$inv_id = isset( $tx['invoice_id'] ) ? (string) $tx['invoice_id'] : '';
 			$pi     = isset( $tx['payment_intent_id'] ) ? (string) $tx['payment_intent_id'] : '';
