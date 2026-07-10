@@ -553,6 +553,53 @@ body.wpf-is-resizing-field * {
 	background: #f8fafc;
 }
 
+.wpf-preview-container-children {
+	display: grid;
+	gap: 10px;
+	margin-top: 14px;
+}
+
+.wpf-preview-container-child {
+	padding: 12px;
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
+	background: #fff;
+}
+
+.wpf-preview-container-empty {
+	margin-top: 12px;
+	padding: 10px 12px;
+	border: 1px dashed #cbd5e1;
+	border-radius: 10px;
+	color: #64748b;
+	font-size: 13px;
+	background: #fff;
+}
+
+.wpf-container-child-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.wpf-container-child-list {
+	display: grid;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.wpf-container-child-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 9px 10px;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	background: #f8fafc;
+}
+
 .wpf-preview-label {
 	font-size: 14px;
 	font-weight: 700;

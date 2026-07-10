@@ -9421,6 +9421,20 @@ class AJForms_Admin {
 			}
 		}
 
+		if ( 'container' === $normalized['type'] ) {
+			$normalized['fields'] = array();
+
+			if ( ! empty( $field['fields'] ) && is_array( $field['fields'] ) ) {
+				foreach ( $field['fields'] as $child_field ) {
+					$normalized_child = $this->normalize_field_for_storage( $child_field );
+
+					if ( null !== $normalized_child ) {
+						$normalized['fields'][] = $normalized_child;
+					}
+				}
+			}
+		}
+
 		return $normalized;
 	}
 
@@ -12599,10 +12613,34 @@ class AJForms_Admin {
 
 		$decoded = json_decode( $form->form_schema, true );
 		if ( isset( $decoded['fields'] ) && is_array( $decoded['fields'] ) ) {
-			return $decoded['fields'];
+			return $this->flatten_form_schema_fields( $decoded['fields'] );
 		}
 
-		return is_array( $decoded ) ? $decoded : array();
+		return is_array( $decoded ) ? $this->flatten_form_schema_fields( $decoded ) : array();
+	}
+
+	private function flatten_form_schema_fields( $fields ) {
+		$flat_fields = array();
+
+		foreach ( (array) $fields as $field ) {
+			if ( ! is_array( $field ) ) {
+				continue;
+			}
+
+			$field_type = isset( $field['type'] ) ? (string) $field['type'] : 'text';
+
+			if ( 'container' === $field_type ) {
+				if ( ! empty( $field['fields'] ) && is_array( $field['fields'] ) ) {
+					$flat_fields = array_merge( $flat_fields, $this->flatten_form_schema_fields( $field['fields'] ) );
+				}
+
+				continue;
+			}
+
+			$flat_fields[] = $field;
+		}
+
+		return $flat_fields;
 	}
 
 	private function sanitize_lead_value_for_field( $field, $posted_value, $existing_value ) {

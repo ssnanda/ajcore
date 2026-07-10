@@ -10089,6 +10089,34 @@ class AJForms {
 		return in_array( $field_type, array( 'separator', 'note', 'heading', 'container' ), true );
 	}
 
+	private function flatten_form_fields( $fields, $include_containers = false ) {
+		$flat_fields = array();
+
+		foreach ( (array) $fields as $field ) {
+			if ( ! is_array( $field ) ) {
+				continue;
+			}
+
+			$field_type = ! empty( $field['type'] ) ? (string) $field['type'] : 'text';
+
+			if ( 'container' === $field_type ) {
+				if ( $include_containers ) {
+					$flat_fields[] = $field;
+				}
+
+				if ( ! empty( $field['fields'] ) && is_array( $field['fields'] ) ) {
+					$flat_fields = array_merge( $flat_fields, $this->flatten_form_fields( $field['fields'], $include_containers ) );
+				}
+
+				continue;
+			}
+
+			$flat_fields[] = $field;
+		}
+
+		return $flat_fields;
+	}
+
 	private function get_client_ip_address() {
 		$keys = array( 'HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'REMOTE_ADDR' );
 
@@ -10772,7 +10800,7 @@ class AJForms {
 		$lead_data = array();
 		$errors    = array();
 
-		foreach ( $fields as $field ) {
+		foreach ( $this->flatten_form_fields( $fields ) as $field ) {
 			if ( ! is_array( $field ) ) {
 				continue;
 			}
@@ -10994,6 +11022,7 @@ class AJForms {
 		$default_value       = ! empty( $field['default_value'] ) ? $field['default_value'] : '';
 		$accepted_file_types = ! empty( $field['accepted_file_types'] ) ? $field['accepted_file_types'] : '.pdf,.jpg,.jpeg,.png,.gif,.webp';
 		$options             = ! empty( $field['options'] ) && is_array( $field['options'] ) ? $field['options'] : array();
+		$child_fields        = array();
 
 		if ( 'question' === $field_type && empty( $options ) ) {
 			$options = array(
@@ -11006,6 +11035,14 @@ class AJForms {
 					'value' => 'no',
 				),
 			);
+		}
+
+		if ( 'container' === $field_type && ! empty( $field['fields'] ) && is_array( $field['fields'] ) ) {
+			foreach ( $field['fields'] as $child_field ) {
+				if ( is_array( $child_field ) ) {
+					$child_fields[] = $this->get_frontend_field_data( $child_field );
+				}
+			}
 		}
 
 		return array(
@@ -11024,6 +11061,7 @@ class AJForms {
 			'conversational'      => array_key_exists( 'conversational', $field ) ? ! empty( $field['conversational'] ) : ( ! empty( $field['conversation_step'] ) ? 'final_contact' !== $field['conversation_step'] : 'question' === $field_type ),
 			'accepted_file_types' => $accepted_file_types,
 			'posted_value'        => isset( $_POST[ $field_id ] ) ? wp_unslash( $_POST[ $field_id ] ) : $default_value,
+			'fields'              => $child_fields,
 		);
 	}
 
@@ -11035,6 +11073,7 @@ class AJForms {
 		$options             = $field_data['options'];
 		$posted_value        = $field_data['posted_value'];
 		$accepted_file_types = $field_data['accepted_file_types'];
+		$child_fields        = ! empty( $field_data['fields'] ) && is_array( $field_data['fields'] ) ? $field_data['fields'] : array();
 		$control_style       = 'width:100%;max-width:780px;min-height:54px;padding:14px 16px;border-radius:calc(var(--ajforms-radius) - 6px);background:var(--ajforms-input-bg);border:2px solid var(--ajforms-input-border);color:var(--ajforms-text);font-size:18px;line-height:1.35;box-sizing:border-box;';
 
 		ob_start();
@@ -11064,7 +11103,32 @@ class AJForms {
 					<strong style="display:block;margin-bottom:6px;color:var(--ajforms-text);font-size:18px;"><?php echo esc_html( $field_data['label'] ); ?></strong>
 				<?php endif; ?>
 				<?php if ( '' !== $field_data['note_text'] ) : ?>
-					<p style="margin:0;color:#64748b;line-height:1.55;"><?php echo esc_html( $field_data['note_text'] ); ?></p>
+					<p style="margin:0 <?php echo ! empty( $child_fields ) ? '0 16px' : '0'; ?>;color:#64748b;line-height:1.55;"><?php echo esc_html( $field_data['note_text'] ); ?></p>
+				<?php endif; ?>
+				<?php if ( ! empty( $child_fields ) ) : ?>
+					<div class="ajforms-container-children" style="display:grid;gap:18px;margin-top:18px;">
+						<?php foreach ( $child_fields as $child_field ) : ?>
+							<?php
+							$child_type = ! empty( $child_field['type'] ) ? $child_field['type'] : 'text';
+							?>
+							<div class="ajforms-container-child ajforms-field <?php echo esc_attr( $child_field['css_class'] ); ?>" style="margin:0;">
+								<?php if ( $this->is_display_only_form_field( $child_type ) ) : ?>
+									<?php echo $this->render_frontend_field_control( $child_field ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<?php else : ?>
+									<label for="<?php echo esc_attr( $child_field['id'] ); ?>" style="display:block;font-weight:600;margin-bottom:6px;color:var(--ajforms-text);">
+										<?php echo esc_html( $child_field['label'] ); ?>
+										<?php if ( ! empty( $child_field['required'] ) ) : ?>
+											<span style="color:#d63638;">*</span>
+										<?php endif; ?>
+									</label>
+									<?php echo $this->render_frontend_field_control( $child_field ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<?php if ( '' !== $child_field['help_text'] ) : ?>
+										<p style="margin-top:6px;color:#646970;font-size:12px;"><?php echo esc_html( $child_field['help_text'] ); ?></p>
+									<?php endif; ?>
+								<?php endif; ?>
+							</div>
+						<?php endforeach; ?>
+					</div>
 				<?php endif; ?>
 			</div>
 			<?php
@@ -11145,6 +11209,7 @@ class AJForms {
 	}
 
 	private function render_conversational_form( $form, $fields, $settings, $submission_result, $wrapper_style, $form_theme, $challenge_enabled, $challenge_config ) {
+		$fields = $this->flatten_form_fields( $fields );
 		$answerable_fields = array_values(
 			array_filter(
 				$fields,
@@ -11644,7 +11709,7 @@ class AJForms {
 		$submission_result = $this->handle_form_submission( $form, $fields, $settings );
 		$has_conversational_fields = ! empty(
 			array_filter(
-				$fields,
+				$this->flatten_form_fields( $fields ),
 				function ( $field ) {
 					$field_type = is_array( $field ) && ! empty( $field['type'] ) ? (string) $field['type'] : 'text';
 					if ( ! is_array( $field ) || $this->is_display_only_form_field( $field_type ) ) {

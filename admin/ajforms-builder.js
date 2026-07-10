@@ -191,12 +191,15 @@ function initAJFormsBuilder() {
 
     function getUniqueFieldName(type, excludeFieldId = null) {
         const base = getFieldNameBase(type);
-        const usedNames = new Set(
-            formSchema.fields
-                .filter((field) => field.id !== excludeFieldId)
-                .map((field) => slugifyFieldName(field.field_name))
-                .filter(Boolean)
-        );
+        const usedNames = new Set();
+        walkFields((field) => {
+            if (field.id !== excludeFieldId) {
+                const name = slugifyFieldName(field.field_name);
+                if (name) {
+                    usedNames.add(name);
+                }
+            }
+        });
 
         let index = 1;
         let candidate = `${base}${index}`;
@@ -326,6 +329,7 @@ function initAJFormsBuilder() {
                 help_text: '',
                 note_text: '',
                 heading_level: 'h2',
+                fields: [],
                 default_value: '',
                 conversational: null,
                 conversation_step: '',
@@ -351,6 +355,9 @@ function initAJFormsBuilder() {
 
         normalized.note_text = String(normalized.note_text || '');
         normalized.heading_level = ['h2', 'h3', 'h4'].includes(normalized.heading_level) ? normalized.heading_level : 'h2';
+        normalized.fields = normalized.type === 'container' && Array.isArray(normalized.fields)
+            ? normalizeFieldNames(normalized.fields.map(normalizeField))
+            : [];
 
         if (normalized.conversational === null || typeof normalized.conversational === 'undefined') {
             normalized.conversational = normalized.conversation_step
@@ -425,6 +432,46 @@ function initAJFormsBuilder() {
         }
 
         return normalized;
+    }
+
+    function walkFields(callback, fields = formSchema.fields, parent = null) {
+        fields.forEach((field, index) => {
+            callback(field, index, fields, parent);
+            if (field && field.type === 'container' && Array.isArray(field.fields)) {
+                walkFields(callback, field.fields, field);
+            }
+        });
+    }
+
+    function findFieldById(fieldId) {
+        let found = null;
+        walkFields((field) => {
+            if (!found && field.id === fieldId) {
+                found = field;
+            }
+        });
+        return found;
+    }
+
+    function findFieldLocation(fieldId) {
+        let location = null;
+        walkFields((field, index, fields, parent) => {
+            if (!location && field.id === fieldId) {
+                location = { field, index, fields, parent };
+            }
+        });
+        return location;
+    }
+
+    function regenerateFieldIdentity(field) {
+        field.id = 'field_' + Math.random().toString(36).slice(2, 11);
+        field.field_name = ['separator', 'note', 'heading', 'container'].includes(field.type)
+            ? ''
+            : getUniqueFieldName(field.type);
+
+        if (field.type === 'container' && Array.isArray(field.fields)) {
+            field.fields.forEach(regenerateFieldIdentity);
+        }
     }
 
     function normalizeFieldNames(fields) {
@@ -746,14 +793,14 @@ function initAJFormsBuilder() {
             formSchema.settings.confirmation_rules = normalizeConfirmationRules(formSchema.settings.confirmation_rules || []);
             activeFieldId = parsed.activeFieldId || null;
 
-            if (activeFieldId && !formSchema.fields.find((field) => field.id === activeFieldId)) {
+            if (activeFieldId && !findFieldById(activeFieldId)) {
                 activeFieldId = formSchema.fields.length ? formSchema.fields[0].id : null;
             }
 
             renderCanvas();
 
             if (activeFieldId) {
-                const field = formSchema.fields.find((item) => item.id === activeFieldId);
+                const field = findFieldById(activeFieldId);
                 if (field) {
                     openFieldSettings(field);
                 }
@@ -971,10 +1018,21 @@ function initAJFormsBuilder() {
         }
 
         if (field.type === 'container') {
+            const childFields = Array.isArray(field.fields) ? field.fields : [];
+            const renderedChildren = childFields.length
+                ? childFields.map((child) => `
+                    <div class="wpf-preview-container-child" data-child-field-id="${escapeHtml(child.id)}">
+                        ${renderFieldPreview(child)}
+                    </div>
+                `).join('')
+                : '<div class="wpf-preview-container-empty">Add fields inside this container from the Container settings.</div>';
             return `
                 <div class="wpf-preview-display-block wpf-preview-container-block">
                     <strong>${label || 'Section container'}</strong>
                     ${field.note_text ? `<p>${escapeHtml(field.note_text)}</p>` : ''}
+                    <div class="wpf-preview-container-children">
+                        ${renderedChildren}
+                    </div>
                 </div>
             `;
         }
@@ -1066,22 +1124,26 @@ function initAJFormsBuilder() {
             return;
         }
 
-        structureList.innerHTML = formSchema.fields.map((field, index) => `
-            <div class="wpf-structure-item ${field.id === activeFieldId ? 'active' : ''}" data-id="${field.id}">
+        const rows = [];
+        walkFields((field, index, fields, parent) => {
+            rows.push(`
+            <div class="wpf-structure-item ${field.id === activeFieldId ? 'active' : ''}" data-id="${escapeHtml(field.id)}">
                 <div class="wpf-structure-lines">
                     <div class="wpf-structure-line"><span>Field Type</span><strong>${escapeHtml(formatFieldTypeLabel(field.type))}</strong></div>
-                    <div class="wpf-structure-line"><span>Field Name</span><strong>${escapeHtml(['separator', 'note', 'heading', 'container'].includes(field.type) ? 'Display only' : (field.field_name || getFieldNameBase(field.type) + (index + 1)))}</strong></div>
+                    <div class="wpf-structure-line"><span>${parent ? 'Inside' : 'Field Name'}</span><strong>${escapeHtml(parent ? (parent.label || 'Container') : (['separator', 'note', 'heading', 'container'].includes(field.type) ? 'Display only' : (field.field_name || getFieldNameBase(field.type) + (index + 1))))}</strong></div>
                     <div class="wpf-structure-badges">
                         <span class="${field.required ? 'is-on' : 'is-off'}">Req ${field.required ? 'Yes' : 'No'}</span>
                         <span class="${field.conversational ? 'is-on' : 'is-off'}">Conv ${field.conversational ? 'Yes' : 'No'}</span>
                     </div>
                 </div>
             </div>
-        `).join('');
+            `);
+        });
+        structureList.innerHTML = rows.join('');
 
         structureList.querySelectorAll('.wpf-structure-item').forEach((item) => {
             item.addEventListener('click', () => {
-                const field = formSchema.fields.find((entry) => entry.id === item.dataset.id);
+                const field = findFieldById(item.dataset.id);
                 if (!field) {
                     return;
                 }
@@ -1108,8 +1170,14 @@ function initAJFormsBuilder() {
             '{submitted_at}'
         ];
 
-        formSchema.fields.forEach((field, index) => {
-            variables.push(`{field_${index + 1}}`);
+        let fieldIndex = 0;
+        walkFields((field) => {
+            if (!field || ['separator', 'note', 'heading', 'container'].includes(field.type)) {
+                return;
+            }
+
+            fieldIndex += 1;
+            variables.push(`{field_${fieldIndex}}`);
             if (field.field_name) {
                 variables.push(`{${field.field_name}}`);
             }
@@ -1119,14 +1187,21 @@ function initAJFormsBuilder() {
     }
 
     function getRuleFieldOptions(selectedFieldId = '') {
-        return formSchema.fields
-            .filter((field) => field && !['separator', 'note', 'heading', 'container'].includes(field.type))
-            .map((field) => `<option value="${escapeHtml(field.id)}" ${field.id === selectedFieldId ? 'selected' : ''}>${escapeHtml(field.label || field.field_name || formatFieldTypeLabel(field.type))}</option>`)
-            .join('');
+        const options = [];
+
+        walkFields((field) => {
+            if (!field || ['separator', 'note', 'heading', 'container'].includes(field.type)) {
+                return;
+            }
+
+            options.push(`<option value="${escapeHtml(field.id)}" ${field.id === selectedFieldId ? 'selected' : ''}>${escapeHtml(field.label || field.field_name || formatFieldTypeLabel(field.type))}</option>`);
+        });
+
+        return options.join('');
     }
 
     function getConditionValueInput(condition) {
-        const field = formSchema.fields.find((item) => item.id === condition.field);
+        const field = findFieldById(condition.field);
         const operator = condition.operator || 'equals';
 
         if (operator === 'is_empty' || operator === 'is_not_empty') {
@@ -1437,7 +1512,10 @@ function initAJFormsBuilder() {
                 if (e.target.classList.contains('delete')) {
                     pushHistory();
 
-                    formSchema.fields = formSchema.fields.filter((entry) => entry.id !== field.id);
+                    const location = findFieldLocation(field.id);
+                    if (location) {
+                        location.fields.splice(location.index, 1);
+                    }
 
                     if (activeFieldId === field.id) {
                         activeFieldId = formSchema.fields.length ? formSchema.fields[0].id : null;
@@ -1446,7 +1524,7 @@ function initAJFormsBuilder() {
                     renderCanvas();
 
                     if (activeFieldId) {
-                        const nextField = formSchema.fields.find((entry) => entry.id === activeFieldId);
+                        const nextField = findFieldById(activeFieldId);
                         if (nextField) {
                             openFieldSettings(nextField);
                         }
@@ -1459,11 +1537,12 @@ function initAJFormsBuilder() {
                     pushHistory();
 
                     const duplicated = cloneDeep(field);
-                    duplicated.id = 'field_' + Math.random().toString(36).slice(2, 11);
-                    duplicated.field_name = getUniqueFieldName(duplicated.type);
+                    regenerateFieldIdentity(duplicated);
 
-                    const index = formSchema.fields.findIndex((entry) => entry.id === field.id);
-                    formSchema.fields.splice(index + 1, 0, duplicated);
+                    const location = findFieldLocation(field.id);
+                    if (location) {
+                        location.fields.splice(location.index + 1, 0, duplicated);
+                    }
                     activeFieldId = duplicated.id;
 
                     renderCanvas();
@@ -1615,7 +1694,7 @@ function initAJFormsBuilder() {
             '<option value="__action">Action hook, then next</option>'
         ];
 
-        formSchema.fields.forEach((candidate) => {
+        walkFields((candidate) => {
             if (!candidate || candidate.id === currentField.id || !candidate.conversational || ['separator', 'note', 'heading', 'container'].includes(candidate.type)) {
                 return;
             }
@@ -1684,6 +1763,44 @@ function initAJFormsBuilder() {
                 });
             });
         });
+    }
+
+    function getContainerChildTypes() {
+        return [
+            ['Text', 'text'],
+            ['Email', 'email'],
+            ['Phone', 'phone'],
+            ['Textarea', 'textarea'],
+            ['Dropdown', 'select'],
+            ['Single Choice', 'multiple_choice'],
+            ['Multiple Choice', 'checkboxes'],
+            ['Number', 'number'],
+            ['Date', 'date'],
+            ['File Upload', 'file'],
+            ['Label / Note', 'note'],
+            ['Heading', 'heading']
+        ];
+    }
+
+    function renderContainerChildrenEditor(field) {
+        const children = Array.isArray(field.fields) ? field.fields : [];
+
+        return `
+            <div class="wpf-container-child-toolbar">
+                ${getContainerChildTypes().map(([label, type]) => `
+                    <button type="button" class="button wpf-container-add-child" data-type="${escapeHtml(type)}" data-label="${escapeHtml(label)}">${escapeHtml(label)}</button>
+                `).join('')}
+            </div>
+            <div class="wpf-container-child-list">
+                ${children.length ? children.map((child, index) => `
+                    <div class="wpf-container-child-row">
+                        <button type="button" class="button-link wpf-container-open-child" data-child-id="${escapeHtml(child.id)}">${escapeHtml(child.label || formatFieldTypeLabel(child.type))}</button>
+                        <span>${escapeHtml(formatFieldTypeLabel(child.type))}</span>
+                        <button type="button" class="button-link-delete wpf-container-remove-child" data-child-index="${index}">Remove</button>
+                    </div>
+                `).join('') : '<p class="wpf-setting-help">No fields inside this container yet.</p>'}
+            </div>
+        `;
     }
 
     function openFieldSettings(field) {
@@ -1797,6 +1914,16 @@ function initAJFormsBuilder() {
             `;
         }
 
+        if (field.type === 'container') {
+            html += `
+                <div class="wpf-field-settings-card">
+                    <div class="wpf-field-settings-card-title">Fields Inside Container</div>
+                    <p class="wpf-setting-help">Add fields here to render them inside this container on the form.</p>
+                    ${renderContainerChildrenEditor(field)}
+                </div>
+            `;
+        }
+
         if (field.type === 'question' || field.type === 'select' || field.type === 'checkboxes' || field.type === 'multiple_choice') {
             html += `
                 <div class="wpf-field-settings-card">
@@ -1817,6 +1944,45 @@ function initAJFormsBuilder() {
         }
 
         fieldSettingsPanel.innerHTML = html;
+
+        fieldSettingsPanel.querySelectorAll('.wpf-container-add-child').forEach((button) => {
+            button.addEventListener('click', () => {
+                pushHistory();
+                if (!Array.isArray(field.fields)) {
+                    field.fields = [];
+                }
+                const child = getDefaultField(button.dataset.type, button.dataset.label);
+                field.fields.push(child);
+                activeFieldId = child.id;
+                renderCanvas();
+                openFieldSettings(child);
+            });
+        });
+
+        fieldSettingsPanel.querySelectorAll('.wpf-container-open-child').forEach((button) => {
+            button.addEventListener('click', () => {
+                const child = findFieldById(button.dataset.childId);
+                if (!child) {
+                    return;
+                }
+                activeFieldId = child.id;
+                renderCanvas();
+                openFieldSettings(child);
+            });
+        });
+
+        fieldSettingsPanel.querySelectorAll('.wpf-container-remove-child').forEach((button) => {
+            button.addEventListener('click', () => {
+                pushHistory();
+                const index = parseInt(button.dataset.childIndex, 10);
+                if (Array.isArray(field.fields) && index >= 0 && index < field.fields.length) {
+                    field.fields.splice(index, 1);
+                }
+                activeFieldId = field.id;
+                renderCanvas();
+                openFieldSettings(field);
+            });
+        });
 
         fieldSettingsPanel.querySelectorAll('.wpf-live-input').forEach((input) => {
             let pushed = false;
@@ -2314,7 +2480,7 @@ function initAJFormsBuilder() {
     renderCanvas();
 
     if (activeFieldId) {
-        const initialField = formSchema.fields.find((field) => field.id === activeFieldId);
+        const initialField = findFieldById(activeFieldId);
         if (initialField) {
             openFieldSettings(initialField);
         }
