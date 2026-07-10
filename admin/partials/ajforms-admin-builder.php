@@ -325,6 +325,9 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 					'Address'         => 'address',
 					'Date'            => 'date',
 					'File Upload'     => 'file',
+					'Label / Note'    => 'note',
+					'Heading'         => 'heading',
+					'Container'       => 'container',
 					'Separator'       => 'separator',
 				);
 

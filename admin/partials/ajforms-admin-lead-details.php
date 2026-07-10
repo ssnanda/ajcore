@@ -479,6 +479,9 @@ $delete_url = wp_nonce_url(
 										</tr>
 										<?php continue; ?>
 									<?php endif; ?>
+									<?php if ( in_array( $field_type, array( 'note', 'heading', 'container' ), true ) ) : ?>
+										<?php continue; ?>
+									<?php endif; ?>
 									<tr>
 										<th style="width:220px;">
 											<?php echo esc_html( $field_label ); ?>

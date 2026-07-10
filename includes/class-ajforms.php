@@ -10085,6 +10085,10 @@ class AJForms {
 		return in_array( $field_type, array( 'checkboxes', 'multiple_choice', 'question', 'select' ), true );
 	}
 
+	private function is_display_only_form_field( $field_type ) {
+		return in_array( $field_type, array( 'separator', 'note', 'heading', 'container' ), true );
+	}
+
 	private function get_client_ip_address() {
 		$keys = array( 'HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'REMOTE_ADDR' );
 
@@ -10779,7 +10783,7 @@ class AJForms {
 			$field_name  = ! empty( $field['field_name'] ) ? sanitize_key( $field['field_name'] ) : sanitize_key( $field_label );
 			$required    = ! empty( $field['required'] );
 
-			if ( ! $field_id || 'separator' === $field_type ) {
+			if ( ! $field_id || $this->is_display_only_form_field( $field_type ) ) {
 				continue;
 			}
 
@@ -11013,6 +11017,8 @@ class AJForms {
 			'placeholder'         => ! empty( $field['placeholder'] ) ? $field['placeholder'] : '',
 			'options'             => $options,
 			'help_text'           => ! empty( $field['help_text'] ) ? $field['help_text'] : '',
+			'note_text'           => ! empty( $field['note_text'] ) ? $field['note_text'] : '',
+			'heading_level'       => ! empty( $field['heading_level'] ) && in_array( $field['heading_level'], array( 'h2', 'h3', 'h4' ), true ) ? $field['heading_level'] : 'h2',
 			'default_value'       => $default_value,
 			'css_class'           => ! empty( $field['css_class'] ) ? $field['css_class'] : '',
 			'conversational'      => array_key_exists( 'conversational', $field ) ? ! empty( $field['conversational'] ) : ( ! empty( $field['conversation_step'] ) ? 'final_contact' !== $field['conversation_step'] : 'question' === $field_type ),
@@ -11032,7 +11038,37 @@ class AJForms {
 		$control_style       = 'width:100%;max-width:780px;min-height:54px;padding:14px 16px;border-radius:calc(var(--ajforms-radius) - 6px);background:var(--ajforms-input-bg);border:2px solid var(--ajforms-input-border);color:var(--ajforms-text);font-size:18px;line-height:1.35;box-sizing:border-box;';
 
 		ob_start();
-		if ( 'textarea' === $field_type ) :
+		if ( 'heading' === $field_type ) :
+			$heading_level = in_array( $field_data['heading_level'], array( 'h2', 'h3', 'h4' ), true ) ? $field_data['heading_level'] : 'h2';
+			?>
+			<div class="ajforms-display-block ajforms-heading-block">
+				<<?php echo esc_attr( $heading_level ); ?> style="margin:0 0 8px;color:var(--ajforms-text);line-height:1.2;"><?php echo esc_html( $field_data['label'] ); ?></<?php echo esc_attr( $heading_level ); ?>>
+				<?php if ( '' !== $field_data['note_text'] ) : ?>
+					<p style="margin:0;color:#64748b;line-height:1.55;"><?php echo esc_html( $field_data['note_text'] ); ?></p>
+				<?php endif; ?>
+			</div>
+			<?php
+		elseif ( 'note' === $field_type ) :
+			?>
+			<div class="ajforms-display-block ajforms-note-block" style="padding:14px 16px;border-radius:calc(var(--ajforms-radius) - 6px);background:rgba(15,122,198,.08);border:1px solid rgba(15,122,198,.18);color:var(--ajforms-text);">
+				<?php if ( '' !== $field_data['label'] ) : ?>
+					<strong style="display:block;margin-bottom:5px;"><?php echo esc_html( $field_data['label'] ); ?></strong>
+				<?php endif; ?>
+				<p style="margin:0;color:#4b5563;line-height:1.55;"><?php echo esc_html( $field_data['note_text'] ); ?></p>
+			</div>
+			<?php
+		elseif ( 'container' === $field_type ) :
+			?>
+			<div class="ajforms-display-block ajforms-container-block" style="padding:18px 20px;border-radius:var(--ajforms-radius);background:rgba(248,250,252,.9);border:1px solid var(--ajforms-input-border);">
+				<?php if ( '' !== $field_data['label'] ) : ?>
+					<strong style="display:block;margin-bottom:6px;color:var(--ajforms-text);font-size:18px;"><?php echo esc_html( $field_data['label'] ); ?></strong>
+				<?php endif; ?>
+				<?php if ( '' !== $field_data['note_text'] ) : ?>
+					<p style="margin:0;color:#64748b;line-height:1.55;"><?php echo esc_html( $field_data['note_text'] ); ?></p>
+				<?php endif; ?>
+			</div>
+			<?php
+		elseif ( 'textarea' === $field_type ) :
 			?>
 			<textarea id="<?php echo esc_attr( $field_id ); ?>" name="<?php echo esc_attr( $field_id ); ?>" placeholder="<?php echo esc_attr( $placeholder ); ?>" <?php echo $required ? 'required' : ''; ?> style="<?php echo esc_attr( $control_style ); ?>min-height:110px;"><?php echo esc_textarea( is_string( $posted_value ) ? $posted_value : '' ); ?></textarea>
 			<?php
@@ -11113,7 +11149,8 @@ class AJForms {
 			array_filter(
 				$fields,
 				function ( $field ) {
-					return is_array( $field ) && ( empty( $field['type'] ) || 'separator' !== $field['type'] );
+					$field_type = is_array( $field ) && ! empty( $field['type'] ) ? (string) $field['type'] : 'text';
+					return is_array( $field ) && ! $this->is_display_only_form_field( $field_type );
 				}
 			)
 		);
@@ -11609,6 +11646,10 @@ class AJForms {
 			array_filter(
 				$fields,
 				function ( $field ) {
+					$field_type = is_array( $field ) && ! empty( $field['type'] ) ? (string) $field['type'] : 'text';
+					if ( ! is_array( $field ) || $this->is_display_only_form_field( $field_type ) ) {
+						return false;
+					}
 					return is_array( $field ) && ( array_key_exists( 'conversational', $field ) ? ! empty( $field['conversational'] ) : ( ! empty( $field['conversation_step'] ) ? 'final_contact' !== $field['conversation_step'] : ( ! empty( $field['type'] ) && 'question' === $field['type'] ) ) );
 				}
 			)
@@ -11688,7 +11729,9 @@ class AJForms {
 					$posted_value = isset( $_POST[ $field_id ] ) ? wp_unslash( $_POST[ $field_id ] ) : $default_value;
 					?>
 					<div class="ajforms-field <?php echo esc_attr( $css_class ); ?>" style="margin-bottom:20px;">
-						<?php if ( 'separator' !== $field_type ) : ?>
+						<?php if ( $this->is_display_only_form_field( $field_type ) ) : ?>
+							<?php echo $this->render_frontend_field_control( $this->get_frontend_field_data( $field ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+						<?php else : ?>
 							<label for="<?php echo esc_attr( $field_id ); ?>" style="display:block; font-weight:600; margin-bottom:6px;color:var(--ajforms-text);">
 								<?php echo esc_html( $field_label ); ?>
 								<?php if ( $required ) : ?>
@@ -11697,7 +11740,9 @@ class AJForms {
 							</label>
 						<?php endif; ?>
 
-						<?php if ( 'textarea' === $field_type ) : ?>
+						<?php if ( $this->is_display_only_form_field( $field_type ) ) : ?>
+							<?php // Display-only block was rendered above. ?>
+						<?php elseif ( 'textarea' === $field_type ) : ?>
 							<textarea
 								id="<?php echo esc_attr( $field_id ); ?>"
 								name="<?php echo esc_attr( $field_id ); ?>"

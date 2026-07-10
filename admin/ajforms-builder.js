@@ -180,7 +180,10 @@ function initAJFormsBuilder() {
             address: 'address',
             date: 'date',
             file: 'file',
-            separator: 'separator'
+            separator: 'separator',
+            note: 'note',
+            heading: 'heading',
+            container: 'container'
         };
 
         return bases[type] || 'field';
@@ -300,7 +303,10 @@ function initAJFormsBuilder() {
             address: 'Address Field',
             date: 'Date Field',
             file: 'File Upload',
-            separator: 'Separator'
+            separator: 'Separator',
+            note: 'Label / Note',
+            heading: 'Heading',
+            container: 'Container'
         };
 
         return labels[type] || 'Field';
@@ -318,6 +324,8 @@ function initAJFormsBuilder() {
                 css_class: '',
                 width: 100,
                 help_text: '',
+                note_text: '',
+                heading_level: 'h2',
                 default_value: '',
                 conversational: null,
                 conversation_step: '',
@@ -334,6 +342,15 @@ function initAJFormsBuilder() {
         }
 
         normalized.field_name = slugifyFieldName(normalized.field_name || '');
+
+        if (['separator', 'note', 'heading', 'container'].includes(normalized.type)) {
+            normalized.required = false;
+            normalized.conversational = false;
+            normalized.conversation_step = 'final_contact';
+        }
+
+        normalized.note_text = String(normalized.note_text || '');
+        normalized.heading_level = ['h2', 'h3', 'h4'].includes(normalized.heading_level) ? normalized.heading_level : 'h2';
 
         if (normalized.conversational === null || typeof normalized.conversational === 'undefined') {
             normalized.conversational = normalized.conversation_step
@@ -416,6 +433,11 @@ function initAJFormsBuilder() {
 
         return fields.map((field) => {
             const normalized = Object.assign({}, field);
+            if (['separator', 'note', 'heading', 'container'].includes(normalized.type)) {
+                normalized.field_name = '';
+                return normalized;
+            }
+
             const base = getFieldNameBase(normalized.type);
             const currentName = slugifyFieldName(normalized.field_name || '');
             const shouldGenerateName = !currentName || currentName === base || usedNames.has(currentName);
@@ -651,15 +673,33 @@ function initAJFormsBuilder() {
     }
 
     function getDefaultField(type, defaultLabel) {
+        const displayDefaults = {
+            note: {
+                label: 'Helpful note',
+                note_text: 'Add supporting text for visitors here.'
+            },
+            heading: {
+                label: 'Section heading',
+                note_text: '',
+                heading_level: 'h2'
+            },
+            container: {
+                label: 'Section container',
+                note_text: 'Use this block to visually group the next part of the form.'
+            }
+        };
+        const displayDefault = displayDefaults[type] || {};
         const field = normalizeField({
             id: 'field_' + Math.random().toString(36).slice(2, 11),
             type: type,
-            label: defaultLabel,
+            label: displayDefault.label || defaultLabel,
             field_name: getUniqueFieldName(type),
             placeholder: '',
-            required: true,
+            required: !['separator', 'note', 'heading', 'container'].includes(type),
             css_class: '',
-            width: 100
+            width: 100,
+            note_text: displayDefault.note_text || '',
+            heading_level: displayDefault.heading_level || 'h2'
         });
 
         return field;
@@ -911,6 +951,34 @@ function initAJFormsBuilder() {
         const label = escapeHtml(field.label || '');
         const placeholder = escapeHtml((formSchema.settings.use_label_placeholders && field.label ? field.label : field.placeholder) || '');
 
+        if (field.type === 'heading') {
+            const headingLevel = ['h2', 'h3', 'h4'].includes(field.heading_level) ? field.heading_level : 'h2';
+            return `
+                <div class="wpf-preview-display-block wpf-preview-heading-block">
+                    <${headingLevel}>${label || 'Section heading'}</${headingLevel}>
+                    ${field.note_text ? `<p>${escapeHtml(field.note_text)}</p>` : ''}
+                </div>
+            `;
+        }
+
+        if (field.type === 'note') {
+            return `
+                <div class="wpf-preview-display-block wpf-preview-note-block">
+                    ${label ? `<strong>${label}</strong>` : ''}
+                    <p>${escapeHtml(field.note_text || 'Add supporting note text here.')}</p>
+                </div>
+            `;
+        }
+
+        if (field.type === 'container') {
+            return `
+                <div class="wpf-preview-display-block wpf-preview-container-block">
+                    <strong>${label || 'Section container'}</strong>
+                    ${field.note_text ? `<p>${escapeHtml(field.note_text)}</p>` : ''}
+                </div>
+            `;
+        }
+
         if (field.type === 'textarea') {
             return `
                 <label class="wpf-preview-label">
@@ -1002,7 +1070,7 @@ function initAJFormsBuilder() {
             <div class="wpf-structure-item ${field.id === activeFieldId ? 'active' : ''}" data-id="${field.id}">
                 <div class="wpf-structure-lines">
                     <div class="wpf-structure-line"><span>Field Type</span><strong>${escapeHtml(formatFieldTypeLabel(field.type))}</strong></div>
-                    <div class="wpf-structure-line"><span>Field Name</span><strong>${escapeHtml(field.field_name || getFieldNameBase(field.type) + (index + 1))}</strong></div>
+                    <div class="wpf-structure-line"><span>Field Name</span><strong>${escapeHtml(['separator', 'note', 'heading', 'container'].includes(field.type) ? 'Display only' : (field.field_name || getFieldNameBase(field.type) + (index + 1)))}</strong></div>
                     <div class="wpf-structure-badges">
                         <span class="${field.required ? 'is-on' : 'is-off'}">Req ${field.required ? 'Yes' : 'No'}</span>
                         <span class="${field.conversational ? 'is-on' : 'is-off'}">Conv ${field.conversational ? 'Yes' : 'No'}</span>
@@ -1052,7 +1120,7 @@ function initAJFormsBuilder() {
 
     function getRuleFieldOptions(selectedFieldId = '') {
         return formSchema.fields
-            .filter((field) => field && field.type !== 'separator')
+            .filter((field) => field && !['separator', 'note', 'heading', 'container'].includes(field.type))
             .map((field) => `<option value="${escapeHtml(field.id)}" ${field.id === selectedFieldId ? 'selected' : ''}>${escapeHtml(field.label || field.field_name || formatFieldTypeLabel(field.type))}</option>`)
             .join('');
     }
@@ -1548,7 +1616,7 @@ function initAJFormsBuilder() {
         ];
 
         formSchema.fields.forEach((candidate) => {
-            if (!candidate || candidate.id === currentField.id || !candidate.conversational || candidate.type === 'separator') {
+            if (!candidate || candidate.id === currentField.id || !candidate.conversational || ['separator', 'note', 'heading', 'container'].includes(candidate.type)) {
                 return;
             }
 
@@ -1624,6 +1692,55 @@ function initAJFormsBuilder() {
             fieldTab.click();
         }
 
+        const isDisplayBlock = ['separator', 'note', 'heading', 'container'].includes(field.type);
+        const contentTitle = isDisplayBlock ? 'Display Text' : 'Content';
+        const labelText = field.type === 'heading' ? 'Heading Text' : (field.type === 'note' ? 'Label Text' : (field.type === 'container' ? 'Container Label' : 'Field Label'));
+        const noteControl = ['note', 'heading', 'container'].includes(field.type)
+            ? `
+                        <div class="wpf-setting-row">
+                            <label>${field.type === 'heading' ? 'Supporting Note' : 'Note Text'}</label>
+                            <textarea class="wpf-live-input" data-key="note_text" rows="4">${escapeHtml(field.note_text || '')}</textarea>
+                        </div>
+            `
+            : '';
+        const headingLevelControl = field.type === 'heading'
+            ? `
+                        <div class="wpf-setting-row">
+                            <label>Heading Level</label>
+                            <select class="wpf-live-select" data-key="heading_level">
+                                <option value="h2" ${field.heading_level === 'h2' ? 'selected' : ''}>H2</option>
+                                <option value="h3" ${field.heading_level === 'h3' ? 'selected' : ''}>H3</option>
+                                <option value="h4" ${field.heading_level === 'h4' ? 'selected' : ''}>H4</option>
+                            </select>
+                        </div>
+            `
+            : '';
+        const fieldNameControl = isDisplayBlock
+            ? ''
+            : `
+                        <div class="wpf-setting-row">
+                            <label>Field Name</label>
+                            <input type="text" class="wpf-live-input" data-key="field_name" value="${escapeHtml(field.field_name || '')}">
+                            <p class="wpf-setting-help">Use this in messages as <code>{${escapeHtml(field.field_name || 'field_name')}}</code>.</p>
+                        </div>
+            `;
+        const fieldBehaviorControls = isDisplayBlock
+            ? ''
+            : `
+                    <div class="wpf-setting-row">
+                        <label class="wpf-toggle-card">
+                            <strong>Required Field</strong>
+                            <input type="checkbox" class="wpf-live-checkbox" data-key="required" ${field.required ? 'checked' : ''}>
+                        </label>
+                    </div>
+                    <div class="wpf-setting-row">
+                        <label class="wpf-toggle-card">
+                            <strong>Conversational Field</strong>
+                            <input type="checkbox" class="wpf-live-checkbox" data-key="conversational" ${field.conversational ? 'checked' : ''}>
+                        </label>
+                    </div>
+            `;
+
         let html = `
             <div class="wpf-field-settings-shell">
                 <div class="wpf-field-settings-header">
@@ -1633,17 +1750,15 @@ function initAJFormsBuilder() {
                 </div>
 
                 <div class="wpf-field-settings-card">
-                    <div class="wpf-field-settings-card-title">Content</div>
+                    <div class="wpf-field-settings-card-title">${contentTitle}</div>
                     <div class="wpf-field-settings-grid">
                         <div class="wpf-setting-row">
-                            <label>Field Label</label>
+                            <label>${labelText}</label>
                             <input type="text" class="wpf-live-input" data-key="label" value="${escapeHtml(field.label || '')}">
                         </div>
-                        <div class="wpf-setting-row">
-                            <label>Field Name</label>
-                            <input type="text" class="wpf-live-input" data-key="field_name" value="${escapeHtml(field.field_name || '')}">
-                            <p class="wpf-setting-help">Use this in messages as <code>{${escapeHtml(field.field_name || 'field_name')}}</code>.</p>
-                        </div>
+                        ${fieldNameControl}
+                        ${headingLevelControl}
+                        ${noteControl}
                     </div>
                 </div>
 
@@ -1664,18 +1779,7 @@ function initAJFormsBuilder() {
                             </select>
                         </div>
                     </div>
-                    <div class="wpf-setting-row">
-                        <label class="wpf-toggle-card">
-                            <strong>Required Field</strong>
-                            <input type="checkbox" class="wpf-live-checkbox" data-key="required" ${field.required ? 'checked' : ''}>
-                        </label>
-                    </div>
-                    <div class="wpf-setting-row">
-                        <label class="wpf-toggle-card">
-                            <strong>Conversational Field</strong>
-                            <input type="checkbox" class="wpf-live-checkbox" data-key="conversational" ${field.conversational ? 'checked' : ''}>
-                        </label>
-                    </div>
+                    ${fieldBehaviorControls}
                 </div>
             </div>
         `;

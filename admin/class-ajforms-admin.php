@@ -9336,6 +9336,8 @@ class AJForms_Admin {
 			'css_class'   => isset( $field['css_class'] ) ? sanitize_html_class( $field['css_class'] ) : '',
 			'width'       => isset( $field['width'] ) ? absint( $field['width'] ) : 100,
 			'help_text'   => isset( $field['help_text'] ) ? sanitize_text_field( $field['help_text'] ) : '',
+			'note_text'   => isset( $field['note_text'] ) ? sanitize_textarea_field( $field['note_text'] ) : '',
+			'heading_level' => isset( $field['heading_level'] ) && in_array( sanitize_key( $field['heading_level'] ), array( 'h2', 'h3', 'h4' ), true ) ? sanitize_key( $field['heading_level'] ) : 'h2',
 			'default_value' => isset( $field['default_value'] ) ? sanitize_text_field( $field['default_value'] ) : '',
 			'conversational' => array_key_exists( 'conversational', $field ) ? ! empty( $field['conversational'] ) : ( isset( $field['conversation_step'] ) ? 'final_contact' !== sanitize_key( $field['conversation_step'] ) : ( isset( $field['type'] ) && 'question' === sanitize_key( $field['type'] ) ) ),
 			'branch_map'   => array(),
@@ -9354,6 +9356,13 @@ class AJForms_Admin {
 
 		if ( ! in_array( $normalized['width'], array( 100, 50, 33, 25 ), true ) ) {
 			$normalized['width'] = 100;
+		}
+
+		if ( in_array( $normalized['type'], array( 'separator', 'note', 'heading', 'container' ), true ) ) {
+			$normalized['required']          = false;
+			$normalized['conversational']    = false;
+			$normalized['conversation_step'] = 'final_contact';
+			$normalized['field_name']        = '';
 		}
 
 		if ( isset( $field['branch_map'] ) && is_array( $field['branch_map'] ) ) {
@@ -12602,7 +12611,7 @@ class AJForms_Admin {
 		$label      = ! empty( $field['label'] ) ? $field['label'] : $field_id;
 		$required   = ! empty( $field['required'] );
 
-		if ( 'separator' === $field_type || '' === $field_id ) {
+		if ( in_array( $field_type, array( 'separator', 'note', 'heading', 'container' ), true ) || '' === $field_id ) {
 			return array( 'skip' => true );
 		}
 

@@ -515,6 +515,44 @@ body.wpf-is-resizing-field * {
 	gap: 10px;
 }
 
+.wpf-preview-display-block {
+	width: 100%;
+	border-radius: 14px;
+	color: #172033;
+}
+
+.wpf-preview-display-block h2,
+.wpf-preview-display-block h3,
+.wpf-preview-display-block h4 {
+	margin: 0 0 8px;
+	color: #111827;
+	line-height: 1.18;
+}
+
+.wpf-preview-display-block p {
+	margin: 0;
+	color: #64748b;
+	line-height: 1.55;
+}
+
+.wpf-preview-note-block {
+	padding: 14px 16px;
+	border: 1px solid #bfdbfe;
+	background: #eff6ff;
+}
+
+.wpf-preview-note-block strong {
+	display: block;
+	margin-bottom: 5px;
+	color: #1e3a8a;
+}
+
+.wpf-preview-container-block {
+	padding: 18px 20px;
+	border: 1px dashed #cbd5e1;
+	background: #f8fafc;
+}
+
 .wpf-preview-label {
 	font-size: 14px;
 	font-weight: 700;
