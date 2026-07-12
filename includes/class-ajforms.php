@@ -14366,6 +14366,9 @@ class AJForms {
 		};
 
 		$zoho_cal_uid = ! empty( $settings['zoho_calendar_uid'] ) ? trim( (string) $settings['zoho_calendar_uid'] ) : '';
+		if ( '' === $zoho_cal_uid && ! empty( $settings['zoho_reservations_enabled'] ) ) {
+			$log_zoho_feed_failure( 'no_calendar_uid', 'zoho_calendar_uid is empty — set the Calendar UID in Calendar/Reservations Step 4; busy times cannot be blocked without it.' );
+		}
 		if ( '' !== $zoho_cal_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
 			$zoho_token = $this->get_valid_zoho_token( $settings );
 			if ( '' === $zoho_token ) {

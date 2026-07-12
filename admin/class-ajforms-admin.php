@@ -23061,6 +23061,45 @@ class AJForms_Admin {
 		<?php endif; ?>
 
 		<?php
+		// ── Busy-time feed self test: run the exact pipeline the booking calendar
+		// uses and show which link is broken. Zero-click production diagnosis.
+		$diag_rows = array();
+		$diag_uid  = trim( (string) ( $settings['zoho_calendar_uid'] ?? '' ) );
+		$diag_tz   = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$diag_rows[] = array( ! empty( $settings['zoho_reservations_enabled'] ), __( 'Reservations enabled', 'ajforms' ), '' );
+		$diag_rows[] = array(
+			'' !== $diag_uid,
+			__( 'Calendar UID (Step 4)', 'ajforms' ),
+			'' !== $diag_uid ? substr( $diag_uid, 0, 8 ) . '…' : __( 'MISSING — the booking calendar reads busy events from this Calendar UID. Without it, no times are blocked.', 'ajforms' ),
+		);
+		if ( class_exists( 'AJCore_Zoho_Calendar' ) ) {
+			$diag_settings = $settings;
+			$diag_token    = AJCore_Zoho_Calendar::get_valid_token( $diag_settings );
+			$diag_rows[]   = array(
+				'' !== $diag_token,
+				__( 'Zoho access token', 'ajforms' ),
+				'' !== $diag_token ? __( 'valid (auto-refreshed if needed)', 'ajforms' ) : __( 'MISSING/refresh failed — re-exchange a generated code in Step 5.', 'ajforms' ),
+			);
+			if ( '' !== $diag_uid && '' !== $diag_token ) {
+				$diag_events = AJCore_Zoho_Calendar::get_events_for_range( $diag_uid, gmdate( 'c' ), gmdate( 'c', time() + 7 * DAY_IN_SECONDS ), $diag_tz, $diag_token );
+				$diag_rows[] = is_wp_error( $diag_events )
+					? array( false, __( 'Zoho events feed', 'ajforms' ), $diag_events->get_error_message() )
+					: array( true, __( 'Zoho events feed', 'ajforms' ), sprintf( __( '%d busy event(s) found in the next 7 days', 'ajforms' ), count( $diag_events ) ) );
+			}
+		}
+		?>
+		<div class="ajc-step-card" style="border-left:4px solid #3157ff;">
+			<h3 style="margin-bottom:8px;"><?php esc_html_e( 'Busy-Time Feed Self Test', 'ajforms' ); ?></h3>
+			<?php foreach ( $diag_rows as $row ) : ?>
+				<div style="display:flex;gap:8px;align-items:baseline;padding:2px 0;">
+					<span style="font-weight:900;color:<?php echo $row[0] ? '#16a34a' : '#dc2626'; ?>"><?php echo $row[0] ? '✓' : '✗'; ?></span>
+					<strong><?php echo esc_html( $row[1] ); ?></strong>
+					<?php if ( '' !== $row[2] ) : ?><span style="color:<?php echo $row[0] ? '#475569' : '#b91c1c'; ?>"><?php echo esc_html( $row[2] ); ?></span><?php endif; ?>
+				</div>
+			<?php endforeach; ?>
+		</div>
+
+		<?php
 		$s_enabled       = ! empty( $settings['zoho_reservations_enabled'] );
 		$s_appt_url      = ! empty( $settings['zoho_schedule_appointment_url'] );
 		$s_biz           = ! empty( $settings['reservation_business_hours_label'] );
@@ -23261,7 +23300,7 @@ class AJForms_Admin {
 				<summary style="cursor:pointer;font-weight:700;font-size:14px;list-style:none;display:flex;align-items:center;gap:10px">
 					<span class="ajc-step-num opt">4</span>
 					<?php esc_html_e( 'Zoho Calendar IDs', 'ajforms' ); ?>
-					<span class="ajc-badge ajc-badge-opt"><?php esc_html_e( 'Optional – only if using Zoho API to create events', 'ajforms' ); ?></span>
+					<span class="ajc-badge ajc-badge-req"><?php esc_html_e( 'Required — busy-time blocking reads events from this Calendar UID', 'ajforms' ); ?></span>
 				</summary>
 				<p style="margin:10px 0 8px;font-size:13px;color:#475569"><?php esc_html_e( 'Skip this unless you plan to have AJCore create calendar events via the Zoho API. The URL-based approach in Step 2 does not require these.', 'ajforms' ); ?></p>
 
