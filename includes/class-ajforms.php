@@ -12539,15 +12539,33 @@ class AJForms {
 					.then(successCb)
 					.catch(failureCb);
 				},
+				displayEventEnd: true,
+				eventTimeFormat: { hour: 'numeric', minute: '2-digit', meridiem: 'short' },
 				eventContent: function(arg) {
-					var el = document.createElement('div');
-					el.style.cssText = 'padding:2px 4px;font-size:11px;font-weight:700;overflow:hidden;';
-					el.textContent = arg.event.title || 'Booked';
-					return { domNodes: [el] };
+					var wrap = document.createElement('div');
+					wrap.style.cssText = 'padding:4px 7px;overflow:hidden;font-family:inherit;line-height:1.3;';
+					var label = document.createElement('div');
+					label.style.cssText = 'font-size:12px;font-weight:800;letter-spacing:-.01em;text-transform:uppercase;';
+					label.textContent = arg.event.title || '<?php echo esc_js( __( 'Unavailable', 'ajforms' ) ); ?>';
+					wrap.appendChild(label);
+					if (arg.timeText) {
+						var time = document.createElement('div');
+						time.style.cssText = 'font-size:12px;font-weight:700;opacity:.9;white-space:nowrap;';
+						time.textContent = arg.timeText;
+						wrap.appendChild(time);
+					}
+					return { domNodes: [wrap] };
 				},
 				eventDidMount: function(info) {
 					info.el.style.cursor = 'not-allowed';
-					info.el.title = '<?php echo esc_js( __( 'Already booked', 'ajforms' ) ); ?>';
+					var tipTime = '';
+					try {
+						var fmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+						if (info.event.start && info.event.end) {
+							tipTime = ' ' + fmt.format(info.event.start) + ' – ' + fmt.format(info.event.end);
+						}
+					} catch (e) {}
+					info.el.title = (info.event.title || '<?php echo esc_js( __( 'Unavailable', 'ajforms' ) ); ?>') + tipTime;
 				},
 				dateClick: function(info) {
 					if (calendar.view.type === 'dayGridMonth') {
