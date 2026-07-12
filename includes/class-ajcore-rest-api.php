@@ -3478,7 +3478,9 @@ class AJCore_REST_API {
 			return array( 'available' => false, 'message' => $conflict->get_error_message() );
 		}
 
-		$api_token    = ! empty( $settings['zoho_access_token'] ) ? $settings['zoho_access_token'] : ( ! empty( $settings['zoho_api_token'] ) ? $settings['zoho_api_token'] : '' );
+		// Auto-refresh: Zoho access tokens expire hourly; with the lenient mode below,
+		// a stale token would 401 and report busy slots as available to AJOps/iOS.
+		$api_token    = class_exists( 'AJCore_Zoho_Calendar' ) ? AJCore_Zoho_Calendar::get_valid_token( $settings ) : '';
 		$calendar_uid = ! empty( $settings['zoho_calendar_uid'] )         ? $settings['zoho_calendar_uid']         : '';
 		$resource_uid = ! empty( $settings['zoho_resource_uid'] )         ? $settings['zoho_resource_uid']         : '';
 		$freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';

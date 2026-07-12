@@ -15,6 +15,96 @@ if ( ! defined( 'WPINC' ) ) {
 class AJCore_Zoho_Calendar {
 
 	/**
+	 * Return a valid Zoho API access token, auto-refreshing with the stored
+	 * refresh token when the current one is expired (Zoho tokens last 1 hour).
+	 *
+	 * This is the ONLY correct way to obtain a token before calling the Zoho
+	 * API. Reading `zoho_access_token` straight out of the settings array
+	 * silently breaks one hour after the last refresh: availability checks
+	 * start returning HTTP 401, lenient callers then treat busy slots as
+	 * free, and strict callers block every booking.
+	 *
+	 * @param array $settings Plugin settings, passed by reference so the
+	 *                        refreshed token is visible to the caller.
+	 * @return string Valid access token, or empty string if none can be obtained.
+	 */
+	public static function get_valid_token( array &$settings = array() ) {
+		if ( empty( $settings ) ) {
+			$settings = get_option( 'ajforms_settings', array() );
+			if ( ! is_array( $settings ) ) {
+				$settings = array();
+			}
+		}
+
+		$token      = ! empty( $settings['zoho_access_token'] ) ? trim( (string) $settings['zoho_access_token'] )
+			: ( ! empty( $settings['zoho_api_token'] ) ? trim( (string) $settings['zoho_api_token'] ) : '' );
+		$exp_raw    = $settings['zoho_token_expires_at'] ?? $settings['zoho_api_token_expires_at'] ?? '';
+		$expires_at = '' !== $exp_raw ? strtotime( (string) $exp_raw ) : 0;
+
+		// Token still valid (with 60-second buffer).
+		if ( '' !== $token && $expires_at > time() + 60 ) {
+			return $token;
+		}
+
+		$refresh_token = ! empty( $settings['zoho_refresh_token'] ) ? trim( (string) $settings['zoho_refresh_token'] ) : '';
+		$client_id     = ! empty( $settings['zoho_client_id'] )     ? trim( (string) $settings['zoho_client_id'] )
+			: ( ! empty( $settings['zoho_oauth_client_id'] )        ? trim( (string) $settings['zoho_oauth_client_id'] ) : '' );
+		$client_secret = ! empty( $settings['zoho_client_secret'] ) ? trim( (string) $settings['zoho_client_secret'] )
+			: ( ! empty( $settings['zoho_oauth_client_secret'] )    ? trim( (string) $settings['zoho_oauth_client_secret'] ) : '' );
+
+		if ( '' === $refresh_token || '' === $client_id || '' === $client_secret ) {
+			// No way to refresh — return whatever we have; an expired token at
+			// least surfaces a 401 the caller can log instead of silently skipping.
+			return $token;
+		}
+
+		$response = wp_remote_post(
+			add_query_arg(
+				array(
+					'grant_type'    => 'refresh_token',
+					'client_id'     => $client_id,
+					'client_secret' => $client_secret,
+					'refresh_token' => $refresh_token,
+				),
+				'https://accounts.zoho.com/oauth/v2/token'
+			),
+			array( 'timeout' => 15 )
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $token;
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( empty( $body['access_token'] ) ) {
+			return $token;
+		}
+
+		$new_token  = sanitize_text_field( (string) $body['access_token'] );
+		$expires_in = ! empty( $body['expires_in'] ) ? absint( $body['expires_in'] ) : 3600;
+		$new_exp    = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
+
+		// Persist on the freshly-read option so we never write back a
+		// defaults-merged settings array from the caller.
+		$stored = get_option( 'ajforms_settings', array() );
+		if ( ! is_array( $stored ) ) {
+			$stored = array();
+		}
+		$stored['zoho_access_token']         = $new_token;
+		$stored['zoho_token_expires_at']     = $new_exp;
+		$stored['zoho_api_token']            = $new_token;
+		$stored['zoho_api_token_expires_at'] = $new_exp;
+		update_option( 'ajforms_settings', $stored, false );
+
+		$settings['zoho_access_token']         = $new_token;
+		$settings['zoho_token_expires_at']     = $new_exp;
+		$settings['zoho_api_token']            = $new_token;
+		$settings['zoho_api_token_expires_at'] = $new_exp;
+
+		return $new_token;
+	}
+
+	/**
 	 * Build a prefilled Zoho Schedule Appointment URL from a template.
 	 *
 	 * Template placeholders (exact strings from Zoho):
@@ -504,8 +594,7 @@ class AJCore_Zoho_Calendar {
 	 * @return array|WP_Error Array with 'event_id' on success, WP_Error otherwise.
 	 */
 	public static function create_zoho_calendar_event( $reservation, $settings ) {
-		$api_token = ! empty( $settings['zoho_access_token'] ) ? trim( (string) $settings['zoho_access_token'] )
-			: ( ! empty( $settings['zoho_api_token'] ) ? trim( (string) $settings['zoho_api_token'] ) : '' );
+		$api_token = self::get_valid_token( $settings );
 
 		if ( is_object( $reservation ) ) {
 			$reservation = (array) $reservation;
