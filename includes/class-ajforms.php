@@ -12478,15 +12478,18 @@ class AJForms {
 
 			// ── FullCalendar ────────────────────────────────────────────
 			var isSmallScreen = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
+			// Full Sun–Sat week by default: weekends are bookable (after-hours rate),
+			// so the Mon–Fri "Work Week" view must not be the default — it hides
+			// weekend bookings and makes the portal disagree with the Zoho calendar.
 			var calendar = new FullCalendar.Calendar(calEl, {
 				timeZone:       tz,
-				initialView:    isSmallScreen ? 'timeGridDay' : 'timeGridWorkWeek',
-				firstDay:       1,
+				initialView:    isSmallScreen ? 'timeGridDay' : 'timeGridWeek',
+				firstDay:       0,
 				height:         'auto',
 				headerToolbar: isSmallScreen ? {
 					left:   'prev,next',
 					center: 'title',
-					right:  'timeGridDay,timeGridWorkWeek,dayGridMonth'
+					right:  'timeGridDay,timeGridWeek,dayGridMonth'
 				} : {
 					left:   'prev,next today',
 					center: 'title',
