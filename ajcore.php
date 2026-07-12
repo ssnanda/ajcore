@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.6.15
+ * Version: 0.6.16
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.6.15' );
+	define( 'AJCORE_VERSION', '0.6.16' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -229,12 +229,18 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 			update_option( 'ajforms_settings', $settings );
 		}
 
-		// Overlay calendar/reservation settings from shared DB so all sites use the same values.
+		// Calendar/reservation settings are shared across sites. The master's local
+		// option is the source of truth (it pushes to the shared DB on every save);
+		// secondary sites overlay the shared values so they never rely on their own
+		// stale local copies.
 		if ( function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled()
 			&& function_exists( 'ajcore_read_shared_calendar_settings' ) ) {
-			$shared_calendar = ajcore_read_shared_calendar_settings();
-			if ( ! empty( $shared_calendar ) ) {
-				$settings = array_merge( $settings, $shared_calendar );
+			$is_master = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
+			if ( ! $is_master ) {
+				$shared_calendar = ajcore_read_shared_calendar_settings();
+				if ( ! empty( $shared_calendar ) ) {
+					$settings = array_merge( $settings, $shared_calendar );
+				}
 			}
 		}
 
@@ -661,30 +667,35 @@ if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) ) {
 	 * When shared DB is enabled, reads is_master from the aj_shared_sites control table.
 	 */
 	function ajcore_is_stripe_sync_owner() {
+		static $cached = null;
+		if ( null !== $cached ) {
+			return $cached;
+		}
+
 		if ( ! ajcore_is_shared_db_enabled() ) {
-			return true;
+			return $cached = true;
 		}
 
 		$shared_db = ajcore_get_shared_db();
 		if ( ! $shared_db ) {
-			return true; // Can't connect — don't silently disable syncing.
+			return $cached = true; // Can't connect — don't silently disable syncing.
 		}
 
 		$uuid = (string) get_option( 'ajcore_site_uuid', '' );
 		if ( '' === $uuid ) {
-			return false;
+			return $cached = false;
 		}
 
 		$table = $shared_db->prefix . 'aj_shared_sites';
 		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-			return true; // Control table not yet created — schema not initialized yet.
+			return $cached = true; // Control table not yet created — schema not initialized yet.
 		}
 
 		$is_master = $shared_db->get_var(
 			$shared_db->prepare( "SELECT is_master FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid )
 		);
 
-		return '1' === (string) $is_master;
+		return $cached = ( '1' === (string) $is_master );
 	}
 }
 
@@ -886,6 +897,26 @@ if ( ! function_exists( 'ajcore_write_shared_calendar_settings' ) ) {
 		);
 	}
 }
+
+/**
+ * Master → shared DB sync: whenever the master site's settings option changes
+ * (admin save, token refresh, migrations), push the calendar/reservation subset
+ * to the shared DB so secondary sites always overlay current values.
+ */
+add_action(
+	'update_option_ajforms_settings',
+	function ( $old_value, $value ) {
+		if ( ! is_array( $value ) || ! function_exists( 'ajcore_write_shared_calendar_settings' ) || ! ajcore_is_shared_db_enabled() ) {
+			return;
+		}
+		if ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() ) {
+			return;
+		}
+		ajcore_write_shared_calendar_settings( $value );
+	},
+	10,
+	2
+);
 
 /**
  * The code that runs during plugin activation.

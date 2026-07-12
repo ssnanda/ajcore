@@ -30,7 +30,9 @@ class AJCore_Zoho_Calendar {
 	 */
 	public static function get_valid_token( array &$settings = array() ) {
 		if ( empty( $settings ) ) {
-			$settings = get_option( 'ajforms_settings', array() );
+			// Overlay-aware read: on secondary shared-DB sites the Zoho config
+			// lives in the shared DB, not the local option.
+			$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
 			if ( ! is_array( $settings ) ) {
 				$settings = array();
 			}
@@ -85,7 +87,9 @@ class AJCore_Zoho_Calendar {
 		$new_exp    = gmdate( 'Y-m-d H:i:s', time() + max( 0, $expires_in - 60 ) );
 
 		// Persist on the freshly-read option so we never write back a
-		// defaults-merged settings array from the caller.
+		// defaults-merged settings array from the caller. On the master this
+		// update also pushes the calendar subset to the shared DB via the
+		// update_option_ajforms_settings hook.
 		$stored = get_option( 'ajforms_settings', array() );
 		if ( ! is_array( $stored ) ) {
 			$stored = array();
@@ -100,6 +104,21 @@ class AJCore_Zoho_Calendar {
 		$settings['zoho_token_expires_at']     = $new_exp;
 		$settings['zoho_api_token']            = $new_token;
 		$settings['zoho_api_token_expires_at'] = $new_exp;
+
+		// Secondary sites refresh with the shared refresh token, so publish the
+		// new access token to the shared DB for every other site to reuse.
+		// Build the payload from overlay-aware settings so a secondary never
+		// clobbers shared credentials with its own stale local copies.
+		if ( function_exists( 'ajcore_write_shared_calendar_settings' )
+			&& function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled()
+			&& ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ! ajcore_is_stripe_sync_owner() ) ) {
+			$sync = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : $settings;
+			$sync['zoho_access_token']         = $new_token;
+			$sync['zoho_token_expires_at']     = $new_exp;
+			$sync['zoho_api_token']            = $new_token;
+			$sync['zoho_api_token_expires_at'] = $new_exp;
+			ajcore_write_shared_calendar_settings( $sync );
+		}
 
 		return $new_token;
 	}

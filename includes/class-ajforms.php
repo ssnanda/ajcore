@@ -14323,7 +14323,8 @@ class AJForms {
 		// Return times in the site's configured timezone (without Z suffix = "floating" time).
 		// FullCalendar's timeZone setting matches this, so it displays them correctly without needing
 		// a timezone plugin conversion from UTC. Avoids the UTC→local conversion bug in CDN bundles.
-		$settings = get_option( 'ajforms_settings', array() );
+		// Must use ajforms_get_settings(): on secondary sites the Zoho config lives in the shared DB.
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
 		$site_tz  = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone']
 			: get_option( 'timezone_string', 'America/New_York' );
 		$tz_obj   = new DateTimeZone( $site_tz );
@@ -14347,12 +14348,33 @@ class AJForms {
 			);
 		}
 
-		// Also show Zoho Calendar events as unavailable blocks.
+		// Also show Zoho Calendar events as unavailable blocks. Failures here would
+		// silently show busy days as free, so log them (throttled to once per 15 min).
+		$log_zoho_feed_failure = function ( $reason, $detail = '' ) {
+			if ( get_transient( 'ajcore_res_feed_zoho_fail_logged' ) ) {
+				return;
+			}
+			set_transient( 'ajcore_res_feed_zoho_fail_logged', 1, 15 * MINUTE_IN_SECONDS );
+			$this->log_portal_event(
+				'reservation_calendar_feed_zoho_failed',
+				array(
+					'severity' => 'warning',
+					'source'   => 'reservation_calendar_feed',
+					'details'  => array( 'reason' => $reason, 'detail' => $detail ),
+				)
+			);
+		};
+
 		$zoho_cal_uid = ! empty( $settings['zoho_calendar_uid'] ) ? trim( (string) $settings['zoho_calendar_uid'] ) : '';
 		if ( '' !== $zoho_cal_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
 			$zoho_token = $this->get_valid_zoho_token( $settings );
-			if ( '' !== $zoho_token ) {
+			if ( '' === $zoho_token ) {
+				$log_zoho_feed_failure( 'no_valid_token', 'Token missing/expired and refresh failed — check Zoho client ID, secret, and refresh token in settings.' );
+			} else {
 				$zoho_events = AJCore_Zoho_Calendar::get_events_for_range( $zoho_cal_uid, $start_raw, $end_raw, $site_tz, $zoho_token );
+				if ( is_wp_error( $zoho_events ) ) {
+					$log_zoho_feed_failure( 'events_fetch_failed', $zoho_events->get_error_message() );
+				}
 				if ( ! is_wp_error( $zoho_events ) ) {
 					foreach ( $zoho_events as $ze ) {
 						$ze['start']->setTimezone( $tz_obj );
