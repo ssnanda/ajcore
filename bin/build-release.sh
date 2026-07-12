@@ -10,11 +10,11 @@ GITHUB_REPO="ssnanda/ajcore"
 TAG_PREFIX="v"
 SITES_ROOT="/Users/sandip/Projects/sites"
 
-GITHUB_RELEASE="ask"
-GIT_COMMIT="ask"
-GIT_PUSH="ask"
+GITHUB_RELEASE="true"
+GIT_COMMIT="true"
+GIT_PUSH="true"
 RELEASE_BRANCH="ask"
-USE_CURRENT_BRANCH="false"
+USE_CURRENT_BRANCH="true"
 CREATE_BRANCH="false"
 MAIN_RELEASE_BRANCH="main"
 MERGE_TO_MAIN="ask"
@@ -24,13 +24,13 @@ usage() {
 Usage:
   ./bin/build-release.sh
 
-Interactive flow:
-  1. Choose release branch, default main
-  2. Choose version bump
-  3. Ask whether to commit to git
-  4. Build releases/<slug>-<version>.zip
-  5. Push branch and version tag to GitHub by default
-  6. Create/upload GitHub Release asset by default
+Interactive flow (only the version bump prompts; everything else is automatic):
+  1. Choose version bump
+  2. Build releases/<slug>-<version>.zip on the current branch
+  3. Commit version changes to git
+  4. Push branch and version tag to GitHub
+  5. Create/upload GitHub Release asset
+  6. Deploy to local ddev sites under /Users/sandip/Projects/sites
   7. For non-main branches, skip merge back to main by default
 
 Options are still supported:

@@ -4410,8 +4410,8 @@ class AJForms {
 								<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
 								<tr>
 									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
-									<td><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
-									<td><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Next Billing Date', 'ajforms' ); ?>"><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Amount', 'ajforms' ); ?>"><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
 								</tr>
 							<?php endforeach; ?>
 						</tbody>
@@ -4435,20 +4435,21 @@ class AJForms {
 								<?php $entry_display_description = $this->get_portal_ledger_display_description( $entry ); ?>
 								<?php $entry_is_open = ( $balance_due > 0 && (float) $entry->amount > 0 && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) ); ?>
 								<?php $entry_debit_credit = $this->get_portal_ledger_debit_credit( $entry ); ?>
+								<?php $entry_actions_html = ( ! $entry_invoice_url && ! $entry_invoice_id ) ? $this->get_portal_service_request_actions( $entry ) : ''; ?>
 								<tr>
-									<td><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Date', 'ajforms' ); ?>"><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
 									<td><?php echo esc_html( $entry_display_description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
-									<td><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
-									<td><?php echo esc_html( $entry_debit_credit['debit'] ? $entry_debit_credit['debit'] : '-' ); ?></td>
-									<td><?php echo esc_html( $entry_debit_credit['credit'] ? $entry_debit_credit['credit'] : '-' ); ?></td>
-									<td><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
-									<td>
+									<td data-label="<?php esc_attr_e( 'Status', 'ajforms' ); ?>"><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Debit', 'ajforms' ); ?>" class="<?php echo $entry_debit_credit['debit'] ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( $entry_debit_credit['debit'] ? $entry_debit_credit['debit'] : '-' ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Credit', 'ajforms' ); ?>" class="<?php echo $entry_debit_credit['credit'] ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( $entry_debit_credit['credit'] ? $entry_debit_credit['credit'] : '-' ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Running Balance', 'ajforms' ); ?>"><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Invoice', 'ajforms' ); ?>" class="<?php echo ( $entry_invoice_url || $entry_invoice_id || '' !== $entry_actions_html ) ? '' : 'aj-portal-td-empty'; ?>">
 										<?php if ( $entry_invoice_url ) : ?>
 											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
 										<?php elseif ( $entry_invoice_id ) : ?>
 											<?php echo esc_html( $entry_invoice_label && 'PDF' !== $entry_invoice_label ? $entry_invoice_label : __( 'Invoice', 'ajforms' ) ); ?>
 										<?php else : ?>
-											<?php echo $this->get_portal_service_request_actions( $entry ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+											<?php echo $entry_actions_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 										<?php endif; ?>
 									</td>
 								</tr>
@@ -4648,9 +4649,9 @@ class AJForms {
 									<strong><?php echo esc_html( $task->title ); ?></strong>
 									<div class="aj-portal-task-meta"><?php echo esc_html( $scope_label . ' · ' . $freq_label ); ?></div>
 								</td>
-								<td><span class="aj-portal-task-status aj-portal-task-status-<?php echo esc_attr( $status ); ?>"><?php echo esc_html( ucwords( str_replace( '_', ' ', $status ) ) ); ?></span></td>
-								<td><?php echo esc_html( ! empty( $task->due_date ) ? $this->format_portal_date( $task->due_date ) : '-' ); ?></td>
-								<td><?php echo esc_html( ! empty( $task->action_required ) ? $task->action_required : '-' ); ?></td>
+								<td data-label="<?php esc_attr_e( 'Status', 'ajforms' ); ?>"><span class="aj-portal-task-status aj-portal-task-status-<?php echo esc_attr( $status ); ?>"><?php echo esc_html( ucwords( str_replace( '_', ' ', $status ) ) ); ?></span></td>
+								<td data-label="<?php esc_attr_e( 'Due Date', 'ajforms' ); ?>" class="<?php echo ! empty( $task->due_date ) ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( ! empty( $task->due_date ) ? $this->format_portal_date( $task->due_date ) : '-' ); ?></td>
+								<td data-label="<?php esc_attr_e( 'Action Required', 'ajforms' ); ?>" class="<?php echo ! empty( $task->action_required ) ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( ! empty( $task->action_required ) ? $task->action_required : '-' ); ?></td>
 								<td>
 									<?php if ( ! empty( $comments ) ) : ?>
 										<div class="aj-portal-task-comments">
@@ -4663,17 +4664,20 @@ class AJForms {
 										</div>
 									<?php endif; ?>
 
-									<form class="aj-portal-task-form" method="post">
-										<?php wp_nonce_field( 'ajcore_portal_task_action_' . $task_id, 'ajcore_portal_task_nonce' ); ?>
-										<input type="hidden" name="portal_task_id" value="<?php echo esc_attr( $task_id ); ?>">
-										<textarea name="portal_task_comment" rows="2" placeholder="<?php esc_attr_e( 'Add a comment for our team...', 'ajforms' ); ?>"></textarea>
-										<div class="aj-portal-task-actions">
-											<button type="submit" class="button aj-portal-task-comment-button" name="ajcore_portal_task_action" value="add_comment"><?php esc_html_e( 'Add Comment', 'ajforms' ); ?></button>
-											<?php if ( ! $is_complete ) : ?>
-												<button type="submit" class="button aj-portal-task-complete-button" name="ajcore_portal_task_action" value="mark_complete"><?php esc_html_e( 'Mark Complete', 'ajforms' ); ?></button>
-											<?php endif; ?>
-										</div>
-									</form>
+									<details class="aj-portal-task-drawer">
+										<summary><?php echo $is_complete ? esc_html__( 'Add Comment', 'ajforms' ) : esc_html__( 'Add Comment / Mark Complete', 'ajforms' ); ?></summary>
+										<form class="aj-portal-task-form" method="post">
+											<?php wp_nonce_field( 'ajcore_portal_task_action_' . $task_id, 'ajcore_portal_task_nonce' ); ?>
+											<input type="hidden" name="portal_task_id" value="<?php echo esc_attr( $task_id ); ?>">
+											<textarea name="portal_task_comment" rows="2" placeholder="<?php esc_attr_e( 'Add a comment for our team...', 'ajforms' ); ?>"></textarea>
+											<div class="aj-portal-task-actions">
+												<button type="submit" class="button aj-portal-task-comment-button" name="ajcore_portal_task_action" value="add_comment"><?php esc_html_e( 'Add Comment', 'ajforms' ); ?></button>
+												<?php if ( ! $is_complete ) : ?>
+													<button type="submit" class="button aj-portal-task-complete-button" name="ajcore_portal_task_action" value="mark_complete"><?php esc_html_e( 'Mark Complete', 'ajforms' ); ?></button>
+												<?php endif; ?>
+											</div>
+										</form>
+									</details>
 								</td>
 							</tr>
 						<?php endforeach; ?>
@@ -5952,7 +5956,14 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-task-comments{display:grid;gap:8px;margin:0 0 10px}
 				.ajcore-portal-shell .aj-portal-task-comment{border:1px solid #e8eef6;border-radius:14px;background:#fff;padding:10px 12px;font-size:13px;line-height:1.45;color:#1f2937}
 				.ajcore-portal-shell .aj-portal-task-comment span{display:block;margin-top:6px;color:#64748b;font-size:11px;font-weight:800}
-				.ajcore-portal-shell .aj-portal-task-form{display:grid;gap:9px;min-width:260px}
+				.ajcore-portal-shell .aj-portal-task-drawer{min-width:260px}
+				.ajcore-portal-shell .aj-portal-task-drawer summary{display:inline-flex;align-items:center;min-height:36px;padding:8px 14px;border:1px solid #dbe7f3;border-radius:999px;background:#f8fbff;color:#1d4ed8;font-size:13px;font-weight:900;cursor:pointer;list-style:none}
+				.ajcore-portal-shell .aj-portal-task-drawer summary::-webkit-details-marker{display:none}
+				.ajcore-portal-shell .aj-portal-task-drawer summary:before{content:"+";margin-right:7px;font-weight:950}
+				.ajcore-portal-shell .aj-portal-task-drawer[open] summary{border-color:#bfdbfe;background:#eff6ff}
+				.ajcore-portal-shell .aj-portal-task-drawer[open] summary:before{content:"–"}
+				.ajcore-portal-shell .aj-portal-task-drawer[open]{width:100%}
+				.ajcore-portal-shell .aj-portal-task-form{display:grid;gap:9px;min-width:260px;margin-top:10px}
 				.ajcore-portal-shell .aj-portal-task-form textarea{width:100%;border:1px solid #dbe7f3;border-radius:14px;padding:10px 12px;background:#fff;min-height:72px;font:inherit;color:#0f172a}
 				.ajcore-portal-shell .aj-portal-task-actions{display:flex;gap:8px;flex-wrap:wrap}
 				.ajcore-portal-shell .aj-portal-task-comment-button{min-height:38px;padding:9px 15px;font-size:13px;background:linear-gradient(135deg,#2563eb 0%,#4f46e5 100%)}
@@ -6041,53 +6052,62 @@ class AJForms {
 				@media (max-width:760px){
 					.ajcore-portal-shell{width:auto;max-width:none;margin:18px auto 0;padding:0 14px 36px}
 					.ajcore-portal-shell:before{inset:-44px -20px auto;height:260px}
-					.ajcore-portal-shell h2{font-size:34px;margin-bottom:20px}
-					.ajcore-portal-shell h3{font-size:22px;margin:28px 0 14px}
+					.ajcore-portal-shell h2{font-size:27px;margin-bottom:16px}
+					.ajcore-portal-shell h3{font-size:19px;margin:24px 0 12px}
+					.ajcore-portal-shell p{font-size:15px}
+					.ajcore-portal-shell .aj-portal-tab-intro{margin:-4px 0 18px}
 					.ajcore-portal-shell .aj-customer-portal-tabs{
 						position:sticky;
 						top:8px;
 						z-index:20;
-						display:grid;
-						grid-template-columns:repeat(2,minmax(0,1fr));
-						gap:8px;
-						margin:0 -2px 26px;
-						border-radius:24px;
-						padding:8px;
-						overflow:visible;
+						display:flex;
+						flex-wrap:nowrap;
+						gap:6px;
+						margin:0 0 22px;
+						border-radius:18px;
+						padding:6px;
+						overflow-x:auto;
+						overscroll-behavior-x:contain;
 					}
 					.ajcore-portal-shell .aj-customer-portal-tab{
-						width:100%;
-						min-height:44px;
-						padding:10px 10px;
+						flex:0 0 auto;
+						min-height:42px;
+						padding:9px 14px;
 						font-size:14px;
-						border-radius:17px;
-						white-space:normal;
-						text-align:center;
+						border-radius:14px;
+						white-space:nowrap;
 					}
-					.ajcore-portal-shell .aj-customer-portal-logout{margin-left:0;grid-column:1 / -1}
-					.ajcore-portal-shell .aj-customer-portal-tab:last-child:nth-child(odd){grid-column:1 / -1}
-					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-					.ajcore-portal-shell .aj-portal-summary-card{min-height:104px;border-radius:22px;padding:20px 18px}
-					.ajcore-portal-shell .aj-portal-summary-card span{font-size:30px}
-					.ajcore-portal-shell .aj-portal-service-card,.ajcore-portal-shell .aj-portal-add-service-card,.ajcore-portal-shell .aj-portal-profile-block{border-radius:24px;padding:22px}
-					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:1fr;gap:16px}
+					.ajcore-portal-shell .aj-customer-portal-logout{margin-left:auto}
+					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+					.ajcore-portal-shell .aj-portal-summary-card{min-height:84px;border-radius:20px;padding:14px 16px;gap:8px}
+					.ajcore-portal-shell .aj-portal-summary-card span{font-size:26px}
+					.ajcore-portal-shell .aj-portal-summary-card strong{font-size:13px}
+					.ajcore-portal-shell .aj-portal-service-card,.ajcore-portal-shell .aj-portal-add-service-card,.ajcore-portal-shell .aj-portal-profile-block{border-radius:20px;padding:16px}
+					.ajcore-portal-shell .aj-portal-service-card h4{font-size:17px;margin-bottom:10px}
+					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 14px}
+					.ajcore-portal-shell .aj-portal-service-card-grid div:first-child{grid-column:1 / -1}
 					.ajcore-portal-shell .aj-portal-add-service-grid{grid-template-columns:1fr}
-					.ajcore-portal-shell .aj-portal-table-wrap{border-radius:24px}
+					.ajcore-portal-shell .aj-portal-account-summary{margin-top:22px;padding:18px 16px;border-radius:20px}
+					.ajcore-portal-shell .aj-portal-account-summary p{font-size:15px;line-height:1.6}
+					.ajcore-portal-shell .aj-portal-open-balance{padding:16px;border-radius:18px}
+					.ajcore-portal-shell .aj-portal-payment-box{width:100%}
+					.ajcore-portal-shell .aj-portal-payment-box label{width:100%;min-width:0}
+					.ajcore-portal-shell .aj-portal-payment-box .aj-portal-payment-amount-input{width:100%!important}
+					.ajcore-portal-shell .aj-portal-payment-box .button{width:100%}
+					.ajcore-portal-shell .aj-portal-table-wrap{border-radius:20px}
 					.ajcore-portal-shell .aj-portal-table{min-width:0;font-size:15px}
 					.ajcore-portal-shell .aj-portal-table thead{display:none}
 					.ajcore-portal-shell .aj-portal-table tbody,.ajcore-portal-shell .aj-portal-table tr,.ajcore-portal-shell .aj-portal-table td{display:block;width:100%}
-					.ajcore-portal-shell .aj-portal-table tr{border-bottom:1px solid #e8eef6;padding:14px 0}
+					.ajcore-portal-shell .aj-portal-table tr{border-bottom:1px solid #e8eef6;padding:12px 0}
 					.ajcore-portal-shell .aj-portal-table tr:last-child{border-bottom:0}
-					.ajcore-portal-shell .aj-portal-table td{border:0;padding:8px 18px}
+					.ajcore-portal-shell .aj-portal-table td{border:0;padding:7px 16px}
 					.ajcore-portal-shell .aj-portal-table td:first-child{font-weight:900;color:#0f172a}
+					.ajcore-portal-shell .aj-portal-table td.aj-portal-td-empty{display:none}
+					.ajcore-portal-shell .aj-portal-table td[data-label]:before{content:attr(data-label);display:block;margin-bottom:2px;font-size:11px;font-weight:950;color:#64748b;text-transform:uppercase;letter-spacing:.06em}
 					.ajcore-portal-shell .aj-portal-upload-card{grid-template-columns:1fr;padding:22px;border-radius:24px}
 					.ajcore-portal-shell .aj-customer-file-row{grid-template-columns:1fr;gap:14px;padding:18px}
 					.ajcore-portal-shell .aj-customer-file-actions{justify-content:flex-start}
 					.ajcore-portal-shell .aj-portal-quick-actions-heading,.ajcore-portal-shell .aj-portal-quick-actions{display:none}
-				}
-				@media (max-width:380px){
-					.ajcore-portal-shell .aj-customer-portal-tabs{grid-template-columns:1fr}
-					.ajcore-portal-shell .aj-customer-portal-tab:last-child:nth-child(odd){grid-column:auto}
 				}
 			</style>
 			<?php if ( 'yes' === $atts['show_title'] ) : ?>
@@ -6142,6 +6162,12 @@ class AJForms {
 					return;
 				}
 				shell.dataset.ajcorePortalReady = '1';
+
+				const tabsNav = shell.querySelector('.aj-customer-portal-tabs');
+				const activeTab = tabsNav ? tabsNav.querySelector('.aj-customer-portal-tab.is-active') : null;
+				if (tabsNav && activeTab && tabsNav.scrollWidth > tabsNav.clientWidth) {
+					tabsNav.scrollLeft = Math.max(0, activeTab.offsetLeft - (tabsNav.clientWidth - activeTab.offsetWidth) / 2);
+				}
 
 				function parseJsonResponse(response) {
 					return response.text().then(function(text) {
@@ -12446,12 +12472,17 @@ class AJForms {
 			var selectedEndStr   = null;
 
 			// ── FullCalendar ────────────────────────────────────────────
+			var isSmallScreen = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
 			var calendar = new FullCalendar.Calendar(calEl, {
 				timeZone:       tz,
-				initialView:    'timeGridWorkWeek',
+				initialView:    isSmallScreen ? 'timeGridDay' : 'timeGridWorkWeek',
 				firstDay:       1,
 				height:         'auto',
-				headerToolbar: {
+				headerToolbar: isSmallScreen ? {
+					left:   'prev,next',
+					center: 'title',
+					right:  'timeGridDay,timeGridWorkWeek,dayGridMonth'
+				} : {
 					left:   'prev,next today',
 					center: 'title',
 					right:  'dayGridMonth,timeGridWeek,timeGridWorkWeek,timeGridDay'
@@ -12668,7 +12699,7 @@ class AJForms {
 					cartItems.innerHTML =
 						'<div class="aj-res-cart-empty">' +
 							'<div class="aj-res-cart-empty-icon">&#128722;</div>' +
-							'<div class="aj-res-cart-empty-text"><?php echo esc_js( __( 'Your cart is empty — drag a time slot on the calendar above to add a reservation.', 'ajforms' ) ); ?></div>' +
+							'<div class="aj-res-cart-empty-text"><?php echo esc_js( __( 'Your cart is empty — select a time slot on the calendar below to add a reservation.', 'ajforms' ) ); ?></div>' +
 						'</div>';
 					return;
 				}
