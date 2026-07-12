@@ -945,6 +945,7 @@ class AJForms {
 		add_action( 'template_redirect', array( $this, 'maybe_render_form_preview' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_impersonation_request' ), 0 );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_impersonation_return' ), 0 );
+		add_action( 'template_redirect', array( $this, 'maybe_handle_staff_portal_switch' ), 0 );
 		add_action( 'template_redirect', array( $this, 'maybe_redirect_guest_customer_portal' ), 1 );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_upload' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_handle_portal_file_download' ) );
@@ -4959,6 +4960,139 @@ class AJForms {
 		unset( $_COOKIE[ $this->get_impersonation_cookie_name() ] );
 	}
 
+	/**
+	 * True when the current user is staff (admin or ops) — the same gate
+	 * create_customer_impersonation_link() enforces internally.
+	 */
+	private function current_user_is_portal_staff() {
+		if ( ! is_user_logged_in() ) {
+			return false;
+		}
+		return current_user_can( 'manage_options' )
+			|| current_user_can( 'ajcore_ops_access' )
+			|| in_array( 'aj_ops_user', (array) wp_get_current_user()->roles, true );
+	}
+
+	/**
+	 * Staff clicked a customer on the portal switcher: mint a single-use
+	 * impersonation token via the hardened admin helper and follow it.
+	 * Customers cannot reach this: the staff gate runs before the nonce check,
+	 * and create_customer_impersonation_link() re-validates actor + target.
+	 */
+	public function maybe_handle_staff_portal_switch() {
+		if ( empty( $_GET['ajcore_staff_switch'] ) ) {
+			return;
+		}
+
+		$stripe_customer_id = sanitize_text_field( wp_unslash( $_GET['ajcore_staff_switch'] ) );
+
+		if ( ! $this->current_user_is_portal_staff() ) {
+			wp_safe_redirect( $this->get_customer_portal_url() );
+			exit;
+		}
+
+		check_admin_referer( 'ajcore_staff_switch_' . $stripe_customer_id );
+
+		$admin = new AJForms_Admin();
+		$link  = $admin->create_customer_impersonation_link( $stripe_customer_id, 'ajcore_admin', $this->get_customer_portal_url() );
+
+		if ( is_wp_error( $link ) ) {
+			wp_safe_redirect( add_query_arg( 'staff_switch_error', rawurlencode( $link->get_error_message() ), $this->get_customer_portal_url() ) );
+			exit;
+		}
+
+		wp_safe_redirect( $link );
+		exit;
+	}
+
+	/**
+	 * Customer picker shown to staff on the portal page instead of the
+	 * "access is not active" message. Lists active portal customers; the
+	 * View Portal button starts a normal audited impersonation session.
+	 */
+	private function render_staff_customer_switcher() {
+		global $wpdb;
+		$pdb = $this->get_pdb();
+
+		$customers_table = $this->get_portal_stripe_customers_table();
+		$states_table    = $this->get_portal_customer_states_table();
+		$has_states      = $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $states_table ) ) === $states_table;
+
+		if ( $has_states ) {
+			$customers = $pdb->get_results(
+				"SELECT c.stripe_customer_id, c.name, c.email
+				 FROM {$customers_table} c
+				 LEFT JOIN {$states_table} s ON s.stripe_customer_id = c.stripe_customer_id
+				 WHERE ( s.portal_status = 'active' OR ( s.portal_status IS NULL AND c.portal_status = 'active' ) )
+				 ORDER BY c.name, c.email"
+			);
+		} else {
+			$customers = $pdb->get_results(
+				"SELECT stripe_customer_id, name, email FROM {$customers_table} WHERE portal_status = 'active' ORDER BY name, email"
+			);
+		}
+
+		$mapping_counts = array();
+		foreach ( (array) $wpdb->get_results(
+			"SELECT stripe_customer_id, COUNT(DISTINCT user_id) AS user_count FROM {$this->get_portal_user_mappings_table()} WHERE user_id > 0 GROUP BY stripe_customer_id"
+		) as $row ) {
+			$mapping_counts[ (string) $row->stripe_customer_id ] = (int) $row->user_count;
+		}
+
+		$error = isset( $_GET['staff_switch_error'] ) ? sanitize_text_field( wp_unslash( $_GET['staff_switch_error'] ) ) : '';
+
+		ob_start();
+		?>
+		<div class="aj-customer-portal aj-staff-switcher" style="max-width:860px;margin:0 auto;font-family:Inter,ui-sans-serif,system-ui,sans-serif;">
+			<div style="margin:0 0 18px;padding:14px 16px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#1e40af;font-weight:600;">
+				<?php echo esc_html( sprintf( __( 'You are signed in as staff (%s). Pick a client below to view their portal exactly as they see it. Every session is logged.', 'ajforms' ), wp_get_current_user()->user_email ) ); ?>
+			</div>
+			<?php if ( '' !== $error ) : ?>
+				<div style="margin:0 0 16px;padding:12px 14px;border:1px solid #fecaca;border-radius:12px;background:#fef2f2;color:#991b1b;font-weight:600;"><?php echo esc_html( $error ); ?></div>
+			<?php endif; ?>
+			<input type="search" id="aj-staff-switcher-filter" placeholder="<?php esc_attr_e( 'Search clients by name or email…', 'ajforms' ); ?>" style="width:100%;margin:0 0 14px;padding:12px 14px;border:1px solid #cbd5e1;border-radius:12px;font-size:15px;box-sizing:border-box;">
+			<?php if ( empty( $customers ) ) : ?>
+				<p><?php esc_html_e( 'No clients with active portal access yet.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div style="border:1px solid #e2e8f0;border-radius:14px;background:#fff;overflow:hidden;">
+					<?php foreach ( $customers as $customer ) : ?>
+						<?php
+						$cus_id     = (string) $customer->stripe_customer_id;
+						$user_count = isset( $mapping_counts[ $cus_id ] ) ? $mapping_counts[ $cus_id ] : 0;
+						$switch_url = wp_nonce_url( add_query_arg( 'ajcore_staff_switch', rawurlencode( $cus_id ), $this->get_customer_portal_url() ), 'ajcore_staff_switch_' . $cus_id );
+						?>
+						<div class="aj-staff-switcher-row" data-filter="<?php echo esc_attr( strtolower( $customer->name . ' ' . $customer->email ) ); ?>" style="display:flex;align-items:center;gap:14px;padding:13px 16px;border-top:1px solid #eef2f7;">
+							<div style="flex:1;min-width:0;">
+								<div style="font-weight:700;color:#0f172a;"><?php echo esc_html( $customer->name ? $customer->name : $customer->email ); ?></div>
+								<div style="color:#64748b;font-size:13px;overflow-wrap:anywhere;"><?php echo esc_html( $customer->email ); ?></div>
+							</div>
+							<?php if ( 1 === $user_count ) : ?>
+								<a class="button" href="<?php echo esc_url( $switch_url ); ?>"><?php esc_html_e( 'View Portal', 'ajforms' ); ?></a>
+							<?php else : ?>
+								<span style="color:#94a3b8;font-size:13px;font-weight:600;"><?php echo esc_html( 0 === $user_count ? __( 'No portal login yet', 'ajforms' ) : __( 'Multiple logins — fix in admin', 'ajforms' ) ); ?></span>
+							<?php endif; ?>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+			<p style="margin:16px 0 0;"><a href="<?php echo esc_url( admin_url() ); ?>"><?php esc_html_e( '← Back to admin dashboard', 'ajforms' ); ?></a></p>
+		</div>
+		<script>
+		(function(){
+			var filter = document.getElementById('aj-staff-switcher-filter');
+			if (!filter) return;
+			filter.addEventListener('input', function(){
+				var q = filter.value.trim().toLowerCase();
+				document.querySelectorAll('.aj-staff-switcher-row').forEach(function(row){
+					row.style.display = !q || row.dataset.filter.indexOf(q) !== -1 ? 'flex' : 'none';
+				});
+			});
+		})();
+		</script>
+		<?php
+		return ob_get_clean();
+	}
+
 	public function maybe_handle_impersonation_request() {
 		if ( empty( $_GET['ajcore_impersonate'] ) ) {
 			return;
@@ -5701,6 +5835,11 @@ class AJForms {
 					),
 				)
 			);
+
+			// Staff without a portal mapping get the client switcher instead of a dead end.
+			if ( $this->current_user_is_portal_staff() ) {
+				return $this->render_staff_customer_switcher();
+			}
 
 			ob_start();
 			?>

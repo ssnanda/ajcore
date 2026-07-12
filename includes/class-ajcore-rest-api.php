@@ -505,6 +505,7 @@ class AJCore_REST_API {
 			'/portal/reservations/(?P<id>[0-9]+)'   => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'portal_get_reservation',            'permission' => 'can_use_portal_api' ),
 			'/portal/reservations'                  => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'portal_get_reservations',            'permission' => 'can_use_portal_api' ),
 			// OPS read-only reservation endpoints
+			'/ops/reservations/busy'                => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'ops_reservations_busy',              'permission' => 'can_manage_ops_api' ),
 			'/ops/reservations/(?P<id>[0-9]+)'      => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'ops_get_reservation',               'permission' => 'can_manage_ops_api' ),
 			'/ops/reservations'                     => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'ops_get_reservations',               'permission' => 'can_manage_ops_api' ),
 			'/ops/reservations/create'              => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_create_reservation',             'permission' => 'can_manage_ops_api' ),
@@ -3269,6 +3270,86 @@ class AJCore_REST_API {
 				'confirmed' => $confirmed,
 				'cancelled' => $cancelled,
 			),
+		) );
+	}
+
+	/**
+	 * Busy blocks for the staff booking calendar: local reservations (confirmed/paid
+	 * plus live pending-payment holds) and Zoho calendar events, in the site timezone.
+	 */
+	public function ops_reservations_busy( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJCore_Reservations' ) ) {
+			return new WP_Error( 'reservation_unavailable', __( 'Reservation system unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$site_tz  = ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York';
+		$tz_obj   = new DateTimeZone( $site_tz );
+
+		$start_raw = sanitize_text_field( (string) ( $request->get_param( 'start' ) ?: '' ) );
+		$end_raw   = sanitize_text_field( (string) ( $request->get_param( 'end' ) ?: '' ) );
+		try {
+			$start_utc = '' !== $start_raw ? ( new DateTime( $start_raw ) )->setTimezone( new DateTimeZone( 'UTC' ) ) : new DateTime( 'now', new DateTimeZone( 'UTC' ) );
+			$end_utc   = '' !== $end_raw ? ( new DateTime( $end_raw ) )->setTimezone( new DateTimeZone( 'UTC' ) ) : ( new DateTime( 'now', new DateTimeZone( 'UTC' ) ) )->modify( '+60 days' );
+		} catch ( Exception $e ) {
+			return new WP_Error( 'invalid_datetime', __( 'Invalid date range.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$events = array();
+
+		$pdb   = AJCore_Reservations::get_pdb();
+		$table = AJCore_Reservations::get_reservations_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) {
+			$hold_cutoff = gmdate( 'Y-m-d H:i:s', time() - ( AJCore_Reservations::PENDING_HOLD_MINUTES * 60 ) );
+			$rows        = $pdb->get_results(
+				$pdb->prepare(
+					"SELECT start_at, end_at, customer_name FROM `{$table}`
+					 WHERE ( status IN ('confirmed','paid','paid_pending_calendar') OR ( status = 'pending_payment' AND created_at >= %s ) )
+					 AND start_at < %s AND end_at > %s",
+					$hold_cutoff,
+					$end_utc->format( 'Y-m-d H:i:s' ),
+					$start_utc->format( 'Y-m-d H:i:s' )
+				)
+			);
+			foreach ( (array) $rows as $r ) {
+				try {
+					$s_dt = ( new DateTime( $r->start_at, new DateTimeZone( 'UTC' ) ) )->setTimezone( $tz_obj );
+					$e_dt = ( new DateTime( $r->end_at, new DateTimeZone( 'UTC' ) ) )->setTimezone( $tz_obj );
+				} catch ( Exception $ex ) {
+					continue;
+				}
+				$events[] = array(
+					'type'  => 'booked',
+					'title' => __( 'Booked', 'ajforms' ) . ( ! empty( $r->customer_name ) ? ' — ' . sanitize_text_field( (string) $r->customer_name ) : '' ),
+					'start' => $s_dt->format( 'Y-m-d\TH:i:s' ),
+					'end'   => $e_dt->format( 'Y-m-d\TH:i:s' ),
+				);
+			}
+		}
+
+		$zoho_cal_uid = ! empty( $settings['zoho_calendar_uid'] ) ? trim( (string) $settings['zoho_calendar_uid'] ) : '';
+		if ( '' !== $zoho_cal_uid && class_exists( 'AJCore_Zoho_Calendar' ) ) {
+			$zoho_token = AJCore_Zoho_Calendar::get_valid_token( $settings );
+			if ( '' !== $zoho_token ) {
+				$zoho_events = AJCore_Zoho_Calendar::get_events_for_range( $zoho_cal_uid, $start_utc->format( 'c' ), $end_utc->format( 'c' ), $site_tz, $zoho_token );
+				if ( ! is_wp_error( $zoho_events ) ) {
+					foreach ( $zoho_events as $ze ) {
+						$ze['start']->setTimezone( $tz_obj );
+						$ze['end']->setTimezone( $tz_obj );
+						$events[] = array(
+							'type'  => 'external',
+							'title' => '' !== (string) $ze['title'] ? (string) $ze['title'] : __( 'Unavailable', 'ajforms' ),
+							'start' => $ze['start']->format( 'Y-m-d\TH:i:s' ),
+							'end'   => $ze['end']->format( 'Y-m-d\TH:i:s' ),
+						);
+					}
+				}
+			}
+		}
+
+		return rest_ensure_response( array(
+			'timezone' => $site_tz,
+			'events'   => $events,
 		) );
 	}
 

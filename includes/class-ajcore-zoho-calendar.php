@@ -719,9 +719,31 @@ class AJCore_Zoho_Calendar {
 	 * @param string $api_token    Valid Zoho access token.
 	 * @return true|WP_Error
 	 */
-	public static function delete_zoho_calendar_event( $calendar_uid, $event_uid, $api_token ) {
-		$api_url  = 'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( $calendar_uid )
-			. '/events/' . rawurlencode( $event_uid );
+	public static function delete_zoho_calendar_event( $calendar_uid, $event_uid, $api_token, $etag = '' ) {
+		// Zoho's router 404s when the event uid's "@" is percent-encoded, and the
+		// DELETE requires the event's etag header. When the caller doesn't have the
+		// etag, look the event up first.
+		$event_uid = trim( (string) $event_uid );
+		if ( '' === $etag ) {
+			$lookup = wp_remote_get(
+				'https://calendar.zoho.com/api/v1/calendars/' . $calendar_uid . '/events/' . $event_uid,
+				array(
+					'timeout' => 15,
+					'headers' => array(
+						'Authorization' => 'Bearer ' . $api_token,
+						'Accept'        => 'application/json',
+					),
+				)
+			);
+			if ( ! is_wp_error( $lookup ) ) {
+				$lookup_body = json_decode( wp_remote_retrieve_body( $lookup ), true );
+				if ( ! empty( $lookup_body['events'][0]['etag'] ) ) {
+					$etag = (string) $lookup_body['events'][0]['etag'];
+				}
+			}
+		}
+
+		$api_url = 'https://calendar.zoho.com/api/v1/calendars/' . $calendar_uid . '/events/' . $event_uid;
 
 		$response = wp_remote_request(
 			$api_url,
@@ -730,6 +752,7 @@ class AJCore_Zoho_Calendar {
 				'timeout' => 15,
 				'headers' => array(
 					'Authorization' => 'Bearer ' . $api_token,
+					'etag'          => (string) $etag,
 					'Accept'        => 'application/json',
 				),
 			)

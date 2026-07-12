@@ -437,6 +437,62 @@ class AJCore_Reservations {
 	 *
 	 * @return object|WP_Error The created reservation row.
 	 */
+	/**
+	 * Check the configured Zoho calendar (or resource free/busy URL) for conflicts
+	 * with a slot. Honors the zoho_availability_failure_mode setting: 'strict'
+	 * blocks when Zoho cannot be reached, 'lenient' logs and allows.
+	 *
+	 * @param DateTime $start_dt Slot start (any timezone; treated as an instant).
+	 * @param DateTime $end_dt   Slot end.
+	 * @param string   $timezone Site timezone string for Zoho display parsing.
+	 * @param array    $settings Plugin settings (re-read when empty).
+	 * @return true|WP_Error True when free (or unverifiable in lenient mode).
+	 */
+	public static function check_zoho_availability_for_slot( $start_dt, $end_dt, $timezone, $settings = array() ) {
+		if ( ! class_exists( 'AJCore_Zoho_Calendar' ) ) {
+			return true;
+		}
+		if ( empty( $settings ) ) {
+			$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		}
+
+		$api_token    = AJCore_Zoho_Calendar::get_valid_token( $settings );
+		$calendar_uid = ! empty( $settings['zoho_calendar_uid'] ) ? $settings['zoho_calendar_uid'] : '';
+		$resource_uid = ! empty( $settings['zoho_resource_uid'] ) ? $settings['zoho_resource_uid'] : '';
+		$freebusy_url = ! empty( $settings['zoho_resource_freebusy_url'] ) ? $settings['zoho_resource_freebusy_url'] : '';
+		$failure_mode = ! empty( $settings['zoho_availability_failure_mode'] ) ? $settings['zoho_availability_failure_mode'] : 'strict';
+
+		$check = null;
+		if ( $api_token && $calendar_uid ) {
+			$check = AJCore_Zoho_Calendar::check_zoho_calendar_events_availability( $calendar_uid, $start_dt->format( 'c' ), $end_dt->format( 'c' ), $timezone, $api_token );
+		} elseif ( $api_token && $resource_uid && $freebusy_url ) {
+			$check = AJCore_Zoho_Calendar::check_zoho_resource_freebusy( $resource_uid, $freebusy_url, $start_dt->format( 'c' ), $end_dt->format( 'c' ), $api_token );
+		}
+
+		if ( null === $check ) {
+			return true;
+		}
+
+		if ( is_wp_error( $check ) ) {
+			if ( 'lenient' !== $failure_mode ) {
+				return new WP_Error( 'zoho_unverified', __( 'Could not verify calendar availability. Please try again or contact support.', 'ajforms' ) );
+			}
+			self::log_reservation_event( 'reservation_zoho_check_failed', array(
+				'severity' => 'warning',
+				'error'    => $check->get_error_message(),
+				'mode'     => 'lenient',
+				'source'   => 'manual_reservation',
+			) );
+			return true;
+		}
+
+		if ( isset( $check['is_free'] ) && ! (bool) $check['is_free'] ) {
+			return new WP_Error( 'slot_busy', __( 'This time slot is already booked on the calendar. Please choose another time.', 'ajforms' ) );
+		}
+
+		return true;
+	}
+
 	public static function create_manual_reservation( $args ) {
 		$args     = is_array( $args ) ? $args : array();
 		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
@@ -475,6 +531,13 @@ class AJCore_Reservations {
 		$conflict = self::check_local_conflict( (int) $resource->id, $start_at_utc, $end_at_utc );
 		if ( is_wp_error( $conflict ) ) {
 			return $conflict;
+		}
+
+		// Staff bookings must respect the Zoho calendar too — a manual entry over a
+		// busy block double-books the room just as badly as a customer booking would.
+		$zoho_check = self::check_zoho_availability_for_slot( $start, $end, $timezone, $settings );
+		if ( is_wp_error( $zoho_check ) ) {
+			return $zoho_check;
 		}
 
 		$customer_name = sanitize_text_field( (string) ( $args['customer_name'] ?? '' ) );

@@ -23757,20 +23757,111 @@ class AJForms_Admin {
 				</div>
 			</div>
 
-			<details class="ajcore-inline-drawer" style="margin:0 0 14px;padding:12px;border:1px dashed #cbd7e6;border-radius:14px;">
+			<details class="ajcore-inline-drawer" id="ajcore-staff-booking-drawer" style="margin:0 0 14px;padding:12px;border:1px dashed #cbd7e6;border-radius:14px;">
 				<summary><?php esc_html_e( 'Add Reservation (staff booking, no payment)', 'ajforms' ); ?></summary>
-				<form method="post" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-top:12px;">
+				<p style="margin:12px 0 8px;color:#50575e;"><?php esc_html_e( 'Select a free slot on the calendar. Booked reservations and Zoho calendar events are blocked out; the slot is re-verified against the calendar when you book.', 'ajforms' ); ?></p>
+				<div id="ajcore-admin-res-cal" style="max-width:1100px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px;"></div>
+				<form method="post" id="ajcore-staff-booking-form" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-top:12px;">
 					<?php wp_nonce_field( 'ajcore_manual_reservation', 'ajcore_manual_reservation_nonce' ); ?>
+					<div id="ajcore-staff-booking-slot" style="flex:1 1 100%;font-weight:600;color:#1d2327;">
+						<?php esc_html_e( 'No slot selected yet — click or drag on the calendar above.', 'ajforms' ); ?>
+					</div>
+					<input type="hidden" name="manual_reservation_date" required>
+					<input type="hidden" name="manual_reservation_start" required>
+					<input type="hidden" name="manual_reservation_end" required>
 					<label><?php esc_html_e( 'Customer name', 'ajforms' ); ?><br><input type="text" name="manual_reservation_name" required style="min-width:200px;"></label>
 					<label><?php esc_html_e( 'Email', 'ajforms' ); ?><br><input type="email" name="manual_reservation_email" style="min-width:200px;"></label>
 					<label><?php esc_html_e( 'Stripe customer ID (optional)', 'ajforms' ); ?><br><input type="text" name="manual_reservation_customer_id" placeholder="cus_…" style="min-width:180px;"></label>
-					<label><?php esc_html_e( 'Date', 'ajforms' ); ?><br><input type="date" name="manual_reservation_date" required></label>
-					<label><?php esc_html_e( 'Start', 'ajforms' ); ?><br><input type="time" name="manual_reservation_start" required></label>
-					<label><?php esc_html_e( 'End', 'ajforms' ); ?><br><input type="time" name="manual_reservation_end" required></label>
 					<label><?php esc_html_e( 'Notes', 'ajforms' ); ?><br><input type="text" name="manual_reservation_notes" style="min-width:220px;"></label>
-					<button type="submit" class="button button-primary"><?php esc_html_e( 'Book Reservation', 'ajforms' ); ?></button>
+					<button type="submit" class="button button-primary" id="ajcore-staff-booking-submit" disabled><?php esc_html_e( 'Book Reservation', 'ajforms' ); ?></button>
 				</form>
 			</details>
+			<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
+			<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+			<script>
+			(function(){
+				var drawer  = document.getElementById('ajcore-staff-booking-drawer');
+				var calEl   = document.getElementById('ajcore-admin-res-cal');
+				var slotEl  = document.getElementById('ajcore-staff-booking-slot');
+				var formEl  = document.getElementById('ajcore-staff-booking-form');
+				var submit  = document.getElementById('ajcore-staff-booking-submit');
+				if (!drawer || !calEl || !formEl) return;
+
+				var calendar = null;
+				var eventsNonce = <?php echo wp_json_encode( wp_create_nonce( 'ajcore_reservation_check_availability' ) ); ?>;
+				var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+
+				// Wall-clock parsing: events arrive as floating site-timezone times and the
+				// calendar runs with timeZone set to the site zone, so we read the selection
+				// from the ISO strings rather than browser-local Date objects.
+				function parseWall(str){
+					var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(str || '');
+					return m ? { date: m[1] + '-' + m[2] + '-' + m[3], hm: m[4] + ':' + m[5], h: parseInt(m[4],10), min: m[5], y: m[1], mo: parseInt(m[2],10), d: parseInt(m[3],10) } : null;
+				}
+				function fmt12(h, min){
+					var ap = h >= 12 ? 'pm' : 'am';
+					var hh = h % 12; if (hh === 0) hh = 12;
+					return hh + ':' + min + ap;
+				}
+				function setSlot(startStr, endStr){
+					var s = parseWall(startStr), e = parseWall(endStr);
+					if (!s || !e) return;
+					formEl.querySelector('[name="manual_reservation_date"]').value  = s.date;
+					formEl.querySelector('[name="manual_reservation_start"]').value = s.hm;
+					formEl.querySelector('[name="manual_reservation_end"]').value   = e.hm;
+					slotEl.textContent = '<?php echo esc_js( __( 'Selected slot:', 'ajforms' ) ); ?> ' + s.date + ', ' + fmt12(s.h, s.min) + ' – ' + fmt12(e.h, e.min);
+					slotEl.style.color = '#166534';
+					submit.disabled = false;
+				}
+
+				function initCalendar(){
+					if (calendar || typeof FullCalendar === 'undefined') return;
+					calendar = new FullCalendar.Calendar(calEl, {
+						timeZone: <?php echo wp_json_encode( ! empty( $settings['zoho_default_timezone'] ) ? $settings['zoho_default_timezone'] : 'America/New_York' ); ?>,
+						initialView: 'timeGridWeek',
+						firstDay: 0,
+						height: 'auto',
+						headerToolbar: { left:'prev,next today', center:'title', right:'timeGridWeek,timeGridDay,dayGridMonth' },
+						slotMinTime: '07:00:00',
+						slotMaxTime: '22:00:00',
+						slotDuration: '01:00:00',
+						snapDuration: '00:30:00',
+						allDaySlot: false,
+						nowIndicator: true,
+						selectable: true,
+						selectMirror: true,
+						selectOverlap: false,
+						displayEventEnd: true,
+						eventTimeFormat: { hour:'numeric', minute:'2-digit', meridiem:'short' },
+						events: function(fetchInfo, ok, fail){
+							fetch(ajaxUrl + '?' + new URLSearchParams({
+								action: 'ajcore_get_reservation_events',
+								nonce:  eventsNonce,
+								start:  fetchInfo.startStr,
+								end:    fetchInfo.endStr
+							}), { credentials:'same-origin' })
+							.then(function(r){ return r.json(); }).then(ok).catch(fail);
+						},
+						eventDidMount: function(info){ info.el.style.cursor = 'not-allowed'; },
+						dateClick: function(info){
+							if (calendar.view.type === 'dayGridMonth') calendar.changeView('timeGridDay', info.dateStr);
+						},
+						select: function(info){ setSlot(info.startStr, info.endStr); }
+					});
+					calendar.render();
+				}
+
+				if (drawer.open) initCalendar();
+				drawer.addEventListener('toggle', function(){ if (drawer.open) initCalendar(); });
+				formEl.addEventListener('submit', function(e){
+					if (!formEl.querySelector('[name="manual_reservation_date"]').value) {
+						e.preventDefault();
+						slotEl.textContent = '<?php echo esc_js( __( 'Please select a slot on the calendar first.', 'ajforms' ) ); ?>';
+						slotEl.style.color = '#b91c1c';
+					}
+				});
+			})();
+			</script>
 
 			<form method="get" class="ajcore-filter-bar" style="margin-bottom:14px;">
 				<input type="hidden" name="page" value="ajforms-client-portal">
