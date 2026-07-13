@@ -13722,8 +13722,16 @@ class AJForms_Admin {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_portal_service_requests_table();
 
+		// A row already marked refunded/partially_refunded must still be revisited until its
+		// service_status has caught up to 'cancelled' (or 'completed') — otherwise a row whose pay
+		// status was flagged refunded before service_status auto-cancellation existed (or before a
+		// staff member got to it) would be excluded here forever and never picked up retroactively.
 		$rows = $pdb->get_results(
-			"SELECT * FROM {$table} WHERE source_type IN ('invoice','checkout_session') AND status NOT IN ('refunded','cancelled','failed','draft') ORDER BY id ASC LIMIT 500"
+			"SELECT * FROM {$table}
+			WHERE source_type IN ('invoice','checkout_session')
+			AND status NOT IN ('cancelled','failed','draft')
+			AND NOT ( status IN ('refunded','partially_refunded') AND service_status IN ('cancelled','completed') )
+			ORDER BY id ASC LIMIT 500"
 		);
 
 		foreach ( (array) $rows as $row ) {
@@ -13734,12 +13742,16 @@ class AJForms_Admin {
 			// Refund detection applies to any source type. A refund means the service is being
 			// discontinued, so the fulfillment pipeline is auto-cancelled here too (per explicit
 			// user decision) — which piggybacks on the existing status-change notification email
-			// below, same as the manual "Cancel Request" button already does.
+			// below, same as the manual "Cancel Request" button already does. Checked independently
+			// of whether $row->status already says 'refunded', so a row that got flagged refunded
+			// before service_status caught up still gets the auto-cancel + email applied.
 			$refund_status       = $this->get_service_request_refund_status( $row );
 			$auto_cancel_refund  = false;
-			if ( '' !== $refund_status && $refund_status !== sanitize_key( (string) $row->status ) ) {
-				$update['status'] = $refund_status;
-				$formats[]        = '%s';
+			if ( '' !== $refund_status ) {
+				if ( $refund_status !== sanitize_key( (string) $row->status ) ) {
+					$update['status'] = $refund_status;
+					$formats[]        = '%s';
+				}
 				if ( ! in_array( $old_service_status, array( 'cancelled', 'completed' ), true ) ) {
 					$update['service_status'] = 'cancelled';
 					$formats[]                = '%s';
@@ -13753,13 +13765,13 @@ class AJForms_Admin {
 					$update['updated_at'] = current_time( 'mysql' );
 					$formats[]            = '%s';
 					$pdb->update( $table, $update, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
-					if ( isset( $update['status'] ) ) {
+					if ( isset( $update['status'] ) || $auto_cancel_refund ) {
 						$this->add_portal_service_request_history(
 							(int) $row->id,
 							'status_changed',
 							array(
 								'status_before'         => sanitize_key( (string) $row->status ),
-								'status_after'          => $update['status'],
+								'status_after'          => isset( $update['status'] ) ? $update['status'] : sanitize_key( (string) $row->status ),
 								'service_status_before' => $old_service_status,
 								'service_status_after'  => isset( $update['service_status'] ) ? $update['service_status'] : $old_service_status,
 								'note'                  => $auto_cancel_refund
@@ -13787,13 +13799,13 @@ class AJForms_Admin {
 					$update['updated_at'] = current_time( 'mysql' );
 					$formats[]            = '%s';
 					$pdb->update( $table, $update, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
-					if ( isset( $update['status'] ) ) {
+					if ( isset( $update['status'] ) || $auto_cancel_refund ) {
 						$this->add_portal_service_request_history(
 							(int) $row->id,
 							'status_changed',
 							array(
 								'status_before'         => sanitize_key( (string) $row->status ),
-								'status_after'          => $update['status'],
+								'status_after'          => isset( $update['status'] ) ? $update['status'] : sanitize_key( (string) $row->status ),
 								'service_status_before' => $old_service_status,
 								'service_status_after'  => isset( $update['service_status'] ) ? $update['service_status'] : $old_service_status,
 								'note'                  => $auto_cancel_refund
@@ -13854,18 +13866,19 @@ class AJForms_Admin {
 			$formats[]            = '%s';
 			$pdb->update( $table, $update, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
 
-			// A refund (from the block near the top of this loop) always sets BOTH 'status' and
-			// 'service_status' together, so 'status' being set identifies a refund-driven update —
-			// elseif avoids writing two conflicting history entries (and mislabeling the cause) for
-			// the same change. The subscription-cancel branch above only ever sets 'service_status'
-			// alone, so it's the only way to reach the elseif.
-			if ( isset( $update['status'] ) ) {
+			// $auto_cancel_refund (not just isset($update['status'])) identifies a refund-driven
+			// update, because a row that was already flagged 'refunded' in an earlier pass — before
+			// service_status caught up — only has 'service_status' queued here, with 'status'
+			// left unset since it already matches. The subscription-cancel branch below only ever
+			// sets 'service_status' with $auto_cancel_refund staying false, so it's still the only
+			// other way to reach the elseif.
+			if ( isset( $update['status'] ) || $auto_cancel_refund ) {
 				$this->add_portal_service_request_history(
 					(int) $row->id,
 					'status_changed',
 					array(
 						'status_before'         => sanitize_key( (string) $row->status ),
-						'status_after'          => $update['status'],
+						'status_after'          => isset( $update['status'] ) ? $update['status'] : sanitize_key( (string) $row->status ),
 						'service_status_before' => $old_service_status,
 						'service_status_after'  => isset( $update['service_status'] ) ? $update['service_status'] : $old_service_status,
 						'note'                  => $auto_cancel_refund

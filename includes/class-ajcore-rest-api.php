@@ -2524,7 +2524,10 @@ class AJCore_REST_API {
 			if ( 'active' === $stat_row->status || 'active' === $stat_row->service_status ) {
 				$active_count++;
 			}
-			if ( 'completed' === $stat_row->status || 'completed' === $stat_row->service_status ) {
+			// Cancelled counts alongside completed here — both are "done, no further action needed"
+			// from a staff perspective (a cancelled request, e.g. from an auto-cancelled refund, isn't
+			// still open work) and previously had no stat-card home at all.
+			if ( 'completed' === $stat_row->status || 'completed' === $stat_row->service_status || 'cancelled' === $stat_row->service_status ) {
 				$completed_count++;
 			}
 		}
