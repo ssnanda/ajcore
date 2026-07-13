@@ -4696,6 +4696,51 @@ class AJForms_Admin {
 		);
 	}
 
+	/**
+	 * The static (non-editable-via-Settings) render_branded_email_html() args for each branded
+	 * email template — everything besides heading/paragraphs (already shared via
+	 * resolve_email_copy()) and the per-send dynamic values (cta_url, info_box_value, etc).
+	 *
+	 * Both the real sending function AND the Settings page's "Preview email" panel call these, so
+	 * there is exactly one place to edit a footer note, info box label, or button text — previously
+	 * each was hardcoded twice (once per call site) and could silently drift out of sync, which is
+	 * exactly what happened when a footer note was added to the send function but not the preview.
+	 */
+	private function get_password_reset_email_static_parts() {
+		return array(
+			'cta_text'      => __( 'Set New Password', 'ajforms' ),
+			'fallback_note' => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
+			'footer_note'   => __( 'If you did not request this email, you can ignore it.', 'ajforms' ),
+		);
+	}
+
+	private function get_welcome_email_static_parts() {
+		return array(
+			'info_box_label'  => __( 'Your username is your email address:', 'ajforms' ),
+			'info_box_layout' => 'stacked',
+			'cta_text'        => __( 'Set Password and Sign In', 'ajforms' ),
+			'fallback_note'   => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
+		);
+	}
+
+	private function get_service_request_status_email_static_parts() {
+		return array(
+			'info_box_label' => __( 'New status', 'ajforms' ),
+			'footer_note'    => __( 'Questions? Call or text us at (704) 307-2135.', 'ajforms' ),
+		);
+	}
+
+	private function get_lead_followup_email_static_parts() {
+		return array(
+			'info_box_label' => __( 'Call or text us', 'ajforms' ),
+			'info_box_value' => __( '(704) 307-2135', 'ajforms' ),
+			'cta_text'       => __( 'View Our Services', 'ajforms' ),
+			'cta_url'        => 'https://ncllcagents.com/service',
+			'fallback_note'  => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
+			'footer_note'    => __( 'Prefer email? Reach us anytime at contactus@ncllcagents.com.', 'ajforms' ),
+		);
+	}
+
 	public function send_portal_user_password_reset( $user_id ) {
 		$user = get_userdata( absint( $user_id ) );
 		if ( ! $user ) {
@@ -4728,17 +4773,15 @@ class AJForms_Admin {
 			),
 			array( '{name}' => $user->display_name )
 		);
-		$message   = $this->render_branded_email_html(
+		$message   = $this->render_branded_email_html( array_merge(
 			array(
-				'kicker'        => $site_name,
-				'heading'       => $copy['heading'],
-				'paragraphs'    => $copy['paragraphs'],
-				'cta_text'      => __( 'Set New Password', 'ajforms' ),
-				'cta_url'       => $reset_url,
-				'fallback_note' => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
-				'footer_note'   => __( 'If you did not request this email, you can ignore it.', 'ajforms' ),
-			)
-		);
+				'kicker'     => $site_name,
+				'heading'    => $copy['heading'],
+				'paragraphs' => $copy['paragraphs'],
+				'cta_url'    => $reset_url,
+			),
+			$this->get_password_reset_email_static_parts()
+		) );
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		if ( is_email( $from_email ) ) {
 			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
@@ -4780,19 +4823,16 @@ class AJForms_Admin {
 			),
 			array( '{name}' => $user->display_name )
 		);
-		$message   = $this->render_branded_email_html(
+		$message   = $this->render_branded_email_html( array_merge(
 			array(
-				'kicker'          => $site_name,
-				'heading'         => $copy['heading'],
-				'paragraphs'      => $copy['paragraphs'],
-				'info_box_label'  => __( 'Your username is your email address:', 'ajforms' ),
-				'info_box_value'  => $user->user_email,
-				'info_box_layout' => 'stacked',
-				'cta_text'        => __( 'Set Password and Sign In', 'ajforms' ),
-				'cta_url'         => $reset_url,
-				'fallback_note'   => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
-			)
-		);
+				'kicker'         => $site_name,
+				'heading'        => $copy['heading'],
+				'paragraphs'     => $copy['paragraphs'],
+				'info_box_value' => $user->user_email,
+				'cta_url'        => $reset_url,
+			),
+			$this->get_welcome_email_static_parts()
+		) );
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		if ( is_email( $from_email ) ) {
 			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
@@ -4840,19 +4880,14 @@ class AJForms_Admin {
 			array( '{name}' => '' !== $name ? $name : __( 'there', 'ajforms' ) )
 		);
 
-		$message = $this->render_branded_email_html(
+		$message = $this->render_branded_email_html( array_merge(
 			array(
-				'kicker'          => $site_name,
-				'heading'         => $copy['heading'],
-				'paragraphs'      => $copy['paragraphs'],
-				'info_box_label'  => __( 'Call or text us', 'ajforms' ),
-				'info_box_value'  => __( '(704) 307-2135', 'ajforms' ),
-				'cta_text'        => __( 'View Our Services', 'ajforms' ),
-				'cta_url'         => 'https://ncllcagents.com/service',
-				'fallback_note'   => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
-				'footer_note'     => __( 'Prefer email? Reach us anytime at contactus@ncllcagents.com.', 'ajforms' ),
-			)
-		);
+				'kicker'     => $site_name,
+				'heading'    => $copy['heading'],
+				'paragraphs' => $copy['paragraphs'],
+			),
+			$this->get_lead_followup_email_static_parts()
+		) );
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		if ( is_email( $from_email ) ) {
@@ -13051,16 +13086,15 @@ class AJForms_Admin {
 			$email_tokens
 		);
 
-		$message = $this->render_branded_email_html(
+		$message = $this->render_branded_email_html( array_merge(
 			array(
 				'kicker'         => $site_name,
 				'heading'        => $copy['heading'],
 				'paragraphs'     => $copy['paragraphs'],
-				'info_box_label' => __( 'New status', 'ajforms' ),
 				'info_box_value' => $status_label,
-				'footer_note'    => __( 'Questions? Call or text us at (704) 307-2135.', 'ajforms' ),
-			)
-		);
+			),
+			$this->get_service_request_status_email_static_parts()
+		) );
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		if ( is_email( $from_email ) ) {
@@ -21871,17 +21905,15 @@ class AJForms_Admin {
 										'heading_key'  => 'wp_password_reset_heading',
 										'body_key'     => 'wp_password_reset_body',
 										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-										'sample_html'  => $this->render_branded_email_html(
+										'sample_html'  => $this->render_branded_email_html( array_merge(
 											array(
-												'kicker'        => $sample_site_name,
-												'heading'       => $sample_copy_password_reset['heading'],
-												'paragraphs'    => $sample_copy_password_reset['paragraphs'],
-												'cta_text'      => __( 'Set New Password', 'ajforms' ),
-												'cta_url'       => '#',
-												'fallback_note' => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
-												'footer_note'   => __( 'If you did not request this email, you can ignore it.', 'ajforms' ),
-											)
-										),
+												'kicker'     => $sample_site_name,
+												'heading'    => $sample_copy_password_reset['heading'],
+												'paragraphs' => $sample_copy_password_reset['paragraphs'],
+												'cta_url'    => '#',
+											),
+											$this->get_password_reset_email_static_parts()
+										) ),
 									),
 									array(
 										'id'           => 'welcome',
@@ -21894,19 +21926,16 @@ class AJForms_Admin {
 										'heading_key'  => 'wp_welcome_heading',
 										'body_key'     => 'wp_welcome_body',
 										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-										'sample_html'  => $this->render_branded_email_html(
+										'sample_html'  => $this->render_branded_email_html( array_merge(
 											array(
-												'kicker'          => $sample_site_name,
-												'heading'         => $sample_copy_welcome['heading'],
-												'paragraphs'      => $sample_copy_welcome['paragraphs'],
-												'info_box_label'  => __( 'Your username is your email address:', 'ajforms' ),
-												'info_box_value'  => 'jane@example.com',
-												'info_box_layout' => 'stacked',
-												'cta_text'        => __( 'Set Password and Sign In', 'ajforms' ),
-												'cta_url'         => '#',
-												'fallback_note'   => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
-											)
-										),
+												'kicker'         => $sample_site_name,
+												'heading'        => $sample_copy_welcome['heading'],
+												'paragraphs'     => $sample_copy_welcome['paragraphs'],
+												'info_box_value' => 'jane@example.com',
+												'cta_url'        => '#',
+											),
+											$this->get_welcome_email_static_parts()
+										) ),
 									),
 									array(
 										'id'           => 'service_status',
@@ -21919,15 +21948,15 @@ class AJForms_Admin {
 										'heading_key'  => 'wp_service_status_heading',
 										'body_key'     => 'wp_service_status_body',
 										'tokens_help'  => __( 'Available placeholders: {name}, {service_name}, {status_label}. One paragraph per line.', 'ajforms' ),
-										'sample_html'  => $this->render_branded_email_html(
+										'sample_html'  => $this->render_branded_email_html( array_merge(
 											array(
 												'kicker'         => $sample_site_name,
 												'heading'        => $sample_copy_service_status['heading'],
 												'paragraphs'     => $sample_copy_service_status['paragraphs'],
-												'info_box_label' => __( 'New status', 'ajforms' ),
 												'info_box_value' => __( 'Active', 'ajforms' ),
-											)
-										),
+											),
+											$this->get_service_request_status_email_static_parts()
+										) ),
 									),
 									array(
 										'id'           => 'lead_followup',
@@ -21940,19 +21969,14 @@ class AJForms_Admin {
 										'heading_key'  => 'lead_followup_heading',
 										'body_key'     => 'lead_followup_body',
 										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-										'sample_html'  => $this->render_branded_email_html(
+										'sample_html'  => $this->render_branded_email_html( array_merge(
 											array(
-												'kicker'         => $sample_site_name,
-												'heading'        => $sample_copy_lead_followup['heading'],
-												'paragraphs'     => $sample_copy_lead_followup['paragraphs'],
-												'info_box_label' => __( 'Call or text us', 'ajforms' ),
-												'info_box_value' => __( '(704) 307-2135', 'ajforms' ),
-												'cta_text'       => __( 'View Our Services', 'ajforms' ),
-												'cta_url'        => 'https://ncllcagents.com/service',
-												'fallback_note'  => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
-												'footer_note'    => __( 'Prefer email? Reach us anytime at contactus@ncllcagents.com.', 'ajforms' ),
-											)
-										),
+												'kicker'     => $sample_site_name,
+												'heading'    => $sample_copy_lead_followup['heading'],
+												'paragraphs' => $sample_copy_lead_followup['paragraphs'],
+											),
+											$this->get_lead_followup_email_static_parts()
+										) ),
 									),
 								);
 								?>
