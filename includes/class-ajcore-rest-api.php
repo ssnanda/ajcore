@@ -326,6 +326,24 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Client portal: mark an annual-report filing complete (or undo) for one of
+		// the current user's own entities.
+		register_rest_route(
+			self::NAMESPACE,
+			'/portal/compliance/filings/(?P<id>\d+)/complete',
+			array(
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'complete_portal_compliance_filing' ),
+					'permission_callback' => array( $this, 'can_use_portal_api' ),
+					'args'                => array(
+						'completed' => array( 'required' => false ),
+						'note'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_textarea_field' ),
+					),
+				),
+			)
+		);
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/ops/compliance/(?P<id>\d+)/remind',
@@ -592,6 +610,7 @@ class AJCore_REST_API {
 			'/portal/billing/transactions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_billing_transactions',  'permission' => 'can_use_portal_api' ),
 			'/portal/billing'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_portal_billing', 'permission' => 'can_use_portal_api' ),
 			'/portal/tasks'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_tasks',              'permission' => 'can_use_portal_api' ),
+			'/portal/compliance'      => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_compliance',         'permission' => 'can_use_portal_api' ),
 			'/portal/service-requests/create' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'create_portal_service_request', 'permission' => 'can_use_portal_api' ),
 			'/portal/files'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_files',         'permission' => 'can_use_portal_api' ),
 			'/portal/mail'            => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_mail',          'permission' => 'can_use_portal_api' ),
@@ -1851,18 +1870,21 @@ class AJCore_REST_API {
 
 	private function format_compliance_filing_row( $f ) {
 		return array(
-			'id'               => (int) $f->id,
-			'entity_id'        => (int) $f->entity_id,
-			'filing_type'      => (string) $f->filing_type,
-			'period_year'      => (int) $f->period_year,
-			'due_date'         => (string) $f->due_date,
-			'status'           => (string) $f->status,
-			'filed_at'         => (string) $f->filed_at,
-			'confirmation'     => (string) $f->confirmation,
-			'notes'            => (string) $f->notes,
-			'reminder_stage'   => (string) $f->reminder_stage,
-			'last_reminder_at' => (string) $f->last_reminder_at,
-			'reminders_sent'   => (int) $f->reminders_sent,
+			'id'                  => (int) $f->id,
+			'entity_id'           => (int) $f->entity_id,
+			'filing_type'         => (string) $f->filing_type,
+			'period_year'         => (int) $f->period_year,
+			'due_date'            => (string) $f->due_date,
+			'status'              => (string) $f->status,
+			'filed_at'            => (string) $f->filed_at,
+			'confirmation'        => (string) $f->confirmation,
+			'notes'               => (string) $f->notes,
+			'client_completed'    => ! empty( $f->client_completed ),
+			'client_completed_at' => (string) $f->client_completed_at,
+			'client_note'         => (string) $f->client_note,
+			'reminder_stage'      => (string) $f->reminder_stage,
+			'last_reminder_at'    => (string) $f->last_reminder_at,
+			'reminders_sent'      => (int) $f->reminders_sent,
 		);
 	}
 
@@ -2266,6 +2288,94 @@ class AJCore_REST_API {
 		), array( 'id' => (int) $filing->id ), array( '%s', '%d' ), array( '%d' ) );
 
 		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	/** Client portal: the current user's entities with their filing deadlines. */
+	public function get_portal_compliance() {
+		$pdb        = $this->get_portal_db();
+		$t_entities = $this->portal_table( 'aj_portal_compliance_entities' );
+		$t_filings  = $this->portal_table( 'aj_portal_compliance_filings' );
+		if ( ! $this->table_exists( $pdb, $t_entities ) ) {
+			return rest_ensure_response( array( 'entities' => array() ) );
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return rest_ensure_response( array( 'entities' => array() ) );
+		}
+
+		$this->ensure_compliance_filing_rows();
+
+		$entities_raw = $pdb->get_results( $pdb->prepare(
+			"SELECT * FROM `{$t_entities}` WHERE stripe_customer_id = %s ORDER BY entity_name ASC",
+			$stripe_customer_id
+		) );
+		$entities_raw = is_array( $entities_raw ) ? $entities_raw : array();
+
+		$entities = array();
+		foreach ( $entities_raw as $e ) {
+			$filings = $pdb->get_results( $pdb->prepare(
+				"SELECT * FROM `{$t_filings}` WHERE entity_id = %d ORDER BY period_year DESC, id DESC",
+				(int) $e->id
+			) );
+			$entities[] = array(
+				'id'             => (int) $e->id,
+				'entity_name'    => (string) $e->entity_name,
+				'entity_type'    => (string) $e->entity_type,
+				'jurisdiction'   => (string) $e->jurisdiction,
+				'sos_id'         => (string) $e->sos_id,
+				'formation_date' => (string) $e->formation_date,
+				'entity_status'  => (string) $e->entity_status,
+				'filings'        => array_map( array( $this, 'format_compliance_filing_row' ), (array) $filings ),
+			);
+		}
+
+		return rest_ensure_response( array( 'entities' => $entities ) );
+	}
+
+	/**
+	 * Client portal: the customer marks a filing complete on their side ("I handled
+	 * this / it's filed"). Staff still verify and mark it officially filed in ops;
+	 * automated reminders stop once the client has marked it complete.
+	 */
+	public function complete_portal_compliance_filing( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$t_entities = $this->portal_table( 'aj_portal_compliance_entities' );
+		$t_filings  = $this->portal_table( 'aj_portal_compliance_filings' );
+		$id         = absint( $request->get_param( 'id' ) );
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		if ( '' === $stripe_customer_id ) {
+			return new WP_Error( 'forbidden', __( 'No linked customer account.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+
+		$filing = $id ? $pdb->get_row( $pdb->prepare(
+			"SELECT f.*, e.stripe_customer_id AS owner_customer_id
+			FROM `{$t_filings}` f
+			INNER JOIN `{$t_entities}` e ON e.id = f.entity_id
+			WHERE f.id = %d",
+			$id
+		) ) : null;
+		if ( ! $filing || (string) $filing->owner_customer_id !== $stripe_customer_id ) {
+			return new WP_Error( 'not_found', __( 'Filing not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$completed = $request->get_param( 'completed' );
+		$completed = null === $completed ? true : rest_sanitize_boolean( $completed );
+
+		$data = array(
+			'client_completed'    => $completed ? 1 : 0,
+			'client_completed_at' => $completed ? current_time( 'mysql' ) : null,
+		);
+		$formats = array( '%d', '%s' );
+		if ( null !== $request->get_param( 'note' ) ) {
+			$data['client_note'] = sanitize_textarea_field( (string) $request->get_param( 'note' ) );
+			$formats[]           = '%s';
+		}
+		$pdb->update( $t_filings, $data, array( 'id' => $id ), $formats, array( '%d' ) );
+
+		$fresh = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$t_filings}` WHERE id = %d", $id ) );
+		return rest_ensure_response( array( 'success' => true, 'filing' => $this->format_compliance_filing_row( $fresh ) ) );
 	}
 
 	public function get_ops_service_requests( WP_REST_Request $request ) {

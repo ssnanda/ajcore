@@ -557,6 +557,9 @@ class AJForms_Activator {
 			filed_by bigint(20) unsigned NOT NULL DEFAULT 0,
 			confirmation varchar(190) DEFAULT '' NOT NULL,
 			notes longtext NULL,
+			client_completed tinyint(1) NOT NULL DEFAULT 0,
+			client_completed_at datetime NULL,
+			client_note longtext NULL,
 			reminder_stage varchar(20) DEFAULT '' NOT NULL,
 			last_reminder_at datetime NULL,
 			reminders_sent int(11) NOT NULL DEFAULT 0,
@@ -1170,7 +1173,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '25', false );
+		update_option( 'ajforms_portal_schema_version', '26', false );
 	}
 
 	/**
@@ -1914,6 +1917,9 @@ class AJForms_Activator {
 			filed_by bigint(20) unsigned NOT NULL DEFAULT 0,
 			confirmation varchar(190) DEFAULT '' NOT NULL,
 			notes longtext NULL,
+			client_completed tinyint(1) NOT NULL DEFAULT 0,
+			client_completed_at datetime NULL,
+			client_note longtext NULL,
 			reminder_stage varchar(20) DEFAULT '' NOT NULL,
 			last_reminder_at datetime NULL,
 			reminders_sent int(11) NOT NULL DEFAULT 0,
