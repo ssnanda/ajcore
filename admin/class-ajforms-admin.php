@@ -15017,6 +15017,18 @@ class AJForms_Admin {
 		if ( false !== stripos( $service_name, 'f&f' ) ) {
 			return false;
 		}
+
+		// A refund is always staff-actionable (decide whether to cancel the service and notify the
+		// customer), but it isn't one of the forward workflow steps get_portal_service_request_quick_actions()
+		// builds — that function treats a refunded pay status the same as "not paid" and offers no
+		// next-step button for it, so without this check a refunded request would silently vanish
+		// from the default "Needs Action" queue the moment the refund was detected.
+		$status         = isset( $request->status ) ? sanitize_key( (string) $request->status ) : '';
+		$service_status = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+		if ( in_array( $status, array( 'refunded', 'partially_refunded' ), true ) && ! in_array( $service_status, array( 'completed', 'cancelled' ), true ) ) {
+			return true;
+		}
+
 		$actions = $this->get_portal_service_request_quick_actions( $request, $raw_data );
 		unset( $actions['cancel'], $actions['delete'] );
 		return ! empty( $actions );
