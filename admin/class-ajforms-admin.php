@@ -12890,7 +12890,7 @@ class AJForms_Admin {
 			'pending_customer'       => __( 'Pending Customer', 'ajforms' ),
 			'pending_agent'          => __( 'Pending Agent', 'ajforms' ),
 			'meeting_scheduled'      => __( 'Meeting Scheduled', 'ajforms' ),
-			'sosnc_filing'           => __( 'Filing with SOS/NC', 'ajforms' ),
+			'sosnc_filing'           => __( 'Filed with SOS/NC', 'ajforms' ),
 			'llc_documents_emailed'  => __( 'LLC Documents Emailed', 'ajforms' ),
 			'signing_cmra'           => __( 'Signing CMRA', 'ajforms' ),
 			'id_proof_needed'        => __( 'ID Proof Needed', 'ajforms' ),
@@ -13058,6 +13058,7 @@ class AJForms_Admin {
 				'paragraphs'     => $copy['paragraphs'],
 				'info_box_label' => __( 'New status', 'ajforms' ),
 				'info_box_value' => $status_label,
+				'footer_note'    => __( 'Questions? Call or text us at (704) 307-2135.', 'ajforms' ),
 			)
 		);
 
