@@ -4137,6 +4137,38 @@ class AJForms_Admin {
 		$this->run_portal_sync_job( 'cron', $settings['jobs'] );
 	}
 
+	/**
+	 * Public entry point for the ops REST API — everything AJOps needs to render a sync control:
+	 * available/selected jobs, enabled + frequency, and last/next run as UNIX (UTC) timestamps so
+	 * the client can render them in any timezone without guessing what timezone the server is in.
+	 * `ajcore_portal_sync_last_run` is stored via current_time('mysql') — the SITE's configured local
+	 * time, not UTC — so it's converted back to a true UTC timestamp using the site's own timezone
+	 * object rather than assumed to already be UTC (a wrong assumption would silently skew the
+	 * "last completed run" time by the site's UTC offset).
+	 */
+	public function get_portal_sync_status_for_ops() {
+		$settings   = $this->get_portal_sync_settings();
+		$last_run   = get_option( 'ajcore_portal_sync_last_run', '' );
+		$last_run_ts = 0;
+		if ( '' !== $last_run ) {
+			$dt = function_exists( 'wp_timezone' ) ? date_create( $last_run, wp_timezone() ) : date_create( $last_run . ' UTC' );
+			if ( $dt ) {
+				$last_run_ts = $dt->getTimestamp();
+			}
+		}
+		$next_run_ts = wp_next_scheduled( 'ajcore_portal_stripe_sync' );
+
+		return array(
+			'enabled'         => $settings['enabled'],
+			'frequency'       => $settings['frequency'],
+			'frequency_label' => $this->get_portal_sync_frequency_labels()[ $settings['frequency'] ] ?? $settings['frequency'],
+			'jobs'            => $this->get_portal_sync_jobs(),
+			'selected_jobs'   => $settings['jobs'],
+			'last_run_at'     => $last_run_ts ?: null,
+			'next_run_at'     => $next_run_ts ?: null,
+		);
+	}
+
 	public function handle_stripe_webhook_request() {
 		$this->ensure_portal_schema();
 

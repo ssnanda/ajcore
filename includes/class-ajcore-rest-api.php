@@ -138,6 +138,16 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/sync/status',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_sync_status' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/leads',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -5317,13 +5327,36 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'success' => true, 'customer' => $customer_row ) );
 	}
 
+	/**
+	 * "Run Selected Sync Now" — runs synchronously (same as the WP admin manual sync buttons) so the
+	 * caller gets an immediate record count / error back, rather than the old fire-and-forget
+	 * cron-scheduling approach (which gave no feedback and mislabeled the run as source 'cron').
+	 * Accepts an optional 'jobs' array (any of: products, customers, subscriptions, transactions);
+	 * omitted/empty means the account's configured default job set.
+	 */
 	public function ops_trigger_sync( WP_REST_Request $request ) {
-		// Schedule a single-run sync event to fire immediately.
-		if ( ! wp_next_scheduled( 'ajcore_portal_stripe_sync' ) ) {
-			wp_schedule_single_event( time() - 1, 'ajcore_portal_stripe_sync' );
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
 		}
-		spawn_cron();
-		return rest_ensure_response( array( 'success' => true, 'message' => 'Sync scheduled.' ) );
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$jobs  = $request->get_param( 'jobs' );
+		$jobs  = is_array( $jobs ) ? array_map( 'sanitize_key', $jobs ) : array();
+
+		$result = $admin->run_portal_sync_job( 'manual', $jobs );
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( 'sync_failed', $result->get_error_message(), array( 'status' => 500 ) );
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'records_synced' => absint( $result ) ) );
+	}
+
+	/** Sync status for the AJOps global sync widget: jobs, enabled/frequency, last/next run. */
+	public function get_ops_sync_status( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		return rest_ensure_response( $admin->get_portal_sync_status_for_ops() );
 	}
 
 	public function ops_update_customer( WP_REST_Request $request ) {
