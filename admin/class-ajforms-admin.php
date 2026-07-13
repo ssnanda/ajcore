@@ -10119,7 +10119,10 @@ class AJForms_Admin {
 			$action     = sanitize_key( wp_unslash( $_GET['portal_action'] ) );
 			$secret_key = $this->get_stripe_secret_key_for_portal();
 			$current_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'menu';
-			$current_tab = in_array( $current_tab, array( 'sync', 'menu', 'portal-users', 'sold-items', 'products-services', 'tasks' ), true ) ? $current_tab : 'menu';
+			// Matches the full tab whitelist in display_portal_dashboard() so "Full Sync Now" (now
+			// available from every tab, not just Sync/Menu/Customers/Product Catalog/Compliance)
+			// redirects back to wherever it was actually clicked from.
+			$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $current_tab : 'menu';
 			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
 
 			if ( in_array( $action, array( 'sync_all', 'sync_products', 'sync_customers', 'sync_subscriptions', 'sync_transactions' ), true )
@@ -16723,6 +16726,9 @@ class AJForms_Admin {
 			$tab = 'payments';
 		}
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
+		// One-click full sync, available from every tab (not just the dedicated Sync tab) — redirects
+		// back to whichever tab it was clicked from, same nonce/action the Sync tab's own button uses.
+		$full_sync_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => $tab, 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
 		$stripe_mode = $this->get_stripe_mode_badge_data();
 		$stripe_settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
 		$tabs = array(
@@ -16794,7 +16800,17 @@ class AJForms_Admin {
 						<?php $tab_url = isset( $external_tab_urls[ $tab_key ] ) ? $external_tab_urls[ $tab_key ] : add_query_arg( 'tab', $tab_key, $base_url ); ?>
 						<a class="ajcore-tab-link <?php echo $tab === $tab_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( $tab_url ); ?>"><?php echo esc_html( $tab_label ); ?></a>
 					<?php endforeach; ?>
+					<div class="ajcore-tab-spacer"></div>
+					<a class="button button-primary" href="<?php echo esc_url( $full_sync_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Run a full Stripe sync now (products, customers, subscriptions, transactions)?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Full Sync Now', 'ajforms' ); ?></a>
 				</nav>
+			<?php endif; ?>
+			<?php if ( 'customer' !== $tab && 'sync' !== $tab ) : ?>
+				<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
+					<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
+				<?php endif; ?>
+				<?php if ( isset( $_GET['portal-error'] ) ) : ?>
+					<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
+				<?php endif; ?>
 			<?php endif; ?>
 			<?php
 			if ( 'customer' === $tab ) {
