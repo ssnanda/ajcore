@@ -13671,51 +13671,51 @@ class AJForms_Admin {
 	 * fell back to Stripe's frozen, sometimes stale, invoice line-item description text.
 	 */
 	/**
-	 * Looks up the charge-level ledger row linked to this service request's originating invoice or
-	 * checkout session (matched by the payment_intent_id / invoice_id that the Stripe charge sync
-	 * also records on the charge's own ledger row — see run_portal_sync_job()'s charge loop) and
-	 * returns 'refunded' or 'partially_refunded' if that charge has since been refunded. Returns ''
-	 * when no refund is detected so callers leave the existing pay status untouched.
+	 * Determines whether the charge behind this service request has been refunded, by reusing
+	 * AJCore_REST_API::attach_payment_display_fields() — the exact same matcher the Payments screen
+	 * uses to show "Refunded" correctly. That method's own docblock explains why: on current Stripe
+	 * API versions, charge objects no longer expose `invoice`/`payment_intent` cross-link fields, so
+	 * a ledger row can't be reliably joined to its charge by ID alone — it falls back to matching by
+	 * (customer, amount, nearest date within 48h). Re-deriving that matching here via ID lookups
+	 * (an earlier version of this method did) silently found nothing, because those ID columns are
+	 * often empty for exactly the reason above. Returns '' when no refund is detected.
 	 */
 	private function get_service_request_refund_status( $row ) {
+		if ( ! class_exists( 'AJCore_REST_API' ) ) {
+			return '';
+		}
 		$pdb      = $this->get_pdb();
 		$t_ledger = $this->get_portal_ledger_table();
 
 		$own_ledger = null;
 		if ( ! empty( $row->ledger_id ) ) {
-			$own_ledger = $pdb->get_row( $pdb->prepare( "SELECT invoice_id, payment_intent_id FROM {$t_ledger} WHERE id = %d", (int) $row->ledger_id ) );
+			$own_ledger = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$t_ledger} WHERE id = %d", (int) $row->ledger_id ) );
 		}
 		if ( ! $own_ledger ) {
-			$own_ledger = $pdb->get_row( $pdb->prepare( "SELECT invoice_id, payment_intent_id FROM {$t_ledger} WHERE source_object_id = %s LIMIT 1", (string) $row->source_object_id ) );
+			$own_ledger = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$t_ledger} WHERE source_object_id = %s LIMIT 1", (string) $row->source_object_id ) );
 		}
-		if ( ! $own_ledger ) {
+		if ( ! $own_ledger || empty( $own_ledger->stripe_customer_id ) ) {
 			return '';
 		}
 
-		$invoice_id        = ! empty( $own_ledger->invoice_id ) ? (string) $own_ledger->invoice_id : '';
-		$payment_intent_id = ! empty( $own_ledger->payment_intent_id ) ? (string) $own_ledger->payment_intent_id : '';
-		if ( '' === $invoice_id && '' === $payment_intent_id ) {
-			return '';
-		}
+		$synthetic_tx = array(
+			array(
+				'object_type'        => sanitize_key( (string) $own_ledger->source_type ),
+				'stripe_object_id'   => (string) $own_ledger->source_object_id,
+				'stripe_customer_id' => (string) $own_ledger->stripe_customer_id,
+				'currency'           => (string) $own_ledger->currency,
+				'amount'             => (float) $own_ledger->amount,
+				'transaction_date'   => (string) $own_ledger->ledger_date,
+				'charge_id'          => (string) $own_ledger->charge_id,
+				'payment_intent_id'  => (string) $own_ledger->payment_intent_id,
+			),
+		);
 
-		$conditions = array();
-		$params     = array();
-		if ( '' !== $payment_intent_id ) {
-			$conditions[] = 'payment_intent_id = %s';
-			$params[]     = $payment_intent_id;
-		}
-		if ( '' !== $invoice_id ) {
-			$conditions[] = 'invoice_id = %s';
-			$params[]     = $invoice_id;
-		}
+		$rest_api      = new AJCore_REST_API();
+		$result        = $rest_api->attach_payment_display_fields( $synthetic_tx );
+		$refund_status = ! empty( $result[0]['refund_status'] ) ? sanitize_key( (string) $result[0]['refund_status'] ) : '';
 
-		$charge_status = $pdb->get_var( $pdb->prepare(
-			"SELECT status FROM {$t_ledger} WHERE source_type = 'charge' AND (" . implode( ' OR ', $conditions ) . ') ORDER BY id DESC LIMIT 1',
-			$params
-		) );
-		$charge_status = $charge_status ? sanitize_key( (string) $charge_status ) : '';
-
-		return in_array( $charge_status, array( 'refunded', 'partially_refunded' ), true ) ? $charge_status : '';
+		return in_array( $refund_status, array( 'refunded', 'partially_refunded' ), true ) ? $refund_status : '';
 	}
 
 	private function reconcile_invoice_sourced_service_requests() {
