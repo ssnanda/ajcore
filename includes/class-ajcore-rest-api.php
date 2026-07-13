@@ -1071,6 +1071,14 @@ class AJCore_REST_API {
 	public function dedupe_stripe_transaction_rows( $transactions ) {
 		$transactions = is_array( $transactions ) ? $transactions : array();
 
+		// Refunds are not payments: like Stripe's own Payments list, the refund shows as a
+		// "Refunded" badge on the original payment row (attach_payment_display_fields() derives
+		// it from the charge). Listing the refund object as its own row duplicates the payment
+		// and double-counts the Refunded total.
+		$transactions = array_values( array_filter( $transactions, function( $tx ) {
+			return 'refund' !== strtolower( isset( $tx['object_type'] ) ? (string) $tx['object_type'] : '' );
+		} ) );
+
 		// Build sets from invoice transactions so their duplicate charge records can be removed.
 		// A charge is a duplicate when: its invoice_id matches an invoice's stripe_object_id (primary),
 		// OR its payment_intent_id matches an invoice's payment_intent_id (fallback).
