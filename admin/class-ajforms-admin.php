@@ -13237,7 +13237,7 @@ class AJForms_Admin {
 			FROM `{$t_filings}` f
 			INNER JOIN `{$t_entities}` e ON e.id = f.entity_id AND e.entity_status = 'active'
 			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = e.stripe_customer_id
-			WHERE f.status = 'pending' AND f.due_date <= %s
+			WHERE f.status = 'pending' AND f.client_completed = 0 AND f.due_date <= %s
 			ORDER BY f.due_date ASC
 			LIMIT 500",
 			$horizon
