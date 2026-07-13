@@ -9886,7 +9886,7 @@ class AJForms_Admin {
 		$default_items = array(
 			array( 'id' => 'overview', 'label' => __( 'Overview', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'services', 'label' => __( 'My Services', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
-			array( 'id' => 'tasks', 'label' => __( 'Tasks', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
+			array( 'id' => 'tasks', 'label' => __( 'Compliance', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'billing', 'label' => __( 'Billing', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'file-library', 'label' => __( 'File Library', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'profile', 'label' => __( 'Profile', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
@@ -16294,7 +16294,7 @@ class AJForms_Admin {
 			array( __( 'Payments', 'ajforms' ), $txns, function ( $row ) {
 				return '<a href="' . esc_url( $this->get_portal_customer_360_url( $row->stripe_customer_id ) ) . '">' . esc_html( $row->description ? $row->description : $row->stripe_object_id ) . '</a> <span class="description">' . esc_html( strtoupper( (string) $row->currency ) . ' ' . number_format( (float) $row->amount, 2 ) . ' · ' . $row->status ) . '</span>';
 			} ),
-			array( __( 'Tasks', 'ajforms' ), $tasks, function ( $row ) {
+			array( __( 'Action Items', 'ajforms' ), $tasks, function ( $row ) {
 				return '<a href="' . esc_url( $this->get_portal_dashboard_url( 'tasks' ) ) . '">' . esc_html( $row->title ) . '</a> <span class="description">' . esc_html( $row->status ) . '</span>';
 			} ),
 			array( __( 'Files', 'ajforms' ), $files, function ( $row ) {
@@ -16437,7 +16437,7 @@ class AJForms_Admin {
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'portal-users'       => __( 'Customers', 'ajforms' ),
 			'products-services'  => __( 'Product Catalog', 'ajforms' ),
-			'tasks'              => __( 'Tasks', 'ajforms' ),
+			'tasks'              => __( 'Compliance', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'sync'               => __( 'Sync', 'ajforms' ),
 			'event-log'          => __( 'Event Log', 'ajforms' ),
@@ -17710,7 +17710,7 @@ class AJForms_Admin {
 			<div><span><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['open_balance'], 'usd' ) ); ?></strong></div>
 			<div><span><?php esc_html_e( 'Credit Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['credit_balance'], 'usd' ) ); ?></strong></div>
 			<div><span><?php esc_html_e( 'Requests', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['requests'] ) ); ?></strong></div>
-			<div><span><?php esc_html_e( 'Tasks', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['tasks'] ) ); ?></strong></div>
+			<div><span><?php esc_html_e( 'Action Items', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['tasks'] ) ); ?></strong></div>
 		</div>
 
 		<div class="ajcore-customer-grid">
@@ -17820,7 +17820,7 @@ class AJForms_Admin {
 				<div class="ajcore-customer-quick-actions">
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'payments', array( 'pay_customer' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Payments', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
-					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Compliance', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'file-library' ) ); ?>"><?php esc_html_e( 'Files', 'ajforms' ); ?></a>
 				</div>
 			</div>
@@ -17999,7 +17999,7 @@ class AJForms_Admin {
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
-				<h3><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h3>
+				<h3><?php esc_html_e( 'Action Items', 'ajforms' ); ?></h3>
 				<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px;padding:12px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:8px;">
 					<?php wp_nonce_field( 'ajcore_customer_task_' . $customer->stripe_customer_id, 'ajcore_customer_task_nonce' ); ?>
 					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
@@ -18011,7 +18011,7 @@ class AJForms_Admin {
 				<?php
 				$this->render_portal_dataset_section(
 					'customer_tasks',
-					__( 'Tasks', 'ajforms' ),
+					__( 'Action Items', 'ajforms' ),
 					$detail['tasks'],
 					array( 'title', 'task_scope', 'task_frequency', 'status', 'customer_status', 'due_date', 'action_required', 'client_visible' ),
 					__( 'No tasks found for this customer.', 'ajforms' )
@@ -19679,7 +19679,7 @@ class AJForms_Admin {
 			</style>
 			<div class="ajcore-task-head">
 				<div>
-					<h2><?php esc_html_e( 'Client Tasks / Action Items', 'ajforms' ); ?></h2>
+					<h2><?php esc_html_e( 'Compliance — Action Items', 'ajforms' ); ?></h2>
 					<p><?php echo $selected_customer ? esc_html( sprintf( __( 'Showing tasks for %s, including global tasks assigned to all portal users.', 'ajforms' ), $selected_customer->name ? $selected_customer->name : $selected_customer->email ) ) : esc_html__( 'Create global tasks for every portal user or client-specific tasks for one customer. Portal users can comment and mark visible tasks complete from their portal.', 'ajforms' ); ?></p>
 				</div>
 				<button type="button" class="button button-primary" id="ajcore-toggle-task-form"><?php echo esc_html( $editing_task ? __( 'Edit Task', 'ajforms' ) : __( 'New Task', 'ajforms' ) ); ?></button>
