@@ -576,6 +576,7 @@ class AJCore_REST_API {
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests/(?P<id>\d+)' => array( 'methods' => 'POST', 'callback' => 'update_ops_service_request', 'permission' => 'can_manage_ops_api' ),
 			'/ops/service-requests/(?P<id>\d+)/quick-action' => array( 'methods' => 'POST', 'callback' => 'apply_ops_service_request_quick_action', 'permission' => 'can_manage_ops_api' ),
+			'/ops/service-requests/(?P<id>\d+)/notify' => array( 'methods' => 'POST', 'callback' => 'notify_ops_service_request_status', 'permission' => 'can_manage_ops_api' ),
 			'/ops/service-requests/(?P<id>\d+)/history' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_request_history', 'permission' => 'can_manage_ops_api' ),
 			'/ops/service-requests/bulk' => array( 'methods' => 'POST', 'callback' => 'bulk_update_ops_service_requests', 'permission' => 'can_manage_ops_api' ),
 			'/ops/sync-logs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sync_logs', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -2554,6 +2555,7 @@ class AJCore_REST_API {
 				'admin_notes'      => $request->get_param( 'admin_notes' ),
 				'note'             => $request->get_param( 'note' ),
 				'assigned_user_id' => $request->get_param( 'assigned_user_id' ),
+				'notify_customer'  => rest_sanitize_boolean( $request->get_param( 'notify_customer' ) ),
 			)
 		);
 		if ( is_wp_error( $result ) ) {
@@ -2571,6 +2573,20 @@ class AJCore_REST_API {
 		) );
 	}
 
+	/** Public entry point for the ops REST API — sends the "notify customer of current status"
+	 *  email on demand, independent of a status change (SVC Status changes don't auto-notify). */
+	public function notify_ops_service_request_status( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->notify_service_request_status_for_ops( (int) $request->get_param( 'id' ) );
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( 'notify_failed', $result->get_error_message(), array( 'status' => 'not_found' === $result->get_error_code() ? 404 : 400 ) );
+		}
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
 	public function apply_ops_service_request_quick_action( WP_REST_Request $request ) {
 		if ( ! class_exists( 'AJForms_Admin' ) ) {
 			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
@@ -2578,7 +2594,8 @@ class AJCore_REST_API {
 		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
 		$result = $admin->apply_service_request_quick_action_for_ops(
 			(int) $request->get_param( 'id' ),
-			(string) $request->get_param( 'action' )
+			(string) $request->get_param( 'action' ),
+			rest_sanitize_boolean( $request->get_param( 'notify' ) )
 		);
 		if ( is_wp_error( $result ) ) {
 			$status = 'not_found' === $result->get_error_code() ? 404 : 400;

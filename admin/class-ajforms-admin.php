@@ -12960,9 +12960,21 @@ class AJForms_Admin {
 		if ( $old_service_status === $new_service_status ) {
 			return;
 		}
+		$this->send_service_request_status_email_now( $request, $new_service_status );
+	}
+
+	/**
+	 * Sends the status-update email for the CURRENT service_status regardless of whether it just
+	 * changed — the on-demand path staff use to notify a customer about a status that was already
+	 * set silently (SVC Status defaults to no email; see update_service_request_from_ops()). Shares
+	 * every template/branding detail with send_service_request_status_email() above, which only
+	 * differs by the old!==new guard before deciding to call this.
+	 */
+	private function send_service_request_status_email_now( $request, $service_status ) {
+		$new_service_status = sanitize_key( (string) $service_status );
 		$labels = $this->get_portal_sr_service_status_labels();
 		if ( ! isset( $labels[ $new_service_status ] ) ) {
-			return;
+			return false;
 		}
 
 		$customer = $this->get_pdb()->get_row(
@@ -12972,7 +12984,7 @@ class AJForms_Admin {
 			)
 		);
 		if ( ! $customer || ! is_email( (string) $customer->email ) ) {
-			return;
+			return false;
 		}
 
 		$settings   = $this->get_plugin_settings();
@@ -13020,7 +13032,43 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $from_email;
 		}
 
-		wp_mail( $customer->email, $subject, $message, $headers );
+		return (bool) wp_mail( $customer->email, $subject, $message, $headers );
+	}
+
+	/**
+	 * Public entry point for the ops REST API — the "ability to send those notifications" on
+	 * demand: emails the customer about the request's CURRENT service_status, independent of
+	 * whether it just changed. Used when staff want to notify after the fact for a status that was
+	 * set silently (the default), rather than only ever at the moment of the change.
+	 */
+	public function notify_service_request_status_for_ops( $request_id ) {
+		$pdb        = $this->get_pdb();
+		$request_id = absint( $request_id );
+		$request    = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $request_id ) );
+		if ( ! $request ) {
+			return new WP_Error( 'not_found', __( 'Service request not found.', 'ajforms' ) );
+		}
+
+		$service_status = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+		$sent           = $this->send_service_request_status_email_now( $request, $service_status );
+		if ( ! $sent ) {
+			return new WP_Error( 'send_failed', __( 'Could not send the notification — check the customer has a valid email on file.', 'ajforms' ) );
+		}
+
+		$this->add_portal_service_request_history(
+			$request_id,
+			'status_changed',
+			array(
+				'status_before'         => sanitize_key( (string) $request->status ),
+				'status_after'          => sanitize_key( (string) $request->status ),
+				'service_status_before' => $service_status,
+				'service_status_after'  => $service_status,
+				'note'                  => __( 'Customer manually notified of the current status.', 'ajforms' ),
+				'details'               => array( 'source' => 'manual_notify' ),
+			)
+		);
+
+		return true;
 	}
 
 	/**
@@ -13387,6 +13435,11 @@ class AJForms_Admin {
 		);
 
 		if ( $old_status !== $status || $old_service_status !== $service_status ) {
+			// SVC Status is mostly internal staff tracking (per explicit user decision) — a customer
+			// email only goes out when the caller opts in (notify_customer truthy), not on every
+			// change by default. AJOps sends this only when staff explicitly check "Notify customer"
+			// or use the dedicated Cancel Request action.
+			$notify = ! empty( $fields['notify_customer'] );
 			$this->add_portal_service_request_history(
 				$request_id,
 				'status_changed',
@@ -13395,11 +13448,15 @@ class AJForms_Admin {
 					'status_after'          => $status,
 					'service_status_before' => $old_service_status,
 					'service_status_after'  => $service_status,
-					'note'                  => __( 'Status updated from AJ Ops.', 'ajforms' ),
+					'note'                  => $notify
+						? __( 'Status updated from AJ Ops. Customer notified.', 'ajforms' )
+						: __( 'Status updated from AJ Ops.', 'ajforms' ),
 					'details'               => array( 'source' => 'ops_api' ),
 				)
 			);
-			$this->send_service_request_status_email( $request, $old_service_status, $service_status );
+			if ( $notify ) {
+				$this->send_service_request_status_email( $request, $old_service_status, $service_status );
+			}
 		}
 		if ( '' !== $note ) {
 			$this->add_portal_service_request_history(
@@ -14108,6 +14165,10 @@ class AJForms_Admin {
 		$payment_reference  = isset( $_POST['payment_reference'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_reference'] ) ) : $this->get_portal_service_request_meta_value( $request, 'payment_reference' );
 		$after_save_status  = isset( $_POST['after_save_status'] ) ? sanitize_key( wp_unslash( $_POST['after_save_status'] ) ) : '';
 		$after_service_status = isset( $_POST['after_service_status'] ) ? sanitize_key( wp_unslash( $_POST['after_service_status'] ) ) : '';
+		// SVC Status is mostly internal staff tracking — email only goes out when a form explicitly
+		// opts in (see the "Cancel Request" form below, which always does; the stepper/edit-panel
+		// forms default to silent).
+		$notify_customer    = ! empty( $_POST['notify_customer'] );
 		$selected_price_id  = isset( $_POST['request_stripe_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['request_stripe_price_id'] ) ) : '';
 		$selected_product   = $this->get_portal_product_by_price_id( $selected_price_id );
 		if ( '' !== $selected_price_id && ! $selected_product ) {
@@ -14228,11 +14289,15 @@ class AJForms_Admin {
 					'status_after'          => $status,
 					'service_status_before' => $old_service_status,
 					'service_status_after'  => $service_status,
-					'note'                  => __( 'Status updated from the edit panel.', 'ajforms' ),
+					'note'                  => $notify_customer
+						? __( 'Status updated from the edit panel. Customer notified.', 'ajforms' )
+						: __( 'Status updated from the edit panel.', 'ajforms' ),
 					'details'               => array( 'source' => 'details_save' ),
 				)
 			);
-			$this->send_service_request_status_email( $request, $old_service_status, $service_status );
+			if ( $notify_customer ) {
+				$this->send_service_request_status_email( $request, $old_service_status, $service_status );
+			}
 		}
 		if ( '' !== $new_history_note ) {
 			$this->add_portal_service_request_history(
@@ -14955,7 +15020,7 @@ class AJForms_Admin {
 	 * @return array|WP_Error array( 'request_id', 'status', 'service_status' ) plus a 'deleted' or
 	 *                        'billing_change_applied' flag for those two special actions.
 	 */
-	private function apply_service_request_quick_action( $request_id, $action ) {
+	private function apply_service_request_quick_action( $request_id, $action, $notify = false ) {
 		$request_id = absint( $request_id );
 		$action     = sanitize_key( (string) $action );
 
@@ -15049,7 +15114,11 @@ class AJForms_Admin {
 					'details'               => array( 'action' => $action ),
 				)
 			);
-			$this->send_service_request_status_email( $request, $old_service_status, $new_service_status );
+			// SVC Status changes don't email the customer by default — same opt-in rule as
+			// update_service_request_from_ops(); callers pass $notify=true to send it.
+			if ( $notify ) {
+				$this->send_service_request_status_email( $request, $old_service_status, $new_service_status );
+			}
 		}
 
 		if ( $is_payment_action ) {
@@ -15066,8 +15135,8 @@ class AJForms_Admin {
 	}
 
 	/** Public entry point for the ops REST API — applies a quick action key directly (e.g. "update_sosn"). */
-	public function apply_service_request_quick_action_for_ops( $request_id, $action ) {
-		return $this->apply_service_request_quick_action( $request_id, $action );
+	public function apply_service_request_quick_action_for_ops( $request_id, $action, $notify = false ) {
+		return $this->apply_service_request_quick_action( $request_id, $action, $notify );
 	}
 
 	/** Public entry point for the ops REST API — the same button set the WP admin list shows for this row. */
@@ -15452,19 +15521,21 @@ class AJForms_Admin {
 												<form method="post">
 													<input type="hidden" name="service_request_action" value="save_details">
 													<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
+													<input type="hidden" name="notify_customer" value="0">
 													<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
-													<button type="submit" name="after_service_status" value="<?php echo esc_attr( ! empty( $pipeline_keys ) ? $pipeline_keys[0] : 'new' ); ?>" class="aj-sr-badge is-cancelled aj-sr-cancelled-badge" title="<?php esc_attr_e( 'Cancelled — click to reopen', 'ajforms' ); ?>" onclick="return confirm('<?php echo esc_js( __( 'This will email the customer to let them know the request was reopened. Continue?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Cancelled', 'ajforms' ); ?></button>
+													<button type="submit" name="after_service_status" value="<?php echo esc_attr( ! empty( $pipeline_keys ) ? $pipeline_keys[0] : 'new' ); ?>" class="aj-sr-badge is-cancelled aj-sr-cancelled-badge" title="<?php esc_attr_e( 'Cancelled — click to reopen', 'ajforms' ); ?>"><?php esc_html_e( 'Cancelled', 'ajforms' ); ?></button>
 												</form>
 											<?php else : ?>
 												<form method="post" class="aj-sr-stepper" title="<?php echo esc_attr( $full_path ); ?>">
 													<input type="hidden" name="service_request_action" value="save_details">
 													<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
+													<input type="hidden" name="notify_customer" value="0">
 													<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
 													<?php foreach ( $pipeline_keys as $i => $key ) : ?>
 														<div class="aj-sr-stepper-step <?php echo 0 === $i ? '' : 'is-grow'; ?>">
 															<?php if ( $i > 0 ) : ?><span class="aj-sr-stepper-line <?php echo $i <= $current_step_index ? 'is-done' : ''; ?>"></span><?php endif; ?>
 															<div class="aj-sr-stepper-col">
-																<button type="submit" name="after_service_status" value="<?php echo esc_attr( $key ); ?>" class="aj-sr-stepper-dot <?php echo $i < $current_step_index ? 'is-done' : ( $i === $current_step_index ? 'is-current' : '' ); ?>"<?php echo $i === $current_step_index ? '' : ' onclick="return confirm(\'' . esc_js( sprintf( __( 'This will email the customer to let them know the status changed to "%s". Continue?', 'ajforms' ), $svc_pipeline[ $key ] ) ) . '\');"'; ?>><?php echo $i < $current_step_index ? '✓' : ''; ?></button>
+																<button type="submit" name="after_service_status" value="<?php echo esc_attr( $key ); ?>" class="aj-sr-stepper-dot <?php echo $i < $current_step_index ? 'is-done' : ( $i === $current_step_index ? 'is-current' : '' ); ?>"><?php echo $i < $current_step_index ? '✓' : ''; ?></button>
 																<span class="aj-sr-stepper-label <?php echo $i === $current_step_index ? 'is-current' : ''; ?>"><?php echo esc_html( $svc_pipeline[ $key ] ); ?></span>
 															</div>
 														</div>
@@ -15499,7 +15570,7 @@ class AJForms_Admin {
 												<div class="aj-sr-detail-grid">
 													<div class="aj-sr-edit-card">
 														<h3><?php esc_html_e( 'Update Workflow', 'ajforms' ); ?></h3>
-														<form method="post" onsubmit="var s=this.querySelector('[name=after_service_status]'); if(s && s.value!==s.getAttribute('data-original')){ return confirm('<?php echo esc_js( __( 'This will email the customer about the status change. Continue?', 'ajforms' ) ); ?>'); } return true;">
+														<form method="post">
 															<input type="hidden" name="service_request_action" value="save_details">
 															<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
 															<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
@@ -15512,6 +15583,7 @@ class AJForms_Admin {
 															<label><span><?php esc_html_e( 'Service Status', 'ajforms' ); ?></span><select name="after_service_status" data-original="<?php echo esc_attr( $svc_status ); ?>"><?php foreach ( $forward_service_options as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>" <?php selected( $svc_status, $key ); ?>><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select></label>
 															<label><span><?php esc_html_e( 'Admin Notes', 'ajforms' ); ?></span><textarea name="admin_notes" rows="3" placeholder="<?php esc_attr_e( 'Internal notes about this request.', 'ajforms' ); ?>"><?php echo esc_textarea( (string) $request->admin_notes ); ?></textarea></label>
 															<label><span><?php esc_html_e( 'Add History Note', 'ajforms' ); ?></span><textarea name="service_request_note" rows="3" placeholder="<?php esc_attr_e( 'Add a note. It will be timestamped in history.', 'ajforms' ); ?>"></textarea></label>
+															<label style="flex-direction:row;align-items:center;gap:6px;"><input type="checkbox" name="notify_customer" value="1"> <span><?php esc_html_e( 'Notify customer of this change by email', 'ajforms' ); ?></span></label>
 															<button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
 														</form>
 														<?php
@@ -15526,6 +15598,7 @@ class AJForms_Admin {
 																	<form method="post" onsubmit="return confirm('<?php echo esc_js( sprintf( __( 'Cancel "%s"? This will email the customer and can be reopened later if needed.', 'ajforms' ), $request_display_name ) ); ?>');">
 																		<input type="hidden" name="service_request_action" value="save_details">
 																		<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
+																		<input type="hidden" name="notify_customer" value="1">
 																		<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
 																		<button type="submit" name="after_service_status" value="cancelled" class="button"><?php esc_html_e( 'Cancel Request', 'ajforms' ); ?></button>
 																	</form>
@@ -16633,7 +16706,7 @@ class AJForms_Admin {
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'sync'               => __( 'Sync', 'ajforms' ),
 			'event-log'          => __( 'Event Log', 'ajforms' ),
-			'emails'             => __( 'Emails', 'ajforms' ),
+			'emails'             => __( 'Email Log', 'ajforms' ),
 			'menu'               => __( 'Menu', 'ajforms' ),
 			'calendar'           => __( 'Calendar / Reservations', 'ajforms' ),
 			'api'                => __( 'API', 'ajforms' ),
