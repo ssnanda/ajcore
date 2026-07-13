@@ -412,6 +412,37 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Mail intake: create/update accept multipart form data (optional scan upload),
+		// so they are registered directly rather than through the JSON route map.
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/mail',
+			array(
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'create_ops_mail_item' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/mail/(?P<id>\d+)',
+			array(
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'update_ops_mail_item' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+				array(
+					'methods'             => WP_REST_Server::DELETABLE,
+					'callback'            => array( $this, 'delete_ops_mail_item' ),
+					'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				),
+			)
+		);
+
 		foreach ( $this->get_route_map() as $route => $args ) {
 			register_rest_route(
 				self::NAMESPACE,
@@ -462,6 +493,11 @@ class AJCore_REST_API {
 			'/ops/product-counts' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_product_counts', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/delete-all' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'delete_ops_email_log_all', 'permission' => 'can_manage_ops_api' ),
+			// Mail intake (sub-routes before the bare /ops/mail/{id} GET; create/update/delete registered above)
+			'/ops/mail/(?P<id>\d+)/notify'  => array( 'methods' => 'POST', 'callback' => 'notify_ops_mail_item', 'permission' => 'can_manage_ops_api' ),
+			'/ops/mail/(?P<id>\d+)/publish' => array( 'methods' => 'POST', 'callback' => 'publish_ops_mail_item_to_files', 'permission' => 'can_manage_ops_api' ),
+			'/ops/mail/(?P<id>\d+)'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_mail_item', 'permission' => 'can_manage_ops_api' ),
+			'/ops/mail'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_mail_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -484,6 +520,7 @@ class AJCore_REST_API {
 			'/portal/tasks'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_tasks',              'permission' => 'can_use_portal_api' ),
 			'/portal/service-requests/create' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'create_portal_service_request', 'permission' => 'can_use_portal_api' ),
 			'/portal/files'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_files',         'permission' => 'can_use_portal_api' ),
+			'/portal/mail'            => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_mail',          'permission' => 'can_use_portal_api' ),
 			'/portal/service-requests'=> array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_service_requests', 'permission' => 'can_use_portal_api' ),
 			'/portal/store'           => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'get_portal_store',       'permission' => 'can_use_portal_api' ),
 			'/portal/store/checkout'  => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'portal_store_checkout', 'permission' => 'can_use_portal_api' ),
@@ -543,6 +580,12 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tasks', 'auth' => 'Admin', 'purpose' => 'Task definitions and customer task statuses.', 'app' => 'OPS tasks' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/service-requests', 'auth' => 'Admin', 'purpose' => 'Service request queue.', 'app' => 'OPS service desk' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/files', 'auth' => 'Admin', 'purpose' => 'Shared files list with assignment labels.', 'app' => 'OPS files' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/mail', 'auth' => 'Admin', 'purpose' => 'Mail/service-of-process intake queue with stats. Filters: search, status (received|scanned|notified|closed|open), mail_type, sop, stripe_customer_id.', 'app' => 'OPS mail' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/mail', 'auth' => 'Admin', 'purpose' => 'Log a received mail item (multipart; optional scan upload + notify flag for log-and-notify in one step).', 'app' => 'OPS mail' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/mail/{id}', 'auth' => 'Admin', 'purpose' => 'Update a mail item: fields, scan upload, disposition (forwarded|picked_up|shredded|returned|held).', 'app' => 'OPS mail' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/mail/{id}/notify', 'auth' => 'Admin', 'purpose' => 'Send (or resend) the client notification email for a mail item; stamps notified_at.', 'app' => 'OPS mail' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/mail/{id}/publish', 'auth' => 'Admin', 'purpose' => 'Publish the item scan into the client Files library and link it via file_id.', 'app' => 'OPS mail' ),
+			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/mail', 'auth' => 'Portal user', 'purpose' => 'Current user mailbox: received mail items with scan links and dispositions (no staff fields).', 'app' => 'iOS app / portal' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -3222,6 +3265,557 @@ class AJCore_REST_API {
 			'created_at'    => (string) $file->created_at,
 			'updated_at'    => (string) $file->updated_at,
 		);
+	}
+
+	// ── Mail intake endpoints ─────────────────────────────────────────────────
+	// Physical mail / service-of-process workflow: log item received → scan/attach →
+	// notify the client → track disposition. Separate from Files (a document library):
+	// a mail item is a chain-of-custody record whose scan is optional; publishing the
+	// scan into the client's Files is an explicit action for keeper documents.
+
+	private function get_mail_items_table() {
+		return $this->portal_table( 'aj_portal_mail_items' );
+	}
+
+	private function ensure_mail_items_table() {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_mail_items_table();
+		if ( $this->table_exists( $pdb, $table ) ) {
+			return true;
+		}
+		if ( ! class_exists( 'AJForms_Activator' ) ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+		}
+		AJForms_Activator::activate();
+		return $this->table_exists( $pdb, $table );
+	}
+
+	private function mail_item_types() {
+		return array( 'letter', 'legal', 'government', 'package', 'check', 'other' );
+	}
+
+	private function mail_item_dispositions() {
+		return array( 'forwarded', 'picked_up', 'shredded', 'returned', 'held' );
+	}
+
+	private function format_mail_item_row( $row, $staff_view = true ) {
+		$row = (array) $row;
+
+		$item = array(
+			'id'                 => (int) $row['id'],
+			'mail_uuid'          => (string) $row['mail_uuid'],
+			'stripe_customer_id' => (string) $row['stripe_customer_id'],
+			'customer_email'     => (string) $row['customer_email'],
+			'customer_name'      => isset( $row['customer_name'] ) ? (string) $row['customer_name'] : '',
+			'recipient_name'     => (string) $row['recipient_name'],
+			'mail_type'          => (string) $row['mail_type'],
+			'is_sop'             => ! empty( $row['is_sop'] ),
+			'sender_name'        => (string) $row['sender_name'],
+			'carrier'            => (string) $row['carrier'],
+			'tracking_number'    => (string) $row['tracking_number'],
+			'description'        => (string) $row['description'],
+			'status'             => (string) $row['status'],
+			'disposition'        => (string) $row['disposition'],
+			'scan_url'           => (string) $row['scan_url'],
+			'file_id'            => (int) $row['file_id'],
+			'received_at'        => (string) $row['received_at'],
+			'notified_at'        => (string) $row['notified_at'],
+			'disposed_at'        => (string) $row['disposed_at'],
+			'created_at'         => (string) $row['created_at'],
+			'updated_at'         => (string) $row['updated_at'],
+		);
+
+		if ( $staff_view ) {
+			$item['scan_attachment_id'] = (int) $row['scan_attachment_id'];
+			$item['admin_notes']        = (string) $row['admin_notes'];
+			$item['created_by']         = (int) $row['created_by'];
+		}
+
+		return $item;
+	}
+
+	private function fetch_mail_item_row( $id ) {
+		$pdb             = $this->get_portal_db();
+		$table           = $this->get_mail_items_table();
+		$customers_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$join            = $this->table_exists( $pdb, $customers_table )
+			? "LEFT JOIN `{$customers_table}` c ON c.stripe_customer_id = m.stripe_customer_id"
+			: '';
+		$name_select     = '' !== $join ? 'c.name AS customer_name, COALESCE(NULLIF(m.customer_email, \'\'), c.email) AS customer_email' : 'm.customer_email';
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		return $pdb->get_row( $pdb->prepare( "SELECT m.*, {$name_select} FROM `{$table}` m {$join} WHERE m.id = %d", absint( $id ) ), ARRAY_A );
+	}
+
+	private function log_mail_event( $event_type, $item, $details = array() ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->portal_table( 'aj_portal_event_log' );
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return;
+		}
+		$user = wp_get_current_user();
+		$pdb->insert(
+			$table,
+			array(
+				'event_type'         => sanitize_key( $event_type ),
+				'severity'           => ! empty( $item['is_sop'] ) ? 'warning' : 'info',
+				'source'             => 'ops_mail',
+				'stripe_customer_id' => (string) $item['stripe_customer_id'],
+				'actor_user_id'      => $user ? (int) $user->ID : 0,
+				'actor_email'        => $user ? (string) $user->user_email : '',
+				'details'            => wp_json_encode( array_merge( array( 'mail_item_id' => (int) $item['id'], 'mail_uuid' => (string) $item['mail_uuid'] ), $details ) ),
+				'created_at'         => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
+		);
+	}
+
+	/** Handles an optional multipart scan upload; returns array( attachment_id, url ) or WP_Error. */
+	private function handle_mail_scan_upload( WP_REST_Request $request ) {
+		$file_params = $request->get_file_params();
+		if ( empty( $file_params['scan'] ) || UPLOAD_ERR_OK !== (int) $file_params['scan']['error'] ) {
+			return array( 0, '' );
+		}
+
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+		require_once ABSPATH . 'wp-admin/includes/media.php';
+
+		$uploaded = wp_handle_upload( $file_params['scan'], array( 'test_form' => false ) );
+		if ( isset( $uploaded['error'] ) ) {
+			return new WP_Error( 'upload_error', $uploaded['error'], array( 'status' => 400 ) );
+		}
+
+		$attachment_id = wp_insert_attachment(
+			array(
+				'post_title'     => sanitize_text_field( basename( $file_params['scan']['name'] ) ),
+				'post_content'   => '',
+				'post_status'    => 'inherit',
+				'post_mime_type' => $uploaded['type'],
+			),
+			$uploaded['file'],
+			0,
+			true
+		);
+		if ( is_wp_error( $attachment_id ) ) {
+			return $attachment_id;
+		}
+		wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $uploaded['file'] ) );
+
+		return array( (int) $attachment_id, (string) wp_get_attachment_url( $attachment_id ) );
+	}
+
+	public function get_ops_mail_items( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_mail_items_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'mail_items' => array(), 'stats' => array( 'total' => 0, 'received' => 0, 'awaiting_notify' => 0, 'open' => 0, 'sop_open' => 0 ) ) );
+		}
+
+		$customers_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$has_customers   = $this->table_exists( $pdb, $customers_table );
+		$join            = $has_customers ? "LEFT JOIN `{$customers_table}` c ON c.stripe_customer_id = m.stripe_customer_id" : '';
+		$name_select     = $has_customers ? 'c.name AS customer_name, COALESCE(NULLIF(m.customer_email, \'\'), c.email) AS customer_email' : 'm.customer_email';
+
+		$where  = array( '1=1' );
+		$params = array();
+
+		$search = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?: '' ) );
+		if ( '' !== $search ) {
+			$like    = '%' . $pdb->esc_like( $search ) . '%';
+			$clause  = '( m.recipient_name LIKE %s OR m.sender_name LIKE %s OR m.tracking_number LIKE %s OR m.description LIKE %s OR m.customer_email LIKE %s OR m.stripe_customer_id LIKE %s';
+			$params  = array_merge( $params, array( $like, $like, $like, $like, $like, $like ) );
+			if ( $has_customers ) {
+				$clause  .= ' OR c.name LIKE %s OR c.email LIKE %s';
+				$params[] = $like;
+				$params[] = $like;
+			}
+			$where[] = $clause . ' )';
+		}
+
+		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?: '' ) );
+		if ( in_array( $status, array( 'received', 'scanned', 'notified', 'closed' ), true ) ) {
+			$where[]  = 'm.status = %s';
+			$params[] = $status;
+		} elseif ( 'open' === $status ) {
+			$where[] = "m.status <> 'closed'";
+		}
+
+		$mail_type = sanitize_key( (string) ( $request->get_param( 'mail_type' ) ?: '' ) );
+		if ( in_array( $mail_type, $this->mail_item_types(), true ) ) {
+			$where[]  = 'm.mail_type = %s';
+			$params[] = $mail_type;
+		}
+
+		if ( ! empty( $request->get_param( 'sop' ) ) ) {
+			$where[] = 'm.is_sop = 1';
+		}
+
+		$customer_filter = sanitize_text_field( (string) ( $request->get_param( 'stripe_customer_id' ) ?: '' ) );
+		if ( '' !== $customer_filter ) {
+			$where[]  = 'm.stripe_customer_id = %s';
+			$params[] = $customer_filter;
+		}
+
+		$per_page = min( 500, max( 1, absint( $request->get_param( 'per_page' ) ?: 200 ) ) );
+		$params[] = $per_page;
+
+		$where_sql = implode( ' AND ', $where );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $pdb->get_results( $pdb->prepare( "SELECT m.*, {$name_select} FROM `{$table}` m {$join} WHERE {$where_sql} ORDER BY (m.is_sop = 1 AND m.status <> 'closed') DESC, m.received_at DESC, m.id DESC LIMIT %d", $params ), ARRAY_A );
+		$rows = is_array( $rows ) ? $rows : array();
+
+		$stats = $pdb->get_row(
+			"SELECT COUNT(*) AS total,
+				SUM(status = 'received') AS received,
+				SUM(status IN ('received','scanned')) AS awaiting_notify,
+				SUM(status <> 'closed') AS open_items,
+				SUM(is_sop = 1 AND status <> 'closed') AS sop_open
+			FROM `{$table}`",
+			ARRAY_A
+		);
+
+		return rest_ensure_response( array(
+			'mail_items' => array_map( array( $this, 'format_mail_item_row' ), $rows ),
+			'stats'      => array(
+				'total'           => (int) ( $stats['total'] ?? 0 ),
+				'received'        => (int) ( $stats['received'] ?? 0 ),
+				'awaiting_notify' => (int) ( $stats['awaiting_notify'] ?? 0 ),
+				'open'            => (int) ( $stats['open_items'] ?? 0 ),
+				'sop_open'        => (int) ( $stats['sop_open'] ?? 0 ),
+			),
+		) );
+	}
+
+	public function get_ops_mail_item( WP_REST_Request $request ) {
+		$row = $this->fetch_mail_item_row( $request['id'] );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Mail item not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		return rest_ensure_response( $this->format_mail_item_row( $row ) );
+	}
+
+	public function create_ops_mail_item( WP_REST_Request $request ) {
+		if ( ! $this->ensure_mail_items_table() ) {
+			return new WP_Error( 'no_table', __( 'Mail items table could not be created.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		$recipient_name = sanitize_text_field( (string) ( $request->get_param( 'recipient_name' ) ?: '' ) );
+		if ( '' === $recipient_name ) {
+			return new WP_Error( 'missing_recipient', __( 'Recipient name is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$scan = $this->handle_mail_scan_upload( $request );
+		if ( is_wp_error( $scan ) ) {
+			return $scan;
+		}
+		list( $scan_attachment_id, $scan_url ) = $scan;
+
+		$mail_type = sanitize_key( (string) ( $request->get_param( 'mail_type' ) ?: 'letter' ) );
+		if ( ! in_array( $mail_type, $this->mail_item_types(), true ) ) {
+			$mail_type = 'other';
+		}
+
+		$received_at = sanitize_text_field( (string) ( $request->get_param( 'received_at' ) ?: '' ) );
+		$received_ts = '' !== $received_at ? strtotime( $received_at ) : false;
+
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_mail_items_table();
+		$data  = array(
+			'mail_uuid'          => wp_generate_uuid4(),
+			'stripe_customer_id' => sanitize_text_field( (string) ( $request->get_param( 'stripe_customer_id' ) ?: '' ) ),
+			'customer_email'     => sanitize_email( (string) ( $request->get_param( 'customer_email' ) ?: '' ) ),
+			'recipient_name'     => $recipient_name,
+			'mail_type'          => $mail_type,
+			'is_sop'             => ! empty( $request->get_param( 'is_sop' ) ) ? 1 : 0,
+			'sender_name'        => sanitize_text_field( (string) ( $request->get_param( 'sender_name' ) ?: '' ) ),
+			'carrier'            => sanitize_text_field( (string) ( $request->get_param( 'carrier' ) ?: '' ) ),
+			'tracking_number'    => sanitize_text_field( (string) ( $request->get_param( 'tracking_number' ) ?: '' ) ),
+			'description'        => sanitize_textarea_field( (string) ( $request->get_param( 'description' ) ?: '' ) ),
+			'status'             => $scan_attachment_id ? 'scanned' : 'received',
+			'disposition'        => '',
+			'scan_attachment_id' => $scan_attachment_id,
+			'scan_url'           => $scan_url,
+			'received_at'        => false !== $received_ts ? gmdate( 'Y-m-d H:i:s', $received_ts ) : current_time( 'mysql' ),
+			'admin_notes'        => sanitize_textarea_field( (string) ( $request->get_param( 'admin_notes' ) ?: '' ) ),
+			'created_by'         => get_current_user_id(),
+			'created_at'         => current_time( 'mysql' ),
+			'updated_at'         => current_time( 'mysql' ),
+		);
+
+		$inserted = $pdb->insert(
+			$table,
+			$data,
+			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s' )
+		);
+		if ( false === $inserted ) {
+			return new WP_Error( 'db_error', __( 'Could not create mail item.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		$item_id = (int) $pdb->insert_id;
+		$row     = $this->fetch_mail_item_row( $item_id );
+		$this->log_mail_event( 'mail_item_created', $row );
+
+		// Optional immediate client notification ("log & notify" in one step).
+		$notified = false;
+		if ( ! empty( $request->get_param( 'notify' ) ) ) {
+			$result = $this->send_mail_item_notification( $row );
+			if ( ! is_wp_error( $result ) ) {
+				$notified = true;
+				$row      = $this->fetch_mail_item_row( $item_id );
+			}
+		}
+
+		$response = $this->format_mail_item_row( $row );
+		$response['notified'] = $notified;
+		return rest_ensure_response( $response );
+	}
+
+	public function update_ops_mail_item( WP_REST_Request $request ) {
+		$row = $this->fetch_mail_item_row( $request['id'] );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Mail item not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$scan = $this->handle_mail_scan_upload( $request );
+		if ( is_wp_error( $scan ) ) {
+			return $scan;
+		}
+		list( $scan_attachment_id, $scan_url ) = $scan;
+
+		$data = array( 'updated_at' => current_time( 'mysql' ) );
+		$fmt  = array( '%s' );
+
+		$text_fields = array(
+			'recipient_name'  => 'sanitize_text_field',
+			'sender_name'     => 'sanitize_text_field',
+			'carrier'         => 'sanitize_text_field',
+			'tracking_number' => 'sanitize_text_field',
+			'description'     => 'sanitize_textarea_field',
+			'admin_notes'     => 'sanitize_textarea_field',
+			'stripe_customer_id' => 'sanitize_text_field',
+			'customer_email'  => 'sanitize_email',
+		);
+		foreach ( $text_fields as $field => $sanitizer ) {
+			if ( null !== $request->get_param( $field ) ) {
+				$data[ $field ] = call_user_func( $sanitizer, (string) $request->get_param( $field ) );
+				$fmt[]          = '%s';
+			}
+		}
+
+		if ( null !== $request->get_param( 'mail_type' ) ) {
+			$mail_type         = sanitize_key( (string) $request->get_param( 'mail_type' ) );
+			$data['mail_type'] = in_array( $mail_type, $this->mail_item_types(), true ) ? $mail_type : 'other';
+			$fmt[]             = '%s';
+		}
+
+		if ( null !== $request->get_param( 'is_sop' ) ) {
+			$data['is_sop'] = ! empty( $request->get_param( 'is_sop' ) ) ? 1 : 0;
+			$fmt[]          = '%d';
+		}
+
+		if ( null !== $request->get_param( 'received_at' ) ) {
+			$ts = strtotime( sanitize_text_field( (string) $request->get_param( 'received_at' ) ) );
+			if ( false !== $ts ) {
+				$data['received_at'] = gmdate( 'Y-m-d H:i:s', $ts );
+				$fmt[]               = '%s';
+			}
+		}
+
+		if ( $scan_attachment_id ) {
+			$data['scan_attachment_id'] = $scan_attachment_id;
+			$fmt[]                      = '%d';
+			$data['scan_url']           = $scan_url;
+			$fmt[]                      = '%s';
+			if ( 'received' === (string) $row['status'] ) {
+				$data['status'] = 'scanned';
+				$fmt[]          = '%s';
+			}
+		}
+
+		$disposition = null !== $request->get_param( 'disposition' ) ? sanitize_key( (string) $request->get_param( 'disposition' ) ) : null;
+		if ( null !== $disposition && '' !== $disposition ) {
+			if ( ! in_array( $disposition, $this->mail_item_dispositions(), true ) ) {
+				return new WP_Error( 'invalid_disposition', __( 'Invalid disposition.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+			$data['disposition'] = $disposition;
+			$fmt[]               = '%s';
+			$data['disposed_at'] = current_time( 'mysql' );
+			$fmt[]               = '%s';
+			// "held" keeps the item open (e.g. awaiting pickup); everything else closes it.
+			if ( 'held' !== $disposition ) {
+				$data['status'] = 'closed';
+				$fmt[]          = '%s';
+			}
+		} elseif ( '' === $disposition ) {
+			$data['disposition'] = '';
+			$fmt[]               = '%s';
+			$data['disposed_at'] = null;
+			$fmt[]               = '%s';
+		}
+
+		$pdb = $this->get_portal_db();
+		$pdb->update( $this->get_mail_items_table(), $data, array( 'id' => (int) $row['id'] ), $fmt, array( '%d' ) );
+
+		$updated = $this->fetch_mail_item_row( $row['id'] );
+		if ( null !== $disposition && '' !== $disposition ) {
+			$this->log_mail_event( 'mail_item_disposed', $updated, array( 'disposition' => $disposition ) );
+		}
+
+		return rest_ensure_response( $this->format_mail_item_row( $updated ) );
+	}
+
+	public function delete_ops_mail_item( WP_REST_Request $request ) {
+		$row = $this->fetch_mail_item_row( $request['id'] );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Mail item not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$pdb = $this->get_portal_db();
+		$pdb->delete( $this->get_mail_items_table(), array( 'id' => (int) $row['id'] ), array( '%d' ) );
+		return rest_ensure_response( array( 'deleted' => true, 'id' => (int) $row['id'] ) );
+	}
+
+	/** Sends the client notification for a mail item row and stamps notified_at/status. */
+	private function send_mail_item_notification( $row ) {
+		$row   = (array) $row;
+		$email = sanitize_email( (string) $row['customer_email'] );
+		if ( ! is_email( $email ) ) {
+			return new WP_Error( 'no_email', __( 'No customer email on file for this mail item. Link a customer or set an email first.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'ajcore_unavailable', __( 'Notification service unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$name  = ! empty( $row['customer_name'] ) ? (string) $row['customer_name'] : (string) $row['recipient_name'];
+		$sent  = $admin->send_mail_item_notification_for_ops( $row, $name, $email );
+		if ( ! $sent ) {
+			return new WP_Error( 'send_failed', __( 'The notification email could not be sent.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		$pdb  = $this->get_portal_db();
+		$data = array( 'notified_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ) );
+		$fmt  = array( '%s', '%s' );
+		if ( in_array( (string) $row['status'], array( 'received', 'scanned' ), true ) ) {
+			$data['status'] = 'notified';
+			$fmt[]          = '%s';
+		}
+		$pdb->update( $this->get_mail_items_table(), $data, array( 'id' => (int) $row['id'] ), $fmt, array( '%d' ) );
+
+		$this->log_mail_event( 'mail_item_notified', $row, array( 'email' => $email ) );
+		return true;
+	}
+
+	public function notify_ops_mail_item( WP_REST_Request $request ) {
+		$row = $this->fetch_mail_item_row( $request['id'] );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Mail item not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$result = $this->send_mail_item_notification( $row );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $this->format_mail_item_row( $this->fetch_mail_item_row( $request['id'] ) ) );
+	}
+
+	/**
+	 * Publishes the item's scan into the client Files library (for keeper documents) and
+	 * links it back via file_id. Files live in the local WP database, same as /ops/files.
+	 */
+	public function publish_ops_mail_item_to_files( WP_REST_Request $request ) {
+		global $wpdb;
+
+		$row = $this->fetch_mail_item_row( $request['id'] );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Mail item not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		if ( ! empty( $row['file_id'] ) ) {
+			return rest_ensure_response( $this->format_mail_item_row( $row ) );
+		}
+		if ( empty( $row['scan_attachment_id'] ) ) {
+			return new WP_Error( 'no_scan', __( 'Attach a scan before publishing to Files.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$files_table = $wpdb->prefix . 'aj_portal_files';
+		$users_table = $wpdb->prefix . 'aj_portal_file_users';
+		if ( ! $this->table_exists( $wpdb, $files_table ) ) {
+			return new WP_Error( 'no_table', __( 'Files table not found.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		$received_day = ! empty( $row['received_at'] ) ? mysql2date( 'M j, Y', (string) $row['received_at'] ) : '';
+		$title        = trim( sprintf( '%s — %s%s', (string) $row['recipient_name'], ucwords( str_replace( '_', ' ', (string) $row['mail_type'] ) ), '' !== $received_day ? ' (' . $received_day . ')' : '' ) );
+
+		$wpdb->insert(
+			$files_table,
+			array(
+				'attachment_id' => (int) $row['scan_attachment_id'],
+				'title'         => $title,
+				'category'      => 'Mail',
+				'description'   => (string) $row['description'],
+				'created_by'    => get_current_user_id(),
+				'created_at'    => current_time( 'mysql' ),
+				'updated_at'    => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%s', '%s', '%d', '%s', '%s' )
+		);
+		$file_id = (int) $wpdb->insert_id;
+		if ( ! $file_id ) {
+			return new WP_Error( 'db_error', __( 'Could not create the file record.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		$email = sanitize_email( (string) $row['customer_email'] );
+		if ( is_email( $email ) && $this->table_exists( $wpdb, $users_table ) ) {
+			$wpdb->insert(
+				$users_table,
+				array( 'file_id' => $file_id, 'user_id' => 0, 'user_email' => strtolower( $email ), 'created_at' => current_time( 'mysql' ) ),
+				array( '%d', '%d', '%s', '%s' )
+			);
+		}
+
+		$pdb = $this->get_portal_db();
+		$pdb->update(
+			$this->get_mail_items_table(),
+			array( 'file_id' => $file_id, 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => (int) $row['id'] ),
+			array( '%d', '%s' ),
+			array( '%d' )
+		);
+
+		return rest_ensure_response( $this->format_mail_item_row( $this->fetch_mail_item_row( $request['id'] ) ) );
+	}
+
+	/** Client mailbox: the current portal user's mail items, without staff-only fields. */
+	public function get_portal_mail() {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_mail_items_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'mail_items' => array() ) );
+		}
+
+		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
+		$user               = wp_get_current_user();
+		$user_email         = $user ? (string) $user->user_email : '';
+		if ( '' === $stripe_customer_id && '' === $user_email ) {
+			return rest_ensure_response( array( 'mail_items' => array() ) );
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $pdb->get_results(
+			$pdb->prepare(
+				"SELECT * FROM `{$table}` WHERE ( stripe_customer_id = %s AND stripe_customer_id <> '' ) OR ( customer_email = %s AND customer_email <> '' ) ORDER BY received_at DESC, id DESC LIMIT 200",
+				$stripe_customer_id,
+				strtolower( $user_email )
+			),
+			ARRAY_A
+		);
+		$rows = is_array( $rows ) ? $rows : array();
+
+		$items = array();
+		foreach ( $rows as $row ) {
+			$items[] = $this->format_mail_item_row( $row, false );
+		}
+
+		return rest_ensure_response( array( 'mail_items' => $items ) );
 	}
 
 	// ── OPS Reservation Endpoints ─────────────────────────────────────────────

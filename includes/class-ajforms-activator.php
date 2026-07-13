@@ -36,6 +36,7 @@ class AJForms_Activator {
 		$table_customer_states      = $wpdb->prefix . 'aj_portal_customer_states';
 		$table_reservation_resources  = $wpdb->prefix . 'aj_portal_reservation_resources';
 		$table_reservations           = $wpdb->prefix . 'aj_portal_reservations';
+		$table_mail_items             = $wpdb->prefix . 'aj_portal_mail_items';
 		$table_ajphone_conversations  = $wpdb->prefix . 'ajphone_conversations';
 
 		$sql = "CREATE TABLE $table_forms (
@@ -710,6 +711,41 @@ class AJForms_Activator {
 			KEY wp_user_id (wp_user_id)
 		) $charset_collate;
 
+		CREATE TABLE $table_mail_items (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			mail_uuid varchar(100) NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			customer_email varchar(190) DEFAULT '' NOT NULL,
+			recipient_name varchar(255) DEFAULT '' NOT NULL,
+			mail_type varchar(50) DEFAULT 'letter' NOT NULL,
+			is_sop tinyint(1) NOT NULL DEFAULT 0,
+			sender_name varchar(255) DEFAULT '' NOT NULL,
+			carrier varchar(50) DEFAULT '' NOT NULL,
+			tracking_number varchar(100) DEFAULT '' NOT NULL,
+			description longtext NULL,
+			status varchar(50) DEFAULT 'received' NOT NULL,
+			disposition varchar(50) DEFAULT '' NOT NULL,
+			scan_attachment_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			scan_url text NULL,
+			file_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			received_at datetime NOT NULL,
+			notified_at datetime NULL,
+			disposed_at datetime NULL,
+			admin_notes longtext NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY mail_uuid (mail_uuid),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY customer_email (customer_email),
+			KEY status (status),
+			KEY mail_type (mail_type),
+			KEY is_sop (is_sop),
+			KEY disposition (disposition),
+			KEY received_at (received_at)
+		) $charset_collate;
+
 		CREATE TABLE $table_ajphone_conversations (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			conversation_key varchar(255) NOT NULL,
@@ -735,12 +771,13 @@ class AJForms_Activator {
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
 
-		// In shared DB mode, also create reservation tables in the portal/shared DB.
+		// In shared DB mode, also create reservation and mail tables in the portal/shared DB.
 		if ( function_exists( 'ajcore_get_portal_db' ) ) {
 			$pdb = ajcore_get_portal_db();
 			if ( $pdb !== $wpdb ) {
 				$pdb_charset = $pdb->get_charset_collate();
 				self::create_reservation_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
+				self::create_mail_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 			}
 		}
 
@@ -1412,6 +1449,54 @@ class AJForms_Activator {
 			setting_value longtext NOT NULL DEFAULT '',
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (setting_name)
+		) {$charset_collate}" );
+	}
+
+	/**
+	 * Create the mail intake table directly in the given portal DB connection.
+	 * Uses CREATE TABLE IF NOT EXISTS so it is safe to call repeatedly.
+	 * Called when the portal DB differs from the local $wpdb instance.
+	 *
+	 * @param string $prefix          DB table prefix for the portal DB.
+	 * @param string $charset_collate Charset/collate string from portal DB.
+	 * @param object $pdb             Portal wpdb instance.
+	 */
+	public static function create_mail_tables_in_portal_db( $prefix, $charset_collate, $pdb ) {
+		$mail_table = $prefix . 'aj_portal_mail_items';
+
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$mail_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			mail_uuid varchar(100) NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			customer_email varchar(190) DEFAULT '' NOT NULL,
+			recipient_name varchar(255) DEFAULT '' NOT NULL,
+			mail_type varchar(50) DEFAULT 'letter' NOT NULL,
+			is_sop tinyint(1) NOT NULL DEFAULT 0,
+			sender_name varchar(255) DEFAULT '' NOT NULL,
+			carrier varchar(50) DEFAULT '' NOT NULL,
+			tracking_number varchar(100) DEFAULT '' NOT NULL,
+			description longtext NULL,
+			status varchar(50) DEFAULT 'received' NOT NULL,
+			disposition varchar(50) DEFAULT '' NOT NULL,
+			scan_attachment_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			scan_url text NULL,
+			file_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			received_at datetime NOT NULL,
+			notified_at datetime NULL,
+			disposed_at datetime NULL,
+			admin_notes longtext NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY mail_uuid (mail_uuid),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY customer_email (customer_email),
+			KEY status (status),
+			KEY mail_type (mail_type),
+			KEY is_sop (is_sop),
+			KEY disposition (disposition),
+			KEY received_at (received_at)
 		) {$charset_collate}" );
 	}
 

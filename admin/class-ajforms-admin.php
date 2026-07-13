@@ -766,6 +766,13 @@ class AJForms_Admin {
 			AJForms_Activator::activate();
 		}
 
+		// ── Mail intake table ─────────────────────────────────────────────────
+		$mail_table = $pdb->prefix . 'aj_portal_mail_items';
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $mail_table ) ) !== $mail_table ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+			AJForms_Activator::activate();
+		}
+
 		// Ensure product_catalog reservation columns exist (added in later schema versions).
 		$pc_table   = $this->get_portal_product_catalog_table();
 		$pc_columns = $pdb->get_col( "SHOW COLUMNS FROM {$pc_table}", 0 );
@@ -12997,6 +13004,104 @@ class AJForms_Admin {
 		}
 
 		wp_mail( $customer->email, $subject, $message, $headers );
+	}
+
+	/**
+	 * Public entry point for the ops REST API — notifies a client that a piece of physical
+	 * mail was received for them at the office. Service-of-process items get an urgent
+	 * subject and copy because timely delivery is the registered agent's legal obligation.
+	 *
+	 * @param array  $item           Mail item row (mail_type, is_sop, sender_name, received_at, scan_url).
+	 * @param string $customer_name  Display name for the greeting.
+	 * @param string $customer_email Destination address.
+	 * @return bool Whether wp_mail() accepted the message.
+	 */
+	public function send_mail_item_notification_for_ops( $item, $customer_name, $customer_email ) {
+		$customer_email = sanitize_email( (string) $customer_email );
+		if ( ! is_email( $customer_email ) ) {
+			return false;
+		}
+
+		$settings  = $this->get_plugin_settings();
+		$sender    = $this->resolve_email_sender( $settings, 'wp_mail_item_from_email', 'wp_mail_item_from_name' );
+		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+
+		$is_sop      = ! empty( $item['is_sop'] );
+		$type_labels = array(
+			'letter'     => __( 'Letter', 'ajforms' ),
+			'legal'      => __( 'Legal document', 'ajforms' ),
+			'government' => __( 'Government notice', 'ajforms' ),
+			'package'    => __( 'Package', 'ajforms' ),
+			'check'      => __( 'Check', 'ajforms' ),
+			'other'      => __( 'Mail item', 'ajforms' ),
+		);
+		$mail_type  = isset( $item['mail_type'] ) ? sanitize_key( (string) $item['mail_type'] ) : 'letter';
+		$type_label = isset( $type_labels[ $mail_type ] ) ? $type_labels[ $mail_type ] : $type_labels['other'];
+
+		$received_at = ! empty( $item['received_at'] ) ? mysql2date( get_option( 'date_format' ), (string) $item['received_at'] ) : '';
+		$sender_name = ! empty( $item['sender_name'] ) ? sanitize_text_field( (string) $item['sender_name'] ) : '';
+
+		$email_tokens = array(
+			'{name}'        => '' !== trim( (string) $customer_name ) ? $customer_name : $customer_email,
+			'{mail_type}'   => $type_label,
+			'{sender_name}' => '' !== $sender_name ? $sender_name : __( 'an unlisted sender', 'ajforms' ),
+			'{received_at}' => $received_at,
+		);
+
+		if ( $is_sop ) {
+			$default_subject = __( 'URGENT: Legal document received for you — {mail_type}', 'ajforms' );
+			$default_heading = __( 'A legal document was delivered to your registered agent', 'ajforms' );
+			$default_body    = array(
+				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+				__( 'We received service of process or another time-sensitive legal document addressed to you: {mail_type} from {sender_name}.', 'ajforms' ),
+				__( 'Legal documents often carry response deadlines. Please review it as soon as possible.', 'ajforms' ),
+			);
+			$subject_key = 'wp_mail_item_sop_subject';
+			$heading_key = 'wp_mail_item_sop_heading';
+			$body_key    = 'wp_mail_item_sop_body';
+		} else {
+			$default_subject = __( 'New mail received for you: {mail_type}', 'ajforms' );
+			$default_heading = __( 'You have new mail at our office', 'ajforms' );
+			$default_body    = array(
+				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+				__( 'We received a {mail_type} addressed to you from {sender_name}.', 'ajforms' ),
+			);
+			$subject_key = 'wp_mail_item_subject';
+			$heading_key = 'wp_mail_item_heading';
+			$body_key    = 'wp_mail_item_body';
+		}
+
+		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : $default_subject;
+		$subject          = strtr( $subject_template, $email_tokens );
+
+		$copy = $this->resolve_email_copy( $settings, $heading_key, $body_key, $default_heading, $default_body, $email_tokens );
+
+		$info_value = $type_label
+			. ( '' !== $sender_name ? ' — ' . sprintf( __( 'from %s', 'ajforms' ), $sender_name ) : '' )
+			. ( '' !== $received_at ? ' — ' . sprintf( __( 'received %s', 'ajforms' ), $received_at ) : '' );
+
+		$scan_url = ! empty( $item['scan_url'] ) ? esc_url_raw( (string) $item['scan_url'] ) : '';
+
+		$message = $this->render_branded_email_html(
+			array(
+				'kicker'         => $site_name,
+				'heading'        => $copy['heading'],
+				'paragraphs'     => $copy['paragraphs'],
+				'info_box_label' => __( 'Mail item', 'ajforms' ),
+				'info_box_value' => $info_value,
+				'cta_text'       => '' !== $scan_url ? __( 'View Scanned Document', 'ajforms' ) : '',
+				'cta_url'        => $scan_url,
+				'footer_note'    => __( 'Log in to your client portal to view your mailbox and manage this item.', 'ajforms' ),
+			)
+		);
+
+		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+		if ( is_email( $sender['from_email'] ) ) {
+			$headers[] = 'From: ' . $sender['from_name'] . ' <' . $sender['from_email'] . '>';
+			$headers[] = 'Reply-To: ' . $sender['from_email'];
+		}
+
+		return (bool) wp_mail( $customer_email, $subject, $message, $headers );
 	}
 
 	/** Public entry point for the ops REST API — returns the workflow status options for a request. */
