@@ -25,6 +25,8 @@ class AJForms_Activator {
 		$table_tasks                = $wpdb->prefix . 'aj_portal_tasks';
 		$table_task_statuses        = $wpdb->prefix . 'aj_portal_task_statuses';
 		$table_task_comments        = $wpdb->prefix . 'aj_portal_task_comments';
+		$table_compliance_entities  = $wpdb->prefix . 'aj_portal_compliance_entities';
+		$table_compliance_filings   = $wpdb->prefix . 'aj_portal_compliance_filings';
 		$table_sync_logs            = $wpdb->prefix . 'aj_portal_sync_logs';
 		$table_sync_log_items       = $wpdb->prefix . 'aj_portal_sync_log_items';
 		$table_service_requests     = $wpdb->prefix . 'aj_portal_service_requests';
@@ -519,6 +521,52 @@ class AJForms_Activator {
 			KEY task_id (task_id),
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY created_at (created_at)
+		) $charset_collate;
+
+		CREATE TABLE $table_compliance_entities (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			entity_name varchar(255) NOT NULL,
+			entity_type varchar(50) DEFAULT 'llc' NOT NULL,
+			jurisdiction varchar(10) DEFAULT 'NC' NOT NULL,
+			sos_id varchar(100) DEFAULT '' NOT NULL,
+			formation_date date NULL,
+			first_report_year smallint(5) unsigned NOT NULL DEFAULT 0,
+			due_month tinyint(3) unsigned NOT NULL DEFAULT 4,
+			due_day tinyint(3) unsigned NOT NULL DEFAULT 15,
+			entity_status varchar(50) DEFAULT 'active' NOT NULL,
+			notes longtext NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY entity_status (entity_status),
+			KEY entity_type (entity_type),
+			KEY jurisdiction (jurisdiction)
+		) $charset_collate;
+
+		CREATE TABLE $table_compliance_filings (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			entity_id bigint(20) unsigned NOT NULL,
+			filing_type varchar(50) DEFAULT 'annual_report' NOT NULL,
+			period_year smallint(5) unsigned NOT NULL,
+			due_date date NOT NULL,
+			status varchar(50) DEFAULT 'pending' NOT NULL,
+			filed_at datetime NULL,
+			filed_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			confirmation varchar(190) DEFAULT '' NOT NULL,
+			notes longtext NULL,
+			reminder_stage varchar(20) DEFAULT '' NOT NULL,
+			last_reminder_at datetime NULL,
+			reminders_sent int(11) NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY entity_period (entity_id, filing_type, period_year),
+			KEY entity_id (entity_id),
+			KEY due_date (due_date),
+			KEY status (status)
 		) $charset_collate;
 
 		CREATE TABLE $table_sync_logs (
@@ -1122,7 +1170,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '24', false );
+		update_option( 'ajforms_portal_schema_version', '25', false );
 	}
 
 	/**
@@ -1501,7 +1549,7 @@ class AJForms_Activator {
 	}
 
 	/**
-	 * Returns CREATE TABLE SQL for the 18 shared portal tables only.
+	 * Returns CREATE TABLE SQL for the shared portal tables only.
 	 * Does NOT include local-only tables (forms, leads, lead_notes, files, file_users, user_mappings).
 	 * Safe to pass to dbDelta() with a shared wpdb instance.
 	 */
@@ -1519,6 +1567,8 @@ class AJForms_Activator {
 		$t_tasks                = $prefix . 'aj_portal_tasks';
 		$t_task_statuses        = $prefix . 'aj_portal_task_statuses';
 		$t_task_comments        = $prefix . 'aj_portal_task_comments';
+		$t_compliance_entities  = $prefix . 'aj_portal_compliance_entities';
+		$t_compliance_filings   = $prefix . 'aj_portal_compliance_filings';
 		$t_sync_logs            = $prefix . 'aj_portal_sync_logs';
 		$t_sync_log_items       = $prefix . 'aj_portal_sync_log_items';
 		$t_ledger               = $prefix . 'aj_portal_ledger';
@@ -1828,6 +1878,52 @@ class AJForms_Activator {
 			KEY task_id (task_id),
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY created_at (created_at)
+		) $charset_collate;
+
+		CREATE TABLE $t_compliance_entities (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			entity_name varchar(255) NOT NULL,
+			entity_type varchar(50) DEFAULT 'llc' NOT NULL,
+			jurisdiction varchar(10) DEFAULT 'NC' NOT NULL,
+			sos_id varchar(100) DEFAULT '' NOT NULL,
+			formation_date date NULL,
+			first_report_year smallint(5) unsigned NOT NULL DEFAULT 0,
+			due_month tinyint(3) unsigned NOT NULL DEFAULT 4,
+			due_day tinyint(3) unsigned NOT NULL DEFAULT 15,
+			entity_status varchar(50) DEFAULT 'active' NOT NULL,
+			notes longtext NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY entity_status (entity_status),
+			KEY entity_type (entity_type),
+			KEY jurisdiction (jurisdiction)
+		) $charset_collate;
+
+		CREATE TABLE $t_compliance_filings (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			entity_id bigint(20) unsigned NOT NULL,
+			filing_type varchar(50) DEFAULT 'annual_report' NOT NULL,
+			period_year smallint(5) unsigned NOT NULL,
+			due_date date NOT NULL,
+			status varchar(50) DEFAULT 'pending' NOT NULL,
+			filed_at datetime NULL,
+			filed_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			confirmation varchar(190) DEFAULT '' NOT NULL,
+			notes longtext NULL,
+			reminder_stage varchar(20) DEFAULT '' NOT NULL,
+			last_reminder_at datetime NULL,
+			reminders_sent int(11) NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY entity_period (entity_id, filing_type, period_year),
+			KEY entity_id (entity_id),
+			KEY due_date (due_date),
+			KEY status (status)
 		) $charset_collate;
 
 		CREATE TABLE $t_sync_logs (
