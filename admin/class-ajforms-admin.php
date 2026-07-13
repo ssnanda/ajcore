@@ -12870,7 +12870,15 @@ class AJForms_Admin {
 		);
 	}
 
-	private function get_portal_service_request_service_status_options( $request ) {
+	/**
+	 * The product type's own forward-pipeline steps, with no injected fallback for the request's
+	 * current status — unlike get_portal_service_request_service_status_options() below, which
+	 * prepends the current status when it isn't naturally in this list (so the save dropdown always
+	 * has *something* selected for legacy/out-of-band data). Callers that need to distinguish "this
+	 * is a real pipeline step" from "this was only added so the UI has somewhere to show a stale
+	 * value" — see is_service_request_status_in_pipeline_for_ops() — should use this method instead.
+	 */
+	private function get_portal_service_request_native_service_status_options( $request ) {
 		$product_type = $this->get_portal_service_request_product_type( $request );
 		$labels       = $this->get_portal_sr_service_status_labels();
 
@@ -12929,6 +12937,13 @@ class AJForms_Admin {
 				$options[ $key ] = $labels[ $key ];
 			}
 		}
+
+		return $options;
+	}
+
+	private function get_portal_service_request_service_status_options( $request ) {
+		$options = $this->get_portal_service_request_native_service_status_options( $request );
+		$labels  = $this->get_portal_sr_service_status_labels();
 
 		$current = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
 		if ( '' !== $current && isset( $labels[ $current ] ) && ! isset( $options[ $current ] ) ) {
@@ -13291,6 +13306,19 @@ class AJForms_Admin {
 	/** Public entry point for the ops REST API — returns the workflow status options for a request. */
 	public function get_service_request_service_status_options_for_ops( $request ) {
 		return $this->get_portal_service_request_service_status_options( $request );
+	}
+
+	/**
+	 * Public entry point for the ops REST API — true when the request's current service_status is
+	 * one of its product type's normal forward-pipeline steps, false for a legacy/out-of-band value
+	 * (e.g. 'completed' on a bundled llc_setup or virtual_office_setup request, which per product
+	 * design settles at 'active' instead — see get_portal_service_request_native_service_status_options()).
+	 * Lets AJOps render such a request without implying it's "step 1" of its own forward pipeline.
+	 */
+	public function is_service_request_status_in_pipeline_for_ops( $request ) {
+		$native = $this->get_portal_service_request_native_service_status_options( $request );
+		$status = isset( $request->service_status ) && '' !== $request->service_status ? sanitize_key( (string) $request->service_status ) : 'new';
+		return isset( $native[ $status ] );
 	}
 
 	/**

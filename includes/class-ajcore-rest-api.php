@@ -2488,6 +2488,7 @@ class AJCore_REST_API {
 				'assigned_user_name'  => $assigned_user_id && isset( $assignees[ $assigned_user_id ] ) ? $assignees[ $assigned_user_id ]['name'] : '',
 				'assigned_user_email' => $assigned_user_id && isset( $assignees[ $assigned_user_id ] ) ? $assignees[ $assigned_user_id ]['email'] : '',
 				'service_status_options' => $admin ? $admin->get_service_request_service_status_options_for_ops( $r ) : array(),
+				'service_status_in_pipeline' => $admin ? $admin->is_service_request_status_in_pipeline_for_ops( $r ) : true,
 				'quick_actions'     => $admin ? $admin->get_service_request_quick_actions_for_ops( $r ) : array(),
 			);
 			if ( count( $service_requests ) >= 200 ) {
