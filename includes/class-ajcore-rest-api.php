@@ -2398,11 +2398,14 @@ class AJCore_REST_API {
 		$where  = array( '1=1' );
 		$params = array();
 
-		// Source filter (default: hide unpaid checkout leads)
+		// Source filter (default: hide unpaid checkout leads). A refund means the request WAS paid —
+		// it must stay alongside 'paid'/'completed'/'active' here, or a refunded checkout-session
+		// purchase gets misclassified as an abandoned/unpaid lead and silently dropped from every
+		// view (not just "Needs Action" — this filter runs before that logic even sees the row).
 		if ( 'checkout_only' === $source_filter ) {
 			$where[] = "(r.source_type = 'checkout_session' OR r.source = 'checkout_session')";
 		} elseif ( 'show_all' !== $source_filter ) {
-			$where[] = "NOT ((r.source_type = 'checkout_session' OR r.source = 'checkout_session') AND r.status NOT IN ('paid','completed','active'))";
+			$where[] = "NOT ((r.source_type = 'checkout_session' OR r.source = 'checkout_session') AND r.status NOT IN ('paid','completed','active','refunded','partially_refunded'))";
 		}
 
 		// Status filter (default: needs action — applied in PHP below via the same logic that

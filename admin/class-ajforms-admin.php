@@ -13731,12 +13731,20 @@ class AJForms_Admin {
 			$formats     = array();
 			$old_service_status = isset( $row->service_status ) && '' !== $row->service_status ? sanitize_key( (string) $row->service_status ) : 'new';
 
-			// Refund detection applies to any source type and never touches service_status — staff
-			// still choose the fulfillment stage manually; this only keeps pay status honest.
-			$refund_status = $this->get_service_request_refund_status( $row );
+			// Refund detection applies to any source type. A refund means the service is being
+			// discontinued, so the fulfillment pipeline is auto-cancelled here too (per explicit
+			// user decision) — which piggybacks on the existing status-change notification email
+			// below, same as the manual "Cancel Request" button already does.
+			$refund_status       = $this->get_service_request_refund_status( $row );
+			$auto_cancel_refund  = false;
 			if ( '' !== $refund_status && $refund_status !== sanitize_key( (string) $row->status ) ) {
 				$update['status'] = $refund_status;
 				$formats[]        = '%s';
+				if ( ! in_array( $old_service_status, array( 'cancelled', 'completed' ), true ) ) {
+					$update['service_status'] = 'cancelled';
+					$formats[]                = '%s';
+					$auto_cancel_refund       = true;
+				}
 			}
 
 			$invoice_id = sanitize_text_field( (string) $row->source_object_id );
@@ -13753,11 +13761,16 @@ class AJForms_Admin {
 								'status_before'         => sanitize_key( (string) $row->status ),
 								'status_after'          => $update['status'],
 								'service_status_before' => $old_service_status,
-								'service_status_after'  => $old_service_status,
-								'note'                  => __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
+								'service_status_after'  => isset( $update['service_status'] ) ? $update['service_status'] : $old_service_status,
+								'note'                  => $auto_cancel_refund
+									? __( 'Reconciled automatically: the linked Stripe charge was refunded — service cancelled and customer notified.', 'ajforms' )
+									: __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
 								'details'               => array( 'source' => 'refund_reconcile' ),
 							)
 						);
+						if ( $auto_cancel_refund ) {
+							$this->send_service_request_status_email( $row, $old_service_status, $update['service_status'] );
+						}
 					}
 				}
 				continue;
@@ -13782,11 +13795,16 @@ class AJForms_Admin {
 								'status_before'         => sanitize_key( (string) $row->status ),
 								'status_after'          => $update['status'],
 								'service_status_before' => $old_service_status,
-								'service_status_after'  => $old_service_status,
-								'note'                  => __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
+								'service_status_after'  => isset( $update['service_status'] ) ? $update['service_status'] : $old_service_status,
+								'note'                  => $auto_cancel_refund
+									? __( 'Reconciled automatically: the linked Stripe charge was refunded — service cancelled and customer notified.', 'ajforms' )
+									: __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
 								'details'               => array( 'source' => 'refund_reconcile' ),
 							)
 						);
+						if ( $auto_cancel_refund ) {
+							$this->send_service_request_status_email( $row, $old_service_status, $update['service_status'] );
+						}
 					}
 				}
 				continue;
@@ -13795,7 +13813,9 @@ class AJForms_Admin {
 			$subscription_id = $this->get_invoice_subscription_id_from_raw_data( $invoice_raw );
 			if ( '' !== $subscription_id ) {
 				$sub_status = $this->get_synced_portal_subscription_status( $subscription_id );
-				if ( in_array( $sub_status, array( 'canceled', 'incomplete_expired' ), true ) && 'cancelled' !== $old_service_status ) {
+				// Skip if the refund check above already queued the same field — service_status can
+				// only be set once per $update, or the extra %s format spec would misalign wpdb->update().
+				if ( in_array( $sub_status, array( 'canceled', 'incomplete_expired' ), true ) && 'cancelled' !== $old_service_status && ! isset( $update['service_status'] ) ) {
 					$update['service_status'] = 'cancelled';
 					$formats[]                = '%s';
 				}
@@ -13834,6 +13854,11 @@ class AJForms_Admin {
 			$formats[]            = '%s';
 			$pdb->update( $table, $update, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
 
+			// A refund (from the block near the top of this loop) always sets BOTH 'status' and
+			// 'service_status' together, so 'status' being set identifies a refund-driven update —
+			// elseif avoids writing two conflicting history entries (and mislabeling the cause) for
+			// the same change. The subscription-cancel branch above only ever sets 'service_status'
+			// alone, so it's the only way to reach the elseif.
 			if ( isset( $update['status'] ) ) {
 				$this->add_portal_service_request_history(
 					(int) $row->id,
@@ -13842,13 +13867,17 @@ class AJForms_Admin {
 						'status_before'         => sanitize_key( (string) $row->status ),
 						'status_after'          => $update['status'],
 						'service_status_before' => $old_service_status,
-						'service_status_after'  => $old_service_status,
-						'note'                  => __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
+						'service_status_after'  => isset( $update['service_status'] ) ? $update['service_status'] : $old_service_status,
+						'note'                  => $auto_cancel_refund
+							? __( 'Reconciled automatically: the linked Stripe charge was refunded — service cancelled and customer notified.', 'ajforms' )
+							: __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
 						'details'               => array( 'source' => 'refund_reconcile' ),
 					)
 				);
-			}
-			if ( isset( $update['service_status'] ) ) {
+				if ( $auto_cancel_refund ) {
+					$this->send_service_request_status_email( $row, $old_service_status, $update['service_status'] );
+				}
+			} elseif ( isset( $update['service_status'] ) ) {
 				$this->add_portal_service_request_history(
 					(int) $row->id,
 					'status_changed',
