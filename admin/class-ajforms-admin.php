@@ -12843,6 +12843,8 @@ class AJForms_Admin {
 			'failed'                => __( 'Failed', 'ajforms' ),
 			'admin_review_required' => __( 'Admin Review Required', 'ajforms' ),
 			'completed'             => __( 'Completed', 'ajforms' ),
+			'refunded'              => __( 'Refunded', 'ajforms' ),
+			'partially_refunded'    => __( 'Partially Refunded', 'ajforms' ),
 		);
 	}
 
@@ -13668,17 +13670,96 @@ class AJForms_Admin {
 	 * collect_portal_service_request_price_ids_from_data): older invoices synced before that fix
 	 * fell back to Stripe's frozen, sometimes stale, invoice line-item description text.
 	 */
+	/**
+	 * Looks up the charge-level ledger row linked to this service request's originating invoice or
+	 * checkout session (matched by the payment_intent_id / invoice_id that the Stripe charge sync
+	 * also records on the charge's own ledger row — see run_portal_sync_job()'s charge loop) and
+	 * returns 'refunded' or 'partially_refunded' if that charge has since been refunded. Returns ''
+	 * when no refund is detected so callers leave the existing pay status untouched.
+	 */
+	private function get_service_request_refund_status( $row ) {
+		$pdb      = $this->get_pdb();
+		$t_ledger = $this->get_portal_ledger_table();
+
+		$own_ledger = null;
+		if ( ! empty( $row->ledger_id ) ) {
+			$own_ledger = $pdb->get_row( $pdb->prepare( "SELECT invoice_id, payment_intent_id FROM {$t_ledger} WHERE id = %d", (int) $row->ledger_id ) );
+		}
+		if ( ! $own_ledger ) {
+			$own_ledger = $pdb->get_row( $pdb->prepare( "SELECT invoice_id, payment_intent_id FROM {$t_ledger} WHERE source_object_id = %s LIMIT 1", (string) $row->source_object_id ) );
+		}
+		if ( ! $own_ledger ) {
+			return '';
+		}
+
+		$invoice_id        = ! empty( $own_ledger->invoice_id ) ? (string) $own_ledger->invoice_id : '';
+		$payment_intent_id = ! empty( $own_ledger->payment_intent_id ) ? (string) $own_ledger->payment_intent_id : '';
+		if ( '' === $invoice_id && '' === $payment_intent_id ) {
+			return '';
+		}
+
+		$conditions = array();
+		$params     = array();
+		if ( '' !== $payment_intent_id ) {
+			$conditions[] = 'payment_intent_id = %s';
+			$params[]     = $payment_intent_id;
+		}
+		if ( '' !== $invoice_id ) {
+			$conditions[] = 'invoice_id = %s';
+			$params[]     = $invoice_id;
+		}
+
+		$charge_status = $pdb->get_var( $pdb->prepare(
+			"SELECT status FROM {$t_ledger} WHERE source_type = 'charge' AND (" . implode( ' OR ', $conditions ) . ') ORDER BY id DESC LIMIT 1',
+			$params
+		) );
+		$charge_status = $charge_status ? sanitize_key( (string) $charge_status ) : '';
+
+		return in_array( $charge_status, array( 'refunded', 'partially_refunded' ), true ) ? $charge_status : '';
+	}
+
 	private function reconcile_invoice_sourced_service_requests() {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_portal_service_requests_table();
 
 		$rows = $pdb->get_results(
-			"SELECT * FROM {$table} WHERE source_type = 'invoice' AND service_status NOT IN ('completed','cancelled') ORDER BY id ASC LIMIT 500"
+			"SELECT * FROM {$table} WHERE source_type IN ('invoice','checkout_session') AND status NOT IN ('refunded','cancelled','failed','draft') ORDER BY id ASC LIMIT 500"
 		);
 
 		foreach ( (array) $rows as $row ) {
+			$update      = array();
+			$formats     = array();
+			$old_service_status = isset( $row->service_status ) && '' !== $row->service_status ? sanitize_key( (string) $row->service_status ) : 'new';
+
+			// Refund detection applies to any source type and never touches service_status — staff
+			// still choose the fulfillment stage manually; this only keeps pay status honest.
+			$refund_status = $this->get_service_request_refund_status( $row );
+			if ( '' !== $refund_status && $refund_status !== sanitize_key( (string) $row->status ) ) {
+				$update['status'] = $refund_status;
+				$formats[]        = '%s';
+			}
+
 			$invoice_id = sanitize_text_field( (string) $row->source_object_id );
-			if ( '' === $invoice_id ) {
+			if ( '' === $invoice_id || 'invoice' !== sanitize_key( (string) $row->source_type ) ) {
+				if ( ! empty( $update ) ) {
+					$update['updated_at'] = current_time( 'mysql' );
+					$formats[]            = '%s';
+					$pdb->update( $table, $update, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
+					if ( isset( $update['status'] ) ) {
+						$this->add_portal_service_request_history(
+							(int) $row->id,
+							'status_changed',
+							array(
+								'status_before'         => sanitize_key( (string) $row->status ),
+								'status_after'          => $update['status'],
+								'service_status_before' => $old_service_status,
+								'service_status_after'  => $old_service_status,
+								'note'                  => __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
+								'details'               => array( 'source' => 'refund_reconcile' ),
+							)
+						);
+					}
+				}
 				continue;
 			}
 			$invoice_raw_json = $pdb->get_var(
@@ -13689,12 +13770,27 @@ class AJForms_Admin {
 			);
 			$invoice_raw = $invoice_raw_json ? json_decode( (string) $invoice_raw_json, true ) : null;
 			if ( ! is_array( $invoice_raw ) ) {
+				if ( ! empty( $update ) ) {
+					$update['updated_at'] = current_time( 'mysql' );
+					$formats[]            = '%s';
+					$pdb->update( $table, $update, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
+					if ( isset( $update['status'] ) ) {
+						$this->add_portal_service_request_history(
+							(int) $row->id,
+							'status_changed',
+							array(
+								'status_before'         => sanitize_key( (string) $row->status ),
+								'status_after'          => $update['status'],
+								'service_status_before' => $old_service_status,
+								'service_status_after'  => $old_service_status,
+								'note'                  => __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
+								'details'               => array( 'source' => 'refund_reconcile' ),
+							)
+						);
+					}
+				}
 				continue;
 			}
-
-			$update      = array();
-			$formats     = array();
-			$old_service_status = isset( $row->service_status ) && '' !== $row->service_status ? sanitize_key( (string) $row->service_status ) : 'new';
 
 			$subscription_id = $this->get_invoice_subscription_id_from_raw_data( $invoice_raw );
 			if ( '' !== $subscription_id ) {
@@ -13738,6 +13834,20 @@ class AJForms_Admin {
 			$formats[]            = '%s';
 			$pdb->update( $table, $update, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
 
+			if ( isset( $update['status'] ) ) {
+				$this->add_portal_service_request_history(
+					(int) $row->id,
+					'status_changed',
+					array(
+						'status_before'         => sanitize_key( (string) $row->status ),
+						'status_after'          => $update['status'],
+						'service_status_before' => $old_service_status,
+						'service_status_after'  => $old_service_status,
+						'note'                  => __( 'Reconciled automatically: the linked Stripe charge was refunded.', 'ajforms' ),
+						'details'               => array( 'source' => 'refund_reconcile' ),
+					)
+				);
+			}
 			if ( isset( $update['service_status'] ) ) {
 				$this->add_portal_service_request_history(
 					(int) $row->id,

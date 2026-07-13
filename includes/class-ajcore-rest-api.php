@@ -2393,7 +2393,7 @@ class AJCore_REST_API {
 		$status_filter = sanitize_key( (string) $request->get_param( 'status' ) );
 		$source_filter = sanitize_key( (string) $request->get_param( 'source' ) );
 
-		$valid_statuses = array( 'draft', 'pending_payment', 'awaiting_payment', 'paid', 'updating_sosn', 'signing_cmra', 'active', 'cancelled', 'failed', 'admin_review_required', 'completed' );
+		$valid_statuses = array( 'draft', 'pending_payment', 'awaiting_payment', 'paid', 'updating_sosn', 'signing_cmra', 'active', 'cancelled', 'failed', 'admin_review_required', 'completed', 'refunded', 'partially_refunded' );
 
 		$where  = array( '1=1' );
 		$params = array();
