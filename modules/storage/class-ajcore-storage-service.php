@@ -20,6 +20,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 	class AJCore_Storage_Service {
 
 		const OPTION_KEY = 'ajcore_storage_settings';
+		const SHARED_SETTING_KEY = 'ajcore_storage_settings';
 		const NONCE_ACTION = 'ajcore_storage_settings_save';
 		const SECRET_PLACEHOLDER = '••••••••••••••••';
 
@@ -194,7 +195,18 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		}
 
 		public static function get_settings() {
-			$saved = get_option( self::OPTION_KEY, array() );
+			if ( self::uses_shared_settings() ) {
+				$saved = self::read_shared_settings();
+				if ( empty( $saved ) ) {
+					$local = get_option( self::OPTION_KEY, array() );
+					if ( is_array( $local ) && ! empty( $local ) && self::write_shared_settings( $local ) ) {
+						delete_option( self::OPTION_KEY );
+						$saved = $local;
+					}
+				}
+			} else {
+				$saved = get_option( self::OPTION_KEY, array() );
+			}
 			$saved = is_array( $saved ) ? $saved : array();
 			return wp_parse_args( $saved, self::get_default_settings() );
 		}
@@ -219,8 +231,74 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				$clean['secret_key'] = $existing['secret_key'];
 			}
 
-			update_option( self::OPTION_KEY, $clean );
+			if ( self::uses_shared_settings() ) {
+				if ( self::write_shared_settings( $clean ) ) {
+					delete_option( self::OPTION_KEY );
+				}
+			} else {
+				update_option( self::OPTION_KEY, $clean );
+			}
 			return $clean;
+		}
+
+		private static function uses_shared_settings() {
+			return function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
+		}
+
+		private static function read_shared_settings() {
+			$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+			if ( ! $shared_db ) {
+				return array();
+			}
+
+			$table = $shared_db->prefix . 'aj_shared_settings';
+			if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+				return array();
+			}
+
+			$value = $shared_db->get_var(
+				$shared_db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", self::SHARED_SETTING_KEY )
+			);
+			$decoded = json_decode( (string) $value, true );
+			return is_array( $decoded ) ? $decoded : array();
+		}
+
+		private static function write_shared_settings( $settings ) {
+			$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+			if ( ! $shared_db ) {
+				return false;
+			}
+
+			$table = $shared_db->prefix . 'aj_shared_settings';
+			if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+				return false;
+			}
+
+			$encoded = wp_json_encode( $settings );
+			if ( false === $encoded ) {
+				return false;
+			}
+
+			$existing = $shared_db->get_var(
+				$shared_db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", self::SHARED_SETTING_KEY )
+			);
+			$data = array(
+				'setting_value' => $encoded,
+				'updated_at'    => current_time( 'mysql' ),
+			);
+
+			if ( $existing ) {
+				return false !== $shared_db->update(
+					$table,
+					$data,
+					array( 'setting_name' => self::SHARED_SETTING_KEY ),
+					array( '%s', '%s' ),
+					array( '%s' )
+				);
+			}
+
+			$data['setting_name'] = self::SHARED_SETTING_KEY;
+			return false !== $shared_db->insert( $table, $data, array( '%s', '%s', '%s' ) );
 		}
 
 		private static function is_secret_placeholder( $submitted, $existing ) {
