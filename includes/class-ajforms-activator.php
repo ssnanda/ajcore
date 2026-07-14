@@ -40,6 +40,7 @@ class AJForms_Activator {
 		$table_reservations           = $wpdb->prefix . 'aj_portal_reservations';
 		$table_mail_items             = $wpdb->prefix . 'aj_portal_mail_items';
 		$table_ajphone_conversations  = $wpdb->prefix . 'ajphone_conversations';
+		$table_storage_objects        = $wpdb->prefix . 'aj_storage_objects';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -817,6 +818,19 @@ class AJForms_Activator {
 			KEY is_archived (is_archived),
 			KEY is_deleted (is_deleted),
 			KEY queue (queue)
+		) $charset_collate;
+
+		CREATE TABLE $table_storage_objects (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			attachment_id bigint(20) unsigned NOT NULL,
+			driver varchar(20) NOT NULL DEFAULT 's3',
+			bucket varchar(190) NOT NULL DEFAULT '',
+			object_key varchar(500) NOT NULL DEFAULT '',
+			size_bytes bigint(20) unsigned NOT NULL DEFAULT 0,
+			content_type varchar(190) NOT NULL DEFAULT '',
+			migrated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY attachment_id (attachment_id)
 		) $charset_collate;";
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -1173,7 +1187,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '26', false );
+		update_option( 'ajforms_portal_schema_version', '27', false );
 	}
 
 	/**

@@ -7195,6 +7195,14 @@ class AJForms {
 			wp_die( esc_html__( 'File not found.', 'ajforms' ), '', array( 'response' => 404 ) );
 		}
 
+		if ( class_exists( 'AJCore_Storage_Service' ) ) {
+			$remote_url = AJCore_Storage_Service::get_presigned_download_url( (int) $file->attachment_id );
+			if ( $remote_url ) {
+				wp_redirect( $remote_url );
+				exit;
+			}
+		}
+
 		$file_path = get_attached_file( (int) $file->attachment_id );
 		$real_path = $file_path ? realpath( $file_path ) : false;
 		$uploads   = wp_get_upload_dir();
