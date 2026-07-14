@@ -4167,12 +4167,46 @@ class AJForms_Admin {
 	 * to trigger and then poll it. Shared by the ops REST trigger and the WP admin manual buttons so
 	 * both go through the exact same (safe, non-blocking) path.
 	 */
+	/**
+	 * Kicks WP-Cron only AFTER the current request's response has been fully sent to the client.
+	 * spawn_cron() makes a loopback HTTP request to the site's own public hostname — instant on a
+	 * local/dev box, but on a Cloudflare-fronted live site that is a hairpin connection (origin →
+	 * Cloudflare edge → back to origin) which can hang or be challenged/blocked outright, and any
+	 * such stall inside the request window stalls the API response with it (observed live as the
+	 * AJOps sync trigger hanging until the gateway 504'd, while local worked perfectly).
+	 * fastcgi_finish_request() (PHP-FPM, and LiteSpeed's lsapi on modern versions) flushes the
+	 * response and closes the client connection first, so a slow/hung spawn only ties up the PHP
+	 * worker, never the caller. Where unavailable, the shutdown hook still runs as late as possible.
+	 */
+	private function kick_wp_cron_after_response() {
+		add_action(
+			'shutdown',
+			static function () {
+				if ( function_exists( 'fastcgi_finish_request' ) ) {
+					fastcgi_finish_request();
+				}
+				spawn_cron();
+			},
+			PHP_INT_MAX
+		);
+	}
+
 	private function schedule_manual_sync_job( $jobs ) {
 		$run_key   = wp_generate_uuid4();
 		$run_token = wp_generate_uuid4();
 		set_transient( 'ajcore_manual_sync_' . $run_token, array( 'jobs' => $jobs, 'run_key' => $run_key ), 10 * MINUTE_IN_SECONDS );
-		wp_schedule_single_event( time() - 1, 'ajcore_manual_sync_run', array( $run_token ) );
-		spawn_cron();
+
+		$scheduled = wp_schedule_single_event( time() - 1, 'ajcore_manual_sync_run', array( $run_token ), true );
+		if ( is_wp_error( $scheduled ) ) {
+			delete_transient( 'ajcore_manual_sync_' . $run_token );
+			return $scheduled;
+		}
+		if ( false === $scheduled ) {
+			delete_transient( 'ajcore_manual_sync_' . $run_token );
+			return new WP_Error( 'schedule_failed', __( 'Could not schedule the background sync job.', 'ajforms' ) );
+		}
+
+		$this->kick_wp_cron_after_response();
 
 		return $run_key;
 	}
@@ -4204,6 +4238,10 @@ class AJForms_Admin {
 		) );
 
 		if ( empty( $rows ) ) {
+			// The scheduled event hasn't fired yet — re-kick cron (after this response is sent) so
+			// a lost/blocked initial kick self-heals on the very first poll instead of waiting for
+			// organic site traffic to trigger WP-Cron.
+			$this->kick_wp_cron_after_response();
 			return array( 'done' => false, 'started' => false, 'records_synced' => 0, 'errors' => array() );
 		}
 
@@ -10277,8 +10315,12 @@ class AJForms_Admin {
 				'sync_transactions'  => array( 'transactions' ),
 			);
 			if ( isset( $job_map[ $action ] ) ) {
-				$this->schedule_manual_sync_job( $job_map[ $action ] );
-				$args['portal-sync-queued'] = 1;
+				$queued = $this->schedule_manual_sync_job( $job_map[ $action ] );
+				if ( is_wp_error( $queued ) ) {
+					$args['portal-error'] = rawurlencode( $queued->get_error_message() );
+				} else {
+					$args['portal-sync-queued'] = 1;
+				}
 			}
 
 			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );

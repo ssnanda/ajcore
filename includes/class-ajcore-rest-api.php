@@ -5356,6 +5356,9 @@ class AJCore_REST_API {
 		$jobs  = is_array( $jobs ) ? array_map( 'sanitize_key', $jobs ) : array();
 
 		$run_key = $admin->trigger_manual_sync_for_ops( $jobs );
+		if ( is_wp_error( $run_key ) ) {
+			return new WP_Error( 'sync_schedule_failed', $run_key->get_error_message(), array( 'status' => 500 ) );
+		}
 
 		return rest_ensure_response( array( 'success' => true, 'run_key' => $run_key ) );
 	}
