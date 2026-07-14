@@ -83,12 +83,74 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		public static function get_default_settings() {
 			return array(
 				'enabled'    => '0',
+				'provider'   => 'minio',
 				'endpoint'   => '',
 				'region'     => 'us-east-1',
 				'bucket'     => '',
 				'access_key' => '',
 				'secret_key' => '',
 				'path_style' => '1',
+			);
+		}
+
+		/**
+		 * Per-provider label, endpoint placeholder/hint, default path-style, and
+		 * step-by-step instructions for obtaining an access key/secret key —
+		 * shown in the settings screen based on the selected provider. The S3
+		 * client itself needs none of this; SigV4 is identical across providers,
+		 * only the console/steps to get credentials differ.
+		 */
+		public static function get_provider_definitions() {
+			return array(
+				'minio'  => array(
+					'label'                => __( 'MinIO', 'ajforms' ),
+					'endpoint_hint'        => __( 'The S3 API endpoint, not the web console — these are usually different hosts/ports (e.g. files.example.com for the API vs. console.files.example.com for the console).', 'ajforms' ),
+					'endpoint_placeholder' => 'https://files.example.com',
+					'default_path_style'   => true,
+					'instructions'         => array(
+						__( 'Log into your MinIO Console (the web UI — a different host/port than the S3 API endpoint above).', 'ajforms' ),
+						__( 'Go to "Access Keys" (older versions: "Identity" → "Users").', 'ajforms' ),
+						__( 'Click "Create Access Key".', 'ajforms' ),
+						__( 'Optionally attach a policy restricting it to a single bucket — recommended over using your root credentials directly.', 'ajforms' ),
+						__( 'Copy the Access Key and Secret Key now — the secret is only ever shown once.', 'ajforms' ),
+					),
+				),
+				'aws_s3' => array(
+					'label'                => __( 'AWS S3', 'ajforms' ),
+					'endpoint_hint'        => __( 'Use your bucket\'s regional endpoint, e.g. https://s3.us-east-1.amazonaws.com — and make sure Region below matches the region the bucket was actually created in.', 'ajforms' ),
+					'endpoint_placeholder' => 'https://s3.us-east-1.amazonaws.com',
+					'default_path_style'   => false,
+					'instructions'         => array(
+						__( 'Open the AWS IAM Console → Users, and select (or create) the user this plugin should act as.', 'ajforms' ),
+						__( 'Open the "Security credentials" tab for that user.', 'ajforms' ),
+						__( 'Click "Create access key", choose "Application running outside AWS" (or similar) as the use case.', 'ajforms' ),
+						__( 'Copy the Access Key ID and Secret Access Key now — the secret is only ever shown once.', 'ajforms' ),
+						__( 'Attach a bucket-scoped IAM policy to that user rather than using broad account credentials.', 'ajforms' ),
+					),
+				),
+				'rustfs' => array(
+					'label'                => __( 'RustFS', 'ajforms' ),
+					'endpoint_hint'        => __( 'RustFS speaks the S3 API the same way MinIO does — use its S3 API host here, not any separate admin/console host if one exists.', 'ajforms' ),
+					'endpoint_placeholder' => 'https://files.example.com',
+					'default_path_style'   => true,
+					'instructions'         => array(
+						__( 'Open your RustFS admin console or CLI.', 'ajforms' ),
+						__( 'Create an access key (RustFS is MinIO-API-compatible, so the concept is the same — check the RustFS docs for the exact screen name in your version).', 'ajforms' ),
+						__( 'Scope it to a single bucket if the option is available.', 'ajforms' ),
+						__( 'Copy the Access Key and Secret Key now.', 'ajforms' ),
+					),
+				),
+				'other'  => array(
+					'label'                => __( 'Other S3-compatible', 'ajforms' ),
+					'endpoint_hint'        => __( 'Use the S3 API endpoint documented by your provider.', 'ajforms' ),
+					'endpoint_placeholder' => 'https://s3.example.com',
+					'default_path_style'   => true,
+					'instructions'         => array(
+						__( 'Check your provider\'s documentation for an "Access Keys" or "API Keys" section, usually under account or security settings.', 'ajforms' ),
+						__( 'Create a key scoped to a single bucket if that option exists.', 'ajforms' ),
+						__( 'Copy the Access Key and Secret Key now — most providers only show the secret once.', 'ajforms' ),
+					),
+				),
 			);
 		}
 
@@ -106,6 +168,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			}
 			$clean['enabled']    = ! empty( $settings['enabled'] ) ? '1' : '0';
 			$clean['path_style'] = ! empty( $settings['path_style'] ) ? '1' : '0';
+			if ( ! array_key_exists( $clean['provider'], self::get_provider_definitions() ) ) {
+				$clean['provider'] = 'minio';
+			}
 
 			// Preserve the existing secret if the settings form submitted a masked
 			// placeholder (the settings screen never round-trips the real secret back
@@ -413,11 +478,12 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 			$posted = array(
 				'enabled'    => isset( $_POST['enabled'] ) ? '1' : '0',
+				'provider'   => isset( $_POST['provider'] ) ? sanitize_key( wp_unslash( $_POST['provider'] ) ) : 'minio',
 				'endpoint'   => isset( $_POST['endpoint'] ) ? esc_url_raw( wp_unslash( $_POST['endpoint'] ) ) : '',
 				'region'     => isset( $_POST['region'] ) ? sanitize_text_field( wp_unslash( $_POST['region'] ) ) : 'us-east-1',
 				'bucket'     => isset( $_POST['bucket'] ) ? sanitize_text_field( wp_unslash( $_POST['bucket'] ) ) : '',
-				'access_key' => isset( $_POST['access_key'] ) ? sanitize_text_field( wp_unslash( $_POST['access_key'] ) ) : '',
-				'secret_key' => isset( $_POST['secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['secret_key'] ) ) : '',
+				'access_key' => isset( $_POST['access_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['access_key'] ) ) ) : '',
+				'secret_key' => isset( $_POST['secret_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['secret_key'] ) ) ) : '',
 				'path_style' => isset( $_POST['path_style'] ) ? '1' : '0',
 			);
 
@@ -439,9 +505,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 			$settings = array(
 				'endpoint'   => isset( $_POST['endpoint'] ) ? esc_url_raw( wp_unslash( $_POST['endpoint'] ) ) : '',
-				'region'     => isset( $_POST['region'] ) ? sanitize_text_field( wp_unslash( $_POST['region'] ) ) : 'us-east-1',
-				'access_key' => isset( $_POST['access_key'] ) ? sanitize_text_field( wp_unslash( $_POST['access_key'] ) ) : '',
-				'secret_key' => isset( $_POST['secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['secret_key'] ) ) : '',
+				'region'     => isset( $_POST['region'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['region'] ) ) ) : 'us-east-1',
+				'access_key' => isset( $_POST['access_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['access_key'] ) ) ) : '',
+				'secret_key' => isset( $_POST['secret_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['secret_key'] ) ) ) : '',
 				'bucket'     => '',
 				'path_style' => isset( $_POST['path_style'] ) ? '1' : '0',
 			);
@@ -514,10 +580,37 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 							</td>
 						</tr>
 						<tr>
+							<th scope="row"><label for="ajcore_storage_provider"><?php esc_html_e( 'Provider', 'ajforms' ); ?></label></th>
+							<td>
+								<select id="ajcore_storage_provider" name="provider">
+									<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
+										<option value="<?php echo esc_attr( $provider_key ); ?>" <?php selected( $settings['provider'], $provider_key ); ?>><?php echo esc_html( $provider['label'] ); ?></option>
+									<?php endforeach; ?>
+								</select>
+								<p class="description"><?php esc_html_e( "Only changes the instructions and defaults shown below — the actual connection works identically across providers, so switching later is just a config change.", 'ajforms' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Getting an access key', 'ajforms' ); ?></th>
+							<td>
+								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
+									<div class="ajcore-storage-provider-help" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>padding:12px 14px;border:1px solid #dcdcde;border-radius:6px;background:#f6f7f7;margin-bottom:8px;">
+										<ol style="margin:0 0 0 18px;">
+											<?php foreach ( $provider['instructions'] as $step ) : ?>
+												<li><?php echo esc_html( $step ); ?></li>
+											<?php endforeach; ?>
+										</ol>
+									</div>
+								<?php endforeach; ?>
+							</td>
+						</tr>
+						<tr>
 							<th scope="row"><label for="ajcore_storage_endpoint"><?php esc_html_e( 'Endpoint URL', 'ajforms' ); ?></label></th>
 							<td>
 								<input type="url" id="ajcore_storage_endpoint" name="endpoint" value="<?php echo esc_attr( $settings['endpoint'] ); ?>" class="regular-text" placeholder="https://files.example.com" />
-								<p class="description"><?php esc_html_e( 'The S3 API endpoint (not the web console). For MinIO on OpenShift this is the api host, not the console host.', 'ajforms' ); ?></p>
+								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
+									<p class="description ajcore-storage-provider-endpoint-hint" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>"><?php echo esc_html( $provider['endpoint_hint'] ); ?></p>
+								<?php endforeach; ?>
 							</td>
 						</tr>
 						<tr>
@@ -574,6 +667,21 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			(function(){
 				var nonce = <?php echo wp_json_encode( $nonce ); ?>;
 				var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+				var providerDefaults = <?php echo wp_json_encode( array_map( function ( $p ) {
+					return array( 'path_style' => $p['default_path_style'], 'placeholder' => $p['endpoint_placeholder'] );
+				}, self::get_provider_definitions() ) ); ?>;
+
+				document.getElementById('ajcore_storage_provider').addEventListener('change', function () {
+					var provider = this.value;
+					document.querySelectorAll('.ajcore-storage-provider-help, .ajcore-storage-provider-endpoint-hint').forEach(function (el) {
+						el.style.display = (el.getAttribute('data-provider') === provider) ? '' : 'none';
+					});
+					var defaults = providerDefaults[provider];
+					if (defaults) {
+						document.getElementById('ajcore_storage_endpoint').placeholder = defaults.placeholder;
+						document.querySelector('input[name="path_style"]').checked = defaults.path_style;
+					}
+				});
 
 				document.getElementById('ajcore_storage_list_buckets').addEventListener('click', function () {
 					var status = document.getElementById('ajcore_storage_bucket_status');
