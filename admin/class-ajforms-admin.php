@@ -10035,17 +10035,30 @@ class AJForms_Admin {
 			$this->handle_service_requests_actions();
 		} elseif ( 'ajforms-client-portal' === $page ) {
 			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'service-requests';
-			if ( 'api' === $tab ) {
-				$this->handle_portal_api_settings_save();
+			// Menu/Calendar/API/Settings were merged into the "CP Settings" tab; its
+			// sub-navigation (cp_section) now carries what used to be the top-level tab.
+			if ( 'cp-settings' === $tab ) {
+				$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
+				if ( 'api' === $cp_section ) {
+					$this->handle_portal_api_settings_save();
+				} elseif ( 'calendar' === $cp_section ) {
+					$this->handle_portal_calendar_settings_save();
+				} elseif ( 'menu' === $cp_section ) {
+					$this->handle_client_portal_settings_save();
+				} elseif ( 'shared-db' === $cp_section ) {
+					$this->handle_portal_shared_db_settings_save();
+				} elseif ( 'roles' === $cp_section || isset( $_GET['role_manager_action'] ) || isset( $_POST['role_manager_action'] ) ) {
+					$this->handle_role_manager_actions();
+				} elseif ( 'email-templates' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+					$this->handle_settings_save();
+				}
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
 			} elseif ( 'billing' === $tab || 'payments' === $tab || isset( $_POST['ajcore_billing_action'] ) ) {
 				$this->handle_portal_billing_actions();
-			} elseif ( 'calendar' === $tab ) {
-				$this->handle_portal_calendar_settings_save();
 			} elseif ( 'reservations' === $tab ) {
 				$this->handle_portal_reservations_admin_actions();
-			} elseif ( in_array( $tab, array( 'sync', 'menu', 'portal-users', 'sold-items', 'products-services', 'tasks' ), true ) ) {
+			} elseif ( in_array( $tab, array( 'sync', 'portal-users', 'sold-items', 'products-services', 'tasks' ), true ) ) {
 				$this->handle_client_portal_settings_save();
 			} elseif ( 'event-log' === $tab ) {
 				$this->handle_portal_event_log_actions();
@@ -10053,8 +10066,6 @@ class AJForms_Admin {
 				$this->handle_portal_customer_detail_actions();
 			} elseif ( 'file-library' === $tab ) {
 				$this->handle_file_library_actions();
-			} elseif ( 'settings' === $tab ) {
-				$this->handle_portal_shared_db_settings_save();
 			}
 		} elseif ( 'ajforms-auth' === $page ) {
 			$this->handle_auth_settings_save();
@@ -11107,7 +11118,8 @@ class AJForms_Admin {
 			add_query_arg(
 				array(
 					'page'           => 'ajforms-client-portal',
-					'tab'            => 'menu',
+					'tab'            => 'cp-settings',
+					'cp_section'     => 'menu',
 					'portal-updated' => 1,
 				),
 				admin_url( 'admin.php' )
@@ -11762,12 +11774,22 @@ class AJForms_Admin {
 			);
 		}
 
-		$redirect_args = array(
-			'page'             => 'ajforms-settings',
-			'section'          => $section,
-			'subsection'       => $subsection,
-			'settings-updated' => 'true',
-		);
+		if ( 'email-templates' === $section ) {
+			// This section's form lives on the Client Portal's CP Settings tab, not this page.
+			$redirect_args = array(
+				'page'             => 'ajforms-client-portal',
+				'tab'              => 'cp-settings',
+				'cp_section'       => 'email-templates',
+				'settings-updated' => 'true',
+			);
+		} else {
+			$redirect_args = array(
+				'page'             => 'ajforms-settings',
+				'section'          => $section,
+				'subsection'       => $subsection,
+				'settings-updated' => 'true',
+			);
+		}
 
 		if ( 'payments' === $section && ! empty( $settings['stripe_secret_key'] ) && isset( $_POST['ajf_sync_stripe_products'] ) ) {
 			$stripe_sync = $this->fetch_stripe_product_prices( $settings['stripe_secret_key'] );
@@ -12273,7 +12295,7 @@ class AJForms_Admin {
 			$role_key = sanitize_key( wp_unslash( $_GET['role'] ) );
 			check_admin_referer( 'ajcore_delete_role_' . $role_key );
 
-			$args = array( 'page' => 'ajforms-settings', 'section' => 'role-manager' );
+			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'roles' );
 
 			if ( in_array( $role_key, array( 'subscriber', 'contributor', 'author', 'editor', 'administrator' ), true ) ) {
 				$args['role-error'] = 'wordpress-default-delete';
@@ -12301,7 +12323,7 @@ class AJForms_Admin {
 		$selected_caps       = isset( $_POST['role_capabilities'] ) && is_array( $_POST['role_capabilities'] ) ? $_POST['role_capabilities'] : array();
 		$custom_capabilities = isset( $_POST['custom_capabilities'] ) ? wp_unslash( $_POST['custom_capabilities'] ) : '';
 		$capabilities        = $this->sanitize_role_capability_list( $selected_caps, $custom_capabilities );
-		$args                = array( 'page' => 'ajforms-settings', 'section' => 'role-manager' );
+		$args                = array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'roles' );
 
 		if ( '' === $role_key || '' === $role_label ) {
 			$args['role-error'] = 'missing-fields';
@@ -16883,7 +16905,17 @@ class AJForms_Admin {
 		$this->ensure_portal_schema();
 
 		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $tab : 'dashboard';
+		// Menu/Calendar/API/Settings were merged into a single "CP Settings" tab with its own
+		// sub-navigation (cp_section) — keep old bookmarked links working by redirecting them in,
+		// before the tab whitelist below (which no longer contains these old values) resets them.
+		if ( in_array( $tab, array( 'menu', 'calendar', 'api', 'settings' ), true ) ) {
+			$old_tab = $tab;
+			$tab     = 'cp-settings';
+			if ( ! isset( $_GET['cp_section'] ) ) {
+				$_GET['cp_section'] = ( 'settings' === $old_tab ) ? 'shared-db' : $old_tab;
+			}
+		}
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -16908,10 +16940,7 @@ class AJForms_Admin {
 			'sync'               => __( 'Sync', 'ajforms' ),
 			'event-log'          => __( 'Event Log', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
-			'menu'               => __( 'Menu', 'ajforms' ),
-			'calendar'           => __( 'Calendar / Reservations', 'ajforms' ),
-			'api'                => __( 'API', 'ajforms' ),
-			'settings'           => __( 'Settings', 'ajforms' ),
+			'cp-settings'        => __( 'CP Settings', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
 		$external_tab_urls = array(
@@ -17001,21 +17030,78 @@ class AJForms_Admin {
 				$this->display_portal_service_requests_tab();
 			} elseif ( 'tasks' === $tab ) {
 				$this->display_portal_tasks_tab();
-			} elseif ( 'menu' === $tab ) {
-				$this->display_client_portal_settings_tab( 'menu', true );
 			} elseif ( 'reservations' === $tab ) {
 				$this->display_portal_reservations_admin_tab();
-			} elseif ( 'calendar' === $tab ) {
-				$this->display_portal_calendar_settings_tab();
-			} elseif ( 'api' === $tab ) {
-				$this->display_portal_api_tab();
-			} elseif ( 'settings' === $tab ) {
-				$this->display_portal_shared_db_settings_tab();
+			} elseif ( 'cp-settings' === $tab ) {
+				$this->display_client_portal_cp_settings_tab();
 			} else {
 				$this->display_file_library_page( true );
 			}
 			?>
 		</div>
+		<?php
+	}
+
+	/**
+	 * "CP Settings" — Client Portal configuration, consolidated under one tab with
+	 * its own sub-navigation (cp_section): the portal nav/menu builder, Calendar/
+	 * Reservations, the REST API access controls, Remote Storage, Role Manager,
+	 * WP Email Templates, and Shared DB / Multi-site. These previously lived as
+	 * separate top-level Client Portal tabs (Menu/Calendar/API/Settings) or, for
+	 * Role Manager and Email Templates, on the separate main AJ Core Settings page.
+	 */
+	public function display_client_portal_cp_settings_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
+		$sub_tabs   = array(
+			'menu'            => __( 'Menu', 'ajforms' ),
+			'calendar'        => __( 'Calendar / Reservations', 'ajforms' ),
+			'api'             => __( 'API', 'ajforms' ),
+			'storage'         => __( 'Storage', 'ajforms' ),
+			'roles'           => __( 'Role Manager', 'ajforms' ),
+			'email-templates' => __( 'Email Templates', 'ajforms' ),
+			'shared-db'       => __( 'Shared DB / Multi-Site', 'ajforms' ),
+		);
+		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
+			$cp_section = 'menu';
+		}
+
+		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings' ), admin_url( 'admin.php' ) );
+		?>
+		<div class="ajforms-settings-card" style="padding:10px;">
+			<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'CP Settings sections', 'ajforms' ); ?>" style="margin:0;">
+				<?php foreach ( $sub_tabs as $sub_key => $sub_label ) : ?>
+					<a class="ajcore-tab-link <?php echo $cp_section === $sub_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'cp_section', $sub_key, $base_url ) ); ?>"><?php echo esc_html( $sub_label ); ?></a>
+				<?php endforeach; ?>
+			</nav>
+		</div>
+
+		<?php if ( 'menu' === $cp_section ) : ?>
+			<?php $this->display_client_portal_settings_tab( 'menu', true ); ?>
+		<?php elseif ( 'calendar' === $cp_section ) : ?>
+			<?php $this->display_portal_calendar_settings_tab(); ?>
+		<?php elseif ( 'api' === $cp_section ) : ?>
+			<?php $this->display_portal_api_tab(); ?>
+		<?php elseif ( 'storage' === $cp_section ) : ?>
+			<?php
+			if ( class_exists( 'AJCore_Storage_Service' ) ) {
+				AJCore_Storage_Service::instance()->render_settings_page( true );
+			}
+			?>
+		<?php elseif ( 'roles' === $cp_section ) : ?>
+			<div class="ajforms-settings-head">
+				<h2><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h2>
+				<p><?php esc_html_e( 'View, add, edit, and delete WordPress roles used by AJ Core and the rest of the site.', 'ajforms' ); ?></p>
+			</div>
+			<?php $this->display_role_manager_page( true ); ?>
+		<?php elseif ( 'email-templates' === $cp_section ) : ?>
+			<?php $this->display_email_templates_settings_section(); ?>
+		<?php elseif ( 'shared-db' === $cp_section ) : ?>
+			<?php $this->display_portal_shared_db_settings_tab(); ?>
+		<?php endif; ?>
 		<?php
 	}
 
@@ -17047,7 +17133,7 @@ class AJForms_Admin {
 			)
 		);
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'api', 'api-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'api', 'api-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -17096,7 +17182,7 @@ class AJForms_Admin {
 		$ms_enabled              = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
 		$app_passwords_available = function_exists( 'wp_is_application_passwords_available' ) ? wp_is_application_passwords_available() : true;
 		$profile_url             = admin_url( 'profile.php#application-passwords-section' );
-		$role_manager_url        = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'role-manager' ), admin_url( 'admin.php' ) );
+		$role_manager_url        = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'roles' ), admin_url( 'admin.php' ) );
 		$status_url              = rest_url( 'ajcore/v1/status' );
 		$ops_summary_url         = rest_url( 'ajcore/v1/ops/summary' );
 		$portal_me_url           = rest_url( 'ajcore/v1/portal/me' );
@@ -18039,7 +18125,7 @@ class AJForms_Admin {
 
 		$stripe_customer_id = isset( $_GET['stripe_customer_id'] ) ? sanitize_text_field( wp_unslash( $_GET['stripe_customer_id'] ) ) : '';
 		$detail             = $this->get_portal_customer_detail_data( $stripe_customer_id );
-		$back_url           = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'menu' ), admin_url( 'admin.php' ) );
+		$back_url           = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'menu' ), admin_url( 'admin.php' ) );
 
 		if ( ! $detail ) {
 			?>
@@ -20639,6 +20725,196 @@ class AJForms_Admin {
 		<?php
 	}
 
+	public function display_email_templates_settings_section() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings    = $this->get_plugin_settings();
+		$action_url  = add_query_arg(
+			array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'email-templates', 'section' => 'email-templates' ),
+			admin_url( 'admin.php' )
+		);
+		?>
+		<div class="ajforms-settings-head">
+			<h2><?php esc_html_e( 'WP Email Templates', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'Control WordPress transactional email branding and subjects so customer-facing messages do not expose internal email addresses.', 'ajforms' ); ?></p>
+		</div>
+		<form method="post" action="<?php echo esc_url( $action_url ); ?>">
+			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+			<div class="ajforms-settings-card">
+				<span class="ajforms-settings-pill"><?php esc_html_e( 'WordPress Mail', 'ajforms' ); ?></span>
+				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'These values are used for WordPress and AJ Core system emails. Keep internal inboxes out of From and Reply-To headers.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
+					<input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>>
+					<div>
+						<strong><?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></strong>
+						<span><?php esc_html_e( 'Controls the WordPress core password reset email only. AJ Core portal, service request, and lead emails below are always branded.', 'ajforms' ); ?></span>
+					</div>
+				</div>
+				<div class="ajforms-settings-grid">
+					<div class="ajforms-settings-field">
+						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
+						<input name="wp_email_from_email" id="wp_email_from_email" type="text" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Recommended: donotreply@ncllcagents.com', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
+						<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
+					</div>
+				</div>
+			</div>
+
+			<?php
+			$sample_site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+
+			$sample_copy_password_reset = $this->resolve_email_copy( $settings, 'wp_password_reset_heading', 'wp_password_reset_body', __( 'Set your client portal password', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Use the secure button below to create a new password for your client portal account. This link is private and should only be used by you.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
+			$sample_copy_welcome        = $this->resolve_email_copy( $settings, 'wp_welcome_heading', 'wp_welcome_body', __( 'Welcome to your client portal', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Your client portal access has been enabled. Use the button below to set your password and sign in securely.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
+			$sample_copy_service_status = $this->resolve_email_copy( $settings, 'wp_service_status_heading', 'wp_service_status_body', __( 'Your service request was updated', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), sprintf( __( 'The status of "%s" has changed.', 'ajforms' ), '{service_name}' ) ), array( '{name}' => 'Jane Doe', '{service_name}' => 'Registered Agent - 1 year', '{status_label}' => 'Active' ) );
+			$sample_copy_lead_followup  = $this->resolve_email_copy( $settings, 'lead_followup_heading', 'lead_followup_body', __( "We'd love to hear from you", 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'We wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.', 'ajforms' ), __( 'Ready to get started? You can review our services and pricing anytime on our website.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
+
+			$email_types = array(
+				array(
+					'id'           => 'password_reset',
+					'label'        => __( 'Password Reset', 'ajforms' ),
+					'description'  => __( 'Sent when a client portal user (or, if enabled above, a WordPress user) requests a password reset.', 'ajforms' ),
+					'subject_key'   => 'wp_password_reset_subject',
+					'subject_help'  => __( 'Used for WordPress Users reset password and AJ Core portal reset password.', 'ajforms' ),
+					'from_email_key' => 'wp_password_reset_from_email',
+					'from_name_key'  => 'wp_password_reset_from_name',
+					'heading_key'  => 'wp_password_reset_heading',
+					'body_key'     => 'wp_password_reset_body',
+					'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'sample_html'  => $this->render_branded_email_html( array_merge(
+						array(
+							'kicker'     => $sample_site_name,
+							'heading'    => $sample_copy_password_reset['heading'],
+							'paragraphs' => $sample_copy_password_reset['paragraphs'],
+							'cta_url'    => '#',
+						),
+						$this->get_password_reset_email_static_parts()
+					) ),
+				),
+				array(
+					'id'           => 'welcome',
+					'label'        => __( 'Portal Welcome', 'ajforms' ),
+					'description'  => __( 'Sent when staff enable portal access for a customer, or via the Portal Users bulk "Send Welcome Email" action.', 'ajforms' ),
+					'subject_key'   => 'wp_welcome_email_subject',
+					'subject_help'  => __( 'Used by the Portal Users bulk Send Welcome Email action.', 'ajforms' ),
+					'from_email_key' => 'wp_welcome_from_email',
+					'from_name_key'  => 'wp_welcome_from_name',
+					'heading_key'  => 'wp_welcome_heading',
+					'body_key'     => 'wp_welcome_body',
+					'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'sample_html'  => $this->render_branded_email_html( array_merge(
+						array(
+							'kicker'         => $sample_site_name,
+							'heading'        => $sample_copy_welcome['heading'],
+							'paragraphs'     => $sample_copy_welcome['paragraphs'],
+							'info_box_value' => 'jane@example.com',
+							'cta_url'        => '#',
+						),
+						$this->get_welcome_email_static_parts()
+					) ),
+				),
+				array(
+					'id'           => 'service_status',
+					'label'        => __( 'Service Request Status Update', 'ajforms' ),
+					'description'  => __( 'Sent to a customer automatically whenever staff change the workflow status of one of their service requests — for example "Update on Registered Agent - 1 year: Active".', 'ajforms' ),
+					'subject_key'   => 'wp_service_status_subject',
+					'subject_help'  => __( 'Use {service_name} and {status_label} as placeholders — each is filled in per email.', 'ajforms' ),
+					'from_email_key' => 'wp_service_status_from_email',
+					'from_name_key'  => 'wp_service_status_from_name',
+					'heading_key'  => 'wp_service_status_heading',
+					'body_key'     => 'wp_service_status_body',
+					'tokens_help'  => __( 'Available placeholders: {name}, {service_name}, {status_label}. One paragraph per line.', 'ajforms' ),
+					'sample_html'  => $this->render_branded_email_html( array_merge(
+						array(
+							'kicker'         => $sample_site_name,
+							'heading'        => $sample_copy_service_status['heading'],
+							'paragraphs'     => $sample_copy_service_status['paragraphs'],
+							'info_box_value' => __( 'Active', 'ajforms' ),
+						),
+						$this->get_service_request_status_email_static_parts()
+					) ),
+				),
+				array(
+					'id'           => 'lead_followup',
+					'label'        => __( 'Lead Follow-up', 'ajforms' ),
+					'description'  => __( 'Sent from the AJ Ops Leads page ("Send Follow-up Email" action, single or bulk) to nudge a lead to reach out or purchase.', 'ajforms' ),
+					'subject_key'   => 'lead_followup_email_subject',
+					'subject_help'  => __( 'Used by the AJ Ops Leads "Send Follow-up Email" action.', 'ajforms' ),
+					'from_email_key' => 'lead_followup_from_email',
+					'from_name_key'  => 'lead_followup_from_name',
+					'heading_key'  => 'lead_followup_heading',
+					'body_key'     => 'lead_followup_body',
+					'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'sample_html'  => $this->render_branded_email_html( array_merge(
+						array(
+							'kicker'     => $sample_site_name,
+							'heading'    => $sample_copy_lead_followup['heading'],
+							'paragraphs' => $sample_copy_lead_followup['paragraphs'],
+						),
+						$this->get_lead_followup_email_static_parts()
+					) ),
+				),
+			);
+			?>
+			<div class="ajforms-settings-card">
+				<span class="ajforms-settings-pill"><?php esc_html_e( 'Templates', 'ajforms' ); ?></span>
+				<h3><?php esc_html_e( 'Email types', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'Every customer-facing branded email this site sends: who it is from, its editable subject and body, and a live preview using sample data.', 'ajforms' ); ?></p>
+				<?php foreach ( $email_types as $type ) : ?>
+					<div style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;">
+						<h4 style="margin:0 0 6px;font-size:15px;"><?php echo esc_html( $type['label'] ); ?></h4>
+						<p class="description" style="margin:0 0 10px;"><?php echo esc_html( $type['description'] ); ?></p>
+						<div class="ajforms-settings-grid" style="max-width:520px;">
+							<div class="ajforms-settings-field">
+								<label for="<?php echo esc_attr( $type['from_email_key'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
+								<input name="<?php echo esc_attr( $type['from_email_key'] ); ?>" id="<?php echo esc_attr( $type['from_email_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email_key'] ] ); ?>">
+								<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Email above.', 'ajforms' ); ?></div>
+							</div>
+							<div class="ajforms-settings-field">
+								<label for="<?php echo esc_attr( $type['from_name_key'] ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
+								<input name="<?php echo esc_attr( $type['from_name_key'] ); ?>" id="<?php echo esc_attr( $type['from_name_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_name_key'] ] ); ?>">
+								<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Name above.', 'ajforms' ); ?></div>
+							</div>
+						</div>
+						<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
+							<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
+							<input name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['subject_key'] ] ); ?>">
+							<div class="ajforms-settings-help"><?php echo esc_html( $type['subject_help'] ); ?></div>
+						</div>
+						<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
+							<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
+							<input name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['heading_key'] ] ); ?>">
+						</div>
+						<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
+							<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
+							<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="4"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
+							<div class="ajforms-settings-help"><?php echo esc_html( $type['tokens_help'] ); ?></div>
+						</div>
+						<details style="margin-top:10px;">
+							<summary style="cursor:pointer;color:#2563eb;font-weight:600;"><?php esc_html_e( 'Preview email', 'ajforms' ); ?></summary>
+							<iframe sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;max-width:680px;height:460px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;margin-top:8px;"></iframe>
+						</details>
+					</div>
+				<?php endforeach; ?>
+				<div class="ajforms-settings-note" style="margin-top:20px;">
+					<strong><?php esc_html_e( 'Want to see what was actually sent?', 'ajforms' ); ?></strong>
+					<p style="margin:6px 0 0;"><?php echo wp_kses_post( sprintf( __( 'Every email this site sends is logged with its real recipient, subject, and full HTML body under %s.', 'ajforms' ), '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'emails' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Client Portal → Emails', 'ajforms' ) . '</a>' ) ); ?></p>
+				</div>
+			</div>
+
+			<div class="ajforms-settings-actions">
+				<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
+				<span style="color:#6b7280;"><?php esc_html_e( 'Changes are stored site-wide for AJ Core.', 'ajforms' ); ?></span>
+			</div>
+		</form>
+		<?php
+	}
+
 	public function display_role_manager_page( $embedded = false ) {
 		if ( ! $this->current_user_can_manage_ajcore_roles() ) {
 			wp_die( esc_html__( 'Only Administrators can manage roles.', 'ajforms' ) );
@@ -20659,7 +20935,7 @@ class AJForms_Admin {
 		$form_label   = $is_editing ? $editing_role['name'] : '';
 		$is_adding    = isset( $_GET['role_manager_action'] ) && 'add' === sanitize_key( wp_unslash( $_GET['role_manager_action'] ) );
 		$form_caps    = $is_editing && ! empty( $editing_role['capabilities'] ) && is_array( $editing_role['capabilities'] ) ? array_keys( array_filter( $editing_role['capabilities'] ) ) : array( 'read' );
-		$base_url     = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'role-manager' ), admin_url( 'admin.php' ) );
+		$base_url     = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'roles' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="<?php echo $embedded ? 'ajcore-role-manager' : 'wrap ajcore-role-manager'; ?>">
 			<?php if ( ! $embedded ) : ?>
@@ -21772,10 +22048,6 @@ class AJForms_Admin {
 				'label' => __( 'General Settings', 'ajforms' ),
 				'icon'  => 'admin-generic',
 			),
-			'email-templates' => array(
-				'label' => __( 'WP Email Templates', 'ajforms' ),
-				'icon'  => 'email-alt',
-			),
 			'spam'         => array(
 				'label' => __( 'Spam Protection', 'ajforms' ),
 				'icon'  => 'warning',
@@ -21787,10 +22059,6 @@ class AJForms_Admin {
 			'payments'     => array(
 				'label' => __( 'Stripe Payments', 'ajforms' ),
 				'icon'  => 'cart',
-			),
-			'role-manager' => array(
-				'label' => __( 'Role Manager', 'ajforms' ),
-				'icon'  => 'admin-users',
 			),
 		);
 
@@ -21918,13 +22186,6 @@ class AJForms_Admin {
 					</aside>
 
 					<div class="ajforms-settings-content">
-						<?php if ( 'role-manager' === $section ) : ?>
-							<div class="ajforms-settings-head">
-								<h2><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h2>
-								<p><?php esc_html_e( 'View, add, edit, and delete WordPress roles used by AJ Core and the rest of the site.', 'ajforms' ); ?></p>
-							</div>
-							<?php $this->display_role_manager_page( true ); ?>
-						<?php else : ?>
 						<form method="post">
 				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 							<div class="ajforms-settings-head">
@@ -21940,9 +22201,6 @@ class AJForms_Admin {
 								<?php elseif ( 'payments' === $section ) : ?>
 									<h2><?php esc_html_e( 'Stripe Payments', 'ajforms' ); ?></h2>
 									<p><?php esc_html_e( 'Connect Stripe here once, then choose which individual forms should use it from the builder.', 'ajforms' ); ?></p>
-								<?php elseif ( 'email-templates' === $section ) : ?>
-									<h2><?php esc_html_e( 'WP Email Templates', 'ajforms' ); ?></h2>
-									<p><?php esc_html_e( 'Control WordPress transactional email branding and subjects so customer-facing messages do not expose internal email addresses.', 'ajforms' ); ?></p>
 								<?php endif; ?>
 							</div>
 
@@ -21992,171 +22250,6 @@ class AJForms_Admin {
 										<label for="default_success_message"><?php esc_html_e( 'Success Message', 'ajforms' ); ?></label>
 										<textarea name="default_success_message" id="default_success_message"><?php echo esc_textarea( $settings['default_success_message'] ); ?></textarea>
 										<div class="ajforms-settings-help"><?php esc_html_e( 'Used as the starting success message when building a new form.', 'ajforms' ); ?></div>
-									</div>
-								</div>
-							<?php elseif ( 'email-templates' === $section ) : ?>
-								<div class="ajforms-settings-card">
-									<span class="ajforms-settings-pill"><?php esc_html_e( 'WordPress Mail', 'ajforms' ); ?></span>
-									<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
-									<p><?php esc_html_e( 'These values are used for WordPress and AJ Core system emails. Keep internal inboxes out of From and Reply-To headers.', 'ajforms' ); ?></p>
-									<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
-										<input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>>
-										<div>
-											<strong><?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></strong>
-											<span><?php esc_html_e( 'Controls the WordPress core password reset email only. AJ Core portal, service request, and lead emails below are always branded.', 'ajforms' ); ?></span>
-										</div>
-									</div>
-									<div class="ajforms-settings-grid">
-										<div class="ajforms-settings-field">
-											<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
-											<input name="wp_email_from_email" id="wp_email_from_email" type="text" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
-											<div class="ajforms-settings-help"><?php esc_html_e( 'Recommended: donotreply@ncllcagents.com', 'ajforms' ); ?></div>
-										</div>
-										<div class="ajforms-settings-field">
-											<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
-											<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
-										</div>
-									</div>
-								</div>
-
-								<?php
-								$sample_site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
-
-								$sample_copy_password_reset = $this->resolve_email_copy( $settings, 'wp_password_reset_heading', 'wp_password_reset_body', __( 'Set your client portal password', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Use the secure button below to create a new password for your client portal account. This link is private and should only be used by you.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
-								$sample_copy_welcome        = $this->resolve_email_copy( $settings, 'wp_welcome_heading', 'wp_welcome_body', __( 'Welcome to your client portal', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Your client portal access has been enabled. Use the button below to set your password and sign in securely.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
-								$sample_copy_service_status = $this->resolve_email_copy( $settings, 'wp_service_status_heading', 'wp_service_status_body', __( 'Your service request was updated', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), sprintf( __( 'The status of "%s" has changed.', 'ajforms' ), '{service_name}' ) ), array( '{name}' => 'Jane Doe', '{service_name}' => 'Registered Agent - 1 year', '{status_label}' => 'Active' ) );
-								$sample_copy_lead_followup  = $this->resolve_email_copy( $settings, 'lead_followup_heading', 'lead_followup_body', __( "We'd love to hear from you", 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'We wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.', 'ajforms' ), __( 'Ready to get started? You can review our services and pricing anytime on our website.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
-
-								$email_types = array(
-									array(
-										'id'           => 'password_reset',
-										'label'        => __( 'Password Reset', 'ajforms' ),
-										'description'  => __( 'Sent when a client portal user (or, if enabled above, a WordPress user) requests a password reset.', 'ajforms' ),
-										'subject_key'   => 'wp_password_reset_subject',
-										'subject_help'  => __( 'Used for WordPress Users reset password and AJ Core portal reset password.', 'ajforms' ),
-										'from_email_key' => 'wp_password_reset_from_email',
-										'from_name_key'  => 'wp_password_reset_from_name',
-										'heading_key'  => 'wp_password_reset_heading',
-										'body_key'     => 'wp_password_reset_body',
-										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-										'sample_html'  => $this->render_branded_email_html( array_merge(
-											array(
-												'kicker'     => $sample_site_name,
-												'heading'    => $sample_copy_password_reset['heading'],
-												'paragraphs' => $sample_copy_password_reset['paragraphs'],
-												'cta_url'    => '#',
-											),
-											$this->get_password_reset_email_static_parts()
-										) ),
-									),
-									array(
-										'id'           => 'welcome',
-										'label'        => __( 'Portal Welcome', 'ajforms' ),
-										'description'  => __( 'Sent when staff enable portal access for a customer, or via the Portal Users bulk "Send Welcome Email" action.', 'ajforms' ),
-										'subject_key'   => 'wp_welcome_email_subject',
-										'subject_help'  => __( 'Used by the Portal Users bulk Send Welcome Email action.', 'ajforms' ),
-										'from_email_key' => 'wp_welcome_from_email',
-										'from_name_key'  => 'wp_welcome_from_name',
-										'heading_key'  => 'wp_welcome_heading',
-										'body_key'     => 'wp_welcome_body',
-										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-										'sample_html'  => $this->render_branded_email_html( array_merge(
-											array(
-												'kicker'         => $sample_site_name,
-												'heading'        => $sample_copy_welcome['heading'],
-												'paragraphs'     => $sample_copy_welcome['paragraphs'],
-												'info_box_value' => 'jane@example.com',
-												'cta_url'        => '#',
-											),
-											$this->get_welcome_email_static_parts()
-										) ),
-									),
-									array(
-										'id'           => 'service_status',
-										'label'        => __( 'Service Request Status Update', 'ajforms' ),
-										'description'  => __( 'Sent to a customer automatically whenever staff change the workflow status of one of their service requests — for example "Update on Registered Agent - 1 year: Active".', 'ajforms' ),
-										'subject_key'   => 'wp_service_status_subject',
-										'subject_help'  => __( 'Use {service_name} and {status_label} as placeholders — each is filled in per email.', 'ajforms' ),
-										'from_email_key' => 'wp_service_status_from_email',
-										'from_name_key'  => 'wp_service_status_from_name',
-										'heading_key'  => 'wp_service_status_heading',
-										'body_key'     => 'wp_service_status_body',
-										'tokens_help'  => __( 'Available placeholders: {name}, {service_name}, {status_label}. One paragraph per line.', 'ajforms' ),
-										'sample_html'  => $this->render_branded_email_html( array_merge(
-											array(
-												'kicker'         => $sample_site_name,
-												'heading'        => $sample_copy_service_status['heading'],
-												'paragraphs'     => $sample_copy_service_status['paragraphs'],
-												'info_box_value' => __( 'Active', 'ajforms' ),
-											),
-											$this->get_service_request_status_email_static_parts()
-										) ),
-									),
-									array(
-										'id'           => 'lead_followup',
-										'label'        => __( 'Lead Follow-up', 'ajforms' ),
-										'description'  => __( 'Sent from the AJ Ops Leads page ("Send Follow-up Email" action, single or bulk) to nudge a lead to reach out or purchase.', 'ajforms' ),
-										'subject_key'   => 'lead_followup_email_subject',
-										'subject_help'  => __( 'Used by the AJ Ops Leads "Send Follow-up Email" action.', 'ajforms' ),
-										'from_email_key' => 'lead_followup_from_email',
-										'from_name_key'  => 'lead_followup_from_name',
-										'heading_key'  => 'lead_followup_heading',
-										'body_key'     => 'lead_followup_body',
-										'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-										'sample_html'  => $this->render_branded_email_html( array_merge(
-											array(
-												'kicker'     => $sample_site_name,
-												'heading'    => $sample_copy_lead_followup['heading'],
-												'paragraphs' => $sample_copy_lead_followup['paragraphs'],
-											),
-											$this->get_lead_followup_email_static_parts()
-										) ),
-									),
-								);
-								?>
-								<div class="ajforms-settings-card">
-									<span class="ajforms-settings-pill"><?php esc_html_e( 'Templates', 'ajforms' ); ?></span>
-									<h3><?php esc_html_e( 'Email types', 'ajforms' ); ?></h3>
-									<p><?php esc_html_e( 'Every customer-facing branded email this site sends: who it is from, its editable subject and body, and a live preview using sample data.', 'ajforms' ); ?></p>
-									<?php foreach ( $email_types as $type ) : ?>
-										<div style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;">
-											<h4 style="margin:0 0 6px;font-size:15px;"><?php echo esc_html( $type['label'] ); ?></h4>
-											<p class="description" style="margin:0 0 10px;"><?php echo esc_html( $type['description'] ); ?></p>
-											<div class="ajforms-settings-grid" style="max-width:520px;">
-												<div class="ajforms-settings-field">
-													<label for="<?php echo esc_attr( $type['from_email_key'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
-													<input name="<?php echo esc_attr( $type['from_email_key'] ); ?>" id="<?php echo esc_attr( $type['from_email_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email_key'] ] ); ?>">
-													<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Email above.', 'ajforms' ); ?></div>
-												</div>
-												<div class="ajforms-settings-field">
-													<label for="<?php echo esc_attr( $type['from_name_key'] ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
-													<input name="<?php echo esc_attr( $type['from_name_key'] ); ?>" id="<?php echo esc_attr( $type['from_name_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_name_key'] ] ); ?>">
-													<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Name above.', 'ajforms' ); ?></div>
-												</div>
-											</div>
-											<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
-												<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
-												<input name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['subject_key'] ] ); ?>">
-												<div class="ajforms-settings-help"><?php echo esc_html( $type['subject_help'] ); ?></div>
-											</div>
-											<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
-												<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
-												<input name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['heading_key'] ] ); ?>">
-											</div>
-											<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
-												<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
-												<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="4"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
-												<div class="ajforms-settings-help"><?php echo esc_html( $type['tokens_help'] ); ?></div>
-											</div>
-											<details style="margin-top:10px;">
-												<summary style="cursor:pointer;color:#2563eb;font-weight:600;"><?php esc_html_e( 'Preview email', 'ajforms' ); ?></summary>
-												<iframe sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;max-width:680px;height:460px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;margin-top:8px;"></iframe>
-											</details>
-										</div>
-									<?php endforeach; ?>
-									<div class="ajforms-settings-note" style="margin-top:20px;">
-										<strong><?php esc_html_e( 'Want to see what was actually sent?', 'ajforms' ); ?></strong>
-										<p style="margin:6px 0 0;"><?php echo wp_kses_post( sprintf( __( 'Every email this site sends is logged with its real recipient, subject, and full HTML body under %s.', 'ajforms' ), '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'emails' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Client Portal → Emails', 'ajforms' ) . '</a>' ) ); ?></p>
 									</div>
 								</div>
 							<?php elseif ( 'spam' === $section ) : ?>
@@ -22573,7 +22666,6 @@ class AJForms_Admin {
 								<span style="color:#6b7280;"><?php esc_html_e( 'Changes are stored site-wide for AJ Core.', 'ajforms' ); ?></span>
 							</div>
 						</form>
-						<?php endif; ?>
 					</div>
 				</div>
 			</div>
@@ -22902,7 +22994,7 @@ class AJForms_Admin {
 
 		wp_safe_redirect(
 			add_query_arg(
-				array( 'page' => 'ajforms-client-portal', 'tab' => 'settings', 'shared-db-saved' => '1' ),
+				array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'shared-db', 'shared-db-saved' => '1' ),
 				admin_url( 'admin.php' )
 			)
 		);
@@ -23651,7 +23743,7 @@ class AJForms_Admin {
 		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
 		$is_master  = ! $ms_enabled || ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ajcore_is_stripe_sync_owner() );
 		if ( ! $is_master ) {
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar' ), admin_url( 'admin.php' ) ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'calendar' ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -23725,7 +23817,7 @@ class AJForms_Admin {
 			)
 		);
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar', 'calendar-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'calendar', 'calendar-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -23871,7 +23963,7 @@ class AJForms_Admin {
 		$catalog_url     = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) );
 		?>
 
-		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
+		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
 			<?php wp_nonce_field( 'ajcore_save_calendar_settings', 'ajcore_calendar_settings_nonce' ); ?>
 			<?php if ( ! $is_master ) : ?>
 			<fieldset disabled style="border:none;padding:0;margin:0;opacity:.55;pointer-events:none">

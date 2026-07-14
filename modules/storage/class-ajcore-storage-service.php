@@ -64,7 +64,6 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			// gets a presigned remote URL once that attachment has been offloaded.
 			add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 
-			add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
 			add_action( 'admin_post_ajcore_storage_settings_save', array( $this, 'handle_settings_save' ) );
 			add_action( 'wp_ajax_ajcore_storage_list_buckets', array( $this, 'ajax_list_buckets' ) );
 			add_action( 'wp_ajax_ajcore_storage_migrate_now', array( $this, 'ajax_migrate_now' ) );
@@ -406,17 +405,6 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		// Admin UI
 		// -----------------------------------------------------------------
 
-		public function register_admin_menu() {
-			add_submenu_page(
-				'ajforms',
-				__( 'Storage', 'ajforms' ),
-				__( 'Storage', 'ajforms' ),
-				'manage_options',
-				'ajforms-storage',
-				array( $this, 'render_settings_page' )
-			);
-		}
-
 		public function handle_settings_save() {
 			if ( ! current_user_can( 'manage_options' ) ) {
 				wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
@@ -435,7 +423,12 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 			self::update_settings( $posted );
 
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-storage', 'notice' => 'saved' ), admin_url( 'admin.php' ) ) );
+			wp_safe_redirect(
+				add_query_arg(
+					array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'storage', 'notice' => 'saved' ),
+					admin_url( 'admin.php' )
+				)
+			);
 			exit;
 		}
 
@@ -484,7 +477,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			wp_send_json_success( $results );
 		}
 
-		public function render_settings_page() {
+		public function render_settings_page( $embedded = false ) {
 			if ( ! current_user_can( 'manage_options' ) ) {
 				wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 			}
@@ -496,8 +489,10 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			$notice = isset( $_GET['notice'] ) ? sanitize_key( wp_unslash( $_GET['notice'] ) ) : '';
 			$nonce  = wp_create_nonce( self::NONCE_ACTION );
 			?>
-			<div class="wrap">
-				<h1><?php esc_html_e( 'Remote Storage', 'ajforms' ); ?></h1>
+			<div class="<?php echo $embedded ? '' : 'wrap'; ?>">
+				<?php if ( ! $embedded ) : ?>
+					<h1><?php esc_html_e( 'Remote Storage', 'ajforms' ); ?></h1>
+				<?php endif; ?>
 				<p><?php esc_html_e( 'Offload media-library files (portal uploads, CRM attachments, and anything added via the WordPress Media Library) to an S3-compatible bucket — MinIO, RustFS, AWS S3, or any other server that speaks the S3 API. Only the endpoint/credentials below change if you ever switch providers.', 'ajforms' ); ?></p>
 
 				<?php if ( 'saved' === $notice ) : ?>
