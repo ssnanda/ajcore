@@ -790,6 +790,10 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 				document.getElementById('ajcore_storage_list_buckets').addEventListener('click', function () {
 					var status = document.getElementById('ajcore_storage_bucket_status');
+					var datalist = document.getElementById('ajcore_storage_bucket_options');
+					var bucketInput = document.getElementById('ajcore_storage_bucket');
+					bucketInput.value = '';
+					datalist.innerHTML = '';
 					status.textContent = <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?>;
 					fetchBuckets()
 						.then(function (res) {
@@ -797,19 +801,13 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 								status.textContent = (res.data && res.data.message) ? res.data.message : <?php echo wp_json_encode( __( 'Failed to list buckets.', 'ajforms' ) ); ?>;
 								return;
 							}
-							var datalist = document.getElementById('ajcore_storage_bucket_options');
-							var bucketInput = document.getElementById('ajcore_storage_bucket');
-							datalist.innerHTML = '';
 							res.data.buckets.forEach(function (name) {
 								var opt = document.createElement('option');
 								opt.value = name;
 								datalist.appendChild(opt);
 							});
-							if (!bucketInput.value && res.data.buckets.length) {
-								bucketInput.value = res.data.buckets[0];
-							}
 							status.textContent = res.data.buckets.length
-								? <?php echo wp_json_encode( __( 'Suggestions loaded — pick one or keep what you typed, then save.', 'ajforms' ) ); ?>
+								? <?php echo wp_json_encode( __( 'Suggestions loaded — pick a bucket, then save.', 'ajforms' ) ); ?>
 								: <?php echo wp_json_encode( __( 'No buckets found on this endpoint.', 'ajforms' ) ); ?>;
 						})
 						.catch(function () {
