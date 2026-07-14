@@ -21,6 +21,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 		const OPTION_KEY = 'ajcore_storage_settings';
 		const NONCE_ACTION = 'ajcore_storage_settings_save';
+		const SECRET_PLACEHOLDER = '••••••••••••••••';
 
 		/**
 		 * Mime types auto-offloaded on upload, and covered by the settings-page
@@ -199,6 +200,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		}
 
 		public static function update_settings( $settings ) {
+			$existing = self::get_settings();
 			$defaults = self::get_default_settings();
 			$clean    = array();
 			foreach ( $defaults as $key => $default ) {
@@ -213,13 +215,26 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			// Preserve the existing secret if the settings form submitted a masked
 			// placeholder (the settings screen never round-trips the real secret back
 			// into the page source).
-			if ( isset( $settings['secret_key'] ) && 0 === strpos( (string) $settings['secret_key'], '••••' ) ) {
-				$existing           = self::get_settings();
+			if ( isset( $settings['secret_key'] ) && self::is_secret_placeholder( $settings['secret_key'], $existing['secret_key'] ) ) {
 				$clean['secret_key'] = $existing['secret_key'];
 			}
 
 			update_option( self::OPTION_KEY, $clean );
 			return $clean;
+		}
+
+		private static function is_secret_placeholder( $submitted, $existing ) {
+			$submitted = (string) $submitted;
+			$existing  = (string) $existing;
+
+			if ( self::SECRET_PLACEHOLDER === $submitted ) {
+				return true;
+			}
+
+			// Accept the previous prefix/suffix mask for forms opened before this fix.
+			return '' !== $existing
+				&& function_exists( 'ajcore_mask_secret_for_display' )
+				&& ajcore_mask_secret_for_display( $existing ) === $submitted;
 		}
 
 		public function encrypt_secret_on_save( $settings ) {
@@ -551,8 +566,8 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				'path_style' => isset( $_POST['path_style'] ) ? '1' : '0',
 			);
 
-			if ( 0 === strpos( $settings['secret_key'], '••••' ) ) {
-				$existing            = self::get_settings();
+			$existing = self::get_settings();
+			if ( self::is_secret_placeholder( $settings['secret_key'], $existing['secret_key'] ) ) {
 				$settings['secret_key'] = $existing['secret_key'];
 			}
 
@@ -588,9 +603,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			}
 
 			$settings     = self::get_settings();
-			$masked_secret = '' !== $settings['secret_key'] && function_exists( 'ajcore_mask_secret_for_display' )
-				? ajcore_mask_secret_for_display( $settings['secret_key'] )
-				: '';
+			$masked_secret = '' !== $settings['secret_key'] ? self::SECRET_PLACEHOLDER : '';
 			$notice = isset( $_GET['notice'] ) ? sanitize_key( wp_unslash( $_GET['notice'] ) ) : '';
 			$nonce  = wp_create_nonce( self::NONCE_ACTION );
 			?>
