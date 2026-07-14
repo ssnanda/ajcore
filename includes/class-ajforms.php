@@ -66,6 +66,7 @@ class AJForms {
 		add_action( 'ajforms_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
 		add_action( 'ajcore_portal_stripe_sync', array( $plugin_admin, 'run_scheduled_portal_sync_job' ) );
 		add_action( 'ajcore_compliance_reminders', array( $plugin_admin, 'run_compliance_reminder_job' ) );
+		add_action( 'ajcore_manual_sync_run', array( $plugin_admin, 'run_manual_sync_job_from_transient' ) );
 
 		add_action( 'admin_enqueue_scripts',   array( $this, 'enqueue_username_edit_script' ) );
 		add_filter( 'user_profile_update_errors', array( $this, 'validate_username_change' ), 10, 3 );

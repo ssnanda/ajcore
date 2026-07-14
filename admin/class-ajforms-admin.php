@@ -4051,7 +4051,7 @@ class AJForms_Admin {
 		return absint( $result ) + absint( $upgrade_result );
 	}
 
-	public function run_portal_sync_job( $source = 'manual', $requested_jobs = array() ) {
+	public function run_portal_sync_job( $source = 'manual', $requested_jobs = array(), $run_key = '' ) {
 		$this->ensure_portal_schema();
 
 		$secret_key = $this->get_stripe_secret_key_for_portal();
@@ -4066,7 +4066,9 @@ class AJForms_Admin {
 			$jobs = array_keys( $available_jobs );
 		}
 
-		$run_key = wp_generate_uuid4();
+		// Callers that need to poll for completion (e.g. an async manual trigger) pass their own
+		// run_key so they can query the logs table for it; everyone else (cron) gets one generated.
+		$run_key = '' !== $run_key ? sanitize_text_field( (string) $run_key ) : wp_generate_uuid4();
 		$total   = 0;
 		$errors  = array();
 
@@ -4135,6 +4137,95 @@ class AJForms_Admin {
 		}
 
 		$this->run_portal_sync_job( 'cron', $settings['jobs'] );
+	}
+
+	/**
+	 * Runs a manually-triggered sync in the background via a one-off WP-Cron event, rather than
+	 * inline within the HTTP request that triggered it — a real Stripe sync (especially the
+	 * "transactions" job, which pages through the full invoice/charge history) can easily take
+	 * longer than a typical PHP or reverse-proxy request timeout allows, and DOES on a live account
+	 * with real data volume even though it looks instant against a small local/dev dataset. Handles
+	 * the 'ajcore_manual_sync_run' cron hook scheduled by ops_trigger_sync() and the WP admin
+	 * "Full Sync Now" / per-job buttons — both now schedule instead of calling run_portal_sync_job()
+	 * directly. The transient carries the requested jobs + the run_key the caller is polling for
+	 * (see get_sync_run_status_for_ops()).
+	 */
+	public function run_manual_sync_job_from_transient( $run_token ) {
+		$run_token = sanitize_text_field( (string) $run_token );
+		$data      = get_transient( 'ajcore_manual_sync_' . $run_token );
+		delete_transient( 'ajcore_manual_sync_' . $run_token );
+		if ( ! is_array( $data ) ) {
+			return;
+		}
+		$jobs    = isset( $data['jobs'] ) && is_array( $data['jobs'] ) ? $data['jobs'] : array();
+		$run_key = isset( $data['run_key'] ) ? (string) $data['run_key'] : '';
+		$this->run_portal_sync_job( 'manual', $jobs, $run_key );
+	}
+
+	/**
+	 * Schedules a manual sync to run in the background and returns the run_key + run_token needed
+	 * to trigger and then poll it. Shared by the ops REST trigger and the WP admin manual buttons so
+	 * both go through the exact same (safe, non-blocking) path.
+	 */
+	private function schedule_manual_sync_job( $jobs ) {
+		$run_key   = wp_generate_uuid4();
+		$run_token = wp_generate_uuid4();
+		set_transient( 'ajcore_manual_sync_' . $run_token, array( 'jobs' => $jobs, 'run_key' => $run_key ), 10 * MINUTE_IN_SECONDS );
+		wp_schedule_single_event( time() - 1, 'ajcore_manual_sync_run', array( $run_token ) );
+		spawn_cron();
+
+		return $run_key;
+	}
+
+	/**
+	 * Public entry point for the ops REST API — schedules a manual sync in the background (see
+	 * schedule_manual_sync_job()) and returns the run_key to poll via get_sync_run_status_for_ops().
+	 */
+	public function trigger_manual_sync_for_ops( $jobs ) {
+		$available_jobs = $this->get_portal_sync_jobs();
+		$jobs = is_array( $jobs ) ? array_values( array_intersect( array_map( 'sanitize_key', $jobs ), array_keys( $available_jobs ) ) ) : array();
+
+		return $this->schedule_manual_sync_job( $jobs );
+	}
+
+	/**
+	 * Public entry point for the ops REST API — polls the sync_logs table for a run_key returned by
+	 * trigger_manual_sync_for_ops(). Each job in a run gets exactly one log row that starts as
+	 * 'started' and is updated in place to 'success'/'failed' (see write_portal_sync_log()), so the
+	 * run is done once no row for this run_key is still 'started'. Empty rows means the background
+	 * cron event hasn't actually fired yet (can take a few seconds on some hosts).
+	 */
+	public function get_sync_run_status_for_ops( $run_key ) {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_sync_logs_table();
+		$rows  = $pdb->get_results( $pdb->prepare(
+			"SELECT job_name, status, records_synced, message FROM {$table} WHERE run_key = %s",
+			sanitize_text_field( (string) $run_key )
+		) );
+
+		if ( empty( $rows ) ) {
+			return array( 'done' => false, 'started' => false, 'records_synced' => 0, 'errors' => array() );
+		}
+
+		$pending = 0;
+		$records = 0;
+		$errors  = array();
+		foreach ( $rows as $row ) {
+			if ( 'started' === $row->status ) {
+				$pending++;
+			} elseif ( 'failed' === $row->status ) {
+				$errors[] = trim( sprintf( '%s: %s', $row->job_name, $row->message ) );
+			} else {
+				$records += (int) $row->records_synced;
+			}
+		}
+
+		return array(
+			'done'           => 0 === $pending,
+			'started'        => true,
+			'records_synced' => $records,
+			'errors'         => $errors,
+		);
 	}
 
 	/**
@@ -10175,24 +10266,19 @@ class AJForms_Admin {
 
 			check_admin_referer( 'ajcore_portal_' . $action );
 
-			$result = null;
-			if ( 'sync_all' === $action ) {
-				$result = $this->run_portal_sync_job( 'manual' );
-			} elseif ( 'sync_products' === $action ) {
-				$result = $this->run_portal_sync_job( 'manual', array( 'products' ) );
-			} elseif ( 'sync_customers' === $action ) {
-				$result = $this->run_portal_sync_job( 'manual', array( 'customers' ) );
-			} elseif ( 'sync_subscriptions' === $action ) {
-				$result = $this->run_portal_sync_job( 'manual', array( 'subscriptions' ) );
-			} elseif ( 'sync_transactions' === $action ) {
-				$result = $this->run_portal_sync_job( 'manual', array( 'transactions' ) );
-			}
-
-			if ( is_wp_error( $result ) ) {
-				$args['portal-error'] = rawurlencode( $result->get_error_message() );
-			} else {
-				delete_option( 'ajforms_last_portal_db_error' );
-				$args['portal-synced'] = absint( $result );
+			// Scheduled in the background (see schedule_manual_sync_job()) rather than run inline
+			// here — a full sync can take longer than this admin-page request's own timeout allows
+			// on a live account with real data volume, which silently failed with no useful error.
+			$job_map = array(
+				'sync_all'           => array(),
+				'sync_products'      => array( 'products' ),
+				'sync_customers'     => array( 'customers' ),
+				'sync_subscriptions' => array( 'subscriptions' ),
+				'sync_transactions'  => array( 'transactions' ),
+			);
+			if ( isset( $job_map[ $action ] ) ) {
+				$this->schedule_manual_sync_job( $job_map[ $action ] );
+				$args['portal-sync-queued'] = 1;
 			}
 
 			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
@@ -16840,6 +16926,9 @@ class AJForms_Admin {
 				</nav>
 			<?php endif; ?>
 			<?php if ( 'customer' !== $tab && 'sync' !== $tab ) : ?>
+				<?php if ( isset( $_GET['portal-sync-queued'] ) ) : ?>
+					<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Sync started — it runs in the background and finishes in a moment. Check the Sync tab for progress and results.', 'ajforms' ); ?></p></div>
+				<?php endif; ?>
 				<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
 					<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
 				<?php endif; ?>
@@ -19025,6 +19114,9 @@ class AJForms_Admin {
 
 			<?php if ( isset( $_GET['portal-sync-settings'] ) ) : ?>
 				<div class="notice notice-success inline"><p><?php esc_html_e( 'Sync schedule saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-sync-queued'] ) ) : ?>
+				<div class="notice notice-success inline"><p><?php esc_html_e( 'Sync started — it runs in the background. Refresh this page in a moment to see the result in the sync history below.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
 				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>

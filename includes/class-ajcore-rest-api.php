@@ -148,6 +148,16 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/sync/run-status',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_sync_run_status' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/leads',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -5328,11 +5338,14 @@ class AJCore_REST_API {
 	}
 
 	/**
-	 * "Run Selected Sync Now" — runs synchronously (same as the WP admin manual sync buttons) so the
-	 * caller gets an immediate record count / error back, rather than the old fire-and-forget
-	 * cron-scheduling approach (which gave no feedback and mislabeled the run as source 'cron').
-	 * Accepts an optional 'jobs' array (any of: products, customers, subscriptions, transactions);
-	 * omitted/empty means the account's configured default job set.
+	 * "Run Selected/Full Sync Now" — schedules the sync to run in the BACKGROUND (a one-off WP-Cron
+	 * event) instead of running it inline within this request. A real Stripe sync (especially the
+	 * "transactions" job, paging through full invoice/charge history) can take longer than a typical
+	 * PHP or reverse-proxy request timeout allows — this looks instant against a small local/dev
+	 * dataset but reliably fails on a live account with real data volume, returning a broken/empty
+	 * response with no useful error message. AJOps polls /ops/sync/run-status with the returned
+	 * run_key to know when it's actually done. Accepts an optional 'jobs' array (any of: products,
+	 * customers, subscriptions, transactions); omitted/empty means the account's configured default.
 	 */
 	public function ops_trigger_sync( WP_REST_Request $request ) {
 		if ( ! class_exists( 'AJForms_Admin' ) ) {
@@ -5342,12 +5355,22 @@ class AJCore_REST_API {
 		$jobs  = $request->get_param( 'jobs' );
 		$jobs  = is_array( $jobs ) ? array_map( 'sanitize_key', $jobs ) : array();
 
-		$result = $admin->run_portal_sync_job( 'manual', $jobs );
-		if ( is_wp_error( $result ) ) {
-			return new WP_Error( 'sync_failed', $result->get_error_message(), array( 'status' => 500 ) );
-		}
+		$run_key = $admin->trigger_manual_sync_for_ops( $jobs );
 
-		return rest_ensure_response( array( 'success' => true, 'records_synced' => absint( $result ) ) );
+		return rest_ensure_response( array( 'success' => true, 'run_key' => $run_key ) );
+	}
+
+	/** Poll target for ops_trigger_sync()'s run_key — see get_sync_run_status_for_ops(). */
+	public function get_ops_sync_run_status( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$run_key = sanitize_text_field( (string) $request->get_param( 'run_key' ) );
+		if ( '' === $run_key ) {
+			return new WP_Error( 'bad_request', 'run_key is required.', array( 'status' => 400 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		return rest_ensure_response( $admin->get_sync_run_status_for_ops( $run_key ) );
 	}
 
 	/** Sync status for the AJOps global sync widget: jobs, enabled/frequency, last/next run. */
