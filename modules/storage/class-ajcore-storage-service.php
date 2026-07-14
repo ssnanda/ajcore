@@ -642,44 +642,8 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 							<th scope="row"><label for="ajcore_storage_console_url"><?php esc_html_e( 'Console URL', 'ajforms' ); ?></label></th>
 							<td>
 								<input type="url" id="ajcore_storage_console_url" name="console_url" value="<?php echo esc_attr( $settings['console_url'] ); ?>" class="regular-text" placeholder="https://console.files.example.com" />
-								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
-									<p class="description ajcore-storage-provider-console-hint" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>"><?php echo esc_html( $provider['console_hint'] ); ?></p>
-								<?php endforeach; ?>
 								<p id="ajcore_storage_console_links" class="ajforms-settings-inline-actions" style="margin-top:8px;"></p>
 							</td>
-						</tr>
-						<tr>
-							<th scope="row"><?php esc_html_e( 'Bucket options to consider', 'ajforms' ); ?></th>
-							<td>
-								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
-									<div class="ajcore-storage-provider-bucket-help" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>padding:12px 14px;border:1px solid #dcdcde;border-radius:6px;background:#f6f7f7;margin-bottom:8px;">
-										<p class="description" style="margin:0 0 8px;"><?php esc_html_e( 'When creating the bucket in the provider console (link above):', 'ajforms' ); ?></p>
-										<ul style="margin:0 0 0 18px;list-style:disc;">
-											<?php foreach ( $provider['bucket_options_help'] as $note ) : ?>
-												<li style="margin-bottom:6px;"><?php echo esc_html( $note ); ?></li>
-											<?php endforeach; ?>
-										</ul>
-									</div>
-								<?php endforeach; ?>
-							</td>
-						</tr>
-						<tr>
-							<th scope="row"><?php esc_html_e( 'Getting an access key', 'ajforms' ); ?></th>
-							<td>
-								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
-									<div class="ajcore-storage-provider-help" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>padding:12px 14px;border:1px solid #dcdcde;border-radius:6px;background:#f6f7f7;margin-bottom:8px;">
-										<ol style="margin:0 0 0 18px;">
-											<?php foreach ( $provider['instructions'] as $step ) : ?>
-												<li><?php echo esc_html( $step ); ?></li>
-											<?php endforeach; ?>
-										</ol>
-									</div>
-								<?php endforeach; ?>
-							</td>
-						</tr>
-						<tr>
-							<th scope="row"><label for="ajcore_storage_region"><?php esc_html_e( 'Region', 'ajforms' ); ?></label></th>
-							<td><input type="text" id="ajcore_storage_region" name="region" value="<?php echo esc_attr( $settings['region'] ); ?>" class="regular-text" /></td>
 						</tr>
 						<tr>
 							<th scope="row"><label for="ajcore_storage_access_key"><?php esc_html_e( 'Access Key', 'ajforms' ); ?></label></th>
@@ -693,15 +657,19 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 							</td>
 						</tr>
 						<tr>
+							<th scope="row"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></th>
+							<td>
+								<button type="button" class="button" id="ajcore_storage_test_connection"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
+								<p class="description" id="ajcore_storage_test_status"><?php esc_html_e( 'Checks the endpoint/access key/secret key above before you bother filling in a bucket.', 'ajforms' ); ?></p>
+							</td>
+						</tr>
+						<tr>
 							<th scope="row"><label for="ajcore_storage_bucket"><?php esc_html_e( 'Bucket', 'ajforms' ); ?></label></th>
 							<td>
-								<select id="ajcore_storage_bucket" name="bucket" style="min-width:260px">
-									<?php if ( '' !== $settings['bucket'] ) : ?>
-										<option value="<?php echo esc_attr( $settings['bucket'] ); ?>" selected><?php echo esc_html( $settings['bucket'] ); ?></option>
-									<?php endif; ?>
-								</select>
+								<input type="text" id="ajcore_storage_bucket" name="bucket" value="<?php echo esc_attr( $settings['bucket'] ); ?>" class="regular-text" list="ajcore_storage_bucket_options" placeholder="my-bucket-name" />
+								<datalist id="ajcore_storage_bucket_options"></datalist>
 								<button type="button" class="button" id="ajcore_storage_list_buckets"><?php esc_html_e( 'List Buckets', 'ajforms' ); ?></button>
-								<p class="description" id="ajcore_storage_bucket_status"></p>
+								<p class="description" id="ajcore_storage_bucket_status"><?php esc_html_e( 'Type the exact bucket name, or click List Buckets for suggestions.', 'ajforms' ); ?></p>
 							</td>
 						</tr>
 						<tr>
@@ -769,9 +737,6 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 				document.getElementById('ajcore_storage_provider').addEventListener('change', function () {
 					var provider = this.value;
-					document.querySelectorAll('.ajcore-storage-provider-help, .ajcore-storage-provider-endpoint-hint, .ajcore-storage-provider-console-hint, .ajcore-storage-provider-bucket-help').forEach(function (el) {
-						el.style.display = (el.getAttribute('data-provider') === provider) ? '' : 'none';
-					});
 					var defaults = providerDefaults[provider];
 					if (defaults) {
 						document.getElementById('ajcore_storage_endpoint').placeholder = defaults.placeholder;
@@ -784,37 +749,54 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				document.getElementById('ajcore_storage_console_url').addEventListener('input', renderConsoleLinks);
 				renderConsoleLinks();
 
-				document.getElementById('ajcore_storage_list_buckets').addEventListener('click', function () {
-					var status = document.getElementById('ajcore_storage_bucket_status');
-					status.textContent = <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?>;
+				function fetchBuckets() {
 					var body = new URLSearchParams({
 						action: 'ajcore_storage_list_buckets',
 						nonce: nonce,
 						endpoint: document.getElementById('ajcore_storage_endpoint').value,
-						region: document.getElementById('ajcore_storage_region').value,
 						access_key: document.getElementById('ajcore_storage_access_key').value,
 						secret_key: document.getElementById('ajcore_storage_secret_key').value,
 						path_style: document.querySelector('input[name="path_style"]').checked ? '1' : ''
 					});
-					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body })
-						.then(function (r) { return r.json(); })
+					return fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body }).then(function (r) { return r.json(); });
+				}
+
+				document.getElementById('ajcore_storage_test_connection').addEventListener('click', function () {
+					var status = document.getElementById('ajcore_storage_test_status');
+					status.textContent = <?php echo wp_json_encode( __( 'Testing…', 'ajforms' ) ); ?>;
+					fetchBuckets()
+						.then(function (res) {
+							status.textContent = res.success
+								? <?php echo wp_json_encode( __( '✅ Connected — endpoint and credentials work.', 'ajforms' ) ); ?>
+								: ( '❌ ' + ((res.data && res.data.message) ? res.data.message : <?php echo wp_json_encode( __( 'Connection failed.', 'ajforms' ) ); ?>) );
+						})
+						.catch(function () {
+							status.textContent = <?php echo wp_json_encode( __( 'Request failed.', 'ajforms' ) ); ?>;
+						});
+				});
+
+				document.getElementById('ajcore_storage_list_buckets').addEventListener('click', function () {
+					var status = document.getElementById('ajcore_storage_bucket_status');
+					status.textContent = <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?>;
+					fetchBuckets()
 						.then(function (res) {
 							if (!res.success) {
 								status.textContent = (res.data && res.data.message) ? res.data.message : <?php echo wp_json_encode( __( 'Failed to list buckets.', 'ajforms' ) ); ?>;
 								return;
 							}
-							var select = document.getElementById('ajcore_storage_bucket');
-							var current = select.value;
-							select.innerHTML = '';
+							var datalist = document.getElementById('ajcore_storage_bucket_options');
+							var bucketInput = document.getElementById('ajcore_storage_bucket');
+							datalist.innerHTML = '';
 							res.data.buckets.forEach(function (name) {
 								var opt = document.createElement('option');
 								opt.value = name;
-								opt.textContent = name;
-								if (name === current) { opt.selected = true; }
-								select.appendChild(opt);
+								datalist.appendChild(opt);
 							});
+							if (!bucketInput.value && res.data.buckets.length) {
+								bucketInput.value = res.data.buckets[0];
+							}
 							status.textContent = res.data.buckets.length
-								? <?php echo wp_json_encode( __( 'Choose a bucket and save.', 'ajforms' ) ); ?>
+								? <?php echo wp_json_encode( __( 'Suggestions loaded — pick one or keep what you typed, then save.', 'ajforms' ) ); ?>
 								: <?php echo wp_json_encode( __( 'No buckets found on this endpoint.', 'ajforms' ) ); ?>;
 						})
 						.catch(function () {
