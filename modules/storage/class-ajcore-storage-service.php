@@ -82,14 +82,15 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 		public static function get_default_settings() {
 			return array(
-				'enabled'    => '0',
-				'provider'   => 'minio',
-				'endpoint'   => '',
-				'region'     => 'us-east-1',
-				'bucket'     => '',
-				'access_key' => '',
-				'secret_key' => '',
-				'path_style' => '1',
+				'enabled'     => '0',
+				'provider'    => 'rustfs',
+				'endpoint'    => '',
+				'console_url' => '',
+				'region'      => 'us-east-1',
+				'bucket'      => '',
+				'access_key'  => '',
+				'secret_key'  => '',
+				'path_style'  => '1',
 			);
 		}
 
@@ -102,17 +103,50 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		 */
 		public static function get_provider_definitions() {
 			return array(
+				'rustfs' => array(
+					'label'                => __( 'RustFS', 'ajforms' ),
+					'endpoint_hint'        => __( 'RustFS speaks the S3 API the same way MinIO does — use its S3 API host here, not the console host below.', 'ajforms' ),
+					'endpoint_placeholder' => 'https://files.example.com',
+					'default_path_style'   => true,
+					'console_hint'         => __( 'The RustFS web console — a different host from the S3 API endpoint above (e.g. console.files.example.com). Fill this in to get one-click links to bucket creation and access keys below.', 'ajforms' ),
+					'console_placeholder'  => 'https://console.files.example.com',
+					'console_paths'        => array(
+						'buckets'     => '/rustfs/console/browser/',
+						'access_keys' => '/rustfs/console/access-keys/',
+					),
+					'instructions'         => array(
+						__( 'Open the RustFS console → Access Keys (link above once you fill in the Console URL).', 'ajforms' ),
+						__( 'Click "Create Access Key".', 'ajforms' ),
+						__( 'A "read-write" key scoped to the bucket you created is all this plugin needs — it only ever does GetObject/PutObject/DeleteObject/ListBucket, never admin-level actions.', 'ajforms' ),
+						__( 'Copy the Access Key and Secret Key now — the secret is typically only shown once.', 'ajforms' ),
+					),
+					'bucket_options_help'  => array(
+						__( 'Versioning: leave off for this plugin. It writes each file to a unique path and never overwrites or deletes it (deleting the WordPress attachment does not yet delete the remote copy), so version history would not currently protect anything — it would only add storage cost. Turn it on later if you add that behavior.', 'ajforms' ),
+						__( 'Object Lock: only worth it if you need WORM-style retention for compliance documents that must not be deleted or altered for a fixed period. It can only be set at bucket-creation time (not added later) and requires Versioning to be on too. The plugin does not set or manage retention periods itself — you would configure a default retention rule directly in RustFS.', 'ajforms' ),
+						__( 'Quota: optional soft ceiling to catch runaway growth (e.g. 10 GiB is generous for scanned documents). Not required for a small document library.', 'ajforms' ),
+					),
+				),
 				'minio'  => array(
 					'label'                => __( 'MinIO', 'ajforms' ),
 					'endpoint_hint'        => __( 'The S3 API endpoint, not the web console — these are usually different hosts/ports (e.g. files.example.com for the API vs. console.files.example.com for the console).', 'ajforms' ),
 					'endpoint_placeholder' => 'https://files.example.com',
 					'default_path_style'   => true,
+					'console_hint'         => __( 'The MinIO web console. Recent Community Edition builds have dropped the self-service Access Keys screen from this console — if you don\'t see one, you\'ll need the mc CLI instead (see instructions below).', 'ajforms' ),
+					'console_placeholder'  => 'https://console.files.example.com',
+					'console_paths'        => array(
+						'buckets' => '/buckets',
+					),
 					'instructions'         => array(
-						__( 'Log into your MinIO Console (the web UI — a different host/port than the S3 API endpoint above).', 'ajforms' ),
-						__( 'Go to "Access Keys" (older versions: "Identity" → "Users").', 'ajforms' ),
+						__( 'Log into your MinIO Console (link above once you fill in the Console URL).', 'ajforms' ),
+						__( 'Go to "Access Keys" (older versions: "Identity" → "Users") — if that screen is missing, your build has dropped it; use the mc CLI (`mc admin user add` / `mc admin accesskey create`) instead.', 'ajforms' ),
 						__( 'Click "Create Access Key".', 'ajforms' ),
 						__( 'Optionally attach a policy restricting it to a single bucket — recommended over using your root credentials directly.', 'ajforms' ),
 						__( 'Copy the Access Key and Secret Key now — the secret is only ever shown once.', 'ajforms' ),
+					),
+					'bucket_options_help'  => array(
+						__( 'Versioning: leave off unless you specifically want protection against accidental overwrite/delete — this plugin doesn\'t overwrite or delete remote copies today, so it wouldn\'t benefit from it yet.', 'ajforms' ),
+						__( 'Object Lock: only relevant for compliance/WORM retention requirements; must be chosen at bucket creation and requires Versioning too.', 'ajforms' ),
+						__( 'Quota: optional soft ceiling on bucket size; not required for a small document library.', 'ajforms' ),
 					),
 				),
 				'aws_s3' => array(
@@ -120,6 +154,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					'endpoint_hint'        => __( 'Use your bucket\'s regional endpoint, e.g. https://s3.us-east-1.amazonaws.com — and make sure Region below matches the region the bucket was actually created in.', 'ajforms' ),
 					'endpoint_placeholder' => 'https://s3.us-east-1.amazonaws.com',
 					'default_path_style'   => false,
+					'console_hint'         => __( 'AWS has one fixed console (not self-hosted) — leave this blank, or use https://console.aws.amazon.com/s3/ for a generic bucket-list link.', 'ajforms' ),
+					'console_placeholder'  => 'https://console.aws.amazon.com',
+					'console_paths'        => array(),
 					'instructions'         => array(
 						__( 'Open the AWS IAM Console → Users, and select (or create) the user this plugin should act as.', 'ajforms' ),
 						__( 'Open the "Security credentials" tab for that user.', 'ajforms' ),
@@ -127,17 +164,10 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 						__( 'Copy the Access Key ID and Secret Access Key now — the secret is only ever shown once.', 'ajforms' ),
 						__( 'Attach a bucket-scoped IAM policy to that user rather than using broad account credentials.', 'ajforms' ),
 					),
-				),
-				'rustfs' => array(
-					'label'                => __( 'RustFS', 'ajforms' ),
-					'endpoint_hint'        => __( 'RustFS speaks the S3 API the same way MinIO does — use its S3 API host here, not any separate admin/console host if one exists.', 'ajforms' ),
-					'endpoint_placeholder' => 'https://files.example.com',
-					'default_path_style'   => true,
-					'instructions'         => array(
-						__( 'Open your RustFS admin console or CLI.', 'ajforms' ),
-						__( 'Create an access key (RustFS is MinIO-API-compatible, so the concept is the same — check the RustFS docs for the exact screen name in your version).', 'ajforms' ),
-						__( 'Scope it to a single bucket if the option is available.', 'ajforms' ),
-						__( 'Copy the Access Key and Secret Key now.', 'ajforms' ),
+					'bucket_options_help'  => array(
+						__( 'Versioning: leave off unless you specifically want overwrite/delete protection — this plugin doesn\'t need it today.', 'ajforms' ),
+						__( 'Object Lock: only for compliance/WORM retention; must be enabled at bucket creation and requires Versioning too.', 'ajforms' ),
+						__( 'S3 has no native per-bucket storage quota — use an AWS Budget/CloudWatch alarm instead if you want a cost ceiling.', 'ajforms' ),
 					),
 				),
 				'other'  => array(
@@ -145,10 +175,18 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					'endpoint_hint'        => __( 'Use the S3 API endpoint documented by your provider.', 'ajforms' ),
 					'endpoint_placeholder' => 'https://s3.example.com',
 					'default_path_style'   => true,
+					'console_hint'         => __( 'Your provider\'s web console, if it has one — fill this in for a quick link below.', 'ajforms' ),
+					'console_placeholder'  => 'https://console.example.com',
+					'console_paths'        => array(),
 					'instructions'         => array(
 						__( 'Check your provider\'s documentation for an "Access Keys" or "API Keys" section, usually under account or security settings.', 'ajforms' ),
 						__( 'Create a key scoped to a single bucket if that option exists.', 'ajforms' ),
 						__( 'Copy the Access Key and Secret Key now — most providers only show the secret once.', 'ajforms' ),
+					),
+					'bucket_options_help'  => array(
+						__( 'Versioning: leave off unless you specifically want overwrite/delete protection — this plugin doesn\'t need it today.', 'ajforms' ),
+						__( 'Object Lock: only for compliance/WORM retention requirements; usually must be enabled at bucket creation.', 'ajforms' ),
+						__( 'Quota: optional soft ceiling on bucket size, if your provider supports one.', 'ajforms' ),
 					),
 				),
 			);
@@ -169,7 +207,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			$clean['enabled']    = ! empty( $settings['enabled'] ) ? '1' : '0';
 			$clean['path_style'] = ! empty( $settings['path_style'] ) ? '1' : '0';
 			if ( ! array_key_exists( $clean['provider'], self::get_provider_definitions() ) ) {
-				$clean['provider'] = 'minio';
+				$clean['provider'] = 'rustfs';
 			}
 
 			// Preserve the existing secret if the settings form submitted a masked
@@ -477,14 +515,15 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			check_admin_referer( self::NONCE_ACTION, 'ajcore_storage_nonce' );
 
 			$posted = array(
-				'enabled'    => isset( $_POST['enabled'] ) ? '1' : '0',
-				'provider'   => isset( $_POST['provider'] ) ? sanitize_key( wp_unslash( $_POST['provider'] ) ) : 'minio',
-				'endpoint'   => isset( $_POST['endpoint'] ) ? esc_url_raw( wp_unslash( $_POST['endpoint'] ) ) : '',
-				'region'     => isset( $_POST['region'] ) ? sanitize_text_field( wp_unslash( $_POST['region'] ) ) : 'us-east-1',
-				'bucket'     => isset( $_POST['bucket'] ) ? sanitize_text_field( wp_unslash( $_POST['bucket'] ) ) : '',
-				'access_key' => isset( $_POST['access_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['access_key'] ) ) ) : '',
-				'secret_key' => isset( $_POST['secret_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['secret_key'] ) ) ) : '',
-				'path_style' => isset( $_POST['path_style'] ) ? '1' : '0',
+				'enabled'     => isset( $_POST['enabled'] ) ? '1' : '0',
+				'provider'    => isset( $_POST['provider'] ) ? sanitize_key( wp_unslash( $_POST['provider'] ) ) : 'rustfs',
+				'endpoint'    => isset( $_POST['endpoint'] ) ? esc_url_raw( wp_unslash( $_POST['endpoint'] ) ) : '',
+				'console_url' => isset( $_POST['console_url'] ) ? esc_url_raw( wp_unslash( $_POST['console_url'] ) ) : '',
+				'region'      => isset( $_POST['region'] ) ? sanitize_text_field( wp_unslash( $_POST['region'] ) ) : 'us-east-1',
+				'bucket'      => isset( $_POST['bucket'] ) ? sanitize_text_field( wp_unslash( $_POST['bucket'] ) ) : '',
+				'access_key'  => isset( $_POST['access_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['access_key'] ) ) ) : '',
+				'secret_key'  => isset( $_POST['secret_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['secret_key'] ) ) ) : '',
+				'path_style'  => isset( $_POST['path_style'] ) ? '1' : '0',
 			);
 
 			self::update_settings( $posted );
@@ -591,6 +630,40 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 							</td>
 						</tr>
 						<tr>
+							<th scope="row"><label for="ajcore_storage_endpoint"><?php esc_html_e( 'Endpoint URL', 'ajforms' ); ?></label></th>
+							<td>
+								<input type="url" id="ajcore_storage_endpoint" name="endpoint" value="<?php echo esc_attr( $settings['endpoint'] ); ?>" class="regular-text" placeholder="https://files.example.com" />
+								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
+									<p class="description ajcore-storage-provider-endpoint-hint" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>"><?php echo esc_html( $provider['endpoint_hint'] ); ?></p>
+								<?php endforeach; ?>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><label for="ajcore_storage_console_url"><?php esc_html_e( 'Console URL', 'ajforms' ); ?></label></th>
+							<td>
+								<input type="url" id="ajcore_storage_console_url" name="console_url" value="<?php echo esc_attr( $settings['console_url'] ); ?>" class="regular-text" placeholder="https://console.files.example.com" />
+								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
+									<p class="description ajcore-storage-provider-console-hint" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>"><?php echo esc_html( $provider['console_hint'] ); ?></p>
+								<?php endforeach; ?>
+								<p id="ajcore_storage_console_links" class="ajforms-settings-inline-actions" style="margin-top:8px;"></p>
+							</td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Bucket options to consider', 'ajforms' ); ?></th>
+							<td>
+								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
+									<div class="ajcore-storage-provider-bucket-help" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>padding:12px 14px;border:1px solid #dcdcde;border-radius:6px;background:#f6f7f7;margin-bottom:8px;">
+										<p class="description" style="margin:0 0 8px;"><?php esc_html_e( 'When creating the bucket in the provider console (link above):', 'ajforms' ); ?></p>
+										<ul style="margin:0 0 0 18px;list-style:disc;">
+											<?php foreach ( $provider['bucket_options_help'] as $note ) : ?>
+												<li style="margin-bottom:6px;"><?php echo esc_html( $note ); ?></li>
+											<?php endforeach; ?>
+										</ul>
+									</div>
+								<?php endforeach; ?>
+							</td>
+						</tr>
+						<tr>
 							<th scope="row"><?php esc_html_e( 'Getting an access key', 'ajforms' ); ?></th>
 							<td>
 								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
@@ -601,15 +674,6 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 											<?php endforeach; ?>
 										</ol>
 									</div>
-								<?php endforeach; ?>
-							</td>
-						</tr>
-						<tr>
-							<th scope="row"><label for="ajcore_storage_endpoint"><?php esc_html_e( 'Endpoint URL', 'ajforms' ); ?></label></th>
-							<td>
-								<input type="url" id="ajcore_storage_endpoint" name="endpoint" value="<?php echo esc_attr( $settings['endpoint'] ); ?>" class="regular-text" placeholder="https://files.example.com" />
-								<?php foreach ( self::get_provider_definitions() as $provider_key => $provider ) : ?>
-									<p class="description ajcore-storage-provider-endpoint-hint" data-provider="<?php echo esc_attr( $provider_key ); ?>" style="<?php echo $settings['provider'] === $provider_key ? '' : 'display:none;'; ?>"><?php echo esc_html( $provider['endpoint_hint'] ); ?></p>
 								<?php endforeach; ?>
 							</td>
 						</tr>
@@ -668,20 +732,57 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				var nonce = <?php echo wp_json_encode( $nonce ); ?>;
 				var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 				var providerDefaults = <?php echo wp_json_encode( array_map( function ( $p ) {
-					return array( 'path_style' => $p['default_path_style'], 'placeholder' => $p['endpoint_placeholder'] );
+					return array(
+						'path_style'          => $p['default_path_style'],
+						'placeholder'         => $p['endpoint_placeholder'],
+						'console_placeholder' => $p['console_placeholder'],
+						'console_paths'       => $p['console_paths'],
+					);
 				}, self::get_provider_definitions() ) ); ?>;
+				var linkLabels = {
+					buckets: <?php echo wp_json_encode( __( 'Open Bucket Browser (create bucket here) →', 'ajforms' ) ); ?>,
+					access_keys: <?php echo wp_json_encode( __( 'Open Access Keys →', 'ajforms' ) ); ?>
+				};
+
+				function currentProvider() {
+					return document.getElementById('ajcore_storage_provider').value;
+				}
+
+				function renderConsoleLinks() {
+					var container = document.getElementById('ajcore_storage_console_links');
+					var consoleUrl = document.getElementById('ajcore_storage_console_url').value.replace(/\/+$/, '');
+					var defaults = providerDefaults[currentProvider()];
+					container.innerHTML = '';
+					if (!consoleUrl || !defaults || !defaults.console_paths) {
+						return;
+					}
+					Object.keys(defaults.console_paths).forEach(function (key) {
+						var a = document.createElement('a');
+						a.href = consoleUrl + defaults.console_paths[key];
+						a.target = '_blank';
+						a.rel = 'noopener noreferrer';
+						a.className = 'button button-secondary';
+						a.textContent = linkLabels[key] || key;
+						container.appendChild(a);
+					});
+				}
 
 				document.getElementById('ajcore_storage_provider').addEventListener('change', function () {
 					var provider = this.value;
-					document.querySelectorAll('.ajcore-storage-provider-help, .ajcore-storage-provider-endpoint-hint').forEach(function (el) {
+					document.querySelectorAll('.ajcore-storage-provider-help, .ajcore-storage-provider-endpoint-hint, .ajcore-storage-provider-console-hint, .ajcore-storage-provider-bucket-help').forEach(function (el) {
 						el.style.display = (el.getAttribute('data-provider') === provider) ? '' : 'none';
 					});
 					var defaults = providerDefaults[provider];
 					if (defaults) {
 						document.getElementById('ajcore_storage_endpoint').placeholder = defaults.placeholder;
+						document.getElementById('ajcore_storage_console_url').placeholder = defaults.console_placeholder;
 						document.querySelector('input[name="path_style"]').checked = defaults.path_style;
 					}
+					renderConsoleLinks();
 				});
+
+				document.getElementById('ajcore_storage_console_url').addEventListener('input', renderConsoleLinks);
+				renderConsoleLinks();
 
 				document.getElementById('ajcore_storage_list_buckets').addEventListener('click', function () {
 					var status = document.getElementById('ajcore_storage_bucket_status');
