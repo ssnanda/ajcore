@@ -461,7 +461,14 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			$tag = $file_id ? (string) $wpdb->get_var( $wpdb->prepare( "SELECT tag_slug FROM `{$tags_table}` WHERE file_id = %d ORDER BY tag_slug ASC LIMIT 1", $file_id ) ) : '';
 			$tag = $tag ? sanitize_title( $tag ) : 'documents';
 			if ( ! $user_id && $file_id ) {
-				$user_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT user_id FROM `{$users_table}` WHERE file_id = %d AND user_id > 0 ORDER BY id ASC LIMIT 1", $file_id ) );
+				$assignment = $wpdb->get_row( $wpdb->prepare( "SELECT user_id, user_email FROM `{$users_table}` WHERE file_id = %d ORDER BY (user_id > 0) DESC, id ASC LIMIT 1", $file_id ) );
+				if ( $assignment ) {
+					$user_id = (int) $assignment->user_id;
+					if ( ! $user_id && ! empty( $assignment->user_email ) ) {
+						$assigned_user = get_user_by( 'email', sanitize_email( (string) $assignment->user_email ) );
+						$user_id = $assigned_user ? (int) $assigned_user->ID : 0;
+					}
+				}
 			}
 			if ( $user_id && '' === $user_login ) {
 				$user = get_userdata( $user_id );

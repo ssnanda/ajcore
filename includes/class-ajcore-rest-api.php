@@ -4501,6 +4501,13 @@ class AJCore_REST_API {
 			return new WP_Error( 'not_found', __( 'Mail item not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
 		if ( ! empty( $row['file_id'] ) ) {
+			$existing_attachment_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT attachment_id FROM `{$wpdb->prefix}aj_portal_files` WHERE id = %d LIMIT 1", (int) $row['file_id'] ) );
+			if ( $existing_attachment_id && class_exists( 'AJCore_Storage_Service' ) ) {
+				$relocated = AJCore_Storage_Service::migrate_attachment_ids( array( $existing_attachment_id ) );
+				if ( ! empty( $relocated['failed'][ $existing_attachment_id ] ) ) {
+					return new WP_Error( 'storage_relocation_failed', $relocated['failed'][ $existing_attachment_id ], array( 'status' => 500 ) );
+				}
+			}
 			return rest_ensure_response( $this->format_mail_item_row( $row ) );
 		}
 		if ( empty( $row['scan_attachment_id'] ) ) {
@@ -4536,9 +4543,10 @@ class AJCore_REST_API {
 
 		$email = sanitize_email( (string) $row['customer_email'] );
 		if ( is_email( $email ) && $this->table_exists( $wpdb, $users_table ) ) {
+			$user = get_user_by( 'email', $email );
 			$wpdb->insert(
 				$users_table,
-				array( 'file_id' => $file_id, 'user_id' => 0, 'user_email' => strtolower( $email ), 'created_at' => current_time( 'mysql' ) ),
+				array( 'file_id' => $file_id, 'user_id' => $user ? (int) $user->ID : 0, 'user_email' => strtolower( $email ), 'created_at' => current_time( 'mysql' ) ),
 				array( '%d', '%d', '%s', '%s' )
 			);
 		}
@@ -4551,6 +4559,14 @@ class AJCore_REST_API {
 			array( '%d', '%s' ),
 			array( '%d' )
 		);
+
+		if ( class_exists( 'AJCore_Storage_Service' ) ) {
+			$attachment_id = (int) $row['scan_attachment_id'];
+			$relocated = AJCore_Storage_Service::migrate_attachment_ids( array( $attachment_id ) );
+			if ( ! empty( $relocated['failed'][ $attachment_id ] ) ) {
+				return new WP_Error( 'storage_relocation_failed', $relocated['failed'][ $attachment_id ], array( 'status' => 500 ) );
+			}
+		}
 
 		return rest_ensure_response( $this->format_mail_item_row( $this->fetch_mail_item_row( $request['id'] ) ) );
 	}
