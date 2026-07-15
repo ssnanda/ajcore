@@ -5297,19 +5297,6 @@ class AJCore_REST_API {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
 		}
 
-		if ( 0 === strpos( $stripe_customer_id, 'local_' ) ) {
-			$pdb = $this->get_portal_db();
-			$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
-			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
-			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
-			$updated = $pdb->update( $customer_table, array(
-				'name' => $name, 'email' => $email, 'phone' => $phone, 'description' => $description,
-				'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ), 'synced_at' => current_time( 'mysql' ),
-			), array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ), array( '%s' ) );
-			if ( false === $updated ) { return new WP_Error( 'ajcore_local_customer_update_failed', 'Could not update the local AJCore customer.', array( 'status' => 500 ) ); }
-			return rest_ensure_response( array( 'stripe_customer_id' => $stripe_customer_id, 'name' => $name, 'email' => $email, 'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description, 'address' => $address_data, 'metadata' => $metadata, 'portal_status' => 'active', 'synced_at' => current_time( 'mysql' ) ) );
-		}
-
 		// Reject duplicate emails: check portal DB before calling Stripe.
 		$check_pdb   = $this->get_portal_db();
 		$check_table = $this->portal_table( 'aj_portal_stripe_customers' );
@@ -5532,6 +5519,19 @@ class AJCore_REST_API {
 
 		if ( empty( $name ) || empty( $email ) || empty( $phone ) ) {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
+		}
+
+		if ( 0 === strpos( $stripe_customer_id, 'local_' ) ) {
+			$pdb = $this->get_portal_db();
+			$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
+			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
+			$updated = $pdb->update( $customer_table, array(
+				'name' => $name, 'email' => $email, 'phone' => $phone, 'description' => $description,
+				'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ), 'synced_at' => current_time( 'mysql' ),
+			), array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ), array( '%s' ) );
+			if ( false === $updated ) { return new WP_Error( 'ajcore_local_customer_update_failed', 'Could not update the local AJCore customer.', array( 'status' => 500 ) ); }
+			return rest_ensure_response( array( 'stripe_customer_id' => $stripe_customer_id, 'name' => $name, 'email' => $email, 'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description, 'address' => $address_data, 'metadata' => $metadata, 'portal_status' => 'active', 'synced_at' => current_time( 'mysql' ) ) );
 		}
 
 		// Get Stripe secret key.

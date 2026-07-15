@@ -3102,7 +3102,7 @@ class AJForms_Admin {
 		return array(
 			'generated_ledger_source_types' => $generated_ledger_source_types,
 			'cleared_tables' => array(
-				array( 'table' => $this->get_portal_stripe_customers_table(), 'scope' => __( 'Stripe customer cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_stripe_customers_table(), 'scope' => __( 'Stripe customer cache', 'ajforms' ), 'mode' => __( 'Stripe rows only; local AJCore customers are preserved', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_products_table(), 'scope' => __( 'Stripe product/price cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_subscriptions_table(), 'scope' => __( 'Stripe subscription cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_transactions_table(), 'scope' => __( 'Stripe transaction cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
@@ -3347,8 +3347,13 @@ class AJForms_Admin {
 		}
 
 		foreach ( $tables as $table ) {
-			$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
-			$result = $wpdb->query( "DELETE FROM {$table}" );
+			if ( $this->get_portal_stripe_customers_table() === $table ) {
+				$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE stripe_customer_id LIKE 'cus\_%'" );
+				$result = $wpdb->query( "DELETE FROM {$table} WHERE stripe_customer_id LIKE 'cus\_%'" );
+			} else {
+				$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
+				$result = $wpdb->query( "DELETE FROM {$table}" );
+			}
 			if ( false === $result ) {
 				return new WP_Error( 'portal_reset_failed', sprintf( __( 'Could not reset table %s.', 'ajforms' ), $table ) );
 			}
