@@ -407,6 +407,11 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return false !== $wpdb->insert( $table, $data );
 		}
 
+		private static function delete_remote_record( $attachment_id ) {
+			global $wpdb;
+			return false !== $wpdb->delete( self::table(), array( 'attachment_id' => (int) $attachment_id ), array( '%d' ) );
+		}
+
 		// -----------------------------------------------------------------
 		// Upload hook: after metadata is generated, push the file(s) to remote
 		// storage and remove the local copies.
@@ -457,32 +462,123 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				return $result;
 			}
 
-			$size_bytes = filesize( $file_path );
-			$saved      = self::save_remote_record( $attachment_id, $settings['bucket'], $object_key, $size_bytes, $mime_type );
-			if ( ! $saved ) {
-				return new WP_Error( 'ajcore_storage_db_error', __( 'Uploaded to remote storage but failed to record the mapping.', 'ajforms' ) );
-			}
-
-			// Also push any generated image sizes (no-op for documents like PDFs, which
-			// have none), then remove every local file now that remote copies exist.
 			$metadata = wp_get_attachment_metadata( $attachment_id );
 			$dir      = dirname( $file_path );
+			$uploaded_size_keys = array();
 			if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
 				foreach ( $metadata['sizes'] as $size ) {
 					if ( empty( $size['file'] ) ) {
 						continue;
 					}
 					$size_path = $dir . '/' . $size['file'];
-					if ( is_file( $size_path ) && is_readable( $size_path ) ) {
-						$size_key = 'attachments/' . $attachment_id . '/sizes/' . sanitize_file_name( $size['file'] );
-						$client->put_object( $size_key, file_get_contents( $size_path ), isset( $size['mime-type'] ) ? $size['mime-type'] : $mime_type ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+					if ( ! is_file( $size_path ) || ! is_readable( $size_path ) ) {
+						continue;
 					}
+					$size_key = 'attachments/' . $attachment_id . '/sizes/' . sanitize_file_name( $size['file'] );
+					$size_result = $client->put_object( $size_key, file_get_contents( $size_path ), isset( $size['mime-type'] ) ? $size['mime-type'] : $mime_type ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+					if ( is_wp_error( $size_result ) ) {
+						$client->delete_object( $object_key );
+						foreach ( $uploaded_size_keys as $uploaded_key ) {
+							$client->delete_object( $uploaded_key );
+						}
+						return $size_result;
+					}
+					$uploaded_size_keys[] = $size_key;
+				}
+			}
+
+			$size_bytes = filesize( $file_path );
+			$saved      = self::save_remote_record( $attachment_id, $settings['bucket'], $object_key, $size_bytes, $mime_type );
+			if ( ! $saved ) {
+				$client->delete_object( $object_key );
+				foreach ( $uploaded_size_keys as $uploaded_key ) {
+					$client->delete_object( $uploaded_key );
+				}
+				return new WP_Error( 'ajcore_storage_db_error', __( 'Uploaded to remote storage but failed to record the mapping.', 'ajforms' ) );
+			}
+
+			// Remove every local file only after all remote writes and mapping succeed.
+			if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+				foreach ( $metadata['sizes'] as $size ) {
+					if ( empty( $size['file'] ) ) {
+						continue;
+					}
+					$size_path = $dir . '/' . $size['file'];
 					@unlink( $size_path );
 				}
 			}
 
 			@unlink( $file_path );
 
+			return true;
+		}
+
+		public function restore_attachment( $attachment_id ) {
+			$attachment_id = (int) $attachment_id;
+			$record = self::get_remote_record( $attachment_id );
+			if ( ! $record ) {
+				return true;
+			}
+			$settings = self::get_settings();
+			$settings['bucket'] = $record->bucket;
+			$client = self::get_client( $settings );
+			if ( ! $client ) {
+				return new WP_Error( 'ajcore_storage_not_configured', __( 'Remote storage is not configured.', 'ajforms' ) );
+			}
+			$target_path = get_attached_file( $attachment_id );
+			if ( ! $target_path ) {
+				return new WP_Error( 'ajcore_storage_no_media_path', __( 'WordPress has no local Media path for this attachment.', 'ajforms' ) );
+			}
+			$directory = dirname( $target_path );
+			if ( ! wp_mkdir_p( $directory ) ) {
+				return new WP_Error( 'ajcore_storage_media_directory', __( 'Could not create the local Media directory.', 'ajforms' ) );
+			}
+			$objects = array( $record->object_key => array( 'path' => $target_path, 'content_type' => $record->content_type ) );
+			$metadata = wp_get_attachment_metadata( $attachment_id );
+			if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+				foreach ( $metadata['sizes'] as $size ) {
+					if ( empty( $size['file'] ) ) {
+						continue;
+					}
+					$key = 'attachments/' . $attachment_id . '/sizes/' . sanitize_file_name( $size['file'] );
+					$objects[ $key ] = array( 'path' => $directory . '/' . $size['file'], 'content_type' => isset( $size['mime-type'] ) ? $size['mime-type'] : $record->content_type );
+				}
+			}
+			$restored_paths = array();
+			foreach ( array_keys( $objects ) as $key ) {
+				$remote = $client->get_object( $key );
+				if ( is_wp_error( $remote ) ) {
+					if ( $key === $record->object_key ) {
+						return $remote;
+					}
+					unset( $objects[ $key ] ); // Older migrations may not have copied derived files.
+					continue;
+				}
+				$objects[ $key ]['body'] = $remote['body'];
+				$temp_path = wp_tempnam( basename( $objects[ $key ]['path'] ), dirname( $objects[ $key ]['path'] ) );
+				if ( ! $temp_path || false === file_put_contents( $temp_path, $objects[ $key ]['body'] ) // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+					|| filesize( $temp_path ) !== strlen( $objects[ $key ]['body'] ) || ! rename( $temp_path, $objects[ $key ]['path'] ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+					@unlink( $temp_path );
+					foreach ( $restored_paths as $restored_path ) { @unlink( $restored_path ); }
+					return new WP_Error( 'ajcore_storage_media_write', __( 'Could not write and verify every restored Media file.', 'ajforms' ) );
+				}
+				$restored_paths[] = $objects[ $key ]['path'];
+			}
+			$deleted_keys = array();
+			foreach ( $objects as $key => $object ) {
+				$deleted = $client->delete_object( $key );
+				if ( is_wp_error( $deleted ) ) {
+					foreach ( $deleted_keys as $deleted_key ) { $client->put_object( $deleted_key, $objects[ $deleted_key ]['body'], $objects[ $deleted_key ]['content_type'] ); }
+					foreach ( $restored_paths as $restored_path ) { @unlink( $restored_path ); }
+					return $deleted;
+				}
+				$deleted_keys[] = $key;
+			}
+			if ( ! self::delete_remote_record( $attachment_id ) ) {
+				foreach ( $objects as $key => $object ) { $client->put_object( $key, $object['body'], $object['content_type'] ? $object['content_type'] : 'application/octet-stream' ); }
+				foreach ( $restored_paths as $restored_path ) { @unlink( $restored_path ); }
+				return new WP_Error( 'ajcore_storage_mapping_delete', __( 'Could not remove the remote mapping; the transfer was rolled back.', 'ajforms' ) );
+			}
 			return true;
 		}
 
@@ -521,10 +617,6 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		/**
 		 * Migrates portal documents selected by approved internal tags.
 		 */
-		public static function migrate_all_attachments( $tags ) {
-			return self::migrate_attachment_ids( self::get_tagged_attachment_ids( $tags ) );
-		}
-
 		private static function get_tagged_attachment_ids( $tags ) {
 			global $wpdb;
 			$settings = function_exists( 'ajcore_get_portal_file_settings' ) ? ajcore_get_portal_file_settings() : array( 'migration_tags' => array() );
@@ -542,12 +634,26 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			} ) );
 		}
 
-		private static function preview_migration( $tags ) {
-			$preview = array( 'matching' => 0, 'ready' => 0, 'migrated' => 0, 'missing' => 0 );
+		private static function preview_migration( $tags, $target ) {
+			$preview = array( 'matching' => 0, 'ready' => 0, 'already_there' => 0, 'missing' => 0 );
 			foreach ( self::get_tagged_attachment_ids( $tags ) as $attachment_id ) {
 				$preview['matching']++;
-				if ( self::get_remote_record( $attachment_id ) ) {
-					$preview['migrated']++;
+				$record = self::get_remote_record( $attachment_id );
+				if ( 'media' === $target ) {
+					if ( $record ) {
+						$preview['ready']++;
+					} else {
+						$file_path = get_attached_file( $attachment_id );
+						if ( $file_path && is_file( $file_path ) ) {
+							$preview['already_there']++;
+						} else {
+							$preview['missing']++;
+						}
+					}
+					continue;
+				}
+				if ( $record ) {
+					$preview['already_there']++;
 					continue;
 				}
 				$file_path = get_attached_file( $attachment_id );
@@ -575,6 +681,26 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					continue;
 				}
 				$outcome = $service->migrate_attachment( $attachment_id );
+				if ( is_wp_error( $outcome ) ) {
+					$title = get_the_title( $attachment_id );
+					$results['failed'][ $attachment_id ] = ( $title ? $title . ': ' : '' ) . $outcome->get_error_message();
+				} else {
+					$results['migrated'][] = $attachment_id;
+				}
+			}
+			return $results;
+		}
+
+		public static function restore_attachment_ids( $ids ) {
+			$service = self::instance();
+			$results = array( 'migrated' => array(), 'skipped' => array(), 'failed' => array() );
+			foreach ( $ids as $attachment_id ) {
+				$attachment_id = (int) $attachment_id;
+				if ( ! self::get_remote_record( $attachment_id ) ) {
+					$results['skipped'][] = $attachment_id;
+					continue;
+				}
+				$outcome = $service->restore_attachment( $attachment_id );
 				if ( is_wp_error( $outcome ) ) {
 					$title = get_the_title( $attachment_id );
 					$results['failed'][ $attachment_id ] = ( $title ? $title . ': ' : '' ) . $outcome->get_error_message();
@@ -702,15 +828,20 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
 			}
 
-			if ( ! self::is_enabled() ) {
-				wp_send_json_error( array( 'message' => __( 'Save and enable remote storage settings first.', 'ajforms' ) ) );
+			if ( ! self::is_configured() ) {
+				wp_send_json_error( array( 'message' => __( 'Save complete remote storage settings first.', 'ajforms' ) ) );
 			}
 
 			$tags = isset( $_POST['tags'] ) && is_array( $_POST['tags'] ) ? wp_unslash( $_POST['tags'] ) : array();
-			if ( empty( self::get_tagged_attachment_ids( $tags ) ) ) {
+			$target = isset( $_POST['target'] ) ? sanitize_key( wp_unslash( $_POST['target'] ) ) : 'remote';
+			if ( ! in_array( $target, array( 'media', 'remote' ), true ) ) {
+				wp_send_json_error( array( 'message' => __( 'Select a valid storage destination.', 'ajforms' ) ) );
+			}
+			$ids = self::get_tagged_attachment_ids( $tags );
+			if ( empty( $ids ) ) {
 				wp_send_json_error( array( 'message' => __( 'No portal files match the selected migration tags.', 'ajforms' ) ) );
 			}
-			$results = self::migrate_all_attachments( $tags );
+			$results = 'media' === $target ? self::restore_attachment_ids( $ids ) : self::migrate_attachment_ids( $ids );
 			wp_send_json_success( $results );
 		}
 
@@ -719,7 +850,11 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
 			}
 			$tags = isset( $_POST['tags'] ) && is_array( $_POST['tags'] ) ? wp_unslash( $_POST['tags'] ) : array();
-			wp_send_json_success( self::preview_migration( $tags ) );
+			$target = isset( $_POST['target'] ) ? sanitize_key( wp_unslash( $_POST['target'] ) ) : 'remote';
+			if ( ! in_array( $target, array( 'media', 'remote' ), true ) ) {
+				wp_send_json_error( array( 'message' => __( 'Select a valid storage destination.', 'ajforms' ) ) );
+			}
+			wp_send_json_success( self::preview_migration( $tags, $target ) );
 		}
 
 		public function render_settings_page( $embedded = false ) {
@@ -836,7 +971,12 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				<hr />
 
 				<h2><?php esc_html_e( 'Migrate Existing Documents', 'ajforms' ); ?></h2>
-				<p><?php esc_html_e( 'Select an approved internal tag. Only Client Portal files carrying a selected tag are eligible. Preview does not modify files.', 'ajforms' ); ?></p>
+				<p><?php esc_html_e( 'Choose a destination and an approved internal tag. Transfers work in either direction; preview does not modify files.', 'ajforms' ); ?></p>
+				<p><label for="ajcore_storage_migration_target"><strong><?php esc_html_e( 'Destination', 'ajforms' ); ?></strong></label><br>
+				<select id="ajcore_storage_migration_target">
+					<option value="remote"><?php echo esc_html( sprintf( __( '%1$s — %2$s', 'ajforms' ), self::get_provider_definitions()[ $settings['provider'] ]['label'] ?? __( 'Remote Storage', 'ajforms' ), $settings['bucket'] ) ); ?></option>
+					<option value="media"><?php esc_html_e( 'WordPress Media Library', 'ajforms' ); ?></option>
+				</select></p>
 				<div id="ajcore_storage_migration_tags">
 					<?php foreach ( $file_settings['migration_tags'] as $slug ) : if ( ! isset( $file_settings['tags'][ $slug ] ) ) { continue; } ?>
 						<label style="display:inline-block;margin:0 16px 10px 0;"><input type="checkbox" value="<?php echo esc_attr( $slug ); ?>"> #<?php echo esc_html( $file_settings['tags'][ $slug ] ); ?></label>
@@ -957,32 +1097,36 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				});
 
 				var migrateButton = document.getElementById('ajcore_storage_migrate_now');
+				var migrationTarget = document.getElementById('ajcore_storage_migration_target');
 				function selectedMigrationTags() {
 					return Array.from(document.querySelectorAll('#ajcore_storage_migration_tags input:checked')).map(function (input) { return input.value; });
 				}
 				document.getElementById('ajcore_storage_migration_tags').addEventListener('change', function () {
 					migrateButton.disabled = true;
 				});
+				migrationTarget.addEventListener('change', function () { migrateButton.disabled = true; });
 				document.getElementById('ajcore_storage_preview_migration').addEventListener('click', function () {
 					var out = document.getElementById('ajcore_storage_migrate_result');
 					var tags = selectedMigrationTags();
 					migrateButton.disabled = true;
 					if (!tags.length) { out.textContent = <?php echo wp_json_encode( __( 'Select at least one migration tag.', 'ajforms' ) ); ?>; return; }
 					var body = new URLSearchParams({ action: 'ajcore_storage_preview_migration', nonce: nonce });
+					body.append('target', migrationTarget.value);
 					tags.forEach(function (tag) { body.append('tags[]', tag); });
 					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body }).then(function (r) { return r.json(); }).then(function (res) {
 						if (!res.success) { out.textContent = (res.data && res.data.message) ? res.data.message : 'Preview failed.'; return; }
 						var d = res.data;
-						out.textContent = 'Matching: ' + d.matching + ', Ready: ' + d.ready + ', Already migrated: ' + d.migrated + ', Missing local file: ' + d.missing;
+						out.textContent = 'Matching: ' + d.matching + ', Ready to transfer: ' + d.ready + ', Already at destination: ' + d.already_there + ', Missing: ' + d.missing;
 						migrateButton.disabled = d.ready < 1;
 					});
 				});
 				migrateButton.addEventListener('click', function () {
 					var out = document.getElementById('ajcore_storage_migrate_result');
 					out.style.whiteSpace = 'pre-wrap';
-					if (!window.confirm(<?php echo wp_json_encode( __( 'Migrate the previewed files now? Local copies are removed only after upload and mapping succeed.', 'ajforms' ) ); ?>)) { return; }
+					if (!window.confirm(<?php echo wp_json_encode( __( 'Transfer the previewed files to the selected destination now? The source copy is removed only after the destination write succeeds.', 'ajforms' ) ); ?>)) { return; }
 					out.textContent = <?php echo wp_json_encode( __( 'Migrating…', 'ajforms' ) ); ?>;
 					var body = new URLSearchParams({ action: 'ajcore_storage_migrate_now', nonce: nonce });
+					body.append('target', migrationTarget.value);
 					selectedMigrationTags().forEach(function (tag) { body.append('tags[]', tag); });
 					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body })
 						.then(function (r) { return r.json(); })
@@ -993,7 +1137,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 							}
 							var d = res.data;
 							var failedIds = Object.keys(d.failed);
-							var summary = 'Migrated: ' + d.migrated.length + ', Skipped (already migrated): ' + d.skipped.length + ', Failed: ' + failedIds.length;
+							var summary = 'Transferred: ' + d.migrated.length + ', Skipped (already at destination): ' + d.skipped.length + ', Failed: ' + failedIds.length;
 							if (failedIds.length) {
 								summary += '\n\n' + failedIds.map(function (attachmentId) {
 									return 'Attachment #' + attachmentId + ': ' + d.failed[attachmentId];
