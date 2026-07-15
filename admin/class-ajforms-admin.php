@@ -17220,6 +17220,7 @@ class AJForms_Admin {
 			'product-catalog' => __( 'Product Catalog', 'ajforms' ),
 			'sync'            => __( 'Sync', 'ajforms' ),
 			'event-log'       => __( 'Event Log', 'ajforms' ),
+			'db-schema'       => __( 'AJCore DB Schema', 'ajforms' ),
 			'calendar'        => __( 'Calendar / Reservations', 'ajforms' ),
 			'api'             => __( 'API', 'ajforms' ),
 			'files'           => __( 'Files', 'ajforms' ),
@@ -17250,6 +17251,8 @@ class AJForms_Admin {
 			<?php $this->display_portal_sync_tab(); ?>
 		<?php elseif ( 'event-log' === $cp_section ) : ?>
 			<?php $this->display_portal_event_log_tab(); ?>
+		<?php elseif ( 'db-schema' === $cp_section ) : ?>
+			<?php $this->display_ajcore_db_schema_tab(); ?>
 		<?php elseif ( 'calendar' === $cp_section ) : ?>
 			<?php $this->display_portal_calendar_settings_tab(); ?>
 		<?php elseif ( 'api' === $cp_section ) : ?>
@@ -17273,6 +17276,111 @@ class AJForms_Admin {
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
+		<?php
+	}
+
+	private function display_ajcore_db_schema_tab() {
+		global $wpdb;
+
+		$pdb       = $this->get_pdb();
+		$sources   = array( 'Local WordPress DB' => $wpdb );
+		if ( $pdb !== $wpdb ) {
+			$sources['Shared Portal DB'] = $pdb;
+		}
+		$tables    = array();
+		$stripe_direct = array(
+			'aj_portal_stripe_customers',
+			'aj_portal_stripe_products',
+			'aj_portal_stripe_subscriptions',
+			'aj_portal_stripe_transactions',
+			'aj_portal_stripe_events',
+		);
+		$stripe_derived = array(
+			'aj_portal_product_catalog',
+			'aj_portal_service_snapshots',
+			'aj_portal_service_states',
+			'aj_portal_ledger',
+			'aj_portal_sync_logs',
+			'aj_portal_sync_log_items',
+		);
+		$purposes = array(
+			'aj_forms' => 'Form definitions', 'aj_leads' => 'CRM leads', 'aj_lead_notes' => 'Lead notes',
+			'aj_portal_stripe_customers' => 'Stripe customer cache and portal status', 'aj_portal_customer_states' => 'Per-site customer portal state',
+			'aj_portal_stripe_products' => 'Stripe product and price cache', 'aj_portal_product_catalog' => 'Portal catalog overrides',
+			'aj_portal_stripe_subscriptions' => 'Stripe subscription cache', 'aj_portal_stripe_transactions' => 'Stripe transaction cache',
+			'aj_portal_stripe_events' => 'Processed Stripe webhook events', 'aj_portal_ledger' => 'Derived billing ledger',
+			'aj_portal_service_snapshots' => 'Purchased-service snapshots', 'aj_portal_service_states' => 'Service lifecycle state',
+			'aj_portal_files' => 'Client file records', 'aj_portal_file_users' => 'File-to-user assignments', 'aj_portal_file_tags' => 'File tags',
+			'aj_storage_objects' => 'Attachment-to-object-storage mappings', 'aj_auth_user_mappings' => 'WordPress user-to-customer mappings',
+			'aj_portal_tasks' => 'Compliance task definitions', 'aj_portal_task_statuses' => 'Per-customer task status', 'aj_portal_task_comments' => 'Task comments',
+			'aj_portal_compliance_entities' => 'Compliance entities', 'aj_portal_compliance_filings' => 'Compliance filing history',
+			'aj_portal_service_requests' => 'Customer service requests', 'aj_portal_service_request_history' => 'Service request audit history',
+			'aj_portal_sync_logs' => 'Stripe sync runs', 'aj_portal_sync_log_items' => 'Stripe sync run details',
+			'aj_portal_event_log' => 'AJCore audit events', 'aj_portal_email_log' => 'Outgoing email log',
+			'aj_portal_reservation_resources' => 'Reservable resources', 'aj_portal_reservations' => 'Reservations',
+			'aj_portal_mail_items' => 'Received mail items', 'aj_portal_partners' => 'Partner organizations',
+		);
+
+		foreach ( $sources as $location => $db ) {
+			$like = $db->esc_like( $db->prefix . 'aj_' ) . '%';
+			$found = $db->get_col( $db->prepare( 'SHOW TABLES LIKE %s', $like ) );
+			foreach ( (array) $found as $full_name ) {
+				$logical_name = 0 === strpos( $full_name, $db->prefix ) ? substr( $full_name, strlen( $db->prefix ) ) : $full_name;
+				$tables[] = array(
+					'full_name'    => (string) $full_name,
+					'logical_name' => (string) $logical_name,
+					'location'     => $location,
+					'purpose'      => isset( $purposes[ $logical_name ] ) ? $purposes[ $logical_name ] : 'AJCore application data',
+					'stripe'       => in_array( $logical_name, $stripe_direct, true ) ? 'direct' : ( in_array( $logical_name, $stripe_derived, true ) ? 'derived' : '' ),
+				);
+			}
+		}
+		usort( $tables, function ( $a, $b ) { return strcmp( $a['logical_name'] . $a['location'], $b['logical_name'] . $b['location'] ); } );
+
+		$relationships = array(
+			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_subscriptions', 'stripe_customer_id' ),
+			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_transactions', 'stripe_customer_id' ),
+			array( 'aj_portal_stripe_customers', 'aj_auth_user_mappings', 'stripe_customer_id' ),
+			array( 'aj_portal_stripe_customers', 'aj_portal_customer_states', 'stripe_customer_id' ),
+			array( 'aj_portal_stripe_products', 'aj_portal_product_catalog', 'stripe_product_id' ),
+			array( 'aj_portal_stripe_subscriptions', 'aj_portal_service_snapshots', 'subscription/customer' ),
+			array( 'aj_portal_stripe_transactions', 'aj_portal_ledger', 'Stripe object/customer IDs' ),
+			array( 'aj_portal_ledger', 'aj_portal_service_requests', 'ledger_id/source_object_id' ),
+			array( 'aj_portal_service_requests', 'aj_portal_service_request_history', 'service_request_id' ),
+			array( 'aj_portal_tasks', 'aj_portal_task_statuses', 'task_id' ),
+			array( 'aj_portal_tasks', 'aj_portal_task_comments', 'task_id' ),
+			array( 'aj_portal_compliance_entities', 'aj_portal_compliance_filings', 'entity_id' ),
+			array( 'aj_portal_files', 'aj_portal_file_users', 'file_id' ),
+			array( 'aj_portal_files', 'aj_portal_file_tags', 'file_id' ),
+			array( 'aj_portal_files', 'aj_storage_objects', 'attachment_id' ),
+			array( 'aj_portal_sync_logs', 'aj_portal_sync_log_items', 'log_id' ),
+			array( 'aj_leads', 'aj_lead_notes', 'lead_id' ),
+			array( 'aj_portal_reservation_resources', 'aj_portal_reservations', 'resource_key' ),
+		);
+		?>
+		<style>
+			.ajcore-schema-legend{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 18px}.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-flow{display:grid;grid-template-columns:minmax(220px,1fr) 70px minmax(220px,1fr);gap:8px 12px;align-items:center}.ajcore-schema-node{border:1px solid #dbe7f3;border-radius:12px;background:#fff;padding:10px 12px;font-family:monospace;font-weight:700;overflow-wrap:anywhere}.ajcore-schema-arrow{text-align:center;color:#3157ff;font-weight:900}.ajcore-schema-arrow small{display:block;color:#64748b;font-weight:600;overflow-wrap:anywhere}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}@media(max-width:782px){.ajcore-schema-flow{grid-template-columns:1fr}.ajcore-schema-arrow{transform:rotate(90deg);padding:3px}.ajcore-schema-arrow small{display:none}}
+		</style>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'AJCore Database Schema', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Live AJCore table inventory and logical relationships. Arrows describe application-level links; AJCore does not require MySQL foreign-key constraints for these relationships.', 'ajforms' ); ?></p></div><span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d tables', 'ajforms' ), count( $tables ) ) ); ?></span></div>
+			<div class="ajcore-schema-legend"><span class="ajcore-schema-badge ajcore-schema-direct">Stripe → direct cache</span><span class="ajcore-schema-badge ajcore-schema-derived">Stripe-derived</span><span class="ajcore-schema-badge ajcore-schema-local">AJCore-managed</span></div>
+			<div class="ajcore-schema-flow">
+				<?php foreach ( $relationships as $relationship ) : ?>
+					<div class="ajcore-schema-node"><?php echo esc_html( $relationship[0] ); ?></div>
+					<div class="ajcore-schema-arrow">→<small><?php echo esc_html( $relationship[2] ); ?></small></div>
+					<div class="ajcore-schema-node"><?php echo esc_html( $relationship[1] ); ?></div>
+				<?php endforeach; ?>
+			</div>
+		</div>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'All AJCore Tables', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Discovered live from the configured local and shared databases.', 'ajforms' ); ?></p></div></div>
+			<table class="widefat striped ajcore-schema-table"><thead><tr><th>Table</th><th>Database</th><th>Purpose</th><th>Data source</th></tr></thead><tbody>
+			<?php foreach ( $tables as $table ) : ?>
+				<tr><td><code><?php echo esc_html( $table['full_name'] ); ?></code></td><td><?php echo esc_html( $table['location'] ); ?></td><td><?php echo esc_html( $table['purpose'] ); ?></td><td><?php if ( 'direct' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-direct">Stripe direct</span><?php elseif ( 'derived' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-derived">Stripe-derived</span><?php else : ?><span class="ajcore-schema-badge ajcore-schema-local">AJCore</span><?php endif; ?></td></tr>
+			<?php endforeach; ?>
+			<?php if ( empty( $tables ) ) : ?><tr><td colspan="4"><?php esc_html_e( 'No AJCore tables were found.', 'ajforms' ); ?></td></tr><?php endif; ?>
+			</tbody></table>
+		</div>
 		<?php
 	}
 
