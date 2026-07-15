@@ -12177,6 +12177,15 @@ class AJForms_Admin {
 					array( '%d', '%d', '%s', '%s' )
 				);
 			}
+
+			if ( class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::is_enabled() ) {
+				$storage_result = AJCore_Storage_Service::instance()->migrate_attachment( $attachment_id );
+				if ( is_wp_error( $storage_result ) ) {
+					set_transient( 'ajcore_file_storage_error_' . get_current_user_id(), $storage_result->get_error_message(), MINUTE_IN_SECONDS );
+					wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'edit_file_id' => $file_id, 'error' => 'storage-path' ), admin_url( 'admin.php' ) ) );
+					exit;
+				}
+			}
 		}
 
 		wp_safe_redirect(
@@ -20582,6 +20591,8 @@ class AJForms_Admin {
 		$attachment_title = '';
 		$attachment_url   = '';
 		$file_settings    = ajcore_get_portal_file_settings();
+		$storage_settings = class_exists( 'AJCore_Storage_Service' ) ? AJCore_Storage_Service::get_settings() : array();
+		$remote_enabled   = class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::is_enabled();
 
 		if ( $editing_file ) {
 			foreach ( $this->get_portal_file_assignments( (int) $editing_file->id ) as $assignment ) {
@@ -20632,6 +20643,10 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['error'] ) && 'tag-save' === sanitize_key( wp_unslash( $_GET['error'] ) ) ) : ?>
 				<div class="notice notice-error"><p><?php esc_html_e( 'The file was updated, but its tags could not be saved. Verify that the local portal file-tags table can be created and written.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['error'] ) && 'storage-path' === sanitize_key( wp_unslash( $_GET['error'] ) ) ) : ?>
+				<?php $storage_error = get_transient( 'ajcore_file_storage_error_' . get_current_user_id() ); delete_transient( 'ajcore_file_storage_error_' . get_current_user_id() ); ?>
+				<div class="notice notice-error"><p><?php echo esc_html( sprintf( __( 'The file record was saved, but its storage transfer/path update failed: %s', 'ajforms' ), $storage_error ? $storage_error : __( 'Unknown storage error.', 'ajforms' ) ) ); ?></p></div>
+			<?php endif; ?>
 
 			<style>
 				.ajforms-file-library-grid{display:grid;grid-template-columns:1fr;gap:16px;align-items:start;margin-top:14px}
@@ -20646,6 +20661,16 @@ class AJForms_Admin {
 					<?php wp_nonce_field( 'ajf_save_portal_file', 'ajf_portal_file_nonce' ); ?>
 					<input type="hidden" name="portal_file_id" value="<?php echo esc_attr( $editing_file ? (int) $editing_file->id : 0 ); ?>">
 					<input type="hidden" name="attachment_id" id="ajforms-portal-attachment-id" value="<?php echo esc_attr( $editing_file ? (int) $editing_file->attachment_id : 0 ); ?>">
+
+					<div class="ajforms-file-field">
+						<label><?php esc_html_e( 'Storage Destination', 'ajforms' ); ?></label>
+						<?php if ( $remote_enabled ) : ?>
+							<p style="margin:0;padding:10px 12px;background:#ecfdf5;border:1px solid #86efac;border-radius:10px;color:#166534;font-weight:700;"><?php echo esc_html( sprintf( __( 'RustFS — bucket: %s', 'ajforms' ), $storage_settings['bucket'] ) ); ?></p>
+							<p class="description"><?php esc_html_e( 'The WordPress Upload Files / Media Library window is only the file picker. After selection, AJCore moves supported documents to this RustFS destination and removes the local file after the remote write succeeds; it does not intentionally keep duplicate copies.', 'ajforms' ); ?></p>
+						<?php else : ?>
+							<p style="margin:0;padding:10px 12px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;font-weight:700;"><?php esc_html_e( 'WordPress Media Library', 'ajforms' ); ?></p>
+						<?php endif; ?>
+					</div>
 
 					<div class="ajforms-file-field">
 						<label><?php esc_html_e( 'Media File', 'ajforms' ); ?></label>
