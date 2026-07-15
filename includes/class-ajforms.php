@@ -5771,12 +5771,18 @@ class AJForms {
 
 		$user       = wp_get_current_user();
 		$user_email = strtolower( (string) $user->user_email );
+		$files_table = $this->get_portal_files_table();
+		$users_table = $this->get_portal_file_users_table();
+		$file_columns = $wpdb->get_col( "SHOW COLUMNS FROM `{$files_table}`", 0 );
+		$status_clause = in_array( 'status', (array) $file_columns, true )
+			? "( f.status <> 'archived' OR f.status IS NULL ) AND "
+			: '';
 
 		return $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT DISTINCT f.* FROM {$this->get_portal_files_table()} f
-				INNER JOIN {$this->get_portal_file_users_table()} fu ON fu.file_id = f.id
-				WHERE ( f.status <> 'archived' OR f.status IS NULL ) AND ( fu.user_id = %d OR LOWER(fu.user_email) = %s )
+				"SELECT DISTINCT f.* FROM `{$files_table}` f
+				INNER JOIN `{$users_table}` fu ON fu.file_id = f.id
+				WHERE {$status_clause}( fu.user_id = %d OR LOWER(fu.user_email) = %s )
 				ORDER BY f.category ASC, f.created_at DESC",
 				get_current_user_id(),
 				$user_email
