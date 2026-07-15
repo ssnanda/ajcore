@@ -1212,6 +1212,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 								: <?php echo wp_json_encode( __( 'No buckets found on this endpoint.', 'ajforms' ) ); ?>;
 						})
 						.catch(function () {
+							if (previousBucket) { var previousOption = document.createElement('option'); previousOption.value = previousBucket; previousOption.textContent = previousBucket; bucketInput.appendChild(previousOption); }
 							status.textContent = <?php echo wp_json_encode( __( 'Request failed.', 'ajforms' ) ); ?>;
 						});
 				});
