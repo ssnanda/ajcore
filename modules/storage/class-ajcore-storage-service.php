@@ -245,6 +245,13 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
 		}
 
+		private static function is_shared_non_master() {
+			return function_exists( 'ajcore_is_multisite_portal_enabled' )
+				&& ajcore_is_multisite_portal_enabled()
+				&& function_exists( 'ajcore_is_stripe_sync_owner' )
+				&& ! ajcore_is_stripe_sync_owner();
+		}
+
 		private static function read_shared_settings() {
 			$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
 			if ( ! $shared_db ) {
@@ -605,6 +612,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			if ( ! current_user_can( 'manage_options' ) ) {
 				wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 			}
+			if ( self::is_shared_non_master() ) {
+				wp_die( esc_html__( 'Storage settings can only be changed on the master site.', 'ajforms' ) );
+			}
 			check_admin_referer( self::NONCE_ACTION, 'ajcore_storage_nonce' );
 
 			$posted = array(
@@ -633,6 +643,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		public function ajax_list_buckets() {
 			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( self::NONCE_ACTION, 'nonce', false ) ) {
 				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
+			}
+			if ( self::is_shared_non_master() ) {
+				wp_send_json_error( array( 'message' => __( 'Storage settings can only be tested on the master site.', 'ajforms' ) ), 403 );
 			}
 
 			$settings = array(
@@ -680,7 +693,8 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 			}
 
-			$settings     = self::get_settings();
+			$settings       = self::get_settings();
+			$settings_locked = self::is_shared_non_master();
 			$masked_secret = '' !== $settings['secret_key'] ? self::SECRET_PLACEHOLDER : '';
 			$notice = isset( $_GET['notice'] ) ? sanitize_key( wp_unslash( $_GET['notice'] ) ) : '';
 			$nonce  = wp_create_nonce( self::NONCE_ACTION );
@@ -694,11 +708,15 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				<?php if ( 'saved' === $notice ) : ?>
 					<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Storage settings saved.', 'ajforms' ); ?></p></div>
 				<?php endif; ?>
+				<?php if ( $settings_locked ) : ?>
+					<div class="notice notice-info"><p><?php esc_html_e( 'Storage settings are shared across sites and can only be changed on the master site.', 'ajforms' ); ?></p></div>
+				<?php endif; ?>
 
 				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="max-width:720px;margin-top:20px;">
 					<input type="hidden" name="action" value="ajcore_storage_settings_save" />
 					<?php wp_nonce_field( self::NONCE_ACTION, 'ajcore_storage_nonce' ); ?>
 
+					<fieldset <?php disabled( $settings_locked ); ?> style="border:0;margin:0;padding:0;<?php echo $settings_locked ? 'opacity:.6;' : ''; ?>">
 					<table class="form-table" role="presentation">
 						<tr>
 							<th scope="row"><?php esc_html_e( 'Enabled', 'ajforms' ); ?></th>
@@ -777,6 +795,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					<p class="submit">
 						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
 					</p>
+					</fieldset>
 				</form>
 
 				<hr />
@@ -884,8 +903,11 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 								opt.value = name;
 								datalist.appendChild(opt);
 							});
+							if (res.data.buckets.length) {
+								bucketInput.value = res.data.buckets[0];
+							}
 							status.textContent = res.data.buckets.length
-								? <?php echo wp_json_encode( __( 'Suggestions loaded — pick a bucket, then save.', 'ajforms' ) ); ?>
+								? <?php echo wp_json_encode( __( 'Buckets loaded — confirm the selected bucket, then save.', 'ajforms' ) ); ?>
 								: <?php echo wp_json_encode( __( 'No buckets found on this endpoint.', 'ajforms' ) ); ?>;
 						})
 						.catch(function () {
