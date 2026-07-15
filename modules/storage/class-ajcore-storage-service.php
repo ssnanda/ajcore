@@ -68,6 +68,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 			add_action( 'admin_post_ajcore_storage_settings_save', array( $this, 'handle_settings_save' ) );
 			add_action( 'wp_ajax_ajcore_storage_list_buckets', array( $this, 'ajax_list_buckets' ) );
+			add_action( 'wp_ajax_ajcore_storage_file_inventory', array( $this, 'ajax_file_inventory' ) );
 			add_action( 'wp_ajax_ajcore_storage_preview_migration', array( $this, 'ajax_preview_migration' ) );
 			add_action( 'wp_ajax_ajcore_storage_migrate_now', array( $this, 'ajax_migrate_now' ) );
 
@@ -941,6 +942,29 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			wp_send_json_success( self::preview_migration( $tags, $target ) );
 		}
 
+		public function ajax_file_inventory() {
+			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( self::NONCE_ACTION, 'nonce', false ) ) {
+				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
+			}
+			global $wpdb;
+			$files_table = $wpdb->prefix . 'aj_portal_files';
+			$rows = $wpdb->get_results( "SELECT id, attachment_id, title FROM `{$files_table}` ORDER BY title ASC, id ASC" );
+			$inventory = array();
+			foreach ( $rows as $row ) {
+				$record = self::get_remote_record( (int) $row->attachment_id );
+				$local_path = (string) get_attached_file( (int) $row->attachment_id );
+				$path = $record ? 's3://' . $record->bucket . '/' . ltrim( $record->object_key, '/' ) : $local_path;
+				$inventory[] = array(
+					'id'       => (int) $row->id,
+					'title'    => (string) $row->title,
+					'filename' => $path ? basename( $path ) : '',
+					'storage'  => $record ? 'RustFS' : 'Media',
+					'path'     => $path,
+				);
+			}
+			wp_send_json_success( array( 'files' => $inventory ) );
+		}
+
 		public function render_settings_page( $embedded = false ) {
 			if ( ! current_user_can( 'manage_options' ) ) {
 				wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
@@ -1029,10 +1053,12 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 						<tr>
 							<th scope="row"><label for="ajcore_storage_bucket"><?php esc_html_e( 'Bucket', 'ajforms' ); ?></label></th>
 							<td>
-								<input type="text" id="ajcore_storage_bucket" name="bucket" value="<?php echo esc_attr( $settings['bucket'] ); ?>" class="regular-text" list="ajcore_storage_bucket_options" placeholder="my-bucket-name" />
-								<datalist id="ajcore_storage_bucket_options"></datalist>
+								<select id="ajcore_storage_bucket" name="bucket" class="regular-text">
+									<option value=""><?php esc_html_e( 'Select a bucket', 'ajforms' ); ?></option>
+									<?php if ( '' !== (string) $settings['bucket'] ) : ?><option value="<?php echo esc_attr( $settings['bucket'] ); ?>" selected><?php echo esc_html( $settings['bucket'] ); ?></option><?php endif; ?>
+								</select>
 								<button type="button" class="button" id="ajcore_storage_list_buckets"><?php esc_html_e( 'List Buckets', 'ajforms' ); ?></button>
-								<p class="description" id="ajcore_storage_bucket_status"><?php esc_html_e( 'Type the exact bucket name, or click List Buckets for suggestions.', 'ajforms' ); ?></p>
+								<p class="description" id="ajcore_storage_bucket_status"><?php esc_html_e( 'Click List Buckets to load every bucket visible to this access key.', 'ajforms' ); ?></p>
 							</td>
 						</tr>
 						<tr>
@@ -1051,6 +1077,13 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					</p>
 					</fieldset>
 				</form>
+
+				<hr />
+
+				<h2><?php esc_html_e( 'File Storage Inventory', 'ajforms' ); ?></h2>
+				<p><?php esc_html_e( 'Preview file names and storage paths only. File contents are not opened or downloaded.', 'ajforms' ); ?></p>
+				<button type="button" class="button" id="ajcore_storage_file_inventory"><?php esc_html_e( 'Preview All File Paths', 'ajforms' ); ?></button>
+				<div id="ajcore_storage_file_inventory_result" style="margin-top:12px;overflow-x:auto;"></div>
 
 				<hr />
 
@@ -1152,24 +1185,27 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 				document.getElementById('ajcore_storage_list_buckets').addEventListener('click', function () {
 					var status = document.getElementById('ajcore_storage_bucket_status');
-					var datalist = document.getElementById('ajcore_storage_bucket_options');
 					var bucketInput = document.getElementById('ajcore_storage_bucket');
-					bucketInput.value = '';
-					datalist.innerHTML = '';
+					var previousBucket = bucketInput.value;
+					bucketInput.innerHTML = '';
 					status.textContent = <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?>;
 					fetchBuckets()
 						.then(function (res) {
 							if (!res.success) {
+								if (previousBucket) { var previousOption = document.createElement('option'); previousOption.value = previousBucket; previousOption.textContent = previousBucket; bucketInput.appendChild(previousOption); }
 								status.textContent = (res.data && res.data.message) ? res.data.message : <?php echo wp_json_encode( __( 'Failed to list buckets.', 'ajforms' ) ); ?>;
 								return;
 							}
 							res.data.buckets.forEach(function (name) {
 								var opt = document.createElement('option');
 								opt.value = name;
-								datalist.appendChild(opt);
+								opt.textContent = name;
+								bucketInput.appendChild(opt);
 							});
 							if (res.data.buckets.length) {
-								bucketInput.value = res.data.buckets[0];
+								bucketInput.value = res.data.buckets.indexOf(previousBucket) !== -1 ? previousBucket : res.data.buckets[0];
+							} else {
+								var emptyOption = document.createElement('option'); emptyOption.value = ''; emptyOption.textContent = <?php echo wp_json_encode( __( 'No buckets found', 'ajforms' ) ); ?>; bucketInput.appendChild(emptyOption);
 							}
 							status.textContent = res.data.buckets.length
 								? <?php echo wp_json_encode( __( 'Buckets loaded — confirm the selected bucket, then save.', 'ajforms' ) ); ?>
@@ -1178,6 +1214,32 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 						.catch(function () {
 							status.textContent = <?php echo wp_json_encode( __( 'Request failed.', 'ajforms' ) ); ?>;
 						});
+				});
+
+				document.getElementById('ajcore_storage_file_inventory').addEventListener('click', function () {
+					var container = document.getElementById('ajcore_storage_file_inventory_result');
+					container.textContent = <?php echo wp_json_encode( __( 'Loading file inventory…', 'ajforms' ) ); ?>;
+					var body = new URLSearchParams({ action: 'ajcore_storage_file_inventory', nonce: nonce });
+					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body }).then(function (r) { return r.json(); }).then(function (res) {
+						container.innerHTML = '';
+						if (!res.success) { container.textContent = (res.data && res.data.message) ? res.data.message : 'Inventory failed.'; return; }
+						if (!res.data.files.length) { container.textContent = <?php echo wp_json_encode( __( 'No Client Portal files found.', 'ajforms' ) ); ?>; return; }
+						var table = document.createElement('table');
+						table.className = 'widefat striped';
+						var head = table.createTHead().insertRow();
+						['Title', 'Filename', 'Storage', 'Path'].forEach(function (label) { var th = document.createElement('th'); th.textContent = label; head.appendChild(th); });
+						var tbody = table.createTBody();
+						res.data.files.forEach(function (file) {
+							var row = tbody.insertRow();
+							[file.title, file.filename, file.storage].forEach(function (value) { var cell = row.insertCell(); cell.textContent = value; });
+							var pathCell = row.insertCell();
+							var code = document.createElement('code');
+							code.textContent = file.path || <?php echo wp_json_encode( __( 'Path unavailable', 'ajforms' ) ); ?>;
+							code.style.overflowWrap = 'anywhere'; code.style.userSelect = 'all';
+							pathCell.appendChild(code);
+						});
+						container.appendChild(table);
+					}).catch(function () { container.textContent = <?php echo wp_json_encode( __( 'Inventory request failed.', 'ajforms' ) ); ?>; });
 				});
 
 				var migrateButton = document.getElementById('ajcore_storage_migrate_now');
