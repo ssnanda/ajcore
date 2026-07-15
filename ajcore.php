@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.6.55
+ * Version: 0.6.56
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.6.55' );
+	define( 'AJCORE_VERSION', '0.6.56' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -923,7 +923,7 @@ if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
 		$defaults = array(
 			'categories'     => array( 'Articles of Organization', 'IRS EIN Letters', 'SOSNC Flyers', 'Others' ),
 			'tags'           => array( 'registered-agent' => 'RegisteredAgent', 'virtual-office' => 'VirtualOffice' ),
-			'migration_tags' => array( 'registered-agent' ),
+			'migration_tags' => array( 'registered-agent', 'virtual-office' ),
 		);
 		$saved = array();
 		if ( ajcore_is_shared_db_enabled() ) {
