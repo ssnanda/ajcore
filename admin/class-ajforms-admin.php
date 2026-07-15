@@ -12408,7 +12408,7 @@ class AJForms_Admin {
 			$role_key = sanitize_key( wp_unslash( $_GET['role'] ) );
 			check_admin_referer( 'ajcore_delete_role_' . $role_key );
 
-			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'roles' );
+			$args = array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'roles' );
 
 			if ( in_array( $role_key, array( 'subscriber', 'contributor', 'author', 'editor', 'administrator' ), true ) ) {
 				$args['role-error'] = 'wordpress-default-delete';
@@ -12436,7 +12436,7 @@ class AJForms_Admin {
 		$selected_caps       = isset( $_POST['role_capabilities'] ) && is_array( $_POST['role_capabilities'] ) ? $_POST['role_capabilities'] : array();
 		$custom_capabilities = isset( $_POST['custom_capabilities'] ) ? wp_unslash( $_POST['custom_capabilities'] ) : '';
 		$capabilities        = $this->sanitize_role_capability_list( $selected_caps, $custom_capabilities );
-		$args                = array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'roles' );
+		$args                = array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'roles' );
 
 		if ( '' === $role_key || '' === $role_label ) {
 			$args['role-error'] = 'missing-fields';
@@ -16153,6 +16153,15 @@ class AJForms_Admin {
 
 		add_submenu_page(
 			'ajforms',
+			__( 'CP Settings', 'ajforms' ),
+			__( 'CP Settings', 'ajforms' ),
+			'manage_options',
+			'ajforms-cp-settings',
+			array( $this, 'display_cp_settings_admin_page' )
+		);
+
+		add_submenu_page(
+			'ajforms',
 			__( 'Auth', 'ajforms' ),
 			__( 'Auth', 'ajforms' ),
 			'manage_options',
@@ -16187,6 +16196,11 @@ class AJForms_Admin {
 			array( $this, 'display_about_page' )
 		);
 
+	}
+
+	public function display_cp_settings_admin_page() {
+		$_GET['tab'] = 'cp-settings';
+		$this->display_client_portal_page();
 	}
 
 	public function add_plugin_action_links( $links ) {
@@ -17058,6 +17072,7 @@ class AJForms_Admin {
 			$tab = 'payments';
 		}
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
+		$is_cp_settings_page = 'cp-settings' === $tab;
 		// One-click full sync, available from every tab (not just the dedicated Sync tab) — redirects
 		// back to whichever tab it was clicked from, same nonce/action the Sync tab's own button uses.
 		$full_sync_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => $tab, 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
@@ -17077,7 +17092,6 @@ class AJForms_Admin {
 			'sync'               => __( 'Sync', 'ajforms' ),
 			'event-log'          => __( 'Event Log', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
-			'cp-settings'        => __( 'CP Settings', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
 		$external_tab_urls = array(
@@ -17110,14 +17124,14 @@ class AJForms_Admin {
 			<div class="ajcore-app-header">
 				<div class="ajcore-brand">
 					<div class="ajcore-brand-mark" aria-hidden="true">✦</div>
-					<div><h1><?php esc_html_e( 'AJ Core - Client Portal', 'ajforms' ); ?></h1><span><?php echo esc_html( isset( $tabs[ $tab ] ) ? $tabs[ $tab ] : __( 'Dashboard', 'ajforms' ) ); ?></span></div>
+					<div><h1><?php echo esc_html( $is_cp_settings_page ? __( 'AJ Core - CP Settings', 'ajforms' ) : __( 'AJ Core - Client Portal', 'ajforms' ) ); ?></h1><span><?php echo esc_html( $is_cp_settings_page ? __( 'Client Portal configuration', 'ajforms' ) : ( isset( $tabs[ $tab ] ) ? $tabs[ $tab ] : __( 'Dashboard', 'ajforms' ) ) ); ?></span></div>
 				</div>
 				<div class="ajcore-stripe-mini">
 					<span class="stripe-pill <?php echo ! empty( $stripe_mode['has_issues'] ) ? 'is-error' : ( empty( $stripe_mode['is_live'] ) ? 'is-test' : '' ); ?>"><?php echo esc_html( sprintf( __( 'Stripe %s Mode', 'ajforms' ), $stripe_mode['label'] ) ); ?></span>
 					<a href="<?php echo esc_url( $stripe_settings_url ); ?>"><?php esc_html_e( 'Stripe settings', 'ajforms' ); ?></a>
 				</div>
 			</div>
-			<?php if ( 'customer' !== $tab ) : ?>
+			<?php if ( 'customer' !== $tab && ! $is_cp_settings_page ) : ?>
 				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'AJ Core Client Portal sections', 'ajforms' ); ?>">
 					<select class="ajcore-tab-select" onchange="if(this.value){window.location.href=this.value;}">
 						<?php foreach ( $tabs as $tab_key => $tab_label ) : ?>
@@ -17207,7 +17221,7 @@ class AJForms_Admin {
 			$cp_section = 'menu';
 		}
 
-		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings' ), admin_url( 'admin.php' ) );
+		$base_url = add_query_arg( array( 'page' => 'ajforms-cp-settings' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="ajforms-settings-card" style="padding:10px;">
 			<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'CP Settings sections', 'ajforms' ); ?>" style="margin:0;">
@@ -17270,7 +17284,7 @@ class AJForms_Admin {
 			? array_values( array_intersect( array_map( 'sanitize_key', wp_unslash( $_POST['migration_tags'] ) ), array_keys( $tags ) ) )
 			: array();
 		ajcore_update_portal_file_settings( compact( 'categories', 'tags', 'migration_tags' ) );
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'files', 'saved' => 1 ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'files', 'saved' => 1 ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -17329,7 +17343,7 @@ class AJForms_Admin {
 			)
 		);
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'api', 'api-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'api', 'api-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -17378,7 +17392,7 @@ class AJForms_Admin {
 		$ms_enabled              = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
 		$app_passwords_available = function_exists( 'wp_is_application_passwords_available' ) ? wp_is_application_passwords_available() : true;
 		$profile_url             = admin_url( 'profile.php#application-passwords-section' );
-		$role_manager_url        = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'roles' ), admin_url( 'admin.php' ) );
+		$role_manager_url        = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'roles' ), admin_url( 'admin.php' ) );
 		$status_url              = rest_url( 'ajcore/v1/status' );
 		$ops_summary_url         = rest_url( 'ajcore/v1/ops/summary' );
 		$portal_me_url           = rest_url( 'ajcore/v1/portal/me' );
@@ -18321,7 +18335,7 @@ class AJForms_Admin {
 
 		$stripe_customer_id = isset( $_GET['stripe_customer_id'] ) ? sanitize_text_field( wp_unslash( $_GET['stripe_customer_id'] ) ) : '';
 		$detail             = $this->get_portal_customer_detail_data( $stripe_customer_id );
-		$back_url           = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'menu' ), admin_url( 'admin.php' ) );
+		$back_url           = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'menu' ), admin_url( 'admin.php' ) );
 
 		if ( ! $detail ) {
 			?>
@@ -21011,7 +21025,7 @@ class AJForms_Admin {
 
 		$settings    = $this->get_plugin_settings();
 		$action_url  = add_query_arg(
-			array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'email-templates', 'section' => 'email-templates' ),
+			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'email-templates', 'section' => 'email-templates' ),
 			admin_url( 'admin.php' )
 		);
 		?>
@@ -21214,7 +21228,7 @@ class AJForms_Admin {
 		$form_label   = $is_editing ? $editing_role['name'] : '';
 		$is_adding    = isset( $_GET['role_manager_action'] ) && 'add' === sanitize_key( wp_unslash( $_GET['role_manager_action'] ) );
 		$form_caps    = $is_editing && ! empty( $editing_role['capabilities'] ) && is_array( $editing_role['capabilities'] ) ? array_keys( array_filter( $editing_role['capabilities'] ) ) : array( 'read' );
-		$base_url     = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'roles' ), admin_url( 'admin.php' ) );
+		$base_url     = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'roles' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="<?php echo $embedded ? 'ajcore-role-manager' : 'wrap ajcore-role-manager'; ?>">
 			<?php if ( ! $embedded ) : ?>
@@ -23273,7 +23287,7 @@ class AJForms_Admin {
 
 		wp_safe_redirect(
 			add_query_arg(
-				array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'shared-db', 'shared-db-saved' => '1' ),
+				array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'shared-db', 'shared-db-saved' => '1' ),
 				admin_url( 'admin.php' )
 			)
 		);
@@ -24022,7 +24036,7 @@ class AJForms_Admin {
 		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
 		$is_master  = ! $ms_enabled || ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ajcore_is_stripe_sync_owner() );
 		if ( ! $is_master ) {
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'calendar' ), admin_url( 'admin.php' ) ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'calendar' ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -24096,7 +24110,7 @@ class AJForms_Admin {
 			)
 		);
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'calendar', 'calendar-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'calendar', 'calendar-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -24242,7 +24256,7 @@ class AJForms_Admin {
 		$catalog_url     = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) );
 		?>
 
-		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
+		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
 			<?php wp_nonce_field( 'ajcore_save_calendar_settings', 'ajcore_calendar_settings_nonce' ); ?>
 			<?php if ( ! $is_master ) : ?>
 			<fieldset disabled style="border:none;padding:0;margin:0;opacity:.55;pointer-events:none">
