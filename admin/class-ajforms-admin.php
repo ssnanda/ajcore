@@ -17322,6 +17322,8 @@ class AJForms_Admin {
 		}
 		$count_snapshot = get_option( 'ajcore_db_schema_row_counts', array() );
 		$saved_counts   = isset( $count_snapshot['counts'] ) && is_array( $count_snapshot['counts'] ) ? $count_snapshot['counts'] : array();
+		$schema_counts_updated = false;
+		$schema_export_error   = '';
 		$tables_by_key = array();
 		$stripe_direct = array(
 			'aj_portal_stripe_customers',
@@ -17360,6 +17362,27 @@ class AJForms_Admin {
 			'aj_portal_user_mappings' => 'Legacy portal-user-to-customer mappings', 'aj_shared_sites' => 'Sites connected to the shared AJCore database',
 			'aj_shared_settings' => 'AJCore settings synchronized across connected sites',
 		);
+		$relationships = array(
+			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_subscriptions', 'stripe_customer_id' ),
+			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_transactions', 'stripe_customer_id' ),
+			array( 'aj_portal_stripe_customers', 'aj_auth_user_mappings', 'stripe_customer_id' ),
+			array( 'aj_portal_stripe_customers', 'aj_portal_customer_states', 'stripe_customer_id' ),
+			array( 'aj_portal_stripe_products', 'aj_portal_product_catalog', 'stripe_product_id' ),
+			array( 'aj_portal_stripe_subscriptions', 'aj_portal_service_snapshots', 'subscription/customer' ),
+			array( 'aj_portal_stripe_transactions', 'aj_portal_ledger', 'Stripe object/customer IDs' ),
+			array( 'aj_portal_ledger', 'aj_portal_service_requests', 'ledger_id/source_object_id' ),
+			array( 'aj_portal_service_requests', 'aj_portal_service_request_history', 'service_request_id' ),
+			array( 'aj_portal_tasks', 'aj_portal_task_statuses', 'task_id' ),
+			array( 'aj_portal_tasks', 'aj_portal_task_comments', 'task_id' ),
+			array( 'aj_portal_compliance_entities', 'aj_portal_compliance_filings', 'entity_id' ),
+			array( 'aj_portal_files', 'aj_portal_file_users', 'file_id' ),
+			array( 'aj_portal_files', 'aj_portal_file_tags', 'file_id' ),
+			array( 'aj_portal_files', 'aj_storage_objects', 'attachment_id' ),
+			array( 'aj_portal_sync_logs', 'aj_portal_sync_log_items', 'log_id' ),
+			array( 'aj_leads', 'aj_lead_notes', 'lead_id' ),
+			array( 'aj_forms_leads', 'aj_forms_lead_notes', 'lead_id' ),
+			array( 'aj_portal_reservation_resources', 'aj_portal_reservations', 'resource_key' ),
+		);
 
 		foreach ( $sources as $location => $db ) {
 			$like = $db->esc_like( $db->prefix . 'aj_' ) . '%';
@@ -17386,6 +17409,7 @@ class AJForms_Admin {
 			}
 			check_admin_referer( 'ajcore_refresh_schema_counts', 'ajcore_schema_counts_nonce' );
 			$refreshed_counts = array();
+			$export_tables     = array();
 			foreach ( $tables_by_key as $table_key => $table ) {
 				$db         = isset( $sources[ $table['location'] ] ) ? $sources[ $table['location'] ] : null;
 				$safe_table = str_replace( '`', '``', $table['full_name'] );
@@ -17393,41 +17417,57 @@ class AJForms_Admin {
 					$count = $db->get_var( "SELECT COUNT(*) FROM `{$safe_table}`" );
 					if ( null !== $count ) {
 						$refreshed_counts[ $table_key ] = absint( $count );
+						$tables_by_key[ $table_key ]['row_count'] = absint( $count );
 					}
+					$export_tables[] = array(
+						'name'          => $table['full_name'],
+						'logical_name'  => $table['logical_name'],
+						'location'      => $table['location'],
+						'database'      => $table['database'],
+						'purpose'       => $table['purpose'],
+						'data_source'   => $table['stripe'] ? 'stripe_' . $table['stripe'] : 'ajcore',
+						'row_count'     => isset( $refreshed_counts[ $table_key ] ) ? $refreshed_counts[ $table_key ] : null,
+						'columns'       => (array) $db->get_results( "DESCRIBE `{$safe_table}`", ARRAY_A ),
+						'indexes'       => (array) $db->get_results( "SHOW INDEX FROM `{$safe_table}`", ARRAY_A ),
+					);
 				}
 			}
+			$updated_at = current_time( 'mysql' );
 			update_option(
 				'ajcore_db_schema_row_counts',
 				array(
-					'updated_at' => current_time( 'mysql' ),
+					'updated_at' => $updated_at,
 					'counts'     => $refreshed_counts,
 				),
 				false
 			);
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'db-schema', 'schema-counts-updated' => 1 ), admin_url( 'admin.php' ) ) );
-			exit;
+			$count_snapshot = array( 'updated_at' => $updated_at, 'counts' => $refreshed_counts );
+			$saved_counts   = $refreshed_counts;
+			$schema_payload = array(
+				'format'       => 'AJCore database schema snapshot',
+				'version'      => 1,
+				'generated_at' => $updated_at,
+				'generated_by' => 'AJCore DB Schema > Update Row Counts',
+				'notes'        => array(
+					'No table row data or database credentials are included.',
+					'Relationships are application-level links and may not be MySQL foreign keys.',
+				),
+				'relationships' => array_map(
+					function ( $relationship ) {
+						return array( 'from' => $relationship[0], 'to' => $relationship[1], 'link' => $relationship[2] );
+					},
+					$relationships
+				),
+				'tables'       => $export_tables,
+			);
+			$schema_json = wp_json_encode( $schema_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+			$schema_file = AJCORE_PLUGIN_DIR . 'config/ajcore-db-schema.json';
+			if ( false === $schema_json || false === @file_put_contents( $schema_file, $schema_json . PHP_EOL, LOCK_EX ) ) {
+				$schema_export_error = sprintf( __( 'Counts were saved, but AJCore could not write the schema snapshot to %s.', 'ajforms' ), $schema_file );
+			}
+			$schema_counts_updated = true;
 		}
 
-		$relationships = array(
-			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_subscriptions', 'stripe_customer_id' ),
-			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_transactions', 'stripe_customer_id' ),
-			array( 'aj_portal_stripe_customers', 'aj_auth_user_mappings', 'stripe_customer_id' ),
-			array( 'aj_portal_stripe_customers', 'aj_portal_customer_states', 'stripe_customer_id' ),
-			array( 'aj_portal_stripe_products', 'aj_portal_product_catalog', 'stripe_product_id' ),
-			array( 'aj_portal_stripe_subscriptions', 'aj_portal_service_snapshots', 'subscription/customer' ),
-			array( 'aj_portal_stripe_transactions', 'aj_portal_ledger', 'Stripe object/customer IDs' ),
-			array( 'aj_portal_ledger', 'aj_portal_service_requests', 'ledger_id/source_object_id' ),
-			array( 'aj_portal_service_requests', 'aj_portal_service_request_history', 'service_request_id' ),
-			array( 'aj_portal_tasks', 'aj_portal_task_statuses', 'task_id' ),
-			array( 'aj_portal_tasks', 'aj_portal_task_comments', 'task_id' ),
-			array( 'aj_portal_compliance_entities', 'aj_portal_compliance_filings', 'entity_id' ),
-			array( 'aj_portal_files', 'aj_portal_file_users', 'file_id' ),
-			array( 'aj_portal_files', 'aj_portal_file_tags', 'file_id' ),
-			array( 'aj_portal_files', 'aj_storage_objects', 'attachment_id' ),
-			array( 'aj_portal_sync_logs', 'aj_portal_sync_log_items', 'log_id' ),
-			array( 'aj_leads', 'aj_lead_notes', 'lead_id' ),
-			array( 'aj_portal_reservation_resources', 'aj_portal_reservations', 'resource_key' ),
-		);
 		$relationship_map = array();
 		foreach ( $relationships as $relationship ) {
 			$relationship_map[ $relationship[0] ][] = array( 'table' => $relationship[1], 'field' => $relationship[2], 'direction' => 'to' );
@@ -17508,12 +17548,14 @@ class AJForms_Admin {
 		}
 		?>
 		<style>
-			.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-query{display:grid;grid-template-columns:170px minmax(280px,1fr) auto;gap:10px;margin:16px 0;padding:14px;border:1px solid #c7d2fe;border-radius:16px;background:#eef2ff}.ajcore-schema-query select,.ajcore-schema-query input{width:100%;min-height:42px}.ajcore-schema-filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr));gap:10px;margin:16px 0;padding:14px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-filters input,.ajcore-schema-filters select{width:100%;min-height:40px}.ajcore-schema-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:14px;background:#eff6ff}.ajcore-schema-actions.is-visible{display:flex}.ajcore-schema-actions strong{margin-right:4px}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}.ajcore-schema-related{display:flex;flex-direction:column;gap:5px;min-width:210px}.ajcore-schema-related code{white-space:normal}.ajcore-schema-empty{display:none;margin:14px 0 0;color:#64748b;font-weight:700}.ajcore-schema-results{margin-top:18px;padding-top:18px;border-top:1px solid #dbe7f3}.ajcore-schema-results-scroll{max-height:520px;overflow:auto;border:1px solid #dbe7f3;border-radius:14px}.ajcore-schema-results table{margin:0!important;border:0!important;border-radius:0!important}.ajcore-schema-results td{max-width:420px;white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:1000px){.ajcore-schema-filters{grid-template-columns:1fr 1fr}}@media(max-width:782px){.ajcore-schema-query,.ajcore-schema-filters{grid-template-columns:1fr}.ajcore-schema-table{display:block;overflow-x:auto}}
+			.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-query{display:grid;grid-template-columns:170px minmax(280px,1fr) auto;gap:10px;margin:16px 0;padding:14px;border:1px solid #c7d2fe;border-radius:16px;background:#eef2ff}.ajcore-schema-query select,.ajcore-schema-query input{width:100%;min-height:42px}.ajcore-schema-filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr));gap:10px;margin:16px 0;padding:14px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-filters input,.ajcore-schema-filters select{width:100%;min-height:40px}.ajcore-schema-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:14px;background:#eff6ff}.ajcore-schema-actions.is-visible{display:flex}.ajcore-schema-actions strong{margin-right:4px}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}.ajcore-schema-related{display:flex;flex-direction:column;gap:5px;min-width:210px}.ajcore-schema-related code{white-space:normal}.ajcore-schema-empty{display:none;margin:14px 0 0;color:#64748b;font-weight:700}.ajcore-schema-result-modal[hidden]{display:none}.ajcore-schema-result-modal{position:fixed;inset:0;z-index:100110;display:grid;place-items:center;padding:24px;background:rgba(15,23,42,.5)}.ajcore-schema-result-dialog{display:flex;flex-direction:column;width:min(1200px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:hidden;border:1px solid #cbd5e1;border-radius:18px;background:#fff;box-shadow:0 28px 80px rgba(15,23,42,.3)}.ajcore-schema-result-head,.ajcore-schema-result-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;border-bottom:1px solid #e2e8f0}.ajcore-schema-result-head h2{margin:0!important;font-size:22px}.ajcore-schema-result-close{display:grid;place-items:center;width:38px;height:38px;padding:0;border:0;background:transparent;color:#64748b;font-size:30px;cursor:pointer}.ajcore-schema-result-body{overflow:auto;padding:20px 22px}.ajcore-schema-results-scroll{max-height:calc(100vh - 210px);overflow:auto;border:1px solid #dbe7f3;border-radius:14px}.ajcore-schema-result-body table{margin:0!important;border:0!important;border-radius:0!important}.ajcore-schema-result-body td{max-width:420px;white-space:pre-wrap;overflow-wrap:anywhere}.ajcore-schema-result-foot{justify-content:flex-end;border-top:1px solid #e2e8f0;border-bottom:0}@media(max-width:1000px){.ajcore-schema-filters{grid-template-columns:1fr 1fr}}@media(max-width:782px){.ajcore-schema-query,.ajcore-schema-filters{grid-template-columns:1fr}.ajcore-schema-table{display:block;overflow-x:auto}.ajcore-schema-result-modal{padding:10px}.ajcore-schema-result-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px)}}
 		</style>
 		<div class="ajforms-settings-card">
 			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'AJCore Database Inventory', 'ajforms' ); ?></h2><p><?php esc_html_e( 'One numbered row per physical table, with a concise purpose, saved row count, data source, and known relationships.', 'ajforms' ); ?></p></div><form method="post" style="margin:0;"><?php wp_nonce_field( 'ajcore_refresh_schema_counts', 'ajcore_schema_counts_nonce' ); ?><button type="submit" class="button" name="ajcore_refresh_schema_counts" value="1"><?php esc_html_e( 'Update Row Counts', 'ajforms' ); ?></button></form></div>
 			<?php if ( ! empty( $count_snapshot['updated_at'] ) ) : ?><p style="margin:-4px 0 12px;color:#64748b;"><?php echo esc_html( sprintf( __( 'Row-count snapshot last updated: %s', 'ajforms' ), $count_snapshot['updated_at'] ) ); ?></p><?php else : ?><div class="notice notice-info inline"><p><?php esc_html_e( 'Row counts have not been collected yet. Click Update Row Counts when you want to create the first snapshot.', 'ajforms' ); ?></p></div><?php endif; ?>
-			<?php if ( isset( $_GET['schema-counts-updated'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'The row-count snapshot was updated.', 'ajforms' ); ?></p></div><?php endif; ?>
+			<p style="margin:-4px 0 12px;color:#64748b;"><?php echo esc_html( sprintf( __( 'Shareable schema file: %s', 'ajforms' ), 'config/ajcore-db-schema.json' ) ); ?></p>
+			<?php if ( $schema_counts_updated && ! $schema_export_error ) : ?><div class="notice notice-success inline"><p><?php esc_html_e( 'Row counts and the shareable JSON schema snapshot were updated.', 'ajforms' ); ?></p></div><?php endif; ?>
+			<?php if ( $schema_export_error ) : ?><div class="notice notice-warning inline"><p><?php echo esc_html( $schema_export_error ); ?></p></div><?php endif; ?>
 			<form method="post" class="ajcore-schema-query">
 				<?php wp_nonce_field( 'ajcore_schema_inspect', 'ajcore_schema_inspect_nonce' ); ?><input type="hidden" name="ajcore_schema_inspect" value="1"><input type="hidden" name="schema_inspect_action" value="query">
 				<select name="schema_query_location" aria-label="<?php esc_attr_e( 'Query database', 'ajforms' ); ?>"><?php foreach ( array_keys( $sources ) as $location ) : ?><option value="<?php echo esc_attr( sanitize_title( $location ) ); ?>" <?php selected( $query_location, sanitize_title( $location ) ); ?>><?php echo esc_html( $location ); ?></option><?php endforeach; ?></select>
@@ -17541,7 +17583,7 @@ class AJForms_Admin {
 			<?php if ( empty( $tables ) ) : ?><tr><td colspan="8"><?php esc_html_e( 'No AJCore tables were found.', 'ajforms' ); ?></td></tr><?php endif; ?>
 			</tbody></table>
 			<p class="ajcore-schema-empty" id="ajcore-schema-empty"><?php esc_html_e( 'No tables match the selected filters.', 'ajforms' ); ?></p>
-			<?php if ( $query_error || $query_label ) : ?><div class="ajcore-schema-results"><?php if ( $query_error ) : ?><div class="notice notice-error inline"><p><?php echo esc_html( $query_error ); ?></p></div><?php else : ?><h3><?php echo esc_html( $query_label ); ?></h3><?php if ( empty( $query_rows ) ) : ?><p><?php esc_html_e( 'The query completed successfully and returned no rows.', 'ajforms' ); ?></p><?php else : ?><div class="ajcore-schema-results-scroll"><table class="widefat striped"><thead><tr><?php foreach ( $query_columns as $column ) : ?><th><?php echo esc_html( $column ); ?></th><?php endforeach; ?></tr></thead><tbody><?php foreach ( $query_rows as $query_row ) : ?><tr><?php foreach ( $query_columns as $column ) : ?><td><?php $value = isset( $query_row[ $column ] ) ? $query_row[ $column ] : null; echo esc_html( is_scalar( $value ) || null === $value ? (string) $value : wp_json_encode( $value ) ); ?></td><?php endforeach; ?></tr><?php endforeach; ?></tbody></table></div><?php endif; ?><?php endif; ?></div><?php endif; ?>
+			<?php if ( $query_error || $query_label ) : ?><div class="ajcore-schema-result-modal" id="ajcore-schema-result-modal" role="dialog" aria-modal="true" aria-labelledby="ajcore-schema-result-title"><div class="ajcore-schema-result-dialog"><div class="ajcore-schema-result-head"><h2 id="ajcore-schema-result-title"><?php echo esc_html( $query_error ? __( 'Query Error', 'ajforms' ) : $query_label ); ?></h2><button type="button" class="ajcore-schema-result-close" data-schema-result-close aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-schema-result-body"><?php if ( $query_error ) : ?><div class="notice notice-error inline"><p><?php echo esc_html( $query_error ); ?></p></div><?php elseif ( empty( $query_rows ) ) : ?><p><?php esc_html_e( 'The query completed successfully and returned no rows.', 'ajforms' ); ?></p><?php else : ?><div class="ajcore-schema-results-scroll"><table class="widefat striped"><thead><tr><?php foreach ( $query_columns as $column ) : ?><th><?php echo esc_html( $column ); ?></th><?php endforeach; ?></tr></thead><tbody><?php foreach ( $query_rows as $query_row ) : ?><tr><?php foreach ( $query_columns as $column ) : ?><td><?php $value = isset( $query_row[ $column ] ) ? $query_row[ $column ] : null; echo esc_html( is_scalar( $value ) || null === $value ? (string) $value : wp_json_encode( $value ) ); ?></td><?php endforeach; ?></tr><?php endforeach; ?></tbody></table></div><?php endif; ?></div><div class="ajcore-schema-result-foot"><button type="button" class="button button-primary" data-schema-result-close><?php esc_html_e( 'Close', 'ajforms' ); ?></button></div></div></div><?php endif; ?>
 		</div>
 		<script>
 		(function(){
@@ -17556,6 +17598,14 @@ class AJForms_Admin {
 			checks.forEach(function(check){check.addEventListener('change',updateActions);});
 			checkAll.addEventListener('change',function(){entries.forEach(function(row){if(!row.hidden){var check=row.querySelector('.ajcore-schema-table-check');if(check){check.checked=checkAll.checked;}}});updateActions();});
 			updateActions();
+			var resultModal=document.getElementById('ajcore-schema-result-modal');
+			function closeResultModal(){if(!resultModal){return;}resultModal.hidden=true;document.body.classList.remove('ajcore-modal-open');}
+			if(resultModal){
+				document.body.classList.add('ajcore-modal-open');
+				resultModal.addEventListener('click',function(event){if(event.target===resultModal||event.target.closest('[data-schema-result-close]')){closeResultModal();}});
+				document.addEventListener('keydown',function(event){if(event.key==='Escape'&&!resultModal.hidden){closeResultModal();}});
+				var closeButton=resultModal.querySelector('[data-schema-result-close]');if(closeButton){closeButton.focus();}
+			}
 		})();
 		</script>
 		<?php

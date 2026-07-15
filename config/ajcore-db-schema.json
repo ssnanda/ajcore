@@ -1,0 +1,12 @@
+{
+    "format": "AJCore database schema snapshot",
+    "version": 1,
+    "generated_at": null,
+    "generated_by": "AJCore DB Schema > Update Row Counts",
+    "notes": [
+        "Click Update Row Counts in AJCore DB Schema to compile the current live table definitions into this file.",
+        "No table row data or database credentials are included."
+    ],
+    "relationships": [],
+    "tables": []
+}
