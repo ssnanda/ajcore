@@ -3781,6 +3781,7 @@ class AJCore_REST_API {
 
 		$file_params   = $request->get_file_params();
 		$attachment_id = 0;
+		$uploaded_file_path = '';
 
 		if ( ! empty( $file_params['file'] ) && UPLOAD_ERR_OK === (int) $file_params['file']['error'] ) {
 			require_once ABSPATH . 'wp-admin/includes/image.php';
@@ -3807,7 +3808,7 @@ class AJCore_REST_API {
 				return $attachment_id;
 			}
 
-			wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $uploaded['file'] ) );
+			$uploaded_file_path = $uploaded['file'];
 
 		} elseif ( ! empty( $request['attachment_id'] ) ) {
 			$attachment_id = absint( $request['attachment_id'] );
@@ -3843,6 +3844,11 @@ class AJCore_REST_API {
 
 		$this->ops_save_file_assignments( $file_id, $request['assigned_emails'] ?? '' );
 		$this->ops_save_file_tags( $file_id, $request['tags'] ?? array() );
+		if ( $uploaded_file_path ) {
+			// Generate metadata only after the AJCore record, customer assignment,
+			// and tags exist so automatic RustFS offload gets the customer/tag path.
+			wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $uploaded_file_path ) );
+		}
 
 		return rest_ensure_response( $this->ops_get_file_row( $file_id ) );
 	}
@@ -3854,7 +3860,7 @@ class AJCore_REST_API {
 		$file_id     = absint( $request['id'] );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$file = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM `{$files_table}` WHERE id = %d", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$file = $wpdb->get_row( $wpdb->prepare( "SELECT id, attachment_id FROM `{$files_table}` WHERE id = %d", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		if ( ! $file ) {
 			return new WP_Error( 'not_found', 'File not found.', array( 'status' => 404 ) );
 		}
@@ -3887,6 +3893,14 @@ class AJCore_REST_API {
 		}
 		if ( null !== $request['tags'] ) {
 			$this->ops_save_file_tags( $file_id, (array) $request['tags'] );
+		}
+		if ( ( null !== $request['assigned_emails'] || null !== $request['tags'] ) && class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::get_remote_record( (int) $file->attachment_id ) ) {
+			// Existing remote files may have been uploaded before their customer/tag
+			// assignment existed. Re-evaluate and relocate their object key on save.
+			$relocated = AJCore_Storage_Service::migrate_attachment_ids( array( (int) $file->attachment_id ) );
+			if ( ! empty( $relocated['failed'][ (int) $file->attachment_id ] ) ) {
+				return new WP_Error( 'storage_relocation_failed', $relocated['failed'][ (int) $file->attachment_id ], array( 'status' => 500 ) );
+			}
 		}
 
 		return rest_ensure_response( $this->ops_get_file_row( $file_id ) );
@@ -3937,12 +3951,13 @@ class AJCore_REST_API {
 		foreach ( $parts as $email ) {
 			$email = sanitize_email( $email );
 			if ( '' !== $email && is_email( $email ) ) {
+				$user = get_user_by( 'email', $email );
 				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 				$wpdb->insert(
 					$users_table,
 					array(
 						'file_id'    => $file_id,
-						'user_id'    => 0,
+						'user_id'    => $user ? (int) $user->ID : 0,
 						'user_email' => strtolower( $email ),
 						'created_at' => current_time( 'mysql' ),
 					),
