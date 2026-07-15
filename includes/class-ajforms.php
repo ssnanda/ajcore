@@ -3981,6 +3981,13 @@ class AJForms {
 		return (bool) preg_match( '/^(cs_|pi_|ch_|in_|sub_|price_|prod_)/', $label );
 	}
 
+	private function is_llc_setup_entity_setup_service_label( $label ) {
+		$label = strtolower( trim( sanitize_text_field( (string) $label ) ) );
+		$label = preg_replace( '/\s*[-–—]\s*/u', ' - ', $label );
+		$label = preg_replace( '/\s+/', ' ', $label );
+		return 'llc setup - entity setup' === $label;
+	}
+
 	private function render_customer_portal_services_tab() {
 		$context = $this->get_current_user_portal_billing_context();
 		$customer = $context['customer'];
@@ -4019,6 +4026,12 @@ class AJForms {
 		foreach ( $displayable_snapshot_services as $snapshot ) {
 			if ( $this->portal_snapshot_payment_was_refunded( $snapshot, $refunded_refs ) ) {
 				$snapshot->status         = 'refunded';
+				$past_snapshot_services[] = $snapshot;
+				continue;
+			}
+			// Entity setup is a completed one-time purchase, not an ongoing
+			// customer service. Keep it in history but never show it as Current.
+			if ( $this->is_llc_setup_entity_setup_service_label( $this->get_snapshot_service_name( $snapshot ) ) ) {
 				$past_snapshot_services[] = $snapshot;
 				continue;
 			}
