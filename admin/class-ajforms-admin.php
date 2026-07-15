@@ -10360,7 +10360,9 @@ class AJForms_Admin {
 
 			$secret_key = $this->get_stripe_secret_key_for_portal();
 			$args       = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
-			if ( '' === $secret_key ) {
+			$customer_type = isset( $_POST['customer_type'] ) ? sanitize_key( wp_unslash( $_POST['customer_type'] ) ) : 'direct';
+			$customer_type = in_array( $customer_type, array( 'direct', 'opus', 'alliance_vo' ), true ) ? $customer_type : 'direct';
+			if ( 'alliance_vo' !== $customer_type && '' === $secret_key ) {
 				$args['portal-error'] = rawurlencode( __( 'Stripe secret key is required.', 'ajforms' ) );
 				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 				exit;
@@ -10370,10 +10372,30 @@ class AJForms_Admin {
 			$name          = isset( $_POST['stripe_customer_name'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_name'] ) ) : '';
 			$phone         = isset( $_POST['stripe_customer_phone'] ) ? $this->normalize_us_phone_for_storage( sanitize_text_field( wp_unslash( $_POST['stripe_customer_phone'] ) ) ) : '';
 			$business_name = isset( $_POST['stripe_customer_business_name'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_business_name'] ) ) : '';
+			$individual_name = isset( $_POST['stripe_customer_individual_name'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_individual_name'] ) ) : '';
 			$description   = isset( $_POST['stripe_customer_description'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_description'] ) ) : '';
+			$address = array(
+				'line1' => sanitize_text_field( wp_unslash( $_POST['stripe_customer_addr_line1'] ?? '' ) ), 'line2' => sanitize_text_field( wp_unslash( $_POST['stripe_customer_addr_line2'] ?? '' ) ),
+				'city' => sanitize_text_field( wp_unslash( $_POST['stripe_customer_addr_city'] ?? '' ) ), 'state' => sanitize_text_field( wp_unslash( $_POST['stripe_customer_addr_state'] ?? '' ) ),
+				'postal_code' => sanitize_text_field( wp_unslash( $_POST['stripe_customer_addr_postal'] ?? '' ) ), 'country' => sanitize_text_field( wp_unslash( $_POST['stripe_customer_addr_country'] ?? '' ) ),
+			);
 
 			if ( ! is_email( $email ) ) {
 				$args['portal-error'] = rawurlencode( __( 'A valid customer email is required.', 'ajforms' ) );
+				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			if ( 'alliance_vo' === $customer_type ) {
+				$local_id = 'local_' . str_replace( '-', '', wp_generate_uuid4() );
+				$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
+				$created = $this->get_pdb()->insert( $this->get_portal_stripe_customers_table(), array(
+					'stripe_customer_id' => $local_id, 'email' => $email, 'name' => $name, 'phone' => $phone, 'description' => $description,
+					'address' => wp_json_encode( array_filter( $address ) ), 'metadata' => wp_json_encode( $metadata ), 'partner_key' => 'alliance_vo',
+					'portal_status' => 'active', 'livemode' => 0, 'created_at' => current_time( 'mysql' ), 'synced_at' => current_time( 'mysql' ),
+				), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ) );
+				if ( false === $created ) { $args['portal-error'] = rawurlencode( __( 'Could not create the local AJCore customer.', 'ajforms' ) ); }
+				else { $args['portal-customer-created'] = $local_id; }
 				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 				exit;
 			}
@@ -10393,6 +10415,8 @@ class AJForms_Admin {
 			if ( '' !== $business_name ) {
 				$body['metadata[business_name]'] = $business_name;
 			}
+			if ( '' !== $individual_name ) { $body['metadata[individual_name]'] = $individual_name; }
+			foreach ( $address as $address_key => $address_value ) { if ( '' !== $address_value ) { $body[ 'address[' . $address_key . ']' ] = $address_value; } }
 
 			$result = $this->stripe_api_request( 'customers', $secret_key, $body );
 			if ( is_wp_error( $result ) ) {
@@ -10404,6 +10428,9 @@ class AJForms_Admin {
 				if ( is_wp_error( $sync_result ) ) {
 					$args['portal-error'] = rawurlencode( $sync_result->get_error_message() );
 				} else {
+					if ( 'opus' === $customer_type ) {
+						$this->get_pdb()->update( $this->get_portal_stripe_customers_table(), array( 'partner_key' => 'opus' ), array( 'stripe_customer_id' => (string) $result['id'] ), array( '%s' ), array( '%s' ) );
+					}
 					$args['portal-customer-created'] = sanitize_text_field( (string) $result['id'] );
 				}
 			}
@@ -19955,31 +19982,39 @@ class AJForms_Admin {
 			<?php endif; ?>
 
 			<details class="ajforms-settings-card ajcore-inline-drawer">
-				<summary><strong><?php esc_html_e( 'Add Stripe Customer', 'ajforms' ); ?></strong></summary>
+				<summary><strong><?php esc_html_e( 'Add Stripe Customers', 'ajforms' ); ?></strong></summary>
 				<form method="post" class="ajforms-settings-grid" style="margin-top:12px;">
 					<?php wp_nonce_field( 'ajcore_create_stripe_customer', 'ajcore_create_stripe_customer_nonce' ); ?>
+					<label class="ajforms-settings-grid-full"><span><?php esc_html_e( 'Customer billing type', 'ajforms' ); ?></span><select name="customer_type"><option value="direct"><?php esc_html_e( 'Direct Billing — create in Stripe', 'ajforms' ); ?></option><option value="opus"><?php esc_html_e( 'OPUS — create in Stripe; OPUS pays fixed VO rate', 'ajforms' ); ?></option><option value="alliance_vo"><?php esc_html_e( 'Alliance VO — local AJCore customer only', 'ajforms' ); ?></option></select></label>
 					<label>
 						<span><?php esc_html_e( 'Email', 'ajforms' ); ?></span>
 						<input type="email" name="stripe_customer_email" required>
 					</label>
 					<label>
 						<span><?php esc_html_e( 'Customer Name', 'ajforms' ); ?></span>
-						<input type="text" name="stripe_customer_name">
+						<input type="text" name="stripe_customer_name" required>
 					</label>
 					<label>
 						<span><?php esc_html_e( 'Business Name', 'ajforms' ); ?></span>
 						<input type="text" name="stripe_customer_business_name">
 					</label>
+					<label><span><?php esc_html_e( 'Individual Name', 'ajforms' ); ?></span><input type="text" name="stripe_customer_individual_name"></label>
 					<label>
 						<span><?php esc_html_e( 'Phone', 'ajforms' ); ?></span>
-						<input type="text" name="stripe_customer_phone">
+						<input type="text" name="stripe_customer_phone" required>
 					</label>
 					<label class="ajforms-settings-grid-full">
 						<span><?php esc_html_e( 'Description', 'ajforms' ); ?></span>
 						<input type="text" name="stripe_customer_description">
 					</label>
+					<label><span><?php esc_html_e( 'Address Line 1', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_line1"></label>
+					<label><span><?php esc_html_e( 'Address Line 2', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_line2"></label>
+					<label><span><?php esc_html_e( 'City', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_city"></label>
+					<label><span><?php esc_html_e( 'State', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_state"></label>
+					<label><span><?php esc_html_e( 'ZIP / Postal Code', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_postal"></label>
+					<label><span><?php esc_html_e( 'Country', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_country" placeholder="US"></label>
 					<div class="ajforms-settings-grid-full">
-						<button type="submit" class="button button-primary"><?php esc_html_e( 'Create Stripe Customer', 'ajforms' ); ?></button>
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Stripe Customers', 'ajforms' ); ?></button>
 					</div>
 				</form>
 			</details>

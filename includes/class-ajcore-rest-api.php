@@ -55,13 +55,14 @@ class AJCore_REST_API {
 					'addr_state'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'addr_postal'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'addr_country'    => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'customer_type'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
 				),
 			)
 		);
 
 		register_rest_route(
 			self::NAMESPACE,
-			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)',
+			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)',
 			array(
 				'methods'             => 'POST, PUT, PATCH',
 				'callback'            => array( $this, 'ops_update_customer' ),
@@ -584,7 +585,7 @@ class AJCore_REST_API {
 		return array(
 			'/ops/summary' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_summary', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_customers', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
-			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_customer', 'permission' => 'can_manage_ops_api' ),
+			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_customer', 'permission' => 'can_manage_ops_api' ),
 			'/ops/products' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_products', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/subscriptions' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_subscriptions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/ledger' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_ledger', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -605,7 +606,7 @@ class AJCore_REST_API {
 			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/partners' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_partners', 'permission' => 'can_manage_ops_api' ),
 			'/ops/product-counts' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_product_counts', 'permission' => 'can_manage_ops_api' ),
-			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
+			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/delete-all' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'delete_ops_email_log_all', 'permission' => 'can_manage_ops_api' ),
 			// Mail intake (sub-routes before the bare /ops/mail/{id} GET; create/update/delete registered above)
 			'/ops/mail/(?P<id>\d+)/notify'  => array( 'methods' => 'POST', 'callback' => 'notify_ops_mail_item', 'permission' => 'can_manage_ops_api' ),
@@ -5288,9 +5289,25 @@ class AJCore_REST_API {
 		$addr_state      = sanitize_text_field( (string) ( $request->get_param( 'addr_state' ) ?? '' ) );
 		$addr_postal     = sanitize_text_field( (string) ( $request->get_param( 'addr_postal' ) ?? '' ) );
 		$addr_country    = sanitize_text_field( (string) ( $request->get_param( 'addr_country' ) ?? '' ) );
+		$customer_type   = sanitize_key( (string) ( $request->get_param( 'customer_type' ) ?? 'direct' ) );
+		$customer_type   = in_array( $customer_type, array( 'direct', 'opus', 'alliance_vo' ), true ) ? $customer_type : 'direct';
+		$partner_key     = 'opus' === $customer_type ? 'opus' : ( 'alliance_vo' === $customer_type ? 'alliance_vo' : '' );
 
 		if ( empty( $name ) || empty( $email ) || empty( $phone ) ) {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
+		}
+
+		if ( 0 === strpos( $stripe_customer_id, 'local_' ) ) {
+			$pdb = $this->get_portal_db();
+			$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
+			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
+			$updated = $pdb->update( $customer_table, array(
+				'name' => $name, 'email' => $email, 'phone' => $phone, 'description' => $description,
+				'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ), 'synced_at' => current_time( 'mysql' ),
+			), array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ), array( '%s' ) );
+			if ( false === $updated ) { return new WP_Error( 'ajcore_local_customer_update_failed', 'Could not update the local AJCore customer.', array( 'status' => 500 ) ); }
+			return rest_ensure_response( array( 'stripe_customer_id' => $stripe_customer_id, 'name' => $name, 'email' => $email, 'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description, 'address' => $address_data, 'metadata' => $metadata, 'portal_status' => 'active', 'synced_at' => current_time( 'mysql' ) ) );
 		}
 
 		// Reject duplicate emails: check portal DB before calling Stripe.
@@ -5308,6 +5325,31 @@ class AJCore_REST_API {
 					array( 'status' => 409 )
 				);
 			}
+		}
+
+		if ( 'alliance_vo' === $customer_type ) {
+			$local_customer_id = 'local_' . str_replace( '-', '', wp_generate_uuid4() );
+			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
+			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
+			$inserted = $check_pdb->insert(
+				$check_table,
+				array(
+					'stripe_customer_id' => $local_customer_id, 'email' => $email, 'name' => $name, 'phone' => $phone,
+					'description' => $description, 'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ),
+					'partner_key' => 'alliance_vo', 'portal_status' => 'active', 'livemode' => 0,
+					'created_at' => current_time( 'mysql' ), 'synced_at' => current_time( 'mysql' ),
+				),
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+			);
+			if ( false === $inserted ) {
+				return new WP_Error( 'ajcore_local_customer_failed', 'Could not create the local AJCore customer.', array( 'status' => 500 ) );
+			}
+			return rest_ensure_response( array( 'success' => true, 'customer' => array(
+				'stripe_customer_id' => $local_customer_id, 'email' => $email, 'name' => $name,
+				'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description,
+				'address' => $address_data, 'metadata' => $metadata, 'partner_key' => 'alliance_vo',
+				'portal_status' => 'active', 'livemode' => 0, 'synced_at' => current_time( 'mysql' ),
+			) ) );
 		}
 
 		// Get Stripe secret key from plugin settings.
@@ -5400,11 +5442,12 @@ class AJCore_REST_API {
 					'description'        => $decoded['description'] ?? $description,
 					'address'            => ! empty( $address_data ) ? wp_json_encode( $address_data ) : '',
 					'metadata'           => ! empty( $meta ) ? wp_json_encode( $meta ) : '',
+					'partner_key'        => $partner_key,
 					'portal_status'      => 'active',
 					'livemode'           => ! empty( $decoded['livemode'] ) ? 1 : 0,
 					'synced_at'          => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' )
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' )
 			);
 		}
 
@@ -5416,6 +5459,7 @@ class AJCore_REST_API {
 			'description'        => $decoded['description'] ?? $description,
 			'address'            => ! empty( $decoded['address'] ) ? $decoded['address'] : null,
 			'metadata'           => ! empty( $decoded['metadata'] ) ? $decoded['metadata'] : null,
+			'partner_key'        => $partner_key,
 			'portal_status'      => 'active',
 			'synced_at'          => current_time( 'mysql' ),
 		);
