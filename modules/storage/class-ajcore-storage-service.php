@@ -413,9 +413,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return false !== $wpdb->delete( self::table(), array( 'attachment_id' => (int) $attachment_id ), array( '%d' ) );
 		}
 
-		private static function update_remote_object_key( $attachment_id, $object_key ) {
+		private static function update_remote_location( $attachment_id, $bucket, $object_key ) {
 			global $wpdb;
-			return false !== $wpdb->update( self::table(), array( 'object_key' => $object_key ), array( 'attachment_id' => (int) $attachment_id ), array( '%s' ), array( '%d' ) );
+			return false !== $wpdb->update( self::table(), array( 'bucket' => $bucket, 'object_key' => $object_key ), array( 'attachment_id' => (int) $attachment_id ), array( '%s', '%s' ), array( '%d' ) );
 		}
 
 		private static function object_key_for_attachment( $attachment_id, $filename, $user_id = 0, $user_login = '' ) {
@@ -435,7 +435,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				$user_login = $user ? $user->user_login : '';
 			}
 			$customer = $user_id ? 'user-' . $user_id . '-' . sanitize_title( $user_login ) : 'unassigned';
-			return $tag . '/' . $customer . '/' . $attachment_id . '-' . sanitize_file_name( $filename );
+			return $tag . '/' . $customer . '/' . sanitize_file_name( $filename );
 		}
 
 		// -----------------------------------------------------------------
@@ -462,12 +462,18 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		 */
 		public function migrate_attachment( $attachment_id ) {
 			$attachment_id = (int) $attachment_id;
-
-			if ( self::get_remote_record( $attachment_id ) ) {
-				return true; // Already migrated.
+			$settings = self::get_settings();
+			$record = self::get_remote_record( $attachment_id );
+			if ( $record ) {
+				$filename = basename( $record->object_key );
+				$filename = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', $filename );
+				$new_key = self::object_key_for_attachment( $attachment_id, $filename );
+				if ( $record->bucket === $settings['bucket'] && $record->object_key === $new_key ) {
+					return true;
+				}
+				return $this->relocate_remote_attachment( $attachment_id, $record, $settings, $new_key );
 			}
 
-			$settings = self::get_settings();
 			$client   = self::get_client( $settings );
 			if ( ! $client || ! self::is_configured( $settings ) ) {
 				return new WP_Error( 'ajcore_storage_not_configured', __( 'Remote storage is not configured.', 'ajforms' ) );
@@ -656,13 +662,54 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					}
 					$copied[] = $target_key;
 				}
-				if ( ! self::update_remote_object_key( $attachment_id, $new_key ) ) {
+				if ( ! self::update_remote_location( $attachment_id, $record->bucket, $new_key ) ) {
 					foreach ( $copied as $copied_key ) { $client->delete_object( $copied_key ); }
 					return new WP_Error( 'ajcore_storage_mapping_update', __( 'Could not update the RustFS path mapping.', 'ajforms' ) );
 				}
 				foreach ( $objects as $old_key => $target_key ) {
 					if ( in_array( $target_key, $copied, true ) ) { $client->delete_object( $old_key ); }
 				}
+			}
+			return true;
+		}
+
+		private function relocate_remote_attachment( $attachment_id, $record, $target_settings, $new_key ) {
+			$source_settings = self::get_settings();
+			$source_settings['bucket'] = $record->bucket;
+			$source_client = self::get_client( $source_settings );
+			$target_client = self::get_client( $target_settings );
+			if ( ! $source_client || ! $target_client ) {
+				return new WP_Error( 'ajcore_storage_not_configured', __( 'Remote storage is not configured.', 'ajforms' ) );
+			}
+			$objects = array( $record->object_key => $new_key );
+			$metadata = wp_get_attachment_metadata( $attachment_id );
+			if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+				foreach ( $metadata['sizes'] as $size ) {
+					if ( ! empty( $size['file'] ) ) {
+						$objects[ dirname( $record->object_key ) . '/sizes/' . sanitize_file_name( $size['file'] ) ] = dirname( $new_key ) . '/sizes/' . sanitize_file_name( $size['file'] );
+					}
+				}
+			}
+			$copied = array();
+			foreach ( $objects as $old_key => $target_key ) {
+				$object = $source_client->get_object( $old_key );
+				if ( is_wp_error( $object ) ) {
+					if ( $old_key !== $record->object_key ) { continue; }
+					return $object;
+				}
+				$result = $target_client->put_object( $target_key, $object['body'], $object['content_type'] ? $object['content_type'] : 'application/octet-stream' );
+				if ( is_wp_error( $result ) ) {
+					foreach ( $copied as $copied_key ) { $target_client->delete_object( $copied_key ); }
+					return $result;
+				}
+				$copied[] = $target_key;
+			}
+			if ( ! self::update_remote_location( $attachment_id, $target_settings['bucket'], $new_key ) ) {
+				foreach ( $copied as $copied_key ) { $target_client->delete_object( $copied_key ); }
+				return new WP_Error( 'ajcore_storage_mapping_update', __( 'Could not update the remote storage mapping.', 'ajforms' ) );
+			}
+			foreach ( $objects as $old_key => $target_key ) {
+				if ( in_array( $target_key, $copied, true ) ) { $source_client->delete_object( $old_key ); }
 			}
 			return true;
 		}
@@ -738,7 +785,14 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					continue;
 				}
 				if ( $record ) {
-					$preview['already_there']++;
+					$settings = self::get_settings();
+					$filename = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', basename( $record->object_key ) );
+					$expected_key = self::object_key_for_attachment( $attachment_id, $filename );
+					if ( $record->bucket === $settings['bucket'] && $record->object_key === $expected_key ) {
+						$preview['already_there']++;
+					} else {
+						$preview['ready']++;
+					}
 					continue;
 				}
 				$file_path = get_attached_file( $attachment_id );
@@ -761,9 +815,15 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			$results = array( 'migrated' => array(), 'skipped' => array(), 'failed' => array() );
 			foreach ( $ids as $attachment_id ) {
 				$attachment_id = (int) $attachment_id;
-				if ( self::get_remote_record( $attachment_id ) ) {
-					$results['skipped'][] = $attachment_id;
-					continue;
+				$record = self::get_remote_record( $attachment_id );
+				if ( $record ) {
+					$settings = self::get_settings();
+					$filename = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', basename( $record->object_key ) );
+					$expected_key = self::object_key_for_attachment( $attachment_id, $filename );
+					if ( $record->bucket === $settings['bucket'] && $record->object_key === $expected_key ) {
+						$results['skipped'][] = $attachment_id;
+						continue;
+					}
 				}
 				$outcome = $service->migrate_attachment( $attachment_id );
 				if ( is_wp_error( $outcome ) ) {
