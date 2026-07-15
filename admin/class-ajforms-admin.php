@@ -11994,27 +11994,59 @@ class AJForms_Admin {
 		return array_values( $links );
 	}
 
+	private function delete_portal_file_and_attachment( $file_id ) {
+		global $wpdb;
+		$file = $this->get_portal_file_record( $file_id );
+		if ( ! $file ) {
+			return new WP_Error( 'ajcore_file_missing', __( 'File record not found.', 'ajforms' ) );
+		}
+		$other_references = (int) $wpdb->get_var( $wpdb->prepare(
+			"SELECT COUNT(*) FROM {$this->get_portal_files_table()} WHERE attachment_id = %d AND id <> %d",
+			(int) $file->attachment_id,
+			(int) $file_id
+		) );
+		if ( 0 === $other_references && class_exists( 'AJCore_Storage_Service' ) ) {
+			$result = AJCore_Storage_Service::delete_attachment_storage( (int) $file->attachment_id );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+		}
+		if ( 0 === $other_references && ! wp_delete_attachment( (int) $file->attachment_id, true ) ) {
+			return new WP_Error( 'ajcore_attachment_delete', __( 'The storage object was handled, but WordPress could not delete the Media attachment.', 'ajforms' ) );
+		}
+		$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $file_id ), array( '%d' ) );
+		$wpdb->delete( $this->get_portal_file_tags_table(), array( 'file_id' => $file_id ), array( '%d' ) );
+		$wpdb->delete( $this->get_portal_files_table(), array( 'id' => $file_id ), array( '%d' ) );
+		return true;
+	}
+
 	private function handle_file_library_actions() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
 
 		global $wpdb;
+		if ( isset( $_GET['portal_file_action'], $_GET['file_id'], $_GET['_wpnonce'] ) && in_array( sanitize_key( wp_unslash( $_GET['portal_file_action'] ) ), array( 'archive', 'restore' ), true ) ) {
+			$file_id = absint( $_GET['file_id'] );
+			$action = sanitize_key( wp_unslash( $_GET['portal_file_action'] ) );
+			check_admin_referer( 'ajf_' . $action . '_portal_file_' . $file_id );
+			$wpdb->update( $this->get_portal_files_table(), array( 'status' => 'archive' === $action ? 'archived' : 'active', 'updated_at' => current_time( 'mysql' ) ), array( 'id' => $file_id ), array( '%s', '%s' ), array( '%d' ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => 'archive' === $action ? 'active' : 'archived', $action . 'd' => 1 ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
 
 		if ( isset( $_GET['portal_file_action'], $_GET['file_id'], $_GET['_wpnonce'] ) && 'delete' === sanitize_key( wp_unslash( $_GET['portal_file_action'] ) ) ) {
 			$file_id = absint( $_GET['file_id'] );
 			check_admin_referer( 'ajf_delete_portal_file_' . $file_id );
-
-			$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $file_id ), array( '%d' ) );
-			$wpdb->delete( $this->get_portal_file_tags_table(), array( 'file_id' => $file_id ), array( '%d' ) );
-			$wpdb->delete( $this->get_portal_files_table(), array( 'id' => $file_id ), array( '%d' ) );
+			$deleted = $this->delete_portal_file_and_attachment( $file_id );
 
 			wp_safe_redirect(
 				add_query_arg(
 					array(
 						'page'    => 'ajforms-client-portal',
 						'tab'     => 'file-library',
-						'deleted' => 1,
+						'deleted' => is_wp_error( $deleted ) ? 0 : 1,
+						'delete-error' => is_wp_error( $deleted ) ? rawurlencode( $deleted->get_error_message() ) : '',
 					),
 					admin_url( 'admin.php' )
 				)
@@ -12036,10 +12068,8 @@ class AJForms_Admin {
 					if ( $fid <= 0 ) {
 						continue;
 					}
-					$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $fid ), array( '%d' ) );
-					$wpdb->delete( $this->get_portal_file_tags_table(), array( 'file_id' => $fid ), array( '%d' ) );
-					$wpdb->delete( $this->get_portal_files_table(), array( 'id' => $fid ), array( '%d' ) );
-					$deleted++;
+					$result = $this->delete_portal_file_and_attachment( $fid );
+					if ( ! is_wp_error( $result ) ) { $deleted++; }
 				}
 			} elseif ( 'add_tag' === $bulk_action ) {
 				$tag = sanitize_key( wp_unslash( $_POST['bulk_tag'] ?? '' ) );
@@ -12056,15 +12086,23 @@ class AJForms_Admin {
 						$wpdb->update( $this->get_portal_files_table(), array( 'category' => $category, 'updated_at' => current_time( 'mysql' ) ), array( 'id' => $fid ), array( '%s', '%s' ), array( '%d' ) );
 					}
 				}
+			} elseif ( in_array( $bulk_action, array( 'archive', 'restore' ), true ) && ! empty( $file_ids ) ) {
+				$wpdb->query( $wpdb->prepare(
+					"UPDATE {$this->get_portal_files_table()} SET status = %s, updated_at = %s WHERE id IN (" . implode( ',', array_fill( 0, count( $file_ids ), '%d' ) ) . ')',
+					array_merge( array( 'archive' === $bulk_action ? 'archived' : 'active', current_time( 'mysql' ) ), $file_ids )
+				) );
 			}
 
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'    => 'ajforms-client-portal',
-						'tab'     => 'file-library',
-						'deleted' => $deleted,
-						'tagged'  => 'add_tag' === $bulk_action ? count( $file_ids ) : 0,
+						'page'        => 'ajforms-client-portal',
+						'tab'         => 'file-library',
+						'file_status' => 'restore' === $bulk_action ? 'archived' : 'active',
+						'deleted'     => $deleted,
+						'tagged'      => 'add_tag' === $bulk_action ? count( $file_ids ) : 0,
+						'archived'    => 'archive' === $bulk_action ? count( $file_ids ) : 0,
+						'restored'    => 'restore' === $bulk_action ? count( $file_ids ) : 0,
 					),
 					admin_url( 'admin.php' )
 				)
@@ -20593,6 +20631,7 @@ class AJForms_Admin {
 		$file_settings    = ajcore_get_portal_file_settings();
 		$storage_settings = class_exists( 'AJCore_Storage_Service' ) ? AJCore_Storage_Service::get_settings() : array();
 		$remote_enabled   = class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::is_enabled();
+		$file_status      = isset( $_GET['file_status'] ) && 'archived' === sanitize_key( wp_unslash( $_GET['file_status'] ) ) ? 'archived' : 'active';
 
 		if ( $editing_file ) {
 			foreach ( $this->get_portal_file_assignments( (int) $editing_file->id ) as $assignment ) {
@@ -20619,7 +20658,8 @@ class AJForms_Admin {
 
 		$files = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_files_table()} ORDER BY created_at DESC LIMIT %d",
+				"SELECT * FROM {$this->get_portal_files_table()} WHERE status = %s ORDER BY created_at DESC LIMIT %d",
+				$file_status,
 				1000
 			)
 		);
@@ -20633,9 +20673,12 @@ class AJForms_Admin {
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'File saved.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 
-			<?php if ( isset( $_GET['deleted'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'File record deleted.', 'ajforms' ); ?></p></div>
+			<?php if ( ! empty( $_GET['deleted'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'File record and its unreferenced Media/RustFS object were deleted.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( ! empty( $_GET['archived'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'File archived. Its Media/RustFS object was retained.', 'ajforms' ); ?></p></div><?php endif; ?>
+			<?php if ( ! empty( $_GET['restored'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'File restored to the active list.', 'ajforms' ); ?></p></div><?php endif; ?>
+			<?php if ( ! empty( $_GET['delete-error'] ) ) : ?><div class="notice notice-error"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['delete-error'] ) ) ); ?></p></div><?php endif; ?>
 
 			<?php if ( isset( $_GET['error'] ) && 'missing-file' === sanitize_key( wp_unslash( $_GET['error'] ) ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'Select a Media Library file before saving.', 'ajforms' ); ?></p></div>
@@ -20771,8 +20814,9 @@ class AJForms_Admin {
 
 				<div class="ajforms-file-card">
 					<h2><?php esc_html_e( 'Shared Files', 'ajforms' ); ?></h2>
+					<p><a class="button <?php echo 'active' === $file_status ? 'button-primary' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => 'active' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Active', 'ajforms' ); ?></a> <a class="button <?php echo 'archived' === $file_status ? 'button-primary' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => 'archived' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Archived', 'ajforms' ); ?></a></p>
 
-					<form method="post" id="ajf-file-bulk-form" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-client-portal&tab=file-library' ) ); ?>">
+					<form method="post" id="ajf-file-bulk-form" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => $file_status ), admin_url( 'admin.php' ) ) ); ?>">
 						<?php wp_nonce_field( 'ajf_file_bulk_action', 'ajf_file_bulk_nonce' ); ?>
 						<input type="hidden" name="ajf_file_bulk_action" id="ajf_file_bulk_action" value="">
 
@@ -20785,8 +20829,11 @@ class AJForms_Admin {
 								<button type="submit" class="button" onclick="document.getElementById('ajf_file_bulk_action').value='set_category';"><?php esc_html_e( 'Set Category', 'ajforms' ); ?></button>
 								<select name="bulk_tag"><option value=""><?php esc_html_e( 'Choose tag', 'ajforms' ); ?></option><?php foreach ( $file_settings['tags'] as $slug => $label ) : ?><option value="<?php echo esc_attr( $slug ); ?>">#<?php echo esc_html( $label ); ?></option><?php endforeach; ?></select>
 								<button type="submit" class="button" onclick="document.getElementById('ajf_file_bulk_action').value='add_tag';"><?php esc_html_e( 'Add Tag', 'ajforms' ); ?></button>
+								<button type="submit" class="button" onclick="document.getElementById('ajf_file_bulk_action').value='<?php echo 'archived' === $file_status ? 'restore' : 'archive'; ?>';">
+									<?php 'archived' === $file_status ? esc_html_e( 'Restore Selected', 'ajforms' ) : esc_html_e( 'Archive Selected', 'ajforms' ); ?>
+								</button>
 								<button type="submit" id="ajf-file-bulk-delete-btn" style="padding:6px 16px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;"
-									onclick="document.getElementById('ajf_file_bulk_action').value='delete';return confirm('<?php echo esc_js( __( 'Delete selected file records? This removes DB records only — media files stay in WordPress.', 'ajforms' ) ); ?>');">
+									onclick="document.getElementById('ajf_file_bulk_action').value='delete';return confirm('<?php echo esc_js( __( 'Permanently delete the selected AJCore records and any Media/RustFS files not referenced by another AJCore record?', 'ajforms' ) ); ?>');">
 									<?php esc_html_e( 'Delete Selected', 'ajforms' ); ?>
 								</button>
 							</div>
@@ -20852,7 +20899,10 @@ class AJForms_Admin {
 										<td style="white-space:nowrap;">
 											<a class="button button-small" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'edit_file_id' => (int) $file->id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
 											&nbsp;
-											<a class="button button-small" style="color:#b91c1c;border-color:#fca5a5;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => 'delete', 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_delete_portal_file_' . (int) $file->id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this file record?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
+											<?php $status_action = 'archived' === $file_status ? 'restore' : 'archive'; ?>
+											<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => $status_action, 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_' . $status_action . '_portal_file_' . (int) $file->id ) ); ?>"><?php 'restore' === $status_action ? esc_html_e( 'Restore', 'ajforms' ) : esc_html_e( 'Archive', 'ajforms' ); ?></a>
+											&nbsp;
+											<a class="button button-small" style="color:#b91c1c;border-color:#fca5a5;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => 'delete', 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_delete_portal_file_' . (int) $file->id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Permanently delete this AJCore record and its Media/RustFS file if no other AJCore record references it?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 										</td>
 									</tr>
 								<?php endforeach; ?>

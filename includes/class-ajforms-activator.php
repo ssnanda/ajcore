@@ -83,12 +83,14 @@ class AJForms_Activator {
 			title varchar(255) NOT NULL,
 			description longtext NULL,
 			category varchar(100) DEFAULT '' NOT NULL,
+			status varchar(20) DEFAULT 'active' NOT NULL,
 			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			KEY attachment_id (attachment_id),
-			KEY category (category)
+			KEY category (category),
+			KEY status (status)
 		) $charset_collate;
 
 		CREATE TABLE $table_portal_file_users (
@@ -1198,7 +1200,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '28', false );
+		update_option( 'ajforms_portal_schema_version', '29', false );
 	}
 
 	/**

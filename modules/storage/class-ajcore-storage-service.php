@@ -413,6 +413,39 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return false !== $wpdb->delete( self::table(), array( 'attachment_id' => (int) $attachment_id ), array( '%d' ) );
 		}
 
+		public static function delete_attachment_storage( $attachment_id ) {
+			$attachment_id = (int) $attachment_id;
+			$record = self::get_remote_record( $attachment_id );
+			if ( ! $record ) {
+				return true;
+			}
+			$settings = self::get_settings();
+			$settings['bucket'] = $record->bucket;
+			$client = self::get_client( $settings );
+			if ( ! $client ) {
+				return new WP_Error( 'ajcore_storage_not_configured', __( 'Remote storage is not configured.', 'ajforms' ) );
+			}
+			$metadata = wp_get_attachment_metadata( $attachment_id );
+			if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+				foreach ( $metadata['sizes'] as $size ) {
+					if ( ! empty( $size['file'] ) ) {
+						$result = $client->delete_object( dirname( $record->object_key ) . '/sizes/' . sanitize_file_name( $size['file'] ) );
+						if ( is_wp_error( $result ) ) {
+							return $result;
+						}
+					}
+				}
+			}
+			$result = $client->delete_object( $record->object_key );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			if ( ! self::delete_remote_record( $attachment_id ) ) {
+				return new WP_Error( 'ajcore_storage_mapping_delete', __( 'The remote file was deleted, but its storage mapping could not be removed.', 'ajforms' ) );
+			}
+			return true;
+		}
+
 		private static function update_remote_location( $attachment_id, $bucket, $object_key ) {
 			global $wpdb;
 			return false !== $wpdb->update( self::table(), array( 'bucket' => $bucket, 'object_key' => $object_key ), array( 'attachment_id' => (int) $attachment_id ), array( '%s', '%s' ), array( '%d' ) );
