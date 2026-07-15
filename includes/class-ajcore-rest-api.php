@@ -5105,7 +5105,7 @@ class AJCore_REST_API {
 		}
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT f.id, f.attachment_id, f.title, f.description, f.category, f.created_at, f.updated_at FROM `{$files_table}` f INNER JOIN `{$link_table}` fu ON fu.file_id = f.id WHERE ( f.status = 'active' OR f.status = '' OR f.status IS NULL ) AND ( fu.user_id = %d OR fu.user_email = %s ) ORDER BY f.created_at DESC, f.id DESC LIMIT 100",
+				"SELECT f.id, f.attachment_id, f.title, f.description, f.category, f.created_at, f.updated_at FROM `{$files_table}` f INNER JOIN `{$link_table}` fu ON fu.file_id = f.id WHERE ( f.status <> 'archived' OR f.status IS NULL ) AND ( fu.user_id = %d OR fu.user_email = %s ) ORDER BY f.created_at DESC, f.id DESC LIMIT 100",
 				(int) $user->ID,
 				$user->user_email
 			),

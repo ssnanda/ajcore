@@ -5763,7 +5763,7 @@ class AJForms {
 			$wpdb->prepare(
 				"SELECT DISTINCT f.* FROM {$this->get_portal_files_table()} f
 				INNER JOIN {$this->get_portal_file_users_table()} fu ON fu.file_id = f.id
-				WHERE ( f.status = 'active' OR f.status = '' OR f.status IS NULL ) AND ( fu.user_id = %d OR LOWER(fu.user_email) = %s )
+				WHERE ( f.status <> 'archived' OR f.status IS NULL ) AND ( fu.user_id = %d OR LOWER(fu.user_email) = %s )
 				ORDER BY f.category ASC, f.created_at DESC",
 				get_current_user_id(),
 				$user_email

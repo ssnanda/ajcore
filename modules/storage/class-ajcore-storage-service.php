@@ -800,7 +800,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		}
 
 		private static function preview_migration( $tags, $target ) {
-			$preview = array( 'matching' => 0, 'ready' => 0, 'already_there' => 0, 'missing' => 0 );
+			$preview = array( 'matching' => 0, 'ready' => 0, 'already_there' => 0, 'missing' => 0, 'missing_files' => array() );
 			foreach ( self::get_tagged_attachment_ids( $tags ) as $attachment_id ) {
 				$preview['matching']++;
 				$record = self::get_remote_record( $attachment_id );
@@ -813,6 +813,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 							$preview['already_there']++;
 						} else {
 							$preview['missing']++;
+							$preview['missing_files'][] = self::describe_missing_migration_file( $attachment_id, $file_path );
 						}
 					}
 					continue;
@@ -831,11 +832,33 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				$file_path = get_attached_file( $attachment_id );
 				if ( ! $file_path || ! is_file( $file_path ) || ! is_readable( $file_path ) ) {
 					$preview['missing']++;
+					$preview['missing_files'][] = self::describe_missing_migration_file( $attachment_id, $file_path );
 				} else {
 					$preview['ready']++;
 				}
 			}
 			return $preview;
+		}
+
+		private static function describe_missing_migration_file( $attachment_id, $file_path ) {
+			if ( ! get_post( $attachment_id ) ) {
+				$reason = __( 'Media attachment record is missing.', 'ajforms' );
+			} elseif ( ! $file_path ) {
+				$reason = __( 'No local file path is recorded.', 'ajforms' );
+			} elseif ( ! is_file( $file_path ) ) {
+				$reason = __( 'The file does not exist at the recorded local path.', 'ajforms' );
+			} elseif ( ! is_readable( $file_path ) ) {
+				$reason = __( 'The local file is not readable.', 'ajforms' );
+			} else {
+				$reason = __( 'The local file is unavailable.', 'ajforms' );
+			}
+			return array(
+				'attachment_id' => (int) $attachment_id,
+				'title'         => (string) get_the_title( $attachment_id ),
+				'filename'      => $file_path ? basename( $file_path ) : '',
+				'path'          => (string) $file_path,
+				'reason'        => $reason,
+			);
 		}
 
 		/**
@@ -1356,7 +1379,15 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body }).then(function (r) { return r.json(); }).then(function (res) {
 						if (!res.success) { out.textContent = (res.data && res.data.message) ? res.data.message : 'Preview failed.'; return; }
 						var d = res.data;
-						out.textContent = 'Matching: ' + d.matching + ', Ready to transfer: ' + d.ready + ', Already at destination: ' + d.already_there + ', Missing: ' + d.missing;
+						var summary = 'Matching: ' + d.matching + ', Ready to transfer: ' + d.ready + ', Already at destination: ' + d.already_there + ', Missing: ' + d.missing;
+						if (d.missing_files && d.missing_files.length) {
+							summary += '\n\nMissing files:\n' + d.missing_files.map(function (file) {
+								var name = file.title || file.filename || ('Attachment #' + file.attachment_id);
+								return name + ' (Attachment #' + file.attachment_id + '): ' + file.reason + (file.path ? '\n' + file.path : '');
+							}).join('\n');
+						}
+						out.style.whiteSpace = 'pre-wrap';
+						out.textContent = summary;
 						migrateButton.disabled = d.ready < 1;
 					});
 				});

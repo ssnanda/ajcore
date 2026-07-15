@@ -20656,10 +20656,19 @@ class AJForms_Admin {
 			)
 		);
 
-		if ( 'archived' === $file_status ) {
-			$files = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$this->get_portal_files_table()} WHERE status = %s ORDER BY created_at DESC LIMIT %d", 'archived', 1000 ) );
+		$portal_files_table = $this->get_portal_files_table();
+		$file_columns       = $wpdb->get_col( "SHOW COLUMNS FROM `{$portal_files_table}`", 0 );
+		$has_file_status    = in_array( 'status', (array) $file_columns, true );
+		if ( 'archived' === $file_status && $has_file_status ) {
+			$files = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM `{$portal_files_table}` WHERE status = %s ORDER BY created_at DESC LIMIT %d", 'archived', 1000 ) );
+		} elseif ( 'archived' === $file_status ) {
+			$files = array();
+		} elseif ( $has_file_status ) {
+			$files = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM `{$portal_files_table}` WHERE status <> %s OR status IS NULL ORDER BY created_at DESC LIMIT %d", 'archived', 1000 ) );
 		} else {
-			$files = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$this->get_portal_files_table()} WHERE status = %s OR status = '' OR status IS NULL ORDER BY created_at DESC LIMIT %d", 'active', 1000 ) );
+			// Compatibility for databases where the archive schema upgrade has not
+			// completed yet: all legacy rows are active.
+			$files = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM `{$portal_files_table}` ORDER BY created_at DESC LIMIT %d", 1000 ) );
 		}
 		?>
 		<div class="<?php echo $embedded ? 'ajforms-file-library' : 'wrap ajforms-file-library'; ?>">
