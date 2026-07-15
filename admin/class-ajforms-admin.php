@@ -16151,6 +16151,42 @@ class AJForms_Admin {
 			array( $this, 'display_client_portal_page' )
 		);
 
+		add_submenu_page(
+			'ajforms',
+			__( 'CP Settings', 'ajforms' ),
+			__( 'CP Settings', 'ajforms' ),
+			'manage_options',
+			'ajforms-cp-settings',
+			array( $this, 'display_cp_settings_admin_page' )
+		);
+
+		add_submenu_page(
+			'ajforms',
+			__( 'Product Catalog', 'ajforms' ),
+			__( 'Product Catalog', 'ajforms' ),
+			'manage_options',
+			'ajforms-product-catalog',
+			array( $this, 'display_product_catalog_admin_page' )
+		);
+
+		add_submenu_page(
+			'ajforms',
+			__( 'Sync', 'ajforms' ),
+			__( 'Sync', 'ajforms' ),
+			'manage_options',
+			'ajforms-sync',
+			array( $this, 'display_sync_admin_page' )
+		);
+
+		add_submenu_page(
+			'ajforms',
+			__( 'Event Log', 'ajforms' ),
+			__( 'Event Log', 'ajforms' ),
+			'manage_options',
+			'ajforms-event-log',
+			array( $this, 'display_event_log_admin_page' )
+		);
+
 
 		add_submenu_page(
 			'ajforms',
@@ -16188,6 +16224,26 @@ class AJForms_Admin {
 			array( $this, 'display_about_page' )
 		);
 
+	}
+
+	public function display_cp_settings_admin_page() {
+		$_GET['tab'] = 'cp-settings';
+		$this->display_client_portal_page();
+	}
+
+	public function display_product_catalog_admin_page() {
+		$_GET['tab'] = 'products-services';
+		$this->display_client_portal_page();
+	}
+
+	public function display_sync_admin_page() {
+		$_GET['tab'] = 'sync';
+		$this->display_client_portal_page();
+	}
+
+	public function display_event_log_admin_page() {
+		$_GET['tab'] = 'event-log';
+		$this->display_client_portal_page();
 	}
 
 	public function add_plugin_action_links( $links ) {
