@@ -17155,11 +17155,12 @@ class AJForms_Admin {
 				.ajcore-modern-admin .ajcore-status-pill{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800;background:#f0f6fc;color:#0969da}
 				.ajcore-modern-admin .ajcore-status-pill.off{background:#f6f7f7;color:#646970}.ajcore-modern-admin .ajcore-status-pill.active{background:#dcfce7;color:#166534}.ajcore-modern-admin .ajcore-status-pill.disabled{background:#fef3c7;color:#92400e}.ajcore-modern-admin .ajcore-status-pill.archived{background:#fee2e2;color:#991b1b}.ajcore-modern-admin .ajcore-status-pill.no-login{background:#f1f5f9;color:#475569}
 				.ajcore-modern-admin .ajcore-portal-users-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:14px 0}.ajcore-modern-admin .ajcore-portal-users-toolbar form{display:flex;align-items:center;gap:8px;margin:0}.ajcore-modern-admin .ajcore-portal-users-toolbar .ajcore-toolbar-spacer{margin-left:auto}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-active td{background:#f6fff8}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-disabled td{background:#fffaf0}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-archived td{background:#fff7f7}.ajcore-modern-admin .ajcore-portal-users-table tr.ajcore-row-no-login td{background:#f8fafc}
+				.ajcore-customer-modal[hidden]{display:none}.ajcore-customer-modal{position:fixed;inset:0;z-index:100100;display:grid;place-items:center;padding:24px;background:rgba(15,23,42,.46)}.ajcore-customer-modal-dialog{display:flex;flex-direction:column;width:min(980px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:hidden;border:1px solid #cbd5e1;border-radius:18px;background:#fff;box-shadow:0 28px 80px rgba(15,23,42,.28)}.ajcore-customer-modal-head,.ajcore-customer-modal-foot{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 30px;border-bottom:1px solid #e5e7eb}.ajcore-customer-modal-head h2{margin:0!important;font-size:28px}.ajcore-customer-modal-close{display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;background:transparent;color:#94a3b8;font-size:32px;line-height:1;cursor:pointer}.ajcore-customer-modal-close:hover{color:#0f172a}.ajcore-customer-modal-body{overflow-y:auto;padding:28px 30px}.ajcore-customer-modal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 24px}.ajcore-customer-modal-grid label{display:flex;flex-direction:column;gap:8px;color:#334155;font-size:16px;font-weight:800}.ajcore-customer-modal-grid label>span small{color:#dc2626}.ajcore-customer-modal-grid input,.ajcore-customer-modal-grid select{width:100%;min-height:48px;padding:8px 14px;font-size:16px}.ajcore-customer-modal-wide,.ajcore-customer-modal-section{grid-column:1/-1}.ajcore-customer-modal-section{margin:4px 0 -2px;color:#64748b;font-size:13px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}.ajcore-customer-modal-location{display:grid;grid-template-columns:2fr 1fr 1fr;gap:20px 24px;grid-column:1/-1}.ajcore-customer-modal-foot{justify-content:flex-end;border-top:1px solid #e5e7eb;border-bottom:0}.ajcore-customer-modal-foot .button{min-height:46px;padding:5px 24px!important;font-size:16px}.ajcore-customer-modal-foot .button:not(.button-primary){background:#fff}.ajcore-modal-open{overflow:hidden}
 				.ajcore-app-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:14px 0 14px;padding:18px 20px;border:1px solid var(--ajc-line);border-radius:24px;background:radial-gradient(circle at 0% 0%,rgba(49,87,255,.16),transparent 28rem),linear-gradient(135deg,#fff 0%,#f8fbff 100%);box-shadow:0 18px 42px rgba(15,23,42,.06)}
 				.ajcore-brand{display:flex;align-items:center;gap:14px}.ajcore-brand-mark{width:48px;height:48px;border-radius:18px;background:linear-gradient(135deg,#3157ff,#7c3aed);display:grid;place-items:center;color:#fff;font-size:24px;box-shadow:0 14px 30px rgba(49,87,255,.28)}.ajcore-brand h1{margin:0;font-size:25px;line-height:1.15;color:var(--ajc-ink)}.ajcore-brand span{display:block;margin-top:3px;color:var(--ajc-muted);font-weight:700}
 				.ajcore-stripe-mini{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.ajcore-stripe-mini .stripe-pill{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:8px 12px;font-weight:800;border:1px solid #fde68a;background:#fffbeb;color:#92400e}.ajcore-stripe-mini .stripe-pill.is-test{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}.ajcore-stripe-mini .stripe-pill.is-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
 				.ajcore-tabs-shell{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;padding:10px;border:1px solid var(--ajc-line);border-radius:20px;background:#fff;box-shadow:0 10px 26px rgba(15,23,42,.04)}.ajcore-tab-link{display:inline-flex;align-items:center;padding:9px 12px;border-radius:14px;text-decoration:none;font-weight:800;color:#334155}.ajcore-tab-link:hover{background:#f1f5f9;color:#0f172a}.ajcore-tab-link.is-active{background:#0f172a;color:#fff}.ajcore-tab-select{display:none;width:100%;max-width:360px}.ajcore-tab-spacer{flex:1}
-				@media(max-width:1100px){.ajcore-app-header{align-items:flex-start;flex-direction:column}.ajcore-tabs-shell .ajcore-tab-link{display:none}.ajcore-tab-select{display:block}.ajcore-tab-spacer{display:none}}
+				@media(max-width:1100px){.ajcore-app-header{align-items:flex-start;flex-direction:column}.ajcore-tabs-shell .ajcore-tab-link{display:none}.ajcore-tab-select{display:block}.ajcore-tab-spacer{display:none}}@media(max-width:700px){.ajcore-customer-modal{padding:10px}.ajcore-customer-modal-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px)}.ajcore-customer-modal-head,.ajcore-customer-modal-body,.ajcore-customer-modal-foot{padding:18px}.ajcore-customer-modal-head h2{font-size:22px}.ajcore-customer-modal-grid,.ajcore-customer-modal-location{grid-template-columns:1fr}.ajcore-customer-modal-location{gap:20px}.ajcore-customer-modal-foot .button{flex:1}}
 			</style>
 			<div class="ajcore-app-header">
 				<div class="ajcore-brand">
@@ -19986,43 +19987,53 @@ class AJForms_Admin {
 				</div>
 			<?php endif; ?>
 
-			<details class="ajforms-settings-card ajcore-inline-drawer">
-				<summary><strong><?php esc_html_e( 'Add Stripe Customers', 'ajforms' ); ?></strong></summary>
-				<form method="post" class="ajforms-settings-grid" style="margin-top:12px;">
+			<div style="margin:0 0 16px;">
+				<button type="button" class="button button-primary" id="ajcore-open-customer-modal"><?php esc_html_e( 'Add Stripe Customers', 'ajforms' ); ?></button>
+			</div>
+			<div class="ajcore-customer-modal" id="ajcore-customer-modal" role="dialog" aria-modal="true" aria-labelledby="ajcore-customer-modal-title" hidden>
+				<div class="ajcore-customer-modal-dialog" role="document">
+					<div class="ajcore-customer-modal-head">
+						<h2 id="ajcore-customer-modal-title"><?php esc_html_e( 'Add Stripe Customers', 'ajforms' ); ?></h2>
+						<button type="button" class="ajcore-customer-modal-close" data-ajcore-close-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button>
+					</div>
+					<form method="post" id="ajcore-create-customer-form">
+						<div class="ajcore-customer-modal-body">
+							<div class="ajcore-customer-modal-grid">
 					<?php wp_nonce_field( 'ajcore_create_stripe_customer', 'ajcore_create_stripe_customer_nonce' ); ?>
-					<label class="ajforms-settings-grid-full"><span><?php esc_html_e( 'Customer billing type', 'ajforms' ); ?></span><select name="customer_type"><option value="direct"><?php esc_html_e( 'Direct Billing — create in Stripe', 'ajforms' ); ?></option><option value="opus"><?php esc_html_e( 'OPUS — create in Stripe; OPUS pays fixed VO rate', 'ajforms' ); ?></option><option value="alliance_vo"><?php esc_html_e( 'Alliance VO — local AJCore customer only', 'ajforms' ); ?></option></select></label>
+					<label class="ajcore-customer-modal-wide"><span><?php esc_html_e( 'Customer billing type', 'ajforms' ); ?></span><select name="customer_type"><option value="direct"><?php esc_html_e( 'Direct Billing — create in Stripe', 'ajforms' ); ?></option><option value="opus"><?php esc_html_e( 'OPUS — create in Stripe; OPUS pays fixed VO rate', 'ajforms' ); ?></option><option value="alliance_vo"><?php esc_html_e( 'Alliance VO — local AJCore customer only; do not create in Stripe', 'ajforms' ); ?></option></select></label>
 					<label>
-						<span><?php esc_html_e( 'Email', 'ajforms' ); ?></span>
-						<input type="email" name="stripe_customer_email" required>
+						<span><?php esc_html_e( 'Full Name', 'ajforms' ); ?> <small>*</small></span>
+						<input type="text" name="stripe_customer_name" placeholder="<?php esc_attr_e( 'Jane Smith', 'ajforms' ); ?>" required>
 					</label>
 					<label>
-						<span><?php esc_html_e( 'Customer Name', 'ajforms' ); ?></span>
-						<input type="text" name="stripe_customer_name" required>
+						<span><?php esc_html_e( 'Email', 'ajforms' ); ?> <small>*</small></span>
+						<input type="email" name="stripe_customer_email" placeholder="jane@example.com" required>
 					</label>
+					<label><span><?php esc_html_e( 'Phone', 'ajforms' ); ?> <small>*</small></span><input type="text" name="stripe_customer_phone" placeholder="+1 555 000-0000" required></label>
+					<label><span><?php esc_html_e( 'Description', 'ajforms' ); ?></span><input type="text" name="stripe_customer_description" placeholder="<?php esc_attr_e( 'Brief description...', 'ajforms' ); ?>"></label>
 					<label>
 						<span><?php esc_html_e( 'Business Name', 'ajforms' ); ?></span>
-						<input type="text" name="stripe_customer_business_name">
+						<input type="text" name="stripe_customer_business_name" placeholder="<?php esc_attr_e( 'Acme Corp', 'ajforms' ); ?>">
 					</label>
-					<label><span><?php esc_html_e( 'Individual Name', 'ajforms' ); ?></span><input type="text" name="stripe_customer_individual_name"></label>
-					<label>
-						<span><?php esc_html_e( 'Phone', 'ajforms' ); ?></span>
-						<input type="text" name="stripe_customer_phone" required>
-					</label>
-					<label class="ajforms-settings-grid-full">
-						<span><?php esc_html_e( 'Description', 'ajforms' ); ?></span>
-						<input type="text" name="stripe_customer_description">
-					</label>
-					<label><span><?php esc_html_e( 'Address Line 1', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_line1"></label>
-					<label><span><?php esc_html_e( 'Address Line 2', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_line2"></label>
-					<label><span><?php esc_html_e( 'City', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_city"></label>
-					<label><span><?php esc_html_e( 'State', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_state"></label>
-					<label><span><?php esc_html_e( 'ZIP / Postal Code', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_postal"></label>
-					<label><span><?php esc_html_e( 'Country', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_country" placeholder="US"></label>
-					<div class="ajforms-settings-grid-full">
-						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Stripe Customers', 'ajforms' ); ?></button>
+					<label><span><?php esc_html_e( 'Individual Name', 'ajforms' ); ?></span><input type="text" name="stripe_customer_individual_name" placeholder="<?php esc_attr_e( 'Jane Smith', 'ajforms' ); ?>"></label>
+					<div class="ajcore-customer-modal-section"><?php esc_html_e( 'Address', 'ajforms' ); ?></div>
+					<label><span><?php esc_html_e( 'Line 1', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_line1" placeholder="<?php esc_attr_e( '123 Main St', 'ajforms' ); ?>"></label>
+					<label><span><?php esc_html_e( 'Line 2', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_line2" placeholder="<?php esc_attr_e( 'Suite 100', 'ajforms' ); ?>"></label>
+					<div class="ajcore-customer-modal-location">
+						<label><span><?php esc_html_e( 'City', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_city"></label>
+						<label><span><?php esc_html_e( 'State', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_state" placeholder="NY"></label>
+						<label><span><?php esc_html_e( 'ZIP', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_postal" placeholder="10001"></label>
 					</div>
-				</form>
-			</details>
+					<label><span><?php esc_html_e( 'Country', 'ajforms' ); ?></span><input type="text" name="stripe_customer_addr_country" placeholder="US"></label>
+							</div>
+						</div>
+						<div class="ajcore-customer-modal-foot">
+							<button type="button" class="button" data-ajcore-close-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button>
+							<button type="submit" class="button button-primary"><?php esc_html_e( 'Create Customer', 'ajforms' ); ?></button>
+						</div>
+					</form>
+				</div>
+			</div>
 
 			<div class="ajcore-portal-users-toolbar">
 				<form method="get" id="ajcore-portal-users-filter-form">
@@ -20182,8 +20193,32 @@ class AJForms_Admin {
 				var checkAll = document.getElementById('ajcore-check-all-portal-users');
 				var filterForm = document.getElementById('ajcore-portal-users-filter-form');
 				var statusFilter = document.getElementById('ajcore-portal-user-status-filter');
+				var customerModal = document.getElementById('ajcore-customer-modal');
+				var openCustomerModal = document.getElementById('ajcore-open-customer-modal');
+				var lastModalFocus = null;
+				function closeModal(){
+					if(!customerModal){return;}
+					customerModal.hidden = true;
+					document.body.classList.remove('ajcore-modal-open');
+					if(lastModalFocus){lastModalFocus.focus();}
+				}
+				function showModal(){
+					if(!customerModal){return;}
+					lastModalFocus = document.activeElement;
+					customerModal.hidden = false;
+					document.body.classList.add('ajcore-modal-open');
+					var firstField = customerModal.querySelector('select, input, button');
+					if(firstField){firstField.focus();}
+				}
 				function boxes(){return Array.prototype.slice.call(document.querySelectorAll('.ajcore-portal-user-checkbox'));}
 				function setAll(checked){boxes().forEach(function(box){box.checked = checked;}); if(checkAll){checkAll.checked = checked;}}
+				if(openCustomerModal){openCustomerModal.addEventListener('click', showModal);}
+				if(customerModal){
+					customerModal.addEventListener('click', function(event){
+						if(event.target === customerModal || event.target.closest('[data-ajcore-close-modal]')){closeModal();}
+					});
+					document.addEventListener('keydown', function(event){if('Escape' === event.key && !customerModal.hidden){closeModal();}});
+				}
 				if(statusFilter && filterForm){statusFilter.addEventListener('change', function(){filterForm.submit();});}
 				if(checkAll){checkAll.addEventListener('change', function(){setAll(checkAll.checked);});}
 				if(form){
@@ -21634,6 +21669,7 @@ class AJForms_Admin {
 	}
 
 	private function display_client_portal_settings_tab( $subsection, $embedded = false ) {
+		global $wpdb;
 		$subsection = in_array( $subsection, array( 'file-library', 'menu' ), true ) ? $subsection : 'file-library';
 		$portal_page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
 		$portal_url     = $portal_page_id ? get_permalink( $portal_page_id ) : '';
@@ -21642,6 +21678,15 @@ class AJForms_Admin {
 		$cache_counts      = $this->get_portal_cache_counts();
 		$service_settings = $this->get_customer_portal_services_display_settings();
 		$last_db_error     = get_option( 'ajforms_last_portal_db_error', '' );
+		$is_multisite_portal = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
+		$is_sync_owner       = ! $is_multisite_portal || ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ajcore_is_stripe_sync_owner() );
+		if ( $last_db_error && false !== strpos( $last_db_error, 'aj_auth_user_mappings' ) && false !== strpos( $last_db_error, "doesn't exist" ) ) {
+			$local_mapping_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $wpdb->prefix . 'aj_auth_user_mappings' ) ) );
+			if ( $local_mapping_exists ) {
+				delete_option( 'ajforms_last_portal_db_error' );
+				$last_db_error = '';
+			}
+		}
 		?>
 		<?php if ( ! $embedded ) : ?>
 			<div class="ajforms-settings-head">
@@ -21688,12 +21733,14 @@ class AJForms_Admin {
 					<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d billing records cached', 'ajforms' ), $cache_counts['ledger'] ) ); ?></span>
 					<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d portal users linked', 'ajforms' ), $cache_counts['mappings'] ) ); ?></span>
 				</div>
-				<?php if ( ! $stripe_enabled ) : ?>
+				<?php if ( ! $is_sync_owner ) : ?>
+					<div class="notice notice-info inline"><p><?php esc_html_e( 'Stripe sync is managed by the AJCore master site. This site reads the shared portal data and does not need its own Stripe secret key.', 'ajforms' ); ?></p></div>
+				<?php elseif ( ! $stripe_enabled ) : ?>
 					<div class="notice notice-warning inline"><p><?php esc_html_e( 'Add your Stripe secret key under Settings > Stripe Payments before syncing portal data.', 'ajforms' ); ?></p></div>
 				<?php endif; ?>
-				<div class="ajforms-settings-inline-actions">
+				<?php if ( $is_sync_owner ) : ?><div class="ajforms-settings-inline-actions">
 					<a class="button button-primary" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
-				</div>
+				</div><?php endif; ?>
 			</div>
 
 			<form method="post">
