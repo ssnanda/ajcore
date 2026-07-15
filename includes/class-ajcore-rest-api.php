@@ -496,6 +496,7 @@ class AJCore_REST_API {
 						'per_page' => array( 'default' => 200, 'sanitize_callback' => 'absint' ),
 						'search'   => array( 'default' => '',  'sanitize_callback' => 'sanitize_text_field' ),
 						'category' => array( 'default' => '',  'sanitize_callback' => 'sanitize_text_field' ),
+						'status'   => array( 'default' => 'active', 'sanitize_callback' => 'sanitize_key' ),
 					),
 				),
 				array(
@@ -3674,6 +3675,7 @@ class AJCore_REST_API {
 
 		$search   = isset( $request['search'] )   ? sanitize_text_field( $request['search'] )   : '';
 		$category = isset( $request['category'] ) ? sanitize_text_field( $request['category'] ) : '';
+		$status   = 'archived' === sanitize_key( (string) ( $request['status'] ?? 'active' ) ) ? 'archived' : 'active';
 		$per_page = min( absint( $request['per_page'] ?? 200 ), 500 );
 		if ( $per_page < 1 ) {
 			$per_page = 200;
@@ -3681,6 +3683,14 @@ class AJCore_REST_API {
 
 		$where  = array( '1=1' );
 		$params = array();
+		$file_columns = $wpdb->get_col( "SHOW COLUMNS FROM `{$files_table}`", 0 );
+		$has_status = in_array( 'status', (array) $file_columns, true );
+		if ( $has_status ) {
+			$where[] = 'archived' === $status ? 'f.status = %s' : '( f.status <> %s OR f.status IS NULL )';
+			$params[] = 'archived';
+		} elseif ( 'archived' === $status ) {
+			return rest_ensure_response( array( 'files' => array(), 'stats' => array( 'total' => 0 ), 'settings' => $this->ops_file_settings() ) );
+		}
 
 		if ( $search ) {
 			$like      = '%' . $wpdb->esc_like( $search ) . '%';
@@ -3701,7 +3711,8 @@ class AJCore_REST_API {
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$files = $wpdb->get_results( $wpdb->prepare( "SELECT f.* FROM `{$files_table}` f WHERE {$where_sql} ORDER BY f.created_at DESC LIMIT %d", $params ) );
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$files_table}`" );
+		$count_params = array_slice( $params, 0, -1 );
+		$total = empty( $count_params ) ? (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$files_table}` f WHERE {$where_sql}" ) : (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$files_table}` f WHERE {$where_sql}", $count_params ) );
 
 		$has_users_table = $this->table_exists( $wpdb, $users_table );
 		$result          = array();
@@ -3745,6 +3756,8 @@ class AJCore_REST_API {
 				'file_url'      => $attachment_url ? (string) $attachment_url : '',
 				'filename'      => $filename,
 				'assignments'   => $assignments,
+				'tags'          => $this->ops_get_file_tags( (int) $file->id ),
+				'status'        => isset( $file->status ) && 'archived' === $file->status ? 'archived' : 'active',
 				'created_at'    => (string) $file->created_at,
 				'updated_at'    => (string) $file->updated_at,
 			);
@@ -3753,6 +3766,7 @@ class AJCore_REST_API {
 		return rest_ensure_response( array(
 			'files' => $result,
 			'stats' => array( 'total' => $total ),
+			'settings' => $this->ops_file_settings(),
 		) );
 	}
 
@@ -3828,6 +3842,7 @@ class AJCore_REST_API {
 		}
 
 		$this->ops_save_file_assignments( $file_id, $request['assigned_emails'] ?? '' );
+		$this->ops_save_file_tags( $file_id, $request['tags'] ?? array() );
 
 		return rest_ensure_response( $this->ops_get_file_row( $file_id ) );
 	}
@@ -3859,12 +3874,19 @@ class AJCore_REST_API {
 			$data['description'] = sanitize_textarea_field( $request['description'] );
 			$fmt[]               = '%s';
 		}
+		if ( null !== $request['status'] && in_array( sanitize_key( (string) $request['status'] ), array( 'active', 'archived' ), true ) ) {
+			$data['status'] = sanitize_key( (string) $request['status'] );
+			$fmt[] = '%s';
+		}
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$wpdb->update( $files_table, $data, array( 'id' => $file_id ), $fmt, array( '%d' ) );
 
 		if ( null !== $request['assigned_emails'] ) {
 			$this->ops_save_file_assignments( $file_id, $request['assigned_emails'] );
+		}
+		if ( null !== $request['tags'] ) {
+			$this->ops_save_file_tags( $file_id, (array) $request['tags'] );
 		}
 
 		return rest_ensure_response( $this->ops_get_file_row( $file_id ) );
@@ -3878,13 +3900,22 @@ class AJCore_REST_API {
 		$file_id     = absint( $request['id'] );
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$file = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM `{$files_table}` WHERE id = %d", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$file = $wpdb->get_row( $wpdb->prepare( "SELECT id, attachment_id FROM `{$files_table}` WHERE id = %d", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		if ( ! $file ) {
 			return new WP_Error( 'not_found', 'File not found.', array( 'status' => 404 ) );
 		}
 
+		$other_references = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$files_table}` WHERE attachment_id = %d AND id <> %d", (int) $file->attachment_id, $file_id ) );
+		if ( 0 === $other_references && class_exists( 'AJCore_Storage_Service' ) ) {
+			$storage_deleted = AJCore_Storage_Service::delete_attachment_storage( (int) $file->attachment_id );
+			if ( is_wp_error( $storage_deleted ) ) { return $storage_deleted; }
+		}
+		if ( 0 === $other_references && ! wp_delete_attachment( (int) $file->attachment_id, true ) ) {
+			return new WP_Error( 'attachment_delete_failed', 'The storage object was handled, but WordPress could not delete the Media attachment.', array( 'status' => 500 ) );
+		}
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$wpdb->delete( $users_table, array( 'file_id' => $file_id ), array( '%d' ) );
+		$wpdb->delete( $wpdb->prefix . 'aj_portal_file_tags', array( 'file_id' => $file_id ), array( '%d' ) );
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$wpdb->delete( $files_table, array( 'id' => $file_id ), array( '%d' ) );
 
@@ -3919,6 +3950,28 @@ class AJCore_REST_API {
 				);
 			}
 		}
+	}
+
+	private function ops_file_settings() {
+		$settings = function_exists( 'ajcore_get_portal_file_settings' ) ? ajcore_get_portal_file_settings() : array();
+		return array( 'categories' => array_values( (array) ( $settings['categories'] ?? array() ) ), 'tags' => (object) (array) ( $settings['tags'] ?? array() ) );
+	}
+
+	private function ops_get_file_tags( $file_id ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'aj_portal_file_tags';
+		if ( ! $this->table_exists( $wpdb, $table ) ) { return array(); }
+		return array_values( array_map( 'sanitize_key', $wpdb->get_col( $wpdb->prepare( "SELECT tag_slug FROM `{$table}` WHERE file_id = %d ORDER BY tag_slug ASC", $file_id ) ) ) );
+	}
+
+	private function ops_save_file_tags( $file_id, $tags ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'aj_portal_file_tags';
+		if ( ! $this->table_exists( $wpdb, $table ) ) { return; }
+		$allowed = array_keys( (array) ( $this->ops_file_settings()['tags'] ?? array() ) );
+		$tags = array_values( array_intersect( array_unique( array_map( 'sanitize_key', (array) $tags ) ), $allowed ) );
+		$wpdb->delete( $table, array( 'file_id' => $file_id ), array( '%d' ) );
+		foreach ( $tags as $tag ) { $wpdb->insert( $table, array( 'file_id' => $file_id, 'tag_slug' => $tag, 'created_at' => current_time( 'mysql' ) ), array( '%d', '%s', '%s' ) ); }
 	}
 
 	private function ops_get_file_row( $file_id ) {
@@ -3963,6 +4016,8 @@ class AJCore_REST_API {
 			'file_url'      => $attachment_url ?: '',
 			'filename'      => $filename,
 			'assignments'   => $assignments,
+			'tags'          => $this->ops_get_file_tags( (int) $file->id ),
+			'status'        => isset( $file->status ) && 'archived' === $file->status ? 'archived' : 'active',
 			'created_at'    => (string) $file->created_at,
 			'updated_at'    => (string) $file->updated_at,
 		);
