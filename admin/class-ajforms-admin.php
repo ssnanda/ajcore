@@ -17066,6 +17066,17 @@ class AJForms_Admin {
 				$_GET['cp_section'] = ( 'settings' === $old_tab ) ? 'shared-db' : $old_tab;
 			}
 		}
+		$moved_cp_tabs = array(
+			'products-services' => 'product-catalog',
+			'sync'              => 'sync',
+			'event-log'         => 'event-log',
+		);
+		if ( isset( $moved_cp_tabs[ $tab ] ) ) {
+			if ( ! isset( $_GET['cp_section'] ) ) {
+				$_GET['cp_section'] = $moved_cp_tabs[ $tab ];
+			}
+			$tab = 'cp-settings';
+		}
 		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
@@ -17086,11 +17097,8 @@ class AJForms_Admin {
 			'partners'           => __( 'Partners', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'portal-users'       => __( 'Customers', 'ajforms' ),
-			'products-services'  => __( 'Product Catalog', 'ajforms' ),
 			'tasks'              => __( 'Compliance', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
-			'sync'               => __( 'Sync', 'ajforms' ),
-			'event-log'          => __( 'Event Log', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
@@ -17209,6 +17217,9 @@ class AJForms_Admin {
 		$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
 		$sub_tabs   = array(
 			'menu'            => __( 'Menu', 'ajforms' ),
+			'product-catalog' => __( 'Product Catalog', 'ajforms' ),
+			'sync'            => __( 'Sync', 'ajforms' ),
+			'event-log'       => __( 'Event Log', 'ajforms' ),
 			'calendar'        => __( 'Calendar / Reservations', 'ajforms' ),
 			'api'             => __( 'API', 'ajforms' ),
 			'files'           => __( 'Files', 'ajforms' ),
@@ -17233,6 +17244,12 @@ class AJForms_Admin {
 
 		<?php if ( 'menu' === $cp_section ) : ?>
 			<?php $this->display_client_portal_settings_tab( 'menu', true ); ?>
+		<?php elseif ( 'product-catalog' === $cp_section ) : ?>
+			<?php $this->display_portal_products_services_tab(); ?>
+		<?php elseif ( 'sync' === $cp_section ) : ?>
+			<?php $this->display_portal_sync_tab(); ?>
+		<?php elseif ( 'event-log' === $cp_section ) : ?>
+			<?php $this->display_portal_event_log_tab(); ?>
 		<?php elseif ( 'calendar' === $cp_section ) : ?>
 			<?php $this->display_portal_calendar_settings_tab(); ?>
 		<?php elseif ( 'api' === $cp_section ) : ?>
