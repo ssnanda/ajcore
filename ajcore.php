@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.6.72
+ * Version: 0.6.73
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.6.72' );
+	define( 'AJCORE_VERSION', '0.6.73' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -59,6 +59,27 @@ if ( ! defined( 'AJFORMS_PLUGIN_BASENAME' ) ) {
 
 if ( ! defined( 'AJFORMS_SYNCED_SETTINGS_FILE' ) ) {
 	define( 'AJFORMS_SYNCED_SETTINGS_FILE', AJCORE_SYNCED_SETTINGS_FILE );
+}
+
+/** Permanently suppress Hostinger AI's API-token sales notice on AJ Core sites. */
+if ( ! function_exists( 'ajcore_suppress_hostinger_ai_token_notice' ) ) {
+	function ajcore_suppress_hostinger_ai_token_notice() {
+		global $wp_filter;
+
+		if ( empty( $wp_filter['admin_notices'] ) || empty( $wp_filter['admin_notices']->callbacks ) ) {
+			return;
+		}
+
+		foreach ( $wp_filter['admin_notices']->callbacks as $priority => $callbacks ) {
+			foreach ( $callbacks as $callback ) {
+				$handler = isset( $callback['function'] ) ? $callback['function'] : null;
+				if ( is_array( $handler ) && is_object( $handler[0] ) && $handler[0] instanceof Hostinger_Ai_Assistant_Notices && 'api_token_plugin_notice' === $handler[1] ) {
+					remove_action( 'admin_notices', $handler, $priority );
+				}
+			}
+		}
+	}
+	add_action( 'admin_init', 'ajcore_suppress_hostinger_ai_token_notice', PHP_INT_MAX );
 }
 
 if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {

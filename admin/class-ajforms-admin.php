@@ -17320,7 +17320,7 @@ class AJForms_Admin {
 		if ( $pdb !== $wpdb ) {
 			$sources['Shared Portal DB'] = $pdb;
 		}
-		$tables    = array();
+		$tables_by_key = array();
 		$stripe_direct = array(
 			'aj_portal_stripe_customers',
 			'aj_portal_stripe_products',
@@ -17359,16 +17359,19 @@ class AJForms_Admin {
 			$found = $db->get_col( $db->prepare( 'SHOW TABLES LIKE %s', $like ) );
 			foreach ( (array) $found as $full_name ) {
 				$logical_name = 0 === strpos( $full_name, $db->prefix ) ? substr( $full_name, strlen( $db->prefix ) ) : $full_name;
-				$tables[] = array(
+				$table_key  = $location . '|' . $full_name;
+				$safe_table = str_replace( '`', '``', (string) $full_name );
+				$tables_by_key[ $table_key ] = array(
 					'full_name'    => (string) $full_name,
 					'logical_name' => (string) $logical_name,
 					'location'     => $location,
+					'database'     => ! empty( $db->dbname ) ? (string) $db->dbname : DB_NAME,
 					'purpose'      => isset( $purposes[ $logical_name ] ) ? $purposes[ $logical_name ] : 'AJCore application data',
 					'stripe'       => in_array( $logical_name, $stripe_direct, true ) ? 'direct' : ( in_array( $logical_name, $stripe_derived, true ) ? 'derived' : '' ),
+					'row_count'    => (int) $db->get_var( "SELECT COUNT(*) FROM `{$safe_table}`" ),
 				);
 			}
 		}
-		usort( $tables, function ( $a, $b ) { return strcmp( $a['logical_name'] . $a['location'], $b['logical_name'] . $b['location'] ); } );
 
 		$relationships = array(
 			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_subscriptions', 'stripe_customer_id' ),
@@ -17390,30 +17393,66 @@ class AJForms_Admin {
 			array( 'aj_leads', 'aj_lead_notes', 'lead_id' ),
 			array( 'aj_portal_reservation_resources', 'aj_portal_reservations', 'resource_key' ),
 		);
+		$relationship_map = array();
+		foreach ( $relationships as $relationship ) {
+			$relationship_map[ $relationship[0] ][] = array( 'table' => $relationship[1], 'field' => $relationship[2], 'direction' => 'to' );
+			$relationship_map[ $relationship[1] ][] = array( 'table' => $relationship[0], 'field' => $relationship[2], 'direction' => 'from' );
+		}
+		$tables = array_values( $tables_by_key );
+		foreach ( $tables as &$table ) {
+			$table['relationships'] = isset( $relationship_map[ $table['logical_name'] ] ) ? $relationship_map[ $table['logical_name'] ] : array();
+		}
+		unset( $table );
+		usort( $tables, function ( $a, $b ) { return strcmp( $a['logical_name'] . $a['location'], $b['logical_name'] . $b['location'] ); } );
+
+		$location_counts = array_fill_keys( array_keys( $sources ), 0 );
+		$source_counts   = array( 'direct' => 0, 'derived' => 0, 'ajcore' => 0 );
+		$total_rows      = 0;
+		$logical_names   = array();
+		foreach ( $tables as $table ) {
+			$location_counts[ $table['location'] ]++;
+			$source_counts[ $table['stripe'] ? $table['stripe'] : 'ajcore' ]++;
+			$total_rows += $table['row_count'];
+			$logical_names[ $table['logical_name'] ] = true;
+		}
 		?>
 		<style>
-			.ajcore-schema-legend{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 18px}.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-flow{display:grid;grid-template-columns:minmax(220px,1fr) 70px minmax(220px,1fr);gap:8px 12px;align-items:center}.ajcore-schema-node{border:1px solid #dbe7f3;border-radius:12px;background:#fff;padding:10px 12px;font-family:monospace;font-weight:700;overflow-wrap:anywhere}.ajcore-schema-arrow{text-align:center;color:#3157ff;font-weight:900}.ajcore-schema-arrow small{display:block;color:#64748b;font-weight:600;overflow-wrap:anywhere}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}@media(max-width:782px){.ajcore-schema-flow{grid-template-columns:1fr}.ajcore-schema-arrow{transform:rotate(90deg);padding:3px}.ajcore-schema-arrow small{display:none}}
+			.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:16px 0}.ajcore-schema-stat{padding:14px 16px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-stat strong{display:block;color:#0f172a;font-size:24px;line-height:1.1}.ajcore-schema-stat span{display:block;margin-top:5px;color:#64748b;font-size:12px;font-weight:800}.ajcore-schema-filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr));gap:10px;margin:16px 0;padding:14px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-filters input,.ajcore-schema-filters select{width:100%;min-height:40px}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}.ajcore-schema-related{display:flex;flex-direction:column;gap:5px;min-width:210px}.ajcore-schema-related code{white-space:normal}.ajcore-schema-empty{display:none;margin:14px 0 0;color:#64748b;font-weight:700}@media(max-width:1000px){.ajcore-schema-filters{grid-template-columns:1fr 1fr}}@media(max-width:782px){.ajcore-schema-filters{grid-template-columns:1fr}.ajcore-schema-table{display:block;overflow-x:auto}}
 		</style>
 		<div class="ajforms-settings-card">
-			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'AJCore Database Schema', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Live AJCore table inventory and logical relationships. Arrows describe application-level links; AJCore does not require MySQL foreign-key constraints for these relationships.', 'ajforms' ); ?></p></div><span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d tables', 'ajforms' ), count( $tables ) ) ); ?></span></div>
-			<div class="ajcore-schema-legend"><span class="ajcore-schema-badge ajcore-schema-direct">Stripe → direct cache</span><span class="ajcore-schema-badge ajcore-schema-derived">Stripe-derived</span><span class="ajcore-schema-badge ajcore-schema-local">AJCore-managed</span></div>
-			<div class="ajcore-schema-flow">
-				<?php foreach ( $relationships as $relationship ) : ?>
-					<div class="ajcore-schema-node"><?php echo esc_html( $relationship[0] ); ?></div>
-					<div class="ajcore-schema-arrow">→<small><?php echo esc_html( $relationship[2] ); ?></small></div>
-					<div class="ajcore-schema-node"><?php echo esc_html( $relationship[1] ); ?></div>
-				<?php endforeach; ?>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'AJCore Database Inventory', 'ajforms' ); ?></h2><p><?php esc_html_e( 'One row per physical table. If the same logical table exists in both databases, each copy is shown separately so stale or misplaced data can be identified.', 'ajforms' ); ?></p></div></div>
+			<div class="ajcore-schema-summary">
+				<div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( count( $tables ) ) ); ?></strong><span><?php esc_html_e( 'Physical tables', 'ajforms' ); ?></span></div>
+				<div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( count( $logical_names ) ) ); ?></strong><span><?php esc_html_e( 'Unique table names', 'ajforms' ); ?></span></div>
+				<?php foreach ( $location_counts as $location => $count ) : ?><div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( $count ) ); ?></strong><span><?php echo esc_html( $location ); ?></span></div><?php endforeach; ?>
+				<div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( $source_counts['direct'] + $source_counts['derived'] ) ); ?></strong><span><?php esc_html_e( 'Stripe-fed tables', 'ajforms' ); ?></span></div>
+				<div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( $total_rows ) ); ?></strong><span><?php esc_html_e( 'Rows across inventory', 'ajforms' ); ?></span></div>
 			</div>
-		</div>
-		<div class="ajforms-settings-card">
-			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'All AJCore Tables', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Discovered live from the configured local and shared databases.', 'ajforms' ); ?></p></div></div>
-			<table class="widefat striped ajcore-schema-table"><thead><tr><th>Table</th><th>Database</th><th>Purpose</th><th>Data source</th></tr></thead><tbody>
+			<div class="ajcore-schema-filters">
+				<input type="search" id="ajcore-schema-search" placeholder="<?php esc_attr_e( 'Search table, purpose, or relationship…', 'ajforms' ); ?>">
+				<select id="ajcore-schema-location"><option value=""><?php esc_html_e( 'All databases', 'ajforms' ); ?></option><?php foreach ( array_keys( $sources ) as $location ) : ?><option value="<?php echo esc_attr( sanitize_title( $location ) ); ?>"><?php echo esc_html( $location ); ?></option><?php endforeach; ?></select>
+				<select id="ajcore-schema-source"><option value=""><?php esc_html_e( 'All data sources', 'ajforms' ); ?></option><option value="direct"><?php esc_html_e( 'Stripe direct', 'ajforms' ); ?></option><option value="derived"><?php esc_html_e( 'Stripe-derived', 'ajforms' ); ?></option><option value="ajcore"><?php esc_html_e( 'AJCore-managed', 'ajforms' ); ?></option></select>
+				<select id="ajcore-schema-rows"><option value=""><?php esc_html_e( 'Any row count', 'ajforms' ); ?></option><option value="populated"><?php esc_html_e( 'Has data', 'ajforms' ); ?></option><option value="empty"><?php esc_html_e( 'Empty tables', 'ajforms' ); ?></option></select>
+			</div>
+			<p id="ajcore-schema-visible-count" style="margin:0 0 12px;color:#64748b;font-weight:800;"><?php echo esc_html( sprintf( __( 'Showing %1$d of %2$d physical tables', 'ajforms' ), count( $tables ), count( $tables ) ) ); ?></p>
+			<table class="widefat striped ajcore-schema-table" id="ajcore-schema-inventory"><thead><tr><th>Table</th><th>Location</th><th>Rows</th><th>Purpose</th><th>Data source</th><th>Related tables</th></tr></thead><tbody>
 			<?php foreach ( $tables as $table ) : ?>
-				<tr><td><code><?php echo esc_html( $table['full_name'] ); ?></code></td><td><?php echo esc_html( $table['location'] ); ?></td><td><?php echo esc_html( $table['purpose'] ); ?></td><td><?php if ( 'direct' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-direct">Stripe direct</span><?php elseif ( 'derived' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-derived">Stripe-derived</span><?php else : ?><span class="ajcore-schema-badge ajcore-schema-local">AJCore</span><?php endif; ?></td></tr>
+				<tr data-location="<?php echo esc_attr( sanitize_title( $table['location'] ) ); ?>" data-source="<?php echo esc_attr( $table['stripe'] ? $table['stripe'] : 'ajcore' ); ?>" data-rows="<?php echo esc_attr( $table['row_count'] ); ?>"><td><code><?php echo esc_html( $table['full_name'] ); ?></code></td><td><strong><?php echo esc_html( $table['location'] ); ?></strong><br><small><code><?php echo esc_html( $table['database'] ); ?></code></small></td><td><strong><?php echo esc_html( number_format_i18n( $table['row_count'] ) ); ?></strong></td><td><?php echo esc_html( $table['purpose'] ); ?></td><td><?php if ( 'direct' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-direct">Stripe direct</span><?php elseif ( 'derived' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-derived">Stripe-derived</span><?php else : ?><span class="ajcore-schema-badge ajcore-schema-local">AJCore-managed</span><?php endif; ?></td><td><div class="ajcore-schema-related"><?php foreach ( $table['relationships'] as $related ) : ?><span><?php echo 'to' === $related['direction'] ? '→' : '←'; ?> <code><?php echo esc_html( $related['table'] ); ?></code><small> via <?php echo esc_html( $related['field'] ); ?></small></span><?php endforeach; ?><?php if ( empty( $table['relationships'] ) ) : ?><span>—</span><?php endif; ?></div></td></tr>
 			<?php endforeach; ?>
-			<?php if ( empty( $tables ) ) : ?><tr><td colspan="4"><?php esc_html_e( 'No AJCore tables were found.', 'ajforms' ); ?></td></tr><?php endif; ?>
+			<?php if ( empty( $tables ) ) : ?><tr><td colspan="6"><?php esc_html_e( 'No AJCore tables were found.', 'ajforms' ); ?></td></tr><?php endif; ?>
 			</tbody></table>
+			<p class="ajcore-schema-empty" id="ajcore-schema-empty"><?php esc_html_e( 'No tables match the selected filters.', 'ajforms' ); ?></p>
 		</div>
+		<script>
+		(function(){
+			var inventory=document.getElementById('ajcore-schema-inventory');
+			if(!inventory){return;}
+			var search=document.getElementById('ajcore-schema-search'),location=document.getElementById('ajcore-schema-location'),source=document.getElementById('ajcore-schema-source'),rows=document.getElementById('ajcore-schema-rows'),empty=document.getElementById('ajcore-schema-empty'),visibleCount=document.getElementById('ajcore-schema-visible-count');
+			var entries=Array.prototype.slice.call(inventory.querySelectorAll('tbody tr[data-location]'));
+			function filter(){var query=(search.value||'').toLowerCase(),visible=0;entries.forEach(function(row){var count=parseInt(row.getAttribute('data-rows'),10)||0;var show=(!query||row.textContent.toLowerCase().indexOf(query)!==-1)&&(!location.value||row.getAttribute('data-location')===location.value)&&(!source.value||row.getAttribute('data-source')===source.value)&&(!rows.value||(rows.value==='empty'?count===0:count>0));row.hidden=!show;if(show){visible++;}});empty.style.display=visible?'none':'block';visibleCount.textContent='Showing '+visible+' of '+entries.length+' physical tables';}
+			[search,location,source,rows].forEach(function(control){control.addEventListener('input',filter);control.addEventListener('change',filter);});
+		})();
+		</script>
 		<?php
 	}
 
