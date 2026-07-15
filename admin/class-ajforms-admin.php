@@ -11902,6 +11902,9 @@ class AJForms_Admin {
 
 	private function get_portal_file_tags( $file_id ) {
 		global $wpdb;
+		if ( ! $this->ensure_portal_file_tags_table() ) {
+			return array();
+		}
 		return $wpdb->get_col(
 			$wpdb->prepare( "SELECT tag_slug FROM {$this->get_portal_file_tags_table()} WHERE file_id = %d ORDER BY tag_slug", absint( $file_id ) )
 		);
@@ -11909,16 +11912,24 @@ class AJForms_Admin {
 
 	private function save_portal_file_tags( $file_id, $tag_slugs ) {
 		global $wpdb;
+		if ( ! $this->ensure_portal_file_tags_table() ) {
+			return false;
+		}
 		$available = array_keys( ajcore_get_portal_file_settings()['tags'] );
 		$tag_slugs = array_values( array_intersect( array_unique( array_map( 'sanitize_key', (array) $tag_slugs ) ), $available ) );
-		$wpdb->delete( $this->get_portal_file_tags_table(), array( 'file_id' => absint( $file_id ) ), array( '%d' ) );
+		$table = $this->get_portal_file_tags_table();
+		$wpdb->delete( $table, array( 'file_id' => absint( $file_id ) ), array( '%d' ) );
 		foreach ( $tag_slugs as $tag_slug ) {
-			$wpdb->insert(
-				$this->get_portal_file_tags_table(),
+			$inserted = $wpdb->insert(
+				$table,
 				array( 'file_id' => absint( $file_id ), 'tag_slug' => $tag_slug, 'created_at' => current_time( 'mysql' ) ),
 				array( '%d', '%s', '%s' )
 			);
+			if ( false === $inserted ) {
+				return false;
+			}
 		}
+		return true;
 	}
 
 	private function get_portal_file_assignment_labels( $file_id ) {
@@ -12130,7 +12141,10 @@ class AJForms_Admin {
 		}
 
 		if ( $file_id ) {
-			$this->save_portal_file_tags( $file_id, $file_tags );
+			if ( ! $this->save_portal_file_tags( $file_id, $file_tags ) ) {
+				wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'edit_file_id' => $file_id, 'error' => 'tag-save' ), admin_url( 'admin.php' ) ) );
+				exit;
+			}
 			$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $file_id ), array( '%d' ) );
 
 			foreach ( array_values( array_unique( $user_ids ) ) as $user_id ) {
@@ -12709,6 +12723,26 @@ class AJForms_Admin {
 	private function get_portal_file_tags_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_file_tags';
+	}
+
+	private function ensure_portal_file_tags_table() {
+		global $wpdb;
+		$table = $this->get_portal_file_tags_table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) {
+			return true;
+		}
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		$charset_collate = $wpdb->get_charset_collate();
+		dbDelta( "CREATE TABLE {$table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			file_id bigint(20) unsigned NOT NULL,
+			tag_slug varchar(100) NOT NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY file_tag (file_id, tag_slug),
+			KEY tag_slug (tag_slug)
+		) {$charset_collate};" );
+		return $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
 	}
 
 	/** Returns the wpdb instance for shared portal tables (or local wpdb when multi-site mode is off). */
@@ -20595,6 +20629,9 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['error'] ) && 'missing-file' === sanitize_key( wp_unslash( $_GET['error'] ) ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'Select a Media Library file before saving.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['error'] ) && 'tag-save' === sanitize_key( wp_unslash( $_GET['error'] ) ) ) : ?>
+				<div class="notice notice-error"><p><?php esc_html_e( 'The file was updated, but its tags could not be saved. Verify that the local portal file-tags table can be created and written.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
 
 			<style>
 				.ajforms-file-library-grid{display:grid;grid-template-columns:1fr;gap:16px;align-items:start;margin-top:14px}
@@ -20718,6 +20755,7 @@ class AJForms_Admin {
 							<span id="ajf-file-sel-count" style="font-weight:700;color:#991b1b;"></span>
 							<button type="button" id="ajf-file-deselect-all" style="font-size:12px;color:#2563eb;background:none;border:none;cursor:pointer;padding:0;"><?php esc_html_e( 'Deselect all', 'ajforms' ); ?></button>
 							<div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+								<button type="button" class="button" id="ajf-file-show-storage-path"><?php esc_html_e( 'Show Storage Path', 'ajforms' ); ?></button>
 								<select name="bulk_category"><option value=""><?php esc_html_e( 'Choose category', 'ajforms' ); ?></option><?php foreach ( $file_settings['categories'] as $category ) : ?><option value="<?php echo esc_attr( $category ); ?>"><?php echo esc_html( $category ); ?></option><?php endforeach; ?></select>
 								<button type="submit" class="button" onclick="document.getElementById('ajf_file_bulk_action').value='set_category';"><?php esc_html_e( 'Set Category', 'ajforms' ); ?></button>
 								<select name="bulk_tag"><option value=""><?php esc_html_e( 'Choose tag', 'ajforms' ); ?></option><?php foreach ( $file_settings['tags'] as $slug => $label ) : ?><option value="<?php echo esc_attr( $slug ); ?>">#<?php echo esc_html( $label ); ?></option><?php endforeach; ?></select>
@@ -20728,6 +20766,7 @@ class AJForms_Admin {
 								</button>
 							</div>
 						</div>
+						<div id="ajf-file-storage-paths" style="display:none;margin:0 0 12px;padding:12px 14px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;"></div>
 
 					<table class="widefat striped ajforms-file-table">
 						<thead>
@@ -20737,22 +20776,28 @@ class AJForms_Admin {
 								<th><?php esc_html_e( 'Category', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Tags', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'File', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Storage', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Shared With', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 							</tr>
 						</thead>
 						<tbody>
 							<?php if ( empty( $files ) ) : ?>
-								<tr><td colspan="7"><?php esc_html_e( 'No files have been shared yet.', 'ajforms' ); ?></td></tr>
+								<tr><td colspan="8"><?php esc_html_e( 'No files have been shared yet.', 'ajforms' ); ?></td></tr>
 							<?php else : ?>
 								<?php foreach ( $files as $file ) : ?>
 									<?php
 									$file_url = wp_get_attachment_url( (int) $file->attachment_id );
 									$labels   = $this->get_portal_file_assignment_labels( (int) $file->id );
 									$customer_links = $this->get_portal_file_customer_links( (int) $file->id );
+									$remote_record = class_exists( 'AJCore_Storage_Service' ) ? AJCore_Storage_Service::get_remote_record( (int) $file->attachment_id ) : null;
+									$storage_type  = $remote_record ? 'RustFS' : 'Media';
+									$storage_path  = $remote_record
+										? 's3://' . $remote_record->bucket . '/' . ltrim( $remote_record->object_key, '/' )
+										: (string) get_attached_file( (int) $file->attachment_id );
 									?>
 									<tr>
-										<td style="width:36px;"><input type="checkbox" name="file_ids[]" value="<?php echo esc_attr( (int) $file->id ); ?>" class="ajf-file-row-checkbox" style="cursor:pointer;"></td>
+										<td style="width:36px;"><input type="checkbox" name="file_ids[]" value="<?php echo esc_attr( (int) $file->id ); ?>" class="ajf-file-row-checkbox" data-file-title="<?php echo esc_attr( $file->title ); ?>" data-storage-type="<?php echo esc_attr( $storage_type ); ?>" data-storage-path="<?php echo esc_attr( $storage_path ); ?>" style="cursor:pointer;"></td>
 										<td><strong><?php echo esc_html( $file->title ); ?></strong><br><span class="description"><?php echo esc_html( wp_trim_words( (string) $file->description, 16 ) ); ?></span></td>
 										<td><?php echo esc_html( $file->category ); ?></td>
 										<td><?php
@@ -20760,6 +20805,7 @@ class AJForms_Admin {
 											echo esc_html( implode( ' ', array_map( function ( $slug ) use ( $file_settings ) { return '#' . ( $file_settings['tags'][ $slug ] ?? $slug ); }, $tag_slugs ) ) );
 										?></td>
 										<td><?php echo $file_url ? esc_html( basename( parse_url( $file_url, PHP_URL_PATH ) ) ) : esc_html__( 'Missing attachment', 'ajforms' ); ?></td>
+										<td><span style="display:inline-block;padding:3px 9px;border-radius:999px;background:<?php echo $remote_record ? '#dcfce7' : '#e2e8f0'; ?>;color:<?php echo $remote_record ? '#166534' : '#334155'; ?>;font-weight:700;font-size:12px;"><?php echo esc_html( $storage_type ); ?></span></td>
 										<td>
 											<?php if ( empty( $labels ) ) : ?>
 												<span class="description"><?php esc_html_e( 'No users assigned.', 'ajforms' ); ?></span>
@@ -20859,6 +20905,18 @@ class AJForms_Admin {
 			$('#ajf-file-deselect-all').on('click', function() {
 				$('.ajf-file-row-checkbox, #ajf-select-all-files').prop('checked', false);
 				bulkBar.hide();
+				$('#ajf-file-storage-paths').hide().empty();
+			});
+
+			$('#ajf-file-show-storage-path').on('click', function() {
+				const panel = $('#ajf-file-storage-paths').empty();
+				$('.ajf-file-row-checkbox:checked').each(function() {
+					const row = $('<div>').css({marginBottom:'10px'});
+					$('<strong>').text($(this).data('file-title') + ' — ' + $(this).data('storage-type')).appendTo(row);
+					$('<code>').text($(this).attr('data-storage-path') || '<?php echo esc_js( __( 'Path unavailable', 'ajforms' ) ); ?>').css({display:'block',marginTop:'4px',padding:'7px 9px',background:'#fff',border:'1px solid #e2e8f0',borderRadius:'6px',whiteSpace:'pre-wrap',overflowWrap:'anywhere',userSelect:'all'}).appendTo(row);
+					panel.append(row);
+				});
+				panel.show();
 			});
 		})(jQuery);
 		</script>
