@@ -849,6 +849,10 @@ class AJForms_Activator {
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
 
+		// Records created before file archiving had no status value. Keep them
+		// visible as active files instead of silently dropping them from AJCore.
+		$wpdb->query( "UPDATE `{$table_portal_files}` SET status = 'active' WHERE status IS NULL OR status = ''" );
+
 		// In shared DB mode, also create reservation and mail tables in the portal/shared DB.
 		if ( function_exists( 'ajcore_get_portal_db' ) ) {
 			$pdb = ajcore_get_portal_db();
@@ -1200,7 +1204,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '29', false );
+		update_option( 'ajforms_portal_schema_version', '30', false );
 	}
 
 	/**

@@ -20656,13 +20656,11 @@ class AJForms_Admin {
 			)
 		);
 
-		$files = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_files_table()} WHERE status = %s ORDER BY created_at DESC LIMIT %d",
-				$file_status,
-				1000
-			)
-		);
+		if ( 'archived' === $file_status ) {
+			$files = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$this->get_portal_files_table()} WHERE status = %s ORDER BY created_at DESC LIMIT %d", 'archived', 1000 ) );
+		} else {
+			$files = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$this->get_portal_files_table()} WHERE status = %s OR status = '' OR status IS NULL ORDER BY created_at DESC LIMIT %d", 'active', 1000 ) );
+		}
 		?>
 		<div class="<?php echo $embedded ? 'ajforms-file-library' : 'wrap ajforms-file-library'; ?>">
 			<?php if ( ! $embedded ) : ?>
