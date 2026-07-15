@@ -412,6 +412,31 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return false !== $wpdb->delete( self::table(), array( 'attachment_id' => (int) $attachment_id ), array( '%d' ) );
 		}
 
+		private static function update_remote_object_key( $attachment_id, $object_key ) {
+			global $wpdb;
+			return false !== $wpdb->update( self::table(), array( 'object_key' => $object_key ), array( 'attachment_id' => (int) $attachment_id ), array( '%s' ), array( '%d' ) );
+		}
+
+		private static function object_key_for_attachment( $attachment_id, $filename, $user_id = 0, $user_login = '' ) {
+			global $wpdb;
+			$attachment_id = (int) $attachment_id;
+			$files_table = $wpdb->prefix . 'aj_portal_files';
+			$users_table = $wpdb->prefix . 'aj_portal_file_users';
+			$tags_table  = $wpdb->prefix . 'aj_portal_file_tags';
+			$file_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$files_table}` WHERE attachment_id = %d ORDER BY id ASC LIMIT 1", $attachment_id ) );
+			$tag = $file_id ? (string) $wpdb->get_var( $wpdb->prepare( "SELECT tag_slug FROM `{$tags_table}` WHERE file_id = %d ORDER BY tag_slug ASC LIMIT 1", $file_id ) ) : '';
+			$tag = $tag ? sanitize_title( $tag ) : 'documents';
+			if ( ! $user_id && $file_id ) {
+				$user_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT user_id FROM `{$users_table}` WHERE file_id = %d AND user_id > 0 ORDER BY id ASC LIMIT 1", $file_id ) );
+			}
+			if ( $user_id && '' === $user_login ) {
+				$user = get_userdata( $user_id );
+				$user_login = $user ? $user->user_login : '';
+			}
+			$customer = $user_id ? 'user-' . $user_id . '-' . sanitize_title( $user_login ) : 'unassigned';
+			return $tag . '/' . $customer . '/' . $attachment_id . '-' . sanitize_file_name( $filename );
+		}
+
 		// -----------------------------------------------------------------
 		// Upload hook: after metadata is generated, push the file(s) to remote
 		// storage and remove the local copies.
@@ -454,7 +479,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 			$mime_type = get_post_mime_type( $attachment_id );
 			$mime_type = $mime_type ? $mime_type : 'application/octet-stream';
-			$object_key = 'attachments/' . $attachment_id . '/' . sanitize_file_name( basename( $file_path ) );
+			$object_key = self::object_key_for_attachment( $attachment_id, basename( $file_path ) );
 
 			$body   = file_get_contents( $file_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 			$result = $client->put_object( $object_key, $body, $mime_type );
@@ -474,7 +499,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					if ( ! is_file( $size_path ) || ! is_readable( $size_path ) ) {
 						continue;
 					}
-					$size_key = 'attachments/' . $attachment_id . '/sizes/' . sanitize_file_name( $size['file'] );
+					$size_key = dirname( $object_key ) . '/sizes/' . sanitize_file_name( $size['file'] );
 					$size_result = $client->put_object( $size_key, file_get_contents( $size_path ), isset( $size['mime-type'] ) ? $size['mime-type'] : $mime_type ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 					if ( is_wp_error( $size_result ) ) {
 						$client->delete_object( $object_key );
@@ -540,7 +565,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					if ( empty( $size['file'] ) ) {
 						continue;
 					}
-					$key = 'attachments/' . $attachment_id . '/sizes/' . sanitize_file_name( $size['file'] );
+					$key = dirname( $record->object_key ) . '/sizes/' . sanitize_file_name( $size['file'] );
 					$objects[ $key ] = array( 'path' => $directory . '/' . $size['file'], 'content_type' => isset( $size['mime-type'] ) ? $size['mime-type'] : $record->content_type );
 				}
 			}
@@ -578,6 +603,65 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				foreach ( $objects as $key => $object ) { $client->put_object( $key, $object['body'], $object['content_type'] ? $object['content_type'] : 'application/octet-stream' ); }
 				foreach ( $restored_paths as $restored_path ) { @unlink( $restored_path ); }
 				return new WP_Error( 'ajcore_storage_mapping_delete', __( 'Could not remove the remote mapping; the transfer was rolled back.', 'ajforms' ) );
+			}
+			return true;
+		}
+
+		public static function rename_user_storage_paths( $user_id, $new_login ) {
+			global $wpdb;
+			$user_id = (int) $user_id;
+			$files_table = $wpdb->prefix . 'aj_portal_files';
+			$users_table = $wpdb->prefix . 'aj_portal_file_users';
+			$storage_table = self::table();
+			$records = $wpdb->get_results( $wpdb->prepare(
+				"SELECT DISTINCT s.* FROM `{$storage_table}` s INNER JOIN `{$files_table}` f ON f.attachment_id = s.attachment_id INNER JOIN `{$users_table}` fu ON fu.file_id = f.id WHERE fu.user_id = %d AND fu.id = (SELECT MIN(fu2.id) FROM `{$users_table}` fu2 WHERE fu2.file_id = f.id AND fu2.user_id > 0)",
+				$user_id
+			) );
+			foreach ( $records as $record ) {
+				$attachment_id = (int) $record->attachment_id;
+				$local_path = get_attached_file( $attachment_id );
+				$filename = $local_path ? basename( $local_path ) : basename( $record->object_key );
+				$filename = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', $filename );
+				$new_key = self::object_key_for_attachment( $attachment_id, $filename, $user_id, $new_login );
+				if ( $new_key === $record->object_key ) {
+					continue;
+				}
+				$settings = self::get_settings();
+				$settings['bucket'] = $record->bucket;
+				$client = self::get_client( $settings );
+				if ( ! $client ) {
+					return new WP_Error( 'ajcore_storage_not_configured', __( 'Remote storage is not configured.', 'ajforms' ) );
+				}
+				$objects = array( $record->object_key => $new_key );
+				$metadata = wp_get_attachment_metadata( $attachment_id );
+				if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+					foreach ( $metadata['sizes'] as $size ) {
+						if ( ! empty( $size['file'] ) ) {
+							$objects[ dirname( $record->object_key ) . '/sizes/' . sanitize_file_name( $size['file'] ) ] = dirname( $new_key ) . '/sizes/' . sanitize_file_name( $size['file'] );
+						}
+					}
+				}
+				$copied = array();
+				foreach ( $objects as $old_key => $target_key ) {
+					$object = $client->get_object( $old_key );
+					if ( is_wp_error( $object ) ) {
+						if ( $old_key !== $record->object_key ) { continue; }
+						return $object;
+					}
+					$result = $client->put_object( $target_key, $object['body'], $object['content_type'] ? $object['content_type'] : 'application/octet-stream' );
+					if ( is_wp_error( $result ) ) {
+						foreach ( $copied as $copied_key ) { $client->delete_object( $copied_key ); }
+						return $result;
+					}
+					$copied[] = $target_key;
+				}
+				if ( ! self::update_remote_object_key( $attachment_id, $new_key ) ) {
+					foreach ( $copied as $copied_key ) { $client->delete_object( $copied_key ); }
+					return new WP_Error( 'ajcore_storage_mapping_update', __( 'Could not update the RustFS path mapping.', 'ajforms' ) );
+				}
+				foreach ( $objects as $old_key => $target_key ) {
+					if ( in_array( $target_key, $copied, true ) ) { $client->delete_object( $old_key ); }
+				}
 			}
 			return true;
 		}

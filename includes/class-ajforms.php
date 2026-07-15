@@ -72,6 +72,7 @@ class AJForms {
 		add_filter( 'user_profile_update_errors', array( $this, 'validate_username_change' ), 10, 3 );
 		add_action( 'personal_options_update',    array( $this, 'save_username_change' ) );
 		add_action( 'edit_user_profile_update',   array( $this, 'save_username_change' ) );
+		add_action( 'admin_notices', array( $this, 'render_username_storage_notice' ) );
 	}
 
 	public function add_ajcore_cron_schedules( $schedules ) {
@@ -14585,8 +14586,14 @@ class AJForms {
 			field.style.cursor = 'text';
 			var desc = document.createElement('p');
 			desc.className = 'description';
-			desc.textContent = 'Username can be changed. It must be unique across all users.';
+			desc.textContent = 'Username can be changed. It must be unique. AJCore will also update this customer\'s RustFS folder paths.';
 			field.closest('td').appendChild(desc);
+			var originalLogin = field.value;
+			field.form.addEventListener('submit', function (event) {
+				if (field.value !== originalLogin && !window.confirm('Changing this username will also move this customer\'s mapped RustFS files to a new folder path. Continue?')) {
+					event.preventDefault();
+				}
+			});
 		});
 		</script>
 		<?php
@@ -14627,9 +14634,33 @@ class AJForms {
 		if ( username_exists( $new_login ) ) {
 			return;
 		}
+		if ( class_exists( 'AJCore_Storage_Service' ) ) {
+			$renamed = AJCore_Storage_Service::rename_user_storage_paths( $user_id, $new_login );
+			if ( is_wp_error( $renamed ) ) {
+				set_transient( 'ajcore_username_storage_error_' . get_current_user_id(), $renamed->get_error_message(), MINUTE_IN_SECONDS );
+				return;
+			}
+		}
 		global $wpdb;
-		$wpdb->update( $wpdb->users, array( 'user_login' => $new_login ), array( 'ID' => $user_id ) );
+		$updated = $wpdb->update( $wpdb->users, array( 'user_login' => $new_login ), array( 'ID' => $user_id ) );
+		if ( false === $updated ) {
+			if ( class_exists( 'AJCore_Storage_Service' ) ) {
+				AJCore_Storage_Service::rename_user_storage_paths( $user_id, $current_user->user_login );
+			}
+			set_transient( 'ajcore_username_storage_error_' . get_current_user_id(), __( 'WordPress could not save the new username; RustFS path changes were rolled back.', 'ajforms' ), MINUTE_IN_SECONDS );
+			return;
+		}
 		clean_user_cache( $user_id );
+	}
+
+	public function render_username_storage_notice() {
+		$key = 'ajcore_username_storage_error_' . get_current_user_id();
+		$message = get_transient( $key );
+		if ( ! $message ) {
+			return;
+		}
+		delete_transient( $key );
+		printf( '<div class="notice notice-error"><p>%s</p></div>', esc_html( sprintf( __( 'Username was not changed because RustFS paths could not be updated: %s', 'ajforms' ), $message ) ) );
 	}
 
 	public function run() {
