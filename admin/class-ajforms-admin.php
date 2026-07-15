@@ -10047,6 +10047,8 @@ class AJForms_Admin {
 					$this->handle_client_portal_settings_save();
 				} elseif ( 'shared-db' === $cp_section ) {
 					$this->handle_portal_shared_db_settings_save();
+				} elseif ( 'files' === $cp_section ) {
+					$this->handle_portal_file_settings_save();
 				} elseif ( 'roles' === $cp_section || isset( $_GET['role_manager_action'] ) || isset( $_POST['role_manager_action'] ) ) {
 					$this->handle_role_manager_actions();
 				} elseif ( 'email-templates' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
@@ -11898,6 +11900,27 @@ class AJForms_Admin {
 		);
 	}
 
+	private function get_portal_file_tags( $file_id ) {
+		global $wpdb;
+		return $wpdb->get_col(
+			$wpdb->prepare( "SELECT tag_slug FROM {$this->get_portal_file_tags_table()} WHERE file_id = %d ORDER BY tag_slug", absint( $file_id ) )
+		);
+	}
+
+	private function save_portal_file_tags( $file_id, $tag_slugs ) {
+		global $wpdb;
+		$available = array_keys( ajcore_get_portal_file_settings()['tags'] );
+		$tag_slugs = array_values( array_intersect( array_unique( array_map( 'sanitize_key', (array) $tag_slugs ) ), $available ) );
+		$wpdb->delete( $this->get_portal_file_tags_table(), array( 'file_id' => absint( $file_id ) ), array( '%d' ) );
+		foreach ( $tag_slugs as $tag_slug ) {
+			$wpdb->insert(
+				$this->get_portal_file_tags_table(),
+				array( 'file_id' => absint( $file_id ), 'tag_slug' => $tag_slug, 'created_at' => current_time( 'mysql' ) ),
+				array( '%d', '%s', '%s' )
+			);
+		}
+	}
+
 	private function get_portal_file_assignment_labels( $file_id ) {
 		$labels = array();
 
@@ -11972,6 +11995,7 @@ class AJForms_Admin {
 			check_admin_referer( 'ajf_delete_portal_file_' . $file_id );
 
 			$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $file_id ), array( '%d' ) );
+			$wpdb->delete( $this->get_portal_file_tags_table(), array( 'file_id' => $file_id ), array( '%d' ) );
 			$wpdb->delete( $this->get_portal_files_table(), array( 'id' => $file_id ), array( '%d' ) );
 
 			wp_safe_redirect(
@@ -11988,18 +12012,38 @@ class AJForms_Admin {
 		}
 
 		// Bulk delete via POST form.
-		if ( isset( $_POST['ajf_file_bulk_nonce'], $_POST['ajf_file_bulk_action'] ) && 'delete' === sanitize_key( wp_unslash( $_POST['ajf_file_bulk_action'] ) ) ) {
+		if ( isset( $_POST['ajf_file_bulk_nonce'], $_POST['ajf_file_bulk_action'] ) ) {
 			check_admin_referer( 'ajf_file_bulk_action', 'ajf_file_bulk_nonce' );
 
+			$bulk_action = sanitize_key( wp_unslash( $_POST['ajf_file_bulk_action'] ) );
 			$raw_ids  = isset( $_POST['file_ids'] ) && is_array( $_POST['file_ids'] ) ? $_POST['file_ids'] : array();
 			$file_ids = array_map( 'absint', $raw_ids );
 			$deleted  = 0;
 
-			foreach ( $file_ids as $fid ) {
-				if ( $fid > 0 ) {
+			if ( 'delete' === $bulk_action ) {
+				foreach ( $file_ids as $fid ) {
+					if ( $fid <= 0 ) {
+						continue;
+					}
 					$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $fid ), array( '%d' ) );
+					$wpdb->delete( $this->get_portal_file_tags_table(), array( 'file_id' => $fid ), array( '%d' ) );
 					$wpdb->delete( $this->get_portal_files_table(), array( 'id' => $fid ), array( '%d' ) );
 					$deleted++;
+				}
+			} elseif ( 'add_tag' === $bulk_action ) {
+				$tag = sanitize_key( wp_unslash( $_POST['bulk_tag'] ?? '' ) );
+				if ( isset( ajcore_get_portal_file_settings()['tags'][ $tag ] ) ) {
+					foreach ( $file_ids as $fid ) {
+						$current = $this->get_portal_file_tags( $fid );
+						$this->save_portal_file_tags( $fid, array_merge( $current, array( $tag ) ) );
+					}
+				}
+			} elseif ( 'set_category' === $bulk_action ) {
+				$category = sanitize_text_field( wp_unslash( $_POST['bulk_category'] ?? '' ) );
+				if ( in_array( $category, ajcore_get_portal_file_settings()['categories'], true ) ) {
+					foreach ( $file_ids as $fid ) {
+						$wpdb->update( $this->get_portal_files_table(), array( 'category' => $category, 'updated_at' => current_time( 'mysql' ) ), array( 'id' => $fid ), array( '%s', '%s' ), array( '%d' ) );
+					}
 				}
 			}
 
@@ -12009,6 +12053,7 @@ class AJForms_Admin {
 						'page'    => 'ajforms-client-portal',
 						'tab'     => 'file-library',
 						'deleted' => $deleted,
+						'tagged'  => 'add_tag' === $bulk_action ? count( $file_ids ) : 0,
 					),
 					admin_url( 'admin.php' )
 				)
@@ -12027,6 +12072,7 @@ class AJForms_Admin {
 		$title         = isset( $_POST['portal_file_title'] ) ? sanitize_text_field( wp_unslash( $_POST['portal_file_title'] ) ) : '';
 		$description   = isset( $_POST['portal_file_description'] ) ? sanitize_textarea_field( wp_unslash( $_POST['portal_file_description'] ) ) : '';
 		$category      = isset( $_POST['portal_file_category'] ) ? sanitize_text_field( wp_unslash( $_POST['portal_file_category'] ) ) : '';
+		$file_tags     = isset( $_POST['portal_file_tags'] ) && is_array( $_POST['portal_file_tags'] ) ? wp_unslash( $_POST['portal_file_tags'] ) : array();
 		$user_ids      = isset( $_POST['assigned_user_ids'] ) && is_array( $_POST['assigned_user_ids'] ) ? array_map( 'absint', wp_unslash( $_POST['assigned_user_ids'] ) ) : array();
 		$extra_emails  = isset( $_POST['assigned_user_emails'] ) ? $this->normalize_portal_assignment_emails( wp_unslash( $_POST['assigned_user_emails'] ) ) : array();
 
@@ -12049,6 +12095,11 @@ class AJForms_Admin {
 			if ( '' === $title ) {
 				$title = basename( (string) get_attached_file( $attachment_id ) );
 			}
+		}
+		$existing_file = $file_id ? $this->get_portal_file_record( $file_id ) : null;
+		if ( ! in_array( $category, ajcore_get_portal_file_settings()['categories'], true )
+			&& ( ! $existing_file || $category !== (string) $existing_file->category ) ) {
+			$category = '';
 		}
 
 		$data = array(
@@ -12079,6 +12130,7 @@ class AJForms_Admin {
 		}
 
 		if ( $file_id ) {
+			$this->save_portal_file_tags( $file_id, $file_tags );
 			$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $file_id ), array( '%d' ) );
 
 			foreach ( array_values( array_unique( $user_ids ) ) as $user_id ) {
@@ -12652,6 +12704,11 @@ class AJForms_Admin {
 	private function get_portal_file_users_table() {
 		global $wpdb;
 		return $wpdb->prefix . 'aj_portal_file_users';
+	}
+
+	private function get_portal_file_tags_table() {
+		global $wpdb;
+		return $wpdb->prefix . 'aj_portal_file_tags';
 	}
 
 	/** Returns the wpdb instance for shared portal tables (or local wpdb when multi-site mode is off). */
@@ -17060,6 +17117,7 @@ class AJForms_Admin {
 			'menu'            => __( 'Menu', 'ajforms' ),
 			'calendar'        => __( 'Calendar / Reservations', 'ajforms' ),
 			'api'             => __( 'API', 'ajforms' ),
+			'files'           => __( 'Files', 'ajforms' ),
 			'storage'         => __( 'Storage', 'ajforms' ),
 			'roles'           => __( 'Role Manager', 'ajforms' ),
 			'email-templates' => __( 'Email Templates', 'ajforms' ),
@@ -17085,6 +17143,8 @@ class AJForms_Admin {
 			<?php $this->display_portal_calendar_settings_tab(); ?>
 		<?php elseif ( 'api' === $cp_section ) : ?>
 			<?php $this->display_portal_api_tab(); ?>
+		<?php elseif ( 'files' === $cp_section ) : ?>
+			<?php $this->display_portal_file_settings_tab(); ?>
 		<?php elseif ( 'storage' === $cp_section ) : ?>
 			<?php
 			if ( class_exists( 'AJCore_Storage_Service' ) ) {
@@ -17102,6 +17162,62 @@ class AJForms_Admin {
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
+		<?php
+	}
+
+	private function handle_portal_file_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) || empty( $_POST['ajcore_file_settings_nonce'] ) ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_save_file_settings', 'ajcore_file_settings_nonce' );
+		if ( function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled()
+			&& function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() ) {
+			wp_die( esc_html__( 'File settings can only be changed on the master site.', 'ajforms' ) );
+		}
+
+		$category_lines = preg_split( '/\R/', (string) wp_unslash( $_POST['file_categories'] ?? '' ) );
+		$tag_lines      = preg_split( '/\R/', (string) wp_unslash( $_POST['file_tags'] ?? '' ) );
+		$categories     = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', $category_lines ) ) ) );
+		$tags           = array();
+		foreach ( $tag_lines as $line ) {
+			$label = ltrim( sanitize_text_field( $line ), '#' );
+			$slug  = sanitize_title( $label );
+			if ( '' !== $slug ) {
+				$tags[ $slug ] = $label;
+			}
+		}
+		$migration_tags = isset( $_POST['migration_tags'] ) && is_array( $_POST['migration_tags'] )
+			? array_values( array_intersect( array_map( 'sanitize_key', wp_unslash( $_POST['migration_tags'] ) ), array_keys( $tags ) ) )
+			: array();
+		ajcore_update_portal_file_settings( compact( 'categories', 'tags', 'migration_tags' ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'cp-settings', 'cp_section' => 'files', 'saved' => 1 ), admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private function display_portal_file_settings_tab() {
+		$settings = ajcore_get_portal_file_settings();
+		$locked = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled()
+			&& function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner();
+		?>
+		<div class="ajforms-settings-card">
+			<h2><?php esc_html_e( 'File Settings', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'Manage administrator-facing file categories and internal tags. Tags are never shown to portal clients.', 'ajforms' ); ?></p>
+			<?php if ( $locked ) : ?><div class="notice notice-info"><p><?php esc_html_e( 'These shared settings can only be changed on the master site.', 'ajforms' ); ?></p></div><?php endif; ?>
+			<form method="post">
+				<?php wp_nonce_field( 'ajcore_save_file_settings', 'ajcore_file_settings_nonce' ); ?>
+				<fieldset <?php disabled( $locked ); ?> style="border:0;margin:0;padding:0;<?php echo $locked ? 'opacity:.6;' : ''; ?>">
+					<p><label for="file_categories"><strong><?php esc_html_e( 'Categories', 'ajforms' ); ?></strong></label><br>
+					<textarea id="file_categories" name="file_categories" rows="7" class="large-text"><?php echo esc_textarea( implode( "\n", $settings['categories'] ) ); ?></textarea><br><span class="description"><?php esc_html_e( 'One category per line.', 'ajforms' ); ?></span></p>
+					<p><label for="file_tags"><strong><?php esc_html_e( 'Internal Tags', 'ajforms' ); ?></strong></label><br>
+					<textarea id="file_tags" name="file_tags" rows="6" class="large-text"><?php echo esc_textarea( implode( "\n", array_map( function ( $label ) { return '#' . $label; }, $settings['tags'] ) ) ); ?></textarea><br><span class="description"><?php esc_html_e( 'One tag per line. The # prefix is optional.', 'ajforms' ); ?></span></p>
+					<p><strong><?php esc_html_e( 'Tags Allowed for Migration', 'ajforms' ); ?></strong></p>
+					<?php foreach ( $settings['tags'] as $slug => $label ) : ?>
+						<label style="display:block;margin:6px 0;"><input type="checkbox" name="migration_tags[]" value="<?php echo esc_attr( $slug ); ?>" <?php checked( in_array( $slug, $settings['migration_tags'], true ) ); ?>> #<?php echo esc_html( $label ); ?></label>
+					<?php endforeach; ?>
+					<?php submit_button( __( 'Save File Settings', 'ajforms' ) ); ?>
+				</fieldset>
+			</form>
+		</div>
 		<?php
 	}
 
@@ -20428,8 +20544,10 @@ class AJForms_Admin {
 		$editing_file     = $edit_file_id ? $this->get_portal_file_record( $edit_file_id ) : null;
 		$assigned_users   = array();
 		$assigned_emails  = array();
+		$selected_tags    = array();
 		$attachment_title = '';
 		$attachment_url   = '';
+		$file_settings    = ajcore_get_portal_file_settings();
 
 		if ( $editing_file ) {
 			foreach ( $this->get_portal_file_assignments( (int) $editing_file->id ) as $assignment ) {
@@ -20442,6 +20560,7 @@ class AJForms_Admin {
 
 			$attachment_title = get_the_title( (int) $editing_file->attachment_id );
 			$attachment_url   = wp_get_attachment_url( (int) $editing_file->attachment_id );
+			$selected_tags    = $this->get_portal_file_tags( (int) $editing_file->id );
 		}
 
 		$users = get_users(
@@ -20509,7 +20628,19 @@ class AJForms_Admin {
 
 					<div class="ajforms-file-field">
 						<label for="portal_file_category"><?php esc_html_e( 'Category', 'ajforms' ); ?></label>
-						<input type="text" id="portal_file_category" name="portal_file_category" value="<?php echo esc_attr( $editing_file ? $editing_file->category : '' ); ?>">
+						<select id="portal_file_category" name="portal_file_category" style="width:100%;">
+							<option value=""><?php esc_html_e( 'Select a category', 'ajforms' ); ?></option>
+							<?php if ( $editing_file && '' !== (string) $editing_file->category && ! in_array( $editing_file->category, $file_settings['categories'], true ) ) : ?><option value="<?php echo esc_attr( $editing_file->category ); ?>" selected><?php echo esc_html( $editing_file->category . ' (' . __( 'Legacy', 'ajforms' ) . ')' ); ?></option><?php endif; ?>
+							<?php foreach ( $file_settings['categories'] as $category ) : ?><option value="<?php echo esc_attr( $category ); ?>" <?php selected( $editing_file ? $editing_file->category : '', $category ); ?>><?php echo esc_html( $category ); ?></option><?php endforeach; ?>
+						</select>
+					</div>
+
+					<div class="ajforms-file-field">
+						<label><?php esc_html_e( 'Internal Tags', 'ajforms' ); ?></label>
+						<?php foreach ( $file_settings['tags'] as $slug => $label ) : ?>
+							<label style="display:inline-block;margin:0 16px 6px 0;font-weight:600;"><input type="checkbox" name="portal_file_tags[]" value="<?php echo esc_attr( $slug ); ?>" <?php checked( in_array( $slug, $selected_tags, true ) ); ?>> #<?php echo esc_html( $label ); ?></label>
+						<?php endforeach; ?>
+						<p class="description"><?php esc_html_e( 'Internal only; clients never see these tags.', 'ajforms' ); ?></p>
 					</div>
 
 					<div class="ajforms-file-field">
@@ -20581,14 +20712,18 @@ class AJForms_Admin {
 
 					<form method="post" id="ajf-file-bulk-form" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-client-portal&tab=file-library' ) ); ?>">
 						<?php wp_nonce_field( 'ajf_file_bulk_action', 'ajf_file_bulk_nonce' ); ?>
-						<input type="hidden" name="ajf_file_bulk_action" value="delete">
+						<input type="hidden" name="ajf_file_bulk_action" id="ajf_file_bulk_action" value="">
 
 						<div class="ajf-file-bulk-bar" id="ajf-file-bulk-bar" style="display:none;align-items:center;gap:10px;margin-bottom:10px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;">
 							<span id="ajf-file-sel-count" style="font-weight:700;color:#991b1b;"></span>
 							<button type="button" id="ajf-file-deselect-all" style="font-size:12px;color:#2563eb;background:none;border:none;cursor:pointer;padding:0;"><?php esc_html_e( 'Deselect all', 'ajforms' ); ?></button>
 							<div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+								<select name="bulk_category"><option value=""><?php esc_html_e( 'Choose category', 'ajforms' ); ?></option><?php foreach ( $file_settings['categories'] as $category ) : ?><option value="<?php echo esc_attr( $category ); ?>"><?php echo esc_html( $category ); ?></option><?php endforeach; ?></select>
+								<button type="submit" class="button" onclick="document.getElementById('ajf_file_bulk_action').value='set_category';"><?php esc_html_e( 'Set Category', 'ajforms' ); ?></button>
+								<select name="bulk_tag"><option value=""><?php esc_html_e( 'Choose tag', 'ajforms' ); ?></option><?php foreach ( $file_settings['tags'] as $slug => $label ) : ?><option value="<?php echo esc_attr( $slug ); ?>">#<?php echo esc_html( $label ); ?></option><?php endforeach; ?></select>
+								<button type="submit" class="button" onclick="document.getElementById('ajf_file_bulk_action').value='add_tag';"><?php esc_html_e( 'Add Tag', 'ajforms' ); ?></button>
 								<button type="submit" id="ajf-file-bulk-delete-btn" style="padding:6px 16px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;"
-									onclick="return confirm('<?php echo esc_js( __( 'Delete selected file records? This removes DB records only — media files stay in WordPress.', 'ajforms' ) ); ?>');">
+									onclick="document.getElementById('ajf_file_bulk_action').value='delete';return confirm('<?php echo esc_js( __( 'Delete selected file records? This removes DB records only — media files stay in WordPress.', 'ajforms' ) ); ?>');">
 									<?php esc_html_e( 'Delete Selected', 'ajforms' ); ?>
 								</button>
 							</div>
@@ -20600,6 +20735,7 @@ class AJForms_Admin {
 								<th style="width:36px;"><input type="checkbox" id="ajf-select-all-files" style="cursor:pointer;" title="<?php esc_attr_e( 'Select all', 'ajforms' ); ?>"></th>
 								<th><?php esc_html_e( 'Title', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Category', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Tags', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'File', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Shared With', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
@@ -20607,7 +20743,7 @@ class AJForms_Admin {
 						</thead>
 						<tbody>
 							<?php if ( empty( $files ) ) : ?>
-								<tr><td colspan="6"><?php esc_html_e( 'No files have been shared yet.', 'ajforms' ); ?></td></tr>
+								<tr><td colspan="7"><?php esc_html_e( 'No files have been shared yet.', 'ajforms' ); ?></td></tr>
 							<?php else : ?>
 								<?php foreach ( $files as $file ) : ?>
 									<?php
@@ -20619,6 +20755,10 @@ class AJForms_Admin {
 										<td style="width:36px;"><input type="checkbox" name="file_ids[]" value="<?php echo esc_attr( (int) $file->id ); ?>" class="ajf-file-row-checkbox" style="cursor:pointer;"></td>
 										<td><strong><?php echo esc_html( $file->title ); ?></strong><br><span class="description"><?php echo esc_html( wp_trim_words( (string) $file->description, 16 ) ); ?></span></td>
 										<td><?php echo esc_html( $file->category ); ?></td>
+										<td><?php
+											$tag_slugs = $this->get_portal_file_tags( (int) $file->id );
+											echo esc_html( implode( ' ', array_map( function ( $slug ) use ( $file_settings ) { return '#' . ( $file_settings['tags'][ $slug ] ?? $slug ); }, $tag_slugs ) ) );
+										?></td>
 										<td><?php echo $file_url ? esc_html( basename( parse_url( $file_url, PHP_URL_PATH ) ) ) : esc_html__( 'Missing attachment', 'ajforms' ); ?></td>
 										<td>
 											<?php if ( empty( $labels ) ) : ?>

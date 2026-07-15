@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.6.45
+ * Version: 0.6.46
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.6.45' );
+	define( 'AJCORE_VERSION', '0.6.46' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -918,6 +918,55 @@ add_action(
 	2
 );
 
+if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
+	function ajcore_get_portal_file_settings() {
+		$defaults = array(
+			'categories'     => array( 'Articles of Organization', 'IRS EIN Letters', 'SOSNC Flyers', 'Others' ),
+			'tags'           => array( 'registered-agent' => 'RegisteredAgent', 'virtual-office' => 'VirtualOffice' ),
+			'migration_tags' => array( 'registered-agent' ),
+		);
+		$saved = array();
+		if ( ajcore_is_shared_db_enabled() ) {
+			$db = ajcore_get_shared_db();
+			if ( $db ) {
+				$table = $db->prefix . 'aj_shared_settings';
+				$value = $db->get_var( $db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_portal_file_settings' ) );
+				$decoded = json_decode( (string) $value, true );
+				$saved = is_array( $decoded ) ? $decoded : array();
+			}
+		} else {
+			$saved = get_option( 'ajcore_portal_file_settings', array() );
+		}
+		$saved = is_array( $saved ) ? $saved : array();
+		$settings = wp_parse_args( $saved, $defaults );
+		$settings['categories'] = array_values( array_filter( array_map( 'sanitize_text_field', (array) $settings['categories'] ) ) );
+		$settings['tags'] = is_array( $settings['tags'] ) ? $settings['tags'] : $defaults['tags'];
+		$settings['migration_tags'] = array_values( array_intersect( (array) $settings['migration_tags'], array_keys( $settings['tags'] ) ) );
+		return $settings;
+	}
+}
+
+if ( ! function_exists( 'ajcore_update_portal_file_settings' ) ) {
+	function ajcore_update_portal_file_settings( $settings ) {
+		if ( ajcore_is_shared_db_enabled() ) {
+			$db = ajcore_get_shared_db();
+			if ( ! $db ) {
+				return false;
+			}
+			$table = $db->prefix . 'aj_shared_settings';
+			$encoded = wp_json_encode( $settings );
+			$exists = $db->get_var( $db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_portal_file_settings' ) );
+			$data = array( 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) );
+			if ( $exists ) {
+				return false !== $db->update( $table, $data, array( 'setting_name' => 'ajcore_portal_file_settings' ), array( '%s', '%s' ), array( '%s' ) );
+			}
+			$data['setting_name'] = 'ajcore_portal_file_settings';
+			return false !== $db->insert( $table, $data, array( '%s', '%s', '%s' ) );
+		}
+		return update_option( 'ajcore_portal_file_settings', $settings, false );
+	}
+}
+
 /**
  * The code that runs during plugin activation.
  */
@@ -937,7 +986,7 @@ function ajforms_maybe_upgrade() {
 	$installed_version = get_option( 'ajforms_version', '' );
 	$portal_schema_version = get_option( 'ajforms_portal_schema_version', '' );
 
-	if ( AJFORMS_VERSION === $installed_version && '27' === $portal_schema_version ) {
+	if ( AJFORMS_VERSION === $installed_version && '28' === $portal_schema_version ) {
 		return;
 	}
 
