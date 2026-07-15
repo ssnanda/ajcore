@@ -14586,7 +14586,9 @@ class AJForms {
 			field.style.cursor = 'text';
 			var desc = document.createElement('p');
 			desc.className = 'description';
-			desc.textContent = 'Username can be changed. It must be unique. AJCore will also update this customer\'s RustFS folder paths.';
+			desc.textContent = 'WARNING: Changing this username also changes this customer\'s RustFS folder paths. Files attached to this user may break if the storage-path update cannot be completed.';
+			desc.style.color = '#b91c1c';
+			desc.style.fontWeight = '700';
 			field.closest('td').appendChild(desc);
 			var originalLogin = field.value;
 			field.form.addEventListener('submit', function (event) {
