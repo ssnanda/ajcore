@@ -17091,12 +17091,12 @@ class AJForms_Admin {
 		$stripe_settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
 		$tabs = array(
 			'dashboard'          => __( 'Dashboard', 'ajforms' ),
-			'service-requests'   => __( 'Service Requests', 'ajforms' ),
 			'leads'              => __( 'Leads', 'ajforms' ),
-			'payments'           => __( 'Payments', 'ajforms' ),
-			'partners'           => __( 'Partners', 'ajforms' ),
-			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'portal-users'       => __( 'Customers', 'ajforms' ),
+			'partners'           => __( 'Partners', 'ajforms' ),
+			'service-requests'   => __( 'Service Requests', 'ajforms' ),
+			'payments'           => __( 'Payments', 'ajforms' ),
+			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'tasks'              => __( 'Compliance', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
