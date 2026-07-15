@@ -17339,7 +17339,9 @@ class AJForms_Admin {
 			'aj_portal_sync_log_items',
 		);
 		$purposes = array(
-			'aj_forms' => 'Form definitions', 'aj_leads' => 'CRM leads', 'aj_lead_notes' => 'Lead notes',
+			'aj_forms' => 'Legacy form definitions', 'aj_forms_forms' => 'AJCore form definitions and form-builder configuration',
+			'aj_leads' => 'Legacy CRM lead records', 'aj_lead_notes' => 'Notes attached to legacy CRM leads',
+			'aj_forms_leads' => 'Form submissions promoted into AJCore CRM lead records', 'aj_forms_lead_notes' => 'Notes and follow-up history attached to AJCore leads',
 			'aj_portal_stripe_customers' => 'Stripe customer cache and portal status', 'aj_portal_customer_states' => 'Per-site customer portal state',
 			'aj_portal_stripe_products' => 'Stripe product and price cache', 'aj_portal_product_catalog' => 'Portal catalog overrides',
 			'aj_portal_stripe_subscriptions' => 'Stripe subscription cache', 'aj_portal_stripe_transactions' => 'Stripe transaction cache',
@@ -17354,6 +17356,9 @@ class AJForms_Admin {
 			'aj_portal_event_log' => 'AJCore audit events', 'aj_portal_email_log' => 'Outgoing email log',
 			'aj_portal_reservation_resources' => 'Reservable resources', 'aj_portal_reservations' => 'Reservations',
 			'aj_portal_mail_items' => 'Received mail items', 'aj_portal_partners' => 'Partner organizations',
+			'aj_portal_carts' => 'Saved client-portal checkout carts', 'aj_portal_entity_mappings' => 'Links AJCore entities to external source records',
+			'aj_portal_user_mappings' => 'Legacy portal-user-to-customer mappings', 'aj_shared_sites' => 'Sites connected to the shared AJCore database',
+			'aj_shared_settings' => 'AJCore settings synchronized across connected sites',
 		);
 
 		foreach ( $sources as $location => $db ) {
@@ -17435,35 +17440,86 @@ class AJForms_Admin {
 		unset( $table );
 		usort( $tables, function ( $a, $b ) { return strcmp( $a['logical_name'] . $a['location'], $b['logical_name'] . $b['location'] ); } );
 
-		$location_counts = array_fill_keys( array_keys( $sources ), 0 );
-		$source_counts   = array( 'direct' => 0, 'derived' => 0, 'ajcore' => 0 );
-		$total_rows      = 0;
-		$counted_tables  = 0;
-		$logical_names   = array();
-		foreach ( $tables as $table ) {
-			$location_counts[ $table['location'] ]++;
-			$source_counts[ $table['stripe'] ? $table['stripe'] : 'ajcore' ]++;
-			if ( null !== $table['row_count'] ) {
-				$total_rows += $table['row_count'];
-				$counted_tables++;
+		$query_rows    = array();
+		$query_columns = array();
+		$query_error   = '';
+		$query_label   = '';
+		$selected      = array();
+		$query_sql     = '';
+		$query_location = sanitize_title( (string) array_key_first( $sources ) );
+		if ( isset( $_POST['ajcore_schema_inspect'] ) ) {
+			if ( ! current_user_can( 'manage_options' ) ) {
+				wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 			}
-			$logical_names[ $table['logical_name'] ] = true;
+			check_admin_referer( 'ajcore_schema_inspect', 'ajcore_schema_inspect_nonce' );
+			$action       = isset( $_POST['schema_inspect_action'] ) ? sanitize_key( wp_unslash( $_POST['schema_inspect_action'] ) ) : 'query';
+			$selected     = isset( $_POST['schema_tables'] ) ? array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['schema_tables'] ) ) : array();
+			$query_sql    = isset( $_POST['schema_query'] ) ? trim( wp_unslash( $_POST['schema_query'] ) ) : '';
+			$query_location = isset( $_POST['schema_query_location'] ) ? sanitize_title( wp_unslash( $_POST['schema_query_location'] ) ) : '';
+			$target_db    = null;
+			$sql          = '';
+
+			if ( 'query' === $action ) {
+				foreach ( $sources as $location => $db ) {
+					if ( sanitize_title( $location ) === $query_location ) {
+						$target_db = $db;
+						break;
+					}
+				}
+				$query_sql = rtrim( $query_sql, "; \t\n\r\0\x0B" );
+				$is_read_only = preg_match( '/^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN)\b/i', $query_sql )
+					&& false === strpos( $query_sql, ';' )
+					&& ! preg_match( '/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|REPLACE|RENAME|GRANT|REVOKE|LOCK|UNLOCK|INTO\s+(OUTFILE|DUMPFILE)|LOAD_FILE|SLEEP|BENCHMARK)\b/i', $query_sql );
+				if ( ! $target_db || ! $is_read_only ) {
+					$query_error = __( 'Only a single read-only SELECT, SHOW, DESCRIBE, DESC, or EXPLAIN query is allowed.', 'ajforms' );
+				} else {
+					$sql = $query_sql;
+					if ( preg_match( '/^\s*SELECT\b/i', $sql ) && ! preg_match( '/\bLIMIT\s+\d+/i', $sql ) ) {
+						$sql .= ' LIMIT 100';
+					}
+					$query_label = __( 'Query Results', 'ajforms' );
+				}
+			} elseif ( 1 !== count( $selected ) || ! isset( $tables_by_key[ $selected[0] ] ) ) {
+				$query_error = __( 'Select exactly one table for this action.', 'ajforms' );
+			} else {
+				$table     = $tables_by_key[ $selected[0] ];
+				$target_db = isset( $sources[ $table['location'] ] ) ? $sources[ $table['location'] ] : null;
+				$safe_table = str_replace( '`', '``', $table['full_name'] );
+				if ( 'preview' === $action ) {
+					$sql = "SELECT * FROM `{$safe_table}` LIMIT 100";
+					$query_label = sprintf( __( 'Preview: %s', 'ajforms' ), $table['full_name'] );
+				} elseif ( 'describe' === $action ) {
+					$sql = "DESCRIBE `{$safe_table}`";
+					$query_label = sprintf( __( 'Columns: %s', 'ajforms' ), $table['full_name'] );
+				} elseif ( 'indexes' === $action ) {
+					$sql = "SHOW INDEX FROM `{$safe_table}`";
+					$query_label = sprintf( __( 'Indexes: %s', 'ajforms' ), $table['full_name'] );
+				}
+			}
+			if ( $sql && $target_db ) {
+				$query_rows = $target_db->get_results( $sql, ARRAY_A );
+				if ( $target_db->last_error ) {
+					$query_error = $target_db->last_error;
+					$query_rows  = array();
+				} elseif ( ! empty( $query_rows ) ) {
+					$query_columns = array_keys( reset( $query_rows ) );
+				}
+			}
 		}
 		?>
 		<style>
-			.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:16px 0}.ajcore-schema-stat{padding:14px 16px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-stat strong{display:block;color:#0f172a;font-size:24px;line-height:1.1}.ajcore-schema-stat span{display:block;margin-top:5px;color:#64748b;font-size:12px;font-weight:800}.ajcore-schema-filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr));gap:10px;margin:16px 0;padding:14px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-filters input,.ajcore-schema-filters select{width:100%;min-height:40px}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}.ajcore-schema-related{display:flex;flex-direction:column;gap:5px;min-width:210px}.ajcore-schema-related code{white-space:normal}.ajcore-schema-empty{display:none;margin:14px 0 0;color:#64748b;font-weight:700}@media(max-width:1000px){.ajcore-schema-filters{grid-template-columns:1fr 1fr}}@media(max-width:782px){.ajcore-schema-filters{grid-template-columns:1fr}.ajcore-schema-table{display:block;overflow-x:auto}}
+			.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-query{display:grid;grid-template-columns:170px minmax(280px,1fr) auto;gap:10px;margin:16px 0;padding:14px;border:1px solid #c7d2fe;border-radius:16px;background:#eef2ff}.ajcore-schema-query select,.ajcore-schema-query input{width:100%;min-height:42px}.ajcore-schema-filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr));gap:10px;margin:16px 0;padding:14px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-filters input,.ajcore-schema-filters select{width:100%;min-height:40px}.ajcore-schema-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:14px;background:#eff6ff}.ajcore-schema-actions.is-visible{display:flex}.ajcore-schema-actions strong{margin-right:4px}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}.ajcore-schema-related{display:flex;flex-direction:column;gap:5px;min-width:210px}.ajcore-schema-related code{white-space:normal}.ajcore-schema-empty{display:none;margin:14px 0 0;color:#64748b;font-weight:700}.ajcore-schema-results{margin-top:18px;padding-top:18px;border-top:1px solid #dbe7f3}.ajcore-schema-results-scroll{max-height:520px;overflow:auto;border:1px solid #dbe7f3;border-radius:14px}.ajcore-schema-results table{margin:0!important;border:0!important;border-radius:0!important}.ajcore-schema-results td{max-width:420px;white-space:pre-wrap;overflow-wrap:anywhere}@media(max-width:1000px){.ajcore-schema-filters{grid-template-columns:1fr 1fr}}@media(max-width:782px){.ajcore-schema-query,.ajcore-schema-filters{grid-template-columns:1fr}.ajcore-schema-table{display:block;overflow-x:auto}}
 		</style>
 		<div class="ajforms-settings-card">
-			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'AJCore Database Inventory', 'ajforms' ); ?></h2><p><?php esc_html_e( 'One row per physical table. Row counts are saved snapshots and are never queried during a normal page load.', 'ajforms' ); ?></p></div><form method="post" style="margin:0;"><?php wp_nonce_field( 'ajcore_refresh_schema_counts', 'ajcore_schema_counts_nonce' ); ?><button type="submit" class="button button-primary" name="ajcore_refresh_schema_counts" value="1"><?php esc_html_e( 'Update Row Counts', 'ajforms' ); ?></button></form></div>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'AJCore Database Inventory', 'ajforms' ); ?></h2><p><?php esc_html_e( 'One numbered row per physical table, with a concise purpose, saved row count, data source, and known relationships.', 'ajforms' ); ?></p></div><form method="post" style="margin:0;"><?php wp_nonce_field( 'ajcore_refresh_schema_counts', 'ajcore_schema_counts_nonce' ); ?><button type="submit" class="button" name="ajcore_refresh_schema_counts" value="1"><?php esc_html_e( 'Update Row Counts', 'ajforms' ); ?></button></form></div>
 			<?php if ( ! empty( $count_snapshot['updated_at'] ) ) : ?><p style="margin:-4px 0 12px;color:#64748b;"><?php echo esc_html( sprintf( __( 'Row-count snapshot last updated: %s', 'ajforms' ), $count_snapshot['updated_at'] ) ); ?></p><?php else : ?><div class="notice notice-info inline"><p><?php esc_html_e( 'Row counts have not been collected yet. Click Update Row Counts when you want to create the first snapshot.', 'ajforms' ); ?></p></div><?php endif; ?>
 			<?php if ( isset( $_GET['schema-counts-updated'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'The row-count snapshot was updated.', 'ajforms' ); ?></p></div><?php endif; ?>
-			<div class="ajcore-schema-summary">
-				<div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( count( $tables ) ) ); ?></strong><span><?php esc_html_e( 'Physical tables', 'ajforms' ); ?></span></div>
-				<div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( count( $logical_names ) ) ); ?></strong><span><?php esc_html_e( 'Unique table names', 'ajforms' ); ?></span></div>
-				<?php foreach ( $location_counts as $location => $count ) : ?><div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( $count ) ); ?></strong><span><?php echo esc_html( $location ); ?></span></div><?php endforeach; ?>
-				<div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( $source_counts['direct'] + $source_counts['derived'] ) ); ?></strong><span><?php esc_html_e( 'Stripe-fed tables', 'ajforms' ); ?></span></div>
-				<div class="ajcore-schema-stat"><strong><?php echo esc_html( number_format_i18n( $total_rows ) ); ?></strong><span><?php echo esc_html( sprintf( __( 'Saved rows (%1$d/%2$d counted)', 'ajforms' ), $counted_tables, count( $tables ) ) ); ?></span></div>
-			</div>
+			<form method="post" class="ajcore-schema-query">
+				<?php wp_nonce_field( 'ajcore_schema_inspect', 'ajcore_schema_inspect_nonce' ); ?><input type="hidden" name="ajcore_schema_inspect" value="1"><input type="hidden" name="schema_inspect_action" value="query">
+				<select name="schema_query_location" aria-label="<?php esc_attr_e( 'Query database', 'ajforms' ); ?>"><?php foreach ( array_keys( $sources ) as $location ) : ?><option value="<?php echo esc_attr( sanitize_title( $location ) ); ?>" <?php selected( $query_location, sanitize_title( $location ) ); ?>><?php echo esc_html( $location ); ?></option><?php endforeach; ?></select>
+				<input type="text" name="schema_query" value="<?php echo esc_attr( $query_sql ); ?>" placeholder="SELECT * FROM wp_aj_example LIMIT 25" required>
+				<button type="submit" class="button button-primary"><?php esc_html_e( 'Run Read-Only Query', 'ajforms' ); ?></button>
+			</form>
 			<div class="ajcore-schema-filters">
 				<input type="search" id="ajcore-schema-search" placeholder="<?php esc_attr_e( 'Search table, purpose, or relationship…', 'ajforms' ); ?>">
 				<select id="ajcore-schema-location"><option value=""><?php esc_html_e( 'All databases', 'ajforms' ); ?></option><?php foreach ( array_keys( $sources ) as $location ) : ?><option value="<?php echo esc_attr( sanitize_title( $location ) ); ?>"><?php echo esc_html( $location ); ?></option><?php endforeach; ?></select>
@@ -17471,13 +17527,21 @@ class AJForms_Admin {
 				<select id="ajcore-schema-rows"><option value=""><?php esc_html_e( 'Any row count', 'ajforms' ); ?></option><option value="populated"><?php esc_html_e( 'Has data', 'ajforms' ); ?></option><option value="empty"><?php esc_html_e( 'Empty tables', 'ajforms' ); ?></option><option value="unknown"><?php esc_html_e( 'Not counted', 'ajforms' ); ?></option></select>
 			</div>
 			<p id="ajcore-schema-visible-count" style="margin:0 0 12px;color:#64748b;font-weight:800;"><?php echo esc_html( sprintf( __( 'Showing %1$d of %2$d physical tables', 'ajforms' ), count( $tables ), count( $tables ) ) ); ?></p>
-			<table class="widefat striped ajcore-schema-table" id="ajcore-schema-inventory"><thead><tr><th>Table</th><th>Location</th><th>Rows</th><th>Purpose</th><th>Data source</th><th>Related tables</th></tr></thead><tbody>
-			<?php foreach ( $tables as $table ) : ?>
-				<tr data-location="<?php echo esc_attr( sanitize_title( $table['location'] ) ); ?>" data-source="<?php echo esc_attr( $table['stripe'] ? $table['stripe'] : 'ajcore' ); ?>" data-rows="<?php echo null === $table['row_count'] ? 'unknown' : esc_attr( $table['row_count'] ); ?>"><td><code><?php echo esc_html( $table['full_name'] ); ?></code></td><td><strong><?php echo esc_html( $table['location'] ); ?></strong><br><small><code><?php echo esc_html( $table['database'] ); ?></code></small></td><td><strong><?php echo null === $table['row_count'] ? esc_html__( 'Not counted', 'ajforms' ) : esc_html( number_format_i18n( $table['row_count'] ) ); ?></strong></td><td><?php echo esc_html( $table['purpose'] ); ?></td><td><?php if ( 'direct' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-direct">Stripe direct</span><?php elseif ( 'derived' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-derived">Stripe-derived</span><?php else : ?><span class="ajcore-schema-badge ajcore-schema-local">AJCore-managed</span><?php endif; ?></td><td><div class="ajcore-schema-related"><?php foreach ( $table['relationships'] as $related ) : ?><span><?php echo 'to' === $related['direction'] ? '→' : '←'; ?> <code><?php echo esc_html( $related['table'] ); ?></code><small> via <?php echo esc_html( $related['field'] ); ?></small></span><?php endforeach; ?><?php if ( empty( $table['relationships'] ) ) : ?><span>—</span><?php endif; ?></div></td></tr>
+			<form method="post" id="ajcore-schema-actions-form" class="ajcore-schema-actions">
+				<?php wp_nonce_field( 'ajcore_schema_inspect', 'ajcore_schema_inspect_nonce' ); ?><input type="hidden" name="ajcore_schema_inspect" value="1">
+				<strong id="ajcore-schema-selected-count"></strong>
+				<button type="submit" class="button button-primary" name="schema_inspect_action" value="preview"><?php esc_html_e( 'Preview 100 Rows', 'ajforms' ); ?></button>
+				<button type="submit" class="button" name="schema_inspect_action" value="describe"><?php esc_html_e( 'Describe Columns', 'ajforms' ); ?></button>
+				<button type="submit" class="button" name="schema_inspect_action" value="indexes"><?php esc_html_e( 'Show Indexes', 'ajforms' ); ?></button>
+			</form>
+			<table class="widefat striped ajcore-schema-table" id="ajcore-schema-inventory"><thead><tr><th style="width:34px;"><input type="checkbox" id="ajcore-schema-check-all" aria-label="<?php esc_attr_e( 'Select all visible tables', 'ajforms' ); ?>"></th><th style="width:42px;">#</th><th>Table</th><th>Location</th><th>Rows</th><th>Purpose</th><th>Data source</th><th>Related tables</th></tr></thead><tbody>
+			<?php foreach ( $tables as $table_index => $table ) : ?>
+				<tr data-location="<?php echo esc_attr( sanitize_title( $table['location'] ) ); ?>" data-source="<?php echo esc_attr( $table['stripe'] ? $table['stripe'] : 'ajcore' ); ?>" data-rows="<?php echo null === $table['row_count'] ? 'unknown' : esc_attr( $table['row_count'] ); ?>"><td><input type="checkbox" class="ajcore-schema-table-check" name="schema_tables[]" value="<?php echo esc_attr( $table['database'] . '|' . $table['full_name'] ); ?>" form="ajcore-schema-actions-form" <?php checked( in_array( $table['database'] . '|' . $table['full_name'], $selected, true ) ); ?>></td><td><?php echo esc_html( number_format_i18n( $table_index + 1 ) ); ?></td><td><code><?php echo esc_html( $table['full_name'] ); ?></code></td><td><strong><?php echo esc_html( $table['location'] ); ?></strong><br><small><code><?php echo esc_html( $table['database'] ); ?></code></small></td><td><strong><?php echo null === $table['row_count'] ? esc_html__( 'Not counted', 'ajforms' ) : esc_html( number_format_i18n( $table['row_count'] ) ); ?></strong></td><td><?php echo esc_html( $table['purpose'] ); ?></td><td><?php if ( 'direct' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-direct">Stripe direct</span><?php elseif ( 'derived' === $table['stripe'] ) : ?><span class="ajcore-schema-badge ajcore-schema-derived">Stripe-derived</span><?php else : ?><span class="ajcore-schema-badge ajcore-schema-local">AJCore-managed</span><?php endif; ?></td><td><div class="ajcore-schema-related"><?php foreach ( $table['relationships'] as $related ) : ?><span><?php echo 'to' === $related['direction'] ? '→' : '←'; ?> <code><?php echo esc_html( $related['table'] ); ?></code><small> via <?php echo esc_html( $related['field'] ); ?></small></span><?php endforeach; ?><?php if ( empty( $table['relationships'] ) ) : ?><span>—</span><?php endif; ?></div></td></tr>
 			<?php endforeach; ?>
-			<?php if ( empty( $tables ) ) : ?><tr><td colspan="6"><?php esc_html_e( 'No AJCore tables were found.', 'ajforms' ); ?></td></tr><?php endif; ?>
+			<?php if ( empty( $tables ) ) : ?><tr><td colspan="8"><?php esc_html_e( 'No AJCore tables were found.', 'ajforms' ); ?></td></tr><?php endif; ?>
 			</tbody></table>
 			<p class="ajcore-schema-empty" id="ajcore-schema-empty"><?php esc_html_e( 'No tables match the selected filters.', 'ajforms' ); ?></p>
+			<?php if ( $query_error || $query_label ) : ?><div class="ajcore-schema-results"><?php if ( $query_error ) : ?><div class="notice notice-error inline"><p><?php echo esc_html( $query_error ); ?></p></div><?php else : ?><h3><?php echo esc_html( $query_label ); ?></h3><?php if ( empty( $query_rows ) ) : ?><p><?php esc_html_e( 'The query completed successfully and returned no rows.', 'ajforms' ); ?></p><?php else : ?><div class="ajcore-schema-results-scroll"><table class="widefat striped"><thead><tr><?php foreach ( $query_columns as $column ) : ?><th><?php echo esc_html( $column ); ?></th><?php endforeach; ?></tr></thead><tbody><?php foreach ( $query_rows as $query_row ) : ?><tr><?php foreach ( $query_columns as $column ) : ?><td><?php $value = isset( $query_row[ $column ] ) ? $query_row[ $column ] : null; echo esc_html( is_scalar( $value ) || null === $value ? (string) $value : wp_json_encode( $value ) ); ?></td><?php endforeach; ?></tr><?php endforeach; ?></tbody></table></div><?php endif; ?><?php endif; ?></div><?php endif; ?>
 		</div>
 		<script>
 		(function(){
@@ -17485,8 +17549,13 @@ class AJForms_Admin {
 			if(!inventory){return;}
 			var search=document.getElementById('ajcore-schema-search'),location=document.getElementById('ajcore-schema-location'),source=document.getElementById('ajcore-schema-source'),rows=document.getElementById('ajcore-schema-rows'),empty=document.getElementById('ajcore-schema-empty'),visibleCount=document.getElementById('ajcore-schema-visible-count');
 			var entries=Array.prototype.slice.call(inventory.querySelectorAll('tbody tr[data-location]'));
-			function filter(){var query=(search.value||'').toLowerCase(),visible=0;entries.forEach(function(row){var rawCount=row.getAttribute('data-rows'),count=rawCount==='unknown'?null:parseInt(rawCount,10);var rowMatch=!rows.value||(rows.value==='unknown'?count===null:(rows.value==='empty'?count===0:count!==null&&count>0));var show=(!query||row.textContent.toLowerCase().indexOf(query)!==-1)&&(!location.value||row.getAttribute('data-location')===location.value)&&(!source.value||row.getAttribute('data-source')===source.value)&&rowMatch;row.hidden=!show;if(show){visible++;}});empty.style.display=visible?'none':'block';visibleCount.textContent='Showing '+visible+' of '+entries.length+' physical tables';}
+			var checks=Array.prototype.slice.call(inventory.querySelectorAll('.ajcore-schema-table-check')),checkAll=document.getElementById('ajcore-schema-check-all'),actionBar=document.getElementById('ajcore-schema-actions-form'),selectedCount=document.getElementById('ajcore-schema-selected-count'),actionButtons=Array.prototype.slice.call(actionBar.querySelectorAll('button'));
+			function updateActions(){var count=checks.filter(function(check){return check.checked;}).length;actionBar.classList.toggle('is-visible',count>0);selectedCount.textContent=count+' selected — choose one table';actionButtons.forEach(function(button){button.disabled=count!==1;});}
+			function filter(){var query=(search.value||'').toLowerCase(),visible=0;entries.forEach(function(row){var rawCount=row.getAttribute('data-rows'),count=rawCount==='unknown'?null:parseInt(rawCount,10);var rowMatch=!rows.value||(rows.value==='unknown'?count===null:(rows.value==='empty'?count===0:count!==null&&count>0));var show=(!query||row.textContent.toLowerCase().indexOf(query)!==-1)&&(!location.value||row.getAttribute('data-location')===location.value)&&(!source.value||row.getAttribute('data-source')===source.value)&&rowMatch;row.hidden=!show;if(show){visible++;}});empty.style.display=visible?'none':'block';visibleCount.textContent='Showing '+visible+' of '+entries.length+' physical tables';checkAll.checked=false;}
 			[search,location,source,rows].forEach(function(control){control.addEventListener('input',filter);control.addEventListener('change',filter);});
+			checks.forEach(function(check){check.addEventListener('change',updateActions);});
+			checkAll.addEventListener('change',function(){entries.forEach(function(row){if(!row.hidden){var check=row.querySelector('.ajcore-schema-table-check');if(check){check.checked=checkAll.checked;}}});updateActions();});
+			updateActions();
 		})();
 		</script>
 		<?php
