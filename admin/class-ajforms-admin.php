@@ -19200,11 +19200,14 @@ class AJForms_Admin {
 			.ajcore-customer-360{width:100%;max-width:none;box-sizing:border-box}
 			.ajcore-customer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:16px 0 18px}
 			.ajcore-customer-head h2{margin:0 0 6px;font-size:24px}
-			.ajcore-customer-grid{display:grid;grid-template-columns:repeat(2,minmax(320px,1fr));gap:16px;align-items:start}
+			.ajcore-customer-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(340px,1fr);gap:16px;align-items:start}
 			.ajcore-customer-grid.is-local{grid-template-columns:minmax(680px,2fr) minmax(340px,1fr)}
+			.ajcore-customer-col-main,.ajcore-customer-col-side{display:flex;flex-direction:column;gap:16px;min-width:0}
+			.ajcore-customer-col-main{grid-column:1;grid-row:1}
+			.ajcore-customer-col-side{grid-column:2;grid-row:1}
 			.ajcore-customer-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px;overflow:hidden}
 			.ajcore-customer-card h3{margin:0 0 14px;font-size:16px}
-			.ajcore-customer-grid.is-local .ajcore-portal-access-card{grid-column:2;grid-row:1;padding:12px 16px}.ajcore-customer-grid.is-local .ajcore-portal-access-card h3{margin-bottom:8px}.ajcore-customer-grid.is-local .ajcore-customer-profile-card{grid-column:2;grid-row:2}.ajcore-customer-grid.is-local .ajcore-local-service-card{grid-column:1;grid-row:1}.ajcore-customer-grid.is-local .ajcore-local-ledger-card{grid-column:1;grid-row:2}.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-meta{grid-template-columns:100px minmax(0,1fr);gap:5px 10px}.ajcore-customer-grid.is-local .ajcore-portal-access-card hr,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-actions,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-quick-actions{display:none}
+			.ajcore-customer-grid.is-local .ajcore-portal-access-card{order:-1;padding:12px 16px}.ajcore-customer-grid.is-local .ajcore-portal-access-card h3{margin-bottom:8px}.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-meta{grid-template-columns:100px minmax(0,1fr);gap:5px 10px}.ajcore-customer-grid.is-local .ajcore-portal-access-card hr,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-actions,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-quick-actions{display:none}
 			.ajcore-customer-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px}
 			.ajcore-customer-card-head h3{margin:0}
 			.ajcore-customer-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:0 0 16px}
@@ -19257,7 +19260,7 @@ class AJForms_Admin {
 			.ajcore-subscription-action-wide{grid-column:1/-1}
 			.ajcore-subscription-action-buttons{display:flex;gap:8px;align-items:center;justify-content:flex-end}
 			.ajcore-subscription-update-form[data-collection-method="charge_automatically"] .ajcore-subscription-due-days{display:none}
-			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}.ajcore-customer-grid.is-local>*{grid-column:1!important;grid-row:auto!important}.ajcore-local-ledger-summary{grid-template-columns:1fr}.ajcore-ledger-edit form{position:static;grid-template-columns:1fr}.ajcore-local-modal-body form{grid-template-columns:1fr}.ajcore-local-modal-body .ajcore-modal-wide{grid-column:1}}
+			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}.ajcore-customer-col-main,.ajcore-customer-col-side{grid-column:1;grid-row:auto}.ajcore-local-ledger-summary{grid-template-columns:1fr}.ajcore-ledger-edit form{position:static;grid-template-columns:1fr}.ajcore-local-modal-body form{grid-template-columns:1fr}.ajcore-local-modal-body .ajcore-modal-wide{grid-column:1}}
 			@media (max-width: 960px){.ajcore-customer-edit-grid{grid-template-columns:1fr}.ajcore-customer-edit-actions{justify-content:flex-start}.ajcore-subscription-form{grid-template-columns:1fr}}
 		</style>
 
@@ -19328,6 +19331,7 @@ class AJForms_Admin {
 		</div><?php endif; ?>
 
 		<div class="ajcore-customer-grid <?php echo $is_local ? 'is-local' : ''; ?>">
+			<div class="ajcore-customer-col-side">
 			<div class="ajcore-customer-card ajcore-customer-profile-card <?php echo $is_editing ? 'is-editing' : ''; ?>">
 				<div class="ajcore-customer-card-head">
 					<h3><?php echo esc_html( $is_local ? __( 'Local Customer Profile', 'ajforms' ) : __( 'Stripe Customer Profile', 'ajforms' ) ); ?></h3>
@@ -19510,6 +19514,57 @@ class AJForms_Admin {
 				</div>
 			</div>
 
+			<?php if ( ! $is_local ) : ?><div class="ajcore-customer-card">
+				<h3><?php esc_html_e( 'Upcoming Payment', 'ajforms' ); ?></h3>
+				<?php
+				$this->render_portal_dataset_section(
+					'upcoming',
+					__( 'Upcoming Payment', 'ajforms' ),
+					$detail['upcoming_payments'],
+					array( 'stripe_subscription_id', 'status', 'current_period_end' ),
+					__( 'No upcoming payment within the next 30 days.', 'ajforms' )
+				);
+				?>
+			</div>
+
+			<div class="ajcore-customer-card">
+				<h3><?php esc_html_e( 'Linked Entities', 'ajforms' ); ?></h3>
+				<?php $this->render_portal_customer_entities_table( $detail['entities'] ); ?>
+			</div><?php endif; ?>
+			</div><!-- /.ajcore-customer-col-side -->
+
+			<div class="ajcore-customer-col-main">
+			<?php if ( ! $is_local ) : ?>
+			<?php
+			$tracking_services_table = $this->get_pdb()->prefix . 'aj_portal_local_services';
+			$tracking_services = $this->get_pdb()->get_results( $this->get_pdb()->prepare( "SELECT * FROM `{$tracking_services_table}` WHERE local_customer_id=%s ORDER BY contract_start_date DESC,id DESC", $customer->stripe_customer_id ) );
+			$tracking_service  = $tracking_services ? $tracking_services[0] : null;
+			?>
+			<div class="ajcore-customer-card ajcore-customer-wide">
+				<div class="ajcore-customer-card-head">
+					<div><h3><?php esc_html_e( 'VO Service (No Billing)', 'ajforms' ); ?></h3><p class="description"><?php esc_html_e( 'Tracks the service period for partner-billed customers. $0 — never invoiced here or in Stripe.', 'ajforms' ); ?></p></div>
+					<button type="button" class="button button-primary" data-ajcore-open-local-modal="tracking-service"><?php echo esc_html( $tracking_service ? __( 'Edit Tracking Service', 'ajforms' ) : __( 'Add Tracking Service', 'ajforms' ) ); ?></button>
+				</div>
+				<?php if ( empty( $tracking_services ) ) : ?><p class="description"><?php esc_html_e( 'No tracking service configured.', 'ajforms' ); ?></p><?php else : ?>
+					<div class="ajcore-customer-table-wrap"><table class="widefat ajcore-local-service-table"><thead><tr><th><?php esc_html_e( 'Service', 'ajforms' ); ?></th><th><?php esc_html_e( 'Move In', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service Start', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service End', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th></tr></thead><tbody>
+					<?php foreach ( $tracking_services as $tracking_row ) : ?>
+						<tr><td><strong><?php echo esc_html( $tracking_row->service_name ); ?></strong><?php if ( ! empty( $tracking_row->notes ) ) : ?><br><small class="description"><?php echo esc_html( $tracking_row->notes ); ?></small><?php endif; ?></td><td><?php echo esc_html( $this->format_portal_date( $tracking_row->move_in_date ) ); ?></td><td><?php echo esc_html( $this->format_portal_date( $tracking_row->contract_start_date ) ); ?></td><td><?php echo $tracking_row->contract_end_date ? esc_html( $this->format_portal_date( $tracking_row->contract_end_date ) ) : esc_html__( 'Ongoing', 'ajforms' ); ?></td><td><?php echo esc_html( 'cancelled' === $tracking_row->status ? __( 'Ended', 'ajforms' ) : ucfirst( $tracking_row->status ) ); ?></td></tr>
+					<?php endforeach; ?>
+					</tbody></table></div>
+				<?php endif; ?>
+				<div class="ajcore-local-modal" data-ajcore-local-modal="tracking-service" role="dialog" aria-modal="true" aria-labelledby="ajcore-tracking-service-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-tracking-service-title"><?php echo esc_html( $tracking_service ? __( 'Edit Tracking Service', 'ajforms' ) : __( 'Add Tracking Service', 'ajforms' ) ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body"><form method="post">
+					<?php wp_nonce_field( 'ajcore_tracking_service_' . $customer->stripe_customer_id, 'ajcore_tracking_service_nonce' ); ?>
+					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+					<input type="hidden" name="tracking_service_id" value="<?php echo esc_attr( $tracking_service->local_service_id ?? '' ); ?>">
+					<label><?php esc_html_e( 'Service', 'ajforms' ); ?><input type="text" name="tracking_service_name" value="<?php echo esc_attr( $tracking_service->service_name ?? 'Virtual Office Service' ); ?>" required></label>
+					<label><?php esc_html_e( 'Move-in date', 'ajforms' ); ?><input type="date" name="tracking_service_move_in" value="<?php echo esc_attr( $tracking_service->move_in_date ?? '' ); ?>" required></label>
+					<label><?php esc_html_e( 'Service start date', 'ajforms' ); ?><input type="date" name="tracking_service_start" value="<?php echo esc_attr( $tracking_service->contract_start_date ?? '' ); ?>" required></label>
+					<label><?php esc_html_e( 'Service end date (set when terminated)', 'ajforms' ); ?><input type="date" name="tracking_service_end" value="<?php echo esc_attr( $tracking_service->contract_end_date ?? '' ); ?>"></label>
+					<label class="ajcore-modal-wide"><?php esc_html_e( 'Notes', 'ajforms' ); ?><input type="text" name="tracking_service_notes" value="<?php echo esc_attr( $tracking_service->notes ?? '' ); ?>" placeholder="<?php esc_attr_e( 'e.g. Billed by Opus', 'ajforms' ); ?>"></label>
+					<div class="ajcore-local-modal-foot"><?php if ( $tracking_service && 'active' === $tracking_service->status ) : ?><button type="submit" class="button-link-delete" name="tracking_service_action" value="end" onclick="return confirm('<?php echo esc_js( __( 'End this service? The record and service period are kept.', 'ajforms' ) ); ?>')"><?php esc_html_e( 'End Service', 'ajforms' ); ?></button><?php endif; ?><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary" name="tracking_service_action" value="save"><?php esc_html_e( 'Save Service', 'ajforms' ); ?></button></div>
+				</form></div></div></div>
+			</div>
+			<?php endif; ?>
 			<div class="ajcore-customer-card <?php echo $is_local ? 'ajcore-local-service-card' : 'ajcore-customer-wide'; ?>">
 				<div class="ajcore-customer-card-head"><div><h3><?php echo esc_html( $is_local ? __( 'Service / Subscription', 'ajforms' ) : __( 'Subscriptions', 'ajforms' ) ); ?></h3><?php if ( $is_local ) : ?><p class="description"><?php esc_html_e( 'Locally managed recurring services. Nothing is created in Stripe.', 'ajforms' ); ?></p><?php endif; ?></div><?php if ( $is_local ) : ?><button type="button" class="button button-primary" data-ajcore-open-local-modal="service"><?php echo esc_html( $local_services ? __( 'Edit Local Service', 'ajforms' ) : __( 'Add Local Service', 'ajforms' ) ); ?></button><?php endif; ?></div>
 				<?php if ( $is_local ) :
@@ -19667,36 +19722,6 @@ class AJForms_Admin {
 			</div>
 
 			<?php if ( ! $is_local ) : ?>
-			<?php
-			$tracking_services_table = $this->get_pdb()->prefix . 'aj_portal_local_services';
-			$tracking_services = $this->get_pdb()->get_results( $this->get_pdb()->prepare( "SELECT * FROM `{$tracking_services_table}` WHERE local_customer_id=%s ORDER BY contract_start_date DESC,id DESC", $customer->stripe_customer_id ) );
-			$tracking_service  = $tracking_services ? $tracking_services[0] : null;
-			?>
-			<div class="ajcore-customer-card ajcore-customer-wide">
-				<div class="ajcore-customer-card-head">
-					<div><h3><?php esc_html_e( 'VO Service (No Billing)', 'ajforms' ); ?></h3><p class="description"><?php esc_html_e( 'Tracks the service period for partner-billed customers. $0 — never invoiced here or in Stripe.', 'ajforms' ); ?></p></div>
-					<button type="button" class="button button-primary" data-ajcore-open-local-modal="tracking-service"><?php echo esc_html( $tracking_service ? __( 'Edit Tracking Service', 'ajforms' ) : __( 'Add Tracking Service', 'ajforms' ) ); ?></button>
-				</div>
-				<?php if ( empty( $tracking_services ) ) : ?><p class="description"><?php esc_html_e( 'No tracking service configured.', 'ajforms' ); ?></p><?php else : ?>
-					<div class="ajcore-customer-table-wrap"><table class="widefat ajcore-local-service-table"><thead><tr><th><?php esc_html_e( 'Service', 'ajforms' ); ?></th><th><?php esc_html_e( 'Move In', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service Start', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service End', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th></tr></thead><tbody>
-					<?php foreach ( $tracking_services as $tracking_row ) : ?>
-						<tr><td><strong><?php echo esc_html( $tracking_row->service_name ); ?></strong><?php if ( ! empty( $tracking_row->notes ) ) : ?><br><small class="description"><?php echo esc_html( $tracking_row->notes ); ?></small><?php endif; ?></td><td><?php echo esc_html( $this->format_portal_date( $tracking_row->move_in_date ) ); ?></td><td><?php echo esc_html( $this->format_portal_date( $tracking_row->contract_start_date ) ); ?></td><td><?php echo $tracking_row->contract_end_date ? esc_html( $this->format_portal_date( $tracking_row->contract_end_date ) ) : esc_html__( 'Ongoing', 'ajforms' ); ?></td><td><?php echo esc_html( 'cancelled' === $tracking_row->status ? __( 'Ended', 'ajforms' ) : ucfirst( $tracking_row->status ) ); ?></td></tr>
-					<?php endforeach; ?>
-					</tbody></table></div>
-				<?php endif; ?>
-				<div class="ajcore-local-modal" data-ajcore-local-modal="tracking-service" role="dialog" aria-modal="true" aria-labelledby="ajcore-tracking-service-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-tracking-service-title"><?php echo esc_html( $tracking_service ? __( 'Edit Tracking Service', 'ajforms' ) : __( 'Add Tracking Service', 'ajforms' ) ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body"><form method="post">
-					<?php wp_nonce_field( 'ajcore_tracking_service_' . $customer->stripe_customer_id, 'ajcore_tracking_service_nonce' ); ?>
-					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
-					<input type="hidden" name="tracking_service_id" value="<?php echo esc_attr( $tracking_service->local_service_id ?? '' ); ?>">
-					<label><?php esc_html_e( 'Service', 'ajforms' ); ?><input type="text" name="tracking_service_name" value="<?php echo esc_attr( $tracking_service->service_name ?? 'Virtual Office Service' ); ?>" required></label>
-					<label><?php esc_html_e( 'Move-in date', 'ajforms' ); ?><input type="date" name="tracking_service_move_in" value="<?php echo esc_attr( $tracking_service->move_in_date ?? '' ); ?>" required></label>
-					<label><?php esc_html_e( 'Service start date', 'ajforms' ); ?><input type="date" name="tracking_service_start" value="<?php echo esc_attr( $tracking_service->contract_start_date ?? '' ); ?>" required></label>
-					<label><?php esc_html_e( 'Service end date (set when terminated)', 'ajforms' ); ?><input type="date" name="tracking_service_end" value="<?php echo esc_attr( $tracking_service->contract_end_date ?? '' ); ?>"></label>
-					<label class="ajcore-modal-wide"><?php esc_html_e( 'Notes', 'ajforms' ); ?><input type="text" name="tracking_service_notes" value="<?php echo esc_attr( $tracking_service->notes ?? '' ); ?>" placeholder="<?php esc_attr_e( 'e.g. Billed by Opus', 'ajforms' ); ?>"></label>
-					<div class="ajcore-local-modal-foot"><?php if ( $tracking_service && 'active' === $tracking_service->status ) : ?><button type="submit" class="button-link-delete" name="tracking_service_action" value="end" onclick="return confirm('<?php echo esc_js( __( 'End this service? The record and service period are kept.', 'ajforms' ) ); ?>')"><?php esc_html_e( 'End Service', 'ajforms' ); ?></button><?php endif; ?><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary" name="tracking_service_action" value="save"><?php esc_html_e( 'Save Service', 'ajforms' ); ?></button></div>
-				</form></div></div></div>
-			</div>
-
 			<div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'One-Time Paid Services', 'ajforms' ); ?></h3>
 				<?php
@@ -19821,23 +19846,7 @@ class AJForms_Admin {
 				?>
 			</div>
 
-			<?php if ( ! $is_local ) : ?><div class="ajcore-customer-card">
-				<h3><?php esc_html_e( 'Upcoming Payment', 'ajforms' ); ?></h3>
-				<?php
-				$this->render_portal_dataset_section(
-					'upcoming',
-					__( 'Upcoming Payment', 'ajforms' ),
-					$detail['upcoming_payments'],
-					array( 'stripe_subscription_id', 'status', 'current_period_end' ),
-					__( 'No upcoming payment within the next 30 days.', 'ajforms' )
-				);
-				?>
-			</div><?php endif; ?>
-
-			<div class="ajcore-customer-card">
-				<h3><?php esc_html_e( 'Linked Entities', 'ajforms' ); ?></h3>
-				<?php $this->render_portal_customer_entities_table( $detail['entities'] ); ?>
-			</div><?php endif; ?>
+			<?php endif; ?>
 
 			<div class="ajcore-customer-card ajcore-customer-wide" id="linked-files">
 				<div class="ajcore-customer-card-head"><h3><?php esc_html_e( 'Files', 'ajforms' ); ?></h3><button type="button" class="button button-primary" data-ajcore-open-local-modal="files"><?php esc_html_e( 'Add Files', 'ajforms' ); ?></button></div>
@@ -19869,6 +19878,7 @@ class AJForms_Admin {
 					</ul>
 				<?php endif; ?>
 			</div><?php endif; ?>
+			</div><!-- /.ajcore-customer-col-main -->
 		</div>
 		</div>
 		<script>
