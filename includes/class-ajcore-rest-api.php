@@ -659,6 +659,8 @@ class AJCore_REST_API {
 			'/ops/partners' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_partners', 'permission' => 'can_manage_ops_api' ),
 			'/ops/product-counts' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_product_counts', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
+			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/profile' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_profile', 'permission' => 'can_manage_ops_api' ),
+			'/ops/customer-profiles/expiring' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_expiring_id_profiles', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/delete-all' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'delete_ops_email_log_all', 'permission' => 'can_manage_ops_api' ),
 			// Mail intake (sub-routes before the bare /ops/mail/{id} GET; create/update/delete registered above)
 			'/ops/mail/(?P<id>\d+)/notify'  => array( 'methods' => 'POST', 'callback' => 'notify_ops_mail_item', 'permission' => 'can_manage_ops_api' ),
@@ -1151,6 +1153,7 @@ class AJCore_REST_API {
 		return rest_ensure_response(
 			array(
 				'customer'         => $decoded,
+				'profile'          => $this->get_customer_profile_row( $stripe_customer_id ),
 				'services'         => $services,
 				'subscriptions'    => $this->select_by_customer( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'items', 'livemode', 'synced_at' ), $stripe_customer_id, 'synced_at DESC, id DESC' ),
 				'transactions'     => $transactions,
@@ -3131,6 +3134,114 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( array( 'success' => true, 'partner_key' => $partner_key ) );
+	}
+
+	/**
+	 * Durable local enrichment (PMB, ID expiration, document links) for any customer —
+	 * Stripe-billed (cus_*) or local (local_*). Never written to Stripe.
+	 */
+	private function customer_profile_defaults() {
+		return array(
+			'pmb_number' => '', 'mailbox_start_date' => null,
+			'id_type' => '', 'id_issuer' => '', 'id_expiration_date' => null, 'id_file_id' => 0,
+			'address_proof_type' => '', 'address_proof_file_id' => 0,
+			'form_1583_status' => 'none', 'form_1583_date' => null, 'form_1583_file_id' => 0,
+			'notes' => '', 'extra' => array(),
+		);
+	}
+
+	private function get_customer_profile_row( $customer_id ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->portal_table( 'aj_portal_customer_profiles' );
+		$row   = $this->table_exists( $pdb, $table ) ? $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE customer_id=%s LIMIT 1", $customer_id ), ARRAY_A ) : null;
+		$profile = $this->customer_profile_defaults();
+		if ( $row ) {
+			foreach ( array_keys( $profile ) as $key ) {
+				if ( array_key_exists( $key, $row ) ) {
+					$profile[ $key ] = $row[ $key ];
+				}
+			}
+			$extra = json_decode( (string) ( $row['extra'] ?? '' ), true );
+			$profile['extra'] = is_array( $extra ) ? $extra : array();
+			foreach ( array( 'id_file_id', 'address_proof_file_id', 'form_1583_file_id' ) as $file_key ) {
+				$profile[ $file_key ] = (int) $profile[ $file_key ];
+			}
+			$profile['updated_at'] = $row['updated_at'] ?? '';
+		}
+		$profile['customer_id'] = $customer_id;
+		return $profile;
+	}
+
+	public function update_ops_customer_profile( WP_REST_Request $request ) {
+		$pdb         = $this->get_portal_db();
+		$table       = $this->portal_table( 'aj_portal_customer_profiles' );
+		$customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return new WP_Error( 'ajcore_profiles_table_missing', __( 'Customer profile storage is not available yet — update AJCore.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		$date_or_null = function ( $value ) {
+			$value = sanitize_text_field( (string) $value );
+			return ( '' !== $value && strtotime( $value ) ) ? gmdate( 'Y-m-d', strtotime( $value ) ) : null;
+		};
+		$extra = $request->get_param( 'extra' );
+
+		$data = array(
+			'customer_id'           => $customer_id,
+			'pmb_number'            => sanitize_text_field( (string) ( $request->get_param( 'pmb_number' ) ?? '' ) ),
+			'mailbox_start_date'    => $date_or_null( $request->get_param( 'mailbox_start_date' ) ),
+			'id_type'               => sanitize_text_field( (string) ( $request->get_param( 'id_type' ) ?? '' ) ),
+			'id_issuer'             => sanitize_text_field( (string) ( $request->get_param( 'id_issuer' ) ?? '' ) ),
+			'id_expiration_date'    => $date_or_null( $request->get_param( 'id_expiration_date' ) ),
+			'id_file_id'            => absint( $request->get_param( 'id_file_id' ) ),
+			'address_proof_type'    => sanitize_text_field( (string) ( $request->get_param( 'address_proof_type' ) ?? '' ) ),
+			'address_proof_file_id' => absint( $request->get_param( 'address_proof_file_id' ) ),
+			'form_1583_status'      => sanitize_key( (string) ( $request->get_param( 'form_1583_status' ) ?? 'none' ) ),
+			'form_1583_date'        => $date_or_null( $request->get_param( 'form_1583_date' ) ),
+			'form_1583_file_id'     => absint( $request->get_param( 'form_1583_file_id' ) ),
+			'notes'                 => sanitize_textarea_field( (string) ( $request->get_param( 'notes' ) ?? '' ) ),
+			'extra'                 => wp_json_encode( is_array( $extra ) ? $extra : array() ),
+		);
+		if ( ! in_array( $data['form_1583_status'], array( 'none', 'sent', 'received', 'notarized' ), true ) ) {
+			$data['form_1583_status'] = 'none';
+		}
+
+		$existing_id = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE customer_id=%s LIMIT 1", $customer_id ) );
+		$saved = $existing_id
+			? $pdb->update( $table, $data, array( 'id' => (int) $existing_id ) )
+			: $pdb->insert( $table, $data );
+		if ( false === $saved ) {
+			return new WP_Error( 'ajcore_profile_save_failed', __( 'Could not save the customer profile.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		return rest_ensure_response( array( 'success' => true, 'profile' => $this->get_customer_profile_row( $customer_id ) ) );
+	}
+
+	/** Customers whose ID has expired or expires within ?days (default 60), soonest first. */
+	public function get_ops_expiring_id_profiles( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->portal_table( 'aj_portal_customer_profiles' );
+		$days  = min( 365, max( 1, absint( $request->get_param( 'days' ) ?: 60 ) ) );
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'profiles' => array(), 'days' => $days ) );
+		}
+		$rows = $pdb->get_results( $pdb->prepare(
+			"SELECT customer_id, pmb_number, id_type, id_expiration_date FROM `{$table}`
+			 WHERE id_expiration_date IS NOT NULL AND id_expiration_date <= DATE_ADD(CURDATE(), INTERVAL %d DAY)
+			 ORDER BY id_expiration_date ASC LIMIT 200", $days
+		), ARRAY_A );
+		$stripe_customers = $this->portal_table( 'aj_portal_stripe_customers' );
+		$local_customers  = $this->portal_table( 'aj_portal_local_customers' );
+		foreach ( (array) $rows as &$row ) {
+			$is_local = 0 === strpos( $row['customer_id'], 'local_' );
+			$lookup   = $is_local
+				? ( $this->table_exists( $pdb, $local_customers ) ? $pdb->get_row( $pdb->prepare( "SELECT name,email FROM `{$local_customers}` WHERE local_customer_id=%s LIMIT 1", $row['customer_id'] ), ARRAY_A ) : null )
+				: ( $this->table_exists( $pdb, $stripe_customers ) ? $pdb->get_row( $pdb->prepare( "SELECT name,email FROM `{$stripe_customers}` WHERE stripe_customer_id=%s LIMIT 1", $row['customer_id'] ), ARRAY_A ) : null );
+			$row['customer_name']  = $lookup['name'] ?? '';
+			$row['customer_email'] = $lookup['email'] ?? '';
+			$row['expired']        = $row['id_expiration_date'] < gmdate( 'Y-m-d' );
+		}
+		unset( $row );
+		return rest_ensure_response( array( 'profiles' => (array) $rows, 'days' => $days ) );
 	}
 
 	public function get_ops_product_counts() {

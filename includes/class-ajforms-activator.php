@@ -1206,7 +1206,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '33', false );
+		update_option( 'ajforms_portal_schema_version', '34', false );
 	}
 
 	/** Dedicated durable AJCore records. Stripe cache tables remain disposable. */
@@ -1293,6 +1293,38 @@ class AJForms_Activator {
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY (id), UNIQUE KEY customer_id (customer_id), KEY partner_key (partner_key)
 		) $charset" );
+		// Mailbox / VO profile enrichment. Keyed by customer_id (cus_* or local_*) like
+		// customer_partners, so Stripe-billed and local customers get identical treatment.
+		$profiles = $prefix . 'aj_portal_customer_profiles';
+		$db->query( "CREATE TABLE IF NOT EXISTS $profiles (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			customer_id varchar(100) NOT NULL,
+			pmb_number varchar(50) DEFAULT '' NOT NULL,
+			mailbox_start_date date NULL,
+			id_type varchar(50) DEFAULT '' NOT NULL,
+			id_issuer varchar(100) DEFAULT '' NOT NULL,
+			id_expiration_date date NULL,
+			id_file_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			address_proof_type varchar(50) DEFAULT '' NOT NULL,
+			address_proof_file_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			form_1583_status varchar(30) DEFAULT 'none' NOT NULL,
+			form_1583_date date NULL,
+			form_1583_file_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			notes longtext NULL,
+			extra longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY (id), UNIQUE KEY customer_id (customer_id), KEY pmb_number (pmb_number), KEY id_expiration_date (id_expiration_date)
+		) $charset" );
+		// Make sure the document categories the profile links against exist in the Files area.
+		if ( function_exists( 'ajcore_get_portal_file_settings' ) && function_exists( 'ajcore_update_portal_file_settings' ) ) {
+			$file_settings = ajcore_get_portal_file_settings();
+			$missing = array_diff( array( 'ID Proof', 'Address Proof', 'USPS Form 1583' ), $file_settings['categories'] );
+			if ( $missing ) {
+				$file_settings['categories'] = array_merge( $file_settings['categories'], array_values( $missing ) );
+				ajcore_update_portal_file_settings( $file_settings );
+			}
+		}
 
 		$old_customers = $prefix . 'aj_portal_stripe_customers';
 		$old_services  = $prefix . 'aj_portal_service_snapshots';

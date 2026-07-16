@@ -11475,6 +11475,42 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_customer_vo_profile_nonce'] ) ) {
+			check_admin_referer( 'ajcore_customer_vo_profile_' . $stripe_customer_id, 'ajcore_customer_vo_profile_nonce' );
+
+			$pdb   = $this->get_pdb();
+			$table = $pdb->prefix . 'aj_portal_customer_profiles';
+			$date_or_null = function ( $key ) {
+				$value = sanitize_text_field( wp_unslash( $_POST[ $key ] ?? '' ) );
+				return ( '' !== $value && strtotime( $value ) ) ? gmdate( 'Y-m-d', strtotime( $value ) ) : null;
+			};
+			$form_1583_status = sanitize_key( wp_unslash( $_POST['vo_form_1583_status'] ?? 'none' ) );
+			$data = array(
+				'customer_id'           => $stripe_customer_id,
+				'pmb_number'            => sanitize_text_field( wp_unslash( $_POST['vo_pmb_number'] ?? '' ) ),
+				'mailbox_start_date'    => $date_or_null( 'vo_mailbox_start_date' ),
+				'id_type'               => sanitize_text_field( wp_unslash( $_POST['vo_id_type'] ?? '' ) ),
+				'id_issuer'             => sanitize_text_field( wp_unslash( $_POST['vo_id_issuer'] ?? '' ) ),
+				'id_expiration_date'    => $date_or_null( 'vo_id_expiration_date' ),
+				'id_file_id'            => absint( $_POST['vo_id_file_id'] ?? 0 ),
+				'address_proof_type'    => sanitize_text_field( wp_unslash( $_POST['vo_address_proof_type'] ?? '' ) ),
+				'address_proof_file_id' => absint( $_POST['vo_address_proof_file_id'] ?? 0 ),
+				'form_1583_status'      => in_array( $form_1583_status, array( 'none', 'sent', 'received', 'notarized' ), true ) ? $form_1583_status : 'none',
+				'form_1583_date'        => $date_or_null( 'vo_form_1583_date' ),
+				'form_1583_file_id'     => absint( $_POST['vo_form_1583_file_id'] ?? 0 ),
+				'notes'                 => sanitize_textarea_field( wp_unslash( $_POST['vo_notes'] ?? '' ) ),
+			);
+			$existing_id = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE customer_id=%s LIMIT 1", $stripe_customer_id ) );
+			$saved = $existing_id ? $pdb->update( $table, $data, array( 'id' => (int) $existing_id ) ) : $pdb->insert( $table, $data );
+			if ( false === $saved ) {
+				$redirect_args['portal-error'] = rawurlencode( __( 'Could not save the mailbox profile.', 'ajforms' ) );
+			} else {
+				$redirect_args['portal-updated'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_customer_task_nonce'], $_POST['customer_task_title'] ) ) {
 			check_admin_referer( 'ajcore_customer_task_' . $stripe_customer_id, 'ajcore_customer_task_nonce' );
 
@@ -19300,6 +19336,80 @@ class AJForms_Admin {
 						<button type="submit" class="button button-primary"><?php echo esc_html( $is_local ? __( 'Save Customer', 'ajforms' ) : __( 'Save & Update in Stripe', 'ajforms' ) ); ?></button>
 					</div>
 				</form>
+			</div>
+
+			<?php
+			$vo_profiles_table = $this->get_pdb()->prefix . 'aj_portal_customer_profiles';
+			$vo_profile = $this->get_pdb()->get_var( $this->get_pdb()->prepare( 'SHOW TABLES LIKE %s', $vo_profiles_table ) ) === $vo_profiles_table
+				? $this->get_pdb()->get_row( $this->get_pdb()->prepare( "SELECT * FROM `{$vo_profiles_table}` WHERE customer_id=%s LIMIT 1", $customer->stripe_customer_id ) )
+				: null;
+			$vo_customer_files = is_array( $detail['files'] ?? null ) ? $detail['files'] : array();
+			$vo_file_label = function ( $file_id ) use ( $vo_customer_files ) {
+				foreach ( $vo_customer_files as $vo_file ) {
+					if ( (int) $vo_file->id === (int) $file_id ) {
+						$url = ! empty( $vo_file->attachment_id ) ? wp_get_attachment_url( (int) $vo_file->attachment_id ) : '';
+						return $url ? '<a href="' . esc_url( $url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( $vo_file->title ) . '</a>' : esc_html( $vo_file->title );
+					}
+				}
+				return '&mdash;';
+			};
+			$vo_file_select = function ( $name, $selected_id ) use ( $vo_customer_files ) {
+				echo '<select name="' . esc_attr( $name ) . '"><option value="0">' . esc_html__( '— None —', 'ajforms' ) . '</option>';
+				foreach ( $vo_customer_files as $vo_file ) {
+					echo '<option value="' . esc_attr( $vo_file->id ) . '" ' . selected( (int) $selected_id, (int) $vo_file->id, false ) . '>' . esc_html( $vo_file->title . ( $vo_file->category ? ' (' . $vo_file->category . ')' : '' ) ) . '</option>';
+				}
+				echo '</select>';
+			};
+			$vo_id_expired  = $vo_profile && $vo_profile->id_expiration_date && $vo_profile->id_expiration_date < gmdate( 'Y-m-d' );
+			$vo_id_expiring = $vo_profile && $vo_profile->id_expiration_date && ! $vo_id_expired && $vo_profile->id_expiration_date <= gmdate( 'Y-m-d', strtotime( '+60 days' ) );
+			$vo_1583_labels = array( 'none' => __( 'Not on file', 'ajforms' ), 'sent' => __( 'Sent to customer', 'ajforms' ), 'received' => __( 'Received', 'ajforms' ), 'notarized' => __( 'Notarized / complete', 'ajforms' ) );
+			?>
+			<div class="ajcore-customer-card ajcore-vo-profile-card">
+				<div class="ajcore-customer-card-head">
+					<h3><?php esc_html_e( 'Mailbox / VO Profile', 'ajforms' ); ?></h3>
+					<button type="button" class="button" data-ajcore-open-local-modal="vo-profile"><?php esc_html_e( 'Edit Profile', 'ajforms' ); ?></button>
+				</div>
+				<?php if ( ! $vo_profile ) : ?>
+					<p class="description"><?php esc_html_e( 'No mailbox profile yet. Use Edit Profile to record the PMB number, ID expiration, and document links.', 'ajforms' ); ?></p>
+				<?php else : ?>
+					<dl class="ajcore-customer-meta">
+						<dt><?php esc_html_e( 'PMB Number', 'ajforms' ); ?></dt><dd><?php echo '' !== $vo_profile->pmb_number ? esc_html( $vo_profile->pmb_number ) : '&mdash;'; ?></dd>
+						<?php if ( $vo_profile->mailbox_start_date ) : ?><dt><?php esc_html_e( 'Mailbox Start', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $vo_profile->mailbox_start_date ) ); ?></dd><?php endif; ?>
+						<dt><?php esc_html_e( 'ID Expiration', 'ajforms' ); ?></dt>
+						<dd>
+							<?php if ( $vo_profile->id_expiration_date ) : ?>
+								<span style="<?php echo $vo_id_expired ? 'color:#b32d2e;font-weight:700' : ( $vo_id_expiring ? 'color:#996800;font-weight:700' : '' ); ?>">
+									<?php echo esc_html( $this->format_portal_date( $vo_profile->id_expiration_date ) ); ?>
+									<?php if ( $vo_id_expired ) { esc_html_e( '(expired — request a new copy)', 'ajforms' ); } elseif ( $vo_id_expiring ) { esc_html_e( '(expiring soon)', 'ajforms' ); } ?>
+								</span>
+							<?php else : ?>&mdash;<?php endif; ?>
+						</dd>
+						<?php if ( '' !== $vo_profile->id_type || '' !== $vo_profile->id_issuer ) : ?><dt><?php esc_html_e( 'Photo ID', 'ajforms' ); ?></dt><dd><?php echo esc_html( trim( $vo_profile->id_type . ( $vo_profile->id_issuer ? ' · ' . $vo_profile->id_issuer : '' ) ) ); ?></dd><?php endif; ?>
+						<dt><?php esc_html_e( 'ID Copy', 'ajforms' ); ?></dt><dd><?php echo wp_kses_post( $vo_file_label( $vo_profile->id_file_id ) ); ?></dd>
+						<?php if ( '' !== $vo_profile->address_proof_type ) : ?><dt><?php esc_html_e( 'Address Proof Type', 'ajforms' ); ?></dt><dd><?php echo esc_html( $vo_profile->address_proof_type ); ?></dd><?php endif; ?>
+						<dt><?php esc_html_e( 'Address Proof', 'ajforms' ); ?></dt><dd><?php echo wp_kses_post( $vo_file_label( $vo_profile->address_proof_file_id ) ); ?></dd>
+						<dt><?php esc_html_e( 'USPS Form 1583', 'ajforms' ); ?></dt><dd><?php echo esc_html( $vo_1583_labels[ $vo_profile->form_1583_status ] ?? $vo_profile->form_1583_status ); ?><?php if ( $vo_profile->form_1583_date ) { echo ' · ' . esc_html( $this->format_portal_date( $vo_profile->form_1583_date ) ); } ?></dd>
+						<?php if ( (int) $vo_profile->form_1583_file_id > 0 ) : ?><dt><?php esc_html_e( '1583 Copy', 'ajforms' ); ?></dt><dd><?php echo wp_kses_post( $vo_file_label( $vo_profile->form_1583_file_id ) ); ?></dd><?php endif; ?>
+						<?php if ( ! empty( $vo_profile->notes ) ) : ?><dt><?php esc_html_e( 'Notes', 'ajforms' ); ?></dt><dd><?php echo esc_html( $vo_profile->notes ); ?></dd><?php endif; ?>
+					</dl>
+				<?php endif; ?>
+				<div class="ajcore-local-modal" data-ajcore-local-modal="vo-profile" role="dialog" aria-modal="true" aria-labelledby="ajcore-vo-profile-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-vo-profile-title"><?php esc_html_e( 'Mailbox / VO Profile', 'ajforms' ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body"><form method="post">
+					<?php wp_nonce_field( 'ajcore_customer_vo_profile_' . $customer->stripe_customer_id, 'ajcore_customer_vo_profile_nonce' ); ?>
+					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+					<label><?php esc_html_e( 'PMB Number', 'ajforms' ); ?><input type="text" name="vo_pmb_number" value="<?php echo esc_attr( $vo_profile->pmb_number ?? '' ); ?>" placeholder="PMB 123"></label>
+					<label><?php esc_html_e( 'Mailbox start date', 'ajforms' ); ?><input type="date" name="vo_mailbox_start_date" value="<?php echo esc_attr( $vo_profile->mailbox_start_date ?? '' ); ?>"></label>
+					<label><?php esc_html_e( 'Photo ID type', 'ajforms' ); ?><select name="vo_id_type"><option value=""><?php esc_html_e( '— Select —', 'ajforms' ); ?></option><?php foreach ( array( 'Driver\'s License', 'Passport', 'State ID', 'Military ID' ) as $vo_type ) : ?><option value="<?php echo esc_attr( $vo_type ); ?>" <?php selected( $vo_profile->id_type ?? '', $vo_type ); ?>><?php echo esc_html( $vo_type ); ?></option><?php endforeach; ?></select></label>
+					<label><?php esc_html_e( 'ID issuer (state / country)', 'ajforms' ); ?><input type="text" name="vo_id_issuer" value="<?php echo esc_attr( $vo_profile->id_issuer ?? '' ); ?>" placeholder="NC"></label>
+					<label><?php esc_html_e( 'ID expiration date', 'ajforms' ); ?><input type="date" name="vo_id_expiration_date" value="<?php echo esc_attr( $vo_profile->id_expiration_date ?? '' ); ?>"></label>
+					<label><?php esc_html_e( 'Current ID copy (from Files)', 'ajforms' ); ?><?php $vo_file_select( 'vo_id_file_id', $vo_profile->id_file_id ?? 0 ); ?></label>
+					<label><?php esc_html_e( 'Address proof type', 'ajforms' ); ?><select name="vo_address_proof_type"><option value=""><?php esc_html_e( '— Select —', 'ajforms' ); ?></option><?php foreach ( array( 'Lease', 'Utility Bill', 'Vehicle Registration', 'Vehicle Insurance', 'Voter Card', 'Mortgage Statement' ) as $vo_type ) : ?><option value="<?php echo esc_attr( $vo_type ); ?>" <?php selected( $vo_profile->address_proof_type ?? '', $vo_type ); ?>><?php echo esc_html( $vo_type ); ?></option><?php endforeach; ?></select></label>
+					<label><?php esc_html_e( 'Address proof file (from Files)', 'ajforms' ); ?><?php $vo_file_select( 'vo_address_proof_file_id', $vo_profile->address_proof_file_id ?? 0 ); ?></label>
+					<label><?php esc_html_e( 'USPS Form 1583 status', 'ajforms' ); ?><select name="vo_form_1583_status"><?php foreach ( $vo_1583_labels as $vo_status_key => $vo_status_label ) : ?><option value="<?php echo esc_attr( $vo_status_key ); ?>" <?php selected( $vo_profile->form_1583_status ?? 'none', $vo_status_key ); ?>><?php echo esc_html( $vo_status_label ); ?></option><?php endforeach; ?></select></label>
+					<label><?php esc_html_e( '1583 date', 'ajforms' ); ?><input type="date" name="vo_form_1583_date" value="<?php echo esc_attr( $vo_profile->form_1583_date ?? '' ); ?>"></label>
+					<label><?php esc_html_e( '1583 file (from Files)', 'ajforms' ); ?><?php $vo_file_select( 'vo_form_1583_file_id', $vo_profile->form_1583_file_id ?? 0 ); ?></label>
+					<label class="ajcore-modal-wide"><?php esc_html_e( 'Notes', 'ajforms' ); ?><input type="text" name="vo_notes" value="<?php echo esc_attr( $vo_profile->notes ?? '' ); ?>"></label>
+					<div class="ajcore-local-modal-foot"><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary"><?php esc_html_e( 'Save Profile', 'ajforms' ); ?></button></div>
+				</form></div></div></div>
 			</div>
 
 			<div class="ajcore-customer-card ajcore-portal-access-card">
