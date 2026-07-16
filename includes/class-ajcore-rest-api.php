@@ -114,7 +114,9 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
-			'/ops/customers/(?P<stripe_customer_id>local_[A-Za-z0-9_\-]+)/local-services',
+			// cus_* customers are allowed too: they get $0 tracking-only services (no billing
+			// dates, so the recurring job never posts ledger charges for them).
+			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/local-services',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'ops_upsert_local_customer_service' ),
@@ -1104,6 +1106,21 @@ class AJCore_REST_API {
 			}
 		}
 
+		// $0 tracking-only services (partner-billed VO customers): stored in the local services
+		// table under the cus_* id, never billed here or in Stripe.
+		$tracking_services = array();
+		if ( ! $is_local ) {
+			$local_services_table = $this->portal_table( 'aj_portal_local_services' );
+			$tracking_rows = $this->table_exists( $pdb, $local_services_table ) ? $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$local_services_table}` WHERE local_customer_id=%s ORDER BY contract_start_date DESC,id DESC", $stripe_customer_id ), ARRAY_A ) : array();
+			foreach ( (array) $tracking_rows as $row ) {
+				$tracking_services[] = array(
+					'local_service_id' => $row['local_service_id'], 'service_name' => $row['service_name'],
+					'move_in_date' => $row['move_in_date'] ?? '', 'service_period_start' => $row['contract_start_date'],
+					'service_period_end' => $row['contract_end_date'], 'status' => $row['status'], 'notes' => $row['notes'] ?? '',
+				);
+			}
+		}
+
 		// Fetch ledger (standard columns — payment_intent_id/charge_id may not exist in all installs).
 		if ( $is_local ) {
 			$local_ledger = $this->portal_table( 'aj_portal_local_ledger' );
@@ -1154,6 +1171,7 @@ class AJCore_REST_API {
 			array(
 				'customer'         => $decoded,
 				'profile'          => $this->get_customer_profile_row( $stripe_customer_id ),
+				'tracking_services' => $tracking_services,
 				'services'         => $services,
 				'subscriptions'    => $this->select_by_customer( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'items', 'livemode', 'synced_at' ), $stripe_customer_id, 'synced_at DESC, id DESC' ),
 				'transactions'     => $transactions,
@@ -1292,31 +1310,45 @@ class AJCore_REST_API {
 		$status      = sanitize_key( (string) ( $request->get_param( 'status' ) ?: 'active' ) );
 		$features_param = $request->get_param( 'features' );
 		$features    = array_values( array_filter( array_map( 'sanitize_text_field', (array) $features_param ) ) );
-		$customers = $this->portal_table( 'aj_portal_local_customers' );
-		$customer  = $pdb->get_row( $pdb->prepare( "SELECT email FROM `{$customers}` WHERE local_customer_id = %s LIMIT 1", $customer_id ) );
+		$is_tracking_only = 0 === strpos( $customer_id, 'cus_' );
+		if ( $is_tracking_only ) {
+			$customers = $this->portal_table( 'aj_portal_stripe_customers' );
+			$customer  = $this->table_exists( $pdb, $customers ) ? $pdb->get_row( $pdb->prepare( "SELECT email FROM `{$customers}` WHERE stripe_customer_id = %s LIMIT 1", $customer_id ) ) : null;
+		} else {
+			$customers = $this->portal_table( 'aj_portal_local_customers' );
+			$customer  = $pdb->get_row( $pdb->prepare( "SELECT email FROM `{$customers}` WHERE local_customer_id = %s LIMIT 1", $customer_id ) );
+		}
 		if ( ! $customer ) return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
 		$table = $this->portal_table( 'aj_portal_local_services' );
 		if ( 'delete' === $action ) {
 			if ( '' === $service_id ) return new WP_Error( 'ajcore_invalid_local_service', __( 'A local service ID is required.', 'ajforms' ), array( 'status' => 400 ) );
-			$deleted = $pdb->update( $table, array( 'status' => 'cancelled', 'next_charge_date' => null ), array( 'local_customer_id' => $customer_id, 'local_service_id' => $service_id ) );
+			// End rather than delete: keep the row so the service period stays on record.
+			$end_data = array( 'status' => 'cancelled', 'next_charge_date' => null );
+			if ( $is_tracking_only ) {
+				$open_ended = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE local_customer_id=%s AND local_service_id=%s AND contract_end_date IS NULL LIMIT 1", $customer_id, $service_id ) );
+				if ( $open_ended ) $end_data['contract_end_date'] = gmdate( 'Y-m-d' );
+			}
+			$deleted = $pdb->update( $table, $end_data, array( 'local_customer_id' => $customer_id, 'local_service_id' => $service_id ) );
 			return false === $deleted ? new WP_Error( 'ajcore_local_service_delete_failed', __( 'The recurring transaction could not be cancelled.', 'ajforms' ), array( 'status' => 500 ) ) : rest_ensure_response( array( 'success' => true, 'history_retained' => true ) );
 		}
-		if ( '' === $name || ! strtotime( $start ) || ! strtotime( $move_in ) || ! strtotime( $billing_start ) || ( '' !== $end && ! strtotime( $end ) ) || $amount < 0 ) {
-			return new WP_Error( 'ajcore_invalid_local_service', __( 'Service name, move-in, service start, charges begin, and a valid monthly rate are required.', 'ajforms' ), array( 'status' => 400 ) );
+		if ( '' === $name || ! strtotime( $start ) || ! strtotime( $move_in ) || ( ! $is_tracking_only && ! strtotime( $billing_start ) ) || ( '' !== $end && ! strtotime( $end ) ) || $amount < 0 ) {
+			return new WP_Error( 'ajcore_invalid_local_service', $is_tracking_only ? __( 'Service name, move-in, and service start are required.', 'ajforms' ) : __( 'Service name, move-in, service start, charges begin, and a valid monthly rate are required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 		$key  = $service_id ?: 'local_service_' . substr( hash( 'sha256', $customer_id . '|' . strtolower( $name ) ), 0, 52 );
 		$data = array(
 			'local_service_id' => $key, 'local_customer_id' => $customer_id, 'service_name' => $name,
 			'contract_start_date' => gmdate( 'Y-m-d', strtotime( $start ) ), 'contract_end_date' => $end ? gmdate( 'Y-m-d', strtotime( $end ) ) : null,
-			'move_in_date' => gmdate( 'Y-m-d', strtotime( $move_in ) ), 'billing_start_date' => gmdate( 'Y-m-d', strtotime( $billing_start ) ),
-			'monthly_rate' => $amount, 'currency' => 'usd',
-			'billing_interval' => 'month', 'variable_charges' => wp_json_encode( array( 'postage' ) ),
-			'status' => in_array( $status, array( 'active', 'paused', 'cancelled' ), true ) ? $status : 'active', 'notes' => 'Reporting-only local AJCore contract.',
+			'move_in_date' => gmdate( 'Y-m-d', strtotime( $move_in ) ), 'billing_start_date' => $is_tracking_only ? null : gmdate( 'Y-m-d', strtotime( $billing_start ) ),
+			'monthly_rate' => $is_tracking_only ? 0 : $amount, 'currency' => 'usd',
+			'billing_interval' => 'month', 'variable_charges' => wp_json_encode( $is_tracking_only ? array() : array( 'postage' ) ),
+			'status' => in_array( $status, array( 'active', 'paused', 'cancelled' ), true ) ? $status : 'active',
+			'notes' => sanitize_textarea_field( (string) ( $request->get_param( 'notes' ) ?? ( $is_tracking_only ? 'Tracking-only service. Billed by the partner; never billed here or in Stripe.' : 'Reporting-only local AJCore contract.' ) ) ),
 		);
 		if ( null !== $features_param ) $data['features'] = wp_json_encode( $features );
 		$existing = $pdb->get_row( $pdb->prepare( "SELECT id,next_charge_date,last_billed_date FROM `{$table}` WHERE local_service_id = %s AND local_customer_id = %s LIMIT 1", $key, $customer_id ), ARRAY_A );
 		$exists = ! empty( $existing['id'] );
-		if ( ! $exists || ( empty( $existing['next_charge_date'] ) && empty( $existing['last_billed_date'] ) ) ) $data['next_charge_date'] = gmdate( 'Y-m-d', strtotime( $billing_start ) );
+		if ( $is_tracking_only ) $data['next_charge_date'] = null;
+		elseif ( ! $exists || ( empty( $existing['next_charge_date'] ) && empty( $existing['last_billed_date'] ) ) ) $data['next_charge_date'] = gmdate( 'Y-m-d', strtotime( $billing_start ) );
 		$new_rate = $request->get_param( 'new_rate' );
 		$new_rate_date = sanitize_text_field( (string) $request->get_param( 'new_rate_date' ) );
 		if ( $exists && null !== $new_rate && '' !== (string) $new_rate && strtotime( $new_rate_date ) ) {
@@ -1337,7 +1369,8 @@ class AJCore_REST_API {
 		$pdb = $this->get_portal_db();
 		$services = $this->portal_table( 'aj_portal_local_services' );
 		$customers = $this->portal_table( 'aj_portal_local_customers' );
-		$rows = $pdb->get_results( "SELECT s.local_service_id,s.local_customer_id,s.service_name,s.move_in_date,s.contract_start_date,s.contract_end_date,s.billing_start_date,s.next_charge_date,s.last_billed_date,s.monthly_rate,s.pending_rate,s.pending_rate_date,s.status,c.name AS customer_name,c.email FROM `{$services}` s LEFT JOIN `{$customers}` c ON c.local_customer_id=s.local_customer_id ORDER BY s.status='active' DESC,s.next_charge_date ASC,c.name ASC", ARRAY_A );
+		// Exclude $0 tracking-only rows (cus_* customers) — they never generate recurring charges.
+		$rows = $pdb->get_results( "SELECT s.local_service_id,s.local_customer_id,s.service_name,s.move_in_date,s.contract_start_date,s.contract_end_date,s.billing_start_date,s.next_charge_date,s.last_billed_date,s.monthly_rate,s.pending_rate,s.pending_rate_date,s.status,c.name AS customer_name,c.email FROM `{$services}` s LEFT JOIN `{$customers}` c ON c.local_customer_id=s.local_customer_id WHERE NOT (s.monthly_rate = 0 AND s.billing_start_date IS NULL) ORDER BY s.status='active' DESC,s.next_charge_date ASC,c.name ASC", ARRAY_A );
 		$history = array();
 		$ledger = $this->portal_table( 'aj_portal_local_ledger' );
 		$posted = $pdb->get_results( "SELECT id,ledger_date,description,amount,currency,status,metadata FROM `{$ledger}` WHERE source_type='local_recurring_charge' ORDER BY ledger_date DESC,id DESC", ARRAY_A );

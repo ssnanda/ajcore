@@ -11366,7 +11366,8 @@ class AJForms_Admin {
 		$services = $pdb->prefix . 'aj_portal_local_services';
 		$ledger = $pdb->prefix . 'aj_portal_local_ledger';
 		$today = current_time( 'Y-m-d' );
-		$rows = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$services}` WHERE status='active' AND next_charge_date IS NOT NULL AND next_charge_date<>'' AND next_charge_date<=%s ORDER BY next_charge_date ASC,id ASC", $today ) );
+		// monthly_rate > 0 also excludes $0 tracking-only services (partner-billed VO customers).
+		$rows = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$services}` WHERE status='active' AND monthly_rate > 0 AND next_charge_date IS NOT NULL AND next_charge_date<>'' AND next_charge_date<=%s ORDER BY next_charge_date ASC,id ASC", $today ) );
 		foreach ( (array) $rows as $service ) {
 			$due = (string) $service->next_charge_date;
 			$iterations = 0;
@@ -11506,6 +11507,50 @@ class AJForms_Admin {
 				$redirect_args['portal-error'] = rawurlencode( __( 'Could not save the mailbox profile.', 'ajforms' ) );
 			} else {
 				$redirect_args['portal-updated'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		// $0 tracking-only VO service for Stripe (partner-billed) customers: rate 0 and no billing
+		// dates, so the recurring job never posts charges. Ending keeps the row for the period record.
+		if ( isset( $_POST['ajcore_tracking_service_nonce'] ) && 0 === strpos( $stripe_customer_id, 'cus_' ) ) {
+			check_admin_referer( 'ajcore_tracking_service_' . $stripe_customer_id, 'ajcore_tracking_service_nonce' );
+
+			$pdb    = $this->get_pdb();
+			$table  = $pdb->prefix . 'aj_portal_local_services';
+			$action = sanitize_key( wp_unslash( $_POST['tracking_service_action'] ?? 'save' ) );
+			$service_id = sanitize_text_field( wp_unslash( $_POST['tracking_service_id'] ?? '' ) );
+
+			if ( 'end' === $action && '' !== $service_id ) {
+				$end_input = sanitize_text_field( wp_unslash( $_POST['tracking_service_end'] ?? '' ) );
+				$updated = $pdb->update( $table, array(
+					'status' => 'cancelled', 'next_charge_date' => null,
+					'contract_end_date' => strtotime( $end_input ) ? gmdate( 'Y-m-d', strtotime( $end_input ) ) : gmdate( 'Y-m-d' ),
+				), array( 'local_customer_id' => $stripe_customer_id, 'local_service_id' => $service_id ) );
+				$redirect_args[ false === $updated ? 'portal-error' : 'portal-updated' ] = false === $updated ? rawurlencode( __( 'Could not end the service.', 'ajforms' ) ) : 1;
+			} else {
+				$name    = sanitize_text_field( wp_unslash( $_POST['tracking_service_name'] ?? '' ) );
+				$move_in = sanitize_text_field( wp_unslash( $_POST['tracking_service_move_in'] ?? '' ) );
+				$start   = sanitize_text_field( wp_unslash( $_POST['tracking_service_start'] ?? '' ) );
+				$end     = sanitize_text_field( wp_unslash( $_POST['tracking_service_end'] ?? '' ) );
+				if ( '' === $name || ! strtotime( $move_in ) || ! strtotime( $start ) ) {
+					$redirect_args['portal-error'] = rawurlencode( __( 'Service name, move-in date, and service start date are required.', 'ajforms' ) );
+				} else {
+					$key  = $service_id ?: 'local_service_' . str_replace( '-', '', wp_generate_uuid4() );
+					$data = array(
+						'local_service_id' => $key, 'local_customer_id' => $stripe_customer_id, 'service_name' => $name,
+						'contract_start_date' => gmdate( 'Y-m-d', strtotime( $start ) ), 'contract_end_date' => strtotime( $end ) ? gmdate( 'Y-m-d', strtotime( $end ) ) : null,
+						'move_in_date' => gmdate( 'Y-m-d', strtotime( $move_in ) ), 'billing_start_date' => null, 'next_charge_date' => null,
+						'monthly_rate' => 0, 'currency' => 'usd', 'billing_interval' => 'month',
+						'features' => wp_json_encode( array() ), 'variable_charges' => wp_json_encode( array() ),
+						'status' => strtotime( $end ) && gmdate( 'Y-m-d', strtotime( $end ) ) < gmdate( 'Y-m-d' ) ? 'cancelled' : 'active',
+						'notes' => sanitize_textarea_field( wp_unslash( $_POST['tracking_service_notes'] ?? '' ) ),
+					);
+					$existing_id = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE local_customer_id=%s AND local_service_id=%s LIMIT 1", $stripe_customer_id, $key ) );
+					$saved = $existing_id ? $pdb->update( $table, $data, array( 'id' => (int) $existing_id ) ) : $pdb->insert( $table, $data );
+					$redirect_args[ false === $saved ? 'portal-error' : 'portal-updated' ] = false === $saved ? rawurlencode( __( 'Could not save the tracking service.', 'ajforms' ) ) : 1;
+				}
 			}
 			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
 			exit;
@@ -17998,7 +18043,7 @@ class AJForms_Admin {
 		$pdb = $this->get_pdb();
 		$services = $pdb->prefix . 'aj_portal_local_services';
 		$customers = $pdb->prefix . 'aj_portal_local_customers';
-		$rows = $pdb->get_results( "SELECT s.*,c.name AS customer_name,c.email AS customer_email FROM `{$services}` s LEFT JOIN `{$customers}` c ON c.local_customer_id=s.local_customer_id ORDER BY (s.status='active') DESC,s.next_charge_date ASC,s.id DESC" );
+		$rows = $pdb->get_results( "SELECT s.*,c.name AS customer_name,c.email AS customer_email FROM `{$services}` s LEFT JOIN `{$customers}` c ON c.local_customer_id=s.local_customer_id WHERE NOT (s.monthly_rate = 0 AND s.billing_start_date IS NULL) ORDER BY (s.status='active') DESC,s.next_charge_date ASC,s.id DESC" );
 		$history_by_service = array();
 		$ledger_table = $pdb->prefix . 'aj_portal_local_ledger';
 		$posted_rows = $pdb->get_results( "SELECT id,ledger_date,description,amount,currency,status,metadata FROM `{$ledger_table}` WHERE source_type='local_recurring_charge' ORDER BY ledger_date DESC,id DESC" );
@@ -19622,6 +19667,36 @@ class AJForms_Admin {
 			</div>
 
 			<?php if ( ! $is_local ) : ?>
+			<?php
+			$tracking_services_table = $this->get_pdb()->prefix . 'aj_portal_local_services';
+			$tracking_services = $this->get_pdb()->get_results( $this->get_pdb()->prepare( "SELECT * FROM `{$tracking_services_table}` WHERE local_customer_id=%s ORDER BY contract_start_date DESC,id DESC", $customer->stripe_customer_id ) );
+			$tracking_service  = $tracking_services ? $tracking_services[0] : null;
+			?>
+			<div class="ajcore-customer-card ajcore-customer-wide">
+				<div class="ajcore-customer-card-head">
+					<div><h3><?php esc_html_e( 'VO Service (No Billing)', 'ajforms' ); ?></h3><p class="description"><?php esc_html_e( 'Tracks the service period for partner-billed customers. $0 — never invoiced here or in Stripe.', 'ajforms' ); ?></p></div>
+					<button type="button" class="button button-primary" data-ajcore-open-local-modal="tracking-service"><?php echo esc_html( $tracking_service ? __( 'Edit Tracking Service', 'ajforms' ) : __( 'Add Tracking Service', 'ajforms' ) ); ?></button>
+				</div>
+				<?php if ( empty( $tracking_services ) ) : ?><p class="description"><?php esc_html_e( 'No tracking service configured.', 'ajforms' ); ?></p><?php else : ?>
+					<div class="ajcore-customer-table-wrap"><table class="widefat ajcore-local-service-table"><thead><tr><th><?php esc_html_e( 'Service', 'ajforms' ); ?></th><th><?php esc_html_e( 'Move In', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service Start', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service End', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th></tr></thead><tbody>
+					<?php foreach ( $tracking_services as $tracking_row ) : ?>
+						<tr><td><strong><?php echo esc_html( $tracking_row->service_name ); ?></strong><?php if ( ! empty( $tracking_row->notes ) ) : ?><br><small class="description"><?php echo esc_html( $tracking_row->notes ); ?></small><?php endif; ?></td><td><?php echo esc_html( $this->format_portal_date( $tracking_row->move_in_date ) ); ?></td><td><?php echo esc_html( $this->format_portal_date( $tracking_row->contract_start_date ) ); ?></td><td><?php echo $tracking_row->contract_end_date ? esc_html( $this->format_portal_date( $tracking_row->contract_end_date ) ) : esc_html__( 'Ongoing', 'ajforms' ); ?></td><td><?php echo esc_html( 'cancelled' === $tracking_row->status ? __( 'Ended', 'ajforms' ) : ucfirst( $tracking_row->status ) ); ?></td></tr>
+					<?php endforeach; ?>
+					</tbody></table></div>
+				<?php endif; ?>
+				<div class="ajcore-local-modal" data-ajcore-local-modal="tracking-service" role="dialog" aria-modal="true" aria-labelledby="ajcore-tracking-service-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-tracking-service-title"><?php echo esc_html( $tracking_service ? __( 'Edit Tracking Service', 'ajforms' ) : __( 'Add Tracking Service', 'ajforms' ) ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body"><form method="post">
+					<?php wp_nonce_field( 'ajcore_tracking_service_' . $customer->stripe_customer_id, 'ajcore_tracking_service_nonce' ); ?>
+					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+					<input type="hidden" name="tracking_service_id" value="<?php echo esc_attr( $tracking_service->local_service_id ?? '' ); ?>">
+					<label><?php esc_html_e( 'Service', 'ajforms' ); ?><input type="text" name="tracking_service_name" value="<?php echo esc_attr( $tracking_service->service_name ?? 'Virtual Office Service' ); ?>" required></label>
+					<label><?php esc_html_e( 'Move-in date', 'ajforms' ); ?><input type="date" name="tracking_service_move_in" value="<?php echo esc_attr( $tracking_service->move_in_date ?? '' ); ?>" required></label>
+					<label><?php esc_html_e( 'Service start date', 'ajforms' ); ?><input type="date" name="tracking_service_start" value="<?php echo esc_attr( $tracking_service->contract_start_date ?? '' ); ?>" required></label>
+					<label><?php esc_html_e( 'Service end date (set when terminated)', 'ajforms' ); ?><input type="date" name="tracking_service_end" value="<?php echo esc_attr( $tracking_service->contract_end_date ?? '' ); ?>"></label>
+					<label class="ajcore-modal-wide"><?php esc_html_e( 'Notes', 'ajforms' ); ?><input type="text" name="tracking_service_notes" value="<?php echo esc_attr( $tracking_service->notes ?? '' ); ?>" placeholder="<?php esc_attr_e( 'e.g. Billed by Opus', 'ajforms' ); ?>"></label>
+					<div class="ajcore-local-modal-foot"><?php if ( $tracking_service && 'active' === $tracking_service->status ) : ?><button type="submit" class="button-link-delete" name="tracking_service_action" value="end" onclick="return confirm('<?php echo esc_js( __( 'End this service? The record and service period are kept.', 'ajforms' ) ); ?>')"><?php esc_html_e( 'End Service', 'ajforms' ); ?></button><?php endif; ?><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary" name="tracking_service_action" value="save"><?php esc_html_e( 'Save Service', 'ajforms' ); ?></button></div>
+				</form></div></div></div>
+			</div>
+
 			<div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'One-Time Paid Services', 'ajforms' ); ?></h3>
 				<?php
