@@ -460,12 +460,14 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			$file_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$files_table}` WHERE attachment_id = %d ORDER BY id ASC LIMIT 1", $attachment_id ) );
 			$tag = $file_id ? (string) $wpdb->get_var( $wpdb->prepare( "SELECT tag_slug FROM `{$tags_table}` WHERE file_id = %d ORDER BY tag_slug ASC LIMIT 1", $file_id ) ) : '';
 			$tag = $tag ? sanitize_title( $tag ) : 'documents';
+			$assigned_email = '';
 			if ( ! $user_id && $file_id ) {
 				$assignment = $wpdb->get_row( $wpdb->prepare( "SELECT user_id, user_email FROM `{$users_table}` WHERE file_id = %d ORDER BY (user_id > 0) DESC, id ASC LIMIT 1", $file_id ) );
 				if ( $assignment ) {
 					$user_id = (int) $assignment->user_id;
+					$assigned_email = sanitize_email( (string) $assignment->user_email );
 					if ( ! $user_id && ! empty( $assignment->user_email ) ) {
-						$assigned_user = get_user_by( 'email', sanitize_email( (string) $assignment->user_email ) );
+						$assigned_user = get_user_by( 'email', $assigned_email );
 						$user_id = $assigned_user ? (int) $assigned_user->ID : 0;
 					}
 				}
@@ -474,7 +476,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				$user = get_userdata( $user_id );
 				$user_login = $user ? $user->user_login : '';
 			}
-			$customer = $user_id ? 'user-' . $user_id . '-' . sanitize_title( $user_login ) : 'unassigned';
+			$customer = $user_id ? 'user-' . $user_id . '-' . sanitize_title( $user_login ) : ( $assigned_email ? 'customer-' . sanitize_title( $assigned_email ) : 'unassigned' );
 			return $tag . '/' . $customer . '/' . sanitize_file_name( $filename );
 		}
 

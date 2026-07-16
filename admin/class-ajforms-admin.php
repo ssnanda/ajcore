@@ -11333,6 +11333,12 @@ class AJForms_Admin {
 			if ( '' !== $tag ) {
 				$this->save_portal_file_tags( $file_id, array( $tag ) );
 			}
+			if ( class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::get_remote_record( (int) $attachment_id ) ) {
+				$relocated = AJCore_Storage_Service::migrate_attachment_ids( array( (int) $attachment_id ) );
+				if ( ! empty( $relocated['failed'][ (int) $attachment_id ] ) ) {
+					$last_error = (string) $relocated['failed'][ (int) $attachment_id ];
+				}
+			}
 			$created++;
 		}
 
@@ -19556,11 +19562,30 @@ class AJForms_Admin {
 			});
 			document.querySelectorAll('[data-ajcore-local-modal]').forEach(function(modal) {
 				modal.addEventListener('click', function(event) {
-					if (event.target === modal || event.target.closest('[data-ajcore-close-local-modal]')) closeLocalModal(modal);
+					if (!modal.dataset.submitting && (event.target === modal || event.target.closest('[data-ajcore-close-local-modal]'))) closeLocalModal(modal);
 				});
 			});
+			var filesModal = document.querySelector('[data-ajcore-local-modal="files"]');
+			var filesForm = filesModal ? filesModal.querySelector('form') : null;
+			if (filesForm) {
+				filesForm.addEventListener('submit', function(event) {
+					if (filesModal.dataset.submitting === '1') {
+						event.preventDefault();
+						return;
+					}
+					filesModal.dataset.submitting = '1';
+					var submit = filesForm.querySelector('button[type="submit"]');
+					var input = filesForm.querySelector('input[type="file"]');
+					var count = input && input.files ? input.files.length : 0;
+					if (submit) {
+						submit.disabled = true;
+						submit.textContent = count ? 'Uploading ' + count + ' file' + (count === 1 ? '' : 's') + '…' : 'Uploading…';
+					}
+					filesModal.querySelectorAll('[data-ajcore-close-local-modal]').forEach(function(button) { button.disabled = true; });
+				});
+			}
 			document.addEventListener('keydown', function(event) {
-				if (event.key === 'Escape') document.querySelectorAll('[data-ajcore-local-modal]:not([hidden])').forEach(closeLocalModal);
+				if (event.key === 'Escape') document.querySelectorAll('[data-ajcore-local-modal]:not([hidden])').forEach(function(modal) { if (!modal.dataset.submitting) closeLocalModal(modal); });
 			});
 		})();
 		</script>
