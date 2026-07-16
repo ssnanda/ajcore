@@ -86,6 +86,26 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>local_[A-Za-z0-9_\-]+)/ledger/import',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_import_local_customer_ledger' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>local_[A-Za-z0-9_\-]+)/local-services',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_upsert_local_customer_service' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/action',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -1021,7 +1041,14 @@ class AJCore_REST_API {
 		}
 
 		// Fetch ledger (standard columns — payment_intent_id/charge_id may not exist in all installs).
-		$ledger = $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_type', 'source_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'created_at' ), $stripe_customer_id, 'created_at DESC, id DESC' );
+		$ledger = $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_object_id', 'source_type', 'ledger_date', 'description', 'amount', 'currency', 'status', 'invoice_id', 'payment_intent_id', 'charge_id', 'metadata', 'created_at' ), $stripe_customer_id, 'ledger_date ASC, id ASC' );
+		foreach ( $ledger as &$ledger_entry ) {
+			if ( isset( $ledger_entry['metadata'] ) && is_string( $ledger_entry['metadata'] ) ) {
+				$metadata = json_decode( $ledger_entry['metadata'], true );
+				$ledger_entry['metadata'] = is_array( $metadata ) ? $metadata : array();
+			}
+		}
+		unset( $ledger_entry );
 
 		// Build billing_type lookup from service snapshots: payment_intent_id / invoice_id → 'subscription' | 'one_time'.
 		$snapshots = $this->select_by_customer( 'aj_portal_service_snapshots', array( 'payment_intent_id', 'invoice_id', 'billing_type' ), $stripe_customer_id, 'created_at DESC' );
@@ -1064,6 +1091,98 @@ class AJCore_REST_API {
 				'service_requests' => $this->select_by_customer( 'aj_portal_service_requests', array( 'id', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'created_at', 'updated_at' ), $stripe_customer_id, 'updated_at DESC, id DESC' ),
 			)
 		);
+	}
+
+	public function ops_import_local_customer_ledger( WP_REST_Request $request ) {
+		$pdb         = $this->get_portal_db();
+		$customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$csv         = (string) $request->get_param( 'csv' );
+		$filename    = sanitize_file_name( (string) $request->get_param( 'filename' ) );
+
+		if ( '' === trim( $csv ) ) {
+			return new WP_Error( 'ajcore_empty_ledger', __( 'Choose a non-empty CSV ledger.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		if ( ! $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1", $customer_id ) ) ) {
+			return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$handle = fopen( 'php://temp', 'r+' );
+		fwrite( $handle, $csv );
+		rewind( $handle );
+		$headers = fgetcsv( $handle, 0, ',', '"', '\\' );
+		$headers = array_map( function ( $header ) { return strtolower( trim( (string) $header, " \t\n\r\0\x0B\xEF\xBB\xBF" ) ); }, (array) $headers );
+		$required = array( 'date', 'category', 'description', 'memo', 'amount' );
+		foreach ( $required as $column ) {
+			if ( ! in_array( $column, $headers, true ) ) {
+				fclose( $handle );
+				return new WP_Error( 'ajcore_invalid_ledger_columns', sprintf( __( 'The CSV is missing the %s column.', 'ajforms' ), $column ), array( 'status' => 400 ) );
+			}
+		}
+
+		$table    = $this->portal_table( 'aj_portal_ledger' );
+		$inserted = 0;
+		$skipped  = 0;
+		$invalid  = 0;
+		$row_num  = 1;
+		while ( false !== ( $values = fgetcsv( $handle, 0, ',', '"', '\\' ) ) ) {
+			$row_num++;
+			if ( count( array_filter( $values, 'strlen' ) ) === 0 ) continue;
+			$values = array_pad( $values, count( $headers ), '' );
+			$row    = array_combine( $headers, array_slice( $values, 0, count( $headers ) ) );
+			$ts     = strtotime( (string) $row['date'] );
+			$amount = (float) str_replace( array( '$', ',' ), '', (string) $row['amount'] );
+			if ( ! $ts || ! is_numeric( str_replace( array( '$', ',', ' ' ), '', (string) $row['amount'] ) ) ) { $invalid++; continue; }
+			$description = sanitize_text_field( $row['description'] ?: ( $row['memo'] ?: $row['category'] ) );
+			$fingerprint = hash( 'sha256', implode( '|', array( $customer_id, gmdate( 'Y-m-d', $ts ), $row['check num'] ?? '', $row['category'], $row['description'], $row['memo'], number_format( $amount, 2, '.', '' ) ) ) );
+			$source_id   = 'local_csv_' . substr( $fingerprint, 0, 54 );
+			if ( $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE source_object_id = %s LIMIT 1", $source_id ) ) ) { $skipped++; continue; }
+			$metadata = array(
+				'import_type' => 'local_customer_csv', 'filename' => $filename, 'row_number' => $row_num,
+				'check_num' => sanitize_text_field( $row['check num'] ?? '' ), 'category' => sanitize_text_field( $row['category'] ),
+				'optional' => sanitize_text_field( $row['optional'] ?? '' ), 'memo' => sanitize_text_field( $row['memo'] ),
+			);
+			$result = $pdb->insert( $table, array(
+				'stripe_customer_id' => $customer_id, 'source_object_id' => $source_id,
+				'source_type' => $amount < 0 ? 'local_charge' : 'local_payment', 'ledger_date' => gmdate( 'Y-m-d 00:00:00', $ts ),
+				'description' => $description, 'amount' => $amount, 'currency' => 'usd', 'status' => 'posted',
+				'metadata' => wp_json_encode( $metadata ),
+			), array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s' ) );
+			false === $result ? $invalid++ : $inserted++;
+		}
+		fclose( $handle );
+		return rest_ensure_response( array( 'success' => true, 'inserted' => $inserted, 'skipped' => $skipped, 'invalid' => $invalid ) );
+	}
+
+	public function ops_upsert_local_customer_service( WP_REST_Request $request ) {
+		$pdb         = $this->get_portal_db();
+		$customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$name        = sanitize_text_field( (string) $request->get_param( 'service_name' ) );
+		$start       = sanitize_text_field( (string) $request->get_param( 'contract_start_date' ) );
+		$amount      = round( (float) $request->get_param( 'monthly_rate' ), 2 );
+		$status      = sanitize_key( (string) ( $request->get_param( 'status' ) ?: 'active' ) );
+		$features    = array_values( array_filter( array_map( 'sanitize_text_field', (array) $request->get_param( 'features' ) ) ) );
+		if ( '' === $name || ! strtotime( $start ) || $amount < 0 ) {
+			return new WP_Error( 'ajcore_invalid_local_service', __( 'Service name, contract start date, and a valid monthly rate are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$customers = $this->portal_table( 'aj_portal_stripe_customers' );
+		$customer  = $pdb->get_row( $pdb->prepare( "SELECT email FROM `{$customers}` WHERE stripe_customer_id = %s LIMIT 1", $customer_id ) );
+		if ( ! $customer ) return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
+		$key  = 'local_service_' . substr( hash( 'sha256', $customer_id . '|' . strtolower( $name ) ), 0, 52 );
+		$data = array(
+			'snapshot_key' => $key, 'stripe_customer_id' => $customer_id, 'customer_email' => sanitize_email( $customer->email ),
+			'product_id' => 'local_virtual_office', 'price_id' => '', 'product_name_snapshot' => $name,
+			'price_label_snapshot' => '$' . number_format( $amount, 2 ) . '/month', 'amount' => $amount, 'currency' => 'usd',
+			'recurring_interval' => 'month', 'quantity' => 1, 'billing_type' => 'recurring',
+			'service_period_start' => gmdate( 'Y-m-d 00:00:00', strtotime( $start ) ), 'source_type' => 'local_contract',
+			'status' => in_array( $status, array( 'active', 'paused', 'cancelled' ), true ) ? $status : 'active', 'livemode' => 0,
+			'raw_data' => wp_json_encode( array( 'local_only' => true, 'features' => $features, 'variable_charges' => array( 'postage' ), 'reporting_only' => true ) ),
+		);
+		$table = $this->portal_table( 'aj_portal_service_snapshots' );
+		$exists = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE snapshot_key = %s LIMIT 1", $key ) );
+		$result = $exists ? $pdb->update( $table, $data, array( 'snapshot_key' => $key ) ) : $pdb->insert( $table, $data );
+		if ( false === $result ) return new WP_Error( 'ajcore_local_service_save_failed', __( 'The local service could not be saved.', 'ajforms' ), array( 'status' => 500 ) );
+		return rest_ensure_response( array( 'success' => true, 'snapshot_key' => $key ) );
 	}
 
 	public function get_ops_products( WP_REST_Request $request ) {

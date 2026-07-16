@@ -3111,7 +3111,7 @@ class AJForms_Admin {
 				array( 'table' => $this->get_portal_stripe_products_table(), 'scope' => __( 'Stripe product/price cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_subscriptions_table(), 'scope' => __( 'Stripe subscription cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_transactions_table(), 'scope' => __( 'Stripe transaction cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
-				array( 'table' => $this->get_portal_service_snapshots_table(), 'scope' => __( 'Generated service snapshots', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_service_snapshots_table(), 'scope' => __( 'Generated service snapshots', 'ajforms' ), 'mode' => __( 'Stripe/generated rows only; local AJCore contracts are preserved', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_sync_log_items_table(), 'scope' => __( 'Sync history detail rows', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_sync_logs_table(), 'scope' => __( 'Sync history runs', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_ledger_table(), 'scope' => __( 'Generated Stripe billing ledger rows', 'ajforms' ), 'mode' => sprintf( __( 'Rows where source_type is %s', 'ajforms' ), implode( ', ', $generated_ledger_source_types ) ) ),
@@ -3355,6 +3355,9 @@ class AJForms_Admin {
 			if ( $this->get_portal_stripe_customers_table() === $table ) {
 				$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE stripe_customer_id LIKE 'cus\_%'" );
 				$result = $wpdb->query( "DELETE FROM {$table} WHERE stripe_customer_id LIKE 'cus\_%'" );
+			} elseif ( $this->get_portal_service_snapshots_table() === $table ) {
+				$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE source_type <> 'local_contract' OR source_type IS NULL" );
+				$result = $wpdb->query( "DELETE FROM {$table} WHERE source_type <> 'local_contract' OR source_type IS NULL" );
 			} else {
 				$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
 				$result = $wpdb->query( "DELETE FROM {$table}" );
@@ -7183,6 +7186,11 @@ class AJForms_Admin {
 			'source_ref'             => ! empty( $snapshot->snapshot_key ) ? sanitize_text_field( (string) $snapshot->snapshot_key ) : '',
 			'next_action'            => 'one_time' === $billing_type_key ? __( 'Convert to Auto-Pay Subscription', 'ajforms' ) : '',
 		);
+		$snapshot_raw = $this->decode_portal_json( isset( $snapshot->raw_data ) ? $snapshot->raw_data : '' );
+		$record->features = ! empty( $snapshot_raw['features'] ) && is_array( $snapshot_raw['features'] )
+			? array_values( array_map( 'sanitize_text_field', $snapshot_raw['features'] ) )
+			: array();
+		$record->local_only = ! empty( $snapshot_raw['local_only'] );
 		if ( $service_state && ! empty( $service_state->service_status ) ) {
 			$record->status = sanitize_key( (string) $service_state->service_status );
 			if ( ! empty( $service_state->used_at ) ) {
