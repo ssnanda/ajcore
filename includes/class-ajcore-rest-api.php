@@ -2812,6 +2812,25 @@ class AJCore_REST_API {
 			return new WP_Error( 'update_failed', __( 'Could not update the customer partner.', 'ajforms' ), array( 'status' => 500 ) );
 		}
 
+		// Keep the payer classification portable across AJCore sites by mirroring it to Stripe metadata.
+		if ( 0 === strpos( $customer_id, 'cus_' ) ) {
+			$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+			$secret_key = trim( (string) ( $settings['stripe_secret_key'] ?? '' ) );
+			if ( '' !== $secret_key ) {
+				$stripe_response = wp_remote_post(
+					'https://api.stripe.com/v1/customers/' . rawurlencode( $customer_id ),
+					array(
+						'headers' => array( 'Authorization' => 'Bearer ' . $secret_key, 'Content-Type' => 'application/x-www-form-urlencoded' ),
+						'body'    => http_build_query( array( 'metadata[partner_key]' => $partner_key, 'metadata[customer_type]' => $partner_key ? $partner_key : 'direct' ) ),
+						'timeout' => 30,
+					)
+				);
+				if ( is_wp_error( $stripe_response ) || wp_remote_retrieve_response_code( $stripe_response ) >= 400 ) {
+					return new WP_Error( 'stripe_partner_update_failed', __( 'The AJCore partner was saved, but Stripe metadata could not be updated.', 'ajforms' ), array( 'status' => 502 ) );
+				}
+			}
+		}
+
 		return rest_ensure_response( array( 'success' => true, 'partner_key' => $partner_key ) );
 	}
 
@@ -5360,6 +5379,10 @@ class AJCore_REST_API {
 			$stripe_body['individual_name']           = $individual_name;
 			$stripe_body['metadata[individual_name]'] = $individual_name;
 		}
+		$stripe_body['metadata[customer_type]'] = $customer_type;
+		if ( '' !== $partner_key ) {
+			$stripe_body['metadata[partner_key]'] = $partner_key;
+		}
 		if ( '' !== $addr_line1 ) {
 			$stripe_body['address[line1]']       = $addr_line1;
 			$stripe_body['address[line2]']       = $addr_line2;
@@ -5410,6 +5433,10 @@ class AJCore_REST_API {
 			}
 			if ( '' !== $individual_name ) {
 				$meta['individual_name'] = $individual_name;
+			}
+			$meta['customer_type'] = $customer_type;
+			if ( '' !== $partner_key ) {
+				$meta['partner_key'] = $partner_key;
 			}
 
 			$address_data = array();

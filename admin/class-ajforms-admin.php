@@ -2356,8 +2356,7 @@ class AJForms_Admin {
 				continue;
 			}
 
-			$upserted = $this->upsert_portal_stripe_customer_record(
-				array(
+			$customer_record = array(
 					'stripe_customer_id' => sanitize_text_field( (string) $customer['id'] ),
 					'email'              => ! empty( $customer['email'] ) ? sanitize_email( (string) $customer['email'] ) : '',
 					'name'               => ! empty( $customer['name'] ) ? sanitize_text_field( (string) $customer['name'] ) : '',
@@ -2369,8 +2368,14 @@ class AJForms_Admin {
 					'livemode'           => ! empty( $customer['livemode'] ) ? 1 : 0,
 					'created_at'         => ! empty( $customer['created'] ) ? $this->stripe_timestamp_to_mysql( $customer['created'] ) : null,
 					'synced_at'          => current_time( 'mysql' ),
-				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+				);
+			$metadata_partner = ! empty( $customer['metadata']['partner_key'] ) ? sanitize_key( (string) $customer['metadata']['partner_key'] ) : '';
+			if ( in_array( $metadata_partner, array( 'opus', 'alliance_vo' ), true ) ) {
+				$customer_record['partner_key'] = $metadata_partner;
+			}
+			$upserted = $this->upsert_portal_stripe_customer_record(
+				$customer_record,
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
 			);
 			if ( $upserted ) {
 				$count++;
@@ -4608,8 +4613,7 @@ class AJForms_Admin {
 			$pdb->query( "ALTER TABLE `{$customer_table}` ADD COLUMN `description` varchar(500) NOT NULL DEFAULT '' AFTER `phone`" );
 		}
 
-		$this->upsert_portal_stripe_customer_record(
-			array(
+		$customer_record = array(
 				'stripe_customer_id' => sanitize_text_field( (string) $customer['id'] ),
 				'email'              => ! empty( $customer['email'] ) ? sanitize_email( (string) $customer['email'] ) : '',
 				'name'               => ! empty( $customer['name'] ) ? sanitize_text_field( (string) $customer['name'] ) : '',
@@ -4621,8 +4625,14 @@ class AJForms_Admin {
 				'livemode'           => ! empty( $customer['livemode'] ) ? 1 : 0,
 				'created_at'         => ! empty( $customer['created'] ) ? $this->stripe_timestamp_to_mysql( $customer['created'] ) : null,
 				'synced_at'          => current_time( 'mysql' ),
-			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+			);
+		$metadata_partner = ! empty( $customer['metadata']['partner_key'] ) ? sanitize_key( (string) $customer['metadata']['partner_key'] ) : '';
+		if ( in_array( $metadata_partner, array( 'opus', 'alliance_vo' ), true ) ) {
+			$customer_record['partner_key'] = $metadata_partner;
+		}
+		$this->upsert_portal_stripe_customer_record(
+			$customer_record,
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
 		);
 
 		$subscription_count = $this->sync_portal_stripe_subscriptions( $secret_key, $stripe_customer_id );
@@ -10421,6 +10431,8 @@ class AJForms_Admin {
 				$body['metadata[business_name]'] = $business_name;
 			}
 			if ( '' !== $individual_name ) { $body['metadata[individual_name]'] = $individual_name; }
+			$body['metadata[customer_type]'] = $customer_type;
+			if ( 'opus' === $customer_type ) { $body['metadata[partner_key]'] = 'opus'; }
 			foreach ( $address as $address_key => $address_value ) { if ( '' !== $address_value ) { $body[ 'address[' . $address_key . ']' ] = $address_value; } }
 
 			$result = $this->stripe_api_request( 'customers', $secret_key, $body );
@@ -20108,6 +20120,8 @@ class AJForms_Admin {
 		$status_filter = isset( $_GET['portal_user_status'] ) ? sanitize_key( wp_unslash( $_GET['portal_user_status'] ) ) : '';
 		$allowed_status_filters = array( 'active', 'disabled', 'archived', 'without_login' );
 		$status_filter = in_array( $status_filter, $allowed_status_filters, true ) ? $status_filter : '';
+		$metric_filter = isset( $_GET['customer_metric'] ) ? sanitize_key( wp_unslash( $_GET['customer_metric'] ) ) : '';
+		$product_counts = $this->get_portal_core_subscription_product_counts();
 
 		// Build WHERE against stripe_customers only; without_login is applied in PHP after merging mapping data.
 		$where = array( '1=1' );
@@ -20161,9 +20175,25 @@ class AJForms_Admin {
 			}
 			$customers[] = $c;
 		}
+		if ( $metric_filter ) {
+			$ra_ids  = array_flip( $product_counts['registered_agent_subscription_customers'] );
+			$vo_ids  = array_flip( $product_counts['virtual_office_subscription_customers'] );
+			$any_ids = array_flip( $product_counts['any_subscription_customers'] );
+			$customers = array_values( array_filter( $customers, function ( $customer ) use ( $metric_filter, $ra_ids, $vo_ids, $any_ids ) {
+				$customer_id = (string) $customer->stripe_customer_id;
+				if ( 'ra' === $metric_filter ) { return isset( $ra_ids[ $customer_id ] ); }
+				if ( 'vo' === $metric_filter ) { return isset( $vo_ids[ $customer_id ] ); }
+				if ( 'none' === $metric_filter ) { return ! isset( $any_ids[ $customer_id ] ); }
+				if ( 0 === strpos( $metric_filter, 'partner_' ) ) { return (string) $customer->partner_key === substr( $metric_filter, 8 ); }
+				return true;
+			} ) );
+		}
 
 		$total_customers = (int) $pdb->get_var( 'SELECT COUNT(*) FROM ' . $this->get_portal_stripe_customers_table() );
 		$enabled_count   = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'active' AND enabled_portal = 1" );
+		$archived_count  = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'archived'" );
+		$non_archived_ids = (array) $pdb->get_col( "SELECT stripe_customer_id FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status IS NULL OR portal_status <> 'archived'" );
+		$no_subscription_count = count( array_diff( $non_archived_ids, $product_counts['any_subscription_customers'] ) );
 		$available_fields = $this->discover_portal_customer_scalar_fields( $customers );
 		$display_fields   = array_values( array_intersect( $this->get_portal_customer_display_fields(), $available_fields ) );
 		if ( empty( $display_fields ) && ! empty( $available_fields ) ) {
@@ -20203,14 +20233,13 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
-			<div class="ajforms-settings-inline-actions">
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d synced customers', 'ajforms' ), $total_customers ) ); ?></span>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d with portal access', 'ajforms' ), $enabled_count ) ); ?></span>
-				<?php
-				$product_counts = $this->get_portal_core_subscription_product_counts();
-				?>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d Registered Agent Subscription', 'ajforms' ), $product_counts['registered_agent_subscription'] ) ); ?></span>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d Virtual Office Subscription', 'ajforms' ), $product_counts['virtual_office_subscription'] ) ); ?></span>
+			<div class="ajcore-kpi-grid">
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), admin_url( 'admin.php' ) ) ); ?>"><strong><?php echo esc_html( number_format_i18n( $total_customers ) ); ?></strong><span><?php esc_html_e( 'Synced Customers', 'ajforms' ); ?></span></a>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'portal_user_status' => 'active' ), admin_url( 'admin.php' ) ) ); ?>"><strong><?php echo esc_html( number_format_i18n( $enabled_count ) ); ?></strong><span><?php esc_html_e( 'With Portal Access', 'ajforms' ); ?></span></a>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'customer_metric' => 'ra' ), admin_url( 'admin.php' ) ) ); ?>"><strong><?php echo esc_html( number_format_i18n( $product_counts['registered_agent_subscription'] ) ); ?></strong><span><?php esc_html_e( 'Registered Agent Subscription', 'ajforms' ); ?></span></a>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'customer_metric' => 'vo' ), admin_url( 'admin.php' ) ) ); ?>"><strong><?php echo esc_html( number_format_i18n( $product_counts['virtual_office_subscription'] ) ); ?></strong><span><?php esc_html_e( 'Virtual Office Subscription', 'ajforms' ); ?></span></a>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'customer_metric' => 'none' ), admin_url( 'admin.php' ) ) ); ?>"><strong><?php echo esc_html( number_format_i18n( $no_subscription_count ) ); ?></strong><span><?php esc_html_e( 'No Subscription', 'ajforms' ); ?></span></a>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'portal_user_status' => 'archived' ), admin_url( 'admin.php' ) ) ); ?>"><strong><?php echo esc_html( number_format_i18n( $archived_count ) ); ?></strong><span><?php esc_html_e( 'Archived Customers', 'ajforms' ); ?></span></a>
 			</div>
 
 			<?php
@@ -20221,7 +20250,7 @@ class AJForms_Admin {
 			if ( ! empty( $partners_summary ) ) :
 				$partner_price_map_summary = $this->get_partner_price_map();
 				?>
-				<div class="ajcore-customer-summary" style="margin:0 0 16px;">
+				<div class="ajcore-kpi-grid" style="margin:0 0 16px!important;">
 					<?php foreach ( $partners_summary as $partner_summary ) : ?>
 						<?php
 						$partner_accounts_summary = $pdb->get_results(
@@ -20235,11 +20264,7 @@ class AJForms_Admin {
 							$partner_total_summary += $this->get_partner_account_rate( $partner_summary, $partner_account_summary, $partner_price_map_summary );
 						}
 						?>
-						<div>
-							<span><?php echo esc_html( $partner_summary->name ); ?></span>
-							<strong><?php echo esc_html( number_format_i18n( count( $partner_accounts_summary ) ) ); ?></strong>
-							<small><?php echo esc_html( sprintf( __( 'accounts · %s/mo', 'ajforms' ), $this->format_portal_money( $partner_total_summary, 'usd' ) ) ); ?></small>
-						</div>
+						<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users', 'customer_metric' => 'partner_' . $partner_summary->partner_key ), admin_url( 'admin.php' ) ) ); ?>"><strong><?php echo esc_html( number_format_i18n( count( $partner_accounts_summary ) ) ); ?></strong><span><?php echo esc_html( $partner_summary->name ); ?></span><small><?php echo esc_html( sprintf( __( 'accounts · %s/mo', 'ajforms' ), $this->format_portal_money( $partner_total_summary, 'usd' ) ) ); ?></small></a>
 					<?php endforeach; ?>
 				</div>
 			<?php endif; ?>
