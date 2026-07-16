@@ -1579,13 +1579,25 @@ class AJForms {
 						<h3><?php esc_html_e( 'Upload a Document', 'ajforms' ); ?></h3>
 						<p><?php esc_html_e( 'Share PDFs, Word documents, and images with our team. Uploaded files will stay in your File Library.', 'ajforms' ); ?></p>
 					</div>
-					<form method="post" enctype="multipart/form-data" class="aj-portal-upload-form">
+					<form method="post" enctype="multipart/form-data" class="aj-portal-upload-form" data-ajcore-portal-file-upload-form>
 						<?php wp_nonce_field( 'ajcore_portal_file_upload', 'ajcore_portal_file_upload_nonce' ); ?>
 						<input type="hidden" name="ajcore_portal_file_upload" value="1">
 						<input type="text" name="portal_file_title" placeholder="<?php echo esc_attr__( 'Optional file title', 'ajforms' ); ?>">
 						<input type="file" name="portal_file_upload" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" required>
 						<button type="submit" class="button"><?php esc_html_e( 'Upload File', 'ajforms' ); ?></button>
 					</form>
+					<script>
+					(function(){
+						var form=document.querySelector('[data-ajcore-portal-file-upload-form]');
+						if(!form)return;
+						form.addEventListener('submit',function(event){
+							if(form.dataset.submitting==='1'){event.preventDefault();return;}
+							form.dataset.submitting='1';
+							var button=form.querySelector('button[type="submit"]');
+							if(button){button.disabled=true;button.textContent='<?php echo esc_js( __( 'Uploading…', 'ajforms' ) ); ?>';}
+						});
+					})();
+					</script>
 				</div>
 			</details>
 
@@ -7185,6 +7197,20 @@ class AJForms {
 			),
 			array( '%d', '%d', '%s', '%s' )
 		);
+
+		// Client Portal uploads are shared customer files, so every supported MIME
+		// type belongs in remote storage. This runs after assignment so RustFS uses
+		// the authenticated customer's folder instead of "unassigned".
+		if ( class_exists( 'AJCore_Storage_Service' ) ) {
+			$storage_result = AJCore_Storage_Service::migrate_attachment_ids( array( (int) $attachment_id ) );
+			if ( ! empty( $storage_result['failed'][ (int) $attachment_id ] ) ) {
+				$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $file_id ), array( '%d' ) );
+				$wpdb->delete( $this->get_portal_files_table(), array( 'id' => $file_id ), array( '%d' ) );
+				wp_delete_attachment( (int) $attachment_id, true );
+				wp_safe_redirect( add_query_arg( 'portal_notice', 'file-upload-error', $portal_url ) );
+				exit;
+			}
+		}
 
 		wp_safe_redirect( add_query_arg( 'portal_notice', 'file-uploaded', $portal_url ) );
 		exit;

@@ -11333,7 +11333,10 @@ class AJForms_Admin {
 			if ( '' !== $tag ) {
 				$this->save_portal_file_tags( $file_id, array( $tag ) );
 			}
-			if ( class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::get_remote_record( (int) $attachment_id ) ) {
+			// Staff/admin "Add Files" uploads shared with a customer always belong in
+			// remote storage, including images. Native Media Library/page-editor images remain local because the
+			// universal metadata hook still excludes image MIME types.
+			if ( class_exists( 'AJCore_Storage_Service' ) ) {
 				$relocated = AJCore_Storage_Service::migrate_attachment_ids( array( (int) $attachment_id ) );
 				if ( ! empty( $relocated['failed'][ (int) $attachment_id ] ) ) {
 					$last_error = (string) $relocated['failed'][ (int) $attachment_id ];
