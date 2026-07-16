@@ -874,6 +874,7 @@ class AJCore_REST_API {
 		$pdb = $this->get_portal_db();
 
 		$customers_table     = $this->portal_table( 'aj_portal_stripe_customers' );
+		$local_customers_table = $this->portal_table( 'aj_portal_local_customers' );
 		$subscriptions_table = $this->portal_table( 'aj_portal_stripe_subscriptions' );
 		$leads_table         = $pdb->prefix . 'aj_forms_leads';
 
@@ -895,12 +896,12 @@ class AJCore_REST_API {
 
 		return rest_ensure_response(
 			array(
-				'customers'                          => $this->count_table( $pdb, $customers_table ),
+				'customers'                          => $this->count_table( $pdb, $customers_table ) + $this->count_table( $pdb, $local_customers_table ),
 				'customers_with_active_subscription' => $customers_with_active_subscription,
 				'customer_states'                    => $this->count_table( $pdb, $this->portal_table( 'aj_portal_customer_states' ) ),
 				'products'                            => $this->count_table( $pdb, $this->portal_table( 'aj_portal_stripe_products' ) ),
 				'subscriptions'                       => $this->count_table( $pdb, $subscriptions_table ),
-				'ledger'                              => $this->count_table( $pdb, $this->portal_table( 'aj_portal_ledger' ) ),
+				'ledger'                              => $this->count_table( $pdb, $this->portal_table( 'aj_portal_ledger' ) ) + $this->count_table( $pdb, $this->portal_table( 'aj_portal_local_ledger' ) ),
 				'tasks'                               => $tasks_total,
 				'tasks_open'                          => $tasks_open,
 				'service_requests'                    => $sr_stats['total'],
@@ -914,6 +915,12 @@ class AJCore_REST_API {
 
 	public function get_ops_customers( WP_REST_Request $request ) {
 		$customers = $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' );
+		$pdb = $this->get_portal_db();
+		$local_table = $this->portal_table( 'aj_portal_local_customers' );
+		if ( $this->table_exists( $pdb, $local_table ) ) {
+			$local_rows = $pdb->get_results( "SELECT local_customer_id AS stripe_customer_id,email,name,phone,description,address,metadata,status AS portal_status,0 AS enabled_portal,partner_key,0 AS livemode,updated_at AS synced_at FROM `{$local_table}` ORDER BY updated_at DESC,id DESC", ARRAY_A );
+			$customers = array_merge( $customers, (array) $local_rows );
+		}
 		$customers = $this->attach_customer_site_labels( array_map( array( $this, 'format_ops_customer_row' ), $customers ) );
 		$customers = $this->attach_customer_portal_user_links( $customers );
 		return rest_ensure_response( array( 'customers' => $customers ) );
@@ -994,10 +1001,15 @@ class AJCore_REST_API {
 	public function get_ops_customer( WP_REST_Request $request ) {
 		$pdb = $this->get_portal_db();
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
-		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$is_local       = 0 === strpos( $stripe_customer_id, 'local_' );
+		$customer_table = $this->portal_table( $is_local ? 'aj_portal_local_customers' : 'aj_portal_stripe_customers' );
 		$desired_cols   = array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'raw_data', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' );
-		$select_cols    = $this->table_exists( $pdb, $customer_table ) ? $this->existing_columns( $pdb, $customer_table, $desired_cols ) : array();
-		$customer       = ! empty( $select_cols ) ? $pdb->get_row( $pdb->prepare( 'SELECT `' . implode( '`,`', $select_cols ) . "` FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ), ARRAY_A ) : null;
+		if ( $is_local ) {
+			$customer = $this->table_exists( $pdb, $customer_table ) ? $pdb->get_row( $pdb->prepare( "SELECT local_customer_id AS stripe_customer_id,email,name,phone,description,address,metadata,status AS portal_status,0 AS enabled_portal,partner_key,0 AS livemode,updated_at AS synced_at FROM `{$customer_table}` WHERE local_customer_id=%s LIMIT 1", $stripe_customer_id ), ARRAY_A ) : null;
+		} else {
+			$select_cols = $this->table_exists( $pdb, $customer_table ) ? $this->existing_columns( $pdb, $customer_table, $desired_cols ) : array();
+			$customer = ! empty( $select_cols ) ? $pdb->get_row( $pdb->prepare( 'SELECT `' . implode( '`,`', $select_cols ) . "` FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ), ARRAY_A ) : null;
+		}
 		if ( ! $customer ) {
 			return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
@@ -1033,7 +1045,21 @@ class AJCore_REST_API {
 		$decoded['individual_name'] = $meta['individual_name'] ?? '';
 		unset( $decoded['raw_data'] );
 		$services = array( 'subscriptions' => array(), 'one_time_services' => array() );
-		if ( class_exists( 'AJForms_Admin' ) ) {
+		if ( $is_local ) {
+			$local_services = $this->portal_table( 'aj_portal_local_services' );
+			$rows = $this->table_exists( $pdb, $local_services ) ? $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$local_services}` WHERE local_customer_id=%s ORDER BY contract_start_date DESC,id DESC", $stripe_customer_id ), ARRAY_A ) : array();
+			foreach ( (array) $rows as $row ) {
+				$features = json_decode( (string) $row['features'], true );
+				$services['subscriptions'][] = array(
+					'service_name' => $row['service_name'], 'price' => '$' . number_format( (float) $row['monthly_rate'], 2 ) . '/' . $row['billing_interval'],
+					'recurring_interval' => $row['billing_interval'], 'billing_type_key' => 'subscription', 'billing_type' => 'Local Contract',
+					'stripe_price_id' => '', 'stripe_product_id' => '', 'stripe_subscription_id' => '', 'service_period' => '',
+					'service_period_start' => $row['contract_start_date'], 'service_period_end' => $row['contract_end_date'], 'next_billing_date' => '',
+					'status' => $row['status'], 'amount' => number_format( (float) $row['monthly_rate'], 2, '.', '' ), 'paid_at' => '', 'next_action' => '',
+					'features' => is_array( $features ) ? $features : array(), 'local_only' => true,
+				);
+			}
+		} elseif ( class_exists( 'AJForms_Admin' ) ) {
 			$admin = new AJForms_Admin();
 			if ( method_exists( $admin, 'api_get_ops_customer_services' ) ) {
 				$services = $admin->api_get_ops_customer_services( $stripe_customer_id );
@@ -1041,7 +1067,12 @@ class AJCore_REST_API {
 		}
 
 		// Fetch ledger (standard columns — payment_intent_id/charge_id may not exist in all installs).
-		$ledger = $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_object_id', 'source_type', 'ledger_date', 'description', 'amount', 'currency', 'status', 'invoice_id', 'payment_intent_id', 'charge_id', 'metadata', 'created_at' ), $stripe_customer_id, 'ledger_date ASC, id ASC' );
+		if ( $is_local ) {
+			$local_ledger = $this->portal_table( 'aj_portal_local_ledger' );
+			$ledger = $this->table_exists( $pdb, $local_ledger ) ? $pdb->get_results( $pdb->prepare( "SELECT id,local_customer_id AS stripe_customer_id,source_object_id,source_type,ledger_date,description,amount,currency,status,'' AS invoice_id,'' AS payment_intent_id,'' AS charge_id,metadata,created_at FROM `{$local_ledger}` WHERE local_customer_id=%s ORDER BY ledger_date ASC,id ASC", $stripe_customer_id ), ARRAY_A ) : array();
+		} else {
+			$ledger = $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_object_id', 'source_type', 'ledger_date', 'description', 'amount', 'currency', 'status', 'invoice_id', 'payment_intent_id', 'charge_id', 'metadata', 'created_at' ), $stripe_customer_id, 'ledger_date ASC, id ASC' );
+		}
 		foreach ( $ledger as &$ledger_entry ) {
 			if ( isset( $ledger_entry['metadata'] ) && is_string( $ledger_entry['metadata'] ) ) {
 				$metadata = json_decode( $ledger_entry['metadata'], true );
@@ -1102,8 +1133,8 @@ class AJCore_REST_API {
 		if ( '' === trim( $csv ) ) {
 			return new WP_Error( 'ajcore_empty_ledger', __( 'Choose a non-empty CSV ledger.', 'ajforms' ), array( 'status' => 400 ) );
 		}
-		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
-		if ( ! $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$customer_table}` WHERE stripe_customer_id = %s LIMIT 1", $customer_id ) ) ) {
+		$customer_table = $this->portal_table( 'aj_portal_local_customers' );
+		if ( ! $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$customer_table}` WHERE local_customer_id = %s LIMIT 1", $customer_id ) ) ) {
 			return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
 
@@ -1120,7 +1151,7 @@ class AJCore_REST_API {
 			}
 		}
 
-		$table    = $this->portal_table( 'aj_portal_ledger' );
+		$table    = $this->portal_table( 'aj_portal_local_ledger' );
 		$inserted = 0;
 		$skipped  = 0;
 		$invalid  = 0;
@@ -1143,7 +1174,7 @@ class AJCore_REST_API {
 				'optional' => sanitize_text_field( $row['optional'] ?? '' ), 'memo' => sanitize_text_field( $row['memo'] ),
 			);
 			$result = $pdb->insert( $table, array(
-				'stripe_customer_id' => $customer_id, 'source_object_id' => $source_id,
+				'local_customer_id' => $customer_id, 'source_object_id' => $source_id,
 				'source_type' => $amount < 0 ? 'local_charge' : 'local_payment', 'ledger_date' => gmdate( 'Y-m-d 00:00:00', $ts ),
 				'description' => $description, 'amount' => $amount, 'currency' => 'usd', 'status' => 'posted',
 				'metadata' => wp_json_encode( $metadata ),
@@ -1165,22 +1196,19 @@ class AJCore_REST_API {
 		if ( '' === $name || ! strtotime( $start ) || $amount < 0 ) {
 			return new WP_Error( 'ajcore_invalid_local_service', __( 'Service name, contract start date, and a valid monthly rate are required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
-		$customers = $this->portal_table( 'aj_portal_stripe_customers' );
-		$customer  = $pdb->get_row( $pdb->prepare( "SELECT email FROM `{$customers}` WHERE stripe_customer_id = %s LIMIT 1", $customer_id ) );
+		$customers = $this->portal_table( 'aj_portal_local_customers' );
+		$customer  = $pdb->get_row( $pdb->prepare( "SELECT email FROM `{$customers}` WHERE local_customer_id = %s LIMIT 1", $customer_id ) );
 		if ( ! $customer ) return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
 		$key  = 'local_service_' . substr( hash( 'sha256', $customer_id . '|' . strtolower( $name ) ), 0, 52 );
 		$data = array(
-			'snapshot_key' => $key, 'stripe_customer_id' => $customer_id, 'customer_email' => sanitize_email( $customer->email ),
-			'product_id' => 'local_virtual_office', 'price_id' => '', 'product_name_snapshot' => $name,
-			'price_label_snapshot' => '$' . number_format( $amount, 2 ) . '/month', 'amount' => $amount, 'currency' => 'usd',
-			'recurring_interval' => 'month', 'quantity' => 1, 'billing_type' => 'recurring',
-			'service_period_start' => gmdate( 'Y-m-d 00:00:00', strtotime( $start ) ), 'source_type' => 'local_contract',
-			'status' => in_array( $status, array( 'active', 'paused', 'cancelled' ), true ) ? $status : 'active', 'livemode' => 0,
-			'raw_data' => wp_json_encode( array( 'local_only' => true, 'features' => $features, 'variable_charges' => array( 'postage' ), 'reporting_only' => true ) ),
+			'local_service_id' => $key, 'local_customer_id' => $customer_id, 'service_name' => $name,
+			'contract_start_date' => gmdate( 'Y-m-d', strtotime( $start ) ), 'monthly_rate' => $amount, 'currency' => 'usd',
+			'billing_interval' => 'month', 'features' => wp_json_encode( $features ), 'variable_charges' => wp_json_encode( array( 'postage' ) ),
+			'status' => in_array( $status, array( 'active', 'paused', 'cancelled' ), true ) ? $status : 'active', 'notes' => 'Reporting-only local AJCore contract.',
 		);
-		$table = $this->portal_table( 'aj_portal_service_snapshots' );
-		$exists = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE snapshot_key = %s LIMIT 1", $key ) );
-		$result = $exists ? $pdb->update( $table, $data, array( 'snapshot_key' => $key ) ) : $pdb->insert( $table, $data );
+		$table = $this->portal_table( 'aj_portal_local_services' );
+		$exists = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE local_service_id = %s LIMIT 1", $key ) );
+		$result = $exists ? $pdb->update( $table, $data, array( 'local_service_id' => $key ) ) : $pdb->insert( $table, $data );
 		if ( false === $result ) return new WP_Error( 'ajcore_local_service_save_failed', __( 'The local service could not be saved.', 'ajforms' ), array( 'status' => 500 ) );
 		return rest_ensure_response( array( 'success' => true, 'snapshot_key' => $key ) );
 	}
@@ -2914,9 +2942,10 @@ class AJCore_REST_API {
 
 	public function update_ops_customer_partner( WP_REST_Request $request ) {
 		$pdb            = $this->get_portal_db();
-		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
 		$partners_table = $this->portal_table( 'aj_portal_partners' );
 		$customer_id    = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$customer_table = $this->portal_table( 0 === strpos( $customer_id, 'local_' ) ? 'aj_portal_local_customers' : 'aj_portal_stripe_customers' );
+		$customer_id_column = 0 === strpos( $customer_id, 'local_' ) ? 'local_customer_id' : 'stripe_customer_id';
 		$partner_key    = sanitize_key( (string) $request->get_param( 'partner_key' ) );
 
 		if ( '' !== $partner_key && $this->table_exists( $pdb, $partners_table ) ) {
@@ -2926,7 +2955,7 @@ class AJCore_REST_API {
 			}
 		}
 
-		$updated = $pdb->update( $customer_table, array( 'partner_key' => $partner_key ), array( 'stripe_customer_id' => $customer_id ), array( '%s' ), array( '%s' ) );
+		$updated = $pdb->update( $customer_table, array( 'partner_key' => $partner_key ), array( $customer_id_column => $customer_id ), array( '%s' ), array( '%s' ) );
 		if ( false === $updated ) {
 			return new WP_Error( 'update_failed', __( 'Could not update the customer partner.', 'ajforms' ), array( 'status' => 500 ) );
 		}
@@ -2965,6 +2994,7 @@ class AJCore_REST_API {
 		$pdb            = $this->get_portal_db();
 		$partners_table = $this->portal_table( 'aj_portal_partners' );
 		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$local_customer_table = $this->portal_table( 'aj_portal_local_customers' );
 		if ( ! $this->table_exists( $pdb, $partners_table ) ) {
 			return rest_ensure_response( array( 'partners' => array() ) );
 		}
@@ -2981,6 +3011,13 @@ class AJCore_REST_API {
 				)
 			);
 			$accounts = is_array( $accounts ) ? $accounts : array();
+			if ( $this->table_exists( $pdb, $local_customer_table ) ) {
+				$local_accounts = $pdb->get_results( $pdb->prepare(
+					"SELECT local_customer_id AS stripe_customer_id,name,email,status AS portal_status,'' AS partner_price_id FROM `{$local_customer_table}` WHERE partner_key=%s ORDER BY name ASC",
+					$p->partner_key
+				) );
+				$accounts = array_merge( $accounts, (array) $local_accounts );
+			}
 
 			$total        = 0.0;
 			$account_rows = array();
@@ -5438,11 +5475,12 @@ class AJCore_REST_API {
 		// Reject duplicate emails: check portal DB before calling Stripe.
 		$check_pdb   = $this->get_portal_db();
 		$check_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$local_check_table = $this->portal_table( 'aj_portal_local_customers' );
 		if ( $this->table_exists( $check_pdb, $check_table ) ) {
-			$existing_id = $check_pdb->get_var( $check_pdb->prepare(
-				"SELECT stripe_customer_id FROM `{$check_table}` WHERE email = %s LIMIT 1",
-				$email
-			) );
+			$existing_id = $check_pdb->get_var( $check_pdb->prepare( "SELECT stripe_customer_id FROM `{$check_table}` WHERE email = %s LIMIT 1", $email ) );
+			if ( ! $existing_id && $this->table_exists( $check_pdb, $local_check_table ) ) {
+				$existing_id = $check_pdb->get_var( $check_pdb->prepare( "SELECT local_customer_id FROM `{$local_check_table}` WHERE email = %s LIMIT 1", $email ) );
+			}
 			if ( $existing_id ) {
 				return new WP_Error(
 					'ajcore_duplicate_email',
@@ -5457,14 +5495,13 @@ class AJCore_REST_API {
 			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
 			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
 			$inserted = $check_pdb->insert(
-				$check_table,
+				$local_check_table,
 				array(
-					'stripe_customer_id' => $local_customer_id, 'email' => $email, 'name' => $name, 'phone' => $phone,
+					'local_customer_id' => $local_customer_id, 'email' => $email, 'name' => $name, 'phone' => $phone,
 					'description' => $description, 'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ),
-					'partner_key' => 'alliance_vo', 'portal_status' => 'active', 'livemode' => 0,
-					'created_at' => current_time( 'mysql' ), 'synced_at' => current_time( 'mysql' ),
+					'partner_key' => 'alliance_vo', 'status' => 'active', 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 			);
 			if ( false === $inserted ) {
 				return new WP_Error( 'ajcore_local_customer_failed', 'Could not create the local AJCore customer.', array( 'status' => 500 ) );
@@ -5669,13 +5706,13 @@ class AJCore_REST_API {
 
 		if ( 0 === strpos( $stripe_customer_id, 'local_' ) ) {
 			$pdb = $this->get_portal_db();
-			$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+			$customer_table = $this->portal_table( 'aj_portal_local_customers' );
 			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
 			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
 			$updated = $pdb->update( $customer_table, array(
 				'name' => $name, 'email' => $email, 'phone' => $phone, 'description' => $description,
-				'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ), 'synced_at' => current_time( 'mysql' ),
-			), array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ), array( '%s' ) );
+				'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ), 'updated_at' => current_time( 'mysql' ),
+			), array( 'local_customer_id' => $stripe_customer_id ), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ), array( '%s' ) );
 			if ( false === $updated ) { return new WP_Error( 'ajcore_local_customer_update_failed', 'Could not update the local AJCore customer.', array( 'status' => 500 ) ); }
 			return rest_ensure_response( array( 'stripe_customer_id' => $stripe_customer_id, 'name' => $name, 'email' => $email, 'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description, 'address' => $address_data, 'metadata' => $metadata, 'portal_status' => 'active', 'synced_at' => current_time( 'mysql' ) ) );
 		}

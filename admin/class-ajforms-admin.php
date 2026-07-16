@@ -657,6 +657,9 @@ class AJForms_Admin {
 
 		$required_tables = array(
 			$this->get_portal_stripe_customers_table(),
+			$pdb->prefix . 'aj_portal_local_customers',
+			$pdb->prefix . 'aj_portal_local_services',
+			$pdb->prefix . 'aj_portal_local_ledger',
 			$this->get_portal_stripe_products_table(),
 			$this->get_portal_product_catalog_table(),
 			$this->get_portal_stripe_subscriptions_table(),
@@ -3107,16 +3110,19 @@ class AJForms_Admin {
 		return array(
 			'generated_ledger_source_types' => $generated_ledger_source_types,
 			'cleared_tables' => array(
-				array( 'table' => $this->get_portal_stripe_customers_table(), 'scope' => __( 'Stripe customer cache', 'ajforms' ), 'mode' => __( 'Stripe rows only; local AJCore customers are preserved', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_stripe_customers_table(), 'scope' => __( 'Stripe customer cache', 'ajforms' ), 'mode' => __( 'All rows; local AJCore customers live in a separate table', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_products_table(), 'scope' => __( 'Stripe product/price cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_subscriptions_table(), 'scope' => __( 'Stripe subscription cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_transactions_table(), 'scope' => __( 'Stripe transaction cache', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
-				array( 'table' => $this->get_portal_service_snapshots_table(), 'scope' => __( 'Generated service snapshots', 'ajforms' ), 'mode' => __( 'Stripe/generated rows only; local AJCore contracts are preserved', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_service_snapshots_table(), 'scope' => __( 'Generated Stripe service snapshots', 'ajforms' ), 'mode' => __( 'All rows; local AJCore contracts live in a separate table', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_sync_log_items_table(), 'scope' => __( 'Sync history detail rows', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_sync_logs_table(), 'scope' => __( 'Sync history runs', 'ajforms' ), 'mode' => __( 'All rows', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_ledger_table(), 'scope' => __( 'Generated Stripe billing ledger rows', 'ajforms' ), 'mode' => sprintf( __( 'Rows where source_type is %s', 'ajforms' ), implode( ', ', $generated_ledger_source_types ) ) ),
 			),
 			'preserved_tables' => array(
+				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_customers', 'scope' => __( 'Local AJCore customers', 'ajforms' ) ),
+				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_services', 'scope' => __( 'Local AJCore service contracts', 'ajforms' ) ),
+				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_ledger', 'scope' => __( 'Local AJCore ledger and Rentec imports', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_customer_states_table(), 'scope' => __( 'Durable portal enabled/disabled/archived state', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_user_mappings_table(), 'scope' => __( 'Local WordPress user mappings', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_service_states_table(), 'scope' => __( 'Durable service used/unused state', 'ajforms' ) ),
@@ -3352,16 +3358,8 @@ class AJForms_Admin {
 		}
 
 		foreach ( $tables as $table ) {
-			if ( $this->get_portal_stripe_customers_table() === $table ) {
-				$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE stripe_customer_id LIKE 'cus\_%'" );
-				$result = $wpdb->query( "DELETE FROM {$table} WHERE stripe_customer_id LIKE 'cus\_%'" );
-			} elseif ( $this->get_portal_service_snapshots_table() === $table ) {
-				$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE source_type <> 'local_contract' OR source_type IS NULL" );
-				$result = $wpdb->query( "DELETE FROM {$table} WHERE source_type <> 'local_contract' OR source_type IS NULL" );
-			} else {
-				$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
-				$result = $wpdb->query( "DELETE FROM {$table}" );
-			}
+			$count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
+			$result = $wpdb->query( "DELETE FROM {$table}" );
 			if ( false === $result ) {
 				return new WP_Error( 'portal_reset_failed', sprintf( __( 'Could not reset table %s.', 'ajforms' ), $table ) );
 			}

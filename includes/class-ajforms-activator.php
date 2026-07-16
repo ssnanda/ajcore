@@ -848,6 +848,7 @@ class AJForms_Activator {
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+		self::create_and_migrate_local_business_tables( $wpdb );
 
 		// Records created before file archiving had no status value. Keep them
 		// visible as active files instead of silently dropping them from AJCore.
@@ -857,6 +858,7 @@ class AJForms_Activator {
 		if ( function_exists( 'ajcore_get_portal_db' ) ) {
 			$pdb = ajcore_get_portal_db();
 			if ( $pdb !== $wpdb ) {
+				self::create_and_migrate_local_business_tables( $pdb );
 				$pdb_charset = $pdb->get_charset_collate();
 				self::create_reservation_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_mail_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
@@ -1204,7 +1206,84 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '30', false );
+		update_option( 'ajforms_portal_schema_version', '31', false );
+	}
+
+	/** Dedicated durable AJCore records. Stripe cache tables remain disposable. */
+	public static function create_and_migrate_local_business_tables( $db ) {
+		$prefix  = $db->prefix;
+		$charset = $db->get_charset_collate();
+		$customers = $prefix . 'aj_portal_local_customers';
+		$services  = $prefix . 'aj_portal_local_services';
+		$ledger    = $prefix . 'aj_portal_local_ledger';
+
+		$db->query( "CREATE TABLE IF NOT EXISTS $customers (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			local_customer_id varchar(100) NOT NULL,
+			email varchar(190) DEFAULT '' NOT NULL,
+			name varchar(255) DEFAULT '' NOT NULL,
+			phone varchar(100) DEFAULT '' NOT NULL,
+			description varchar(500) DEFAULT '' NOT NULL,
+			address longtext NULL,
+			metadata longtext NULL,
+			partner_key varchar(100) DEFAULT 'alliance_vo' NOT NULL,
+			status varchar(50) DEFAULT 'active' NOT NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY (id), UNIQUE KEY local_customer_id (local_customer_id), KEY email (email), KEY partner_key (partner_key), KEY status (status)
+		) $charset" );
+		$db->query( "CREATE TABLE IF NOT EXISTS $services (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			local_service_id varchar(100) NOT NULL,
+			local_customer_id varchar(100) NOT NULL,
+			service_name varchar(255) DEFAULT '' NOT NULL,
+			contract_start_date date NULL,
+			contract_end_date date NULL,
+			monthly_rate decimal(12,2) DEFAULT 0 NOT NULL,
+			currency varchar(12) DEFAULT 'usd' NOT NULL,
+			billing_interval varchar(50) DEFAULT 'month' NOT NULL,
+			features longtext NULL,
+			variable_charges longtext NULL,
+			status varchar(50) DEFAULT 'active' NOT NULL,
+			notes longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY (id), UNIQUE KEY local_service_id (local_service_id), KEY local_customer_id (local_customer_id), KEY status (status)
+		) $charset" );
+		$db->query( "CREATE TABLE IF NOT EXISTS $ledger (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			local_customer_id varchar(100) NOT NULL,
+			source_object_id varchar(100) NOT NULL,
+			source_type varchar(50) NOT NULL,
+			ledger_date datetime NULL,
+			description varchar(255) DEFAULT '' NOT NULL,
+			amount decimal(12,2) DEFAULT 0 NOT NULL,
+			currency varchar(12) DEFAULT 'usd' NOT NULL,
+			status varchar(50) DEFAULT 'posted' NOT NULL,
+			metadata longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY (id), UNIQUE KEY source_object_id (source_object_id), KEY local_customer_id (local_customer_id), KEY ledger_date (ledger_date), KEY status (status)
+		) $charset" );
+
+		$old_customers = $prefix . 'aj_portal_stripe_customers';
+		$old_services  = $prefix . 'aj_portal_service_snapshots';
+		$old_ledger    = $prefix . 'aj_portal_ledger';
+		if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $old_customers ) ) === $old_customers ) {
+			$db->query( "INSERT IGNORE INTO $customers (local_customer_id,email,name,phone,description,address,metadata,partner_key,status,created_at,updated_at)
+				SELECT stripe_customer_id,email,name,phone,description,address,metadata,COALESCE(NULLIF(partner_key,''),'alliance_vo'),COALESCE(NULLIF(portal_status,''),'active'),COALESCE(created_at,synced_at),synced_at FROM $old_customers WHERE stripe_customer_id LIKE 'local\_%'" );
+		}
+		if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $old_services ) ) === $old_services ) {
+			$db->query( "INSERT IGNORE INTO $services (local_service_id,local_customer_id,service_name,contract_start_date,contract_end_date,monthly_rate,currency,billing_interval,features,variable_charges,status,notes,created_at,updated_at)
+				SELECT snapshot_key,stripe_customer_id,product_name_snapshot,DATE(service_period_start),DATE(service_period_end),amount,currency,COALESCE(NULLIF(recurring_interval,''),'month'),JSON_EXTRACT(raw_data,'$.features'),JSON_EXTRACT(raw_data,'$.variable_charges'),status,'',created_at,updated_at FROM $old_services WHERE source_type='local_contract' AND stripe_customer_id LIKE 'local\_%'" );
+		}
+		if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $old_ledger ) ) === $old_ledger ) {
+			$db->query( "INSERT IGNORE INTO $ledger (local_customer_id,source_object_id,source_type,ledger_date,description,amount,currency,status,metadata,created_at)
+				SELECT stripe_customer_id,source_object_id,source_type,ledger_date,description,amount,currency,status,metadata,created_at FROM $old_ledger WHERE stripe_customer_id LIKE 'local\_%' OR source_type IN ('local_charge','local_payment')" );
+		}
+		// Delete only after copy. Re-running this migration is safe because destination keys are unique.
+		if ( $db->get_var( "SELECT COUNT(*) FROM $customers" ) > 0 ) $db->query( "DELETE FROM $old_customers WHERE stripe_customer_id LIKE 'local\_%'" );
+		if ( $db->get_var( "SELECT COUNT(*) FROM $services" ) > 0 ) $db->query( "DELETE FROM $old_services WHERE source_type='local_contract' AND stripe_customer_id LIKE 'local\_%'" );
+		if ( $db->get_var( "SELECT COUNT(*) FROM $ledger" ) > 0 ) $db->query( "DELETE FROM $old_ledger WHERE stripe_customer_id LIKE 'local\_%' OR source_type IN ('local_charge','local_payment')" );
 	}
 
 	/**
