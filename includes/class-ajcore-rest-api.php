@@ -1294,8 +1294,8 @@ class AJCore_REST_API {
 		$table = $this->portal_table( 'aj_portal_local_services' );
 		if ( 'delete' === $action ) {
 			if ( '' === $service_id ) return new WP_Error( 'ajcore_invalid_local_service', __( 'A local service ID is required.', 'ajforms' ), array( 'status' => 400 ) );
-			$deleted = $pdb->delete( $table, array( 'local_customer_id' => $customer_id, 'local_service_id' => $service_id ), array( '%s', '%s' ) );
-			return false === $deleted ? new WP_Error( 'ajcore_local_service_delete_failed', __( 'The local service could not be deleted.', 'ajforms' ), array( 'status' => 500 ) ) : rest_ensure_response( array( 'success' => true ) );
+			$deleted = $pdb->update( $table, array( 'status' => 'cancelled', 'next_charge_date' => null ), array( 'local_customer_id' => $customer_id, 'local_service_id' => $service_id ) );
+			return false === $deleted ? new WP_Error( 'ajcore_local_service_delete_failed', __( 'The recurring transaction could not be cancelled.', 'ajforms' ), array( 'status' => 500 ) ) : rest_ensure_response( array( 'success' => true, 'history_retained' => true ) );
 		}
 		if ( '' === $name || ! strtotime( $start ) || ! strtotime( $move_in ) || ! strtotime( $billing_start ) || ( '' !== $end && ! strtotime( $end ) ) || $amount < 0 ) {
 			return new WP_Error( 'ajcore_invalid_local_service', __( 'Service name, move-in, service start, charges begin, and a valid monthly rate are required.', 'ajforms' ), array( 'status' => 400 ) );
@@ -1333,6 +1333,12 @@ class AJCore_REST_API {
 		$services = $this->portal_table( 'aj_portal_local_services' );
 		$customers = $this->portal_table( 'aj_portal_local_customers' );
 		$rows = $pdb->get_results( "SELECT s.local_service_id,s.local_customer_id,s.service_name,s.move_in_date,s.contract_start_date,s.contract_end_date,s.billing_start_date,s.next_charge_date,s.last_billed_date,s.monthly_rate,s.pending_rate,s.pending_rate_date,s.status,c.name AS customer_name,c.email FROM `{$services}` s LEFT JOIN `{$customers}` c ON c.local_customer_id=s.local_customer_id ORDER BY s.status='active' DESC,s.next_charge_date ASC,c.name ASC", ARRAY_A );
+		$history = array();
+		$ledger = $this->portal_table( 'aj_portal_local_ledger' );
+		$posted = $pdb->get_results( "SELECT id,ledger_date,description,amount,currency,status,metadata FROM `{$ledger}` WHERE source_type='local_recurring_charge' ORDER BY ledger_date DESC,id DESC", ARRAY_A );
+		foreach ( (array) $posted as $entry ) { $meta = json_decode( (string) $entry['metadata'], true ); $service_id = is_array( $meta ) ? ( $meta['local_service_id'] ?? '' ) : ''; unset( $entry['metadata'] ); if ( $service_id ) $history[ $service_id ][] = $entry; }
+		foreach ( $rows as &$row ) { $row['posting_history'] = $history[ $row['local_service_id'] ] ?? array(); $row['posted_charge_count'] = count( $row['posting_history'] ); }
+		unset( $row );
 		return rest_ensure_response( array( 'transactions' => is_array( $rows ) ? $rows : array(), 'last_run' => get_option( 'ajcore_local_recurring_transactions_last_run', '' ) ) );
 	}
 
