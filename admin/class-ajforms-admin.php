@@ -18847,6 +18847,7 @@ class AJForms_Admin {
 		}
 
 		$customer     = $detail['customer'];
+		$is_local     = 0 === strpos( (string) $customer->stripe_customer_id, 'local_' );
 		$user         = $detail['user'];
 		$active_services_count = count( $detail['active_recurring_services'] ) + count( $detail['one_time_services'] );
 		$portal_status = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' );
@@ -18857,7 +18858,7 @@ class AJForms_Admin {
 		$addr         = is_array( $addr ) ? $addr : array();
 		$meta_data    = ! empty( $customer->metadata ) ? ( is_array( $customer->metadata ) ? $customer->metadata : json_decode( $customer->metadata, true ) ) : array();
 		$meta_data    = is_array( $meta_data ) ? $meta_data : array();
-		$subscription_products = $this->api_get_ops_subscription_products();
+		$subscription_products = $is_local ? array() : $this->api_get_ops_subscription_products();
 		$sync_url     = wp_nonce_url(
 			add_query_arg(
 				array(
@@ -18981,14 +18982,16 @@ class AJForms_Admin {
 			</div><?php endif; ?>
 		</div>
 
-		<div class="ajcore-customer-summary">
-			<div><span><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></span><strong><?php echo esc_html( 'active' === $portal_status ? __( 'Active', 'ajforms' ) : ucfirst( $portal_status ) ); ?></strong></div>
+		<div class="ajcore-customer-summary <?php echo $is_local ? 'is-local' : ''; ?>">
+			<div><span><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></span><strong><?php echo esc_html( $is_local && ! $user ? __( 'Not enabled', 'ajforms' ) : ( 'active' === $portal_status ? __( 'Active', 'ajforms' ) : ucfirst( $portal_status ) ) ); ?></strong></div>
 			<div><span><?php esc_html_e( 'Active Services', 'ajforms' ); ?></span><strong><?php echo esc_html( $active_services_count ); ?></strong></div>
 			<?php if ( ! $is_local ) : ?><div><span><?php esc_html_e( 'Auto-Pay Subscriptions', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['active_recurring_services'] ) ); ?></strong></div><?php endif; ?>
 			<div><span><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['open_balance'], 'usd' ) ); ?></strong></div>
-			<div><span><?php esc_html_e( 'Credit Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['credit_balance'], 'usd' ) ); ?></strong></div>
-			<div><span><?php esc_html_e( 'Requests', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['requests'] ) ); ?></strong></div>
-			<div><span><?php esc_html_e( 'Action Items', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['tasks'] ) ); ?></strong></div>
+			<?php if ( ! $is_local ) : ?>
+				<div><span><?php esc_html_e( 'Credit Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['credit_balance'], 'usd' ) ); ?></strong></div>
+				<div><span><?php esc_html_e( 'Requests', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['requests'] ) ); ?></strong></div>
+				<div><span><?php esc_html_e( 'Action Items', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['tasks'] ) ); ?></strong></div>
+			<?php endif; ?>
 		</div>
 
 		<div class="ajcore-customer-grid <?php echo $is_local ? 'is-local' : ''; ?>">
@@ -19016,7 +19019,7 @@ class AJForms_Admin {
 					<?php if ( ! $is_local ) : ?><dt><?php esc_html_e( 'Mode', 'ajforms' ); ?></dt><dd><?php echo ! empty( $customer->livemode ) ? esc_html__( 'Live', 'ajforms' ) : esc_html__( 'Sandbox', 'ajforms' ); ?></dd><?php endif; ?>
 					<dt><?php esc_html_e( 'Created', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->created_at ) ); ?></dd>
 					<dt><?php echo esc_html( $is_local ? __( 'Last Updated', 'ajforms' ) : __( 'Last Synced', 'ajforms' ) ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></dd>
-					<?php foreach ( $display_fields as $field ) : ?>
+					<?php foreach ( $is_local ? array() : $display_fields as $field ) : ?>
 						<?php if ( in_array( $field, array( 'name', 'email', 'phone', 'livemode', 'created' ), true ) ) { continue; } ?>
 						<dt><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></dt><dd><?php $this->render_portal_customer_field_value( $this->get_portal_customer_display_value( $customer, $field ) ); ?></dd>
 					<?php endforeach; ?>
@@ -19074,18 +19077,15 @@ class AJForms_Admin {
 							? $partner_pdb->get_results( "SELECT partner_key, name FROM `{$partners_table}` ORDER BY name ASC" )
 							: array();
 						$current_partner  = isset( $customer->partner_key ) ? (string) $customer->partner_key : '';
+						$current_partner_record = null;
+						foreach ( $partner_options as $partner_option ) {
+							if ( $current_partner === (string) $partner_option->partner_key ) {
+								$current_partner_record = $partner_option;
+								break;
+							}
+						}
 						?>
-						<form method="post" style="display:flex;gap:8px;align-items:center;margin:0;">
-							<?php wp_nonce_field( 'ajcore_customer_partner_' . $customer->stripe_customer_id, 'ajcore_customer_partner_nonce' ); ?>
-							<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
-							<select name="customer_partner_key">
-								<option value=""><?php esc_html_e( '— Direct customer —', 'ajforms' ); ?></option>
-								<?php foreach ( $partner_options as $partner_option ) : ?>
-									<option value="<?php echo esc_attr( $partner_option->partner_key ); ?>" <?php selected( $current_partner, $partner_option->partner_key ); ?>><?php echo esc_html( $partner_option->name ); ?></option>
-								<?php endforeach; ?>
-							</select>
-							<button type="submit" class="button button-small"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
-						</form>
+						<strong><?php echo esc_html( $current_partner_record ? $current_partner_record->name : __( 'Direct customer', 'ajforms' ) ); ?></strong>
 					</dd>
 				</dl>
 				<hr>
@@ -19314,7 +19314,7 @@ class AJForms_Admin {
 				?>
 			</div>
 
-			<div class="ajcore-customer-card">
+			<?php if ( ! $is_local ) : ?><div class="ajcore-customer-card">
 				<h3><?php esc_html_e( 'Upcoming Payment', 'ajforms' ); ?></h3>
 				<?php
 				$this->render_portal_dataset_section(
@@ -19325,7 +19325,7 @@ class AJForms_Admin {
 					__( 'No upcoming payment within the next 30 days.', 'ajforms' )
 				);
 				?>
-			</div>
+			</div><?php endif; ?>
 
 			<div class="ajcore-customer-card">
 				<h3><?php esc_html_e( 'Linked Entities', 'ajforms' ); ?></h3>
