@@ -5228,7 +5228,7 @@ class AJForms_Admin {
 
 		if ( $is_local ) {
 			$local_ledger = $pdb->prefix . 'aj_portal_local_ledger';
-			$ledger = $pdb->get_results( $pdb->prepare( "SELECT id,local_customer_id AS stripe_customer_id,source_object_id,source_type,ledger_date,description,amount,currency,status,metadata,created_at FROM `{$local_ledger}` WHERE local_customer_id=%s ORDER BY ledger_date DESC,id DESC LIMIT %d", $stripe_customer_id, 100 ) );
+			$ledger = $pdb->get_results( $pdb->prepare( "SELECT id,local_customer_id AS stripe_customer_id,source_object_id,source_type,ledger_date,description,amount,currency,status,metadata,created_at FROM `{$local_ledger}` WHERE local_customer_id=%s ORDER BY ledger_date DESC,id DESC", $stripe_customer_id ) );
 		} else {
 			$ledger = $pdb->get_results(
 			$pdb->prepare(
@@ -11473,6 +11473,90 @@ class AJForms_Admin {
 				), array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s' ) );
 				if ( false === $inserted ) $args['portal-error'] = rawurlencode( __( 'The charge could not be saved.', 'ajforms' ) );
 				else $args['local-charge-added'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_local_service_nonce'] ) && 0 === strpos( $stripe_customer_id, 'local_' ) ) {
+			check_admin_referer( 'ajcore_local_service_' . $stripe_customer_id, 'ajcore_local_service_nonce' );
+			$name   = sanitize_text_field( wp_unslash( $_POST['local_service_name'] ?? '' ) );
+			$start  = sanitize_text_field( wp_unslash( $_POST['local_service_start'] ?? '' ) );
+			$rate   = round( abs( (float) wp_unslash( $_POST['local_service_rate'] ?? 0 ) ), 2 );
+			$notes  = sanitize_textarea_field( wp_unslash( $_POST['local_service_notes'] ?? '' ) );
+			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $stripe_customer_id );
+			if ( '' === $name || ! strtotime( $start ) || $rate <= 0 ) {
+				$args['portal-error'] = rawurlencode( __( 'Service name, start date, and a monthly rate greater than zero are required.', 'ajforms' ) );
+			} else {
+				$pdb = $this->get_pdb();
+				$service_id = 'local_service_' . str_replace( '-', '', wp_generate_uuid4() );
+				$saved = $pdb->insert( $pdb->prefix . 'aj_portal_local_services', array(
+					'local_service_id' => $service_id, 'local_customer_id' => $stripe_customer_id,
+					'service_name' => $name, 'contract_start_date' => gmdate( 'Y-m-d', strtotime( $start ) ),
+					'monthly_rate' => $rate, 'currency' => 'usd', 'billing_interval' => 'month',
+					'features' => wp_json_encode( array() ), 'variable_charges' => wp_json_encode( array( 'postage' ) ),
+					'status' => 'active', 'notes' => $notes,
+				) );
+				if ( false === $saved ) $args['portal-error'] = rawurlencode( __( 'The recurring service could not be saved.', 'ajforms' ) );
+				else $args['local-service-added'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_local_service_bill_nonce'] ) && 0 === strpos( $stripe_customer_id, 'local_' ) ) {
+			$service_id = sanitize_text_field( wp_unslash( $_POST['local_service_id'] ?? '' ) );
+			check_admin_referer( 'ajcore_local_service_bill_' . $stripe_customer_id . '_' . $service_id, 'ajcore_local_service_bill_nonce' );
+			$pdb = $this->get_pdb();
+			$service = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$pdb->prefix}aj_portal_local_services` WHERE local_service_id=%s AND local_customer_id=%s LIMIT 1", $service_id, $stripe_customer_id ) );
+			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $stripe_customer_id );
+			if ( ! $service || 'active' !== $service->status ) {
+				$args['portal-error'] = rawurlencode( __( 'Active local service not found.', 'ajforms' ) );
+			} else {
+				$period_start = wp_date( 'Y-m-01' );
+				$period_end = wp_date( 'Y-m-t' );
+				$source_id = 'local_recurring_' . substr( hash( 'sha256', $service_id . '|' . substr( $period_start, 0, 7 ) ), 0, 48 );
+				$inserted = $pdb->insert( $pdb->prefix . 'aj_portal_local_ledger', array(
+					'local_customer_id' => $stripe_customer_id, 'source_object_id' => $source_id, 'source_type' => 'local_charge',
+					'ledger_date' => $period_start . ' 00:00:00', 'description' => wp_date( 'm/d/y', strtotime( $period_start ) ) . ' - ' . wp_date( 'm/d/y', strtotime( $period_end ) ),
+					'amount' => -abs( (float) $service->monthly_rate ), 'currency' => $service->currency, 'status' => 'posted',
+					'metadata' => wp_json_encode( array( 'entry_type' => 'recurring_charge', 'category' => 'Rent', 'local_service_id' => $service_id ) ),
+				) );
+				if ( false === $inserted ) $args['portal-error'] = rawurlencode( __( 'This month may already be billed, or the monthly charge could not be saved.', 'ajforms' ) );
+				else $args['local-charge-added'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_local_ledger_action_nonce'] ) && 0 === strpos( $stripe_customer_id, 'local_' ) ) {
+			$entry_id = absint( wp_unslash( $_POST['local_ledger_id'] ?? 0 ) );
+			check_admin_referer( 'ajcore_local_ledger_action_' . $stripe_customer_id . '_' . $entry_id, 'ajcore_local_ledger_action_nonce' );
+			$pdb   = $this->get_pdb();
+			$table = $pdb->prefix . 'aj_portal_local_ledger';
+			$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id=%d AND local_customer_id=%s LIMIT 1", $entry_id, $stripe_customer_id ) );
+			$args  = array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $stripe_customer_id );
+			$action = sanitize_key( wp_unslash( $_POST['local_ledger_action'] ?? '' ) );
+			if ( ! $row ) {
+				$args['portal-error'] = rawurlencode( __( 'Ledger entry not found.', 'ajforms' ) );
+			} elseif ( 'delete' === $action ) {
+				$pdb->delete( $table, array( 'id' => $entry_id, 'local_customer_id' => $stripe_customer_id ), array( '%d', '%s' ) );
+				$args['local-ledger-updated'] = 1;
+			} elseif ( 'edit' === $action ) {
+				$date = sanitize_text_field( wp_unslash( $_POST['local_ledger_date'] ?? '' ) );
+				$description = sanitize_text_field( wp_unslash( $_POST['local_ledger_description'] ?? '' ) );
+				$category = sanitize_text_field( wp_unslash( $_POST['local_ledger_category'] ?? '' ) );
+				$amount = round( abs( (float) wp_unslash( $_POST['local_ledger_amount'] ?? 0 ) ), 2 );
+				$entry_type = sanitize_key( wp_unslash( $_POST['local_ledger_entry_type'] ?? 'charge' ) );
+				if ( '' === $description || ! strtotime( $date ) || $amount <= 0 ) {
+					$args['portal-error'] = rawurlencode( __( 'A valid date, description, and amount are required.', 'ajforms' ) );
+				} else {
+					$metadata = $this->decode_portal_json( $row->metadata );
+					$metadata = is_array( $metadata ) ? $metadata : array();
+					$metadata['category'] = $category;
+					$pdb->update( $table, array( 'ledger_date' => gmdate( 'Y-m-d 00:00:00', strtotime( $date ) ), 'description' => $description, 'amount' => 'payment' === $entry_type ? $amount : -$amount, 'source_type' => 'payment' === $entry_type ? 'local_payment' : 'local_charge', 'metadata' => wp_json_encode( $metadata ) ), array( 'id' => $entry_id, 'local_customer_id' => $stripe_customer_id ) );
+					$args['local-ledger-updated'] = 1;
+				}
 			}
 			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 			exit;
@@ -18865,6 +18949,17 @@ class AJForms_Admin {
 		$local_ledger_pages     = $is_local ? max( 1, (int) ceil( $local_ledger_total / $local_ledger_per_page ) ) : 1;
 		$local_ledger_page      = min( $local_ledger_page, $local_ledger_pages );
 		$local_ledger_rows      = $is_local ? array_slice( $detail['ledger'], ( $local_ledger_page - 1 ) * $local_ledger_per_page, $local_ledger_per_page ) : $detail['ledger'];
+		$local_services_table   = $this->get_pdb()->prefix . 'aj_portal_local_services';
+		$local_services         = $is_local ? $this->get_pdb()->get_results( $this->get_pdb()->prepare( "SELECT * FROM `{$local_services_table}` WHERE local_customer_id=%s ORDER BY contract_start_date DESC,id DESC", $customer->stripe_customer_id ) ) : array();
+		$local_charge_total     = 0.0;
+		$local_payment_total    = 0.0;
+		if ( $is_local ) {
+			foreach ( $detail['ledger'] as $local_entry ) {
+				$local_amount = (float) $local_entry->amount;
+				if ( $local_amount < 0 ) $local_charge_total += abs( $local_amount );
+				else $local_payment_total += $local_amount;
+			}
+		}
 		$sync_url     = wp_nonce_url(
 			add_query_arg(
 				array(
@@ -18906,6 +19001,8 @@ class AJForms_Admin {
 			.ajcore-customer-grid.is-local .ajcore-customer-table-wrap th,.ajcore-customer-grid.is-local .ajcore-customer-table-wrap td{padding:9px 10px;line-height:1.35}
 			.ajcore-ledger-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}
 			.ajcore-ledger-pagination .ajcore-ledger-pages{display:flex;gap:8px;align-items:center}
+			.ajcore-local-service-form{display:grid;grid-template-columns:minmax(180px,1.4fr) 140px 120px minmax(180px,1fr) auto;gap:10px;align-items:end;margin:0 0 16px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px}.ajcore-local-service-form label{font-weight:600;color:#50575e}.ajcore-local-service-form input{display:block;width:100%;margin-top:4px}.ajcore-local-service-list{display:grid;gap:8px}.ajcore-local-service-list>div{display:grid;grid-template-columns:minmax(180px,1fr) auto;gap:4px 16px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:8px}.ajcore-local-service-list span{font-weight:700}.ajcore-local-service-list small{color:#646970}.ajcore-local-service-list form{grid-column:1/-1;margin-top:6px}
+			.ajcore-local-ledger-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 14px}.ajcore-local-ledger-summary>div{padding:12px 14px;border:1px solid #e2e8f0;border-radius:8px}.ajcore-local-ledger-summary span{display:block;color:#646970;font-size:12px;font-weight:700;text-transform:uppercase}.ajcore-local-ledger-summary strong{display:block;margin-top:4px;font-size:20px}.ajcore-payment-amount{color:#16803c;font-weight:600}.ajcore-ledger-edit summary{cursor:pointer;color:#3858e9;font-weight:600}.ajcore-ledger-edit form{display:grid;grid-template-columns:130px 130px minmax(190px,1fr) 100px 100px auto auto;gap:8px;align-items:center;position:absolute;right:32px;left:32px;z-index:5;padding:12px;background:#fff;border:1px solid #c3c4c7;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15)}
 			.ajcore-customer-card th,.ajcore-customer-card td{vertical-align:top}
 			.ajcore-customer-field-value{display:inline-block;max-width:380px;white-space:normal;overflow-wrap:anywhere}
 			.ajcore-customer-json summary{cursor:pointer;font-weight:600}
@@ -18935,7 +19032,7 @@ class AJForms_Admin {
 			.ajcore-subscription-action-wide{grid-column:1/-1}
 			.ajcore-subscription-action-buttons{display:flex;gap:8px;align-items:center;justify-content:flex-end}
 			.ajcore-subscription-update-form[data-collection-method="charge_automatically"] .ajcore-subscription-due-days{display:none}
-			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}.ajcore-customer-grid.is-local>*{grid-column:1!important;grid-row:auto!important}}
+			@media (max-width: 960px){.ajcore-customer-grid{grid-template-columns:1fr}.ajcore-customer-head{display:block}.ajcore-customer-meta{grid-template-columns:1fr}.ajcore-customer-grid.is-local>*{grid-column:1!important;grid-row:auto!important}.ajcore-local-service-form{grid-template-columns:1fr}.ajcore-local-ledger-summary{grid-template-columns:1fr}.ajcore-ledger-edit form{position:static;grid-template-columns:1fr}}
 			@media (max-width: 960px){.ajcore-customer-edit-grid{grid-template-columns:1fr}.ajcore-customer-edit-actions{justify-content:flex-start}.ajcore-subscription-form{grid-template-columns:1fr}}
 		</style>
 
@@ -18964,6 +19061,8 @@ class AJForms_Admin {
 			<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( '%d file(s) uploaded and shared with this customer.', 'ajforms' ), absint( wp_unslash( $_GET['portal-files-added'] ) ) ) ); ?></p></div>
 		<?php endif; ?>
 		<?php if ( isset( $_GET['local-charge-added'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Local charge added.', 'ajforms' ); ?></p></div><?php endif; ?>
+		<?php if ( isset( $_GET['local-service-added'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Recurring local service added.', 'ajforms' ); ?></p></div><?php endif; ?>
+		<?php if ( isset( $_GET['local-ledger-updated'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Local ledger updated.', 'ajforms' ); ?></p></div><?php endif; ?>
 
 		<div class="ajcore-customer-360">
 		<div class="ajcore-customer-head">
@@ -18991,7 +19090,7 @@ class AJForms_Admin {
 			</div><?php endif; ?>
 		</div>
 
-		<div class="ajcore-customer-summary <?php echo $is_local ? 'is-local' : ''; ?>">
+		<?php if ( ! $is_local ) : ?><div class="ajcore-customer-summary">
 			<div><span><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></span><strong><?php echo esc_html( $is_local && ! $user ? __( 'Not enabled', 'ajforms' ) : ( 'active' === $portal_status ? __( 'Active', 'ajforms' ) : ucfirst( $portal_status ) ) ); ?></strong></div>
 			<div><span><?php esc_html_e( 'Active Services', 'ajforms' ); ?></span><strong><?php echo esc_html( $active_services_count ); ?></strong></div>
 			<?php if ( ! $is_local ) : ?><div><span><?php esc_html_e( 'Auto-Pay Subscriptions', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['active_recurring_services'] ) ); ?></strong></div><?php endif; ?>
@@ -19001,7 +19100,7 @@ class AJForms_Admin {
 				<div><span><?php esc_html_e( 'Requests', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['requests'] ) ); ?></strong></div>
 				<div><span><?php esc_html_e( 'Action Items', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['tasks'] ) ); ?></strong></div>
 			<?php endif; ?>
-		</div>
+		</div><?php endif; ?>
 
 		<div class="ajcore-customer-grid <?php echo $is_local ? 'is-local' : ''; ?>">
 			<div class="ajcore-customer-card ajcore-customer-profile-card <?php echo $is_editing ? 'is-editing' : ''; ?>">
@@ -19113,9 +19212,24 @@ class AJForms_Admin {
 			</div>
 
 			<div class="ajcore-customer-card <?php echo $is_local ? 'ajcore-local-service-card' : 'ajcore-customer-wide'; ?>">
-				<h3><?php echo esc_html( $is_local ? __( 'Local Service', 'ajforms' ) : __( 'Subscriptions', 'ajforms' ) ); ?></h3>
+				<div class="ajcore-customer-card-head"><div><h3><?php echo esc_html( $is_local ? __( 'Service / Subscription', 'ajforms' ) : __( 'Subscriptions', 'ajforms' ) ); ?></h3><?php if ( $is_local ) : ?><p class="description"><?php esc_html_e( 'Locally managed recurring services. Nothing is created in Stripe.', 'ajforms' ); ?></p><?php endif; ?></div></div>
 				<?php if ( $is_local ) : ?>
-					<?php $this->render_portal_dataset_section( 'local_services', __( 'Local Service', 'ajforms' ), $detail['active_recurring_services'], array( 'service_name', 'included', 'service_period_start', 'price', 'status' ), __( 'No local service configured.', 'ajforms' ), false ); ?>
+					<form method="post" class="ajcore-local-service-form">
+						<?php wp_nonce_field( 'ajcore_local_service_' . $customer->stripe_customer_id, 'ajcore_local_service_nonce' ); ?>
+						<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+						<label><?php esc_html_e( 'Service', 'ajforms' ); ?><input type="text" name="local_service_name" value="Virtual Office Service" required></label>
+						<label><?php esc_html_e( 'Start date', 'ajforms' ); ?><input type="date" name="local_service_start" required></label>
+						<label><?php esc_html_e( 'Monthly rate', 'ajforms' ); ?><input type="number" name="local_service_rate" min="0.01" step="0.01" placeholder="42.00" required></label>
+						<label><?php esc_html_e( 'Included / notes', 'ajforms' ); ?><input type="text" name="local_service_notes" placeholder="Monthly Mail Forwarding"></label>
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Local Service', 'ajforms' ); ?></button>
+					</form>
+					<?php if ( empty( $local_services ) ) : ?><p class="description"><?php esc_html_e( 'No local service configured.', 'ajforms' ); ?></p><?php else : ?>
+						<div class="ajcore-local-service-list">
+						<?php foreach ( $local_services as $local_service ) : ?>
+							<div><strong><?php echo esc_html( $local_service->service_name ); ?></strong><span><?php echo esc_html( $this->format_portal_money( $local_service->monthly_rate, $local_service->currency ) ); ?> / <?php echo esc_html( $local_service->billing_interval ); ?></span><small><?php echo esc_html( sprintf( __( 'Started %s · %s', 'ajforms' ), $this->format_portal_date( $local_service->contract_start_date ), ucfirst( $local_service->status ) ) ); ?></small><?php if ( ! empty( $local_service->notes ) ) : ?><small><?php echo esc_html( $local_service->notes ); ?></small><?php endif; ?><form method="post"><input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>"><input type="hidden" name="local_service_id" value="<?php echo esc_attr( $local_service->local_service_id ); ?>"><?php wp_nonce_field( 'ajcore_local_service_bill_' . $customer->stripe_customer_id . '_' . $local_service->local_service_id, 'ajcore_local_service_bill_nonce' ); ?><button class="button"><?php esc_html_e( 'Post This Month’s Charge', 'ajforms' ); ?></button></form></div>
+						<?php endforeach; ?>
+						</div>
+					<?php endif; ?>
 				<?php else : ?>
 				<?php if ( empty( $subscription_products ) ) : ?>
 					<p class="description"><?php esc_html_e( 'No active recurring Stripe prices are available. Sync products from Stripe first.', 'ajforms' ); ?></p>
@@ -19272,6 +19386,21 @@ class AJForms_Admin {
 					<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Charge', 'ajforms' ); ?></button>
 				</form>
 				<?php endif; ?>
+				<?php if ( $is_local ) : ?>
+				<div class="ajcore-local-ledger-summary">
+					<div><span><?php esc_html_e( 'Charges', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $local_charge_total, 'usd' ) ); ?></strong></div>
+					<div><span><?php esc_html_e( 'Payments Received', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $local_payment_total, 'usd' ) ); ?></strong></div>
+					<div><span><?php esc_html_e( 'Outstanding', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( max( 0, $local_charge_total - $local_payment_total ), 'usd' ) ); ?></strong></div>
+				</div>
+				<div class="ajcore-customer-table-wrap"><table class="widefat ajcore-local-ledger-table"><thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Category', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description / Memo', 'ajforms' ); ?></th><th><?php esc_html_e( 'Charge', 'ajforms' ); ?></th><th><?php esc_html_e( 'Payment', 'ajforms' ); ?></th><th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th></tr></thead><tbody>
+				<?php foreach ( $local_ledger_rows as $entry ) : $entry_meta = $this->decode_portal_json( $entry->metadata ?? '' ); $entry_meta = is_array( $entry_meta ) ? $entry_meta : array(); $entry_amount = (float) $entry->amount; ?>
+					<tr><td><?php echo esc_html( $this->format_portal_date( $entry->ledger_date ) ); ?></td><td><?php echo esc_html( $entry_meta['category'] ?? ucfirst( str_replace( 'local_', '', $entry->source_type ) ) ); ?></td><td><?php echo esc_html( $entry->description ); ?></td><td><?php echo $entry_amount < 0 ? esc_html( $this->format_portal_money( abs( $entry_amount ), $entry->currency ) ) : '—'; ?></td><td class="ajcore-payment-amount"><?php echo $entry_amount >= 0 ? esc_html( $this->format_portal_money( $entry_amount, $entry->currency ) ) : '—'; ?></td><td><details class="ajcore-ledger-edit"><summary><?php esc_html_e( 'Edit', 'ajforms' ); ?></summary><form method="post">
+						<?php wp_nonce_field( 'ajcore_local_ledger_action_' . $customer->stripe_customer_id . '_' . $entry->id, 'ajcore_local_ledger_action_nonce' ); ?><input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>"><input type="hidden" name="local_ledger_id" value="<?php echo esc_attr( $entry->id ); ?>">
+						<input type="date" name="local_ledger_date" value="<?php echo esc_attr( substr( $entry->ledger_date, 0, 10 ) ); ?>" required><input type="text" name="local_ledger_category" value="<?php echo esc_attr( $entry_meta['category'] ?? '' ); ?>" placeholder="Category"><input type="text" name="local_ledger_description" value="<?php echo esc_attr( $entry->description ); ?>" required><input type="number" name="local_ledger_amount" value="<?php echo esc_attr( number_format( abs( $entry_amount ), 2, '.', '' ) ); ?>" min="0.01" step="0.01" required><select name="local_ledger_entry_type"><option value="charge" <?php selected( $entry_amount < 0 ); ?>><?php esc_html_e( 'Charge', 'ajforms' ); ?></option><option value="payment" <?php selected( $entry_amount >= 0 ); ?>><?php esc_html_e( 'Payment', 'ajforms' ); ?></option></select><button class="button button-primary" name="local_ledger_action" value="edit"><?php esc_html_e( 'Save', 'ajforms' ); ?></button><button class="button-link-delete" name="local_ledger_action" value="delete" onclick="return confirm('<?php echo esc_js( __( 'Delete this ledger entry permanently?', 'ajforms' ) ); ?>')"><?php esc_html_e( 'Delete', 'ajforms' ); ?></button>
+					</form></details></td></tr>
+				<?php endforeach; ?>
+				</tbody></table></div>
+				<?php else : ?>
 				<p>
 					<strong><?php esc_html_e( 'Open:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_money( $detail['balance']['open_balance'], 'usd' ) ); ?>
 					&nbsp; <strong><?php esc_html_e( 'Credit:', 'ajforms' ); ?></strong> <?php echo esc_html( $this->format_portal_money( $detail['balance']['credit_balance'], 'usd' ) ); ?>
@@ -19288,6 +19417,7 @@ class AJForms_Admin {
 					! $is_local
 				);
 				?>
+				<?php endif; ?>
 				<?php if ( $is_local && $local_ledger_pages > 1 ) : ?>
 					<div class="ajcore-ledger-pagination">
 						<span><?php echo esc_html( sprintf( __( 'Showing %1$d–%2$d of %3$d entries', 'ajforms' ), ( ( $local_ledger_page - 1 ) * $local_ledger_per_page ) + 1, min( $local_ledger_page * $local_ledger_per_page, $local_ledger_total ), $local_ledger_total ) ); ?></span>
@@ -19300,7 +19430,7 @@ class AJForms_Admin {
 				<?php endif; ?>
 			</div>
 
-			<div class="ajcore-customer-card ajcore-customer-wide">
+			<?php if ( ! $is_local ) : ?><div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'Requests', 'ajforms' ); ?></h3>
 				<?php
 				$this->render_portal_dataset_section(
@@ -19350,7 +19480,7 @@ class AJForms_Admin {
 			<div class="ajcore-customer-card">
 				<h3><?php esc_html_e( 'Linked Entities', 'ajforms' ); ?></h3>
 				<?php $this->render_portal_customer_entities_table( $detail['entities'] ); ?>
-			</div>
+			</div><?php endif; ?>
 
 			<div class="ajcore-customer-card ajcore-customer-wide" id="linked-files">
 				<h3><?php esc_html_e( 'Linked Files', 'ajforms' ); ?></h3>
@@ -19365,7 +19495,7 @@ class AJForms_Admin {
 				<?php $this->render_portal_customer_files_table( $detail['files'] ); ?>
 			</div>
 
-			<div class="ajcore-customer-card ajcore-customer-wide">
+			<?php if ( ! $is_local ) : ?><div class="ajcore-customer-card ajcore-customer-wide">
 				<h3><?php esc_html_e( 'Internal Notes / Activity', 'ajforms' ); ?></h3>
 				<?php if ( empty( $detail['activity'] ) ) : ?>
 					<p><?php esc_html_e( 'No customer activity found yet.', 'ajforms' ); ?></p>
@@ -19381,7 +19511,7 @@ class AJForms_Admin {
 						<?php endforeach; ?>
 					</ul>
 				<?php endif; ?>
-			</div>
+			</div><?php endif; ?>
 		</div>
 		</div>
 		<script>
