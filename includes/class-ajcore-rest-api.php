@@ -1287,7 +1287,8 @@ class AJCore_REST_API {
 		$service_id  = sanitize_text_field( (string) $request->get_param( 'local_service_id' ) );
 		$action      = sanitize_key( (string) ( $request->get_param( 'action' ) ?: 'save' ) );
 		$status      = sanitize_key( (string) ( $request->get_param( 'status' ) ?: 'active' ) );
-		$features    = array_values( array_filter( array_map( 'sanitize_text_field', (array) $request->get_param( 'features' ) ) ) );
+		$features_param = $request->get_param( 'features' );
+		$features    = array_values( array_filter( array_map( 'sanitize_text_field', (array) $features_param ) ) );
 		$customers = $this->portal_table( 'aj_portal_local_customers' );
 		$customer  = $pdb->get_row( $pdb->prepare( "SELECT email FROM `{$customers}` WHERE local_customer_id = %s LIMIT 1", $customer_id ) );
 		if ( ! $customer ) return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
@@ -1306,9 +1307,10 @@ class AJCore_REST_API {
 			'contract_start_date' => gmdate( 'Y-m-d', strtotime( $start ) ), 'contract_end_date' => $end ? gmdate( 'Y-m-d', strtotime( $end ) ) : null,
 			'move_in_date' => gmdate( 'Y-m-d', strtotime( $move_in ) ), 'billing_start_date' => gmdate( 'Y-m-d', strtotime( $billing_start ) ),
 			'monthly_rate' => $amount, 'currency' => 'usd',
-			'billing_interval' => 'month', 'features' => wp_json_encode( $features ), 'variable_charges' => wp_json_encode( array( 'postage' ) ),
+			'billing_interval' => 'month', 'variable_charges' => wp_json_encode( array( 'postage' ) ),
 			'status' => in_array( $status, array( 'active', 'paused', 'cancelled' ), true ) ? $status : 'active', 'notes' => 'Reporting-only local AJCore contract.',
 		);
+		if ( null !== $features_param ) $data['features'] = wp_json_encode( $features );
 		$existing = $pdb->get_row( $pdb->prepare( "SELECT id,next_charge_date,last_billed_date FROM `{$table}` WHERE local_service_id = %s AND local_customer_id = %s LIMIT 1", $key, $customer_id ), ARRAY_A );
 		$exists = ! empty( $existing['id'] );
 		if ( ! $exists || ( empty( $existing['next_charge_date'] ) && empty( $existing['last_billed_date'] ) ) ) $data['next_charge_date'] = gmdate( 'Y-m-d', strtotime( $billing_start ) );
