@@ -96,6 +96,16 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>local_[A-Za-z0-9_\-]+)/ledger/charges',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_add_local_customer_charge' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/customers/(?P<stripe_customer_id>local_[A-Za-z0-9_\-]+)/local-services',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -1183,6 +1193,32 @@ class AJCore_REST_API {
 		}
 		fclose( $handle );
 		return rest_ensure_response( array( 'success' => true, 'inserted' => $inserted, 'skipped' => $skipped, 'invalid' => $invalid ) );
+	}
+
+	public function ops_add_local_customer_charge( WP_REST_Request $request ) {
+		$pdb         = $this->get_portal_db();
+		$customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$description = sanitize_text_field( (string) $request->get_param( 'description' ) );
+		$category    = sanitize_text_field( (string) ( $request->get_param( 'category' ) ?: 'Additional Service' ) );
+		$date        = sanitize_text_field( (string) ( $request->get_param( 'date' ) ?: current_time( 'Y-m-d' ) ) );
+		$amount      = round( abs( (float) $request->get_param( 'amount' ) ), 2 );
+		if ( '' === $description || $amount <= 0 || ! strtotime( $date ) ) {
+			return new WP_Error( 'ajcore_invalid_local_charge', __( 'Description, valid date, and an amount greater than zero are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$customers = $this->portal_table( 'aj_portal_local_customers' );
+		if ( ! $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$customers}` WHERE local_customer_id=%s LIMIT 1", $customer_id ) ) ) {
+			return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$table = $this->portal_table( 'aj_portal_local_ledger' );
+		$source_id = 'local_manual_' . str_replace( '-', '', wp_generate_uuid4() );
+		$inserted = $pdb->insert( $table, array(
+			'local_customer_id' => $customer_id, 'source_object_id' => $source_id, 'source_type' => 'local_charge',
+			'ledger_date' => gmdate( 'Y-m-d 00:00:00', strtotime( $date ) ), 'description' => $description,
+			'amount' => -$amount, 'currency' => 'usd', 'status' => 'posted',
+			'metadata' => wp_json_encode( array( 'entry_type' => 'manual_charge', 'category' => $category, 'created_by' => get_current_user_id() ) ),
+		), array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s' ) );
+		if ( false === $inserted ) return new WP_Error( 'ajcore_local_charge_failed', __( 'The charge could not be saved.', 'ajforms' ), array( 'status' => 500 ) );
+		return rest_ensure_response( array( 'success' => true, 'id' => (int) $pdb->insert_id ) );
 	}
 
 	public function ops_upsert_local_customer_service( WP_REST_Request $request ) {
