@@ -10120,6 +10120,11 @@ class AJForms_Admin {
 			} elseif ( 'file-library' === $tab ) {
 				$this->handle_file_library_actions();
 			}
+		} elseif ( 'ajforms-cp-settings' === $page ) {
+			$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
+			if ( 'files' === $cp_section ) {
+				$this->handle_portal_file_settings_save();
+			}
 		} elseif ( 'ajforms-auth' === $page ) {
 			$this->handle_auth_settings_save();
 		} elseif ( 'ajforms-automations' === $page ) {
@@ -17302,9 +17307,10 @@ class AJForms_Admin {
 		}
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal' ), admin_url( 'admin.php' ) );
 		$is_cp_settings_page = 'cp-settings' === $tab;
+		$nav_tab = 'customer' === $tab ? 'portal-users' : $tab;
 		// One-click full sync, available from every tab (not just the dedicated Sync tab) — redirects
 		// back to whichever tab it was clicked from, same nonce/action the Sync tab's own button uses.
-		$full_sync_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => $tab, 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
+		$full_sync_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => $nav_tab, 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
 		$stripe_mode = $this->get_stripe_mode_badge_data();
 		$stripe_settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
 		$tabs = array(
@@ -17358,17 +17364,17 @@ class AJForms_Admin {
 					<a href="<?php echo esc_url( $stripe_settings_url ); ?>"><?php esc_html_e( 'Stripe settings', 'ajforms' ); ?></a>
 				</div>
 			</div>
-			<?php if ( 'customer' !== $tab && ! $is_cp_settings_page ) : ?>
+			<?php if ( ! $is_cp_settings_page ) : ?>
 				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'AJ Core Client Portal sections', 'ajforms' ); ?>">
 					<select class="ajcore-tab-select" onchange="if(this.value){window.location.href=this.value;}">
 						<?php foreach ( $tabs as $tab_key => $tab_label ) : ?>
 							<?php $tab_url = isset( $external_tab_urls[ $tab_key ] ) ? $external_tab_urls[ $tab_key ] : add_query_arg( 'tab', $tab_key, $base_url ); ?>
-							<option value="<?php echo esc_url( $tab_url ); ?>" <?php selected( $tab, $tab_key ); ?>><?php echo esc_html( $tab_label ); ?></option>
+							<option value="<?php echo esc_url( $tab_url ); ?>" <?php selected( $nav_tab, $tab_key ); ?>><?php echo esc_html( $tab_label ); ?></option>
 						<?php endforeach; ?>
 					</select>
 					<?php foreach ( $tabs as $tab_key => $tab_label ) : ?>
 						<?php $tab_url = isset( $external_tab_urls[ $tab_key ] ) ? $external_tab_urls[ $tab_key ] : add_query_arg( 'tab', $tab_key, $base_url ); ?>
-						<a class="ajcore-tab-link <?php echo $tab === $tab_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( $tab_url ); ?>"><?php echo esc_html( $tab_label ); ?></a>
+						<a class="ajcore-tab-link <?php echo $nav_tab === $tab_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( $tab_url ); ?>"><?php echo esc_html( $tab_label ); ?></a>
 					<?php endforeach; ?>
 					<div class="ajcore-tab-spacer"></div>
 					<a class="button button-primary" href="<?php echo esc_url( $full_sync_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Run a full Stripe sync now (products, customers, subscriptions, transactions)?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Full Sync Now', 'ajforms' ); ?></a>
@@ -17884,8 +17890,13 @@ class AJForms_Admin {
 		$migration_tags = isset( $_POST['migration_tags'] ) && is_array( $_POST['migration_tags'] )
 			? array_values( array_intersect( array_map( 'sanitize_key', wp_unslash( $_POST['migration_tags'] ) ), array_keys( $tags ) ) )
 			: array();
-		ajcore_update_portal_file_settings( compact( 'categories', 'tags', 'migration_tags' ) );
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'files', 'saved' => 1 ), admin_url( 'admin.php' ) ) );
+		$requested_settings = compact( 'categories', 'tags', 'migration_tags' );
+		$saved = ajcore_update_portal_file_settings( $requested_settings );
+		if ( ! $saved ) {
+			$current_settings = ajcore_get_portal_file_settings();
+			$saved = $requested_settings === array_intersect_key( $current_settings, $requested_settings );
+		}
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'files', $saved ? 'saved' : 'save-error' => 1 ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -17897,6 +17908,8 @@ class AJForms_Admin {
 		<div class="ajforms-settings-card">
 			<h2><?php esc_html_e( 'File Settings', 'ajforms' ); ?></h2>
 			<p><?php esc_html_e( 'Manage administrator-facing file categories and internal tags. Tags are never shown to portal clients.', 'ajforms' ); ?></p>
+			<?php if ( isset( $_GET['saved'] ) ) : ?><div class="notice notice-success inline"><p><?php esc_html_e( 'File categories and internal tags saved.', 'ajforms' ); ?></p></div><?php endif; ?>
+			<?php if ( isset( $_GET['save-error'] ) ) : ?><div class="notice notice-error inline"><p><?php esc_html_e( 'File settings could not be saved. Check the shared database connection and try again.', 'ajforms' ); ?></p></div><?php endif; ?>
 			<?php if ( $locked ) : ?><div class="notice notice-info"><p><?php esc_html_e( 'These shared settings can only be changed on the master site.', 'ajforms' ); ?></p></div><?php endif; ?>
 			<form method="post">
 				<?php wp_nonce_field( 'ajcore_save_file_settings', 'ajcore_file_settings_nonce' ); ?>
