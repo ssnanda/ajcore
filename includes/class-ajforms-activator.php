@@ -1206,7 +1206,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '32', false );
+		update_option( 'ajforms_portal_schema_version', '33', false );
 	}
 
 	/** Dedicated durable AJCore records. Stripe cache tables remain disposable. */
@@ -1240,7 +1240,13 @@ class AJForms_Activator {
 			service_name varchar(255) DEFAULT '' NOT NULL,
 			contract_start_date date NULL,
 			contract_end_date date NULL,
+			move_in_date date NULL,
+			billing_start_date date NULL,
+			next_charge_date date NULL,
+			last_billed_date date NULL,
 			monthly_rate decimal(12,2) DEFAULT 0 NOT NULL,
+			pending_rate decimal(12,2) NULL,
+			pending_rate_date date NULL,
 			currency varchar(12) DEFAULT 'usd' NOT NULL,
 			billing_interval varchar(50) DEFAULT 'month' NOT NULL,
 			features longtext NULL,
@@ -1251,6 +1257,19 @@ class AJForms_Activator {
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY (id), UNIQUE KEY local_service_id (local_service_id), KEY local_customer_id (local_customer_id), KEY status (status)
 		) $charset" );
+		$service_columns = (array) $db->get_col( "SHOW COLUMNS FROM `{$services}`", 0 );
+		foreach ( array(
+			'move_in_date' => 'date NULL AFTER contract_end_date',
+			'billing_start_date' => 'date NULL AFTER move_in_date',
+			'next_charge_date' => 'date NULL AFTER billing_start_date',
+			'last_billed_date' => 'date NULL AFTER next_charge_date',
+			'pending_rate' => 'decimal(12,2) NULL AFTER monthly_rate',
+			'pending_rate_date' => 'date NULL AFTER pending_rate',
+		) as $column => $definition ) {
+			if ( ! in_array( $column, $service_columns, true ) ) {
+				$db->query( "ALTER TABLE `{$services}` ADD COLUMN `{$column}` {$definition}" );
+			}
+		}
 		$db->query( "CREATE TABLE IF NOT EXISTS $ledger (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			local_customer_id varchar(100) NOT NULL,

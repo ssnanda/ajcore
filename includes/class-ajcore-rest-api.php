@@ -103,6 +103,14 @@ class AJCore_REST_API {
 				'permission_callback' => array( $this, 'can_manage_ops_api' ),
 			)
 		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>local_[A-Za-z0-9_\-]+)/ledger/(?P<entry_id>\d+)',
+			array(
+				array( 'methods' => WP_REST_Server::EDITABLE, 'callback' => array( $this, 'ops_update_local_ledger_entry' ), 'permission_callback' => array( $this, 'can_manage_ops_api' ) ),
+				array( 'methods' => WP_REST_Server::DELETABLE, 'callback' => array( $this, 'ops_delete_local_ledger_entry' ), 'permission_callback' => array( $this, 'can_manage_ops_api' ) ),
+			)
+		);
 
 		register_rest_route(
 			self::NAMESPACE,
@@ -110,6 +118,16 @@ class AJCore_REST_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'ops_upsert_local_customer_service' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/local-recurring-transactions',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_local_recurring_transactions' ),
 				'permission_callback' => array( $this, 'can_manage_ops_api' ),
 			)
 		);
@@ -1067,6 +1085,10 @@ class AJCore_REST_API {
 					'service_period_start' => $row['contract_start_date'], 'service_period_end' => $row['contract_end_date'], 'next_billing_date' => '',
 					'status' => $row['status'], 'amount' => number_format( (float) $row['monthly_rate'], 2, '.', '' ), 'paid_at' => '', 'next_action' => '',
 					'features' => is_array( $features ) ? $features : array(), 'local_only' => true,
+					'local_service_id' => $row['local_service_id'], 'move_in_date' => $row['move_in_date'] ?? '',
+					'billing_start_date' => $row['billing_start_date'] ?? '', 'next_charge_date' => $row['next_charge_date'] ?? '',
+					'last_billed_date' => $row['last_billed_date'] ?? '', 'pending_rate' => $row['pending_rate'] ?? null,
+					'pending_rate_date' => $row['pending_rate_date'] ?? '', 'notes' => $row['notes'] ?? '',
 				);
 			}
 		} elseif ( class_exists( 'AJForms_Admin' ) ) {
@@ -1221,32 +1243,91 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'success' => true, 'id' => (int) $pdb->insert_id ) );
 	}
 
+	public function ops_update_local_ledger_entry( WP_REST_Request $request ) {
+		$pdb = $this->get_portal_db();
+		$table = $this->portal_table( 'aj_portal_local_ledger' );
+		$customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$id = absint( $request->get_param( 'entry_id' ) );
+		$row = $pdb->get_row( $pdb->prepare( "SELECT amount,metadata FROM `{$table}` WHERE id=%d AND local_customer_id=%s LIMIT 1", $id, $customer_id ), ARRAY_A );
+		if ( ! $row ) return new WP_Error( 'ajcore_ledger_entry_not_found', __( 'Ledger entry not found.', 'ajforms' ), array( 'status' => 404 ) );
+		$date = sanitize_text_field( (string) $request->get_param( 'date' ) );
+		$description = sanitize_text_field( (string) $request->get_param( 'description' ) );
+		$category = sanitize_text_field( (string) $request->get_param( 'category' ) );
+		$amount = round( abs( (float) $request->get_param( 'amount' ) ), 2 );
+		$entry_type = sanitize_key( (string) ( $request->get_param( 'entry_type' ) ?: ( (float) $row['amount'] < 0 ? 'charge' : 'payment' ) ) );
+		if ( ! strtotime( $date ) || '' === $description || $amount <= 0 ) return new WP_Error( 'ajcore_invalid_ledger_entry', __( 'Date, description, and an amount greater than zero are required.', 'ajforms' ), array( 'status' => 400 ) );
+		$metadata = json_decode( (string) $row['metadata'], true );
+		if ( ! is_array( $metadata ) ) $metadata = array();
+		$metadata['category'] = $category;
+		$result = $pdb->update( $table, array( 'ledger_date' => gmdate( 'Y-m-d 00:00:00', strtotime( $date ) ), 'description' => $description, 'amount' => 'payment' === $entry_type ? $amount : -$amount, 'metadata' => wp_json_encode( $metadata ) ), array( 'id' => $id, 'local_customer_id' => $customer_id ) );
+		return false === $result ? new WP_Error( 'ajcore_ledger_update_failed', __( 'Ledger entry could not be updated.', 'ajforms' ), array( 'status' => 500 ) ) : rest_ensure_response( array( 'success' => true ) );
+	}
+
+	public function ops_delete_local_ledger_entry( WP_REST_Request $request ) {
+		$pdb = $this->get_portal_db();
+		$deleted = $pdb->delete( $this->portal_table( 'aj_portal_local_ledger' ), array( 'id' => absint( $request->get_param( 'entry_id' ) ), 'local_customer_id' => sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) ) ), array( '%d', '%s' ) );
+		return false === $deleted ? new WP_Error( 'ajcore_ledger_delete_failed', __( 'Ledger entry could not be deleted.', 'ajforms' ), array( 'status' => 500 ) ) : rest_ensure_response( array( 'success' => true ) );
+	}
+
 	public function ops_upsert_local_customer_service( WP_REST_Request $request ) {
 		$pdb         = $this->get_portal_db();
 		$customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$name        = sanitize_text_field( (string) $request->get_param( 'service_name' ) );
 		$start       = sanitize_text_field( (string) $request->get_param( 'contract_start_date' ) );
+		$end         = sanitize_text_field( (string) $request->get_param( 'contract_end_date' ) );
+		$move_in     = sanitize_text_field( (string) ( $request->get_param( 'move_in_date' ) ?: $start ) );
+		$billing_start = sanitize_text_field( (string) ( $request->get_param( 'billing_start_date' ) ?: $start ) );
 		$amount      = round( (float) $request->get_param( 'monthly_rate' ), 2 );
+		$service_id  = sanitize_text_field( (string) $request->get_param( 'local_service_id' ) );
+		$action      = sanitize_key( (string) ( $request->get_param( 'action' ) ?: 'save' ) );
 		$status      = sanitize_key( (string) ( $request->get_param( 'status' ) ?: 'active' ) );
 		$features    = array_values( array_filter( array_map( 'sanitize_text_field', (array) $request->get_param( 'features' ) ) ) );
-		if ( '' === $name || ! strtotime( $start ) || $amount < 0 ) {
-			return new WP_Error( 'ajcore_invalid_local_service', __( 'Service name, contract start date, and a valid monthly rate are required.', 'ajforms' ), array( 'status' => 400 ) );
-		}
 		$customers = $this->portal_table( 'aj_portal_local_customers' );
 		$customer  = $pdb->get_row( $pdb->prepare( "SELECT email FROM `{$customers}` WHERE local_customer_id = %s LIMIT 1", $customer_id ) );
 		if ( ! $customer ) return new WP_Error( 'ajcore_customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
-		$key  = 'local_service_' . substr( hash( 'sha256', $customer_id . '|' . strtolower( $name ) ), 0, 52 );
+		$table = $this->portal_table( 'aj_portal_local_services' );
+		if ( 'delete' === $action ) {
+			if ( '' === $service_id ) return new WP_Error( 'ajcore_invalid_local_service', __( 'A local service ID is required.', 'ajforms' ), array( 'status' => 400 ) );
+			$deleted = $pdb->delete( $table, array( 'local_customer_id' => $customer_id, 'local_service_id' => $service_id ), array( '%s', '%s' ) );
+			return false === $deleted ? new WP_Error( 'ajcore_local_service_delete_failed', __( 'The local service could not be deleted.', 'ajforms' ), array( 'status' => 500 ) ) : rest_ensure_response( array( 'success' => true ) );
+		}
+		if ( '' === $name || ! strtotime( $start ) || ! strtotime( $move_in ) || ! strtotime( $billing_start ) || ( '' !== $end && ! strtotime( $end ) ) || $amount < 0 ) {
+			return new WP_Error( 'ajcore_invalid_local_service', __( 'Service name, move-in, service start, charges begin, and a valid monthly rate are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$key  = $service_id ?: 'local_service_' . substr( hash( 'sha256', $customer_id . '|' . strtolower( $name ) ), 0, 52 );
 		$data = array(
 			'local_service_id' => $key, 'local_customer_id' => $customer_id, 'service_name' => $name,
-			'contract_start_date' => gmdate( 'Y-m-d', strtotime( $start ) ), 'monthly_rate' => $amount, 'currency' => 'usd',
+			'contract_start_date' => gmdate( 'Y-m-d', strtotime( $start ) ), 'contract_end_date' => $end ? gmdate( 'Y-m-d', strtotime( $end ) ) : null,
+			'move_in_date' => gmdate( 'Y-m-d', strtotime( $move_in ) ), 'billing_start_date' => gmdate( 'Y-m-d', strtotime( $billing_start ) ),
+			'monthly_rate' => $amount, 'currency' => 'usd',
 			'billing_interval' => 'month', 'features' => wp_json_encode( $features ), 'variable_charges' => wp_json_encode( array( 'postage' ) ),
 			'status' => in_array( $status, array( 'active', 'paused', 'cancelled' ), true ) ? $status : 'active', 'notes' => 'Reporting-only local AJCore contract.',
 		);
-		$table = $this->portal_table( 'aj_portal_local_services' );
-		$exists = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE local_service_id = %s LIMIT 1", $key ) );
-		$result = $exists ? $pdb->update( $table, $data, array( 'local_service_id' => $key ) ) : $pdb->insert( $table, $data );
+		$existing = $pdb->get_row( $pdb->prepare( "SELECT id,next_charge_date,last_billed_date FROM `{$table}` WHERE local_service_id = %s AND local_customer_id = %s LIMIT 1", $key, $customer_id ), ARRAY_A );
+		$exists = ! empty( $existing['id'] );
+		if ( ! $exists || ( empty( $existing['next_charge_date'] ) && empty( $existing['last_billed_date'] ) ) ) $data['next_charge_date'] = gmdate( 'Y-m-d', strtotime( $billing_start ) );
+		$new_rate = $request->get_param( 'new_rate' );
+		$new_rate_date = sanitize_text_field( (string) $request->get_param( 'new_rate_date' ) );
+		if ( $exists && null !== $new_rate && '' !== (string) $new_rate && strtotime( $new_rate_date ) ) {
+			$data['pending_rate'] = round( (float) $new_rate, 2 );
+			$data['pending_rate_date'] = gmdate( 'Y-m-d', strtotime( $new_rate_date ) );
+			if ( $request->get_param( 'update_accounting' ) ) {
+				$ledger = $this->portal_table( 'aj_portal_local_ledger' );
+				$like = '%"local_service_id":"' . $pdb->esc_like( $key ) . '"%';
+				$pdb->query( $pdb->prepare( "UPDATE `{$ledger}` SET amount=%f WHERE local_customer_id=%s AND source_type='local_recurring_charge' AND ledger_date >= %s AND metadata LIKE %s", -abs( (float) $new_rate ), $customer_id, gmdate( 'Y-m-d 00:00:00', strtotime( $new_rate_date ) ), $like ) );
+			}
+		}
+		$result = $exists ? $pdb->update( $table, $data, array( 'local_service_id' => $key, 'local_customer_id' => $customer_id ) ) : $pdb->insert( $table, $data );
 		if ( false === $result ) return new WP_Error( 'ajcore_local_service_save_failed', __( 'The local service could not be saved.', 'ajforms' ), array( 'status' => 500 ) );
 		return rest_ensure_response( array( 'success' => true, 'snapshot_key' => $key ) );
+	}
+
+	public function get_ops_local_recurring_transactions() {
+		$pdb = $this->get_portal_db();
+		$services = $this->portal_table( 'aj_portal_local_services' );
+		$customers = $this->portal_table( 'aj_portal_local_customers' );
+		$rows = $pdb->get_results( "SELECT s.local_service_id,s.local_customer_id,s.service_name,s.move_in_date,s.contract_start_date,s.contract_end_date,s.billing_start_date,s.next_charge_date,s.last_billed_date,s.monthly_rate,s.pending_rate,s.pending_rate_date,s.status,c.name AS customer_name,c.email FROM `{$services}` s LEFT JOIN `{$customers}` c ON c.local_customer_id=s.local_customer_id ORDER BY s.status='active' DESC,s.next_charge_date ASC,c.name ASC", ARRAY_A );
+		return rest_ensure_response( array( 'transactions' => is_array( $rows ) ? $rows : array(), 'last_run' => get_option( 'ajcore_local_recurring_transactions_last_run', '' ) ) );
 	}
 
 	public function get_ops_products( WP_REST_Request $request ) {
