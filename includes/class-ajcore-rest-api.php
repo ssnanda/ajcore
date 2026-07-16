@@ -2959,6 +2959,10 @@ class AJCore_REST_API {
 		if ( false === $updated ) {
 			return new WP_Error( 'update_failed', __( 'Could not update the customer partner.', 'ajforms' ), array( 'status' => 500 ) );
 		}
+		$partner_assignments = $this->portal_table( 'aj_portal_customer_partners' );
+		if ( $this->table_exists( $pdb, $partner_assignments ) ) {
+			$pdb->replace( $partner_assignments, array( 'customer_id' => $customer_id, 'partner_key' => $partner_key, 'source' => 'ajops' ), array( '%s', '%s', '%s' ) );
+		}
 
 		// Keep the payer classification portable across AJCore sites by mirroring it to Stripe metadata.
 		if ( 0 === strpos( $customer_id, 'cus_' ) ) {
@@ -5505,6 +5509,10 @@ class AJCore_REST_API {
 			);
 			if ( false === $inserted ) {
 				return new WP_Error( 'ajcore_local_customer_failed', 'Could not create the local AJCore customer.', array( 'status' => 500 ) );
+			}
+			$partner_assignments = $this->portal_table( 'aj_portal_customer_partners' );
+			if ( $this->table_exists( $check_pdb, $partner_assignments ) ) {
+				$check_pdb->replace( $partner_assignments, array( 'customer_id' => $local_customer_id, 'partner_key' => 'alliance_vo', 'source' => 'ajops' ), array( '%s', '%s', '%s' ) );
 			}
 			return rest_ensure_response( array( 'success' => true, 'customer' => array(
 				'stripe_customer_id' => $local_customer_id, 'email' => $email, 'name' => $name,

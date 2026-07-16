@@ -660,6 +660,7 @@ class AJForms_Admin {
 			$pdb->prefix . 'aj_portal_local_customers',
 			$pdb->prefix . 'aj_portal_local_services',
 			$pdb->prefix . 'aj_portal_local_ledger',
+			$pdb->prefix . 'aj_portal_customer_partners',
 			$this->get_portal_stripe_products_table(),
 			$this->get_portal_product_catalog_table(),
 			$this->get_portal_stripe_subscriptions_table(),
@@ -1839,6 +1840,15 @@ class AJForms_Admin {
 				$data[ $unique_key ]
 			)
 		);
+		$partner_table = $wpdb->prefix . 'aj_portal_customer_partners';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $partner_table ) ) === $partner_table ) {
+			$durable_partner = $wpdb->get_var( $wpdb->prepare( "SELECT partner_key FROM `{$partner_table}` WHERE customer_id=%s LIMIT 1", $data['stripe_customer_id'] ) );
+			if ( '' !== (string) $durable_partner ) {
+				$data['partner_key'] = sanitize_key( (string) $durable_partner );
+			} elseif ( ! empty( $data['partner_key'] ) ) {
+				$wpdb->replace( $partner_table, array( 'customer_id' => $data['stripe_customer_id'], 'partner_key' => sanitize_key( (string) $data['partner_key'] ), 'source' => 'stripe_metadata' ), array( '%s', '%s', '%s' ) );
+			}
+		}
 		$existing_id = $existing ? (int) $existing->id : 0;
 
 		$mode_scoped_tables = array(
@@ -3123,6 +3133,7 @@ class AJForms_Admin {
 				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_customers', 'scope' => __( 'Local AJCore customers', 'ajforms' ) ),
 				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_services', 'scope' => __( 'Local AJCore service contracts', 'ajforms' ) ),
 				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_ledger', 'scope' => __( 'Local AJCore ledger and Rentec imports', 'ajforms' ) ),
+				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_customer_partners', 'scope' => __( 'Durable customer partner and payer assignments', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_customer_states_table(), 'scope' => __( 'Durable portal enabled/disabled/archived state', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_user_mappings_table(), 'scope' => __( 'Local WordPress user mappings', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_service_states_table(), 'scope' => __( 'Durable service used/unused state', 'ajforms' ) ),
@@ -5187,12 +5198,13 @@ class AJForms_Admin {
 		$pdb = $this->get_pdb();
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
-		$customer = $pdb->get_row(
-			$pdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s",
-				$stripe_customer_id
-			)
-		);
+		$is_local = 0 === strpos( $stripe_customer_id, 'local_' );
+		if ( $is_local ) {
+			$local_customers = $pdb->prefix . 'aj_portal_local_customers';
+			$customer = $pdb->get_row( $pdb->prepare( "SELECT id,local_customer_id AS stripe_customer_id,email,name,phone,description,address,metadata,partner_key,status AS portal_status,0 AS enabled_portal,0 AS livemode,created_at,updated_at AS synced_at FROM `{$local_customers}` WHERE local_customer_id=%s", $stripe_customer_id ) );
+		} else {
+			$customer = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s", $stripe_customer_id ) );
+		}
 
 		if ( ! $customer ) {
 			return null;
@@ -5207,20 +5219,25 @@ class AJForms_Admin {
 		);
 		$user = $this->get_valid_portal_mapping_user( $customer, $mapping );
 
-		$subscriptions = $pdb->get_results(
+		$subscriptions = $is_local ? array() : $pdb->get_results(
 			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_customer_id = %s ORDER BY current_period_end DESC, id DESC",
 				$stripe_customer_id
 			)
 		);
 
-		$ledger = $pdb->get_results(
+		if ( $is_local ) {
+			$local_ledger = $pdb->prefix . 'aj_portal_local_ledger';
+			$ledger = $pdb->get_results( $pdb->prepare( "SELECT id,local_customer_id AS stripe_customer_id,source_object_id,source_type,ledger_date,description,amount,currency,status,metadata,created_at FROM `{$local_ledger}` WHERE local_customer_id=%s ORDER BY ledger_date DESC,id DESC LIMIT %d", $stripe_customer_id, 100 ) );
+		} else {
+			$ledger = $pdb->get_results(
 			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s ORDER BY ledger_date DESC, id DESC LIMIT %d",
 				$stripe_customer_id,
 				100
 			)
 		);
+		}
 		// Remove charge/payment entries whose description is generic (e.g. "Payment for Invoice")
 		// when a more descriptive service_charge or invoice entry exists for the same payment.
 		$ledger = array_values( array_filter( (array) $ledger, function ( $entry ) {
@@ -20148,6 +20165,19 @@ class AJForms_Admin {
 			ORDER BY c.enabled_portal DESC, c.name ASC, c.email ASC
 			LIMIT 300'
 		);
+		$local_customers_table = $pdb->prefix . 'aj_portal_local_customers';
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $local_customers_table ) ) === $local_customers_table ) {
+			$local_where = array( '1=1' );
+			if ( 'archived' === $status_filter ) {
+				$local_where[] = "status = 'archived'";
+			} elseif ( 'active' === $status_filter || 'disabled' === $status_filter ) {
+				$local_where[] = '1=0'; // These filters describe portal access; local reporting customers have no login.
+			} elseif ( 'without_login' !== $status_filter ) {
+				$local_where[] = "status <> 'archived'";
+			}
+			$local_rows = $pdb->get_results( "SELECT id,local_customer_id AS stripe_customer_id,email,name,phone,description,address,metadata,partner_key,status AS portal_status,0 AS enabled_portal,0 AS livemode,created_at,updated_at AS synced_at FROM `{$local_customers_table}` WHERE " . implode( ' AND ', $local_where ) . ' ORDER BY name ASC,email ASC LIMIT 300' );
+			$customers_raw = array_merge( (array) $customers_raw, (array) $local_rows );
+		}
 
 		// Step 2: Fetch user_mappings for these customers from local DB.
 		$mappings_by_cid = array();
@@ -20195,10 +20225,12 @@ class AJForms_Admin {
 			} ) );
 		}
 
-		$total_customers = (int) $pdb->get_var( 'SELECT COUNT(*) FROM ' . $this->get_portal_stripe_customers_table() );
+		$local_total = $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $local_customers_table ) ) === $local_customers_table ? (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$local_customers_table}`" ) : 0;
+		$total_customers = (int) $pdb->get_var( 'SELECT COUNT(*) FROM ' . $this->get_portal_stripe_customers_table() ) + $local_total;
 		$enabled_count   = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'active' AND enabled_portal = 1" );
 		$archived_count  = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'archived'" );
 		$non_archived_ids = (array) $pdb->get_col( "SELECT stripe_customer_id FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status IS NULL OR portal_status <> 'archived'" );
+		if ( $local_total ) $non_archived_ids = array_merge( $non_archived_ids, (array) $pdb->get_col( "SELECT local_customer_id FROM `{$local_customers_table}` WHERE status <> 'archived'" ) );
 		$no_subscription_count = count( array_diff( $non_archived_ids, $product_counts['any_subscription_customers'] ) );
 		$available_fields = $this->discover_portal_customer_scalar_fields( $customers );
 		$display_fields   = array_values( array_intersect( $this->get_portal_customer_display_fields(), $available_fields ) );
@@ -20265,6 +20297,9 @@ class AJForms_Admin {
 								$partner_summary->partner_key
 							)
 						);
+						if ( $local_total ) {
+							$partner_accounts_summary = array_merge( (array) $partner_accounts_summary, (array) $pdb->get_results( $pdb->prepare( "SELECT '' AS partner_price_id FROM `{$local_customers_table}` WHERE partner_key=%s", $partner_summary->partner_key ) ) );
+						}
 						$partner_total_summary = 0.0;
 						foreach ( $partner_accounts_summary as $partner_account_summary ) {
 							$partner_total_summary += $this->get_partner_account_rate( $partner_summary, $partner_account_summary, $partner_price_map_summary );

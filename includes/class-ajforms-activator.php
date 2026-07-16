@@ -1206,7 +1206,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '31', false );
+		update_option( 'ajforms_portal_schema_version', '32', false );
 	}
 
 	/** Dedicated durable AJCore records. Stripe cache tables remain disposable. */
@@ -1216,6 +1216,7 @@ class AJForms_Activator {
 		$customers = $prefix . 'aj_portal_local_customers';
 		$services  = $prefix . 'aj_portal_local_services';
 		$ledger    = $prefix . 'aj_portal_local_ledger';
+		$customer_partners = $prefix . 'aj_portal_customer_partners';
 
 		$db->query( "CREATE TABLE IF NOT EXISTS $customers (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -1264,14 +1265,25 @@ class AJForms_Activator {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY (id), UNIQUE KEY source_object_id (source_object_id), KEY local_customer_id (local_customer_id), KEY ledger_date (ledger_date), KEY status (status)
 		) $charset" );
+		$db->query( "CREATE TABLE IF NOT EXISTS $customer_partners (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			customer_id varchar(100) NOT NULL,
+			partner_key varchar(100) DEFAULT '' NOT NULL,
+			source varchar(50) DEFAULT 'ajcore' NOT NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY (id), UNIQUE KEY customer_id (customer_id), KEY partner_key (partner_key)
+		) $charset" );
 
 		$old_customers = $prefix . 'aj_portal_stripe_customers';
 		$old_services  = $prefix . 'aj_portal_service_snapshots';
 		$old_ledger    = $prefix . 'aj_portal_ledger';
 		if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $old_customers ) ) === $old_customers ) {
+			$db->query( "INSERT INTO $customer_partners (customer_id,partner_key,source) SELECT stripe_customer_id,partner_key,'legacy_cache' FROM $old_customers WHERE partner_key <> '' ON DUPLICATE KEY UPDATE partner_key=VALUES(partner_key),source=VALUES(source)" );
 			$db->query( "INSERT IGNORE INTO $customers (local_customer_id,email,name,phone,description,address,metadata,partner_key,status,created_at,updated_at)
 				SELECT stripe_customer_id,email,name,phone,description,address,metadata,COALESCE(NULLIF(partner_key,''),'alliance_vo'),COALESCE(NULLIF(portal_status,''),'active'),COALESCE(created_at,synced_at),synced_at FROM $old_customers WHERE stripe_customer_id LIKE 'local\_%'" );
 		}
+		$db->query( "INSERT INTO $customer_partners (customer_id,partner_key,source) SELECT local_customer_id,partner_key,'local_customer' FROM $customers WHERE partner_key <> '' ON DUPLICATE KEY UPDATE partner_key=VALUES(partner_key),source=VALUES(source)" );
 		if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $old_services ) ) === $old_services ) {
 			$db->query( "INSERT IGNORE INTO $services (local_service_id,local_customer_id,service_name,contract_start_date,contract_end_date,monthly_rate,currency,billing_interval,features,variable_charges,status,notes,created_at,updated_at)
 				SELECT snapshot_key,stripe_customer_id,product_name_snapshot,DATE(service_period_start),DATE(service_period_end),amount,currency,COALESCE(NULLIF(recurring_interval,''),'month'),JSON_EXTRACT(raw_data,'$.features'),JSON_EXTRACT(raw_data,'$.variable_charges'),status,'',created_at,updated_at FROM $old_services WHERE source_type='local_contract' AND stripe_customer_id LIKE 'local\_%'" );
