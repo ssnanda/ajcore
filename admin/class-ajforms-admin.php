@@ -11517,6 +11517,8 @@ class AJForms_Admin {
 			$category    = sanitize_text_field( wp_unslash( $_POST['local_charge_category'] ?? 'Additional Service' ) );
 			$date        = sanitize_text_field( wp_unslash( $_POST['local_charge_date'] ?? current_time( 'Y-m-d' ) ) );
 			$amount      = round( abs( (float) wp_unslash( $_POST['local_charge_amount'] ?? 0 ) ), 2 );
+			$entry_type  = sanitize_key( wp_unslash( $_POST['local_transaction_type'] ?? 'charge' ) );
+			$is_payment  = 'payment' === $entry_type;
 			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $stripe_customer_id );
 			if ( '' === $description || $amount <= 0 || ! strtotime( $date ) ) {
 				$args['portal-error'] = rawurlencode( __( 'Description, valid date, and an amount greater than zero are required.', 'ajforms' ) );
@@ -11524,9 +11526,9 @@ class AJForms_Admin {
 				$pdb = $this->get_pdb();
 				$inserted = $pdb->insert( $pdb->prefix . 'aj_portal_local_ledger', array(
 					'local_customer_id' => $stripe_customer_id, 'source_object_id' => 'local_manual_' . str_replace( '-', '', wp_generate_uuid4() ),
-					'source_type' => 'local_charge', 'ledger_date' => gmdate( 'Y-m-d 00:00:00', strtotime( $date ) ),
-					'description' => $description, 'amount' => -$amount, 'currency' => 'usd', 'status' => 'posted',
-					'metadata' => wp_json_encode( array( 'entry_type' => 'manual_charge', 'category' => $category, 'created_by' => get_current_user_id() ) ),
+					'source_type' => $is_payment ? 'local_payment' : 'local_charge', 'ledger_date' => gmdate( 'Y-m-d 00:00:00', strtotime( $date ) ),
+					'description' => $description, 'amount' => $is_payment ? $amount : -$amount, 'currency' => 'usd', 'status' => 'posted',
+					'metadata' => wp_json_encode( array( 'entry_type' => $is_payment ? 'manual_payment' : 'manual_charge', 'category' => $category, 'created_by' => get_current_user_id() ) ),
 				), array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s' ) );
 				if ( false === $inserted ) $args['portal-error'] = rawurlencode( __( 'The charge could not be saved.', 'ajforms' ) );
 				else $args['local-charge-added'] = 1;
@@ -12830,6 +12832,8 @@ class AJForms_Admin {
 			file_exists( $phone_js_path ) ? filemtime( $phone_js_path ) : AJFORMS_VERSION,
 			true
 		);
+		$date_js_path = AJFORMS_PLUGIN_DIR . 'admin/ajforms-dates.js';
+		wp_enqueue_script( 'ajforms-dates-js', AJFORMS_PLUGIN_URL . 'admin/ajforms-dates.js', array(), file_exists( $date_js_path ) ? filemtime( $date_js_path ) : AJFORMS_VERSION, true );
 
 		$action = isset( $_GET['action'] ) ? sanitize_text_field( wp_unslash( $_GET['action'] ) ) : '';
 
@@ -17516,6 +17520,7 @@ class AJForms_Admin {
 			'calendar'        => __( 'Calendar / Reservations', 'ajforms' ),
 			'api'             => __( 'API', 'ajforms' ),
 			'files'           => __( 'Files', 'ajforms' ),
+			'accounting-catalog' => __( 'Products & Services', 'ajforms' ),
 			'recurring-transactions' => __( 'Recurring Transactions', 'ajforms' ),
 			'storage'         => __( 'Storage', 'ajforms' ),
 			'roles'           => __( 'Role Manager', 'ajforms' ),
@@ -17552,6 +17557,8 @@ class AJForms_Admin {
 			<?php $this->display_portal_api_tab(); ?>
 		<?php elseif ( 'files' === $cp_section ) : ?>
 			<?php $this->display_portal_file_settings_tab(); ?>
+		<?php elseif ( 'accounting-catalog' === $cp_section ) : ?>
+			<?php $this->display_local_accounting_catalog_settings(); ?>
 		<?php elseif ( 'recurring-transactions' === $cp_section ) : ?>
 			<?php $this->display_local_recurring_transactions_settings(); ?>
 		<?php elseif ( 'storage' === $cp_section ) : ?>
@@ -17933,6 +17940,21 @@ class AJForms_Admin {
 			}
 		})();
 		</script>
+		<?php
+	}
+
+	private function display_local_accounting_catalog_settings() {
+		if ( isset( $_POST['ajcore_accounting_catalog_nonce'] ) ) {
+			check_admin_referer( 'ajcore_save_accounting_catalog', 'ajcore_accounting_catalog_nonce' );
+			$parse = static function ( $value ) { return array_values( array_unique( array_filter( array_map( 'sanitize_text_field', preg_split( '/\r\n|\r|\n/', (string) wp_unslash( $value ) ) ) ) ) ); };
+			update_option( 'ajcore_local_charge_categories', $parse( $_POST['charge_categories'] ?? '' ) );
+			update_option( 'ajcore_local_payment_categories', $parse( $_POST['payment_categories'] ?? '' ) );
+			echo '<div class="notice notice-success inline"><p>' . esc_html__( 'Products, services, and payment categories saved.', 'ajforms' ) . '</p></div>';
+		}
+		$charges = get_option( 'ajcore_local_charge_categories', array( 'Rent', 'Postage', 'Conference Room', 'Printing', 'Additional Service' ) );
+		$payments = get_option( 'ajcore_local_payment_categories', array( 'Rental Income', 'Service Income', 'Reimbursement', 'Uncategorized Income' ) );
+		?>
+		<div class="ajforms-settings-card"><div class="ajforms-settings-head"><h2><?php esc_html_e( 'Products & Services', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Shared categories used by AJCore and AJOps when posting local charges and payments.', 'ajforms' ); ?></p></div><form method="post"><?php wp_nonce_field( 'ajcore_save_accounting_catalog', 'ajcore_accounting_catalog_nonce' ); ?><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;"><label><strong><?php esc_html_e( 'Charge Products & Services', 'ajforms' ); ?></strong><p class="description"><?php esc_html_e( 'One item per line, such as Postage or Conference Room.', 'ajforms' ); ?></p><textarea name="charge_categories" rows="12" style="width:100%;"><?php echo esc_textarea( implode( "\n", (array) $charges ) ); ?></textarea></label><label><strong><?php esc_html_e( 'Payment / Income Categories', 'ajforms' ); ?></strong><p class="description"><?php esc_html_e( 'One item per line, based on the income section of your Chart of Accounts.', 'ajforms' ); ?></p><textarea name="payment_categories" rows="12" style="width:100%;"><?php echo esc_textarea( implode( "\n", (array) $payments ) ); ?></textarea></label></div><p><button class="button button-primary"><?php esc_html_e( 'Save Products & Services', 'ajforms' ); ?></button></p></form></div>
 		<?php
 	}
 
@@ -19493,17 +19515,20 @@ class AJForms_Admin {
 			<?php endif; ?>
 
 			<div class="ajcore-customer-card <?php echo $is_local ? 'ajcore-local-ledger-card' : 'ajcore-customer-wide'; ?>">
-				<div class="ajcore-customer-card-head"><h3><?php echo esc_html( $is_local ? __( 'Local Ledger', 'ajforms' ) : __( 'Payments', 'ajforms' ) ); ?></h3><?php if ( $is_local ) : ?><button type="button" class="button button-primary" data-ajcore-open-local-modal="charge"><?php esc_html_e( 'Add Charge', 'ajforms' ); ?></button><?php endif; ?></div>
+				<div class="ajcore-customer-card-head"><h3><?php echo esc_html( $is_local ? __( 'Local Ledger', 'ajforms' ) : __( 'Payments', 'ajforms' ) ); ?></h3><?php if ( $is_local ) : ?><div style="display:flex;gap:8px;"><button type="button" class="button button-primary" data-ajcore-open-local-modal="charge"><?php esc_html_e( 'Add Charge', 'ajforms' ); ?></button><button type="button" class="button" data-ajcore-open-local-modal="payment"><?php esc_html_e( 'Add Payment', 'ajforms' ); ?></button></div><?php endif; ?></div>
 				<?php if ( $is_local ) : ?>
-				<div class="ajcore-local-modal" data-ajcore-local-modal="charge" role="dialog" aria-modal="true" aria-labelledby="ajcore-local-charge-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-local-charge-title"><?php esc_html_e( 'Add Charge', 'ajforms' ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body"><form method="post">
+				<?php $charge_categories = get_option( 'ajcore_local_charge_categories', array( 'Rent', 'Postage', 'Conference Room', 'Printing', 'Additional Service' ) ); $payment_categories = get_option( 'ajcore_local_payment_categories', array( 'Rental Income', 'Service Income', 'Reimbursement', 'Uncategorized Income' ) ); foreach ( array( 'charge' => array( __( 'Add Charge', 'ajforms' ), $charge_categories ), 'payment' => array( __( 'Add Payment', 'ajforms' ), $payment_categories ) ) as $transaction_type => $modal_config ) : ?>
+				<div class="ajcore-local-modal" data-ajcore-local-modal="<?php echo esc_attr( $transaction_type ); ?>" role="dialog" aria-modal="true" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2><?php echo esc_html( $modal_config[0] ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body"><form method="post">
 					<?php wp_nonce_field( 'ajcore_local_charge_' . $customer->stripe_customer_id, 'ajcore_local_charge_nonce' ); ?>
 					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+					<input type="hidden" name="local_transaction_type" value="<?php echo esc_attr( $transaction_type ); ?>">
 					<label><?php esc_html_e( 'Date', 'ajforms' ); ?><input type="date" name="local_charge_date" value="<?php echo esc_attr( current_time( 'Y-m-d' ) ); ?>" required></label>
-					<label><?php esc_html_e( 'Category', 'ajforms' ); ?><input type="text" name="local_charge_category" value="Postage" required></label>
+					<label><?php esc_html_e( 'Category', 'ajforms' ); ?><select name="local_charge_category" required><?php foreach ( (array) $modal_config[1] as $category ) : ?><option value="<?php echo esc_attr( $category ); ?>"><?php echo esc_html( $category ); ?></option><?php endforeach; ?></select></label>
 					<label class="ajcore-modal-wide"><?php esc_html_e( 'Description', 'ajforms' ); ?><input type="text" name="local_charge_description" required></label>
 					<label><?php esc_html_e( 'Amount', 'ajforms' ); ?><input type="number" name="local_charge_amount" min="0.01" step="0.01" required></label>
-					<div class="ajcore-local-modal-foot"><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary"><?php esc_html_e( 'Add Charge', 'ajforms' ); ?></button></div>
+					<div class="ajcore-local-modal-foot"><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary"><?php echo esc_html( $modal_config[0] ); ?></button></div>
 				</form></div></div></div>
+				<?php endforeach; ?>
 				<?php endif; ?>
 				<?php if ( $is_local ) : ?>
 				<div class="ajcore-local-ledger-summary">

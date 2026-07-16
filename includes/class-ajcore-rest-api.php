@@ -131,6 +131,10 @@ class AJCore_REST_API {
 				'permission_callback' => array( $this, 'can_manage_ops_api' ),
 			)
 		);
+		register_rest_route( self::NAMESPACE, '/ops/accounting-catalog', array(
+			array( 'methods' => WP_REST_Server::READABLE, 'callback' => array( $this, 'get_ops_accounting_catalog' ), 'permission_callback' => array( $this, 'can_manage_ops_api' ) ),
+			array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => array( $this, 'save_ops_accounting_catalog' ), 'permission_callback' => array( $this, 'can_manage_ops_api' ) ),
+		) );
 
 		register_rest_route(
 			self::NAMESPACE,
@@ -1224,6 +1228,8 @@ class AJCore_REST_API {
 		$category    = sanitize_text_field( (string) ( $request->get_param( 'category' ) ?: 'Additional Service' ) );
 		$date        = sanitize_text_field( (string) ( $request->get_param( 'date' ) ?: current_time( 'Y-m-d' ) ) );
 		$amount      = round( abs( (float) $request->get_param( 'amount' ) ), 2 );
+		$entry_type  = sanitize_key( (string) ( $request->get_param( 'entry_type' ) ?: 'charge' ) );
+		$is_payment  = 'payment' === $entry_type;
 		if ( '' === $description || $amount <= 0 || ! strtotime( $date ) ) {
 			return new WP_Error( 'ajcore_invalid_local_charge', __( 'Description, valid date, and an amount greater than zero are required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
@@ -1234,10 +1240,10 @@ class AJCore_REST_API {
 		$table = $this->portal_table( 'aj_portal_local_ledger' );
 		$source_id = 'local_manual_' . str_replace( '-', '', wp_generate_uuid4() );
 		$inserted = $pdb->insert( $table, array(
-			'local_customer_id' => $customer_id, 'source_object_id' => $source_id, 'source_type' => 'local_charge',
+			'local_customer_id' => $customer_id, 'source_object_id' => $source_id, 'source_type' => $is_payment ? 'local_payment' : 'local_charge',
 			'ledger_date' => gmdate( 'Y-m-d 00:00:00', strtotime( $date ) ), 'description' => $description,
-			'amount' => -$amount, 'currency' => 'usd', 'status' => 'posted',
-			'metadata' => wp_json_encode( array( 'entry_type' => 'manual_charge', 'category' => $category, 'created_by' => get_current_user_id() ) ),
+			'amount' => $is_payment ? $amount : -$amount, 'currency' => 'usd', 'status' => 'posted',
+			'metadata' => wp_json_encode( array( 'entry_type' => $is_payment ? 'manual_payment' : 'manual_charge', 'category' => $category, 'created_by' => get_current_user_id() ) ),
 		), array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s' ) );
 		if ( false === $inserted ) return new WP_Error( 'ajcore_local_charge_failed', __( 'The charge could not be saved.', 'ajforms' ), array( 'status' => 500 ) );
 		return rest_ensure_response( array( 'success' => true, 'id' => (int) $pdb->insert_id ) );
@@ -1328,6 +1334,22 @@ class AJCore_REST_API {
 		$customers = $this->portal_table( 'aj_portal_local_customers' );
 		$rows = $pdb->get_results( "SELECT s.local_service_id,s.local_customer_id,s.service_name,s.move_in_date,s.contract_start_date,s.contract_end_date,s.billing_start_date,s.next_charge_date,s.last_billed_date,s.monthly_rate,s.pending_rate,s.pending_rate_date,s.status,c.name AS customer_name,c.email FROM `{$services}` s LEFT JOIN `{$customers}` c ON c.local_customer_id=s.local_customer_id ORDER BY s.status='active' DESC,s.next_charge_date ASC,c.name ASC", ARRAY_A );
 		return rest_ensure_response( array( 'transactions' => is_array( $rows ) ? $rows : array(), 'last_run' => get_option( 'ajcore_local_recurring_transactions_last_run', '' ) ) );
+	}
+
+	public function get_ops_accounting_catalog() {
+		return rest_ensure_response( array(
+			'charge_categories' => get_option( 'ajcore_local_charge_categories', array( 'Rent', 'Postage', 'Conference Room', 'Printing', 'Additional Service' ) ),
+			'payment_categories' => get_option( 'ajcore_local_payment_categories', array( 'Rental Income', 'Service Income', 'Reimbursement', 'Uncategorized Income' ) ),
+		) );
+	}
+
+	public function save_ops_accounting_catalog( WP_REST_Request $request ) {
+		$clean = static function ( $values ) { return array_values( array_unique( array_filter( array_map( 'sanitize_text_field', (array) $values ) ) ) ); };
+		$charges = $clean( $request->get_param( 'charge_categories' ) );
+		$payments = $clean( $request->get_param( 'payment_categories' ) );
+		update_option( 'ajcore_local_charge_categories', $charges );
+		update_option( 'ajcore_local_payment_categories', $payments );
+		return rest_ensure_response( array( 'success' => true, 'charge_categories' => $charges, 'payment_categories' => $payments ) );
 	}
 
 	public function get_ops_products( WP_REST_Request $request ) {
