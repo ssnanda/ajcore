@@ -18859,6 +18859,12 @@ class AJForms_Admin {
 		$meta_data    = ! empty( $customer->metadata ) ? ( is_array( $customer->metadata ) ? $customer->metadata : json_decode( $customer->metadata, true ) ) : array();
 		$meta_data    = is_array( $meta_data ) ? $meta_data : array();
 		$subscription_products = $is_local ? array() : $this->api_get_ops_subscription_products();
+		$local_ledger_page      = max( 1, isset( $_GET['ledger_page'] ) ? absint( wp_unslash( $_GET['ledger_page'] ) ) : 1 );
+		$local_ledger_per_page  = 20;
+		$local_ledger_total     = $is_local ? count( $detail['ledger'] ) : 0;
+		$local_ledger_pages     = $is_local ? max( 1, (int) ceil( $local_ledger_total / $local_ledger_per_page ) ) : 1;
+		$local_ledger_page      = min( $local_ledger_page, $local_ledger_pages );
+		$local_ledger_rows      = $is_local ? array_slice( $detail['ledger'], ( $local_ledger_page - 1 ) * $local_ledger_per_page, $local_ledger_per_page ) : $detail['ledger'];
 		$sync_url     = wp_nonce_url(
 			add_query_arg(
 				array(
@@ -18876,7 +18882,7 @@ class AJForms_Admin {
 			.ajcore-customer-360{max-width:1280px}
 			.ajcore-customer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:16px 0 18px}
 			.ajcore-customer-head h2{margin:0 0 6px;font-size:24px}
-			.ajcore-customer-grid{display:grid;grid-template-columns:repeat(2,minmax(320px,1fr));gap:16px}
+			.ajcore-customer-grid{display:grid;grid-template-columns:repeat(2,minmax(320px,1fr));gap:16px;align-items:start}
 			.ajcore-customer-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px;overflow:hidden}
 			.ajcore-customer-card h3{margin:0 0 14px;font-size:16px}
 			.ajcore-customer-grid.is-local .ajcore-portal-access-card{grid-column:2;grid-row:1;padding:12px 16px}.ajcore-customer-grid.is-local .ajcore-portal-access-card h3{margin-bottom:8px}.ajcore-customer-grid.is-local .ajcore-customer-profile-card{grid-column:2;grid-row:2}.ajcore-customer-grid.is-local .ajcore-local-service-card{grid-column:1;grid-row:1}.ajcore-customer-grid.is-local .ajcore-local-ledger-card{grid-column:1;grid-row:2}.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-meta{grid-template-columns:100px minmax(0,1fr);gap:5px 10px}.ajcore-customer-grid.is-local .ajcore-portal-access-card hr,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-actions,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-quick-actions{display:none}
@@ -18897,6 +18903,9 @@ class AJForms_Admin {
 			.ajcore-customer-actions input[type="email"]{min-width:280px}
 			.ajcore-customer-table-wrap{max-width:100%;overflow:auto;border:1px solid #dcdcde;border-radius:8px;background:#fff}
 			.ajcore-customer-table-wrap table{margin:0;min-width:760px;border:0}
+			.ajcore-customer-grid.is-local .ajcore-customer-table-wrap th,.ajcore-customer-grid.is-local .ajcore-customer-table-wrap td{padding:9px 10px;line-height:1.35}
+			.ajcore-ledger-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}
+			.ajcore-ledger-pagination .ajcore-ledger-pages{display:flex;gap:8px;align-items:center}
 			.ajcore-customer-card th,.ajcore-customer-card td{vertical-align:top}
 			.ajcore-customer-field-value{display:inline-block;max-width:380px;white-space:normal;overflow-wrap:anywhere}
 			.ajcore-customer-json summary{cursor:pointer;font-weight:600}
@@ -19106,7 +19115,7 @@ class AJForms_Admin {
 			<div class="ajcore-customer-card <?php echo $is_local ? 'ajcore-local-service-card' : 'ajcore-customer-wide'; ?>">
 				<h3><?php echo esc_html( $is_local ? __( 'Local Service', 'ajforms' ) : __( 'Subscriptions', 'ajforms' ) ); ?></h3>
 				<?php if ( $is_local ) : ?>
-					<?php $this->render_portal_dataset_section( 'local_services', __( 'Local Service', 'ajforms' ), $detail['active_recurring_services'], array( 'service_name', 'included', 'service_period_start', 'price', 'status' ), __( 'No local service configured.', 'ajforms' ) ); ?>
+					<?php $this->render_portal_dataset_section( 'local_services', __( 'Local Service', 'ajforms' ), $detail['active_recurring_services'], array( 'service_name', 'included', 'service_period_start', 'price', 'status' ), __( 'No local service configured.', 'ajforms' ), false ); ?>
 				<?php else : ?>
 				<?php if ( empty( $subscription_products ) ) : ?>
 					<p class="description"><?php esc_html_e( 'No active recurring Stripe prices are available. Sync products from Stripe first.', 'ajforms' ); ?></p>
@@ -19273,11 +19282,22 @@ class AJForms_Admin {
 				$this->render_portal_dataset_section(
 					'ledger',
 					$is_local ? __( 'Local Ledger', 'ajforms' ) : __( 'Payments', 'ajforms' ),
-					$detail['ledger'],
+					$local_ledger_rows,
 					$is_local ? array( 'ledger_date', 'metadata.category', 'description', 'amount', 'currency', 'status' ) : array( 'ledger_date', 'description', 'billing_type', 'metadata.service_period', 'amount', 'currency', 'status', 'invoice_id', 'charge_id' ),
-					__( 'No payment records.', 'ajforms' )
+					__( 'No payment records.', 'ajforms' ),
+					! $is_local
 				);
 				?>
+				<?php if ( $is_local && $local_ledger_pages > 1 ) : ?>
+					<div class="ajcore-ledger-pagination">
+						<span><?php echo esc_html( sprintf( __( 'Showing %1$d–%2$d of %3$d entries', 'ajforms' ), ( ( $local_ledger_page - 1 ) * $local_ledger_per_page ) + 1, min( $local_ledger_page * $local_ledger_per_page, $local_ledger_total ), $local_ledger_total ) ); ?></span>
+						<div class="ajcore-ledger-pages">
+							<?php if ( $local_ledger_page > 1 ) : ?><a class="button" href="<?php echo esc_url( add_query_arg( 'ledger_page', $local_ledger_page - 1 ) ); ?>"><?php esc_html_e( 'Previous', 'ajforms' ); ?></a><?php endif; ?>
+							<strong><?php echo esc_html( sprintf( __( 'Page %1$d of %2$d', 'ajforms' ), $local_ledger_page, $local_ledger_pages ) ); ?></strong>
+							<?php if ( $local_ledger_page < $local_ledger_pages ) : ?><a class="button" href="<?php echo esc_url( add_query_arg( 'ledger_page', $local_ledger_page + 1 ) ); ?>"><?php esc_html_e( 'Next', 'ajforms' ); ?></a><?php endif; ?>
+						</div>
+					</div>
+				<?php endif; ?>
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
@@ -19573,16 +19593,17 @@ class AJForms_Admin {
 		<?php
 	}
 
-	private function render_portal_dataset_section( $section, $title, $rows, $defaults, $empty_message ) {
+	private function render_portal_dataset_section( $section, $title, $rows, $defaults, $empty_message, $show_field_picker = true ) {
 		$section    = sanitize_key( $section );
 		$available  = $this->discover_portal_row_scalar_fields( $rows );
-		$selected   = array_values( array_intersect( $this->get_portal_detail_display_fields( $section, $defaults ), $available ) );
+		$selected   = array_values( array_intersect( $show_field_picker ? $this->get_portal_detail_display_fields( $section, $defaults ) : $defaults, $available ) );
 		$show_subscription_actions = 'active_recurring_services' === $section;
 		if ( empty( $selected ) && ! empty( $available ) ) {
 			$selected = array_slice( array_values( array_intersect( $defaults, $available ) ), 0, 8 );
 		}
 
-		$this->render_portal_field_display_picker(
+		if ( $show_field_picker ) {
+			$this->render_portal_field_display_picker(
 			array(
 				'section'       => $section,
 				'title'         => sprintf( __( '%s Fields to Display', 'ajforms' ), $title ),
@@ -19595,7 +19616,8 @@ class AJForms_Admin {
 					'detail_field_section' => $section,
 				),
 			)
-		);
+			);
+		}
 
 		if ( empty( $rows ) ) {
 			echo '<p>' . esc_html( $empty_message ) . '</p>';
