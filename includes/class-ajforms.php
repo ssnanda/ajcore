@@ -4096,6 +4096,26 @@ class AJForms {
 		return 'llc setup - entity setup' === $label;
 	}
 
+	/** Partner-paid $0 services are intentionally absent from Stripe subscriptions, but
+	 * remain real customer services and must be visible in the customer portal. */
+	private function get_customer_portal_tracking_services( $stripe_customer_id, $active_only = false ) {
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		if ( '' === $stripe_customer_id ) {
+			return array();
+		}
+		$pdb   = $this->get_pdb();
+		$table = $pdb->prefix . 'aj_portal_local_services';
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return array();
+		}
+		$sql = "SELECT * FROM `{$table}` WHERE local_customer_id = %s";
+		if ( $active_only ) {
+			$sql .= " AND status = 'active' AND (contract_end_date IS NULL OR contract_end_date = '' OR contract_end_date >= CURDATE())";
+		}
+		$sql .= ' ORDER BY contract_start_date DESC, id DESC';
+		return (array) $pdb->get_results( $pdb->prepare( $sql, $stripe_customer_id ) );
+	}
+
 	private function render_customer_portal_services_tab() {
 		$context = $this->get_current_user_portal_billing_context();
 		$customer = $context['customer'];
@@ -4105,6 +4125,7 @@ class AJForms {
 		}
 
 		$subscriptions      = $context['subscriptions'];
+		$tracking_services  = $this->get_customer_portal_tracking_services( $context['stripe_customer_id'], true );
 		$current_services   = array_values( array_filter( $subscriptions, array( $this, 'is_current_portal_subscription' ) ) );
 		$past_services      = array_values(
 			array_filter(
@@ -4167,7 +4188,7 @@ class AJForms {
 
 			<?php if ( $show_current ) : ?>
 			<h3><?php esc_html_e( 'Current Services', 'ajforms' ); ?></h3>
-			<?php if ( empty( $snapshot_services ) && empty( $current_services ) ) : ?>
+			<?php if ( empty( $snapshot_services ) && empty( $current_services ) && empty( $tracking_services ) ) : ?>
 				<p><?php esc_html_e( 'No current services are synced yet.', 'ajforms' ); ?></p>
 			<?php else : ?>
 				<div class="aj-portal-services-list">
@@ -4200,6 +4221,18 @@ class AJForms {
 									<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_next_billing_date_label( $snapshot ) ); ?></span></div>
 								<?php endif; ?>
 								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_snapshot_service_amount_label( $snapshot ) ); ?></span></div>
+							</div>
+						</div>
+					<?php endforeach; ?>
+					<?php foreach ( $tracking_services as $service ) : ?>
+						<div class="aj-portal-service-card">
+							<h4><?php echo esc_html( $service->service_name ); ?></h4>
+							<div class="aj-portal-service-card-grid">
+								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( 'cancelled' === $service->status ? __( 'Ended', 'ajforms' ) : ucfirst( (string) $service->status ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Service Start', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->format_portal_date( $service->contract_start_date ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Service End', 'ajforms' ); ?></strong><span><?php echo esc_html( ! empty( $service->contract_end_date ) ? $this->format_portal_date( $service->contract_end_date ) : __( 'Ongoing', 'ajforms' ) ); ?></span></div>
+								<div><strong><?php esc_html_e( 'Billing', 'ajforms' ); ?></strong><span><?php esc_html_e( 'Provided through your service partner', 'ajforms' ); ?></span></div>
 							</div>
 						</div>
 					<?php endforeach; ?>
@@ -4842,8 +4875,8 @@ class AJForms {
 	}
 
 
-	private function render_customer_portal_service_summary( $active_subscriptions, $ledger, $business_name ) {
-		if ( empty( $active_subscriptions ) ) {
+	private function render_customer_portal_service_summary( $active_subscriptions, $ledger, $business_name, $tracking_services = array() ) {
+		if ( empty( $active_subscriptions ) && empty( $tracking_services ) ) {
 			return '<div class="aj-portal-account-summary"><h3>' . esc_html__( 'Account Summary', 'ajforms' ) . '</h3><p>' . esc_html__( 'No active services are synced to your portal yet.', 'ajforms' ) . '</p></div>';
 		}
 
@@ -4859,6 +4892,17 @@ class AJForms {
 				__( 'You currently have %1$s for %2$s from %3$s.', 'ajforms' ),
 				$service_name,
 				$entity_label,
+				$service_period
+			);
+		}
+		foreach ( $tracking_services as $service ) {
+			$service_period = ! empty( $service->contract_end_date )
+				? $this->format_portal_date( $service->contract_start_date ) . ' - ' . $this->format_portal_date( $service->contract_end_date )
+				: $this->format_portal_date( $service->contract_start_date ) . ' - ' . __( 'Ongoing', 'ajforms' );
+			$lines[] = sprintf(
+				/* translators: 1: service name, 2: service period */
+				__( 'Your %1$s is active for %2$s and is provided through your service partner.', 'ajforms' ),
+				$service->service_name,
 				$service_period
 			);
 		}
@@ -4939,6 +4983,7 @@ class AJForms {
 
 		$upcoming             = $context['upcoming'];
 		$active_subscriptions = $context['active_subscriptions'];
+		$tracking_services    = $this->get_customer_portal_tracking_services( $context['stripe_customer_id'], true );
 		$balance_data         = $this->get_portal_ledger_running_balances( $context['ledger'] );
 		$open_ledger          = $this->get_current_user_open_portal_ledger();
 		$open_total           = $this->get_portal_open_ledger_total( $open_ledger );
@@ -4973,7 +5018,7 @@ class AJForms {
 				</a>
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $services_url ); ?>">
 					<strong><?php esc_html_e( 'Active Services', 'ajforms' ); ?></strong>
-					<span><?php echo esc_html( number_format_i18n( count( $active_subscriptions ) ) ); ?></span>
+					<span><?php echo esc_html( number_format_i18n( count( $active_subscriptions ) + count( $tracking_services ) ) ); ?></span>
 				</a>
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $billing_url ); ?>">
 					<strong><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></strong>
@@ -4989,7 +5034,14 @@ class AJForms {
 				</a>
 			</div>
 
-			<?php echo $this->render_customer_portal_service_summary( $active_subscriptions, $context['ledger'], $business_name ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			<?php echo $this->render_customer_portal_service_summary( $active_subscriptions, $context['ledger'], $business_name, $tracking_services ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+
+			<?php if ( false !== strpos( home_url( '/' ), 'universityofficesuites.com' ) || ! empty( $tracking_services ) ) : ?>
+				<div class="aj-portal-account-summary aj-portal-office-address">
+					<h3><?php esc_html_e( 'Our Office Address', 'ajforms' ); ?></h3>
+					<p><strong><?php esc_html_e( 'University Place Office Suites', 'ajforms' ); ?></strong><br>1914 J N PEASE PL.<br>CHARLOTTE, NC 28262</p>
+				</div>
+			<?php endif; ?>
 
 			<h3 class="aj-portal-quick-actions-heading"><?php esc_html_e( 'Quick Actions', 'ajforms' ); ?></h3>
 			<div class="aj-portal-quick-actions">
