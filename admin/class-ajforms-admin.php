@@ -5122,7 +5122,7 @@ class AJForms_Admin {
 		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
 		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'wp_password_reset_from_email', $brand ), $this->get_customer_brand_setting_key( 'wp_password_reset_from_name', $brand ) );
 		$from_email = $sender['from_email'];
-		$from_name  = ! empty( $brand['site_name'] ) && 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
+		$from_name  = $sender['from_name'];
 		$site_name  = $brand['site_name'];
 		$copy      = $this->resolve_email_copy(
 			$settings,
@@ -5175,7 +5175,7 @@ class AJForms_Admin {
 		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
 		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'wp_welcome_from_email', $brand ), $this->get_customer_brand_setting_key( 'wp_welcome_from_name', $brand ) );
 		$from_email = $sender['from_email'];
-		$from_name  = ! empty( $brand['site_name'] ) && 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
+		$from_name  = $sender['from_name'];
 		$site_name  = $brand['site_name'];
 		$copy      = $this->resolve_email_copy(
 			$settings,
@@ -12616,6 +12616,21 @@ class AJForms_Admin {
 			'wp_welcome_from_name'           => isset( $_POST['wp_welcome_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_from_name'] ) ) : '',
 			'wp_service_status_from_email'   => isset( $_POST['wp_service_status_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_service_status_from_email'] ) ) : '',
 			'wp_service_status_from_name'    => isset( $_POST['wp_service_status_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_service_status_from_name'] ) ) : '',
+			'university_wp_password_reset_subject'    => isset( $_POST['university_wp_password_reset_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_password_reset_subject'] ) ) : 'Password reset for your University Place Office Suites portal login',
+			'university_wp_password_reset_heading'    => isset( $_POST['university_wp_password_reset_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_password_reset_heading'] ) ) : 'Set your client portal password',
+			'university_wp_password_reset_body'       => isset( $_POST['university_wp_password_reset_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_wp_password_reset_body'] ) ) : "Hi {name},\nUse the secure button below to create a new password for your client portal account. This link is private and should only be used by you.",
+			'university_wp_password_reset_from_email' => isset( $_POST['university_wp_password_reset_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_wp_password_reset_from_email'] ) ) : 'donotreply@universityofficesuites.com',
+			'university_wp_password_reset_from_name'  => isset( $_POST['university_wp_password_reset_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_password_reset_from_name'] ) ) : 'University Place Office Suites',
+			'university_wp_welcome_email_subject'     => isset( $_POST['university_wp_welcome_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_welcome_email_subject'] ) ) : 'Welcome : Your portal access is enabled to University Place Office Suites LLC',
+			'university_wp_welcome_heading'           => isset( $_POST['university_wp_welcome_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_welcome_heading'] ) ) : 'Welcome to your client portal',
+			'university_wp_welcome_body'              => isset( $_POST['university_wp_welcome_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_wp_welcome_body'] ) ) : "Hi {name},\nYour client portal access has been enabled. Use the button below to set your password and sign in securely.",
+			'university_wp_welcome_from_email'        => isset( $_POST['university_wp_welcome_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_wp_welcome_from_email'] ) ) : 'donotreply@universityofficesuites.com',
+			'university_wp_welcome_from_name'         => isset( $_POST['university_wp_welcome_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_welcome_from_name'] ) ) : 'University Place Office Suites',
+			'university_wp_service_status_subject'    => isset( $_POST['university_wp_service_status_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_subject'] ) ) : 'Update on {service_name}: {status_label}',
+			'university_wp_service_status_heading'    => isset( $_POST['university_wp_service_status_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_heading'] ) ) : 'Your service request was updated',
+			'university_wp_service_status_body'       => isset( $_POST['university_wp_service_status_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_wp_service_status_body'] ) ) : "Hi {name},\nThe status of \"{service_name}\" has changed.",
+			'university_wp_service_status_from_email' => isset( $_POST['university_wp_service_status_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_wp_service_status_from_email'] ) ) : 'donotreply@universityofficesuites.com',
+			'university_wp_service_status_from_name'  => isset( $_POST['university_wp_service_status_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_from_name'] ) ) : 'University Place Office Suites',
 			'lead_followup_from_email'       => isset( $_POST['lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['lead_followup_from_email'] ) ) : 'contactus@ncllcagents.com',
 			'lead_followup_from_name'        => isset( $_POST['lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_from_name'] ) ) : '',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
@@ -12663,7 +12678,7 @@ class AJForms_Admin {
 
 		$section_keys = array(
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
-			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name' ),
+			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
@@ -14266,15 +14281,16 @@ class AJForms_Admin {
 
 		$settings   = $this->get_plugin_settings();
 		$brand      = $this->get_customer_brand_context( $request->stripe_customer_id );
-		$sender     = $this->resolve_email_sender( $settings, 'wp_service_status_from_email', 'wp_service_status_from_name' );
+		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'wp_service_status_from_email', $brand ), $this->get_customer_brand_setting_key( 'wp_service_status_from_name', $brand ) );
 		$from_email = $sender['from_email'];
-		$from_name  = 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
+		$from_name  = $sender['from_name'];
 		$site_name  = $brand['site_name'];
 
 		$service_name    = sanitize_text_field( (string) $request->service_name );
 		$status_label    = $labels[ $new_service_status ];
 		$service_display = '' !== $service_name ? $service_name : __( 'your service request', 'ajforms' );
-		$subject_template = ! empty( $settings['wp_service_status_subject'] ) ? sanitize_text_field( (string) $settings['wp_service_status_subject'] ) : __( 'Update on {service_name}: {status_label}', 'ajforms' );
+		$subject_key      = $this->get_customer_brand_setting_key( 'wp_service_status_subject', $brand );
+		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : __( 'Update on {service_name}: {status_label}', 'ajforms' );
 		$email_tokens     = array(
 			'{name}'          => ! empty( $customer->name ) ? $customer->name : $customer->email,
 			'{service_name}'  => $service_display,
@@ -14284,8 +14300,8 @@ class AJForms_Admin {
 
 		$copy = $this->resolve_email_copy(
 			$settings,
-			'wp_service_status_heading',
-			'wp_service_status_body',
+			$this->get_customer_brand_setting_key( 'wp_service_status_heading', $brand ),
+			$this->get_customer_brand_setting_key( 'wp_service_status_body', $brand ),
 			__( 'Your service request was updated', 'ajforms' ),
 			array(
 				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
@@ -14310,7 +14326,7 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $from_email;
 		}
 
-		return (bool) wp_mail( $customer->email, $subject, $message, $headers );
+		return (bool) $this->send_branded_wp_mail( $customer->email, $subject, $message, $headers, $from_email, $from_name );
 	}
 
 	/**
@@ -22763,6 +22779,31 @@ class AJForms_Admin {
 						<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
 					</div>
 				</div>
+			</div>
+
+			<div class="ajforms-settings-card">
+				<span class="ajforms-settings-pill"><?php esc_html_e( 'University Office Suites', 'ajforms' ); ?></span>
+				<h3><?php esc_html_e( 'University Place Office Suites email templates', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'Used automatically for customers assigned to universityofficesuites.com. These settings are independent of the NC LLC Agents templates below.', 'ajforms' ); ?></p>
+				<?php
+				$university_email_types = array(
+					array( 'label' => __( 'Password Reset', 'ajforms' ), 'subject' => 'university_wp_password_reset_subject', 'heading' => 'university_wp_password_reset_heading', 'body' => 'university_wp_password_reset_body', 'from_email' => 'university_wp_password_reset_from_email', 'from_name' => 'university_wp_password_reset_from_name', 'tokens' => __( 'Available placeholder: {name}.', 'ajforms' ) ),
+					array( 'label' => __( 'Portal Welcome', 'ajforms' ), 'subject' => 'university_wp_welcome_email_subject', 'heading' => 'university_wp_welcome_heading', 'body' => 'university_wp_welcome_body', 'from_email' => 'university_wp_welcome_from_email', 'from_name' => 'university_wp_welcome_from_name', 'tokens' => __( 'Available placeholder: {name}.', 'ajforms' ) ),
+					array( 'label' => __( 'Service Request Status Update', 'ajforms' ), 'subject' => 'university_wp_service_status_subject', 'heading' => 'university_wp_service_status_heading', 'body' => 'university_wp_service_status_body', 'from_email' => 'university_wp_service_status_from_email', 'from_name' => 'university_wp_service_status_from_name', 'tokens' => __( 'Available placeholders: {name}, {service_name}, {status_label}.', 'ajforms' ) ),
+				);
+				foreach ( $university_email_types as $type ) :
+				?>
+					<div style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;">
+						<h4 style="margin:0 0 12px;font-size:15px;"><?php echo esc_html( $type['label'] ); ?></h4>
+						<div class="ajforms-settings-grid" style="max-width:680px;">
+							<div class="ajforms-settings-field"><label for="<?php echo esc_attr( $type['from_email'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label><input type="email" name="<?php echo esc_attr( $type['from_email'] ); ?>" id="<?php echo esc_attr( $type['from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email'] ] ); ?>"></div>
+							<div class="ajforms-settings-field"><label for="<?php echo esc_attr( $type['from_name'] ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label><input type="text" name="<?php echo esc_attr( $type['from_name'] ); ?>" id="<?php echo esc_attr( $type['from_name'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_name'] ] ); ?>"></div>
+						</div>
+						<div class="ajforms-settings-field" style="max-width:680px;margin-top:14px;"><label for="<?php echo esc_attr( $type['subject'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label><input type="text" name="<?php echo esc_attr( $type['subject'] ); ?>" id="<?php echo esc_attr( $type['subject'] ); ?>" value="<?php echo esc_attr( $settings[ $type['subject'] ] ); ?>"></div>
+						<div class="ajforms-settings-field" style="max-width:680px;margin-top:14px;"><label for="<?php echo esc_attr( $type['heading'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label><input type="text" name="<?php echo esc_attr( $type['heading'] ); ?>" id="<?php echo esc_attr( $type['heading'] ); ?>" value="<?php echo esc_attr( $settings[ $type['heading'] ] ); ?>"></div>
+						<div class="ajforms-settings-field" style="max-width:680px;margin-top:14px;"><label for="<?php echo esc_attr( $type['body'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label><textarea name="<?php echo esc_attr( $type['body'] ); ?>" id="<?php echo esc_attr( $type['body'] ); ?>" rows="4"><?php echo esc_textarea( $settings[ $type['body'] ] ); ?></textarea><div class="ajforms-settings-help"><?php echo esc_html( $type['tokens'] ); ?> <?php esc_html_e( 'Use one paragraph per line.', 'ajforms' ); ?></div></div>
+					</div>
+				<?php endforeach; ?>
 			</div>
 
 			<?php
