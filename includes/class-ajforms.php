@@ -3550,7 +3550,9 @@ class AJForms {
 		$payment_refs = array();
 		foreach ( $ledger as $entry ) {
 			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
-			if ( ! in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+			// A linked failed, pending, zero-value, or refunded transaction does not
+			// balance a paid invoice and must not suppress its fallback credit.
+			if ( ! in_array( $source_type, array( 'charge', 'payment' ), true ) || $this->get_portal_ledger_balance_effect( $entry ) >= -0.00001 ) {
 				continue;
 			}
 			foreach ( array( 'invoice_id', 'payment_intent_id', 'charge_id' ) as $field ) {
@@ -3567,7 +3569,7 @@ class AJForms {
 		foreach ( $ledger as $entry ) {
 			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
 			$status      = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
-			if ( 'invoice' !== $source_type || ! in_array( $status, array( 'paid', 'succeeded' ), true ) || (float) $entry->amount <= 0 ) {
+			if ( 'invoice' !== $source_type || ! in_array( $status, array( 'paid', 'succeeded' ), true ) ) {
 				continue;
 			}
 
@@ -3582,9 +3584,24 @@ class AJForms {
 				continue;
 			}
 
+			$payment_amount = (float) $entry->amount;
+			if ( $payment_amount <= 0 && ! empty( $entry->source_object_id ) ) {
+				$invoice_id = sanitize_text_field( (string) $entry->source_object_id );
+				foreach ( $ledger as $service_entry ) {
+					$service_invoice_id = ! empty( $service_entry->invoice_id ) ? sanitize_text_field( (string) $service_entry->invoice_id ) : $this->get_ledger_metadata_value( $service_entry, 'invoice_id' );
+					if ( $invoice_id === $service_invoice_id ) {
+						$payment_amount += max( 0, (float) $this->get_portal_ledger_balance_effect( $service_entry ) );
+					}
+				}
+			}
+			if ( $payment_amount <= 0 ) {
+				continue;
+			}
+
 			$payment_entry = clone $entry;
 			$payment_entry->source_type = 'payment';
 			$payment_entry->description = __( 'Payment for invoice', 'ajforms' );
+			$payment_entry->amount = $payment_amount;
 			$fallback_invoice_payments[] = $payment_entry;
 		}
 		$ledger = array_merge( $ledger, $fallback_invoice_payments );
