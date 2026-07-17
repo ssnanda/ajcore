@@ -4481,8 +4481,17 @@ class AJForms {
 								<?php $entry_is_open = ( $balance_due > 0 && (float) $entry->amount > 0 && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) ); ?>
 								<?php $entry_debit_credit = $this->get_portal_ledger_debit_credit( $entry ); ?>
 								<?php $entry_actions_html = ( ! $entry_invoice_url && ! $entry_invoice_id ) ? $this->get_portal_service_request_actions( $entry ) : ''; ?>
+								<?php
+								// One-off (non-subscription) invoices show the operator-chosen service
+								// date rather than the day the invoice was created in Stripe.
+								$entry_display_date = $entry->ledger_date;
+								$entry_period_start = $this->get_ledger_metadata_value( $entry, 'service_period_start' );
+								if ( $entry_period_start && ! $this->get_ledger_metadata_value( $entry, 'subscription_id' ) ) {
+									$entry_display_date = $entry_period_start;
+								}
+								?>
 								<tr>
-									<td data-label="<?php esc_attr_e( 'Date', 'ajforms' ); ?>"><?php echo esc_html( $entry->ledger_date ? $this->format_portal_date( $entry->ledger_date ) : '-' ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Date', 'ajforms' ); ?>"><?php echo esc_html( $entry_display_date ? $this->format_portal_date( $entry_display_date ) : '-' ); ?></td>
 									<td><?php echo esc_html( $entry_display_description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
 									<td data-label="<?php esc_attr_e( 'Status', 'ajforms' ); ?>"><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Debit', 'ajforms' ); ?>" class="<?php echo $entry_debit_credit['debit'] ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( $entry_debit_credit['debit'] ? $entry_debit_credit['debit'] : '-' ); ?></td>
