@@ -8263,9 +8263,12 @@ class AJForms_Admin {
 			return $result;
 		}
 
-		// Keep the synced transactions cache honest without waiting for the next full sync.
-		$pdb   = $this->get_pdb();
-		$table = $this->get_portal_stripe_transactions_table();
+		// Keep the synced caches honest without waiting for the next full sync. The client
+		// portal's balance and Billing History read the LEDGER table, so it must be updated
+		// alongside the transactions cache or voided invoices keep counting toward the balance.
+		$pdb          = $this->get_pdb();
+		$table        = $this->get_portal_stripe_transactions_table();
+		$ledger_table = $this->get_portal_ledger_table();
 		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) {
 			if ( 'delete' === $action ) {
 				$pdb->delete( $table, array( 'stripe_object_id' => $invoice_id ), array( '%s' ) );
@@ -8275,6 +8278,19 @@ class AJForms_Admin {
 					array( 'status' => sanitize_key( (string) $result['status'] ), 'raw_data' => wp_json_encode( $result ), 'synced_at' => current_time( 'mysql' ) ),
 					array( 'stripe_object_id' => $invoice_id ),
 					array( '%s', '%s', '%s' ),
+					array( '%s' )
+				);
+			}
+		}
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $ledger_table ) ) === $ledger_table ) {
+			if ( 'delete' === $action ) {
+				$pdb->delete( $ledger_table, array( 'source_object_id' => $invoice_id ), array( '%s' ) );
+			} elseif ( ! empty( $result['status'] ) ) {
+				$pdb->update(
+					$ledger_table,
+					array( 'status' => sanitize_key( (string) $result['status'] ) ),
+					array( 'source_object_id' => $invoice_id ),
+					array( '%s' ),
 					array( '%s' )
 				);
 			}
