@@ -6342,7 +6342,12 @@ class AJForms_Admin {
 		}
 
 		$source_type = ! empty( $snapshot->source_type ) ? sanitize_key( (string) $snapshot->source_type ) : '';
-		if ( ! in_array( $source_type, array( 'invoice', 'checkout_session' ), true ) ) {
+		// Standalone charges (e.g. a direct "Create payment" in the Stripe Dashboard) have no
+		// invoice or checkout session to produce the purchase (debit) side of the ledger pair —
+		// without this, only their payment (credit) row exists and the balance shows a phantom credit.
+		$is_standalone_charge = in_array( $source_type, array( 'charge', 'payment_intent' ), true )
+			&& empty( $snapshot->invoice_id ) && empty( $snapshot->checkout_session_id ) && empty( $snapshot->subscription_id );
+		if ( ! in_array( $source_type, array( 'invoice', 'checkout_session' ), true ) && ! $is_standalone_charge ) {
 			return false;
 		}
 
