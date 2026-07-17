@@ -8088,7 +8088,6 @@ class AJForms_Admin {
 			$invoice_description = mb_substr( implode( ' | ', array_map( static function ( $item ) { return $item['description']; }, $items ) ), 0, 500 );
 			$invoice = $this->stripe_api_request( 'invoices', $secret_key, array(
 				'customer'                       => $stripe_customer_id,
-				'description'                    => $invoice_description,
 				'collection_method'              => 'send_invoice',
 				'days_until_due'                 => $days_until_due,
 				'auto_advance'                   => 'false',
@@ -8125,7 +8124,8 @@ class AJForms_Admin {
 			$total += $item['amount'];
 		}
 
-		$hosted_url = '';
+		$hosted_url      = '';
+		$invoice_warning = '';
 		if ( '' !== $invoice_id ) {
 			$finalized = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/finalize', $secret_key, array( 'auto_advance' => 'false' ) );
 			if ( is_wp_error( $finalized ) ) {
@@ -8135,9 +8135,26 @@ class AJForms_Admin {
 			$payment_intent = $finalized['payment_intent'] ?? '';
 			if ( is_array( $payment_intent ) ) $payment_intent = $payment_intent['id'] ?? '';
 			$payment_intent = sanitize_text_field( (string) $payment_intent );
+			if ( '' === $payment_intent ) {
+				$finalized_invoice = $this->stripe_api_get(
+					'invoices/' . rawurlencode( $invoice_id ),
+					$secret_key,
+					array( 'expand[]' => 'payment_intent' )
+				);
+				if ( ! is_wp_error( $finalized_invoice ) ) {
+					$payment_intent = $finalized_invoice['payment_intent'] ?? '';
+					if ( is_array( $payment_intent ) ) $payment_intent = $payment_intent['id'] ?? '';
+					$payment_intent = sanitize_text_field( (string) $payment_intent );
+				}
+			}
 			if ( 0 === strpos( $payment_intent, 'pi_' ) ) {
 				// Stripe's Payments list otherwise displays the generic "Payment for Invoice" label.
-				$this->stripe_api_request( 'payment_intents/' . rawurlencode( $payment_intent ), $secret_key, array( 'description' => $invoice_description ) );
+				$description_updated = $this->stripe_api_request( 'payment_intents/' . rawurlencode( $payment_intent ), $secret_key, array( 'description' => $invoice_description ) );
+				if ( is_wp_error( $description_updated ) ) {
+					$invoice_warning = sprintf( __( 'The invoice was finalized, but Stripe could not update the internal Payment description: %s', 'ajforms' ), $description_updated->get_error_message() );
+				}
+			} else {
+				$invoice_warning = __( 'The invoice was finalized, but Stripe did not return its Payment ID, so the internal Payment description could not be updated.', 'ajforms' );
 			}
 			if ( $send_email ) {
 				$sent = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/send', $secret_key );
@@ -8147,7 +8164,7 @@ class AJForms_Admin {
 			}
 		}
 
-		return array(
+		$result = array(
 			'success'            => true,
 			'mode'               => $mode,
 			'invoice_id'         => $invoice_id,
@@ -8155,6 +8172,11 @@ class AJForms_Admin {
 			'total'              => round( $total, 2 ),
 			'item_count'         => count( $items ),
 		);
+		if ( '' !== $invoice_warning ) {
+			$result['partial_success'] = true;
+			$result['warning']         = $invoice_warning;
+		}
+		return $result;
 	}
 
 	public function api_update_ops_customer_subscription( $stripe_customer_id, $stripe_subscription_id, $args = array() ) {

@@ -4427,6 +4427,14 @@ class AJForms {
 				</div>
 			</div>
 
+			<div class="aj-portal-autopay" style="margin:0 0 24px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+				<div>
+					<strong><?php esc_html_e( 'Payment Methods & AutoPay', 'ajforms' ); ?></strong>
+					<p style="margin:4px 0 0;color:#64748b;"><?php esc_html_e( 'Securely add or update the payment method Stripe uses for eligible recurring subscriptions.', 'ajforms' ); ?></p>
+				</div>
+				<button type="button" class="button aj-portal-billing-portal-button" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_stripe_customer_portal' ) ); ?>"><?php esc_html_e( 'Manage Payment Methods / AutoPay', 'ajforms' ); ?></button>
+			</div>
+
 			<div class="aj-portal-balance-summary" style="margin:0 0 24px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
 				<div>
 					<strong><?php esc_html_e( 'Final Ledger Balance', 'ajforms' ); ?></strong>
@@ -4824,6 +4832,11 @@ class AJForms {
 
 		$upcoming             = $context['upcoming'];
 		$active_subscriptions = $context['active_subscriptions'];
+		$balance_data         = $this->get_portal_ledger_running_balances( $context['ledger'] );
+		$open_ledger          = $this->get_current_user_open_portal_ledger();
+		$open_total           = $this->get_portal_open_ledger_total( $open_ledger );
+		$balance_due          = max( 0, (float) $balance_data['total'] );
+		$balance_currency     = ! empty( $open_total['currency'] ) ? $open_total['currency'] : ( ! empty( $context['ledger'][0]->currency ) ? sanitize_key( (string) $context['ledger'][0]->currency ) : 'usd' );
 		$files                = $this->get_current_user_portal_files();
 		$tasks                = $this->get_current_user_portal_tasks();
 		$display_name         = $customer->name ? $customer->name : $customer->email;
@@ -4846,6 +4859,11 @@ class AJForms {
 			<h2><?php echo esc_html( sprintf( __( 'Welcome, %s', 'ajforms' ), $display_name ) ); ?></h2>
 
 			<div class="aj-portal-summary-grid">
+				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $billing_url ); ?>">
+					<strong><?php esc_html_e( 'Balance', 'ajforms' ); ?></strong>
+					<span><?php echo esc_html( $this->format_portal_money( $balance_due, $balance_currency ) ); ?></span>
+					<small><?php esc_html_e( 'Make a Payment', 'ajforms' ); ?></small>
+				</a>
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $services_url ); ?>">
 					<strong><?php esc_html_e( 'Active Services', 'ajforms' ); ?></strong>
 					<span><?php echo esc_html( number_format_i18n( count( $active_subscriptions ) ) ); ?></span>
@@ -4870,7 +4888,7 @@ class AJForms {
 			<div class="aj-portal-quick-actions">
 				<a class="button" href="<?php echo esc_url( $file_library_url ); ?>"><?php esc_html_e( 'Upload Document', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( $billing_url ); ?>"><?php esc_html_e( 'View Billing', 'ajforms' ); ?></a>
-				<span class="button disabled"><?php esc_html_e( 'Update Payment Method', 'ajforms' ); ?></span>
+				<button type="button" class="button aj-portal-billing-portal-button" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_stripe_customer_portal' ) ); ?>"><?php esc_html_e( 'Payment Methods / AutoPay', 'ajforms' ); ?></button>
 				<a class="button" href="<?php echo esc_url( $services_url ); ?>"><?php esc_html_e( 'Add Services', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( $email_us_url ); ?>"><?php esc_html_e( 'Email Us', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( $text_url ); ?>"><?php esc_html_e( 'Text Us', 'ajforms' ); ?></a>
@@ -6025,7 +6043,7 @@ class AJForms {
 				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 16px}
 				@keyframes ajp-fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
-				.ajcore-portal-shell .aj-portal-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:0 0 24px;width:100%}
+				.ajcore-portal-shell .aj-portal-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px;margin:0 0 24px;width:100%}
 				.ajcore-portal-shell .aj-portal-summary-card{
 					position:relative;
 					overflow:hidden;
@@ -6047,6 +6065,7 @@ class AJForms {
 				.ajcore-portal-shell a.aj-portal-summary-card:hover{border-color:#93c5fd;box-shadow:0 30px 70px rgba(37,99,235,.16);transform:translateY(-4px)}
 				.ajcore-portal-shell .aj-portal-summary-card strong{position:relative;z-index:1;color:#475569;font-size:14px;font-weight:900}
 				.ajcore-portal-shell .aj-portal-summary-card span{position:relative;z-index:1;font-size:30px;line-height:1;font-weight:950;letter-spacing:-.055em;color:var(--ajp-ink)}
+				.ajcore-portal-shell .aj-portal-summary-card small{position:relative;z-index:1;color:#3157ff;font-size:12px;font-weight:900}
 
 				.ajcore-portal-shell .aj-portal-services-list{display:grid;gap:12px;margin:0 0 20px;width:100%;max-width:none}
 				.ajcore-portal-shell .aj-portal-service-card{
@@ -6360,7 +6379,48 @@ class AJForms {
 					});
 				}
 
+				function getPortalErrorMessage(payload, fallback) {
+					if (payload && payload.data) {
+						if (typeof payload.data === 'string') {
+							return payload.data;
+						}
+						if (typeof payload.data.message === 'string' && payload.data.message) {
+							return payload.data.message;
+						}
+					}
+					return fallback;
+				}
+
 				shell.addEventListener('click', function(event) {
+					const billingPortalButton = event.target.closest('.aj-portal-billing-portal-button');
+					if (billingPortalButton && !billingPortalButton.disabled) {
+						billingPortalButton.disabled = true;
+						const originalBillingText = billingPortalButton.textContent;
+						billingPortalButton.textContent = '<?php echo esc_js( __( 'Opening Stripe...', 'ajforms' ) ); ?>';
+						const billingData = new FormData();
+						billingData.append('action', 'ajcore_stripe_customer_portal');
+						billingData.append('nonce', billingPortalButton.dataset.nonce || '');
+						fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+							method: 'POST',
+							credentials: 'same-origin',
+							body: billingData
+						})
+							.then(parseJsonResponse)
+							.then(function(payload) {
+								if (!payload || !payload.success || !payload.data || !payload.data.portal_url) {
+									const message = payload && payload.data && payload.data.message ? payload.data.message : '<?php echo esc_js( __( 'Could not open payment settings.', 'ajforms' ) ); ?>';
+									throw new Error(message);
+								}
+								window.location.href = payload.data.portal_url;
+							})
+							.catch(function(error) {
+								billingPortalButton.disabled = false;
+								billingPortalButton.textContent = originalBillingText;
+								window.alert(error.message || '<?php echo esc_js( __( 'Could not open payment settings.', 'ajforms' ) ); ?>');
+							});
+						return;
+					}
+
 					const payButton = event.target.closest('.aj-portal-pay-ledger-button');
 					if (!payButton || payButton.disabled) {
 						return;
@@ -6417,7 +6477,7 @@ class AJForms {
 						.then(parseJsonResponse)
 						.then(function(payload) {
 							if (!payload || !payload.success || !payload.data || !payload.data.url) {
-								throw new Error((payload && payload.data) || '<?php echo esc_js( __( 'Unable to start payment.', 'ajforms' ) ); ?>');
+								throw new Error(getPortalErrorMessage(payload, '<?php echo esc_js( __( 'Unable to start payment.', 'ajforms' ) ); ?>'));
 							}
 							window.location.href = payload.data.url;
 						})
