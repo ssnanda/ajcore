@@ -8223,6 +8223,71 @@ class AJForms_Admin {
 		return $result;
 	}
 
+	/**
+	 * Invoice lifecycle actions. Stripe's rules apply: drafts can be finalized or deleted;
+	 * finalized (open/uncollectible) invoices can only be voided, never deleted; paid ones
+	 * take neither — refund instead.
+	 */
+	public function api_manage_ops_customer_invoice( $invoice_id, $action ) {
+		$invoice_id = sanitize_text_field( (string) $invoice_id );
+		$action     = sanitize_key( (string) $action );
+		if ( '' === $invoice_id || 0 !== strpos( $invoice_id, 'in_' ) ) {
+			return new WP_Error( 'invalid_invoice', __( 'A valid Stripe invoice ID is required.', 'ajforms' ) );
+		}
+		if ( ! in_array( $action, array( 'finalize', 'send', 'void', 'delete' ), true ) ) {
+			return new WP_Error( 'invalid_action', __( 'Unsupported invoice action.', 'ajforms' ) );
+		}
+
+		$secret_key = $this->get_stripe_secret_key_for_portal();
+		if ( '' === $secret_key ) {
+			return new WP_Error( 'stripe_not_configured', __( 'Stripe is not configured.', 'ajforms' ) );
+		}
+
+		$encoded_id = rawurlencode( $invoice_id );
+		switch ( $action ) {
+			case 'finalize':
+				$result = $this->stripe_api_request( 'invoices/' . $encoded_id . '/finalize', $secret_key, array( 'auto_advance' => 'true' ) );
+				break;
+			case 'send':
+				$result = $this->stripe_api_request( 'invoices/' . $encoded_id . '/send', $secret_key );
+				break;
+			case 'void':
+				$result = $this->stripe_api_request( 'invoices/' . $encoded_id . '/void', $secret_key );
+				break;
+			case 'delete':
+			default:
+				$result = $this->stripe_api_request( 'invoices/' . $encoded_id, $secret_key, array(), 'DELETE' );
+				break;
+		}
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		// Keep the synced transactions cache honest without waiting for the next full sync.
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_stripe_transactions_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) {
+			if ( 'delete' === $action ) {
+				$pdb->delete( $table, array( 'stripe_object_id' => $invoice_id ), array( '%s' ) );
+			} elseif ( ! empty( $result['status'] ) ) {
+				$pdb->update(
+					$table,
+					array( 'status' => sanitize_key( (string) $result['status'] ), 'raw_data' => wp_json_encode( $result ), 'synced_at' => current_time( 'mysql' ) ),
+					array( 'stripe_object_id' => $invoice_id ),
+					array( '%s', '%s', '%s' ),
+					array( '%s' )
+				);
+			}
+		}
+
+		return array(
+			'success'            => true,
+			'action'             => $action,
+			'status'             => ! empty( $result['status'] ) ? sanitize_key( (string) $result['status'] ) : ( 'delete' === $action ? 'deleted' : '' ),
+			'hosted_invoice_url' => ! empty( $result['hosted_invoice_url'] ) ? esc_url_raw( (string) $result['hosted_invoice_url'] ) : '',
+		);
+	}
+
 	public function api_update_ops_customer_subscription( $stripe_customer_id, $stripe_subscription_id, $args = array() ) {
 		$stripe_customer_id      = sanitize_text_field( (string) $stripe_customer_id );
 		$stripe_subscription_id  = sanitize_text_field( (string) $stripe_subscription_id );
