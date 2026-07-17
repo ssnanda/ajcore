@@ -3183,6 +3183,24 @@ class AJCore_REST_API {
 		);
 	}
 
+	/**
+	 * The upgrade routine runs at plugins_loaded, which can be before the shared portal DB is
+	 * connected — so the profiles table may exist locally but not in the portal DB. Creating it
+	 * here on demand is safe: the activator uses CREATE TABLE IF NOT EXISTS throughout.
+	 */
+	private function ensure_customer_profiles_table( $pdb, $table ) {
+		if ( $this->table_exists( $pdb, $table ) ) {
+			return true;
+		}
+		if ( ! class_exists( 'AJForms_Activator' ) && defined( 'AJFORMS_PLUGIN_DIR' ) ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+		}
+		if ( class_exists( 'AJForms_Activator' ) && method_exists( 'AJForms_Activator', 'create_and_migrate_local_business_tables' ) ) {
+			AJForms_Activator::create_and_migrate_local_business_tables( $pdb );
+		}
+		return $this->table_exists( $pdb, $table );
+	}
+
 	private function get_customer_profile_row( $customer_id ) {
 		$pdb   = $this->get_portal_db();
 		$table = $this->portal_table( 'aj_portal_customer_profiles' );
@@ -3209,7 +3227,7 @@ class AJCore_REST_API {
 		$pdb         = $this->get_portal_db();
 		$table       = $this->portal_table( 'aj_portal_customer_profiles' );
 		$customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
-		if ( ! $this->table_exists( $pdb, $table ) ) {
+		if ( ! $this->ensure_customer_profiles_table( $pdb, $table ) ) {
 			return new WP_Error( 'ajcore_profiles_table_missing', __( 'Customer profile storage is not available yet — update AJCore.', 'ajforms' ), array( 'status' => 503 ) );
 		}
 

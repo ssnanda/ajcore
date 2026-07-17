@@ -11481,6 +11481,15 @@ class AJForms_Admin {
 
 			$pdb   = $this->get_pdb();
 			$table = $pdb->prefix . 'aj_portal_customer_profiles';
+			// The plugins_loaded upgrade can run before the shared portal DB connects; create on demand.
+			if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+				if ( ! class_exists( 'AJForms_Activator' ) && defined( 'AJFORMS_PLUGIN_DIR' ) ) {
+					require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+				}
+				if ( class_exists( 'AJForms_Activator' ) ) {
+					AJForms_Activator::create_and_migrate_local_business_tables( $pdb );
+				}
+			}
 			$date_or_null = function ( $key ) {
 				$value = sanitize_text_field( wp_unslash( $_POST[ $key ] ?? '' ) );
 				return ( '' !== $value && strtotime( $value ) ) ? gmdate( 'Y-m-d', strtotime( $value ) ) : null;
