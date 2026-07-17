@@ -8085,8 +8085,10 @@ class AJForms_Admin {
 
 		$invoice_id = '';
 		if ( 'standalone' === $mode ) {
+			$invoice_description = mb_substr( implode( ' | ', array_map( static function ( $item ) { return $item['description']; }, $items ) ), 0, 500 );
 			$invoice = $this->stripe_api_request( 'invoices', $secret_key, array(
 				'customer'                       => $stripe_customer_id,
+				'description'                    => $invoice_description,
 				'collection_method'              => 'send_invoice',
 				'days_until_due'                 => $days_until_due,
 				'auto_advance'                   => 'false',
@@ -8125,15 +8127,22 @@ class AJForms_Admin {
 
 		$hosted_url = '';
 		if ( '' !== $invoice_id ) {
-			$finalized = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/finalize', $secret_key, array( 'auto_advance' => 'true' ) );
+			$finalized = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/finalize', $secret_key, array( 'auto_advance' => 'false' ) );
 			if ( is_wp_error( $finalized ) ) {
 				return $finalized;
 			}
 			$hosted_url = esc_url_raw( (string) ( $finalized['hosted_invoice_url'] ?? '' ) );
+			$payment_intent = $finalized['payment_intent'] ?? '';
+			if ( is_array( $payment_intent ) ) $payment_intent = $payment_intent['id'] ?? '';
+			$payment_intent = sanitize_text_field( (string) $payment_intent );
+			if ( 0 === strpos( $payment_intent, 'pi_' ) ) {
+				// Stripe's Payments list otherwise displays the generic "Payment for Invoice" label.
+				$this->stripe_api_request( 'payment_intents/' . rawurlencode( $payment_intent ), $secret_key, array( 'description' => $invoice_description ) );
+			}
 			if ( $send_email ) {
 				$sent = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/send', $secret_key );
 				if ( is_wp_error( $sent ) ) {
-					return new WP_Error( 'invoice_send_failed', sprintf( __( 'The invoice was created but the email failed: %s', 'ajforms' ), $sent->get_error_message() ) );
+					return array( 'success' => true, 'partial_success' => true, 'mode' => $mode, 'invoice_id' => $invoice_id, 'hosted_invoice_url' => $hosted_url, 'total' => round( $total, 2 ), 'item_count' => count( $items ), 'warning' => __( 'The invoice was finalized, but Stripe could not send the email. Open the invoice in Stripe to send it manually.', 'ajforms' ) );
 				}
 			}
 		}
