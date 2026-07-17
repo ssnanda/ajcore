@@ -2744,6 +2744,12 @@ class AJForms_Admin {
 			$currency = isset( $invoice['currency'] ) ? strtolower( sanitize_key( $invoice['currency'] ) ) : 'usd';
 			$line_summary = $this->get_invoice_line_summary( $invoice );
 			$invoice_amount = isset( $invoice['total'] ) ? $invoice['total'] : ( isset( $invoice['amount_paid'] ) ? $invoice['amount_paid'] : ( isset( $invoice['amount_due'] ) ? $invoice['amount_due'] : 0 ) );
+			$transaction_date = ! empty( $invoice['created'] ) ? $this->stripe_timestamp_to_mysql( $invoice['created'] ) : null;
+			// AJOps manual one-off invoices use the operator-selected line date. Subscription invoices
+			// retain Stripe's invoice creation date because their line period represents service dates.
+			if ( empty( $line_summary['subscription_id'] ) && ! empty( $line_summary['service_period_start'] ) ) {
+				$transaction_date = $line_summary['service_period_start'];
+			}
 			$data = array(
 				'stripe_object_id'   => sanitize_text_field( (string) $invoice['id'] ),
 				'object_type'        => 'invoice',
@@ -2755,7 +2761,7 @@ class AJForms_Admin {
 				'amount'             => $this->stripe_amount_to_decimal( $invoice_amount, $currency ),
 				'currency'           => $currency,
 				'status'             => ! empty( $invoice['status'] ) ? sanitize_key( (string) $invoice['status'] ) : '',
-				'transaction_date'   => ! empty( $invoice['created'] ) ? $this->stripe_timestamp_to_mysql( $invoice['created'] ) : null,
+				'transaction_date'   => $transaction_date,
 				'due_date'           => ! empty( $invoice['due_date'] ) ? $this->stripe_timestamp_to_mysql( $invoice['due_date'] ) : null,
 				'raw_data'           => wp_json_encode( $invoice ),
 				'livemode'           => ! empty( $invoice['livemode'] ) ? 1 : $this->get_current_stripe_livemode(),
@@ -8153,14 +8159,17 @@ class AJForms_Admin {
 				if ( is_wp_error( $description_updated ) ) {
 					$invoice_warning = sprintf( __( 'The invoice was finalized, but Stripe could not update the internal Payment description: %s', 'ajforms' ), $description_updated->get_error_message() );
 				}
-			} else {
-				$invoice_warning = __( 'The invoice was finalized, but Stripe did not return its Payment ID, so the internal Payment description could not be updated.', 'ajforms' );
 			}
 			if ( $send_email ) {
 				$sent = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/send', $secret_key );
 				if ( is_wp_error( $sent ) ) {
 					return array( 'success' => true, 'partial_success' => true, 'mode' => $mode, 'invoice_id' => $invoice_id, 'hosted_invoice_url' => $hosted_url, 'total' => round( $total, 2 ), 'item_count' => count( $items ), 'warning' => __( 'The invoice was finalized, but Stripe could not send the email. Open the invoice in Stripe to send it manually.', 'ajforms' ) );
 				}
+			}
+			// Keep AJOps/AJCore customer billing views current without requiring a manual Full Sync.
+			$customer_sync = $this->sync_portal_stripe_transactions( $secret_key, $stripe_customer_id );
+			if ( is_wp_error( $customer_sync ) && '' === $invoice_warning ) {
+				$invoice_warning = sprintf( __( 'The invoice was created, but the customer billing view could not refresh automatically: %s', 'ajforms' ), $customer_sync->get_error_message() );
 			}
 		}
 
