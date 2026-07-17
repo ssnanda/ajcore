@@ -4850,10 +4850,17 @@ class AJForms_Admin {
 		}
 
 		$partner_key = '';
+		$site_domain = '';
 		if ( '' !== $stripe_customer_id ) {
 			$partner_key = (string) $this->get_pdb()->get_var(
 				$this->get_pdb()->prepare(
 					"SELECT partner_key FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+					$stripe_customer_id
+				)
+			);
+			$site_domain = (string) $this->get_pdb()->get_var(
+				$this->get_pdb()->prepare(
+					"SELECT s.domain FROM {$this->get_portal_customer_states_table()} cs LEFT JOIN {$this->get_pdb()->prefix}aj_shared_sites s ON s.site_uuid = cs.site_uuid WHERE cs.stripe_customer_id = %s LIMIT 1",
 					$stripe_customer_id
 				)
 			);
@@ -4866,11 +4873,12 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( in_array( sanitize_key( $partner_key ), array( 'opus', 'alliance_vo' ), true ) ) {
+		if ( false !== strpos( $site_domain, 'universityofficesuites.com' ) || in_array( sanitize_key( $partner_key ), array( 'opus', 'alliance_vo' ), true ) ) {
 			return array(
 				'entity_name' => 'University Place Office Suites LLC',
 				'site_name'   => 'University Place Office Suites',
 				'site_url'    => 'https://universityofficesuites.com/',
+				'from_email'  => 'donotreply@universityofficesuites.com',
 				'partner_key' => sanitize_key( $partner_key ),
 			);
 		}
@@ -4879,6 +4887,7 @@ class AJForms_Admin {
 			'entity_name' => 'NC LLC Agents Inc',
 			'site_name'   => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
 			'site_url'    => home_url( '/' ),
+			'from_email'  => 'donotreply@ncllcagents.com',
 			'partner_key' => sanitize_key( $partner_key ),
 		);
 	}
@@ -5077,7 +5086,7 @@ class AJForms_Admin {
 		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
 		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
 		$sender     = $this->resolve_email_sender( $settings, 'wp_password_reset_from_email', 'wp_password_reset_from_name' );
-		$from_email = $sender['from_email'];
+		$from_email = ! empty( $brand['from_email'] ) ? sanitize_email( $brand['from_email'] ) : $sender['from_email'];
 		$from_name  = ! empty( $brand['site_name'] ) && 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
 		$site_name  = $brand['site_name'];
 		$copy      = $this->resolve_email_copy(
@@ -5129,7 +5138,7 @@ class AJForms_Admin {
 		$subject = ! empty( $settings['wp_welcome_email_subject'] ) ? sanitize_text_field( (string) $settings['wp_welcome_email_subject'] ) : __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
 		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
 		$sender     = $this->resolve_email_sender( $settings, 'wp_welcome_from_email', 'wp_welcome_from_name' );
-		$from_email = $sender['from_email'];
+		$from_email = ! empty( $brand['from_email'] ) ? sanitize_email( $brand['from_email'] ) : $sender['from_email'];
 		$from_name  = ! empty( $brand['site_name'] ) && 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
 		$site_name  = $brand['site_name'];
 		$copy      = $this->resolve_email_copy(
