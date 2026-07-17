@@ -19207,7 +19207,7 @@ class AJForms_Admin {
 			.ajcore-customer-col-side{grid-column:2;grid-row:1}
 			.ajcore-customer-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:18px;overflow:hidden}
 			.ajcore-customer-card h3{margin:0 0 14px;font-size:16px}
-			.ajcore-customer-grid.is-local .ajcore-portal-access-card{order:-1;padding:12px 16px}.ajcore-customer-grid.is-local .ajcore-portal-access-card h3{margin-bottom:8px}.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-meta{grid-template-columns:100px minmax(0,1fr);gap:5px 10px}.ajcore-customer-grid.is-local .ajcore-portal-access-card hr,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-actions,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-quick-actions{display:none}
+			.ajcore-customer-grid.is-local .ajcore-portal-access-card{padding:12px 16px}.ajcore-customer-grid.is-local .ajcore-portal-access-card h3{margin-bottom:8px}.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-meta{grid-template-columns:100px minmax(0,1fr);gap:5px 10px}.ajcore-customer-grid.is-local .ajcore-portal-access-card hr,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-actions,.ajcore-customer-grid.is-local .ajcore-portal-access-card .ajcore-customer-quick-actions{display:none}
 			.ajcore-customer-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px}
 			.ajcore-customer-card-head h3{margin:0}
 			.ajcore-customer-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:0 0 16px}
@@ -19246,6 +19246,7 @@ class AJForms_Admin {
 			.ajcore-customer-edit-grid .regular-text{width:100%;max-width:420px}
 			.ajcore-customer-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 			.ajcore-subscription-form{display:grid;grid-template-columns:minmax(220px,2fr) repeat(auto-fit,minmax(110px,1fr));gap:10px;align-items:end;margin:0 0 18px;padding:14px;border:1px solid #dcdcde;border-radius:8px;background:#f6f7f7}
+			.ajcore-local-modal-body .ajcore-subscription-form{margin:0;padding:0;border:0;background:transparent;align-items:start}
 			.ajcore-subscription-form label{display:block;font-weight:600;color:#50575e}
 			.ajcore-subscription-form select,.ajcore-subscription-form input{width:100%;margin-top:4px}
 			.ajcore-subscription-form button[type="submit"]{justify-self:end;min-width:150px}
@@ -19318,18 +19319,6 @@ class AJForms_Admin {
 			</div><?php endif; ?>
 		</div>
 
-		<?php if ( ! $is_local ) : ?><div class="ajcore-customer-summary">
-			<div><span><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></span><strong><?php echo esc_html( $is_local && ! $user ? __( 'Not enabled', 'ajforms' ) : ( 'active' === $portal_status ? __( 'Active', 'ajforms' ) : ucfirst( $portal_status ) ) ); ?></strong></div>
-			<div><span><?php esc_html_e( 'Active Services', 'ajforms' ); ?></span><strong><?php echo esc_html( $active_services_count ); ?></strong></div>
-			<?php if ( ! $is_local ) : ?><div><span><?php esc_html_e( 'Auto-Pay Subscriptions', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['active_recurring_services'] ) ); ?></strong></div><?php endif; ?>
-			<div><span><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['open_balance'], 'usd' ) ); ?></strong></div>
-			<?php if ( ! $is_local ) : ?>
-				<div><span><?php esc_html_e( 'Credit Balance', 'ajforms' ); ?></span><strong><?php echo esc_html( $this->format_portal_money( $detail['balance']['credit_balance'], 'usd' ) ); ?></strong></div>
-				<div><span><?php esc_html_e( 'Requests', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['requests'] ) ); ?></strong></div>
-				<div><span><?php esc_html_e( 'Action Items', 'ajforms' ); ?></span><strong><?php echo esc_html( count( $detail['tasks'] ) ); ?></strong></div>
-			<?php endif; ?>
-		</div><?php endif; ?>
-
 		<div class="ajcore-customer-grid <?php echo $is_local ? 'is-local' : ''; ?>">
 			<div class="ajcore-customer-col-side">
 			<div class="ajcore-customer-card ajcore-customer-profile-card <?php echo $is_editing ? 'is-editing' : ''; ?>">
@@ -19357,7 +19346,13 @@ class AJForms_Admin {
 					<dt><?php esc_html_e( 'Created', 'ajforms' ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->created_at ) ); ?></dd>
 					<dt><?php echo esc_html( $is_local ? __( 'Last Updated', 'ajforms' ) : __( 'Last Synced', 'ajforms' ) ); ?></dt><dd><?php echo esc_html( $this->format_portal_date( $customer->synced_at ) ); ?></dd>
 					<?php foreach ( $is_local ? array() : $display_fields as $field ) : ?>
-						<?php if ( in_array( $field, array( 'name', 'email', 'phone', 'livemode', 'created' ), true ) ) { continue; } ?>
+						<?php
+						// Skip anything the card already renders natively above.
+						$field_key = str_replace( array( 'metadata.', 'address.' ), array( '', 'address_' ), (string) $field );
+						if ( in_array( $field_key, array( 'name', 'email', 'phone', 'livemode', 'created', 'created_at', 'description', 'business_name', 'individual_name', 'synced_at', 'last_synced' ), true ) || 0 === strpos( $field_key, 'address' ) ) {
+							continue;
+						}
+						?>
 						<dt><?php echo esc_html( $this->format_portal_customer_field_label( $field ) ); ?></dt><dd><?php $this->render_portal_customer_field_value( $this->get_portal_customer_display_value( $customer, $field ) ); ?></dd>
 					<?php endforeach; ?>
 				</dl>
@@ -19566,7 +19561,7 @@ class AJForms_Admin {
 			</div>
 			<?php endif; ?>
 			<div class="ajcore-customer-card <?php echo $is_local ? 'ajcore-local-service-card' : 'ajcore-customer-wide'; ?>">
-				<div class="ajcore-customer-card-head"><div><h3><?php echo esc_html( $is_local ? __( 'Service / Subscription', 'ajforms' ) : __( 'Subscriptions', 'ajforms' ) ); ?></h3><?php if ( $is_local ) : ?><p class="description"><?php esc_html_e( 'Locally managed recurring services. Nothing is created in Stripe.', 'ajforms' ); ?></p><?php endif; ?></div><?php if ( $is_local ) : ?><button type="button" class="button button-primary" data-ajcore-open-local-modal="service"><?php echo esc_html( $local_services ? __( 'Edit Local Service', 'ajforms' ) : __( 'Add Local Service', 'ajforms' ) ); ?></button><?php endif; ?></div>
+				<div class="ajcore-customer-card-head"><div><h3><?php echo esc_html( $is_local ? __( 'Service / Subscription', 'ajforms' ) : __( 'Subscriptions', 'ajforms' ) ); ?></h3><?php if ( $is_local ) : ?><p class="description"><?php esc_html_e( 'Locally managed recurring services. Nothing is created in Stripe.', 'ajforms' ); ?></p><?php endif; ?></div><?php if ( $is_local ) : ?><button type="button" class="button button-primary" data-ajcore-open-local-modal="service"><?php echo esc_html( $local_services ? __( 'Edit Local Service', 'ajforms' ) : __( 'Add Local Service', 'ajforms' ) ); ?></button><?php elseif ( ! empty( $subscription_products ) ) : ?><button type="button" class="button button-primary" data-ajcore-open-local-modal="subscription"><?php esc_html_e( 'Add Subscription', 'ajforms' ); ?></button><?php endif; ?></div>
 				<?php if ( $is_local ) :
 					$existing_local_service = $local_services ? $local_services[0] : null;
 				?>
@@ -19613,6 +19608,7 @@ class AJForms_Admin {
 				<?php if ( empty( $subscription_products ) ) : ?>
 					<p class="description"><?php esc_html_e( 'No active recurring Stripe prices are available. Sync products from Stripe first.', 'ajforms' ); ?></p>
 				<?php else : ?>
+					<div class="ajcore-local-modal" data-ajcore-local-modal="subscription" role="dialog" aria-modal="true" aria-labelledby="ajcore-subscription-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-subscription-title"><?php esc_html_e( 'Add Subscription', 'ajforms' ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body">
 					<form method="post" class="ajcore-subscription-form" data-collection-method="send_invoice" data-end-mode="forever">
 						<?php wp_nonce_field( 'ajcore_customer_subscription_' . $customer->stripe_customer_id, 'ajcore_customer_subscription_nonce' ); ?>
 						<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
@@ -19675,8 +19671,9 @@ class AJForms_Admin {
 							<input type="number" name="subscription_trial_days" min="0" value="0">
 						</label>
 						<p id="ajcore-subscription-billing-start-help" class="screen-reader-text"><?php esc_html_e( 'Use a future bill starting date when the customer already paid outside Stripe. This delays the first Stripe bill until that date.', 'ajforms' ); ?></p>
-						<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Subscription', 'ajforms' ); ?></button>
+						<div class="ajcore-local-modal-foot"><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary"><?php esc_html_e( 'Add Subscription', 'ajforms' ); ?></button></div>
 					</form>
+					</div></div></div>
 					<script>
 					(function() {
 						var forms = document.querySelectorAll('.ajcore-subscription-form');
@@ -19745,7 +19742,7 @@ class AJForms_Admin {
 					'products',
 					__( 'Service Records', 'ajforms' ),
 					$detail['purchased_products'],
-					array( 'name', 'billing_type', 'source', 'stripe_price_id', 'stripe_product_id' ),
+					array( 'name', 'billing_type', 'source' ),
 					__( 'No service records found in the synced cache.', 'ajforms' )
 				);
 				?>
@@ -19819,28 +19816,30 @@ class AJForms_Admin {
 					'customer_requests',
 					__( 'Requests', 'ajforms' ),
 					$detail['requests'],
-					array( 'created_at', 'service_name', 'request_type', 'status', 'amount', 'currency', 'source', 'admin_notes', 'client_notes' ),
+					array( 'created_at', 'service_name', 'request_type', 'status', 'amount' ),
 					__( 'No requests found for this customer.', 'ajforms' )
 				);
 				?>
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
-				<h3><?php esc_html_e( 'Action Items', 'ajforms' ); ?></h3>
-				<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px;padding:12px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:8px;">
+				<div class="ajcore-customer-card-head"><h3><?php esc_html_e( 'Action Items', 'ajforms' ); ?></h3><button type="button" class="button button-primary" data-ajcore-open-local-modal="customer-task"><?php esc_html_e( 'Add Task', 'ajforms' ); ?></button></div>
+				<div class="ajcore-local-modal" data-ajcore-local-modal="customer-task" role="dialog" aria-modal="true" aria-labelledby="ajcore-customer-task-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-customer-task-title"><?php esc_html_e( 'Add Task', 'ajforms' ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body">
+				<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>">
 					<?php wp_nonce_field( 'ajcore_customer_task_' . $customer->stripe_customer_id, 'ajcore_customer_task_nonce' ); ?>
 					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
-					<input type="text" name="customer_task_title" placeholder="<?php esc_attr_e( 'Task title…', 'ajforms' ); ?>" required style="min-width:260px;">
-					<input type="date" name="customer_task_due_date">
-					<label style="display:inline-flex;align-items:center;gap:6px;"><input type="checkbox" name="customer_task_client_visible" value="1"> <?php esc_html_e( 'Visible to customer', 'ajforms' ); ?></label>
-					<button type="submit" class="button button-primary"><?php esc_html_e( 'Add Task', 'ajforms' ); ?></button>
+					<label><?php esc_html_e( 'Task title', 'ajforms' ); ?><input type="text" name="customer_task_title" placeholder="<?php esc_attr_e( 'Task title…', 'ajforms' ); ?>" required></label>
+					<label><?php esc_html_e( 'Due date', 'ajforms' ); ?><input type="date" name="customer_task_due_date"></label>
+					<label class="ajcore-modal-wide"><input type="checkbox" name="customer_task_client_visible" value="1"> <?php esc_html_e( 'Visible to customer', 'ajforms' ); ?></label>
+					<div class="ajcore-local-modal-foot"><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary"><?php esc_html_e( 'Add Task', 'ajforms' ); ?></button></div>
 				</form>
+				</div></div></div>
 				<?php
 				$this->render_portal_dataset_section(
 					'customer_tasks',
 					__( 'Action Items', 'ajforms' ),
 					$detail['tasks'],
-					array( 'title', 'task_scope', 'task_frequency', 'status', 'customer_status', 'due_date', 'action_required', 'client_visible' ),
+					array( 'title', 'status', 'due_date', 'action_required', 'client_visible' ),
 					__( 'No tasks found for this customer.', 'ajforms' )
 				);
 				?>
