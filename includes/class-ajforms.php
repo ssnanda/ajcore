@@ -3522,15 +3522,75 @@ class AJForms {
 		}
 
 		if ( in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'checkout_line_item', 'manual_charge', 'charge', 'payment' ), true ) ) {
-			return 0.0 !== (float) $this->get_portal_ledger_balance_effect( $entry ) || in_array( $source_type, array( 'charge', 'payment' ), true );
+			$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+			$is_canceled_history = in_array( $source_type, array( 'service_charge', 'invoice_line_item', 'manual_charge' ), true )
+				&& in_array( $status, array( 'canceled', 'cancelled', 'void', 'voided' ), true );
+
+			return 0.0 !== (float) $this->get_portal_ledger_balance_effect( $entry ) || in_array( $source_type, array( 'charge', 'payment' ), true ) || $is_canceled_history;
 		}
 
 		return false;
 	}
 
 	private function get_customer_portal_display_ledger( $ledger ) {
+		$ledger = (array) $ledger;
+		$invoice_statuses = array();
+		foreach ( $ledger as $entry ) {
+			if ( 'invoice' === sanitize_key( isset( $entry->source_type ) ? (string) $entry->source_type : '' ) && ! empty( $entry->source_object_id ) ) {
+				$invoice_statuses[ sanitize_text_field( (string) $entry->source_object_id ) ] = sanitize_key( isset( $entry->status ) ? (string) $entry->status : '' );
+			}
+		}
+		foreach ( $ledger as $entry ) {
+			$invoice_id = ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' );
+			if ( '' !== $invoice_id && ! empty( $invoice_statuses[ $invoice_id ] ) && in_array( sanitize_key( (string) $entry->source_type ), array( 'service_charge', 'invoice_line_item', 'manual_charge' ), true ) ) {
+				$entry->status = $invoice_statuses[ $invoice_id ];
+			}
+		}
+
+		$payment_refs = array();
+		foreach ( $ledger as $entry ) {
+			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+			if ( ! in_array( $source_type, array( 'charge', 'payment' ), true ) ) {
+				continue;
+			}
+			foreach ( array( 'invoice_id', 'payment_intent_id', 'charge_id' ) as $field ) {
+				if ( ! empty( $entry->{$field} ) ) {
+					$payment_refs[ sanitize_text_field( (string) $entry->{$field} ) ] = true;
+				}
+			}
+		}
+
+		// Some Stripe invoices are marked paid without a separate Charge object (for
+		// example, an out-of-band/manual payment). The service row is still the debit;
+		// expose the paid invoice as its credit only when no real payment row exists.
+		$fallback_invoice_payments = array();
+		foreach ( $ledger as $entry ) {
+			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
+			$status      = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
+			if ( 'invoice' !== $source_type || ! in_array( $status, array( 'paid', 'succeeded' ), true ) || (float) $entry->amount <= 0 ) {
+				continue;
+			}
+
+			$has_payment = false;
+			foreach ( array( 'source_object_id', 'invoice_id', 'payment_intent_id', 'charge_id' ) as $field ) {
+				if ( ! empty( $entry->{$field} ) && isset( $payment_refs[ sanitize_text_field( (string) $entry->{$field} ) ] ) ) {
+					$has_payment = true;
+					break;
+				}
+			}
+			if ( $has_payment ) {
+				continue;
+			}
+
+			$payment_entry = clone $entry;
+			$payment_entry->source_type = 'payment';
+			$payment_entry->description = __( 'Payment for invoice', 'ajforms' );
+			$fallback_invoice_payments[] = $payment_entry;
+		}
+		$ledger = array_merge( $ledger, $fallback_invoice_payments );
+
 		$display = array();
-		foreach ( (array) $ledger as $entry ) {
+		foreach ( $ledger as $entry ) {
 			if ( ! $this->should_show_customer_portal_ledger_entry( $entry ) ) {
 				continue;
 			}
@@ -4368,16 +4428,22 @@ class AJForms {
 		$statuses = $this->get_portal_open_ledger_statuses();
 		$status_placeholders = implode( ',', array_fill( 0, count( $statuses ), '%s' ) );
 		$params = array_merge( array( $stripe_customer_id ), $statuses );
-		$where = "stripe_customer_id = %s AND amount > 0 AND status IN ({$status_placeholders}) AND " . $this->get_ignored_unpaid_checkout_sql_fragment() . "";
+		$where = "l.stripe_customer_id = %s AND l.amount > 0 AND l.status IN ({$status_placeholders}) AND " . $this->get_ignored_unpaid_checkout_sql_fragment( 'l' ) . "
+			AND NOT EXISTS (
+				SELECT 1 FROM {$this->get_portal_ledger_table()} parent_invoice
+				WHERE parent_invoice.source_type = 'invoice'
+				AND parent_invoice.source_object_id = l.invoice_id
+				AND parent_invoice.status IN ('canceled','cancelled','void','voided','draft')
+			)";
 
 		$ledger_ids = array_values( array_filter( array_map( 'absint', (array) $ledger_ids ) ) );
 		if ( ! empty( $ledger_ids ) ) {
 			$id_placeholders = implode( ',', array_fill( 0, count( $ledger_ids ), '%d' ) );
-			$where .= " AND id IN ({$id_placeholders})";
+			$where .= " AND l.id IN ({$id_placeholders})";
 			$params = array_merge( $params, $ledger_ids );
 		}
 
-		$sql = "SELECT * FROM {$this->get_portal_ledger_table()} WHERE {$where} ORDER BY ledger_date ASC, id ASC";
+		$sql = "SELECT l.* FROM {$this->get_portal_ledger_table()} l WHERE {$where} ORDER BY l.ledger_date ASC, l.id ASC";
 
 		return $pdb->get_results( $pdb->prepare( $sql, $params ) );
 	}
