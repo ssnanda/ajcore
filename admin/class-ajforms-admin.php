@@ -4836,6 +4836,36 @@ class AJForms_Admin {
 		);
 	}
 
+	/** Send one branded message without the plugin-wide default From address replacing
+	 * the customer/site-specific sender after wp_mail() parses its headers. */
+	private function send_branded_wp_mail( $to, $subject, $message, $headers, $from_email, $from_name ) {
+		$from_email = sanitize_email( (string) $from_email );
+		$from_name  = sanitize_text_field( (string) $from_name );
+		if ( ! is_email( $from_email ) ) {
+			return wp_mail( $to, $subject, $message, $headers );
+		}
+
+		$email_filter = static function () use ( $from_email ) {
+			return $from_email;
+		};
+		$name_filter = static function () use ( $from_name ) {
+			return $from_name;
+		};
+		$mailer_filter = static function ( $phpmailer ) use ( $from_email, $from_name ) {
+			$phpmailer->setFrom( $from_email, $from_name, false );
+		};
+
+		add_filter( 'wp_mail_from', $email_filter, PHP_INT_MAX );
+		add_filter( 'wp_mail_from_name', $name_filter, PHP_INT_MAX );
+		add_action( 'phpmailer_init', $mailer_filter, PHP_INT_MAX );
+		$sent = wp_mail( $to, $subject, $message, $headers );
+		remove_action( 'phpmailer_init', $mailer_filter, PHP_INT_MAX );
+		remove_filter( 'wp_mail_from_name', $name_filter, PHP_INT_MAX );
+		remove_filter( 'wp_mail_from', $email_filter, PHP_INT_MAX );
+
+		return $sent;
+	}
+
 	/** Resolve the legal/customer-facing brand from the durable customer partner assignment. */
 	private function get_customer_brand_context( $stripe_customer_id = '', $user_id = 0, $customer_email = '' ) {
 		global $wpdb;
@@ -4898,6 +4928,10 @@ class AJForms_Admin {
 		}
 
 		return str_ireplace( array( 'NC LLC Agents Inc', 'NC LLC Agents' ), $brand['entity_name'], (string) $subject );
+	}
+
+	private function get_customer_brand_setting_key( $key, $brand ) {
+		return ! empty( $brand['entity_name'] ) && 'University Place Office Suites LLC' === $brand['entity_name'] ? 'university_' . $key : $key;
 	}
 
 	/** Resolves the editable heading + body-paragraphs for a branded email from plugin settings,
@@ -5083,16 +5117,17 @@ class AJForms_Admin {
 		);
 		$settings = $this->get_plugin_settings();
 		$brand   = $this->get_customer_brand_context( '', $user->ID );
-		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
+		$subject_key = $this->get_customer_brand_setting_key( 'wp_password_reset_subject', $brand );
+		$subject = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
 		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
-		$sender     = $this->resolve_email_sender( $settings, 'wp_password_reset_from_email', 'wp_password_reset_from_name' );
-		$from_email = ! empty( $brand['from_email'] ) ? sanitize_email( $brand['from_email'] ) : $sender['from_email'];
+		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'wp_password_reset_from_email', $brand ), $this->get_customer_brand_setting_key( 'wp_password_reset_from_name', $brand ) );
+		$from_email = $sender['from_email'];
 		$from_name  = ! empty( $brand['site_name'] ) && 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
 		$site_name  = $brand['site_name'];
 		$copy      = $this->resolve_email_copy(
 			$settings,
-			'wp_password_reset_heading',
-			'wp_password_reset_body',
+			$this->get_customer_brand_setting_key( 'wp_password_reset_heading', $brand ),
+			$this->get_customer_brand_setting_key( 'wp_password_reset_body', $brand ),
 			__( 'Set your client portal password', 'ajforms' ),
 			array(
 				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
@@ -5115,7 +5150,7 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $from_email;
 		}
 
-		return wp_mail( $user->user_email, $subject, $message, $headers );
+		return $this->send_branded_wp_mail( $user->user_email, $subject, $message, $headers, $from_email, $from_name );
 	}
 
 	public function send_portal_user_welcome_email( $user_id ) {
@@ -5135,16 +5170,17 @@ class AJForms_Admin {
 		);
 		$settings = $this->get_plugin_settings();
 		$brand   = $this->get_customer_brand_context( '', $user->ID );
-		$subject = ! empty( $settings['wp_welcome_email_subject'] ) ? sanitize_text_field( (string) $settings['wp_welcome_email_subject'] ) : __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
+		$subject_key = $this->get_customer_brand_setting_key( 'wp_welcome_email_subject', $brand );
+		$subject = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
 		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
-		$sender     = $this->resolve_email_sender( $settings, 'wp_welcome_from_email', 'wp_welcome_from_name' );
-		$from_email = ! empty( $brand['from_email'] ) ? sanitize_email( $brand['from_email'] ) : $sender['from_email'];
+		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'wp_welcome_from_email', $brand ), $this->get_customer_brand_setting_key( 'wp_welcome_from_name', $brand ) );
+		$from_email = $sender['from_email'];
 		$from_name  = ! empty( $brand['site_name'] ) && 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
 		$site_name  = $brand['site_name'];
 		$copy      = $this->resolve_email_copy(
 			$settings,
-			'wp_welcome_heading',
-			'wp_welcome_body',
+			$this->get_customer_brand_setting_key( 'wp_welcome_heading', $brand ),
+			$this->get_customer_brand_setting_key( 'wp_welcome_body', $brand ),
 			__( 'Welcome to your client portal', 'ajforms' ),
 			array(
 				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
@@ -5168,7 +5204,7 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $from_email;
 		}
 
-		return wp_mail( $user->user_email, $subject, $message, $headers );
+		return $this->send_branded_wp_mail( $user->user_email, $subject, $message, $headers, $from_email, $from_name );
 	}
 
 	/** Sends a branded follow-up email to a Lead. Used by the AJOps "Send Follow-up Email"
