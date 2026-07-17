@@ -2789,6 +2789,9 @@ class AJForms_Admin {
 				array( '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
 				'source_object_id'
 			);
+			if ( $ledger_upserted ) {
+				$this->update_portal_ledger_rows_for_invoice( $data['invoice_id'], $data['status'] );
+			}
 			if ( $transaction_upserted && $ledger_upserted ) {
 				$this->maybe_create_portal_service_snapshots_from_stripe_object( $invoice, 'invoice' );
 				$count++;
@@ -6435,15 +6438,19 @@ class AJForms_Admin {
 			$effective_recurring_interval = null !== $product_interval ? $product_interval : ( ! empty( $snapshot->recurring_interval ) ? sanitize_key( (string) $snapshot->recurring_interval ) : '' );
 			$effective_billing_type = '' !== $effective_recurring_interval ? 'recurring' : 'one_time';
 			$invoice_metadata = array();
+			$invoice_status   = '';
 			if ( ! empty( $snapshot->invoice_id ) ) {
-				$invoice_metadata_json = $wpdb->get_var(
+				$invoice_ledger = $wpdb->get_row(
 					$wpdb->prepare(
-						"SELECT metadata FROM {$this->get_portal_ledger_table()} WHERE source_type = %s AND source_object_id = %s LIMIT 1",
+						"SELECT metadata, status FROM {$this->get_portal_ledger_table()} WHERE source_type = %s AND source_object_id = %s LIMIT 1",
 						'invoice',
 						sanitize_text_field( (string) $snapshot->invoice_id )
 					)
 				);
-				$invoice_metadata = $this->decode_portal_json( $invoice_metadata_json );
+				if ( $invoice_ledger ) {
+					$invoice_metadata = $this->decode_portal_json( $invoice_ledger->metadata );
+					$invoice_status   = sanitize_key( (string) $invoice_ledger->status );
+				}
 			}
 			$metadata         = array(
 				'ledger_line_type'      => 'service_charge',
@@ -6478,7 +6485,9 @@ class AJForms_Admin {
 				'description'        => $service_name,
 				'amount'             => (float) $snapshot->amount,
 				'currency'           => ! empty( $snapshot->currency ) ? strtolower( sanitize_key( (string) $snapshot->currency ) ) : 'usd',
-				'status'             => $this->get_portal_service_charge_ledger_status( $snapshot ),
+				// The Stripe invoice is authoritative. A stale snapshot must not reopen a
+				// service row after the invoice has been voided/canceled.
+				'status'             => '' !== $invoice_status ? $invoice_status : $this->get_portal_service_charge_ledger_status( $snapshot ),
 				'invoice_id'         => ! empty( $snapshot->invoice_id ) ? sanitize_text_field( (string) $snapshot->invoice_id ) : '',
 				'payment_intent_id'  => ! empty( $snapshot->payment_intent_id ) ? sanitize_text_field( (string) $snapshot->payment_intent_id ) : '',
 				'charge_id'          => ! empty( $snapshot->charge_id ) ? sanitize_text_field( (string) $snapshot->charge_id ) : '',
@@ -8291,13 +8300,7 @@ class AJForms_Admin {
 			if ( 'delete' === $action ) {
 				$pdb->delete( $ledger_table, array( 'source_object_id' => $invoice_id ), array( '%s' ) );
 			} elseif ( ! empty( $result['status'] ) ) {
-				$pdb->update(
-					$ledger_table,
-					array( 'status' => sanitize_key( (string) $result['status'] ) ),
-					array( 'source_object_id' => $invoice_id ),
-					array( '%s' ),
-					array( '%s' )
-				);
+				$this->update_portal_ledger_rows_for_invoice( $invoice_id, $result['status'] );
 			}
 		}
 
@@ -8306,6 +8309,34 @@ class AJForms_Admin {
 			'action'             => $action,
 			'status'             => ! empty( $result['status'] ) ? sanitize_key( (string) $result['status'] ) : ( 'delete' === $action ? 'deleted' : '' ),
 			'hosted_invoice_url' => ! empty( $result['hosted_invoice_url'] ) ? esc_url_raw( (string) $result['hosted_invoice_url'] ) : '',
+		);
+	}
+
+	/**
+	 * Keep the parent invoice and the customer-facing invoice line rows in the same state.
+	 * The portal displays service/line-item rows instead of the parent invoice, so updating
+	 * only source_object_id leaves canceled invoices looking open in the client balance.
+	 */
+	private function update_portal_ledger_rows_for_invoice( $invoice_id, $status ) {
+		$pdb        = $this->get_pdb();
+		$table      = $this->get_portal_ledger_table();
+		$invoice_id = sanitize_text_field( (string) $invoice_id );
+		$status     = sanitize_key( (string) $status );
+
+		if ( '' === $invoice_id || 0 !== strpos( $invoice_id, 'in_' ) || '' === $status ) {
+			return false;
+		}
+
+		return false !== $pdb->query(
+			$pdb->prepare(
+				"UPDATE {$table}
+				SET status = %s
+				WHERE source_type IN ('invoice','service_charge','invoice_line_item','manual_charge')
+				AND (source_object_id = %s OR invoice_id = %s)",
+				$status,
+				$invoice_id,
+				$invoice_id
+			)
 		);
 	}
 

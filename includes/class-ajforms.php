@@ -3488,10 +3488,27 @@ class AJForms {
 			return '';
 		}
 
+		$invoice_id = ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' );
+		$payment_reference = $invoice_id;
+		if ( '' === $payment_reference ) {
+			foreach ( array( 'payment_intent_id', 'checkout_session_id', 'charge_id' ) as $reference_key ) {
+				$payment_reference = $this->get_ledger_metadata_value( $entry, $reference_key );
+				if ( '' === $payment_reference && ! empty( $entry->{$reference_key} ) ) {
+					$payment_reference = sanitize_text_field( (string) $entry->{$reference_key} );
+				}
+				if ( '' !== $payment_reference ) {
+					break;
+				}
+			}
+		}
+		if ( '' === $payment_reference && ! empty( $entry->source_object_id ) ) {
+			$payment_reference = sanitize_text_field( (string) $entry->source_object_id );
+		}
+
 		$parts    = array(
 			! empty( $entry->stripe_customer_id ) ? sanitize_text_field( (string) $entry->stripe_customer_id ) : '',
 			! empty( $entry->description ) ? sanitize_title( $this->clean_stripe_line_service_name( (string) $entry->description ) ) : '',
-			! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' ),
+			$payment_reference,
 			number_format( abs( (float) $entry->amount ), 2, '.', '' ),
 		);
 
