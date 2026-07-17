@@ -1925,6 +1925,9 @@ class AJForms {
 		if ( 0.0 === $amount ) {
 			return 0.0;
 		}
+		if ( ! empty( $entry->_ajcore_paid_invoice_net_zero ) ) {
+			return 0.0;
+		}
 
 		$status = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
 		$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
@@ -3547,65 +3550,6 @@ class AJForms {
 			}
 		}
 
-		$payment_refs = array();
-		foreach ( $ledger as $entry ) {
-			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
-			// A linked failed, pending, zero-value, or refunded transaction does not
-			// balance a paid invoice and must not suppress its fallback credit.
-			if ( ! in_array( $source_type, array( 'charge', 'payment' ), true ) || $this->get_portal_ledger_balance_effect( $entry ) >= -0.00001 ) {
-				continue;
-			}
-			foreach ( array( 'invoice_id', 'payment_intent_id', 'charge_id' ) as $field ) {
-				if ( ! empty( $entry->{$field} ) ) {
-					$payment_refs[ sanitize_text_field( (string) $entry->{$field} ) ] = true;
-				}
-			}
-		}
-
-		// Some Stripe invoices are marked paid without a separate Charge object (for
-		// example, an out-of-band/manual payment). The service row is still the debit;
-		// expose the paid invoice as its credit only when no real payment row exists.
-		$fallback_invoice_payments = array();
-		foreach ( $ledger as $entry ) {
-			$source_type = isset( $entry->source_type ) ? sanitize_key( (string) $entry->source_type ) : '';
-			$status      = isset( $entry->status ) ? sanitize_key( (string) $entry->status ) : '';
-			if ( 'invoice' !== $source_type || ! in_array( $status, array( 'paid', 'succeeded' ), true ) ) {
-				continue;
-			}
-
-			$has_payment = false;
-			foreach ( array( 'source_object_id', 'invoice_id', 'payment_intent_id', 'charge_id' ) as $field ) {
-				if ( ! empty( $entry->{$field} ) && isset( $payment_refs[ sanitize_text_field( (string) $entry->{$field} ) ] ) ) {
-					$has_payment = true;
-					break;
-				}
-			}
-			if ( $has_payment ) {
-				continue;
-			}
-
-			$payment_amount = (float) $entry->amount;
-			if ( $payment_amount <= 0 && ! empty( $entry->source_object_id ) ) {
-				$invoice_id = sanitize_text_field( (string) $entry->source_object_id );
-				foreach ( $ledger as $service_entry ) {
-					$service_invoice_id = ! empty( $service_entry->invoice_id ) ? sanitize_text_field( (string) $service_entry->invoice_id ) : $this->get_ledger_metadata_value( $service_entry, 'invoice_id' );
-					if ( $invoice_id === $service_invoice_id ) {
-						$payment_amount += max( 0, (float) $this->get_portal_ledger_balance_effect( $service_entry ) );
-					}
-				}
-			}
-			if ( $payment_amount <= 0 ) {
-				continue;
-			}
-
-			$payment_entry = clone $entry;
-			$payment_entry->source_type = 'payment';
-			$payment_entry->description = __( 'Payment for invoice', 'ajforms' );
-			$payment_entry->amount = $payment_amount;
-			$fallback_invoice_payments[] = $payment_entry;
-		}
-		$ledger = array_merge( $ledger, $fallback_invoice_payments );
-
 		$display = array();
 		foreach ( $ledger as $entry ) {
 			if ( ! $this->should_show_customer_portal_ledger_entry( $entry ) ) {
@@ -3629,6 +3573,60 @@ class AJForms {
 		}
 
 		$display = array_values( $display );
+		$used_payments = array();
+		foreach ( $display as $service_entry ) {
+			$service_type   = sanitize_key( isset( $service_entry->source_type ) ? (string) $service_entry->source_type : '' );
+			$service_status = sanitize_key( isset( $service_entry->status ) ? (string) $service_entry->status : '' );
+			if ( ! in_array( $service_type, array( 'service_charge', 'invoice_line_item', 'manual_charge' ), true ) || ! in_array( $service_status, array( 'paid', 'succeeded' ), true ) ) {
+				continue;
+			}
+
+			$service_refs = array_filter( array(
+				! empty( $service_entry->invoice_id ) ? (string) $service_entry->invoice_id : $this->get_ledger_metadata_value( $service_entry, 'invoice_id' ),
+				! empty( $service_entry->payment_intent_id ) ? (string) $service_entry->payment_intent_id : $this->get_ledger_metadata_value( $service_entry, 'payment_intent_id' ),
+				! empty( $service_entry->charge_id ) ? (string) $service_entry->charge_id : $this->get_ledger_metadata_value( $service_entry, 'charge_id' ),
+				$this->get_ledger_metadata_value( $service_entry, 'checkout_session_id' ),
+			) );
+			$matched_index = null;
+			$amount_date_index = null;
+			foreach ( $display as $payment_index => $payment_entry ) {
+				if ( isset( $used_payments[ $payment_index ] ) || ! in_array( sanitize_key( isset( $payment_entry->source_type ) ? (string) $payment_entry->source_type : '' ), array( 'charge', 'payment' ), true ) || $this->get_portal_ledger_balance_effect( $payment_entry ) >= -0.00001 ) {
+					continue;
+				}
+				$payment_refs = array_filter( array(
+					isset( $payment_entry->invoice_id ) ? (string) $payment_entry->invoice_id : '',
+					isset( $payment_entry->payment_intent_id ) ? (string) $payment_entry->payment_intent_id : '',
+					isset( $payment_entry->charge_id ) ? (string) $payment_entry->charge_id : '',
+					isset( $payment_entry->source_object_id ) ? (string) $payment_entry->source_object_id : '',
+				) );
+				$strong_match = ! empty( array_intersect( $service_refs, $payment_refs ) );
+				$service_time = ! empty( $service_entry->ledger_date ) ? strtotime( $service_entry->ledger_date . ' UTC' ) : 0;
+				$payment_time = ! empty( $payment_entry->ledger_date ) ? strtotime( $payment_entry->ledger_date . ' UTC' ) : 0;
+				$amount_date_match = abs( abs( (float) $service_entry->amount ) - abs( (float) $payment_entry->amount ) ) < 0.00001
+					&& sanitize_key( (string) $service_entry->currency ) === sanitize_key( (string) $payment_entry->currency )
+					&& $service_time && $payment_time && abs( $service_time - $payment_time ) <= 2 * DAY_IN_SECONDS;
+				if ( $strong_match ) {
+					$matched_index = $payment_index;
+					break;
+				}
+				if ( null === $amount_date_index && $amount_date_match ) {
+					$amount_date_index = $payment_index;
+				}
+			}
+			if ( null === $matched_index ) {
+				$matched_index = $amount_date_index;
+			}
+
+			if ( null === $matched_index ) {
+				$service_entry->_ajcore_paid_invoice_net_zero = true;
+				continue;
+			}
+			$used_payments[ $matched_index ] = true;
+			$payment_entry = $display[ $matched_index ];
+			if ( $this->is_generic_customer_portal_service_label( isset( $payment_entry->description ) ? $payment_entry->description : '' ) ) {
+				$payment_entry->description = sprintf( __( 'Payment — %s', 'ajforms' ), $this->get_portal_ledger_display_description( $service_entry ) );
+			}
+		}
 		usort(
 			$display,
 			function ( $a, $b ) {
