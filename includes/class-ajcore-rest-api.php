@@ -145,7 +145,7 @@ class AJCore_REST_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'ops_customer_action' ),
-				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'permission_callback' => array( $this, 'can_manage_site_ops_api' ),
 				'args'                => array(
 					'action' => array( 'required' => true, 'sanitize_callback' => 'sanitize_key' ),
 				),
@@ -158,7 +158,7 @@ class AJCore_REST_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'ops_create_customer_impersonation_link' ),
-				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'permission_callback' => array( $this, 'can_manage_site_ops_api' ),
 			)
 		);
 
@@ -852,6 +852,28 @@ class AJCore_REST_API {
 			return true;
 		}
 		return new WP_Error( 'ajcore_api_forbidden', __( 'This account does not have OPS API access.', 'ajforms' ), array( 'status' => 403 ) );
+	}
+
+	/** Site-local customer actions must execute on the WordPress site that owns the
+	 * portal user (password keys, auth cookies and impersonation transients are local).
+	 * Keep aggregate/list/sync OPS routes master-only; only routes explicitly wired to
+	 * this callback may run on a non-master portal site. */
+	public function can_manage_site_ops_api() {
+		$enabled = $this->protected_api_enabled( 'ops' );
+		if ( is_wp_error( $enabled ) ) {
+			return $enabled;
+		}
+		if ( ! is_user_logged_in() ) {
+			return new WP_Error( 'ajcore_api_auth_required', __( 'Authentication required.', 'ajforms' ), array( 'status' => 401 ) );
+		}
+		$user = wp_get_current_user();
+		if ( current_user_can( 'manage_options' )
+			|| user_can( $user, 'ajcore_ops_access' )
+			|| in_array( 'aj_ops_user', (array) $user->roles, true )
+		) {
+			return true;
+		}
+		return new WP_Error( 'ajcore_api_forbidden', __( 'You do not have permission to use the AJ Core OPS API.', 'ajforms' ), array( 'status' => 403 ) );
 	}
 
 	public function can_use_portal_api() {
