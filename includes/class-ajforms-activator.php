@@ -155,6 +155,8 @@ class AJForms_Activator {
 			address longtext NULL,
 			metadata longtext NULL,
 			raw_data longtext NULL,
+			partner_key varchar(100) DEFAULT '' NOT NULL,
+			partner_price_id varchar(100) DEFAULT '' NOT NULL,
 			livemode tinyint(1) NOT NULL DEFAULT 0,
 			enabled_portal tinyint(1) NOT NULL DEFAULT 0,
 			portal_status varchar(50) DEFAULT 'disabled' NOT NULL,
@@ -163,6 +165,7 @@ class AJForms_Activator {
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_customer_id (stripe_customer_id),
 			KEY email (email),
+			KEY partner_key (partner_key),
 			KEY enabled_portal (enabled_portal),
 			KEY portal_status (portal_status)
 		) $charset_collate;
@@ -1206,7 +1209,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '34', false );
+		update_option( 'ajforms_portal_schema_version', '35', false );
 	}
 
 	/** Dedicated durable AJCore records. Stripe cache tables remain disposable. */
@@ -1778,6 +1781,8 @@ class AJForms_Activator {
 			address longtext NULL,
 			metadata longtext NULL,
 			raw_data longtext NULL,
+			partner_key varchar(100) DEFAULT '' NOT NULL,
+			partner_price_id varchar(100) DEFAULT '' NOT NULL,
 			livemode tinyint(1) NOT NULL DEFAULT 0,
 			enabled_portal tinyint(1) NOT NULL DEFAULT 0,
 			portal_status varchar(50) DEFAULT 'disabled' NOT NULL,
@@ -1786,6 +1791,7 @@ class AJForms_Activator {
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_customer_id (stripe_customer_id),
 			KEY email (email),
+			KEY partner_key (partner_key),
 			KEY enabled_portal (enabled_portal),
 			KEY portal_status (portal_status)
 		) $charset_collate;

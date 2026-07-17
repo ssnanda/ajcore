@@ -1841,7 +1841,7 @@ class AJForms_Admin {
 			)
 		);
 		$partner_table = $wpdb->prefix . 'aj_portal_customer_partners';
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $partner_table ) ) === $partner_table ) {
+		if ( $table === $this->get_portal_stripe_customers_table() && $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $partner_table ) ) === $partner_table ) {
 			$durable_partner = $wpdb->get_var( $wpdb->prepare( "SELECT partner_key FROM `{$partner_table}` WHERE customer_id=%s LIMIT 1", $data['stripe_customer_id'] ) );
 			if ( '' !== (string) $durable_partner ) {
 				$data['partner_key'] = sanitize_key( (string) $durable_partner );
