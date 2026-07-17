@@ -2797,6 +2797,7 @@ class AJForms_Admin {
 				$count++;
 			}
 		}
+		$count += $this->create_overdue_invoice_late_fees( $invoices, $secret_key, $stripe_customer_id );
 
 		$charge_args = array();
 		if ( '' !== $stripe_customer_id ) {
@@ -3010,6 +3011,101 @@ class AJForms_Admin {
 		$count += $this->backfill_portal_ledger_service_charges_from_snapshots( $stripe_customer_id );
 
 		return $this->portal_db_error ? new WP_Error( 'portal_db_error', $this->portal_db_error ) : $count;
+	}
+
+	/**
+	 * Create one separate Stripe late-fee invoice per overdue source invoice.
+	 * Metadata on the fee invoice provides durable idempotency across sync runs.
+	 */
+	private function create_overdue_invoice_late_fees( $invoices, $secret_key, $stripe_customer_id = '' ) {
+		$settings = $this->get_plugin_settings();
+		if ( empty( $settings['stripe_late_fees_enabled'] ) || '1' !== (string) $settings['stripe_late_fees_enabled'] ) {
+			return 0;
+		}
+
+		$fee_type  = ! empty( $settings['stripe_late_fee_type'] ) && 'percent' === sanitize_key( (string) $settings['stripe_late_fee_type'] ) ? 'percent' : 'fixed';
+		$fee_value = isset( $settings['stripe_late_fee_amount'] ) ? max( 0, (float) $settings['stripe_late_fee_amount'] ) : 0;
+		$grace     = isset( $settings['stripe_late_fee_grace_days'] ) ? max( 0, absint( $settings['stripe_late_fee_grace_days'] ) ) : 5;
+		$due_days  = isset( $settings['stripe_late_fee_due_days'] ) ? max( 1, absint( $settings['stripe_late_fee_due_days'] ) ) : 7;
+		if ( $fee_value <= 0 ) {
+			return 0;
+		}
+
+		$existing = array();
+		foreach ( (array) $invoices as $invoice ) {
+			if ( ! empty( $invoice['metadata']['ajcore_late_fee_for_invoice'] ) ) {
+				$existing[ sanitize_text_field( (string) $invoice['metadata']['ajcore_late_fee_for_invoice'] ) ] = true;
+			}
+		}
+
+		$created = 0;
+		$now     = time();
+		foreach ( (array) $invoices as $invoice ) {
+			$invoice_id = ! empty( $invoice['id'] ) ? sanitize_text_field( (string) $invoice['id'] ) : '';
+			$customer_id = ! empty( $invoice['customer'] ) && is_string( $invoice['customer'] ) ? sanitize_text_field( (string) $invoice['customer'] ) : '';
+			$status = ! empty( $invoice['status'] ) ? sanitize_key( (string) $invoice['status'] ) : '';
+			$collection_method = ! empty( $invoice['collection_method'] ) ? sanitize_key( (string) $invoice['collection_method'] ) : '';
+			$due_at = ! empty( $invoice['due_date'] ) ? absint( $invoice['due_date'] ) : 0;
+			$amount_due = isset( $invoice['amount_due'] ) ? absint( $invoice['amount_due'] ) : 0;
+			if ( '' === $invoice_id || '' === $customer_id || ( '' !== $stripe_customer_id && $customer_id !== $stripe_customer_id ) || 'open' !== $status || 'send_invoice' !== $collection_method || ! $due_at || $amount_due <= 0 || $now < $due_at + ( $grace * DAY_IN_SECONDS ) || isset( $existing[ $invoice_id ] ) || ! empty( $invoice['metadata']['ajcore_late_fee_for_invoice'] ) ) {
+				continue;
+			}
+
+			$currency = ! empty( $invoice['currency'] ) ? sanitize_key( (string) $invoice['currency'] ) : 'usd';
+			$fee_cents = 'percent' === $fee_type ? (int) round( $amount_due * ( $fee_value / 100 ) ) : (int) round( $fee_value * 100 );
+			if ( $fee_cents <= 0 ) {
+				continue;
+			}
+
+			$fee_invoice = $this->stripe_api_request(
+				'invoices',
+				$secret_key,
+				array(
+					'customer'                                  => $customer_id,
+					'collection_method'                         => 'send_invoice',
+					'days_until_due'                            => (string) $due_days,
+					'auto_advance'                              => 'false',
+					'description'                               => sprintf( 'Late fee for invoice %s', $invoice_id ),
+					'metadata[ajcore_late_fee_for_invoice]'     => $invoice_id,
+					'metadata[ajcore_late_fee_type]'            => $fee_type,
+					'metadata[ajcore_late_fee_value]'           => (string) $fee_value,
+				)
+			);
+			if ( is_wp_error( $fee_invoice ) || empty( $fee_invoice['id'] ) ) {
+				$this->record_portal_sync_item( 'late_fee_failed', 'invoice', $invoice_id, 'failed', is_wp_error( $fee_invoice ) ? $fee_invoice->get_error_message() : __( 'Stripe did not return a late-fee invoice ID.', 'ajforms' ), $invoice, $customer_id );
+				continue;
+			}
+
+			$fee_invoice_id = sanitize_text_field( (string) $fee_invoice['id'] );
+			$line = $this->stripe_api_request(
+				'invoiceitems',
+				$secret_key,
+				array(
+					'customer'    => $customer_id,
+					'invoice'     => $fee_invoice_id,
+					'amount'      => (string) $fee_cents,
+					'currency'    => $currency,
+					'description' => sprintf( 'Late fee for overdue invoice %s', $invoice_id ),
+					'metadata[ajcore_late_fee_for_invoice]' => $invoice_id,
+				)
+			);
+			if ( is_wp_error( $line ) ) {
+				$this->record_portal_sync_item( 'late_fee_failed', 'invoice', $invoice_id, 'failed', $line->get_error_message(), $fee_invoice, $customer_id );
+				continue;
+			}
+
+			$finalized = $this->stripe_api_request( 'invoices/' . rawurlencode( $fee_invoice_id ) . '/finalize', $secret_key, array( 'auto_advance' => 'true' ) );
+			if ( is_wp_error( $finalized ) ) {
+				$this->record_portal_sync_item( 'late_fee_failed', 'invoice', $invoice_id, 'failed', $finalized->get_error_message(), $fee_invoice, $customer_id );
+				continue;
+			}
+
+			$existing[ $invoice_id ] = true;
+			$created++;
+			$this->record_portal_sync_item( 'late_fee_created', 'invoice', $fee_invoice_id, 'success', sprintf( __( 'Late fee created for overdue invoice %s.', 'ajforms' ), $invoice_id ), $finalized, $customer_id );
+		}
+
+		return $created;
 	}
 
 
@@ -4740,6 +4836,61 @@ class AJForms_Admin {
 		);
 	}
 
+	/** Resolve the legal/customer-facing brand from the durable customer partner assignment. */
+	private function get_customer_brand_context( $stripe_customer_id = '', $user_id = 0, $customer_email = '' ) {
+		global $wpdb;
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		if ( '' === $stripe_customer_id && $user_id > 0 ) {
+			$stripe_customer_id = (string) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT stripe_customer_id FROM {$this->get_portal_user_mappings_table()} WHERE user_id = %d LIMIT 1",
+					absint( $user_id )
+				)
+			);
+		}
+
+		$partner_key = '';
+		if ( '' !== $stripe_customer_id ) {
+			$partner_key = (string) $this->get_pdb()->get_var(
+				$this->get_pdb()->prepare(
+					"SELECT partner_key FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+					$stripe_customer_id
+				)
+			);
+		} elseif ( is_email( $customer_email ) ) {
+			$partner_key = (string) $this->get_pdb()->get_var(
+				$this->get_pdb()->prepare(
+					"SELECT partner_key FROM {$this->get_portal_stripe_customers_table()} WHERE email = %s ORDER BY id DESC LIMIT 1",
+					sanitize_email( $customer_email )
+				)
+			);
+		}
+
+		if ( in_array( sanitize_key( $partner_key ), array( 'opus', 'alliance_vo' ), true ) ) {
+			return array(
+				'entity_name' => 'University Place Office Suites LLC',
+				'site_name'   => 'University Place Office Suites',
+				'site_url'    => 'https://universityofficesuites.com/',
+				'partner_key' => sanitize_key( $partner_key ),
+			);
+		}
+
+		return array(
+			'entity_name' => 'NC LLC Agents Inc',
+			'site_name'   => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
+			'site_url'    => home_url( '/' ),
+			'partner_key' => sanitize_key( $partner_key ),
+		);
+	}
+
+	private function apply_customer_brand_to_subject( $subject, $brand ) {
+		if ( empty( $brand['entity_name'] ) || 'NC LLC Agents Inc' === $brand['entity_name'] ) {
+			return $subject;
+		}
+
+		return str_ireplace( array( 'NC LLC Agents Inc', 'NC LLC Agents' ), $brand['entity_name'], (string) $subject );
+	}
+
 	/** Resolves the editable heading + body-paragraphs for a branded email from plugin settings,
 	 *  falling back to the built-in defaults when the admin hasn't customized them. Body text is
 	 *  stored as one paragraph per line in a textarea; tokens like {name} are substituted in both
@@ -4922,11 +5073,13 @@ class AJForms_Admin {
 			'login'
 		);
 		$settings = $this->get_plugin_settings();
+		$brand   = $this->get_customer_brand_context( '', $user->ID );
 		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
+		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
 		$sender     = $this->resolve_email_sender( $settings, 'wp_password_reset_from_email', 'wp_password_reset_from_name' );
 		$from_email = $sender['from_email'];
-		$from_name  = $sender['from_name'];
-		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$from_name  = ! empty( $brand['site_name'] ) && 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
+		$site_name  = $brand['site_name'];
 		$copy      = $this->resolve_email_copy(
 			$settings,
 			'wp_password_reset_heading',
@@ -4972,11 +5125,13 @@ class AJForms_Admin {
 			'login'
 		);
 		$settings = $this->get_plugin_settings();
+		$brand   = $this->get_customer_brand_context( '', $user->ID );
 		$subject = ! empty( $settings['wp_welcome_email_subject'] ) ? sanitize_text_field( (string) $settings['wp_welcome_email_subject'] ) : __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
+		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
 		$sender     = $this->resolve_email_sender( $settings, 'wp_welcome_from_email', 'wp_welcome_from_name' );
 		$from_email = $sender['from_email'];
-		$from_name  = $sender['from_name'];
-		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$from_name  = ! empty( $brand['site_name'] ) && 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
+		$site_name  = $brand['site_name'];
 		$copy      = $this->resolve_email_copy(
 			$settings,
 			'wp_welcome_heading',
@@ -9788,6 +9943,11 @@ class AJForms_Admin {
 			'stripe_secret_key'              => '',
 			'stripe_products_mode'           => 'all',
 			'stripe_selected_prices'         => array(),
+			'stripe_late_fees_enabled'        => '0',
+			'stripe_late_fee_type'            => 'fixed',
+			'stripe_late_fee_amount'          => '25.00',
+			'stripe_late_fee_grace_days'      => 5,
+			'stripe_late_fee_due_days'        => 7,
 			'portal_event_log_retention_days' => 180,
 			'portal_event_log_max_rows'      => 50000,
 		);
@@ -12438,6 +12598,11 @@ class AJForms_Admin {
 			'stripe_secret_key'              => '',
 			'stripe_products_mode'           => isset( $_POST['stripe_products_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['stripe_products_mode'] ) ), array( 'all', 'selected' ), true ) ? sanitize_key( wp_unslash( $_POST['stripe_products_mode'] ) ) : 'all',
 			'stripe_selected_prices'         => isset( $_POST['stripe_selected_prices'] ) && is_array( $_POST['stripe_selected_prices'] ) ? array_values( array_unique( array_map( 'sanitize_text_field', wp_unslash( $_POST['stripe_selected_prices'] ) ) ) ) : array(),
+			'stripe_late_fees_enabled'        => isset( $_POST['stripe_late_fees_enabled'] ) ? '1' : '0',
+			'stripe_late_fee_type'            => isset( $_POST['stripe_late_fee_type'] ) && 'percent' === sanitize_key( wp_unslash( $_POST['stripe_late_fee_type'] ) ) ? 'percent' : 'fixed',
+			'stripe_late_fee_amount'          => isset( $_POST['stripe_late_fee_amount'] ) ? max( 0, (float) wp_unslash( $_POST['stripe_late_fee_amount'] ) ) : 25,
+			'stripe_late_fee_grace_days'      => isset( $_POST['stripe_late_fee_grace_days'] ) ? max( 0, absint( wp_unslash( $_POST['stripe_late_fee_grace_days'] ) ) ) : 5,
+			'stripe_late_fee_due_days'        => isset( $_POST['stripe_late_fee_due_days'] ) ? max( 1, absint( wp_unslash( $_POST['stripe_late_fee_due_days'] ) ) ) : 7,
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
@@ -12456,7 +12621,7 @@ class AJForms_Admin {
 			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
-			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices' ),
+			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -14046,7 +14211,7 @@ class AJForms_Admin {
 
 		$customer = $this->get_pdb()->get_row(
 			$this->get_pdb()->prepare(
-				"SELECT name, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				"SELECT name, email, partner_key FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
 				sanitize_text_field( (string) $request->stripe_customer_id )
 			)
 		);
@@ -14055,10 +14220,11 @@ class AJForms_Admin {
 		}
 
 		$settings   = $this->get_plugin_settings();
+		$brand      = $this->get_customer_brand_context( $request->stripe_customer_id );
 		$sender     = $this->resolve_email_sender( $settings, 'wp_service_status_from_email', 'wp_service_status_from_name' );
 		$from_email = $sender['from_email'];
-		$from_name  = $sender['from_name'];
-		$site_name  = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$from_name  = 'NC LLC Agents Inc' !== $brand['entity_name'] ? $brand['site_name'] : $sender['from_name'];
+		$site_name  = $brand['site_name'];
 
 		$service_name    = sanitize_text_field( (string) $request->service_name );
 		$status_label    = $labels[ $new_service_status ];
@@ -14069,7 +14235,7 @@ class AJForms_Admin {
 			'{service_name}'  => $service_display,
 			'{status_label}'  => $status_label,
 		);
-		$subject = strtr( $subject_template, $email_tokens );
+		$subject = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
 
 		$copy = $this->resolve_email_copy(
 			$settings,
@@ -14155,8 +14321,12 @@ class AJForms_Admin {
 		}
 
 		$settings  = $this->get_plugin_settings();
+		$brand     = $this->get_customer_brand_context( ! empty( $item['stripe_customer_id'] ) ? $item['stripe_customer_id'] : '', 0, $customer_email );
 		$sender    = $this->resolve_email_sender( $settings, 'wp_mail_item_from_email', 'wp_mail_item_from_name' );
-		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$site_name = $brand['site_name'];
+		if ( 'NC LLC Agents Inc' !== $brand['entity_name'] ) {
+			$sender['from_name'] = $brand['site_name'];
+		}
 
 		$is_sop      = ! empty( $item['is_sop'] );
 		$type_labels = array(
@@ -14204,7 +14374,7 @@ class AJForms_Admin {
 		}
 
 		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : $default_subject;
-		$subject          = strtr( $subject_template, $email_tokens );
+		$subject          = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
 
 		$copy = $this->resolve_email_copy( $settings, $heading_key, $body_key, $default_heading, $default_body, $email_tokens );
 
@@ -14247,8 +14417,12 @@ class AJForms_Admin {
 		}
 
 		$settings  = $this->get_plugin_settings();
+		$brand     = $this->get_customer_brand_context( ! empty( $entity->stripe_customer_id ) ? $entity->stripe_customer_id : '', 0, $customer_email );
 		$sender    = $this->resolve_email_sender( $settings, 'wp_compliance_from_email', 'wp_compliance_from_name' );
-		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$site_name = $brand['site_name'];
+		if ( 'NC LLC Agents Inc' !== $brand['entity_name'] ) {
+			$sender['from_name'] = $brand['site_name'];
+		}
 
 		$due_date  = mysql2date( get_option( 'date_format' ), (string) $filing->due_date . ' 00:00:00' );
 		$days_left = (int) floor( ( strtotime( (string) $filing->due_date ) - strtotime( gmdate( 'Y-m-d' ) ) ) / DAY_IN_SECONDS );
@@ -14287,7 +14461,7 @@ class AJForms_Admin {
 		}
 
 		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : $default_subject;
-		$subject          = strtr( $subject_template, $email_tokens );
+		$subject          = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
 
 		$copy = $this->resolve_email_copy( $settings, $heading_key, $body_key, $default_heading, $default_body, $email_tokens );
 
@@ -24414,6 +24588,20 @@ class AJForms_Admin {
 											?>
 										</span>
 									</div>
+								</div>
+
+								<div class="ajforms-settings-card">
+									<span class="ajforms-settings-pill"><?php esc_html_e( 'Collections', 'ajforms' ); ?></span>
+									<h3><?php esc_html_e( 'Automatic late fees', 'ajforms' ); ?></h3>
+									<p><?php esc_html_e( 'Create one separate Stripe invoice when a send-invoice bill remains open beyond its due date and grace period. Metadata prevents duplicate fees.', 'ajforms' ); ?></p>
+									<div class="ajforms-settings-field" style="margin-bottom:18px;"><label><input type="checkbox" name="stripe_late_fees_enabled" value="1" <?php checked( ! empty( $settings['stripe_late_fees_enabled'] ) ); ?>> <?php esc_html_e( 'Enable automatic late fees during invoice sync', 'ajforms' ); ?></label></div>
+									<div class="ajforms-settings-grid">
+										<div class="ajforms-settings-field"><label for="stripe_late_fee_type"><?php esc_html_e( 'Fee type', 'ajforms' ); ?></label><select name="stripe_late_fee_type" id="stripe_late_fee_type"><option value="fixed" <?php selected( isset( $settings['stripe_late_fee_type'] ) ? $settings['stripe_late_fee_type'] : 'fixed', 'fixed' ); ?>><?php esc_html_e( 'Fixed amount', 'ajforms' ); ?></option><option value="percent" <?php selected( isset( $settings['stripe_late_fee_type'] ) ? $settings['stripe_late_fee_type'] : 'fixed', 'percent' ); ?>><?php esc_html_e( 'Percentage of balance due', 'ajforms' ); ?></option></select></div>
+										<div class="ajforms-settings-field"><label for="stripe_late_fee_amount"><?php esc_html_e( 'Amount or percent', 'ajforms' ); ?></label><input type="number" min="0" step="0.01" name="stripe_late_fee_amount" id="stripe_late_fee_amount" value="<?php echo esc_attr( isset( $settings['stripe_late_fee_amount'] ) ? $settings['stripe_late_fee_amount'] : '25.00' ); ?>"></div>
+										<div class="ajforms-settings-field"><label for="stripe_late_fee_grace_days"><?php esc_html_e( 'Grace period (days)', 'ajforms' ); ?></label><input type="number" min="0" step="1" name="stripe_late_fee_grace_days" id="stripe_late_fee_grace_days" value="<?php echo esc_attr( isset( $settings['stripe_late_fee_grace_days'] ) ? absint( $settings['stripe_late_fee_grace_days'] ) : 5 ); ?>"></div>
+										<div class="ajforms-settings-field"><label for="stripe_late_fee_due_days"><?php esc_html_e( 'Late-fee invoice due in (days)', 'ajforms' ); ?></label><input type="number" min="1" step="1" name="stripe_late_fee_due_days" id="stripe_late_fee_due_days" value="<?php echo esc_attr( isset( $settings['stripe_late_fee_due_days'] ) ? absint( $settings['stripe_late_fee_due_days'] ) : 7 ); ?>"></div>
+									</div>
+									<p class="ajforms-settings-help"><?php esc_html_e( 'Only open invoices with collection method “send invoice,” a due date, and a remaining balance qualify. Paid, void, draft, uncollectible, and existing late-fee invoices are ignored.', 'ajforms' ); ?></p>
 								</div>
 
 								<div class="ajforms-settings-card">

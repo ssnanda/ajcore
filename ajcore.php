@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.38
+ * Version: 0.7.39
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.38' );
+	define( 'AJCORE_VERSION', '0.7.39' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -138,6 +138,11 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'stripe_secret_key'             => '',
 			'stripe_products_mode'          => 'all',
 			'stripe_selected_prices'        => array(),
+			'stripe_late_fees_enabled'       => '0',
+			'stripe_late_fee_type'           => 'fixed',
+			'stripe_late_fee_amount'         => '25.00',
+			'stripe_late_fee_grace_days'     => 5,
+			'stripe_late_fee_due_days'       => 7,
 			'portal_event_log_retention_days'   => 180,
 			'portal_event_log_max_rows'         => 50000,
 			'zoho_reservations_enabled'         => '0',

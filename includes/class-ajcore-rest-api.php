@@ -55,6 +55,7 @@ class AJCore_REST_API {
 					'addr_state'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'addr_postal'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'addr_country'    => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'site_domain'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'customer_type'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
 				),
 			)
@@ -1012,15 +1013,17 @@ class AJCore_REST_API {
 		) ) ) );
 
 		$site_by_customer = array();
+		$site_source_by_customer = array();
 		if ( ! empty( $ids ) ) {
 			$pdb          = $this->get_portal_db();
 			$states_table = $this->portal_table( 'aj_portal_customer_states' );
 			if ( $this->table_exists( $pdb, $states_table ) ) {
 				$placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
 				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				$state_rows = $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id, site_uuid FROM `{$states_table}` WHERE stripe_customer_id IN ({$placeholders})", $ids ) );
+				$state_rows = $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id, site_uuid, status_source FROM `{$states_table}` WHERE stripe_customer_id IN ({$placeholders})", $ids ) );
 				foreach ( (array) $state_rows as $s ) {
 					$site_by_customer[ (string) $s->stripe_customer_id ] = (string) $s->site_uuid;
+					$site_source_by_customer[ (string) $s->stripe_customer_id ] = (string) $s->status_source;
 				}
 			}
 		}
@@ -1028,6 +1031,13 @@ class AJCore_REST_API {
 		foreach ( $customers as &$c ) {
 			$cid              = isset( $c['stripe_customer_id'] ) ? (string) $c['stripe_customer_id'] : '';
 			$site_uuid        = isset( $site_by_customer[ $cid ] ) ? $site_by_customer[ $cid ] : '';
+			$partner_key      = isset( $c['partner_key'] ) ? sanitize_key( (string) $c['partner_key'] ) : '';
+			if ( in_array( $partner_key, array( 'opus', 'alliance_vo' ), true ) && 'ajops_edit' !== ( $site_source_by_customer[ $cid ] ?? '' ) && 'universityofficesuites.com' !== $this->get_site_label( $site_uuid ) ) {
+				if ( true === $this->update_customer_site_domain( $cid, 'universityofficesuites.com' ) ) {
+					$sites_table = $this->get_portal_db()->prefix . 'aj_shared_sites';
+					$site_uuid = (string) $this->get_portal_db()->get_var( "SELECT site_uuid FROM `{$sites_table}` WHERE domain LIKE '%universityofficesuites.com%' LIMIT 1" );
+				}
+			}
 			$c['site_uuid']   = $site_uuid;
 			$c['site_label']  = $this->get_site_label( $site_uuid );
 		}
@@ -6060,6 +6070,7 @@ class AJCore_REST_API {
 		$addr_state         = sanitize_text_field( (string) ( $request->get_param( 'addr_state' ) ?? '' ) );
 		$addr_postal        = sanitize_text_field( (string) ( $request->get_param( 'addr_postal' ) ?? '' ) );
 		$addr_country       = sanitize_text_field( (string) ( $request->get_param( 'addr_country' ) ?? '' ) );
+		$site_domain        = sanitize_text_field( (string) ( $request->get_param( 'site_domain' ) ?? '' ) );
 
 		if ( empty( $name ) || empty( $email ) || empty( $phone ) ) {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
@@ -6075,6 +6086,7 @@ class AJCore_REST_API {
 				'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ), 'updated_at' => current_time( 'mysql' ),
 			), array( 'local_customer_id' => $stripe_customer_id ), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ), array( '%s' ) );
 			if ( false === $updated ) { return new WP_Error( 'ajcore_local_customer_update_failed', 'Could not update the local AJCore customer.', array( 'status' => 500 ) ); }
+			if ( '' !== $site_domain ) { $this->update_customer_site_domain( $stripe_customer_id, $site_domain ); }
 			return rest_ensure_response( array( 'stripe_customer_id' => $stripe_customer_id, 'name' => $name, 'email' => $email, 'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description, 'address' => $address_data, 'metadata' => $metadata, 'portal_status' => 'active', 'synced_at' => current_time( 'mysql' ) ) );
 		}
 
@@ -6197,6 +6209,10 @@ class AJCore_REST_API {
 				array( '%s' )
 			);
 		}
+		if ( '' !== $site_domain ) {
+			$site_result = $this->update_customer_site_domain( $stripe_customer_id, $site_domain );
+			if ( is_wp_error( $site_result ) ) { return $site_result; }
+		}
 
 		$customer_row = array(
 			'stripe_customer_id' => $decoded['id'],
@@ -6211,6 +6227,34 @@ class AJCore_REST_API {
 		);
 
 		return rest_ensure_response( array( 'success' => true, 'customer' => $customer_row ) );
+	}
+
+	private function update_customer_site_domain( $stripe_customer_id, $site_domain ) {
+		$pdb = $this->get_portal_db();
+		$sites_table = $pdb->prefix . 'aj_shared_sites';
+		$states_table = $this->portal_table( 'aj_portal_customer_states' );
+		$host = strtolower( (string) wp_parse_url( false === strpos( $site_domain, '://' ) ? 'https://' . $site_domain : $site_domain, PHP_URL_HOST ) );
+		if ( '' === $host || ! $this->table_exists( $pdb, $sites_table ) || ! $this->table_exists( $pdb, $states_table ) ) {
+			return new WP_Error( 'ajcore_invalid_customer_site', 'The selected customer site is unavailable.', array( 'status' => 400 ) );
+		}
+
+		$sites = $pdb->get_results( "SELECT site_uuid, domain FROM `{$sites_table}`" );
+		$site_uuid = '';
+		foreach ( (array) $sites as $site ) {
+			$site_host = strtolower( (string) wp_parse_url( false === strpos( (string) $site->domain, '://' ) ? 'https://' . $site->domain : $site->domain, PHP_URL_HOST ) );
+			if ( $host === $site_host ) { $site_uuid = (string) $site->site_uuid; break; }
+		}
+		if ( '' === $site_uuid ) {
+			return new WP_Error( 'ajcore_unknown_customer_site', 'The selected domain is not a registered AJCore site.', array( 'status' => 400 ) );
+		}
+
+		$existing_id = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$states_table}` WHERE stripe_customer_id=%s LIMIT 1", $stripe_customer_id ) );
+		if ( $existing_id ) {
+			$pdb->update( $states_table, array( 'site_uuid' => $site_uuid, 'status_source' => 'ajops_edit', 'updated_at' => current_time( 'mysql' ) ), array( 'id' => absint( $existing_id ) ), array( '%s', '%s', '%s' ), array( '%d' ) );
+		} else {
+			$pdb->insert( $states_table, array( 'stripe_customer_id' => sanitize_text_field( $stripe_customer_id ), 'site_uuid' => $site_uuid, 'status_source' => 'ajops_edit', 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ) ), array( '%s', '%s', '%s', '%s', '%s' ) );
+		}
+		return true;
 	}
 
 	public function ops_customer_action( WP_REST_Request $request ) {
