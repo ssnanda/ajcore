@@ -8071,8 +8071,19 @@ class AJForms_Admin {
 			if ( $amount <= 0 || '' === $description ) {
 				continue;
 			}
-			$period_start = ! empty( $raw_item['period_start'] ) ? strtotime( sanitize_text_field( (string) $raw_item['period_start'] ) ) : 0;
-			$period_end   = ! empty( $raw_item['period_end'] ) ? strtotime( sanitize_text_field( (string) $raw_item['period_end'] ) ) : 0;
+			// Anchor bare dates to noon UTC — midnight UTC renders as the previous day in US timezones.
+			$parse_period_date = function ( $value ) {
+				$value = sanitize_text_field( (string) $value );
+				if ( '' === $value ) {
+					return 0;
+				}
+				if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $value ) ) {
+					$value .= ' 12:00:00 UTC';
+				}
+				return (int) strtotime( $value );
+			};
+			$period_start = ! empty( $raw_item['period_start'] ) ? $parse_period_date( $raw_item['period_start'] ) : 0;
+			$period_end   = ! empty( $raw_item['period_end'] ) ? $parse_period_date( $raw_item['period_end'] ) : 0;
 			$items[]      = array(
 				'amount'       => $amount,
 				'description'  => $description,
@@ -8109,25 +8120,49 @@ class AJForms_Admin {
 		}
 
 		$total = 0;
-		foreach ( $items as $item ) {
-			$body = array(
-				'customer'    => $stripe_customer_id,
-				'amount'      => (string) (int) round( $item['amount'] * 100 ),
-				'currency'    => 'usd',
-				'description' => $item['description'],
-			);
-			if ( '' !== $invoice_id ) {
-				$body['invoice'] = $invoice_id;
+		$lines_added = false;
+		if ( '' !== $invoice_id ) {
+			// One bulk call instead of one round trip per line — outbound HTTPS from shared
+			// hosting is the slow part, so every request saved matters.
+			$bulk = array();
+			foreach ( $items as $i => $item ) {
+				$bulk[ "lines[{$i}][amount]" ]      = (string) (int) round( $item['amount'] * 100 );
+				$bulk[ "lines[{$i}][description]" ] = $item['description'];
+				if ( $item['period_start'] && $item['period_end'] ) {
+					$bulk[ "lines[{$i}][period][start]" ] = $item['period_start'];
+					$bulk[ "lines[{$i}][period][end]" ]   = $item['period_end'];
+				}
 			}
-			if ( $item['period_start'] && $item['period_end'] ) {
-				$body['period[start]'] = $item['period_start'];
-				$body['period[end]']   = $item['period_end'];
+			$added = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/add_lines', $secret_key, $bulk );
+			if ( ! is_wp_error( $added ) ) {
+				$lines_added = true;
+				foreach ( $items as $item ) {
+					$total += $item['amount'];
+				}
 			}
-			$created_item = $this->stripe_api_request( 'invoiceitems', $secret_key, $body );
-			if ( is_wp_error( $created_item ) ) {
-				return $created_item;
+			// add_lines needs a recent Stripe API version — fall back to per-item calls below.
+		}
+		if ( ! $lines_added ) {
+			foreach ( $items as $item ) {
+				$body = array(
+					'customer'    => $stripe_customer_id,
+					'amount'      => (string) (int) round( $item['amount'] * 100 ),
+					'currency'    => 'usd',
+					'description' => $item['description'],
+				);
+				if ( '' !== $invoice_id ) {
+					$body['invoice'] = $invoice_id;
+				}
+				if ( $item['period_start'] && $item['period_end'] ) {
+					$body['period[start]'] = $item['period_start'];
+					$body['period[end]']   = $item['period_end'];
+				}
+				$created_item = $this->stripe_api_request( 'invoiceitems', $secret_key, $body );
+				if ( is_wp_error( $created_item ) ) {
+					return $created_item;
+				}
+				$total += $item['amount'];
 			}
-			$total += $item['amount'];
 		}
 
 		$hosted_url      = '';
