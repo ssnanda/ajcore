@@ -1425,6 +1425,7 @@ class AJCore_REST_API {
 				'service_start_date' => sanitize_text_field( (string) $request->get_param( 'service_start_date' ) ),
 				'service_end_date'  => sanitize_text_field( (string) $request->get_param( 'service_end_date' ) ),
 				'billing_start_date' => sanitize_text_field( (string) $request->get_param( 'billing_start_date' ) ),
+				'prorate_first_period' => ! empty( $request->get_param( 'prorate_first_period' ) ),
 			)
 		);
 

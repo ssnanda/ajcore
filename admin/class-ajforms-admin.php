@@ -7908,6 +7908,7 @@ class AJForms_Admin {
 		$service_start_date = ! empty( $args['service_start_date'] ) ? sanitize_text_field( (string) $args['service_start_date'] ) : '';
 		$service_end_date   = ! empty( $args['service_end_date'] ) ? sanitize_text_field( (string) $args['service_end_date'] ) : '';
 		$billing_start_date = ! empty( $args['billing_start_date'] ) ? sanitize_text_field( (string) $args['billing_start_date'] ) : '';
+		$prorate_first      = ! empty( $args['prorate_first_period'] );
 		$service_start_ts   = 0;
 		$service_end_ts     = 0;
 		$billing_start_ts   = 0;
@@ -7997,7 +7998,10 @@ class AJForms_Admin {
 
 		if ( $billing_start_ts > 0 ) {
 			$body['billing_cycle_anchor'] = $billing_start_ts;
-			$body['proration_behavior']   = 'none';
+			// "Prorate first period" bills today→anchor immediately (e.g. move in mid-month, then
+			// full price on the 1st). Never combined with a backdated start: prorations against a
+			// backdate_start_date would invoice the entire past period.
+			$body['proration_behavior'] = ( $prorate_first && empty( $body['backdate_start_date'] ) ) ? 'create_prorations' : 'none';
 		} elseif ( $trial_days > 0 ) {
 			$body['trial_period_days'] = $trial_days;
 		}
@@ -11922,6 +11926,7 @@ class AJForms_Admin {
 					'service_start_date' => isset( $_POST['subscription_service_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_service_start_date'] ) ) : '',
 					'service_end_date'  => isset( $_POST['subscription_service_end_mode'], $_POST['subscription_service_end_date'] ) && 'custom' === sanitize_key( wp_unslash( $_POST['subscription_service_end_mode'] ) ) ? sanitize_text_field( wp_unslash( $_POST['subscription_service_end_date'] ) ) : '',
 					'billing_start_date' => isset( $_POST['subscription_billing_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['subscription_billing_start_date'] ) ) : '',
+					'prorate_first_period' => ! empty( $_POST['subscription_prorate_first'] ),
 				)
 			);
 
@@ -19675,6 +19680,7 @@ class AJForms_Admin {
 							<?php esc_html_e( 'Bill starting', 'ajforms' ); ?>
 							<input type="date" name="subscription_billing_start_date" aria-describedby="ajcore-subscription-billing-start-help">
 						</label>
+						<label class="ajcore-modal-wide"><input type="checkbox" name="subscription_prorate_first" value="1"> <?php esc_html_e( 'Prorate the partial first period (bills today through Bill starting now, then full price each cycle). Leave off when the customer already paid outside Stripe.', 'ajforms' ); ?></label>
 						<label>
 							<?php esc_html_e( 'Trial Days', 'ajforms' ); ?>
 							<input type="number" name="subscription_trial_days" min="0" value="0">
