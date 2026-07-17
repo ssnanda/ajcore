@@ -662,6 +662,7 @@ class AJCore_REST_API {
 			'/ops/product-counts' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_product_counts', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/profile' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_profile', 'permission' => 'can_manage_ops_api' ),
+			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/invoices' => array( 'methods' => 'POST', 'callback' => 'ops_create_customer_invoice', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customer-profiles/expiring' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_expiring_id_profiles', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/delete-all' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'delete_ops_email_log_all', 'permission' => 'can_manage_ops_api' ),
 			// Mail intake (sub-routes before the bare /ops/mail/{id} GET; create/update/delete registered above)
@@ -1402,6 +1403,29 @@ class AJCore_REST_API {
 
 	public function get_ops_subscriptions( WP_REST_Request $request ) {
 		return rest_ensure_response( array( 'subscriptions' => $this->select_rows( $this->portal_table( 'aj_portal_stripe_subscriptions' ), array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'livemode', 'synced_at' ), $request, array( 'stripe_subscription_id', 'stripe_customer_id', 'status' ), 'synced_at DESC, id DESC' ) ) );
+	}
+
+	public function ops_create_customer_invoice( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'ajcore_admin_unavailable', __( 'AJCore admin services are unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$admin = new AJForms_Admin();
+		if ( ! method_exists( $admin, 'api_create_ops_customer_invoice' ) ) {
+			return new WP_Error( 'ajcore_invoice_unavailable', __( 'Invoice creation is unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$result = $admin->api_create_ops_customer_invoice(
+			sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) ),
+			array(
+				'items'          => $request->get_param( 'items' ),
+				'mode'           => sanitize_key( (string) $request->get_param( 'mode' ) ),
+				'days_until_due' => absint( $request->get_param( 'days_until_due' ) ),
+				'send_email'     => ! empty( $request->get_param( 'send_email' ) ),
+			)
+		);
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 400 ) );
+		}
+		return rest_ensure_response( $result );
 	}
 
 	public function ops_create_customer_subscription( WP_REST_Request $request ) {

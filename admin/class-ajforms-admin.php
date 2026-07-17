@@ -7497,6 +7497,10 @@ class AJForms_Admin {
 				$subscription_period = $this->get_synced_portal_subscription_period_context( $subscription->stripe_subscription_id );
 				$period_start = ! empty( $subscription_period['current_period_start'] ) ? $subscription_period['current_period_start'] : '';
 				$period_end   = ! empty( $subscription_period['current_period_end'] ) ? $subscription_period['current_period_end'] : ( ! empty( $subscription->current_period_end ) ? $subscription->current_period_end : '' );
+				// Prefer Stripe's start_date so backdated migrations show the true service start.
+				if ( ! empty( $subscription_period['start_date'] ) && ( '' === $period_start || $subscription_period['start_date'] < $period_start ) ) {
+					$period_start = $subscription_period['start_date'];
+				}
 				$service_period = ( $period_start && $period_end ) ? $this->format_portal_date( $period_start ) . ' - ' . $this->format_portal_date( $period_end ) : '';
 
 				$record = $this->make_portal_service_record_from_product(
@@ -7680,6 +7684,8 @@ class AJForms_Admin {
 		return array(
 			'current_period_start' => $start,
 			'current_period_end'   => $end,
+			// True subscription start — earlier than current_period_start for backdated migrations.
+			'start_date'           => ! empty( $raw['start_date'] ) ? $this->normalize_portal_subscription_period_value( $raw['start_date'] ) : '',
 		);
 	}
 
@@ -7878,6 +7884,19 @@ class AJForms_Admin {
 			$this->get_portal_recurring_service_records_from_ledger( $stripe_customer_id, 50 )
 		) );
 
+		// Backdated migrations: whatever record won the dedupe, show the subscription's true
+		// Stripe start_date rather than the current billing period's start.
+		foreach ( $merged_subscriptions as $merged_record ) {
+			if ( empty( $merged_record->stripe_subscription_id ) ) {
+				continue;
+			}
+			$period_context = $this->get_synced_portal_subscription_period_context( $merged_record->stripe_subscription_id );
+			if ( ! empty( $period_context['start_date'] ) && ( empty( $merged_record->service_period_start ) || $period_context['start_date'] < $merged_record->service_period_start ) ) {
+				$merged_record->service_period_start = $period_context['start_date'];
+				$merged_record->service_period       = $this->get_portal_service_record_period_label( $merged_record );
+			}
+		}
+
 		$to_array = function( $record ) { return (array) $record; };
 		return array(
 			'subscriptions'     => array_values( array_map( $to_array, $merged_subscriptions ) ),
@@ -8017,6 +8036,115 @@ class AJForms_Admin {
 			'success'         => true,
 			'subscription_id' => ! empty( $subscription['id'] ) ? sanitize_text_field( (string) $subscription['id'] ) : '',
 			'status'          => ! empty( $subscription['status'] ) ? sanitize_key( (string) $subscription['status'] ) : '',
+		);
+	}
+
+	/**
+	 * One-off charges for Stripe-billed customers (postage, backfilled history). Line items become
+	 * Stripe invoice items; 'standalone' wraps them in their own finalized invoice the customer can
+	 * pay, 'next_invoice' leaves them pending so they ride along on the next subscription invoice.
+	 */
+	public function api_create_ops_customer_invoice( $stripe_customer_id, $args = array() ) {
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		if ( '' === $stripe_customer_id || 0 !== strpos( $stripe_customer_id, 'cus_' ) ) {
+			return new WP_Error( 'invalid_customer', __( 'A valid Stripe customer is required.', 'ajforms' ) );
+		}
+
+		$mode           = ! empty( $args['mode'] ) && 'next_invoice' === $args['mode'] ? 'next_invoice' : 'standalone';
+		$days_until_due = ! empty( $args['days_until_due'] ) ? max( 1, absint( $args['days_until_due'] ) ) : 30;
+		$send_email     = ! empty( $args['send_email'] );
+		$raw_items      = isset( $args['items'] ) && is_array( $args['items'] ) ? $args['items'] : array();
+
+		$items = array();
+		foreach ( $raw_items as $raw_item ) {
+			if ( ! is_array( $raw_item ) ) {
+				continue;
+			}
+			$amount      = round( (float) ( $raw_item['amount'] ?? 0 ), 2 );
+			$description = sanitize_text_field( (string) ( $raw_item['description'] ?? '' ) );
+			if ( $amount <= 0 || '' === $description ) {
+				continue;
+			}
+			$period_start = ! empty( $raw_item['period_start'] ) ? strtotime( sanitize_text_field( (string) $raw_item['period_start'] ) ) : 0;
+			$period_end   = ! empty( $raw_item['period_end'] ) ? strtotime( sanitize_text_field( (string) $raw_item['period_end'] ) ) : 0;
+			$items[]      = array(
+				'amount'       => $amount,
+				'description'  => $description,
+				'period_start' => $period_start ?: 0,
+				'period_end'   => ( $period_end && $period_start && $period_end >= $period_start ) ? $period_end : 0,
+			);
+		}
+		if ( empty( $items ) ) {
+			return new WP_Error( 'invalid_items', __( 'Add at least one charge line with a description and an amount above zero.', 'ajforms' ) );
+		}
+
+		$secret_key = $this->get_stripe_secret_key_for_portal();
+		if ( '' === $secret_key ) {
+			return new WP_Error( 'stripe_not_configured', __( 'Stripe is not configured.', 'ajforms' ) );
+		}
+
+		$invoice_id = '';
+		if ( 'standalone' === $mode ) {
+			$invoice = $this->stripe_api_request( 'invoices', $secret_key, array(
+				'customer'                       => $stripe_customer_id,
+				'collection_method'              => 'send_invoice',
+				'days_until_due'                 => $days_until_due,
+				'auto_advance'                   => 'false',
+				'pending_invoice_items_behavior' => 'exclude',
+			) );
+			if ( is_wp_error( $invoice ) ) {
+				return $invoice;
+			}
+			$invoice_id = sanitize_text_field( (string) ( $invoice['id'] ?? '' ) );
+			if ( '' === $invoice_id ) {
+				return new WP_Error( 'invoice_create_failed', __( 'Stripe did not return an invoice.', 'ajforms' ) );
+			}
+		}
+
+		$total = 0;
+		foreach ( $items as $item ) {
+			$body = array(
+				'customer'    => $stripe_customer_id,
+				'amount'      => (string) (int) round( $item['amount'] * 100 ),
+				'currency'    => 'usd',
+				'description' => $item['description'],
+			);
+			if ( '' !== $invoice_id ) {
+				$body['invoice'] = $invoice_id;
+			}
+			if ( $item['period_start'] && $item['period_end'] ) {
+				$body['period[start]'] = $item['period_start'];
+				$body['period[end]']   = $item['period_end'];
+			}
+			$created_item = $this->stripe_api_request( 'invoiceitems', $secret_key, $body );
+			if ( is_wp_error( $created_item ) ) {
+				return $created_item;
+			}
+			$total += $item['amount'];
+		}
+
+		$hosted_url = '';
+		if ( '' !== $invoice_id ) {
+			$finalized = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/finalize', $secret_key, array( 'auto_advance' => 'true' ) );
+			if ( is_wp_error( $finalized ) ) {
+				return $finalized;
+			}
+			$hosted_url = esc_url_raw( (string) ( $finalized['hosted_invoice_url'] ?? '' ) );
+			if ( $send_email ) {
+				$sent = $this->stripe_api_request( 'invoices/' . rawurlencode( $invoice_id ) . '/send', $secret_key );
+				if ( is_wp_error( $sent ) ) {
+					return new WP_Error( 'invoice_send_failed', sprintf( __( 'The invoice was created but the email failed: %s', 'ajforms' ), $sent->get_error_message() ) );
+				}
+			}
+		}
+
+		return array(
+			'success'            => true,
+			'mode'               => $mode,
+			'invoice_id'         => $invoice_id,
+			'hosted_invoice_url' => $hosted_url,
+			'total'              => round( $total, 2 ),
+			'item_count'         => count( $items ),
 		);
 	}
 
