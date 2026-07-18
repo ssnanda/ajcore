@@ -1736,6 +1736,7 @@ class AJForms_Activator {
 		$t_shared_sites         = $prefix . 'aj_shared_sites';
 		$t_stripe_customers     = $prefix . 'aj_portal_stripe_customers';
 		$t_customer_states      = $prefix . 'aj_portal_customer_states';
+		$t_customer_site_access = $prefix . 'aj_portal_customer_site_access';
 		$t_stripe_products      = $prefix . 'aj_portal_stripe_products';
 		$t_product_catalog      = $prefix . 'aj_portal_product_catalog';
 		$t_stripe_subscriptions = $prefix . 'aj_portal_stripe_subscriptions';
@@ -1818,6 +1819,22 @@ class AJForms_Activator {
 			KEY wp_user_id (wp_user_id),
 			KEY portal_user_email (portal_user_email),
 			KEY site_uuid (site_uuid)
+		) $charset_collate;
+
+		CREATE TABLE $t_customer_site_access (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			stripe_customer_id varchar(100) NOT NULL,
+			site_uuid varchar(100) NOT NULL,
+			portal_status varchar(50) DEFAULT 'disabled' NOT NULL,
+			enabled_portal tinyint(1) NOT NULL DEFAULT 0,
+			wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			portal_user_email varchar(190) DEFAULT '' NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY customer_site (stripe_customer_id, site_uuid),
+			KEY site_uuid (site_uuid),
+			KEY portal_status (portal_status)
 		) $charset_collate;
 
 		CREATE TABLE $t_stripe_products (

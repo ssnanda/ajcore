@@ -680,6 +680,7 @@ class AJForms_Admin {
 			$this->get_portal_service_snapshots_table(),
 			$this->get_portal_service_states_table(),
 			$this->get_portal_customer_states_table(),
+			$this->get_portal_customer_site_access_table(),
 		);
 
 		$local_tables = array(
@@ -703,6 +704,7 @@ class AJForms_Admin {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
 		}
+		$this->sync_current_site_access_rows();
 
 		$mapping_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$this->get_portal_user_mappings_table()}", 0 );
 		if ( is_array( $mapping_columns ) && ( ! in_array( 'portal_user_email', $mapping_columns, true ) || ! in_array( 'site_uuid', $mapping_columns, true ) ) ) {
@@ -809,6 +811,20 @@ class AJForms_Admin {
 		$this->seed_portal_customer_states_from_existing_customers();
 		$this->ensure_aj_portal_user_role();
 		$this->repair_portal_user_links_and_roles( false, false, false );
+	}
+
+	private function sync_current_site_access_rows() {
+		global $wpdb;
+		$table = $this->get_portal_customer_site_access_table();
+		$pdb   = $this->get_pdb();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return;
+		}
+		foreach ( (array) $wpdb->get_results( "SELECT stripe_customer_id,user_id,portal_user_email FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id <> ''" ) as $mapping ) {
+			$user = ! empty( $mapping->user_id ) ? get_userdata( (int) $mapping->user_id ) : false;
+			$active = $user && ( in_array( 'aj_portal_user', (array) $user->roles, true ) || user_can( $user, 'ajcore_customer_portal_access' ) );
+			$this->upsert_portal_customer_site_access( $mapping->stripe_customer_id, $active ? 'active' : 'disabled', array( 'wp_user_id' => $user ? $user->ID : 0, 'user_email' => $user ? $user->user_email : $mapping->portal_user_email ) );
+		}
 	}
 
 	private function get_ajcore_site_uuid() {
@@ -1090,6 +1106,7 @@ class AJForms_Admin {
 			$customer_email = sanitize_email( (string) $details['customer_email'] );
 		}
 
+		$existing_state = $pdb->get_row( $pdb->prepare( "SELECT id,site_uuid,status_source FROM {$table} WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ) );
 		$row = array(
 			'stripe_customer_id'  => $stripe_customer_id,
 			'customer_email'      => $customer_email,
@@ -1097,18 +1114,15 @@ class AJForms_Admin {
 			'enabled_portal'      => $this->portal_customer_status_enabled_value( $portal_status ),
 			'wp_user_id'          => $mapping && ! empty( $mapping->user_id ) ? absint( $mapping->user_id ) : ( ! empty( $details['wp_user_id'] ) ? absint( $details['wp_user_id'] ) : 0 ),
 			'portal_user_email'   => $mapping && ! empty( $mapping->portal_user_email ) ? sanitize_email( (string) $mapping->portal_user_email ) : ( ! empty( $details['user_email'] ) ? sanitize_email( (string) $details['user_email'] ) : '' ),
-			'site_uuid'           => $mapping && ! empty( $mapping->site_uuid ) ? sanitize_text_field( (string) $mapping->site_uuid ) : $this->get_ajcore_site_uuid(),
-			'status_source'       => sanitize_key( (string) $source ),
+			// Site assignment is an independent administrative choice. Enabling or disabling
+			// access on another WordPress site must never move the customer to that site.
+			'site_uuid'           => $existing_state && ! empty( $existing_state->site_uuid ) ? sanitize_text_field( (string) $existing_state->site_uuid ) : ( $mapping && ! empty( $mapping->site_uuid ) ? sanitize_text_field( (string) $mapping->site_uuid ) : $this->get_ajcore_site_uuid() ),
+			'status_source'       => $existing_state && 'ajops_edit' === (string) $existing_state->status_source ? 'ajops_edit' : sanitize_key( (string) $source ),
 			'status_reason'       => sanitize_text_field( (string) $reason ),
 			'updated_at'          => current_time( 'mysql' ),
 		);
 
-		$existing_id = $pdb->get_var(
-			$pdb->prepare(
-				"SELECT id FROM {$table} WHERE stripe_customer_id = %s LIMIT 1",
-				$stripe_customer_id
-			)
-		);
+		$existing_id = $existing_state ? absint( $existing_state->id ) : 0;
 
 		$formats = array( '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s' );
 		if ( $existing_id ) {
@@ -1206,6 +1220,7 @@ class AJForms_Admin {
 
 		$details = is_array( $details ) ? $details : array( 'value' => $details );
 		$this->upsert_portal_customer_state( $stripe_customer_id, $new_status, $source, $reason, $details );
+		$this->upsert_portal_customer_site_access( $stripe_customer_id, $new_status, $details );
 
 		if ( $old_status !== $new_status || $old_enabled !== $new_enabled ) {
 			$details['reason'] = sanitize_text_field( (string) $reason );
@@ -1231,6 +1246,35 @@ class AJForms_Admin {
 		}
 
 		return true;
+	}
+
+	private function upsert_portal_customer_site_access( $stripe_customer_id, $portal_status, $details = array() ) {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_portal_customer_site_access_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+			AJForms_Activator::activate();
+		}
+		$site_uuid = $this->get_ajcore_site_uuid();
+		$row = array(
+			'stripe_customer_id' => sanitize_text_field( (string) $stripe_customer_id ),
+			'site_uuid'          => $site_uuid,
+			'portal_status'      => $this->normalize_portal_customer_status( $portal_status ),
+			'enabled_portal'     => $this->portal_customer_status_enabled_value( $portal_status ),
+			'wp_user_id'         => ! empty( $details['wp_user_id'] ) ? absint( $details['wp_user_id'] ) : 0,
+			'portal_user_email'  => ! empty( $details['user_email'] ) ? sanitize_email( $details['user_email'] ) : '',
+			'updated_at'         => current_time( 'mysql' ),
+		);
+		$existing = $pdb->get_var( $pdb->prepare( "SELECT id FROM {$table} WHERE stripe_customer_id=%s AND site_uuid=%s LIMIT 1", $row['stripe_customer_id'], $site_uuid ) );
+		if ( $existing ) {
+			return $pdb->update( $table, $row, array( 'id' => absint( $existing ) ) );
+		}
+		$row['created_at'] = current_time( 'mysql' );
+		return $pdb->insert( $table, $row );
+	}
+
+	public function record_current_site_customer_access( $stripe_customer_id, $portal_status, $user_id = 0, $user_email = '' ) {
+		return $this->upsert_portal_customer_site_access( $stripe_customer_id, $portal_status, array( 'wp_user_id' => absint( $user_id ), 'user_email' => sanitize_email( $user_email ) ) );
 	}
 
 	private function get_portal_cache_counts() {
@@ -13891,6 +13935,10 @@ class AJForms_Admin {
 
 	private function get_portal_customer_states_table() {
 		return $this->get_pdb()->prefix . 'aj_portal_customer_states';
+	}
+
+	private function get_portal_customer_site_access_table() {
+		return $this->get_pdb()->prefix . 'aj_portal_customer_site_access';
 	}
 
 	public function get_form_record( $form_id ) {

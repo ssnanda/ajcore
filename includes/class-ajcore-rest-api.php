@@ -984,7 +984,36 @@ class AJCore_REST_API {
 		}
 		$customers = $this->attach_customer_site_labels( array_map( array( $this, 'format_ops_customer_row' ), $customers ) );
 		$customers = $this->attach_customer_portal_user_links( $customers );
+		$customers = $this->attach_customer_site_access( $customers );
 		return rest_ensure_response( array( 'customers' => $customers ) );
+	}
+
+	private function attach_customer_site_access( $customers ) {
+		$customers = (array) $customers;
+		$ids = array_values( array_unique( array_filter( array_map( function ( $c ) {
+			return isset( $c['stripe_customer_id'] ) ? (string) $c['stripe_customer_id'] : '';
+		}, $customers ) ) ) );
+		$access_by_customer = array();
+		$pdb = $this->get_portal_db();
+		$table = $pdb->prefix . 'aj_portal_customer_site_access';
+		if ( ! empty( $ids ) && $this->table_exists( $pdb, $table ) ) {
+			$placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
+			$rows = $pdb->get_results( $pdb->prepare( "SELECT a.*, s.domain FROM `{$table}` a LEFT JOIN `{$pdb->prefix}aj_shared_sites` s ON s.site_uuid=a.site_uuid WHERE a.stripe_customer_id IN ({$placeholders})", $ids ) );
+			foreach ( (array) $rows as $row ) {
+				$host = strtolower( (string) wp_parse_url( false === strpos( $row->domain, '://' ) ? 'https://' . $row->domain : $row->domain, PHP_URL_HOST ) );
+				$access_by_customer[ $row->stripe_customer_id ][ $host ] = array( 'status' => $row->portal_status, 'enabled' => (bool) $row->enabled_portal, 'user_email' => $row->portal_user_email );
+			}
+		}
+		foreach ( $customers as &$customer ) {
+			$cid = (string) ( $customer['stripe_customer_id'] ?? '' );
+			$assigned = (string) ( $customer['site_label'] ?? '' );
+			$access = $access_by_customer[ $cid ] ?? array();
+			$customer['site_access'] = $access;
+			$customer['assigned_site_status'] = isset( $access[ $assigned ] ) ? $access[ $assigned ]['status'] : 'not_enabled';
+			$customer['active_site_labels'] = array_keys( array_filter( $access, function ( $item ) { return ! empty( $item['enabled'] ); } ) );
+		}
+		unset( $customer );
+		return $customers;
 	}
 
 	private function attach_customer_portal_user_links( $customers ) {
@@ -6320,6 +6349,9 @@ class AJCore_REST_API {
 		$customer->portal_user_email = $mapping ? $mapping->portal_user_email : null;
 
 		$portal_status = ! empty( $customer->portal_status ) ? (string) $customer->portal_status : 'disabled';
+		$local_user    = ! empty( $customer->user_id ) ? get_userdata( (int) $customer->user_id ) : false;
+		$local_active  = $local_user && ( in_array( 'aj_portal_user', (array) $local_user->roles, true ) || user_can( $local_user, 'ajcore_customer_portal_access' ) );
+		AJForms_Admin::$instance->record_current_site_customer_access( $stripe_customer_id, $local_active ? 'active' : 'disabled', $local_user ? $local_user->ID : 0, $local_user ? $local_user->user_email : '' );
 		$result        = true;
 
 		switch ( $action ) {
@@ -6350,7 +6382,7 @@ class AJCore_REST_API {
 				if ( empty( $customer->user_id ) ) {
 					return new WP_Error( 'no_wp_user', 'No linked WordPress user. Run Enable & Repair first.', array( 'status' => 400 ) );
 				}
-				if ( 'active' !== $portal_status ) {
+				if ( ! $local_active ) {
 					return new WP_Error( 'not_active', 'Customer must have active portal access to receive a welcome email.', array( 'status' => 400 ) );
 				}
 				$result = AJForms_Admin::$instance->send_portal_user_welcome_email( (int) $customer->user_id );
