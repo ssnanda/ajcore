@@ -5071,6 +5071,10 @@ class AJForms {
 		return function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
 	}
 
+	private function table_exists( $db, $table ) {
+		return $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
+	}
+
 	private function get_portal_stripe_customers_table() {
 		return $this->get_pdb()->prefix . 'aj_portal_stripe_customers';
 	}
