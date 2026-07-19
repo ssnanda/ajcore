@@ -1255,6 +1255,14 @@ class AJForms_Admin {
 			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
 			AJForms_Activator::activate();
 		}
+		// Access rows are matched back to a site via aj_shared_sites, but a site only registers
+		// itself on a handful of admin page loads — refresh the registration here so the uuid and
+		// current domain are always resolvable for rows this request is about to write.
+		static $site_registration_refreshed = false;
+		if ( ! $site_registration_refreshed && function_exists( 'ajcore_register_site_in_shared_db' ) ) {
+			ajcore_register_site_in_shared_db();
+			$site_registration_refreshed = true;
+		}
 		$site_uuid = $this->get_ajcore_site_uuid();
 		$row = array(
 			'stripe_customer_id' => sanitize_text_field( (string) $stripe_customer_id ),

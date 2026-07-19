@@ -865,6 +865,7 @@ class AJForms_Activator {
 				$pdb_charset = $pdb->get_charset_collate();
 				self::create_reservation_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_mail_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
+				self::create_customer_site_access_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 			}
 		}
 
@@ -1725,6 +1726,33 @@ class AJForms_Activator {
 			KEY disposition (disposition),
 			KEY received_at (received_at)
 		) {$charset_collate}" );
+	}
+
+	/**
+	 * Creates the per-site customer access table in the portal/shared DB. The main dbDelta
+	 * run only creates it in the local WP DB, but in shared mode every read/write targets
+	 * the shared DB — without this, access upserts fail silently against a missing table.
+	 * Keep the definition in sync with $t_customer_site_access in get_shared_portal_table_sql().
+	 */
+	public static function create_customer_site_access_table_in_portal_db( $prefix, $charset_collate, $pdb ) {
+		$table = $prefix . 'aj_portal_customer_site_access';
+		$pdb->query(
+			"CREATE TABLE IF NOT EXISTS $table (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				stripe_customer_id varchar(100) NOT NULL,
+				site_uuid varchar(100) NOT NULL,
+				portal_status varchar(50) DEFAULT 'disabled' NOT NULL,
+				enabled_portal tinyint(1) NOT NULL DEFAULT 0,
+				wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+				portal_user_email varchar(190) DEFAULT '' NOT NULL,
+				updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+				created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				PRIMARY KEY  (id),
+				UNIQUE KEY customer_site (stripe_customer_id, site_uuid),
+				KEY site_uuid (site_uuid),
+				KEY portal_status (portal_status)
+			) $charset_collate"
+		);
 	}
 
 	/**
