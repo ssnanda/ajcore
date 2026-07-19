@@ -5394,9 +5394,14 @@ class AJForms {
 		delete_transient( 'ajcore_impersonation_return_' . $return_hash );
 		$this->clear_impersonation_cookie();
 
+		$from_ajops = isset( $payload['source'] ) && 'ajops' === $payload['source'];
+
 		$actor = get_userdata( (int) $payload['actor_user_id'] );
 		if ( ! $actor ) {
 			wp_logout();
+			if ( $from_ajops ) {
+				$this->render_impersonation_return_close_page();
+			}
 			wp_safe_redirect( wp_login_url( admin_url( 'admin.php' ) ) );
 			exit;
 		}
@@ -5420,11 +5425,35 @@ class AJForms {
 		);
 
 		wp_logout();
+
+		if ( $from_ajops ) {
+			$this->render_impersonation_return_close_page();
+		}
+
 		wp_set_current_user( (int) $actor->ID );
 		wp_set_auth_cookie( (int) $actor->ID, false, is_ssl() );
 
 		$return_url = ! empty( $payload['return_url'] ) ? esc_url_raw( (string) $payload['return_url'] ) : admin_url( 'admin.php' );
 		wp_safe_redirect( wp_validate_redirect( $return_url, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private function render_impersonation_return_close_page() {
+		nocache_headers();
+		header( 'Content-Type: text/html; charset=utf-8' );
+		?>
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title><?php esc_html_e( 'Client session ended', 'ajforms' ); ?></title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0;">
+	<p><?php esc_html_e( 'Client session ended. You can close this tab.', 'ajforms' ); ?></p>
+	<script>window.close();</script>
+</body>
+</html>
+		<?php
 		exit;
 	}
 
