@@ -2525,7 +2525,7 @@ class AJForms_Admin {
 	}
 
 	private function cleanup_unpaid_portal_checkout_sessions( $stripe_customer_id = '' ) {
-		global $wpdb;
+		$wpdb = $this->get_pdb();
 
 		$ledger_table         = $this->get_portal_ledger_table();
 		$transactions_table   = $this->get_portal_stripe_transactions_table();
@@ -3901,18 +3901,18 @@ class AJForms_Admin {
 			return 0;
 		}
 
-		global $wpdb;
+		$pdb = $this->get_pdb();
 
 		$session_id  = sanitize_text_field( (string) $session['id'] );
 		$customer_id = $this->get_scalar_stripe_id( $session['customer'], 'cus_' );
 		if ( '' === $customer_id ) {
 			return new WP_Error( 'missing_customer', __( 'Unable to charge one-time cart items because the checkout session customer is missing.', 'ajforms' ) );
 		}
-		$existing    = $wpdb->get_var(
-			$wpdb->prepare(
+		$existing    = $pdb->get_var(
+			$pdb->prepare(
 				"SELECT id FROM {$this->get_portal_ledger_table()} WHERE source_object_id = %s OR metadata LIKE %s LIMIT 1",
 				'mixed_one_time_' . $session_id,
-				'%' . $wpdb->esc_like( $session_id ) . '%ajcore_mixed_one_time_payment%'
+				'%' . $pdb->esc_like( $session_id ) . '%ajcore_mixed_one_time_payment%'
 			)
 		);
 		if ( $existing ) {
