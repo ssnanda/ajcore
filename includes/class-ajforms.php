@@ -2907,7 +2907,16 @@ class AJForms {
 		}
 
 		$pdb->insert( $this->get_portal_service_requests_table(), $data, $formats );
-		return (int) $pdb->insert_id;
+		$new_id = (int) $pdb->insert_id;
+
+		if ( $new_id && class_exists( 'AJForms_Admin' ) ) {
+			$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+			if ( method_exists( $admin, 'maybe_send_service_purchase_welcome' ) ) {
+				$admin->maybe_send_service_purchase_welcome( $new_id );
+			}
+		}
+
+		return $new_id;
 	}
 
 	private function get_open_portal_service_request_for_product( $stripe_customer_id, $price_id, $product_id = '' ) {

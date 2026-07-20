@@ -5152,6 +5152,14 @@ class AJForms_Admin {
 		);
 	}
 
+	private function get_service_purchase_welcome_email_static_parts() {
+		return array(
+			'info_box_label' => __( 'Call or text us', 'ajforms' ),
+			'info_box_value' => __( '(704) 307-2135', 'ajforms' ),
+			'footer_note'    => __( 'Questions about your order? Call or text us anytime at (704) 307-2135.', 'ajforms' ),
+		);
+	}
+
 	public function send_portal_user_password_reset( $user_id ) {
 		$user = get_userdata( absint( $user_id ) );
 		if ( ! $user ) {
@@ -5257,6 +5265,215 @@ class AJForms_Admin {
 		}
 
 		return $this->send_branded_wp_mail( $user->user_email, $subject, $message, $headers, $from_email, $from_name );
+	}
+
+	/**
+	 * Sends the branded "thank you for your purchase" welcome email for a newly-created
+	 * add_service service request. Fired once, automatically, by
+	 * maybe_send_service_purchase_welcome() — never call this directly for a request that may
+	 * have already been welcomed, or the customer gets a duplicate email.
+	 */
+	private function send_service_purchase_welcome_email( $request ) {
+		$customer = $this->get_pdb()->get_row(
+			$this->get_pdb()->prepare(
+				"SELECT name, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				sanitize_text_field( (string) $request->stripe_customer_id )
+			)
+		);
+		if ( ! $customer || ! is_email( (string) $customer->email ) ) {
+			return false;
+		}
+
+		$settings   = $this->get_plugin_settings();
+		$brand      = $this->get_customer_brand_context( $request->stripe_customer_id );
+		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'wp_service_purchase_welcome_from_email', $brand ), $this->get_customer_brand_setting_key( 'wp_service_purchase_welcome_from_name', $brand ) );
+		$from_email = $sender['from_email'];
+		$from_name  = $sender['from_name'];
+		$site_name  = $brand['site_name'];
+
+		$service_display = '' !== (string) $request->service_name ? sanitize_text_field( (string) $request->service_name ) : __( 'your purchase', 'ajforms' );
+		$email_tokens     = array(
+			'{name}'         => ! empty( $customer->name ) ? $customer->name : $customer->email,
+			'{service_name}' => $service_display,
+			'{site_name}'    => $site_name,
+		);
+
+		$subject_key      = $this->get_customer_brand_setting_key( 'wp_service_purchase_welcome_subject', $brand );
+		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : __( 'Welcome to {site_name} \xe2\x80\x93 Next steps for {service_name}', 'ajforms' );
+		$subject          = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
+
+		$copy = $this->resolve_email_copy(
+			$settings,
+			$this->get_customer_brand_setting_key( 'wp_service_purchase_welcome_heading', $brand ),
+			$this->get_customer_brand_setting_key( 'wp_service_purchase_welcome_body', $brand ),
+			__( 'Thank you for your purchase', 'ajforms' ),
+			array(
+				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+				sprintf( __( 'Thank you for choosing %s for %s. We are excited to get started.', 'ajforms' ), '{site_name}', '{service_name}' ),
+				__( 'Our team will be in touch soon with next steps. In the meantime, feel free to reach out with any questions.', 'ajforms' ),
+			),
+			$email_tokens
+		);
+
+		$message = $this->render_branded_email_html( array_merge(
+			array(
+				'kicker'         => $site_name,
+				'heading'        => $copy['heading'],
+				'paragraphs'     => $copy['paragraphs'],
+				'info_box_value' => $service_display,
+			),
+			$this->get_service_purchase_welcome_email_static_parts()
+		) );
+
+		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+		if ( is_email( $from_email ) ) {
+			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
+			$headers[] = 'Reply-To: ' . $from_email;
+		}
+
+		return (bool) $this->send_branded_wp_mail( $customer->email, $subject, $message, $headers, $from_email, $from_name );
+	}
+
+	/**
+	 * Sends the short "thank you for your purchase" welcome text via AJOps/AJPhone (Zoom SMS).
+	 * AJCore has no Zoom credentials of its own, so this relays the send through a small
+	 * server-to-server AJOps endpoint authenticated with the same secret used by the AJPhone
+	 * automation cron (AJOPS_AJPHONE_CRON_SECRET here, AJPHONE_CRON_SECRET on the AJOps side —
+	 * same value, configured once on each side).
+	 */
+	private function send_service_purchase_welcome_text( $request ) {
+		$customer = $this->get_pdb()->get_row(
+			$this->get_pdb()->prepare(
+				"SELECT name, phone FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				sanitize_text_field( (string) $request->stripe_customer_id )
+			)
+		);
+		$phone = $customer && ! empty( $customer->phone ) ? sanitize_text_field( (string) $customer->phone ) : '';
+		if ( '' === $phone ) {
+			return false;
+		}
+
+		$brand           = $this->get_customer_brand_context( $request->stripe_customer_id );
+		$service_display = '' !== (string) $request->service_name ? sanitize_text_field( (string) $request->service_name ) : __( 'your purchase', 'ajforms' );
+		$name            = $customer && ! empty( $customer->name ) ? sanitize_text_field( (string) $customer->name ) : '';
+
+		$message = sprintf(
+			/* translators: 1: customer name or "there", 2: site/brand name, 3: purchased service name */
+			__( 'Hi %1$s, thank you for choosing %2$s for %3$s. We\xe2\x80\x99re excited to help \xe2\x80\x94 feel free to call or text us anytime at (704) 307-2135 with any questions.', 'ajforms' ),
+			'' !== $name ? $name : __( 'there', 'ajforms' ),
+			$brand['site_name'],
+			$service_display
+		);
+
+		return $this->notify_ajops_send_sms( $phone, $message );
+	}
+
+	/** Low-level relay to AJOps' server-to-server AJPhone endpoint. Returns false (and logs) on
+	 *  any misconfiguration or failure rather than throwing — a welcome text is best-effort and
+	 *  must never block service request creation. */
+	private function notify_ajops_send_sms( $to, $message ) {
+		$base_url = defined( 'AJOPS_BASE_URL' ) ? rtrim( (string) AJOPS_BASE_URL, '/' ) : '';
+		$secret   = defined( 'AJOPS_AJPHONE_CRON_SECRET' ) ? (string) AJOPS_AJPHONE_CRON_SECRET : '';
+		if ( '' === $base_url || '' === $secret ) {
+			$this->log_portal_event(
+				'service_purchase_welcome_text_skipped',
+				array(
+					'severity' => 'warning',
+					'source'   => 'auto_welcome',
+					'details'  => array( 'reason' => 'AJOPS_BASE_URL / AJOPS_AJPHONE_CRON_SECRET not configured.' ),
+				)
+			);
+			return false;
+		}
+
+		$response = wp_remote_post(
+			$base_url . '/api/ajphone/notify',
+			array(
+				'timeout' => 15,
+				'headers' => array(
+					'Content-Type' => 'application/json',
+					'X-Cron-Secret' => $secret,
+				),
+				'body'    => wp_json_encode( array( 'to' => $to, 'message' => $message ) ),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			$this->log_portal_event(
+				'service_purchase_welcome_text_failed',
+				array(
+					'severity' => 'error',
+					'source'   => 'auto_welcome',
+					'details'  => array( 'error' => $response->get_error_message() ),
+				)
+			);
+			return false;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		if ( $code < 200 || $code >= 300 ) {
+			$this->log_portal_event(
+				'service_purchase_welcome_text_failed',
+				array(
+					'severity' => 'error',
+					'source'   => 'auto_welcome',
+					'details'  => array( 'status' => $code, 'body' => wp_remote_retrieve_body( $response ) ),
+				)
+			);
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Fires the welcome email + welcome text exactly once for a newly-created add_service
+	 * service request, then advances its SVC status from 'new' to 'welcome' so a second call
+	 * (from a retry, a resync, or any other path) is always a no-op. This is the ONLY place
+	 * that should trigger the purchase-welcome notifications — call it right after any code
+	 * path creates a fresh add_service row, never call send_service_purchase_welcome_email/
+	 * _text directly.
+	 */
+	public function maybe_send_service_purchase_welcome( $request_id ) {
+		$request_id = absint( $request_id );
+		if ( ! $request_id ) {
+			return;
+		}
+
+		$pdb     = $this->get_pdb();
+		$request = $pdb->get_row( $pdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE id = %d LIMIT 1", $request_id ) );
+		if ( ! $request || 'add_service' !== sanitize_key( (string) $request->request_type ) ) {
+			return;
+		}
+
+		$current_service_status = ! empty( $request->service_status ) ? sanitize_key( (string) $request->service_status ) : 'new';
+		if ( 'new' !== $current_service_status ) {
+			return; // Already welcomed (or moved past it) — never re-send.
+		}
+
+		$email_sent = $this->send_service_purchase_welcome_email( $request );
+		$text_sent  = $this->send_service_purchase_welcome_text( $request );
+
+		$pdb->update(
+			$this->get_portal_service_requests_table(),
+			array( 'service_status' => 'welcome' ),
+			array( 'id' => $request_id ),
+			array( '%s' ),
+			array( '%d' )
+		);
+
+		$this->add_portal_service_request_history(
+			$request_id,
+			'status_changed',
+			array(
+				'status_before'         => sanitize_key( (string) $request->status ),
+				'status_after'          => sanitize_key( (string) $request->status ),
+				'service_status_before' => 'new',
+				'service_status_after'  => 'welcome',
+				'note'                  => __( 'Welcome email and text sent automatically after purchase.', 'ajforms' ),
+				'details'               => array( 'source' => 'auto_welcome', 'email_sent' => $email_sent, 'text_sent' => $text_sent ),
+			)
+		);
 	}
 
 	/** Sends a branded follow-up email to a Lead. Used by the AJOps "Send Follow-up Email"
@@ -14199,6 +14416,7 @@ class AJForms_Admin {
 	private function get_portal_sr_service_status_labels() {
 		return array(
 			'new'                    => __( 'New', 'ajforms' ),
+			'welcome'                => __( 'Welcome', 'ajforms' ),
 			'under_review'           => __( 'Under Review', 'ajforms' ),
 			'pending_customer'       => __( 'Pending Customer', 'ajforms' ),
 			'pending_agent'          => __( 'Pending Agent', 'ajforms' ),
@@ -14236,6 +14454,7 @@ class AJForms_Admin {
 			// Registered Agent Subscription would.
 			'llc_setup' => array(
 				'new',
+				'welcome',
 				'meeting_scheduled',
 				'sosnc_filing',
 				'llc_documents_emailed',
@@ -14246,6 +14465,7 @@ class AJForms_Admin {
 			// once the one-time ID/address proof setup is done, same reasoning as llc_setup above.
 			'virtual_office_setup' => array(
 				'new',
+				'welcome',
 				'signing_cmra',
 				'id_proof_needed',
 				'address_proof_needed',
@@ -14255,6 +14475,7 @@ class AJForms_Admin {
 			// Buying this subscription means one thing: get the CMRA signed, then it's active — no other steps.
 			'virtual_office_subscription' => array(
 				'new',
+				'welcome',
 				'signing_cmra',
 				'active',
 				'cancelled',
@@ -14263,6 +14484,7 @@ class AJForms_Admin {
 			// customer does it), then it's active — no other steps.
 			'registered_agent_subscription' => array(
 				'new',
+				'welcome',
 				'updating_sosn',
 				'active',
 				'cancelled',
@@ -16366,6 +16588,7 @@ class AJForms_Admin {
 				),
 				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%d', '%s', '%d', '%s', '%s', '%s' )
 			);
+			$this->maybe_send_service_purchase_welcome( (int) $pdb->insert_id );
 		}
 	}
 
