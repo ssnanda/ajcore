@@ -412,13 +412,23 @@ $delete_url = wp_nonce_url(
 						<option value="<?php echo esc_url( $lead_action_url( $action_key ) ); ?>"><?php echo esc_html( $action_label ); ?></option>
 					<?php endforeach; ?>
 				</select>
-				<select id="ajf-lead-pipeline-select" onchange="if(this.value){ location.href = this.value; }">
+				<select id="ajf-lead-pipeline-select" onchange="
+					if ( ! this.value ) { return; }
+					var chosen = this.options[ this.selectedIndex ];
+					if ( chosen && 'future_follow_up' === chosen.dataset.stage ) {
+						var followUpDate = prompt( '<?php echo esc_js( __( 'Follow up on which date? (YYYY-MM-DD)', 'ajforms' ) ); ?>' );
+						if ( ! followUpDate ) { this.value = ''; return; }
+						location.href = this.value + '&follow_up_at=' + encodeURIComponent( followUpDate );
+						return;
+					}
+					location.href = this.value;
+				">
 					<option value=""><?php esc_html_e( 'Change lead status…', 'ajforms' ); ?></option>
 					<?php foreach ( $pipeline_select_labels as $stage_key => $stage_label ) : ?>
 						<?php if ( $stage_key === $lead_pipeline_status ) : ?>
 							<?php continue; ?>
 						<?php endif; ?>
-						<option value="<?php echo esc_url( $pipeline_action_url( $stage_key ) ); ?>"><?php echo esc_html( $stage_label ); ?></option>
+						<option data-stage="<?php echo esc_attr( $stage_key ); ?>" value="<?php echo esc_url( $pipeline_action_url( $stage_key ) ); ?>"><?php echo esc_html( $stage_label ); ?></option>
 					<?php endforeach; ?>
 				</select>
 				<?php if ( in_array( $lead->status, array( 'new', 'read' ), true ) ) : ?>

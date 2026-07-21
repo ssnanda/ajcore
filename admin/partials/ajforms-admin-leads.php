@@ -306,6 +306,17 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 			font-weight: 700;
 		}
 
+		.ajforms-follow-up-date {
+			font-size: 11px;
+			font-weight: 600;
+			color: #64748b;
+			align-self: center;
+		}
+
+		.ajforms-follow-up-date.is-due {
+			color: #b91c1c;
+		}
+
 		.ajforms-status-badge.new {
 			background: #fef3c7;
 			color: #92400e;

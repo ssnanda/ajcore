@@ -60,6 +60,7 @@ class AJForms_Activator {
 			lead_data longtext NOT NULL,
 			status varchar(50) DEFAULT 'new' NOT NULL,
 			lead_status varchar(50) DEFAULT 'new' NOT NULL,
+			lead_follow_up_at datetime NULL,
 			ip_address varchar(100) DEFAULT '' NOT NULL,
 			source_url text NULL,
 			user_agent text NULL,
@@ -67,6 +68,7 @@ class AJForms_Activator {
 			PRIMARY KEY  (id),
 			KEY form_id (form_id),
 			KEY status (status),
+			KEY lead_follow_up_at (lead_follow_up_at),
 			KEY lead_status (lead_status)
 		) $charset_collate;
 
@@ -1112,6 +1114,10 @@ class AJForms_Activator {
 			if ( ! $has_lead_pipeline_status_col ) {
 				$wpdb->query( "ALTER TABLE $table_leads ADD COLUMN lead_status varchar(50) DEFAULT 'new' NOT NULL, ADD KEY lead_status (lead_status)" );
 			}
+			$has_lead_follow_up_col = $wpdb->get_var( "SHOW COLUMNS FROM $table_leads LIKE 'lead_follow_up_at'" );
+			if ( ! $has_lead_follow_up_col ) {
+				$wpdb->query( "ALTER TABLE $table_leads ADD COLUMN lead_follow_up_at datetime NULL, ADD KEY lead_follow_up_at (lead_follow_up_at)" );
+			}
 
 			// "unread" renamed to "new" (default status for a fresh lead — "read" is now set
 			// automatically when staff open the lead, not via a manual dropdown).
@@ -1434,6 +1440,7 @@ class AJForms_Activator {
 				lead_data longtext NOT NULL,
 				status varchar(50) DEFAULT 'new' NOT NULL,
 				lead_status varchar(50) DEFAULT 'new' NOT NULL,
+				lead_follow_up_at datetime NULL,
 				ip_address varchar(100) DEFAULT '' NOT NULL,
 				source_url text NULL,
 				user_agent text NULL,
@@ -1447,6 +1454,7 @@ class AJForms_Activator {
 				KEY form_id (form_id),
 				KEY status (status),
 				KEY lead_status (lead_status),
+				KEY lead_follow_up_at (lead_follow_up_at),
 				KEY site_uuid (site_uuid),
 				KEY stripe_customer_id (stripe_customer_id),
 				KEY merged_into_lead_id (merged_into_lead_id),
@@ -1500,6 +1508,9 @@ class AJForms_Activator {
 		}
 		if ( ! $pdb->get_var( "SHOW COLUMNS FROM $shared_leads LIKE 'lead_status'" ) ) {
 			$pdb->query( "ALTER TABLE $shared_leads ADD COLUMN lead_status varchar(50) DEFAULT 'new' NOT NULL, ADD KEY lead_status (lead_status)" );
+		}
+		if ( ! $pdb->get_var( "SHOW COLUMNS FROM $shared_leads LIKE 'lead_follow_up_at'" ) ) {
+			$pdb->query( "ALTER TABLE $shared_leads ADD COLUMN lead_follow_up_at datetime NULL, ADD KEY lead_follow_up_at (lead_follow_up_at)" );
 		}
 
 		// 3. Local → shared migration for this site's existing leads. Idempotent: each copied

@@ -52,6 +52,7 @@ class AJForms {
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_styles' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_scripts' ) );
 		add_action( 'admin_notices', array( $plugin_admin, 'display_stripe_mode_admin_notice' ) );
+		add_action( 'admin_notices', array( $plugin_admin, 'display_lead_action_error_notice' ) );
 		add_filter( 'plugin_action_links_' . AJFORMS_PLUGIN_BASENAME, array( $plugin_admin, 'add_plugin_action_links' ) );
 		add_filter( 'plugin_row_meta', array( $plugin_admin, 'add_plugin_row_meta_links' ), 10, 2 );
 

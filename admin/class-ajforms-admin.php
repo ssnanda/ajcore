@@ -13738,15 +13738,23 @@ class AJForms_Admin {
 
 	/** Human label for a lead's site_uuid, resolved from the shared aj_shared_sites control
 	 *  table (domain column, stripped to a bare hostname) — same pattern as get_site_label() in
-	 *  class-ajcore-rest-api.php, reimplemented here since pipeline resolution lives in this class. */
-	private function get_lead_site_domain( $site_uuid ) {
-		$site_uuid = (string) $site_uuid;
-		if ( '' === $site_uuid ) {
-			return '';
+	 *  class-ajcore-rest-api.php, reimplemented here since pipeline resolution lives in this class.
+	 *  Falls back to this PHP process's own home_url() when the site_uuid is blank or has no
+	 *  matching row — a lead's site_uuid can be blank for older/locally-created rows, and in that
+	 *  case the current site's own identity is still a reliable signal for which pipeline applies. */
+	private function get_lead_site_domain( $site_uuid, &$used_fallback = null ) {
+		$site_uuid     = (string) $site_uuid;
+		$used_fallback = false;
+		if ( '' !== $site_uuid ) {
+			$pdb    = $this->get_leads_db();
+			$table  = $pdb->prefix . 'aj_shared_sites';
+			$domain = (string) $pdb->get_var( $pdb->prepare( "SELECT domain FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $site_uuid ) );
+			if ( '' !== $domain ) {
+				return $domain;
+			}
 		}
-		$pdb   = $this->get_leads_db();
-		$table = $pdb->prefix . 'aj_shared_sites';
-		return (string) $pdb->get_var( $pdb->prepare( "SELECT domain FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $site_uuid ) );
+		$used_fallback = true;
+		return (string) home_url();
 	}
 
 	/**
@@ -13756,7 +13764,22 @@ class AJForms_Admin {
 	 * to that business); every other site (including NC LLC Agents) skips straight to Customer.
 	 */
 	public function get_lead_pipeline_linear_stages( $site_uuid = '' ) {
-		$domain = $this->get_lead_site_domain( $site_uuid );
+		$used_fallback = false;
+		$domain        = $this->get_lead_site_domain( $site_uuid, $used_fallback );
+		// Only worth logging when the site_uuid → aj_shared_sites lookup came up empty and this
+		// process fell back to its own home_url() — that's the one path that can silently
+		// mis-resolve a lead's pipeline (e.g. a University lead viewed via a non-University
+		// request context). A normal, successfully-resolved NC lead logs nothing.
+		if ( $used_fallback && '' !== (string) $site_uuid ) {
+			$this->log_portal_event(
+				'lead_pipeline_site_lookup_missed',
+				array(
+					'severity' => 'warning',
+					'source'   => 'get_lead_pipeline_linear_stages',
+					'details'  => array( 'site_uuid' => (string) $site_uuid, 'fallback_domain' => $domain ),
+				)
+			);
+		}
 		if ( false !== strpos( $domain, 'universityofficesuites.com' ) ) {
 			return array( 'new', 'auto_reached', 'engaged', 'tour', 'customer' );
 		}
@@ -13831,11 +13854,11 @@ class AJForms_Admin {
 	 * atomically, whether the caller is the AJOps stepper UI or the auto-outreach cron's status
 	 * flip. Never update the `lead_status` column directly anywhere else.
 	 */
-	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '' ) {
+	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '', $follow_up_at = '' ) {
 		$pdb     = $this->get_leads_db();
 		$table   = $this->get_leads_table();
 		$lead_id = absint( $lead_id );
-		$lead    = $pdb->get_row( $pdb->prepare( "SELECT id, lead_status FROM `{$table}` WHERE id = %d", $lead_id ) );
+		$lead    = $pdb->get_row( $pdb->prepare( "SELECT id, lead_status, lead_follow_up_at FROM `{$table}` WHERE id = %d", $lead_id ) );
 		if ( ! $lead ) {
 			return new WP_Error( 'not_found', __( 'Lead not found.', 'ajforms' ) );
 		}
@@ -13851,10 +13874,22 @@ class AJForms_Admin {
 			return new WP_Error( 'missing_customer', __( 'Pick a customer to link this lead to before marking it Customer.', 'ajforms' ) );
 		}
 
+		// Future Follow-Up is only useful if it actually comes back to someone's attention —
+		// require a date rather than letting it silently become a fourth, undated "lost" bucket.
+		$follow_up_at   = sanitize_text_field( (string) $follow_up_at );
+		$follow_up_mysql = '';
+		if ( 'future_follow_up' === $new ) {
+			$follow_up_timestamp = strtotime( $follow_up_at );
+			if ( '' === $follow_up_at || false === $follow_up_timestamp ) {
+				return new WP_Error( 'missing_follow_up_date', __( 'Pick a follow-up date before marking this Future Follow-Up.', 'ajforms' ) );
+			}
+			$follow_up_mysql = gmdate( 'Y-m-d H:i:s', $follow_up_timestamp );
+		}
+
 		$old  = '' !== (string) $lead->lead_status ? sanitize_key( (string) $lead->lead_status ) : 'new';
 		$note = sanitize_textarea_field( (string) $note );
 
-		if ( $old === $new && '' === $note ) {
+		if ( $old === $new && '' === $note && '' === $follow_up_mysql ) {
 			return $lead;
 		}
 
@@ -13872,6 +13907,15 @@ class AJForms_Admin {
 			$update_data['status'] = 'lost';
 			$update_formats[]      = '%s';
 		}
+		if ( 'future_follow_up' === $new ) {
+			$update_data['lead_follow_up_at'] = $follow_up_mysql;
+			$update_formats[]                 = '%s';
+		} elseif ( $old !== $new ) {
+			// Leaving future_follow_up for any other stage clears the stale date rather than
+			// leaving an old reminder attached to a lead that's since moved on.
+			$update_data['lead_follow_up_at'] = null;
+			$update_formats[]                 = '%s';
+		}
 
 		$pdb->update(
 			$table,
@@ -13882,14 +13926,18 @@ class AJForms_Admin {
 		);
 
 		if ( $old !== $new ) {
+			$details = array( 'source' => 'ops_api' );
+			if ( '' !== $follow_up_mysql ) {
+				$details['follow_up_at'] = $follow_up_mysql;
+			}
 			$this->add_lead_status_history(
 				$lead_id,
 				'status_changed',
 				array(
 					'status_before' => $old,
 					'status_after'  => $new,
-					'note'          => $note,
-					'details'       => array( 'source' => 'ops_api' ),
+					'note'          => '' !== $follow_up_mysql ? trim( $note . ' Follow up on ' . gmdate( 'M j, Y', strtotime( $follow_up_mysql ) ) . '.' ) : $note,
+					'details'       => $details,
 				)
 			);
 		} elseif ( '' !== $note ) {
@@ -13897,6 +13945,7 @@ class AJForms_Admin {
 		}
 
 		$lead->lead_status = $new;
+		$lead->lead_follow_up_at = isset( $update_data['lead_follow_up_at'] ) ? $update_data['lead_follow_up_at'] : ( isset( $lead->lead_follow_up_at ) ? $lead->lead_follow_up_at : '' );
 		return $lead;
 	}
 
@@ -24220,6 +24269,19 @@ class AJForms_Admin {
 		<?php
 	}
 
+	/** Surfaces the one WP_Error case handle_lead_actions() can hit (missing follow-up date on a
+	 *  set_pipeline_status GET action) — everything else there is either a fixed set of values or
+	 *  a no-op on bad input, but this one has a real, user-actionable failure mode. */
+	public function display_lead_action_error_notice() {
+		$key     = 'ajforms_lead_action_error_' . get_current_user_id();
+		$message = get_transient( $key );
+		if ( ! $message ) {
+			return;
+		}
+		delete_transient( $key );
+		echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( $message ) . '</p></div>';
+	}
+
 	private function handle_lead_actions() {
 		$wpdb = $this->get_leads_db();
 
@@ -24410,7 +24472,11 @@ class AJForms_Admin {
 				// lost) — separate from the status field handled above. Goes through the
 				// same choke point AJOps' stepper and the outreach cron use, so history logs here too.
 				$pipeline_status = isset( $_GET['pipeline_status'] ) ? sanitize_text_field( wp_unslash( $_GET['pipeline_status'] ) ) : '';
-				$this->update_lead_pipeline_status_from_ops( $lead_id, $pipeline_status );
+				$follow_up_at    = isset( $_GET['follow_up_at'] ) ? sanitize_text_field( wp_unslash( $_GET['follow_up_at'] ) ) : '';
+				$pipeline_result = $this->update_lead_pipeline_status_from_ops( $lead_id, $pipeline_status, '', '', $follow_up_at );
+				if ( is_wp_error( $pipeline_result ) ) {
+					set_transient( 'ajforms_lead_action_error_' . get_current_user_id(), $pipeline_result->get_error_message(), 60 );
+				}
 			}
 
 			$redirect = admin_url( 'admin.php?page=ajforms-leads' );

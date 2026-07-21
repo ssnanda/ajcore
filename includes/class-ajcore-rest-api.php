@@ -6756,6 +6756,7 @@ class AJCore_REST_API {
 			'form_title'          => isset( $row['form_title'] ) ? (string) $row['form_title'] : '',
 			'status'              => isset( $row['status'] ) ? (string) $row['status'] : 'new',
 			'lead_status'         => isset( $row['lead_status'] ) && '' !== $row['lead_status'] ? (string) $row['lead_status'] : 'new',
+			'lead_follow_up_at'   => isset( $row['lead_follow_up_at'] ) ? (string) $row['lead_follow_up_at'] : '',
 			'name'                => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
 			'email'               => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
 			'phone'               => $this->format_us_phone_for_display( $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) ),
@@ -6858,7 +6859,7 @@ class AJCore_REST_API {
 		// per-site/local, so a JOIN can't resolve titles for leads captured on other sites.
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT l.id, l.form_id, l.form_title, l.lead_data, l.status, l.lead_status, l.source_url, l.user_agent, l.created_at, l.updated_at, l.site_uuid, l.stripe_customer_id, l.merged_into_lead_id
+				"SELECT l.id, l.form_id, l.form_title, l.lead_data, l.status, l.lead_status, l.lead_follow_up_at, l.source_url, l.user_agent, l.created_at, l.updated_at, l.site_uuid, l.stripe_customer_id, l.merged_into_lead_id
 				 FROM `{$leads_table}` l
 				 WHERE {$where}
 				 ORDER BY l.created_at DESC, l.id DESC
@@ -7458,12 +7459,24 @@ class AJCore_REST_API {
 			absint( $request->get_param( 'id' ) ),
 			(string) $request->get_param( 'lead_status' ),
 			(string) ( $request->get_param( 'note' ) ?? '' ),
-			(string) ( $request->get_param( 'stripe_customer_id' ) ?? '' )
+			(string) ( $request->get_param( 'stripe_customer_id' ) ?? '' ),
+			(string) ( $request->get_param( 'follow_up_at' ) ?? '' )
 		);
 		if ( is_wp_error( $result ) ) {
-			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 'not_found' === $result->get_error_code() ? 404 : 400 ) );
+			$error_status = 400;
+			if ( 'not_found' === $result->get_error_code() ) {
+				$error_status = 404;
+			}
+			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => $error_status ) );
 		}
-		return rest_ensure_response( array( 'success' => true, 'id' => (int) $result->id, 'lead_status' => (string) $result->lead_status ) );
+		return rest_ensure_response(
+			array(
+				'success'         => true,
+				'id'              => (int) $result->id,
+				'lead_status'     => (string) $result->lead_status,
+				'lead_follow_up_at' => isset( $result->lead_follow_up_at ) ? (string) $result->lead_follow_up_at : '',
+			)
+		);
 	}
 
 	public function get_ops_lead_pipeline_history( WP_REST_Request $request ) {
