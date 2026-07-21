@@ -315,15 +315,22 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 				// where there's room for the full select) — matches the single-purpose-button style
 				// of the other quick actions in this block.
 				$pipeline_current = ! empty( $item['lead_status'] ) ? sanitize_key( (string) $item['lead_status'] ) : 'new';
-				$pipeline_labels  = array(
-					'new'               => __( 'New', 'ajforms' ),
-					'auto_reached'      => __( 'Auto Reached', 'ajforms' ),
-					'engaged'           => __( 'Engaged', 'ajforms' ),
-					'qualified'         => __( 'Qualified', 'ajforms' ),
-					'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),
-					'proposal_sent'     => __( 'Proposal Sent', 'ajforms' ),
+				// Full label set (for display) vs. the linear "Next" order (Customer/Future Follow-
+				// Up/Lost are branch endpoints, not forward steps — same rule as AJOps' stepper).
+				// This doesn't resolve per-site (Tour for University Office Suites) — WP admin is
+				// a secondary surface to AJOps, so it always uses the simpler 4-stage default here.
+				$pipeline_labels = array(
+					'new'              => __( 'New', 'ajforms' ),
+					'auto_reached'     => __( 'Auto Reached', 'ajforms' ),
+					'engaged'          => __( 'Engaged', 'ajforms' ),
+					'tour'             => __( 'Tour', 'ajforms' ),
+					'customer'         => __( 'Customer', 'ajforms' ),
+					'future_follow_up' => __( 'Future Follow-Up', 'ajforms' ),
+					'lost'             => __( 'Lost', 'ajforms' ),
 				);
-				$pipeline_order = array_keys( $pipeline_labels );
+				// Excludes 'customer' — that transition requires a linked Stripe customer, which
+				// this quick-action link has no way to collect; use Open for that one.
+				$pipeline_order = array( 'new', 'auto_reached', 'engaged' );
 				$pipeline_idx   = array_search( $pipeline_current, $pipeline_order, true );
 				$next_stage     = ( false !== $pipeline_idx && isset( $pipeline_order[ $pipeline_idx + 1 ] ) ) ? $pipeline_order[ $pipeline_idx + 1 ] : '';
 

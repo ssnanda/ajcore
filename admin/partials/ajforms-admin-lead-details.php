@@ -94,16 +94,21 @@ if ( in_array( $lead->status, array( 'new', 'read' ), true ) ) {
 	$status_actions['reopen'] = __( 'Reopen to Inbox', 'ajforms' );
 }
 
-// LEAD STATUS pipeline — separate from $lead->status above, mirrors AJOps' stepper.
+// LEAD STATUS pipeline — separate from $lead->status above, mirrors AJOps' stepper. Full label
+// set for display; 'customer' is excluded from the select below since that transition requires
+// a linked Stripe customer, which this simple select has no way to collect.
 $lead_pipeline_status = ! empty( $lead->lead_status ) ? sanitize_key( (string) $lead->lead_status ) : 'new';
 $pipeline_labels = array(
-	'new'               => __( 'New', 'ajforms' ),
-	'auto_reached'      => __( 'Auto Reached', 'ajforms' ),
-	'engaged'           => __( 'Engaged', 'ajforms' ),
-	'qualified'         => __( 'Qualified', 'ajforms' ),
-	'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),
-	'proposal_sent'     => __( 'Proposal Sent', 'ajforms' ),
+	'new'              => __( 'New', 'ajforms' ),
+	'auto_reached'     => __( 'Auto Reached', 'ajforms' ),
+	'engaged'          => __( 'Engaged', 'ajforms' ),
+	'tour'             => __( 'Tour', 'ajforms' ),
+	'customer'         => __( 'Customer', 'ajforms' ),
+	'future_follow_up' => __( 'Future Follow-Up', 'ajforms' ),
+	'lost'             => __( 'Lost', 'ajforms' ),
 );
+$pipeline_select_labels = $pipeline_labels;
+unset( $pipeline_select_labels['customer'] );
 $pipeline_action_url = function ( $stage ) use ( $lead_id ) {
 	return wp_nonce_url(
 		add_query_arg(
@@ -409,7 +414,7 @@ $delete_url = wp_nonce_url(
 				</select>
 				<select id="ajf-lead-pipeline-select" onchange="if(this.value){ location.href = this.value; }">
 					<option value=""><?php esc_html_e( 'Change lead status…', 'ajforms' ); ?></option>
-					<?php foreach ( $pipeline_labels as $stage_key => $stage_label ) : ?>
+					<?php foreach ( $pipeline_select_labels as $stage_key => $stage_label ) : ?>
 						<?php if ( $stage_key === $lead_pipeline_status ) : ?>
 							<?php continue; ?>
 						<?php endif; ?>

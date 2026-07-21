@@ -13729,18 +13729,38 @@ class AJForms_Admin {
 			'new'               => __( 'New', 'ajforms' ),
 			'auto_reached'      => __( 'Auto Reached', 'ajforms' ),
 			'engaged'           => __( 'Engaged', 'ajforms' ),
-			'qualified'         => __( 'Qualified', 'ajforms' ),
-			'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),
-			'proposal_sent'     => __( 'Proposal Sent', 'ajforms' ),
-			'won'               => __( 'Won', 'ajforms' ),
+			'tour'              => __( 'Tour', 'ajforms' ),
+			'customer'          => __( 'Customer', 'ajforms' ),
+			'future_follow_up'  => __( 'Future Follow-Up', 'ajforms' ),
 			'lost'              => __( 'Lost', 'ajforms' ),
 		);
 	}
 
-	/** The linear (non-terminal) part of the pipeline — Won/Lost are branch endpoints reachable
-	 *  from any of these, not a forward step in the sequence. */
-	public function get_lead_pipeline_linear_stages() {
-		return array( 'new', 'auto_reached', 'engaged', 'qualified', 'meeting_scheduled', 'proposal_sent' );
+	/** Human label for a lead's site_uuid, resolved from the shared aj_shared_sites control
+	 *  table (domain column, stripped to a bare hostname) — same pattern as get_site_label() in
+	 *  class-ajcore-rest-api.php, reimplemented here since pipeline resolution lives in this class. */
+	private function get_lead_site_domain( $site_uuid ) {
+		$site_uuid = (string) $site_uuid;
+		if ( '' === $site_uuid ) {
+			return '';
+		}
+		$pdb   = $this->get_leads_db();
+		$table = $pdb->prefix . 'aj_shared_sites';
+		return (string) $pdb->get_var( $pdb->prepare( "SELECT domain FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $site_uuid ) );
+	}
+
+	/**
+	 * The linear (non-terminal) part of the pipeline for a given lead — Customer/Future Follow-
+	 * Up/Lost are branch endpoints reachable from Engaged onward, not a forward step in the
+	 * sequence. University Office Suites gets an extra "Tour" step (property tours are specific
+	 * to that business); every other site (including NC LLC Agents) skips straight to Customer.
+	 */
+	public function get_lead_pipeline_linear_stages( $site_uuid = '' ) {
+		$domain = $this->get_lead_site_domain( $site_uuid );
+		if ( false !== strpos( $domain, 'universityofficesuites.com' ) ) {
+			return array( 'new', 'auto_reached', 'engaged', 'tour', 'customer' );
+		}
+		return array( 'new', 'auto_reached', 'engaged', 'customer' );
 	}
 
 	private function add_lead_status_history( $lead_id, $event_type, $args = array() ) {
@@ -13827,8 +13847,8 @@ class AJForms_Admin {
 		}
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
-		if ( 'won' === $new && '' === $stripe_customer_id ) {
-			return new WP_Error( 'missing_customer', __( 'Pick a customer to link this lead to before marking it Won.', 'ajforms' ) );
+		if ( 'customer' === $new && '' === $stripe_customer_id ) {
+			return new WP_Error( 'missing_customer', __( 'Pick a customer to link this lead to before marking it Customer.', 'ajforms' ) );
 		}
 
 		$old  = '' !== (string) $lead->lead_status ? sanitize_key( (string) $lead->lead_status ) : 'new';
@@ -13843,7 +13863,7 @@ class AJForms_Admin {
 		// Keep the legacy `status` field (and its Won->customer link) in sync so nothing that
 		// still reads it — reports, the old Inbox/Lost/Archived filter, etc. — goes stale, even
 		// though the pipeline (lead_status) is now the primary thing staff interact with.
-		if ( 'won' === $new ) {
+		if ( 'customer' === $new ) {
 			$update_data['status']              = 'won';
 			$update_data['stripe_customer_id']  = $stripe_customer_id;
 			$update_formats[]                   = '%s';
@@ -24386,8 +24406,8 @@ class AJForms_Admin {
 				$wpdb->delete( $lead_notes_table, array( 'lead_id' => $lead_id ), array( '%d' ) );
 				$wpdb->delete( $leads_table, array( 'id' => $lead_id ), array( '%d' ) );
 			} elseif ( 'set_pipeline_status' === $action ) {
-				// LEAD STATUS pipeline (new/auto_reached/engaged/qualified/meeting_scheduled/
-				// proposal_sent) — separate from the status field handled above. Goes through the
+				// LEAD STATUS pipeline (new/auto_reached/engaged/tour/customer/future_follow_up/
+				// lost) — separate from the status field handled above. Goes through the
 				// same choke point AJOps' stepper and the outreach cron use, so history logs here too.
 				$pipeline_status = isset( $_GET['pipeline_status'] ) ? sanitize_text_field( wp_unslash( $_GET['pipeline_status'] ) ) : '';
 				$this->update_lead_pipeline_status_from_ops( $lead_id, $pipeline_status );

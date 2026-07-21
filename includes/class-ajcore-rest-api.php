@@ -6772,7 +6772,18 @@ class AJCore_REST_API {
 			'merged_into_lead_id' => isset( $row['merged_into_lead_id'] ) ? (int) $row['merged_into_lead_id'] : 0,
 			'site_uuid'           => $site_uuid,
 			'site_label'          => $this->get_site_label( $site_uuid ),
+			'lead_pipeline_stages' => $this->get_lead_pipeline_stages_for_row( $site_uuid ),
 		);
+	}
+
+	/** The linear LEAD STATUS pipeline for a lead's site (e.g. University Office Suites gets an
+	 *  extra "Tour" step) — see get_lead_pipeline_linear_stages() in AJForms_Admin. */
+	private function get_lead_pipeline_stages_for_row( $site_uuid ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return array( 'new', 'auto_reached', 'engaged', 'customer' );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		return $admin->get_lead_pipeline_linear_stages( $site_uuid );
 	}
 
 	/** Human label for a site_uuid, resolved from the shared aj_shared_sites control table
@@ -7434,7 +7445,7 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'id' => $lead_id, 'status' => $status, 'stripe_customer_id' => 'won' === $status ? $stripe_customer_id : '' ) );
 	}
 
-	/** LEAD STATUS pipeline (new/auto_reached/engaged/qualified/meeting_scheduled/proposal_sent) —
+	/** LEAD STATUS pipeline (new/auto_reached/engaged/tour/customer/future_follow_up/lost) —
 	 *  a separate field from the `status` handled above (new/read/won/lost/duplicate); see
 	 *  update_lead_pipeline_status_from_ops() in AJForms_Admin for the single choke point both
 	 *  this route and the auto-outreach cron's status flip go through. */
