@@ -23347,136 +23347,143 @@ class AJForms_Admin {
 				</div>
 			</div>
 
-			<div class="ajforms-settings-card">
-				<span class="ajforms-settings-pill"><?php esc_html_e( 'University Office Suites', 'ajforms' ); ?></span>
-				<h3><?php esc_html_e( 'University Place Office Suites email templates', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'Used automatically for customers assigned to universityofficesuites.com. These settings are independent of the NC LLC Agents templates below.', 'ajforms' ); ?></p>
-				<?php
-				$university_email_types = array(
-					array( 'label' => __( 'Password Reset', 'ajforms' ), 'subject' => 'university_wp_password_reset_subject', 'heading' => 'university_wp_password_reset_heading', 'body' => 'university_wp_password_reset_body', 'from_email' => 'university_wp_password_reset_from_email', 'from_name' => 'university_wp_password_reset_from_name', 'tokens' => __( 'Available placeholder: {name}.', 'ajforms' ) ),
-					array( 'label' => __( 'Portal Welcome', 'ajforms' ), 'subject' => 'university_wp_welcome_email_subject', 'heading' => 'university_wp_welcome_heading', 'body' => 'university_wp_welcome_body', 'from_email' => 'university_wp_welcome_from_email', 'from_name' => 'university_wp_welcome_from_name', 'tokens' => __( 'Available placeholder: {name}.', 'ajforms' ) ),
-					array( 'label' => __( 'Service Request Status Update', 'ajforms' ), 'subject' => 'university_wp_service_status_subject', 'heading' => 'university_wp_service_status_heading', 'body' => 'university_wp_service_status_body', 'from_email' => 'university_wp_service_status_from_email', 'from_name' => 'university_wp_service_status_from_name', 'tokens' => __( 'Available placeholders: {name}, {service_name}, {status_label}.', 'ajforms' ) ),
-					array( 'label' => __( 'Lead Follow-up', 'ajforms' ), 'subject' => 'university_lead_followup_email_subject', 'heading' => 'university_lead_followup_heading', 'body' => 'university_lead_followup_body', 'from_email' => 'university_lead_followup_from_email', 'from_name' => 'university_lead_followup_from_name', 'tokens' => __( 'Available placeholder: {name}.', 'ajforms' ) ),
-				);
-				foreach ( $university_email_types as $type ) :
-				?>
-					<div style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;">
-						<h4 style="margin:0 0 12px;font-size:15px;"><?php echo esc_html( $type['label'] ); ?></h4>
-						<div class="ajforms-settings-grid" style="max-width:680px;">
-							<div class="ajforms-settings-field"><label for="<?php echo esc_attr( $type['from_email'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label><input type="email" name="<?php echo esc_attr( $type['from_email'] ); ?>" id="<?php echo esc_attr( $type['from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email'] ] ); ?>"></div>
-							<div class="ajforms-settings-field"><label for="<?php echo esc_attr( $type['from_name'] ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label><input type="text" name="<?php echo esc_attr( $type['from_name'] ); ?>" id="<?php echo esc_attr( $type['from_name'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_name'] ] ); ?>"></div>
-						</div>
-						<div class="ajforms-settings-field" style="max-width:680px;margin-top:14px;"><label for="<?php echo esc_attr( $type['subject'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label><input type="text" name="<?php echo esc_attr( $type['subject'] ); ?>" id="<?php echo esc_attr( $type['subject'] ); ?>" value="<?php echo esc_attr( $settings[ $type['subject'] ] ); ?>"></div>
-						<div class="ajforms-settings-field" style="max-width:680px;margin-top:14px;"><label for="<?php echo esc_attr( $type['heading'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label><input type="text" name="<?php echo esc_attr( $type['heading'] ); ?>" id="<?php echo esc_attr( $type['heading'] ); ?>" value="<?php echo esc_attr( $settings[ $type['heading'] ] ); ?>"></div>
-						<div class="ajforms-settings-field" style="max-width:680px;margin-top:14px;"><label for="<?php echo esc_attr( $type['body'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label><textarea name="<?php echo esc_attr( $type['body'] ); ?>" id="<?php echo esc_attr( $type['body'] ); ?>" rows="4"><?php echo esc_textarea( $settings[ $type['body'] ] ); ?></textarea><div class="ajforms-settings-help"><?php echo esc_html( $type['tokens'] ); ?> <?php esc_html_e( 'Use one paragraph per line.', 'ajforms' ); ?></div></div>
-					</div>
-				<?php endforeach; ?>
-			</div>
-
 			<?php
-			$sample_site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
-
-			$sample_copy_password_reset = $this->resolve_email_copy( $settings, 'wp_password_reset_heading', 'wp_password_reset_body', __( 'Set your client portal password', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Use the secure button below to create a new password for your client portal account. This link is private and should only be used by you.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
-			$sample_copy_welcome        = $this->resolve_email_copy( $settings, 'wp_welcome_heading', 'wp_welcome_body', __( 'Welcome to your client portal', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Your client portal access has been enabled. Use the button below to set your password and sign in securely.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
-			$sample_copy_service_status = $this->resolve_email_copy( $settings, 'wp_service_status_heading', 'wp_service_status_body', __( 'Your service request was updated', 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), sprintf( __( 'The status of "%s" has changed.', 'ajforms' ), '{service_name}' ) ), array( '{name}' => 'Jane Doe', '{service_name}' => 'Registered Agent - 1 year', '{status_label}' => 'Active' ) );
-			$sample_copy_lead_followup  = $this->resolve_email_copy( $settings, 'lead_followup_heading', 'lead_followup_body', __( "We'd love to hear from you", 'ajforms' ), array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'We wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.', 'ajforms' ), __( 'Ready to get started? You can review our services and pricing anytime on our website.', 'ajforms' ) ), array( '{name}' => 'Jane Doe' ) );
-
-			$email_types = array(
+			// One shared definition per email TYPE, expanded into a NC LLC + University VARIANT
+			// each — replaces what used to be two separate loops (a University-only card above,
+			// a NC LLC "Templates" card below) with duplicated markup and no way to jump straight
+			// to one email without scrolling past the other nine fields. Variants are all still
+			// rendered (so the existing POST/save handling needs zero changes) but only the one
+			// picked in the dropdown below is visible at a time.
+			$type_defs = array(
 				array(
-					'id'           => 'password_reset',
-					'label'        => __( 'Password Reset', 'ajforms' ),
-					'description'  => __( 'Sent when a client portal user (or, if enabled above, a WordPress user) requests a password reset.', 'ajforms' ),
-					'subject_key'   => 'wp_password_reset_subject',
-					'subject_help'  => __( 'Used for WordPress Users reset password and AJ Core portal reset password.', 'ajforms' ),
-					'from_email_key' => 'wp_password_reset_from_email',
-					'from_name_key'  => 'wp_password_reset_from_name',
-					'heading_key'  => 'wp_password_reset_heading',
-					'body_key'     => 'wp_password_reset_body',
-					'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-					'sample_html'  => $this->render_branded_email_html( array_merge(
-						array(
-							'kicker'     => $sample_site_name,
-							'heading'    => $sample_copy_password_reset['heading'],
-							'paragraphs' => $sample_copy_password_reset['paragraphs'],
-							'cta_url'    => '#',
-						),
-						$this->get_password_reset_email_static_parts()
-					) ),
+					'id'                => 'password_reset',
+					'label'             => __( 'Password Reset', 'ajforms' ),
+					'description'       => __( 'Sent when a client portal user (or, if enabled above, a WordPress user) requests a password reset.', 'ajforms' ),
+					'subject_key'       => 'wp_password_reset_subject',
+					'subject_help'      => __( 'Used for WordPress Users reset password and AJ Core portal reset password.', 'ajforms' ),
+					'from_email_key'    => 'wp_password_reset_from_email',
+					'from_name_key'     => 'wp_password_reset_from_name',
+					'heading_key'       => 'wp_password_reset_heading',
+					'body_key'          => 'wp_password_reset_body',
+					'tokens_help'       => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'default_heading'   => __( 'Set your client portal password', 'ajforms' ),
+					'default_body'      => array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Use the secure button below to create a new password for your client portal account. This link is private and should only be used by you.', 'ajforms' ) ),
+					'static_parts'      => 'get_password_reset_email_static_parts',
+					'sample_extra'      => array( 'cta_url' => '#' ),
 				),
 				array(
-					'id'           => 'welcome',
-					'label'        => __( 'Portal Welcome', 'ajforms' ),
-					'description'  => __( 'Sent when staff enable portal access for a customer, or via the Portal Users bulk "Send Welcome Email" action.', 'ajforms' ),
-					'subject_key'   => 'wp_welcome_email_subject',
-					'subject_help'  => __( 'Used by the Portal Users bulk Send Welcome Email action.', 'ajforms' ),
-					'from_email_key' => 'wp_welcome_from_email',
-					'from_name_key'  => 'wp_welcome_from_name',
-					'heading_key'  => 'wp_welcome_heading',
-					'body_key'     => 'wp_welcome_body',
-					'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-					'sample_html'  => $this->render_branded_email_html( array_merge(
-						array(
-							'kicker'         => $sample_site_name,
-							'heading'        => $sample_copy_welcome['heading'],
-							'paragraphs'     => $sample_copy_welcome['paragraphs'],
-							'info_box_value' => 'jane@example.com',
-							'cta_url'        => '#',
-						),
-						$this->get_welcome_email_static_parts()
-					) ),
+					'id'                => 'welcome',
+					'label'             => __( 'Portal Welcome', 'ajforms' ),
+					'description'       => __( 'Sent when staff enable portal access for a customer, or via the Portal Users bulk "Send Welcome Email" action.', 'ajforms' ),
+					'subject_key'       => 'wp_welcome_email_subject',
+					'subject_help'      => __( 'Used by the Portal Users bulk Send Welcome Email action.', 'ajforms' ),
+					'from_email_key'    => 'wp_welcome_from_email',
+					'from_name_key'     => 'wp_welcome_from_name',
+					'heading_key'       => 'wp_welcome_heading',
+					'body_key'          => 'wp_welcome_body',
+					'tokens_help'       => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'default_heading'   => __( 'Welcome to your client portal', 'ajforms' ),
+					'default_body'      => array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Your client portal access has been enabled. Use the button below to set your password and sign in securely.', 'ajforms' ) ),
+					'static_parts'      => 'get_welcome_email_static_parts',
+					'sample_extra'      => array( 'info_box_value' => 'jane@example.com', 'cta_url' => '#' ),
 				),
 				array(
-					'id'           => 'service_status',
-					'label'        => __( 'Service Request Status Update', 'ajforms' ),
-					'description'  => __( 'Sent to a customer automatically whenever staff change the workflow status of one of their service requests — for example "Update on Registered Agent - 1 year: Active".', 'ajforms' ),
-					'subject_key'   => 'wp_service_status_subject',
-					'subject_help'  => __( 'Use {service_name} and {status_label} as placeholders — each is filled in per email.', 'ajforms' ),
-					'from_email_key' => 'wp_service_status_from_email',
-					'from_name_key'  => 'wp_service_status_from_name',
-					'heading_key'  => 'wp_service_status_heading',
-					'body_key'     => 'wp_service_status_body',
-					'tokens_help'  => __( 'Available placeholders: {name}, {service_name}, {status_label}. One paragraph per line.', 'ajforms' ),
-					'sample_html'  => $this->render_branded_email_html( array_merge(
-						array(
-							'kicker'         => $sample_site_name,
-							'heading'        => $sample_copy_service_status['heading'],
-							'paragraphs'     => $sample_copy_service_status['paragraphs'],
-							'info_box_value' => __( 'Active', 'ajforms' ),
-						),
-						$this->get_service_request_status_email_static_parts()
-					) ),
+					'id'                => 'service_status',
+					'label'             => __( 'Service Request Status Update', 'ajforms' ),
+					'description'       => __( 'Sent to a customer automatically whenever staff change the workflow status of one of their service requests — for example "Update on Registered Agent - 1 year: Active".', 'ajforms' ),
+					'subject_key'       => 'wp_service_status_subject',
+					'subject_help'      => __( 'Use {service_name} and {status_label} as placeholders — each is filled in per email.', 'ajforms' ),
+					'from_email_key'    => 'wp_service_status_from_email',
+					'from_name_key'     => 'wp_service_status_from_name',
+					'heading_key'       => 'wp_service_status_heading',
+					'body_key'          => 'wp_service_status_body',
+					'tokens_help'       => __( 'Available placeholders: {name}, {service_name}, {status_label}. One paragraph per line.', 'ajforms' ),
+					'default_heading'   => __( 'Your service request was updated', 'ajforms' ),
+					'default_body'      => array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), sprintf( __( 'The status of "%s" has changed.', 'ajforms' ), '{service_name}' ) ),
+					'static_parts'      => 'get_service_request_status_email_static_parts',
+					'sample_extra'      => array( 'info_box_value' => __( 'Active', 'ajforms' ) ),
 				),
 				array(
-					'id'           => 'lead_followup',
-					'label'        => __( 'Lead Follow-up', 'ajforms' ),
-					'description'  => __( 'Sent from the AJ Ops Leads page ("Send Follow-up Email" action, single or bulk) to nudge a lead to reach out or purchase.', 'ajforms' ),
-					'subject_key'   => 'lead_followup_email_subject',
-					'subject_help'  => __( 'Used by the AJ Ops Leads "Send Follow-up Email" action.', 'ajforms' ),
-					'from_email_key' => 'lead_followup_from_email',
-					'from_name_key'  => 'lead_followup_from_name',
-					'heading_key'  => 'lead_followup_heading',
-					'body_key'     => 'lead_followup_body',
-					'tokens_help'  => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
-					'sample_html'  => $this->render_branded_email_html( array_merge(
-						array(
-							'kicker'     => $sample_site_name,
-							'heading'    => $sample_copy_lead_followup['heading'],
-							'paragraphs' => $sample_copy_lead_followup['paragraphs'],
-						),
-						$this->get_lead_followup_email_static_parts()
-					) ),
+					'id'                => 'lead_followup',
+					'label'             => __( 'Lead Follow-up', 'ajforms' ),
+					'description'       => __( 'Sent from the AJ Ops Leads page ("Send Follow-up Email" action, single or bulk) to nudge a lead to reach out or purchase.', 'ajforms' ),
+					'subject_key'       => 'lead_followup_email_subject',
+					'subject_help'      => __( 'Used by the AJ Ops Leads "Send Follow-up Email" action.', 'ajforms' ),
+					'from_email_key'    => 'lead_followup_from_email',
+					'from_name_key'     => 'lead_followup_from_name',
+					'heading_key'       => 'lead_followup_heading',
+					'body_key'          => 'lead_followup_body',
+					'tokens_help'       => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'default_heading'   => __( "We'd love to hear from you", 'ajforms' ),
+					'default_body'      => array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'We wanted to follow up on your recent inquiry with {site_name}. If you have any questions or would like to talk through your options, give us a call — we are happy to help.', 'ajforms' ), __( 'Ready to get started? You can review our services and pricing anytime on our website.', 'ajforms' ) ),
+					'static_parts'      => null, // brand-dependent — resolved per-variant below.
+					'sample_extra'      => array(),
 				),
 			);
+
+			$brands = array(
+				'ncllc'      => array( 'label' => __( 'NC LLC Agents', 'ajforms' ), 'prefix' => '', 'entity_name' => 'NC LLC Agents Inc', 'site_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
+				'university' => array( 'label' => __( 'University Office Suites', 'ajforms' ), 'prefix' => 'university_', 'entity_name' => 'University Place Office Suites LLC', 'site_name' => 'University Place Office Suites' ),
+			);
+
+			$email_variants = array();
+			foreach ( $brands as $brand_key => $brand ) {
+				foreach ( $type_defs as $type ) {
+					$key = function ( $base ) use ( $brand ) {
+						return '' === $brand['prefix'] ? $base : $brand['prefix'] . $base;
+					};
+					$tokens = array( '{name}' => 'Jane Doe', '{service_name}' => 'Registered Agent - 1 year', '{status_label}' => 'Active', '{site_name}' => $brand['site_name'] );
+					$copy   = $this->resolve_email_copy( $settings, $key( $type['heading_key'] ), $key( $type['body_key'] ), $type['default_heading'], $type['default_body'], $tokens );
+
+					$static_parts = 'lead_followup' === $type['id']
+						? $this->get_lead_followup_email_static_parts( array( 'entity_name' => $brand['entity_name'] ) )
+						: $this->{$type['static_parts']}();
+
+					$email_variants[] = array_merge( $type, array(
+						'variant_key'    => $brand_key . '_' . $type['id'],
+						'variant_label'  => $brand['label'] . ' — ' . $type['label'],
+						'brand_label'    => $brand['label'],
+						'subject_key'    => $key( $type['subject_key'] ),
+						'heading_key'    => $key( $type['heading_key'] ),
+						'body_key'       => $key( $type['body_key'] ),
+						'from_email_key' => $key( $type['from_email_key'] ),
+						'from_name_key'  => $key( $type['from_name_key'] ),
+						'sample_html'    => $this->render_branded_email_html( array_merge(
+							array(
+								'kicker'     => $brand['site_name'],
+								'heading'    => $copy['heading'],
+								'paragraphs' => $copy['paragraphs'],
+							),
+							$type['sample_extra'],
+							$static_parts
+						) ),
+					) );
+				}
+			}
 			?>
 			<div class="ajforms-settings-card">
 				<span class="ajforms-settings-pill"><?php esc_html_e( 'Templates', 'ajforms' ); ?></span>
 				<h3><?php esc_html_e( 'Email types', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'Every customer-facing branded email this site sends: who it is from, its editable subject and body, and a live preview using sample data.', 'ajforms' ); ?></p>
-				<?php foreach ( $email_types as $type ) : ?>
-					<div style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;">
-						<h4 style="margin:0 0 6px;font-size:15px;"><?php echo esc_html( $type['label'] ); ?></h4>
+				<p><?php esc_html_e( 'Every customer-facing branded email either site sends: who it is from, its editable subject and body, and a live preview using sample data. Pick one below instead of scrolling through all of them.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-field" style="max-width:520px;margin-bottom:6px;">
+					<label for="ajforms-email-variant-select"><?php esc_html_e( 'Email', 'ajforms' ); ?></label>
+					<select id="ajforms-email-variant-select">
+						<?php foreach ( $brands as $brand_key => $brand ) : ?>
+							<optgroup label="<?php echo esc_attr( $brand['label'] ); ?>">
+								<?php foreach ( $email_variants as $variant ) : ?>
+									<?php if ( strpos( $variant['variant_key'], $brand_key . '_' ) === 0 ) : ?>
+										<option value="<?php echo esc_attr( $variant['variant_key'] ); ?>"><?php echo esc_html( $variant['variant_label'] ); ?></option>
+									<?php endif; ?>
+								<?php endforeach; ?>
+							</optgroup>
+						<?php endforeach; ?>
+					</select>
+				</div>
+				<?php foreach ( $email_variants as $i => $type ) : ?>
+					<div class="ajforms-email-variant-panel" data-variant="<?php echo esc_attr( $type['variant_key'] ); ?>" style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;<?php echo 0 === $i ? '' : 'display:none;'; ?>">
+						<h4 style="margin:0 0 6px;font-size:15px;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
 						<p class="description" style="margin:0 0 10px;"><?php echo esc_html( $type['description'] ); ?></p>
-						<div class="ajforms-settings-grid" style="max-width:520px;">
+						<div class="ajforms-settings-grid" style="max-width:920px;">
 							<div class="ajforms-settings-field">
 								<label for="<?php echo esc_attr( $type['from_email_key'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
 								<input name="<?php echo esc_attr( $type['from_email_key'] ); ?>" id="<?php echo esc_attr( $type['from_email_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email_key'] ] ); ?>">
@@ -23488,26 +23495,43 @@ class AJForms_Admin {
 								<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Name above.', 'ajforms' ); ?></div>
 							</div>
 						</div>
-						<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
+						<div class="ajforms-settings-field" style="max-width:920px;margin-top:14px;">
 							<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
 							<input name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['subject_key'] ] ); ?>">
 							<div class="ajforms-settings-help"><?php echo esc_html( $type['subject_help'] ); ?></div>
 						</div>
-						<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
+						<div class="ajforms-settings-field" style="max-width:920px;margin-top:14px;">
 							<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
 							<input name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['heading_key'] ] ); ?>">
 						</div>
-						<div class="ajforms-settings-field" style="max-width:520px;margin-top:14px;">
+						<div class="ajforms-settings-field" style="max-width:920px;margin-top:14px;">
 							<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
 							<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="4"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
 							<div class="ajforms-settings-help"><?php echo esc_html( $type['tokens_help'] ); ?></div>
 						</div>
-						<details style="margin-top:10px;">
+						<details style="margin-top:10px;" <?php echo 0 === $i ? 'open' : ''; ?>>
 							<summary style="cursor:pointer;color:#2563eb;font-weight:600;"><?php esc_html_e( 'Preview email', 'ajforms' ); ?></summary>
 							<iframe sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;max-width:680px;height:460px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;margin-top:8px;"></iframe>
 						</details>
 					</div>
 				<?php endforeach; ?>
+				<script>
+				(function () {
+					var select = document.getElementById( 'ajforms-email-variant-select' );
+					var panels = document.querySelectorAll( '.ajforms-email-variant-panel' );
+					if ( ! select ) { return; }
+					select.addEventListener( 'change', function () {
+						panels.forEach( function ( panel ) {
+							var isSelected = panel.getAttribute( 'data-variant' ) === select.value;
+							panel.style.display = isSelected ? '' : 'none';
+							if ( isSelected ) {
+								var details = panel.querySelector( 'details' );
+								if ( details ) { details.open = true; }
+							}
+						} );
+					} );
+				})();
+				</script>
 				<div class="ajforms-settings-note" style="margin-top:20px;">
 					<strong><?php esc_html_e( 'Want to see what was actually sent?', 'ajforms' ); ?></strong>
 					<p style="margin:6px 0 0;"><?php echo wp_kses_post( sprintf( __( 'Every email this site sends is logged with its real recipient, subject, and full HTML body under %s.', 'ajforms' ), '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'emails' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Client Portal → Emails', 'ajforms' ) . '</a>' ) ); ?></p>
