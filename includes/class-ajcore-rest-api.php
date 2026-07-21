@@ -648,6 +648,8 @@ class AJCore_REST_API {
 			'/ops/leads'              => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_leads',         'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/leads/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_lead_detail',    'permission' => 'can_manage_ops_api' ),
 			'/ops/leads/(?P<id>\d+)/status' => array( 'methods' => 'PATCH',           'callback' => 'update_ops_lead_status', 'permission' => 'can_manage_ops_api' ),
+			'/ops/leads/(?P<id>\d+)/pipeline-status' => array( 'methods' => 'PATCH', 'callback' => 'update_ops_lead_pipeline_status', 'permission' => 'can_manage_ops_api' ),
+			'/ops/leads/(?P<id>\d+)/pipeline-history' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_lead_pipeline_history', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tasks' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tasks', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/compliance' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_compliance', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/service-requests' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_service_requests', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -6753,6 +6755,7 @@ class AJCore_REST_API {
 			'form_id'             => (int) $row['form_id'],
 			'form_title'          => isset( $row['form_title'] ) ? (string) $row['form_title'] : '',
 			'status'              => isset( $row['status'] ) ? (string) $row['status'] : 'new',
+			'lead_status'         => isset( $row['lead_status'] ) && '' !== $row['lead_status'] ? (string) $row['lead_status'] : 'new',
 			'name'                => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
 			'email'               => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
 			'phone'               => $this->format_us_phone_for_display( $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) ),
@@ -6844,7 +6847,7 @@ class AJCore_REST_API {
 		// per-site/local, so a JOIN can't resolve titles for leads captured on other sites.
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT l.id, l.form_id, l.form_title, l.lead_data, l.status, l.source_url, l.user_agent, l.created_at, l.updated_at, l.site_uuid, l.stripe_customer_id, l.merged_into_lead_id
+				"SELECT l.id, l.form_id, l.form_title, l.lead_data, l.status, l.lead_status, l.source_url, l.user_agent, l.created_at, l.updated_at, l.site_uuid, l.stripe_customer_id, l.merged_into_lead_id
 				 FROM `{$leads_table}` l
 				 WHERE {$where}
 				 ORDER BY l.created_at DESC, l.id DESC
@@ -7107,6 +7110,10 @@ class AJCore_REST_API {
 			'lead_auto_outreach_account_key'     => (string) get_option( 'ajcore_lead_auto_outreach_account_key', '' ),
 			'lead_auto_outreach_template'        => (string) get_option( 'ajcore_lead_auto_outreach_template', '' ),
 			'lead_auto_outreach_sites'           => (string) get_option( 'ajcore_lead_auto_outreach_sites', '' ),
+			'service_purchase_welcome_enabled'     => (string) get_option( 'ajcore_service_purchase_welcome_enabled', '0' ),
+			'service_purchase_welcome_from_number' => (string) get_option( 'ajcore_service_purchase_welcome_from_number', '' ),
+			'service_purchase_welcome_account_key' => (string) get_option( 'ajcore_service_purchase_welcome_account_key', '' ),
+			'service_purchase_welcome_sms_template' => (string) get_option( 'ajcore_service_purchase_welcome_sms_template', '' ),
 		) );
 	}
 
@@ -7217,6 +7224,20 @@ class AJCore_REST_API {
 			if ( '' === $sites_raw || null !== json_decode( $sites_raw, true ) ) {
 				update_option( 'ajcore_lead_auto_outreach_sites', $sites_raw, false );
 			}
+		}
+
+		$service_welcome_enabled = $request->get_param( 'service_purchase_welcome_enabled' );
+		if ( null !== $service_welcome_enabled ) {
+			update_option( 'ajcore_service_purchase_welcome_enabled', in_array( (string) $service_welcome_enabled, array( '1', 'true', 'yes', 'on' ), true ) ? '1' : '0', false );
+		}
+		if ( $request->has_param( 'service_purchase_welcome_from_number' ) ) {
+			update_option( 'ajcore_service_purchase_welcome_from_number', sanitize_text_field( (string) $request->get_param( 'service_purchase_welcome_from_number' ) ), false );
+		}
+		if ( $request->has_param( 'service_purchase_welcome_account_key' ) ) {
+			update_option( 'ajcore_service_purchase_welcome_account_key', sanitize_key( (string) $request->get_param( 'service_purchase_welcome_account_key' ) ), false );
+		}
+		if ( $request->has_param( 'service_purchase_welcome_sms_template' ) ) {
+			update_option( 'ajcore_service_purchase_welcome_sms_template', sanitize_textarea_field( (string) $request->get_param( 'service_purchase_welcome_sms_template' ) ), false );
 		}
 
 		$automation_rules = $request->get_param( 'automation_rules' );
@@ -7411,6 +7432,34 @@ class AJCore_REST_API {
 		$wpdb->update( $leads_table, $update_data, array( 'id' => $lead_id ), $update_formats, array( '%d' ) );
 
 		return rest_ensure_response( array( 'id' => $lead_id, 'status' => $status, 'stripe_customer_id' => 'won' === $status ? $stripe_customer_id : '' ) );
+	}
+
+	/** LEAD STATUS pipeline (new/welcomed/engaged/qualified/meeting_scheduled/proposal_sent) —
+	 *  a separate field from the `status` handled above (new/read/won/lost/duplicate); see
+	 *  update_lead_pipeline_status_from_ops() in AJForms_Admin for the single choke point both
+	 *  this route and the auto-outreach cron's status flip go through. */
+	public function update_ops_lead_pipeline_status( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->update_lead_pipeline_status_from_ops(
+			absint( $request->get_param( 'id' ) ),
+			(string) $request->get_param( 'lead_status' ),
+			(string) ( $request->get_param( 'note' ) ?? '' )
+		);
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 'not_found' === $result->get_error_code() ? 404 : 400 ) );
+		}
+		return rest_ensure_response( array( 'success' => true, 'id' => (int) $result->id, 'lead_status' => (string) $result->lead_status ) );
+	}
+
+	public function get_ops_lead_pipeline_history( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		return rest_ensure_response( array( 'history' => $admin->get_lead_status_history_for_ops( absint( $request->get_param( 'id' ) ) ) ) );
 	}
 
 	public function delete_ops_lead( WP_REST_Request $request ) {
@@ -7654,16 +7703,17 @@ class AJCore_REST_API {
 		$result = $wpdb->insert(
 			$table,
 			array(
-				'form_id'    => 0,
-				'lead_data'  => wp_json_encode( $lead_data ),
-				'status'     => $status,
-				'ip_address' => '',
-				'source_url' => '',
-				'user_agent' => 'api',
-				'site_uuid'  => (string) get_option( 'ajcore_site_uuid', '' ),
-				'created_at' => current_time( 'mysql' ),
+				'form_id'     => 0,
+				'lead_data'   => wp_json_encode( $lead_data ),
+				'status'      => $status,
+				'lead_status' => 'new',
+				'ip_address'  => '',
+				'source_url'  => '',
+				'user_agent'  => 'api',
+				'site_uuid'   => (string) get_option( 'ajcore_site_uuid', '' ),
+				'created_at'  => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 
 		if ( ! $result ) {

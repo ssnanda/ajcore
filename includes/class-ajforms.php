@@ -11450,17 +11450,18 @@ class AJForms {
 		$inserted = $leads_db->insert(
 			$leads_table,
 			array(
-				'form_id'    => $form_id,
-				'form_title' => isset( $form->title ) ? (string) $form->title : '',
-				'lead_data'  => wp_json_encode( $lead_data ),
-				'status'     => 'new',
-				'ip_address' => isset( $submission_meta['ip_address'] ) ? $submission_meta['ip_address'] : '',
-				'source_url' => isset( $submission_meta['page_url'] ) ? $submission_meta['page_url'] : '',
-				'user_agent' => isset( $submission_meta['user_agent'] ) ? $submission_meta['user_agent'] : '',
-				'site_uuid'  => (string) get_option( 'ajcore_site_uuid', '' ),
-				'created_at' => current_time( 'mysql' ),
+				'form_id'     => $form_id,
+				'form_title'  => isset( $form->title ) ? (string) $form->title : '',
+				'lead_data'   => wp_json_encode( $lead_data ),
+				'status'      => 'new',
+				'lead_status' => 'new',
+				'ip_address'  => isset( $submission_meta['ip_address'] ) ? $submission_meta['ip_address'] : '',
+				'source_url'  => isset( $submission_meta['page_url'] ) ? $submission_meta['page_url'] : '',
+				'user_agent'  => isset( $submission_meta['user_agent'] ) ? $submission_meta['user_agent'] : '',
+				'site_uuid'   => (string) get_option( 'ajcore_site_uuid', '' ),
+				'created_at'  => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 
 		if ( false === $inserted ) {

@@ -10,6 +10,7 @@ class AJForms_Activator {
 		$table_forms      = $wpdb->prefix . 'aj_forms_forms';
 		$table_leads      = $wpdb->prefix . 'aj_forms_leads';
 		$table_lead_notes = $wpdb->prefix . 'aj_forms_lead_notes';
+		$table_lead_status_history = $wpdb->prefix . 'aj_forms_lead_status_history';
 		$table_portal_files      = $wpdb->prefix . 'aj_portal_files';
 		$table_portal_file_users = $wpdb->prefix . 'aj_portal_file_users';
 		$table_portal_file_tags  = $wpdb->prefix . 'aj_portal_file_tags';
@@ -58,13 +59,15 @@ class AJForms_Activator {
 			form_id bigint(20) unsigned NOT NULL,
 			lead_data longtext NOT NULL,
 			status varchar(50) DEFAULT 'new' NOT NULL,
+			lead_status varchar(50) DEFAULT 'new' NOT NULL,
 			ip_address varchar(100) DEFAULT '' NOT NULL,
 			source_url text NULL,
 			user_agent text NULL,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			KEY form_id (form_id),
-			KEY status (status)
+			KEY status (status),
+			KEY lead_status (lead_status)
 		) $charset_collate;
 
 		CREATE TABLE $table_lead_notes (
@@ -75,6 +78,24 @@ class AJForms_Activator {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			KEY lead_id (lead_id)
+		) $charset_collate;
+
+		CREATE TABLE $table_lead_status_history (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			lead_id bigint(20) unsigned NOT NULL,
+			event_type varchar(50) DEFAULT 'status_changed' NOT NULL,
+			status_before varchar(50) DEFAULT '' NOT NULL,
+			status_after varchar(50) DEFAULT '' NOT NULL,
+			note longtext NULL,
+			actor_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			actor_email varchar(190) DEFAULT '' NOT NULL,
+			details longtext NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY lead_id (lead_id),
+			KEY event_type (event_type),
+			KEY actor_user_id (actor_user_id),
+			KEY created_at (created_at)
 		) $charset_collate;
 
 		CREATE TABLE $table_portal_files (
@@ -1087,6 +1108,10 @@ class AJForms_Activator {
 			if ( ! $has_lead_updated_col ) {
 				$wpdb->query( "ALTER TABLE $table_leads ADD COLUMN updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL" );
 			}
+			$has_lead_pipeline_status_col = $wpdb->get_var( "SHOW COLUMNS FROM $table_leads LIKE 'lead_status'" );
+			if ( ! $has_lead_pipeline_status_col ) {
+				$wpdb->query( "ALTER TABLE $table_leads ADD COLUMN lead_status varchar(50) DEFAULT 'new' NOT NULL, ADD KEY lead_status (lead_status)" );
+			}
 
 			// "unread" renamed to "new" (default status for a fresh lead — "read" is now set
 			// automatically when staff open the lead, not via a manual dropdown).
@@ -1398,6 +1423,7 @@ class AJForms_Activator {
 		// 2. Create the shared tables (mirrors get_shared_portal_table_sql, IF NOT EXISTS form).
 		$shared_leads = $pdb->prefix . 'aj_forms_leads';
 		$shared_notes = $pdb->prefix . 'aj_forms_lead_notes';
+		$shared_lead_status_history = $pdb->prefix . 'aj_forms_lead_status_history';
 		$charset      = $pdb->get_charset_collate();
 
 		$pdb->query(
@@ -1407,6 +1433,7 @@ class AJForms_Activator {
 				form_title varchar(255) DEFAULT '' NOT NULL,
 				lead_data longtext NOT NULL,
 				status varchar(50) DEFAULT 'new' NOT NULL,
+				lead_status varchar(50) DEFAULT 'new' NOT NULL,
 				ip_address varchar(100) DEFAULT '' NOT NULL,
 				source_url text NULL,
 				user_agent text NULL,
@@ -1419,6 +1446,7 @@ class AJForms_Activator {
 				PRIMARY KEY (id),
 				KEY form_id (form_id),
 				KEY status (status),
+				KEY lead_status (lead_status),
 				KEY site_uuid (site_uuid),
 				KEY stripe_customer_id (stripe_customer_id),
 				KEY merged_into_lead_id (merged_into_lead_id),
@@ -1437,6 +1465,25 @@ class AJForms_Activator {
 				KEY lead_id (lead_id)
 			) $charset"
 		);
+		$pdb->query(
+			"CREATE TABLE IF NOT EXISTS $shared_lead_status_history (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				lead_id bigint(20) unsigned NOT NULL,
+				event_type varchar(50) DEFAULT 'status_changed' NOT NULL,
+				status_before varchar(50) DEFAULT '' NOT NULL,
+				status_after varchar(50) DEFAULT '' NOT NULL,
+				note longtext NULL,
+				actor_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+				actor_email varchar(190) DEFAULT '' NOT NULL,
+				details longtext NULL,
+				created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				PRIMARY KEY (id),
+				KEY lead_id (lead_id),
+				KEY event_type (event_type),
+				KEY actor_user_id (actor_user_id),
+				KEY created_at (created_at)
+			) $charset"
+		);
 
 		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $shared_leads ) ) !== $shared_leads ) {
 			update_option(
@@ -1450,6 +1497,9 @@ class AJForms_Activator {
 		// Shared table may pre-date the tracking column (created by an earlier plugin version).
 		if ( ! $pdb->get_var( "SHOW COLUMNS FROM $shared_leads LIKE 'legacy_local_id'" ) ) {
 			$pdb->query( "ALTER TABLE $shared_leads ADD COLUMN legacy_local_id bigint(20) unsigned NOT NULL DEFAULT 0, ADD KEY legacy_local_id (legacy_local_id)" );
+		}
+		if ( ! $pdb->get_var( "SHOW COLUMNS FROM $shared_leads LIKE 'lead_status'" ) ) {
+			$pdb->query( "ALTER TABLE $shared_leads ADD COLUMN lead_status varchar(50) DEFAULT 'new' NOT NULL, ADD KEY lead_status (lead_status)" );
 		}
 
 		// 3. Local → shared migration for this site's existing leads. Idempotent: each copied

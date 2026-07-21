@@ -22,6 +22,17 @@ if ( isset( $_POST['ajf_migrate_leads_nonce'] ) && wp_verify_nonce( sanitize_tex
 	$leads_migration_rerun = true;
 }
 
+// One-time LEAD STATUS cursor-cutover backfill (see backfill_lead_status_for_cursor_cutover()
+// in AJForms_Admin) — run this BEFORE switching the auto-outreach cron over to status-based
+// triggering, so leads already contacted under the old baseline/last-processed cursor don't get
+// re-texted/re-emailed. Idempotent — safe to click more than once.
+$lead_status_backfill_result = null;
+if ( isset( $_POST['ajf_backfill_lead_status_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajf_backfill_lead_status_nonce'] ) ), 'ajf_backfill_lead_status' ) && current_user_can( 'manage_options' ) ) {
+	$lead_status_backfill_admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+	$lead_status_backfill_result = $lead_status_backfill_admin->backfill_lead_status_for_cursor_cutover();
+}
+$lead_status_backfill_done_at = get_option( 'ajcore_lead_status_cursor_backfill_done', '' );
+
 $leads_list_table = new AJForms_Leads_List_Table();
 $leads_list_table->process_bulk_action();
 $leads_list_table->prepare_items();
@@ -106,6 +117,25 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 				<span class="description" style="margin-left:8px;"><?php esc_html_e( 'Safe to click repeatedly — already-copied leads are skipped, never duplicated.', 'ajforms' ); ?></span>
 			</form>
 		<?php endif; ?>
+		<form method="post" style="margin-top:10px;">
+			<?php wp_nonce_field( 'ajf_backfill_lead_status', 'ajf_backfill_lead_status_nonce' ); ?>
+			<button type="submit" class="button button-secondary"><?php esc_html_e( 'Run LEAD STATUS cursor-cutover backfill now', 'ajforms' ); ?></button>
+			<span class="description" style="margin-left:8px;"><?php esc_html_e( 'Run this once before switching Lead Auto Outreach to status-based triggering, so already-contacted leads are marked Welcomed instead of re-texted. Safe to click repeatedly.', 'ajforms' ); ?></span>
+			<?php if ( '' !== (string) $lead_status_backfill_done_at ) : ?>
+				<p class="description"><?php echo esc_html( sprintf( __( 'Last run: %s', 'ajforms' ), $lead_status_backfill_done_at ) ); ?></p>
+			<?php endif; ?>
+			<?php if ( is_array( $lead_status_backfill_result ) ) : ?>
+				<div class="notice notice-success inline" style="margin-top:8px;"><p>
+					<?php echo esc_html( sprintf(
+						/* translators: 1: number of leads updated, 2: legacy cursor cutoff id, 3: number of per-site cursors found */
+						__( 'Backfill complete: %1$d lead(s) marked Welcomed. Legacy cutoff: #%2$d. Per-site cursors found: %3$d.', 'ajforms' ),
+						(int) $lead_status_backfill_result['updated'],
+						(int) $lead_status_backfill_result['legacy_cutoff'],
+						count( (array) $lead_status_backfill_result['per_site_cutoffs'] )
+					) ); ?>
+				</p></div>
+			<?php endif; ?>
+		</form>
 	</details>
 <?php endif; ?>
 <?php if ( ! empty( $leads_migration_errors ) ) : ?>

@@ -13688,6 +13688,236 @@ class AJForms_Admin {
 		return $this->get_leads_db()->prefix . 'aj_forms_lead_notes';
 	}
 
+	private function get_lead_status_history_table() {
+		return $this->get_leads_db()->prefix . 'aj_forms_lead_status_history';
+	}
+
+	/**
+	 * The LEAD STATUS pipeline (distinct from the existing `status` field — new/read/won/lost/
+	 * duplicate — which drives the Inbox/Lost/Archived views and is untouched by this). This is
+	 * a single universal workflow tracker, since leads have no clean "product type" to key
+	 * separate pipelines off the way service requests do. Does not include a "converted" stage —
+	 * `status = won` remains the sole outcome field.
+	 */
+	public function get_lead_pipeline_status_labels() {
+		return array(
+			'new'               => __( 'New', 'ajforms' ),
+			'welcomed'          => __( 'Welcomed', 'ajforms' ),
+			'engaged'           => __( 'Engaged', 'ajforms' ),
+			'qualified'         => __( 'Qualified', 'ajforms' ),
+			'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),
+			'proposal_sent'     => __( 'Proposal Sent', 'ajforms' ),
+		);
+	}
+
+	private function add_lead_status_history( $lead_id, $event_type, $args = array() ) {
+		$pdb     = $this->get_leads_db();
+		$lead_id = absint( $lead_id );
+		if ( ! $lead_id ) {
+			return false;
+		}
+
+		$table = $this->get_lead_status_history_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+			AJForms_Activator::activate();
+		}
+
+		$actor = wp_get_current_user();
+		$args  = wp_parse_args(
+			(array) $args,
+			array(
+				'status_before' => '',
+				'status_after'  => '',
+				'note'          => '',
+				'details'       => array(),
+			)
+		);
+
+		$details = is_array( $args['details'] ) ? $args['details'] : array( 'value' => $args['details'] );
+		return $pdb->insert(
+			$table,
+			array(
+				'lead_id'       => $lead_id,
+				'event_type'    => sanitize_key( (string) $event_type ),
+				'status_before' => sanitize_key( (string) $args['status_before'] ),
+				'status_after'  => sanitize_key( (string) $args['status_after'] ),
+				'note'          => sanitize_textarea_field( (string) $args['note'] ),
+				'actor_user_id' => get_current_user_id(),
+				'actor_email'   => $actor && ! empty( $actor->user_email ) ? sanitize_email( $actor->user_email ) : '',
+				'details'       => wp_json_encode( $details ),
+				'created_at'    => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s' )
+		);
+	}
+
+	private function get_lead_status_history( $lead_id, $limit = 40 ) {
+		$pdb   = $this->get_leads_db();
+		$table = $this->get_lead_status_history_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return array();
+		}
+
+		$lead_id = absint( $lead_id );
+		$limit   = max( 1, min( 100, absint( $limit ) ) );
+		return $pdb->get_results( $pdb->prepare( "SELECT * FROM {$table} WHERE lead_id = %d ORDER BY created_at DESC, id DESC LIMIT %d", $lead_id, $limit ) );
+	}
+
+	private function get_lead_status_history_title( $item ) {
+		$type   = isset( $item->event_type ) ? sanitize_key( (string) $item->event_type ) : 'note';
+		$titles = array(
+			'note'           => __( 'Note added', 'ajforms' ),
+			'status_changed' => __( 'Lead status changed', 'ajforms' ),
+		);
+		return isset( $titles[ $type ] ) ? $titles[ $type ] : ucfirst( str_replace( '_', ' ', $type ) );
+	}
+
+	/**
+	 * Single choke point for changing a lead's LEAD STATUS — updates the row and logs history
+	 * atomically, whether the caller is the AJOps stepper UI or the auto-outreach cron's status
+	 * flip. Never update the `lead_status` column directly anywhere else.
+	 */
+	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '' ) {
+		$pdb     = $this->get_leads_db();
+		$table   = $this->get_leads_table();
+		$lead_id = absint( $lead_id );
+		$lead    = $pdb->get_row( $pdb->prepare( "SELECT id, lead_status FROM `{$table}` WHERE id = %d", $lead_id ) );
+		if ( ! $lead ) {
+			return new WP_Error( 'not_found', __( 'Lead not found.', 'ajforms' ) );
+		}
+
+		$labels = $this->get_lead_pipeline_status_labels();
+		$new    = sanitize_key( (string) $lead_status );
+		if ( ! isset( $labels[ $new ] ) ) {
+			return new WP_Error( 'invalid_status', __( 'Invalid lead status.', 'ajforms' ) );
+		}
+
+		$old  = '' !== (string) $lead->lead_status ? sanitize_key( (string) $lead->lead_status ) : 'new';
+		$note = sanitize_textarea_field( (string) $note );
+
+		if ( $old === $new && '' === $note ) {
+			return $lead;
+		}
+
+		$pdb->update(
+			$table,
+			array( 'lead_status' => $new, 'updated_at' => current_time( 'mysql' ) ),
+			array( 'id' => $lead_id ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+
+		if ( $old !== $new ) {
+			$this->add_lead_status_history(
+				$lead_id,
+				'status_changed',
+				array(
+					'status_before' => $old,
+					'status_after'  => $new,
+					'note'          => $note,
+					'details'       => array( 'source' => 'ops_api' ),
+				)
+			);
+		} elseif ( '' !== $note ) {
+			$this->add_lead_status_history( $lead_id, 'note', array( 'status_before' => $old, 'status_after' => $new, 'note' => $note ) );
+		}
+
+		$lead->lead_status = $new;
+		return $lead;
+	}
+
+	/** Public entry point for the ops REST API — history timeline for a lead's LEAD STATUS. */
+	public function get_lead_status_history_for_ops( $lead_id, $limit = 40 ) {
+		$rows = $this->get_lead_status_history( $lead_id, $limit );
+		$out  = array();
+		foreach ( (array) $rows as $row ) {
+			$out[] = array(
+				'id'            => (int) $row->id,
+				'event_type'    => (string) $row->event_type,
+				'title'         => $this->get_lead_status_history_title( $row ),
+				'status_before' => (string) $row->status_before,
+				'status_after'  => (string) $row->status_after,
+				'note'          => (string) $row->note,
+				'actor_email'   => (string) $row->actor_email,
+				'created_at'    => (string) $row->created_at,
+			);
+		}
+		return $out;
+	}
+
+	/**
+	 * One-time cutover backfill: marks every pre-existing lead that the OLD cursor-based auto
+	 * outreach (baselineLeadId/lastProcessedLeadId) would already have contacted as
+	 * lead_status='welcomed', so the NEW status-based cron (which only fires on lead_status='new')
+	 * doesn't re-blast them the moment it goes live. Leads on a site that never had its own
+	 * outreach running (cursor = 0) are deliberately left at 'new' — they have no backlog to
+	 * protect and should legitimately get their first-ever outreach under the new system.
+	 * Idempotency guard via the 'ajcore_lead_status_cursor_backfill_done' option — safe to re-run.
+	 */
+	public function backfill_lead_status_for_cursor_cutover() {
+		$pdb   = $this->get_leads_db();
+		$table = $this->get_leads_table();
+
+		$legacy_cutoff = max(
+			(int) get_option( 'ajcore_lead_auto_outreach_baseline_id', 0 ),
+			(int) get_option( 'ajcore_lead_auto_outreach_last_processed_id', 0 )
+		);
+
+		$sites_raw = (string) get_option( 'ajcore_lead_auto_outreach_sites', '' );
+		$sites     = '' !== $sites_raw ? json_decode( $sites_raw, true ) : array();
+		$sites     = is_array( $sites ) ? $sites : array();
+
+		$per_site_cutoffs = array();
+		foreach ( $sites as $site_uuid => $cfg ) {
+			if ( ! is_array( $cfg ) ) {
+				continue;
+			}
+			$site_cutoff = max( (int) ( $cfg['baselineLeadId'] ?? 0 ), (int) ( $cfg['lastProcessedLeadId'] ?? 0 ) );
+			if ( $site_cutoff > 0 ) {
+				$per_site_cutoffs[ (string) $site_uuid ] = $site_cutoff;
+			}
+		}
+
+		$updated = 0;
+		foreach ( $per_site_cutoffs as $site_uuid => $site_cutoff ) {
+			$updated += (int) $pdb->query(
+				$pdb->prepare(
+					"UPDATE `{$table}` SET lead_status = 'welcomed' WHERE site_uuid = %s AND id <= %d AND lead_status = 'new'",
+					$site_uuid,
+					$site_cutoff
+				)
+			);
+		}
+
+		// Every other lead (no site, or a site with no per-site cursor entry) falls back to the
+		// legacy single cutoff — matches configFor()'s fallback resolution in the AJOps cron.
+		if ( $legacy_cutoff > 0 ) {
+			$excluded_site_uuids = array_keys( $per_site_cutoffs );
+			if ( empty( $excluded_site_uuids ) ) {
+				$updated += (int) $pdb->query(
+					$pdb->prepare( "UPDATE `{$table}` SET lead_status = 'welcomed' WHERE id <= %d AND lead_status = 'new'", $legacy_cutoff )
+				);
+			} else {
+				$placeholders = implode( ',', array_fill( 0, count( $excluded_site_uuids ), '%s' ) );
+				$updated     += (int) $pdb->query(
+					$pdb->prepare(
+						"UPDATE `{$table}` SET lead_status = 'welcomed' WHERE id <= %d AND lead_status = 'new' AND (site_uuid = '' OR site_uuid NOT IN ({$placeholders}))",
+						array_merge( array( $legacy_cutoff ), $excluded_site_uuids )
+					)
+				);
+			}
+		}
+
+		update_option( 'ajcore_lead_status_cursor_backfill_done', current_time( 'mysql' ), false );
+
+		return array(
+			'updated'           => $updated,
+			'legacy_cutoff'     => $legacy_cutoff,
+			'per_site_cutoffs'  => $per_site_cutoffs,
+		);
+	}
+
 	/** Statuses a lead can be in — see get_lead_status_labels() in class-ajcore-rest-api.php
 	 *  for the REST-facing equivalent; kept in sync manually since leads have no shared model class. */
 	public function get_lead_status_labels() {
