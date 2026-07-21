@@ -23321,7 +23321,22 @@ class AJForms_Admin {
 			<h2><?php esc_html_e( 'WP Email Templates', 'ajforms' ); ?></h2>
 			<p><?php esc_html_e( 'Control WordPress transactional email branding and subjects so customer-facing messages do not expose internal email addresses.', 'ajforms' ); ?></p>
 		</div>
-		<form method="post" action="<?php echo esc_url( $action_url ); ?>">
+		<style>
+			/* Scoped here rather than relying on whichever page shell happens to wrap this section —
+			   the .ajcore-modern-admin shell styles inputs' border/radius but never sets width, so
+			   without this every field on this page renders at the browser's default (~20 char) size. */
+			#ajforms-email-templates-section .ajforms-settings-field input[type="text"],
+			#ajforms-email-templates-section .ajforms-settings-field input[type="email"],
+			#ajforms-email-templates-section .ajforms-settings-field textarea,
+			#ajforms-email-templates-section .ajforms-settings-field select { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid #d1d5db; border-radius: 12px; padding: 10px 13px; font-family: inherit; font-size: 14px; }
+			#ajforms-email-templates-section .ajforms-settings-field textarea { min-height: auto; resize: vertical; }
+			#ajforms-email-templates-section .ajforms-settings-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #111827; }
+			#ajforms-email-templates-section .ajforms-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+			.ajforms-email-variant-layout { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(360px, 480px); gap: 28px; align-items: start; }
+			@media (max-width: 1100px) { .ajforms-email-variant-layout { grid-template-columns: 1fr; } }
+			.ajforms-email-variant-layout .ajforms-settings-field + .ajforms-settings-field { margin-top: 14px; }
+		</style>
+		<form method="post" action="<?php echo esc_url( $action_url ); ?>" id="ajforms-email-templates-section">
 			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 			<div class="ajforms-settings-card">
 				<span class="ajforms-settings-pill"><?php esc_html_e( 'WordPress Mail', 'ajforms' ); ?></span>
@@ -23337,8 +23352,7 @@ class AJForms_Admin {
 				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
-						<input name="wp_email_from_email" id="wp_email_from_email" type="text" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Recommended: donotreply@ncllcagents.com', 'ajforms' ); ?></div>
+						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="donotreply@ncllcagents.com" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
@@ -23483,36 +23497,38 @@ class AJForms_Admin {
 					<div class="ajforms-email-variant-panel" data-variant="<?php echo esc_attr( $type['variant_key'] ); ?>" style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;<?php echo 0 === $i ? '' : 'display:none;'; ?>">
 						<h4 style="margin:0 0 6px;font-size:15px;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
 						<p class="description" style="margin:0 0 10px;"><?php echo esc_html( $type['description'] ); ?></p>
-						<div class="ajforms-settings-grid" style="max-width:920px;">
-							<div class="ajforms-settings-field">
-								<label for="<?php echo esc_attr( $type['from_email_key'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
-								<input name="<?php echo esc_attr( $type['from_email_key'] ); ?>" id="<?php echo esc_attr( $type['from_email_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email_key'] ] ); ?>">
-								<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Email above.', 'ajforms' ); ?></div>
+						<div class="ajforms-email-variant-layout">
+							<div>
+								<div class="ajforms-settings-grid">
+									<div class="ajforms-settings-field">
+										<label for="<?php echo esc_attr( $type['from_email_key'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
+										<input name="<?php echo esc_attr( $type['from_email_key'] ); ?>" id="<?php echo esc_attr( $type['from_email_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email_key'] ] ); ?>">
+									</div>
+									<div class="ajforms-settings-field">
+										<label for="<?php echo esc_attr( $type['from_name_key'] ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
+										<input name="<?php echo esc_attr( $type['from_name_key'] ); ?>" id="<?php echo esc_attr( $type['from_name_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_name_key'] ] ); ?>">
+									</div>
+								</div>
+								<div class="ajforms-settings-field">
+									<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
+									<textarea name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" rows="2"><?php echo esc_textarea( $settings[ $type['subject_key'] ] ); ?></textarea>
+									<div class="ajforms-settings-help"><?php echo esc_html( $type['subject_help'] ); ?></div>
+								</div>
+								<div class="ajforms-settings-field">
+									<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
+									<textarea name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" rows="2"><?php echo esc_textarea( $settings[ $type['heading_key'] ] ); ?></textarea>
+								</div>
+								<div class="ajforms-settings-field">
+									<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
+									<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="6"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
+									<div class="ajforms-settings-help"><?php echo esc_html( $type['tokens_help'] ); ?></div>
+								</div>
 							</div>
-							<div class="ajforms-settings-field">
-								<label for="<?php echo esc_attr( $type['from_name_key'] ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
-								<input name="<?php echo esc_attr( $type['from_name_key'] ); ?>" id="<?php echo esc_attr( $type['from_name_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_name_key'] ] ); ?>">
-								<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the System From Name above.', 'ajforms' ); ?></div>
+							<div>
+								<div class="ajforms-settings-help" style="margin-bottom:6px;"><?php esc_html_e( 'Preview (sample data)', 'ajforms' ); ?></div>
+								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;height:560px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;"></iframe>
 							</div>
 						</div>
-						<div class="ajforms-settings-field" style="max-width:920px;margin-top:14px;">
-							<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
-							<input name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['subject_key'] ] ); ?>">
-							<div class="ajforms-settings-help"><?php echo esc_html( $type['subject_help'] ); ?></div>
-						</div>
-						<div class="ajforms-settings-field" style="max-width:920px;margin-top:14px;">
-							<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
-							<input name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" type="text" value="<?php echo esc_attr( $settings[ $type['heading_key'] ] ); ?>">
-						</div>
-						<div class="ajforms-settings-field" style="max-width:920px;margin-top:14px;">
-							<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
-							<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="4"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
-							<div class="ajforms-settings-help"><?php echo esc_html( $type['tokens_help'] ); ?></div>
-						</div>
-						<details style="margin-top:10px;" <?php echo 0 === $i ? 'open' : ''; ?>>
-							<summary style="cursor:pointer;color:#2563eb;font-weight:600;"><?php esc_html_e( 'Preview email', 'ajforms' ); ?></summary>
-							<iframe sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;max-width:680px;height:460px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;margin-top:8px;"></iframe>
-						</details>
 					</div>
 				<?php endforeach; ?>
 				<script>
@@ -23522,12 +23538,7 @@ class AJForms_Admin {
 					if ( ! select ) { return; }
 					select.addEventListener( 'change', function () {
 						panels.forEach( function ( panel ) {
-							var isSelected = panel.getAttribute( 'data-variant' ) === select.value;
-							panel.style.display = isSelected ? '' : 'none';
-							if ( isSelected ) {
-								var details = panel.querySelector( 'details' );
-								if ( details ) { details.open = true; }
-							}
+							panel.style.display = panel.getAttribute( 'data-variant' ) === select.value ? '' : 'none';
 						} );
 					} );
 				})();
