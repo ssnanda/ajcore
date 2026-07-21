@@ -17,6 +17,7 @@ class AJForms_Activator {
 		$table_email_log         = $wpdb->prefix . 'aj_portal_email_log';
 		$table_partners          = $wpdb->prefix . 'aj_portal_partners';
 		$table_stripe_customers     = $wpdb->prefix . 'aj_portal_stripe_customers';
+		$table_customer_number_counters = $wpdb->prefix . 'aj_portal_customer_number_counters';
 		$table_stripe_products      = $wpdb->prefix . 'aj_portal_stripe_products';
 		$table_product_catalog      = $wpdb->prefix . 'aj_portal_product_catalog';
 		$table_stripe_subscriptions = $wpdb->prefix . 'aj_portal_stripe_subscriptions';
@@ -171,6 +172,7 @@ class AJForms_Activator {
 		CREATE TABLE $table_stripe_customers (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			stripe_customer_id varchar(100) NOT NULL,
+			customer_number varchar(20) DEFAULT '' NOT NULL,
 			email varchar(190) DEFAULT '' NOT NULL,
 			name varchar(255) DEFAULT '' NOT NULL,
 			phone varchar(100) DEFAULT '' NOT NULL,
@@ -187,10 +189,17 @@ class AJForms_Activator {
 			synced_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_customer_id (stripe_customer_id),
+			KEY customer_number (customer_number),
 			KEY email (email),
 			KEY partner_key (partner_key),
 			KEY enabled_portal (enabled_portal),
 			KEY portal_status (portal_status)
+		) $charset_collate;
+
+		CREATE TABLE $table_customer_number_counters (
+			year_month varchar(7) NOT NULL,
+			next_seq int(10) unsigned NOT NULL DEFAULT 1,
+			PRIMARY KEY  (year_month)
 		) $charset_collate;
 
 		CREATE TABLE $table_customer_states (
@@ -1126,6 +1135,7 @@ class AJForms_Activator {
 		}
 
 		self::ensure_shared_leads_tables_and_migrate();
+		self::ensure_customer_number_columns_and_counter_table();
 
 		$now = current_time( 'mysql' );
 		$wpdb->query(
@@ -1241,7 +1251,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '36', false );
+		update_option( 'ajforms_portal_schema_version', '37', false );
 	}
 
 	/** Dedicated durable AJCore records. Stripe cache tables remain disposable. */
@@ -1256,6 +1266,7 @@ class AJForms_Activator {
 		$db->query( "CREATE TABLE IF NOT EXISTS $customers (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			local_customer_id varchar(100) NOT NULL,
+			customer_number varchar(20) DEFAULT '' NOT NULL,
 			email varchar(190) DEFAULT '' NOT NULL,
 			name varchar(255) DEFAULT '' NOT NULL,
 			phone varchar(100) DEFAULT '' NOT NULL,
@@ -1266,7 +1277,7 @@ class AJForms_Activator {
 			status varchar(50) DEFAULT 'active' NOT NULL,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
-			PRIMARY KEY (id), UNIQUE KEY local_customer_id (local_customer_id), KEY email (email), KEY partner_key (partner_key), KEY status (status)
+			PRIMARY KEY (id), UNIQUE KEY local_customer_id (local_customer_id), KEY customer_number (customer_number), KEY email (email), KEY partner_key (partner_key), KEY status (status)
 		) $charset" );
 		$db->query( "CREATE TABLE IF NOT EXISTS $services (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -1742,6 +1753,49 @@ class AJForms_Activator {
 	}
 
 	/**
+	 * Adds customer_number (+ the aj_portal_customer_number_counters table used to generate it)
+	 * to both customer tables, on both the local $wpdb and — if shared DB mode is on — the shared
+	 * DB too. Runs on every activate()/upgrade, the same auto-triggered safety net used for the
+	 * leads table's schema changes: relying solely on dbDelta()/CREATE TABLE IF NOT EXISTS here
+	 * would silently skip existing installs whose stored ajforms_version already matches (exactly
+	 * what caused the "0 leads" incident this schema pattern was hardened against).
+	 */
+	public static function ensure_customer_number_columns_and_counter_table() {
+		global $wpdb;
+
+		$dbs = array( $wpdb );
+		if ( function_exists( 'ajcore_get_portal_db' ) ) {
+			$pdb = ajcore_get_portal_db();
+			if ( $pdb !== $wpdb ) {
+				$dbs[] = $pdb;
+			}
+		}
+
+		foreach ( $dbs as $db ) {
+			$charset = $db->get_charset_collate();
+
+			$counters_table = $db->prefix . 'aj_portal_customer_number_counters';
+			$db->query(
+				"CREATE TABLE IF NOT EXISTS $counters_table (
+					year_month varchar(7) NOT NULL,
+					next_seq int(10) unsigned NOT NULL DEFAULT 1,
+					PRIMARY KEY  (year_month)
+				) $charset"
+			);
+
+			foreach ( array( 'aj_portal_stripe_customers', 'aj_portal_local_customers' ) as $base ) {
+				$table = $db->prefix . $base;
+				if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+					continue; // Table doesn't exist yet on this connection — nothing to alter.
+				}
+				if ( ! $db->get_var( "SHOW COLUMNS FROM $table LIKE 'customer_number'" ) ) {
+					$db->query( "ALTER TABLE $table ADD COLUMN customer_number varchar(20) DEFAULT '' NOT NULL, ADD KEY customer_number (customer_number)" );
+				}
+			}
+		}
+	}
+
+	/**
 	 * Create the mail intake table directly in the given portal DB connection.
 	 * Uses CREATE TABLE IF NOT EXISTS so it is safe to call repeatedly.
 	 * Called when the portal DB differs from the local $wpdb instance.
@@ -1824,6 +1878,7 @@ class AJForms_Activator {
 	public static function get_shared_portal_table_sql( $prefix, $charset_collate ) {
 		$t_shared_sites         = $prefix . 'aj_shared_sites';
 		$t_stripe_customers     = $prefix . 'aj_portal_stripe_customers';
+		$t_customer_number_counters = $prefix . 'aj_portal_customer_number_counters';
 		$t_customer_states      = $prefix . 'aj_portal_customer_states';
 		$t_customer_site_access = $prefix . 'aj_portal_customer_site_access';
 		$t_stripe_products      = $prefix . 'aj_portal_stripe_products';
@@ -1864,6 +1919,7 @@ class AJForms_Activator {
 		CREATE TABLE $t_stripe_customers (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			stripe_customer_id varchar(100) NOT NULL,
+			customer_number varchar(20) DEFAULT '' NOT NULL,
 			email varchar(190) DEFAULT '' NOT NULL,
 			name varchar(255) DEFAULT '' NOT NULL,
 			phone varchar(100) DEFAULT '' NOT NULL,
@@ -1880,10 +1936,17 @@ class AJForms_Activator {
 			synced_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY stripe_customer_id (stripe_customer_id),
+			KEY customer_number (customer_number),
 			KEY email (email),
 			KEY partner_key (partner_key),
 			KEY enabled_portal (enabled_portal),
 			KEY portal_status (portal_status)
+		) $charset_collate;
+
+		CREATE TABLE $t_customer_number_counters (
+			year_month varchar(7) NOT NULL,
+			next_seq int(10) unsigned NOT NULL DEFAULT 1,
+			PRIMARY KEY  (year_month)
 		) $charset_collate;
 
 		CREATE TABLE $t_customer_states (

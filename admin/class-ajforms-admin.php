@@ -2111,9 +2111,101 @@ class AJForms_Admin {
 			}
 			$data['portal_status']  = $this->normalize_portal_customer_status( $data['portal_status'] );
 			$data['enabled_portal'] = $this->portal_customer_status_enabled_value( $data['portal_status'] );
+			// Internal Customer # — assigned once, only for a genuinely new row (never touched on
+			// re-sync of an existing customer). Dated off the Stripe customer's own created_at so a
+			// backfilled/late-synced customer still gets a number reflecting when they actually
+			// became a customer, not whenever this sync happened to run.
+			$data['customer_number'] = $this->generate_customer_number( ! empty( $data['created_at'] ) ? $data['created_at'] : null );
+			$formats[] = '%s';
 		}
 
 		return $this->upsert_portal_record( $table, $data, $formats, 'stripe_customer_id' );
+	}
+
+	/**
+	 * Atomically claims the next "YYYY-MM-NNNN" customer number for the given month (defaults to
+	 * now), backed by a per-month counter row so concurrent inserts (two sites' REST requests, a
+	 * sync run overlapping a manual "+ Add Customer") can never collide. Uses the standard MySQL
+	 * INSERT ... ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(next_seq + 1) idiom: on the very
+	 * first customer of a month the row is freshly inserted (no auto-increment column, so
+	 * LAST_INSERT_ID() reads back 0 — that 0 means "this claim IS seq 1", not "something failed").
+	 */
+	public function generate_customer_number( $created_at = null ) {
+		$pdb   = $this->get_pdb();
+		$table = $pdb->prefix . 'aj_portal_customer_number_counters';
+
+		$timestamp  = $created_at ? strtotime( (string) $created_at ) : false;
+		$year_month = gmdate( 'Y-m', $timestamp ? $timestamp : time() );
+
+		$pdb->query(
+			$pdb->prepare(
+				"INSERT INTO {$table} (year_month, next_seq) VALUES (%s, 1) ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(next_seq + 1)",
+				$year_month
+			)
+		);
+		$seq = (int) $pdb->get_var( 'SELECT LAST_INSERT_ID()' );
+		if ( 0 === $seq ) {
+			$seq = 1;
+		}
+
+		return sprintf( '%s-%04d', $year_month, $seq );
+	}
+
+	/**
+	 * One-time (but idempotent/self-healing — safe to call repeatedly) backfill for customers that
+	 * predate the customer_number column, or that somehow slipped through without one. Assigns
+	 * numbers in TRUE chronological order (by the customer's own created_at) rather than in
+	 * whatever order they happen to be queried, so a backfilled customer's number reflects when
+	 * they actually became a customer, not when this backfill happened to run. Cheap to call from
+	 * a hot path — the caller should skip invoking this unless it already knows un-numbered rows
+	 * exist (see get_ops_customers()'s cheap COUNT(*) check).
+	 */
+	public function backfill_customer_numbers() {
+		$pdb          = $this->get_pdb();
+		$stripe_table = $this->get_portal_stripe_customers_table();
+		$local_table  = $pdb->prefix . 'aj_portal_local_customers';
+
+		$rows = array();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $stripe_table ) ) === $stripe_table ) {
+			foreach ( $pdb->get_results( "SELECT stripe_customer_id AS id_val, created_at, synced_at FROM `{$stripe_table}` WHERE customer_number = '' OR customer_number IS NULL" ) as $r ) {
+				$rows[] = array(
+					'table'  => $stripe_table,
+					'id_col' => 'stripe_customer_id',
+					'id_val' => $r->id_val,
+					'created'=> ! empty( $r->created_at ) ? $r->created_at : $r->synced_at,
+				);
+			}
+		}
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $local_table ) ) === $local_table ) {
+			foreach ( $pdb->get_results( "SELECT local_customer_id AS id_val, created_at FROM `{$local_table}` WHERE customer_number = '' OR customer_number IS NULL" ) as $r ) {
+				$rows[] = array(
+					'table'  => $local_table,
+					'id_col' => 'local_customer_id',
+					'id_val' => $r->id_val,
+					'created'=> $r->created_at,
+				);
+			}
+		}
+
+		usort(
+			$rows,
+			function ( $a, $b ) {
+				return strtotime( (string) $a['created'] ) <=> strtotime( (string) $b['created'] );
+			}
+		);
+
+		foreach ( $rows as $row ) {
+			$number = $this->generate_customer_number( $row['created'] );
+			$pdb->update(
+				$row['table'],
+				array( 'customer_number' => $number ),
+				array( $row['id_col'] => $row['id_val'] ),
+				array( '%s' ),
+				array( '%s' )
+			);
+		}
+
+		return count( $rows );
 	}
 
 	private function get_guest_portal_customer_id( $email ) {
@@ -11200,10 +11292,10 @@ class AJForms_Admin {
 				$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
 				$pdb = $this->get_pdb();
 				$created = $pdb->insert( $pdb->prefix . 'aj_portal_local_customers', array(
-					'local_customer_id' => $local_id, 'email' => $email, 'name' => $name, 'phone' => $phone, 'description' => $description,
+					'local_customer_id' => $local_id, 'customer_number' => $this->generate_customer_number(), 'email' => $email, 'name' => $name, 'phone' => $phone, 'description' => $description,
 					'address' => wp_json_encode( array_filter( $address ) ), 'metadata' => wp_json_encode( $metadata ), 'partner_key' => 'alliance_vo',
 					'status' => 'active', 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ),
-				), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ) );
+				), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ) );
 				if ( false !== $created ) $pdb->replace( $pdb->prefix . 'aj_portal_customer_partners', array( 'customer_id' => $local_id, 'partner_key' => 'alliance_vo', 'source' => 'ajcore' ), array( '%s', '%s', '%s' ) );
 				if ( false === $created ) { $args['portal-error'] = rawurlencode( __( 'Could not create the local AJCore customer.', 'ajforms' ) ); }
 				else { $args['portal-customer-created'] = $local_id; }
@@ -16748,6 +16840,15 @@ class AJForms_Admin {
 	/** Public entry point for the ops REST API — same reconciliation the WP admin page triggers. */
 	public function reconcile_service_requests_for_ops() {
 		$this->reconcile_invoice_sourced_service_requests();
+	}
+
+	/** Public entry point for the ops REST API — the same ledger -> service-request backfill (plus
+	 *  stale-checkout cleanup) that render_service_requests_admin_interface() runs on every WP admin
+	 *  page load, so a purchase never silently goes un-actioned just because staff only use AJOps. */
+	public function run_ops_service_request_backfill() {
+		$this->ensure_portal_schema();
+		$this->backfill_portal_service_requests_from_ledger();
+		$this->cleanup_stale_pending_checkout_service_requests();
 	}
 
 	/** Public entry point for the ops REST API — history timeline for the "View History" panel. */
@@ -23317,10 +23418,6 @@ class AJForms_Admin {
 			admin_url( 'admin.php' )
 		);
 		?>
-		<div class="ajforms-settings-head">
-			<h2><?php esc_html_e( 'WP Email Templates', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'Control WordPress transactional email branding and subjects so customer-facing messages do not expose internal email addresses.', 'ajforms' ); ?></p>
-		</div>
 		<style>
 			/* Scoped here rather than relying on whichever page shell happens to wrap this section —
 			   the .ajcore-modern-admin shell styles inputs' border/radius but never sets width, so
@@ -23341,13 +23438,9 @@ class AJForms_Admin {
 			<div class="ajforms-settings-card">
 				<span class="ajforms-settings-pill"><?php esc_html_e( 'WordPress Mail', 'ajforms' ); ?></span>
 				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'These values are used for WordPress and AJ Core system emails. Keep internal inboxes out of From and Reply-To headers.', 'ajforms' ); ?></p>
 				<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
 					<input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>>
-					<div>
-						<strong><?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></strong>
-						<span><?php esc_html_e( 'Controls the WordPress core password reset email only. AJ Core portal, service request, and lead emails below are always branded.', 'ajforms' ); ?></span>
-					</div>
+					<strong><?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></strong>
 				</div>
 				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
@@ -23372,14 +23465,12 @@ class AJForms_Admin {
 				array(
 					'id'                => 'password_reset',
 					'label'             => __( 'Password Reset', 'ajforms' ),
-					'description'       => __( 'Sent when a client portal user (or, if enabled above, a WordPress user) requests a password reset.', 'ajforms' ),
 					'subject_key'       => 'wp_password_reset_subject',
-					'subject_help'      => __( 'Used for WordPress Users reset password and AJ Core portal reset password.', 'ajforms' ),
 					'from_email_key'    => 'wp_password_reset_from_email',
 					'from_name_key'     => 'wp_password_reset_from_name',
 					'heading_key'       => 'wp_password_reset_heading',
 					'body_key'          => 'wp_password_reset_body',
-					'tokens_help'       => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'placeholders'      => '{name}',
 					'default_heading'   => __( 'Set your client portal password', 'ajforms' ),
 					'default_body'      => array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Use the secure button below to create a new password for your client portal account. This link is private and should only be used by you.', 'ajforms' ) ),
 					'static_parts'      => 'get_password_reset_email_static_parts',
@@ -23388,14 +23479,12 @@ class AJForms_Admin {
 				array(
 					'id'                => 'welcome',
 					'label'             => __( 'Portal Welcome', 'ajforms' ),
-					'description'       => __( 'Sent when staff enable portal access for a customer, or via the Portal Users bulk "Send Welcome Email" action.', 'ajforms' ),
 					'subject_key'       => 'wp_welcome_email_subject',
-					'subject_help'      => __( 'Used by the Portal Users bulk Send Welcome Email action.', 'ajforms' ),
 					'from_email_key'    => 'wp_welcome_from_email',
 					'from_name_key'     => 'wp_welcome_from_name',
 					'heading_key'       => 'wp_welcome_heading',
 					'body_key'          => 'wp_welcome_body',
-					'tokens_help'       => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'placeholders'      => '{name}',
 					'default_heading'   => __( 'Welcome to your client portal', 'ajforms' ),
 					'default_body'      => array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'Your client portal access has been enabled. Use the button below to set your password and sign in securely.', 'ajforms' ) ),
 					'static_parts'      => 'get_welcome_email_static_parts',
@@ -23404,14 +23493,12 @@ class AJForms_Admin {
 				array(
 					'id'                => 'service_status',
 					'label'             => __( 'Service Request Status Update', 'ajforms' ),
-					'description'       => __( 'Sent to a customer automatically whenever staff change the workflow status of one of their service requests — for example "Update on Registered Agent - 1 year: Active".', 'ajforms' ),
 					'subject_key'       => 'wp_service_status_subject',
-					'subject_help'      => __( 'Use {service_name} and {status_label} as placeholders — each is filled in per email.', 'ajforms' ),
 					'from_email_key'    => 'wp_service_status_from_email',
 					'from_name_key'     => 'wp_service_status_from_name',
 					'heading_key'       => 'wp_service_status_heading',
 					'body_key'          => 'wp_service_status_body',
-					'tokens_help'       => __( 'Available placeholders: {name}, {service_name}, {status_label}. One paragraph per line.', 'ajforms' ),
+					'placeholders'      => '{name}, {service_name}, {status_label}',
 					'default_heading'   => __( 'Your service request was updated', 'ajforms' ),
 					'default_body'      => array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), sprintf( __( 'The status of "%s" has changed.', 'ajforms' ), '{service_name}' ) ),
 					'static_parts'      => 'get_service_request_status_email_static_parts',
@@ -23420,14 +23507,12 @@ class AJForms_Admin {
 				array(
 					'id'                => 'lead_followup',
 					'label'             => __( 'Lead Follow-up', 'ajforms' ),
-					'description'       => __( 'Sent from the AJ Ops Leads page ("Send Follow-up Email" action, single or bulk) to nudge a lead to reach out or purchase.', 'ajforms' ),
 					'subject_key'       => 'lead_followup_email_subject',
-					'subject_help'      => __( 'Used by the AJ Ops Leads "Send Follow-up Email" action.', 'ajforms' ),
 					'from_email_key'    => 'lead_followup_from_email',
 					'from_name_key'     => 'lead_followup_from_name',
 					'heading_key'       => 'lead_followup_heading',
 					'body_key'          => 'lead_followup_body',
-					'tokens_help'       => __( 'Available placeholder: {name}. One paragraph per line.', 'ajforms' ),
+					'placeholders'      => '{name}',
 					'default_heading'   => __( "We'd love to hear from you", 'ajforms' ),
 					'default_body'      => array( sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ), __( 'We wanted to follow up on your recent inquiry with {site_name}. If you have any questions or would like to talk through your options, give us a call — we are happy to help.', 'ajforms' ), __( 'Ready to get started? You can review our services and pricing anytime on our website.', 'ajforms' ) ),
 					'static_parts'      => null, // brand-dependent — resolved per-variant below.
@@ -23478,15 +23563,14 @@ class AJForms_Admin {
 			<div class="ajforms-settings-card">
 				<span class="ajforms-settings-pill"><?php esc_html_e( 'Templates', 'ajforms' ); ?></span>
 				<h3><?php esc_html_e( 'Email types', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'Every customer-facing branded email either site sends: who it is from, its editable subject and body, and a live preview using sample data. Pick one below instead of scrolling through all of them.', 'ajforms' ); ?></p>
-				<div class="ajforms-settings-field" style="max-width:520px;margin-bottom:6px;">
+				<div class="ajforms-settings-field" style="max-width:420px;margin-bottom:6px;">
 					<label for="ajforms-email-variant-select"><?php esc_html_e( 'Email', 'ajforms' ); ?></label>
 					<select id="ajforms-email-variant-select">
 						<?php foreach ( $brands as $brand_key => $brand ) : ?>
 							<optgroup label="<?php echo esc_attr( $brand['label'] ); ?>">
 								<?php foreach ( $email_variants as $variant ) : ?>
 									<?php if ( strpos( $variant['variant_key'], $brand_key . '_' ) === 0 ) : ?>
-										<option value="<?php echo esc_attr( $variant['variant_key'] ); ?>"><?php echo esc_html( $variant['variant_label'] ); ?></option>
+										<option value="<?php echo esc_attr( $variant['variant_key'] ); ?>"><?php echo esc_html( $variant['label'] ); ?></option>
 									<?php endif; ?>
 								<?php endforeach; ?>
 							</optgroup>
@@ -23495,8 +23579,7 @@ class AJForms_Admin {
 				</div>
 				<?php foreach ( $email_variants as $i => $type ) : ?>
 					<div class="ajforms-email-variant-panel" data-variant="<?php echo esc_attr( $type['variant_key'] ); ?>" style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;<?php echo 0 === $i ? '' : 'display:none;'; ?>">
-						<h4 style="margin:0 0 6px;font-size:15px;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
-						<p class="description" style="margin:0 0 10px;"><?php echo esc_html( $type['description'] ); ?></p>
+						<h4 style="margin:0 0 14px;font-size:15px;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
 						<div class="ajforms-email-variant-layout">
 							<div>
 								<div class="ajforms-settings-grid">
@@ -23512,7 +23595,6 @@ class AJForms_Admin {
 								<div class="ajforms-settings-field">
 									<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
 									<textarea name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" rows="2"><?php echo esc_textarea( $settings[ $type['subject_key'] ] ); ?></textarea>
-									<div class="ajforms-settings-help"><?php echo esc_html( $type['subject_help'] ); ?></div>
 								</div>
 								<div class="ajforms-settings-field">
 									<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
@@ -23521,11 +23603,11 @@ class AJForms_Admin {
 								<div class="ajforms-settings-field">
 									<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
 									<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="6"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
-									<div class="ajforms-settings-help"><?php echo esc_html( $type['tokens_help'] ); ?></div>
+									<div class="ajforms-settings-help"><?php echo esc_html( sprintf( __( 'Placeholders: %s', 'ajforms' ), $type['placeholders'] ) ); ?></div>
 								</div>
 							</div>
 							<div>
-								<div class="ajforms-settings-help" style="margin-bottom:6px;"><?php esc_html_e( 'Preview (sample data)', 'ajforms' ); ?></div>
+								<div class="ajforms-settings-help" style="margin-bottom:6px;"><?php esc_html_e( 'Preview', 'ajforms' ); ?></div>
 								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;height:560px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;"></iframe>
 							</div>
 						</div>
@@ -23544,14 +23626,12 @@ class AJForms_Admin {
 				})();
 				</script>
 				<div class="ajforms-settings-note" style="margin-top:20px;">
-					<strong><?php esc_html_e( 'Want to see what was actually sent?', 'ajforms' ); ?></strong>
-					<p style="margin:6px 0 0;"><?php echo wp_kses_post( sprintf( __( 'Every email this site sends is logged with its real recipient, subject, and full HTML body under %s.', 'ajforms' ), '<a href="' . esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'emails' ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'Client Portal → Emails', 'ajforms' ) . '</a>' ) ); ?></p>
+					<?php echo wp_kses_post( sprintf( '<a href="%s">%s</a>', esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'emails' ), admin_url( 'admin.php' ) ) ), esc_html__( 'View sent emails →', 'ajforms' ) ) ); ?>
 				</div>
 			</div>
 
 			<div class="ajforms-settings-actions">
 				<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
-				<span style="color:#6b7280;"><?php esc_html_e( 'Changes are stored site-wide for AJ Core.', 'ajforms' ); ?></span>
 			</div>
 		</form>
 		<?php

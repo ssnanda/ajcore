@@ -978,11 +978,26 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_customers( WP_REST_Request $request ) {
-		$customers = $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' );
 		$pdb = $this->get_portal_db();
+
+		// Self-healing backfill for customer_number — cheap COUNT so this stays a no-op once every
+		// customer has one; only does real work (chronological assignment) when it finds gaps.
+		if ( class_exists( 'AJForms_Admin' ) ) {
+			$stripe_table_check = $this->portal_table( 'aj_portal_stripe_customers' );
+			$local_table_check  = $this->portal_table( 'aj_portal_local_customers' );
+			$missing = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$stripe_table_check}` WHERE customer_number = '' OR customer_number IS NULL" );
+			if ( 0 === $missing && $this->table_exists( $pdb, $local_table_check ) ) {
+				$missing = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$local_table_check}` WHERE customer_number = '' OR customer_number IS NULL" );
+			}
+			if ( $missing > 0 ) {
+				( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() )->backfill_customer_numbers();
+			}
+		}
+
+		$customers = $this->select_rows( $this->portal_table( 'aj_portal_stripe_customers' ), array( 'stripe_customer_id', 'customer_number', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' ), $request, array( 'name', 'email', 'stripe_customer_id' ), 'synced_at DESC, id DESC' );
 		$local_table = $this->portal_table( 'aj_portal_local_customers' );
 		if ( $this->table_exists( $pdb, $local_table ) ) {
-			$local_rows = $pdb->get_results( "SELECT local_customer_id AS stripe_customer_id,email,name,phone,description,address,metadata,status AS portal_status,0 AS enabled_portal,partner_key,0 AS livemode,updated_at AS synced_at FROM `{$local_table}` ORDER BY updated_at DESC,id DESC", ARRAY_A );
+			$local_rows = $pdb->get_results( "SELECT local_customer_id AS stripe_customer_id,customer_number,email,name,phone,description,address,metadata,status AS portal_status,0 AS enabled_portal,partner_key,0 AS livemode,updated_at AS synced_at FROM `{$local_table}` ORDER BY updated_at DESC,id DESC", ARRAY_A );
 			$customers = array_merge( $customers, (array) $local_rows );
 		}
 		$customers = $this->attach_customer_site_labels( array_map( array( $this, 'format_ops_customer_row' ), $customers ) );
@@ -2869,9 +2884,15 @@ class AJCore_REST_API {
 		$t_customers = $this->portal_table( 'aj_portal_stripe_customers' );
 
 		// Keep requests honest against Stripe (e.g. a subscription canceled after the request was
-		// created) without requiring someone to load the WP admin tab first.
+		// created) without requiring someone to load the WP admin tab first. Also run the same
+		// ledger -> service-request backfill the WP admin Service Requests tab runs on every page
+		// load — without this, a purchase whose webhook never fired (or fired before the ledger
+		// sync captured it) would never get a service request, since AJOps staff never visit the
+		// WP admin tab that was previously the only place this backfill ran.
 		if ( class_exists( 'AJForms_Admin' ) ) {
-			( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() )->reconcile_service_requests_for_ops();
+			$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+			$admin->reconcile_service_requests_for_ops();
+			$admin->run_ops_service_request_backfill();
 		}
 
 		$search        = sanitize_text_field( (string) $request->get_param( 'search' ) );
@@ -5963,14 +5984,15 @@ class AJCore_REST_API {
 			$local_customer_id = 'local_' . str_replace( '-', '', wp_generate_uuid4() );
 			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
 			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
+			$customer_number = class_exists( 'AJForms_Admin' ) ? ( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() )->generate_customer_number() : '';
 			$inserted = $check_pdb->insert(
 				$local_check_table,
 				array(
-					'local_customer_id' => $local_customer_id, 'email' => $email, 'name' => $name, 'phone' => $phone,
+					'local_customer_id' => $local_customer_id, 'customer_number' => $customer_number, 'email' => $email, 'name' => $name, 'phone' => $phone,
 					'description' => $description, 'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ),
 					'partner_key' => 'alliance_vo', 'status' => 'active', 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 			);
 			if ( false === $inserted ) {
 				return new WP_Error( 'ajcore_local_customer_failed', 'Could not create the local AJCore customer.', array( 'status' => 500 ) );
@@ -5980,7 +6002,7 @@ class AJCore_REST_API {
 				$check_pdb->replace( $partner_assignments, array( 'customer_id' => $local_customer_id, 'partner_key' => 'alliance_vo', 'source' => 'ajops' ), array( '%s', '%s', '%s' ) );
 			}
 			return rest_ensure_response( array( 'success' => true, 'customer' => array(
-				'stripe_customer_id' => $local_customer_id, 'email' => $email, 'name' => $name,
+				'stripe_customer_id' => $local_customer_id, 'customer_number' => $customer_number, 'email' => $email, 'name' => $name,
 				'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description,
 				'address' => $address_data, 'metadata' => $metadata, 'partner_key' => 'alliance_vo',
 				'portal_status' => 'active', 'livemode' => 0, 'synced_at' => current_time( 'mysql' ),
@@ -6046,8 +6068,9 @@ class AJCore_REST_API {
 		}
 
 		// Upsert into local portal DB.
-		$pdb            = $this->get_portal_db();
-		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$pdb             = $this->get_portal_db();
+		$customer_table  = $this->portal_table( 'aj_portal_stripe_customers' );
+		$customer_number = '';
 
 		if ( $this->table_exists( $pdb, $customer_table ) ) {
 			// Add description column if missing (safe on all MySQL/MariaDB versions).
@@ -6075,10 +6098,14 @@ class AJCore_REST_API {
 				$address_data = $decoded['address'];
 			}
 
+			// $decoded['id'] is a brand-new Stripe customer ID Stripe just returned from customers.create,
+			// so this REPLACE can never collide with an existing row — safe to always assign a fresh number.
+			$customer_number = class_exists( 'AJForms_Admin' ) ? ( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() )->generate_customer_number() : '';
 			$pdb->replace(
 				$customer_table,
 				array(
 					'stripe_customer_id' => $decoded['id'],
+					'customer_number'    => $customer_number,
 					'email'              => $decoded['email'] ?? '',
 					'name'               => $decoded['name'] ?? '',
 					'phone'              => $this->normalize_us_phone_for_storage( $decoded['phone'] ?? $phone ),
@@ -6090,12 +6117,13 @@ class AJCore_REST_API {
 					'livemode'           => ! empty( $decoded['livemode'] ) ? 1 : 0,
 					'synced_at'          => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' )
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s' )
 			);
 		}
 
 		$customer_row = array(
 			'stripe_customer_id' => $decoded['id'],
+			'customer_number'    => $customer_number,
 			'email'              => $decoded['email'] ?? '',
 			'name'               => $decoded['name'] ?? '',
 			'phone'              => $this->format_us_phone_for_display( $decoded['phone'] ?? $phone ),
