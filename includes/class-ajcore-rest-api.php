@@ -662,6 +662,7 @@ class AJCore_REST_API {
 			'/ops/event-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_event_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/partners' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_partners', 'permission' => 'can_manage_ops_api' ),
+			'/ops/sites' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sites', 'permission' => 'can_manage_ops_api' ),
 			'/ops/product-counts' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_product_counts', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/profile' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_profile', 'permission' => 'can_manage_ops_api' ),
@@ -3497,6 +3498,29 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( array( 'partners' => $partners ) );
+	}
+
+	/** Read-only mirror of the AJCore admin's "Connected Sites" panel (Settings > Portal), so
+	 *  AJOps — a single staff portal instance serving a multisite Stripe/leads/customers pool —
+	 *  can show staff which sites actually share that pool instead of presenting as single-site. */
+	public function get_ops_sites( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $pdb->prefix . 'aj_shared_sites';
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'sites' => array() ) );
+		}
+
+		$rows  = $pdb->get_results( "SELECT site_uuid, domain, is_master, last_seen FROM `{$table}` ORDER BY is_master DESC, domain ASC" );
+		$sites = array();
+		foreach ( (array) $rows as $row ) {
+			$sites[] = array(
+				'site_uuid' => (string) $row->site_uuid,
+				'domain'    => (string) $row->domain,
+				'is_master' => (bool) $row->is_master,
+				'last_seen' => (string) $row->last_seen,
+			);
+		}
+		return rest_ensure_response( array( 'sites' => $sites ) );
 	}
 
 	public function delete_ops_email_log_entry( WP_REST_Request $request ) {
@@ -6868,6 +6892,22 @@ class AJCore_REST_API {
 			),
 			ARRAY_A
 		);
+
+		// A failed query (e.g. a column the schema-upgrade guard hasn't added yet on this DB)
+		// makes $wpdb return null here — silently identical to "no leads exist" everywhere below.
+		// That already happened once (see AJForms_Activator's schema-version bump comment) and
+		// looked exactly like an empty Leads page with no error anywhere, so log it explicitly.
+		if ( null === $rows && '' !== $wpdb->last_error && class_exists( 'AJForms_Admin' ) ) {
+			$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+			$admin->log_portal_event(
+				'ops_leads_query_failed',
+				array(
+					'severity' => 'error',
+					'source'   => 'get_ops_leads',
+					'details'  => array( 'db_error' => (string) $wpdb->last_error ),
+				)
+			);
+		}
 
 		$customers_by_id = $this->get_customers_by_id_for_leads( $rows );
 

@@ -1241,7 +1241,7 @@ class AJForms_Activator {
 		}
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '35', false );
+		update_option( 'ajforms_portal_schema_version', '36', false );
 	}
 
 	/** Dedicated durable AJCore records. Stripe cache tables remain disposable. */

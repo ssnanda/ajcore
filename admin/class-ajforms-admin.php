@@ -873,7 +873,7 @@ class AJForms_Admin {
 		return $correlation_id;
 	}
 
-	private function log_portal_event( $event_type, $args = array() ) {
+	public function log_portal_event( $event_type, $args = array() ) {
 		$wpdb = $this->get_pdb();
 
 		$event_type = sanitize_key( (string) $event_type );
@@ -4974,6 +4974,32 @@ class AJForms_Admin {
 		);
 	}
 
+	/** Same brand shape as get_customer_brand_context(), resolved from a lead's site_uuid instead
+	 *  of a Stripe customer — a lead isn't a customer yet, so there's no stripe_customer_id/
+	 *  partner_key to look up through. Reuses get_lead_site_domain(), the same site_uuid ->
+	 *  aj_shared_sites.domain resolver the LEAD STATUS pipeline already relies on. */
+	private function get_lead_brand_context( $site_uuid ) {
+		$domain = $this->get_lead_site_domain( $site_uuid );
+
+		if ( false !== strpos( $domain, 'universityofficesuites.com' ) ) {
+			return array(
+				'entity_name' => 'University Place Office Suites LLC',
+				'site_name'   => 'University Place Office Suites',
+				'site_url'    => 'https://universityofficesuites.com/',
+				'from_email'  => 'donotreply@universityofficesuites.com',
+				'partner_key' => '',
+			);
+		}
+
+		return array(
+			'entity_name' => 'NC LLC Agents Inc',
+			'site_name'   => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
+			'site_url'    => home_url( '/' ),
+			'from_email'  => 'donotreply@ncllcagents.com',
+			'partner_key' => '',
+		);
+	}
+
 	private function apply_customer_brand_to_subject( $subject, $brand ) {
 		if ( empty( $brand['entity_name'] ) || 'NC LLC Agents Inc' === $brand['entity_name'] ) {
 			return $subject;
@@ -5141,7 +5167,19 @@ class AJForms_Admin {
 		);
 	}
 
-	private function get_lead_followup_email_static_parts() {
+	/** NC LLC Agents' contact info here is real (call/text number, services page, contact email) —
+	 *  confirmed by the business owner for this exact template. University Place Office Suites'
+	 *  equivalents are NOT yet known, so its branch intentionally omits the phone/CTA box rather
+	 *  than guess a number or URL — showing wrong contact info in a live customer email is worse
+	 *  than showing none. Fill in university_lead_followup_static_* once real values are given,
+	 *  the same way the other four static-parts methods would need their own University branch
+	 *  if they ever gain real per-brand contact info. */
+	private function get_lead_followup_email_static_parts( $brand = array() ) {
+		if ( ! empty( $brand['entity_name'] ) && 'University Place Office Suites LLC' === $brand['entity_name'] ) {
+			return array(
+				'fallback_note' => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
+			);
+		}
 		return array(
 			'info_box_label' => __( 'Call or text us', 'ajforms' ),
 			'info_box_value' => __( '(704) 307-2135', 'ajforms' ),
@@ -5368,7 +5406,7 @@ class AJForms_Admin {
 	public function send_lead_followup_email( $lead_id ) {
 		$wpdb        = $this->get_leads_db();
 		$leads_table = $this->get_leads_table();
-		$row         = $wpdb->get_row( $wpdb->prepare( "SELECT id, lead_data FROM `{$leads_table}` WHERE id = %d", absint( $lead_id ) ), ARRAY_A );
+		$row         = $wpdb->get_row( $wpdb->prepare( "SELECT id, lead_data, site_uuid FROM `{$leads_table}` WHERE id = %d", absint( $lead_id ) ), ARRAY_A );
 		if ( ! $row ) {
 			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ) );
 		}
@@ -5406,23 +5444,29 @@ class AJForms_Admin {
 		}
 
 		$settings   = $this->get_plugin_settings();
-		$sender     = $this->resolve_email_sender( $settings, 'lead_followup_from_email', 'lead_followup_from_name' );
+		$brand      = $this->get_lead_brand_context( isset( $row['site_uuid'] ) ? (string) $row['site_uuid'] : '' );
+		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'lead_followup_from_email', $brand ), $this->get_customer_brand_setting_key( 'lead_followup_from_name', $brand ) );
 		$from_email = $sender['from_email'];
 		$from_name  = $sender['from_name'];
-		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
-		$subject   = ! empty( $settings['lead_followup_email_subject'] ) ? sanitize_text_field( (string) $settings['lead_followup_email_subject'] ) : __( 'Following up from NC LLC Agents', 'ajforms' );
+		$site_name  = $brand['site_name'];
+
+		$subject_key = $this->get_customer_brand_setting_key( 'lead_followup_email_subject', $brand );
+		$subject     = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : sprintf( __( 'Following up from %s', 'ajforms' ), $site_name );
 
 		$copy = $this->resolve_email_copy(
 			$settings,
-			'lead_followup_heading',
-			'lead_followup_body',
+			$this->get_customer_brand_setting_key( 'lead_followup_heading', $brand ),
+			$this->get_customer_brand_setting_key( 'lead_followup_body', $brand ),
 			__( "We'd love to hear from you", 'ajforms' ),
 			array(
 				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-				__( 'We wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.', 'ajforms' ),
+				sprintf( __( 'We wanted to follow up on your recent inquiry with %s. If you have any questions or would like to talk through your options, give us a call — we are happy to help.', 'ajforms' ), '{site_name}' ),
 				__( 'Ready to get started? You can review our services and pricing anytime on our website.', 'ajforms' ),
 			),
-			array( '{name}' => '' !== $name ? $name : __( 'there', 'ajforms' ) )
+			array(
+				'{name}'      => '' !== $name ? $name : __( 'there', 'ajforms' ),
+				'{site_name}' => $site_name,
+			)
 		);
 
 		$message = $this->render_branded_email_html( array_merge(
@@ -5431,7 +5475,7 @@ class AJForms_Admin {
 				'heading'    => $copy['heading'],
 				'paragraphs' => $copy['paragraphs'],
 			),
-			$this->get_lead_followup_email_static_parts()
+			$this->get_lead_followup_email_static_parts( $brand )
 		) );
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
@@ -12813,6 +12857,11 @@ class AJForms_Admin {
 			'university_wp_service_status_from_name'  => isset( $_POST['university_wp_service_status_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_from_name'] ) ) : 'University Place Office Suites',
 			'lead_followup_from_email'       => isset( $_POST['lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['lead_followup_from_email'] ) ) : 'contactus@ncllcagents.com',
 			'lead_followup_from_name'        => isset( $_POST['lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_from_name'] ) ) : '',
+			'university_lead_followup_email_subject' => isset( $_POST['university_lead_followup_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_email_subject'] ) ) : 'Following up from University Place Office Suites',
+			'university_lead_followup_heading'       => isset( $_POST['university_lead_followup_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_heading'] ) ) : "We'd love to hear from you",
+			'university_lead_followup_body'          => isset( $_POST['university_lead_followup_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_lead_followup_body'] ) ) : "Hi {name},\nWe wanted to follow up on your recent inquiry with University Place Office Suites. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
+			'university_lead_followup_from_email'    => isset( $_POST['university_lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_lead_followup_from_email'] ) ) : 'donotreply@universityofficesuites.com',
+			'university_lead_followup_from_name'     => isset( $_POST['university_lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_from_name'] ) ) : 'University Place Office Suites',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -12858,7 +12907,7 @@ class AJForms_Admin {
 
 		$section_keys = array(
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
-			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name' ),
+			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
@@ -23307,6 +23356,7 @@ class AJForms_Admin {
 					array( 'label' => __( 'Password Reset', 'ajforms' ), 'subject' => 'university_wp_password_reset_subject', 'heading' => 'university_wp_password_reset_heading', 'body' => 'university_wp_password_reset_body', 'from_email' => 'university_wp_password_reset_from_email', 'from_name' => 'university_wp_password_reset_from_name', 'tokens' => __( 'Available placeholder: {name}.', 'ajforms' ) ),
 					array( 'label' => __( 'Portal Welcome', 'ajforms' ), 'subject' => 'university_wp_welcome_email_subject', 'heading' => 'university_wp_welcome_heading', 'body' => 'university_wp_welcome_body', 'from_email' => 'university_wp_welcome_from_email', 'from_name' => 'university_wp_welcome_from_name', 'tokens' => __( 'Available placeholder: {name}.', 'ajforms' ) ),
 					array( 'label' => __( 'Service Request Status Update', 'ajforms' ), 'subject' => 'university_wp_service_status_subject', 'heading' => 'university_wp_service_status_heading', 'body' => 'university_wp_service_status_body', 'from_email' => 'university_wp_service_status_from_email', 'from_name' => 'university_wp_service_status_from_name', 'tokens' => __( 'Available placeholders: {name}, {service_name}, {status_label}.', 'ajforms' ) ),
+					array( 'label' => __( 'Lead Follow-up', 'ajforms' ), 'subject' => 'university_lead_followup_email_subject', 'heading' => 'university_lead_followup_heading', 'body' => 'university_lead_followup_body', 'from_email' => 'university_lead_followup_from_email', 'from_name' => 'university_lead_followup_from_name', 'tokens' => __( 'Available placeholder: {name}.', 'ajforms' ) ),
 				);
 				foreach ( $university_email_types as $type ) :
 				?>
