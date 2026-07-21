@@ -5335,104 +5335,12 @@ class AJForms_Admin {
 	}
 
 	/**
-	 * Sends the short "thank you for your purchase" welcome text via AJOps/AJPhone (Zoom SMS).
-	 * AJCore has no Zoom credentials of its own, so this relays the send through a small
-	 * server-to-server AJOps endpoint authenticated with the same secret used by the AJPhone
-	 * automation cron (AJOPS_AJPHONE_CRON_SECRET here, AJPHONE_CRON_SECRET on the AJOps side —
-	 * same value, configured once on each side).
-	 */
-	private function send_service_purchase_welcome_text( $request ) {
-		$customer = $this->get_pdb()->get_row(
-			$this->get_pdb()->prepare(
-				"SELECT name, phone FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
-				sanitize_text_field( (string) $request->stripe_customer_id )
-			)
-		);
-		$phone = $customer && ! empty( $customer->phone ) ? sanitize_text_field( (string) $customer->phone ) : '';
-		if ( '' === $phone ) {
-			return false;
-		}
-
-		$brand           = $this->get_customer_brand_context( $request->stripe_customer_id );
-		$service_display = '' !== (string) $request->service_name ? sanitize_text_field( (string) $request->service_name ) : __( 'your purchase', 'ajforms' );
-		$name            = $customer && ! empty( $customer->name ) ? sanitize_text_field( (string) $customer->name ) : '';
-
-		$message = sprintf(
-			/* translators: 1: customer name or "there", 2: site/brand name, 3: purchased service name */
-			__( 'Hi %1$s, thank you for choosing %2$s for %3$s. We\xe2\x80\x99re excited to help \xe2\x80\x94 feel free to call or text us anytime at (704) 307-2135 with any questions.', 'ajforms' ),
-			'' !== $name ? $name : __( 'there', 'ajforms' ),
-			$brand['site_name'],
-			$service_display
-		);
-
-		return $this->notify_ajops_send_sms( $phone, $message );
-	}
-
-	/** Low-level relay to AJOps' server-to-server AJPhone endpoint. Returns false (and logs) on
-	 *  any misconfiguration or failure rather than throwing — a welcome text is best-effort and
-	 *  must never block service request creation. */
-	private function notify_ajops_send_sms( $to, $message ) {
-		$base_url = defined( 'AJOPS_BASE_URL' ) ? rtrim( (string) AJOPS_BASE_URL, '/' ) : '';
-		$secret   = defined( 'AJOPS_AJPHONE_CRON_SECRET' ) ? (string) AJOPS_AJPHONE_CRON_SECRET : '';
-		if ( '' === $base_url || '' === $secret ) {
-			$this->log_portal_event(
-				'service_purchase_welcome_text_skipped',
-				array(
-					'severity' => 'warning',
-					'source'   => 'auto_welcome',
-					'details'  => array( 'reason' => 'AJOPS_BASE_URL / AJOPS_AJPHONE_CRON_SECRET not configured.' ),
-				)
-			);
-			return false;
-		}
-
-		$response = wp_remote_post(
-			$base_url . '/api/ajphone/notify',
-			array(
-				'timeout' => 15,
-				'headers' => array(
-					'Content-Type' => 'application/json',
-					'X-Cron-Secret' => $secret,
-				),
-				'body'    => wp_json_encode( array( 'to' => $to, 'message' => $message ) ),
-			)
-		);
-
-		if ( is_wp_error( $response ) ) {
-			$this->log_portal_event(
-				'service_purchase_welcome_text_failed',
-				array(
-					'severity' => 'error',
-					'source'   => 'auto_welcome',
-					'details'  => array( 'error' => $response->get_error_message() ),
-				)
-			);
-			return false;
-		}
-
-		$code = wp_remote_retrieve_response_code( $response );
-		if ( $code < 200 || $code >= 300 ) {
-			$this->log_portal_event(
-				'service_purchase_welcome_text_failed',
-				array(
-					'severity' => 'error',
-					'source'   => 'auto_welcome',
-					'details'  => array( 'status' => $code, 'body' => wp_remote_retrieve_body( $response ) ),
-				)
-			);
-			return false;
-		}
-
-		return true;
-	}
-
-	/**
-	 * Fires the welcome email + welcome text exactly once for a newly-created add_service
-	 * service request, then advances its SVC status from 'new' to 'welcome' so a second call
-	 * (from a retry, a resync, or any other path) is always a no-op. This is the ONLY place
-	 * that should trigger the purchase-welcome notifications — call it right after any code
-	 * path creates a fresh add_service row, never call send_service_purchase_welcome_email/
-	 * _text directly.
+	 * Sends the branded welcome email exactly once for a newly-created add_service service
+	 * request. Deliberately does NOT advance service_status — AJOps' welcome-outreach cron owns
+	 * that transition (it flips 'new' -> 'welcome' only after the welcome TEXT is sent, via the
+	 * same update path the ops UI already uses), so this only needs to guard against being
+	 * called twice for the same row, which can't happen through either of its two call sites
+	 * (both are one-time INSERTs) — the service_status check here is defense in depth only.
 	 */
 	public function maybe_send_service_purchase_welcome( $request_id ) {
 		$request_id = absint( $request_id );
@@ -5451,29 +5359,7 @@ class AJForms_Admin {
 			return; // Already welcomed (or moved past it) — never re-send.
 		}
 
-		$email_sent = $this->send_service_purchase_welcome_email( $request );
-		$text_sent  = $this->send_service_purchase_welcome_text( $request );
-
-		$pdb->update(
-			$this->get_portal_service_requests_table(),
-			array( 'service_status' => 'welcome' ),
-			array( 'id' => $request_id ),
-			array( '%s' ),
-			array( '%d' )
-		);
-
-		$this->add_portal_service_request_history(
-			$request_id,
-			'status_changed',
-			array(
-				'status_before'         => sanitize_key( (string) $request->status ),
-				'status_after'          => sanitize_key( (string) $request->status ),
-				'service_status_before' => 'new',
-				'service_status_after'  => 'welcome',
-				'note'                  => __( 'Welcome email and text sent automatically after purchase.', 'ajforms' ),
-				'details'               => array( 'source' => 'auto_welcome', 'email_sent' => $email_sent, 'text_sent' => $text_sent ),
-			)
-		);
+		$this->send_service_purchase_welcome_email( $request );
 	}
 
 	/** Sends a branded follow-up email to a Lead. Used by the AJOps "Send Follow-up Email"

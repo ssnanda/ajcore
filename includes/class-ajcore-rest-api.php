@@ -2917,7 +2917,7 @@ class AJCore_REST_API {
 		$sql       = "SELECT r.id, r.stripe_customer_id, r.service_name, r.request_type, r.status, r.service_status,
 			r.amount, r.currency, r.source, r.source_type, r.client_notes, r.admin_notes, r.created_at, r.updated_at,
 			r.stripe_price_id, r.stripe_product_id, r.assigned_user_id,
-			c.name AS customer_name, c.email AS customer_email
+			c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone
 			FROM `{$t_sr}` r
 			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = r.stripe_customer_id
 			WHERE {$where_sql}
@@ -2965,6 +2965,7 @@ class AJCore_REST_API {
 				'updated_at'        => (string) $r->updated_at,
 				'customer_name'     => (string) $r->customer_name,
 				'customer_email'    => (string) $r->customer_email,
+				'customer_phone'    => (string) $r->customer_phone,
 				'needs_action'      => $needs_action,
 				'assigned_user_id'  => $assigned_user_id,
 				'assigned_user_name'  => $assigned_user_id && isset( $assignees[ $assigned_user_id ] ) ? $assignees[ $assigned_user_id ]['name'] : '',
