@@ -24332,6 +24332,12 @@ class AJForms_Admin {
 			} elseif ( 'delete' === $action ) {
 				$wpdb->delete( $lead_notes_table, array( 'lead_id' => $lead_id ), array( '%d' ) );
 				$wpdb->delete( $leads_table, array( 'id' => $lead_id ), array( '%d' ) );
+			} elseif ( 'set_pipeline_status' === $action ) {
+				// LEAD STATUS pipeline (new/welcomed/engaged/qualified/meeting_scheduled/
+				// proposal_sent) — separate from the status field handled above. Goes through the
+				// same choke point AJOps' stepper and the outreach cron use, so history logs here too.
+				$pipeline_status = isset( $_GET['pipeline_status'] ) ? sanitize_text_field( wp_unslash( $_GET['pipeline_status'] ) ) : '';
+				$this->update_lead_pipeline_status_from_ops( $lead_id, $pipeline_status );
 			}
 
 			$redirect = admin_url( 'admin.php?page=ajforms-leads' );

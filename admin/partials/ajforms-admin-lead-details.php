@@ -94,6 +94,26 @@ if ( in_array( $lead->status, array( 'new', 'read' ), true ) ) {
 	$status_actions['reopen'] = __( 'Reopen to Inbox', 'ajforms' );
 }
 
+// LEAD STATUS pipeline — separate from $lead->status above, mirrors AJOps' stepper.
+$lead_pipeline_status = ! empty( $lead->lead_status ) ? sanitize_key( (string) $lead->lead_status ) : 'new';
+$pipeline_labels = array(
+	'new'               => __( 'New', 'ajforms' ),
+	'welcomed'          => __( 'Welcomed', 'ajforms' ),
+	'engaged'           => __( 'Engaged', 'ajforms' ),
+	'qualified'         => __( 'Qualified', 'ajforms' ),
+	'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),
+	'proposal_sent'     => __( 'Proposal Sent', 'ajforms' ),
+);
+$pipeline_action_url = function ( $stage ) use ( $lead_id ) {
+	return wp_nonce_url(
+		add_query_arg(
+			array( 'page' => 'ajforms-leads', 'view' => 'detail', 'lead_action' => 'set_pipeline_status', 'pipeline_status' => $stage, 'lead_id' => $lead_id ),
+			admin_url( 'admin.php' )
+		),
+		'ajf_lead_action_' . $lead_id
+	);
+};
+
 $linked_customer_name = '';
 if ( 'won' === $lead->status && ! empty( $lead->stripe_customer_id ) ) {
 	$pdb_lookup = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $wpdb;
@@ -370,6 +390,7 @@ $delete_url = wp_nonce_url(
 				<p><?php esc_html_e( 'Update saved values, replace uploaded files, review the submission context, and leave internal notes without losing track of the linked form.', 'ajforms' ); ?></p>
 				<div class="ajforms-entry-status-row">
 					<span class="ajforms-status-badge <?php echo esc_attr( $lead->status ); ?>"><?php echo esc_html( isset( $status_labels[ $lead->status ] ) ? $status_labels[ $lead->status ] : ucfirst( $lead->status ) ); ?></span>
+					<span class="ajforms-status-badge lead-pipeline-<?php echo esc_attr( $lead_pipeline_status ); ?>"><?php echo esc_html( isset( $pipeline_labels[ $lead_pipeline_status ] ) ? $pipeline_labels[ $lead_pipeline_status ] : ucfirst( $lead_pipeline_status ) ); ?></span>
 					<?php if ( 'won' === $lead->status && $linked_customer_name ) : ?>
 						<span class="ajforms-entry-note">&rarr; <?php echo esc_html( $linked_customer_name ); ?></span>
 					<?php endif; ?>
@@ -384,6 +405,15 @@ $delete_url = wp_nonce_url(
 					<option value=""><?php esc_html_e( 'Change status…', 'ajforms' ); ?></option>
 					<?php foreach ( $status_actions as $action_key => $action_label ) : ?>
 						<option value="<?php echo esc_url( $lead_action_url( $action_key ) ); ?>"><?php echo esc_html( $action_label ); ?></option>
+					<?php endforeach; ?>
+				</select>
+				<select id="ajf-lead-pipeline-select" onchange="if(this.value){ location.href = this.value; }">
+					<option value=""><?php esc_html_e( 'Change lead status…', 'ajforms' ); ?></option>
+					<?php foreach ( $pipeline_labels as $stage_key => $stage_label ) : ?>
+						<?php if ( $stage_key === $lead_pipeline_status ) : ?>
+							<?php continue; ?>
+						<?php endif; ?>
+						<option value="<?php echo esc_url( $pipeline_action_url( $stage_key ) ); ?>"><?php echo esc_html( $stage_label ); ?></option>
 					<?php endforeach; ?>
 				</select>
 				<?php if ( in_array( $lead->status, array( 'new', 'read' ), true ) ) : ?>
