@@ -5380,6 +5380,31 @@ class AJForms_Admin {
 			return new WP_Error( 'ajcore_lead_no_email', __( 'This lead does not have a valid email address on file.', 'ajforms' ) );
 		}
 
+		// Idempotency guard: the actual mutating operation (not the caller) is what has to stop
+		// duplicates — this function has been called on a repeating schedule from more than one
+		// place historically, and any caller-side "don't call me twice" logic can fail (a status
+		// flip that doesn't stick, a retry loop, a stray external automation hitting the REST API
+		// directly). If a follow-up was already logged for this lead within the last 6 hours,
+		// skip sending again outright rather than trusting the caller not to re-request it.
+		$last_followup_sent_at = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT created_at FROM {$this->get_lead_notes_table()} WHERE lead_id = %d AND note LIKE %s ORDER BY created_at DESC LIMIT 1",
+				absint( $lead_id ),
+				$wpdb->esc_like( 'Follow-up email sent' ) . '%'
+			)
+		);
+		if ( $last_followup_sent_at && ( current_time( 'timestamp' ) - strtotime( (string) $last_followup_sent_at ) ) < 6 * HOUR_IN_SECONDS ) {
+			$this->log_portal_event(
+				'lead_followup_email_duplicate_blocked',
+				array(
+					'severity' => 'warning',
+					'source'   => 'send_lead_followup_email',
+					'details'  => array( 'lead_id' => absint( $lead_id ), 'last_sent_at' => (string) $last_followup_sent_at ),
+				)
+			);
+			return new WP_Error( 'ajcore_followup_already_sent', __( 'A follow-up email was already sent to this lead recently — skipped to avoid a duplicate.', 'ajforms' ) );
+		}
+
 		$settings   = $this->get_plugin_settings();
 		$sender     = $this->resolve_email_sender( $settings, 'lead_followup_from_email', 'lead_followup_from_name' );
 		$from_email = $sender['from_email'];
