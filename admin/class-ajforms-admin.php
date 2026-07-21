@@ -13732,7 +13732,15 @@ class AJForms_Admin {
 			'qualified'         => __( 'Qualified', 'ajforms' ),
 			'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),
 			'proposal_sent'     => __( 'Proposal Sent', 'ajforms' ),
+			'won'               => __( 'Won', 'ajforms' ),
+			'lost'              => __( 'Lost', 'ajforms' ),
 		);
+	}
+
+	/** The linear (non-terminal) part of the pipeline — Won/Lost are branch endpoints reachable
+	 *  from any of these, not a forward step in the sequence. */
+	public function get_lead_pipeline_linear_stages() {
+		return array( 'new', 'auto_reached', 'engaged', 'qualified', 'meeting_scheduled', 'proposal_sent' );
 	}
 
 	private function add_lead_status_history( $lead_id, $event_type, $args = array() ) {
@@ -13803,7 +13811,7 @@ class AJForms_Admin {
 	 * atomically, whether the caller is the AJOps stepper UI or the auto-outreach cron's status
 	 * flip. Never update the `lead_status` column directly anywhere else.
 	 */
-	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '' ) {
+	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '' ) {
 		$pdb     = $this->get_leads_db();
 		$table   = $this->get_leads_table();
 		$lead_id = absint( $lead_id );
@@ -13818,6 +13826,11 @@ class AJForms_Admin {
 			return new WP_Error( 'invalid_status', __( 'Invalid lead status.', 'ajforms' ) );
 		}
 
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		if ( 'won' === $new && '' === $stripe_customer_id ) {
+			return new WP_Error( 'missing_customer', __( 'Pick a customer to link this lead to before marking it Won.', 'ajforms' ) );
+		}
+
 		$old  = '' !== (string) $lead->lead_status ? sanitize_key( (string) $lead->lead_status ) : 'new';
 		$note = sanitize_textarea_field( (string) $note );
 
@@ -13825,11 +13838,26 @@ class AJForms_Admin {
 			return $lead;
 		}
 
+		$update_data    = array( 'lead_status' => $new, 'updated_at' => current_time( 'mysql' ) );
+		$update_formats = array( '%s', '%s' );
+		// Keep the legacy `status` field (and its Won->customer link) in sync so nothing that
+		// still reads it — reports, the old Inbox/Lost/Archived filter, etc. — goes stale, even
+		// though the pipeline (lead_status) is now the primary thing staff interact with.
+		if ( 'won' === $new ) {
+			$update_data['status']              = 'won';
+			$update_data['stripe_customer_id']  = $stripe_customer_id;
+			$update_formats[]                   = '%s';
+			$update_formats[]                   = '%s';
+		} elseif ( 'lost' === $new ) {
+			$update_data['status'] = 'lost';
+			$update_formats[]      = '%s';
+		}
+
 		$pdb->update(
 			$table,
-			array( 'lead_status' => $new, 'updated_at' => current_time( 'mysql' ) ),
+			$update_data,
 			array( 'id' => $lead_id ),
-			array( '%s', '%s' ),
+			$update_formats,
 			array( '%d' )
 		);
 

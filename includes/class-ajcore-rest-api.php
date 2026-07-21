@@ -7446,7 +7446,8 @@ class AJCore_REST_API {
 		$result = $admin->update_lead_pipeline_status_from_ops(
 			absint( $request->get_param( 'id' ) ),
 			(string) $request->get_param( 'lead_status' ),
-			(string) ( $request->get_param( 'note' ) ?? '' )
+			(string) ( $request->get_param( 'note' ) ?? '' ),
+			(string) ( $request->get_param( 'stripe_customer_id' ) ?? '' )
 		);
 		if ( is_wp_error( $result ) ) {
 			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 'not_found' === $result->get_error_code() ? 404 : 400 ) );
