@@ -13729,7 +13729,7 @@ class AJForms_Admin {
 			'new'               => __( 'New', 'ajforms' ),
 			'auto_reached'      => __( 'Auto Reached', 'ajforms' ),
 			'engaged'           => __( 'Engaged', 'ajforms' ),
-			'tour'              => __( 'Tour', 'ajforms' ),
+			'tour'              => __( 'Tour Scheduled', 'ajforms' ),
 			'customer'          => __( 'Customer', 'ajforms' ),
 			'future_follow_up'  => __( 'Future Follow-Up', 'ajforms' ),
 			'lost'              => __( 'Lost', 'ajforms' ),
