@@ -120,7 +120,7 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 		<form method="post" style="margin-top:10px;">
 			<?php wp_nonce_field( 'ajf_backfill_lead_status', 'ajf_backfill_lead_status_nonce' ); ?>
 			<button type="submit" class="button button-secondary"><?php esc_html_e( 'Run LEAD STATUS cursor-cutover backfill now', 'ajforms' ); ?></button>
-			<span class="description" style="margin-left:8px;"><?php esc_html_e( 'Run this once before switching Lead Auto Outreach to status-based triggering, so already-contacted leads are marked Welcomed instead of re-texted. Safe to click repeatedly.', 'ajforms' ); ?></span>
+			<span class="description" style="margin-left:8px;"><?php esc_html_e( 'Run this once before switching Lead Auto Outreach to status-based triggering, so already-contacted leads are marked Auto Reached instead of re-texted. Safe to click repeatedly.', 'ajforms' ); ?></span>
 			<?php if ( '' !== (string) $lead_status_backfill_done_at ) : ?>
 				<p class="description"><?php echo esc_html( sprintf( __( 'Last run: %s', 'ajforms' ), $lead_status_backfill_done_at ) ); ?></p>
 			<?php endif; ?>
@@ -128,7 +128,7 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 				<div class="notice notice-success inline" style="margin-top:8px;"><p>
 					<?php echo esc_html( sprintf(
 						/* translators: 1: number of leads updated, 2: legacy cursor cutoff id, 3: number of per-site cursors found */
-						__( 'Backfill complete: %1$d lead(s) marked Welcomed. Legacy cutoff: #%2$d. Per-site cursors found: %3$d.', 'ajforms' ),
+						__( 'Backfill complete: %1$d lead(s) marked Auto Reached. Legacy cutoff: #%2$d. Per-site cursors found: %3$d.', 'ajforms' ),
 						(int) $lead_status_backfill_result['updated'],
 						(int) $lead_status_backfill_result['legacy_cutoff'],
 						count( (array) $lead_status_backfill_result['per_site_cutoffs'] )

@@ -7434,7 +7434,7 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'id' => $lead_id, 'status' => $status, 'stripe_customer_id' => 'won' === $status ? $stripe_customer_id : '' ) );
 	}
 
-	/** LEAD STATUS pipeline (new/welcomed/engaged/qualified/meeting_scheduled/proposal_sent) —
+	/** LEAD STATUS pipeline (new/auto_reached/engaged/qualified/meeting_scheduled/proposal_sent) —
 	 *  a separate field from the `status` handled above (new/read/won/lost/duplicate); see
 	 *  update_lead_pipeline_status_from_ops() in AJForms_Admin for the single choke point both
 	 *  this route and the auto-outreach cron's status flip go through. */

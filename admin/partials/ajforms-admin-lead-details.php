@@ -98,7 +98,7 @@ if ( in_array( $lead->status, array( 'new', 'read' ), true ) ) {
 $lead_pipeline_status = ! empty( $lead->lead_status ) ? sanitize_key( (string) $lead->lead_status ) : 'new';
 $pipeline_labels = array(
 	'new'               => __( 'New', 'ajforms' ),
-	'welcomed'          => __( 'Welcomed', 'ajforms' ),
+	'auto_reached'      => __( 'Auto Reached', 'ajforms' ),
 	'engaged'           => __( 'Engaged', 'ajforms' ),
 	'qualified'         => __( 'Qualified', 'ajforms' ),
 	'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),

@@ -13702,7 +13702,7 @@ class AJForms_Admin {
 	public function get_lead_pipeline_status_labels() {
 		return array(
 			'new'               => __( 'New', 'ajforms' ),
-			'welcomed'          => __( 'Welcomed', 'ajforms' ),
+			'auto_reached'      => __( 'Auto Reached', 'ajforms' ),
 			'engaged'           => __( 'Engaged', 'ajforms' ),
 			'qualified'         => __( 'Qualified', 'ajforms' ),
 			'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),
@@ -13849,7 +13849,7 @@ class AJForms_Admin {
 	/**
 	 * One-time cutover backfill: marks every pre-existing lead that the OLD cursor-based auto
 	 * outreach (baselineLeadId/lastProcessedLeadId) would already have contacted as
-	 * lead_status='welcomed', so the NEW status-based cron (which only fires on lead_status='new')
+	 * lead_status='auto_reached', so the NEW status-based cron (which only fires on lead_status='new')
 	 * doesn't re-blast them the moment it goes live. Leads on a site that never had its own
 	 * outreach running (cursor = 0) are deliberately left at 'new' — they have no backlog to
 	 * protect and should legitimately get their first-ever outreach under the new system.
@@ -13883,7 +13883,7 @@ class AJForms_Admin {
 		foreach ( $per_site_cutoffs as $site_uuid => $site_cutoff ) {
 			$updated += (int) $pdb->query(
 				$pdb->prepare(
-					"UPDATE `{$table}` SET lead_status = 'welcomed' WHERE site_uuid = %s AND id <= %d AND lead_status = 'new'",
+					"UPDATE `{$table}` SET lead_status = 'auto_reached' WHERE site_uuid = %s AND id <= %d AND lead_status = 'new'",
 					$site_uuid,
 					$site_cutoff
 				)
@@ -13896,13 +13896,13 @@ class AJForms_Admin {
 			$excluded_site_uuids = array_keys( $per_site_cutoffs );
 			if ( empty( $excluded_site_uuids ) ) {
 				$updated += (int) $pdb->query(
-					$pdb->prepare( "UPDATE `{$table}` SET lead_status = 'welcomed' WHERE id <= %d AND lead_status = 'new'", $legacy_cutoff )
+					$pdb->prepare( "UPDATE `{$table}` SET lead_status = 'auto_reached' WHERE id <= %d AND lead_status = 'new'", $legacy_cutoff )
 				);
 			} else {
 				$placeholders = implode( ',', array_fill( 0, count( $excluded_site_uuids ), '%s' ) );
 				$updated     += (int) $pdb->query(
 					$pdb->prepare(
-						"UPDATE `{$table}` SET lead_status = 'welcomed' WHERE id <= %d AND lead_status = 'new' AND (site_uuid = '' OR site_uuid NOT IN ({$placeholders}))",
+						"UPDATE `{$table}` SET lead_status = 'auto_reached' WHERE id <= %d AND lead_status = 'new' AND (site_uuid = '' OR site_uuid NOT IN ({$placeholders}))",
 						array_merge( array( $legacy_cutoff ), $excluded_site_uuids )
 					)
 				);
@@ -24333,7 +24333,7 @@ class AJForms_Admin {
 				$wpdb->delete( $lead_notes_table, array( 'lead_id' => $lead_id ), array( '%d' ) );
 				$wpdb->delete( $leads_table, array( 'id' => $lead_id ), array( '%d' ) );
 			} elseif ( 'set_pipeline_status' === $action ) {
-				// LEAD STATUS pipeline (new/welcomed/engaged/qualified/meeting_scheduled/
+				// LEAD STATUS pipeline (new/auto_reached/engaged/qualified/meeting_scheduled/
 				// proposal_sent) — separate from the status field handled above. Goes through the
 				// same choke point AJOps' stepper and the outreach cron use, so history logs here too.
 				$pipeline_status = isset( $_GET['pipeline_status'] ) ? sanitize_text_field( wp_unslash( $_GET['pipeline_status'] ) ) : '';
