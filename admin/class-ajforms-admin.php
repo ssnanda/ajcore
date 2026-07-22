@@ -23861,10 +23861,30 @@ class AJForms_Admin {
 		if ( is_wp_error( $org_response ) ) {
 			return $org_response;
 		}
-		$org_data = json_decode( wp_remote_retrieve_body( $org_response ), true );
-		$zoid     = ! empty( $org_data['data']['zoid'] ) ? sanitize_text_field( (string) $org_data['data']['zoid'] ) : ( ! empty( $org_data['zoid'] ) ? sanitize_text_field( (string) $org_data['zoid'] ) : '' );
+		$org_status = (int) wp_remote_retrieve_response_code( $org_response );
+		$org_body   = wp_remote_retrieve_body( $org_response );
+		$org_data   = json_decode( $org_body, true );
+		// Response shape isn't fully documented — try every plausible location: a single org
+		// object under 'data', a bare top-level 'zoid', or a list of orgs under 'data'.
+		$zoid = '';
+		if ( ! empty( $org_data['data']['zoid'] ) ) {
+			$zoid = (string) $org_data['data']['zoid'];
+		} elseif ( ! empty( $org_data['zoid'] ) ) {
+			$zoid = (string) $org_data['zoid'];
+		} elseif ( ! empty( $org_data['data'][0]['zoid'] ) ) {
+			$zoid = (string) $org_data['data'][0]['zoid'];
+		}
+		$zoid = sanitize_text_field( $zoid );
 		if ( '' === $zoid ) {
-			return new WP_Error( 'zoho_mail_no_org', __( 'Could not resolve this Zoho organization (no zoid returned) — is the signed-in account an org admin?', 'ajforms' ) );
+			return new WP_Error(
+				'zoho_mail_no_org',
+				sprintf(
+					/* translators: 1: HTTP status code, 2: raw response body from Zoho (truncated) */
+					__( 'Could not resolve this Zoho organization — GET /api/organization/ returned HTTP %1$d: %2$s', 'ajforms' ),
+					$org_status,
+					mb_substr( trim( (string) $org_body ), 0, 500 )
+				)
+			);
 		}
 
 		$groups_response = wp_remote_get( "https://{$api_host}/api/organization/{$zoid}/groups", array( 'timeout' => 20, 'headers' => $auth_headers ) );
