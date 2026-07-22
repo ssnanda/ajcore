@@ -23874,6 +23874,19 @@ class AJForms_Admin {
 		$groups_body   = wp_remote_retrieve_body( $groups_response );
 		$groups_data   = json_decode( $groups_body, true );
 
+		// Stashed regardless of outcome so the settings page can show exactly what Zoho sent back
+		// — cheaper than guessing at the response shape from error text alone.
+		set_transient(
+			'ajcore_zoho_mail_groups_debug',
+			array(
+				'url'    => "https://{$api_host}/api/organization/{$zoid}/groups",
+				'status' => $groups_status,
+				'body'   => $groups_body,
+				'at'     => current_time( 'mysql' ),
+			),
+			15 * MINUTE_IN_SECONDS
+		);
+
 		// wp_remote_get() only returns a WP_Error for network-level failures — an HTTP 4xx/5xx
 		// (wrong zoid, missing scope, not an org admin, etc.) comes back as a normal 200-shaped
 		// response object here, and would otherwise silently look identical to "zero groups
@@ -24364,6 +24377,32 @@ class AJForms_Admin {
 					</div>
 					<div class="ajforms-zoho-test-result" id="ajforms-zoho-diagnose-result"></div>
 				</div>
+				<?php endif; ?>
+
+				<?php
+				$groups_debug = get_transient( 'ajcore_zoho_mail_groups_debug' );
+				if ( ! empty( $groups_debug ) && is_array( $groups_debug ) ) :
+					$pretty_body = $groups_debug['body'];
+					$decoded     = json_decode( $groups_debug['body'], true );
+					if ( null !== $decoded ) {
+						$pretty_body = wp_json_encode( $decoded, JSON_PRETTY_PRINT );
+					}
+					?>
+					<div style="margin-top:18px;padding-top:16px;border-top:1px dashed #e2e8f0;">
+						<h4 style="margin:0 0 4px;font-size:13px;"><?php esc_html_e( 'Last raw Shared Mailbox Groups API response (debug)', 'ajforms' ); ?></h4>
+						<p style="margin:0 0 10px;color:#6b7280;font-size:13px;">
+							<?php
+							printf(
+								/* translators: 1: request URL, 2: HTTP status code, 3: date/time */
+								esc_html__( '%1$s — HTTP %2$s — %3$s (auto-clears after 15 minutes)', 'ajforms' ),
+								esc_html( $groups_debug['url'] ),
+								esc_html( $groups_debug['status'] ),
+								esc_html( $groups_debug['at'] )
+							);
+							?>
+						</p>
+						<pre style="margin:0;padding:14px 16px;background:#0f172a;color:#e2e8f0;border-radius:12px;font-size:12px;line-height:1.5;overflow:auto;max-height:360px;white-space:pre-wrap;word-break:break-word;"><?php echo esc_html( $pretty_body ); ?></pre>
+					</div>
 				<?php endif; ?>
 			</div>
 		</div>
