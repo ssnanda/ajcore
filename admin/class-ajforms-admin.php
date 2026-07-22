@@ -11217,7 +11217,7 @@ class AJForms_Admin {
 			// Matches the full tab whitelist in display_portal_dashboard() so "Full Sync Now" (now
 			// available from every tab, not just Sync/Menu/Customers/Product Catalog/Compliance)
 			// redirects back to wherever it was actually clicked from.
-			$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'inbox', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $current_tab : 'menu';
+			$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $current_tab : 'menu';
 			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
 
 			if ( in_array( $action, array( 'sync_all', 'sync_products', 'sync_customers', 'sync_subscriptions', 'sync_transactions' ), true )
@@ -18719,7 +18719,7 @@ class AJForms_Admin {
 			}
 			$tab = 'cp-settings';
 		}
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'inbox', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -18741,7 +18741,6 @@ class AJForms_Admin {
 			'payments'           => __( 'Payments', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'tasks'              => __( 'Compliance', 'ajforms' ),
-			'inbox'              => __( 'Inbox', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
 		);
@@ -18822,8 +18821,6 @@ class AJForms_Admin {
 				$this->display_portal_event_log_tab();
 			} elseif ( 'emails' === $tab ) {
 				$this->display_portal_emails_tab();
-			} elseif ( 'inbox' === $tab ) {
-				$this->display_zoho_shared_inbox_tab();
 			} elseif ( 'partners' === $tab ) {
 				$this->display_portal_partners_tab();
 			} elseif ( 'portal-users' === $tab ) {
