@@ -10971,9 +10971,21 @@ class AJForms_Admin {
 				$this->handle_file_library_actions();
 			}
 		} elseif ( 'ajforms-cp-settings' === $page ) {
+			// display_cp_settings_admin_page() aliases this page slug to
+			// page=ajforms-client-portal&tab=cp-settings by injecting $_GET['tab'] — but only at
+			// render time (admin_menu), which is after admin_init already ran this dispatcher. So
+			// every cp_section whose settings form posts back to THIS page slug (email-templates,
+			// inbox, files) needs its own save routing here too, not just in the other branch above.
 			$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
 			if ( 'files' === $cp_section ) {
 				$this->handle_portal_file_settings_save();
+			} elseif ( 'email-templates' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+				$this->handle_settings_save();
+			} elseif ( 'inbox' === $cp_section ) {
+				if ( isset( $_POST['ajforms_settings_nonce'] ) ) {
+					$this->handle_settings_save();
+				}
+				$this->handle_zoho_mail_actions();
 			}
 		} elseif ( 'ajforms-auth' === $page ) {
 			$this->handle_auth_settings_save();
