@@ -23879,7 +23879,7 @@ class AJForms_Admin {
 		// response object here, and would otherwise silently look identical to "zero groups
 		// exist" below. Surface it explicitly so a real API error is diagnosable instead of
 		// being misreported as "Shared Mailbox groups visible: none".
-		if ( $groups_status >= 300 || ! isset( $groups_data['data'] ) ) {
+		if ( $groups_status >= 300 || ! isset( $groups_data['data']['groups'] ) ) {
 			return new WP_Error(
 				'zoho_mail_groups_lookup_failed',
 				sprintf(
@@ -23894,7 +23894,9 @@ class AJForms_Admin {
 		$mailbox_id       = '';
 		$connected_email  = '';
 		$available_groups = array();
-		foreach ( (array) ( isset( $groups_data['data'] ) ? $groups_data['data'] : array() ) as $group ) {
+		// Zoho nests the actual list one level under data: { count, groups: [...], domains: [...] } —
+		// data itself is NOT the array of groups.
+		foreach ( (array) $groups_data['data']['groups'] as $group ) {
 			if ( ! is_array( $group ) || empty( $group['mailboxId'] ) ) {
 				continue; // Skip plain distribution lists (no mailboxId) — only Shared Mailbox groups have one.
 			}
