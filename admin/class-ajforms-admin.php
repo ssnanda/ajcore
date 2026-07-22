@@ -23870,7 +23870,26 @@ class AJForms_Admin {
 		if ( is_wp_error( $groups_response ) ) {
 			return $groups_response;
 		}
-		$groups_data = json_decode( wp_remote_retrieve_body( $groups_response ), true );
+		$groups_status = (int) wp_remote_retrieve_response_code( $groups_response );
+		$groups_body   = wp_remote_retrieve_body( $groups_response );
+		$groups_data   = json_decode( $groups_body, true );
+
+		// wp_remote_get() only returns a WP_Error for network-level failures — an HTTP 4xx/5xx
+		// (wrong zoid, missing scope, not an org admin, etc.) comes back as a normal 200-shaped
+		// response object here, and would otherwise silently look identical to "zero groups
+		// exist" below. Surface it explicitly so a real API error is diagnosable instead of
+		// being misreported as "Shared Mailbox groups visible: none".
+		if ( $groups_status >= 300 || ! isset( $groups_data['data'] ) ) {
+			return new WP_Error(
+				'zoho_mail_groups_lookup_failed',
+				sprintf(
+					/* translators: 1: HTTP status code, 2: raw response body from Zoho */
+					__( 'Could not list Shared Mailbox groups for this organization — GET /api/organization/{zoid}/groups returned HTTP %1$d: %2$s', 'ajforms' ),
+					$groups_status,
+					$groups_body
+				)
+			);
+		}
 
 		$mailbox_id       = '';
 		$connected_email  = '';
