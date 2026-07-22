@@ -24146,7 +24146,23 @@ class AJForms_Admin {
 			return $response;
 		}
 		$status_code = (int) wp_remote_retrieve_response_code( $response );
-		$data        = json_decode( wp_remote_retrieve_body( $response ), true );
+		$raw_body    = wp_remote_retrieve_body( $response );
+		$data        = json_decode( $raw_body, true );
+
+		// Stashed on every call (Test Connection, the Inbox tab, etc.) so the settings page can
+		// show exactly what Zoho sent back — same pattern used for the Groups lookup during
+		// connect, kept here since the mailboxId-as-accountId call is the still-unverified part.
+		set_transient(
+			'ajcore_zoho_mail_api_debug',
+			array(
+				'url'    => $url,
+				'status' => $status_code,
+				'body'   => $raw_body,
+				'at'     => current_time( 'mysql' ),
+			),
+			15 * MINUTE_IN_SECONDS
+		);
+
 		if ( $status_code >= 400 ) {
 			$message = ! empty( $data['status']['description'] ) ? (string) $data['status']['description'] : sprintf(
 				/* translators: %d: HTTP status code */
@@ -24432,30 +24448,37 @@ class AJForms_Admin {
 				<?php endif; ?>
 
 				<?php
-				$groups_debug = get_transient( 'ajcore_zoho_mail_groups_debug' );
-				if ( ! empty( $groups_debug ) && is_array( $groups_debug ) ) :
-					$pretty_body = $groups_debug['body'];
-					$decoded     = json_decode( $groups_debug['body'], true );
+				$debug_blocks = array(
+					'ajcore_zoho_mail_groups_debug' => __( 'Last raw Shared Mailbox Groups API response (debug)', 'ajforms' ),
+					'ajcore_zoho_mail_api_debug'    => __( 'Last raw Zoho Mail API response — folders/messages (debug)', 'ajforms' ),
+				);
+				foreach ( $debug_blocks as $debug_key => $debug_label ) :
+					$api_debug = get_transient( $debug_key );
+					if ( empty( $api_debug ) || ! is_array( $api_debug ) ) {
+						continue;
+					}
+					$pretty_body = $api_debug['body'];
+					$decoded     = json_decode( $api_debug['body'], true );
 					if ( null !== $decoded ) {
 						$pretty_body = wp_json_encode( $decoded, JSON_PRETTY_PRINT );
 					}
 					?>
 					<div style="margin-top:18px;padding-top:16px;border-top:1px dashed #e2e8f0;">
-						<h4 style="margin:0 0 4px;font-size:13px;"><?php esc_html_e( 'Last raw Shared Mailbox Groups API response (debug)', 'ajforms' ); ?></h4>
+						<h4 style="margin:0 0 4px;font-size:13px;"><?php echo esc_html( $debug_label ); ?></h4>
 						<p style="margin:0 0 10px;color:#6b7280;font-size:13px;">
 							<?php
 							printf(
 								/* translators: 1: request URL, 2: HTTP status code, 3: date/time */
 								esc_html__( '%1$s — HTTP %2$s — %3$s (auto-clears after 15 minutes)', 'ajforms' ),
-								esc_html( $groups_debug['url'] ),
-								esc_html( $groups_debug['status'] ),
-								esc_html( $groups_debug['at'] )
+								esc_html( $api_debug['url'] ),
+								esc_html( $api_debug['status'] ),
+								esc_html( $api_debug['at'] )
 							);
 							?>
 						</p>
 						<pre style="margin:0;padding:14px 16px;background:#0f172a;color:#e2e8f0;border-radius:12px;font-size:12px;line-height:1.5;overflow:auto;max-height:360px;white-space:pre-wrap;word-break:break-word;"><?php echo esc_html( $pretty_body ); ?></pre>
 					</div>
-				<?php endif; ?>
+				<?php endforeach; ?>
 			</div>
 		</div>
 		<script>
