@@ -23846,63 +23846,63 @@ class AJForms_Admin {
 		$refresh_token = ! empty( $token_data['refresh_token'] ) ? sanitize_text_field( (string) $token_data['refresh_token'] ) : trim( (string) $settings['zoho_mail_refresh_token'] );
 		$expires_in    = ! empty( $token_data['expires_in'] ) ? absint( $token_data['expires_in'] ) : 3600;
 
-		// Discover the accountId for the SHARED mailbox specifically — /api/accounts returns every
-		// mailbox the signed-in Zoho user can reach (their own personal one first, then any shared/
-		// delegated mailboxes they're a member of), so the first entry is normally the admin's own
-		// inbox, not the shared one. Match by the address configured above instead of trusting order.
-		$wanted_email      = strtolower( trim( (string) $settings['zoho_mail_account_email'] ) );
-		$account_id        = '';
-		$connected_email   = '';
-		$available_emails  = array();
-		$accounts_response = wp_remote_get(
-			'https://' . $this->get_zoho_mail_api_host( $settings['zoho_mail_data_center'] ) . '/api/accounts',
-			array(
-				'timeout' => 20,
-				'headers' => array( 'Authorization' => 'Zoho-oauthtoken ' . $access_token ),
-			)
-		);
-		if ( ! is_wp_error( $accounts_response ) ) {
-			$accounts_data = json_decode( wp_remote_retrieve_body( $accounts_response ), true );
-			foreach ( (array) ( isset( $accounts_data['data'] ) ? $accounts_data['data'] : array() ) as $account ) {
-				if ( ! is_array( $account ) || empty( $account['accountId'] ) ) {
-					continue;
-				}
-				// Every address this account entry answers to — primary, plus any "send mail as"
-				// identities Zoho lists for it (shared/delegated mailboxes often show up as an
-				// extra sendMailDetails entry rather than a fully separate top-level account).
-				$candidate_emails = array();
-				if ( ! empty( $account['primaryEmailAddress'] ) ) {
-					$candidate_emails[] = (string) $account['primaryEmailAddress'];
-				}
-				foreach ( (array) ( isset( $account['sendMailDetails'] ) ? $account['sendMailDetails'] : array() ) as $send_as ) {
-					if ( ! empty( $send_as['fromAddress'] ) ) {
-						$candidate_emails[] = (string) $send_as['fromAddress'];
-					}
-				}
-				foreach ( $candidate_emails as $candidate ) {
-					$available_emails[] = $candidate;
-					if ( '' !== $wanted_email && strtolower( trim( $candidate ) ) === $wanted_email ) {
-						$account_id      = sanitize_text_field( (string) $account['accountId'] );
-						$connected_email = sanitize_email( $candidate );
-						break 2;
-					}
-				}
+		// Zoho implements "Shared Mailbox" (Mail Admin Console -> Groups -> Shared Mailbox) as an
+		// ORGANIZATION GROUP, not a regular mail account — it never shows up in /api/accounts at
+		// all, which is why matching against that endpoint kept resolving to the signed-in user's
+		// own personal mailbox. The real path is: resolve this org's zoid, list its groups, find
+		// the one whose address matches what's configured, and use ITS mailboxId (not a personal
+		// accountId) for every later folders/messages call.
+		$api_host     = $this->get_zoho_mail_api_host( $settings['zoho_mail_data_center'] );
+		$auth_headers = array( 'Authorization' => 'Zoho-oauthtoken ' . $access_token );
+		$wanted_email = strtolower( trim( (string) $settings['zoho_mail_account_email'] ) );
+		$wanted_local = false !== strpos( $wanted_email, '@' ) ? strtolower( substr( $wanted_email, 0, strpos( $wanted_email, '@' ) ) ) : $wanted_email;
+
+		$org_response = wp_remote_get( "https://{$api_host}/api/organization/", array( 'timeout' => 20, 'headers' => $auth_headers ) );
+		if ( is_wp_error( $org_response ) ) {
+			return $org_response;
+		}
+		$org_data = json_decode( wp_remote_retrieve_body( $org_response ), true );
+		$zoid     = ! empty( $org_data['data']['zoid'] ) ? sanitize_text_field( (string) $org_data['data']['zoid'] ) : ( ! empty( $org_data['zoid'] ) ? sanitize_text_field( (string) $org_data['zoid'] ) : '' );
+		if ( '' === $zoid ) {
+			return new WP_Error( 'zoho_mail_no_org', __( 'Could not resolve this Zoho organization (no zoid returned) — is the signed-in account an org admin?', 'ajforms' ) );
+		}
+
+		$groups_response = wp_remote_get( "https://{$api_host}/api/organization/{$zoid}/groups", array( 'timeout' => 20, 'headers' => $auth_headers ) );
+		if ( is_wp_error( $groups_response ) ) {
+			return $groups_response;
+		}
+		$groups_data = json_decode( wp_remote_retrieve_body( $groups_response ), true );
+
+		$mailbox_id       = '';
+		$connected_email  = '';
+		$available_groups = array();
+		foreach ( (array) ( isset( $groups_data['data'] ) ? $groups_data['data'] : array() ) as $group ) {
+			if ( ! is_array( $group ) || empty( $group['mailboxId'] ) ) {
+				continue; // Skip plain distribution lists (no mailboxId) — only Shared Mailbox groups have one.
+			}
+			$group_name  = isset( $group['name'] ) ? (string) $group['name'] : '';
+			$group_email = isset( $group['emailId'] ) ? (string) $group['emailId'] : ( isset( $group['email'] ) ? (string) $group['email'] : '' );
+			$available_groups[] = '' !== $group_email ? $group_email : $group_name;
+			if ( strtolower( trim( $group_email ) ) === $wanted_email || strtolower( trim( $group_name ) ) === $wanted_local ) {
+				$mailbox_id      = sanitize_text_field( (string) $group['mailboxId'] );
+				$connected_email = '' !== $group_email ? sanitize_email( $group_email ) : trim( (string) $settings['zoho_mail_account_email'] );
+				break;
 			}
 		}
 
-		if ( '' === $account_id ) {
+		if ( '' === $mailbox_id ) {
 			return new WP_Error(
-				'zoho_mail_account_not_found',
-				'' !== $wanted_email
-					? sprintf(
-						/* translators: 1: the shared mailbox address that was configured, 2: comma-separated list of addresses actually available */
-						__( 'Signed-in Zoho account has no access to %1$s. Accounts it can see: %2$s. Confirm this Zoho user is a member of that shared mailbox, or fix the Shared Mailbox Address in settings.', 'ajforms' ),
-						$wanted_email,
-						! empty( $available_emails ) ? implode( ', ', array_unique( $available_emails ) ) : __( 'none returned', 'ajforms' )
-					)
-					: __( 'Zoho did not return any mailbox accounts for this login.', 'ajforms' )
+				'zoho_mail_shared_mailbox_not_found',
+				sprintf(
+					/* translators: 1: the shared mailbox address that was configured, 2: comma-separated list of shared-mailbox groups actually found */
+					__( 'No Shared Mailbox group matching %1$s was found for this Zoho organization. Shared Mailbox groups visible: %2$s. Confirm the signed-in Zoho user is a member/moderator of it, or fix the Shared Mailbox Address in settings.', 'ajforms' ),
+					$wanted_email,
+					! empty( $available_groups ) ? implode( ', ', array_unique( $available_groups ) ) : __( 'none — this login may not be an org admin, which the Groups API requires', 'ajforms' )
+				)
 			);
 		}
+
+		$account_id = $mailbox_id;
 
 		$settings['zoho_mail_access_token']     = $access_token;
 		$settings['zoho_mail_refresh_token']    = $refresh_token;
@@ -24110,7 +24110,11 @@ class AJForms_Admin {
 		set_transient( 'ajcore_zoho_mail_oauth_state', $authorize_state, 10 * MINUTE_IN_SECONDS );
 		$authorize_url   = add_query_arg(
 			array(
-				'scope'         => 'ZohoMail.accounts.READ,ZohoMail.messages.READ,ZohoMail.folders.READ',
+				// organization.groups.READ is what actually lets us find the Shared Mailbox itself
+				// (Zoho implements "Shared Mailbox" as an org Group with its own mailboxId, not as
+				// a regular mail account — accounts/messages/folders scopes alone only ever see
+				// the signed-in user's own personal mailbox).
+				'scope'         => 'ZohoMail.accounts.READ,ZohoMail.messages.READ,ZohoMail.folders.READ,ZohoMail.organization.groups.READ',
 				'client_id'     => (string) $settings['zoho_mail_client_id'],
 				'response_type' => 'code',
 				'access_type'   => 'offline',
@@ -24185,6 +24189,9 @@ class AJForms_Admin {
 					</ol>
 					<p style="margin:14px 0 0;color:#6b7280;font-size:13px;">
 						<?php esc_html_e( 'Separately, in the Zoho Mail Admin Console under Groups → Shared Mailbox → (this mailbox) → Members, confirm the Zoho user you sign in with above is a member or moderator of the shared mailbox — that account is whose access AJCore will use to read it.', 'ajforms' ); ?>
+					</p>
+					<p style="margin:8px 0 0;color:#6b7280;font-size:13px;">
+						<?php esc_html_e( 'Zoho treats a Shared Mailbox as an organization group, so finding it also needs your Zoho account to have org-admin access — a non-admin Zoho login can be a member of the shared mailbox in Zoho Mail\'s own UI without being able to see it through this connection.', 'ajforms' ); ?>
 					</p>
 				</div>
 
