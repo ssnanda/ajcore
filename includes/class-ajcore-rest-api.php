@@ -35,6 +35,21 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Browser-driven OAuth redirect from Zoho — the visiting browser is the logged-in wp-admin
+		// session that clicked "Connect Zoho Mail", not an AJOps API caller, so this uses a plain
+		// cookie/session permission check instead of the Bearer-token can_manage_ops_api used above.
+		register_rest_route(
+			self::NAMESPACE,
+			'/zoho-mail/oauth/callback',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'zoho_mail_oauth_callback' ),
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+			)
+		);
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/ops/customers',
@@ -3542,6 +3557,46 @@ class AJCore_REST_API {
 			);
 		}
 		return rest_ensure_response( array( 'sites' => $sites ) );
+	}
+
+	/**
+	 * Handles the browser redirect Zoho sends back after the admin approves (or denies) the
+	 * "Connect Zoho Mail" consent screen. Exchanges the one-time code for an access + refresh
+	 * token pair, discovers the mailbox's Zoho accountId (needed for every later Mail API call),
+	 * stores everything, and sends the browser back to the Inbox settings tab with a result banner.
+	 * This is a plain redirect response, not a JSON one — it's only ever reached by direct browser
+	 * navigation (Zoho's OAuth redirect), never called as an API endpoint by AJOps or anything else.
+	 */
+	public function zoho_mail_oauth_callback( WP_REST_Request $request ) {
+		$settings_page_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox' ), admin_url( 'admin.php' ) );
+
+		$error = sanitize_text_field( (string) $request->get_param( 'error' ) );
+		if ( '' !== $error ) {
+			wp_safe_redirect( add_query_arg( 'zoho-mail-error', rawurlencode( $error ), $settings_page_url ) );
+			exit;
+		}
+
+		$state = sanitize_text_field( (string) $request->get_param( 'state' ) );
+		if ( ! wp_verify_nonce( $state, 'ajcore_zoho_mail_oauth' ) ) {
+			wp_safe_redirect( add_query_arg( 'zoho-mail-error', rawurlencode( __( 'Could not verify this request (expired link) — click Connect Zoho Mail again.', 'ajforms' ) ), $settings_page_url ) );
+			exit;
+		}
+
+		$code = sanitize_text_field( (string) $request->get_param( 'code' ) );
+		if ( '' === $code || ! class_exists( 'AJForms_Admin' ) ) {
+			wp_safe_redirect( add_query_arg( 'zoho-mail-error', rawurlencode( __( 'Zoho did not return an authorization code.', 'ajforms' ) ), $settings_page_url ) );
+			exit;
+		}
+
+		$admin    = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result   = $admin->complete_zoho_mail_oauth_connection( $code );
+		if ( is_wp_error( $result ) ) {
+			wp_safe_redirect( add_query_arg( 'zoho-mail-error', rawurlencode( $result->get_error_message() ), $settings_page_url ) );
+			exit;
+		}
+
+		wp_safe_redirect( add_query_arg( 'zoho-mail-connected', 'true', $settings_page_url ) );
+		exit;
 	}
 
 	public function delete_ops_email_log_entry( WP_REST_Request $request ) {

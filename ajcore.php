@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.66
+ * Version: 0.7.67
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.66' );
+	define( 'AJCORE_VERSION', '0.7.67' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -133,6 +133,18 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'university_lead_followup_from_name'      => 'University Place Office Suites',
 			'lead_followup_from_email'      => 'contactus@ncllcagents.com',
 			'lead_followup_from_name'       => '',
+			// Zoho Mail shared-inbox OAuth app (Inbox settings). client_id/secret/account_email/
+			// data_center are admin-entered; the rest are written only by the OAuth callback itself.
+			'zoho_mail_client_id'           => '',
+			'zoho_mail_client_secret'       => '',
+			'zoho_mail_account_email'       => 'agent@ncllcagents.com',
+			'zoho_mail_data_center'         => 'com',
+			'zoho_mail_access_token'        => '',
+			'zoho_mail_refresh_token'       => '',
+			'zoho_mail_token_expires_at'    => 0,
+			'zoho_mail_account_id'          => '',
+			'zoho_mail_connected_email'     => '',
+			'zoho_mail_connected_at'        => '',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',

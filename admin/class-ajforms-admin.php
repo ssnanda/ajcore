@@ -10949,6 +10949,11 @@ class AJForms_Admin {
 					$this->handle_role_manager_actions();
 				} elseif ( 'email-templates' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 					$this->handle_settings_save();
+				} elseif ( 'inbox' === $cp_section ) {
+					if ( isset( $_POST['ajforms_settings_nonce'] ) ) {
+						$this->handle_settings_save();
+					}
+					$this->handle_zoho_mail_actions();
 				}
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
@@ -12954,6 +12959,10 @@ class AJForms_Admin {
 			'university_lead_followup_body'          => isset( $_POST['university_lead_followup_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_lead_followup_body'] ) ) : "Hi {name},\nWe wanted to follow up on your recent inquiry with University Place Office Suites. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
 			'university_lead_followup_from_email'    => isset( $_POST['university_lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_lead_followup_from_email'] ) ) : 'donotreply@universityofficesuites.com',
 			'university_lead_followup_from_name'     => isset( $_POST['university_lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_from_name'] ) ) : 'University Place Office Suites',
+			'zoho_mail_client_id'            => isset( $_POST['zoho_mail_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_id'] ) ) : '',
+			'zoho_mail_client_secret'        => isset( $_POST['zoho_mail_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_secret'] ) ) : '',
+			'zoho_mail_account_email'        => isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : 'agent@ncllcagents.com',
+			'zoho_mail_data_center'          => isset( $_POST['zoho_mail_data_center'] ) && in_array( sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ), array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -12987,10 +12996,17 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
+		}
+
+		// OAuth tokens are never edited through this form — only the "Connect Zoho Mail" callback
+		// writes them directly. Without this, they'd silently reset to '' on every unrelated
+		// settings save anywhere in the plugin, since they belong to no $section_keys entry below.
+		foreach ( array( 'zoho_mail_access_token', 'zoho_mail_refresh_token', 'zoho_mail_token_expires_at', 'zoho_mail_account_id', 'zoho_mail_connected_email', 'zoho_mail_connected_at' ) as $zoho_token_field ) {
+			$settings[ $zoho_token_field ] = isset( $current_settings[ $zoho_token_field ] ) ? $current_settings[ $zoho_token_field ] : '';
 		}
 
 		$active_stripe_prefix = 'live' === $settings['stripe_mode'] ? 'stripe_live' : 'stripe_sandbox';
@@ -13003,6 +13019,7 @@ class AJForms_Admin {
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
+			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_data_center' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -13029,12 +13046,12 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( 'email-templates' === $section ) {
-			// This section's form lives on the Client Portal's CP Settings tab, not this page.
+		if ( 'email-templates' === $section || 'inbox' === $section ) {
+			// These sections' forms live on the Client Portal's CP Settings tab, not this page.
 			$redirect_args = array(
 				'page'             => 'ajforms-client-portal',
 				'tab'              => 'cp-settings',
-				'cp_section'       => 'email-templates',
+				'cp_section'       => $section,
 				'settings-updated' => 'true',
 			);
 		} else {
@@ -18842,6 +18859,7 @@ class AJForms_Admin {
 			'storage'         => __( 'Storage', 'ajforms' ),
 			'roles'           => __( 'Role Manager', 'ajforms' ),
 			'email-templates' => __( 'Email Templates', 'ajforms' ),
+			'inbox'           => __( 'Inbox', 'ajforms' ),
 			'shared-db'       => __( 'Shared DB / Multi-Site', 'ajforms' ),
 		);
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
@@ -18892,6 +18910,8 @@ class AJForms_Admin {
 			<?php $this->display_role_manager_page( true ); ?>
 		<?php elseif ( 'email-templates' === $cp_section ) : ?>
 			<?php $this->display_email_templates_settings_section(); ?>
+		<?php elseif ( 'inbox' === $cp_section ) : ?>
+			<?php $this->display_zoho_mail_settings_section(); ?>
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
@@ -23634,6 +23654,284 @@ class AJForms_Admin {
 				<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
 			</div>
 		</form>
+		<?php
+	}
+
+	/** The OAuth data-center-specific accounts host Zoho token/authorize endpoints live on. */
+	private function get_zoho_mail_accounts_host( $data_center ) {
+		$dc = in_array( $data_center, array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? $data_center : 'com';
+		return 'accounts.zoho.' . $dc;
+	}
+
+	/** The OAuth data-center-specific Mail API host (only 'com'/'eu'/'in' currently have mail.zoho.{dc}). */
+	private function get_zoho_mail_api_host( $data_center ) {
+		$dc = in_array( $data_center, array( 'com', 'eu', 'in' ), true ) ? $data_center : 'com';
+		return 'mail.zoho.' . $dc;
+	}
+
+	public function handle_zoho_mail_actions() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_GET['zoho_mail_action'] ) ) {
+			return;
+		}
+		$action = sanitize_key( wp_unslash( $_GET['zoho_mail_action'] ) );
+		if ( 'disconnect' !== $action ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_zoho_mail_disconnect' );
+
+		$settings = $this->get_plugin_settings();
+		foreach ( array( 'zoho_mail_access_token', 'zoho_mail_refresh_token', 'zoho_mail_account_id', 'zoho_mail_connected_email', 'zoho_mail_connected_at' ) as $field ) {
+			$settings[ $field ] = '';
+		}
+		$settings['zoho_mail_token_expires_at'] = 0;
+		update_option( 'ajforms_settings', $settings );
+		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
+			ajforms_write_synced_settings_file( $settings );
+		}
+
+		wp_safe_redirect(
+			add_query_arg(
+				array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox', 'zoho-mail-disconnected' => 'true' ),
+				admin_url( 'admin.php' )
+			)
+		);
+		exit;
+	}
+
+	/**
+	 * Exchanges a Zoho OAuth authorization code for an access + refresh token pair, discovers the
+	 * connected mailbox's Zoho accountId (every Mail API call needs it), and stores everything.
+	 * Public entry point for the REST OAuth callback (class-ajcore-rest-api.php) — kept here rather
+	 * than in that class since it's the one place that already owns get_plugin_settings()/
+	 * update_option('ajforms_settings', ...) writes.
+	 */
+	public function complete_zoho_mail_oauth_connection( $code ) {
+		$settings = $this->get_plugin_settings();
+		$client_id     = trim( (string) $settings['zoho_mail_client_id'] );
+		$client_secret = trim( (string) $settings['zoho_mail_client_secret'] );
+		if ( '' === $client_id || '' === $client_secret ) {
+			return new WP_Error( 'zoho_mail_not_configured', __( 'Zoho Mail Client ID/Secret are not saved.', 'ajforms' ) );
+		}
+
+		$accounts_host = $this->get_zoho_mail_accounts_host( $settings['zoho_mail_data_center'] );
+		$redirect_uri  = rest_url( 'ajcore/v1/zoho-mail/oauth/callback' );
+
+		$token_response = wp_remote_post(
+			"https://{$accounts_host}/oauth/v2/token",
+			array(
+				'timeout' => 20,
+				'body'    => array(
+					'grant_type'    => 'authorization_code',
+					'client_id'     => $client_id,
+					'client_secret' => $client_secret,
+					'redirect_uri'  => $redirect_uri,
+					'code'          => sanitize_text_field( (string) $code ),
+				),
+			)
+		);
+		if ( is_wp_error( $token_response ) ) {
+			return $token_response;
+		}
+		$token_data = json_decode( wp_remote_retrieve_body( $token_response ), true );
+		if ( empty( $token_data['access_token'] ) ) {
+			$message = ! empty( $token_data['error'] ) ? (string) $token_data['error'] : __( 'Zoho did not return an access token.', 'ajforms' );
+			return new WP_Error( 'zoho_mail_token_exchange_failed', $message );
+		}
+
+		$access_token  = sanitize_text_field( (string) $token_data['access_token'] );
+		$refresh_token = ! empty( $token_data['refresh_token'] ) ? sanitize_text_field( (string) $token_data['refresh_token'] ) : trim( (string) $settings['zoho_mail_refresh_token'] );
+		$expires_in    = ! empty( $token_data['expires_in'] ) ? absint( $token_data['expires_in'] ) : 3600;
+
+		// Discover the mailbox's accountId + confirmed email — every later Mail API call is scoped
+		// to a specific accountId, and this is the one point where we can reliably resolve it.
+		$account_id       = '';
+		$connected_email  = '';
+		$accounts_response = wp_remote_get(
+			'https://' . $this->get_zoho_mail_api_host( $settings['zoho_mail_data_center'] ) . '/api/accounts',
+			array(
+				'timeout' => 20,
+				'headers' => array( 'Authorization' => 'Zoho-oauthtoken ' . $access_token ),
+			)
+		);
+		if ( ! is_wp_error( $accounts_response ) ) {
+			$accounts_data = json_decode( wp_remote_retrieve_body( $accounts_response ), true );
+			$first_account = ! empty( $accounts_data['data'][0] ) ? $accounts_data['data'][0] : null;
+			if ( is_array( $first_account ) ) {
+				$account_id      = ! empty( $first_account['accountId'] ) ? sanitize_text_field( (string) $first_account['accountId'] ) : '';
+				$connected_email = ! empty( $first_account['primaryEmailAddress'] ) ? sanitize_email( (string) $first_account['primaryEmailAddress'] ) : '';
+			}
+		}
+
+		$settings['zoho_mail_access_token']     = $access_token;
+		$settings['zoho_mail_refresh_token']    = $refresh_token;
+		$settings['zoho_mail_token_expires_at'] = time() + $expires_in;
+		$settings['zoho_mail_account_id']       = $account_id;
+		$settings['zoho_mail_connected_email']  = '' !== $connected_email ? $connected_email : trim( (string) $settings['zoho_mail_account_email'] );
+		$settings['zoho_mail_connected_at']     = current_time( 'mysql' );
+
+		update_option( 'ajforms_settings', $settings );
+		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
+			ajforms_write_synced_settings_file( $settings );
+		}
+
+		return true;
+	}
+
+	public function display_zoho_mail_settings_section() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings     = $this->get_plugin_settings();
+		$redirect_uri = rest_url( 'ajcore/v1/zoho-mail/oauth/callback' );
+		$action_url   = add_query_arg(
+			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox', 'section' => 'inbox' ),
+			admin_url( 'admin.php' )
+		);
+
+		$is_connected     = ! empty( $settings['zoho_mail_access_token'] ) || ! empty( $settings['zoho_mail_refresh_token'] );
+		$can_connect      = ! empty( $settings['zoho_mail_client_id'] ) && ! empty( $settings['zoho_mail_client_secret'] );
+		$connect_disabled_reason = ! $can_connect ? __( 'Save a Client ID and Client Secret below first.', 'ajforms' ) : '';
+
+		if ( isset( $_GET['zoho-mail-connected'] ) ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Zoho Mail connected.', 'ajforms' ) . '</p></div>';
+		} elseif ( isset( $_GET['zoho-mail-disconnected'] ) ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Zoho Mail disconnected.', 'ajforms' ) . '</p></div>';
+		} elseif ( isset( $_GET['zoho-mail-error'] ) ) {
+			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['zoho-mail-error'] ) ) ) . '</p></div>';
+		}
+
+		$authorize_state = wp_create_nonce( 'ajcore_zoho_mail_oauth' );
+		$authorize_url   = add_query_arg(
+			array(
+				'scope'         => 'ZohoMail.accounts.READ,ZohoMail.messages.READ,ZohoMail.folders.READ',
+				'client_id'     => rawurlencode( (string) $settings['zoho_mail_client_id'] ),
+				'response_type' => 'code',
+				'access_type'   => 'offline',
+				'redirect_uri'  => rawurlencode( $redirect_uri ),
+				'prompt'        => 'consent',
+				'state'         => $authorize_state,
+			),
+			'https://' . $this->get_zoho_mail_accounts_host( $settings['zoho_mail_data_center'] ) . '/oauth/v2/auth'
+		);
+
+		$disconnect_url = wp_nonce_url(
+			add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox', 'zoho_mail_action' => 'disconnect' ), admin_url( 'admin.php' ) ),
+			'ajcore_zoho_mail_disconnect'
+		);
+		?>
+		<style>
+			#ajforms-zoho-mail-section .ajforms-settings-field input[type="text"],
+			#ajforms-zoho-mail-section .ajforms-settings-field input[type="email"],
+			#ajforms-zoho-mail-section .ajforms-settings-field select { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid #d1d5db; border-radius: 12px; padding: 10px 13px; font-family: inherit; font-size: 14px; }
+			#ajforms-zoho-mail-section .ajforms-settings-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #111827; }
+			#ajforms-zoho-mail-section .ajforms-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+			#ajforms-zoho-mail-section .ajforms-zoho-steps { margin: 0; padding-left: 20px; }
+			#ajforms-zoho-mail-section .ajforms-zoho-steps li { margin-bottom: 10px; line-height: 1.6; }
+			#ajforms-zoho-mail-section .ajforms-zoho-copyfield { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+			#ajforms-zoho-mail-section .ajforms-zoho-copyfield code { flex: 1; padding: 8px 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; overflow-x: auto; white-space: nowrap; }
+		</style>
+		<div id="ajforms-zoho-mail-section">
+			<div class="ajforms-settings-card">
+				<span class="ajforms-settings-pill"><?php esc_html_e( 'Zoho Mail', 'ajforms' ); ?></span>
+				<h3><?php esc_html_e( 'Connect the shared inbox', 'ajforms' ); ?></h3>
+				<p style="margin:0 0 14px;color:#6b7280;font-size:14px;">
+					<?php esc_html_e( 'This is the Zoho API Console app, not the Zoho Mail Admin Console — do not use Zoho Mail\'s own Admin Console for this.', 'ajforms' ); ?>
+				</p>
+				<ol class="ajforms-zoho-steps" style="font-size:14px;color:#374151;">
+					<li><?php echo wp_kses_post( sprintf( __( 'Go to %s.', 'ajforms' ), '<code>api-console.zoho.com</code>' ) ); ?></li>
+					<li><?php esc_html_e( 'Sign in with the Zoho administrator account that has access to the shared mailbox.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Click "Get Started" or "Add Client", then choose "Server-based Applications".', 'ajforms' ); ?></li>
+					<li>
+						<?php esc_html_e( 'Enter:', 'ajforms' ); ?>
+						<ul style="margin:6px 0 0;padding-left:18px;">
+							<li><?php echo wp_kses_post( sprintf( __( '<strong>Client Name:</strong> %s', 'ajforms' ), 'AJCore Zoho Mail' ) ); ?></li>
+							<li><?php echo wp_kses_post( sprintf( __( '<strong>Homepage URL:</strong> %s', 'ajforms' ), esc_html( home_url( '/' ) ) ) ); ?></li>
+							<li>
+								<strong><?php esc_html_e( 'Authorized Redirect URI:', 'ajforms' ); ?></strong>
+								<?php esc_html_e( 'must match exactly —', 'ajforms' ); ?>
+								<div class="ajforms-zoho-copyfield">
+									<code id="ajforms-zoho-redirect-uri"><?php echo esc_html( $redirect_uri ); ?></code>
+									<button type="button" class="button button-small" onclick="navigator.clipboard.writeText(document.getElementById('ajforms-zoho-redirect-uri').textContent);this.textContent='<?php echo esc_js( __( 'Copied', 'ajforms' ) ); ?>';"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
+								</div>
+							</li>
+						</ul>
+					</li>
+					<li><?php esc_html_e( 'Create the application and copy the Client ID and Client Secret into the fields below.', 'ajforms' ); ?></li>
+				</ol>
+				<p style="margin:14px 0 0;color:#6b7280;font-size:13px;">
+					<?php esc_html_e( 'Separately, in the Zoho Mail Admin Console under Groups → Shared Mailbox → (this mailbox) → Members, confirm the Zoho user you sign in with above is a member or moderator of the shared mailbox — that account is whose access AJCore will use to read it.', 'ajforms' ); ?>
+				</p>
+			</div>
+
+			<form method="post" action="<?php echo esc_url( $action_url ); ?>">
+				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+				<div class="ajforms-settings-card">
+					<span class="ajforms-settings-pill"><?php esc_html_e( 'OAuth App', 'ajforms' ); ?></span>
+					<h3><?php esc_html_e( 'Client ID & Secret', 'ajforms' ); ?></h3>
+					<div class="ajforms-settings-grid">
+						<div class="ajforms-settings-field">
+							<label for="zoho_mail_client_id"><?php esc_html_e( 'Client ID', 'ajforms' ); ?></label>
+							<input type="text" name="zoho_mail_client_id" id="zoho_mail_client_id" value="<?php echo esc_attr( $settings['zoho_mail_client_id'] ); ?>" autocomplete="off">
+						</div>
+						<div class="ajforms-settings-field">
+							<label for="zoho_mail_client_secret"><?php esc_html_e( 'Client Secret', 'ajforms' ); ?></label>
+							<input type="text" name="zoho_mail_client_secret" id="zoho_mail_client_secret" value="" placeholder="<?php echo ! empty( $settings['zoho_mail_client_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off">
+						</div>
+						<div class="ajforms-settings-field">
+							<label for="zoho_mail_account_email"><?php esc_html_e( 'Shared Mailbox Address', 'ajforms' ); ?></label>
+							<input type="email" name="zoho_mail_account_email" id="zoho_mail_account_email" value="<?php echo esc_attr( $settings['zoho_mail_account_email'] ); ?>">
+						</div>
+						<div class="ajforms-settings-field">
+							<label for="zoho_mail_data_center"><?php esc_html_e( 'Zoho Data Center', 'ajforms' ); ?></label>
+							<select name="zoho_mail_data_center" id="zoho_mail_data_center">
+								<?php foreach ( array( 'com' => 'zoho.com (US)', 'eu' => 'zoho.eu', 'in' => 'zoho.in', 'com.au' => 'zoho.com.au', 'jp' => 'zoho.jp' ) as $dc_key => $dc_label ) : ?>
+									<option value="<?php echo esc_attr( $dc_key ); ?>" <?php selected( $settings['zoho_mail_data_center'], $dc_key ); ?>><?php echo esc_html( $dc_label ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</div>
+					</div>
+				</div>
+				<div class="ajforms-settings-actions">
+					<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
+				</div>
+			</form>
+
+			<div class="ajforms-settings-card">
+				<span class="ajforms-settings-pill"><?php esc_html_e( 'Connection', 'ajforms' ); ?></span>
+				<h3><?php esc_html_e( 'Authorize access', 'ajforms' ); ?></h3>
+				<?php if ( $is_connected ) : ?>
+					<div class="ajforms-settings-checkbox" style="margin-bottom:16px;">
+						<strong style="color:#166534;">✓ <?php esc_html_e( 'Connected', 'ajforms' ); ?></strong>
+						<span>
+							<?php
+							echo esc_html(
+								! empty( $settings['zoho_mail_connected_email'] )
+									? sprintf(
+										/* translators: 1: connected mailbox address, 2: date connected */
+										__( 'as %1$s%2$s', 'ajforms' ),
+										$settings['zoho_mail_connected_email'],
+										! empty( $settings['zoho_mail_connected_at'] ) ? sprintf( __( ' — connected %s', 'ajforms' ), $settings['zoho_mail_connected_at'] ) : ''
+									)
+									: __( 'Connected — mailbox address not yet confirmed.', 'ajforms' )
+							);
+							?>
+						</span>
+					</div>
+				<?php endif; ?>
+				<div class="ajforms-settings-inline-actions">
+					<?php if ( $can_connect ) : ?>
+						<a class="button button-primary" href="<?php echo esc_url( $authorize_url ); ?>"><?php echo esc_html( $is_connected ? __( 'Reconnect Zoho Mail', 'ajforms' ) : __( 'Connect Zoho Mail', 'ajforms' ) ); ?></a>
+					<?php else : ?>
+						<button type="button" class="button" disabled title="<?php echo esc_attr( $connect_disabled_reason ); ?>"><?php esc_html_e( 'Connect Zoho Mail', 'ajforms' ); ?></button>
+						<span style="color:#6b7280;font-size:13px;"><?php echo esc_html( $connect_disabled_reason ); ?></span>
+					<?php endif; ?>
+					<?php if ( $is_connected ) : ?>
+						<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Zoho Mail? This stops syncing the shared inbox until reconnected.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajforms' ); ?></a>
+					<?php endif; ?>
+				</div>
+			</div>
+		</div>
 		<?php
 	}
 
