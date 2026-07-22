@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.73
+ * Version: 0.7.74
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.73' );
+	define( 'AJCORE_VERSION', '0.7.74' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -138,6 +138,10 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'zoho_mail_client_id'           => '',
 			'zoho_mail_client_secret'       => '',
 			'zoho_mail_account_email'       => 'agent@ncllcagents.com',
+			// The Zoho Organization ID (zoid) — there's no reliable non-partner API to discover
+			// this for a regular admin, so it's entered manually. Visible in the Zoho Mail Admin
+			// Console under Organization -> Profile.
+			'zoho_mail_org_id'              => '',
 			'zoho_mail_data_center'         => 'com',
 			'zoho_mail_access_token'        => '',
 			'zoho_mail_refresh_token'       => '',

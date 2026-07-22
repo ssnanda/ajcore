@@ -65,6 +65,20 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Diagnostic only — not used by the Inbox feature itself. See
+		// AJForms_Admin::diagnose_zoho_mail_shared_access() for what it actually checks.
+		register_rest_route(
+			self::NAMESPACE,
+			'/zoho-mail/diagnose',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'zoho_mail_diagnose' ),
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+			)
+		);
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/ops/customers',
@@ -3687,6 +3701,25 @@ class AJCore_REST_API {
 				),
 			)
 		);
+	}
+
+	/** Diagnostic — see AJForms_Admin::diagnose_zoho_mail_shared_access(). */
+	public function zoho_mail_diagnose( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin       = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$search_text = sanitize_text_field( (string) $request->get_param( 'q' ) );
+		if ( '' === $search_text ) {
+			$search_text = 'E-Notification Filing';
+		}
+
+		$result = $admin->diagnose_zoho_mail_shared_access( $search_text );
+		if ( is_wp_error( $result ) ) {
+			return rest_ensure_response( array( 'success' => false, 'message' => $result->get_error_message() ) );
+		}
+
+		return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
 	}
 
 	public function delete_ops_email_log_entry( WP_REST_Request $request ) {

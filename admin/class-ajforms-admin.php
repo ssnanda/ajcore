@@ -12974,6 +12974,7 @@ class AJForms_Admin {
 			'zoho_mail_client_id'            => isset( $_POST['zoho_mail_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_id'] ) ) : '',
 			'zoho_mail_client_secret'        => isset( $_POST['zoho_mail_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_secret'] ) ) : '',
 			'zoho_mail_account_email'        => isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : 'agent@ncllcagents.com',
+			'zoho_mail_org_id'               => isset( $_POST['zoho_mail_org_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_org_id'] ) ) : '',
 			'zoho_mail_data_center'          => isset( $_POST['zoho_mail_data_center'] ) && in_array( sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ), array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
@@ -13031,7 +13032,7 @@ class AJForms_Admin {
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
-			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_data_center' ),
+			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_data_center' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -23857,34 +23858,12 @@ class AJForms_Admin {
 		$wanted_email = strtolower( trim( (string) $settings['zoho_mail_account_email'] ) );
 		$wanted_local = false !== strpos( $wanted_email, '@' ) ? strtolower( substr( $wanted_email, 0, strpos( $wanted_email, '@' ) ) ) : $wanted_email;
 
-		$org_response = wp_remote_get( "https://{$api_host}/api/organization/", array( 'timeout' => 20, 'headers' => $auth_headers ) );
-		if ( is_wp_error( $org_response ) ) {
-			return $org_response;
-		}
-		$org_status = (int) wp_remote_retrieve_response_code( $org_response );
-		$org_body   = wp_remote_retrieve_body( $org_response );
-		$org_data   = json_decode( $org_body, true );
-		// Response shape isn't fully documented — try every plausible location: a single org
-		// object under 'data', a bare top-level 'zoid', or a list of orgs under 'data'.
-		$zoid = '';
-		if ( ! empty( $org_data['data']['zoid'] ) ) {
-			$zoid = (string) $org_data['data']['zoid'];
-		} elseif ( ! empty( $org_data['zoid'] ) ) {
-			$zoid = (string) $org_data['zoid'];
-		} elseif ( ! empty( $org_data['data'][0]['zoid'] ) ) {
-			$zoid = (string) $org_data['data'][0]['zoid'];
-		}
-		$zoid = sanitize_text_field( $zoid );
+		// zoid has no reliable non-partner discovery API (GET /api/organization/ 404s for a
+		// regular admin — that endpoint is partner/reseller-scoped) — it's entered manually in
+		// settings, copied from the Zoho Mail Admin Console under Organization -> Profile.
+		$zoid = sanitize_text_field( trim( (string) $settings['zoho_mail_org_id'] ) );
 		if ( '' === $zoid ) {
-			return new WP_Error(
-				'zoho_mail_no_org',
-				sprintf(
-					/* translators: 1: HTTP status code, 2: raw response body from Zoho (truncated) */
-					__( 'Could not resolve this Zoho organization — GET /api/organization/ returned HTTP %1$d: %2$s', 'ajforms' ),
-					$org_status,
-					mb_substr( trim( (string) $org_body ), 0, 500 )
-				)
-			);
+			return new WP_Error( 'zoho_mail_no_org_id', __( 'Zoho Organization ID is not saved — copy it from the Zoho Mail Admin Console (Organization → Profile) into the settings above, then reconnect.', 'ajforms' ) );
 		}
 
 		$groups_response = wp_remote_get( "https://{$api_host}/api/organization/{$zoid}/groups", array( 'timeout' => 20, 'headers' => $auth_headers ) );
@@ -23998,6 +23977,72 @@ class AJForms_Admin {
 		}
 
 		return $access_token;
+	}
+
+	/**
+	 * Diagnostic (not part of normal operation): searches every personal/delegate account the
+	 * currently-authorized OAuth token can see (via the standard user-scoped
+	 * /api/accounts/{accountId}/messages/search) for a known piece of text that should only exist
+	 * in the shared mailbox. Answers a narrower question than Test Connection — not "is the token
+	 * valid" but "can the *personal-account* Message API reach the shared mailbox's content at
+	 * all," which determines whether the Groups/mailboxId approach is actually required or whether
+	 * a plain account-scoped search would have worked all along.
+	 */
+	public function diagnose_zoho_mail_shared_access( $search_text ) {
+		$access_token = $this->get_valid_zoho_mail_access_token();
+		if ( is_wp_error( $access_token ) ) {
+			return $access_token;
+		}
+		$settings     = $this->get_plugin_settings();
+		$api_host     = $this->get_zoho_mail_api_host( $settings['zoho_mail_data_center'] );
+		$auth_headers = array( 'Authorization' => 'Zoho-oauthtoken ' . $access_token );
+
+		$accounts_response = wp_remote_get( "https://{$api_host}/api/accounts", array( 'timeout' => 20, 'headers' => $auth_headers ) );
+		if ( is_wp_error( $accounts_response ) ) {
+			return $accounts_response;
+		}
+		$accounts_data = json_decode( wp_remote_retrieve_body( $accounts_response ), true );
+
+		$accounts_tried = array();
+		$matches        = array();
+		foreach ( (array) ( isset( $accounts_data['data'] ) ? $accounts_data['data'] : array() ) as $account ) {
+			if ( ! is_array( $account ) || empty( $account['accountId'] ) ) {
+				continue;
+			}
+			$account_id    = (string) $account['accountId'];
+			$account_email = isset( $account['primaryEmailAddress'] ) ? (string) $account['primaryEmailAddress'] : '';
+			$accounts_tried[] = array( 'account_id' => $account_id, 'email' => $account_email );
+
+			$search_response = wp_remote_get(
+				add_query_arg(
+					array( 'searchKey' => $search_text, 'limit' => 5 ),
+					"https://{$api_host}/api/accounts/{$account_id}/messages/search"
+				),
+				array( 'timeout' => 20, 'headers' => $auth_headers )
+			);
+			if ( is_wp_error( $search_response ) ) {
+				continue;
+			}
+			$search_data = json_decode( wp_remote_retrieve_body( $search_response ), true );
+			foreach ( (array) ( isset( $search_data['data'] ) ? $search_data['data'] : array() ) as $row ) {
+				if ( empty( $row['messageId'] ) ) {
+					continue;
+				}
+				$matches[] = array(
+					'account_id' => $account_id,
+					'account_email' => $account_email,
+					'folder_id'  => isset( $row['folderId'] ) ? (string) $row['folderId'] : '',
+					'subject'    => isset( $row['subject'] ) ? (string) $row['subject'] : '',
+				);
+			}
+		}
+
+		return array(
+			'search_text'     => $search_text,
+			'accounts_tried'  => $accounts_tried,
+			'found'           => ! empty( $matches ),
+			'matches'         => $matches,
+		);
 	}
 
 	/** Thin authenticated GET wrapper for the Zoho Mail API, scoped to the connected account. */
@@ -24149,7 +24194,8 @@ class AJForms_Admin {
 			add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox', 'zoho_mail_action' => 'disconnect' ), admin_url( 'admin.php' ) ),
 			'ajcore_zoho_mail_disconnect'
 		);
-		$test_url = rest_url( 'ajcore/v1/zoho-mail/test' );
+		$test_url     = rest_url( 'ajcore/v1/zoho-mail/test' );
+		$diagnose_url = rest_url( 'ajcore/v1/zoho-mail/diagnose' );
 		?>
 		<style>
 			#ajforms-zoho-mail-section .ajforms-settings-field input[type="text"],
@@ -24232,6 +24278,11 @@ class AJForms_Admin {
 							<input type="email" name="zoho_mail_account_email" id="zoho_mail_account_email" value="<?php echo esc_attr( $settings['zoho_mail_account_email'] ); ?>">
 						</div>
 						<div class="ajforms-settings-field">
+							<label for="zoho_mail_org_id"><?php esc_html_e( 'Zoho Organization ID', 'ajforms' ); ?></label>
+							<input type="text" name="zoho_mail_org_id" id="zoho_mail_org_id" value="<?php echo esc_attr( $settings['zoho_mail_org_id'] ); ?>" autocomplete="off">
+							<div class="ajforms-settings-help"><?php esc_html_e( 'From the Zoho Mail Admin Console: Organization → Profile.', 'ajforms' ); ?></div>
+						</div>
+						<div class="ajforms-settings-field">
 							<label for="zoho_mail_data_center"><?php esc_html_e( 'Zoho Data Center', 'ajforms' ); ?></label>
 							<select name="zoho_mail_data_center" id="zoho_mail_data_center">
 								<?php foreach ( array( 'com' => 'zoho.com (US)', 'eu' => 'zoho.eu', 'in' => 'zoho.in', 'com.au' => 'zoho.com.au', 'jp' => 'zoho.jp' ) as $dc_key => $dc_label ) : ?>
@@ -24281,6 +24332,18 @@ class AJForms_Admin {
 				</div>
 
 				<div class="ajforms-zoho-test-result" id="ajforms-zoho-test-result"></div>
+
+				<?php if ( $is_connected ) : ?>
+				<div style="margin-top:18px;padding-top:16px;border-top:1px dashed #e2e8f0;">
+					<h4 style="margin:0 0 4px;font-size:13px;"><?php esc_html_e( 'Diagnose Shared Mailbox access', 'ajforms' ); ?></h4>
+					<p style="margin:0 0 10px;color:#6b7280;font-size:13px;"><?php esc_html_e( 'Searches every mailbox this Zoho login can personally see for a known piece of text — use this to confirm whether the Shared Mailbox is reachable at all, independent of the Organization ID / Groups setup above.', 'ajforms' ); ?></p>
+					<div class="ajforms-settings-inline-actions">
+						<input type="text" id="ajforms-zoho-diagnose-input" placeholder="<?php esc_attr_e( 'Text to search for…', 'ajforms' ); ?>" value="<?php echo esc_attr( __( 'E-Notification Filing', 'ajforms' ) ); ?>" style="min-width:260px;box-sizing:border-box;min-height:40px;border:1px solid #d1d5db;border-radius:10px;padding:8px 12px;font-family:inherit;font-size:13px;">
+						<button type="button" class="button" id="ajforms-zoho-diagnose-btn"><?php esc_html_e( 'Run Diagnostic', 'ajforms' ); ?></button>
+					</div>
+					<div class="ajforms-zoho-test-result" id="ajforms-zoho-diagnose-result"></div>
+				</div>
+				<?php endif; ?>
 			</div>
 		</div>
 		<script>
@@ -24330,6 +24393,52 @@ class AJForms_Admin {
 						.finally( function () {
 							testBtn.disabled = false;
 							testBtn.textContent = '<?php echo esc_js( __( 'Test Connection', 'ajforms' ) ); ?>';
+						} );
+				} );
+			}
+
+			var diagnoseBtn = document.getElementById( 'ajforms-zoho-diagnose-btn' );
+			var diagnoseInput = document.getElementById( 'ajforms-zoho-diagnose-input' );
+			var diagnoseResultBox = document.getElementById( 'ajforms-zoho-diagnose-result' );
+			if ( diagnoseBtn && diagnoseInput && diagnoseResultBox ) {
+				diagnoseBtn.addEventListener( 'click', function () {
+					var q = diagnoseInput.value || '';
+					diagnoseBtn.disabled = true;
+					diagnoseBtn.textContent = '<?php echo esc_js( __( 'Searching…', 'ajforms' ) ); ?>';
+					diagnoseResultBox.classList.remove( 'is-visible' );
+					fetch( '<?php echo esc_url_raw( $diagnose_url ); ?>' + '?q=' + encodeURIComponent( q ), {
+						headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
+					} )
+						.then( function ( r ) { return r.json(); } )
+						.then( function ( data ) {
+							var html = '';
+							if ( data && data.success ) {
+								var accountList = ( data.accounts_tried || [] ).map( function ( a ) { return a.email || a.account_id; } );
+								html += '<p style="margin:0 0 10px;"><?php echo esc_js( __( 'Searched these mailboxes for', 'ajforms' ) ); ?> "' + data.search_text + '": ' + ( accountList.join( ', ' ) || '<?php echo esc_js( __( '(none found)', 'ajforms' ) ); ?>' ) + '</p>';
+								if ( data.found ) {
+									html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Found it — the personal Message API can reach this content.', 'ajforms' ) ); ?></h4>';
+									html += '<ul>' + data.matches.map( function ( m ) {
+										return '<li><?php echo esc_js( __( 'Account', 'ajforms' ) ); ?> ' + ( m.account_email || m.account_id ) + ' — <?php echo esc_js( __( 'folder', 'ajforms' ) ); ?> ' + m.folder_id + ' — "' + m.subject + '"</li>';
+									} ).join( '' ) + '</ul>';
+									html += '<p style="margin:0;color:#6b7280;"><?php echo esc_js( __( 'This means the account listed above already has direct access — the Groups/Organization ID setup may not be necessary for it.', 'ajforms' ) ); ?></p>';
+								} else {
+									html += '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Not found in any personally-visible mailbox.', 'ajforms' ) ); ?></h4>';
+									html += '<p style="margin:0;color:#6b7280;"><?php echo esc_js( __( 'The standard user Message API cannot reach this Shared Mailbox — the Organization Groups + Zoho Organization ID setup above is required.', 'ajforms' ) ); ?></p>';
+								}
+							} else {
+								html += '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Diagnostic failed', 'ajforms' ) ); ?></h4>';
+								html += '<p style="margin:0;">' + ( ( data && data.message ) || '<?php echo esc_js( __( 'Unknown error.', 'ajforms' ) ); ?>' ) + '</p>';
+							}
+							diagnoseResultBox.innerHTML = html;
+							diagnoseResultBox.classList.add( 'is-visible' );
+						} )
+						.catch( function () {
+							diagnoseResultBox.innerHTML = '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Diagnostic failed', 'ajforms' ) ); ?></h4><p style="margin:0;"><?php echo esc_js( __( 'Request to the site failed.', 'ajforms' ) ); ?></p>';
+							diagnoseResultBox.classList.add( 'is-visible' );
+						} )
+						.finally( function () {
+							diagnoseBtn.disabled = false;
+							diagnoseBtn.textContent = '<?php echo esc_js( __( 'Run Diagnostic', 'ajforms' ) ); ?>';
 						} );
 				} );
 			}
