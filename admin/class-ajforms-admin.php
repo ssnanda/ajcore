@@ -12975,6 +12975,7 @@ class AJForms_Admin {
 			'zoho_mail_client_secret'        => isset( $_POST['zoho_mail_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_secret'] ) ) : '',
 			'zoho_mail_account_email'        => isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : 'agent@ncllcagents.com',
 			'zoho_mail_org_id'               => isset( $_POST['zoho_mail_org_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_org_id'] ) ) : '',
+			'zoho_mail_group_id'             => isset( $_POST['zoho_mail_group_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_group_id'] ) ) : '',
 			'zoho_mail_data_center'          => isset( $_POST['zoho_mail_data_center'] ) && in_array( sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ), array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
@@ -13032,7 +13033,7 @@ class AJForms_Admin {
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
-			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_data_center' ),
+			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -23866,60 +23867,106 @@ class AJForms_Admin {
 			return new WP_Error( 'zoho_mail_no_org_id', __( 'Zoho Organization ID is not saved — copy it from the Zoho Mail Admin Console (Organization → Profile) into the settings above, then reconnect.', 'ajforms' ) );
 		}
 
-		$groups_response = wp_remote_get( "https://{$api_host}/api/organization/{$zoid}/groups", array( 'timeout' => 20, 'headers' => $auth_headers ) );
-		if ( is_wp_error( $groups_response ) ) {
-			return $groups_response;
-		}
-		$groups_status = (int) wp_remote_retrieve_response_code( $groups_response );
-		$groups_body   = wp_remote_retrieve_body( $groups_response );
-		$groups_data   = json_decode( $groups_body, true );
-
-		// Stashed regardless of outcome so the settings page can show exactly what Zoho sent back
-		// — cheaper than guessing at the response shape from error text alone.
-		set_transient(
-			'ajcore_zoho_mail_groups_debug',
-			array(
-				'url'    => "https://{$api_host}/api/organization/{$zoid}/groups",
-				'status' => $groups_status,
-				'body'   => $groups_body,
-				'at'     => current_time( 'mysql' ),
-			),
-			15 * MINUTE_IN_SECONDS
-		);
-
-		// wp_remote_get() only returns a WP_Error for network-level failures — an HTTP 4xx/5xx
-		// (wrong zoid, missing scope, not an org admin, etc.) comes back as a normal 200-shaped
-		// response object here, and would otherwise silently look identical to "zero groups
-		// exist" below. Surface it explicitly so a real API error is diagnosable instead of
-		// being misreported as "Shared Mailbox groups visible: none".
-		if ( $groups_status >= 300 || ! isset( $groups_data['data']['groups'] ) ) {
-			return new WP_Error(
-				'zoho_mail_groups_lookup_failed',
-				sprintf(
-					/* translators: 1: HTTP status code, 2: raw response body from Zoho */
-					__( 'Could not list Shared Mailbox groups for this organization — GET /api/organization/{zoid}/groups returned HTTP %1$d: %2$s', 'ajforms' ),
-					$groups_status,
-					$groups_body
-				)
-			);
-		}
-
 		$mailbox_id       = '';
 		$connected_email  = '';
 		$available_groups = array();
-		// Zoho nests the actual list one level under data: { count, groups: [...], domains: [...] } —
-		// data itself is NOT the array of groups.
-		foreach ( (array) $groups_data['data']['groups'] as $group ) {
-			if ( ! is_array( $group ) || empty( $group['mailboxId'] ) ) {
-				continue; // Skip plain distribution lists (no mailboxId) — only Shared Mailbox groups have one.
+		$zgid_override    = sanitize_text_field( trim( (string) $settings['zoho_mail_group_id'] ) );
+
+		if ( '' !== $zgid_override ) {
+			// Manual override: fetch this one group directly by ID, bypassing the org-wide
+			// groups list — which has been observed returning an empty "groups": [] for a
+			// Shared Mailbox group that demonstrably exists in the Admin Console. Cause not
+			// confirmed (scope grant vs. admin-role scoping on the list endpoint specifically);
+			// this sidesteps it rather than keep guessing at why the list is empty.
+			$group_url      = "https://{$api_host}/api/organization/{$zoid}/groups/{$zgid_override}";
+			$group_response = wp_remote_get( $group_url, array( 'timeout' => 20, 'headers' => $auth_headers ) );
+			if ( is_wp_error( $group_response ) ) {
+				return $group_response;
 			}
-			$group_name  = isset( $group['name'] ) ? (string) $group['name'] : '';
-			$group_email = isset( $group['emailId'] ) ? (string) $group['emailId'] : ( isset( $group['email'] ) ? (string) $group['email'] : '' );
-			$available_groups[] = '' !== $group_email ? $group_email : $group_name;
-			if ( strtolower( trim( $group_email ) ) === $wanted_email || strtolower( trim( $group_name ) ) === $wanted_local ) {
-				$mailbox_id      = sanitize_text_field( (string) $group['mailboxId'] );
-				$connected_email = '' !== $group_email ? sanitize_email( $group_email ) : trim( (string) $settings['zoho_mail_account_email'] );
-				break;
+			$group_status = (int) wp_remote_retrieve_response_code( $group_response );
+			$group_body   = wp_remote_retrieve_body( $group_response );
+			$group_data   = json_decode( $group_body, true );
+
+			set_transient(
+				'ajcore_zoho_mail_groups_debug',
+				array(
+					'url'    => $group_url,
+					'status' => $group_status,
+					'body'   => $group_body,
+					'at'     => current_time( 'mysql' ),
+				),
+				15 * MINUTE_IN_SECONDS
+			);
+
+			$group = isset( $group_data['data'] ) && is_array( $group_data['data'] ) ? $group_data['data'] : array();
+			if ( $group_status >= 300 || empty( $group['mailboxId'] ) ) {
+				return new WP_Error(
+					'zoho_mail_group_lookup_failed',
+					sprintf(
+						/* translators: 1: the zgid entered in settings, 2: HTTP status code, 3: raw response body from Zoho */
+						__( 'Could not fetch Zoho Group ID %1$s directly — GET /api/organization/{zoid}/groups/{zgid} returned HTTP %2$d: %3$s', 'ajforms' ),
+						$zgid_override,
+						$group_status,
+						$group_body
+					)
+				);
+			}
+			$mailbox_id      = sanitize_text_field( (string) $group['mailboxId'] );
+			$group_email     = isset( $group['emailId'] ) ? (string) $group['emailId'] : ( isset( $group['email'] ) ? (string) $group['email'] : '' );
+			$connected_email = '' !== $group_email ? sanitize_email( $group_email ) : trim( (string) $settings['zoho_mail_account_email'] );
+		} else {
+			$groups_response = wp_remote_get( "https://{$api_host}/api/organization/{$zoid}/groups", array( 'timeout' => 20, 'headers' => $auth_headers ) );
+			if ( is_wp_error( $groups_response ) ) {
+				return $groups_response;
+			}
+			$groups_status = (int) wp_remote_retrieve_response_code( $groups_response );
+			$groups_body   = wp_remote_retrieve_body( $groups_response );
+			$groups_data   = json_decode( $groups_body, true );
+
+			// Stashed regardless of outcome so the settings page can show exactly what Zoho sent
+			// back — cheaper than guessing at the response shape from error text alone.
+			set_transient(
+				'ajcore_zoho_mail_groups_debug',
+				array(
+					'url'    => "https://{$api_host}/api/organization/{$zoid}/groups",
+					'status' => $groups_status,
+					'body'   => $groups_body,
+					'at'     => current_time( 'mysql' ),
+				),
+				15 * MINUTE_IN_SECONDS
+			);
+
+			// wp_remote_get() only returns a WP_Error for network-level failures — an HTTP 4xx/5xx
+			// (wrong zoid, missing scope, not an org admin, etc.) comes back as a normal 200-shaped
+			// response object here, and would otherwise silently look identical to "zero groups
+			// exist" below. Surface it explicitly so a real API error is diagnosable instead of
+			// being misreported as "Shared Mailbox groups visible: none".
+			if ( $groups_status >= 300 || ! isset( $groups_data['data']['groups'] ) ) {
+				return new WP_Error(
+					'zoho_mail_groups_lookup_failed',
+					sprintf(
+						/* translators: 1: HTTP status code, 2: raw response body from Zoho */
+						__( 'Could not list Shared Mailbox groups for this organization — GET /api/organization/{zoid}/groups returned HTTP %1$d: %2$s', 'ajforms' ),
+						$groups_status,
+						$groups_body
+					)
+				);
+			}
+
+			// Zoho nests the actual list one level under data: { count, groups: [...], domains: [...] } —
+			// data itself is NOT the array of groups.
+			foreach ( (array) $groups_data['data']['groups'] as $group ) {
+				if ( ! is_array( $group ) || empty( $group['mailboxId'] ) ) {
+					continue; // Skip plain distribution lists (no mailboxId) — only Shared Mailbox groups have one.
+				}
+				$group_name  = isset( $group['name'] ) ? (string) $group['name'] : '';
+				$group_email = isset( $group['emailId'] ) ? (string) $group['emailId'] : ( isset( $group['email'] ) ? (string) $group['email'] : '' );
+				$available_groups[] = '' !== $group_email ? $group_email : $group_name;
+				if ( strtolower( trim( $group_email ) ) === $wanted_email || strtolower( trim( $group_name ) ) === $wanted_local ) {
+					$mailbox_id      = sanitize_text_field( (string) $group['mailboxId'] );
+					$connected_email = '' !== $group_email ? sanitize_email( $group_email ) : trim( (string) $settings['zoho_mail_account_email'] );
+					break;
+				}
 			}
 		}
 
@@ -24315,6 +24362,11 @@ class AJForms_Admin {
 							<label for="zoho_mail_org_id"><?php esc_html_e( 'Zoho Organization ID', 'ajforms' ); ?></label>
 							<input type="text" name="zoho_mail_org_id" id="zoho_mail_org_id" value="<?php echo esc_attr( $settings['zoho_mail_org_id'] ); ?>" autocomplete="off">
 							<div class="ajforms-settings-help"><?php esc_html_e( 'From the Zoho Mail Admin Console: Organization → Profile.', 'ajforms' ); ?></div>
+						</div>
+						<div class="ajforms-settings-field">
+							<label for="zoho_mail_group_id"><?php esc_html_e( 'Zoho Group ID (zgid) — optional override', 'ajforms' ); ?></label>
+							<input type="text" name="zoho_mail_group_id" id="zoho_mail_group_id" value="<?php echo esc_attr( $settings['zoho_mail_group_id'] ); ?>" autocomplete="off">
+							<div class="ajforms-settings-help"><?php esc_html_e( 'Only needed if the Groups list above comes back empty despite the Shared Mailbox existing. Open the group in Zoho Mail Admin Console (Groups → your Shared Mailbox), and copy the ID from the browser address bar — it appears after "grouplist/" or "/groups/" in the URL. Leave blank to use the org-wide groups list instead.', 'ajforms' ); ?></div>
 						</div>
 						<div class="ajforms-settings-field">
 							<label for="zoho_mail_data_center"><?php esc_html_e( 'Zoho Data Center', 'ajforms' ); ?></label>
