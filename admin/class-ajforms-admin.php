@@ -23813,14 +23813,21 @@ class AJForms_Admin {
 			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['zoho-mail-error'] ) ) ) . '</p></div>';
 		}
 
-		$authorize_state = wp_create_nonce( 'ajcore_zoho_mail_oauth' );
+		// A plain wp_create_nonce() won't survive the round trip: Zoho's redirect back to the
+		// callback carries none of WordPress's REST auth headers, so WP treats that request as
+		// logged-out and wp_verify_nonce() (tied to the current user) would always fail even for
+		// the admin who just clicked this link. A random token stashed in a transient sidesteps
+		// that entirely — it isn't tied to "who is the current user" at all, just "does this exact
+		// value exist," which is all real CSRF protection here needs.
+		$authorize_state = wp_generate_password( 32, false );
+		set_transient( 'ajcore_zoho_mail_oauth_state', $authorize_state, 10 * MINUTE_IN_SECONDS );
 		$authorize_url   = add_query_arg(
 			array(
 				'scope'         => 'ZohoMail.accounts.READ,ZohoMail.messages.READ,ZohoMail.folders.READ',
-				'client_id'     => rawurlencode( (string) $settings['zoho_mail_client_id'] ),
+				'client_id'     => (string) $settings['zoho_mail_client_id'],
 				'response_type' => 'code',
 				'access_type'   => 'offline',
-				'redirect_uri'  => rawurlencode( $redirect_uri ),
+				'redirect_uri'  => $redirect_uri,
 				'prompt'        => 'consent',
 				'state'         => $authorize_state,
 			),

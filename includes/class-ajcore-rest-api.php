@@ -35,18 +35,19 @@ class AJCore_REST_API {
 			)
 		);
 
-		// Browser-driven OAuth redirect from Zoho — the visiting browser is the logged-in wp-admin
-		// session that clicked "Connect Zoho Mail", not an AJOps API caller, so this uses a plain
-		// cookie/session permission check instead of the Bearer-token can_manage_ops_api used above.
+		// Browser-driven OAuth redirect from Zoho. current_user_can() can't gate this: WordPress's
+		// REST layer only recognizes a logged-in cookie session when the request also carries its
+		// own X-WP-Nonce, which an external redirect from Zoho has no way to attach — so WP treats
+		// this request as logged-out regardless of who's actually sitting at the browser. Security
+		// here comes from the handler's own state-token check (a random value stashed in a
+		// transient when "Connect Zoho Mail" was clicked), not from a capability check.
 		register_rest_route(
 			self::NAMESPACE,
 			'/zoho-mail/oauth/callback',
 			array(
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'zoho_mail_oauth_callback' ),
-				'permission_callback' => function () {
-					return current_user_can( 'manage_options' );
-				},
+				'permission_callback' => '__return_true',
 			)
 		);
 
@@ -3572,26 +3573,31 @@ class AJCore_REST_API {
 
 		$error = sanitize_text_field( (string) $request->get_param( 'error' ) );
 		if ( '' !== $error ) {
-			wp_safe_redirect( add_query_arg( 'zoho-mail-error', rawurlencode( $error ), $settings_page_url ) );
+			wp_safe_redirect( add_query_arg( 'zoho-mail-error', $error, $settings_page_url ) );
 			exit;
 		}
 
-		$state = sanitize_text_field( (string) $request->get_param( 'state' ) );
-		if ( ! wp_verify_nonce( $state, 'ajcore_zoho_mail_oauth' ) ) {
-			wp_safe_redirect( add_query_arg( 'zoho-mail-error', rawurlencode( __( 'Could not verify this request (expired link) — click Connect Zoho Mail again.', 'ajforms' ) ), $settings_page_url ) );
+		// Compared against a transient, not wp_verify_nonce() — this request arrives via an
+		// external redirect with none of WordPress's REST auth headers, so WP resolves it as
+		// logged-out and a user-tied nonce would never verify here even for the real admin.
+		$state          = sanitize_text_field( (string) $request->get_param( 'state' ) );
+		$expected_state = get_transient( 'ajcore_zoho_mail_oauth_state' );
+		delete_transient( 'ajcore_zoho_mail_oauth_state' );
+		if ( '' === $state || ! $expected_state || ! hash_equals( (string) $expected_state, $state ) ) {
+			wp_safe_redirect( add_query_arg( 'zoho-mail-error', __( 'Could not verify this request (expired link) — click Connect Zoho Mail again.', 'ajforms' ), $settings_page_url ) );
 			exit;
 		}
 
 		$code = sanitize_text_field( (string) $request->get_param( 'code' ) );
 		if ( '' === $code || ! class_exists( 'AJForms_Admin' ) ) {
-			wp_safe_redirect( add_query_arg( 'zoho-mail-error', rawurlencode( __( 'Zoho did not return an authorization code.', 'ajforms' ) ), $settings_page_url ) );
+			wp_safe_redirect( add_query_arg( 'zoho-mail-error', __( 'Zoho did not return an authorization code.', 'ajforms' ), $settings_page_url ) );
 			exit;
 		}
 
 		$admin    = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
 		$result   = $admin->complete_zoho_mail_oauth_connection( $code );
 		if ( is_wp_error( $result ) ) {
-			wp_safe_redirect( add_query_arg( 'zoho-mail-error', rawurlencode( $result->get_error_message() ), $settings_page_url ) );
+			wp_safe_redirect( add_query_arg( 'zoho-mail-error', $result->get_error_message(), $settings_page_url ) );
 			exit;
 		}
 
