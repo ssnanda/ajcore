@@ -51,6 +51,20 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Called via fetch() from the settings page itself (wp-admin JS, so it carries a real
+		// X-WP-Nonce) — cookie auth works normally here, unlike the OAuth callback above.
+		register_rest_route(
+			self::NAMESPACE,
+			'/zoho-mail/test',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'zoho_mail_test_connection' ),
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+			)
+		);
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/ops/customers',
@@ -679,6 +693,7 @@ class AJCore_REST_API {
 			'/ops/email-log' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/partners' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_partners', 'permission' => 'can_manage_ops_api' ),
 			'/ops/sites' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_sites', 'permission' => 'can_manage_ops_api' ),
+			'/ops/inbox' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_inbox', 'permission' => 'can_manage_ops_api' ),
 			'/ops/product-counts' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_product_counts', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/partner' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_partner', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)/profile' => array( 'methods' => 'POST', 'callback' => 'update_ops_customer_profile', 'permission' => 'can_manage_ops_api' ),
@@ -3560,6 +3575,42 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'sites' => $sites ) );
 	}
 
+	/** AJOps' Inbox tab — same live Zoho Mail read the WP admin Inbox tab uses, exposed for the
+	 *  Bearer-token ops API. Not connected -> empty lists rather than an error, so AJOps can show
+	 *  its own "not connected" state without treating it as a fetch failure. */
+	public function get_ops_inbox( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin    = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$settings = $admin->get_plugin_settings();
+
+		if ( empty( $settings['zoho_mail_refresh_token'] ) ) {
+			return rest_ensure_response( array( 'connected' => false, 'folders' => array(), 'messages' => array() ) );
+		}
+
+		$folders = $admin->get_zoho_mail_folders();
+		if ( is_wp_error( $folders ) ) {
+			return new WP_Error( $folders->get_error_code(), $folders->get_error_message(), array( 'status' => 502 ) );
+		}
+
+		$folder_id = sanitize_text_field( (string) $request->get_param( 'folder_id' ) );
+		$limit     = min( 100, max( 1, absint( $request->get_param( 'limit' ) ?: 50 ) ) );
+		$messages  = $admin->get_zoho_mail_recent_messages( $limit, $folder_id );
+		if ( is_wp_error( $messages ) ) {
+			return new WP_Error( $messages->get_error_code(), $messages->get_error_message(), array( 'status' => 502 ) );
+		}
+
+		return rest_ensure_response(
+			array(
+				'connected'         => true,
+				'connected_email'   => (string) $settings['zoho_mail_connected_email'],
+				'folders'           => $folders,
+				'messages'          => $messages,
+			)
+		);
+	}
+
 	/**
 	 * Handles the browser redirect Zoho sends back after the admin approves (or denies) the
 	 * "Connect Zoho Mail" consent screen. Exchanges the one-time code for an access + refresh
@@ -3603,6 +3654,39 @@ class AJCore_REST_API {
 
 		wp_safe_redirect( add_query_arg( 'zoho-mail-connected', 'true', $settings_page_url ) );
 		exit;
+	}
+
+	/** "Test Connection" button on the Inbox settings page — proves the token actually works and
+	 *  shows exactly what it can see, rather than just trusting a green "Connected" label. */
+	public function zoho_mail_test_connection( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+
+		$folders = $admin->get_zoho_mail_folders();
+		if ( is_wp_error( $folders ) ) {
+			return rest_ensure_response( array( 'success' => false, 'message' => $folders->get_error_message() ) );
+		}
+
+		$messages = $admin->get_zoho_mail_recent_messages( 5 );
+		if ( is_wp_error( $messages ) ) {
+			return rest_ensure_response( array( 'success' => false, 'message' => $messages->get_error_message() ) );
+		}
+
+		return rest_ensure_response(
+			array(
+				'success'          => true,
+				'folders'          => wp_list_pluck( $folders, 'name' ),
+				'recent_messages'  => array_map(
+					function ( $m ) {
+						$from = '' !== $m['from_name'] ? $m['from_name'] : $m['from_email'];
+						return trim( $m['subject'] . ( '' !== $from ? ' — ' . $from : '' ) );
+					},
+					$messages
+				),
+			)
+		);
 	}
 
 	public function delete_ops_email_log_entry( WP_REST_Request $request ) {

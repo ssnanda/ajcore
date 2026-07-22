@@ -11217,7 +11217,7 @@ class AJForms_Admin {
 			// Matches the full tab whitelist in display_portal_dashboard() so "Full Sync Now" (now
 			// available from every tab, not just Sync/Menu/Customers/Product Catalog/Compliance)
 			// redirects back to wherever it was actually clicked from.
-			$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $current_tab : 'menu';
+			$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'inbox', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $current_tab : 'menu';
 			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
 
 			if ( in_array( $action, array( 'sync_all', 'sync_products', 'sync_customers', 'sync_subscriptions', 'sync_transactions' ), true )
@@ -18717,7 +18717,7 @@ class AJForms_Admin {
 			}
 			$tab = 'cp-settings';
 		}
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'inbox', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -18739,6 +18739,7 @@ class AJForms_Admin {
 			'payments'           => __( 'Payments', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'tasks'              => __( 'Compliance', 'ajforms' ),
+			'inbox'              => __( 'Inbox', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
 		);
@@ -18819,6 +18820,8 @@ class AJForms_Admin {
 				$this->display_portal_event_log_tab();
 			} elseif ( 'emails' === $tab ) {
 				$this->display_portal_emails_tab();
+			} elseif ( 'inbox' === $tab ) {
+				$this->display_zoho_shared_inbox_tab();
 			} elseif ( 'partners' === $tab ) {
 				$this->display_portal_partners_tab();
 			} elseif ( 'portal-users' === $tab ) {
@@ -18871,7 +18874,7 @@ class AJForms_Admin {
 			'storage'         => __( 'Storage', 'ajforms' ),
 			'roles'           => __( 'Role Manager', 'ajforms' ),
 			'email-templates' => __( 'Email Templates', 'ajforms' ),
-			'inbox'           => __( 'Inbox', 'ajforms' ),
+			'inbox'           => __( 'Zoho Shared Inbox', 'ajforms' ),
 			'shared-db'       => __( 'Shared DB / Multi-Site', 'ajforms' ),
 		);
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
@@ -20195,6 +20198,95 @@ class AJForms_Admin {
 										<?php wp_nonce_field( 'ajcore_email_log_delete', 'ajcore_email_log_delete_nonce' ); ?>
 										<button type="submit" name="delete_email_id" value="<?php echo esc_attr( (int) $row->id ); ?>" class="button-link" style="color:#b91c1c;cursor:pointer;"><?php esc_html_e( 'Delete', 'ajforms' ); ?></button>
 									</form>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
+	}
+
+	/**
+	 * The shared Zoho Mail inbox (agent@ncllcagents.com by default), read live from Zoho on every
+	 * load — no local copy of message content is kept. This is a viewing surface, not a
+	 * replacement for Zoho's own triage tools (assign/status/etc. still happen in Zoho Mail
+	 * itself); it exists so staff can see the shared inbox without a separate Zoho login.
+	 */
+	private function display_zoho_shared_inbox_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox' ), admin_url( 'admin.php' ) );
+		$settings     = $this->get_plugin_settings();
+		$is_connected = ! empty( $settings['zoho_mail_refresh_token'] );
+
+		if ( ! $is_connected ) {
+			echo '<div class="ajforms-settings-card"><div class="ajcore-section-head"><div><h2>' . esc_html__( 'Inbox', 'ajforms' ) . '</h2><p>' . esc_html__( 'Not connected yet.', 'ajforms' ) . '</p></div></div><a class="button button-primary" href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Connect Zoho Mail →', 'ajforms' ) . '</a></div>';
+			return;
+		}
+
+		$folders = $this->get_zoho_mail_folders();
+		if ( is_wp_error( $folders ) ) {
+			echo '<div class="ajforms-settings-card"><div class="ajcore-section-head"><div><h2>' . esc_html__( 'Inbox', 'ajforms' ) . '</h2></div></div><div class="notice notice-error inline"><p>' . esc_html( $folders->get_error_message() ) . '</p></div><a class="button" href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Check connection settings →', 'ajforms' ) . '</a></div>';
+			return;
+		}
+
+		$folder_id = isset( $_GET['zoho_folder'] ) ? sanitize_text_field( wp_unslash( $_GET['zoho_folder'] ) ) : '';
+		$messages  = $this->get_zoho_mail_recent_messages( 50, $folder_id );
+		if ( is_wp_error( $messages ) ) {
+			echo '<div class="ajforms-settings-card"><div class="ajcore-section-head"><div><h2>' . esc_html__( 'Inbox', 'ajforms' ) . '</h2></div></div><div class="notice notice-error inline"><p>' . esc_html( $messages->get_error_message() ) . '</p></div></div>';
+			return;
+		}
+
+		$mail_web_url = 'https://' . $this->get_zoho_mail_api_host( $settings['zoho_mail_data_center'] );
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'Inbox', 'ajforms' ); ?></h2>
+					<p><?php echo esc_html( sprintf( __( 'Shared mailbox: %s. Read-only view — reply, assign, and archive still happen in Zoho Mail itself.', 'ajforms' ), $settings['zoho_mail_connected_email'] ? $settings['zoho_mail_connected_email'] : $settings['zoho_mail_account_email'] ) ); ?></p>
+				</div>
+				<a class="button" href="<?php echo esc_url( $mail_web_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open in Zoho Mail ↗', 'ajforms' ); ?></a>
+			</div>
+			<form method="get" class="ajforms-settings-inline-actions" style="align-items:center;gap:10px;">
+				<input type="hidden" name="page" value="ajforms-client-portal">
+				<input type="hidden" name="tab" value="inbox">
+				<select name="zoho_folder" onchange="this.form.submit();">
+					<option value=""><?php esc_html_e( 'All folders', 'ajforms' ); ?></option>
+					<?php foreach ( $folders as $folder ) : ?>
+						<option value="<?php echo esc_attr( $folder['folder_id'] ); ?>" <?php selected( $folder_id, $folder['folder_id'] ); ?>>
+							<?php echo esc_html( $folder['name'] ); ?><?php echo $folder['unread_count'] > 0 ? ' (' . esc_html( $folder['unread_count'] ) . ')' : ''; ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</form>
+			<table class="widefat striped" style="margin-top:14px;">
+				<thead>
+					<tr>
+						<th style="width:170px;"><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
+						<th style="width:220px;"><?php esc_html_e( 'From', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Subject', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( empty( $messages ) ) : ?>
+						<tr><td colspan="3"><?php esc_html_e( 'No messages in this view.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $messages as $message ) : ?>
+							<tr style="<?php echo $message['is_unread'] ? 'font-weight:700;' : ''; ?>">
+								<td><?php echo esc_html( $message['received_at'] ? $this->format_portal_date( $message['received_at'] ) : '—' ); ?></td>
+								<td><?php echo esc_html( $message['from_name'] ? $message['from_name'] : $message['from_email'] ); ?></td>
+								<td>
+									<?php echo esc_html( $message['subject'] ); ?>
+									<?php if ( $message['has_attachment'] ) : ?>
+										<span title="<?php esc_attr_e( 'Has attachment', 'ajforms' ); ?>">📎</span>
+									<?php endif; ?>
+									<?php if ( ! empty( $message['summary'] ) ) : ?>
+										<br><span class="description"><?php echo esc_html( wp_trim_words( $message['summary'], 20 ) ); ?></span>
+									<?php endif; ?>
 								</td>
 							</tr>
 						<?php endforeach; ?>
@@ -23789,6 +23881,163 @@ class AJForms_Admin {
 		return true;
 	}
 
+	/**
+	 * Returns a usable Zoho Mail access token, transparently refreshing it via the stored
+	 * refresh_token whenever it's expired (or about to be) — every Mail API call should go
+	 * through this rather than reading zoho_mail_access_token directly.
+	 */
+	public function get_valid_zoho_mail_access_token() {
+		$settings      = $this->get_plugin_settings();
+		$access_token  = trim( (string) $settings['zoho_mail_access_token'] );
+		$refresh_token = trim( (string) $settings['zoho_mail_refresh_token'] );
+		$expires_at    = absint( $settings['zoho_mail_token_expires_at'] );
+
+		if ( '' === $refresh_token ) {
+			return new WP_Error( 'zoho_mail_not_connected', __( 'Zoho Mail is not connected.', 'ajforms' ) );
+		}
+
+		// Refresh a little before actual expiry so a slow request never lands right on the boundary.
+		if ( '' !== $access_token && $expires_at > time() + 60 ) {
+			return $access_token;
+		}
+
+		$client_id     = trim( (string) $settings['zoho_mail_client_id'] );
+		$client_secret = trim( (string) $settings['zoho_mail_client_secret'] );
+		if ( '' === $client_id || '' === $client_secret ) {
+			return new WP_Error( 'zoho_mail_not_configured', __( 'Zoho Mail Client ID/Secret are not saved.', 'ajforms' ) );
+		}
+
+		$accounts_host = $this->get_zoho_mail_accounts_host( $settings['zoho_mail_data_center'] );
+		$response      = wp_remote_post(
+			"https://{$accounts_host}/oauth/v2/token",
+			array(
+				'timeout' => 20,
+				'body'    => array(
+					'grant_type'    => 'refresh_token',
+					'client_id'     => $client_id,
+					'client_secret' => $client_secret,
+					'refresh_token' => $refresh_token,
+				),
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$data = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( empty( $data['access_token'] ) ) {
+			$message = ! empty( $data['error'] ) ? (string) $data['error'] : __( 'Zoho did not return a refreshed access token.', 'ajforms' );
+			return new WP_Error( 'zoho_mail_refresh_failed', $message );
+		}
+
+		$access_token = sanitize_text_field( (string) $data['access_token'] );
+		$expires_in   = ! empty( $data['expires_in'] ) ? absint( $data['expires_in'] ) : 3600;
+
+		$settings['zoho_mail_access_token']     = $access_token;
+		$settings['zoho_mail_token_expires_at'] = time() + $expires_in;
+		update_option( 'ajforms_settings', $settings );
+		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
+			ajforms_write_synced_settings_file( $settings );
+		}
+
+		return $access_token;
+	}
+
+	/** Thin authenticated GET wrapper for the Zoho Mail API, scoped to the connected account. */
+	private function zoho_mail_api_get( $path, $query = array() ) {
+		$settings   = $this->get_plugin_settings();
+		$account_id = trim( (string) $settings['zoho_mail_account_id'] );
+		if ( '' === $account_id ) {
+			return new WP_Error( 'zoho_mail_not_connected', __( 'Zoho Mail is not connected.', 'ajforms' ) );
+		}
+		$access_token = $this->get_valid_zoho_mail_access_token();
+		if ( is_wp_error( $access_token ) ) {
+			return $access_token;
+		}
+		$url = 'https://' . $this->get_zoho_mail_api_host( $settings['zoho_mail_data_center'] ) . '/api/accounts/' . rawurlencode( $account_id ) . $path;
+		if ( ! empty( $query ) ) {
+			$url = add_query_arg( $query, $url );
+		}
+		$response = wp_remote_get( $url, array( 'timeout' => 20, 'headers' => array( 'Authorization' => 'Zoho-oauthtoken ' . $access_token ) ) );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+		$data        = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( $status_code >= 400 ) {
+			$message = ! empty( $data['status']['description'] ) ? (string) $data['status']['description'] : sprintf(
+				/* translators: %d: HTTP status code */
+				__( 'Zoho Mail API returned an error (%d).', 'ajforms' ),
+				$status_code
+			);
+			return new WP_Error( 'zoho_mail_api_error', $message );
+		}
+		return is_array( $data ) ? $data : array();
+	}
+
+	/** Folder list for the connected mailbox. */
+	public function get_zoho_mail_folders() {
+		$data = $this->zoho_mail_api_get( '/folders' );
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$folders = array();
+		foreach ( (array) ( isset( $data['data'] ) ? $data['data'] : array() ) as $row ) {
+			if ( empty( $row['folderId'] ) ) {
+				continue;
+			}
+			$folders[] = array(
+				'folder_id'    => (string) $row['folderId'],
+				'name'         => isset( $row['folderName'] ) ? (string) $row['folderName'] : ( isset( $row['path'] ) ? (string) $row['path'] : __( '(unnamed folder)', 'ajforms' ) ),
+				'unread_count' => isset( $row['unreadCount'] ) ? absint( $row['unreadCount'] ) : 0,
+			);
+		}
+		return $folders;
+	}
+
+	/**
+	 * Recent message summaries from a folder (or the account's default view when $folder_id is
+	 * blank). Field mapping is best-effort against Zoho Mail's documented response shape — the
+	 * Test Connection button on the settings page is the way to confirm these against a real
+	 * mailbox and adjust if Zoho's actual field names differ from what's assumed here.
+	 */
+	public function get_zoho_mail_recent_messages( $limit = 10, $folder_id = '' ) {
+		$query = array( 'limit' => max( 1, absint( $limit ) ) );
+		if ( '' !== $folder_id ) {
+			$query['folderId'] = $folder_id;
+		}
+		$data = $this->zoho_mail_api_get( '/messages/view', $query );
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$messages = array();
+		foreach ( (array) ( isset( $data['data'] ) ? $data['data'] : array() ) as $row ) {
+			if ( empty( $row['messageId'] ) ) {
+				continue;
+			}
+			$messages[] = array(
+				'message_id'     => (string) $row['messageId'],
+				'folder_id'      => isset( $row['folderId'] ) ? (string) $row['folderId'] : $folder_id,
+				'subject'        => isset( $row['subject'] ) && '' !== $row['subject'] ? (string) $row['subject'] : __( '(no subject)', 'ajforms' ),
+				'from_name'      => isset( $row['sender'] ) ? (string) $row['sender'] : '',
+				'from_email'     => isset( $row['fromAddress'] ) ? (string) $row['fromAddress'] : '',
+				'summary'        => isset( $row['summary'] ) ? (string) $row['summary'] : '',
+				'received_at'    => isset( $row['receivedTime'] ) ? $this->zoho_mail_timestamp_to_mysql( $row['receivedTime'] ) : '',
+				'is_unread'      => isset( $row['status'] ) && '0' === (string) $row['status'],
+				'has_attachment' => ! empty( $row['hasAttachment'] ) && '1' === (string) $row['hasAttachment'],
+			);
+		}
+		return $messages;
+	}
+
+	/** Zoho Mail timestamps are milliseconds since epoch. */
+	private function zoho_mail_timestamp_to_mysql( $ms_timestamp ) {
+		$ms = (float) $ms_timestamp;
+		if ( $ms <= 0 ) {
+			return '';
+		}
+		return gmdate( 'Y-m-d H:i:s', (int) round( $ms / 1000 ) );
+	}
+
 	public function display_zoho_mail_settings_section() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
@@ -23838,6 +24087,7 @@ class AJForms_Admin {
 			add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox', 'zoho_mail_action' => 'disconnect' ), admin_url( 'admin.php' ) ),
 			'ajcore_zoho_mail_disconnect'
 		);
+		$test_url = rest_url( 'ajcore/v1/zoho-mail/test' );
 		?>
 		<style>
 			#ajforms-zoho-mail-section .ajforms-settings-field input[type="text"],
@@ -23849,45 +24099,60 @@ class AJForms_Admin {
 			#ajforms-zoho-mail-section .ajforms-zoho-steps li { margin-bottom: 10px; line-height: 1.6; }
 			#ajforms-zoho-mail-section .ajforms-zoho-copyfield { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 			#ajforms-zoho-mail-section .ajforms-zoho-copyfield code { flex: 1; padding: 8px 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; overflow-x: auto; white-space: nowrap; }
+			#ajforms-zoho-mail-section .ajforms-zoho-help-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-left: 8px; border-radius: 999px; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-weight: 700; font-size: 12px; cursor: pointer; vertical-align: middle; }
+			#ajforms-zoho-mail-section .ajforms-zoho-help-btn:hover { background: #eef2ff; border-color: #a5b4fc; color: #3730a3; }
+			#ajforms-zoho-mail-section .ajforms-zoho-instructions { display: none; margin: 14px 0 22px; padding: 16px 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; }
+			#ajforms-zoho-mail-section .ajforms-zoho-instructions.is-open { display: block; }
+			#ajforms-zoho-mail-section .ajforms-zoho-status { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 12px; margin: 18px 0; font-size: 14px; }
+			#ajforms-zoho-mail-section .ajforms-zoho-status.is-connected { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+			#ajforms-zoho-mail-section .ajforms-zoho-status.is-disconnected { background: #f8fafc; border: 1px solid #e2e8f0; color: #64748b; }
+			#ajforms-zoho-mail-section .ajforms-zoho-test-result { margin-top: 14px; padding: 14px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 13px; display: none; }
+			#ajforms-zoho-mail-section .ajforms-zoho-test-result.is-visible { display: block; }
+			#ajforms-zoho-mail-section .ajforms-zoho-test-result h4 { margin: 0 0 8px; font-size: 13px; }
+			#ajforms-zoho-mail-section .ajforms-zoho-test-result ul { margin: 0 0 12px; padding-left: 18px; }
+			#ajforms-zoho-mail-section .ajforms-zoho-test-result li { margin-bottom: 4px; }
 		</style>
 		<div id="ajforms-zoho-mail-section">
 			<div class="ajforms-settings-card">
 				<span class="ajforms-settings-pill"><?php esc_html_e( 'Zoho Mail', 'ajforms' ); ?></span>
-				<h3><?php esc_html_e( 'Connect the shared inbox', 'ajforms' ); ?></h3>
-				<p style="margin:0 0 14px;color:#6b7280;font-size:14px;">
-					<?php esc_html_e( 'This is the Zoho API Console app, not the Zoho Mail Admin Console — do not use Zoho Mail\'s own Admin Console for this.', 'ajforms' ); ?>
-				</p>
-				<ol class="ajforms-zoho-steps" style="font-size:14px;color:#374151;">
-					<li><?php echo wp_kses_post( sprintf( __( 'Go to %s.', 'ajforms' ), '<code>api-console.zoho.com</code>' ) ); ?></li>
-					<li><?php esc_html_e( 'Sign in with the Zoho administrator account that has access to the shared mailbox.', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'Click "Get Started" or "Add Client", then choose "Server-based Applications".', 'ajforms' ); ?></li>
-					<li>
-						<?php esc_html_e( 'Enter:', 'ajforms' ); ?>
-						<ul style="margin:6px 0 0;padding-left:18px;">
-							<li><?php echo wp_kses_post( sprintf( __( '<strong>Client Name:</strong> %s', 'ajforms' ), 'AJCore Zoho Mail' ) ); ?></li>
-							<li><?php echo wp_kses_post( sprintf( __( '<strong>Homepage URL:</strong> %s', 'ajforms' ), esc_html( home_url( '/' ) ) ) ); ?></li>
-							<li>
-								<strong><?php esc_html_e( 'Authorized Redirect URI:', 'ajforms' ); ?></strong>
-								<?php esc_html_e( 'must match exactly —', 'ajforms' ); ?>
-								<div class="ajforms-zoho-copyfield">
-									<code id="ajforms-zoho-redirect-uri"><?php echo esc_html( $redirect_uri ); ?></code>
-									<button type="button" class="button button-small" onclick="navigator.clipboard.writeText(document.getElementById('ajforms-zoho-redirect-uri').textContent);this.textContent='<?php echo esc_js( __( 'Copied', 'ajforms' ) ); ?>';"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
-								</div>
-							</li>
-						</ul>
-					</li>
-					<li><?php esc_html_e( 'Create the application and copy the Client ID and Client Secret into the fields below.', 'ajforms' ); ?></li>
-				</ol>
-				<p style="margin:14px 0 0;color:#6b7280;font-size:13px;">
-					<?php esc_html_e( 'Separately, in the Zoho Mail Admin Console under Groups → Shared Mailbox → (this mailbox) → Members, confirm the Zoho user you sign in with above is a member or moderator of the shared mailbox — that account is whose access AJCore will use to read it.', 'ajforms' ); ?>
-				</p>
-			</div>
+				<h3>
+					<?php esc_html_e( 'Connect the shared inbox', 'ajforms' ); ?>
+					<button type="button" class="ajforms-zoho-help-btn" id="ajforms-zoho-help-toggle" title="<?php esc_attr_e( 'Setup instructions', 'ajforms' ); ?>">?</button>
+				</h3>
 
-			<form method="post" action="<?php echo esc_url( $action_url ); ?>">
-				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
-				<div class="ajforms-settings-card">
-					<span class="ajforms-settings-pill"><?php esc_html_e( 'OAuth App', 'ajforms' ); ?></span>
-					<h3><?php esc_html_e( 'Client ID & Secret', 'ajforms' ); ?></h3>
+				<div class="ajforms-zoho-instructions" id="ajforms-zoho-instructions">
+					<p style="margin:0 0 14px;color:#6b7280;font-size:14px;">
+						<?php esc_html_e( 'This is the Zoho API Console app, not the Zoho Mail Admin Console — do not use Zoho Mail\'s own Admin Console for this.', 'ajforms' ); ?>
+					</p>
+					<ol class="ajforms-zoho-steps" style="font-size:14px;color:#374151;">
+						<li><?php echo wp_kses_post( sprintf( __( 'Go to %s.', 'ajforms' ), '<code>api-console.zoho.com</code>' ) ); ?></li>
+						<li><?php esc_html_e( 'Sign in with the Zoho administrator account that has access to the shared mailbox.', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Click "Get Started" or "Add Client", then choose "Server-based Applications".', 'ajforms' ); ?></li>
+						<li>
+							<?php esc_html_e( 'Enter:', 'ajforms' ); ?>
+							<ul style="margin:6px 0 0;padding-left:18px;">
+								<li><?php echo wp_kses_post( sprintf( __( '<strong>Client Name:</strong> %s', 'ajforms' ), 'AJCore Zoho Mail' ) ); ?></li>
+								<li><?php echo wp_kses_post( sprintf( __( '<strong>Homepage URL:</strong> %s', 'ajforms' ), esc_html( home_url( '/' ) ) ) ); ?></li>
+								<li>
+									<strong><?php esc_html_e( 'Authorized Redirect URI:', 'ajforms' ); ?></strong>
+									<?php esc_html_e( 'must match exactly —', 'ajforms' ); ?>
+									<div class="ajforms-zoho-copyfield">
+										<code id="ajforms-zoho-redirect-uri"><?php echo esc_html( $redirect_uri ); ?></code>
+										<button type="button" class="button button-small" onclick="navigator.clipboard.writeText(document.getElementById('ajforms-zoho-redirect-uri').textContent);this.textContent='<?php echo esc_js( __( 'Copied', 'ajforms' ) ); ?>';"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
+									</div>
+								</li>
+							</ul>
+						</li>
+						<li><?php esc_html_e( 'Create the application and copy the Client ID and Client Secret into the fields below.', 'ajforms' ); ?></li>
+					</ol>
+					<p style="margin:14px 0 0;color:#6b7280;font-size:13px;">
+						<?php esc_html_e( 'Separately, in the Zoho Mail Admin Console under Groups → Shared Mailbox → (this mailbox) → Members, confirm the Zoho user you sign in with above is a member or moderator of the shared mailbox — that account is whose access AJCore will use to read it.', 'ajforms' ); ?>
+					</p>
+				</div>
+
+				<form method="post" action="<?php echo esc_url( $action_url ); ?>">
+					<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+					<h4 style="margin:0 0 12px;font-size:14px;color:#111827;"><?php esc_html_e( 'Client ID & Secret', 'ajforms' ); ?></h4>
 					<div class="ajforms-settings-grid">
 						<div class="ajforms-settings-field">
 							<label for="zoho_mail_client_id"><?php esc_html_e( 'Client ID', 'ajforms' ); ?></label>
@@ -23910,18 +24175,14 @@ class AJForms_Admin {
 							</select>
 						</div>
 					</div>
-				</div>
-				<div class="ajforms-settings-actions">
-					<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
-				</div>
-			</form>
+					<div class="ajforms-settings-actions">
+						<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
+					</div>
+				</form>
 
-			<div class="ajforms-settings-card">
-				<span class="ajforms-settings-pill"><?php esc_html_e( 'Connection', 'ajforms' ); ?></span>
-				<h3><?php esc_html_e( 'Authorize access', 'ajforms' ); ?></h3>
-				<?php if ( $is_connected ) : ?>
-					<div class="ajforms-settings-checkbox" style="margin-bottom:16px;">
-						<strong style="color:#166534;">✓ <?php esc_html_e( 'Connected', 'ajforms' ); ?></strong>
+				<div class="ajforms-zoho-status <?php echo $is_connected ? 'is-connected' : 'is-disconnected'; ?>">
+					<?php if ( $is_connected ) : ?>
+						<strong>✓ <?php esc_html_e( 'Connected', 'ajforms' ); ?></strong>
 						<span>
 							<?php
 							echo esc_html(
@@ -23936,8 +24197,11 @@ class AJForms_Admin {
 							);
 							?>
 						</span>
-					</div>
-				<?php endif; ?>
+					<?php else : ?>
+						<span><?php esc_html_e( 'Not connected yet.', 'ajforms' ); ?></span>
+					<?php endif; ?>
+				</div>
+
 				<div class="ajforms-settings-inline-actions">
 					<?php if ( $can_connect ) : ?>
 						<a class="button button-primary" href="<?php echo esc_url( $authorize_url ); ?>"><?php echo esc_html( $is_connected ? __( 'Reconnect Zoho Mail', 'ajforms' ) : __( 'Connect Zoho Mail', 'ajforms' ) ); ?></a>
@@ -23946,11 +24210,66 @@ class AJForms_Admin {
 						<span style="color:#6b7280;font-size:13px;"><?php echo esc_html( $connect_disabled_reason ); ?></span>
 					<?php endif; ?>
 					<?php if ( $is_connected ) : ?>
+						<button type="button" class="button" id="ajforms-zoho-test-btn"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
 						<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Zoho Mail? This stops syncing the shared inbox until reconnected.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajforms' ); ?></a>
 					<?php endif; ?>
 				</div>
+
+				<div class="ajforms-zoho-test-result" id="ajforms-zoho-test-result"></div>
 			</div>
 		</div>
+		<script>
+		(function () {
+			var helpBtn = document.getElementById( 'ajforms-zoho-help-toggle' );
+			var instructions = document.getElementById( 'ajforms-zoho-instructions' );
+			if ( helpBtn && instructions ) {
+				helpBtn.addEventListener( 'click', function () {
+					instructions.classList.toggle( 'is-open' );
+				} );
+			}
+
+			var testBtn = document.getElementById( 'ajforms-zoho-test-btn' );
+			var resultBox = document.getElementById( 'ajforms-zoho-test-result' );
+			if ( testBtn && resultBox ) {
+				testBtn.addEventListener( 'click', function () {
+					testBtn.disabled = true;
+					testBtn.textContent = '<?php echo esc_js( __( 'Testing…', 'ajforms' ) ); ?>';
+					resultBox.classList.remove( 'is-visible' );
+					fetch( '<?php echo esc_url_raw( $test_url ); ?>', {
+						headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
+					} )
+						.then( function ( r ) { return r.json(); } )
+						.then( function ( data ) {
+							var html = '';
+							if ( data && data.success ) {
+								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Connection works', 'ajforms' ) ); ?></h4>';
+								html += '<p style="margin:0 0 10px;"><?php echo esc_js( __( 'Folders visible to this connection:', 'ajforms' ) ); ?></p>';
+								html += '<ul>' + ( data.folders || [] ).map( function ( f ) { return '<li>' + f + '</li>'; } ).join( '' ) + '</ul>';
+								html += '<p style="margin:0 0 10px;"><?php echo esc_js( __( 'Most recent messages it can read:', 'ajforms' ) ); ?></p>';
+								if ( ( data.recent_messages || [] ).length ) {
+									html += '<ul>' + data.recent_messages.map( function ( m ) { return '<li>' + m + '</li>'; } ).join( '' ) + '</ul>';
+								} else {
+									html += '<p style="margin:0;color:#6b7280;"><?php echo esc_js( __( '(Mailbox has no messages yet, or none in the default folder.)', 'ajforms' ) ); ?></p>';
+								}
+							} else {
+								html += '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Test failed', 'ajforms' ) ); ?></h4>';
+								html += '<p style="margin:0;">' + ( ( data && data.message ) || '<?php echo esc_js( __( 'Unknown error.', 'ajforms' ) ); ?>' ) + '</p>';
+							}
+							resultBox.innerHTML = html;
+							resultBox.classList.add( 'is-visible' );
+						} )
+						.catch( function () {
+							resultBox.innerHTML = '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Test failed', 'ajforms' ) ); ?></h4><p style="margin:0;"><?php echo esc_js( __( 'Request to the site failed.', 'ajforms' ) ); ?></p>';
+							resultBox.classList.add( 'is-visible' );
+						} )
+						.finally( function () {
+							testBtn.disabled = false;
+							testBtn.textContent = '<?php echo esc_js( __( 'Test Connection', 'ajforms' ) ); ?>';
+						} );
+				} );
+			}
+		})();
+		</script>
 		<?php
 	}
 
