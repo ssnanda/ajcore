@@ -23846,10 +23846,14 @@ class AJForms_Admin {
 		$refresh_token = ! empty( $token_data['refresh_token'] ) ? sanitize_text_field( (string) $token_data['refresh_token'] ) : trim( (string) $settings['zoho_mail_refresh_token'] );
 		$expires_in    = ! empty( $token_data['expires_in'] ) ? absint( $token_data['expires_in'] ) : 3600;
 
-		// Discover the mailbox's accountId + confirmed email — every later Mail API call is scoped
-		// to a specific accountId, and this is the one point where we can reliably resolve it.
-		$account_id       = '';
-		$connected_email  = '';
+		// Discover the accountId for the SHARED mailbox specifically — /api/accounts returns every
+		// mailbox the signed-in Zoho user can reach (their own personal one first, then any shared/
+		// delegated mailboxes they're a member of), so the first entry is normally the admin's own
+		// inbox, not the shared one. Match by the address configured above instead of trusting order.
+		$wanted_email      = strtolower( trim( (string) $settings['zoho_mail_account_email'] ) );
+		$account_id        = '';
+		$connected_email   = '';
+		$available_emails  = array();
 		$accounts_response = wp_remote_get(
 			'https://' . $this->get_zoho_mail_api_host( $settings['zoho_mail_data_center'] ) . '/api/accounts',
 			array(
@@ -23859,18 +23863,52 @@ class AJForms_Admin {
 		);
 		if ( ! is_wp_error( $accounts_response ) ) {
 			$accounts_data = json_decode( wp_remote_retrieve_body( $accounts_response ), true );
-			$first_account = ! empty( $accounts_data['data'][0] ) ? $accounts_data['data'][0] : null;
-			if ( is_array( $first_account ) ) {
-				$account_id      = ! empty( $first_account['accountId'] ) ? sanitize_text_field( (string) $first_account['accountId'] ) : '';
-				$connected_email = ! empty( $first_account['primaryEmailAddress'] ) ? sanitize_email( (string) $first_account['primaryEmailAddress'] ) : '';
+			foreach ( (array) ( isset( $accounts_data['data'] ) ? $accounts_data['data'] : array() ) as $account ) {
+				if ( ! is_array( $account ) || empty( $account['accountId'] ) ) {
+					continue;
+				}
+				// Every address this account entry answers to — primary, plus any "send mail as"
+				// identities Zoho lists for it (shared/delegated mailboxes often show up as an
+				// extra sendMailDetails entry rather than a fully separate top-level account).
+				$candidate_emails = array();
+				if ( ! empty( $account['primaryEmailAddress'] ) ) {
+					$candidate_emails[] = (string) $account['primaryEmailAddress'];
+				}
+				foreach ( (array) ( isset( $account['sendMailDetails'] ) ? $account['sendMailDetails'] : array() ) as $send_as ) {
+					if ( ! empty( $send_as['fromAddress'] ) ) {
+						$candidate_emails[] = (string) $send_as['fromAddress'];
+					}
+				}
+				foreach ( $candidate_emails as $candidate ) {
+					$available_emails[] = $candidate;
+					if ( '' !== $wanted_email && strtolower( trim( $candidate ) ) === $wanted_email ) {
+						$account_id      = sanitize_text_field( (string) $account['accountId'] );
+						$connected_email = sanitize_email( $candidate );
+						break 2;
+					}
+				}
 			}
+		}
+
+		if ( '' === $account_id ) {
+			return new WP_Error(
+				'zoho_mail_account_not_found',
+				'' !== $wanted_email
+					? sprintf(
+						/* translators: 1: the shared mailbox address that was configured, 2: comma-separated list of addresses actually available */
+						__( 'Signed-in Zoho account has no access to %1$s. Accounts it can see: %2$s. Confirm this Zoho user is a member of that shared mailbox, or fix the Shared Mailbox Address in settings.', 'ajforms' ),
+						$wanted_email,
+						! empty( $available_emails ) ? implode( ', ', array_unique( $available_emails ) ) : __( 'none returned', 'ajforms' )
+					)
+					: __( 'Zoho did not return any mailbox accounts for this login.', 'ajforms' )
+			);
 		}
 
 		$settings['zoho_mail_access_token']     = $access_token;
 		$settings['zoho_mail_refresh_token']    = $refresh_token;
 		$settings['zoho_mail_token_expires_at'] = time() + $expires_in;
 		$settings['zoho_mail_account_id']       = $account_id;
-		$settings['zoho_mail_connected_email']  = '' !== $connected_email ? $connected_email : trim( (string) $settings['zoho_mail_account_email'] );
+		$settings['zoho_mail_connected_email']  = $connected_email;
 		$settings['zoho_mail_connected_at']     = current_time( 'mysql' );
 
 		update_option( 'ajforms_settings', $settings );
