@@ -25179,25 +25179,26 @@ class AJForms_Admin {
 						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/projectselector2/home/dashboard" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Cloud Console', 'ajforms' ); ?></a></div>
 					</li>
 					<li>
-						<?php esc_html_e( 'Enable the Gmail API.', 'ajforms' ); ?>
+						<?php esc_html_e( 'Enable the Gmail API — click the Enable button on that page.', 'ajforms' ); ?>
 						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Gmail API page', 'ajforms' ); ?></a></div>
 					</li>
 					<li>
-						<?php esc_html_e( 'Set up Google Auth Platform (click Get started if it says "not configured yet") — External is fine for a single mailbox; add the intake Gmail address under Audience as a test user.', 'ajforms' ); ?>
-						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Google Auth Platform', 'ajforms' ); ?></a></div>
+						<?php esc_html_e( 'Configure Google Auth Platform (skip if it already shows your app): click Get started → enter an app name and your own email as support email → Next → Audience: choose External → Next → enter your email again as contact → Next → check the agreement box → Create.', 'ajforms' ); ?>
+						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Google Auth Platform', 'ajforms' ); ?></a></div>
 					</li>
 					<li>
-						<?php esc_html_e( 'Create Credentials → OAuth client ID → Application type: Web application.', 'ajforms' ); ?>
-						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Credentials page', 'ajforms' ); ?></a></div>
+						<?php esc_html_e( 'Add the intake Gmail address as a test user: on the Audience page, scroll to "Test users" → Add users → enter the address → Save.', 'ajforms' ); ?>
+						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Audience / Test users', 'ajforms' ); ?></a></div>
 					</li>
 					<li>
-						<?php esc_html_e( 'Under Authorized redirect URIs on that same client, paste this exact URL:', 'ajforms' ); ?>
+						<?php esc_html_e( 'On the Clients page, click Create OAuth client. Leave Application type as "Web application", type any Name, and leave "Authorized JavaScript origins" empty. Under "Authorized redirect URIs" click "+ Add URI" and paste this exact URL, then click Create:', 'ajforms' ); ?>
+						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Clients', 'ajforms' ); ?></a></div>
 						<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
 							<code id="ajforms-gmail-intake-redirect-uri" style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;font-size:12px;word-break:break-all;"><?php echo esc_html( $redirect_uri ); ?></code>
 							<button type="button" class="button button-small" id="ajforms-gmail-intake-copy-redirect"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
 						</div>
 					</li>
-					<li><?php esc_html_e( 'Copy the Client ID and Client Secret below → Save Settings → Connect, then sign in as the intake mailbox itself (not a delegate).', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'That last step shows a Client ID and Client Secret — copy both into the fields below → Save Settings → Connect, then sign in as the intake mailbox itself (not a delegate).', 'ajforms' ); ?></li>
 				</ol>
 				<p style="margin:8px 0 0;color:#6b7280;font-size:13px;"><?php esc_html_e( 'Free at this scale — no billing account needed.', 'ajforms' ); ?></p>
 			</div>
