@@ -25183,8 +25183,8 @@ class AJForms_Admin {
 						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Gmail API page', 'ajforms' ); ?></a></div>
 					</li>
 					<li>
-						<?php esc_html_e( 'Set up the OAuth consent screen — External is fine for a single mailbox; add the intake Gmail address as a test user.', 'ajforms' ); ?>
-						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open OAuth consent screen', 'ajforms' ); ?></a></div>
+						<?php esc_html_e( 'Set up Google Auth Platform (click Get started if it says "not configured yet") — External is fine for a single mailbox; add the intake Gmail address under Audience as a test user.', 'ajforms' ); ?>
+						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Google Auth Platform', 'ajforms' ); ?></a></div>
 					</li>
 					<li>
 						<?php esc_html_e( 'Create Credentials → OAuth client ID → Application type: Web application.', 'ajforms' ); ?>
