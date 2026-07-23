@@ -79,6 +79,41 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Same rationale as the Zoho callback above — an external redirect from Google carries no
+		// X-WP-Nonce, so this route can't be capability-gated; security is the state-token check
+		// inside the handler itself.
+		register_rest_route(
+			self::NAMESPACE,
+			'/gmail-intake/oauth/callback',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'gmail_intake_oauth_callback' ),
+				'permission_callback' => '__return_true',
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/gmail-intake/test',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'gmail_intake_test_connection' ),
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/gmail-intake/process',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'gmail_intake_process_now' ),
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+			)
+		);
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/ops/customers',
@@ -3715,6 +3750,94 @@ class AJCore_REST_API {
 		}
 
 		$result = $admin->diagnose_zoho_mail_shared_access( $search_text );
+		if ( is_wp_error( $result ) ) {
+			return rest_ensure_response( array( 'success' => false, 'message' => $result->get_error_message() ) );
+		}
+
+		return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
+	}
+
+	/**
+	 * Handles the browser redirect Google sends back after the admin approves (or denies) the
+	 * "Connect Gmail" consent screen — same state-token pattern and non-JSON redirect response as
+	 * zoho_mail_oauth_callback() above, for the same reason (an external OAuth redirect carries no
+	 * X-WP-Nonce, so this route can't be capability-gated).
+	 */
+	public function gmail_intake_oauth_callback( WP_REST_Request $request ) {
+		$settings_page_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'gmail-intake' ), admin_url( 'admin.php' ) );
+
+		$error = sanitize_text_field( (string) $request->get_param( 'error' ) );
+		if ( '' !== $error ) {
+			wp_safe_redirect( add_query_arg( 'gmail-intake-error', $error, $settings_page_url ) );
+			exit;
+		}
+
+		$state          = sanitize_text_field( (string) $request->get_param( 'state' ) );
+		$expected_state = get_transient( 'ajcore_gmail_intake_oauth_state' );
+		delete_transient( 'ajcore_gmail_intake_oauth_state' );
+		if ( '' === $state || ! $expected_state || ! hash_equals( (string) $expected_state, $state ) ) {
+			wp_safe_redirect( add_query_arg( 'gmail-intake-error', __( 'Could not verify this request (expired link) — click Connect Gmail again.', 'ajforms' ), $settings_page_url ) );
+			exit;
+		}
+
+		$code = sanitize_text_field( (string) $request->get_param( 'code' ) );
+		if ( '' === $code || ! class_exists( 'AJForms_Admin' ) ) {
+			wp_safe_redirect( add_query_arg( 'gmail-intake-error', __( 'Google did not return an authorization code.', 'ajforms' ), $settings_page_url ) );
+			exit;
+		}
+
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->complete_gmail_intake_oauth_connection( $code );
+		if ( is_wp_error( $result ) ) {
+			wp_safe_redirect( add_query_arg( 'gmail-intake-error', $result->get_error_message(), $settings_page_url ) );
+			exit;
+		}
+
+		wp_safe_redirect( add_query_arg( 'gmail-intake-connected', 'true', $settings_page_url ) );
+		exit;
+	}
+
+	/** "Test Connection" button on the Gmail Intake settings page. */
+	public function gmail_intake_test_connection( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+
+		$access_token = $admin->get_valid_gmail_intake_access_token();
+		if ( is_wp_error( $access_token ) ) {
+			return rest_ensure_response( array( 'success' => false, 'message' => $access_token->get_error_message() ) );
+		}
+
+		$response = wp_remote_get(
+			'https://gmail.googleapis.com/gmail/v1/users/me/profile',
+			array( 'timeout' => 20, 'headers' => array( 'Authorization' => 'Bearer ' . $access_token ) )
+		);
+		if ( is_wp_error( $response ) ) {
+			return rest_ensure_response( array( 'success' => false, 'message' => $response->get_error_message() ) );
+		}
+		$data = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( empty( $data['emailAddress'] ) ) {
+			$message = ! empty( $data['error']['message'] ) ? (string) $data['error']['message'] : __( 'Gmail did not return a profile.', 'ajforms' );
+			return rest_ensure_response( array( 'success' => false, 'message' => $message ) );
+		}
+
+		return rest_ensure_response(
+			array(
+				'success'        => true,
+				'email_address'  => (string) $data['emailAddress'],
+				'messages_total' => isset( $data['messagesTotal'] ) ? (int) $data['messagesTotal'] : 0,
+			)
+		);
+	}
+
+	/** "Process Now" button — runs one pass of AJForms_Admin::process_gmail_intake_inbox() on demand. */
+	public function gmail_intake_process_now( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->process_gmail_intake_inbox();
 		if ( is_wp_error( $result ) ) {
 			return rest_ensure_response( array( 'success' => false, 'message' => $result->get_error_message() ) );
 		}

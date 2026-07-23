@@ -10954,6 +10954,11 @@ class AJForms_Admin {
 						$this->handle_settings_save();
 					}
 					$this->handle_zoho_mail_actions();
+				} elseif ( 'gmail-intake' === $cp_section ) {
+					if ( isset( $_POST['ajforms_settings_nonce'] ) ) {
+						$this->handle_settings_save();
+					}
+					$this->handle_gmail_intake_actions();
 				}
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
@@ -10986,6 +10991,11 @@ class AJForms_Admin {
 					$this->handle_settings_save();
 				}
 				$this->handle_zoho_mail_actions();
+			} elseif ( 'gmail-intake' === $cp_section ) {
+				if ( isset( $_POST['ajforms_settings_nonce'] ) ) {
+					$this->handle_settings_save();
+				}
+				$this->handle_gmail_intake_actions();
 			}
 		} elseif ( 'ajforms-auth' === $page ) {
 			$this->handle_auth_settings_save();
@@ -12977,6 +12987,9 @@ class AJForms_Admin {
 			'zoho_mail_org_id'               => isset( $_POST['zoho_mail_org_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_org_id'] ) ) : '',
 			'zoho_mail_group_id'             => isset( $_POST['zoho_mail_group_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_group_id'] ) ) : '',
 			'zoho_mail_data_center'          => isset( $_POST['zoho_mail_data_center'] ) && in_array( sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ), array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com',
+			'gmail_intake_client_id'         => isset( $_POST['gmail_intake_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_id'] ) ) : '',
+			'gmail_intake_client_secret'     => isset( $_POST['gmail_intake_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_secret'] ) ) : '',
+			'gmail_intake_address'           => isset( $_POST['gmail_intake_address'] ) ? sanitize_email( wp_unslash( $_POST['gmail_intake_address'] ) ) : 'universityplaceofficesuites@gmail.com',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -13010,17 +13023,21 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
 		}
 
-		// OAuth tokens are never edited through this form — only the "Connect Zoho Mail" callback
-		// writes them directly. Without this, they'd silently reset to '' on every unrelated
-		// settings save anywhere in the plugin, since they belong to no $section_keys entry below.
+		// OAuth tokens are never edited through this form — only the "Connect Zoho Mail"/"Connect
+		// Gmail Intake" callbacks write them directly. Without this, they'd silently reset to ''
+		// on every unrelated settings save anywhere in the plugin, since they belong to no
+		// $section_keys entry below.
 		foreach ( array( 'zoho_mail_access_token', 'zoho_mail_refresh_token', 'zoho_mail_token_expires_at', 'zoho_mail_account_id', 'zoho_mail_connected_email', 'zoho_mail_connected_at' ) as $zoho_token_field ) {
 			$settings[ $zoho_token_field ] = isset( $current_settings[ $zoho_token_field ] ) ? $current_settings[ $zoho_token_field ] : '';
+		}
+		foreach ( array( 'gmail_intake_access_token', 'gmail_intake_refresh_token', 'gmail_intake_token_expires_at', 'gmail_intake_connected_email', 'gmail_intake_connected_at', 'gmail_intake_label_id' ) as $gmail_token_field ) {
+			$settings[ $gmail_token_field ] = isset( $current_settings[ $gmail_token_field ] ) ? $current_settings[ $gmail_token_field ] : '';
 		}
 
 		$active_stripe_prefix = 'live' === $settings['stripe_mode'] ? 'stripe_live' : 'stripe_sandbox';
@@ -13034,6 +13051,7 @@ class AJForms_Admin {
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
+			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -13060,7 +13078,7 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( 'email-templates' === $section || 'inbox' === $section ) {
+		if ( 'email-templates' === $section || 'inbox' === $section || 'gmail-intake' === $section ) {
 			// These sections' forms live on the Client Portal's CP Settings tab, not this page.
 			$redirect_args = array(
 				'page'             => 'ajforms-client-portal',
@@ -18874,6 +18892,7 @@ class AJForms_Admin {
 			'roles'           => __( 'Role Manager', 'ajforms' ),
 			'email-templates' => __( 'Email Templates', 'ajforms' ),
 			'inbox'           => __( 'Zoho Shared Inbox', 'ajforms' ),
+			'gmail-intake'    => __( 'Email Intake (Gmail)', 'ajforms' ),
 			'shared-db'       => __( 'Shared DB / Multi-Site', 'ajforms' ),
 		);
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
@@ -18926,6 +18945,8 @@ class AJForms_Admin {
 			<?php $this->display_email_templates_settings_section(); ?>
 		<?php elseif ( 'inbox' === $cp_section ) : ?>
 			<?php $this->display_zoho_mail_settings_section(); ?>
+		<?php elseif ( 'gmail-intake' === $cp_section ) : ?>
+			<?php $this->display_gmail_intake_settings_section(); ?>
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
@@ -24571,6 +24592,779 @@ class AJForms_Admin {
 						.finally( function () {
 							diagnoseBtn.disabled = false;
 							diagnoseBtn.textContent = '<?php echo esc_js( __( 'Run Diagnostic', 'ajforms' ) ); ?>';
+						} );
+				} );
+			}
+		})();
+		</script>
+		<?php
+	}
+
+	// ============================================================
+	// Gmail Intake (Email settings) — a dedicated Gmail inbox (not Zoho) that staff forward
+	// state-filing notification emails into by hand from the Zoho Shared Mailbox; AJCore polls
+	// it, matches each message to a customer by the company name in its subject, and files any
+	// real-document PDF attachments (as opposed to bundled flyers) into that customer's Files.
+	// ============================================================
+
+	private function get_gmail_intake_redirect_uri() {
+		return rest_url( 'ajcore/v1/gmail-intake/oauth/callback' );
+	}
+
+	public function handle_gmail_intake_actions() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_GET['gmail_intake_action'] ) ) {
+			return;
+		}
+		$action = sanitize_key( wp_unslash( $_GET['gmail_intake_action'] ) );
+		if ( 'disconnect' !== $action ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_gmail_intake_disconnect' );
+
+		$settings = $this->get_plugin_settings();
+		foreach ( array( 'gmail_intake_access_token', 'gmail_intake_refresh_token', 'gmail_intake_connected_email', 'gmail_intake_connected_at', 'gmail_intake_label_id' ) as $field ) {
+			$settings[ $field ] = '';
+		}
+		$settings['gmail_intake_token_expires_at'] = 0;
+		update_option( 'ajforms_settings', $settings );
+		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
+			ajforms_write_synced_settings_file( $settings );
+		}
+
+		wp_safe_redirect(
+			add_query_arg(
+				array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'gmail-intake', 'gmail-intake-disconnected' => 'true' ),
+				admin_url( 'admin.php' )
+			)
+		);
+		exit;
+	}
+
+	public function complete_gmail_intake_oauth_connection( $code ) {
+		$settings      = $this->get_plugin_settings();
+		$client_id     = trim( (string) $settings['gmail_intake_client_id'] );
+		$client_secret = trim( (string) $settings['gmail_intake_client_secret'] );
+		if ( '' === $client_id || '' === $client_secret ) {
+			return new WP_Error( 'gmail_intake_not_configured', __( 'Gmail Intake Client ID/Secret are not saved.', 'ajforms' ) );
+		}
+
+		$token_response = wp_remote_post(
+			'https://oauth2.googleapis.com/token',
+			array(
+				'timeout' => 20,
+				'body'    => array(
+					'grant_type'    => 'authorization_code',
+					'client_id'     => $client_id,
+					'client_secret' => $client_secret,
+					'redirect_uri'  => $this->get_gmail_intake_redirect_uri(),
+					'code'          => sanitize_text_field( (string) $code ),
+				),
+			)
+		);
+		if ( is_wp_error( $token_response ) ) {
+			return $token_response;
+		}
+		$token_data = json_decode( wp_remote_retrieve_body( $token_response ), true );
+		if ( empty( $token_data['access_token'] ) ) {
+			$message = ! empty( $token_data['error_description'] ) ? (string) $token_data['error_description'] : ( ! empty( $token_data['error'] ) ? (string) $token_data['error'] : __( 'Google did not return an access token.', 'ajforms' ) );
+			return new WP_Error( 'gmail_intake_token_exchange_failed', $message );
+		}
+
+		$access_token = sanitize_text_field( (string) $token_data['access_token'] );
+		// Google only returns a refresh_token on first consent (or a forced re-consent via
+		// prompt=consent) — keep the existing one on a reconnect that doesn't get a new one.
+		$refresh_token = ! empty( $token_data['refresh_token'] ) ? sanitize_text_field( (string) $token_data['refresh_token'] ) : trim( (string) $settings['gmail_intake_refresh_token'] );
+		$expires_in    = ! empty( $token_data['expires_in'] ) ? absint( $token_data['expires_in'] ) : 3600;
+
+		if ( '' === $refresh_token ) {
+			return new WP_Error( 'gmail_intake_no_refresh_token', __( 'Google did not grant offline access (no refresh token). Disconnect and reconnect, approving the consent screen fully.', 'ajforms' ) );
+		}
+
+		$profile_response = wp_remote_get(
+			'https://gmail.googleapis.com/gmail/v1/users/me/profile',
+			array( 'timeout' => 20, 'headers' => array( 'Authorization' => 'Bearer ' . $access_token ) )
+		);
+		if ( is_wp_error( $profile_response ) ) {
+			return $profile_response;
+		}
+		$profile_data    = json_decode( wp_remote_retrieve_body( $profile_response ), true );
+		$connected_email = ! empty( $profile_data['emailAddress'] ) ? sanitize_email( $profile_data['emailAddress'] ) : trim( (string) $settings['gmail_intake_address'] );
+
+		$settings['gmail_intake_access_token']     = $access_token;
+		$settings['gmail_intake_refresh_token']    = $refresh_token;
+		$settings['gmail_intake_token_expires_at'] = time() + $expires_in;
+		$settings['gmail_intake_connected_email']  = $connected_email;
+		$settings['gmail_intake_connected_at']     = current_time( 'mysql' );
+		update_option( 'ajforms_settings', $settings );
+		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
+			ajforms_write_synced_settings_file( $settings );
+		}
+
+		return true;
+	}
+
+	public function get_valid_gmail_intake_access_token() {
+		$settings      = $this->get_plugin_settings();
+		$access_token  = trim( (string) $settings['gmail_intake_access_token'] );
+		$refresh_token = trim( (string) $settings['gmail_intake_refresh_token'] );
+		$expires_at    = absint( $settings['gmail_intake_token_expires_at'] );
+
+		if ( '' === $refresh_token ) {
+			return new WP_Error( 'gmail_intake_not_connected', __( 'Gmail Intake is not connected.', 'ajforms' ) );
+		}
+		if ( '' !== $access_token && $expires_at > time() + 60 ) {
+			return $access_token;
+		}
+
+		$client_id     = trim( (string) $settings['gmail_intake_client_id'] );
+		$client_secret = trim( (string) $settings['gmail_intake_client_secret'] );
+		if ( '' === $client_id || '' === $client_secret ) {
+			return new WP_Error( 'gmail_intake_not_configured', __( 'Gmail Intake Client ID/Secret are not saved.', 'ajforms' ) );
+		}
+
+		$response = wp_remote_post(
+			'https://oauth2.googleapis.com/token',
+			array(
+				'timeout' => 20,
+				'body'    => array(
+					'grant_type'    => 'refresh_token',
+					'client_id'     => $client_id,
+					'client_secret' => $client_secret,
+					'refresh_token' => $refresh_token,
+				),
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$data = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( empty( $data['access_token'] ) ) {
+			$message = ! empty( $data['error_description'] ) ? (string) $data['error_description'] : ( ! empty( $data['error'] ) ? (string) $data['error'] : __( 'Google did not return a refreshed access token.', 'ajforms' ) );
+			return new WP_Error( 'gmail_intake_refresh_failed', $message );
+		}
+
+		$access_token = sanitize_text_field( (string) $data['access_token'] );
+		$expires_in   = ! empty( $data['expires_in'] ) ? absint( $data['expires_in'] ) : 3600;
+
+		$settings['gmail_intake_access_token']     = $access_token;
+		$settings['gmail_intake_token_expires_at'] = time() + $expires_in;
+		update_option( 'ajforms_settings', $settings );
+		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
+			ajforms_write_synced_settings_file( $settings );
+		}
+
+		return $access_token;
+	}
+
+	/** Thin request wrapper for the Gmail API, with the same raw-response debug capture used for Zoho Mail. */
+	private function gmail_intake_api_request( $method, $path, $args = array() ) {
+		$access_token = $this->get_valid_gmail_intake_access_token();
+		if ( is_wp_error( $access_token ) ) {
+			return $access_token;
+		}
+		$url = 'https://gmail.googleapis.com/gmail/v1/users/me' . $path;
+		if ( ! empty( $args['query'] ) ) {
+			$url = add_query_arg( $args['query'], $url );
+		}
+		$request_args = array(
+			'timeout' => 20,
+			'method'  => $method,
+			'headers' => array( 'Authorization' => 'Bearer ' . $access_token ),
+		);
+		if ( isset( $args['body'] ) ) {
+			$request_args['headers']['Content-Type'] = 'application/json';
+			$request_args['body']                    = wp_json_encode( $args['body'] );
+		}
+		$response = wp_remote_request( $url, $request_args );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+		$raw_body    = wp_remote_retrieve_body( $response );
+		$data        = json_decode( $raw_body, true );
+
+		set_transient(
+			'ajcore_gmail_intake_api_debug',
+			array(
+				'url'    => $url,
+				'status' => $status_code,
+				'body'   => $raw_body,
+				'at'     => current_time( 'mysql' ),
+			),
+			15 * MINUTE_IN_SECONDS
+		);
+
+		if ( $status_code >= 400 ) {
+			$message = ! empty( $data['error']['message'] ) ? (string) $data['error']['message'] : sprintf(
+				/* translators: %d: HTTP status code */
+				__( 'Gmail API returned an error (%d).', 'ajforms' ),
+				$status_code
+			);
+			return new WP_Error( 'gmail_intake_api_error', $message );
+		}
+		return is_array( $data ) ? $data : array();
+	}
+
+	/** Ensures the "AJCore-Processed"/"AJCore-NeedsReview" Gmail labels exist, returns their IDs keyed 'processed'/'review'. */
+	private function get_or_create_gmail_intake_labels() {
+		$wanted = array( 'processed' => 'AJCore-Processed', 'review' => 'AJCore-NeedsReview' );
+		$ids    = array();
+
+		$existing = $this->gmail_intake_api_request( 'GET', '/labels' );
+		if ( is_wp_error( $existing ) ) {
+			return $existing;
+		}
+		$by_name = array();
+		foreach ( (array) ( isset( $existing['labels'] ) ? $existing['labels'] : array() ) as $label ) {
+			if ( ! empty( $label['name'] ) && ! empty( $label['id'] ) ) {
+				$by_name[ $label['name'] ] = $label['id'];
+			}
+		}
+
+		foreach ( $wanted as $key => $name ) {
+			if ( isset( $by_name[ $name ] ) ) {
+				$ids[ $key ] = $by_name[ $name ];
+				continue;
+			}
+			$created = $this->gmail_intake_api_request(
+				'POST',
+				'/labels',
+				array(
+					'body' => array(
+						'name'                  => $name,
+						'labelListVisibility'   => 'labelShow',
+						'messageListVisibility' => 'show',
+					),
+				)
+			);
+			if ( is_wp_error( $created ) || empty( $created['id'] ) ) {
+				return is_wp_error( $created ) ? $created : new WP_Error(
+					'gmail_intake_label_failed',
+					sprintf(
+						/* translators: %s: Gmail label name */
+						__( 'Could not create the "%s" Gmail label.', 'ajforms' ),
+						$name
+					)
+				);
+			}
+			$ids[ $key ] = $created['id'];
+		}
+
+		return $ids;
+	}
+
+	private function gmail_intake_header_value( $headers, $name ) {
+		foreach ( (array) $headers as $header ) {
+			if ( isset( $header['name'] ) && 0 === strcasecmp( $header['name'], $name ) ) {
+				return isset( $header['value'] ) ? (string) $header['value'] : '';
+			}
+		}
+		return '';
+	}
+
+	/** Recursively walks a Gmail message payload's MIME parts, collecting PDF attachment descriptors into $out. */
+	private function gmail_intake_collect_pdf_parts( $payload, &$out ) {
+		if ( ! is_array( $payload ) ) {
+			return;
+		}
+		$filename  = isset( $payload['filename'] ) ? (string) $payload['filename'] : '';
+		$mime_type = isset( $payload['mimeType'] ) ? (string) $payload['mimeType'] : '';
+		$body      = isset( $payload['body'] ) ? $payload['body'] : array();
+		$is_pdf    = ( 'application/pdf' === $mime_type ) || ( '' !== $filename && 0 === strcasecmp( substr( $filename, -4 ), '.pdf' ) );
+		if ( $is_pdf && '' !== $filename && ! empty( $body['attachmentId'] ) ) {
+			$out[] = array(
+				'filename'      => $filename,
+				'attachment_id' => (string) $body['attachmentId'],
+				'size'          => isset( $body['size'] ) ? (int) $body['size'] : 0,
+			);
+		}
+		if ( ! empty( $payload['parts'] ) && is_array( $payload['parts'] ) ) {
+			foreach ( $payload['parts'] as $part ) {
+				$this->gmail_intake_collect_pdf_parts( $part, $out );
+			}
+		}
+	}
+
+	/**
+	 * Best-effort company name extraction from these state-filing notification subjects. Tries,
+	 * in order: "Filing: {name} (", "Filing: {name}" to end, "... for {name}" ending at a
+	 * business-entity suffix, and finally the whole subject if it itself ends with a suffix
+	 * (covers e.g. an EIN letter's subject being just "PAINT MY CASTLE LLC"). Returns '' if none
+	 * match — callers must treat that as "needs manual review", not guess further.
+	 */
+	private function extract_company_name_from_subject( $subject ) {
+		$subject = trim( (string) $subject );
+		$suffix  = '(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|LLP|L\.L\.P\.|LP|PLLC|PLC|Co\.)';
+
+		if ( preg_match( '/Filing:\s*(.+?)\s*\(/i', $subject, $m ) ) {
+			return trim( $m[1] );
+		}
+		if ( preg_match( '/Filing:\s*(.+)$/i', $subject, $m ) ) {
+			return trim( $m[1] );
+		}
+		if ( preg_match( '/\bfor\s+([A-Z0-9][A-Za-z0-9&,.\'\-\s]*?\s*' . $suffix . ')\b/i', $subject, $m ) ) {
+			return trim( $m[1] );
+		}
+		if ( preg_match( '/^([A-Z0-9][A-Za-z0-9&,.\'\-\s]*?\s*' . $suffix . ')$/i', $subject, $m ) ) {
+			return trim( $m[1] );
+		}
+		return '';
+	}
+
+	/** Finds exactly one customer matching $company_name across Stripe and local customers. Returns null on zero or 2+ matches — never auto-file on an ambiguous guess. */
+	private function find_portal_customer_by_company_name( $company_name ) {
+		$company_name = trim( (string) $company_name );
+		if ( '' === $company_name ) {
+			return null;
+		}
+		$pdb         = $this->get_pdb();
+		$local_table = $pdb->prefix . 'aj_portal_local_customers';
+
+		$matches = array_merge(
+			(array) $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id, name, customer_number FROM {$this->get_portal_stripe_customers_table()} WHERE name = %s", $company_name ) ),
+			(array) $pdb->get_results( $pdb->prepare( "SELECT local_customer_id AS stripe_customer_id, name, customer_number FROM {$local_table} WHERE name = %s", $company_name ) )
+		);
+
+		if ( 1 !== count( $matches ) ) {
+			// No unambiguous exact match — fall back to a fuzzy pass, still requiring exactly one hit.
+			$like    = '%' . $pdb->esc_like( $company_name ) . '%';
+			$matches = array_merge(
+				(array) $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id, name, customer_number FROM {$this->get_portal_stripe_customers_table()} WHERE name LIKE %s", $like ) ),
+				(array) $pdb->get_results( $pdb->prepare( "SELECT local_customer_id AS stripe_customer_id, name, customer_number FROM {$local_table} WHERE name LIKE %s", $like ) )
+			);
+		}
+
+		return 1 === count( $matches ) ? $matches[0] : null;
+	}
+
+	/**
+	 * Heuristic only, pending real attachment filenames from a live test: a PDF is treated as a
+	 * real filing document (and gets filed to the customer) if its filename contains one of these
+	 * document-type keywords; anything else (informational flyers bundled into the same email) is
+	 * skipped rather than cluttering a customer's Files with unrelated marketing PDFs.
+	 */
+	private function gmail_intake_pdf_looks_like_real_document( $filename ) {
+		$name     = strtolower( (string) $filename );
+		$keywords = array( 'articles', 'certificate', 'ein', 'notice', 'filing', 'annual-report', 'annual_report', 'order', 'letter', 'statement', 'formation', 'authority', 'organization', 'dissolution', 'amendment', 'reinstatement', 'application' );
+		foreach ( $keywords as $keyword ) {
+			if ( false !== strpos( $name, $keyword ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Default filename format, pending confirmation: "{CustomerNumber} - {CompanyName} -
+	 * {DocumentLabel} - {YYYY-MM-DD}.pdf". $document_label falls back to a title-cased version of
+	 * the original filename if no known document-type keyword matched it.
+	 */
+	private function gmail_intake_build_filename( $customer_number, $company_name, $original_filename ) {
+		$base  = preg_replace( '/\.pdf$/i', '', (string) $original_filename );
+		$label = ucwords( str_replace( array( '_', '-' ), ' ', $base ) );
+
+		$keyword_labels = array(
+			'articles'      => 'Articles of Organization',
+			'certificate'   => 'Certificate',
+			'ein'           => 'EIN Letter',
+			'annual-report' => 'Annual Report',
+			'annual_report' => 'Annual Report',
+			'formation'     => 'Formation Document',
+			'authority'     => 'Certificate of Authority',
+			'organization'  => 'Articles of Organization',
+			'dissolution'   => 'Dissolution',
+			'amendment'     => 'Amendment',
+			'reinstatement' => 'Reinstatement',
+		);
+		$lower = strtolower( $base );
+		foreach ( $keyword_labels as $keyword => $friendly ) {
+			if ( false !== strpos( $lower, $keyword ) ) {
+				$label = $friendly;
+				break;
+			}
+		}
+
+		$parts    = array_filter( array( trim( (string) $customer_number ), trim( (string) $company_name ), $label, current_time( 'Y-m-d' ) ) );
+		$filename = implode( ' - ', $parts ) . '.pdf';
+		return preg_replace( '/[\\\\\/:*?"<>|]/', '', $filename );
+	}
+
+	/**
+	 * Polls the connected Gmail Intake inbox for unprocessed messages, matches each to a customer
+	 * via the company name in its subject, files any PDF attachments that look like real documents
+	 * onto that customer, and labels the message Processed (matched) or NeedsReview (no confident
+	 * single customer match) so it's never re-processed. Returns a summary array for the
+	 * Test/Process-Now UI.
+	 */
+	public function process_gmail_intake_inbox( $max_messages = 20 ) {
+		$labels = $this->get_or_create_gmail_intake_labels();
+		if ( is_wp_error( $labels ) ) {
+			return $labels;
+		}
+
+		$list = $this->gmail_intake_api_request(
+			'GET',
+			'/messages',
+			array(
+				'query' => array(
+					'q'          => 'in:inbox -label:ajcore-processed -label:ajcore-needsreview',
+					'maxResults' => max( 1, min( 50, (int) $max_messages ) ),
+				),
+			)
+		);
+		if ( is_wp_error( $list ) ) {
+			return $list;
+		}
+
+		$summary = array( 'checked' => 0, 'filed' => 0, 'needs_review' => 0, 'skipped_no_attachment' => 0, 'errors' => array() );
+
+		foreach ( (array) ( isset( $list['messages'] ) ? $list['messages'] : array() ) as $item ) {
+			if ( empty( $item['id'] ) ) {
+				continue;
+			}
+			$message_id = (string) $item['id'];
+
+			$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $message_id ), array( 'query' => array( 'format' => 'full' ) ) );
+			if ( is_wp_error( $message ) ) {
+				$summary['errors'][] = $message->get_error_message();
+				continue;
+			}
+
+			// Defensive re-check regardless of whether the -label query above actually excluded
+			// it — never risk double-filing the same attachment into a customer's Files.
+			$existing_label_ids = isset( $message['labelIds'] ) ? (array) $message['labelIds'] : array();
+			if ( in_array( $labels['processed'], $existing_label_ids, true ) || in_array( $labels['review'], $existing_label_ids, true ) ) {
+				continue;
+			}
+
+			$summary['checked']++;
+			$headers = isset( $message['payload']['headers'] ) ? $message['payload']['headers'] : array();
+			$subject = $this->gmail_intake_header_value( $headers, 'Subject' );
+
+			$company_name = $this->extract_company_name_from_subject( $subject );
+			$customer     = '' !== $company_name ? $this->find_portal_customer_by_company_name( $company_name ) : null;
+
+			if ( ! $customer ) {
+				$this->gmail_intake_api_request( 'POST', '/messages/' . rawurlencode( $message_id ) . '/modify', array( 'body' => array( 'addLabelIds' => array( $labels['review'] ) ) ) );
+				$summary['needs_review']++;
+				continue;
+			}
+
+			$pdf_parts = array();
+			$this->gmail_intake_collect_pdf_parts( isset( $message['payload'] ) ? $message['payload'] : array(), $pdf_parts );
+
+			$filed_any = false;
+			foreach ( $pdf_parts as $pdf ) {
+				if ( ! $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ) ) {
+					continue; // Looks like a bundled flyer, not a real filing document — skip it.
+				}
+				$attachment = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $message_id ) . '/attachments/' . rawurlencode( $pdf['attachment_id'] ) );
+				if ( is_wp_error( $attachment ) || empty( $attachment['data'] ) ) {
+					$summary['errors'][] = is_wp_error( $attachment ) ? $attachment->get_error_message() : __( 'Attachment had no data.', 'ajforms' );
+					continue;
+				}
+				$binary = base64_decode( strtr( $attachment['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+				if ( false === $binary ) {
+					continue;
+				}
+
+				$tmp_path = wp_tempnam( $pdf['filename'] );
+				file_put_contents( $tmp_path, $binary ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+				$new_filename = $this->gmail_intake_build_filename( $customer->customer_number, $customer->name, $pdf['filename'] );
+
+				$files = array(
+					'name'     => $new_filename,
+					'type'     => 'application/pdf',
+					'tmp_name' => $tmp_path,
+					'error'    => UPLOAD_ERR_OK,
+					'size'     => filesize( $tmp_path ),
+				);
+				$result = $this->upload_files_for_portal_customer( $customer->stripe_customer_id, $files, 'Gmail Intake', '' );
+				if ( is_wp_error( $result ) ) {
+					$summary['errors'][] = $result->get_error_message();
+				} else {
+					$filed_any = true;
+				}
+				if ( file_exists( $tmp_path ) ) {
+					unlink( $tmp_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+				}
+			}
+
+			if ( $filed_any ) {
+				$summary['filed']++;
+			} else {
+				$summary['skipped_no_attachment']++;
+			}
+
+			$this->gmail_intake_api_request( 'POST', '/messages/' . rawurlencode( $message_id ) . '/modify', array( 'body' => array( 'addLabelIds' => array( $labels['processed'] ) ) ) );
+		}
+
+		return $summary;
+	}
+
+	public function display_gmail_intake_settings_section() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings     = $this->get_plugin_settings();
+		$redirect_uri = $this->get_gmail_intake_redirect_uri();
+		$action_url   = add_query_arg(
+			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'gmail-intake', 'section' => 'gmail-intake' ),
+			admin_url( 'admin.php' )
+		);
+
+		$is_connected            = ! empty( $settings['gmail_intake_access_token'] ) || ! empty( $settings['gmail_intake_refresh_token'] );
+		$can_connect              = ! empty( $settings['gmail_intake_client_id'] ) && ! empty( $settings['gmail_intake_client_secret'] );
+		$connect_disabled_reason = ! $can_connect ? __( 'Save a Client ID and Client Secret below first.', 'ajforms' ) : '';
+
+		if ( isset( $_GET['gmail-intake-connected'] ) ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Gmail Intake connected.', 'ajforms' ) . '</p></div>';
+		} elseif ( isset( $_GET['gmail-intake-disconnected'] ) ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Gmail Intake disconnected.', 'ajforms' ) . '</p></div>';
+		} elseif ( isset( $_GET['gmail-intake-error'] ) ) {
+			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['gmail-intake-error'] ) ) ) . '</p></div>';
+		}
+
+		$authorize_state = wp_generate_password( 32, false );
+		set_transient( 'ajcore_gmail_intake_oauth_state', $authorize_state, 10 * MINUTE_IN_SECONDS );
+		$authorize_url = add_query_arg(
+			array(
+				'client_id'     => $settings['gmail_intake_client_id'],
+				'redirect_uri'  => $redirect_uri,
+				'response_type' => 'code',
+				'scope'         => 'https://www.googleapis.com/auth/gmail.modify',
+				'access_type'   => 'offline',
+				'prompt'        => 'consent',
+				'state'         => $authorize_state,
+			),
+			'https://accounts.google.com/o/oauth2/v2/auth'
+		);
+		$disconnect_url = wp_nonce_url(
+			add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'gmail-intake', 'gmail_intake_action' => 'disconnect' ), admin_url( 'admin.php' ) ),
+			'ajcore_gmail_intake_disconnect'
+		);
+		$test_url    = rest_url( 'ajcore/v1/gmail-intake/test' );
+		$process_url = rest_url( 'ajcore/v1/gmail-intake/process' );
+		?>
+		<style>
+			#ajforms-gmail-intake-section .ajforms-settings-field input[type="text"],
+			#ajforms-gmail-intake-section .ajforms-settings-field input[type="email"] { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid #d1d5db; border-radius: 12px; padding: 10px 13px; font-family: inherit; font-size: 14px; }
+			#ajforms-gmail-intake-section .ajforms-settings-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #111827; }
+			#ajforms-gmail-intake-section .ajforms-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+			#ajforms-gmail-intake-section .ajforms-settings-help { margin-top: 6px; color: #6b7280; font-size: 12px; }
+			#ajforms-gmail-intake-instructions { display: none; margin: 10px 0 18px; padding: 14px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 13px; line-height: 1.6; }
+			#ajforms-gmail-intake-instructions.is-open { display: block; }
+			#ajforms-gmail-intake-section .ajforms-zoho-help-btn { border: 1px solid #d1d5db; background: #fff; border-radius: 999px; width: 22px; height: 22px; line-height: 20px; text-align: center; padding: 0; font-weight: 700; cursor: pointer; color: #475569; }
+			#ajforms-gmail-intake-section .ajforms-zoho-status { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; margin: 14px 0; font-size: 13px; }
+			#ajforms-gmail-intake-section .ajforms-zoho-test-result { margin-top: 14px; padding: 14px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 13px; display: none; }
+			#ajforms-gmail-intake-section .ajforms-zoho-test-result.is-visible { display: block; }
+		</style>
+		<div class="ajforms-settings-card" id="ajforms-gmail-intake-section">
+			<div class="ajforms-settings-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+				<div>
+					<span class="ajcore-modern-admin ajforms-settings-pill" style="display:inline-flex;"><?php esc_html_e( 'Gmail Intake', 'ajforms' ); ?></span>
+					<h3 style="display:inline-flex;align-items:center;gap:8px;margin:10px 0 4px;"><?php esc_html_e( 'Connect the intake mailbox', 'ajforms' ); ?>
+						<button type="button" class="ajforms-zoho-help-btn" id="ajforms-gmail-intake-help-toggle" title="<?php esc_attr_e( 'Setup instructions', 'ajforms' ); ?>">?</button>
+					</h3>
+					<p style="margin:0;color:#6b7280;font-size:13px;max-width:640px;"><?php esc_html_e( 'A dedicated Gmail mailbox your team forwards state-filing notification emails into. AJCore reads it, matches each email to a customer by the company name in its subject, and files any real filing-document PDF attachments into that customer\'s Files.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+
+			<div id="ajforms-gmail-intake-instructions">
+				<strong><?php esc_html_e( 'Google Cloud setup (one-time):', 'ajforms' ); ?></strong>
+				<ol style="margin:8px 0 0 18px;padding:0;">
+					<li><?php esc_html_e( 'Go to the Google Cloud Console and create (or pick) a project.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'APIs & Services → Library → search "Gmail API" → Enable.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'APIs & Services → OAuth consent screen → set it up (External is fine for a single mailbox) → add the intake Gmail address as a test user if it stays in Testing mode.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type: Web application.', 'ajforms' ); ?></li>
+					<li>
+						<?php esc_html_e( 'Under Authorized redirect URIs, add exactly:', 'ajforms' ); ?>
+						<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+							<code id="ajforms-gmail-intake-redirect-uri" style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;font-size:12px;word-break:break-all;"><?php echo esc_html( $redirect_uri ); ?></code>
+							<button type="button" class="button button-small" id="ajforms-gmail-intake-copy-redirect"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
+						</div>
+					</li>
+					<li><?php esc_html_e( 'Copy the resulting Client ID and Client Secret into the fields below and Save Settings.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Click Connect below and sign in as the intake Gmail address itself (not a delegate).', 'ajforms' ); ?></li>
+				</ol>
+				<p style="margin:8px 0 0;color:#6b7280;font-size:13px;"><?php esc_html_e( 'Gmail API usage at this scale is free — no billing account required.', 'ajforms' ); ?></p>
+			</div>
+
+			<form method="post" action="<?php echo esc_url( $action_url ); ?>">
+				<?php wp_nonce_field( 'ajforms_settings_save', 'ajforms_settings_nonce' ); ?>
+				<input type="hidden" name="ajforms_section" value="gmail-intake">
+				<div class="ajforms-settings-grid">
+					<div class="ajforms-settings-field">
+						<label for="gmail_intake_client_id"><?php esc_html_e( 'Client ID', 'ajforms' ); ?></label>
+						<input type="text" name="gmail_intake_client_id" id="gmail_intake_client_id" value="<?php echo esc_attr( $settings['gmail_intake_client_id'] ); ?>" autocomplete="off">
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="gmail_intake_client_secret"><?php esc_html_e( 'Client Secret', 'ajforms' ); ?></label>
+						<input type="text" name="gmail_intake_client_secret" id="gmail_intake_client_secret" value="" placeholder="<?php echo ! empty( $settings['gmail_intake_client_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off">
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="gmail_intake_address"><?php esc_html_e( 'Intake Mailbox Address', 'ajforms' ); ?></label>
+						<input type="email" name="gmail_intake_address" id="gmail_intake_address" value="<?php echo esc_attr( $settings['gmail_intake_address'] ); ?>">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only — the actual account read is whichever Google login completes Connect below.', 'ajforms' ); ?></div>
+					</div>
+				</div>
+				<p class="submit" style="margin:14px 0 0;"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button></p>
+			</form>
+
+			<div class="ajforms-zoho-status">
+				<?php if ( $is_connected ) : ?>
+					<strong>✓ <?php esc_html_e( 'Connected', 'ajforms' ); ?></strong>
+					<span>
+						<?php
+						echo esc_html(
+							! empty( $settings['gmail_intake_connected_email'] )
+								? sprintf(
+									/* translators: 1: connected mailbox address, 2: date connected */
+									__( 'as %1$s%2$s', 'ajforms' ),
+									$settings['gmail_intake_connected_email'],
+									! empty( $settings['gmail_intake_connected_at'] ) ? sprintf( __( ' — connected %s', 'ajforms' ), $settings['gmail_intake_connected_at'] ) : ''
+								)
+								: __( 'Connected — mailbox address not yet confirmed.', 'ajforms' )
+						);
+						?>
+					</span>
+				<?php else : ?>
+					<span><?php esc_html_e( 'Not connected yet.', 'ajforms' ); ?></span>
+				<?php endif; ?>
+			</div>
+
+			<div class="ajforms-settings-inline-actions">
+				<?php if ( $can_connect ) : ?>
+					<a class="button button-primary" href="<?php echo esc_url( $authorize_url ); ?>"><?php echo esc_html( $is_connected ? __( 'Reconnect Gmail', 'ajforms' ) : __( 'Connect Gmail', 'ajforms' ) ); ?></a>
+				<?php else : ?>
+					<button type="button" class="button" disabled title="<?php echo esc_attr( $connect_disabled_reason ); ?>"><?php esc_html_e( 'Connect Gmail', 'ajforms' ); ?></button>
+					<span style="color:#6b7280;font-size:13px;"><?php echo esc_html( $connect_disabled_reason ); ?></span>
+				<?php endif; ?>
+				<?php if ( $is_connected ) : ?>
+					<button type="button" class="button" id="ajforms-gmail-intake-test-btn"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
+					<button type="button" class="button" id="ajforms-gmail-intake-process-btn"><?php esc_html_e( 'Process Now', 'ajforms' ); ?></button>
+					<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Gmail Intake? Scheduled processing stops until reconnected.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajforms' ); ?></a>
+				<?php endif; ?>
+			</div>
+
+			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-test-result"></div>
+			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-process-result"></div>
+
+			<?php
+			$gmail_debug = get_transient( 'ajcore_gmail_intake_api_debug' );
+			if ( ! empty( $gmail_debug ) && is_array( $gmail_debug ) ) :
+				$pretty_body = $gmail_debug['body'];
+				$decoded     = json_decode( $gmail_debug['body'], true );
+				if ( null !== $decoded ) {
+					$pretty_body = wp_json_encode( $decoded, JSON_PRETTY_PRINT );
+				}
+				?>
+				<div style="margin-top:18px;padding-top:16px;border-top:1px dashed #e2e8f0;">
+					<h4 style="margin:0 0 4px;font-size:13px;"><?php esc_html_e( 'Last raw Gmail API response (debug)', 'ajforms' ); ?></h4>
+					<p style="margin:0 0 10px;color:#6b7280;font-size:13px;">
+						<?php
+						printf(
+							/* translators: 1: request URL, 2: HTTP status code, 3: date/time */
+							esc_html__( '%1$s — HTTP %2$s — %3$s (auto-clears after 15 minutes)', 'ajforms' ),
+							esc_html( $gmail_debug['url'] ),
+							esc_html( $gmail_debug['status'] ),
+							esc_html( $gmail_debug['at'] )
+						);
+						?>
+					</p>
+					<pre style="margin:0;padding:14px 16px;background:#0f172a;color:#e2e8f0;border-radius:12px;font-size:12px;line-height:1.5;overflow:auto;max-height:360px;white-space:pre-wrap;word-break:break-word;"><?php echo esc_html( $pretty_body ); ?></pre>
+				</div>
+			<?php endif; ?>
+		</div>
+		<script>
+		(function () {
+			var helpBtn = document.getElementById( 'ajforms-gmail-intake-help-toggle' );
+			var instructions = document.getElementById( 'ajforms-gmail-intake-instructions' );
+			if ( helpBtn && instructions ) {
+				helpBtn.addEventListener( 'click', function () {
+					instructions.classList.toggle( 'is-open' );
+				} );
+			}
+
+			var copyBtn = document.getElementById( 'ajforms-gmail-intake-copy-redirect' );
+			var redirectCode = document.getElementById( 'ajforms-gmail-intake-redirect-uri' );
+			if ( copyBtn && redirectCode && navigator.clipboard ) {
+				copyBtn.addEventListener( 'click', function () {
+					navigator.clipboard.writeText( redirectCode.textContent || '' );
+					copyBtn.textContent = '<?php echo esc_js( __( 'Copied', 'ajforms' ) ); ?>';
+					setTimeout( function () { copyBtn.textContent = '<?php echo esc_js( __( 'Copy', 'ajforms' ) ); ?>'; }, 1500 );
+				} );
+			}
+
+			var testBtn = document.getElementById( 'ajforms-gmail-intake-test-btn' );
+			var testResultBox = document.getElementById( 'ajforms-gmail-intake-test-result' );
+			if ( testBtn && testResultBox ) {
+				testBtn.addEventListener( 'click', function () {
+					testBtn.disabled = true;
+					testBtn.textContent = '<?php echo esc_js( __( 'Testing…', 'ajforms' ) ); ?>';
+					testResultBox.classList.remove( 'is-visible' );
+					fetch( '<?php echo esc_url_raw( $test_url ); ?>', {
+						headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
+					} )
+						.then( function ( r ) { return r.json(); } )
+						.then( function ( data ) {
+							var html = '';
+							if ( data && data.success ) {
+								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Connection works', 'ajforms' ) ); ?></h4>';
+								html += '<p style="margin:0;"><?php echo esc_js( __( 'Mailbox:', 'ajforms' ) ); ?> ' + ( data.email_address || '' ) + ' — <?php echo esc_js( __( 'total messages:', 'ajforms' ) ); ?> ' + ( data.messages_total || 0 ) + '</p>';
+							} else {
+								html += '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Test failed', 'ajforms' ) ); ?></h4>';
+								html += '<p style="margin:0;">' + ( ( data && data.message ) || '<?php echo esc_js( __( 'Unknown error.', 'ajforms' ) ); ?>' ) + '</p>';
+							}
+							testResultBox.innerHTML = html;
+							testResultBox.classList.add( 'is-visible' );
+						} )
+						.catch( function () {
+							testResultBox.innerHTML = '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Test failed', 'ajforms' ) ); ?></h4><p style="margin:0;"><?php echo esc_js( __( 'Request to the site failed.', 'ajforms' ) ); ?></p>';
+							testResultBox.classList.add( 'is-visible' );
+						} )
+						.finally( function () {
+							testBtn.disabled = false;
+							testBtn.textContent = '<?php echo esc_js( __( 'Test Connection', 'ajforms' ) ); ?>';
+						} );
+				} );
+			}
+
+			var processBtn = document.getElementById( 'ajforms-gmail-intake-process-btn' );
+			var processResultBox = document.getElementById( 'ajforms-gmail-intake-process-result' );
+			if ( processBtn && processResultBox ) {
+				processBtn.addEventListener( 'click', function () {
+					processBtn.disabled = true;
+					processBtn.textContent = '<?php echo esc_js( __( 'Processing…', 'ajforms' ) ); ?>';
+					processResultBox.classList.remove( 'is-visible' );
+					fetch( '<?php echo esc_url_raw( $process_url ); ?>', {
+						method: 'POST',
+						headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
+					} )
+						.then( function ( r ) { return r.json(); } )
+						.then( function ( data ) {
+							var html = '';
+							if ( data && data.success ) {
+								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Processed', 'ajforms' ) ); ?></h4>';
+								html += '<p style="margin:0;"><?php echo esc_js( __( 'Checked:', 'ajforms' ) ); ?> ' + data.checked + ' — <?php echo esc_js( __( 'Filed:', 'ajforms' ) ); ?> ' + data.filed + ' — <?php echo esc_js( __( 'Needs review:', 'ajforms' ) ); ?> ' + data.needs_review + ' — <?php echo esc_js( __( 'No matching attachment:', 'ajforms' ) ); ?> ' + data.skipped_no_attachment + '</p>';
+								if ( data.errors && data.errors.length ) {
+									html += '<p style="margin:8px 0 0;color:#b91c1c;">' + data.errors.join( '<br>' ) + '</p>';
+								}
+							} else {
+								html += '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Processing failed', 'ajforms' ) ); ?></h4>';
+								html += '<p style="margin:0;">' + ( ( data && data.message ) || '<?php echo esc_js( __( 'Unknown error.', 'ajforms' ) ); ?>' ) + '</p>';
+							}
+							processResultBox.innerHTML = html;
+							processResultBox.classList.add( 'is-visible' );
+						} )
+						.catch( function () {
+							processResultBox.innerHTML = '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Processing failed', 'ajforms' ) ); ?></h4><p style="margin:0;"><?php echo esc_js( __( 'Request to the site failed.', 'ajforms' ) ); ?></p>';
+							processResultBox.classList.add( 'is-visible' );
+						} )
+						.finally( function () {
+							processBtn.disabled = false;
+							processBtn.textContent = '<?php echo esc_js( __( 'Process Now', 'ajforms' ) ); ?>';
 						} );
 				} );
 			}

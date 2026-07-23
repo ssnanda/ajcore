@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.80
+ * Version: 0.7.81
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.80' );
+	define( 'AJCORE_VERSION', '0.7.81' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -154,6 +154,18 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'zoho_mail_account_id'          => '',
 			'zoho_mail_connected_email'     => '',
 			'zoho_mail_connected_at'        => '',
+			// Gmail Intake (Email settings). A dedicated Gmail inbox (not Zoho) that staff forward
+			// state-filing notification emails into; AJCore polls it, matches the sender's subject
+			// to a customer, and files PDF attachments into that customer's Files.
+			'gmail_intake_client_id'         => '',
+			'gmail_intake_client_secret'     => '',
+			'gmail_intake_address'           => 'universityplaceofficesuites@gmail.com',
+			'gmail_intake_access_token'      => '',
+			'gmail_intake_refresh_token'     => '',
+			'gmail_intake_token_expires_at'  => 0,
+			'gmail_intake_connected_email'   => '',
+			'gmail_intake_connected_at'      => '',
+			'gmail_intake_label_id'          => '',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
