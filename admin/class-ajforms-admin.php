@@ -25172,27 +25172,14 @@ class AJForms_Admin {
 			</div>
 
 			<div id="ajforms-gmail-intake-instructions">
-				<strong><?php esc_html_e( 'One-time Google Cloud setup — each step links to its exact page:', 'ajforms' ); ?></strong>
+				<strong><?php esc_html_e( 'One-time Google Cloud setup — everything starts from one link, use the search bar at the top of the console for every step after that:', 'ajforms' ); ?></strong>
+				<div style="margin:6px 0 10px;"><a class="button button-small" href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">https://console.cloud.google.com/</a></div>
 				<ol style="margin:8px 0 0 18px;padding:0;">
-					<li>
-						<?php esc_html_e( 'Create or pick a project.', 'ajforms' ); ?>
-						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/projectselector2/home/dashboard" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Cloud Console', 'ajforms' ); ?></a></div>
-					</li>
-					<li>
-						<?php esc_html_e( 'Enable the Gmail API — click the Enable button on that page.', 'ajforms' ); ?>
-						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Gmail API page', 'ajforms' ); ?></a></div>
-					</li>
-					<li>
-						<?php esc_html_e( 'Configure Google Auth Platform (skip if it already shows your app): click Get started → enter an app name and your own email as support email → Next → Audience: choose External → Next → enter your email again as contact → Next → check the agreement box → Create.', 'ajforms' ); ?>
-						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Google Auth Platform', 'ajforms' ); ?></a></div>
-					</li>
-					<li>
-						<?php esc_html_e( 'Add the intake Gmail address as a test user: on the Audience page, scroll to "Test users" → Add users → enter the address → Save.', 'ajforms' ); ?>
-						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Audience / Test users', 'ajforms' ); ?></a></div>
-					</li>
-					<li>
-						<?php esc_html_e( 'On the Clients page, click Create OAuth client. Leave Application type as "Web application", type any Name, and leave "Authorized JavaScript origins" empty. Under "Authorized redirect URIs" click "+ Add URI" and paste this exact URL, then click Create:', 'ajforms' ); ?>
-						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Clients', 'ajforms' ); ?></a></div>
+					<li><?php esc_html_e( 'At the top left, next to the "Google Cloud" logo, click the project switcher and create (or select) a project.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Click the search bar at the top of the page, type "Gmail API", press Enter, open the result, and click Enable.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Search "Google Auth Platform", open it, and click Get started (skip this if it already shows an app name). Fill in: an app name and your own email as support email → Next. Audience: choose External → Next. Contact email: your own email again → Next. Check the agreement box → Create.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Still on Google Auth Platform, click "Audience" in the left-hand menu, scroll to "Test users", click "Add users", enter the intake Gmail address, and Save.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Click "Clients" in the same left-hand menu, then "Create OAuth client". Leave Application type as "Web application", type any Name, leave "Authorized JavaScript origins" empty. Under "Authorized redirect URIs" click "+ Add URI" and paste this exact URL, then click Create:', 'ajforms' ); ?>
 						<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
 							<code id="ajforms-gmail-intake-redirect-uri" style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;font-size:12px;word-break:break-all;"><?php echo esc_html( $redirect_uri ); ?></code>
 							<button type="button" class="button button-small" id="ajforms-gmail-intake-copy-redirect"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
