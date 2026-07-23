@@ -25040,6 +25040,8 @@ class AJForms_Admin {
 			$summary['checked']++;
 			$headers = isset( $message['payload']['headers'] ) ? $message['payload']['headers'] : array();
 			$subject = $this->gmail_intake_header_value( $headers, 'Subject' );
+			$sender  = $this->gmail_intake_header_value( $headers, 'From' );
+			$date_ts = strtotime( (string) $this->gmail_intake_header_value( $headers, 'Date' ) );
 
 			$company_name = $this->extract_company_name_from_subject( $subject );
 			$customer     = '' !== $company_name ? $this->find_portal_customer_by_company_name( $company_name ) : null;
@@ -25047,20 +25049,33 @@ class AJForms_Admin {
 			if ( ! $customer ) {
 				$this->gmail_intake_api_request( 'POST', '/messages/' . rawurlencode( $message_id ) . '/modify', array( 'body' => array( 'addLabelIds' => array( $labels['review'] ) ) ) );
 				$summary['needs_review']++;
+				$this->log_gmail_intake_item( array(
+					'gmail_message_id'       => $message_id,
+					'subject'                => $subject,
+					'sender'                 => $sender,
+					'snippet'                => isset( $message['snippet'] ) ? $message['snippet'] : '',
+					'company_name_extracted' => $company_name,
+					'status'                 => 'needs_review',
+					'received_at'            => false !== $date_ts ? $date_ts : null,
+				) );
 				continue;
 			}
 
 			$pdf_parts = array();
 			$this->gmail_intake_collect_pdf_parts( isset( $message['payload'] ) ? $message['payload'] : array(), $pdf_parts );
 
-			$filed_any = false;
+			$filed_any       = false;
+			$filed_filenames = array();
+			$message_errors  = array();
 			foreach ( $pdf_parts as $pdf ) {
 				if ( ! $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ) ) {
 					continue; // Looks like a bundled flyer, not a real filing document — skip it.
 				}
 				$attachment = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $message_id ) . '/attachments/' . rawurlencode( $pdf['attachment_id'] ) );
 				if ( is_wp_error( $attachment ) || empty( $attachment['data'] ) ) {
-					$summary['errors'][] = is_wp_error( $attachment ) ? $attachment->get_error_message() : __( 'Attachment had no data.', 'ajforms' );
+					$error_message          = is_wp_error( $attachment ) ? $attachment->get_error_message() : __( 'Attachment had no data.', 'ajforms' );
+					$summary['errors'][]    = $error_message;
+					$message_errors[]       = $error_message;
 					continue;
 				}
 				$binary = base64_decode( strtr( $attachment['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
@@ -25082,8 +25097,10 @@ class AJForms_Admin {
 				$result = $this->upload_files_for_portal_customer( $customer->stripe_customer_id, $files, 'Gmail Intake', '' );
 				if ( is_wp_error( $result ) ) {
 					$summary['errors'][] = $result->get_error_message();
+					$message_errors[]    = $result->get_error_message();
 				} else {
-					$filed_any = true;
+					$filed_any         = true;
+					$filed_filenames[] = $new_filename;
 				}
 				if ( file_exists( $tmp_path ) ) {
 					unlink( $tmp_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
@@ -25097,9 +25114,190 @@ class AJForms_Admin {
 			}
 
 			$this->gmail_intake_api_request( 'POST', '/messages/' . rawurlencode( $message_id ) . '/modify', array( 'body' => array( 'addLabelIds' => array( $labels['processed'] ) ) ) );
+
+			$this->log_gmail_intake_item( array(
+				'gmail_message_id'       => $message_id,
+				'subject'                => $subject,
+				'sender'                 => $sender,
+				'snippet'                => isset( $message['snippet'] ) ? $message['snippet'] : '',
+				'company_name_extracted' => $company_name,
+				'status'                 => $filed_any ? 'filed' : 'skipped_no_attachment',
+				'stripe_customer_id'     => $customer->stripe_customer_id,
+				'customer_name'          => $customer->name,
+				'filed_filenames'        => $filed_filenames,
+				'error_message'          => implode( ' | ', $message_errors ),
+				'received_at'            => false !== $date_ts ? $date_ts : null,
+			) );
 		}
 
 		return $summary;
+	}
+
+	private function get_gmail_intake_log_table() {
+		return $this->get_pdb()->prefix . 'aj_gmail_intake_log';
+	}
+
+	private function ensure_gmail_intake_log_table() {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) {
+			return true;
+		}
+		if ( ! class_exists( 'AJForms_Activator' ) ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+		}
+		AJForms_Activator::activate();
+		return $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
+	}
+
+	private function log_gmail_intake_item( $data ) {
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return 0;
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+
+		$gmail_message_id = isset( $data['gmail_message_id'] ) ? sanitize_text_field( (string) $data['gmail_message_id'] ) : '';
+		if ( '' === $gmail_message_id ) {
+			return 0;
+		}
+
+		$row = array(
+			'subject'                => mb_substr( sanitize_text_field( (string) ( $data['subject'] ?? '' ) ), 0, 500 ),
+			'sender'                 => mb_substr( sanitize_text_field( (string) ( $data['sender'] ?? '' ) ), 0, 255 ),
+			'snippet'                => sanitize_textarea_field( (string) ( $data['snippet'] ?? '' ) ),
+			'company_name_extracted' => mb_substr( sanitize_text_field( (string) ( $data['company_name_extracted'] ?? '' ) ), 0, 255 ),
+			'status'                 => sanitize_key( (string) ( $data['status'] ?? 'needs_review' ) ),
+			'stripe_customer_id'     => sanitize_text_field( (string) ( $data['stripe_customer_id'] ?? '' ) ),
+			'customer_name'          => sanitize_text_field( (string) ( $data['customer_name'] ?? '' ) ),
+			'filed_filenames'        => wp_json_encode( array_values( (array) ( $data['filed_filenames'] ?? array() ) ) ),
+			'error_message'          => sanitize_textarea_field( (string) ( $data['error_message'] ?? '' ) ),
+			'received_at'            => ! empty( $data['received_at'] ) ? gmdate( 'Y-m-d H:i:s', (int) $data['received_at'] ) : null,
+			'updated_at'             => current_time( 'mysql' ),
+		);
+
+		$existing_id = (int) $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE gmail_message_id = %s", $gmail_message_id ) );
+		if ( $existing_id ) {
+			$pdb->update( $table, $row, array( 'id' => $existing_id ) );
+			return $existing_id;
+		}
+
+		$row['gmail_message_id'] = $gmail_message_id;
+		$row['created_at']       = current_time( 'mysql' );
+		$pdb->insert( $table, $row );
+		return (int) $pdb->insert_id;
+	}
+
+	private function find_portal_customer_by_stripe_id( $stripe_customer_id ) {
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$pdb                = $this->get_pdb();
+		if ( 0 === strpos( $stripe_customer_id, 'local_' ) ) {
+			$local_table = $pdb->prefix . 'aj_portal_local_customers';
+			return $pdb->get_row( $pdb->prepare( "SELECT local_customer_id AS stripe_customer_id, name, customer_number FROM `{$local_table}` WHERE local_customer_id = %s", $stripe_customer_id ) );
+		}
+		return $pdb->get_row( $pdb->prepare( "SELECT stripe_customer_id, name, customer_number FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s", $stripe_customer_id ) );
+	}
+
+	/**
+	 * Manually resolves a "needs review" Gmail Intake log entry: re-fetches the original message
+	 * from Gmail (the raw PDF was never stored, only metadata), files any real filing-document PDF
+	 * attachments to the chosen customer, and marks the log row resolved. Called by the AJOps
+	 * "needs review" queue via AJCore_REST_API::resolve_ops_gmail_intake_item().
+	 */
+	public function resolve_gmail_intake_needs_review( $log_id, $stripe_customer_id ) {
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", (int) $log_id ) );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$customer = $this->find_portal_customer_by_stripe_id( $stripe_customer_id );
+		if ( ! $customer ) {
+			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ), array( 'query' => array( 'format' => 'full' ) ) );
+		if ( is_wp_error( $message ) ) {
+			return $message;
+		}
+
+		$pdf_parts = array();
+		$this->gmail_intake_collect_pdf_parts( isset( $message['payload'] ) ? $message['payload'] : array(), $pdf_parts );
+
+		$filed_filenames = array();
+		$errors          = array();
+		foreach ( $pdf_parts as $pdf ) {
+			if ( ! $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ) ) {
+				continue;
+			}
+			$attachment = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ) . '/attachments/' . rawurlencode( $pdf['attachment_id'] ) );
+			if ( is_wp_error( $attachment ) || empty( $attachment['data'] ) ) {
+				$errors[] = is_wp_error( $attachment ) ? $attachment->get_error_message() : __( 'Attachment had no data.', 'ajforms' );
+				continue;
+			}
+			$binary = base64_decode( strtr( $attachment['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+			if ( false === $binary ) {
+				continue;
+			}
+
+			$tmp_path     = wp_tempnam( $pdf['filename'] );
+			file_put_contents( $tmp_path, $binary ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			$new_filename = $this->gmail_intake_build_filename( $customer->customer_number, $customer->name, $pdf['filename'] );
+			$files        = array(
+				'name'     => $new_filename,
+				'type'     => 'application/pdf',
+				'tmp_name' => $tmp_path,
+				'error'    => UPLOAD_ERR_OK,
+				'size'     => filesize( $tmp_path ),
+			);
+			$result = $this->upload_files_for_portal_customer( $customer->stripe_customer_id, $files, 'Gmail Intake', '' );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $result->get_error_message();
+			} else {
+				$filed_filenames[] = $new_filename;
+			}
+			if ( file_exists( $tmp_path ) ) {
+				unlink( $tmp_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+			}
+		}
+
+		if ( empty( $filed_filenames ) ) {
+			return new WP_Error(
+				'resolve_failed',
+				! empty( $errors ) ? implode( ' | ', $errors ) : __( 'No filing-document PDF attachments were found on this email.', 'ajforms' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$pdb->update(
+			$table,
+			array(
+				'status'             => 'resolved',
+				'stripe_customer_id' => $customer->stripe_customer_id,
+				'customer_name'      => $customer->name,
+				'filed_filenames'    => wp_json_encode( $filed_filenames ),
+				'error_message'      => implode( ' | ', $errors ),
+				'resolved_at'        => current_time( 'mysql' ),
+				'resolved_by'        => get_current_user_id(),
+				'updated_at'         => current_time( 'mysql' ),
+			),
+			array( 'id' => (int) $row->id )
+		);
+
+		$labels = $this->get_or_create_gmail_intake_labels();
+		if ( ! is_wp_error( $labels ) ) {
+			$this->gmail_intake_api_request(
+				'POST',
+				'/messages/' . rawurlencode( $row->gmail_message_id ) . '/modify',
+				array( 'body' => array( 'removeLabelIds' => array( $labels['review'] ), 'addLabelIds' => array( $labels['processed'] ) ) )
+			);
+		}
+
+		return true;
 	}
 
 	public function display_gmail_intake_settings_section() {

@@ -42,6 +42,7 @@ class AJForms_Activator {
 		$table_reservation_resources  = $wpdb->prefix . 'aj_portal_reservation_resources';
 		$table_reservations           = $wpdb->prefix . 'aj_portal_reservations';
 		$table_mail_items             = $wpdb->prefix . 'aj_portal_mail_items';
+		$table_gmail_intake_log       = $wpdb->prefix . 'aj_gmail_intake_log';
 		$table_ajphone_conversations  = $wpdb->prefix . 'ajphone_conversations';
 		$table_storage_objects        = $wpdb->prefix . 'aj_storage_objects';
 
@@ -846,6 +847,30 @@ class AJForms_Activator {
 			KEY received_at (received_at)
 		) $charset_collate;
 
+		CREATE TABLE $table_gmail_intake_log (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			gmail_message_id varchar(100) NOT NULL,
+			subject varchar(500) DEFAULT '' NOT NULL,
+			sender varchar(255) DEFAULT '' NOT NULL,
+			snippet text NULL,
+			company_name_extracted varchar(255) DEFAULT '' NOT NULL,
+			status varchar(30) DEFAULT 'needs_review' NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			customer_name varchar(255) DEFAULT '' NOT NULL,
+			filed_filenames longtext NULL,
+			error_message text NULL,
+			resolved_at datetime NULL,
+			resolved_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			received_at datetime NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY gmail_message_id (gmail_message_id),
+			KEY status (status),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY created_at (created_at)
+		) $charset_collate;
+
 		CREATE TABLE $table_ajphone_conversations (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			conversation_key varchar(255) NOT NULL,
@@ -897,6 +922,7 @@ class AJForms_Activator {
 				$pdb_charset = $pdb->get_charset_collate();
 				self::create_reservation_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_mail_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
+				self::create_gmail_intake_log_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_customer_site_access_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 			}
 		}
@@ -1840,6 +1866,39 @@ class AJForms_Activator {
 			KEY is_sop (is_sop),
 			KEY disposition (disposition),
 			KEY received_at (received_at)
+		) {$charset_collate}" );
+	}
+
+	/**
+	 * Creates the Gmail Intake activity log table in the portal/shared DB. The main dbDelta
+	 * run only creates it in the local WP DB, but in shared mode every read/write targets
+	 * the shared DB — without this, log inserts fail silently against a missing table.
+	 */
+	public static function create_gmail_intake_log_table_in_portal_db( $prefix, $charset_collate, $pdb ) {
+		$table = $prefix . 'aj_gmail_intake_log';
+
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			gmail_message_id varchar(100) NOT NULL,
+			subject varchar(500) DEFAULT '' NOT NULL,
+			sender varchar(255) DEFAULT '' NOT NULL,
+			snippet text NULL,
+			company_name_extracted varchar(255) DEFAULT '' NOT NULL,
+			status varchar(30) DEFAULT 'needs_review' NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			customer_name varchar(255) DEFAULT '' NOT NULL,
+			filed_filenames longtext NULL,
+			error_message text NULL,
+			resolved_at datetime NULL,
+			resolved_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			received_at datetime NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY gmail_message_id (gmail_message_id),
+			KEY status (status),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY created_at (created_at)
 		) {$charset_collate}" );
 	}
 

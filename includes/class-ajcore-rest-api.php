@@ -755,6 +755,10 @@ class AJCore_REST_API {
 			'/ops/mail/(?P<id>\d+)/publish' => array( 'methods' => 'POST', 'callback' => 'publish_ops_mail_item_to_files', 'permission' => 'can_manage_ops_api' ),
 			'/ops/mail/(?P<id>\d+)'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_mail_item', 'permission' => 'can_manage_ops_api' ),
 			'/ops/mail'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_mail_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			// Gmail Intake activity log (sub-routes before the bare /ops/gmail-intake/{id} GET)
+			'/ops/gmail-intake/(?P<id>\d+)/resolve' => array( 'methods' => 'POST', 'callback' => 'resolve_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/(?P<id>\d+)'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -845,6 +849,9 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/mail/{id}/notify', 'auth' => 'Admin', 'purpose' => 'Send (or resend) the client notification email for a mail item; stamps notified_at.', 'app' => 'OPS mail' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/mail/{id}/publish', 'auth' => 'Admin', 'purpose' => 'Publish the item scan into the client Files library and link it via file_id.', 'app' => 'OPS mail' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/mail', 'auth' => 'Portal user', 'purpose' => 'Current user mailbox: received mail items with scan links and dispositions (no staff fields).', 'app' => 'iOS app / portal' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake', 'auth' => 'Admin', 'purpose' => 'Gmail Intake activity log with stats. Filters: search, status (filed|skipped_no_attachment|needs_review|resolved).', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}', 'auth' => 'Admin', 'purpose' => 'Single Gmail Intake log entry.', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/resolve', 'auth' => 'Admin', 'purpose' => 'Manually resolve a needs-review entry: re-fetches the email from Gmail, files its PDF attachments to the given stripe_customer_id.', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -5536,6 +5543,126 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( $this->format_mail_item_row( $this->fetch_mail_item_row( $request['id'] ) ) );
+	}
+
+	private function get_gmail_intake_log_table() {
+		return $this->portal_table( 'aj_gmail_intake_log' );
+	}
+
+	private function format_gmail_intake_log_row( $row ) {
+		$row = (array) $row;
+		return array(
+			'id'                     => (int) $row['id'],
+			'gmail_message_id'       => (string) $row['gmail_message_id'],
+			'subject'                => (string) $row['subject'],
+			'sender'                 => (string) $row['sender'],
+			'snippet'                => (string) $row['snippet'],
+			'company_name_extracted' => (string) $row['company_name_extracted'],
+			'status'                 => (string) $row['status'],
+			'stripe_customer_id'     => (string) $row['stripe_customer_id'],
+			'customer_name'          => (string) $row['customer_name'],
+			'filed_filenames'        => ! empty( $row['filed_filenames'] ) ? (array) json_decode( (string) $row['filed_filenames'], true ) : array(),
+			'error_message'          => (string) $row['error_message'],
+			'resolved_at'            => (string) $row['resolved_at'],
+			'resolved_by'            => (int) $row['resolved_by'],
+			'received_at'            => (string) $row['received_at'],
+			'created_at'             => (string) $row['created_at'],
+			'updated_at'             => (string) $row['updated_at'],
+		);
+	}
+
+	private function fetch_gmail_intake_log_row( $id ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_gmail_intake_log_table();
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		return $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", absint( $id ) ), ARRAY_A );
+	}
+
+	public function get_ops_gmail_intake_items( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_gmail_intake_log_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'items' => array(), 'stats' => array( 'total' => 0, 'filed' => 0, 'needs_review' => 0, 'resolved' => 0, 'skipped_no_attachment' => 0 ) ) );
+		}
+
+		$where  = array( '1=1' );
+		$params = array();
+
+		$search = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?: '' ) );
+		if ( '' !== $search ) {
+			$like    = '%' . $pdb->esc_like( $search ) . '%';
+			$where[] = '( subject LIKE %s OR sender LIKE %s OR company_name_extracted LIKE %s OR customer_name LIKE %s )';
+			$params  = array_merge( $params, array( $like, $like, $like, $like ) );
+		}
+
+		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?: '' ) );
+		if ( in_array( $status, array( 'filed', 'skipped_no_attachment', 'needs_review', 'resolved' ), true ) ) {
+			$where[]  = 'status = %s';
+			$params[] = $status;
+		}
+
+		$per_page = min( 500, max( 1, absint( $request->get_param( 'per_page' ) ?: 200 ) ) );
+		$params[] = $per_page;
+
+		$where_sql = implode( ' AND ', $where );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$table}` WHERE {$where_sql} ORDER BY (status = 'needs_review') DESC, created_at DESC, id DESC LIMIT %d", $params ), ARRAY_A );
+		$rows = is_array( $rows ) ? $rows : array();
+
+		$stats = $pdb->get_row(
+			"SELECT COUNT(*) AS total,
+				SUM(status = 'filed') AS filed,
+				SUM(status = 'needs_review') AS needs_review,
+				SUM(status = 'resolved') AS resolved,
+				SUM(status = 'skipped_no_attachment') AS skipped_no_attachment
+			FROM `{$table}`",
+			ARRAY_A
+		);
+
+		return rest_ensure_response( array(
+			'items' => array_map( array( $this, 'format_gmail_intake_log_row' ), $rows ),
+			'stats' => array(
+				'total'                 => (int) ( $stats['total'] ?? 0 ),
+				'filed'                 => (int) ( $stats['filed'] ?? 0 ),
+				'needs_review'          => (int) ( $stats['needs_review'] ?? 0 ),
+				'resolved'              => (int) ( $stats['resolved'] ?? 0 ),
+				'skipped_no_attachment' => (int) ( $stats['skipped_no_attachment'] ?? 0 ),
+			),
+		) );
+	}
+
+	public function get_ops_gmail_intake_item( WP_REST_Request $request ) {
+		$row = $this->fetch_gmail_intake_log_row( $request['id'] );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		return rest_ensure_response( $this->format_gmail_intake_log_row( $row ) );
+	}
+
+	public function resolve_ops_gmail_intake_item( WP_REST_Request $request ) {
+		$row = $this->fetch_gmail_intake_log_row( $request['id'] );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		if ( 'needs_review' !== $row['status'] ) {
+			return new WP_Error( 'already_resolved', __( 'This entry is not awaiting review.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		if ( '' === $stripe_customer_id ) {
+			return new WP_Error( 'missing_customer', __( 'stripe_customer_id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', __( 'AJForms admin class not available.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->resolve_gmail_intake_needs_review( (int) $row['id'], $stripe_customer_id );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return rest_ensure_response( $this->format_gmail_intake_log_row( $this->fetch_gmail_intake_log_row( $row['id'] ) ) );
 	}
 
 	/** Client mailbox: the current portal user's mail items, without staff-only fields. */
