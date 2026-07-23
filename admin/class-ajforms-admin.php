@@ -25172,23 +25172,34 @@ class AJForms_Admin {
 			</div>
 
 			<div id="ajforms-gmail-intake-instructions">
-				<strong><?php esc_html_e( 'Google Cloud setup (one-time):', 'ajforms' ); ?></strong>
+				<strong><?php esc_html_e( 'One-time Google Cloud setup — each step links to its exact page:', 'ajforms' ); ?></strong>
 				<ol style="margin:8px 0 0 18px;padding:0;">
-					<li><?php esc_html_e( 'Go to the Google Cloud Console and create (or pick) a project.', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'APIs & Services → Library → search "Gmail API" → Enable.', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'APIs & Services → OAuth consent screen → set it up (External is fine for a single mailbox) → add the intake Gmail address as a test user if it stays in Testing mode.', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type: Web application.', 'ajforms' ); ?></li>
 					<li>
-						<?php esc_html_e( 'Under Authorized redirect URIs, add exactly:', 'ajforms' ); ?>
+						<?php esc_html_e( 'Create or pick a project.', 'ajforms' ); ?>
+						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/projectselector2/home/dashboard" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Cloud Console', 'ajforms' ); ?></a></div>
+					</li>
+					<li>
+						<?php esc_html_e( 'Enable the Gmail API.', 'ajforms' ); ?>
+						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Gmail API page', 'ajforms' ); ?></a></div>
+					</li>
+					<li>
+						<?php esc_html_e( 'Set up the OAuth consent screen — External is fine for a single mailbox; add the intake Gmail address as a test user.', 'ajforms' ); ?>
+						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open OAuth consent screen', 'ajforms' ); ?></a></div>
+					</li>
+					<li>
+						<?php esc_html_e( 'Create Credentials → OAuth client ID → Application type: Web application.', 'ajforms' ); ?>
+						<div style="margin-top:4px;"><a class="button button-small" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Credentials page', 'ajforms' ); ?></a></div>
+					</li>
+					<li>
+						<?php esc_html_e( 'Under Authorized redirect URIs on that same client, paste this exact URL:', 'ajforms' ); ?>
 						<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
 							<code id="ajforms-gmail-intake-redirect-uri" style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;font-size:12px;word-break:break-all;"><?php echo esc_html( $redirect_uri ); ?></code>
 							<button type="button" class="button button-small" id="ajforms-gmail-intake-copy-redirect"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
 						</div>
 					</li>
-					<li><?php esc_html_e( 'Copy the resulting Client ID and Client Secret into the fields below and Save Settings.', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'Click Connect below and sign in as the intake Gmail address itself (not a delegate).', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Copy the Client ID and Client Secret below → Save Settings → Connect, then sign in as the intake mailbox itself (not a delegate).', 'ajforms' ); ?></li>
 				</ol>
-				<p style="margin:8px 0 0;color:#6b7280;font-size:13px;"><?php esc_html_e( 'Gmail API usage at this scale is free — no billing account required.', 'ajforms' ); ?></p>
+				<p style="margin:8px 0 0;color:#6b7280;font-size:13px;"><?php esc_html_e( 'Free at this scale — no billing account needed.', 'ajforms' ); ?></p>
 			</div>
 
 			<form method="post" action="<?php echo esc_url( $action_url ); ?>">
