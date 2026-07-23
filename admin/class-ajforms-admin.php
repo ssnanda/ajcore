@@ -25180,7 +25180,7 @@ class AJForms_Admin {
 					<li><?php esc_html_e( 'Click the search bar at the top of the page, type "Gmail API", press Enter, open the result. If it says "Enable", click it; if it already says "Manage" / shows usage graphs, it\'s already enabled — move on.', 'ajforms' ); ?></li>
 					<li><?php esc_html_e( 'Search "Google Auth Platform" and open it. If the Overview page shows a "Get started" button, click it and fill in: an app name and your own email as support email → Next. Audience: choose External → Next. Contact email: your own email again → Next. Check the agreement box → Create. If Overview instead already shows "Metrics" / "Project Checkup" panels (no "Get started" button anywhere on the page), this is already configured — click "Audience" in the left-hand menu (the next step below) and keep going.', 'ajforms' ); ?></li>
 					<li><?php esc_html_e( 'Click "Audience" in the left-hand menu, scroll to "Test users". If the intake Gmail address is already listed, skip to the next step; otherwise click "Add users", enter it, and Save.', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'Click "Clients" in the same left-hand menu. If an OAuth client already exists there (e.g. one named for this integration), open it and confirm the Authorized redirect URI below is listed — add it if not, then Save, and skip to the last step. Otherwise click "Create OAuth client": leave Application type as "Web application", type any Name, leave "Authorized JavaScript origins" empty, and under "Authorized redirect URIs" click "+ Add URI" and paste this exact URL, then click Create:', 'ajforms' ); ?>
+					<li><?php esc_html_e( 'Click "Clients" in the same left-hand menu. If an OAuth client already exists there (e.g. one named for this integration), open it and confirm the Authorized redirect URI below is listed — add it if not, then Save, and skip to the last step. Otherwise click "+ Create client": leave Application type as "Web application", type any Name, leave "Authorized JavaScript origins" empty, and under "Authorized redirect URIs" click "+ Add URI" and paste this exact URL, then click Create:', 'ajforms' ); ?>
 						<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
 							<code id="ajforms-gmail-intake-redirect-uri" style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;font-size:12px;word-break:break-all;"><?php echo esc_html( $redirect_uri ); ?></code>
 							<button type="button" class="button button-small" id="ajforms-gmail-intake-copy-redirect"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
@@ -25192,7 +25192,7 @@ class AJForms_Admin {
 			</div>
 
 			<form method="post" action="<?php echo esc_url( $action_url ); ?>">
-				<?php wp_nonce_field( 'ajforms_settings_save', 'ajforms_settings_nonce' ); ?>
+				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 				<input type="hidden" name="ajforms_section" value="gmail-intake">
 				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
