@@ -20888,9 +20888,11 @@ class AJForms_Admin {
 					body.innerHTML = '<p>' + <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?> + '</p>';
 
 					apiFetch( '/gmail-intake/' + logId + '/preview' ).then( function ( data ) {
-						var categoryOptions = '<option value="">— category —</option>' + categories.map( function ( c ) {
-							return '<option value="' + escapeHtml( c ) + '">' + escapeHtml( c ) + '</option>';
-						} ).join( '' );
+						function categoryOptionsFor( selectedCategory ) {
+							return '<option value="">— category —</option>' + categories.map( function ( c ) {
+								return '<option value="' + escapeHtml( c ) + '"' + ( c === selectedCategory ? ' selected' : '' ) + '>' + escapeHtml( c ) + '</option>';
+							} ).join( '' );
+						}
 						var defaultTagSlug = Object.keys( tags ).indexOf( 'registeredagent' ) !== -1 ? 'registeredagent' : '';
 						var tagOptions = '<option value="">— none —</option>' + Object.keys( tags ).map( function ( slug ) {
 							return '<option value="' + escapeHtml( slug ) + '"' + ( slug === defaultTagSlug ? ' selected' : '' ) + '>' + escapeHtml( tags[ slug ] ) + '</option>';
@@ -20911,7 +20913,7 @@ class AJForms_Admin {
 												'<input type="text" class="ajcore-gi-att-filename" value="' + escapeHtml( suggested ) + '" style="flex:1;min-width:0;">' +
 												'<span style="color:#94a3b8;font-weight:600;">.pdf</span>' +
 											'</div>' +
-											'<select class="ajcore-gi-att-category" style="width:100%;margin-top:6px;">' + categoryOptions + '</select>' +
+											'<select class="ajcore-gi-att-category" style="width:100%;margin-top:6px;">' + categoryOptionsFor( a.suggested_category || '' ) + '</select>' +
 											'<p class="description" style="margin:4px 0 0;font-size:11px;">' + Math.round( a.size / 1024 ) + ' KB' + note + '</p>' +
 										'</div>' +
 										'<button type="button" class="button button-small ajcore-gi-att-preview-btn">' + <?php echo wp_json_encode( __( 'Preview', 'ajforms' ) ); ?> + '</button>' +
@@ -25749,6 +25751,98 @@ class AJForms_Admin {
 		return $original_filename;
 	}
 
+	/**
+	 * Best-effort, dependency-free PDF text extraction — no vendor library, no shell-out (this
+	 * mailbox's real attachment filenames are opaque hashes, so the filename alone can't tell us
+	 * what a document is; the actual PDF text can). Walks stream...endstream objects, tries
+	 * gzuncompress() for FlateDecode-compressed ones, and pulls the parenthesized string operands
+	 * of the Tj/TJ text-showing operators. Good enough to search for known keywords — not meant
+	 * to reproduce exact layout/text fidelity, and won't find text in scanned/image-only PDFs.
+	 */
+	private function gmail_intake_extract_pdf_text( $binary ) {
+		$binary = (string) $binary;
+		if ( '' === $binary || ! preg_match_all( '/stream\r?\n(.*?)endstream/s', $binary, $stream_matches ) ) {
+			return '';
+		}
+
+		$text = '';
+		foreach ( $stream_matches[1] as $stream ) {
+			$decoded = @gzuncompress( $stream ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			$content = ( false !== $decoded ) ? $decoded : $stream;
+
+			if ( preg_match_all( '/\(((?:\\\\.|[^()])*)\)\s*Tj/', $content, $tj ) ) {
+				foreach ( $tj[1] as $piece ) {
+					$text .= $this->gmail_intake_unescape_pdf_string( $piece ) . ' ';
+				}
+			}
+			if ( preg_match_all( '/\[((?:\\\\.|[^\[\]])*)\]\s*TJ/', $content, $tj_arrays ) ) {
+				foreach ( $tj_arrays[1] as $array_body ) {
+					if ( preg_match_all( '/\(((?:\\\\.|[^()])*)\)/', $array_body, $pieces ) ) {
+						foreach ( $pieces[1] as $piece ) {
+							$text .= $this->gmail_intake_unescape_pdf_string( $piece );
+						}
+						$text .= ' ';
+					}
+				}
+			}
+		}
+
+		return trim( preg_replace( '/\s+/', ' ', $text ) );
+	}
+
+	private function gmail_intake_unescape_pdf_string( $s ) {
+		$s = preg_replace_callback( '/\\\\([0-7]{1,3})/', function ( $m ) {
+			return chr( octdec( $m[1] ) );
+		}, $s );
+		return str_replace( array( '\\(', '\\)', '\\\\', '\\n', '\\r', '\\t' ), array( '(', ')', '\\', "\n", "\r", "\t" ), $s );
+	}
+
+	/**
+	 * Content-based rules for suggesting a filename + category from a Gmail Intake attachment's
+	 * actual PDF text. Extend $flyer_rules (or add another branch above it) as more document
+	 * types get identified — this list grows incrementally as the user specifies each one.
+	 * Returns null (no rule matched) if the caller should fall back to the filename-only guess.
+	 */
+	private function gmail_intake_classify_pdf_content( $pdf_text, $company_name ) {
+		$lower        = strtolower( (string) $pdf_text );
+		$company_name = trim( (string) $company_name );
+
+		if ( '' !== $company_name && false !== strpos( $lower, 'articles of organization' ) ) {
+			return array(
+				'filename' => 'AOO of ' . $company_name,
+				'category' => 'Articles of Organization',
+			);
+		}
+
+		$flyer_rules = array(
+			'rural rise'           => 'Rural Rise',
+			'misleading mailings'  => 'Misleading Mailings Targeting New Companies',
+			'notice to employers'  => 'Important Notice to Employers',
+			'beneficial ownership' => 'Beneficial Ownership Information Reporting Requirement',
+		);
+		foreach ( $flyer_rules as $keyword => $label ) {
+			if ( false !== strpos( $lower, $keyword ) ) {
+				return array(
+					'filename' => 'Flyer ' . $label,
+					'category' => 'SOSNC Flyers',
+				);
+			}
+		}
+
+		// No embedded text at all (a scanned/image-only PDF, e.g. the state's stamped charter
+		// certificate has no /Font objects — pure raster image, nothing to extract). If we
+		// already know the company name from the email, that's a strong signal this specific
+		// attachment is the actual Articles of Organization scan.
+		if ( '' === $lower && '' !== $company_name ) {
+			return array(
+				'filename' => 'AOO of ' . $company_name,
+				'category' => 'Articles of Organization',
+			);
+		}
+
+		return null;
+	}
+
 	private function gmail_intake_build_filename( $customer_number, $company_name, $original_filename ) {
 		$base  = preg_replace( '/\.pdf$/i', '', (string) $original_filename );
 		$label = ucwords( str_replace( array( '_', '-' ), ' ', $base ) );
@@ -26104,12 +26198,33 @@ class AJForms_Admin {
 
 		$attachments = array();
 		foreach ( $pdf_parts as $pdf ) {
+			$looks_like_document = $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] );
+			$suggested_filename  = $this->gmail_intake_suggest_filename( $pdf['filename'], (string) $row->customer_name );
+			$suggested_category  = '';
+
+			// Real attachment filenames from this mailbox are opaque hashes, not descriptive —
+			// the only reliable signal is the PDF's actual text content.
+			$fetched = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ) . '/attachments/' . rawurlencode( $pdf['attachment_id'] ) );
+			if ( ! is_wp_error( $fetched ) && ! empty( $fetched['data'] ) ) {
+				$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+				if ( false !== $binary ) {
+					$pdf_text   = $this->gmail_intake_extract_pdf_text( $binary );
+					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, (string) $row->customer_name );
+					if ( null !== $classified ) {
+						$suggested_filename  = $classified['filename'];
+						$suggested_category  = $classified['category'];
+						$looks_like_document = true;
+					}
+				}
+			}
+
 			$attachments[] = array(
 				'attachment_id'       => $pdf['attachment_id'],
 				'filename'            => $pdf['filename'],
 				'size'                => $pdf['size'],
-				'looks_like_document' => $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ),
-				'suggested_filename'  => $this->gmail_intake_suggest_filename( $pdf['filename'], (string) $row->customer_name ),
+				'looks_like_document' => $looks_like_document,
+				'suggested_filename'  => $suggested_filename,
+				'suggested_category'  => $suggested_category,
 			);
 		}
 
