@@ -20664,15 +20664,20 @@ class AJForms_Admin {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
 
-		$status = isset( $_GET['gi_status'] ) ? sanitize_key( wp_unslash( $_GET['gi_status'] ) ) : 'needs_review';
+		$status = isset( $_GET['gi_status'] ) ? sanitize_key( wp_unslash( $_GET['gi_status'] ) ) : 'pending';
+		$status = in_array( $status, array( 'pending', 'filed' ), true ) ? $status : 'pending';
 		$search = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
+
+		$status_groups = array(
+			'pending' => array( 'needs_review', 'matched_pending_file', 'skipped_no_attachment' ),
+			'filed'   => array( 'filed', 'resolved' ),
+		);
 
 		$where  = array( '1=1' );
 		$params = array();
-		if ( in_array( $status, array( 'filed', 'matched_pending_file', 'skipped_no_attachment', 'needs_review', 'resolved' ), true ) ) {
-			$where[]  = 'status = %s';
-			$params[] = $status;
-		}
+		$placeholders = implode( ', ', array_fill( 0, count( $status_groups[ $status ] ), '%s' ) );
+		$where[]  = "status IN ({$placeholders})";
+		$params   = array_merge( $params, $status_groups[ $status ] );
 		if ( '' !== $search ) {
 			$like    = '%' . $pdb->esc_like( $search ) . '%';
 			$where[] = '(subject LIKE %s OR sender LIKE %s OR company_name_extracted LIKE %s OR customer_name LIKE %s)';
@@ -20681,7 +20686,7 @@ class AJForms_Admin {
 		$where_sql = implode( ' AND ', $where );
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$sql  = "SELECT * FROM `{$table}` WHERE {$where_sql} ORDER BY (status = 'needs_review') DESC, created_at DESC, id DESC LIMIT 300";
-		$rows = ! empty( $params ) ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
+		$rows = $pdb->get_results( $pdb->prepare( $sql, $params ) );
 
 		$stats = $pdb->get_row(
 			"SELECT COUNT(*) AS total,
@@ -20726,12 +20731,8 @@ class AJForms_Admin {
 				<input type="hidden" name="page" value="ajforms-client-portal">
 				<input type="hidden" name="tab" value="gmail-intake">
 				<select name="gi_status">
-					<option value="needs_review" <?php selected( $status, 'needs_review' ); ?>><?php esc_html_e( 'Needs review', 'ajforms' ); ?></option>
-					<option value="matched_pending_file" <?php selected( $status, 'matched_pending_file' ); ?>><?php esc_html_e( 'Matched, pending file', 'ajforms' ); ?></option>
+					<option value="pending" <?php selected( $status, 'pending' ); ?>><?php esc_html_e( 'Pending File', 'ajforms' ); ?></option>
 					<option value="filed" <?php selected( $status, 'filed' ); ?>><?php esc_html_e( 'Filed', 'ajforms' ); ?></option>
-					<option value="resolved" <?php selected( $status, 'resolved' ); ?>><?php esc_html_e( 'Resolved', 'ajforms' ); ?></option>
-					<option value="skipped_no_attachment" <?php selected( $status, 'skipped_no_attachment' ); ?>><?php esc_html_e( 'No document found', 'ajforms' ); ?></option>
-					<option value="" <?php selected( $status, '' ); ?>><?php esc_html_e( 'All', 'ajforms' ); ?></option>
 				</select>
 				<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php echo esc_attr__( 'Search subject, sender, company, customer…', 'ajforms' ); ?>">
 				<button type="submit" class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
