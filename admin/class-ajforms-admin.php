@@ -10316,6 +10316,7 @@ class AJForms_Admin {
 			'asana_personal_access_token'    => '',
 			'asana_workspace_gid'            => '',
 			'asana_project_gid'              => '',
+			'breezedoc_api_token'            => '',
 			'stripe_mode'                    => 'test',
 			'stripe_sandbox_publishable_key'  => '',
 			'stripe_sandbox_secret_key'       => '',
@@ -10980,6 +10981,8 @@ class AJForms_Admin {
 						$this->handle_settings_save();
 					}
 					$this->handle_gmail_intake_actions();
+				} elseif ( 'esign' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+					$this->handle_settings_save();
 				}
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
@@ -11021,6 +11024,8 @@ class AJForms_Admin {
 					$this->handle_settings_save();
 				}
 				$this->handle_gmail_intake_actions();
+			} elseif ( 'esign' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+				$this->handle_settings_save();
 			}
 		} elseif ( 'ajforms-auth' === $page ) {
 			$this->handle_auth_settings_save();
@@ -13143,6 +13148,7 @@ class AJForms_Admin {
 			'gmail_intake_client_id'         => isset( $_POST['gmail_intake_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_id'] ) ) : '',
 			'gmail_intake_client_secret'     => isset( $_POST['gmail_intake_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_secret'] ) ) : '',
 			'gmail_intake_address'           => isset( $_POST['gmail_intake_address'] ) ? sanitize_email( wp_unslash( $_POST['gmail_intake_address'] ) ) : 'universityplaceofficesuites@gmail.com',
+			'breezedoc_api_token'            => isset( $_POST['breezedoc_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['breezedoc_api_token'] ) ) : '',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -13176,7 +13182,7 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -13205,6 +13211,7 @@ class AJForms_Admin {
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
+			'esign'        => array( 'breezedoc_api_token' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -13231,7 +13238,7 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( 'email-templates' === $section || 'inbox' === $section || 'gmail-intake' === $section ) {
+		if ( 'email-templates' === $section || 'inbox' === $section || 'gmail-intake' === $section || 'esign' === $section ) {
 			// These sections' forms live on the Client Portal's CP Settings tab, not this page.
 			$redirect_args = array(
 				'page'             => 'ajforms-client-portal',
@@ -17822,18 +17829,22 @@ class AJForms_Admin {
 											<?php endif; ?>
 										</td>
 										<td class="aj-sr-td-assignee" onclick="event.stopPropagation()">
-											<form method="post">
-												<input type="hidden" name="service_request_action" value="save_details">
-												<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
-												<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
-												<input type="hidden" name="after_service_status" value="<?php echo esc_attr( $svc_status ); ?>">
-												<select name="assigned_user_id" onchange="this.form.submit()">
-													<option value="0" <?php selected( (int) $request->assigned_user_id, 0 ); ?>><?php esc_html_e( 'Unassigned', 'ajforms' ); ?></option>
-													<?php foreach ( $staff_users as $staff_user ) : ?>
-														<option value="<?php echo esc_attr( (int) $staff_user->ID ); ?>" <?php selected( (int) $request->assigned_user_id, (int) $staff_user->ID ); ?>><?php echo esc_html( $staff_user->display_name ); ?></option>
-													<?php endforeach; ?>
-												</select>
-											</form>
+											<?php if ( 'active' === $svc_status ) : ?>
+												<span class="description"><?php esc_html_e( 'N/A', 'ajforms' ); ?></span>
+											<?php else : ?>
+												<form method="post">
+													<input type="hidden" name="service_request_action" value="save_details">
+													<input type="hidden" name="request_id" value="<?php echo esc_attr( (int) $request->id ); ?>">
+													<?php wp_nonce_field( 'ajcore_service_request_details_' . (int) $request->id ); ?>
+													<input type="hidden" name="after_service_status" value="<?php echo esc_attr( $svc_status ); ?>">
+													<select name="assigned_user_id" onchange="this.form.submit()">
+														<option value="0" <?php selected( (int) $request->assigned_user_id, 0 ); ?>><?php esc_html_e( 'Unassigned', 'ajforms' ); ?></option>
+														<?php foreach ( $staff_users as $staff_user ) : ?>
+															<option value="<?php echo esc_attr( (int) $staff_user->ID ); ?>" <?php selected( (int) $request->assigned_user_id, (int) $staff_user->ID ); ?>><?php echo esc_html( $staff_user->display_name ); ?></option>
+														<?php endforeach; ?>
+													</select>
+												</form>
+											<?php endif; ?>
 										</td>
 										<td class="aj-sr-td-amount"><?php echo esc_html( $amount_str ); ?></td>
 										<?php $note_preview = '' !== (string) $request->admin_notes ? (string) $request->admin_notes : (string) $request->client_notes; ?>
@@ -18997,7 +19008,7 @@ class AJForms_Admin {
 			}
 			$tab = 'cp-settings';
 		}
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -19022,6 +19033,7 @@ class AJForms_Admin {
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'mail'               => __( 'Mail', 'ajforms' ),
 			'gmail-intake'       => __( 'Gmail Intake', 'ajforms' ),
+			'esign'              => __( 'E-Signatures', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
@@ -19119,6 +19131,8 @@ class AJForms_Admin {
 				$this->display_portal_mail_tab();
 			} elseif ( 'gmail-intake' === $tab ) {
 				$this->display_portal_gmail_intake_tab();
+			} elseif ( 'esign' === $tab ) {
+				$this->display_portal_esign_tab();
 			} elseif ( 'cp-settings' === $tab ) {
 				$this->display_client_portal_cp_settings_tab();
 			} else {
@@ -19159,6 +19173,7 @@ class AJForms_Admin {
 			'email-templates' => __( 'Email Templates', 'ajforms' ),
 			'inbox'           => __( 'Zoho Shared Inbox', 'ajforms' ),
 			'gmail-intake'    => __( 'Email Intake (Gmail)', 'ajforms' ),
+			'esign'           => __( 'E-Signatures (BreezeDoc)', 'ajforms' ),
 			'shared-db'       => __( 'Shared DB / Multi-Site', 'ajforms' ),
 		);
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
@@ -19213,6 +19228,8 @@ class AJForms_Admin {
 			<?php $this->display_zoho_mail_settings_section(); ?>
 		<?php elseif ( 'gmail-intake' === $cp_section ) : ?>
 			<?php $this->display_gmail_intake_settings_section(); ?>
+		<?php elseif ( 'esign' === $cp_section ) : ?>
+			<?php $this->display_breezedoc_settings_section(); ?>
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
@@ -21149,6 +21166,252 @@ class AJForms_Admin {
 						} );
 					} ).catch( function ( e ) {
 						body.innerHTML = '<p style="color:#dc2626;">' + escapeHtml( e.message ) + '</p>';
+					} );
+				} );
+			} );
+		} )();
+		</script>
+		<?php
+	}
+
+	/**
+	 * E-Signatures (BreezeDoc): pick a customer + a template, the customer's name/email is
+	 * assigned as the signer, send. BreezeDoc's API can't pre-fill the document's own fields
+	 * (see the settings notice on the E-Signatures CP Settings tab) — only who signs it.
+	 * There's no webhook, so status is checked with a "Refresh Status" button per row.
+	 */
+	private function display_portal_esign_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings    = $this->get_plugin_settings();
+		$is_connected = ! empty( $settings['breezedoc_api_token'] );
+		$settings_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'esign' ), admin_url( 'admin.php' ) );
+
+		$pdb                   = $this->get_pdb();
+		$local_customers_table = $pdb->prefix . 'aj_portal_local_customers';
+		$customers             = array_merge(
+			(array) $pdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC" ),
+			(array) $pdb->get_results( "SELECT local_customer_id AS stripe_customer_id, name, email FROM `{$local_customers_table}` ORDER BY name ASC" )
+		);
+
+		$templates     = array();
+		$template_error = '';
+		if ( $is_connected ) {
+			$templates_result = $this->breezedoc_list_templates();
+			if ( is_wp_error( $templates_result ) ) {
+				$template_error = $templates_result->get_error_message();
+			} else {
+				$templates = $templates_result;
+			}
+		}
+
+		$log = $this->get_esign_documents_list();
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'E-Signatures', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'Send a BreezeDoc template out for signature. Templates and their fields are designed in BreezeDoc itself — this only assigns who signs and tracks whether they have.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+
+			<?php if ( ! $is_connected ) : ?>
+				<div class="notice notice-warning inline"><p>
+					<?php
+					printf(
+						/* translators: %s: settings page link */
+						esc_html__( 'BreezeDoc is not connected yet. %s', 'ajforms' ),
+						'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Add a Personal Access Token in E-Signatures settings.', 'ajforms' ) . '</a>'
+					);
+					?>
+				</p></div>
+			<?php elseif ( $template_error ) : ?>
+				<div class="notice notice-error inline"><p><?php echo esc_html( $template_error ); ?></p></div>
+			<?php elseif ( empty( $templates ) ) : ?>
+				<div class="notice notice-info inline"><p><?php esc_html_e( 'No templates found in BreezeDoc yet — create one at breezedoc.com, then reload this page.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<?php if ( $is_connected && ! $template_error && ! empty( $templates ) ) : ?>
+				<div id="ajcore-esign-error" style="display:none;margin-bottom:14px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"></div>
+				<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px;">
+					<div>
+						<label style="display:block;font-weight:700;margin-bottom:6px;"><?php esc_html_e( 'Customer', 'ajforms' ); ?></label>
+						<select id="ajcore-esign-customer" style="width:100%;">
+							<option value=""><?php esc_html_e( '— pick a customer —', 'ajforms' ); ?></option>
+						</select>
+					</div>
+					<div>
+						<label style="display:block;font-weight:700;margin-bottom:6px;"><?php esc_html_e( 'Template', 'ajforms' ); ?></label>
+						<select id="ajcore-esign-template" style="width:100%;">
+							<option value=""><?php esc_html_e( '— pick a template —', 'ajforms' ); ?></option>
+						</select>
+					</div>
+				</div>
+				<div id="ajcore-esign-recipients" style="margin-top:16px;max-width:900px;"></div>
+				<p style="margin-top:16px;">
+					<button type="button" class="button button-primary" id="ajcore-esign-send-btn" disabled><?php esc_html_e( 'Send for Signature', 'ajforms' ); ?></button>
+				</p>
+			<?php endif; ?>
+		</div>
+
+		<div class="ajforms-settings-card" style="margin-top:20px;">
+			<h2><?php esc_html_e( 'Sent Signature Requests', 'ajforms' ); ?></h2>
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Template', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Sent', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody id="ajcore-esign-log-body">
+					<?php if ( empty( $log['documents'] ) ) : ?>
+						<tr><td colspan="5"><?php esc_html_e( 'No signature requests sent yet.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $log['documents'] as $doc ) : ?>
+							<tr data-esign-row="<?php echo esc_attr( $doc['id'] ); ?>">
+								<td><?php echo esc_html( $doc['customerName'] ?: '—' ); ?></td>
+								<td><?php echo esc_html( $doc['templateTitle'] ?: '—' ); ?></td>
+								<td class="ajcore-esign-status"><?php echo esc_html( 'completed' === $doc['status'] ? __( 'Completed', 'ajforms' ) : __( 'Sent — awaiting signature', 'ajforms' ) ); ?></td>
+								<td><?php echo esc_html( $doc['sentAt'] ? mysql2date( get_option( 'date_format' ), $doc['sentAt'] ) : '—' ); ?></td>
+								<td>
+									<button type="button" class="button button-small ajcore-esign-refresh-btn" data-id="<?php echo esc_attr( $doc['id'] ); ?>"><?php esc_html_e( 'Refresh Status', 'ajforms' ); ?></button>
+									<?php if ( $doc['documentUrl'] ) : ?>
+										&nbsp;<a class="button button-small" href="<?php echo esc_url( $doc['documentUrl'] ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open in BreezeDoc', 'ajforms' ); ?></a>
+									<?php endif; ?>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+
+		<script>
+		( function () {
+			var restBase  = <?php echo wp_json_encode( rest_url( 'ajcore/v1' ) ); ?>;
+			var nonce     = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
+			var customers = <?php echo wp_json_encode( array_map( function ( $c ) { return array( 'id' => $c->stripe_customer_id, 'name' => $c->name, 'email' => $c->email ); }, $customers ) ); ?>;
+			var templates = <?php echo wp_json_encode( $templates ); ?>;
+
+			function apiFetch( path, opts ) {
+				opts = opts || {};
+				opts.headers = Object.assign( { 'X-WP-Nonce': nonce }, opts.headers || {} );
+				return fetch( restBase + path, opts ).then( function ( r ) {
+					return r.json().then( function ( data ) {
+						if ( ! r.ok ) { throw new Error( data.message || 'Request failed' ); }
+						return data;
+					} );
+				} );
+			}
+			function escapeHtml( s ) {
+				return String( s || '' ).replace( /[&<>"']/g, function ( c ) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[ c ]; } );
+			}
+
+			var customerSelect = document.getElementById( 'ajcore-esign-customer' );
+			var templateSelect = document.getElementById( 'ajcore-esign-template' );
+			var recipientsBox  = document.getElementById( 'ajcore-esign-recipients' );
+			var sendBtn        = document.getElementById( 'ajcore-esign-send-btn' );
+			var errorBox       = document.getElementById( 'ajcore-esign-error' );
+
+			if ( customerSelect ) {
+				customers.forEach( function ( c ) {
+					var opt = document.createElement( 'option' );
+					opt.value = c.id;
+					opt.textContent = c.name + ' (' + c.email + ')';
+					customerSelect.appendChild( opt );
+				} );
+			}
+			if ( templateSelect ) {
+				templates.forEach( function ( t ) {
+					var opt = document.createElement( 'option' );
+					opt.value = t.id;
+					opt.textContent = t.title || ( 'Template #' + t.id );
+					templateSelect.appendChild( opt );
+				} );
+			}
+
+			function renderRecipients() {
+				var template = templates.filter( function ( t ) { return String( t.id ) === templateSelect.value; } )[0];
+				if ( ! template ) { recipientsBox.innerHTML = ''; sendBtn.disabled = true; return; }
+				sendBtn.disabled = false;
+				recipientsBox.innerHTML = '<label style="display:block;font-weight:700;margin-bottom:6px;">' + <?php echo wp_json_encode( __( 'Recipients (in signing order)', 'ajforms' ) ); ?> + '</label>' +
+					template.recipients.map( function ( r, idx ) {
+						return '' +
+							'<div class="ajcore-esign-recipient" data-party="' + r.party + '" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">' +
+								'<span style="width:70px;color:#64748b;font-size:12px;">' + <?php echo wp_json_encode( __( 'Party', 'ajforms' ) ); ?> + ' ' + r.party + '</span>' +
+								'<input type="text" class="ajcore-esign-recipient-name" placeholder="' + <?php echo wp_json_encode( __( 'Name', 'ajforms' ) ); ?> + '" value="' + escapeHtml( r.name ) + '" style="flex:1;">' +
+								'<input type="email" class="ajcore-esign-recipient-email" placeholder="' + <?php echo wp_json_encode( __( 'Email', 'ajforms' ) ); ?> + '" value="' + escapeHtml( r.email ) + '" style="flex:1;">' +
+								( idx === 0 ? '<button type="button" class="button button-small ajcore-esign-fill-customer">' + <?php echo wp_json_encode( __( 'Use Customer', 'ajforms' ) ); ?> + '</button>' : '' ) +
+							'</div>';
+					} ).join( '' );
+
+				var fillBtn = recipientsBox.querySelector( '.ajcore-esign-fill-customer' );
+				if ( fillBtn ) {
+					fillBtn.addEventListener( 'click', function () {
+						var customer = customers.filter( function ( c ) { return c.id === customerSelect.value; } )[0];
+						if ( ! customer ) { return; }
+						var row = fillBtn.closest( '.ajcore-esign-recipient' );
+						row.querySelector( '.ajcore-esign-recipient-name' ).value = customer.name;
+						row.querySelector( '.ajcore-esign-recipient-email' ).value = customer.email;
+					} );
+				}
+			}
+			if ( templateSelect ) { templateSelect.addEventListener( 'change', renderRecipients ); }
+
+			if ( sendBtn ) {
+				sendBtn.addEventListener( 'click', function () {
+					errorBox.style.display = 'none';
+					if ( ! customerSelect.value ) {
+						errorBox.style.display = 'block';
+						errorBox.textContent = <?php echo wp_json_encode( __( 'Pick a customer first.', 'ajforms' ) ); ?>;
+						return;
+					}
+					var recipients = Array.prototype.slice.call( recipientsBox.querySelectorAll( '.ajcore-esign-recipient' ) ).map( function ( row ) {
+						return {
+							party: parseInt( row.getAttribute( 'data-party' ), 10 ),
+							name: row.querySelector( '.ajcore-esign-recipient-name' ).value.trim(),
+							email: row.querySelector( '.ajcore-esign-recipient-email' ).value.trim(),
+						};
+					} );
+					sendBtn.disabled = true;
+					sendBtn.textContent = <?php echo wp_json_encode( __( 'Sending…', 'ajforms' ) ); ?>;
+					apiFetch( '/esign/send', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify( { template_id: parseInt( templateSelect.value, 10 ), stripe_customer_id: customerSelect.value, recipients: recipients } ),
+					} ).then( function () {
+						window.location.reload();
+					} ).catch( function ( e ) {
+						errorBox.style.display = 'block';
+						errorBox.textContent = e.message;
+						sendBtn.disabled = false;
+						sendBtn.textContent = <?php echo wp_json_encode( __( 'Send for Signature', 'ajforms' ) ); ?>;
+					} );
+				} );
+			}
+
+			document.querySelectorAll( '.ajcore-esign-refresh-btn' ).forEach( function ( btn ) {
+				btn.addEventListener( 'click', function () {
+					btn.disabled = true;
+					btn.textContent = <?php echo wp_json_encode( __( 'Checking…', 'ajforms' ) ); ?>;
+					apiFetch( '/esign/documents/' + btn.getAttribute( 'data-id' ) + '/refresh', { method: 'POST' } ).then( function ( data ) {
+						var row = document.querySelector( '[data-esign-row="' + data.id + '"]' );
+						if ( row ) {
+							row.querySelector( '.ajcore-esign-status' ).textContent = 'completed' === data.status
+								? <?php echo wp_json_encode( __( 'Completed', 'ajforms' ) ); ?>
+								: <?php echo wp_json_encode( __( 'Sent — awaiting signature', 'ajforms' ) ); ?>;
+						}
+						btn.disabled = false;
+						btn.textContent = <?php echo wp_json_encode( __( 'Refresh Status', 'ajforms' ) ); ?>;
+					} ).catch( function ( e ) {
+						btn.disabled = false;
+						btn.textContent = <?php echo wp_json_encode( __( 'Refresh Status', 'ajforms' ) ); ?>;
+						window.alert( e.message );
 					} );
 				} );
 			} );
@@ -26786,6 +27049,366 @@ class AJForms_Admin {
 		})();
 		</script>
 		<?php
+	}
+
+	/**
+	 * BreezeDoc e-signature settings — just a Personal Access Token (create one at
+	 * https://breezedoc.com/integrations/api) plus a connection test. Far simpler than Gmail
+	 * Intake/Zoho Mail's OAuth dance since BreezeDoc's API authenticates with a single token.
+	 */
+	public function display_breezedoc_settings_section() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings   = $this->get_plugin_settings();
+		$action_url = add_query_arg(
+			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'esign', 'section' => 'esign' ),
+			admin_url( 'admin.php' )
+		);
+		$test_url = rest_url( 'ajcore/v1/esign/test' );
+		?>
+		<style>
+			#ajforms-esign-section .ajforms-settings-field input[type="text"] { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid #d1d5db; border-radius: 12px; padding: 10px 13px; font-family: inherit; font-size: 14px; }
+			#ajforms-esign-section .ajforms-settings-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #111827; }
+			#ajforms-esign-section .ajforms-settings-help { margin-top: 6px; color: #6b7280; font-size: 12px; }
+			#ajforms-esign-section .ajforms-esign-test-result { margin-top: 14px; padding: 14px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; font-size: 13px; display: none; }
+			#ajforms-esign-section .ajforms-esign-test-result.is-visible { display: block; }
+		</style>
+		<div class="ajforms-settings-card" id="ajforms-esign-section">
+			<span class="ajcore-modern-admin ajforms-settings-pill" style="display:inline-flex;"><?php esc_html_e( 'E-Signatures', 'ajforms' ); ?></span>
+			<h3 style="margin:10px 0 4px;"><?php esc_html_e( 'Connect BreezeDoc', 'ajforms' ); ?></h3>
+			<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:640px;"><?php esc_html_e( 'Templates are designed in your BreezeDoc account. Here, staff pick a customer and a template, and AJCore sends it out for signature with the customer already filled in as the signer. Other fields on the document (company name, dates, etc.) are filled in by whoever signs — BreezeDoc\'s API does not support pre-filling those.', 'ajforms' ); ?></p>
+
+			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<form method="post" action="<?php echo esc_url( $action_url ); ?>">
+				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+				<input type="hidden" name="ajforms_section" value="esign">
+				<div class="ajforms-settings-field">
+					<label for="breezedoc_api_token"><?php esc_html_e( 'Personal Access Token', 'ajforms' ); ?></label>
+					<input type="text" name="breezedoc_api_token" id="breezedoc_api_token" value="" placeholder="<?php echo ! empty( $settings['breezedoc_api_token'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off">
+					<div class="ajforms-settings-help"><?php esc_html_e( 'Create this at breezedoc.com/integrations/api and paste it here.', 'ajforms' ); ?></div>
+				</div>
+				<p>
+					<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
+					<button type="button" class="button" id="ajforms-esign-test-btn"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
+				</p>
+				<div class="ajforms-esign-test-result" id="ajforms-esign-test-result"></div>
+			</form>
+		</div>
+		<script>
+		(function() {
+			var testBtn = document.getElementById( 'ajforms-esign-test-btn' );
+			var resultBox = document.getElementById( 'ajforms-esign-test-result' );
+			if ( ! testBtn || ! resultBox ) { return; }
+			testBtn.addEventListener( 'click', function () {
+				testBtn.disabled = true;
+				testBtn.textContent = <?php echo wp_json_encode( __( 'Testing…', 'ajforms' ) ); ?>;
+				fetch( '<?php echo esc_url_raw( $test_url ); ?>', { headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' } } )
+					.then( function ( r ) { return r.json().then( function ( d ) { return { ok: r.ok, data: d }; } ); } )
+					.then( function ( result ) {
+						resultBox.classList.add( 'is-visible' );
+						if ( result.ok && result.data && result.data.connected ) {
+							resultBox.style.color = '#166534';
+							resultBox.textContent = <?php echo wp_json_encode( __( 'Connected as', 'ajforms' ) ); ?> + ' ' + ( result.data.email || '' );
+						} else {
+							resultBox.style.color = '#b32d2e';
+							resultBox.textContent = ( result.data && result.data.message ) || <?php echo wp_json_encode( __( 'Could not connect to BreezeDoc.', 'ajforms' ) ); ?>;
+						}
+					} )
+					.catch( function ( e ) {
+						resultBox.classList.add( 'is-visible' );
+						resultBox.style.color = '#b32d2e';
+						resultBox.textContent = e.message;
+					} )
+					.finally( function () {
+						testBtn.disabled = false;
+						testBtn.textContent = <?php echo wp_json_encode( __( 'Test Connection', 'ajforms' ) ); ?>;
+					} );
+			} );
+		})();
+		</script>
+		<?php
+	}
+
+	// -----------------------------------------------------------------
+	// E-Signatures (BreezeDoc)
+	// -----------------------------------------------------------------
+
+	/**
+	 * BreezeDoc authenticates with a single static Bearer token (no OAuth refresh dance like
+	 * Gmail/Zoho) — see https://breezedoc.com/developer/docs/. Base URL per their OpenAPI spec's
+	 * `servers` entry ("/api") is https://breezedoc.com/api.
+	 */
+	private function breezedoc_api_request( $method, $path, $args = array() ) {
+		$settings = $this->get_plugin_settings();
+		$token    = trim( (string) ( $settings['breezedoc_api_token'] ?? '' ) );
+		if ( '' === $token ) {
+			return new WP_Error( 'breezedoc_not_configured', __( 'BreezeDoc is not connected. Add a Personal Access Token in E-Signatures settings.', 'ajforms' ) );
+		}
+
+		$url = 'https://breezedoc.com/api' . $path;
+		if ( ! empty( $args['query'] ) ) {
+			$url = add_query_arg( $args['query'], $url );
+		}
+		$request_args = array(
+			'timeout' => 20,
+			'method'  => $method,
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $token,
+				'Accept'        => 'application/json',
+			),
+		);
+		if ( isset( $args['body'] ) ) {
+			$request_args['headers']['Content-Type'] = 'application/json';
+			$request_args['body']                    = wp_json_encode( $args['body'] );
+		}
+
+		$response = wp_remote_request( $url, $request_args );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+		$raw_body    = wp_remote_retrieve_body( $response );
+		$data        = json_decode( $raw_body, true );
+
+		if ( $status_code >= 400 ) {
+			$message = ! empty( $data['message'] ) ? (string) $data['message'] : sprintf(
+				/* translators: %d: HTTP status code */
+				__( 'BreezeDoc API returned an error (%d).', 'ajforms' ),
+				$status_code
+			);
+			return new WP_Error( 'breezedoc_api_error', $message, array( 'status' => $status_code ) );
+		}
+
+		return is_array( $data ) ? $data : array();
+	}
+
+	public function breezedoc_test_connection() {
+		$me = $this->breezedoc_api_request( 'GET', '/me' );
+		if ( is_wp_error( $me ) ) {
+			return $me;
+		}
+		return array(
+			'connected' => true,
+			'email'     => isset( $me['email'] ) ? (string) $me['email'] : '',
+		);
+	}
+
+	/** Normalizes a BreezeDoc Recipient array into the shape both frontends expect. */
+	private function breezedoc_map_recipients( $raw_recipients ) {
+		$recipients = array();
+		foreach ( (array) $raw_recipients as $r ) {
+			$recipients[] = array(
+				'party'       => isset( $r['party'] ) ? (int) $r['party'] : 0,
+				'name'        => isset( $r['name'] ) ? (string) $r['name'] : '',
+				'email'       => isset( $r['email'] ) ? (string) $r['email'] : '',
+				'completedAt' => isset( $r['completed_at'] ) ? (string) $r['completed_at'] : '',
+			);
+		}
+		usort( $recipients, static function ( $a, $b ) {
+			return $a['party'] <=> $b['party'];
+		} );
+		return $recipients;
+	}
+
+	private function breezedoc_map_template( $raw ) {
+		return array(
+			'id'         => isset( $raw['id'] ) ? (int) $raw['id'] : 0,
+			'title'      => isset( $raw['title'] ) ? (string) $raw['title'] : '',
+			'recipients' => $this->breezedoc_map_recipients( $raw['recipients'] ?? array() ),
+		);
+	}
+
+	public function breezedoc_list_templates() {
+		$result = $this->breezedoc_api_request( 'GET', '/templates' );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		$templates = array();
+		foreach ( (array) ( $result['data'] ?? array() ) as $raw ) {
+			$templates[] = $this->breezedoc_map_template( $raw );
+		}
+		return $templates;
+	}
+
+	public function breezedoc_get_template( $template_id ) {
+		$result = $this->breezedoc_api_request( 'GET', '/templates/' . absint( $template_id ) );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return $this->breezedoc_map_template( $result );
+	}
+
+	private function get_esign_documents_table() {
+		return $this->get_pdb()->prefix . 'aj_esign_documents';
+	}
+
+	private function ensure_esign_documents_table() {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_esign_documents_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) {
+			return true;
+		}
+		if ( ! class_exists( 'AJForms_Activator' ) ) {
+			require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+		}
+		AJForms_Activator::activate();
+		return $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
+	}
+
+	private function format_esign_document_row( $row ) {
+		if ( ! $row ) {
+			return null;
+		}
+		return array(
+			'id'                   => (int) $row->id,
+			'breezedocDocumentId'  => (string) $row->breezedoc_document_id,
+			'breezedocTemplateId'  => (string) $row->breezedoc_template_id,
+			'templateTitle'        => (string) $row->template_title,
+			'stripeCustomerId'     => (string) $row->stripe_customer_id,
+			'customerName'         => (string) $row->customer_name,
+			'status'               => (string) $row->status,
+			'recipients'           => $row->recipients ? json_decode( (string) $row->recipients, true ) : array(),
+			'documentUrl'          => (string) $row->document_url,
+			'sentAt'               => (string) $row->sent_at,
+			'completedAt'          => (string) $row->completed_at,
+			'lastCheckedAt'        => (string) $row->last_checked_at,
+			'createdAt'            => (string) $row->created_at,
+			'updatedAt'            => (string) $row->updated_at,
+		);
+	}
+
+	public function get_esign_documents_list() {
+		if ( ! $this->ensure_esign_documents_table() ) {
+			return array( 'documents' => array(), 'stats' => array( 'total' => 0, 'sent' => 0, 'completed' => 0 ) );
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_esign_documents_table();
+		$rows  = $pdb->get_results( "SELECT * FROM `{$table}` ORDER BY created_at DESC LIMIT 500" );
+
+		$documents = array();
+		$stats     = array( 'total' => 0, 'sent' => 0, 'completed' => 0 );
+		foreach ( $rows as $row ) {
+			$documents[] = $this->format_esign_document_row( $row );
+			$stats['total']++;
+			'completed' === $row->status ? $stats['completed']++ : $stats['sent']++;
+		}
+
+		return array( 'documents' => $documents, 'stats' => $stats );
+	}
+
+	/**
+	 * Clones the template into a real document, assigns the supplied recipients (their name/email
+	 * only — BreezeDoc's API has no way to pre-fill the document's own fields, see the E-Signatures
+	 * settings notice), sends it, and logs it locally so status can be tracked from AJCore/AJOps.
+	 */
+	public function send_esign_document_from_template( $template_id, $stripe_customer_id, $recipients ) {
+		$template_id = absint( $template_id );
+		$recipients  = array_map(
+			static function ( $r ) {
+				return array(
+					'name'  => sanitize_text_field( (string) ( $r['name'] ?? '' ) ),
+					'email' => sanitize_email( (string) ( $r['email'] ?? '' ) ),
+					'party' => isset( $r['party'] ) ? (int) $r['party'] : 0,
+				);
+			},
+			(array) $recipients
+		);
+		usort( $recipients, static function ( $a, $b ) {
+			return $a['party'] <=> $b['party'];
+		} );
+		foreach ( $recipients as $r ) {
+			if ( '' === $r['name'] || ! is_email( $r['email'] ) ) {
+				return new WP_Error( 'invalid_recipient', __( 'Every recipient needs a name and a valid email address.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+		}
+
+		$document = $this->breezedoc_api_request( 'POST', '/templates/' . $template_id . '/create-document' );
+		if ( is_wp_error( $document ) ) {
+			return $document;
+		}
+		$document_id = isset( $document['id'] ) ? (int) $document['id'] : 0;
+		if ( ! $document_id ) {
+			return new WP_Error( 'breezedoc_create_failed', __( 'BreezeDoc did not return a document id.', 'ajforms' ) );
+		}
+
+		$send_body = array( 'recipients' => array_map( static function ( $r ) {
+			return array( 'name' => $r['name'], 'email' => $r['email'] );
+		}, $recipients ) );
+		$sent = $this->breezedoc_api_request( 'POST', '/documents/' . $document_id . '/send', array( 'body' => $send_body ) );
+		if ( is_wp_error( $sent ) ) {
+			return $sent;
+		}
+
+		$customer      = $stripe_customer_id ? $this->find_portal_customer_by_stripe_id( $stripe_customer_id ) : null;
+		$customer_name = $customer ? (string) $customer->name : '';
+		$title         = isset( $sent['title'] ) ? (string) $sent['title'] : '';
+		$slug          = isset( $sent['slug'] ) ? (string) $sent['slug'] : '';
+
+		if ( ! $this->ensure_esign_documents_table() ) {
+			return new WP_Error( 'no_table', __( 'E-Signatures log table could not be created.', 'ajforms' ) );
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_esign_documents_table();
+		$pdb->insert(
+			$table,
+			array(
+				'breezedoc_document_id' => (string) $document_id,
+				'breezedoc_template_id' => (string) $template_id,
+				'template_title'        => $title,
+				'stripe_customer_id'    => sanitize_text_field( (string) $stripe_customer_id ),
+				'customer_name'         => $customer_name,
+				'status'                => 'sent',
+				'recipients'            => wp_json_encode( $this->breezedoc_map_recipients( $sent['recipients'] ?? $recipients ) ),
+				'document_url'          => $slug ? 'https://breezedoc.com/documents/' . $slug : '',
+				'sent_at'               => current_time( 'mysql' ),
+				'created_by'            => get_current_user_id(),
+				'created_at'            => current_time( 'mysql' ),
+				'updated_at'            => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+		);
+		$local_id = (int) $pdb->insert_id;
+
+		return $this->format_esign_document_row( $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", $local_id ) ) );
+	}
+
+	/** Polls BreezeDoc for the current state of a previously-sent document — there's no webhook. */
+	public function refresh_esign_document_status( $local_id ) {
+		if ( ! $this->ensure_esign_documents_table() ) {
+			return new WP_Error( 'no_table', __( 'E-Signatures log table could not be created.', 'ajforms' ) );
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_esign_documents_table();
+		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", absint( $local_id ) ) );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Signature request not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$document = $this->breezedoc_api_request( 'GET', '/documents/' . absint( $row->breezedoc_document_id ) );
+		if ( is_wp_error( $document ) ) {
+			return $document;
+		}
+
+		$completed_at = ! empty( $document['completed_at'] ) ? gmdate( 'Y-m-d H:i:s', strtotime( (string) $document['completed_at'] ) ) : '';
+		$update_data  = array(
+			'status'          => '' !== $completed_at ? 'completed' : 'sent',
+			'recipients'      => wp_json_encode( $this->breezedoc_map_recipients( $document['recipients'] ?? array() ) ),
+			'last_checked_at' => current_time( 'mysql' ),
+			'updated_at'      => current_time( 'mysql' ),
+		);
+		$update_format = array( '%s', '%s', '%s', '%s' );
+		if ( '' !== $completed_at ) {
+			$update_data['completed_at'] = $completed_at;
+			$update_format[]             = '%s';
+		}
+		$pdb->update( $table, $update_data, array( 'id' => $row->id ), $update_format, array( '%d' ) );
+
+		return $this->format_esign_document_row( $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", $row->id ) ) );
 	}
 
 	public function display_role_manager_page( $embedded = false ) {

@@ -43,6 +43,7 @@ class AJForms_Activator {
 		$table_reservations           = $wpdb->prefix . 'aj_portal_reservations';
 		$table_mail_items             = $wpdb->prefix . 'aj_portal_mail_items';
 		$table_gmail_intake_log       = $wpdb->prefix . 'aj_gmail_intake_log';
+		$table_esign_documents        = $wpdb->prefix . 'aj_esign_documents';
 		$table_ajphone_conversations  = $wpdb->prefix . 'ajphone_conversations';
 		$table_storage_objects        = $wpdb->prefix . 'aj_storage_objects';
 
@@ -871,6 +872,29 @@ class AJForms_Activator {
 			KEY created_at (created_at)
 		) $charset_collate;
 
+		CREATE TABLE $table_esign_documents (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			breezedoc_document_id varchar(50) NOT NULL,
+			breezedoc_template_id varchar(50) DEFAULT '' NOT NULL,
+			template_title varchar(255) DEFAULT '' NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			customer_name varchar(255) DEFAULT '' NOT NULL,
+			status varchar(30) DEFAULT 'sent' NOT NULL,
+			recipients longtext NULL,
+			document_url varchar(500) DEFAULT '' NOT NULL,
+			sent_at datetime NULL,
+			completed_at datetime NULL,
+			last_checked_at datetime NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY breezedoc_document_id (breezedoc_document_id),
+			KEY status (status),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY created_at (created_at)
+		) $charset_collate;
+
 		CREATE TABLE $table_ajphone_conversations (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			conversation_key varchar(255) NOT NULL,
@@ -923,6 +947,7 @@ class AJForms_Activator {
 				self::create_reservation_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_mail_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_gmail_intake_log_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
+				self::create_esign_documents_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_customer_site_access_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 			}
 		}
@@ -1896,6 +1921,38 @@ class AJForms_Activator {
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY gmail_message_id (gmail_message_id),
+			KEY status (status),
+			KEY stripe_customer_id (stripe_customer_id),
+			KEY created_at (created_at)
+		) {$charset_collate}" );
+	}
+
+	/**
+	 * Creates the E-Signatures (BreezeDoc) log table in the portal/shared DB. The main dbDelta
+	 * run only creates it in the local WP DB, but in shared mode every read/write targets
+	 * the shared DB — without this, log inserts fail silently against a missing table.
+	 */
+	public static function create_esign_documents_table_in_portal_db( $prefix, $charset_collate, $pdb ) {
+		$table = $prefix . 'aj_esign_documents';
+
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			breezedoc_document_id varchar(50) NOT NULL,
+			breezedoc_template_id varchar(50) DEFAULT '' NOT NULL,
+			template_title varchar(255) DEFAULT '' NOT NULL,
+			stripe_customer_id varchar(100) DEFAULT '' NOT NULL,
+			customer_name varchar(255) DEFAULT '' NOT NULL,
+			status varchar(30) DEFAULT 'sent' NOT NULL,
+			recipients longtext NULL,
+			document_url varchar(500) DEFAULT '' NOT NULL,
+			sent_at datetime NULL,
+			completed_at datetime NULL,
+			last_checked_at datetime NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY breezedoc_document_id (breezedoc_document_id),
 			KEY status (status),
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY created_at (created_at)

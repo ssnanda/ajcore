@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.100
+ * Version: 0.7.101
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.100' );
+	define( 'AJCORE_VERSION', '0.7.101' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -166,6 +166,9 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'gmail_intake_connected_email'   => '',
 			'gmail_intake_connected_at'      => '',
 			'gmail_intake_label_id'          => '',
+			// E-Signatures (BreezeDoc). A single shared BreezeDoc account, authenticated with a
+			// Personal Access Token, used to send templates out for customer signature.
+			'breezedoc_api_token'           => '',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
@@ -371,6 +374,7 @@ if ( ! function_exists( 'ajcore_get_secret_setting_keys' ) ) {
 			'hcaptcha_secret_key',
 			'turnstile_secret_key',
 			'asana_personal_access_token',
+			'breezedoc_api_token',
 		);
 	}
 }

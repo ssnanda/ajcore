@@ -147,6 +147,39 @@ class AJCore_REST_API {
 			'permission_callback' => $manage_options_permission,
 		) );
 
+		// WP-admin-friendly siblings of the /ops/esign/* routes above — same callback methods,
+		// gated by cookie/nonce auth instead of can_manage_ops_api().
+		register_rest_route( self::NAMESPACE, '/esign/test', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_ops_esign_test' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/esign/templates', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_ops_esign_templates' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/esign/templates/(?P<id>\d+)', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_ops_esign_template' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/esign/send', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'send_ops_esign_document' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/esign/documents/(?P<id>\d+)/refresh', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'refresh_ops_esign_document' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/esign/documents', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_ops_esign_documents' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/ops/customers',
@@ -798,6 +831,13 @@ class AJCore_REST_API {
 			'/ops/gmail-intake/(?P<id>\d+)/file'           => array( 'methods' => 'POST', 'callback' => 'file_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake/(?P<id>\d+)'                => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake'                            => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			// E-Signatures (BreezeDoc)
+			'/ops/esign/test'                       => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_esign_test', 'permission' => 'can_manage_ops_api' ),
+			'/ops/esign/templates'                   => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_esign_templates', 'permission' => 'can_manage_ops_api' ),
+			'/ops/esign/templates/(?P<id>\d+)'       => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_esign_template', 'permission' => 'can_manage_ops_api' ),
+			'/ops/esign/send'                        => array( 'methods' => 'POST', 'callback' => 'send_ops_esign_document', 'permission' => 'can_manage_ops_api' ),
+			'/ops/esign/documents/(?P<id>\d+)/refresh' => array( 'methods' => 'POST', 'callback' => 'refresh_ops_esign_document', 'permission' => 'can_manage_ops_api' ),
+			'/ops/esign/documents'                    => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_esign_documents', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -897,6 +937,12 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/file', 'auth' => 'Admin', 'purpose' => 'Files the given (possibly renamed) attachments to a customer with an explicit category + tag.', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/reset', 'auth' => 'Admin', 'purpose' => 'Clears the whole Gmail Intake activity log (local table only; does not touch the real mailbox).', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/bulk-delete', 'auth' => 'Admin', 'purpose' => 'Bulk-deletes selected Gmail Intake log entries (body: ids).', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/esign/test', 'auth' => 'Admin', 'purpose' => 'Tests the configured BreezeDoc Personal Access Token against GET /me.', 'app' => 'OPS e-signatures' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/esign/templates', 'auth' => 'Admin', 'purpose' => 'Lists BreezeDoc templates (id, title, recipient parties).', 'app' => 'OPS e-signatures' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/esign/templates/{id}', 'auth' => 'Admin', 'purpose' => 'Fetches one BreezeDoc template with its recipient parties.', 'app' => 'OPS e-signatures' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/esign/send', 'auth' => 'Admin', 'purpose' => 'Clones a template into a document, assigns recipients (name/email only), and sends it for signature. Logs the result locally.', 'app' => 'OPS e-signatures' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/esign/documents', 'auth' => 'Admin', 'purpose' => 'Local log of sent signature requests with their last-known status.', 'app' => 'OPS e-signatures' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/esign/documents/{id}/refresh', 'auth' => 'Admin', 'purpose' => 'Polls BreezeDoc for the current status of a sent document (no webhook exists).', 'app' => 'OPS e-signatures' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -5807,6 +5853,68 @@ class AJCore_REST_API {
 		$ids    = (array) $request->get_param( 'ids' );
 		$result = $admin->bulk_delete_gmail_intake_log_rows( $ids );
 		return is_wp_error( $result ) ? $result : rest_ensure_response( array( 'deleted' => $result ) );
+	}
+
+	// ── E-Signatures (BreezeDoc) ─────────────────────────────────────────────
+
+	public function get_ops_esign_test( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$result = $admin->breezedoc_test_connection();
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	public function get_ops_esign_templates( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$result = $admin->breezedoc_list_templates();
+		return is_wp_error( $result ) ? $result : rest_ensure_response( array( 'templates' => $result ) );
+	}
+
+	public function get_ops_esign_template( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$result = $admin->breezedoc_get_template( (int) $request['id'] );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	public function send_ops_esign_document( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$template_id         = (int) $request->get_param( 'template_id' );
+		$stripe_customer_id  = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$recipients          = (array) $request->get_param( 'recipients' );
+		if ( ! $template_id ) {
+			return new WP_Error( 'missing_template', __( 'template_id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$result = $admin->send_esign_document_from_template( $template_id, $stripe_customer_id, $recipients );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	public function refresh_ops_esign_document( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$result = $admin->refresh_esign_document_status( (int) $request['id'] );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	public function get_ops_esign_documents( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$result = $admin->get_esign_documents_list();
+		return rest_ensure_response( $result );
 	}
 
 	/** Client mailbox: the current portal user's mail items, without staff-only fields. */
