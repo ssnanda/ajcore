@@ -20916,7 +20916,7 @@ class AJForms_Admin {
 					<?php else : ?>
 						<?php foreach ( $rows as $row ) : ?>
 							<?php $filed_filenames = ! empty( $row->filed_filenames ) ? (array) json_decode( (string) $row->filed_filenames, true ) : array(); ?>
-							<tr class="ajcore-gi-row" style="cursor:pointer;" data-log-id="<?php echo esc_attr( $row->id ); ?>" data-customer-id="<?php echo esc_attr( $row->stripe_customer_id ); ?>">
+							<tr class="ajcore-gi-row" style="cursor:pointer;" data-log-id="<?php echo esc_attr( $row->id ); ?>" data-customer-id="<?php echo esc_attr( $row->stripe_customer_id ); ?>" data-status="<?php echo esc_attr( $row->status ); ?>">
 								<td><?php echo esc_html( $row->received_at ); ?></td>
 								<td>
 									<strong><?php echo esc_html( $row->subject ); ?></strong><br>
@@ -21028,6 +21028,7 @@ class AJForms_Admin {
 				row.addEventListener( 'click', function () {
 					var logId = row.getAttribute( 'data-log-id' );
 					var presetCustomerId = row.getAttribute( 'data-customer-id' ) || '';
+					var rowStatus = row.getAttribute( 'data-status' ) || '';
 					listSection.style.display = 'none';
 					previewSection.style.display = '';
 					body.innerHTML = '<p>' + <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?> + '</p>';
@@ -21085,8 +21086,9 @@ class AJForms_Admin {
 										'<input type="checkbox" id="ajcore-gi-file-notify" checked> ' + <?php echo wp_json_encode( __( 'Email the customer about these files', 'ajforms' ) ); ?> +
 									'</label>' +
 									'<div id="ajcore-gi-file-error" style="display:none;margin-top:14px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"></div>' +
-									'<div style="margin-top:16px;">' +
+									'<div style="margin-top:16px;display:flex;gap:8px;">' +
 										'<button type="button" class="button button-primary" id="ajcore-gi-file-submit">' + <?php echo wp_json_encode( __( 'File Selected to Customer', 'ajforms' ) ); ?> + '</button>' +
+										( ( 'filed' !== rowStatus && 'resolved' !== rowStatus ) ? '<button type="button" class="button" id="ajcore-gi-mark-filed">' + <?php echo wp_json_encode( __( 'Mark as Already Filed', 'ajforms' ) ); ?> + '</button>' : '' ) +
 									'</div>' +
 								'</div>' +
 								'<div>' +
@@ -21164,6 +21166,22 @@ class AJForms_Admin {
 								submitBtn.textContent = <?php echo wp_json_encode( __( 'File Selected to Customer', 'ajforms' ) ); ?>;
 							} );
 						} );
+
+						var markFiledBtn = document.getElementById( 'ajcore-gi-mark-filed' );
+						if ( markFiledBtn ) {
+							markFiledBtn.addEventListener( 'click', function () {
+								if ( ! window.confirm( <?php echo wp_json_encode( __( 'Mark this as already filed? This just clears it from Pending â it does not upload or attach anything.', 'ajforms' ) ); ?> ) ) { return; }
+								markFiledBtn.disabled = true;
+								markFiledBtn.textContent = <?php echo wp_json_encode( __( 'Markingâ¦', 'ajforms' ) ); ?>;
+								apiFetch( '/gmail-intake/' + logId + '/mark-filed', { method: 'POST' } ).then( function () {
+									window.location.reload();
+								} ).catch( function ( e ) {
+									markFiledBtn.disabled = false;
+									markFiledBtn.textContent = <?php echo wp_json_encode( __( 'Mark as Already Filed', 'ajforms' ) ); ?>;
+									window.alert( e.message );
+								} );
+							} );
+						}
 					} ).catch( function ( e ) {
 						body.innerHTML = '<p style="color:#dc2626;">' + escapeHtml( e.message ) + '</p>';
 					} );
@@ -26620,6 +26638,40 @@ class AJForms_Admin {
 				'updated_at'         => current_time( 'mysql' ),
 			),
 			array( 'id' => (int) $row->id )
+		);
+
+		return true;
+	}
+
+	/**
+	 * Marks a pending log entry as filed WITHOUT uploading/attaching anything — for emails staff
+	 * already handled some other way (filed manually, a duplicate, not something that needs a
+	 * customer file). Just clears it out of the Pending queue and records who/when.
+	 */
+	public function mark_gmail_intake_item_filed( $log_id ) {
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajforms' ) );
+		}
+		$pdb    = $this->get_pdb();
+		$table  = $this->get_gmail_intake_log_table();
+		$log_id = absint( $log_id );
+
+		$row = $pdb->get_row( $pdb->prepare( "SELECT id FROM `{$table}` WHERE id = %d", $log_id ) );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$pdb->update(
+			$table,
+			array(
+				'status'      => 'filed',
+				'resolved_at' => current_time( 'mysql' ),
+				'resolved_by' => get_current_user_id(),
+				'updated_at'  => current_time( 'mysql' ),
+			),
+			array( 'id' => $log_id ),
+			array( '%s', '%s', '%d', '%s' ),
+			array( '%d' )
 		);
 
 		return true;

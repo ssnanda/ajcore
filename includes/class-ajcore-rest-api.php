@@ -136,6 +136,11 @@ class AJCore_REST_API {
 			'callback'            => array( $this, 'file_ops_gmail_intake_item' ),
 			'permission_callback' => $manage_options_permission,
 		) );
+		register_rest_route( self::NAMESPACE, '/gmail-intake/(?P<id>\d+)/mark-filed', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'mark_ops_gmail_intake_item_filed' ),
+			'permission_callback' => $manage_options_permission,
+		) );
 		register_rest_route( self::NAMESPACE, '/gmail-intake/reset', array(
 			'methods'             => 'POST',
 			'callback'            => array( $this, 'reset_ops_gmail_intake_log' ),
@@ -826,6 +831,7 @@ class AJCore_REST_API {
 			'/ops/gmail-intake/reset'                      => array( 'methods' => 'POST', 'callback' => 'reset_ops_gmail_intake_log', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake/bulk-delete'                => array( 'methods' => 'POST', 'callback' => 'bulk_delete_ops_gmail_intake_items', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake/(?P<id>\d+)/resolve'        => array( 'methods' => 'POST', 'callback' => 'resolve_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/(?P<id>\d+)/mark-filed'     => array( 'methods' => 'POST', 'callback' => 'mark_ops_gmail_intake_item_filed', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake/(?P<id>\d+)/preview'        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_preview', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake/(?P<id>\d+)/attachment'     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_attachment', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake/(?P<id>\d+)/file'           => array( 'methods' => 'POST', 'callback' => 'file_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
@@ -5779,6 +5785,19 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( $this->format_gmail_intake_log_row( $this->fetch_gmail_intake_log_row( $row['id'] ) ) );
+	}
+
+	/** Marks a pending entry as filed without uploading/attaching anything — handled elsewhere. */
+	public function mark_ops_gmail_intake_item_filed( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$result = $admin->mark_gmail_intake_item_filed( (int) $request['id'] );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $this->format_gmail_intake_log_row( $this->fetch_gmail_intake_log_row( $request['id'] ) ) );
 	}
 
 	private function get_gmail_intake_admin() {
