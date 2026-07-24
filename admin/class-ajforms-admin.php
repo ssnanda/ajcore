@@ -21000,7 +21000,7 @@ class AJForms_Admin {
 			var resetBtn = document.getElementById( 'ajcore-gmail-intake-reset-log' );
 			if ( resetBtn ) {
 				resetBtn.addEventListener( 'click', function () {
-					if ( ! window.confirm( <?php echo wp_json_encode( __( 'Clear the whole Gmail Intake log? This only clears our own tracking table — it does not touch the real mailbox.', 'ajforms' ) ); ?> ) ) { return; }
+					if ( ! window.confirm( <?php echo wp_json_encode( __( 'Clear pending Gmail Intake entries? Already-filed items are kept. This only clears our own tracking table — it does not touch the real mailbox.', 'ajforms' ) ); ?> ) ) { return; }
 					resetBtn.disabled = true;
 					apiFetch( '/gmail-intake/reset', { method: 'POST' } ).then( function () { window.location.reload(); } ).catch( function ( e ) { alert( e.message ); resetBtn.disabled = false; } );
 				} );
@@ -26223,9 +26223,32 @@ class AJForms_Admin {
 	 * types get identified — this list grows incrementally as the user specifies each one.
 	 * Returns null (no rule matched) if the caller should fall back to the filename-only guess.
 	 */
-	private function gmail_intake_classify_pdf_content( $pdf_text, $company_name, $binary = '' ) {
-		$lower        = strtolower( (string) $pdf_text );
+	private function gmail_intake_classify_pdf_content( $pdf_text, $company_name, $subject = '' ) {
 		$company_name = trim( (string) $company_name );
+
+		$result = $this->gmail_intake_match_classification_rules( (string) $pdf_text, $company_name );
+		if ( null !== $result ) {
+			return $result;
+		}
+
+		// The PDF's own extracted text didn't match anything — either it's a genuinely scanned/
+		// image-only page (the state's stamped charter certificate has no text layer at all), or
+		// our dependency-free extractor failed on this particular PDF's internal encoding (e.g. a
+		// modern compressed object stream, which happened for a real Change of Registered Office/
+		// Agent confirmation — its text simply never made it into $pdf_text). Either way, SOS/NC's
+		// notification emails always put the exact filing type in the subject line (e.g. "NC
+		// Secretary of State Document Filed: ARTICLES OF ORGANIZATION for {company}"), which is a
+		// far more reliable signal than guessing from the PDF binary's internal structure.
+		return $this->gmail_intake_match_classification_rules( (string) $subject, $company_name );
+	}
+
+	/** Shared keyword rules, run against either the PDF's own extracted text or (as a fallback)
+	 *  the email subject line — see gmail_intake_classify_pdf_content() above. */
+	private function gmail_intake_match_classification_rules( $haystack, $company_name ) {
+		$lower = strtolower( $haystack );
+		if ( '' === $lower ) {
+			return null;
+		}
 
 		if ( '' !== $company_name && false !== strpos( $lower, 'articles of organization' ) ) {
 			return array(
@@ -26260,33 +26283,7 @@ class AJForms_Admin {
 			}
 		}
 
-		// No embedded text at all AND the binary itself confirms this is a scanned/image-only PDF
-		// (no /Font objects — nothing our text extractor could ever have pulled out — but it does
-		// have an embedded /Image, e.g. the state's stamped charter certificate). If we already
-		// know the company name from the email, that's a strong signal this specific attachment is
-		// the actual Articles of Organization scan. Checking the binary (not just "text came back
-		// empty") matters: other real document types — e.g. the Change of Registered Office/Agent
-		// confirmation above — are genuine text PDFs that our extractor can occasionally fail on for
-		// unrelated reasons (an encoding/compression it doesn't handle), and blindly assuming "empty
-		// text + known company = AOO" mislabeled one of those as an AOO scan.
-		if ( '' === $lower && '' !== $company_name && $this->gmail_intake_pdf_is_scanned_image( $binary ) ) {
-			return array(
-				'filename' => 'AOO of ' . $company_name,
-				'category' => 'Articles of Organization',
-			);
-		}
-
 		return null;
-	}
-
-	/** True only when the binary itself confirms "scanned image, no extractable text" — no /Font
-	 *  resources (nothing a text extractor could ever pull out) but a real /Image is embedded. */
-	private function gmail_intake_pdf_is_scanned_image( $binary ) {
-		$binary = (string) $binary;
-		if ( '' === $binary ) {
-			return false;
-		}
-		return false === strpos( $binary, '/Font' ) && false !== strpos( $binary, '/Image' );
 	}
 
 	private function gmail_intake_build_filename( $customer_number, $company_name, $original_filename ) {
@@ -26454,13 +26451,19 @@ class AJForms_Admin {
 	 * mailbox) — safe to call as often as needed; the next Refresh just re-evaluates everything
 	 * from scratch since dedup is local-only now (see process_gmail_intake_inbox()).
 	 */
+	/**
+	 * Clears everything EXCEPT already-filed/resolved rows — those are a real record of what was
+	 * actually filed to a customer and must survive a reset. Only pending rows (needs_review,
+	 * matched_pending_file, skipped_no_attachment) are cleared so the next Refresh re-evaluates
+	 * them from scratch.
+	 */
 	public function reset_gmail_intake_log() {
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
 			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajforms' ) );
 		}
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
-		$pdb->query( "TRUNCATE TABLE `{$table}`" );
+		$pdb->query( "DELETE FROM `{$table}` WHERE status NOT IN ( 'filed', 'resolved' )" );
 		return true;
 	}
 
@@ -26638,6 +26641,7 @@ class AJForms_Admin {
 
 		$headers = isset( $message['payload']['headers'] ) ? $message['payload']['headers'] : array();
 		$payload = isset( $message['payload'] ) ? $message['payload'] : array();
+		$subject = $this->gmail_intake_header_value( $headers, 'Subject' );
 
 		$pdf_parts = array();
 		$this->gmail_intake_collect_pdf_parts( $payload, $pdf_parts );
@@ -26656,7 +26660,7 @@ class AJForms_Admin {
 				$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 				if ( false !== $binary ) {
 					$pdf_text   = $this->gmail_intake_extract_pdf_text( $binary );
-					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, (string) $row->customer_name, $binary );
+					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, (string) $row->customer_name, $subject );
 					if ( null !== $classified ) {
 						$suggested_filename  = $classified['filename'];
 						$suggested_category  = $classified['category'];
@@ -26679,7 +26683,7 @@ class AJForms_Admin {
 
 		return array(
 			'id'          => (int) $row->id,
-			'subject'     => $this->gmail_intake_header_value( $headers, 'Subject' ),
+			'subject'     => $subject,
 			'sender'      => $this->gmail_intake_header_value( $headers, 'From' ),
 			'date'        => $this->gmail_intake_header_value( $headers, 'Date' ),
 			'body_text'   => $this->gmail_intake_get_text_body( $payload ),
