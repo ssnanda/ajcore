@@ -756,6 +756,7 @@ class AJCore_REST_API {
 			'/ops/mail/(?P<id>\d+)'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_mail_item', 'permission' => 'can_manage_ops_api' ),
 			'/ops/mail'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_mail_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			// Gmail Intake activity log (sub-routes before the bare /ops/gmail-intake/{id} GET)
+			'/ops/gmail-intake/process'             => array( 'methods' => 'POST', 'callback' => 'process_ops_gmail_intake', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake/(?P<id>\d+)/resolve' => array( 'methods' => 'POST', 'callback' => 'resolve_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake/(?P<id>\d+)'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
 			'/ops/gmail-intake'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
@@ -849,7 +850,8 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/mail/{id}/notify', 'auth' => 'Admin', 'purpose' => 'Send (or resend) the client notification email for a mail item; stamps notified_at.', 'app' => 'OPS mail' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/mail/{id}/publish', 'auth' => 'Admin', 'purpose' => 'Publish the item scan into the client Files library and link it via file_id.', 'app' => 'OPS mail' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/mail', 'auth' => 'Portal user', 'purpose' => 'Current user mailbox: received mail items with scan links and dispositions (no staff fields).', 'app' => 'iOS app / portal' ),
-			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake', 'auth' => 'Admin', 'purpose' => 'Gmail Intake activity log with stats. Filters: search, status (filed|skipped_no_attachment|needs_review|resolved).', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/process', 'auth' => 'Admin', 'purpose' => 'Runs one pass of the Gmail Intake mailbox check now (same as the "Process Now" button in CP Settings).', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake', 'auth' => 'Admin', 'purpose' => 'Gmail Intake activity log with stats. Filters: search, status (filed|matched_pending_file|skipped_no_attachment|needs_review|resolved).', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}', 'auth' => 'Admin', 'purpose' => 'Single Gmail Intake log entry.', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/resolve', 'auth' => 'Admin', 'purpose' => 'Manually resolve a needs-review entry: re-fetches the email from Gmail, files its PDF attachments to the given stripe_customer_id.', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
@@ -5582,7 +5584,7 @@ class AJCore_REST_API {
 		$pdb   = $this->get_portal_db();
 		$table = $this->get_gmail_intake_log_table();
 		if ( ! $this->table_exists( $pdb, $table ) ) {
-			return rest_ensure_response( array( 'items' => array(), 'stats' => array( 'total' => 0, 'filed' => 0, 'needs_review' => 0, 'resolved' => 0, 'skipped_no_attachment' => 0 ) ) );
+			return rest_ensure_response( array( 'items' => array(), 'stats' => array( 'total' => 0, 'filed' => 0, 'matched_pending_file' => 0, 'needs_review' => 0, 'resolved' => 0, 'skipped_no_attachment' => 0 ) ) );
 		}
 
 		$where  = array( '1=1' );
@@ -5596,7 +5598,7 @@ class AJCore_REST_API {
 		}
 
 		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?: '' ) );
-		if ( in_array( $status, array( 'filed', 'skipped_no_attachment', 'needs_review', 'resolved' ), true ) ) {
+		if ( in_array( $status, array( 'filed', 'matched_pending_file', 'skipped_no_attachment', 'needs_review', 'resolved' ), true ) ) {
 			$where[]  = 'status = %s';
 			$params[] = $status;
 		}
@@ -5612,6 +5614,7 @@ class AJCore_REST_API {
 		$stats = $pdb->get_row(
 			"SELECT COUNT(*) AS total,
 				SUM(status = 'filed') AS filed,
+				SUM(status = 'matched_pending_file') AS matched_pending_file,
 				SUM(status = 'needs_review') AS needs_review,
 				SUM(status = 'resolved') AS resolved,
 				SUM(status = 'skipped_no_attachment') AS skipped_no_attachment
@@ -5624,6 +5627,7 @@ class AJCore_REST_API {
 			'stats' => array(
 				'total'                 => (int) ( $stats['total'] ?? 0 ),
 				'filed'                 => (int) ( $stats['filed'] ?? 0 ),
+				'matched_pending_file'  => (int) ( $stats['matched_pending_file'] ?? 0 ),
 				'needs_review'          => (int) ( $stats['needs_review'] ?? 0 ),
 				'resolved'              => (int) ( $stats['resolved'] ?? 0 ),
 				'skipped_no_attachment' => (int) ( $stats['skipped_no_attachment'] ?? 0 ),
@@ -5637,6 +5641,19 @@ class AJCore_REST_API {
 			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
 		return rest_ensure_response( $this->format_gmail_intake_log_row( $row ) );
+	}
+
+	/** "Refresh" — runs one pass of AJForms_Admin::process_gmail_intake_inbox() on demand, same as the CP Settings "Process Now" button. */
+	public function process_ops_gmail_intake( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', __( 'AJForms admin class not available.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->process_gmail_intake_inbox();
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
 	}
 
 	public function resolve_ops_gmail_intake_item( WP_REST_Request $request ) {

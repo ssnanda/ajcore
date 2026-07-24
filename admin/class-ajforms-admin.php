@@ -10974,6 +10974,10 @@ class AJForms_Admin {
 				$this->handle_portal_customer_detail_actions();
 			} elseif ( 'file-library' === $tab ) {
 				$this->handle_file_library_actions();
+			} elseif ( 'gmail-intake' === $tab ) {
+				$this->handle_portal_gmail_intake_actions();
+			} elseif ( 'mail' === $tab ) {
+				$this->handle_portal_mail_actions();
 			}
 		} elseif ( 'ajforms-cp-settings' === $page ) {
 			// display_cp_settings_admin_page() aliases this page slug to
@@ -11227,7 +11231,7 @@ class AJForms_Admin {
 			// Matches the full tab whitelist in display_portal_dashboard() so "Full Sync Now" (now
 			// available from every tab, not just Sync/Menu/Customers/Product Catalog/Compliance)
 			// redirects back to wherever it was actually clicked from.
-			$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $current_tab : 'menu';
+			$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations', 'mail', 'gmail-intake' ), true ) ? $current_tab : 'menu';
 			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
 
 			if ( in_array( $action, array( 'sync_all', 'sync_products', 'sync_customers', 'sync_subscriptions', 'sync_transactions' ), true )
@@ -12869,6 +12873,34 @@ class AJForms_Admin {
 			exit;
 		}
 	}
+
+	private function handle_portal_gmail_intake_actions() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_gmail_intake_resolve_nonce'] ) ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_gmail_intake_resolve', 'ajcore_gmail_intake_resolve_nonce' );
+
+		$log_id             = isset( $_POST['gmail_intake_log_id'] ) ? absint( $_POST['gmail_intake_log_id'] ) : 0;
+		$stripe_customer_id = isset( $_POST['stripe_customer_id'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_id'] ) ) : '';
+		$args               = array( 'page' => 'ajforms-client-portal', 'tab' => 'gmail-intake' );
+
+		if ( ! $log_id || '' === $stripe_customer_id ) {
+			$args['portal-error'] = rawurlencode( __( 'Pick a customer before filing.', 'ajforms' ) );
+		} else {
+			$result = $this->resolve_gmail_intake_needs_review( $log_id, $stripe_customer_id );
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['gmail-intake-resolved'] = 1;
+			}
+		}
+
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	// TODO: full WP-admin Mail tab actions (create/update/delete/notify/publish).
+	private function handle_portal_mail_actions() {}
 
 	private function handle_portal_event_log_actions() {
 		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_event_log_nonce'], $_POST['ajcore_event_log_action'] ) ) {
@@ -18737,7 +18769,7 @@ class AJForms_Admin {
 			}
 			$tab = 'cp-settings';
 		}
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -18760,6 +18792,8 @@ class AJForms_Admin {
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'tasks'              => __( 'Compliance', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
+			'mail'               => __( 'Mail', 'ajforms' ),
+			'gmail-intake'       => __( 'Gmail Intake', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
@@ -18853,6 +18887,10 @@ class AJForms_Admin {
 				$this->display_portal_tasks_tab();
 			} elseif ( 'reservations' === $tab ) {
 				$this->display_portal_reservations_admin_tab();
+			} elseif ( 'mail' === $tab ) {
+				$this->display_portal_mail_tab();
+			} elseif ( 'gmail-intake' === $tab ) {
+				$this->display_portal_gmail_intake_tab();
 			} elseif ( 'cp-settings' === $tab ) {
 				$this->display_client_portal_cp_settings_tab();
 			} else {
@@ -20513,6 +20551,213 @@ class AJForms_Admin {
 		</table>
 		</div>
 		<?php
+	}
+
+	/**
+	 * WP-admin fallback for the Gmail Intake activity log/needs-review queue, so staff can
+	 * resolve unmatched emails even if AJOps is down — same data and same resolve action
+	 * (resolve_gmail_intake_needs_review()) as the AJOps "Gmail Intake" screen.
+	 */
+	private function display_portal_gmail_intake_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			echo '<div class="notice notice-warning"><p>' . esc_html__( 'The Gmail Intake log table is not available yet.', 'ajforms' ) . '</p></div>';
+			return;
+		}
+
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+
+		$status = isset( $_GET['gi_status'] ) ? sanitize_key( wp_unslash( $_GET['gi_status'] ) ) : 'needs_review';
+		$search = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
+
+		$where  = array( '1=1' );
+		$params = array();
+		if ( in_array( $status, array( 'filed', 'matched_pending_file', 'skipped_no_attachment', 'needs_review', 'resolved' ), true ) ) {
+			$where[]  = 'status = %s';
+			$params[] = $status;
+		}
+		if ( '' !== $search ) {
+			$like    = '%' . $pdb->esc_like( $search ) . '%';
+			$where[] = '(subject LIKE %s OR sender LIKE %s OR company_name_extracted LIKE %s OR customer_name LIKE %s)';
+			$params  = array_merge( $params, array( $like, $like, $like, $like ) );
+		}
+		$where_sql = implode( ' AND ', $where );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$sql  = "SELECT * FROM `{$table}` WHERE {$where_sql} ORDER BY (status = 'needs_review') DESC, created_at DESC, id DESC LIMIT 300";
+		$rows = ! empty( $params ) ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
+
+		$stats = $pdb->get_row(
+			"SELECT COUNT(*) AS total,
+				SUM(status = 'filed') AS filed,
+				SUM(status = 'matched_pending_file') AS matched_pending_file,
+				SUM(status = 'needs_review') AS needs_review,
+				SUM(status = 'resolved') AS resolved,
+				SUM(status = 'skipped_no_attachment') AS skipped_no_attachment
+			FROM `{$table}`"
+		);
+
+		// Customer picker options, shared by every row's inline resolve form.
+		$local_customers_table = $pdb->prefix . 'aj_portal_local_customers';
+		$customers              = array_merge(
+			(array) $pdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC" ),
+			(array) $pdb->get_results( "SELECT local_customer_id AS stripe_customer_id, name, email FROM `{$local_customers_table}` ORDER BY name ASC" )
+		);
+
+		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'gmail-intake' ), admin_url( 'admin.php' ) );
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'Gmail Intake', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( "State-filing notification emails read from the intake mailbox, matched to a customer by company name. Filing to a customer's Files is paused for now — matched emails just show which documents would be filed.", 'ajforms' ); ?></p>
+				</div>
+			</div>
+
+			<?php if ( isset( $_GET['gmail-intake-resolved'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Filed to the selected customer.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<div class="ajcore-kpi-grid">
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Needs Review', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->needs_review ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Matched, Pending File', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->matched_pending_file ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Filed', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->filed ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Resolved', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->resolved ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Total Checked', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->total ); ?></strong></div>
+			</div>
+
+			<form method="get" class="ajcore-filter-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px;">
+				<input type="hidden" name="page" value="ajforms-client-portal">
+				<input type="hidden" name="tab" value="gmail-intake">
+				<select name="gi_status">
+					<option value="needs_review" <?php selected( $status, 'needs_review' ); ?>><?php esc_html_e( 'Needs review', 'ajforms' ); ?></option>
+					<option value="matched_pending_file" <?php selected( $status, 'matched_pending_file' ); ?>><?php esc_html_e( 'Matched, pending file', 'ajforms' ); ?></option>
+					<option value="filed" <?php selected( $status, 'filed' ); ?>><?php esc_html_e( 'Filed', 'ajforms' ); ?></option>
+					<option value="resolved" <?php selected( $status, 'resolved' ); ?>><?php esc_html_e( 'Resolved', 'ajforms' ); ?></option>
+					<option value="skipped_no_attachment" <?php selected( $status, 'skipped_no_attachment' ); ?>><?php esc_html_e( 'No document found', 'ajforms' ); ?></option>
+					<option value="" <?php selected( $status, '' ); ?>><?php esc_html_e( 'All', 'ajforms' ); ?></option>
+				</select>
+				<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php echo esc_attr__( 'Search subject, sender, company, customer…', 'ajforms' ); ?>">
+				<button type="submit" class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
+				<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
+				<button type="button" id="ajcore-gmail-intake-refresh" class="button" style="margin-left:auto;"><?php esc_html_e( 'Refresh', 'ajforms' ); ?></button>
+			</form>
+
+			<script>
+			( function () {
+				var btn        = document.getElementById( 'ajcore-gmail-intake-refresh' );
+				var processUrl = <?php echo wp_json_encode( rest_url( 'ajcore/v1/gmail-intake/process' ) ); ?>;
+				var nonce      = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
+
+				function processThenReload( onDone ) {
+					if ( btn ) { btn.disabled = true; btn.textContent = <?php echo wp_json_encode( __( 'Checking mailbox…', 'ajforms' ) ); ?>; }
+					fetch( processUrl, { method: 'POST', headers: { 'X-WP-Nonce': nonce } } )
+						.catch( function () {} )
+						.then( function () { onDone(); } );
+				}
+
+				if ( btn ) {
+					btn.addEventListener( 'click', function () {
+						processThenReload( function () { window.location.reload(); } );
+					} );
+				}
+
+				// Refresh on load — once per page view, guarded by a URL param so this can't loop.
+				if ( -1 === window.location.search.indexOf( 'gi_processed=1' ) ) {
+					processThenReload( function () {
+						var url = new URL( window.location.href );
+						url.searchParams.set( 'gi_processed', '1' );
+						window.location.replace( url.toString() );
+					} );
+				}
+
+				// Refresh every 5 minutes while the tab stays open.
+				setInterval( function () {
+					processThenReload( function () { window.location.reload(); } );
+				}, 5 * 60 * 1000 );
+			} )();
+			</script>
+
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Received', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( empty( $rows ) ) : ?>
+						<tr><td colspan="5"><?php esc_html_e( 'Nothing here.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $rows as $row ) : ?>
+							<?php $filed_filenames = ! empty( $row->filed_filenames ) ? (array) json_decode( (string) $row->filed_filenames, true ) : array(); ?>
+							<tr>
+								<td><?php echo esc_html( $row->received_at ); ?></td>
+								<td>
+									<strong><?php echo esc_html( $row->subject ); ?></strong><br>
+									<span class="description"><?php echo esc_html( sprintf( __( 'From %s', 'ajforms' ), $row->sender ) ); ?></span>
+									<?php if ( ! empty( $filed_filenames ) && 'matched_pending_file' === $row->status ) : ?>
+										<br><span class="description"><?php echo esc_html( sprintf( __( 'Would file: %s', 'ajforms' ), implode( ', ', $filed_filenames ) ) ); ?></span>
+									<?php elseif ( ! empty( $filed_filenames ) ) : ?>
+										<br><span class="description"><?php echo esc_html( sprintf( __( 'Filed: %s', 'ajforms' ), implode( ', ', $filed_filenames ) ) ); ?></span>
+									<?php endif; ?>
+									<?php if ( ! empty( $row->error_message ) ) : ?>
+										<br><span style="color:#dc2626;"><?php echo esc_html( $row->error_message ); ?></span>
+									<?php endif; ?>
+								</td>
+								<td>
+									<?php if ( ! empty( $row->customer_name ) ) : ?>
+										<?php echo esc_html( $row->customer_name ); ?>
+									<?php elseif ( ! empty( $row->company_name_extracted ) ) : ?>
+										<span class="description"><?php echo esc_html( sprintf( __( '"%s" (no match)', 'ajforms' ), $row->company_name_extracted ) ); ?></span>
+									<?php else : ?>
+										&mdash;
+									<?php endif; ?>
+								</td>
+								<td>
+									<span class="ajcore-status-pill <?php echo esc_attr( 'needs_review' === $row->status ? 'disabled' : ( in_array( $row->status, array( 'filed', 'resolved' ), true ) ? 'active' : '' ) ); ?>">
+										<?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $row->status ) ) ); ?>
+									</span>
+								</td>
+								<td>
+									<?php if ( 'needs_review' === $row->status ) : ?>
+										<details>
+											<summary class="button"><?php esc_html_e( 'Review', 'ajforms' ); ?></summary>
+											<form method="post" style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;max-width:320px;">
+												<?php wp_nonce_field( 'ajcore_gmail_intake_resolve', 'ajcore_gmail_intake_resolve_nonce' ); ?>
+												<input type="hidden" name="gmail_intake_log_id" value="<?php echo esc_attr( $row->id ); ?>">
+												<select name="stripe_customer_id" required style="width:100%;">
+													<option value=""><?php esc_html_e( '— pick a customer —', 'ajforms' ); ?></option>
+													<?php foreach ( $customers as $c ) : ?>
+														<option value="<?php echo esc_attr( $c->stripe_customer_id ); ?>"><?php echo esc_html( $c->name . ' (' . $c->email . ')' ); ?></option>
+													<?php endforeach; ?>
+												</select>
+												<button type="submit" class="button button-primary button-small"><?php esc_html_e( 'File to This Customer', 'ajforms' ); ?></button>
+											</form>
+										</details>
+									<?php endif; ?>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
+	}
+
+	// TODO: full WP-admin Mail tab (parity with AJOps Mail: log/edit/notify/publish/disposition/delete).
+	private function display_portal_mail_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+		echo '<div class="ajforms-settings-card"><div class="ajcore-section-head"><div><h2>' . esc_html__( 'Mail', 'ajforms' ) . '</h2><p>' . esc_html__( 'Under construction — use AJOps for Mail in the meantime.', 'ajforms' ) . '</p></div></div></div>';
 	}
 
 	private function display_portal_customer_detail_page() {
@@ -24911,6 +25156,78 @@ class AJForms_Admin {
 		return '';
 	}
 
+	/** Subject first, then body — the real NC SOS approval template's subject is a generic "Congratulations..." with no company name in it at all; the name only appears in the body. */
+	private function extract_company_name_from_gmail_message( $subject, $body_text ) {
+		$from_subject = $this->extract_company_name_from_subject( $subject );
+		if ( '' !== $from_subject ) {
+			return $from_subject;
+		}
+		return $this->extract_company_name_from_body( $body_text );
+	}
+
+	/**
+	 * Body-text fallback for extraction. The NC Secretary of State's actual filing-approval
+	 * template reads "Document Filed: ARTICLES OF ORGANIZATIONfor LUX VENTUREZ LLC" — note there
+	 * is NO space between the document-type name and "for" in their template, so (unlike the
+	 * subject-line patterns above) this deliberately does not require a word boundary before
+	 * "for"; the required business-entity suffix on the captured name is what keeps this from
+	 * over-matching random body text.
+	 */
+	private function extract_company_name_from_body( $body_text ) {
+		$body_text = (string) $body_text;
+		if ( '' === trim( $body_text ) ) {
+			return '';
+		}
+		$suffix = '(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|LLP|L\.L\.P\.|LP|PLLC|PLC|Co\.)';
+
+		if ( preg_match( '/Document Filed:\s*.*?for\s+([A-Z0-9][A-Za-z0-9&,.\'\-\s]*?\s*' . $suffix . ')\b/is', $body_text, $m ) ) {
+			return trim( preg_replace( '/\s+/', ' ', $m[1] ) );
+		}
+		if ( preg_match( '/for\s+([A-Z0-9][A-Za-z0-9&,.\'\-\s]*?\s*' . $suffix . ')\b/i', $body_text, $m ) ) {
+			return trim( preg_replace( '/\s+/', ' ', $m[1] ) );
+		}
+		return '';
+	}
+
+	/** Recursively walks a Gmail message payload's MIME parts, collecting the first text/plain and text/html body parts found (by reference, first-found-wins per type). */
+	private function gmail_intake_collect_body_parts( $payload, &$plain, &$html ) {
+		if ( ! is_array( $payload ) ) {
+			return;
+		}
+		$mime_type = isset( $payload['mimeType'] ) ? (string) $payload['mimeType'] : '';
+		$body_data = isset( $payload['body']['data'] ) ? (string) $payload['body']['data'] : '';
+		if ( '' !== $body_data ) {
+			$decoded = (string) base64_decode( strtr( $body_data, '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+			if ( 'text/plain' === $mime_type && '' === $plain ) {
+				$plain = $decoded;
+			} elseif ( 'text/html' === $mime_type && '' === $html ) {
+				$html = $decoded;
+			}
+		}
+		if ( ! empty( $payload['parts'] ) && is_array( $payload['parts'] ) ) {
+			foreach ( $payload['parts'] as $part ) {
+				$this->gmail_intake_collect_body_parts( $part, $plain, $html );
+			}
+		}
+	}
+
+	/** Plain text preferred; falls back to the HTML part stripped to text (handles forwarded emails, which are often HTML-only). */
+	private function gmail_intake_get_text_body( $payload ) {
+		$plain = '';
+		$html  = '';
+		$this->gmail_intake_collect_body_parts( $payload, $plain, $html );
+		if ( '' !== $plain ) {
+			return $plain;
+		}
+		if ( '' !== $html ) {
+			$text = preg_replace( '/<(script|style)[^>]*>.*?<\/\1>/is', ' ', $html );
+			$text = preg_replace( '/<br\s*\/?>|<\/p>|<\/div>|<\/tr>|<\/li>/i', "\n", (string) $text );
+			$text = wp_strip_all_tags( (string) $text, false );
+			return html_entity_decode( $text, ENT_QUOTES, 'UTF-8' );
+		}
+		return '';
+	}
+
 	/** Finds exactly one customer matching $company_name across Stripe and local customers. Returns null on zero or 2+ matches — never auto-file on an ambiguous guess. */
 	private function find_portal_customer_by_company_name( $company_name ) {
 		$company_name = trim( (string) $company_name );
@@ -25007,7 +25324,7 @@ class AJForms_Admin {
 			'/messages',
 			array(
 				'query' => array(
-					'q'          => 'in:inbox -label:ajcore-processed -label:ajcore-needsreview',
+					'q'          => 'in:inbox -label:ajcore-processed -label:ajcore-needsreview -from:google.com',
 					'maxResults' => max( 1, min( 50, (int) $max_messages ) ),
 				),
 			)
@@ -25016,7 +25333,7 @@ class AJForms_Admin {
 			return $list;
 		}
 
-		$summary = array( 'checked' => 0, 'filed' => 0, 'needs_review' => 0, 'skipped_no_attachment' => 0, 'errors' => array() );
+		$summary = array( 'checked' => 0, 'filed' => 0, 'matched_pending_file' => 0, 'needs_review' => 0, 'skipped_no_attachment' => 0, 'errors' => array() );
 
 		foreach ( (array) ( isset( $list['messages'] ) ? $list['messages'] : array() ) as $item ) {
 			if ( empty( $item['id'] ) ) {
@@ -25043,7 +25360,8 @@ class AJForms_Admin {
 			$sender  = $this->gmail_intake_header_value( $headers, 'From' );
 			$date_ts = strtotime( (string) $this->gmail_intake_header_value( $headers, 'Date' ) );
 
-			$company_name = $this->extract_company_name_from_subject( $subject );
+			$body_text    = $this->gmail_intake_get_text_body( isset( $message['payload'] ) ? $message['payload'] : array() );
+			$company_name = $this->extract_company_name_from_gmail_message( $subject, $body_text );
 			$customer     = '' !== $company_name ? $this->find_portal_customer_by_company_name( $company_name ) : null;
 
 			if ( ! $customer ) {
@@ -25061,57 +25379,23 @@ class AJForms_Admin {
 				continue;
 			}
 
+			// Matched to a customer — for now, only identify which real filing-document PDFs
+			// would be filed and log the match. Actual upload/renaming is intentionally paused
+			// pending a confirmed attachment-naming convention; nothing is written to the
+			// customer's Files yet. (Re-enable by restoring the download+upload_files_for_portal_
+			// customer() loop that used to sit here — see git history — once that's ready.)
 			$pdf_parts = array();
 			$this->gmail_intake_collect_pdf_parts( isset( $message['payload'] ) ? $message['payload'] : array(), $pdf_parts );
 
-			$filed_any       = false;
-			$filed_filenames = array();
-			$message_errors  = array();
+			$pending_filenames = array();
 			foreach ( $pdf_parts as $pdf ) {
 				if ( ! $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ) ) {
 					continue; // Looks like a bundled flyer, not a real filing document — skip it.
 				}
-				$attachment = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $message_id ) . '/attachments/' . rawurlencode( $pdf['attachment_id'] ) );
-				if ( is_wp_error( $attachment ) || empty( $attachment['data'] ) ) {
-					$error_message          = is_wp_error( $attachment ) ? $attachment->get_error_message() : __( 'Attachment had no data.', 'ajforms' );
-					$summary['errors'][]    = $error_message;
-					$message_errors[]       = $error_message;
-					continue;
-				}
-				$binary = base64_decode( strtr( $attachment['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
-				if ( false === $binary ) {
-					continue;
-				}
-
-				$tmp_path = wp_tempnam( $pdf['filename'] );
-				file_put_contents( $tmp_path, $binary ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-				$new_filename = $this->gmail_intake_build_filename( $customer->customer_number, $customer->name, $pdf['filename'] );
-
-				$files = array(
-					'name'     => $new_filename,
-					'type'     => 'application/pdf',
-					'tmp_name' => $tmp_path,
-					'error'    => UPLOAD_ERR_OK,
-					'size'     => filesize( $tmp_path ),
-				);
-				$result = $this->upload_files_for_portal_customer( $customer->stripe_customer_id, $files, 'Gmail Intake', '' );
-				if ( is_wp_error( $result ) ) {
-					$summary['errors'][] = $result->get_error_message();
-					$message_errors[]    = $result->get_error_message();
-				} else {
-					$filed_any         = true;
-					$filed_filenames[] = $new_filename;
-				}
-				if ( file_exists( $tmp_path ) ) {
-					unlink( $tmp_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-				}
+				$pending_filenames[] = $pdf['filename'];
 			}
 
-			if ( $filed_any ) {
-				$summary['filed']++;
-			} else {
-				$summary['skipped_no_attachment']++;
-			}
+			$summary['matched_pending_file']++;
 
 			$this->gmail_intake_api_request( 'POST', '/messages/' . rawurlencode( $message_id ) . '/modify', array( 'body' => array( 'addLabelIds' => array( $labels['processed'] ) ) ) );
 
@@ -25121,11 +25405,10 @@ class AJForms_Admin {
 				'sender'                 => $sender,
 				'snippet'                => isset( $message['snippet'] ) ? $message['snippet'] : '',
 				'company_name_extracted' => $company_name,
-				'status'                 => $filed_any ? 'filed' : 'skipped_no_attachment',
+				'status'                 => 'matched_pending_file',
 				'stripe_customer_id'     => $customer->stripe_customer_id,
 				'customer_name'          => $customer->name,
-				'filed_filenames'        => $filed_filenames,
-				'error_message'          => implode( ' | ', $message_errors ),
+				'filed_filenames'        => $pending_filenames,
 				'received_at'            => false !== $date_ts ? $date_ts : null,
 			) );
 		}
@@ -25163,8 +25446,11 @@ class AJForms_Admin {
 		}
 
 		$row = array(
-			'subject'                => mb_substr( sanitize_text_field( (string) ( $data['subject'] ?? '' ) ), 0, 500 ),
-			'sender'                 => mb_substr( sanitize_text_field( (string) ( $data['sender'] ?? '' ) ), 0, 255 ),
+			// Not sanitize_text_field() — it strip_tags()-strips anything that looks like a tag,
+			// which silently deletes the "<email@domain>" portion of a "Display Name <addr>"
+			// From/Subject header. Escaped properly with esc_html() at every render site instead.
+			'subject'                => mb_substr( wp_check_invalid_utf8( (string) ( $data['subject'] ?? '' ), true ), 0, 500 ),
+			'sender'                 => mb_substr( wp_check_invalid_utf8( (string) ( $data['sender'] ?? '' ), true ), 0, 255 ),
 			'snippet'                => sanitize_textarea_field( (string) ( $data['snippet'] ?? '' ) ),
 			'company_name_extracted' => mb_substr( sanitize_text_field( (string) ( $data['company_name_extracted'] ?? '' ) ), 0, 255 ),
 			'status'                 => sanitize_key( (string) ( $data['status'] ?? 'needs_review' ) ),
@@ -25545,7 +25831,7 @@ class AJForms_Admin {
 							var html = '';
 							if ( data && data.success ) {
 								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Processed', 'ajforms' ) ); ?></h4>';
-								html += '<p style="margin:0;"><?php echo esc_js( __( 'Checked:', 'ajforms' ) ); ?> ' + data.checked + ' — <?php echo esc_js( __( 'Filed:', 'ajforms' ) ); ?> ' + data.filed + ' — <?php echo esc_js( __( 'Needs review:', 'ajforms' ) ); ?> ' + data.needs_review + ' — <?php echo esc_js( __( 'No matching attachment:', 'ajforms' ) ); ?> ' + data.skipped_no_attachment + '</p>';
+								html += '<p style="margin:0;"><?php echo esc_js( __( 'Checked:', 'ajforms' ) ); ?> ' + data.checked + ' — <?php echo esc_js( __( 'Matched (pending file):', 'ajforms' ) ); ?> ' + data.matched_pending_file + ' — <?php echo esc_js( __( 'Needs review:', 'ajforms' ) ); ?> ' + data.needs_review + '</p>';
 								if ( data.errors && data.errors.length ) {
 									html += '<p style="margin:8px 0 0;color:#b91c1c;">' + data.errors.join( '<br>' ) + '</p>';
 								}
