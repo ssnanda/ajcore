@@ -20879,7 +20879,7 @@ class AJForms_Admin {
 				$filed_count   = (int) $stats->filed + (int) $stats->resolved;
 				?>
 				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'gi_status', 'pending', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'pending' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
-					<span><?php esc_html_e( 'Pending File', 'ajforms' ); ?></span><strong><?php echo esc_html( $pending_count ); ?></strong>
+					<span><?php esc_html_e( 'Pending File', 'ajforms' ); ?></span><strong<?php echo $pending_count > 0 ? ' style="color:#dc2626;"' : ''; ?>><?php echo esc_html( $pending_count ); ?></strong>
 				</a>
 				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'gi_status', 'filed', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'filed' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
 					<span><?php esc_html_e( 'Filed', 'ajforms' ); ?></span><strong><?php echo esc_html( $filed_count ); ?></strong>
@@ -26231,6 +26231,16 @@ class AJForms_Admin {
 			return array(
 				'filename' => 'AOO of ' . $company_name,
 				'category' => 'Articles of Organization',
+			);
+		}
+
+		// SOS/NC's confirmation that a Change of Registered Office/Agent filing went through —
+		// this is the proof document for the "RA Change Filed with SOS/NC" service status, so it's
+		// per-company like the AOO scan above, not a generic flyer.
+		if ( '' !== $company_name && false !== strpos( $lower, 'change of registered office and/or registered agent' ) ) {
+			return array(
+				'filename' => 'RA Change Confirmation - ' . $company_name,
+				'category' => 'Others',
 			);
 		}
 
