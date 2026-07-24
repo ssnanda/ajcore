@@ -20719,12 +20719,17 @@ class AJForms_Admin {
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Filed to the selected customer.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 
-			<div class="ajcore-kpi-grid">
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Needs Review', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->needs_review ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Matched, Pending File', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->matched_pending_file ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Filed', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->filed ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Resolved', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->resolved ); ?></strong></div>
-				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Total Checked', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats->total ); ?></strong></div>
+			<div class="ajcore-kpi-grid" style="grid-template-columns:repeat(2,minmax(160px,220px));">
+				<?php
+				$pending_count = (int) $stats->needs_review + (int) $stats->matched_pending_file + (int) $stats->skipped_no_attachment;
+				$filed_count   = (int) $stats->filed + (int) $stats->resolved;
+				?>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'gi_status', 'pending', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'pending' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
+					<span><?php esc_html_e( 'Pending File', 'ajforms' ); ?></span><strong><?php echo esc_html( $pending_count ); ?></strong>
+				</a>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'gi_status', 'filed', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'filed' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
+					<span><?php esc_html_e( 'Filed', 'ajforms' ); ?></span><strong><?php echo esc_html( $filed_count ); ?></strong>
+				</a>
 			</div>
 
 			<form method="get" class="ajcore-filter-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px;">
@@ -25550,6 +25555,31 @@ class AJForms_Admin {
 	 * {DocumentLabel} - {YYYY-MM-DD}.pdf". $document_label falls back to a title-cased version of
 	 * the original filename if no known document-type keyword matched it.
 	 */
+	/**
+	 * Rule-based filename suggestions for the rename field in the Gmail Intake preview/file panel,
+	 * added incrementally as new naming rules are specified. Current rules:
+	 * - Articles of Organization → "AOO {Company Name}.pdf"
+	 * Falls back to the original attachment filename if no rule matches or there's no company name yet.
+	 */
+	private function gmail_intake_suggest_filename( $original_filename, $company_name ) {
+		$lower        = strtolower( (string) $original_filename );
+		$company_name = trim( (string) $company_name );
+
+		$rules = array(
+			'articles' => 'AOO',
+		);
+
+		if ( '' !== $company_name ) {
+			foreach ( $rules as $keyword => $prefix ) {
+				if ( false !== strpos( $lower, $keyword ) ) {
+					return $prefix . ' ' . $company_name . '.pdf';
+				}
+			}
+		}
+
+		return $original_filename;
+	}
+
 	private function gmail_intake_build_filename( $customer_number, $company_name, $original_filename ) {
 		$base  = preg_replace( '/\.pdf$/i', '', (string) $original_filename );
 		$label = ucwords( str_replace( array( '_', '-' ), ' ', $base ) );
@@ -25710,6 +25740,35 @@ class AJForms_Admin {
 		return (bool) $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE gmail_message_id = %s", $gmail_message_id ) );
 	}
 
+	/**
+	 * Clears the Gmail Intake activity log entirely. Local-only (this table, not the real
+	 * mailbox) — safe to call as often as needed; the next Refresh just re-evaluates everything
+	 * from scratch since dedup is local-only now (see process_gmail_intake_inbox()).
+	 */
+	public function reset_gmail_intake_log() {
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajforms' ) );
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		$pdb->query( "TRUNCATE TABLE `{$table}`" );
+		return true;
+	}
+
+	/** Deletes specific Gmail Intake log rows by id (bulk-selection "Delete" action). */
+	public function bulk_delete_gmail_intake_log_rows( $ids ) {
+		$ids = array_values( array_filter( array_map( 'absint', (array) $ids ) ) );
+		if ( empty( $ids ) ) {
+			return new WP_Error( 'no_ids', __( 'No items selected.', 'ajforms' ) );
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		$placeholders = implode( ', ', array_fill( 0, count( $ids ), '%d' ) );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$pdb->query( $pdb->prepare( "DELETE FROM `{$table}` WHERE id IN ({$placeholders})", $ids ) );
+		return count( $ids );
+	}
+
 	private function log_gmail_intake_item( $data ) {
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
 			return 0;
@@ -25846,6 +25905,158 @@ class AJForms_Admin {
 				'error_message'      => implode( ' | ', $errors ),
 				'resolved_at'        => current_time( 'mysql' ),
 				'resolved_by'        => get_current_user_id(),
+				'updated_at'         => current_time( 'mysql' ),
+			),
+			array( 'id' => (int) $row->id )
+		);
+
+		return true;
+	}
+
+	/** Fetches the source Gmail message for a log row and lists its PDF attachments, for in-app preview (no more "open in Gmail" link). */
+	public function get_gmail_intake_message_preview( $log_id ) {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", (int) $log_id ) );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajforms' ) );
+		}
+
+		$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ), array( 'query' => array( 'format' => 'full' ) ) );
+		if ( is_wp_error( $message ) ) {
+			return $message;
+		}
+
+		$headers = isset( $message['payload']['headers'] ) ? $message['payload']['headers'] : array();
+		$payload = isset( $message['payload'] ) ? $message['payload'] : array();
+
+		$pdf_parts = array();
+		$this->gmail_intake_collect_pdf_parts( $payload, $pdf_parts );
+
+		$attachments = array();
+		foreach ( $pdf_parts as $pdf ) {
+			$attachments[] = array(
+				'attachment_id'       => $pdf['attachment_id'],
+				'filename'            => $pdf['filename'],
+				'size'                => $pdf['size'],
+				'looks_like_document' => $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ),
+				'suggested_filename'  => $this->gmail_intake_suggest_filename( $pdf['filename'], (string) $row->customer_name ),
+			);
+		}
+
+		return array(
+			'id'          => (int) $row->id,
+			'subject'     => $this->gmail_intake_header_value( $headers, 'Subject' ),
+			'sender'      => $this->gmail_intake_header_value( $headers, 'From' ),
+			'date'        => $this->gmail_intake_header_value( $headers, 'Date' ),
+			'body_text'   => $this->gmail_intake_get_text_body( $payload ),
+			'attachments' => $attachments,
+		);
+	}
+
+	/** Fetches one PDF attachment's bytes on demand (never stored) for in-app preview or download. */
+	public function get_gmail_intake_attachment_data( $log_id, $attachment_id ) {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		$row   = $pdb->get_row( $pdb->prepare( "SELECT gmail_message_id FROM `{$table}` WHERE id = %d", (int) $log_id ) );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajforms' ) );
+		}
+
+		$attachment = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
+		if ( is_wp_error( $attachment ) ) {
+			return $attachment;
+		}
+		if ( empty( $attachment['data'] ) ) {
+			return new WP_Error( 'no_data', __( 'Attachment had no data.', 'ajforms' ) );
+		}
+		$binary = base64_decode( strtr( $attachment['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+		if ( false === $binary ) {
+			return new WP_Error( 'decode_failed', __( 'Could not decode attachment data.', 'ajforms' ) );
+		}
+
+		return array(
+			'mime_type'   => 'application/pdf',
+			'data_base64' => base64_encode( $binary ), // phpcs:ignore WordPress.PHP.DiscouragedFunctions.obfuscation_base64_encode
+		);
+	}
+
+	/**
+	 * Files the given (possibly staff-renamed) attachments from a Gmail Intake email to a
+	 * customer's Files with an explicit category + tag, and marks the log row filed. This is the
+	 * explicit "attach to customer with labels/tags" action — separate from the automatic
+	 * matching in process_gmail_intake_inbox(), which only ever logs matched_pending_file.
+	 */
+	public function file_gmail_intake_attachments( $log_id, $stripe_customer_id, $category, $tag, $attachments ) {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", (int) $log_id ) );
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajforms' ) );
+		}
+		if ( empty( $attachments ) || ! is_array( $attachments ) ) {
+			return new WP_Error( 'no_attachments', __( 'Select at least one attachment to file.', 'ajforms' ) );
+		}
+
+		$customer = $this->find_portal_customer_by_stripe_id( $stripe_customer_id );
+		if ( ! $customer ) {
+			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajforms' ) );
+		}
+
+		$filed_filenames = array();
+		$errors          = array();
+		foreach ( $attachments as $attachment ) {
+			$attachment_id = isset( $attachment['attachment_id'] ) ? (string) $attachment['attachment_id'] : '';
+			$filename      = isset( $attachment['filename'] ) ? sanitize_file_name( (string) $attachment['filename'] ) : '';
+			if ( '' === $attachment_id || '' === $filename ) {
+				continue;
+			}
+			if ( ! preg_match( '/\.pdf$/i', $filename ) ) {
+				$filename .= '.pdf';
+			}
+
+			$fetched = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
+			if ( is_wp_error( $fetched ) || empty( $fetched['data'] ) ) {
+				$errors[] = is_wp_error( $fetched ) ? $fetched->get_error_message() : __( 'Attachment had no data.', 'ajforms' );
+				continue;
+			}
+			$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+			if ( false === $binary ) {
+				continue;
+			}
+
+			$tmp_path = wp_tempnam( $filename );
+			file_put_contents( $tmp_path, $binary ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			$files = array(
+				'name'     => $filename,
+				'type'     => 'application/pdf',
+				'tmp_name' => $tmp_path,
+				'error'    => UPLOAD_ERR_OK,
+				'size'     => filesize( $tmp_path ),
+			);
+			$result = $this->upload_files_for_portal_customer( $customer->stripe_customer_id, $files, $category, $tag );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $result->get_error_message();
+			} else {
+				$filed_filenames[] = $filename;
+			}
+			if ( file_exists( $tmp_path ) ) {
+				unlink( $tmp_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+			}
+		}
+
+		if ( empty( $filed_filenames ) ) {
+			return new WP_Error( 'file_failed', ! empty( $errors ) ? implode( ' | ', $errors ) : __( 'No attachments were filed.', 'ajforms' ) );
+		}
+
+		$pdb->update(
+			$table,
+			array(
+				'status'             => 'filed',
+				'stripe_customer_id' => $customer->stripe_customer_id,
+				'customer_name'      => $customer->name,
+				'filed_filenames'    => wp_json_encode( $filed_filenames ),
+				'error_message'      => implode( ' | ', $errors ),
 				'updated_at'         => current_time( 'mysql' ),
 			),
 			array( 'id' => (int) $row->id )

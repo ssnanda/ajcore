@@ -756,10 +756,15 @@ class AJCore_REST_API {
 			'/ops/mail/(?P<id>\d+)'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_mail_item', 'permission' => 'can_manage_ops_api' ),
 			'/ops/mail'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_mail_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			// Gmail Intake activity log (sub-routes before the bare /ops/gmail-intake/{id} GET)
-			'/ops/gmail-intake/process'             => array( 'methods' => 'POST', 'callback' => 'process_ops_gmail_intake', 'permission' => 'can_manage_ops_api' ),
-			'/ops/gmail-intake/(?P<id>\d+)/resolve' => array( 'methods' => 'POST', 'callback' => 'resolve_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
-			'/ops/gmail-intake/(?P<id>\d+)'         => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
-			'/ops/gmail-intake'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/gmail-intake/process'                    => array( 'methods' => 'POST', 'callback' => 'process_ops_gmail_intake', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/reset'                      => array( 'methods' => 'POST', 'callback' => 'reset_ops_gmail_intake_log', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/bulk-delete'                => array( 'methods' => 'POST', 'callback' => 'bulk_delete_ops_gmail_intake_items', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/(?P<id>\d+)/resolve'        => array( 'methods' => 'POST', 'callback' => 'resolve_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/(?P<id>\d+)/preview'        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_preview', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/(?P<id>\d+)/attachment'     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_attachment', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/(?P<id>\d+)/file'           => array( 'methods' => 'POST', 'callback' => 'file_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake/(?P<id>\d+)'                => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_item', 'permission' => 'can_manage_ops_api' ),
+			'/ops/gmail-intake'                            => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_gmail_intake_items', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -854,6 +859,11 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake', 'auth' => 'Admin', 'purpose' => 'Gmail Intake activity log with stats. Filters: search, status (filed|matched_pending_file|skipped_no_attachment|needs_review|resolved).', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}', 'auth' => 'Admin', 'purpose' => 'Single Gmail Intake log entry.', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/resolve', 'auth' => 'Admin', 'purpose' => 'Manually resolve a needs-review entry: re-fetches the email from Gmail, files its PDF attachments to the given stripe_customer_id.', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}/preview', 'auth' => 'Admin', 'purpose' => 'In-app email preview: subject/sender/date/body plus the list of PDF attachments (with suggested renamed filenames).', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}/attachment', 'auth' => 'Admin', 'purpose' => 'Fetches one PDF attachment\'s bytes on demand (query param attachment_id) for in-app preview.', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/file', 'auth' => 'Admin', 'purpose' => 'Files the given (possibly renamed) attachments to a customer with an explicit category + tag.', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/reset', 'auth' => 'Admin', 'purpose' => 'Clears the whole Gmail Intake activity log (local table only; does not touch the real mailbox).', 'app' => 'OPS gmail intake' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/bulk-delete', 'auth' => 'Admin', 'purpose' => 'Bulk-deletes selected Gmail Intake log entries (body: ids).', 'app' => 'OPS gmail intake' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -5680,6 +5690,78 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( $this->format_gmail_intake_log_row( $this->fetch_gmail_intake_log_row( $row['id'] ) ) );
+	}
+
+	private function get_gmail_intake_admin() {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', __( 'AJForms admin class not available.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		return AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+	}
+
+	/** In-app email preview (subject/sender/date/body + attachment list) — replaces linking out to Gmail's own web UI. */
+	public function get_ops_gmail_intake_preview( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$result = $admin->get_gmail_intake_message_preview( (int) $request['id'] );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	/** Fetches one PDF attachment's bytes on demand (never stored server-side) for in-app preview. */
+	public function get_ops_gmail_intake_attachment( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$attachment_id = sanitize_text_field( (string) $request->get_param( 'attachment_id' ) );
+		if ( '' === $attachment_id ) {
+			return new WP_Error( 'missing_attachment_id', __( 'attachment_id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$result = $admin->get_gmail_intake_attachment_data( (int) $request['id'], $attachment_id );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	/** Files the given (possibly renamed) attachments to a customer with an explicit category + tag. */
+	public function file_ops_gmail_intake_item( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$category            = sanitize_text_field( (string) $request->get_param( 'category' ) );
+		$tag                  = sanitize_key( (string) $request->get_param( 'tag' ) );
+		$attachments          = (array) $request->get_param( 'attachments' );
+		if ( '' === $stripe_customer_id ) {
+			return new WP_Error( 'missing_customer', __( 'stripe_customer_id is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$result = $admin->file_gmail_intake_attachments( (int) $request['id'], $stripe_customer_id, $category, $tag, $attachments );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $this->format_gmail_intake_log_row( $this->fetch_gmail_intake_log_row( $request['id'] ) ) );
+	}
+
+	/** "Reset" — clears the whole Gmail Intake activity log (local-only; doesn't touch the real mailbox). */
+	public function reset_ops_gmail_intake_log( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$result = $admin->reset_gmail_intake_log();
+		return is_wp_error( $result ) ? $result : rest_ensure_response( array( 'success' => true ) );
+	}
+
+	/** Bulk-selection "Delete" action for the Gmail Intake queue. */
+	public function bulk_delete_ops_gmail_intake_items( WP_REST_Request $request ) {
+		$admin = $this->get_gmail_intake_admin();
+		if ( is_wp_error( $admin ) ) {
+			return $admin;
+		}
+		$ids    = (array) $request->get_param( 'ids' );
+		$result = $admin->bulk_delete_gmail_intake_log_rows( $ids );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( array( 'deleted' => $result ) );
 	}
 
 	/** Client mailbox: the current portal user's mail items, without staff-only fields. */
