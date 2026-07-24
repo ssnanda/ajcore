@@ -5763,13 +5763,12 @@ class AJCore_REST_API {
 			return $admin;
 		}
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
-		$category            = sanitize_text_field( (string) $request->get_param( 'category' ) );
-		$tag                  = sanitize_key( (string) $request->get_param( 'tag' ) );
-		$attachments          = (array) $request->get_param( 'attachments' );
+		$tag                = sanitize_key( (string) $request->get_param( 'tag' ) );
+		$attachments        = (array) $request->get_param( 'attachments' );
 		if ( '' === $stripe_customer_id ) {
 			return new WP_Error( 'missing_customer', __( 'stripe_customer_id is required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
-		$result = $admin->file_gmail_intake_attachments( (int) $request['id'], $stripe_customer_id, $category, $tag, $attachments );
+		$result = $admin->file_gmail_intake_attachments( (int) $request['id'], $stripe_customer_id, $tag, $attachments );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}

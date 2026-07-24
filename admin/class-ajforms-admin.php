@@ -20716,7 +20716,7 @@ class AJForms_Admin {
 
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'gmail-intake' ), admin_url( 'admin.php' ) );
 		?>
-		<div class="ajforms-settings-card">
+		<div id="ajcore-gi-list-section" class="ajforms-settings-card">
 			<div class="ajcore-section-head">
 				<div>
 					<h2><?php esc_html_e( 'Gmail Intake', 'ajforms' ); ?></h2>
@@ -20755,31 +20755,23 @@ class AJForms_Admin {
 				<button type="button" id="ajcore-gmail-intake-refresh" class="button" style="margin-left:auto;"><?php esc_html_e( 'Refresh', 'ajforms' ); ?></button>
 			</form>
 
-			<div id="ajcore-gi-bulk-bar" style="display:none;align-items:center;gap:10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 14px;margin:0 0 12px;">
-				<span id="ajcore-gi-bulk-count" style="font-weight:700;"></span>
-				<button type="button" id="ajcore-gi-bulk-delete" class="button" style="color:#dc2626;"><?php esc_html_e( 'Delete Selected', 'ajforms' ); ?></button>
-				<button type="button" id="ajcore-gi-bulk-clear" class="button-link"><?php esc_html_e( 'Clear selection', 'ajforms' ); ?></button>
-			</div>
-
 			<table class="widefat striped">
 				<thead>
 					<tr>
-						<th style="width:24px;"><input type="checkbox" id="ajcore-gi-select-all"></th>
 						<th><?php esc_html_e( 'Received', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+						<th style="width:24px;"></th>
 					</tr>
 				</thead>
 				<tbody>
 					<?php if ( empty( $rows ) ) : ?>
-						<tr><td colspan="6"><?php esc_html_e( 'Nothing here.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="5"><?php esc_html_e( 'Nothing here.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $rows as $row ) : ?>
 							<?php $filed_filenames = ! empty( $row->filed_filenames ) ? (array) json_decode( (string) $row->filed_filenames, true ) : array(); ?>
-							<tr>
-								<td><input type="checkbox" class="ajcore-gi-row-check" value="<?php echo esc_attr( $row->id ); ?>"></td>
+							<tr class="ajcore-gi-row" style="cursor:pointer;" data-log-id="<?php echo esc_attr( $row->id ); ?>" data-customer-id="<?php echo esc_attr( $row->stripe_customer_id ); ?>">
 								<td><?php echo esc_html( $row->received_at ); ?></td>
 								<td>
 									<strong><?php echo esc_html( $row->subject ); ?></strong><br>
@@ -20807,9 +20799,7 @@ class AJForms_Admin {
 										<?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $row->status ) ) ); ?>
 									</span>
 								</td>
-								<td>
-									<button type="button" class="button ajcore-gi-preview-btn" data-log-id="<?php echo esc_attr( $row->id ); ?>" data-customer-id="<?php echo esc_attr( $row->stripe_customer_id ); ?>"><?php esc_html_e( 'Preview', 'ajforms' ); ?></button>
-								</td>
+								<td style="color:#94a3b8;">&rsaquo;</td>
 							</tr>
 						<?php endforeach; ?>
 					<?php endif; ?>
@@ -20817,14 +20807,9 @@ class AJForms_Admin {
 			</table>
 		</div>
 
-		<div id="ajcore-gi-preview-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.4);z-index:100000;">
-			<div id="ajcore-gi-preview-modal" style="position:fixed;top:0;right:0;bottom:0;width:100%;max-width:600px;background:#fff;box-shadow:-10px 0 40px rgba(0,0,0,.25);overflow-y:auto;">
-				<div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #e2e8f0;">
-					<h2 style="margin:0;font-size:18px;"><?php esc_html_e( 'Email Preview', 'ajforms' ); ?></h2>
-					<button type="button" id="ajcore-gi-preview-close" class="button">&times;</button>
-				</div>
-				<div id="ajcore-gi-preview-body" style="padding:22px;"></div>
-			</div>
+		<div id="ajcore-gi-preview-section" style="display:none;">
+			<button type="button" id="ajcore-gi-preview-back" class="button" style="margin-bottom:14px;">&larr; <?php esc_html_e( 'Back to list', 'ajforms' ); ?></button>
+			<div id="ajcore-gi-preview-body"></div>
 		</div>
 
 		<script>
@@ -20876,90 +20861,57 @@ class AJForms_Admin {
 				} );
 			}
 
-			// ── Checkboxes + bulk delete ───────────────────────────────────────────
-			var selectAll  = document.getElementById( 'ajcore-gi-select-all' );
-			var rowChecks  = function () { return Array.prototype.slice.call( document.querySelectorAll( '.ajcore-gi-row-check' ) ); };
-			var bulkBar    = document.getElementById( 'ajcore-gi-bulk-bar' );
-			var bulkCount  = document.getElementById( 'ajcore-gi-bulk-count' );
-			var bulkDelete = document.getElementById( 'ajcore-gi-bulk-delete' );
-			var bulkClear  = document.getElementById( 'ajcore-gi-bulk-clear' );
+			// ── Preview (full-width, in place of the list) ─────────────────────────
+			var listSection    = document.getElementById( 'ajcore-gi-list-section' );
+			var previewSection = document.getElementById( 'ajcore-gi-preview-section' );
+			var backBtn        = document.getElementById( 'ajcore-gi-preview-back' );
+			var body           = document.getElementById( 'ajcore-gi-preview-body' );
 
-			function updateBulkBar() {
-				var checked = rowChecks().filter( function ( c ) { return c.checked; } );
-				if ( checked.length > 0 ) {
-					bulkBar.style.display = 'flex';
-					bulkCount.textContent = checked.length + <?php echo wp_json_encode( ' ' . __( 'selected', 'ajforms' ) ); ?>;
-				} else {
-					bulkBar.style.display = 'none';
-				}
+			function showList() {
+				previewSection.style.display = 'none';
+				listSection.style.display = '';
+				body.innerHTML = '';
 			}
-			if ( selectAll ) {
-				selectAll.addEventListener( 'change', function () {
-					rowChecks().forEach( function ( c ) { c.checked = selectAll.checked; } );
-					updateBulkBar();
-				} );
-			}
-			rowChecks().forEach( function ( c ) { c.addEventListener( 'change', updateBulkBar ); } );
-			if ( bulkClear ) {
-				bulkClear.addEventListener( 'click', function () {
-					rowChecks().forEach( function ( c ) { c.checked = false; } );
-					if ( selectAll ) { selectAll.checked = false; }
-					updateBulkBar();
-				} );
-			}
-			if ( bulkDelete ) {
-				bulkDelete.addEventListener( 'click', function () {
-					var ids = rowChecks().filter( function ( c ) { return c.checked; } ).map( function ( c ) { return parseInt( c.value, 10 ); } );
-					if ( ids.length === 0 ) { return; }
-					if ( ! window.confirm( ids.length + <?php echo wp_json_encode( ' ' . __( 'item(s) will be deleted from the log. Continue?', 'ajforms' ) ); ?> ) ) { return; }
-					bulkDelete.disabled = true;
-					apiFetch( '/gmail-intake/bulk-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify( { ids: ids } ) } )
-						.then( function () { window.location.reload(); } )
-						.catch( function ( e ) { alert( e.message ); bulkDelete.disabled = false; } );
-				} );
-			}
-
-			// ── Preview panel ──────────────────────────────────────────────────────
-			var overlay   = document.getElementById( 'ajcore-gi-preview-overlay' );
-			var body      = document.getElementById( 'ajcore-gi-preview-body' );
-			var closeBtn  = document.getElementById( 'ajcore-gi-preview-close' );
-
-			function closePreview() { overlay.style.display = 'none'; body.innerHTML = ''; }
-			closeBtn.addEventListener( 'click', closePreview );
-			overlay.addEventListener( 'click', function ( e ) { if ( e.target === overlay ) { closePreview(); } } );
-			document.addEventListener( 'keydown', function ( e ) { if ( e.key === 'Escape' ) { closePreview(); } } );
+			backBtn.addEventListener( 'click', showList );
 
 			function escapeHtml( s ) {
 				return String( s || '' ).replace( /[&<>"']/g, function ( c ) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[ c ]; } );
 			}
+			function stripPdfExt( s ) { return String( s || '' ).replace( /\.pdf$/i, '' ); }
 
-			document.querySelectorAll( '.ajcore-gi-preview-btn' ).forEach( function ( btn ) {
-				btn.addEventListener( 'click', function () {
-					var logId = btn.getAttribute( 'data-log-id' );
-					var presetCustomerId = btn.getAttribute( 'data-customer-id' ) || '';
-					overlay.style.display = 'block';
+			document.querySelectorAll( '.ajcore-gi-row' ).forEach( function ( row ) {
+				row.addEventListener( 'click', function () {
+					var logId = row.getAttribute( 'data-log-id' );
+					var presetCustomerId = row.getAttribute( 'data-customer-id' ) || '';
+					listSection.style.display = 'none';
+					previewSection.style.display = '';
 					body.innerHTML = '<p>' + <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?> + '</p>';
 
 					apiFetch( '/gmail-intake/' + logId + '/preview' ).then( function ( data ) {
-						var categoryOptions = '<option value="">— none —</option>' + categories.map( function ( c ) {
+						var categoryOptions = '<option value="">— category —</option>' + categories.map( function ( c ) {
 							return '<option value="' + escapeHtml( c ) + '">' + escapeHtml( c ) + '</option>';
 						} ).join( '' );
+						var defaultTagSlug = Object.keys( tags ).indexOf( 'registeredagent' ) !== -1 ? 'registeredagent' : '';
 						var tagOptions = '<option value="">— none —</option>' + Object.keys( tags ).map( function ( slug ) {
-							return '<option value="' + escapeHtml( slug ) + '">' + escapeHtml( tags[ slug ] ) + '</option>';
+							return '<option value="' + escapeHtml( slug ) + '"' + ( slug === defaultTagSlug ? ' selected' : '' ) + '>' + escapeHtml( tags[ slug ] ) + '</option>';
 						} ).join( '' );
 						var customerOptions = customers.map( function ( c ) {
 							return '<option value="' + escapeHtml( c.id ) + '"' + ( c.id === presetCustomerId ? ' selected' : '' ) + '>' + escapeHtml( c.name ) + ' (' + escapeHtml( c.email ) + ')</option>';
 						} ).join( '' );
 
 						var attachmentsHtml = ( data.attachments || [] ).map( function ( a, idx ) {
-							var suggested = a.suggested_filename || a.filename;
+							var suggested = stripPdfExt( a.suggested_filename || a.filename );
 							var note = a.looks_like_document ? '' : ' &middot; <span style="color:#b45309;">' + <?php echo wp_json_encode( __( "didn't look like a filing document by filename — check before filing", 'ajforms' ) ); ?> + '</span>';
 							return '' +
 								'<div class="ajcore-gi-attachment" data-attachment-id="' + escapeHtml( a.attachment_id ) + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;">' +
 									'<div style="display:flex;align-items:flex-start;gap:8px;">' +
 										'<input type="checkbox" class="ajcore-gi-att-check" ' + ( a.looks_like_document ? 'checked' : '' ) + ' style="margin-top:8px;">' +
 										'<div style="flex:1;min-width:0;">' +
-											'<input type="text" class="ajcore-gi-att-filename" value="' + escapeHtml( suggested ) + '" style="width:100%;">' +
+											'<div style="display:flex;align-items:center;gap:4px;">' +
+												'<input type="text" class="ajcore-gi-att-filename" value="' + escapeHtml( suggested ) + '" style="flex:1;min-width:0;">' +
+												'<span style="color:#94a3b8;font-weight:600;">.pdf</span>' +
+											'</div>' +
+											'<select class="ajcore-gi-att-category" style="width:100%;margin-top:6px;">' + categoryOptions + '</select>' +
 											'<p class="description" style="margin:4px 0 0;font-size:11px;">' + Math.round( a.size / 1024 ) + ' KB' + note + '</p>' +
 										'</div>' +
 										'<button type="button" class="button button-small ajcore-gi-att-preview-btn">' + <?php echo wp_json_encode( __( 'Preview', 'ajforms' ) ); ?> + '</button>' +
@@ -20969,26 +20921,27 @@ class AJForms_Admin {
 						} ).join( '' ) || '<p class="description">' + <?php echo wp_json_encode( __( 'No PDF attachments on this email.', 'ajforms' ) ); ?> + '</p>';
 
 						body.innerHTML = '' +
-							'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:16px;">' +
-								'<p style="margin:0;font-weight:700;">' + escapeHtml( data.subject || '(no subject)' ) + '</p>' +
-								'<p style="margin:4px 0 0;color:#64748b;font-size:12px;">' + <?php echo wp_json_encode( __( 'From', 'ajforms' ) ); ?> + ' ' + escapeHtml( data.sender ) + ' &middot; ' + escapeHtml( data.date ) + '</p>' +
-								'<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;max-height:160px;overflow-y:auto;font-size:12px;color:#64748b;white-space:pre-wrap;">' + escapeHtml( data.body_text || '(no body content)' ) + '</div>' +
-							'</div>' +
-							'<label style="display:block;font-weight:700;margin-bottom:8px;">' + <?php echo wp_json_encode( __( 'Attachments', 'ajforms' ) ); ?> + '</label>' +
-							attachmentsHtml +
-							'<label style="display:block;font-weight:700;margin:16px 0 6px;">' + <?php echo wp_json_encode( __( 'Customer', 'ajforms' ) ); ?> + '</label>' +
-							'<select id="ajcore-gi-file-customer" style="width:100%;"><option value="">' + <?php echo wp_json_encode( __( '— pick a customer —', 'ajforms' ) ); ?> + '</option>' + customerOptions + '</select>' +
-							'<div style="display:flex;gap:10px;margin-top:12px;">' +
-								'<div style="flex:1;"><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px;">' + <?php echo wp_json_encode( __( 'Category', 'ajforms' ) ); ?> + '</label><select id="ajcore-gi-file-category" style="width:100%;">' + categoryOptions + '</select></div>' +
-								'<div style="flex:1;"><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px;">' + <?php echo wp_json_encode( __( 'Tag', 'ajforms' ) ); ?> + '</label><select id="ajcore-gi-file-tag" style="width:100%;">' + tagOptions + '</select></div>' +
-							'</div>' +
-							'<div id="ajcore-gi-file-error" style="display:none;margin-top:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"></div>' +
-							'<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">' +
-								'<button type="button" class="button" id="ajcore-gi-file-cancel">' + <?php echo wp_json_encode( __( 'Close', 'ajforms' ) ); ?> + '</button>' +
-								'<button type="button" class="button button-primary" id="ajcore-gi-file-submit">' + <?php echo wp_json_encode( __( 'File Selected to Customer', 'ajforms' ) ); ?> + '</button>' +
+							'<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">' +
+								'<div>' +
+									'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:16px;">' +
+										'<p style="margin:0;font-weight:700;">' + escapeHtml( data.subject || '(no subject)' ) + '</p>' +
+										'<p style="margin:4px 0 0;color:#64748b;font-size:12px;">' + <?php echo wp_json_encode( __( 'From', 'ajforms' ) ); ?> + ' ' + escapeHtml( data.sender ) + ' &middot; ' + escapeHtml( data.date ) + '</p>' +
+										'<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;max-height:260px;overflow-y:auto;font-size:12px;color:#64748b;white-space:pre-wrap;">' + escapeHtml( data.body_text || '(no body content)' ) + '</div>' +
+									'</div>' +
+									'<label style="display:block;font-weight:700;margin-bottom:6px;">' + <?php echo wp_json_encode( __( 'Customer', 'ajforms' ) ); ?> + '</label>' +
+									'<select id="ajcore-gi-file-customer" style="width:100%;"><option value="">' + <?php echo wp_json_encode( __( '— pick a customer —', 'ajforms' ) ); ?> + '</option>' + customerOptions + '</select>' +
+									'<label style="display:block;font-weight:700;margin:14px 0 6px;">' + <?php echo wp_json_encode( __( 'Tag (applies to all filed attachments)', 'ajforms' ) ); ?> + '</label>' +
+									'<select id="ajcore-gi-file-tag" style="width:100%;">' + tagOptions + '</select>' +
+									'<div id="ajcore-gi-file-error" style="display:none;margin-top:14px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"></div>' +
+									'<div style="margin-top:16px;">' +
+										'<button type="button" class="button button-primary" id="ajcore-gi-file-submit">' + <?php echo wp_json_encode( __( 'File Selected to Customer', 'ajforms' ) ); ?> + '</button>' +
+									'</div>' +
+								'</div>' +
+								'<div>' +
+									'<label style="display:block;font-weight:700;margin-bottom:8px;">' + <?php echo wp_json_encode( __( 'Attachments', 'ajforms' ) ); ?> + '</label>' +
+									attachmentsHtml +
+								'</div>' +
 							'</div>';
-
-						document.getElementById( 'ajcore-gi-file-cancel' ).addEventListener( 'click', closePreview );
 
 						body.querySelectorAll( '.ajcore-gi-att-preview-btn' ).forEach( function ( pbtn ) {
 							pbtn.addEventListener( 'click', function () {
@@ -21002,7 +20955,7 @@ class AJForms_Admin {
 								pbtn.disabled = true;
 								pbtn.textContent = <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?>;
 								apiFetch( '/gmail-intake/' + logId + '/attachment?attachment_id=' + encodeURIComponent( attId ) ).then( function ( d ) {
-									holder.innerHTML = '<embed src="data:' + d.mime_type + ';base64,' + d.data_base64 + '" type="application/pdf" style="width:100%;height:380px;margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;">';
+									holder.innerHTML = '<embed src="data:' + d.mime_type + ';base64,' + d.data_base64 + '" type="application/pdf" style="width:100%;height:32rem;margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;">';
 									holder.dataset.loaded = '1';
 									pbtn.disabled = false;
 									pbtn.textContent = <?php echo wp_json_encode( __( 'Hide', 'ajforms' ) ); ?>;
@@ -21028,7 +20981,8 @@ class AJForms_Admin {
 								if ( check && check.checked ) {
 									selectedAttachments.push( {
 										attachment_id: wrap.getAttribute( 'data-attachment-id' ),
-										filename: wrap.querySelector( '.ajcore-gi-att-filename' ).value,
+										filename: wrap.querySelector( '.ajcore-gi-att-filename' ).value.trim() + '.pdf',
+										category: wrap.querySelector( '.ajcore-gi-att-category' ).value,
 									} );
 								}
 							} );
@@ -21045,7 +20999,6 @@ class AJForms_Admin {
 								headers: { 'Content-Type': 'application/json' },
 								body: JSON.stringify( {
 									stripe_customer_id: customerId,
-									category: document.getElementById( 'ajcore-gi-file-category' ).value,
 									tag: document.getElementById( 'ajcore-gi-file-tag' ).value,
 									attachments: selectedAttachments,
 								} ),
@@ -26199,11 +26152,12 @@ class AJForms_Admin {
 
 	/**
 	 * Files the given (possibly staff-renamed) attachments from a Gmail Intake email to a
-	 * customer's Files with an explicit category + tag, and marks the log row filed. This is the
-	 * explicit "attach to customer with labels/tags" action — separate from the automatic
-	 * matching in process_gmail_intake_inbox(), which only ever logs matched_pending_file.
+	 * customer's Files, and marks the log row filed. Each attachment carries its own category
+	 * (they can be different document types on the same email); $tag is shared across the whole
+	 * batch. This is the explicit "attach to customer with labels/tags" action — separate from the
+	 * automatic matching in process_gmail_intake_inbox(), which only ever logs matched_pending_file.
 	 */
-	public function file_gmail_intake_attachments( $log_id, $stripe_customer_id, $category, $tag, $attachments ) {
+	public function file_gmail_intake_attachments( $log_id, $stripe_customer_id, $tag, $attachments ) {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
 		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", (int) $log_id ) );
@@ -26224,6 +26178,7 @@ class AJForms_Admin {
 		foreach ( $attachments as $attachment ) {
 			$attachment_id = isset( $attachment['attachment_id'] ) ? (string) $attachment['attachment_id'] : '';
 			$filename      = isset( $attachment['filename'] ) ? sanitize_file_name( (string) $attachment['filename'] ) : '';
+			$category      = isset( $attachment['category'] ) ? sanitize_text_field( (string) $attachment['category'] ) : '';
 			if ( '' === $attachment_id || '' === $filename ) {
 				continue;
 			}
