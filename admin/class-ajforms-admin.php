@@ -5150,6 +5150,8 @@ class AJForms_Admin {
 				'info_box_label'  => '',
 				'info_box_value'  => '',
 				'info_box_layout' => 'inline', // 'inline' => "Label: value", 'stacked' => "Label\nvalue"
+				'checklist_title' => '',
+				'checklist_items' => array(),
 				'cta_text'        => '',
 				'cta_url'         => '',
 				'fallback_note'   => '',
@@ -5177,6 +5179,24 @@ class AJForms_Admin {
 				$info_box_html = '<p style="' . $info_box_style . '">'
 					. ( '' !== (string) $a['info_box_label'] ? '<strong>' . esc_html( $a['info_box_label'] ) . ':</strong> ' : '' )
 					. esc_html( $a['info_box_value'] ) . '</p>';
+			}
+		}
+
+		$checklist_html = '';
+		if ( ! empty( $a['checklist_items'] ) ) {
+			$items_html = '';
+			foreach ( (array) $a['checklist_items'] as $item ) {
+				$item = trim( (string) $item );
+				if ( '' === $item ) {
+					continue;
+				}
+				$items_html .= '<tr><td style="padding:0 10px 12px 0;vertical-align:top;width:24px;"><span style="display:inline-block;width:20px;height:20px;border-radius:6px;background:#eef2ff;color:#3157ff;font-weight:900;font-size:13px;line-height:20px;text-align:center;">&#10003;</span></td><td style="padding:0 0 12px;vertical-align:top;font-size:15px;line-height:1.5;color:#334155;">' . esc_html( $item ) . '</td></tr>';
+			}
+			if ( '' !== $items_html ) {
+				$checklist_html = '<div style="margin:0 0 28px;">'
+					. ( '' !== (string) $a['checklist_title'] ? '<p style="margin:0 0 12px;font-size:16px;font-weight:800;color:#0f172a;">' . esc_html( $a['checklist_title'] ) . '</p>' : '' )
+					. '<table role="presentation" cellspacing="0" cellpadding="0">' . $items_html . '</table>'
+					. '</div>';
 			}
 		}
 
@@ -5208,7 +5228,7 @@ class AJForms_Admin {
 									<td style="padding:34px 34px 30px;">
 										<p style="margin:0 0 10px;color:#2563eb;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">%1$s</p>
 										<h1 style="margin:0 0 16px;font-size:28px;line-height:1.15;color:#0f172a;">%2$s</h1>
-										%3$s%4$s%5$s%6$s
+										%3$s%4$s%5$s%6$s%7$s
 									</td>
 								</tr>
 							</table>
@@ -5220,6 +5240,7 @@ class AJForms_Admin {
 			esc_html( $a['heading'] ),
 			$paragraphs_html,
 			$info_box_html,
+			$checklist_html,
 			$cta_html,
 			$fallback_html . $footer_html
 		);
@@ -15306,6 +15327,73 @@ class AJForms_Admin {
 	}
 
 	/**
+	 * Notifies a customer that document(s) from the Gmail Intake mailbox were just filed to
+	 * their portal Files — short and to the point (modeled after, but much shorter than, the real
+	 * NC SOS approval email): what was filed, a BOIR reminder with the direct filing link, and a
+	 * getting-started checklist. Subject/heading/body are settings-overridable like every other
+	 * branded email (see resolve_email_copy()); the checklist itself is not (yet) editable.
+	 */
+	public function send_gmail_intake_filed_notification( $stripe_customer_id, $customer_name, $customer_email, $filed_filenames ) {
+		$customer_email = sanitize_email( (string) $customer_email );
+		if ( ! is_email( $customer_email ) ) {
+			return false;
+		}
+
+		$settings  = $this->get_plugin_settings();
+		$brand     = $this->get_customer_brand_context( $stripe_customer_id, 0, $customer_email );
+		$sender    = $this->resolve_email_sender( $settings, 'wp_gmail_intake_from_email', 'wp_gmail_intake_from_name' );
+		$site_name = $brand['site_name'];
+
+		$file_list = implode( ', ', array_map( 'sanitize_text_field', (array) $filed_filenames ) );
+
+		$email_tokens = array(
+			'{name}'  => '' !== trim( (string) $customer_name ) ? $customer_name : $customer_email,
+			'{files}' => '' !== $file_list ? $file_list : __( 'your documents', 'ajforms' ),
+		);
+
+		$default_subject = __( 'Your business formation documents are ready', 'ajforms' );
+		$default_heading = __( 'Your documents are in your portal', 'ajforms' );
+		$default_body    = array(
+			sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+			__( "We've added the following document(s) to your client portal: {files}.", 'ajforms' ),
+			__( 'Reminder: most new companies are required to file a Beneficial Ownership Information Report (BOIR) with FinCEN. You can file directly at boiefiling.fincen.gov/boir/html.', 'ajforms' ),
+		);
+
+		$subject_template = ! empty( $settings['wp_gmail_intake_subject'] ) ? sanitize_text_field( (string) $settings['wp_gmail_intake_subject'] ) : $default_subject;
+		$subject          = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
+
+		$copy = $this->resolve_email_copy( $settings, 'wp_gmail_intake_heading', 'wp_gmail_intake_body', $default_heading, $default_body, $email_tokens );
+
+		$portal_page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
+		$portal_url     = $portal_page_id ? get_permalink( $portal_page_id ) : home_url( '/client-portal/' );
+
+		$message = $this->render_branded_email_html(
+			array(
+				'kicker'          => $site_name,
+				'heading'         => $copy['heading'],
+				'paragraphs'      => $copy['paragraphs'],
+				'checklist_title' => __( 'Your next steps:', 'ajforms' ),
+				'checklist_items' => array(
+					__( 'Get your EIN from the IRS at irs.gov', 'ajforms' ),
+					__( 'Open a business bank account', 'ajforms' ),
+					__( 'Get liability insurance for your business', 'ajforms' ),
+				),
+				'cta_text'        => __( 'View Your Files', 'ajforms' ),
+				'cta_url'         => $portal_url,
+				'footer_note'     => __( 'Log in to your client portal to view and download these files any time.', 'ajforms' ),
+			)
+		);
+
+		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+		if ( is_email( $sender['from_email'] ) ) {
+			$headers[] = 'From: ' . $sender['from_name'] . ' <' . $sender['from_email'] . '>';
+			$headers[] = 'Reply-To: ' . $sender['from_email'];
+		}
+
+		return (bool) $this->send_branded_wp_mail( $customer_email, $subject, $message, $headers, $sender['from_email'], $sender['from_name'] );
+	}
+
+	/**
 	 * Branded compliance-deadline reminder (annual report). Used by the ops REST
 	 * "Remind now" action and the daily reminder cron.
 	 */
@@ -20904,6 +20992,7 @@ class AJForms_Admin {
 						var attachmentsHtml = ( data.attachments || [] ).map( function ( a, idx ) {
 							var suggested = stripPdfExt( a.suggested_filename || a.filename );
 							var note = a.looks_like_document ? '' : ' &middot; <span style="color:#b45309;">' + <?php echo wp_json_encode( __( "didn't look like a filing document by filename — check before filing", 'ajforms' ) ); ?> + '</span>';
+							var linkHtml = a.related_link ? '<a href="' + escapeHtml( a.related_link ) + '" target="_blank" rel="noopener noreferrer" style="font-size:11px;font-weight:700;display:inline-block;margin-top:4px;">' + <?php echo wp_json_encode( __( 'Open filing site →', 'ajforms' ) ); ?> + '</a>' : '';
 							return '' +
 								'<div class="ajcore-gi-attachment" data-attachment-id="' + escapeHtml( a.attachment_id ) + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;">' +
 									'<div style="display:flex;align-items:flex-start;gap:8px;">' +
@@ -20915,6 +21004,7 @@ class AJForms_Admin {
 											'</div>' +
 											'<select class="ajcore-gi-att-category" style="width:100%;margin-top:6px;">' + categoryOptionsFor( a.suggested_category || '' ) + '</select>' +
 											'<p class="description" style="margin:4px 0 0;font-size:11px;">' + Math.round( a.size / 1024 ) + ' KB' + note + '</p>' +
+											linkHtml +
 										'</div>' +
 										'<button type="button" class="button button-small ajcore-gi-att-preview-btn">' + <?php echo wp_json_encode( __( 'Preview', 'ajforms' ) ); ?> + '</button>' +
 									'</div>' +
@@ -20934,6 +21024,9 @@ class AJForms_Admin {
 									'<select id="ajcore-gi-file-customer" style="width:100%;"><option value="">' + <?php echo wp_json_encode( __( '— pick a customer —', 'ajforms' ) ); ?> + '</option>' + customerOptions + '</select>' +
 									'<label style="display:block;font-weight:700;margin:14px 0 6px;">' + <?php echo wp_json_encode( __( 'Tag (applies to all filed attachments)', 'ajforms' ) ); ?> + '</label>' +
 									'<select id="ajcore-gi-file-tag" style="width:100%;">' + tagOptions + '</select>' +
+									'<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:600;">' +
+										'<input type="checkbox" id="ajcore-gi-file-notify" checked> ' + <?php echo wp_json_encode( __( 'Email the customer about these files', 'ajforms' ) ); ?> +
+									'</label>' +
 									'<div id="ajcore-gi-file-error" style="display:none;margin-top:14px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"></div>' +
 									'<div style="margin-top:16px;">' +
 										'<button type="button" class="button button-primary" id="ajcore-gi-file-submit">' + <?php echo wp_json_encode( __( 'File Selected to Customer', 'ajforms' ) ); ?> + '</button>' +
@@ -21002,6 +21095,7 @@ class AJForms_Admin {
 								body: JSON.stringify( {
 									stripe_customer_id: customerId,
 									tag: document.getElementById( 'ajcore-gi-file-tag' ).value,
+									notify: document.getElementById( 'ajcore-gi-file-notify' ).checked,
 									attachments: selectedAttachments,
 								} ),
 							} ).then( function () {
@@ -25815,16 +25909,17 @@ class AJForms_Admin {
 		}
 
 		$flyer_rules = array(
-			'rural rise'           => 'Rural Rise',
-			'misleading mailings'  => 'Misleading Mailings Targeting New Companies',
-			'notice to employers'  => 'Important Notice to Employers',
-			'beneficial ownership' => 'Beneficial Ownership Information Reporting Requirement',
+			'rural rise'           => array( 'label' => 'Rural Rise' ),
+			'misleading mailings'  => array( 'label' => 'Misleading Mailings Targeting New Companies' ),
+			'notice to employers'  => array( 'label' => 'Important Notice to Employers' ),
+			'beneficial ownership' => array( 'label' => 'Beneficial Ownership Information Reporting Requirement', 'link' => 'https://boiefiling.fincen.gov/boir/html' ),
 		);
-		foreach ( $flyer_rules as $keyword => $label ) {
+		foreach ( $flyer_rules as $keyword => $rule ) {
 			if ( false !== strpos( $lower, $keyword ) ) {
 				return array(
-					'filename' => 'Flyer ' . $label,
+					'filename' => 'Flyer ' . $rule['label'],
 					'category' => 'SOSNC Flyers',
+					'link'     => isset( $rule['link'] ) ? $rule['link'] : '',
 				);
 			}
 		}
@@ -26078,9 +26173,9 @@ class AJForms_Admin {
 		$pdb                = $this->get_pdb();
 		if ( 0 === strpos( $stripe_customer_id, 'local_' ) ) {
 			$local_table = $pdb->prefix . 'aj_portal_local_customers';
-			return $pdb->get_row( $pdb->prepare( "SELECT local_customer_id AS stripe_customer_id, name, customer_number FROM `{$local_table}` WHERE local_customer_id = %s", $stripe_customer_id ) );
+			return $pdb->get_row( $pdb->prepare( "SELECT local_customer_id AS stripe_customer_id, name, customer_number, email FROM `{$local_table}` WHERE local_customer_id = %s", $stripe_customer_id ) );
 		}
-		return $pdb->get_row( $pdb->prepare( "SELECT stripe_customer_id, name, customer_number FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s", $stripe_customer_id ) );
+		return $pdb->get_row( $pdb->prepare( "SELECT stripe_customer_id, name, customer_number, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s", $stripe_customer_id ) );
 	}
 
 	/**
@@ -26201,6 +26296,7 @@ class AJForms_Admin {
 			$looks_like_document = $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] );
 			$suggested_filename  = $this->gmail_intake_suggest_filename( $pdf['filename'], (string) $row->customer_name );
 			$suggested_category  = '';
+			$related_link        = '';
 
 			// Real attachment filenames from this mailbox are opaque hashes, not descriptive —
 			// the only reliable signal is the PDF's actual text content.
@@ -26213,6 +26309,7 @@ class AJForms_Admin {
 					if ( null !== $classified ) {
 						$suggested_filename  = $classified['filename'];
 						$suggested_category  = $classified['category'];
+						$related_link        = isset( $classified['link'] ) ? $classified['link'] : '';
 						$looks_like_document = true;
 					}
 				}
@@ -26225,6 +26322,7 @@ class AJForms_Admin {
 				'looks_like_document' => $looks_like_document,
 				'suggested_filename'  => $suggested_filename,
 				'suggested_category'  => $suggested_category,
+				'related_link'        => $related_link,
 			);
 		}
 
@@ -26272,7 +26370,7 @@ class AJForms_Admin {
 	 * batch. This is the explicit "attach to customer with labels/tags" action — separate from the
 	 * automatic matching in process_gmail_intake_inbox(), which only ever logs matched_pending_file.
 	 */
-	public function file_gmail_intake_attachments( $log_id, $stripe_customer_id, $tag, $attachments ) {
+	public function file_gmail_intake_attachments( $log_id, $stripe_customer_id, $tag, $attachments, $notify = false ) {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
 		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", (int) $log_id ) );
@@ -26348,7 +26446,12 @@ class AJForms_Admin {
 			array( 'id' => (int) $row->id )
 		);
 
-		return true;
+		$notified = false;
+		if ( $notify && ! empty( $customer->email ) ) {
+			$notified = $this->send_gmail_intake_filed_notification( $customer->stripe_customer_id, $customer->name, $customer->email, $filed_filenames );
+		}
+
+		return array( 'notified' => $notified );
 	}
 
 	public function display_gmail_intake_settings_section() {

@@ -5765,14 +5765,17 @@ class AJCore_REST_API {
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$tag                = sanitize_key( (string) $request->get_param( 'tag' ) );
 		$attachments        = (array) $request->get_param( 'attachments' );
+		$notify             = ! empty( $request->get_param( 'notify' ) );
 		if ( '' === $stripe_customer_id ) {
 			return new WP_Error( 'missing_customer', __( 'stripe_customer_id is required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
-		$result = $admin->file_gmail_intake_attachments( (int) $request['id'], $stripe_customer_id, $tag, $attachments );
+		$result = $admin->file_gmail_intake_attachments( (int) $request['id'], $stripe_customer_id, $tag, $attachments, $notify );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
-		return rest_ensure_response( $this->format_gmail_intake_log_row( $this->fetch_gmail_intake_log_row( $request['id'] ) ) );
+		$response = $this->format_gmail_intake_log_row( $this->fetch_gmail_intake_log_row( $request['id'] ) );
+		$response['notified'] = ! empty( $result['notified'] );
+		return rest_ensure_response( $response );
 	}
 
 	/** "Reset" — clears the whole Gmail Intake activity log (local-only; doesn't touch the real mailbox). */
