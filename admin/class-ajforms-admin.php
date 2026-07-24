@@ -15009,7 +15009,7 @@ class AJForms_Admin {
 			'address_proof_needed'   => __( 'Address Proof Needed', 'ajforms' ),
 			'vo_setup_required'      => __( 'Virtual Office Setup Required', 'ajforms' ),
 			'sosnc_client'           => __( 'Customer Updating SOS/NC', 'ajforms' ),
-			'updating_sosn'          => __( 'Updating SOS/NC', 'ajforms' ),
+			'updating_sosn'          => __( 'RA Change Filed with SOS/NC', 'ajforms' ),
 			'included_with_llc_setup' => __( 'Included with LLC Setup', 'ajforms' ),
 			'active'                 => __( 'Active', 'ajforms' ),
 			'completed'              => __( 'Completed', 'ajforms' ),
@@ -15148,24 +15148,51 @@ class AJForms_Admin {
 		$service_name    = sanitize_text_field( (string) $request->service_name );
 		$status_label    = $labels[ $new_service_status ];
 		$service_display = '' !== $service_name ? $service_name : __( 'your service request', 'ajforms' );
-		$subject_key      = $this->get_customer_brand_setting_key( 'wp_service_status_subject', $brand );
-		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : __( 'Update on {service_name}: {status_label}', 'ajforms' );
+		$product_type    = $this->get_portal_service_request_product_type( $request );
 		$email_tokens     = array(
 			'{name}'          => ! empty( $customer->name ) ? $customer->name : $customer->email,
 			'{service_name}'  => $service_display,
 			'{status_label}'  => $status_label,
+			'{agent_name}'    => ! empty( $brand['entity_name'] ) ? $brand['entity_name'] : $site_name,
 		);
+
+		$default_subject  = __( 'Update on {service_name}: {status_label}', 'ajforms' );
+		$default_heading  = __( 'Your service request was updated', 'ajforms' );
+		$default_body     = array(
+			sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+			sprintf( __( 'The status of "%s" has changed.', 'ajforms' ), '{service_name}' ),
+		);
+		$subject_setting_key = 'wp_service_status_subject';
+		$heading_setting_key = 'wp_service_status_heading';
+		$body_setting_key    = 'wp_service_status_body';
+
+		// This transition means something specific for a Registered Agent Subscription — we just
+		// submitted the Change of Registered Agent form to SOS/NC naming us as the new agent — so it
+		// gets its own copy (and its own settings keys, left blank by default) instead of reusing the
+		// generic "status changed" template, which already has non-empty saved defaults of its own.
+		if ( 'updating_sosn' === $new_service_status && 'registered_agent_subscription' === $product_type ) {
+			$default_subject = __( 'We filed your Registered Agent change with SOS/NC', 'ajforms' );
+			$default_heading = __( 'Your Registered Agent change has been filed', 'ajforms' );
+			$default_body    = array(
+				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+				sprintf( __( 'We\'ve submitted the Change of Registered Agent form to the NC Secretary of State, naming %1$s as the new registered agent for %2$s.', 'ajforms' ), '{agent_name}', '{service_name}' ),
+				__( "No action is needed from you right now — once the state processes this filing, we'll mark your service active.", 'ajforms' ),
+			);
+			$subject_setting_key = 'wp_ra_change_filed_subject';
+			$heading_setting_key = 'wp_ra_change_filed_heading';
+			$body_setting_key    = 'wp_ra_change_filed_body';
+		}
+
+		$subject_key      = $this->get_customer_brand_setting_key( $subject_setting_key, $brand );
+		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : $default_subject;
 		$subject = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
 
 		$copy = $this->resolve_email_copy(
 			$settings,
-			$this->get_customer_brand_setting_key( 'wp_service_status_heading', $brand ),
-			$this->get_customer_brand_setting_key( 'wp_service_status_body', $brand ),
-			__( 'Your service request was updated', 'ajforms' ),
-			array(
-				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-				sprintf( __( 'The status of "%s" has changed.', 'ajforms' ), '{service_name}' ),
-			),
+			$this->get_customer_brand_setting_key( $heading_setting_key, $brand ),
+			$this->get_customer_brand_setting_key( $body_setting_key, $brand ),
+			$default_heading,
+			$default_body,
 			$email_tokens
 		);
 
@@ -15806,8 +15833,8 @@ class AJForms_Admin {
 					// One step: get the CMRA signed. Once signed, mark active — no further action.
 					$actions['sign_cmra'] = __( 'Send CMRA for Signing', 'ajforms' );
 				} elseif ( 'registered_agent_subscription' === $product_type ) {
-					// One step: update the registered agent on SOS/NC (staff or customer). Once done, mark active.
-					$actions['update_sosn'] = __( 'Update RA on SOS/NC', 'ajforms' );
+					// One step: file the Change of Registered Agent form with SOS/NC (staff or customer). Once done, mark active.
+					$actions['update_sosn'] = __( 'File RA Change with SOS/NC', 'ajforms' );
 				} else {
 					if ( 'new' === $service_status || '' === $service_status ) {
 						$actions['under_review'] = __( 'Start Review', 'ajforms' );
