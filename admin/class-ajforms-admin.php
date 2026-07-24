@@ -26223,7 +26223,7 @@ class AJForms_Admin {
 	 * types get identified — this list grows incrementally as the user specifies each one.
 	 * Returns null (no rule matched) if the caller should fall back to the filename-only guess.
 	 */
-	private function gmail_intake_classify_pdf_content( $pdf_text, $company_name ) {
+	private function gmail_intake_classify_pdf_content( $pdf_text, $company_name, $binary = '' ) {
 		$lower        = strtolower( (string) $pdf_text );
 		$company_name = trim( (string) $company_name );
 
@@ -26260,11 +26260,16 @@ class AJForms_Admin {
 			}
 		}
 
-		// No embedded text at all (a scanned/image-only PDF, e.g. the state's stamped charter
-		// certificate has no /Font objects — pure raster image, nothing to extract). If we
-		// already know the company name from the email, that's a strong signal this specific
-		// attachment is the actual Articles of Organization scan.
-		if ( '' === $lower && '' !== $company_name ) {
+		// No embedded text at all AND the binary itself confirms this is a scanned/image-only PDF
+		// (no /Font objects — nothing our text extractor could ever have pulled out — but it does
+		// have an embedded /Image, e.g. the state's stamped charter certificate). If we already
+		// know the company name from the email, that's a strong signal this specific attachment is
+		// the actual Articles of Organization scan. Checking the binary (not just "text came back
+		// empty") matters: other real document types — e.g. the Change of Registered Office/Agent
+		// confirmation above — are genuine text PDFs that our extractor can occasionally fail on for
+		// unrelated reasons (an encoding/compression it doesn't handle), and blindly assuming "empty
+		// text + known company = AOO" mislabeled one of those as an AOO scan.
+		if ( '' === $lower && '' !== $company_name && $this->gmail_intake_pdf_is_scanned_image( $binary ) ) {
 			return array(
 				'filename' => 'AOO of ' . $company_name,
 				'category' => 'Articles of Organization',
@@ -26272,6 +26277,16 @@ class AJForms_Admin {
 		}
 
 		return null;
+	}
+
+	/** True only when the binary itself confirms "scanned image, no extractable text" — no /Font
+	 *  resources (nothing a text extractor could ever pull out) but a real /Image is embedded. */
+	private function gmail_intake_pdf_is_scanned_image( $binary ) {
+		$binary = (string) $binary;
+		if ( '' === $binary ) {
+			return false;
+		}
+		return false === strpos( $binary, '/Font' ) && false !== strpos( $binary, '/Image' );
 	}
 
 	private function gmail_intake_build_filename( $customer_number, $company_name, $original_filename ) {
@@ -26641,7 +26656,7 @@ class AJForms_Admin {
 				$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 				if ( false !== $binary ) {
 					$pdf_text   = $this->gmail_intake_extract_pdf_text( $binary );
-					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, (string) $row->customer_name );
+					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, (string) $row->customer_name, $binary );
 					if ( null !== $classified ) {
 						$suggested_filename  = $classified['filename'];
 						$suggested_category  = $classified['category'];
