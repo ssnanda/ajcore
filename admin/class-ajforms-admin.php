@@ -12159,7 +12159,14 @@ class AJForms_Admin {
 				'size'     => (int) $get( 'size', $i ),
 			);
 
-			$uploaded = wp_handle_upload( $single, array( 'test_form' => false ) );
+			// wp_handle_sideload(), not wp_handle_upload(): callers like Gmail Intake build this
+			// array from a file we downloaded and wrote ourselves (wp_tempnam() +
+			// file_put_contents()), not a genuine $_FILES entry. wp_handle_upload() hard-requires
+			// is_uploaded_file() (no override exists for it), which always fails for a
+			// server-written temp file; wp_handle_sideload() checks is_readable() instead, which
+			// is exactly what this scenario needs — it's the documented WP function for "import a
+			// file from elsewhere on disk into the media library," not a raw upload.
+			$uploaded = wp_handle_sideload( $single, array( 'test_form' => false ) );
 			if ( isset( $uploaded['error'] ) ) {
 				$last_error = (string) $uploaded['error'];
 				continue;
@@ -20705,6 +20712,8 @@ class AJForms_Admin {
 			(array) $pdb->get_results( "SELECT local_customer_id AS stripe_customer_id, name, email FROM `{$local_customers_table}` ORDER BY name ASC" )
 		);
 
+		$file_settings = function_exists( 'ajcore_get_portal_file_settings' ) ? ajcore_get_portal_file_settings() : array( 'categories' => array(), 'tags' => array() );
+
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'gmail-intake' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="ajforms-settings-card">
@@ -20741,48 +20750,21 @@ class AJForms_Admin {
 				</select>
 				<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php echo esc_attr__( 'Search subject, sender, company, customer…', 'ajforms' ); ?>">
 				<button type="submit" class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
-				<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Clear Filters', 'ajforms' ); ?></a>
+				<button type="button" id="ajcore-gmail-intake-reset-log" class="button" style="color:#dc2626;"><?php esc_html_e( 'Reset Log', 'ajforms' ); ?></button>
 				<button type="button" id="ajcore-gmail-intake-refresh" class="button" style="margin-left:auto;"><?php esc_html_e( 'Refresh', 'ajforms' ); ?></button>
 			</form>
 
-			<script>
-			( function () {
-				var btn        = document.getElementById( 'ajcore-gmail-intake-refresh' );
-				var processUrl = <?php echo wp_json_encode( rest_url( 'ajcore/v1/gmail-intake/process' ) ); ?>;
-				var nonce      = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
-
-				function processThenReload( onDone ) {
-					if ( btn ) { btn.disabled = true; btn.textContent = <?php echo wp_json_encode( __( 'Checking mailbox…', 'ajforms' ) ); ?>; }
-					fetch( processUrl, { method: 'POST', headers: { 'X-WP-Nonce': nonce } } )
-						.catch( function () {} )
-						.then( function () { onDone(); } );
-				}
-
-				if ( btn ) {
-					btn.addEventListener( 'click', function () {
-						processThenReload( function () { window.location.reload(); } );
-					} );
-				}
-
-				// Refresh on load — once per page view, guarded by a URL param so this can't loop.
-				if ( -1 === window.location.search.indexOf( 'gi_processed=1' ) ) {
-					processThenReload( function () {
-						var url = new URL( window.location.href );
-						url.searchParams.set( 'gi_processed', '1' );
-						window.location.replace( url.toString() );
-					} );
-				}
-
-				// Refresh every 5 minutes while the tab stays open.
-				setInterval( function () {
-					processThenReload( function () { window.location.reload(); } );
-				}, 5 * 60 * 1000 );
-			} )();
-			</script>
+			<div id="ajcore-gi-bulk-bar" style="display:none;align-items:center;gap:10px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;padding:10px 14px;margin:0 0 12px;">
+				<span id="ajcore-gi-bulk-count" style="font-weight:700;"></span>
+				<button type="button" id="ajcore-gi-bulk-delete" class="button" style="color:#dc2626;"><?php esc_html_e( 'Delete Selected', 'ajforms' ); ?></button>
+				<button type="button" id="ajcore-gi-bulk-clear" class="button-link"><?php esc_html_e( 'Clear selection', 'ajforms' ); ?></button>
+			</div>
 
 			<table class="widefat striped">
 				<thead>
 					<tr>
+						<th style="width:24px;"><input type="checkbox" id="ajcore-gi-select-all"></th>
 						<th><?php esc_html_e( 'Received', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Email', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
@@ -20792,11 +20774,12 @@ class AJForms_Admin {
 				</thead>
 				<tbody>
 					<?php if ( empty( $rows ) ) : ?>
-						<tr><td colspan="5"><?php esc_html_e( 'Nothing here.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="6"><?php esc_html_e( 'Nothing here.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $rows as $row ) : ?>
 							<?php $filed_filenames = ! empty( $row->filed_filenames ) ? (array) json_decode( (string) $row->filed_filenames, true ) : array(); ?>
 							<tr>
+								<td><input type="checkbox" class="ajcore-gi-row-check" value="<?php echo esc_attr( $row->id ); ?>"></td>
 								<td><?php echo esc_html( $row->received_at ); ?></td>
 								<td>
 									<strong><?php echo esc_html( $row->subject ); ?></strong><br>
@@ -20825,23 +20808,7 @@ class AJForms_Admin {
 									</span>
 								</td>
 								<td>
-									<a class="button" href="<?php echo esc_url( 'https://mail.google.com/mail/u/0/#all/' . rawurlencode( $row->gmail_message_id ) ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open', 'ajforms' ); ?></a>
-									<?php if ( 'needs_review' === $row->status ) : ?>
-										<details>
-											<summary class="button"><?php esc_html_e( 'Review', 'ajforms' ); ?></summary>
-											<form method="post" style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;max-width:320px;">
-												<?php wp_nonce_field( 'ajcore_gmail_intake_resolve', 'ajcore_gmail_intake_resolve_nonce' ); ?>
-												<input type="hidden" name="gmail_intake_log_id" value="<?php echo esc_attr( $row->id ); ?>">
-												<select name="stripe_customer_id" required style="width:100%;">
-													<option value=""><?php esc_html_e( '— pick a customer —', 'ajforms' ); ?></option>
-													<?php foreach ( $customers as $c ) : ?>
-														<option value="<?php echo esc_attr( $c->stripe_customer_id ); ?>"><?php echo esc_html( $c->name . ' (' . $c->email . ')' ); ?></option>
-													<?php endforeach; ?>
-												</select>
-												<button type="submit" class="button button-primary button-small"><?php esc_html_e( 'File to This Customer', 'ajforms' ); ?></button>
-											</form>
-										</details>
-									<?php endif; ?>
+									<button type="button" class="button ajcore-gi-preview-btn" data-log-id="<?php echo esc_attr( $row->id ); ?>" data-customer-id="<?php echo esc_attr( $row->stripe_customer_id ); ?>"><?php esc_html_e( 'Preview', 'ajforms' ); ?></button>
 								</td>
 							</tr>
 						<?php endforeach; ?>
@@ -20849,6 +20816,255 @@ class AJForms_Admin {
 				</tbody>
 			</table>
 		</div>
+
+		<div id="ajcore-gi-preview-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.4);z-index:100000;">
+			<div id="ajcore-gi-preview-modal" style="position:fixed;top:0;right:0;bottom:0;width:100%;max-width:600px;background:#fff;box-shadow:-10px 0 40px rgba(0,0,0,.25);overflow-y:auto;">
+				<div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #e2e8f0;">
+					<h2 style="margin:0;font-size:18px;"><?php esc_html_e( 'Email Preview', 'ajforms' ); ?></h2>
+					<button type="button" id="ajcore-gi-preview-close" class="button">&times;</button>
+				</div>
+				<div id="ajcore-gi-preview-body" style="padding:22px;"></div>
+			</div>
+		</div>
+
+		<script>
+		( function () {
+			var restBase   = <?php echo wp_json_encode( rest_url( 'ajcore/v1' ) ); ?>;
+			var nonce       = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
+			var customers   = <?php echo wp_json_encode( array_map( function ( $c ) { return array( 'id' => $c->stripe_customer_id, 'name' => $c->name, 'email' => $c->email ); }, $customers ) ); ?>;
+			var categories  = <?php echo wp_json_encode( array_values( (array) $file_settings['categories'] ) ); ?>;
+			var tags        = <?php echo wp_json_encode( (object) (array) $file_settings['tags'] ); ?>;
+
+			function apiFetch( path, opts ) {
+				opts = opts || {};
+				opts.headers = Object.assign( { 'X-WP-Nonce': nonce }, opts.headers || {} );
+				return fetch( restBase + path, opts ).then( function ( r ) {
+					return r.json().then( function ( data ) {
+						if ( ! r.ok ) { throw new Error( data.message || 'Request failed' ); }
+						return data;
+					} );
+				} );
+			}
+
+			// ── Refresh / process-now (on load + button + 5min interval) ──────────────
+			var refreshBtn = document.getElementById( 'ajcore-gmail-intake-refresh' );
+			function processThenReload( onDone ) {
+				if ( refreshBtn ) { refreshBtn.disabled = true; refreshBtn.textContent = <?php echo wp_json_encode( __( 'Checking mailbox…', 'ajforms' ) ); ?>; }
+				fetch( restBase + '/gmail-intake/process', { method: 'POST', headers: { 'X-WP-Nonce': nonce } } )
+					.catch( function () {} )
+					.then( function () { onDone(); } );
+			}
+			if ( refreshBtn ) {
+				refreshBtn.addEventListener( 'click', function () { processThenReload( function () { window.location.reload(); } ); } );
+			}
+			if ( -1 === window.location.search.indexOf( 'gi_processed=1' ) ) {
+				processThenReload( function () {
+					var url = new URL( window.location.href );
+					url.searchParams.set( 'gi_processed', '1' );
+					window.location.replace( url.toString() );
+				} );
+			}
+			setInterval( function () { processThenReload( function () { window.location.reload(); } ); }, 5 * 60 * 1000 );
+
+			// ── Reset log ──────────────────────────────────────────────────────────
+			var resetBtn = document.getElementById( 'ajcore-gmail-intake-reset-log' );
+			if ( resetBtn ) {
+				resetBtn.addEventListener( 'click', function () {
+					if ( ! window.confirm( <?php echo wp_json_encode( __( 'Clear the whole Gmail Intake log? This only clears our own tracking table — it does not touch the real mailbox.', 'ajforms' ) ); ?> ) ) { return; }
+					resetBtn.disabled = true;
+					apiFetch( '/gmail-intake/reset', { method: 'POST' } ).then( function () { window.location.reload(); } ).catch( function ( e ) { alert( e.message ); resetBtn.disabled = false; } );
+				} );
+			}
+
+			// ── Checkboxes + bulk delete ───────────────────────────────────────────
+			var selectAll  = document.getElementById( 'ajcore-gi-select-all' );
+			var rowChecks  = function () { return Array.prototype.slice.call( document.querySelectorAll( '.ajcore-gi-row-check' ) ); };
+			var bulkBar    = document.getElementById( 'ajcore-gi-bulk-bar' );
+			var bulkCount  = document.getElementById( 'ajcore-gi-bulk-count' );
+			var bulkDelete = document.getElementById( 'ajcore-gi-bulk-delete' );
+			var bulkClear  = document.getElementById( 'ajcore-gi-bulk-clear' );
+
+			function updateBulkBar() {
+				var checked = rowChecks().filter( function ( c ) { return c.checked; } );
+				if ( checked.length > 0 ) {
+					bulkBar.style.display = 'flex';
+					bulkCount.textContent = checked.length + <?php echo wp_json_encode( ' ' . __( 'selected', 'ajforms' ) ); ?>;
+				} else {
+					bulkBar.style.display = 'none';
+				}
+			}
+			if ( selectAll ) {
+				selectAll.addEventListener( 'change', function () {
+					rowChecks().forEach( function ( c ) { c.checked = selectAll.checked; } );
+					updateBulkBar();
+				} );
+			}
+			rowChecks().forEach( function ( c ) { c.addEventListener( 'change', updateBulkBar ); } );
+			if ( bulkClear ) {
+				bulkClear.addEventListener( 'click', function () {
+					rowChecks().forEach( function ( c ) { c.checked = false; } );
+					if ( selectAll ) { selectAll.checked = false; }
+					updateBulkBar();
+				} );
+			}
+			if ( bulkDelete ) {
+				bulkDelete.addEventListener( 'click', function () {
+					var ids = rowChecks().filter( function ( c ) { return c.checked; } ).map( function ( c ) { return parseInt( c.value, 10 ); } );
+					if ( ids.length === 0 ) { return; }
+					if ( ! window.confirm( ids.length + <?php echo wp_json_encode( ' ' . __( 'item(s) will be deleted from the log. Continue?', 'ajforms' ) ); ?> ) ) { return; }
+					bulkDelete.disabled = true;
+					apiFetch( '/gmail-intake/bulk-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify( { ids: ids } ) } )
+						.then( function () { window.location.reload(); } )
+						.catch( function ( e ) { alert( e.message ); bulkDelete.disabled = false; } );
+				} );
+			}
+
+			// ── Preview panel ──────────────────────────────────────────────────────
+			var overlay   = document.getElementById( 'ajcore-gi-preview-overlay' );
+			var body      = document.getElementById( 'ajcore-gi-preview-body' );
+			var closeBtn  = document.getElementById( 'ajcore-gi-preview-close' );
+
+			function closePreview() { overlay.style.display = 'none'; body.innerHTML = ''; }
+			closeBtn.addEventListener( 'click', closePreview );
+			overlay.addEventListener( 'click', function ( e ) { if ( e.target === overlay ) { closePreview(); } } );
+			document.addEventListener( 'keydown', function ( e ) { if ( e.key === 'Escape' ) { closePreview(); } } );
+
+			function escapeHtml( s ) {
+				return String( s || '' ).replace( /[&<>"']/g, function ( c ) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[ c ]; } );
+			}
+
+			document.querySelectorAll( '.ajcore-gi-preview-btn' ).forEach( function ( btn ) {
+				btn.addEventListener( 'click', function () {
+					var logId = btn.getAttribute( 'data-log-id' );
+					var presetCustomerId = btn.getAttribute( 'data-customer-id' ) || '';
+					overlay.style.display = 'block';
+					body.innerHTML = '<p>' + <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?> + '</p>';
+
+					apiFetch( '/gmail-intake/' + logId + '/preview' ).then( function ( data ) {
+						var categoryOptions = '<option value="">— none —</option>' + categories.map( function ( c ) {
+							return '<option value="' + escapeHtml( c ) + '">' + escapeHtml( c ) + '</option>';
+						} ).join( '' );
+						var tagOptions = '<option value="">— none —</option>' + Object.keys( tags ).map( function ( slug ) {
+							return '<option value="' + escapeHtml( slug ) + '">' + escapeHtml( tags[ slug ] ) + '</option>';
+						} ).join( '' );
+						var customerOptions = customers.map( function ( c ) {
+							return '<option value="' + escapeHtml( c.id ) + '"' + ( c.id === presetCustomerId ? ' selected' : '' ) + '>' + escapeHtml( c.name ) + ' (' + escapeHtml( c.email ) + ')</option>';
+						} ).join( '' );
+
+						var attachmentsHtml = ( data.attachments || [] ).map( function ( a, idx ) {
+							var suggested = a.suggested_filename || a.filename;
+							var note = a.looks_like_document ? '' : ' &middot; <span style="color:#b45309;">' + <?php echo wp_json_encode( __( "didn't look like a filing document by filename — check before filing", 'ajforms' ) ); ?> + '</span>';
+							return '' +
+								'<div class="ajcore-gi-attachment" data-attachment-id="' + escapeHtml( a.attachment_id ) + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;">' +
+									'<div style="display:flex;align-items:flex-start;gap:8px;">' +
+										'<input type="checkbox" class="ajcore-gi-att-check" ' + ( a.looks_like_document ? 'checked' : '' ) + ' style="margin-top:8px;">' +
+										'<div style="flex:1;min-width:0;">' +
+											'<input type="text" class="ajcore-gi-att-filename" value="' + escapeHtml( suggested ) + '" style="width:100%;">' +
+											'<p class="description" style="margin:4px 0 0;font-size:11px;">' + Math.round( a.size / 1024 ) + ' KB' + note + '</p>' +
+										'</div>' +
+										'<button type="button" class="button button-small ajcore-gi-att-preview-btn">' + <?php echo wp_json_encode( __( 'Preview', 'ajforms' ) ); ?> + '</button>' +
+									'</div>' +
+									'<div class="ajcore-gi-att-preview-holder"></div>' +
+								'</div>';
+						} ).join( '' ) || '<p class="description">' + <?php echo wp_json_encode( __( 'No PDF attachments on this email.', 'ajforms' ) ); ?> + '</p>';
+
+						body.innerHTML = '' +
+							'<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin-bottom:16px;">' +
+								'<p style="margin:0;font-weight:700;">' + escapeHtml( data.subject || '(no subject)' ) + '</p>' +
+								'<p style="margin:4px 0 0;color:#64748b;font-size:12px;">' + <?php echo wp_json_encode( __( 'From', 'ajforms' ) ); ?> + ' ' + escapeHtml( data.sender ) + ' &middot; ' + escapeHtml( data.date ) + '</p>' +
+								'<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;max-height:160px;overflow-y:auto;font-size:12px;color:#64748b;white-space:pre-wrap;">' + escapeHtml( data.body_text || '(no body content)' ) + '</div>' +
+							'</div>' +
+							'<label style="display:block;font-weight:700;margin-bottom:8px;">' + <?php echo wp_json_encode( __( 'Attachments', 'ajforms' ) ); ?> + '</label>' +
+							attachmentsHtml +
+							'<label style="display:block;font-weight:700;margin:16px 0 6px;">' + <?php echo wp_json_encode( __( 'Customer', 'ajforms' ) ); ?> + '</label>' +
+							'<select id="ajcore-gi-file-customer" style="width:100%;"><option value="">' + <?php echo wp_json_encode( __( '— pick a customer —', 'ajforms' ) ); ?> + '</option>' + customerOptions + '</select>' +
+							'<div style="display:flex;gap:10px;margin-top:12px;">' +
+								'<div style="flex:1;"><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px;">' + <?php echo wp_json_encode( __( 'Category', 'ajforms' ) ); ?> + '</label><select id="ajcore-gi-file-category" style="width:100%;">' + categoryOptions + '</select></div>' +
+								'<div style="flex:1;"><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px;">' + <?php echo wp_json_encode( __( 'Tag', 'ajforms' ) ); ?> + '</label><select id="ajcore-gi-file-tag" style="width:100%;">' + tagOptions + '</select></div>' +
+							'</div>' +
+							'<div id="ajcore-gi-file-error" style="display:none;margin-top:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:13px;"></div>' +
+							'<div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;">' +
+								'<button type="button" class="button" id="ajcore-gi-file-cancel">' + <?php echo wp_json_encode( __( 'Close', 'ajforms' ) ); ?> + '</button>' +
+								'<button type="button" class="button button-primary" id="ajcore-gi-file-submit">' + <?php echo wp_json_encode( __( 'File Selected to Customer', 'ajforms' ) ); ?> + '</button>' +
+							'</div>';
+
+						document.getElementById( 'ajcore-gi-file-cancel' ).addEventListener( 'click', closePreview );
+
+						body.querySelectorAll( '.ajcore-gi-att-preview-btn' ).forEach( function ( pbtn ) {
+							pbtn.addEventListener( 'click', function () {
+								var wrap   = pbtn.closest( '.ajcore-gi-attachment' );
+								var holder = wrap.querySelector( '.ajcore-gi-att-preview-holder' );
+								var attId  = wrap.getAttribute( 'data-attachment-id' );
+								if ( holder.dataset.loaded === '1' ) {
+									holder.style.display = holder.style.display === 'none' ? 'block' : 'none';
+									return;
+								}
+								pbtn.disabled = true;
+								pbtn.textContent = <?php echo wp_json_encode( __( 'Loading…', 'ajforms' ) ); ?>;
+								apiFetch( '/gmail-intake/' + logId + '/attachment?attachment_id=' + encodeURIComponent( attId ) ).then( function ( d ) {
+									holder.innerHTML = '<embed src="data:' + d.mime_type + ';base64,' + d.data_base64 + '" type="application/pdf" style="width:100%;height:380px;margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;">';
+									holder.dataset.loaded = '1';
+									pbtn.disabled = false;
+									pbtn.textContent = <?php echo wp_json_encode( __( 'Hide', 'ajforms' ) ); ?>;
+								} ).catch( function ( e ) {
+									holder.innerHTML = '<p style="color:#dc2626;font-size:12px;">' + escapeHtml( e.message ) + '</p>';
+									pbtn.disabled = false;
+									pbtn.textContent = <?php echo wp_json_encode( __( 'Preview', 'ajforms' ) ); ?>;
+								} );
+							} );
+						} );
+
+						document.getElementById( 'ajcore-gi-file-submit' ).addEventListener( 'click', function () {
+							var errorBox = document.getElementById( 'ajcore-gi-file-error' );
+							var customerId = document.getElementById( 'ajcore-gi-file-customer' ).value;
+							if ( ! customerId ) {
+								errorBox.style.display = 'block';
+								errorBox.textContent = <?php echo wp_json_encode( __( 'Pick a customer first.', 'ajforms' ) ); ?>;
+								return;
+							}
+							var selectedAttachments = [];
+							body.querySelectorAll( '.ajcore-gi-attachment' ).forEach( function ( wrap ) {
+								var check = wrap.querySelector( '.ajcore-gi-att-check' );
+								if ( check && check.checked ) {
+									selectedAttachments.push( {
+										attachment_id: wrap.getAttribute( 'data-attachment-id' ),
+										filename: wrap.querySelector( '.ajcore-gi-att-filename' ).value,
+									} );
+								}
+							} );
+							if ( selectedAttachments.length === 0 ) {
+								errorBox.style.display = 'block';
+								errorBox.textContent = <?php echo wp_json_encode( __( 'Select at least one attachment to file.', 'ajforms' ) ); ?>;
+								return;
+							}
+							var submitBtn = document.getElementById( 'ajcore-gi-file-submit' );
+							submitBtn.disabled = true;
+							submitBtn.textContent = <?php echo wp_json_encode( __( 'Filing…', 'ajforms' ) ); ?>;
+							apiFetch( '/gmail-intake/' + logId + '/file', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify( {
+									stripe_customer_id: customerId,
+									category: document.getElementById( 'ajcore-gi-file-category' ).value,
+									tag: document.getElementById( 'ajcore-gi-file-tag' ).value,
+									attachments: selectedAttachments,
+								} ),
+							} ).then( function () {
+								window.location.reload();
+							} ).catch( function ( e ) {
+								errorBox.style.display = 'block';
+								errorBox.textContent = e.message;
+								submitBtn.disabled = false;
+								submitBtn.textContent = <?php echo wp_json_encode( __( 'File Selected to Customer', 'ajforms' ) ); ?>;
+							} );
+						} );
+					} ).catch( function ( e ) {
+						body.innerHTML = '<p style="color:#dc2626;">' + escapeHtml( e.message ) + '</p>';
+					} );
+				} );
+			} );
+		} )();
+		</script>
 		<?php
 	}
 

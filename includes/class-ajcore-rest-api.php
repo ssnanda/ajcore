@@ -114,6 +114,39 @@ class AJCore_REST_API {
 			)
 		);
 
+		// WP-admin-friendly siblings of the /ops/gmail-intake/* routes below — same callback
+		// methods, but gated by plain current_user_can( 'manage_options' ) (cookie/nonce auth)
+		// instead of can_manage_ops_api() (which also requires the OPS API toggle + master-site,
+		// neither of which should block a logged-in WP-admin session from using this tab).
+		$manage_options_permission = function () {
+			return current_user_can( 'manage_options' );
+		};
+		register_rest_route( self::NAMESPACE, '/gmail-intake/(?P<id>\d+)/preview', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_ops_gmail_intake_preview' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/gmail-intake/(?P<id>\d+)/attachment', array(
+			'methods'             => WP_REST_Server::READABLE,
+			'callback'            => array( $this, 'get_ops_gmail_intake_attachment' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/gmail-intake/(?P<id>\d+)/file', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'file_ops_gmail_intake_item' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/gmail-intake/reset', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'reset_ops_gmail_intake_log' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+		register_rest_route( self::NAMESPACE, '/gmail-intake/bulk-delete', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'bulk_delete_ops_gmail_intake_items' ),
+			'permission_callback' => $manage_options_permission,
+		) );
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/ops/customers',
