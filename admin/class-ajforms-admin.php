@@ -12899,8 +12899,101 @@ class AJForms_Admin {
 		exit;
 	}
 
-	// TODO: full WP-admin Mail tab actions (create/update/delete/notify/publish).
-	private function handle_portal_mail_actions() {}
+	/**
+	 * WP-admin Mail tab actions. Rather than reimplementing the mail business logic, these build a
+	 * WP_REST_Request from $_POST/$_FILES and call straight into AJCore_REST_API's already-tested
+	 * /ops/mail methods (same pattern AJOps' Mail screen uses over HTTP, just in-process here).
+	 */
+	private function handle_portal_mail_actions() {
+		if ( ! current_user_can( 'manage_options' ) || ! class_exists( 'AJCore_REST_API' ) ) {
+			return;
+		}
+		$rest = new AJCore_REST_API();
+		$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'mail' );
+
+		if ( isset( $_POST['ajcore_mail_create_nonce'] ) ) {
+			check_admin_referer( 'ajcore_mail_create', 'ajcore_mail_create_nonce' );
+			$request = new WP_REST_Request( 'POST' );
+			foreach ( array( 'recipient_name', 'mail_type', 'sender_name', 'carrier', 'tracking_number', 'description', 'stripe_customer_id', 'customer_email', 'received_at' ) as $field ) {
+				$request->set_param( $field, wp_unslash( $_POST[ $field ] ?? '' ) );
+			}
+			$request->set_param( 'is_sop', ! empty( $_POST['is_sop'] ) ? '1' : '' );
+			$request->set_param( 'notify', ! empty( $_POST['notify'] ) ? '1' : '' );
+			$request->set_file_params( $_FILES );
+			$result = $rest->create_ops_mail_item( $request );
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['portal-mail-created'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_mail_update_nonce'], $_POST['mail_item_id'] ) ) {
+			check_admin_referer( 'ajcore_mail_update', 'ajcore_mail_update_nonce' );
+			$request = new WP_REST_Request( 'POST' );
+			$request->set_param( 'id', absint( $_POST['mail_item_id'] ) );
+			foreach ( array( 'recipient_name', 'mail_type', 'sender_name', 'carrier', 'tracking_number', 'description', 'admin_notes', 'stripe_customer_id', 'customer_email', 'received_at', 'disposition' ) as $field ) {
+				if ( isset( $_POST[ $field ] ) ) {
+					$request->set_param( $field, wp_unslash( $_POST[ $field ] ) );
+				}
+			}
+			if ( isset( $_POST['is_sop'] ) ) {
+				$request->set_param( 'is_sop', ! empty( $_POST['is_sop'] ) ? '1' : '' );
+			}
+			$request->set_file_params( $_FILES );
+			$result = $rest->update_ops_mail_item( $request );
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['portal-mail-updated'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_mail_delete_nonce'], $_POST['mail_item_id'] ) ) {
+			check_admin_referer( 'ajcore_mail_delete', 'ajcore_mail_delete_nonce' );
+			$request = new WP_REST_Request( 'POST' );
+			$request->set_param( 'id', absint( $_POST['mail_item_id'] ) );
+			$result = $rest->delete_ops_mail_item( $request );
+			$args['portal-mail-deleted'] = is_wp_error( $result ) ? 0 : 1;
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_mail_notify_nonce'], $_POST['mail_item_id'] ) ) {
+			check_admin_referer( 'ajcore_mail_notify', 'ajcore_mail_notify_nonce' );
+			$request = new WP_REST_Request( 'POST' );
+			$request->set_param( 'id', absint( $_POST['mail_item_id'] ) );
+			$result = $rest->notify_ops_mail_item( $request );
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['portal-mail-notified'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_mail_publish_nonce'], $_POST['mail_item_id'] ) ) {
+			check_admin_referer( 'ajcore_mail_publish', 'ajcore_mail_publish_nonce' );
+			$request = new WP_REST_Request( 'POST' );
+			$request->set_param( 'id', absint( $_POST['mail_item_id'] ) );
+			$result = $rest->publish_ops_mail_item_to_files( $request );
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['portal-mail-published'] = 1;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+	}
 
 	private function handle_portal_event_log_actions() {
 		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_event_log_nonce'], $_POST['ajcore_event_log_action'] ) ) {
@@ -20726,6 +20819,7 @@ class AJForms_Admin {
 									</span>
 								</td>
 								<td>
+									<a class="button" href="<?php echo esc_url( 'https://mail.google.com/mail/u/0/#all/' . rawurlencode( $row->gmail_message_id ) ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open', 'ajforms' ); ?></a>
 									<?php if ( 'needs_review' === $row->status ) : ?>
 										<details>
 											<summary class="button"><?php esc_html_e( 'Review', 'ajforms' ); ?></summary>
@@ -20752,12 +20846,238 @@ class AJForms_Admin {
 		<?php
 	}
 
-	// TODO: full WP-admin Mail tab (parity with AJOps Mail: log/edit/notify/publish/disposition/delete).
+	/**
+	 * WP-admin fallback for the AJOps Mail (service-of-process intake) screen, so staff can log,
+	 * edit, notify, publish, and dispose of mail even if AJOps is down. Reads/writes go through
+	 * AJCore_REST_API's /ops/mail methods (see handle_portal_mail_actions()) — this function is
+	 * display-only.
+	 */
 	private function display_portal_mail_tab() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
-		echo '<div class="ajforms-settings-card"><div class="ajcore-section-head"><div><h2>' . esc_html__( 'Mail', 'ajforms' ) . '</h2><p>' . esc_html__( 'Under construction — use AJOps for Mail in the meantime.', 'ajforms' ) . '</p></div></div></div>';
+		if ( ! class_exists( 'AJCore_REST_API' ) ) {
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'AJCore REST API class not available.', 'ajforms' ) . '</p></div>';
+			return;
+		}
+		$rest = new AJCore_REST_API();
+
+		$mail_types    = array( 'letter', 'legal', 'government', 'package', 'check', 'other' );
+		$dispositions  = array( 'forwarded', 'picked_up', 'shredded', 'returned', 'held' );
+
+		$status = isset( $_GET['mail_status'] ) ? sanitize_key( wp_unslash( $_GET['mail_status'] ) ) : 'open';
+		$search = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
+
+		$list_request = new WP_REST_Request( 'GET' );
+		if ( '' !== $status ) {
+			$list_request->set_param( 'status', $status );
+		}
+		if ( '' !== $search ) {
+			$list_request->set_param( 'search', $search );
+		}
+		$list_request->set_param( 'per_page', 300 );
+		$response  = $rest->get_ops_mail_items( $list_request );
+		$response  = is_wp_error( $response ) ? array( 'mail_items' => array(), 'stats' => array() ) : $response->get_data();
+		$items     = isset( $response['mail_items'] ) ? $response['mail_items'] : array();
+		$stats     = wp_parse_args( isset( $response['stats'] ) ? $response['stats'] : array(), array( 'total' => 0, 'received' => 0, 'awaiting_notify' => 0, 'open' => 0, 'sop_open' => 0 ) );
+
+		$pdb                    = $this->get_pdb();
+		$local_customers_table  = $pdb->prefix . 'aj_portal_local_customers';
+		$customers              = array_merge(
+			(array) $pdb->get_results( "SELECT stripe_customer_id, name, email FROM {$this->get_portal_stripe_customers_table()} ORDER BY name ASC" ),
+			(array) $pdb->get_results( "SELECT local_customer_id AS stripe_customer_id, name, email FROM `{$local_customers_table}` ORDER BY name ASC" )
+		);
+
+		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'mail' ), admin_url( 'admin.php' ) );
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'Mail', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'Physical mail / service-of-process intake log — the same data as the AJOps Mail screen.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+
+			<?php foreach ( array(
+				'portal-mail-created'   => __( 'Mail item logged.', 'ajforms' ),
+				'portal-mail-updated'   => __( 'Mail item updated.', 'ajforms' ),
+				'portal-mail-deleted'   => __( 'Mail item deleted.', 'ajforms' ),
+				'portal-mail-notified'  => __( 'Client notification sent.', 'ajforms' ),
+				'portal-mail-published' => __( 'Published to Files.', 'ajforms' ),
+			) as $flag => $message ) : ?>
+				<?php if ( isset( $_GET[ $flag ] ) ) : ?>
+					<div class="notice notice-success is-dismissible"><p><?php echo esc_html( $message ); ?></p></div>
+				<?php endif; ?>
+			<?php endforeach; ?>
+
+			<div class="ajcore-kpi-grid">
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Open', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats['open'] ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'SOP Open', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats['sop_open'] ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Awaiting Notify', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats['awaiting_notify'] ); ?></strong></div>
+				<div class="ajcore-kpi-card"><span><?php esc_html_e( 'Total', 'ajforms' ); ?></span><strong><?php echo esc_html( (int) $stats['total'] ); ?></strong></div>
+			</div>
+
+			<details class="ajforms-settings-card" style="margin:14px 0;">
+				<summary><?php esc_html_e( 'Log New Mail Item', 'ajforms' ); ?></summary>
+				<form method="post" enctype="multipart/form-data" style="margin-top:14px;">
+					<?php wp_nonce_field( 'ajcore_mail_create', 'ajcore_mail_create_nonce' ); ?>
+					<div class="ajforms-settings-grid">
+						<div class="ajforms-settings-field">
+							<label><?php esc_html_e( 'Recipient Name', 'ajforms' ); ?> *</label>
+							<input type="text" name="recipient_name" required>
+						</div>
+						<div class="ajforms-settings-field">
+							<label><?php esc_html_e( 'Mail Type', 'ajforms' ); ?></label>
+							<select name="mail_type">
+								<?php foreach ( $mail_types as $type ) : ?>
+									<option value="<?php echo esc_attr( $type ); ?>"><?php echo esc_html( ucfirst( $type ) ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</div>
+						<div class="ajforms-settings-field">
+							<label><?php esc_html_e( 'Sender Name', 'ajforms' ); ?></label>
+							<input type="text" name="sender_name">
+						</div>
+						<div class="ajforms-settings-field">
+							<label><?php esc_html_e( 'Carrier', 'ajforms' ); ?></label>
+							<input type="text" name="carrier">
+						</div>
+						<div class="ajforms-settings-field">
+							<label><?php esc_html_e( 'Tracking Number', 'ajforms' ); ?></label>
+							<input type="text" name="tracking_number">
+						</div>
+						<div class="ajforms-settings-field">
+							<label><?php esc_html_e( 'Customer', 'ajforms' ); ?></label>
+							<select name="stripe_customer_id">
+								<option value=""><?php esc_html_e( '— none —', 'ajforms' ); ?></option>
+								<?php foreach ( $customers as $c ) : ?>
+									<option value="<?php echo esc_attr( $c->stripe_customer_id ); ?>"><?php echo esc_html( $c->name . ' (' . $c->email . ')' ); ?></option>
+								<?php endforeach; ?>
+							</select>
+						</div>
+						<div class="ajforms-settings-field">
+							<label><?php esc_html_e( 'Customer Email (if not linking above)', 'ajforms' ); ?></label>
+							<input type="email" name="customer_email">
+						</div>
+						<div class="ajforms-settings-field">
+							<label><?php esc_html_e( 'Scan (optional)', 'ajforms' ); ?></label>
+							<input type="file" name="scan" accept="application/pdf,image/*">
+						</div>
+					</div>
+					<div class="ajforms-settings-field" style="margin-top:10px;">
+						<label><?php esc_html_e( 'Description', 'ajforms' ); ?></label>
+						<textarea name="description" rows="2" style="width:100%;"></textarea>
+					</div>
+					<p style="margin:10px 0;">
+						<label><input type="checkbox" name="is_sop" value="1"> <?php esc_html_e( 'This is a Service of Process (SOP) delivery', 'ajforms' ); ?></label><br>
+						<label><input type="checkbox" name="notify" value="1"> <?php esc_html_e( 'Notify the customer immediately after logging', 'ajforms' ); ?></label>
+					</p>
+					<button type="submit" class="button button-primary"><?php esc_html_e( 'Log Mail Item', 'ajforms' ); ?></button>
+				</form>
+			</details>
+
+			<form method="get" class="ajcore-filter-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px;">
+				<input type="hidden" name="page" value="ajforms-client-portal">
+				<input type="hidden" name="tab" value="mail">
+				<select name="mail_status">
+					<option value="open" <?php selected( $status, 'open' ); ?>><?php esc_html_e( 'Open', 'ajforms' ); ?></option>
+					<option value="received" <?php selected( $status, 'received' ); ?>><?php esc_html_e( 'Received', 'ajforms' ); ?></option>
+					<option value="scanned" <?php selected( $status, 'scanned' ); ?>><?php esc_html_e( 'Scanned', 'ajforms' ); ?></option>
+					<option value="notified" <?php selected( $status, 'notified' ); ?>><?php esc_html_e( 'Notified', 'ajforms' ); ?></option>
+					<option value="closed" <?php selected( $status, 'closed' ); ?>><?php esc_html_e( 'Closed', 'ajforms' ); ?></option>
+					<option value="" <?php selected( $status, '' ); ?>><?php esc_html_e( 'All', 'ajforms' ); ?></option>
+				</select>
+				<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php echo esc_attr__( 'Search recipient, sender, tracking, customer…', 'ajforms' ); ?>">
+				<button type="submit" class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
+				<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
+			</form>
+
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th><?php esc_html_e( 'Received', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Recipient / Type', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Sender / Tracking', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Customer', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( empty( $items ) ) : ?>
+						<tr><td colspan="6"><?php esc_html_e( 'Nothing here.', 'ajforms' ); ?></td></tr>
+					<?php else : ?>
+						<?php foreach ( $items as $item ) : ?>
+							<tr>
+								<td><?php echo esc_html( $item['received_at'] ); ?></td>
+								<td>
+									<strong><?php echo esc_html( $item['recipient_name'] ); ?></strong><br>
+									<span class="description"><?php echo esc_html( ucfirst( $item['mail_type'] ) ); ?><?php echo ! empty( $item['is_sop'] ) ? ' — ' . esc_html__( 'SOP', 'ajforms' ) : ''; ?></span>
+								</td>
+								<td>
+									<?php echo esc_html( $item['sender_name'] ); ?>
+									<?php if ( ! empty( $item['tracking_number'] ) ) : ?><br><span class="description"><?php echo esc_html( $item['carrier'] . ' ' . $item['tracking_number'] ); ?></span><?php endif; ?>
+									<?php if ( ! empty( $item['scan_url'] ) ) : ?><br><a href="<?php echo esc_url( $item['scan_url'] ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View scan', 'ajforms' ); ?></a><?php endif; ?>
+								</td>
+								<td>
+									<?php echo esc_html( $item['customer_name'] ?: $item['customer_email'] ); ?>
+								</td>
+								<td>
+									<span class="ajcore-status-pill <?php echo esc_attr( 'closed' === $item['status'] ? 'active' : ( ! empty( $item['is_sop'] ) ? 'disabled' : '' ) ); ?>">
+										<?php echo esc_html( ucfirst( $item['status'] ) ); ?>
+									</span>
+									<?php if ( ! empty( $item['disposition'] ) ) : ?><br><span class="description"><?php echo esc_html( ucfirst( str_replace( '_', ' ', $item['disposition'] ) ) ); ?></span><?php endif; ?>
+								</td>
+								<td style="white-space:nowrap;">
+									<?php if ( empty( $item['notified_at'] ) ) : ?>
+										<form method="post" style="display:inline;">
+											<?php wp_nonce_field( 'ajcore_mail_notify', 'ajcore_mail_notify_nonce' ); ?>
+											<input type="hidden" name="mail_item_id" value="<?php echo esc_attr( $item['id'] ); ?>">
+											<button type="submit" class="button button-small"><?php esc_html_e( 'Notify', 'ajforms' ); ?></button>
+										</form>
+									<?php endif; ?>
+									<?php if ( empty( $item['file_id'] ) && ! empty( $item['scan_url'] ) ) : ?>
+										<form method="post" style="display:inline;">
+											<?php wp_nonce_field( 'ajcore_mail_publish', 'ajcore_mail_publish_nonce' ); ?>
+											<input type="hidden" name="mail_item_id" value="<?php echo esc_attr( $item['id'] ); ?>">
+											<button type="submit" class="button button-small"><?php esc_html_e( 'Publish to Files', 'ajforms' ); ?></button>
+										</form>
+									<?php endif; ?>
+									<details style="display:inline-block;">
+										<summary class="button button-small"><?php esc_html_e( 'Edit', 'ajforms' ); ?></summary>
+										<form method="post" enctype="multipart/form-data" style="margin-top:8px;min-width:280px;">
+											<?php wp_nonce_field( 'ajcore_mail_update', 'ajcore_mail_update_nonce' ); ?>
+											<input type="hidden" name="mail_item_id" value="<?php echo esc_attr( $item['id'] ); ?>">
+											<div class="ajforms-settings-field"><label><?php esc_html_e( 'Recipient', 'ajforms' ); ?></label><input type="text" name="recipient_name" value="<?php echo esc_attr( $item['recipient_name'] ); ?>"></div>
+											<div class="ajforms-settings-field"><label><?php esc_html_e( 'Sender', 'ajforms' ); ?></label><input type="text" name="sender_name" value="<?php echo esc_attr( $item['sender_name'] ); ?>"></div>
+											<div class="ajforms-settings-field"><label><?php esc_html_e( 'Tracking #', 'ajforms' ); ?></label><input type="text" name="tracking_number" value="<?php echo esc_attr( $item['tracking_number'] ); ?>"></div>
+											<div class="ajforms-settings-field"><label><?php esc_html_e( 'Admin Notes', 'ajforms' ); ?></label><textarea name="admin_notes" rows="2" style="width:100%;"></textarea></div>
+											<div class="ajforms-settings-field">
+												<label><?php esc_html_e( 'Disposition', 'ajforms' ); ?></label>
+												<select name="disposition">
+													<option value=""><?php esc_html_e( '— none —', 'ajforms' ); ?></option>
+													<?php foreach ( $dispositions as $d ) : ?>
+														<option value="<?php echo esc_attr( $d ); ?>" <?php selected( $item['disposition'], $d ); ?>><?php echo esc_html( ucfirst( str_replace( '_', ' ', $d ) ) ); ?></option>
+													<?php endforeach; ?>
+												</select>
+											</div>
+											<div class="ajforms-settings-field"><label><?php esc_html_e( 'Replace Scan', 'ajforms' ); ?></label><input type="file" name="scan" accept="application/pdf,image/*"></div>
+											<button type="submit" class="button button-primary button-small" style="margin-top:8px;"><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
+										</form>
+									</details>
+									<form method="post" style="display:inline;" onsubmit="return confirm('<?php echo esc_js( __( 'Delete this mail item permanently?', 'ajforms' ) ); ?>');">
+										<?php wp_nonce_field( 'ajcore_mail_delete', 'ajcore_mail_delete_nonce' ); ?>
+										<input type="hidden" name="mail_item_id" value="<?php echo esc_attr( $item['id'] ); ?>">
+										<button type="submit" class="button button-small" style="color:#dc2626;"><?php esc_html_e( 'Delete', 'ajforms' ); ?></button>
+									</form>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
 	}
 
 	private function display_portal_customer_detail_page() {
@@ -25051,53 +25371,6 @@ class AJForms_Admin {
 	}
 
 	/** Ensures the "AJCore-Processed"/"AJCore-NeedsReview" Gmail labels exist, returns their IDs keyed 'processed'/'review'. */
-	private function get_or_create_gmail_intake_labels() {
-		$wanted = array( 'processed' => 'AJCore-Processed', 'review' => 'AJCore-NeedsReview' );
-		$ids    = array();
-
-		$existing = $this->gmail_intake_api_request( 'GET', '/labels' );
-		if ( is_wp_error( $existing ) ) {
-			return $existing;
-		}
-		$by_name = array();
-		foreach ( (array) ( isset( $existing['labels'] ) ? $existing['labels'] : array() ) as $label ) {
-			if ( ! empty( $label['name'] ) && ! empty( $label['id'] ) ) {
-				$by_name[ $label['name'] ] = $label['id'];
-			}
-		}
-
-		foreach ( $wanted as $key => $name ) {
-			if ( isset( $by_name[ $name ] ) ) {
-				$ids[ $key ] = $by_name[ $name ];
-				continue;
-			}
-			$created = $this->gmail_intake_api_request(
-				'POST',
-				'/labels',
-				array(
-					'body' => array(
-						'name'                  => $name,
-						'labelListVisibility'   => 'labelShow',
-						'messageListVisibility' => 'show',
-					),
-				)
-			);
-			if ( is_wp_error( $created ) || empty( $created['id'] ) ) {
-				return is_wp_error( $created ) ? $created : new WP_Error(
-					'gmail_intake_label_failed',
-					sprintf(
-						/* translators: %s: Gmail label name */
-						__( 'Could not create the "%s" Gmail label.', 'ajforms' ),
-						$name
-					)
-				);
-			}
-			$ids[ $key ] = $created['id'];
-		}
-
-		return $ids;
-	}
-
 	private function gmail_intake_header_value( $headers, $name ) {
 		foreach ( (array) $headers as $header ) {
 			if ( isset( $header['name'] ) && 0 === strcasecmp( $header['name'], $name ) ) {
@@ -25307,16 +25580,16 @@ class AJForms_Admin {
 	}
 
 	/**
-	 * Polls the connected Gmail Intake inbox for unprocessed messages, matches each to a customer
-	 * via the company name in its subject, files any PDF attachments that look like real documents
-	 * onto that customer, and labels the message Processed (matched) or NeedsReview (no confident
-	 * single customer match) so it's never re-processed. Returns a summary array for the
-	 * Test/Process-Now UI.
+	 * Polls the connected Gmail Intake inbox for messages not yet in our own log table, matches
+	 * each to a customer via the company name in its subject or body, and logs the result
+	 * (matched_pending_file or needs_review — see log_gmail_intake_item()). Dedup is entirely
+	 * local (by gmail_message_id in aj_gmail_intake_log), NOT via Gmail labels — a Gmail label is
+	 * permanent and lives in the real shared mailbox, so a bug here used to be very hard to undo.
+	 * Returns a summary array for the Test/Process-Now UI.
 	 */
 	public function process_gmail_intake_inbox( $max_messages = 20 ) {
-		$labels = $this->get_or_create_gmail_intake_labels();
-		if ( is_wp_error( $labels ) ) {
-			return $labels;
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajforms' ) );
 		}
 
 		$list = $this->gmail_intake_api_request(
@@ -25324,7 +25597,7 @@ class AJForms_Admin {
 			'/messages',
 			array(
 				'query' => array(
-					'q'          => 'in:inbox -label:ajcore-processed -label:ajcore-needsreview -from:google.com',
+					'q'          => 'in:inbox -from:google.com',
 					'maxResults' => max( 1, min( 50, (int) $max_messages ) ),
 				),
 			)
@@ -25341,16 +25614,16 @@ class AJForms_Admin {
 			}
 			$message_id = (string) $item['id'];
 
-			$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $message_id ), array( 'query' => array( 'format' => 'full' ) ) );
-			if ( is_wp_error( $message ) ) {
-				$summary['errors'][] = $message->get_error_message();
+			// Already logged (any status) — never re-fetch or reprocess. Dedup lives entirely in
+			// our own table now, not as a Gmail label on the message (a Gmail label is permanent
+			// and shared with the real mailbox, so a bug here used to be very hard to undo).
+			if ( $this->gmail_intake_log_exists( $message_id ) ) {
 				continue;
 			}
 
-			// Defensive re-check regardless of whether the -label query above actually excluded
-			// it — never risk double-filing the same attachment into a customer's Files.
-			$existing_label_ids = isset( $message['labelIds'] ) ? (array) $message['labelIds'] : array();
-			if ( in_array( $labels['processed'], $existing_label_ids, true ) || in_array( $labels['review'], $existing_label_ids, true ) ) {
+			$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $message_id ), array( 'query' => array( 'format' => 'full' ) ) );
+			if ( is_wp_error( $message ) ) {
+				$summary['errors'][] = $message->get_error_message();
 				continue;
 			}
 
@@ -25365,7 +25638,6 @@ class AJForms_Admin {
 			$customer     = '' !== $company_name ? $this->find_portal_customer_by_company_name( $company_name ) : null;
 
 			if ( ! $customer ) {
-				$this->gmail_intake_api_request( 'POST', '/messages/' . rawurlencode( $message_id ) . '/modify', array( 'body' => array( 'addLabelIds' => array( $labels['review'] ) ) ) );
 				$summary['needs_review']++;
 				$this->log_gmail_intake_item( array(
 					'gmail_message_id'       => $message_id,
@@ -25396,8 +25668,6 @@ class AJForms_Admin {
 			}
 
 			$summary['matched_pending_file']++;
-
-			$this->gmail_intake_api_request( 'POST', '/messages/' . rawurlencode( $message_id ) . '/modify', array( 'body' => array( 'addLabelIds' => array( $labels['processed'] ) ) ) );
 
 			$this->log_gmail_intake_item( array(
 				'gmail_message_id'       => $message_id,
@@ -25431,6 +25701,12 @@ class AJForms_Admin {
 		}
 		AJForms_Activator::activate();
 		return $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
+	}
+
+	private function gmail_intake_log_exists( $gmail_message_id ) {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		return (bool) $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE gmail_message_id = %s", $gmail_message_id ) );
 	}
 
 	private function log_gmail_intake_item( $data ) {
@@ -25573,15 +25849,6 @@ class AJForms_Admin {
 			),
 			array( 'id' => (int) $row->id )
 		);
-
-		$labels = $this->get_or_create_gmail_intake_labels();
-		if ( ! is_wp_error( $labels ) ) {
-			$this->gmail_intake_api_request(
-				'POST',
-				'/messages/' . rawurlencode( $row->gmail_message_id ) . '/modify',
-				array( 'body' => array( 'removeLabelIds' => array( $labels['review'] ), 'addLabelIds' => array( $labels['processed'] ) ) )
-			);
-		}
 
 		return true;
 	}
