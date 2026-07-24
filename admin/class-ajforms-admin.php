@@ -15787,7 +15787,10 @@ class AJForms_Admin {
 		$actions          = array();
 		$is_paid          = in_array( $status, array( 'paid', 'completed', 'active' ), true );
 		$is_terminal      = in_array( $service_status, array( 'completed', 'cancelled' ), true );
-		$review_states    = array( 'new', '', 'under_review' );
+		// 'welcome' is a real mid-pipeline step (new -> welcome -> next-action -> active) for every
+		// product type that has it, not a resting state — the welcome text/email being sent doesn't
+		// mean the request is actioned, so it needs the same quick action as 'new' until it moves on.
+		$review_states    = array( 'new', '', 'welcome', 'under_review' );
 
 		if ( ! $is_paid && in_array( $status, array( 'draft', 'pending_payment', 'awaiting_payment', 'failed', 'admin_review_required' ), true ) ) {
 			$actions['await_payment'] = __( 'Request Payment', 'ajforms' );
