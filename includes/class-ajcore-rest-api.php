@@ -4884,6 +4884,16 @@ class AJCore_REST_API {
 			return new WP_Error( 'not_found', 'File not found.', array( 'status' => 404 ) );
 		}
 
+		if ( null !== $request['filename'] && '' !== trim( (string) $request['filename'] ) ) {
+			if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
+				return new WP_Error( 'storage_unavailable', __( 'Storage service unavailable.', 'ajforms' ), array( 'status' => 500 ) );
+			}
+			$renamed = AJCore_Storage_Service::rename_attachment_filename( (int) $file->attachment_id, (string) $request['filename'] );
+			if ( is_wp_error( $renamed ) ) {
+				return $renamed;
+			}
+		}
+
 		$data = array( 'updated_at' => current_time( 'mysql' ) );
 		$fmt  = array( '%s' );
 

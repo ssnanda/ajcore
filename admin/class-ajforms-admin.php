@@ -13579,6 +13579,7 @@ class AJForms_Admin {
 		$file_tags     = isset( $_POST['portal_file_tags'] ) && is_array( $_POST['portal_file_tags'] ) ? wp_unslash( $_POST['portal_file_tags'] ) : array();
 		$user_ids      = isset( $_POST['assigned_user_ids'] ) && is_array( $_POST['assigned_user_ids'] ) ? array_map( 'absint', wp_unslash( $_POST['assigned_user_ids'] ) ) : array();
 		$extra_emails  = isset( $_POST['assigned_user_emails'] ) ? $this->normalize_portal_assignment_emails( wp_unslash( $_POST['assigned_user_emails'] ) ) : array();
+		$new_filename  = isset( $_POST['portal_file_name'] ) ? sanitize_text_field( wp_unslash( $_POST['portal_file_name'] ) ) : '';
 
 		if ( ! $attachment_id || 'attachment' !== get_post_type( $attachment_id ) ) {
 			wp_safe_redirect(
@@ -13592,6 +13593,15 @@ class AJForms_Admin {
 				)
 			);
 			exit;
+		}
+
+		if ( '' !== $new_filename && class_exists( 'AJCore_Storage_Service' ) ) {
+			$renamed = AJCore_Storage_Service::rename_attachment_filename( $attachment_id, $new_filename );
+			if ( is_wp_error( $renamed ) ) {
+				set_transient( 'ajcore_file_storage_error_' . get_current_user_id(), $renamed->get_error_message(), MINUTE_IN_SECONDS );
+				wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'edit_file_id' => $file_id, 'error' => 'storage-path' ), admin_url( 'admin.php' ) ) );
+				exit;
+			}
 		}
 
 		if ( '' === $title ) {
@@ -24059,6 +24069,10 @@ class AJForms_Admin {
 			$selected_tags    = $this->get_portal_file_tags( (int) $editing_file->id );
 		}
 
+		$current_filename = $attachment_url ? basename( wp_parse_url( $attachment_url, PHP_URL_PATH ) ) : '';
+		$filename_ext     = $current_filename && false !== strrpos( $current_filename, '.' ) ? substr( $current_filename, strrpos( $current_filename, '.' ) ) : '';
+		$filename_base    = '' !== $filename_ext ? substr( $current_filename, 0, -strlen( $filename_ext ) ) : $current_filename;
+
 		$users = get_users(
 			array(
 				'fields'  => array( 'ID', 'display_name', 'user_email' ),
@@ -24143,7 +24157,26 @@ class AJForms_Admin {
 						<div class="ajforms-selected-file" id="ajforms-selected-portal-file">
 							<?php echo $attachment_url ? esc_html( $attachment_title ? $attachment_title : basename( $attachment_url ) ) : esc_html__( 'No file selected.', 'ajforms' ); ?>
 						</div>
+						<?php if ( $attachment_url ) : ?>
+							<p style="margin:8px 0 0;"><a href="<?php echo esc_url( $attachment_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open in a new tab', 'ajforms' ); ?> &#8599;</a></p>
+							<?php if ( 'pdf' === strtolower( $filename_ext ? ltrim( $filename_ext, '.' ) : '' ) ) : ?>
+								<embed src="<?php echo esc_url( $attachment_url ); ?>" type="application/pdf" style="width:100%;height:22rem;margin-top:10px;border:1px solid #dbe7f3;border-radius:12px;">
+							<?php elseif ( in_array( strtolower( ltrim( $filename_ext, '.' ) ), array( 'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg' ), true ) ) : ?>
+								<img src="<?php echo esc_url( $attachment_url ); ?>" alt="" style="max-width:100%;max-height:22rem;margin-top:10px;border:1px solid #dbe7f3;border-radius:12px;">
+							<?php endif; ?>
+						<?php endif; ?>
 					</div>
+
+					<?php if ( $editing_file && $current_filename ) : ?>
+						<div class="ajforms-file-field">
+							<label for="portal_file_name"><?php esc_html_e( 'File Name', 'ajforms' ); ?></label>
+							<div style="display:flex;align-items:center;gap:8px;">
+								<input type="text" id="portal_file_name" name="portal_file_name" value="<?php echo esc_attr( $filename_base ); ?>" style="flex:1;">
+								<span style="color:#94a3b8;font-weight:600;"><?php echo esc_html( $filename_ext ); ?></span>
+							</div>
+							<p class="description"><?php esc_html_e( 'Renames the actual stored file. The extension is fixed to avoid accidentally corrupting the file.', 'ajforms' ); ?></p>
+						</div>
+					<?php endif; ?>
 
 					<div class="ajforms-file-field">
 						<label for="portal_file_title"><?php esc_html_e( 'Title', 'ajforms' ); ?></label>

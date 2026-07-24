@@ -756,6 +756,84 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return true;
 		}
 
+		/**
+		 * Renames a file's actual stored filename (not just its AJCore title). Handles both
+		 * cases: still-local (rename on disk + update _wp_attached_file) and already offloaded
+		 * to remote storage — where migrate_attachment()/migrate_attachment_ids() can only ever
+		 * re-derive the customer/tag PATH prefix of the object key from the EXISTING remote
+		 * basename, never a new filename, because the local file is deleted once migrated (see
+		 * migrate_attachment() above). A real rename there means copying the object under a new
+		 * key, repointing the mapping, then removing the old key.
+		 */
+		public static function rename_attachment_filename( $attachment_id, $new_base_name ) {
+			$attachment_id = (int) $attachment_id;
+			$new_base_name = trim( (string) $new_base_name );
+			if ( '' === $new_base_name ) {
+				return new WP_Error( 'ajcore_storage_invalid_filename', __( 'Please enter a file name.', 'ajforms' ) );
+			}
+
+			$record = self::get_remote_record( $attachment_id );
+
+			if ( $record ) {
+				$ext          = pathinfo( basename( $record->object_key ), PATHINFO_EXTENSION );
+				$new_filename = sanitize_file_name( $new_base_name . ( $ext ? '.' . $ext : '' ) );
+
+				$settings = self::get_settings();
+				$settings['bucket'] = $record->bucket;
+				$client = self::get_client( $settings );
+				if ( ! $client ) {
+					return new WP_Error( 'ajcore_storage_not_configured', __( 'Remote storage is not configured.', 'ajforms' ) );
+				}
+
+				$new_key = self::object_key_for_attachment( $attachment_id, $new_filename );
+				if ( $new_key === $record->object_key ) {
+					return true;
+				}
+
+				$object = $client->get_object( $record->object_key );
+				if ( is_wp_error( $object ) ) {
+					return $object;
+				}
+				$put = $client->put_object( $new_key, $object['body'], ! empty( $object['content_type'] ) ? $object['content_type'] : 'application/octet-stream' );
+				if ( is_wp_error( $put ) ) {
+					return $put;
+				}
+				if ( ! self::update_remote_location( $attachment_id, $settings['bucket'], $new_key ) ) {
+					$client->delete_object( $new_key );
+					return new WP_Error( 'ajcore_storage_mapping_update', __( 'Could not update the remote storage mapping.', 'ajforms' ) );
+				}
+				$client->delete_object( $record->object_key );
+				wp_update_post( array( 'ID' => $attachment_id, 'post_title' => sanitize_text_field( pathinfo( $new_filename, PATHINFO_FILENAME ) ) ) );
+
+				return true;
+			}
+
+			$old_path = get_attached_file( $attachment_id );
+			if ( ! $old_path || ! is_file( $old_path ) ) {
+				return new WP_Error( 'ajcore_storage_no_local_file', __( 'The stored file could not be found.', 'ajforms' ) );
+			}
+
+			$ext          = pathinfo( $old_path, PATHINFO_EXTENSION );
+			$new_filename = sanitize_file_name( $new_base_name . ( $ext ? '.' . $ext : '' ) );
+			$dir          = dirname( $old_path );
+			$unique_name  = wp_unique_filename( $dir, $new_filename );
+			$new_path     = trailingslashit( $dir ) . $unique_name;
+
+			if ( $new_path === $old_path ) {
+				return true;
+			}
+
+			if ( ! rename( $old_path, $new_path ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+				return new WP_Error( 'ajcore_storage_rename_failed', __( 'Could not rename the file on disk.', 'ajforms' ) );
+			}
+
+			update_attached_file( $attachment_id, $new_path );
+			wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $new_path ) );
+			wp_update_post( array( 'ID' => $attachment_id, 'post_title' => sanitize_text_field( pathinfo( $unique_name, PATHINFO_FILENAME ) ) ) );
+
+			return true;
+		}
+
 		public function filter_attachment_url( $url, $attachment_id ) {
 			$record = self::get_remote_record( $attachment_id );
 			if ( ! $record ) {
