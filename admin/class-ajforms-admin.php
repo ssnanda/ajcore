@@ -13177,8 +13177,7 @@ class AJForms_Admin {
 			'breezedoc_api_token'            => isset( $_POST['breezedoc_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['breezedoc_api_token'] ) ) : '',
 			'tawk_enabled'                    => isset( $_POST['tawk_enabled'] ) ? '1' : '0',
 			'tawk_properties'                 => $this->parse_tawk_properties_from_post( isset( $current_settings['tawk_properties'] ) ? $current_settings['tawk_properties'] : array() ),
-			'tawk_api_key_id'                 => isset( $_POST['tawk_api_key_id'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_key_id'] ) ) : '',
-			'tawk_api_key_secret'             => isset( $_POST['tawk_api_key_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_key_secret'] ) ) : '',
+			'tawk_api_key'                     => isset( $_POST['tawk_api_key'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_key'] ) ) : '',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -13212,7 +13211,7 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'tawk_api_key_secret' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -13242,7 +13241,7 @@ class AJForms_Admin {
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
 			'esign'        => array( 'breezedoc_api_token' ),
-			'tawk'         => array( 'tawk_enabled', 'tawk_properties', 'tawk_api_key_id', 'tawk_api_key_secret' ),
+			'tawk'         => array( 'tawk_enabled', 'tawk_properties', 'tawk_api_key' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -27520,35 +27519,31 @@ class AJForms_Admin {
 				<div class="notice notice-info inline"><p><?php esc_html_e( 'Live Chat (Tawk.to) is a single shared configuration for every connected site. It\'s managed on the master AJ Core site — the values below are read-only here.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 
-			<div style="margin:0 0 18px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:13px;line-height:1.6;<?php echo $read_only ? 'opacity:.6;' : ''; ?>">
-				<strong><?php esc_html_e( 'Setup in Tawk.to:', 'ajforms' ); ?></strong>
-				<ol style="margin:8px 0 0 18px;padding:0;">
-					<li>
-						<?php
-						printf(
-							/* translators: %s: help.tawk.to article link */
-							esc_html__( 'In the Tawk.to dashboard, click the ⚙ Administration icon in the left nav, then Integrations → Webhooks (per-property), then "Create Webhook". %s', 'ajforms' ),
-							'<a href="https://help.tawk.to/article/creating-and-managing-webhooks" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Tawk.to guide: Creating and managing Webhooks ↗', 'ajforms' ) . '</a>'
-						);
-						?>
-					</li>
-					<li><?php esc_html_e( 'Paste the Webhook URL below as the Endpoint URL, and check all four Select Events boxes: Chat Start, Chat End, New ticket, New Chat Transcript.', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'Copy the signing secret Tawk.to shows you after saving and paste it into "Webhook Signing Secret" below.', 'ajforms' ); ?></li>
-					<li>
-						<?php
-						printf(
-							/* translators: %s: help.tawk.to article link */
-							esc_html__( 'Property ID: Administration → Chat Widget (or the "tawk.to/chat/{propertyId}/{widgetId}" Direct Chat Link). %s', 'ajforms' ),
-							'<a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Tawk.to guide: Where can I find the property and widget ID? ↗', 'ajforms' ) . '</a>'
-						);
-						?>
-					</li>
-				</ol>
-				<div class="ajforms-tawk-webhook-row">
-					<code id="ajforms-tawk-webhook-url"><?php echo esc_html( $webhook_url ); ?></code>
-					<button type="button" class="button button-small" id="ajforms-tawk-copy-webhook"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
+			<details style="margin:0 0 18px;<?php echo $read_only ? 'opacity:.6;' : ''; ?>">
+				<summary style="cursor:pointer;font-weight:600;padding:10px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;"><?php esc_html_e( 'How do I get the REST API Key and Webhook Secret?', 'ajforms' ); ?></summary>
+				<div style="margin-top:8px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:13px;line-height:1.6;">
+					<strong><?php esc_html_e( 'REST API Key (one-time, covers every property):', 'ajforms' ); ?></strong>
+					<p style="margin:4px 0 12px;"><?php esc_html_e( 'Tawk.to dashboard → your profile icon (bottom-left) → REST API Keys → Create Key. Paste it below, Save, then use "Fetch Properties" to pull your properties and pick which to track.', 'ajforms' ); ?></p>
+					<strong><?php esc_html_e( 'Webhook Secret (one per property you select below):', 'ajforms' ); ?></strong>
+					<ol style="margin:4px 0 0 18px;padding:0;">
+						<li>
+							<?php
+							printf(
+								/* translators: %s: help.tawk.to article link */
+								esc_html__( 'In the Tawk.to dashboard, click the ⚙ Administration icon in the left nav, then Integrations → Webhooks, and switch to that property. %s', 'ajforms' ),
+								'<a href="https://help.tawk.to/article/creating-and-managing-webhooks" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Tawk.to guide ↗', 'ajforms' ) . '</a>'
+							);
+							?>
+						</li>
+						<li><?php esc_html_e( 'Create Webhook → paste the URL below as the Endpoint URL → check all four Select Events boxes (Chat Start, Chat End, New ticket, New Chat Transcript) → Save.', 'ajforms' ); ?></li>
+						<li><?php esc_html_e( 'Copy the signing secret Tawk.to shows you and paste it into that property\'s Webhook Secret field below. It\'s shown once — if you lose it, delete and recreate the webhook to get a new one.', 'ajforms' ); ?></li>
+					</ol>
+					<div class="ajforms-tawk-webhook-row">
+						<code id="ajforms-tawk-webhook-url"><?php echo esc_html( $webhook_url ); ?></code>
+						<button type="button" class="button button-small" id="ajforms-tawk-copy-webhook"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
+					</div>
 				</div>
-			</div>
+			</details>
 
 			<form method="post" action="<?php echo esc_url( $action_url ); ?>">
 				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
@@ -27560,33 +27555,40 @@ class AJForms_Admin {
 					</label>
 					<div class="ajforms-settings-help"><?php esc_html_e( 'While off, the webhook receiver rejects incoming events.', 'ajforms' ); ?></div>
 				</div>
-				<div class="ajforms-settings-field" style="margin-bottom:8px;">
-					<label style="font-weight:600;"><?php esc_html_e( 'Properties', 'ajforms' ); ?></label>
-					<div class="ajforms-settings-help" style="margin:0 0 10px;"><?php esc_html_e( 'One row per Tawk.to property (business). Each needs its own webhook created in Tawk.to (step above), pointed at the same Webhook URL above — the receiver matches each incoming event to the right property automatically, so alerts from every property consolidate into one feed, filterable by property.', 'ajforms' ); ?></div>
+
+				<div class="ajforms-settings-field">
+					<label for="tawk_api_key"><?php esc_html_e( 'REST API Key', 'ajforms' ); ?></label>
+					<input type="text" name="tawk_api_key" id="tawk_api_key" value="<?php echo esc_attr( $settings['tawk_api_key'] ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
 				</div>
+				<?php if ( ! $read_only ) : ?>
+					<p style="margin:10px 0 0;">
+						<button type="button" class="button" id="ajforms-tawk-fetch-properties"><?php esc_html_e( 'Fetch Properties from Tawk.to', 'ajforms' ); ?></button>
+						<button type="button" class="button" id="ajforms-tawk-test-connection"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
+					</p>
+					<div id="ajforms-tawk-fetch-result" style="display:none;margin:10px 0 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;"></div>
+					<div id="ajforms-tawk-fetch-picker" style="display:none;margin:10px 0 0;padding:14px 16px;border:1px solid #e2e8f0;border-radius:10px;"></div>
+				<?php endif; ?>
+
 				<?php
 				$properties = ! empty( $settings['tawk_properties'] ) ? array_values( $settings['tawk_properties'] ) : array();
-				if ( empty( $properties ) && ! $read_only ) {
-					$properties = array( array( 'label' => '', 'property_id' => '', 'webhook_secret' => '' ) );
-				}
 				?>
+				<div class="ajforms-settings-field" style="margin:20px 0 8px;">
+					<label style="font-weight:600;"><?php esc_html_e( 'Tracked Properties', 'ajforms' ); ?></label>
+				</div>
 				<div id="ajforms-tawk-properties">
-					<?php if ( empty( $properties ) && $read_only ) : ?>
-						<p style="color:#6b7280;font-size:13px;"><?php esc_html_e( 'No properties configured yet.', 'ajforms' ); ?></p>
+					<?php if ( empty( $properties ) ) : ?>
+						<p style="color:#6b7280;font-size:13px;" id="ajforms-tawk-properties-empty"><?php esc_html_e( 'None yet — use Fetch Properties above to add some.', 'ajforms' ); ?></p>
 					<?php endif; ?>
 					<?php foreach ( $properties as $property ) : ?>
-						<div class="ajforms-tawk-property-row" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;">
-							<div class="ajforms-settings-field" style="margin:0;">
-								<label><?php esc_html_e( 'Label', 'ajforms' ); ?></label>
-								<input type="text" name="tawk_property_label[]" value="<?php echo esc_attr( $property['label'] ?? '' ); ?>" placeholder="<?php esc_attr_e( 'e.g. UPOS', 'ajforms' ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<div class="ajforms-tawk-property-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:center;margin-bottom:10px;">
+							<div>
+								<strong><?php echo esc_html( $property['label'] ?? '' ); ?></strong>
+								<div style="color:#9ca3af;font-size:12px;"><?php echo esc_html( $property['property_id'] ?? '' ); ?></div>
+								<input type="hidden" name="tawk_property_label[]" value="<?php echo esc_attr( $property['label'] ?? '' ); ?>">
+								<input type="hidden" name="tawk_property_id[]" value="<?php echo esc_attr( $property['property_id'] ?? '' ); ?>">
 							</div>
 							<div class="ajforms-settings-field" style="margin:0;">
-								<label><?php esc_html_e( 'Property ID', 'ajforms' ); ?></label>
-								<input type="text" name="tawk_property_id[]" value="<?php echo esc_attr( $property['property_id'] ?? '' ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
-							</div>
-							<div class="ajforms-settings-field" style="margin:0;">
-								<label><?php esc_html_e( 'Webhook Secret', 'ajforms' ); ?></label>
-								<input type="text" name="tawk_property_secret[]" value="" placeholder="<?php echo ! empty( $property['webhook_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+								<input type="text" name="tawk_property_secret[]" value="" placeholder="<?php echo ! empty( $property['webhook_secret'] ) ? esc_attr__( 'Webhook Secret •••••••• (saved — leave blank to keep)', 'ajforms' ) : esc_attr__( 'Webhook Secret', 'ajforms' ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
 							</div>
 							<?php if ( ! $read_only ) : ?>
 								<button type="button" class="button ajforms-tawk-remove-property" title="<?php esc_attr_e( 'Remove this property', 'ajforms' ); ?>">&times;</button>
@@ -27596,48 +27598,21 @@ class AJForms_Admin {
 				</div>
 				<?php if ( ! $read_only ) : ?>
 					<template id="ajforms-tawk-property-template">
-						<div class="ajforms-tawk-property-row" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px;align-items:end;margin-bottom:10px;">
-							<div class="ajforms-settings-field" style="margin:0;">
-								<label><?php esc_html_e( 'Label', 'ajforms' ); ?></label>
-								<input type="text" name="tawk_property_label[]" placeholder="<?php esc_attr_e( 'e.g. UPOS', 'ajforms' ); ?>" autocomplete="off">
+						<div class="ajforms-tawk-property-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:center;margin-bottom:10px;">
+							<div>
+								<strong class="ajforms-tawk-row-label"></strong>
+								<div style="color:#9ca3af;font-size:12px;" class="ajforms-tawk-row-id"></div>
+								<input type="hidden" name="tawk_property_label[]">
+								<input type="hidden" name="tawk_property_id[]">
 							</div>
 							<div class="ajforms-settings-field" style="margin:0;">
-								<label><?php esc_html_e( 'Property ID', 'ajforms' ); ?></label>
-								<input type="text" name="tawk_property_id[]" autocomplete="off">
-							</div>
-							<div class="ajforms-settings-field" style="margin:0;">
-								<label><?php esc_html_e( 'Webhook Secret', 'ajforms' ); ?></label>
-								<input type="text" name="tawk_property_secret[]" autocomplete="off">
+								<input type="text" name="tawk_property_secret[]" placeholder="<?php esc_attr_e( 'Webhook Secret', 'ajforms' ); ?>" autocomplete="off">
 							</div>
 							<button type="button" class="button ajforms-tawk-remove-property" title="<?php esc_attr_e( 'Remove this property', 'ajforms' ); ?>">&times;</button>
 						</div>
 					</template>
-					<p style="margin:0 0 6px;">
-						<button type="button" class="button" id="ajforms-tawk-add-property"><?php esc_html_e( '+ Add Property', 'ajforms' ); ?></button>
-						<a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer" style="margin-left:8px;"><?php esc_html_e( 'Where do I find a Property ID? ↗', 'ajforms' ); ?></a>
-					</p>
-					<p class="ajforms-settings-help" style="margin:0 0 16px;"><?php esc_html_e( 'Webhook Secret is shown once, when you create each property\'s webhook in Tawk.to — if you lose it, delete and recreate that webhook to get a new one.', 'ajforms' ); ?></p>
 				<?php endif; ?>
-				<div class="ajforms-settings-grid">
-					<div class="ajforms-settings-field">
-						<label for="tawk_api_key_id"><?php esc_html_e( 'REST API Key ID', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_api_key_id" id="tawk_api_key_id" value="<?php echo esc_attr( $settings['tawk_api_key_id'] ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
-					</div>
-					<div class="ajforms-settings-field">
-						<label for="tawk_api_key_secret"><?php esc_html_e( 'REST API Key Secret', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_api_key_secret" id="tawk_api_key_secret" value="" placeholder="<?php echo ! empty( $settings['tawk_api_key_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
-					</div>
-				</div>
-				<?php if ( ! $read_only ) : ?>
-					<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'From Tawk.to Dashboard → your profile icon → REST API Keys → Create Key. Save settings first so they\'re available to the buttons below.', 'ajforms' ); ?></p>
-					<p style="margin:10px 0 0;">
-						<button type="button" class="button" id="ajforms-tawk-fetch-properties"><?php esc_html_e( 'Fetch Properties from Tawk.to', 'ajforms' ); ?></button>
-						<button type="button" class="button" id="ajforms-tawk-test-connection"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
-					</p>
-					<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'Fetch pulls the list of properties on your Tawk.to account so you can pick which ones to track. Test Connection just checks the saved keys work.', 'ajforms' ); ?></p>
-					<div id="ajforms-tawk-fetch-result" style="display:none;margin:10px 0 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;"></div>
-					<div id="ajforms-tawk-fetch-picker" style="display:none;margin:10px 0 0;padding:14px 16px;border:1px solid #e2e8f0;border-radius:10px;"></div>
-				<?php endif; ?>
+
 				<p style="margin:14px 0 0;">
 					<?php if ( ! $read_only ) : ?>
 						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
@@ -27685,32 +27660,33 @@ class AJForms_Admin {
 		})();
 		(function() {
 			var container = document.getElementById( 'ajforms-tawk-properties' );
-			var addBtn    = document.getElementById( 'ajforms-tawk-add-property' );
 			var template  = document.getElementById( 'ajforms-tawk-property-template' );
-			if ( ! container || ! addBtn || ! template ) { return; }
+			if ( ! container || ! template ) { return; }
+			function updateEmptyState() {
+				var empty = document.getElementById( 'ajforms-tawk-properties-empty' );
+				var hasRows = container.querySelectorAll( '.ajforms-tawk-property-row' ).length > 0;
+				if ( empty ) { empty.style.display = hasRows ? 'none' : 'block'; }
+			}
 			function bindRemove( row ) {
 				var removeBtn = row.querySelector( '.ajforms-tawk-remove-property' );
 				if ( ! removeBtn ) { return; }
 				removeBtn.addEventListener( 'click', function () {
-					// Always leave at least one (empty) row so the property list POSTs as an array,
-					// not an entirely missing field.
-					if ( container.querySelectorAll( '.ajforms-tawk-property-row' ).length <= 1 ) {
-						row.querySelectorAll( 'input' ).forEach( function ( input ) { input.value = ''; } );
-						return;
-					}
 					row.remove();
+					updateEmptyState();
 				} );
 			}
 			container.querySelectorAll( '.ajforms-tawk-property-row' ).forEach( bindRemove );
 			function addPropertyRow( label, propertyId ) {
 				var row = template.content.firstElementChild.cloneNode( true );
+				row.querySelector( '.ajforms-tawk-row-label' ).textContent = label || '';
+				row.querySelector( '.ajforms-tawk-row-id' ).textContent = propertyId || '';
 				row.querySelector( '[name="tawk_property_label[]"]' ).value = label || '';
 				row.querySelector( '[name="tawk_property_id[]"]' ).value = propertyId || '';
 				container.appendChild( row );
 				bindRemove( row );
+				updateEmptyState();
 				return row;
 			}
-			addBtn.addEventListener( 'click', function () { addPropertyRow( '', '' ); } );
 
 			var fetchBtn    = document.getElementById( 'ajforms-tawk-fetch-properties' );
 			var fetchResult = document.getElementById( 'ajforms-tawk-fetch-result' );

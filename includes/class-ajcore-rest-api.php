@@ -6032,22 +6032,21 @@ class AJCore_REST_API {
 	/**
 	 * Calls Tawk.to's REST API (POST https://api.tawk.to/v1/property.list) to list properties, so
 	 * staff don't have to hand-type every Property ID. Verified live against a real account
-	 * (2026-07-27): auth is HTTP Basic with the Key ID as username — the Key Secret isn't actually
-	 * checked by this endpoint (tested blank and populated, identical result), but it's sent as the
-	 * Basic password whenever set in case Tawk.to starts enforcing it. A JSON body is required even
-	 * though property.list takes no parameters — an empty/missing body 400s. Confirmed response
-	 * shape: {"ok":true,"data":[{"propertyId":"...","type":"profile"|"business","name":"...",
-	 * "enabled":true,"domain":"..."}]} (the "profile" entry is the account's own default property
-	 * and often has an empty name). property.list has no way to return webhook secrets (Tawk.to only
-	 * shows those once, at webhook creation), so this can't replace the manual per-property webhook
-	 * setup in display_tawk_settings_section().
+	 * (2026-07-27): auth is HTTP Basic with the Key as username and an empty password — Tawk.to's
+	 * dashboard only ever shows this one value (no separate secret), and the endpoint doesn't check
+	 * the Basic password at all. A JSON body is required even though property.list takes no
+	 * parameters — an empty/missing body 400s. Confirmed response shape: {"ok":true,"data":
+	 * [{"propertyId":"...","type":"profile"|"business","name":"...","enabled":true,"domain":"..."}]}
+	 * (the "profile" entry is the account's own default property and often has an empty name).
+	 * property.list has no way to return webhook secrets (Tawk.to only shows those once, at webhook
+	 * creation), so this can't replace the manual per-property webhook setup in
+	 * display_tawk_settings_section().
 	 */
 	public function fetch_ops_tawk_properties_from_api() {
-		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$key_id    = trim( (string) ( $settings['tawk_api_key_id'] ?? '' ) );
-		$key_secret = trim( (string) ( $settings['tawk_api_key_secret'] ?? '' ) );
-		if ( '' === $key_id ) {
-			return new WP_Error( 'tawk_api_not_configured', __( 'Add a REST API Key ID below first.', 'ajforms' ), array( 'status' => 400 ) );
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$key      = trim( (string) ( $settings['tawk_api_key'] ?? '' ) );
+		if ( '' === $key ) {
+			return new WP_Error( 'tawk_api_not_configured', __( 'Add a REST API Key below first.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 
 		$response = wp_remote_post(
@@ -6057,7 +6056,7 @@ class AJCore_REST_API {
 				'headers' => array(
 					'Content-Type'  => 'application/json',
 					'Accept'        => 'application/json',
-					'Authorization' => 'Basic ' . base64_encode( $key_id . ':' . $key_secret ),
+					'Authorization' => 'Basic ' . base64_encode( $key . ':' ),
 				),
 				'body'    => '{}',
 			)
