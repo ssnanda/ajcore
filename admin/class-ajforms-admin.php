@@ -13177,7 +13177,8 @@ class AJForms_Admin {
 			'breezedoc_api_token'            => isset( $_POST['breezedoc_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['breezedoc_api_token'] ) ) : '',
 			'tawk_enabled'                    => isset( $_POST['tawk_enabled'] ) ? '1' : '0',
 			'tawk_properties'                 => $this->parse_tawk_properties_from_post( isset( $current_settings['tawk_properties'] ) ? $current_settings['tawk_properties'] : array() ),
-			'tawk_api_token'                  => isset( $_POST['tawk_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_token'] ) ) : '',
+			'tawk_api_key_id'                 => isset( $_POST['tawk_api_key_id'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_key_id'] ) ) : '',
+			'tawk_api_key_secret'             => isset( $_POST['tawk_api_key_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_key_secret'] ) ) : '',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -13211,7 +13212,7 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'tawk_api_token' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'tawk_api_key_secret' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -13241,7 +13242,7 @@ class AJForms_Admin {
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
 			'esign'        => array( 'breezedoc_api_token' ),
-			'tawk'         => array( 'tawk_enabled', 'tawk_properties', 'tawk_api_token' ),
+			'tawk'         => array( 'tawk_enabled', 'tawk_properties', 'tawk_api_key_id', 'tawk_api_key_secret' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -27617,19 +27618,23 @@ class AJForms_Admin {
 					</p>
 					<p class="ajforms-settings-help" style="margin:0 0 16px;"><?php esc_html_e( 'Webhook Secret is shown once, when you create each property\'s webhook in Tawk.to — if you lose it, delete and recreate that webhook to get a new one.', 'ajforms' ); ?></p>
 				<?php endif; ?>
-				<div class="ajforms-settings-field">
-					<label for="tawk_api_token"><?php esc_html_e( 'REST API Access Token', 'ajforms' ); ?></label>
-					<input type="text" name="tawk_api_token" id="tawk_api_token" value="" placeholder="<?php echo ! empty( $settings['tawk_api_token'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
-					<?php if ( ! $read_only ) : ?>
-						<div class="ajforms-settings-help"><?php esc_html_e( 'From Tawk.to Dashboard → your profile icon → Edit Profile → REST API Keys → Create Key. Save settings first so it\'s available to the buttons below.', 'ajforms' ); ?></div>
-					<?php endif; ?>
+				<div class="ajforms-settings-grid">
+					<div class="ajforms-settings-field">
+						<label for="tawk_api_key_id"><?php esc_html_e( 'REST API Key ID', 'ajforms' ); ?></label>
+						<input type="text" name="tawk_api_key_id" id="tawk_api_key_id" value="<?php echo esc_attr( $settings['tawk_api_key_id'] ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="tawk_api_key_secret"><?php esc_html_e( 'REST API Key Secret', 'ajforms' ); ?></label>
+						<input type="text" name="tawk_api_key_secret" id="tawk_api_key_secret" value="" placeholder="<?php echo ! empty( $settings['tawk_api_key_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+					</div>
 				</div>
 				<?php if ( ! $read_only ) : ?>
+					<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'From Tawk.to Dashboard → your profile icon → REST API Keys → Create Key. Save settings first so they\'re available to the buttons below.', 'ajforms' ); ?></p>
 					<p style="margin:10px 0 0;">
 						<button type="button" class="button" id="ajforms-tawk-fetch-properties"><?php esc_html_e( 'Fetch Properties from Tawk.to', 'ajforms' ); ?></button>
 						<button type="button" class="button" id="ajforms-tawk-test-connection"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
 					</p>
-					<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'Fetch pulls the list of properties on your Tawk.to account so you can pick which ones to track. Test Connection just checks the saved token works.', 'ajforms' ); ?></p>
+					<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'Fetch pulls the list of properties on your Tawk.to account so you can pick which ones to track. Test Connection just checks the saved keys work.', 'ajforms' ); ?></p>
 					<div id="ajforms-tawk-fetch-result" style="display:none;margin:10px 0 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;"></div>
 					<div id="ajforms-tawk-fetch-picker" style="display:none;margin:10px 0 0;padding:14px 16px;border:1px solid #e2e8f0;border-radius:10px;"></div>
 				<?php endif; ?>

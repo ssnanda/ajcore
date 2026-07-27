@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.111
+ * Version: 0.7.112
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.111' );
+	define( 'AJCORE_VERSION', '0.7.112' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -177,11 +177,11 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// available yet) — not used by anything yet.
 			'tawk_enabled'                   => '0',
 			'tawk_properties'                => array(),
-			// Bearer token for Tawk.to's REST API (Profile → Edit Profile → REST API Keys in the
-			// Tawk.to dashboard), used by the "Fetch Properties"/"Test Connection" buttons to list
-			// properties — property.list can't return webhook secrets, so those are still entered
-			// manually per property, above.
-			'tawk_api_token'                 => '',
+			// Key ID/Key Secret pair from Tawk.to's REST API Keys (dashboard profile menu), used by
+			// the "Fetch Properties"/"Test Connection" buttons to list properties — property.list
+			// can't return webhook secrets, so those are still entered manually per property, above.
+			'tawk_api_key_id'                => '',
+			'tawk_api_key_secret'            => '',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
@@ -1019,7 +1019,8 @@ if ( ! function_exists( 'ajcore_get_tawk_setting_keys' ) ) {
 		return array(
 			'tawk_enabled',
 			'tawk_properties',
-			'tawk_api_token',
+			'tawk_api_key_id',
+			'tawk_api_key_secret',
 		);
 	}
 }

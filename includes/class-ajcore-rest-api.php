@@ -6030,21 +6030,24 @@ class AJCore_REST_API {
 	}
 
 	/**
-	 * Calls Tawk.to's REST API (POST https://api.tawk.to/v1/property.list, Bearer token from
-	 * Profile → Edit Profile → REST API Keys) to list properties, so staff don't have to hand-type
-	 * every Property ID. This is private-beta/undocumented-until-approved — I don't have Tawk.to's
-	 * actual response schema, so the id/label field names below are best-effort guesses across a
-	 * few common shapes. The raw decoded response is always returned alongside whatever we managed
-	 * to parse, so the CP Settings UI can show it for verification if the guessed fields are wrong.
-	 * Only ever lists properties — property.list has no way to return webhook secrets (those are
-	 * shown once, by Tawk.to, when a webhook is created), so this can't replace the manual
-	 * per-property webhook setup in display_tawk_settings_section().
+	 * Calls Tawk.to's REST API (POST https://api.tawk.to/v1/property.list) to list properties, so
+	 * staff don't have to hand-type every Property ID. Verified live against a real account
+	 * (2026-07-27): auth is HTTP Basic with the Key ID as username — the Key Secret isn't actually
+	 * checked by this endpoint (tested blank and populated, identical result), but it's sent as the
+	 * Basic password whenever set in case Tawk.to starts enforcing it. A JSON body is required even
+	 * though property.list takes no parameters — an empty/missing body 400s. Confirmed response
+	 * shape: {"ok":true,"data":[{"propertyId":"...","type":"profile"|"business","name":"...",
+	 * "enabled":true,"domain":"..."}]} (the "profile" entry is the account's own default property
+	 * and often has an empty name). property.list has no way to return webhook secrets (Tawk.to only
+	 * shows those once, at webhook creation), so this can't replace the manual per-property webhook
+	 * setup in display_tawk_settings_section().
 	 */
 	public function fetch_ops_tawk_properties_from_api() {
-		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$token    = trim( (string) ( $settings['tawk_api_token'] ?? '' ) );
-		if ( '' === $token ) {
-			return new WP_Error( 'tawk_api_not_configured', __( 'Add a REST API Access Token below first.', 'ajforms' ), array( 'status' => 400 ) );
+		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$key_id    = trim( (string) ( $settings['tawk_api_key_id'] ?? '' ) );
+		$key_secret = trim( (string) ( $settings['tawk_api_key_secret'] ?? '' ) );
+		if ( '' === $key_id ) {
+			return new WP_Error( 'tawk_api_not_configured', __( 'Add a REST API Key ID below first.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 
 		$response = wp_remote_post(
@@ -6054,8 +6057,9 @@ class AJCore_REST_API {
 				'headers' => array(
 					'Content-Type'  => 'application/json',
 					'Accept'        => 'application/json',
-					'Authorization' => 'Bearer ' . $token,
+					'Authorization' => 'Basic ' . base64_encode( $key_id . ':' . $key_secret ),
 				),
+				'body'    => '{}',
 			)
 		);
 		if ( is_wp_error( $response ) ) {
@@ -6079,20 +6083,7 @@ class AJCore_REST_API {
 			);
 		}
 
-		// Best-effort: try a few plausible shapes for where the property list and each property's
-		// id/name might live, since the real schema isn't documented publicly.
-		$list = array();
-		if ( is_array( $decoded ) ) {
-			if ( isset( $decoded['data'] ) && is_array( $decoded['data'] ) ) {
-				$list = $decoded['data'];
-			} elseif ( isset( $decoded['properties'] ) && is_array( $decoded['properties'] ) ) {
-				$list = $decoded['properties'];
-			} elseif ( isset( $decoded['result'] ) && is_array( $decoded['result'] ) ) {
-				$list = $decoded['result'];
-			} elseif ( ! empty( $decoded ) && array_keys( $decoded ) === range( 0, count( $decoded ) - 1 ) ) {
-				$list = $decoded;
-			}
-		}
+		$list = ( is_array( $decoded ) && isset( $decoded['data'] ) && is_array( $decoded['data'] ) ) ? $decoded['data'] : array();
 
 		$properties = array();
 		foreach ( $list as $item ) {
@@ -6104,9 +6095,13 @@ class AJCore_REST_API {
 			if ( '' === $property_id ) {
 				continue;
 			}
+			if ( '' === $label ) {
+				// The account's own default "profile" property has no name set.
+				$label = 'profile' === ( $item['type'] ?? '' ) ? __( 'Default Profile', 'ajforms' ) : $property_id;
+			}
 			$properties[] = array(
 				'propertyId' => sanitize_text_field( (string) $property_id ),
-				'label'      => sanitize_text_field( (string) ( '' !== $label ? $label : $property_id ) ),
+				'label'      => sanitize_text_field( (string) $label ),
 			);
 		}
 
