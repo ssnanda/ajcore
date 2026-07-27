@@ -27464,12 +27464,12 @@ class AJForms_Admin {
 						<?php
 						printf(
 							/* translators: %s: help.tawk.to article link */
-							esc_html__( 'In the Tawk.to dashboard, click the ⚙ Administration icon in the top nav, then Settings → Webhooks (per-property). %s', 'ajforms' ),
+							esc_html__( 'In the Tawk.to dashboard, click the ⚙ Administration icon in the left nav, then Integrations → Webhooks (per-property), then "Create Webhook". %s', 'ajforms' ),
 							'<a href="https://help.tawk.to/article/creating-and-managing-webhooks" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Tawk.to guide: Creating and managing Webhooks ↗', 'ajforms' ) . '</a>'
 						);
 						?>
 					</li>
-					<li><?php esc_html_e( 'Click "Create Webhook", paste the Webhook URL below as the Endpoint URL, and enable at least Chat Start, Chat End, and New Ticket (enable any others you see too — this receiver ignores event types it doesn\'t recognize).', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Paste the Webhook URL below as the Endpoint URL, and check all four Select Events boxes: Chat Start, Chat End, New ticket, New Chat Transcript.', 'ajforms' ); ?></li>
 					<li><?php esc_html_e( 'Copy the signing secret Tawk.to shows you after saving and paste it into "Webhook Signing Secret" below.', 'ajforms' ); ?></li>
 					<li>
 						<?php
