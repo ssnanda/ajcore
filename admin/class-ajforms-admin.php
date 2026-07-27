@@ -21289,7 +21289,7 @@ class AJForms_Admin {
 			<div class="ajcore-section-head">
 				<div>
 					<h2><?php esc_html_e( 'Live Chat', 'ajforms' ); ?></h2>
-					<p><?php esc_html_e( 'New Tawk.to chats and tickets, logged the moment they happen so staff notice fast. This does not embed chat — use "Open Tawk.to Dashboard" below to actually reply.', 'ajforms' ); ?></p>
+					<p><?php esc_html_e( 'New Tawk.to chats and tickets, logged the moment they happen so staff notice fast. Use "Join Chat" on an active chat, or "Open Tawk.to Dashboard" below, to reply — both open the real Tawk.to dashboard right here.', 'ajforms' ); ?></p>
 				</div>
 			</div>
 
@@ -21322,7 +21322,7 @@ class AJForms_Admin {
 			</div>
 
 			<p>
-				<a class="button button-primary" href="https://dashboard.tawk.to/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Tawk.to Dashboard ↗', 'ajforms' ); ?></a>
+				<button type="button" class="button button-primary" id="ajforms-tawk-open-dashboard-btn"><?php esc_html_e( 'Open Tawk.to Dashboard', 'ajforms' ); ?></button>
 				<a class="button" href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Live Chat Settings', 'ajforms' ); ?></a>
 				<?php if ( $configured && $enabled ) : ?>
 					<button type="button" class="button" id="ajforms-tawk-backfill-btn"><?php esc_html_e( 'Import History', 'ajforms' ); ?></button>
@@ -21474,7 +21474,7 @@ class AJForms_Admin {
 								<td><?php echo esc_html( $event['createdAt'] ); ?></td>
 								<td>
 									<?php if ( ! empty( $event['isActive'] ) ) : ?>
-										<a class="button button-small button-primary" href="https://dashboard.tawk.to/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Join in Tawk.to ↗', 'ajforms' ); ?></a>
+										<button type="button" class="button button-small button-primary ajforms-tawk-join-btn"><?php esc_html_e( 'Join Chat', 'ajforms' ); ?></button>
 									<?php endif; ?>
 									<a class="button button-small" style="color:#b91c1c;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'tawk_action' => 'delete', 'tawk_event_id' => $event['id'] ), $base_url ), 'ajcore_tawk_delete_' . $event['id'] ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this Live Chat event? This cannot be undone.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 								</td>
@@ -21497,6 +21497,38 @@ class AJForms_Admin {
 				})();
 				</script>
 			<?php endif; ?>
+
+			<div id="ajforms-tawk-join-modal" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;padding:16px;">
+				<div style="background:#fff;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,0.25);width:100%;max-width:1100px;height:85vh;display:flex;flex-direction:column;overflow:hidden;">
+					<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #e5e7eb;">
+						<div>
+							<strong style="font-size:13px;"><?php esc_html_e( 'Join Chat', 'ajforms' ); ?></strong>
+							<p style="margin:2px 0 0;color:#9ca3af;font-size:12px;"><?php esc_html_e( 'Live Tawk.to dashboard, embedded. Log in below, then open the chat from Incoming/Active to join it.', 'ajforms' ); ?></p>
+						</div>
+						<div style="display:flex;align-items:center;gap:10px;">
+							<a href="https://dashboard.tawk.to/" target="_blank" rel="noopener noreferrer" style="font-size:12px;font-weight:600;"><?php esc_html_e( 'Not loading? Open in new tab ↗', 'ajforms' ); ?></a>
+							<button type="button" id="ajforms-tawk-join-modal-close" class="button" style="line-height:1;">✕</button>
+						</div>
+					</div>
+					<iframe src="https://dashboard.tawk.to/" title="Tawk.to Dashboard" style="flex:1;width:100%;border:0;"></iframe>
+				</div>
+			</div>
+			<script>
+			(function() {
+				var modal = document.getElementById( 'ajforms-tawk-join-modal' );
+				var closeBtn = document.getElementById( 'ajforms-tawk-join-modal-close' );
+				if ( ! modal ) { return; }
+				function openModal() { modal.style.display = 'flex'; }
+				function closeModal() { modal.style.display = 'none'; }
+				var openBtn = document.getElementById( 'ajforms-tawk-open-dashboard-btn' );
+				if ( openBtn ) { openBtn.addEventListener( 'click', openModal ); }
+				document.querySelectorAll( '.ajforms-tawk-join-btn' ).forEach( function ( btn ) {
+					btn.addEventListener( 'click', openModal );
+				} );
+				if ( closeBtn ) { closeBtn.addEventListener( 'click', closeModal ); }
+				modal.addEventListener( 'click', function ( e ) { if ( e.target === modal ) { closeModal(); } } );
+			})();
+			</script>
 		</div>
 		<?php
 	}
