@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.122
+ * Version: 0.7.124
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.122' );
+	define( 'AJCORE_VERSION', '0.7.124' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -169,23 +169,15 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// E-Signatures (BreezeDoc). A single shared BreezeDoc account, authenticated with a
 			// Personal Access Token, used to send templates out for customer signature.
 			'breezedoc_api_token'           => '',
-			// Live Chat (Tawk.to). One AJCore install can front multiple Tawk.to properties (one per
-			// business) — tawk_properties is a list of { label, property_id, webhook_secret }, each
-			// property's own webhook pointed at the SAME /tawk/webhook URL. The receiver picks the
-			// right secret to verify by matching the payload's property.id. api_username/api_password
-			// are stored for a future Tawk.to REST API integration (private-beta access, docs not
-			// available yet) — not used by anything yet.
-			'tawk_enabled'                   => '0',
-			'tawk_properties'                => array(),
-			// Key from Tawk.to's REST API Keys (dashboard profile menu), used by the "Fetch
-			// Properties"/"Test Connection" buttons to list properties — property.list can't return
-			// webhook secrets, so those are still entered manually per selected property, above.
-			'tawk_api_key'                   => '',
-			// Best-effort SMS alert (via the existing AJPhone/Zoom integration) on every new Tawk.to
-			// chat, sent to whatever ajcore_ajphone_automation_staff_notify_number is configured to
-			// (falls back to the same default AJPhone's own automation uses). Never blocks or fails
-			// the webhook itself if Zoom/AJPhone isn't configured or the send errors.
-			'tawk_sms_alerts_enabled'        => '0',
+			// Self-hosted Live Chat. chat_server_url/chat_notify_secret are shared across every
+			// connected site (master-controlled, same as the settings above) — they point every
+			// site's widget/reply actions at the one AJOps chat server and let it verify the
+			// /chat/notify webhook AJCore fires after every write. chat_widget_enabled is
+			// deliberately LOCAL (per-site, never pushed to the shared DB) so the widget can be
+			// rolled out to individual sites one at a time.
+			'chat_server_url'               => '',
+			'chat_notify_secret'            => '',
+			'chat_widget_enabled'           => '0',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
@@ -324,20 +316,6 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 
 		$settings = function_exists( 'ajcore_normalize_stripe_settings' ) ? ajcore_normalize_stripe_settings( $settings ) : $settings;
 
-		// One-time in-memory upgrade: the original Live Chat build stored a single property/secret
-		// pair (tawk_property_id/tawk_webhook_secret) before it became a multi-property list. Fold
-		// any leftover single-value config into tawk_properties so it isn't silently dropped; gets
-		// persisted properly the next time Live Chat settings are saved from the new UI.
-		if ( empty( $settings['tawk_properties'] ) && ! empty( $settings['tawk_property_id'] ) ) {
-			$settings['tawk_properties'] = array(
-				array(
-					'label'          => ! empty( $settings['tawk_widget_id'] ) ? (string) $settings['tawk_widget_id'] : (string) $settings['tawk_property_id'],
-					'property_id'    => (string) $settings['tawk_property_id'],
-					'webhook_secret' => isset( $settings['tawk_webhook_secret'] ) ? (string) $settings['tawk_webhook_secret'] : '',
-				),
-			);
-		}
-
 		if ( ! $has_saved_settings && ! empty( $file_settings ) ) {
 			update_option( 'ajforms_settings', $settings );
 		}
@@ -354,10 +332,10 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 				if ( ! empty( $shared_calendar ) ) {
 					$settings = array_merge( $settings, $shared_calendar );
 				}
-				if ( function_exists( 'ajcore_read_shared_tawk_settings' ) ) {
-					$shared_tawk = ajcore_read_shared_tawk_settings();
-					if ( ! empty( $shared_tawk ) ) {
-						$settings = array_merge( $settings, $shared_tawk );
+				if ( function_exists( 'ajcore_read_shared_chat_settings' ) ) {
+					$shared_chat = ajcore_read_shared_chat_settings();
+					if ( ! empty( $shared_chat ) ) {
+						$settings = array_merge( $settings, $shared_chat );
 					}
 				}
 			}
@@ -1018,19 +996,18 @@ if ( ! function_exists( 'ajcore_write_shared_calendar_settings' ) ) {
 	}
 }
 
-if ( ! function_exists( 'ajcore_get_tawk_setting_keys' ) ) {
-	function ajcore_get_tawk_setting_keys() {
+
+if ( ! function_exists( 'ajcore_get_chat_setting_keys' ) ) {
+	function ajcore_get_chat_setting_keys() {
 		return array(
-			'tawk_enabled',
-			'tawk_properties',
-			'tawk_api_key',
-			'tawk_sms_alerts_enabled',
+			'chat_server_url',
+			'chat_notify_secret',
 		);
 	}
 }
 
-if ( ! function_exists( 'ajcore_read_shared_tawk_settings' ) ) {
-	function ajcore_read_shared_tawk_settings() {
+if ( ! function_exists( 'ajcore_read_shared_chat_settings' ) ) {
+	function ajcore_read_shared_chat_settings() {
 		static $cache     = null;
 		static $cache_set = false;
 
@@ -1048,7 +1025,7 @@ if ( ! function_exists( 'ajcore_read_shared_tawk_settings' ) ) {
 			return array();
 		}
 		$value = $shared_db->get_var(
-			$shared_db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_tawk_settings' )
+			$shared_db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_chat_settings' )
 		);
 		if ( null === $value || '' === (string) $value ) {
 			return array();
@@ -1060,13 +1037,13 @@ if ( ! function_exists( 'ajcore_read_shared_tawk_settings' ) ) {
 }
 
 /**
- * Live Chat (Tawk.to) is a single shared configuration across every connected site — the master's
- * local option is the source of truth (pushed here on every save) and secondary sites overlay it
- * in ajforms_get_settings(), so the /tawk/webhook receiver and CP Settings UI see the same values
- * everywhere without staff having to configure each site separately.
+ * Live Chat server URL/notify secret are shared across every connected site — the master's local
+ * option is the source of truth, pushed here on every save, and secondary sites overlay it in
+ * ajforms_get_settings(). chat_widget_enabled deliberately does NOT go through this (see the
+ * settings-default comment above).
  */
-if ( ! function_exists( 'ajcore_write_shared_tawk_settings' ) ) {
-	function ajcore_write_shared_tawk_settings( $settings ) {
+if ( ! function_exists( 'ajcore_write_shared_chat_settings' ) ) {
+	function ajcore_write_shared_chat_settings( $settings ) {
 		if ( ! ajcore_is_shared_db_enabled() ) {
 			return false;
 		}
@@ -1079,7 +1056,7 @@ if ( ! function_exists( 'ajcore_write_shared_tawk_settings' ) ) {
 			return false;
 		}
 		$data = array();
-		foreach ( ajcore_get_tawk_setting_keys() as $key ) {
+		foreach ( ajcore_get_chat_setting_keys() as $key ) {
 			if ( array_key_exists( $key, $settings ) ) {
 				$data[ $key ] = $settings[ $key ];
 			}
@@ -1089,20 +1066,20 @@ if ( ! function_exists( 'ajcore_write_shared_tawk_settings' ) ) {
 			return false;
 		}
 		$existing = $shared_db->get_var(
-			$shared_db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_tawk_settings' )
+			$shared_db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_chat_settings' )
 		);
 		if ( $existing ) {
 			return false !== $shared_db->update(
 				$table,
 				array( 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
-				array( 'setting_name'  => 'ajcore_tawk_settings' ),
+				array( 'setting_name'  => 'ajcore_chat_settings' ),
 				array( '%s', '%s' ),
 				array( '%s' )
 			);
 		}
 		return false !== $shared_db->insert(
 			$table,
-			array( 'setting_name' => 'ajcore_tawk_settings', 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
+			array( 'setting_name' => 'ajcore_chat_settings', 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
 			array( '%s', '%s', '%s' )
 		);
 	}
@@ -1123,8 +1100,8 @@ add_action(
 			return;
 		}
 		ajcore_write_shared_calendar_settings( $value );
-		if ( function_exists( 'ajcore_write_shared_tawk_settings' ) ) {
-			ajcore_write_shared_tawk_settings( $value );
+		if ( function_exists( 'ajcore_write_shared_chat_settings' ) ) {
+			ajcore_write_shared_chat_settings( $value );
 		}
 	},
 	10,
@@ -1204,7 +1181,7 @@ function ajforms_maybe_upgrade() {
 	// re-deploy that keeps the same plugin version number will match this check and skip the
 	// migration entirely, silently leaving the new column/table missing on already-migrated
 	// installs (schema drift that showed up in production as leads queries erroring out).
-	if ( AJFORMS_VERSION === $installed_version && '37' === $portal_schema_version ) {
+	if ( AJFORMS_VERSION === $installed_version && '38' === $portal_schema_version ) {
 		return;
 	}
 
@@ -1337,6 +1314,38 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
 	}
 	add_action( 'wp_mail_failed', 'ajcore_log_outgoing_mail_failed' );
 }
+
+/**
+ * Renders the self-hosted Live Chat widget on the front end of this site, when enabled locally
+ * (see the "Live Chat" CP Settings section — chat_widget_enabled is deliberately per-site, not
+ * shared, so the widget can be rolled out to one site at a time). Vanilla JS, no framework, to
+ * keep the visitor-facing payload tiny; connects directly to the AJOps chat server's WebSocket
+ * endpoint configured in chat_server_url.
+ */
+function ajcore_render_chat_widget() {
+	if ( is_admin() ) {
+		return;
+	}
+	$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+	if ( '1' !== (string) ( $settings['chat_widget_enabled'] ?? '' ) ) {
+		return;
+	}
+	$server_url = untrailingslashit( trim( (string) ( $settings['chat_server_url'] ?? '' ) ) );
+	$site_uuid  = (string) get_option( 'ajcore_site_uuid', '' );
+	if ( '' === $server_url || '' === $site_uuid ) {
+		return;
+	}
+	?>
+	<script>
+		window.AJCoreChatConfig = {
+			serverUrl: <?php echo wp_json_encode( $server_url ); ?>,
+			siteUuid: <?php echo wp_json_encode( $site_uuid ); ?>
+		};
+	</script>
+	<script src="<?php echo esc_url( AJFORMS_PLUGIN_URL . 'assets/js/ajcore-chat-widget.js' ); ?>?v=<?php echo esc_attr( AJFORMS_VERSION ); ?>" defer></script>
+	<?php
+}
+add_action( 'wp_footer', 'ajcore_render_chat_widget' );
 
 /**
  * Begins execution of the plugin.

@@ -82,34 +82,6 @@ class AJCore_REST_API {
 		// Same rationale as the Zoho callback above — an external redirect from Google carries no
 		// X-WP-Nonce, so this route can't be capability-gated; security is the state-token check
 		// inside the handler itself.
-		// Inbound webhook from Tawk.to (Administration → Webhooks). No WP nonce/cookie is possible
-		// on an external caller — security is the X-Tawk-Signature HMAC check inside the handler
-		// itself (see tawk_webhook_receive()), not a capability check.
-		register_rest_route(
-			self::NAMESPACE,
-			'/tawk/webhook',
-			array(
-				'methods'             => WP_REST_Server::CREATABLE,
-				'callback'            => array( $this, 'tawk_webhook_receive' ),
-				'permission_callback' => '__return_true',
-			)
-		);
-
-		// Called via fetch() from CP Settings itself (wp-admin JS, so it carries a real X-WP-Nonce)
-		// — plain manage_options is right here, not can_manage_ops_api(), since this is a settings-
-		// page action, not an OPS API surface, and Live Chat settings are already master-only.
-		register_rest_route(
-			self::NAMESPACE,
-			'/tawk/fetch-properties',
-			array(
-				'methods'             => WP_REST_Server::CREATABLE,
-				'callback'            => array( $this, 'fetch_ops_tawk_properties_from_api' ),
-				'permission_callback' => function () {
-					return current_user_can( 'manage_options' );
-				},
-			)
-		);
-
 		register_rest_route(
 			self::NAMESPACE,
 			'/gmail-intake/oauth/callback',
@@ -872,13 +844,16 @@ class AJCore_REST_API {
 			'/ops/esign/send'                        => array( 'methods' => 'POST', 'callback' => 'send_ops_esign_document', 'permission' => 'can_manage_ops_api' ),
 			'/ops/esign/documents/(?P<id>\d+)/refresh' => array( 'methods' => 'POST', 'callback' => 'refresh_ops_esign_document', 'permission' => 'can_manage_ops_api' ),
 			'/ops/esign/documents'                    => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_esign_documents', 'permission' => 'can_manage_ops_api' ),
-			// Live Chat (Tawk.to) alerts
-			'/ops/tawk/events'                        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_events', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
-			'/ops/tawk/events/(?P<id>\d+)/acknowledge' => array( 'methods' => 'POST', 'callback' => 'acknowledge_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
-			'/ops/tawk/events/(?P<id>\d+)'             => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
-			'/ops/tawk/reset'                          => array( 'methods' => 'POST', 'callback' => 'reset_ops_tawk_events', 'permission' => 'can_manage_ops_api' ),
-			'/ops/tawk/properties'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_properties', 'permission' => 'can_manage_ops_api' ),
-			'/ops/tawk/backfill'                       => array( 'methods' => 'POST', 'callback' => 'backfill_ops_tawk_history', 'permission' => 'can_manage_ops_api' ),
+			// Self-hosted Live Chat. /chat/* is written to by AJOps' chat-server process using the
+			// same service-account JWT pattern as the AJPhone cron (still gated by can_manage_ops_api,
+			// not public) — visitor browsers never call AJCore directly, only AJOps' WS server does.
+			'/chat/sessions'                          => array( 'methods' => 'POST', 'callback' => 'create_chat_session', 'permission' => 'can_manage_ops_api' ),
+			'/chat/sessions/(?P<id>\d+)/messages'     => array( 'methods' => 'POST', 'callback' => 'post_chat_message', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/sessions'                      => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_chat_sessions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/chat/sessions/(?P<id>\d+)/messages' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_chat_session_messages', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/sessions/(?P<id>\d+)/reply'    => array( 'methods' => 'POST', 'callback' => 'reply_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/sessions/(?P<id>\d+)'          => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/reset'                          => array( 'methods' => 'POST', 'callback' => 'reset_ops_chat_sessions', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -984,14 +959,13 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/esign/send', 'auth' => 'Admin', 'purpose' => 'Clones a template into a document, assigns recipients (name/email only), and sends it for signature. Logs the result locally.', 'app' => 'OPS e-signatures' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/esign/documents', 'auth' => 'Admin', 'purpose' => 'Local log of sent signature requests with their last-known status.', 'app' => 'OPS e-signatures' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/esign/documents/{id}/refresh', 'auth' => 'Admin', 'purpose' => 'Polls BreezeDoc for the current status of a sent document (no webhook exists).', 'app' => 'OPS e-signatures' ),
-			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/tawk/webhook', 'auth' => 'Public (HMAC-SHA1 X-Tawk-Signature header, verified against the configured secret)', 'purpose' => 'Receives Tawk.to Chat Start/End/Transcript/Ticket Created events and logs them as staff alerts.', 'app' => 'Tawk.to webhook' ),
-			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/tawk/fetch-properties', 'auth' => 'Admin', 'purpose' => 'Calls Tawk.to\'s REST API (property.list) with the configured Bearer token to list properties for the CP Settings "Fetch Properties" button.', 'app' => 'CP Settings live chat' ),
-			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/events', 'auth' => 'Admin', 'purpose' => 'Live Chat alert feed (all connected sites, via the shared DB). Filters: status (new|acknowledged), event_type, site_uuid, property_id.', 'app' => 'OPS live chat' ),
-			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/events/{id}/acknowledge', 'auth' => 'Admin', 'purpose' => 'Marks a Live Chat alert as acknowledged.', 'app' => 'OPS live chat' ),
-			array( 'surface' => 'OPS', 'method' => 'DELETE', 'path' => '/ops/tawk/events/{id}', 'auth' => 'Admin', 'purpose' => 'Deletes a Live Chat event (e.g. test data).', 'app' => 'OPS live chat' ),
-			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/reset', 'auth' => 'Admin', 'purpose' => 'Deletes every Live Chat event across every property/site. Not scoped or reversible.', 'app' => 'OPS live chat' ),
-			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/properties', 'auth' => 'Admin', 'purpose' => 'Configured Tawk.to properties (id + label only, no secrets) for filter dropdowns.', 'app' => 'OPS live chat' ),
-			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/backfill', 'auth' => 'Admin', 'purpose' => 'Imports past conversations via Tawk.to\'s chat.list API for every tracked property (or one, via property_id param). Stored already-acknowledged; deduped by chat ID.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Creates (or fetches, by session_uuid) a Live Chat session from a visitor widget message relayed by AJOps\' WS server.', 'app' => 'Live Chat' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions/{id}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Appends a visitor message to a Live Chat session.', 'app' => 'Live Chat' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/chat/sessions', 'auth' => 'Admin', 'purpose' => 'Live Chat session list (all connected sites, via the shared DB). Filters: status (open|closed), site_uuid.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/chat/sessions/{id}/messages', 'auth' => 'Admin', 'purpose' => 'Full message thread for a Live Chat session.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/reply', 'auth' => 'Admin', 'purpose' => 'Sends a staff reply on a Live Chat session; triggers the /chat/notify push back to AJOps.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'DELETE', 'path' => '/ops/chat/sessions/{id}', 'auth' => 'Admin', 'purpose' => 'Deletes a Live Chat session and its messages (e.g. test data).', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/reset', 'auth' => 'Admin', 'purpose' => 'Deletes every Live Chat session/message across every site. Not scoped or reversible.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -1185,8 +1159,8 @@ class AJCore_REST_API {
 		$tasks_total = $this->count_table( $pdb, $tasks_table );
 		$tasks_open  = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$tasks_table}` WHERE status NOT IN ('completed','cancelled')" );
 
-		$tawk_table  = $this->portal_table( 'aj_portal_tawk_events' );
-		$tawk_unread = $this->table_exists( $pdb, $tawk_table ) ? (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$tawk_table}` WHERE status = 'new'" ) : 0;
+		$chat_sessions_table = $this->get_chat_sessions_table();
+		$chat_unread         = $this->table_exists( $pdb, $chat_sessions_table ) ? (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$chat_sessions_table}` WHERE status = 'open'" ) : 0;
 
 		return rest_ensure_response(
 			array(
@@ -1202,7 +1176,7 @@ class AJCore_REST_API {
 				'service_requests_needs_action'       => $sr_stats['needs_action'],
 				'leads'                               => $leads_total,
 				'leads_unread'                        => $leads_unread,
-				'tawk_unread'                         => $tawk_unread,
+				'chat_unread'                         => $chat_unread,
 				'sync_logs'                           => $this->count_table( $pdb, $this->portal_table( 'aj_portal_sync_logs' ) ),
 			)
 		);
@@ -5983,156 +5957,212 @@ class AJCore_REST_API {
 		return rest_ensure_response( $result );
 	}
 
-	// -----------------------------------------------------------------
-	// Live Chat (Tawk.to)
-	// -----------------------------------------------------------------
 
-	private function get_tawk_events_table() {
-		return $this->portal_table( 'aj_portal_tawk_events' );
+	// ── Self-hosted Live Chat ──────────────────────────────────────────────────
+	// AJCore's shared DB is the single source of truth and single writer for chat data — visitor
+	// messages (relayed through AJOps' WS server using the AJOps service account) and staff replies
+	// (from either WP-admin or AJOps) both land here the same way. Every successful write then fires
+	// a best-effort notify_ajops_chat() call so AJOps' WS server can push it to the right sockets;
+	// AJOps itself never writes to a database directly, same as every other OPS subsystem.
+
+	private function get_chat_sessions_table() {
+		return $this->portal_table( 'aj_portal_chat_sessions' );
 	}
 
-	/** property_id => label map from CP Settings → Live Chat, for display only (never exposes secrets). */
-	private function get_tawk_property_labels() {
-		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$properties = is_array( $settings['tawk_properties'] ?? null ) ? $settings['tawk_properties'] : array();
-		$labels     = array();
-		foreach ( $properties as $property_row ) {
-			if ( ! empty( $property_row['property_id'] ) ) {
-				$labels[ (string) $property_row['property_id'] ] = ! empty( $property_row['label'] ) ? (string) $property_row['label'] : (string) $property_row['property_id'];
-			}
-		}
-		return $labels;
+	private function get_chat_messages_table() {
+		return $this->portal_table( 'aj_portal_chat_messages' );
 	}
 
-	/**
-	 * $ended_chat_ids: set (array with chat_id keys) of tawk_chat_id values that have a chat_end
-	 * row somewhere in the table. A chat_start row is "active" (still ongoing, worth a fast "Join
-	 * in Tawk.to" link) only when its chat_id isn't in that set — every other event type is never
-	 * considered active (chat_end/chat_transcript/ticket_create aren't live conversations to join).
-	 */
-	private function format_tawk_event_row( $row, $property_labels = array(), $ended_chat_ids = array() ) {
-		$row         = (array) $row;
-		$property_id = (string) $row['property_id'];
-		$chat_id     = (string) $row['tawk_chat_id'];
-		$event_type  = (string) $row['event_type'];
+	private function format_chat_session_row( $row ) {
+		$row = (array) $row;
 		return array(
-			'id'              => (int) $row['id'],
-			'siteUuid'        => (string) $row['site_uuid'],
-			'siteLabel'       => (string) ( $row['site_domain'] ?? '' ),
-			'propertyId'      => $property_id,
-			'propertyLabel'   => isset( $property_labels[ $property_id ] ) ? $property_labels[ $property_id ] : $property_id,
-			'eventType'       => $event_type,
-			'chatId'          => $chat_id,
-			'visitorName'     => (string) $row['visitor_name'],
-			'visitorEmail'    => (string) $row['visitor_email'],
-			'messagePreview'  => (string) $row['message_preview'],
-			'status'          => (string) $row['status'],
-			'createdAt'       => (string) $row['created_at'],
-			'acknowledgedAt'  => (string) $row['acknowledged_at'],
-			'acknowledgedBy'  => (int) $row['acknowledged_by'],
-			'isActive'        => 'chat_start' === $event_type && '' !== $chat_id && ! isset( $ended_chat_ids[ $chat_id ] ),
+			'id'            => (int) $row['id'],
+			'siteUuid'      => (string) $row['site_uuid'],
+			'siteLabel'     => (string) ( $row['site_domain'] ?? '' ),
+			'sessionUuid'   => (string) $row['session_uuid'],
+			'visitorName'   => (string) $row['visitor_name'],
+			'visitorEmail'  => (string) $row['visitor_email'],
+			'visitorPhone'  => (string) $row['visitor_phone'],
+			'status'        => (string) $row['status'],
+			'createdAt'     => (string) $row['created_at'],
+			'lastMessageAt' => (string) ( $row['last_message_at'] ?? '' ),
+			'closedAt'      => (string) ( $row['closed_at'] ?? '' ),
 		);
 	}
 
-	/** property_id/label list for AJOps' and WP-admin's filter dropdowns (no secrets). */
-	public function get_ops_tawk_properties() {
-		$labels     = $this->get_tawk_property_labels();
-		$properties = array();
-		foreach ( $labels as $property_id => $label ) {
-			$properties[] = array( 'propertyId' => $property_id, 'label' => $label );
-		}
-		return rest_ensure_response( array( 'properties' => $properties ) );
+	private function format_chat_message_row( $row ) {
+		$row = (array) $row;
+		return array(
+			'id'         => (int) $row['id'],
+			'sessionId'  => (int) $row['session_id'],
+			'senderType' => (string) $row['sender_type'],
+			'senderName' => (string) $row['sender_name'],
+			'body'       => (string) $row['body'],
+			'createdAt'  => (string) $row['created_at'],
+		);
 	}
 
 	/**
-	 * Calls Tawk.to's REST API (POST https://api.tawk.to/v1/property.list) to list properties, so
-	 * staff don't have to hand-type every Property ID. Verified live against a real account
-	 * (2026-07-27): auth is HTTP Basic with the Key as username and an empty password — Tawk.to's
-	 * dashboard only ever shows this one value (no separate secret), and the endpoint doesn't check
-	 * the Basic password at all. A JSON body is required even though property.list takes no
-	 * parameters — an empty/missing body 400s. Confirmed response shape: {"ok":true,"data":
-	 * [{"propertyId":"...","type":"profile"|"business","name":"...","enabled":true,"domain":"..."}]}
-	 * (the "profile" entry is the account's own default property and often has an empty name).
-	 * property.list has no way to return webhook secrets (Tawk.to only shows those once, at webhook
-	 * creation), so this can't replace the manual per-property webhook setup in
-	 * display_tawk_settings_section().
+	 * Best-effort push to AJOps so its WS server can fan a session/message out to connected
+	 * sockets (staff dashboards + the visitor's own browser) — AJOps never writes to a database
+	 * itself, this is its only ingestion path. Never blocks or fails the caller if the chat server
+	 * URL isn't configured or the request errors.
 	 */
-	public function fetch_ops_tawk_properties_from_api() {
+	private function notify_ajops_chat( $session, $message = null ) {
 		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$key      = trim( (string) ( $settings['tawk_api_key'] ?? '' ) );
-		if ( '' === $key ) {
-			return new WP_Error( 'tawk_api_not_configured', __( 'Add a REST API Key below first.', 'ajforms' ), array( 'status' => 400 ) );
+		$url      = trim( (string) ( $settings['chat_server_url'] ?? '' ) );
+		if ( '' === $url ) {
+			return;
 		}
-
+		$secret = (string) ( $settings['chat_notify_secret'] ?? '' );
 		$response = wp_remote_post(
-			'https://api.tawk.to/v1/property.list',
+			rtrim( $url, '/' ) . '/api/chat/notify',
 			array(
-				'timeout' => 20,
-				'headers' => array(
+				'timeout'  => 5,
+				'blocking' => false,
+				'headers'  => array(
 					'Content-Type'  => 'application/json',
-					'Accept'        => 'application/json',
-					'Authorization' => 'Basic ' . base64_encode( $key . ':' ),
+					'X-Chat-Secret' => $secret,
 				),
-				'body'    => '{}',
+				'body'     => wp_json_encode(
+					array(
+						'session' => $session,
+						'message' => $message,
+					)
+				),
 			)
 		);
 		if ( is_wp_error( $response ) ) {
-			return $response;
+			error_log( 'AJCore Live Chat notify: ' . $response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		}
-
-		$status = wp_remote_retrieve_response_code( $response );
-		$body   = wp_remote_retrieve_body( $response );
-		$decoded = json_decode( $body, true );
-
-		if ( $status < 200 || $status >= 300 ) {
-			return new WP_Error(
-				'tawk_api_error',
-				sprintf(
-					/* translators: 1: HTTP status code, 2: raw response body */
-					__( 'Tawk.to API returned HTTP %1$d: %2$s', 'ajforms' ),
-					(int) $status,
-					mb_substr( (string) $body, 0, 300 )
-				),
-				array( 'status' => 502 )
-			);
-		}
-
-		$list = ( is_array( $decoded ) && isset( $decoded['data'] ) && is_array( $decoded['data'] ) ) ? $decoded['data'] : array();
-
-		$properties = array();
-		foreach ( $list as $item ) {
-			if ( ! is_array( $item ) ) {
-				continue;
-			}
-			$property_id = $item['propertyId'] ?? $item['property_id'] ?? $item['id'] ?? $item['_id'] ?? '';
-			$label       = $item['name'] ?? $item['title'] ?? $item['label'] ?? $item['companyName'] ?? '';
-			if ( '' === $property_id ) {
-				continue;
-			}
-			if ( '' === $label ) {
-				// The account's own default "profile" property has no name set.
-				$label = 'profile' === ( $item['type'] ?? '' ) ? __( 'Default Profile', 'ajforms' ) : $property_id;
-			}
-			$properties[] = array(
-				'propertyId' => sanitize_text_field( (string) $property_id ),
-				'label'      => sanitize_text_field( (string) $label ),
-			);
-		}
-
-		return rest_ensure_response(
-			array(
-				'success'    => true,
-				'properties' => $properties,
-				'raw'        => $decoded,
-			)
-		);
 	}
 
-	public function get_ops_tawk_events( WP_REST_Request $request ) {
+	/**
+	 * Shared by post_chat_message() (visitor) and reply_ops_chat_session() (staff) — inserts a
+	 * message row and bumps the session's last_message_at, so both origins stay consistent.
+	 * Returns the formatted message row, or a WP_Error on failure.
+	 */
+	private function insert_chat_message( $session_id, $sender_type, $sender_name, $body ) {
+		$pdb     = $this->get_portal_db();
+		$s_table = $this->get_chat_sessions_table();
+		$m_table = $this->get_chat_messages_table();
+
+		$now      = current_time( 'mysql' );
+		$inserted = $pdb->insert(
+			$m_table,
+			array(
+				'session_id'  => $session_id,
+				'sender_type' => $sender_type,
+				'sender_name' => $sender_name,
+				'body'        => $body,
+				'created_at'  => $now,
+			),
+			array( '%d', '%s', '%s', '%s', '%s' )
+		);
+		if ( ! $inserted ) {
+			return new WP_Error( 'chat_message_failed', __( 'Could not save this message.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		$pdb->update( $s_table, array( 'last_message_at' => $now ), array( 'id' => $session_id ), array( '%s' ), array( '%d' ) );
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$row = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$m_table}` WHERE id = %d", $pdb->insert_id ), ARRAY_A );
+		return $this->format_chat_message_row( $row );
+	}
+
+	/**
+	 * Creates a Live Chat session (or returns the existing one for a returning visitor whose
+	 * browser already has this session_uuid in localStorage) — called by AJOps' WS server with
+	 * the pre-chat form fields (name/email/phone) the widget collected.
+	 */
+	public function create_chat_session( WP_REST_Request $request ) {
 		$pdb   = $this->get_portal_db();
-		$table = $this->get_tawk_events_table();
+		$table = $this->get_chat_sessions_table();
 		if ( ! $this->table_exists( $pdb, $table ) ) {
-			return rest_ensure_response( array( 'events' => array(), 'stats' => array( 'total' => 0, 'new' => 0 ) ) );
+			return new WP_Error( 'chat_storage_unavailable', __( 'Live Chat storage is not available.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		$session_uuid = sanitize_text_field( (string) $request->get_param( 'session_uuid' ) );
+		if ( '' === $session_uuid ) {
+			return new WP_Error( 'chat_invalid_session', __( 'A session_uuid is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$existing = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE session_uuid = %s", $session_uuid ), ARRAY_A );
+		if ( $existing ) {
+			return rest_ensure_response( array( 'session' => $this->format_chat_session_row( $existing ) ) );
+		}
+
+		$site_uuid     = sanitize_text_field( (string) $request->get_param( 'site_uuid' ) );
+		$visitor_name  = sanitize_text_field( (string) $request->get_param( 'visitor_name' ) );
+		$visitor_email = sanitize_email( (string) $request->get_param( 'visitor_email' ) );
+		$visitor_phone = sanitize_text_field( (string) $request->get_param( 'visitor_phone' ) );
+
+		$inserted = $pdb->insert(
+			$table,
+			array(
+				'site_uuid'     => $site_uuid,
+				'session_uuid'  => $session_uuid,
+				'visitor_name'  => $visitor_name,
+				'visitor_email' => $visitor_email,
+				'visitor_phone' => $visitor_phone,
+				'status'        => 'open',
+				'created_at'    => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+		if ( ! $inserted ) {
+			return new WP_Error( 'chat_create_failed', __( 'Could not start this chat session.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$row     = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", $pdb->insert_id ), ARRAY_A );
+		$session = $this->format_chat_session_row( $row );
+		$this->notify_ajops_chat( $session );
+		return rest_ensure_response( array( 'session' => $session ) );
+	}
+
+	/** Appends a visitor message to an existing session — reopens the session if it had been closed. */
+	public function post_chat_message( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$s_table    = $this->get_chat_sessions_table();
+		$m_table    = $this->get_chat_messages_table();
+		$session_id = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || ! $this->table_exists( $pdb, $m_table ) || ! $session_id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		if ( ! $session ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$body = sanitize_textarea_field( (string) $request->get_param( 'body' ) );
+		if ( '' === $body ) {
+			return new WP_Error( 'chat_empty_message', __( 'Message body is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$message_row = $this->insert_chat_message( $session_id, 'visitor', (string) $session['visitor_name'], $body );
+		if ( is_wp_error( $message_row ) ) {
+			return $message_row;
+		}
+
+		if ( 'open' !== (string) $session['status'] ) {
+			$pdb->update( $s_table, array( 'status' => 'open', 'closed_at' => null ), array( 'id' => $session_id ), array( '%s', '%s' ), array( '%d' ) );
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$updated_session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		$this->notify_ajops_chat( $this->format_chat_session_row( $updated_session ), $message_row );
+
+		return rest_ensure_response( array( 'message' => $message_row ) );
+	}
+
+	/** Live Chat session list for both staff surfaces — filters: status (open|closed), site_uuid, search. */
+	public function get_ops_chat_sessions( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_chat_sessions_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'sessions' => array() ) );
 		}
 
 		$sites_table = $pdb->prefix . 'aj_shared_sites';
@@ -6142,33 +6172,21 @@ class AJCore_REST_API {
 		$params = array();
 
 		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?: '' ) );
-		if ( in_array( $status, array( 'new', 'acknowledged' ), true ) ) {
-			$where[]  = 'e.status = %s';
+		if ( in_array( $status, array( 'open', 'closed' ), true ) ) {
+			$where[]  = 'c.status = %s';
 			$params[] = $status;
-		}
-
-		$event_type = sanitize_key( (string) ( $request->get_param( 'event_type' ) ?: '' ) );
-		if ( in_array( $event_type, array( 'chat_start', 'chat_end', 'chat_transcript', 'ticket_create' ), true ) ) {
-			$where[]  = 'e.event_type = %s';
-			$params[] = $event_type;
 		}
 
 		$site_uuid = sanitize_text_field( (string) ( $request->get_param( 'site_uuid' ) ?: '' ) );
 		if ( '' !== $site_uuid ) {
-			$where[]  = 'e.site_uuid = %s';
+			$where[]  = 'c.site_uuid = %s';
 			$params[] = $site_uuid;
-		}
-
-		$property_id = sanitize_text_field( (string) ( $request->get_param( 'property_id' ) ?: '' ) );
-		if ( '' !== $property_id ) {
-			$where[]  = 'e.property_id = %s';
-			$params[] = $property_id;
 		}
 
 		$search = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?: '' ) );
 		if ( '' !== $search ) {
 			$like     = '%' . $pdb->esc_like( $search ) . '%';
-			$where[]  = '( e.visitor_name LIKE %s OR e.visitor_email LIKE %s OR e.message_preview LIKE %s )';
+			$where[]  = '( c.visitor_name LIKE %s OR c.visitor_email LIKE %s OR c.visitor_phone LIKE %s )';
 			$params[] = $like;
 			$params[] = $like;
 			$params[] = $like;
@@ -6178,460 +6196,100 @@ class AJCore_REST_API {
 		$params[] = $per_page;
 
 		$where_sql = implode( ' AND ', $where );
-		$select    = $has_sites ? 'e.*, s.domain AS site_domain' : 'e.*';
-		$join      = $has_sites ? "LEFT JOIN `{$sites_table}` s ON s.site_uuid = e.site_uuid" : '';
+		$select    = $has_sites ? 'c.*, s.domain AS site_domain' : 'c.*';
+		$join      = $has_sites ? "LEFT JOIN `{$sites_table}` s ON s.site_uuid = c.site_uuid" : '';
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$rows = $pdb->get_results( $pdb->prepare( "SELECT {$select} FROM `{$table}` e {$join} WHERE {$where_sql} ORDER BY e.created_at DESC, e.id DESC LIMIT %d", $params ), ARRAY_A );
+		$rows = $pdb->get_results( $pdb->prepare( "SELECT {$select} FROM `{$table}` c {$join} WHERE {$where_sql} ORDER BY c.last_message_at DESC, c.created_at DESC LIMIT %d", $params ), ARRAY_A );
 		$rows = is_array( $rows ) ? $rows : array();
-		$property_labels = $this->get_tawk_property_labels();
 
-		$ended_chat_ids_list = $pdb->get_col( "SELECT DISTINCT tawk_chat_id FROM `{$table}` WHERE event_type = 'chat_end' AND tawk_chat_id <> ''" );
-		$ended_chat_ids      = array_flip( array_map( 'strval', (array) $ended_chat_ids_list ) );
-
-		$stats = $pdb->get_row( "SELECT COUNT(*) AS total, SUM(status = 'new') AS new FROM `{$table}`", ARRAY_A );
-
-		return rest_ensure_response( array(
-			'events' => array_map( function ( $row ) use ( $property_labels, $ended_chat_ids ) { return $this->format_tawk_event_row( $row, $property_labels, $ended_chat_ids ); }, $rows ),
-			'stats'  => array(
-				'total' => (int) ( $stats['total'] ?? 0 ),
-				'new'   => (int) ( $stats['new'] ?? 0 ),
-			),
-		) );
+		return rest_ensure_response( array( 'sessions' => array_map( array( $this, 'format_chat_session_row' ), $rows ) ) );
 	}
 
-	public function acknowledge_ops_tawk_event( WP_REST_Request $request ) {
-		$pdb   = $this->get_portal_db();
-		$table = $this->get_tawk_events_table();
-		$id    = absint( $request['id'] );
-		if ( ! $this->table_exists( $pdb, $table ) || ! $id ) {
-			return new WP_Error( 'not_found', __( 'Live Chat event not found.', 'ajforms' ), array( 'status' => 404 ) );
-		}
-		$user    = wp_get_current_user();
-		$updated = $pdb->update(
-			$table,
-			array(
-				'status'          => 'acknowledged',
-				'acknowledged_at' => current_time( 'mysql' ),
-				'acknowledged_by' => $user ? (int) $user->ID : 0,
-			),
-			array( 'id' => $id ),
-			array( '%s', '%s', '%d' ),
-			array( '%d' )
-		);
-		if ( false === $updated ) {
-			return new WP_Error( 'update_failed', __( 'Could not acknowledge this event.', 'ajforms' ), array( 'status' => 500 ) );
+	/** Full message thread for a session, oldest first. */
+	public function get_ops_chat_session_messages( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$table      = $this->get_chat_messages_table();
+		$session_id = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $table ) || ! $session_id ) {
+			return rest_ensure_response( array( 'messages' => array() ) );
 		}
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$row = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", $id ), ARRAY_A );
-		return rest_ensure_response( $row ? $this->format_tawk_event_row( $row ) : array( 'id' => $id, 'status' => 'acknowledged' ) );
+		$rows = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$table}` WHERE session_id = %d ORDER BY created_at ASC, id ASC", $session_id ), ARRAY_A );
+		$rows = is_array( $rows ) ? $rows : array();
+		return rest_ensure_response( array( 'messages' => array_map( array( $this, 'format_chat_message_row' ), $rows ) ) );
 	}
 
-	public function delete_ops_tawk_event( WP_REST_Request $request ) {
-		$pdb   = $this->get_portal_db();
-		$table = $this->get_tawk_events_table();
-		$id    = absint( $request['id'] );
-		if ( ! $this->table_exists( $pdb, $table ) || ! $id ) {
-			return new WP_Error( 'not_found', __( 'Live Chat event not found.', 'ajforms' ), array( 'status' => 404 ) );
+	/** Staff reply — used by both WP-admin's reply box and AJOps' reply box, identically. */
+	public function reply_ops_chat_session( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$s_table    = $this->get_chat_sessions_table();
+		$session_id = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || ! $session_id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
-		$deleted = $pdb->delete( $table, array( 'id' => $id ), array( '%d' ) );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		if ( ! $session ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$body = sanitize_textarea_field( (string) $request->get_param( 'body' ) );
+		if ( '' === $body ) {
+			return new WP_Error( 'chat_empty_message', __( 'Message body is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$user        = wp_get_current_user();
+		$sender_name = ( $user && $user->exists() ) ? $user->display_name : __( 'Staff', 'ajforms' );
+
+		$message_row = $this->insert_chat_message( $session_id, 'staff', $sender_name, $body );
+		if ( is_wp_error( $message_row ) ) {
+			return $message_row;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$updated_session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		$this->notify_ajops_chat( $this->format_chat_session_row( $updated_session ), $message_row );
+
+		return rest_ensure_response( array( 'message' => $message_row ) );
+	}
+
+	public function delete_ops_chat_session( WP_REST_Request $request ) {
+		$pdb     = $this->get_portal_db();
+		$s_table = $this->get_chat_sessions_table();
+		$m_table = $this->get_chat_messages_table();
+		$id      = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || ! $id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		if ( $this->table_exists( $pdb, $m_table ) ) {
+			$pdb->delete( $m_table, array( 'session_id' => $id ), array( '%d' ) );
+		}
+		$deleted = $pdb->delete( $s_table, array( 'id' => $id ), array( '%d' ) );
 		if ( ! $deleted ) {
-			return new WP_Error( 'delete_failed', __( 'Could not delete this event.', 'ajforms' ), array( 'status' => 500 ) );
+			return new WP_Error( 'delete_failed', __( 'Could not delete this session.', 'ajforms' ), array( 'status' => 500 ) );
 		}
 		return rest_ensure_response( array( 'success' => true, 'id' => $id ) );
 	}
 
 	/**
-	 * Full reset — deletes every Live Chat event, across every property and site (this table is
+	 * Full reset — deletes every Live Chat session/message, across every site (this table is
 	 * shared across the whole multi-site install, so this is intentionally not scoped to just the
-	 * current site). For clearing out test data / bad-timezone backfill rows before re-running
-	 * Import History, not a routine action — the confirm dialogs in both UIs say as much.
+	 * current site). Carried over from the old Tawk build, where this was explicitly valuable for
+	 * clearing out test data.
 	 */
-	public function reset_ops_tawk_events() {
-		$pdb   = $this->get_portal_db();
-		$table = $this->get_tawk_events_table();
-		if ( ! $this->table_exists( $pdb, $table ) ) {
+	public function reset_ops_chat_sessions() {
+		$pdb     = $this->get_portal_db();
+		$s_table = $this->get_chat_sessions_table();
+		$m_table = $this->get_chat_messages_table();
+		if ( ! $this->table_exists( $pdb, $s_table ) ) {
 			return rest_ensure_response( array( 'success' => true, 'deleted' => 0 ) );
 		}
-		$count = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-		$pdb->query( "TRUNCATE TABLE `{$table}`" );
+		$count = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$s_table}`" );
+		if ( $this->table_exists( $pdb, $m_table ) ) {
+			$pdb->query( "TRUNCATE TABLE `{$m_table}`" );
+		}
+		$pdb->query( "TRUNCATE TABLE `{$s_table}`" );
 		return rest_ensure_response( array( 'success' => true, 'deleted' => $count ) );
-	}
-
-	/**
-	 * One-time(-ish) backfill of past conversations via Tawk.to's REST API (POST
-	 * https://api.tawk.to/v1/chat.list, body {"propertyId": "..."}), for chats that happened before
-	 * this integration existed (the webhook only ever sees NEW events going forward). Verified live
-	 * against a real account (2026-07-27): same Basic-auth-with-Key-as-username pattern as
-	 * property.list; response is {"ok":true,"total":N,"data":[{"id","propertyId","status",
-	 * "visitor":{"name","email"},"messageCount","createdOn","updatedOn","messages":[{"sender":
-	 * {"t":"v"|"s"|"a"},"type":"msg"|"nav"|...,"time","msg"}],...}]}. Imported rows are stored
-	 * already-acknowledged (status='acknowledged') so they show up under History without cluttering
-	 * the New-alerts feed, and deduped against both prior backfills and anything the live webhook has
-	 * already logged, keyed on (property_id, tawk_chat_id).
-	 */
-	public function backfill_ops_tawk_history( WP_REST_Request $request ) {
-		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$key       = trim( (string) ( $settings['tawk_api_key'] ?? '' ) );
-		$properties = is_array( $settings['tawk_properties'] ?? null ) ? $settings['tawk_properties'] : array();
-		if ( '' === $key ) {
-			return new WP_Error( 'tawk_api_not_configured', __( 'Add a REST API Key in Live Chat settings first.', 'ajforms' ), array( 'status' => 400 ) );
-		}
-		if ( empty( $properties ) ) {
-			return new WP_Error( 'tawk_no_properties', __( 'No tracked properties to backfill.', 'ajforms' ), array( 'status' => 400 ) );
-		}
-
-		$only_property_id = sanitize_text_field( (string) ( $request->get_param( 'property_id' ) ?: '' ) );
-		if ( '' !== $only_property_id ) {
-			$properties = array_values( array_filter( $properties, function ( $p ) use ( $only_property_id ) {
-				return isset( $p['property_id'] ) && $p['property_id'] === $only_property_id;
-			} ) );
-		}
-
-		$pdb   = $this->get_portal_db();
-		$table = $this->get_tawk_events_table();
-		if ( ! $this->table_exists( $pdb, $table ) && class_exists( 'AJForms_Activator' ) ) {
-			AJForms_Activator::activate();
-		}
-		if ( ! $this->table_exists( $pdb, $table ) ) {
-			return new WP_Error( 'tawk_storage_unavailable', __( 'Live Chat storage is not available on this site.', 'ajforms' ), array( 'status' => 500 ) );
-		}
-
-		$results = array();
-		$total_imported = 0;
-		$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
-
-		foreach ( $properties as $property_row ) {
-			$property_id = isset( $property_row['property_id'] ) ? (string) $property_row['property_id'] : '';
-			if ( '' === $property_id ) {
-				continue;
-			}
-
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$existing_ids = $pdb->get_col( $pdb->prepare( "SELECT tawk_chat_id FROM `{$table}` WHERE property_id = %s AND tawk_chat_id <> ''", $property_id ) );
-			$existing_ids = array_flip( array_map( 'strval', (array) $existing_ids ) );
-
-			$response = wp_remote_post(
-				'https://api.tawk.to/v1/chat.list',
-				array(
-					'timeout' => 30,
-					'headers' => array(
-						'Content-Type'  => 'application/json',
-						'Accept'        => 'application/json',
-						'Authorization' => 'Basic ' . base64_encode( $key . ':' ),
-					),
-					'body'    => wp_json_encode( array( 'propertyId' => $property_id ) ),
-				)
-			);
-			if ( is_wp_error( $response ) ) {
-				$results[] = array( 'propertyId' => $property_id, 'label' => $property_row['label'] ?? $property_id, 'error' => $response->get_error_message(), 'imported' => 0 );
-				continue;
-			}
-			$status = wp_remote_retrieve_response_code( $response );
-			$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
-			if ( $status < 200 || $status >= 300 || empty( $decoded['ok'] ) || ! is_array( $decoded['data'] ?? null ) ) {
-				$results[] = array( 'propertyId' => $property_id, 'label' => $property_row['label'] ?? $property_id, 'error' => sprintf( 'HTTP %d', (int) $status ), 'imported' => 0 );
-				continue;
-			}
-
-			$imported = 0;
-			foreach ( $decoded['data'] as $chat ) {
-				$chat_id = (string) ( $chat['id'] ?? '' );
-				if ( '' === $chat_id || isset( $existing_ids[ $chat_id ] ) ) {
-					continue;
-				}
-
-				$first_visitor_message = '';
-				foreach ( (array) ( $chat['messages'] ?? array() ) as $message ) {
-					if ( 'msg' === ( $message['type'] ?? '' ) && 'v' === ( $message['sender']['t'] ?? '' ) ) {
-						$first_visitor_message = (string) ( $message['msg'] ?? '' );
-						break;
-					}
-				}
-
-				$created_on = (string) ( $chat['createdOn'] ?? '' );
-				// get_date_from_gmt() (not gmdate()) so this matches the site-local convention every
-				// other created_at in this table uses (current_time('mysql') on the live webhook path)
-				// — using gmdate() here stored these in UTC, silently disagreeing with live events.
-				$created_at = $created_on ? get_date_from_gmt( gmdate( 'Y-m-d H:i:s', strtotime( $created_on ) ), 'Y-m-d H:i:s' ) : current_time( 'mysql' );
-
-				$inserted = $pdb->insert(
-					$table,
-					array(
-						'site_uuid'       => $site_uuid,
-						'property_id'     => $property_id,
-						'event_type'      => 'chat_transcript',
-						'tawk_chat_id'    => $chat_id,
-						'visitor_name'    => sanitize_text_field( (string) ( $chat['visitor']['name'] ?? '' ) ),
-						'visitor_email'   => sanitize_email( (string) ( $chat['visitor']['email'] ?? '' ) ),
-						'message_preview' => sanitize_textarea_field( mb_substr( $first_visitor_message, 0, 500 ) ),
-						'payload'         => wp_json_encode( $chat ),
-						'status'          => 'acknowledged',
-						'created_at'      => $created_at,
-						'acknowledged_at' => current_time( 'mysql' ),
-					),
-					array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
-				);
-				if ( false !== $inserted ) {
-					$imported++;
-					$existing_ids[ $chat_id ] = true;
-				}
-			}
-
-			$total_imported += $imported;
-			$results[] = array(
-				'propertyId' => $property_id,
-				'label'      => $property_row['label'] ?? $property_id,
-				'found'      => count( $decoded['data'] ),
-				'imported'   => $imported,
-			);
-		}
-
-		return rest_ensure_response( array( 'success' => true, 'imported' => $total_imported, 'results' => $results ) );
-	}
-
-	/**
-	 * Digs a value out of a decoded Tawk.to webhook payload, trying several candidate key paths
-	 * (dot notation) since chat events nest visitor data at the root while the transcript event
-	 * nests it under "chat" — see display_tawk_settings_section() for the setup instructions.
-	 */
-	private function dig_tawk_payload_value( array $payload, array $candidate_paths ) {
-		foreach ( $candidate_paths as $path ) {
-			$value = $payload;
-			foreach ( explode( '.', $path ) as $segment ) {
-				if ( ! is_array( $value ) || ! array_key_exists( $segment, $value ) ) {
-					$value = null;
-					break;
-				}
-				$value = $value[ $segment ];
-			}
-			if ( null !== $value && '' !== $value ) {
-				return $value;
-			}
-		}
-		return '';
-	}
-
-	/**
-	 * Webhook receiver for Tawk.to (Administration → Webhooks in the Tawk.to dashboard, configured
-	 * per-property in CP Settings → Live Chat). Public route — Tawk.to's redirect carries no WP
-	 * nonce/cookie, so security is the HMAC-SHA1 signature check below (same pattern as the Zoho/
-	 * Gmail OAuth callbacks elsewhere in this file), not a capability check. Only logs events for
-	 * staff alerting; does not call back into Tawk.to.
-	 */
-	public function tawk_webhook_receive( WP_REST_Request $request ) {
-		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$enabled    = '1' === (string) ( $settings['tawk_enabled'] ?? '' );
-		$properties = is_array( $settings['tawk_properties'] ?? null ) ? $settings['tawk_properties'] : array();
-
-		$secrets_by_property = array();
-		foreach ( $properties as $property_row ) {
-			if ( ! empty( $property_row['property_id'] ) && ! empty( $property_row['webhook_secret'] ) ) {
-				$secrets_by_property[ (string) $property_row['property_id'] ] = (string) $property_row['webhook_secret'];
-			}
-		}
-		if ( ! $enabled || empty( $secrets_by_property ) ) {
-			return new WP_Error( 'tawk_not_configured', __( 'Tawk.to Live Chat is not enabled on this site.', 'ajforms' ), array( 'status' => 403 ) );
-		}
-
-		$body      = $request->get_body();
-		$signature = (string) $request->get_header( 'x-tawk-signature' );
-		if ( '' === $signature ) {
-			return new WP_Error( 'tawk_invalid_signature', __( 'Invalid webhook signature.', 'ajforms' ), array( 'status' => 401 ) );
-		}
-
-		$payload = json_decode( (string) $body, true );
-		$payload = is_array( $payload ) ? $payload : array();
-
-		// Each configured property has its OWN Tawk.to webhook (and secret), all pointed at this
-		// same URL. The payload's property.id names which one sent it, but since that hasn't been
-		// verified yet, only trust it as a lookup hint — confirm it by actually matching the HMAC
-		// against that property's secret, falling back to trying every configured secret in case
-		// property.id isn't where we expect it in this payload shape.
-		$claimed_property_id = (string) $this->dig_tawk_payload_value( $payload, array( 'property.id' ) );
-		$matched_property_id = '';
-		if ( '' !== $claimed_property_id && isset( $secrets_by_property[ $claimed_property_id ] ) ) {
-			$expected = hash_hmac( 'sha1', (string) $body, $secrets_by_property[ $claimed_property_id ] );
-			if ( hash_equals( $expected, $signature ) ) {
-				$matched_property_id = $claimed_property_id;
-			}
-		}
-		if ( '' === $matched_property_id ) {
-			foreach ( $secrets_by_property as $property_id => $property_secret ) {
-				$expected = hash_hmac( 'sha1', (string) $body, $property_secret );
-				if ( hash_equals( $expected, $signature ) ) {
-					$matched_property_id = $property_id;
-					break;
-				}
-			}
-		}
-		if ( '' === $matched_property_id ) {
-			return new WP_Error( 'tawk_invalid_signature', __( 'Invalid webhook signature.', 'ajforms' ), array( 'status' => 401 ) );
-		}
-
-		$raw_event  = (string) $this->dig_tawk_payload_value( $payload, array( 'event' ) );
-		$event_map  = array(
-			'chat:start'              => 'chat_start',
-			'chat:end'                => 'chat_end',
-			'chat:transcript_created' => 'chat_transcript',
-			'ticket:create'           => 'ticket_create',
-		);
-		$event_type = isset( $event_map[ $raw_event ] ) ? $event_map[ $raw_event ] : sanitize_key( str_replace( ':', '_', $raw_event ) );
-		if ( '' === $event_type ) {
-			$event_type = 'unknown';
-		}
-
-		$chat_id = (string) $this->dig_tawk_payload_value( $payload, array( 'chatId', 'chat.id', 'ticket.id' ) );
-		$name    = (string) $this->dig_tawk_payload_value( $payload, array( 'visitor.name', 'chat.visitor.name', 'requester.name' ) );
-		$email   = (string) $this->dig_tawk_payload_value( $payload, array( 'visitor.email', 'chat.visitor.email', 'requester.email' ) );
-		$message = (string) $this->dig_tawk_payload_value( $payload, array( 'message.text', 'chat.message.text', 'ticket.subject' ) );
-		$property = $matched_property_id;
-
-		$pdb   = $this->get_portal_db();
-		$table = $this->get_tawk_events_table();
-		if ( ! $this->table_exists( $pdb, $table ) && class_exists( 'AJForms_Activator' ) ) {
-			AJForms_Activator::activate();
-		}
-		if ( ! $this->table_exists( $pdb, $table ) ) {
-			return new WP_Error( 'tawk_storage_unavailable', __( 'Live Chat storage is not available on this site.', 'ajforms' ), array( 'status' => 500 ) );
-		}
-
-		$inserted = $pdb->insert(
-			$table,
-			array(
-				'site_uuid'       => (string) get_option( 'ajcore_site_uuid', '' ),
-				'property_id'     => sanitize_text_field( $property ),
-				'event_type'      => sanitize_key( $event_type ),
-				'tawk_chat_id'    => sanitize_text_field( $chat_id ),
-				'visitor_name'    => sanitize_text_field( $name ),
-				'visitor_email'   => sanitize_email( $email ),
-				'message_preview' => sanitize_textarea_field( mb_substr( $message, 0, 500 ) ),
-				'payload'         => wp_json_encode( $payload ),
-				'status'          => 'new',
-				'created_at'      => current_time( 'mysql' ),
-			),
-			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
-		);
-
-		if ( false === $inserted ) {
-			return new WP_Error( 'tawk_store_failed', __( 'Could not log this event.', 'ajforms' ), array( 'status' => 500 ) );
-		}
-
-		if ( 'chat_start' === $event_type && '1' === (string) ( $settings['tawk_sms_alerts_enabled'] ?? '' ) ) {
-			$this->send_tawk_chat_alert_sms( $name, $email, $message );
-		}
-
-		return rest_ensure_response( array( 'success' => true, 'id' => (int) $pdb->insert_id ) );
-	}
-
-	/**
-	 * Best-effort SMS alert on a new Tawk.to chat, via the site's existing AJPhone/Zoom Phone
-	 * integration (primary account only — see get_ops_ajphone_settings() in this file for where
-	 * these ajcore_ajphone_* options are managed). Deliberately does not throw/return an error to
-	 * the caller on any failure (missing config, Zoom auth failure, etc.) — logging the chat event
-	 * itself must never be blocked by a broken or unconfigured SMS side-channel. There is no way to
-	 * relay a reply back to the visitor via SMS: Tawk.to's own team has confirmed their API doesn't
-	 * support posting a message into a chat.
-	 */
-	private function send_tawk_chat_alert_sms( $visitor_name, $visitor_email, $message_preview ) {
-		$account_id    = trim( (string) get_option( 'ajcore_ajphone_account_id', '' ) );
-		$client_id     = trim( (string) get_option( 'ajcore_ajphone_client_id', '' ) );
-		$client_secret = trim( (string) get_option( 'ajcore_ajphone_client_secret', '' ) );
-		$from_number   = trim( (string) get_option( 'ajcore_ajphone_phone_number', '' ) );
-		$to_number     = trim( (string) get_option( 'ajcore_ajphone_automation_staff_notify_number', '' ) );
-		if ( '' === $to_number ) {
-			$to_number = '+17043072135'; // Same default AJPhone's own automation cron falls back to.
-		}
-		if ( '' === $account_id || '' === $client_id || '' === $client_secret || '' === $from_number ) {
-			error_log( 'AJCore Tawk.to SMS alert skipped: AJPhone is not fully configured.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			return;
-		}
-
-		$token_response = wp_remote_post(
-			'https://zoom.us/oauth/token?grant_type=account_credentials&account_id=' . rawurlencode( $account_id ),
-			array(
-				'timeout' => 15,
-				'headers' => array(
-					'Authorization' => 'Basic ' . base64_encode( $client_id . ':' . $client_secret ),
-					'Content-Type'  => 'application/x-www-form-urlencoded',
-				),
-			)
-		);
-		if ( is_wp_error( $token_response ) ) {
-			error_log( 'AJCore Tawk.to SMS alert: Zoom OAuth failed — ' . $token_response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			return;
-		}
-		$token_data = json_decode( wp_remote_retrieve_body( $token_response ), true );
-		$access_token = is_array( $token_data ) ? (string) ( $token_data['access_token'] ?? '' ) : '';
-		if ( '' === $access_token ) {
-			error_log( 'AJCore Tawk.to SMS alert: Zoom OAuth returned no access_token — ' . wp_remote_retrieve_body( $token_response ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			return;
-		}
-
-		// Zoom rejects SMS sends from a number without the owning user_id attached (error 7639), so
-		// look it up via /phone/numbers — best-effort; if this fails, still attempt the send below
-		// with just the phone_number (may or may not be accepted depending on the Zoom app's setup).
-		$from_user_id = '';
-		$numbers_response = wp_remote_get(
-			'https://api.zoom.us/v2/phone/numbers?page_size=100&type=assigned',
-			array(
-				'timeout' => 15,
-				'headers' => array( 'Authorization' => 'Bearer ' . $access_token ),
-			)
-		);
-		if ( ! is_wp_error( $numbers_response ) ) {
-			$numbers_data = json_decode( wp_remote_retrieve_body( $numbers_response ), true );
-			$numbers_list = is_array( $numbers_data ) ? ( $numbers_data['phone_numbers'] ?? $numbers_data['numbers'] ?? array() ) : array();
-			$from_digits  = preg_replace( '/\D+/', '', $from_number );
-			foreach ( (array) $numbers_list as $number_row ) {
-				$row_digits = preg_replace( '/\D+/', '', (string) ( $number_row['number'] ?? $number_row['phone_number'] ?? '' ) );
-				if ( '' !== $row_digits && $row_digits === $from_digits ) {
-					$from_user_id = (string) ( $number_row['assignee']['id'] ?? $number_row['owner']['id'] ?? $number_row['user_id'] ?? '' );
-					break;
-				}
-			}
-		}
-
-		$to_digits   = preg_replace( '/\D+/', '', $to_number );
-		$to_e164     = '+1' . ( 10 === strlen( $to_digits ) ? $to_digits : preg_replace( '/^1/', '', $to_digits ) );
-		$from_digits = preg_replace( '/\D+/', '', $from_number );
-		$from_e164   = '+1' . ( 10 === strlen( $from_digits ) ? $from_digits : preg_replace( '/^1/', '', $from_digits ) );
-
-		$who          = trim( $visitor_name ) !== '' ? $visitor_name : ( $visitor_email ?: 'A visitor' );
-		$snippet      = trim( (string) $message_preview );
-		$snippet_part = $snippet ? ( ': "' . mb_substr( $snippet, 0, 140 ) . '". ' ) : '. ';
-		$sms_body     = sprintf( 'New Tawk.to chat from %s%s Open dashboard.tawk.to to reply.', $who, $snippet_part );
-
-		$sender = array( 'phone_number' => $from_e164 );
-		if ( '' !== $from_user_id ) {
-			$sender['user_id'] = $from_user_id;
-		}
-
-		$send_response = wp_remote_post(
-			'https://api.zoom.us/v2/phone/sms/messages',
-			array(
-				'timeout' => 15,
-				'headers' => array(
-					'Authorization' => 'Bearer ' . $access_token,
-					'Content-Type'  => 'application/json',
-				),
-				'body'    => wp_json_encode(
-					array(
-						'sender'     => $sender,
-						'to_members' => array( array( 'phone_number' => $to_e164 ) ),
-						'message'    => $sms_body,
-					)
-				),
-			)
-		);
-		if ( is_wp_error( $send_response ) ) {
-			error_log( 'AJCore Tawk.to SMS alert: Zoom send failed — ' . $send_response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-			return;
-		}
-		$send_status = wp_remote_retrieve_response_code( $send_response );
-		if ( $send_status < 200 || $send_status >= 300 ) {
-			error_log( 'AJCore Tawk.to SMS alert: Zoom send HTTP ' . $send_status . ' — ' . wp_remote_retrieve_body( $send_response ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-		}
 	}
 
 	/** Client mailbox: the current portal user's mail items, without staff-only fields. */
