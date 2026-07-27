@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.107
+ * Version: 0.7.108
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.107' );
+	define( 'AJCORE_VERSION', '0.7.108' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -332,6 +332,12 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 				$shared_calendar = ajcore_read_shared_calendar_settings();
 				if ( ! empty( $shared_calendar ) ) {
 					$settings = array_merge( $settings, $shared_calendar );
+				}
+				if ( function_exists( 'ajcore_read_shared_tawk_settings' ) ) {
+					$shared_tawk = ajcore_read_shared_tawk_settings();
+					if ( ! empty( $shared_tawk ) ) {
+						$settings = array_merge( $settings, $shared_tawk );
+					}
 				}
 			}
 		}
@@ -991,6 +997,98 @@ if ( ! function_exists( 'ajcore_write_shared_calendar_settings' ) ) {
 	}
 }
 
+if ( ! function_exists( 'ajcore_get_tawk_setting_keys' ) ) {
+	function ajcore_get_tawk_setting_keys() {
+		return array(
+			'tawk_enabled',
+			'tawk_property_id',
+			'tawk_widget_id',
+			'tawk_webhook_secret',
+			'tawk_api_username',
+			'tawk_api_password',
+		);
+	}
+}
+
+if ( ! function_exists( 'ajcore_read_shared_tawk_settings' ) ) {
+	function ajcore_read_shared_tawk_settings() {
+		static $cache     = null;
+		static $cache_set = false;
+
+		if ( $cache_set ) {
+			return is_array( $cache ) ? $cache : array();
+		}
+		$cache_set = true;
+
+		$shared_db = ajcore_get_shared_db();
+		if ( ! $shared_db ) {
+			return array();
+		}
+		$table = $shared_db->prefix . 'aj_shared_settings';
+		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return array();
+		}
+		$value = $shared_db->get_var(
+			$shared_db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_tawk_settings' )
+		);
+		if ( null === $value || '' === (string) $value ) {
+			return array();
+		}
+		$decoded = json_decode( (string) $value, true );
+		$cache   = is_array( $decoded ) ? $decoded : array();
+		return $cache;
+	}
+}
+
+/**
+ * Live Chat (Tawk.to) is a single shared configuration across every connected site — the master's
+ * local option is the source of truth (pushed here on every save) and secondary sites overlay it
+ * in ajforms_get_settings(), so the /tawk/webhook receiver and CP Settings UI see the same values
+ * everywhere without staff having to configure each site separately.
+ */
+if ( ! function_exists( 'ajcore_write_shared_tawk_settings' ) ) {
+	function ajcore_write_shared_tawk_settings( $settings ) {
+		if ( ! ajcore_is_shared_db_enabled() ) {
+			return false;
+		}
+		$shared_db = ajcore_get_shared_db();
+		if ( ! $shared_db ) {
+			return false;
+		}
+		$table = $shared_db->prefix . 'aj_shared_settings';
+		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return false;
+		}
+		$data = array();
+		foreach ( ajcore_get_tawk_setting_keys() as $key ) {
+			if ( array_key_exists( $key, $settings ) ) {
+				$data[ $key ] = $settings[ $key ];
+			}
+		}
+		$encoded = wp_json_encode( $data );
+		if ( false === $encoded ) {
+			return false;
+		}
+		$existing = $shared_db->get_var(
+			$shared_db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_tawk_settings' )
+		);
+		if ( $existing ) {
+			return false !== $shared_db->update(
+				$table,
+				array( 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
+				array( 'setting_name'  => 'ajcore_tawk_settings' ),
+				array( '%s', '%s' ),
+				array( '%s' )
+			);
+		}
+		return false !== $shared_db->insert(
+			$table,
+			array( 'setting_name' => 'ajcore_tawk_settings', 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
+			array( '%s', '%s', '%s' )
+		);
+	}
+}
+
 /**
  * Master → shared DB sync: whenever the master site's settings option changes
  * (admin save, token refresh, migrations), push the calendar/reservation subset
@@ -1006,6 +1104,9 @@ add_action(
 			return;
 		}
 		ajcore_write_shared_calendar_settings( $value );
+		if ( function_exists( 'ajcore_write_shared_tawk_settings' ) ) {
+			ajcore_write_shared_tawk_settings( $value );
+		}
 	},
 	10,
 	2

@@ -10984,6 +10984,16 @@ class AJForms_Admin {
 				} elseif ( 'esign' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 					$this->handle_settings_save();
 				} elseif ( 'tawk' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+					// Live Chat is a single shared config, edited on the master site only — see
+					// display_tawk_settings_section(). Reject a direct POST from a secondary site
+					// rather than silently accepting it (it would be overlaid by the master's
+					// values on every read anyway, per ajforms_get_settings()).
+					$is_shared_db = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
+					$is_master    = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
+					if ( $is_shared_db && ! $is_master ) {
+						wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'tawk', 'portal-error' => rawurlencode( __( 'Live Chat (Tawk.to) is managed on the master AJ Core site.', 'ajforms' ) ) ), admin_url( 'admin.php' ) ) );
+						exit;
+					}
 					$this->handle_settings_save();
 				}
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
@@ -11029,6 +11039,18 @@ class AJForms_Admin {
 				}
 				$this->handle_gmail_intake_actions();
 			} elseif ( 'esign' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+				$this->handle_settings_save();
+			} elseif ( 'tawk' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+				// Live Chat is a single shared config, edited on the master site only — see
+				// display_tawk_settings_section(). Reject a direct POST from a secondary site
+				// rather than silently accepting it (it would be overlaid by the master's
+				// values on every read anyway, per ajforms_get_settings()).
+				$is_shared_db = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
+				$is_master    = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
+				if ( $is_shared_db && ! $is_master ) {
+					wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'tawk', 'portal-error' => rawurlencode( __( 'Live Chat (Tawk.to) is managed on the master AJ Core site.', 'ajforms' ) ) ), admin_url( 'admin.php' ) ) );
+					exit;
+				}
 				$this->handle_settings_save();
 			}
 		} elseif ( 'ajforms-auth' === $page ) {
@@ -27401,6 +27423,14 @@ class AJForms_Admin {
 		);
 		$webhook_url = rest_url( 'ajcore/v1/tawk/webhook' );
 		$live_chat_tab_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'tawk' ), admin_url( 'admin.php' ) );
+
+		// Live Chat is one shared configuration across every connected site (see
+		// ajcore_write_shared_tawk_settings() / ajcore_read_shared_tawk_settings() in ajcore.php) —
+		// only the master site edits it; secondary sites just display the master's values read-only
+		// so staff aren't tempted to configure a second, conflicting Tawk.to property per site.
+		$is_shared_db = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
+		$is_master    = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
+		$read_only    = $is_shared_db && ! $is_master;
 		?>
 		<style>
 			#ajforms-tawk-section .ajforms-settings-field input[type="text"],
@@ -27419,8 +27449,15 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
+				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
+			<?php endif; ?>
 
-			<div style="margin:0 0 18px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:13px;line-height:1.6;">
+			<?php if ( $read_only ) : ?>
+				<div class="notice notice-info inline"><p><?php esc_html_e( 'Live Chat (Tawk.to) is a single shared configuration for every connected site. It\'s managed on the master AJ Core site — the values below are read-only here.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<div style="margin:0 0 18px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:13px;line-height:1.6;<?php echo $read_only ? 'opacity:.6;' : ''; ?>">
 				<strong><?php esc_html_e( 'Setup in Tawk.to:', 'ajforms' ); ?></strong>
 				<ol style="margin:8px 0 0 18px;padding:0;">
 					<li>
@@ -27455,7 +27492,7 @@ class AJForms_Admin {
 				<input type="hidden" name="ajforms_section" value="tawk">
 				<div class="ajforms-settings-field" style="margin-bottom:16px;">
 					<label style="display:flex;align-items:center;gap:8px;font-weight:600;">
-						<input type="checkbox" name="tawk_enabled" value="1" <?php checked( '1', $settings['tawk_enabled'] ); ?>>
+						<input type="checkbox" name="tawk_enabled" value="1" <?php checked( '1', $settings['tawk_enabled'] ); ?> <?php disabled( $read_only ); ?>>
 						<?php esc_html_e( 'Enabled', 'ajforms' ); ?>
 					</label>
 					<div class="ajforms-settings-help"><?php esc_html_e( 'While off, the webhook receiver rejects incoming events.', 'ajforms' ); ?></div>
@@ -27463,32 +27500,46 @@ class AJForms_Admin {
 				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
 						<label for="tawk_property_id"><?php esc_html_e( 'Property ID', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_property_id" id="tawk_property_id" value="<?php echo esc_attr( $settings['tawk_property_id'] ); ?>" autocomplete="off">
-						<div class="ajforms-settings-help"><a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Where do I find this? ↗', 'ajforms' ); ?></a></div>
+						<input type="text" name="tawk_property_id" id="tawk_property_id" value="<?php echo esc_attr( $settings['tawk_property_id'] ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<?php if ( ! $read_only ) : ?>
+							<div class="ajforms-settings-help"><a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Where do I find this? ↗', 'ajforms' ); ?></a></div>
+						<?php endif; ?>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="tawk_widget_id"><?php esc_html_e( 'Widget ID', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_widget_id" id="tawk_widget_id" value="<?php echo esc_attr( $settings['tawk_widget_id'] ); ?>" autocomplete="off">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only for now — not used until a chat widget is added.', 'ajforms' ); ?> <a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Where do I find this? ↗', 'ajforms' ); ?></a></div>
+						<input type="text" name="tawk_widget_id" id="tawk_widget_id" value="<?php echo esc_attr( $settings['tawk_widget_id'] ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<?php if ( ! $read_only ) : ?>
+							<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only for now — not used until a chat widget is added.', 'ajforms' ); ?> <a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Where do I find this? ↗', 'ajforms' ); ?></a></div>
+						<?php endif; ?>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="tawk_webhook_secret"><?php esc_html_e( 'Webhook Signing Secret', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_webhook_secret" id="tawk_webhook_secret" value="" placeholder="<?php echo ! empty( $settings['tawk_webhook_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Used to verify the X-Tawk-Signature header on every incoming webhook call. Shown once, when you create the webhook in Tawk.to (step above) — if you lose it, delete and recreate the webhook to get a new one.', 'ajforms' ); ?></div>
+						<input type="text" name="tawk_webhook_secret" id="tawk_webhook_secret" value="" placeholder="<?php echo ! empty( $settings['tawk_webhook_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<?php if ( ! $read_only ) : ?>
+							<div class="ajforms-settings-help"><?php esc_html_e( 'Used to verify the X-Tawk-Signature header on every incoming webhook call. Shown once, when you create the webhook in Tawk.to (step above) — if you lose it, delete and recreate the webhook to get a new one.', 'ajforms' ); ?></div>
+						<?php endif; ?>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="tawk_api_username"><?php esc_html_e( 'REST API Username (optional)', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_api_username" id="tawk_api_username" value="<?php echo esc_attr( $settings['tawk_api_username'] ); ?>" autocomplete="off">
-						<div class="ajforms-settings-help"><a href="https://www.tawk.to/rest-api-beta-access-request/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( "Don't have this? Request REST API access ↗", 'ajforms' ); ?></a></div>
+						<input type="text" name="tawk_api_username" id="tawk_api_username" value="<?php echo esc_attr( $settings['tawk_api_username'] ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<?php if ( ! $read_only ) : ?>
+							<div class="ajforms-settings-help"><a href="https://www.tawk.to/rest-api-beta-access-request/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( "Don't have this? Request REST API access ↗", 'ajforms' ); ?></a></div>
+						<?php endif; ?>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="tawk_api_password"><?php esc_html_e( 'REST API Password (optional)', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_api_password" id="tawk_api_password" value="" placeholder="<?php echo ! empty( $settings['tawk_api_password'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'From Tawk.to\'s REST API access approval email. Stored for a future integration only — nothing uses it yet.', 'ajforms' ); ?></div>
+						<input type="text" name="tawk_api_password" id="tawk_api_password" value="" placeholder="<?php echo ! empty( $settings['tawk_api_password'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<?php if ( ! $read_only ) : ?>
+							<div class="ajforms-settings-help"><?php esc_html_e( 'From Tawk.to\'s REST API access approval email. Stored for a future integration only — nothing uses it yet.', 'ajforms' ); ?></div>
+						<?php endif; ?>
 					</div>
 				</div>
-				<p style="margin:14px 0 0;"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
-				<a class="button" href="<?php echo esc_url( $live_chat_tab_url ); ?>"><?php esc_html_e( 'View Live Chat alerts', 'ajforms' ); ?></a></p>
+				<p style="margin:14px 0 0;">
+					<?php if ( ! $read_only ) : ?>
+						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
+					<?php endif; ?>
+					<a class="button" href="<?php echo esc_url( $live_chat_tab_url ); ?>"><?php esc_html_e( 'View Live Chat alerts', 'ajforms' ); ?></a>
+				</p>
 			</form>
 		</div>
 		<script>
