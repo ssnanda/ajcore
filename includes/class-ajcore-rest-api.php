@@ -876,6 +876,7 @@ class AJCore_REST_API {
 			'/ops/tawk/events'                        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_events', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/tawk/events/(?P<id>\d+)/acknowledge' => array( 'methods' => 'POST', 'callback' => 'acknowledge_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tawk/events/(?P<id>\d+)'             => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
+			'/ops/tawk/reset'                          => array( 'methods' => 'POST', 'callback' => 'reset_ops_tawk_events', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tawk/properties'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_properties', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tawk/backfill'                       => array( 'methods' => 'POST', 'callback' => 'backfill_ops_tawk_history', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
@@ -988,6 +989,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/events', 'auth' => 'Admin', 'purpose' => 'Live Chat alert feed (all connected sites, via the shared DB). Filters: status (new|acknowledged), event_type, site_uuid, property_id.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/events/{id}/acknowledge', 'auth' => 'Admin', 'purpose' => 'Marks a Live Chat alert as acknowledged.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'DELETE', 'path' => '/ops/tawk/events/{id}', 'auth' => 'Admin', 'purpose' => 'Deletes a Live Chat event (e.g. test data).', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/reset', 'auth' => 'Admin', 'purpose' => 'Deletes every Live Chat event across every property/site. Not scoped or reversible.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/properties', 'auth' => 'Admin', 'purpose' => 'Configured Tawk.to properties (id + label only, no secrets) for filter dropdowns.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/backfill', 'auth' => 'Admin', 'purpose' => 'Imports past conversations via Tawk.to\'s chat.list API for every tracked property (or one, via property_id param). Stored already-acknowledged; deduped by chat ID.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
@@ -6236,6 +6238,24 @@ class AJCore_REST_API {
 			return new WP_Error( 'delete_failed', __( 'Could not delete this event.', 'ajforms' ), array( 'status' => 500 ) );
 		}
 		return rest_ensure_response( array( 'success' => true, 'id' => $id ) );
+	}
+
+	/**
+	 * Full reset — deletes every Live Chat event, across every property and site (this table is
+	 * shared across the whole multi-site install, so this is intentionally not scoped to just the
+	 * current site). For clearing out test data / bad-timezone backfill rows before re-running
+	 * Import History, not a routine action — the confirm dialogs in both UIs say as much.
+	 */
+	public function reset_ops_tawk_events() {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_tawk_events_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'success' => true, 'deleted' => 0 ) );
+		}
+		$count = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$pdb->query( "TRUNCATE TABLE `{$table}`" );
+		return rest_ensure_response( array( 'success' => true, 'deleted' => $count ) );
 	}
 
 	/**

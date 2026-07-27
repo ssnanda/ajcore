@@ -21326,12 +21326,47 @@ class AJForms_Admin {
 				<a class="button" href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Live Chat Settings', 'ajforms' ); ?></a>
 				<?php if ( $configured && $enabled ) : ?>
 					<button type="button" class="button" id="ajforms-tawk-backfill-btn"><?php esc_html_e( 'Import History', 'ajforms' ); ?></button>
+					<button type="button" class="button" id="ajforms-tawk-reset-btn" style="color:#b91c1c;"><?php esc_html_e( 'Full Reset', 'ajforms' ); ?></button>
 				<?php endif; ?>
 			</p>
 			<?php if ( $configured && $enabled ) : ?>
 				<div id="ajforms-tawk-backfill-result" style="display:none;margin:0 0 14px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;"></div>
 				<script>
 				(function() {
+					var resetBtn = document.getElementById( 'ajforms-tawk-reset-btn' );
+					var resetResult = document.getElementById( 'ajforms-tawk-backfill-result' );
+					if ( resetBtn && resetResult ) {
+						resetBtn.addEventListener( 'click', function () {
+							if ( ! window.confirm( <?php echo wp_json_encode( __( 'Delete ALL Live Chat history — every property, every site connected to this install? This cannot be undone. You can re-populate afterward with Import History.', 'ajforms' ) ); ?> ) ) {
+								return;
+							}
+							resetBtn.disabled = true;
+							resetBtn.textContent = <?php echo wp_json_encode( __( 'Resetting…', 'ajforms' ) ); ?>;
+							resetResult.style.display = 'none';
+							fetch( '<?php echo esc_url_raw( rest_url( 'ajcore/v1/ops/tawk/reset' ) ); ?>', {
+								method: 'POST',
+								headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
+							} )
+								.then( function ( r ) { return r.json().then( function ( d ) { return { ok: r.ok, data: d }; } ); } )
+								.then( function ( result_data ) {
+									resetResult.style.display = 'block';
+									if ( ! result_data.ok || ! result_data.data || ! result_data.data.success ) {
+										resetResult.innerHTML = '<strong style="color:#b91c1c;"><?php echo esc_js( __( 'Reset failed:', 'ajforms' ) ); ?></strong> ' + ( ( result_data.data && result_data.data.message ) || <?php echo wp_json_encode( __( 'Unknown error.', 'ajforms' ) ); ?> );
+										return;
+									}
+									resetResult.innerHTML = '<strong>' + result_data.data.deleted + <?php echo wp_json_encode( __( ' event(s) deleted.', 'ajforms' ) ); ?> + '</strong> <a href="' + window.location.href + '">' + <?php echo wp_json_encode( __( 'Reload', 'ajforms' ) ); ?> + '</a>';
+								} )
+								.catch( function ( e ) {
+									resetResult.style.display = 'block';
+									resetResult.innerHTML = '<strong style="color:#b91c1c;"><?php echo esc_js( __( 'Reset failed:', 'ajforms' ) ); ?></strong> ' + e.message;
+								} )
+								.finally( function () {
+									resetBtn.disabled = false;
+									resetBtn.textContent = <?php echo wp_json_encode( __( 'Full Reset', 'ajforms' ) ); ?>;
+								} );
+						} );
+					}
+
 					var btn = document.getElementById( 'ajforms-tawk-backfill-btn' );
 					var result = document.getElementById( 'ajforms-tawk-backfill-result' );
 					if ( ! btn || ! result ) { return; }
