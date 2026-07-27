@@ -82,6 +82,19 @@ class AJCore_REST_API {
 		// Same rationale as the Zoho callback above — an external redirect from Google carries no
 		// X-WP-Nonce, so this route can't be capability-gated; security is the state-token check
 		// inside the handler itself.
+		// Inbound webhook from Tawk.to (Administration → Webhooks). No WP nonce/cookie is possible
+		// on an external caller — security is the X-Tawk-Signature HMAC check inside the handler
+		// itself (see tawk_webhook_receive()), not a capability check.
+		register_rest_route(
+			self::NAMESPACE,
+			'/tawk/webhook',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'tawk_webhook_receive' ),
+				'permission_callback' => '__return_true',
+			)
+		);
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/gmail-intake/oauth/callback',
@@ -844,6 +857,9 @@ class AJCore_REST_API {
 			'/ops/esign/send'                        => array( 'methods' => 'POST', 'callback' => 'send_ops_esign_document', 'permission' => 'can_manage_ops_api' ),
 			'/ops/esign/documents/(?P<id>\d+)/refresh' => array( 'methods' => 'POST', 'callback' => 'refresh_ops_esign_document', 'permission' => 'can_manage_ops_api' ),
 			'/ops/esign/documents'                    => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_esign_documents', 'permission' => 'can_manage_ops_api' ),
+			// Live Chat (Tawk.to) alerts
+			'/ops/tawk/events'                        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_events', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
+			'/ops/tawk/events/(?P<id>\d+)/acknowledge' => array( 'methods' => 'POST', 'callback' => 'acknowledge_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -949,6 +965,9 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/esign/send', 'auth' => 'Admin', 'purpose' => 'Clones a template into a document, assigns recipients (name/email only), and sends it for signature. Logs the result locally.', 'app' => 'OPS e-signatures' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/esign/documents', 'auth' => 'Admin', 'purpose' => 'Local log of sent signature requests with their last-known status.', 'app' => 'OPS e-signatures' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/esign/documents/{id}/refresh', 'auth' => 'Admin', 'purpose' => 'Polls BreezeDoc for the current status of a sent document (no webhook exists).', 'app' => 'OPS e-signatures' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/tawk/webhook', 'auth' => 'Public (HMAC-SHA1 X-Tawk-Signature header, verified against the configured secret)', 'purpose' => 'Receives Tawk.to Chat Start/End/Transcript/Ticket Created events and logs them as staff alerts.', 'app' => 'Tawk.to webhook' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/events', 'auth' => 'Admin', 'purpose' => 'Live Chat alert feed (all connected sites, via the shared DB). Filters: status (new|acknowledged), event_type, site_uuid.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/events/{id}/acknowledge', 'auth' => 'Admin', 'purpose' => 'Marks a Live Chat alert as acknowledged.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -1142,6 +1161,9 @@ class AJCore_REST_API {
 		$tasks_total = $this->count_table( $pdb, $tasks_table );
 		$tasks_open  = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$tasks_table}` WHERE status NOT IN ('completed','cancelled')" );
 
+		$tawk_table  = $this->portal_table( 'aj_portal_tawk_events' );
+		$tawk_unread = $this->table_exists( $pdb, $tawk_table ) ? (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$tawk_table}` WHERE status = 'new'" ) : 0;
+
 		return rest_ensure_response(
 			array(
 				'customers'                          => $this->count_table( $pdb, $customers_table ) + $this->count_table( $pdb, $local_customers_table ),
@@ -1156,6 +1178,7 @@ class AJCore_REST_API {
 				'service_requests_needs_action'       => $sr_stats['needs_action'],
 				'leads'                               => $leads_total,
 				'leads_unread'                        => $leads_unread,
+				'tawk_unread'                         => $tawk_unread,
 				'sync_logs'                           => $this->count_table( $pdb, $this->portal_table( 'aj_portal_sync_logs' ) ),
 			)
 		);
@@ -5934,6 +5957,213 @@ class AJCore_REST_API {
 		}
 		$result = $admin->get_esign_documents_list();
 		return rest_ensure_response( $result );
+	}
+
+	// -----------------------------------------------------------------
+	// Live Chat (Tawk.to)
+	// -----------------------------------------------------------------
+
+	private function get_tawk_events_table() {
+		return $this->portal_table( 'aj_portal_tawk_events' );
+	}
+
+	private function format_tawk_event_row( $row ) {
+		$row = (array) $row;
+		return array(
+			'id'              => (int) $row['id'],
+			'siteUuid'        => (string) $row['site_uuid'],
+			'siteLabel'       => (string) ( $row['site_domain'] ?? '' ),
+			'propertyId'      => (string) $row['property_id'],
+			'eventType'       => (string) $row['event_type'],
+			'chatId'          => (string) $row['tawk_chat_id'],
+			'visitorName'     => (string) $row['visitor_name'],
+			'visitorEmail'    => (string) $row['visitor_email'],
+			'messagePreview'  => (string) $row['message_preview'],
+			'status'          => (string) $row['status'],
+			'createdAt'       => (string) $row['created_at'],
+			'acknowledgedAt'  => (string) $row['acknowledged_at'],
+			'acknowledgedBy'  => (int) $row['acknowledged_by'],
+		);
+	}
+
+	public function get_ops_tawk_events( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_tawk_events_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'events' => array(), 'stats' => array( 'total' => 0, 'new' => 0 ) ) );
+		}
+
+		$sites_table = $pdb->prefix . 'aj_shared_sites';
+		$has_sites   = $this->table_exists( $pdb, $sites_table );
+
+		$where  = array( '1=1' );
+		$params = array();
+
+		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?: '' ) );
+		if ( in_array( $status, array( 'new', 'acknowledged' ), true ) ) {
+			$where[]  = 'e.status = %s';
+			$params[] = $status;
+		}
+
+		$event_type = sanitize_key( (string) ( $request->get_param( 'event_type' ) ?: '' ) );
+		if ( in_array( $event_type, array( 'chat_start', 'chat_end', 'chat_transcript', 'ticket_create' ), true ) ) {
+			$where[]  = 'e.event_type = %s';
+			$params[] = $event_type;
+		}
+
+		$site_uuid = sanitize_text_field( (string) ( $request->get_param( 'site_uuid' ) ?: '' ) );
+		if ( '' !== $site_uuid ) {
+			$where[]  = 'e.site_uuid = %s';
+			$params[] = $site_uuid;
+		}
+
+		$per_page = min( 500, max( 1, absint( $request->get_param( 'per_page' ) ?: 200 ) ) );
+		$params[] = $per_page;
+
+		$where_sql = implode( ' AND ', $where );
+		$select    = $has_sites ? 'e.*, s.domain AS site_domain' : 'e.*';
+		$join      = $has_sites ? "LEFT JOIN `{$sites_table}` s ON s.site_uuid = e.site_uuid" : '';
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $pdb->get_results( $pdb->prepare( "SELECT {$select} FROM `{$table}` e {$join} WHERE {$where_sql} ORDER BY e.created_at DESC, e.id DESC LIMIT %d", $params ), ARRAY_A );
+		$rows = is_array( $rows ) ? $rows : array();
+
+		$stats = $pdb->get_row( "SELECT COUNT(*) AS total, SUM(status = 'new') AS new FROM `{$table}`", ARRAY_A );
+
+		return rest_ensure_response( array(
+			'events' => array_map( array( $this, 'format_tawk_event_row' ), $rows ),
+			'stats'  => array(
+				'total' => (int) ( $stats['total'] ?? 0 ),
+				'new'   => (int) ( $stats['new'] ?? 0 ),
+			),
+		) );
+	}
+
+	public function acknowledge_ops_tawk_event( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_tawk_events_table();
+		$id    = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $table ) || ! $id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat event not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$user    = wp_get_current_user();
+		$updated = $pdb->update(
+			$table,
+			array(
+				'status'          => 'acknowledged',
+				'acknowledged_at' => current_time( 'mysql' ),
+				'acknowledged_by' => $user ? (int) $user->ID : 0,
+			),
+			array( 'id' => $id ),
+			array( '%s', '%s', '%d' ),
+			array( '%d' )
+		);
+		if ( false === $updated ) {
+			return new WP_Error( 'update_failed', __( 'Could not acknowledge this event.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$row = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", $id ), ARRAY_A );
+		return rest_ensure_response( $row ? $this->format_tawk_event_row( $row ) : array( 'id' => $id, 'status' => 'acknowledged' ) );
+	}
+
+	/**
+	 * Digs a value out of a decoded Tawk.to webhook payload, trying several candidate key paths
+	 * (dot notation) since chat events nest visitor data at the root while the transcript event
+	 * nests it under "chat" — see display_tawk_settings_section() for the setup instructions.
+	 */
+	private function dig_tawk_payload_value( array $payload, array $candidate_paths ) {
+		foreach ( $candidate_paths as $path ) {
+			$value = $payload;
+			foreach ( explode( '.', $path ) as $segment ) {
+				if ( ! is_array( $value ) || ! array_key_exists( $segment, $value ) ) {
+					$value = null;
+					break;
+				}
+				$value = $value[ $segment ];
+			}
+			if ( null !== $value && '' !== $value ) {
+				return $value;
+			}
+		}
+		return '';
+	}
+
+	/**
+	 * Webhook receiver for Tawk.to (Administration → Webhooks in the Tawk.to dashboard, configured
+	 * per-property in CP Settings → Live Chat). Public route — Tawk.to's redirect carries no WP
+	 * nonce/cookie, so security is the HMAC-SHA1 signature check below (same pattern as the Zoho/
+	 * Gmail OAuth callbacks elsewhere in this file), not a capability check. Only logs events for
+	 * staff alerting; does not call back into Tawk.to.
+	 */
+	public function tawk_webhook_receive( WP_REST_Request $request ) {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$enabled  = '1' === (string) ( $settings['tawk_enabled'] ?? '' );
+		$secret   = trim( (string) ( $settings['tawk_webhook_secret'] ?? '' ) );
+		if ( ! $enabled || '' === $secret ) {
+			return new WP_Error( 'tawk_not_configured', __( 'Tawk.to Live Chat is not enabled on this site.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+
+		$body      = $request->get_body();
+		$signature = (string) $request->get_header( 'x-tawk-signature' );
+		$expected  = hash_hmac( 'sha1', (string) $body, $secret );
+		if ( '' === $signature || ! hash_equals( $expected, $signature ) ) {
+			return new WP_Error( 'tawk_invalid_signature', __( 'Invalid webhook signature.', 'ajforms' ), array( 'status' => 401 ) );
+		}
+
+		$payload = json_decode( (string) $body, true );
+		$payload = is_array( $payload ) ? $payload : array();
+
+		$raw_event  = (string) $this->dig_tawk_payload_value( $payload, array( 'event' ) );
+		$event_map  = array(
+			'chat:start'              => 'chat_start',
+			'chat:end'                => 'chat_end',
+			'chat:transcript_created' => 'chat_transcript',
+			'ticket:create'           => 'ticket_create',
+		);
+		$event_type = isset( $event_map[ $raw_event ] ) ? $event_map[ $raw_event ] : sanitize_key( str_replace( ':', '_', $raw_event ) );
+		if ( '' === $event_type ) {
+			$event_type = 'unknown';
+		}
+
+		$chat_id    = (string) $this->dig_tawk_payload_value( $payload, array( 'chatId', 'chat.id', 'ticket.id' ) );
+		$name       = (string) $this->dig_tawk_payload_value( $payload, array( 'visitor.name', 'chat.visitor.name', 'requester.name' ) );
+		$email      = (string) $this->dig_tawk_payload_value( $payload, array( 'visitor.email', 'chat.visitor.email', 'requester.email' ) );
+		$message    = (string) $this->dig_tawk_payload_value( $payload, array( 'message.text', 'chat.message.text', 'ticket.subject' ) );
+		$property   = (string) $this->dig_tawk_payload_value( $payload, array( 'property.id' ) );
+		if ( '' === $property ) {
+			$property = trim( (string) ( $settings['tawk_property_id'] ?? '' ) );
+		}
+
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_tawk_events_table();
+		if ( ! $this->table_exists( $pdb, $table ) && class_exists( 'AJForms_Activator' ) ) {
+			AJForms_Activator::activate();
+		}
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return new WP_Error( 'tawk_storage_unavailable', __( 'Live Chat storage is not available on this site.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		$inserted = $pdb->insert(
+			$table,
+			array(
+				'site_uuid'       => (string) get_option( 'ajcore_site_uuid', '' ),
+				'property_id'     => sanitize_text_field( $property ),
+				'event_type'      => sanitize_key( $event_type ),
+				'tawk_chat_id'    => sanitize_text_field( $chat_id ),
+				'visitor_name'    => sanitize_text_field( $name ),
+				'visitor_email'   => sanitize_email( $email ),
+				'message_preview' => sanitize_textarea_field( mb_substr( $message, 0, 500 ) ),
+				'payload'         => wp_json_encode( $payload ),
+				'status'          => 'new',
+				'created_at'      => current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+
+		if ( false === $inserted ) {
+			return new WP_Error( 'tawk_store_failed', __( 'Could not log this event.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'id' => (int) $pdb->insert_id ) );
 	}
 
 	/** Client mailbox: the current portal user's mail items, without staff-only fields. */

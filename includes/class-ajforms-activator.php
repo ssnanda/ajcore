@@ -46,6 +46,7 @@ class AJForms_Activator {
 		$table_esign_documents        = $wpdb->prefix . 'aj_esign_documents';
 		$table_ajphone_conversations  = $wpdb->prefix . 'ajphone_conversations';
 		$table_storage_objects        = $wpdb->prefix . 'aj_storage_objects';
+		$table_tawk_events            = $wpdb->prefix . 'aj_portal_tawk_events';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -895,6 +896,27 @@ class AJForms_Activator {
 			KEY created_at (created_at)
 		) $charset_collate;
 
+		CREATE TABLE $table_tawk_events (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			site_uuid varchar(100) DEFAULT '' NOT NULL,
+			property_id varchar(100) DEFAULT '' NOT NULL,
+			event_type varchar(30) NOT NULL,
+			tawk_chat_id varchar(100) DEFAULT '' NOT NULL,
+			visitor_name varchar(255) DEFAULT '' NOT NULL,
+			visitor_email varchar(190) DEFAULT '' NOT NULL,
+			message_preview text NULL,
+			payload longtext NULL,
+			status varchar(20) DEFAULT 'new' NOT NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			acknowledged_at datetime NULL,
+			acknowledged_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			PRIMARY KEY  (id),
+			KEY site_uuid (site_uuid),
+			KEY event_type (event_type),
+			KEY status (status),
+			KEY created_at (created_at)
+		) $charset_collate;
+
 		CREATE TABLE $table_ajphone_conversations (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			conversation_key varchar(255) NOT NULL,
@@ -949,6 +971,7 @@ class AJForms_Activator {
 				self::create_gmail_intake_log_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_esign_documents_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_customer_site_access_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
+				self::create_tawk_events_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 			}
 		}
 
@@ -1984,6 +2007,36 @@ class AJForms_Activator {
 				KEY portal_status (portal_status)
 			) $charset_collate"
 		);
+	}
+
+	/**
+	 * Creates the Tawk.to webhook event log table in the portal/shared DB. The main dbDelta
+	 * run only creates it in the local WP DB, but in shared mode every read/write targets
+	 * the shared DB — without this, webhook inserts fail silently against a missing table.
+	 */
+	public static function create_tawk_events_table_in_portal_db( $prefix, $charset_collate, $pdb ) {
+		$table = $prefix . 'aj_portal_tawk_events';
+
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			site_uuid varchar(100) DEFAULT '' NOT NULL,
+			property_id varchar(100) DEFAULT '' NOT NULL,
+			event_type varchar(30) NOT NULL,
+			tawk_chat_id varchar(100) DEFAULT '' NOT NULL,
+			visitor_name varchar(255) DEFAULT '' NOT NULL,
+			visitor_email varchar(190) DEFAULT '' NOT NULL,
+			message_preview text NULL,
+			payload longtext NULL,
+			status varchar(20) DEFAULT 'new' NOT NULL,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			acknowledged_at datetime NULL,
+			acknowledged_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			PRIMARY KEY  (id),
+			KEY site_uuid (site_uuid),
+			KEY event_type (event_type),
+			KEY status (status),
+			KEY created_at (created_at)
+		) {$charset_collate}" );
 	}
 
 	/**

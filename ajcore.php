@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.105
+ * Version: 0.7.106
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.105' );
+	define( 'AJCORE_VERSION', '0.7.106' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -169,6 +169,16 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// E-Signatures (BreezeDoc). A single shared BreezeDoc account, authenticated with a
 			// Personal Access Token, used to send templates out for customer signature.
 			'breezedoc_api_token'           => '',
+			// Live Chat (Tawk.to). Property/Widget ID + per-property webhook signing secret feed
+			// the /tawk/webhook receiver, which logs Chat Start/End/Transcript/Ticket events for
+			// staff alerts. api_username/api_password are stored for a future Tawk.to REST API
+			// integration (private-beta access) — not used by anything yet.
+			'tawk_enabled'                   => '0',
+			'tawk_property_id'               => '',
+			'tawk_widget_id'                 => '',
+			'tawk_webhook_secret'            => '',
+			'tawk_api_username'              => '',
+			'tawk_api_password'              => '',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',

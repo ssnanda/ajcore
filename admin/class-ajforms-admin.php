@@ -10983,6 +10983,8 @@ class AJForms_Admin {
 					$this->handle_gmail_intake_actions();
 				} elseif ( 'esign' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 					$this->handle_settings_save();
+				} elseif ( 'tawk' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+					$this->handle_settings_save();
 				}
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
@@ -11002,6 +11004,8 @@ class AJForms_Admin {
 				$this->handle_portal_gmail_intake_actions();
 			} elseif ( 'mail' === $tab ) {
 				$this->handle_portal_mail_actions();
+			} elseif ( 'tawk' === $tab ) {
+				$this->handle_portal_tawk_actions();
 			}
 		} elseif ( 'ajforms-cp-settings' === $page ) {
 			// display_cp_settings_admin_page() aliases this page slug to
@@ -13149,6 +13153,12 @@ class AJForms_Admin {
 			'gmail_intake_client_secret'     => isset( $_POST['gmail_intake_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_secret'] ) ) : '',
 			'gmail_intake_address'           => isset( $_POST['gmail_intake_address'] ) ? sanitize_email( wp_unslash( $_POST['gmail_intake_address'] ) ) : 'universityplaceofficesuites@gmail.com',
 			'breezedoc_api_token'            => isset( $_POST['breezedoc_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['breezedoc_api_token'] ) ) : '',
+			'tawk_enabled'                    => isset( $_POST['tawk_enabled'] ) ? '1' : '0',
+			'tawk_property_id'                => isset( $_POST['tawk_property_id'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_property_id'] ) ) : '',
+			'tawk_widget_id'                  => isset( $_POST['tawk_widget_id'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_widget_id'] ) ) : '',
+			'tawk_webhook_secret'             => isset( $_POST['tawk_webhook_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_webhook_secret'] ) ) : '',
+			'tawk_api_username'               => isset( $_POST['tawk_api_username'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_username'] ) ) : '',
+			'tawk_api_password'               => isset( $_POST['tawk_api_password'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_password'] ) ) : '',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -13182,7 +13192,7 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'tawk_webhook_secret', 'tawk_api_password' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -13212,6 +13222,7 @@ class AJForms_Admin {
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
 			'esign'        => array( 'breezedoc_api_token' ),
+			'tawk'         => array( 'tawk_enabled', 'tawk_property_id', 'tawk_widget_id', 'tawk_webhook_secret', 'tawk_api_username', 'tawk_api_password' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -13238,7 +13249,7 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( 'email-templates' === $section || 'inbox' === $section || 'gmail-intake' === $section || 'esign' === $section ) {
+		if ( 'email-templates' === $section || 'inbox' === $section || 'gmail-intake' === $section || 'esign' === $section || 'tawk' === $section ) {
 			// These sections' forms live on the Client Portal's CP Settings tab, not this page.
 			$redirect_args = array(
 				'page'             => 'ajforms-client-portal',
@@ -19008,7 +19019,7 @@ class AJForms_Admin {
 			}
 			$tab = 'cp-settings';
 		}
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign', 'tawk' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -19034,6 +19045,7 @@ class AJForms_Admin {
 			'mail'               => __( 'Mail', 'ajforms' ),
 			'gmail-intake'       => __( 'Gmail Intake', 'ajforms' ),
 			'esign'              => __( 'E-Signatures', 'ajforms' ),
+			'tawk'               => __( 'Live Chat', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
@@ -19133,6 +19145,8 @@ class AJForms_Admin {
 				$this->display_portal_gmail_intake_tab();
 			} elseif ( 'esign' === $tab ) {
 				$this->display_portal_esign_tab();
+			} elseif ( 'tawk' === $tab ) {
+				$this->display_portal_tawk_tab();
 			} elseif ( 'cp-settings' === $tab ) {
 				$this->display_client_portal_cp_settings_tab();
 			} else {
@@ -19174,6 +19188,7 @@ class AJForms_Admin {
 			'inbox'           => __( 'Zoho Shared Inbox', 'ajforms' ),
 			'gmail-intake'    => __( 'Email Intake (Gmail)', 'ajforms' ),
 			'esign'           => __( 'E-Signatures (BreezeDoc)', 'ajforms' ),
+			'tawk'            => __( 'Live Chat (Tawk.to)', 'ajforms' ),
 			'shared-db'       => __( 'Shared DB / Multi-Site', 'ajforms' ),
 		);
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
@@ -19230,6 +19245,8 @@ class AJForms_Admin {
 			<?php $this->display_gmail_intake_settings_section(); ?>
 		<?php elseif ( 'esign' === $cp_section ) : ?>
 			<?php $this->display_breezedoc_settings_section(); ?>
+		<?php elseif ( 'tawk' === $cp_section ) : ?>
+			<?php $this->display_tawk_settings_section(); ?>
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
@@ -21198,6 +21215,155 @@ class AJForms_Admin {
 	 * (see the settings notice on the E-Signatures CP Settings tab) — only who signs it.
 	 * There's no webhook, so status is checked with a "Refresh Status" button per row.
 	 */
+	/**
+	 * WP-admin "Live Chat" tab — reuses AJCore_REST_API's already-tested /ops/tawk/events methods
+	 * in-process (same pattern as handle_portal_mail_actions()) rather than duplicating the query
+	 * logic here. Shows what the webhook receiver has logged; does not embed chat itself — see
+	 * display_tawk_settings_section() for why (Tawk.to has no public reply API / iframe support).
+	 */
+	private function display_portal_tawk_tab() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings     = $this->get_plugin_settings();
+		$configured   = ! empty( $settings['tawk_property_id'] ) && ! empty( $settings['tawk_webhook_secret'] );
+		$enabled      = '1' === (string) $settings['tawk_enabled'];
+		$settings_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'tawk' ), admin_url( 'admin.php' ) );
+
+		$status = isset( $_GET['tawk_status'] ) ? sanitize_key( wp_unslash( $_GET['tawk_status'] ) ) : 'new';
+		$status = in_array( $status, array( 'new', 'acknowledged', 'all' ), true ) ? $status : 'new';
+
+		$events = array();
+		$stats  = array( 'total' => 0, 'new' => 0 );
+		if ( class_exists( 'AJCore_REST_API' ) ) {
+			$rest    = new AJCore_REST_API();
+			$request = new WP_REST_Request( 'GET' );
+			if ( 'all' !== $status ) {
+				$request->set_param( 'status', $status );
+			}
+			$request->set_param( 'per_page', 200 );
+			$result = $rest->get_ops_tawk_events( $request );
+			$data   = $result instanceof WP_REST_Response ? $result->get_data() : array();
+			$events = isset( $data['events'] ) ? $data['events'] : array();
+			$stats  = isset( $data['stats'] ) ? $data['stats'] : $stats;
+		}
+
+		$base_url     = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'tawk' ), admin_url( 'admin.php' ) );
+		$event_labels = array(
+			'chat_start'      => __( 'Chat Started', 'ajforms' ),
+			'chat_end'        => __( 'Chat Ended', 'ajforms' ),
+			'chat_transcript' => __( 'Transcript Ready', 'ajforms' ),
+			'ticket_create'   => __( 'Ticket Created', 'ajforms' ),
+		);
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'Live Chat', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'New Tawk.to chats and tickets, logged the moment they happen so staff notice fast. This does not embed chat — use "Open Tawk.to Dashboard" below to actually reply.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+
+			<?php if ( isset( $_GET['tawk-acknowledged'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Marked as acknowledged.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
+				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
+			<?php endif; ?>
+
+			<?php if ( ! $configured || ! $enabled ) : ?>
+				<div class="notice notice-warning inline"><p>
+					<?php
+					printf(
+						/* translators: %s: settings page link */
+						esc_html__( 'Tawk.to is not set up yet. %s', 'ajforms' ),
+						'<a href="' . esc_url( $settings_url ) . '">' . esc_html__( 'Add your Property ID and webhook secret, and enable it, in Live Chat (Tawk.to) settings.', 'ajforms' ) . '</a>'
+					);
+					?>
+				</p></div>
+			<?php endif; ?>
+
+			<div class="ajcore-kpi-grid" style="grid-template-columns:repeat(3,minmax(140px,200px));margin:14px 0;">
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'tawk_status', 'new', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'new' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
+					<span><?php esc_html_e( 'New', 'ajforms' ); ?></span><strong<?php echo (int) $stats['new'] > 0 ? ' style="color:#dc2626;"' : ''; ?>><?php echo esc_html( $stats['new'] ); ?></strong>
+				</a>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'tawk_status', 'acknowledged', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'acknowledged' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
+					<span><?php esc_html_e( 'Acknowledged', 'ajforms' ); ?></span><strong><?php echo esc_html( max( 0, (int) $stats['total'] - (int) $stats['new'] ) ); ?></strong>
+				</a>
+				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'tawk_status', 'all', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'all' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
+					<span><?php esc_html_e( 'Total', 'ajforms' ); ?></span><strong><?php echo esc_html( $stats['total'] ); ?></strong>
+				</a>
+			</div>
+
+			<p>
+				<a class="button button-primary" href="https://dashboard.tawk.to/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Tawk.to Dashboard ↗', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Live Chat Settings', 'ajforms' ); ?></a>
+			</p>
+
+			<?php if ( empty( $events ) ) : ?>
+				<p style="color:#6b7280;"><?php esc_html_e( 'No Live Chat events yet.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<table class="widefat striped">
+					<thead><tr>
+						<th><?php esc_html_e( 'Type', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Visitor', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Message', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Site', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'When', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+						<th></th>
+					</tr></thead>
+					<tbody>
+					<?php foreach ( $events as $event ) : ?>
+						<tr>
+							<td><?php echo esc_html( $event_labels[ $event['eventType'] ] ?? ucfirst( str_replace( '_', ' ', $event['eventType'] ) ) ); ?></td>
+							<td><?php echo esc_html( $event['visitorName'] ?: ( $event['visitorEmail'] ?: '—' ) ); ?></td>
+							<td><?php echo esc_html( wp_trim_words( (string) $event['messagePreview'], 12, '…' ) ); ?></td>
+							<td><?php echo esc_html( $event['siteLabel'] ?: '—' ); ?></td>
+							<td><?php echo esc_html( $event['createdAt'] ); ?></td>
+							<td><?php echo 'new' === $event['status'] ? '<span style="color:#dc2626;font-weight:700;">' . esc_html__( 'New', 'ajforms' ) . '</span>' : esc_html__( 'Acknowledged', 'ajforms' ); ?></td>
+							<td>
+								<?php if ( 'new' === $event['status'] ) : ?>
+									<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'tawk_action' => 'acknowledge', 'tawk_event_id' => $event['id'] ), $base_url ), 'ajcore_tawk_acknowledge_' . $event['id'] ) ); ?>"><?php esc_html_e( 'Acknowledge', 'ajforms' ); ?></a>
+								<?php endif; ?>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	private function handle_portal_tawk_actions() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_GET['tawk_action'], $_GET['tawk_event_id'] ) ) {
+			return;
+		}
+		$action = sanitize_key( wp_unslash( $_GET['tawk_action'] ) );
+		$id     = absint( $_GET['tawk_event_id'] );
+		if ( 'acknowledge' !== $action || ! $id ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_tawk_acknowledge_' . $id );
+
+		$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'tawk' );
+		if ( class_exists( 'AJCore_REST_API' ) ) {
+			$rest    = new AJCore_REST_API();
+			$request = new WP_REST_Request( 'POST' );
+			$request->set_param( 'id', $id );
+			$result = $rest->acknowledge_ops_tawk_event( $request );
+			if ( is_wp_error( $result ) ) {
+				$args['portal-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['tawk-acknowledged'] = 1;
+			}
+		}
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
 	private function display_portal_esign_tab() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
@@ -27209,6 +27375,114 @@ class AJForms_Admin {
 						testBtn.disabled = false;
 						testBtn.textContent = <?php echo wp_json_encode( __( 'Test Connection', 'ajforms' ) ); ?>;
 					} );
+			} );
+		})();
+		</script>
+		<?php
+	}
+
+	/**
+	 * "Live Chat (Tawk.to)" settings — Property ID + a per-property webhook signing secret
+	 * (Tawk.to Admin → Webhooks) so the /tawk/webhook receiver can verify inbound events
+	 * (Chat Start, Chat End, Chat Transcript Created, Ticket Created) and log them as staff
+	 * alerts. No OAuth, no live "test connection" — Tawk.to's REST API is private-beta/
+	 * request-only, so the optional API username/password fields here are just stored for a
+	 * future integration, not called by anything yet.
+	 */
+	public function display_tawk_settings_section() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings   = $this->get_plugin_settings();
+		$action_url = add_query_arg(
+			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'tawk', 'section' => 'tawk' ),
+			admin_url( 'admin.php' )
+		);
+		$webhook_url = rest_url( 'ajcore/v1/tawk/webhook' );
+		$live_chat_tab_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'tawk' ), admin_url( 'admin.php' ) );
+		?>
+		<style>
+			#ajforms-tawk-section .ajforms-settings-field input[type="text"],
+			#ajforms-tawk-section .ajforms-settings-field input[type="password"] { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid #d1d5db; border-radius: 12px; padding: 10px 13px; font-family: inherit; font-size: 14px; }
+			#ajforms-tawk-section .ajforms-settings-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #111827; }
+			#ajforms-tawk-section .ajforms-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+			#ajforms-tawk-section .ajforms-settings-help { margin-top: 6px; color: #6b7280; font-size: 12px; }
+			#ajforms-tawk-section .ajforms-tawk-webhook-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+			#ajforms-tawk-webhook-url { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 10px; font-size: 12px; word-break: break-all; flex: 1; }
+		</style>
+		<div class="ajforms-settings-card" id="ajforms-tawk-section">
+			<span class="ajcore-modern-admin ajforms-settings-pill" style="display:inline-flex;"><?php esc_html_e( 'Live Chat', 'ajforms' ); ?></span>
+			<h3 style="margin:10px 0 4px;"><?php esc_html_e( 'Tawk.to alerts', 'ajforms' ); ?></h3>
+			<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'This does not embed the Tawk.to chat widget anywhere — it just gets new chats and tickets logged here (and in AJOps) the moment they happen, so staff notice and can jump into the real Tawk.to dashboard to reply faster. Set the fields below, then paste the Webhook URL into Tawk.to.', 'ajforms' ); ?></p>
+
+			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+
+			<div style="margin:0 0 18px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:13px;line-height:1.6;">
+				<strong><?php esc_html_e( 'Setup in Tawk.to:', 'ajforms' ); ?></strong>
+				<ol style="margin:8px 0 0 18px;padding:0;">
+					<li><?php esc_html_e( 'In the Tawk.to dashboard, go to Administration → Webhooks (per-property).', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Paste the Webhook URL below as the target, and enable at least Chat Start, Chat End, and Ticket Created.', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Copy the signing secret Tawk.to shows you and paste it into "Webhook Signing Secret" below, along with the Property ID (Administration → Channels → Widget). Save.', 'ajforms' ); ?></li>
+				</ol>
+				<div class="ajforms-tawk-webhook-row">
+					<code id="ajforms-tawk-webhook-url"><?php echo esc_html( $webhook_url ); ?></code>
+					<button type="button" class="button button-small" id="ajforms-tawk-copy-webhook"><?php esc_html_e( 'Copy', 'ajforms' ); ?></button>
+				</div>
+			</div>
+
+			<form method="post" action="<?php echo esc_url( $action_url ); ?>">
+				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+				<input type="hidden" name="ajforms_section" value="tawk">
+				<div class="ajforms-settings-field" style="margin-bottom:16px;">
+					<label style="display:flex;align-items:center;gap:8px;font-weight:600;">
+						<input type="checkbox" name="tawk_enabled" value="1" <?php checked( '1', $settings['tawk_enabled'] ); ?>>
+						<?php esc_html_e( 'Enabled', 'ajforms' ); ?>
+					</label>
+					<div class="ajforms-settings-help"><?php esc_html_e( 'While off, the webhook receiver rejects incoming events.', 'ajforms' ); ?></div>
+				</div>
+				<div class="ajforms-settings-grid">
+					<div class="ajforms-settings-field">
+						<label for="tawk_property_id"><?php esc_html_e( 'Property ID', 'ajforms' ); ?></label>
+						<input type="text" name="tawk_property_id" id="tawk_property_id" value="<?php echo esc_attr( $settings['tawk_property_id'] ); ?>" autocomplete="off">
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="tawk_widget_id"><?php esc_html_e( 'Widget ID', 'ajforms' ); ?></label>
+						<input type="text" name="tawk_widget_id" id="tawk_widget_id" value="<?php echo esc_attr( $settings['tawk_widget_id'] ); ?>" autocomplete="off">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only for now — not used until a chat widget is added.', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="tawk_webhook_secret"><?php esc_html_e( 'Webhook Signing Secret', 'ajforms' ); ?></label>
+						<input type="text" name="tawk_webhook_secret" id="tawk_webhook_secret" value="" placeholder="<?php echo ! empty( $settings['tawk_webhook_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Used to verify the X-Tawk-Signature header on every incoming webhook call.', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="tawk_api_username"><?php esc_html_e( 'REST API Username (optional)', 'ajforms' ); ?></label>
+						<input type="text" name="tawk_api_username" id="tawk_api_username" value="<?php echo esc_attr( $settings['tawk_api_username'] ); ?>" autocomplete="off">
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="tawk_api_password"><?php esc_html_e( 'REST API Password (optional)', 'ajforms' ); ?></label>
+						<input type="text" name="tawk_api_password" id="tawk_api_password" value="" placeholder="<?php echo ! empty( $settings['tawk_api_password'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'From Tawk.to\'s REST API access approval email. Stored for a future integration only — nothing uses it yet.', 'ajforms' ); ?></div>
+					</div>
+				</div>
+				<p style="margin:14px 0 0;"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
+				<a class="button" href="<?php echo esc_url( $live_chat_tab_url ); ?>"><?php esc_html_e( 'View Live Chat alerts', 'ajforms' ); ?></a></p>
+			</form>
+		</div>
+		<script>
+		(function() {
+			var copyBtn = document.getElementById( 'ajforms-tawk-copy-webhook' );
+			var urlEl = document.getElementById( 'ajforms-tawk-webhook-url' );
+			if ( ! copyBtn || ! urlEl ) { return; }
+			copyBtn.addEventListener( 'click', function () {
+				navigator.clipboard.writeText( urlEl.textContent ).then( function () {
+					var original = copyBtn.textContent;
+					copyBtn.textContent = <?php echo wp_json_encode( __( 'Copied!', 'ajforms' ) ); ?>;
+					setTimeout( function () { copyBtn.textContent = original; }, 1500 );
+				} );
 			} );
 		})();
 		</script>
