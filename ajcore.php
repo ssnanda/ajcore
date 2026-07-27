@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.109
+ * Version: 0.7.110
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.109' );
+	define( 'AJCORE_VERSION', '0.7.110' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -169,16 +169,20 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// E-Signatures (BreezeDoc). A single shared BreezeDoc account, authenticated with a
 			// Personal Access Token, used to send templates out for customer signature.
 			'breezedoc_api_token'           => '',
-			// Live Chat (Tawk.to). Property/Widget ID + per-property webhook signing secret feed
-			// the /tawk/webhook receiver, which logs Chat Start/End/Transcript/Ticket events for
-			// staff alerts. api_username/api_password are stored for a future Tawk.to REST API
-			// integration (private-beta access) — not used by anything yet.
+			// Live Chat (Tawk.to). One AJCore install can front multiple Tawk.to properties (one per
+			// business) — tawk_properties is a list of { label, property_id, webhook_secret }, each
+			// property's own webhook pointed at the SAME /tawk/webhook URL. The receiver picks the
+			// right secret to verify by matching the payload's property.id. api_username/api_password
+			// are stored for a future Tawk.to REST API integration (private-beta access, docs not
+			// available yet) — not used by anything yet.
 			'tawk_enabled'                   => '0',
-			'tawk_property_id'               => '',
-			'tawk_widget_id'                 => '',
-			'tawk_webhook_secret'            => '',
+			'tawk_properties'                => array(),
 			'tawk_api_username'              => '',
 			'tawk_api_password'              => '',
+			// Bearer token for Tawk.to's REST API (Profile → Edit Profile → REST API Keys in the
+			// Tawk.to dashboard), used only by the "Fetch Properties" button to list properties —
+			// property.list can't return webhook secrets, so those are still entered manually.
+			'tawk_api_token'                 => '',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
@@ -316,6 +320,20 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 		);
 
 		$settings = function_exists( 'ajcore_normalize_stripe_settings' ) ? ajcore_normalize_stripe_settings( $settings ) : $settings;
+
+		// One-time in-memory upgrade: the original Live Chat build stored a single property/secret
+		// pair (tawk_property_id/tawk_webhook_secret) before it became a multi-property list. Fold
+		// any leftover single-value config into tawk_properties so it isn't silently dropped; gets
+		// persisted properly the next time Live Chat settings are saved from the new UI.
+		if ( empty( $settings['tawk_properties'] ) && ! empty( $settings['tawk_property_id'] ) ) {
+			$settings['tawk_properties'] = array(
+				array(
+					'label'          => ! empty( $settings['tawk_widget_id'] ) ? (string) $settings['tawk_widget_id'] : (string) $settings['tawk_property_id'],
+					'property_id'    => (string) $settings['tawk_property_id'],
+					'webhook_secret' => isset( $settings['tawk_webhook_secret'] ) ? (string) $settings['tawk_webhook_secret'] : '',
+				),
+			);
+		}
 
 		if ( ! $has_saved_settings && ! empty( $file_settings ) ) {
 			update_option( 'ajforms_settings', $settings );
@@ -1001,11 +1019,10 @@ if ( ! function_exists( 'ajcore_get_tawk_setting_keys' ) ) {
 	function ajcore_get_tawk_setting_keys() {
 		return array(
 			'tawk_enabled',
-			'tawk_property_id',
-			'tawk_widget_id',
-			'tawk_webhook_secret',
+			'tawk_properties',
 			'tawk_api_username',
 			'tawk_api_password',
+			'tawk_api_token',
 		);
 	}
 }

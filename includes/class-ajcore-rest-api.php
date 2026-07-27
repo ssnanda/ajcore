@@ -95,6 +95,21 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Called via fetch() from CP Settings itself (wp-admin JS, so it carries a real X-WP-Nonce)
+		// — plain manage_options is right here, not can_manage_ops_api(), since this is a settings-
+		// page action, not an OPS API surface, and Live Chat settings are already master-only.
+		register_rest_route(
+			self::NAMESPACE,
+			'/tawk/fetch-properties',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'fetch_ops_tawk_properties_from_api' ),
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+			)
+		);
+
 		register_rest_route(
 			self::NAMESPACE,
 			'/gmail-intake/oauth/callback',
@@ -860,6 +875,7 @@ class AJCore_REST_API {
 			// Live Chat (Tawk.to) alerts
 			'/ops/tawk/events'                        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_events', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/tawk/events/(?P<id>\d+)/acknowledge' => array( 'methods' => 'POST', 'callback' => 'acknowledge_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
+			'/ops/tawk/properties'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_properties', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -966,8 +982,10 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/esign/documents', 'auth' => 'Admin', 'purpose' => 'Local log of sent signature requests with their last-known status.', 'app' => 'OPS e-signatures' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/esign/documents/{id}/refresh', 'auth' => 'Admin', 'purpose' => 'Polls BreezeDoc for the current status of a sent document (no webhook exists).', 'app' => 'OPS e-signatures' ),
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/tawk/webhook', 'auth' => 'Public (HMAC-SHA1 X-Tawk-Signature header, verified against the configured secret)', 'purpose' => 'Receives Tawk.to Chat Start/End/Transcript/Ticket Created events and logs them as staff alerts.', 'app' => 'Tawk.to webhook' ),
-			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/events', 'auth' => 'Admin', 'purpose' => 'Live Chat alert feed (all connected sites, via the shared DB). Filters: status (new|acknowledged), event_type, site_uuid.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/tawk/fetch-properties', 'auth' => 'Admin', 'purpose' => 'Calls Tawk.to\'s REST API (property.list) with the configured Bearer token to list properties for the CP Settings "Fetch Properties" button.', 'app' => 'CP Settings live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/events', 'auth' => 'Admin', 'purpose' => 'Live Chat alert feed (all connected sites, via the shared DB). Filters: status (new|acknowledged), event_type, site_uuid, property_id.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/events/{id}/acknowledge', 'auth' => 'Admin', 'purpose' => 'Marks a Live Chat alert as acknowledged.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/properties', 'auth' => 'Admin', 'purpose' => 'Configured Tawk.to properties (id + label only, no secrets) for filter dropdowns.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -5967,13 +5985,28 @@ class AJCore_REST_API {
 		return $this->portal_table( 'aj_portal_tawk_events' );
 	}
 
-	private function format_tawk_event_row( $row ) {
-		$row = (array) $row;
+	/** property_id => label map from CP Settings → Live Chat, for display only (never exposes secrets). */
+	private function get_tawk_property_labels() {
+		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$properties = is_array( $settings['tawk_properties'] ?? null ) ? $settings['tawk_properties'] : array();
+		$labels     = array();
+		foreach ( $properties as $property_row ) {
+			if ( ! empty( $property_row['property_id'] ) ) {
+				$labels[ (string) $property_row['property_id'] ] = ! empty( $property_row['label'] ) ? (string) $property_row['label'] : (string) $property_row['property_id'];
+			}
+		}
+		return $labels;
+	}
+
+	private function format_tawk_event_row( $row, $property_labels = array() ) {
+		$row         = (array) $row;
+		$property_id = (string) $row['property_id'];
 		return array(
 			'id'              => (int) $row['id'],
 			'siteUuid'        => (string) $row['site_uuid'],
 			'siteLabel'       => (string) ( $row['site_domain'] ?? '' ),
-			'propertyId'      => (string) $row['property_id'],
+			'propertyId'      => $property_id,
+			'propertyLabel'   => isset( $property_labels[ $property_id ] ) ? $property_labels[ $property_id ] : $property_id,
 			'eventType'       => (string) $row['event_type'],
 			'chatId'          => (string) $row['tawk_chat_id'],
 			'visitorName'     => (string) $row['visitor_name'],
@@ -5983,6 +6016,106 @@ class AJCore_REST_API {
 			'createdAt'       => (string) $row['created_at'],
 			'acknowledgedAt'  => (string) $row['acknowledged_at'],
 			'acknowledgedBy'  => (int) $row['acknowledged_by'],
+		);
+	}
+
+	/** property_id/label list for AJOps' and WP-admin's filter dropdowns (no secrets). */
+	public function get_ops_tawk_properties() {
+		$labels     = $this->get_tawk_property_labels();
+		$properties = array();
+		foreach ( $labels as $property_id => $label ) {
+			$properties[] = array( 'propertyId' => $property_id, 'label' => $label );
+		}
+		return rest_ensure_response( array( 'properties' => $properties ) );
+	}
+
+	/**
+	 * Calls Tawk.to's REST API (POST https://api.tawk.to/v1/property.list, Bearer token from
+	 * Profile → Edit Profile → REST API Keys) to list properties, so staff don't have to hand-type
+	 * every Property ID. This is private-beta/undocumented-until-approved — I don't have Tawk.to's
+	 * actual response schema, so the id/label field names below are best-effort guesses across a
+	 * few common shapes. The raw decoded response is always returned alongside whatever we managed
+	 * to parse, so the CP Settings UI can show it for verification if the guessed fields are wrong.
+	 * Only ever lists properties — property.list has no way to return webhook secrets (those are
+	 * shown once, by Tawk.to, when a webhook is created), so this can't replace the manual
+	 * per-property webhook setup in display_tawk_settings_section().
+	 */
+	public function fetch_ops_tawk_properties_from_api() {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$token    = trim( (string) ( $settings['tawk_api_token'] ?? '' ) );
+		if ( '' === $token ) {
+			return new WP_Error( 'tawk_api_not_configured', __( 'Add a REST API Access Token below first.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$response = wp_remote_post(
+			'https://api.tawk.to/v1/property.list',
+			array(
+				'timeout' => 20,
+				'headers' => array(
+					'Content-Type'  => 'application/json',
+					'Accept'        => 'application/json',
+					'Authorization' => 'Bearer ' . $token,
+				),
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$status = wp_remote_retrieve_response_code( $response );
+		$body   = wp_remote_retrieve_body( $response );
+		$decoded = json_decode( $body, true );
+
+		if ( $status < 200 || $status >= 300 ) {
+			return new WP_Error(
+				'tawk_api_error',
+				sprintf(
+					/* translators: 1: HTTP status code, 2: raw response body */
+					__( 'Tawk.to API returned HTTP %1$d: %2$s', 'ajforms' ),
+					(int) $status,
+					mb_substr( (string) $body, 0, 300 )
+				),
+				array( 'status' => 502 )
+			);
+		}
+
+		// Best-effort: try a few plausible shapes for where the property list and each property's
+		// id/name might live, since the real schema isn't documented publicly.
+		$list = array();
+		if ( is_array( $decoded ) ) {
+			if ( isset( $decoded['data'] ) && is_array( $decoded['data'] ) ) {
+				$list = $decoded['data'];
+			} elseif ( isset( $decoded['properties'] ) && is_array( $decoded['properties'] ) ) {
+				$list = $decoded['properties'];
+			} elseif ( isset( $decoded['result'] ) && is_array( $decoded['result'] ) ) {
+				$list = $decoded['result'];
+			} elseif ( ! empty( $decoded ) && array_keys( $decoded ) === range( 0, count( $decoded ) - 1 ) ) {
+				$list = $decoded;
+			}
+		}
+
+		$properties = array();
+		foreach ( $list as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+			$property_id = $item['propertyId'] ?? $item['property_id'] ?? $item['id'] ?? $item['_id'] ?? '';
+			$label       = $item['name'] ?? $item['title'] ?? $item['label'] ?? $item['companyName'] ?? '';
+			if ( '' === $property_id ) {
+				continue;
+			}
+			$properties[] = array(
+				'propertyId' => sanitize_text_field( (string) $property_id ),
+				'label'      => sanitize_text_field( (string) ( '' !== $label ? $label : $property_id ) ),
+			);
+		}
+
+		return rest_ensure_response(
+			array(
+				'success'    => true,
+				'properties' => $properties,
+				'raw'        => $decoded,
+			)
 		);
 	}
 
@@ -6017,6 +6150,12 @@ class AJCore_REST_API {
 			$params[] = $site_uuid;
 		}
 
+		$property_id = sanitize_text_field( (string) ( $request->get_param( 'property_id' ) ?: '' ) );
+		if ( '' !== $property_id ) {
+			$where[]  = 'e.property_id = %s';
+			$params[] = $property_id;
+		}
+
 		$per_page = min( 500, max( 1, absint( $request->get_param( 'per_page' ) ?: 200 ) ) );
 		$params[] = $per_page;
 
@@ -6026,11 +6165,12 @@ class AJCore_REST_API {
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$rows = $pdb->get_results( $pdb->prepare( "SELECT {$select} FROM `{$table}` e {$join} WHERE {$where_sql} ORDER BY e.created_at DESC, e.id DESC LIMIT %d", $params ), ARRAY_A );
 		$rows = is_array( $rows ) ? $rows : array();
+		$property_labels = $this->get_tawk_property_labels();
 
 		$stats = $pdb->get_row( "SELECT COUNT(*) AS total, SUM(status = 'new') AS new FROM `{$table}`", ARRAY_A );
 
 		return rest_ensure_response( array(
-			'events' => array_map( array( $this, 'format_tawk_event_row' ), $rows ),
+			'events' => array_map( function ( $row ) use ( $property_labels ) { return $this->format_tawk_event_row( $row, $property_labels ); }, $rows ),
 			'stats'  => array(
 				'total' => (int) ( $stats['total'] ?? 0 ),
 				'new'   => (int) ( $stats['new'] ?? 0 ),
@@ -6095,22 +6235,54 @@ class AJCore_REST_API {
 	 * staff alerting; does not call back into Tawk.to.
 	 */
 	public function tawk_webhook_receive( WP_REST_Request $request ) {
-		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$enabled  = '1' === (string) ( $settings['tawk_enabled'] ?? '' );
-		$secret   = trim( (string) ( $settings['tawk_webhook_secret'] ?? '' ) );
-		if ( ! $enabled || '' === $secret ) {
+		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$enabled    = '1' === (string) ( $settings['tawk_enabled'] ?? '' );
+		$properties = is_array( $settings['tawk_properties'] ?? null ) ? $settings['tawk_properties'] : array();
+
+		$secrets_by_property = array();
+		foreach ( $properties as $property_row ) {
+			if ( ! empty( $property_row['property_id'] ) && ! empty( $property_row['webhook_secret'] ) ) {
+				$secrets_by_property[ (string) $property_row['property_id'] ] = (string) $property_row['webhook_secret'];
+			}
+		}
+		if ( ! $enabled || empty( $secrets_by_property ) ) {
 			return new WP_Error( 'tawk_not_configured', __( 'Tawk.to Live Chat is not enabled on this site.', 'ajforms' ), array( 'status' => 403 ) );
 		}
 
 		$body      = $request->get_body();
 		$signature = (string) $request->get_header( 'x-tawk-signature' );
-		$expected  = hash_hmac( 'sha1', (string) $body, $secret );
-		if ( '' === $signature || ! hash_equals( $expected, $signature ) ) {
+		if ( '' === $signature ) {
 			return new WP_Error( 'tawk_invalid_signature', __( 'Invalid webhook signature.', 'ajforms' ), array( 'status' => 401 ) );
 		}
 
 		$payload = json_decode( (string) $body, true );
 		$payload = is_array( $payload ) ? $payload : array();
+
+		// Each configured property has its OWN Tawk.to webhook (and secret), all pointed at this
+		// same URL. The payload's property.id names which one sent it, but since that hasn't been
+		// verified yet, only trust it as a lookup hint — confirm it by actually matching the HMAC
+		// against that property's secret, falling back to trying every configured secret in case
+		// property.id isn't where we expect it in this payload shape.
+		$claimed_property_id = (string) $this->dig_tawk_payload_value( $payload, array( 'property.id' ) );
+		$matched_property_id = '';
+		if ( '' !== $claimed_property_id && isset( $secrets_by_property[ $claimed_property_id ] ) ) {
+			$expected = hash_hmac( 'sha1', (string) $body, $secrets_by_property[ $claimed_property_id ] );
+			if ( hash_equals( $expected, $signature ) ) {
+				$matched_property_id = $claimed_property_id;
+			}
+		}
+		if ( '' === $matched_property_id ) {
+			foreach ( $secrets_by_property as $property_id => $property_secret ) {
+				$expected = hash_hmac( 'sha1', (string) $body, $property_secret );
+				if ( hash_equals( $expected, $signature ) ) {
+					$matched_property_id = $property_id;
+					break;
+				}
+			}
+		}
+		if ( '' === $matched_property_id ) {
+			return new WP_Error( 'tawk_invalid_signature', __( 'Invalid webhook signature.', 'ajforms' ), array( 'status' => 401 ) );
+		}
 
 		$raw_event  = (string) $this->dig_tawk_payload_value( $payload, array( 'event' ) );
 		$event_map  = array(
@@ -6124,14 +6296,11 @@ class AJCore_REST_API {
 			$event_type = 'unknown';
 		}
 
-		$chat_id    = (string) $this->dig_tawk_payload_value( $payload, array( 'chatId', 'chat.id', 'ticket.id' ) );
-		$name       = (string) $this->dig_tawk_payload_value( $payload, array( 'visitor.name', 'chat.visitor.name', 'requester.name' ) );
-		$email      = (string) $this->dig_tawk_payload_value( $payload, array( 'visitor.email', 'chat.visitor.email', 'requester.email' ) );
-		$message    = (string) $this->dig_tawk_payload_value( $payload, array( 'message.text', 'chat.message.text', 'ticket.subject' ) );
-		$property   = (string) $this->dig_tawk_payload_value( $payload, array( 'property.id' ) );
-		if ( '' === $property ) {
-			$property = trim( (string) ( $settings['tawk_property_id'] ?? '' ) );
-		}
+		$chat_id = (string) $this->dig_tawk_payload_value( $payload, array( 'chatId', 'chat.id', 'ticket.id' ) );
+		$name    = (string) $this->dig_tawk_payload_value( $payload, array( 'visitor.name', 'chat.visitor.name', 'requester.name' ) );
+		$email   = (string) $this->dig_tawk_payload_value( $payload, array( 'visitor.email', 'chat.visitor.email', 'requester.email' ) );
+		$message = (string) $this->dig_tawk_payload_value( $payload, array( 'message.text', 'chat.message.text', 'ticket.subject' ) );
+		$property = $matched_property_id;
 
 		$pdb   = $this->get_portal_db();
 		$table = $this->get_tawk_events_table();
