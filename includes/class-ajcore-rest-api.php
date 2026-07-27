@@ -6002,17 +6002,25 @@ class AJCore_REST_API {
 		return $labels;
 	}
 
-	private function format_tawk_event_row( $row, $property_labels = array() ) {
+	/**
+	 * $ended_chat_ids: set (array with chat_id keys) of tawk_chat_id values that have a chat_end
+	 * row somewhere in the table. A chat_start row is "active" (still ongoing, worth a fast "Join
+	 * in Tawk.to" link) only when its chat_id isn't in that set — every other event type is never
+	 * considered active (chat_end/chat_transcript/ticket_create aren't live conversations to join).
+	 */
+	private function format_tawk_event_row( $row, $property_labels = array(), $ended_chat_ids = array() ) {
 		$row         = (array) $row;
 		$property_id = (string) $row['property_id'];
+		$chat_id     = (string) $row['tawk_chat_id'];
+		$event_type  = (string) $row['event_type'];
 		return array(
 			'id'              => (int) $row['id'],
 			'siteUuid'        => (string) $row['site_uuid'],
 			'siteLabel'       => (string) ( $row['site_domain'] ?? '' ),
 			'propertyId'      => $property_id,
 			'propertyLabel'   => isset( $property_labels[ $property_id ] ) ? $property_labels[ $property_id ] : $property_id,
-			'eventType'       => (string) $row['event_type'],
-			'chatId'          => (string) $row['tawk_chat_id'],
+			'eventType'       => $event_type,
+			'chatId'          => $chat_id,
 			'visitorName'     => (string) $row['visitor_name'],
 			'visitorEmail'    => (string) $row['visitor_email'],
 			'messagePreview'  => (string) $row['message_preview'],
@@ -6020,6 +6028,7 @@ class AJCore_REST_API {
 			'createdAt'       => (string) $row['created_at'],
 			'acknowledgedAt'  => (string) $row['acknowledged_at'],
 			'acknowledgedBy'  => (int) $row['acknowledged_by'],
+			'isActive'        => 'chat_start' === $event_type && '' !== $chat_id && ! isset( $ended_chat_ids[ $chat_id ] ),
 		);
 	}
 
@@ -6174,10 +6183,13 @@ class AJCore_REST_API {
 		$rows = is_array( $rows ) ? $rows : array();
 		$property_labels = $this->get_tawk_property_labels();
 
+		$ended_chat_ids_list = $pdb->get_col( "SELECT DISTINCT tawk_chat_id FROM `{$table}` WHERE event_type = 'chat_end' AND tawk_chat_id <> ''" );
+		$ended_chat_ids      = array_flip( array_map( 'strval', (array) $ended_chat_ids_list ) );
+
 		$stats = $pdb->get_row( "SELECT COUNT(*) AS total, SUM(status = 'new') AS new FROM `{$table}`", ARRAY_A );
 
 		return rest_ensure_response( array(
-			'events' => array_map( function ( $row ) use ( $property_labels ) { return $this->format_tawk_event_row( $row, $property_labels ); }, $rows ),
+			'events' => array_map( function ( $row ) use ( $property_labels, $ended_chat_ids ) { return $this->format_tawk_event_row( $row, $property_labels, $ended_chat_ids ); }, $rows ),
 			'stats'  => array(
 				'total' => (int) ( $stats['total'] ?? 0 ),
 				'new'   => (int) ( $stats['new'] ?? 0 ),
