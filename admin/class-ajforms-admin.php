@@ -13177,8 +13177,6 @@ class AJForms_Admin {
 			'breezedoc_api_token'            => isset( $_POST['breezedoc_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['breezedoc_api_token'] ) ) : '',
 			'tawk_enabled'                    => isset( $_POST['tawk_enabled'] ) ? '1' : '0',
 			'tawk_properties'                 => $this->parse_tawk_properties_from_post( isset( $current_settings['tawk_properties'] ) ? $current_settings['tawk_properties'] : array() ),
-			'tawk_api_username'               => isset( $_POST['tawk_api_username'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_username'] ) ) : '',
-			'tawk_api_password'               => isset( $_POST['tawk_api_password'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_password'] ) ) : '',
 			'tawk_api_token'                  => isset( $_POST['tawk_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_token'] ) ) : '',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
@@ -13213,7 +13211,7 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'tawk_api_password', 'tawk_api_token' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'tawk_api_token' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -13243,7 +13241,7 @@ class AJForms_Admin {
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
 			'esign'        => array( 'breezedoc_api_token' ),
-			'tawk'         => array( 'tawk_enabled', 'tawk_properties', 'tawk_api_username', 'tawk_api_password', 'tawk_api_token' ),
+			'tawk'         => array( 'tawk_enabled', 'tawk_properties', 'tawk_api_token' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -27619,35 +27617,21 @@ class AJForms_Admin {
 					</p>
 					<p class="ajforms-settings-help" style="margin:0 0 16px;"><?php esc_html_e( 'Webhook Secret is shown once, when you create each property\'s webhook in Tawk.to — if you lose it, delete and recreate that webhook to get a new one.', 'ajforms' ); ?></p>
 				<?php endif; ?>
-				<div class="ajforms-settings-grid">
-					<div class="ajforms-settings-field">
-						<label for="tawk_api_username"><?php esc_html_e( 'REST API Username (optional)', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_api_username" id="tawk_api_username" value="<?php echo esc_attr( $settings['tawk_api_username'] ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
-						<?php if ( ! $read_only ) : ?>
-							<div class="ajforms-settings-help"><a href="https://www.tawk.to/rest-api-beta-access-request/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( "Don't have this? Request REST API access ↗", 'ajforms' ); ?></a></div>
-						<?php endif; ?>
-					</div>
-					<div class="ajforms-settings-field">
-						<label for="tawk_api_password"><?php esc_html_e( 'REST API Password (optional)', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_api_password" id="tawk_api_password" value="" placeholder="<?php echo ! empty( $settings['tawk_api_password'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
-						<?php if ( ! $read_only ) : ?>
-							<div class="ajforms-settings-help"><?php esc_html_e( 'From Tawk.to\'s REST API access approval email. Stored for a future integration only — nothing uses it yet.', 'ajforms' ); ?></div>
-						<?php endif; ?>
-					</div>
-					<div class="ajforms-settings-field">
-						<label for="tawk_api_token"><?php esc_html_e( 'REST API Access Token', 'ajforms' ); ?></label>
-						<input type="text" name="tawk_api_token" id="tawk_api_token" value="" placeholder="<?php echo ! empty( $settings['tawk_api_token'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
-						<?php if ( ! $read_only ) : ?>
-							<div class="ajforms-settings-help"><?php esc_html_e( 'From Tawk.to Dashboard → your profile icon → Edit Profile → REST API Keys → Create Key. Used by "Fetch Properties" below — save settings first so it\'s available to that button.', 'ajforms' ); ?></div>
-						<?php endif; ?>
-					</div>
+				<div class="ajforms-settings-field">
+					<label for="tawk_api_token"><?php esc_html_e( 'REST API Access Token', 'ajforms' ); ?></label>
+					<input type="text" name="tawk_api_token" id="tawk_api_token" value="" placeholder="<?php echo ! empty( $settings['tawk_api_token'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+					<?php if ( ! $read_only ) : ?>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'From Tawk.to Dashboard → your profile icon → Edit Profile → REST API Keys → Create Key. Save settings first so it\'s available to the buttons below.', 'ajforms' ); ?></div>
+					<?php endif; ?>
 				</div>
 				<?php if ( ! $read_only ) : ?>
-					<p style="margin:4px 0 0;">
+					<p style="margin:10px 0 0;">
 						<button type="button" class="button" id="ajforms-tawk-fetch-properties"><?php esc_html_e( 'Fetch Properties from Tawk.to', 'ajforms' ); ?></button>
-						<span class="ajforms-settings-help" style="display:inline;"><?php esc_html_e( 'Adds any properties not already listed above (Property ID + Label only — webhook secrets still have to be set up manually per property, above). Uses the saved Access Token, not whatever is currently typed in the field.', 'ajforms' ); ?></span>
+						<button type="button" class="button" id="ajforms-tawk-test-connection"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
 					</p>
+					<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'Fetch pulls the list of properties on your Tawk.to account so you can pick which ones to track. Test Connection just checks the saved token works.', 'ajforms' ); ?></p>
 					<div id="ajforms-tawk-fetch-result" style="display:none;margin:10px 0 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;"></div>
+					<div id="ajforms-tawk-fetch-picker" style="display:none;margin:10px 0 0;padding:14px 16px;border:1px solid #e2e8f0;border-radius:10px;"></div>
 				<?php endif; ?>
 				<p style="margin:14px 0 0;">
 					<?php if ( ! $read_only ) : ?>
@@ -27725,42 +27709,87 @@ class AJForms_Admin {
 
 			var fetchBtn    = document.getElementById( 'ajforms-tawk-fetch-properties' );
 			var fetchResult = document.getElementById( 'ajforms-tawk-fetch-result' );
-			if ( fetchBtn && fetchResult ) {
+			var fetchPicker = document.getElementById( 'ajforms-tawk-fetch-picker' );
+			if ( fetchBtn && fetchResult && fetchPicker ) {
+				function renderPicker( properties ) {
+					var existingIds = Array.prototype.map.call(
+						container.querySelectorAll( '[name="tawk_property_id[]"]' ),
+						function ( input ) { return input.value.trim(); }
+					);
+					var candidates = properties.filter( function ( p ) { return p.propertyId && existingIds.indexOf( p.propertyId ) === -1; } );
+
+					if ( 0 === candidates.length ) {
+						fetchPicker.style.display = 'none';
+						fetchResult.style.display = 'block';
+						fetchResult.innerHTML = properties.length
+							? <?php echo wp_json_encode( __( 'Every property from Tawk.to is already listed above.', 'ajforms' ) ); ?>
+							: <?php echo wp_json_encode( __( 'Tawk.to returned no properties for this account.', 'ajforms' ) ); ?>;
+						return;
+					}
+
+					var html = '<p style="margin:0 0 8px;font-weight:600;">' +
+						<?php echo wp_json_encode( __( 'Pick which properties to track:', 'ajforms' ) ); ?> + '</p>';
+					candidates.forEach( function ( p, i ) {
+						html += '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;">' +
+							'<input type="checkbox" class="ajforms-tawk-picker-checkbox" data-index="' + i + '">' +
+							'<span>' + p.label.replace( /[<>&]/g, function ( c ) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ c ]; } ) +
+							' <span style="color:#9ca3af;">(' + p.propertyId.replace( /[<>&]/g, function ( c ) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ c ]; } ) + ')</span></span>' +
+							'</label>';
+					} );
+					html += '<p style="margin:10px 0 0;">' +
+						'<button type="button" class="button button-primary" id="ajforms-tawk-picker-add">' + <?php echo wp_json_encode( __( 'Add Selected', 'ajforms' ) ); ?> + '</button> ' +
+						'<button type="button" class="button" id="ajforms-tawk-picker-selectall">' + <?php echo wp_json_encode( __( 'Select All', 'ajforms' ) ); ?> + '</button> ' +
+						'<button type="button" class="button" id="ajforms-tawk-picker-cancel">' + <?php echo wp_json_encode( __( 'Cancel', 'ajforms' ) ); ?> + '</button>' +
+						'</p>';
+
+					fetchPicker.innerHTML = html;
+					fetchPicker.style.display = 'block';
+
+					document.getElementById( 'ajforms-tawk-picker-selectall' ).addEventListener( 'click', function () {
+						fetchPicker.querySelectorAll( '.ajforms-tawk-picker-checkbox' ).forEach( function ( cb ) { cb.checked = true; } );
+					} );
+					document.getElementById( 'ajforms-tawk-picker-cancel' ).addEventListener( 'click', function () {
+						fetchPicker.style.display = 'none';
+						fetchPicker.innerHTML = '';
+					} );
+					document.getElementById( 'ajforms-tawk-picker-add' ).addEventListener( 'click', function () {
+						var added = 0;
+						fetchPicker.querySelectorAll( '.ajforms-tawk-picker-checkbox:checked' ).forEach( function ( cb ) {
+							var p = candidates[ parseInt( cb.getAttribute( 'data-index' ), 10 ) ];
+							if ( ! p ) { return; }
+							addPropertyRow( p.label, p.propertyId );
+							added++;
+						} );
+						fetchPicker.style.display = 'none';
+						fetchPicker.innerHTML = '';
+						fetchResult.style.display = 'block';
+						fetchResult.textContent = added > 0
+							? ( added + ( 1 === added ? <?php echo wp_json_encode( __( ' property added. Enter its webhook secret above, then Save Settings.', 'ajforms' ) ); ?> : <?php echo wp_json_encode( __( ' properties added. Enter each one\'s webhook secret above, then Save Settings.', 'ajforms' ) ); ?> ) )
+							: <?php echo wp_json_encode( __( 'Nothing selected.', 'ajforms' ) ); ?>;
+					} );
+				}
+
 				fetchBtn.addEventListener( 'click', function () {
 					fetchBtn.disabled = true;
 					fetchBtn.textContent = <?php echo wp_json_encode( __( 'Fetching…', 'ajforms' ) ); ?>;
 					fetchResult.style.display = 'none';
+					fetchPicker.style.display = 'none';
 					fetch( '<?php echo esc_url_raw( rest_url( 'ajcore/v1/tawk/fetch-properties' ) ); ?>', {
 						method: 'POST',
 						headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
 					} )
 						.then( function ( r ) { return r.json().then( function ( d ) { return { ok: r.ok, data: d }; } ); } )
 						.then( function ( result ) {
-							fetchResult.style.display = 'block';
 							if ( ! result.ok || ! result.data || ! result.data.success ) {
-								fetchResult.innerHTML = '<strong style="color:#b91c1c;">' + <?php echo wp_json_encode( __( 'Fetch failed:', 'ajforms' ) ); ?> + '</strong> ' + ( ( result.data && result.data.message ) || <?php echo wp_json_encode( __( 'Unknown error.', 'ajforms' ) ); ?> );
+								fetchResult.style.display = 'block';
+								fetchResult.innerHTML = '<strong style="color:#b91c1c;">' + <?php echo wp_json_encode( __( 'Fetch failed:', 'ajforms' ) ); ?> + '</strong> ' + ( ( result.data && result.data.message ) || <?php echo wp_json_encode( __( 'Unknown error.', 'ajforms' ) ); ?> ) +
+									'<details style="margin-top:8px;"><summary style="cursor:pointer;color:#6b7280;"><?php echo esc_js( __( 'Raw Tawk.to response (debug)', 'ajforms' ) ); ?></summary>' +
+									'<pre style="white-space:pre-wrap;max-height:240px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:8px;"></pre></details>';
+								var pre = fetchResult.querySelector( 'pre' );
+								if ( pre ) { pre.textContent = JSON.stringify( result.data, null, 2 ); }
 								return;
 							}
-							var existingIds = Array.prototype.map.call(
-								container.querySelectorAll( '[name="tawk_property_id[]"]' ),
-								function ( input ) { return input.value.trim(); }
-							);
-							var added = 0;
-							( result.data.properties || [] ).forEach( function ( property ) {
-								if ( ! property.propertyId || existingIds.indexOf( property.propertyId ) !== -1 ) { return; }
-								addPropertyRow( property.label, property.propertyId );
-								existingIds.push( property.propertyId );
-								added++;
-							} );
-							var total = ( result.data.properties || [] ).length;
-							var summary = added + <?php echo wp_json_encode( __( ' new propert' , 'ajforms' ) ); ?> + ( 1 === added ? 'y' : 'ies' ) + ' ' + <?php echo wp_json_encode( __( 'added', 'ajforms' ) ); ?> +
-								( total > added ? ' (' + ( total - added ) + ' ' + <?php echo wp_json_encode( __( 'already listed', 'ajforms' ) ); ?> + ')' : '' ) + '. ' +
-								<?php echo wp_json_encode( __( 'Still enter each one\'s webhook secret manually, then Save Settings.', 'ajforms' ) ); ?>;
-							var rawJson = JSON.stringify( result.data.raw, null, 2 );
-							fetchResult.innerHTML = '<p style="margin:0 0 6px;">' + summary + '</p>' +
-								'<details><summary style="cursor:pointer;color:#6b7280;"><?php echo esc_js( __( 'Raw Tawk.to response (debug)', 'ajforms' ) ); ?></summary>' +
-								'<pre style="white-space:pre-wrap;max-height:240px;overflow:auto;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-top:8px;"></pre></details>';
-							fetchResult.querySelector( 'pre' ).textContent = rawJson;
+							renderPicker( result.data.properties || [] );
 						} )
 						.catch( function ( e ) {
 							fetchResult.style.display = 'block';
@@ -27769,6 +27798,39 @@ class AJForms_Admin {
 						.finally( function () {
 							fetchBtn.disabled = false;
 							fetchBtn.textContent = <?php echo wp_json_encode( __( 'Fetch Properties from Tawk.to', 'ajforms' ) ); ?>;
+						} );
+				} );
+			}
+
+			var testBtn = document.getElementById( 'ajforms-tawk-test-connection' );
+			if ( testBtn && fetchResult ) {
+				testBtn.addEventListener( 'click', function () {
+					testBtn.disabled = true;
+					testBtn.textContent = <?php echo wp_json_encode( __( 'Testing…', 'ajforms' ) ); ?>;
+					fetchResult.style.display = 'none';
+					if ( fetchPicker ) { fetchPicker.style.display = 'none'; }
+					fetch( '<?php echo esc_url_raw( rest_url( 'ajcore/v1/tawk/fetch-properties' ) ); ?>', {
+						method: 'POST',
+						headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
+					} )
+						.then( function ( r ) { return r.json().then( function ( d ) { return { ok: r.ok, data: d }; } ); } )
+						.then( function ( result ) {
+							fetchResult.style.display = 'block';
+							if ( result.ok && result.data && result.data.success ) {
+								var count = ( result.data.properties || [] ).length;
+								fetchResult.innerHTML = '<strong style="color:#166534;">✓ <?php echo esc_js( __( 'Connected.', 'ajforms' ) ); ?></strong> ' +
+									count + ( 1 === count ? <?php echo wp_json_encode( __( ' property found on this account.', 'ajforms' ) ); ?> : <?php echo wp_json_encode( __( ' properties found on this account.', 'ajforms' ) ); ?> );
+							} else {
+								fetchResult.innerHTML = '<strong style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Test failed:', 'ajforms' ) ); ?></strong> ' + ( ( result.data && result.data.message ) || <?php echo wp_json_encode( __( 'Unknown error.', 'ajforms' ) ); ?> );
+							}
+						} )
+						.catch( function ( e ) {
+							fetchResult.style.display = 'block';
+							fetchResult.innerHTML = '<strong style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Test failed:', 'ajforms' ) ); ?></strong> ' + e.message;
+						} )
+						.finally( function () {
+							testBtn.disabled = false;
+							testBtn.textContent = <?php echo wp_json_encode( __( 'Test Connection', 'ajforms' ) ); ?>;
 						} );
 				} );
 			}
