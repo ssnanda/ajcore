@@ -27572,13 +27572,12 @@ class AJForms_Admin {
 				<?php
 				$properties = ! empty( $settings['tawk_properties'] ) ? array_values( $settings['tawk_properties'] ) : array();
 				?>
-				<div class="ajforms-settings-field" style="margin:20px 0 8px;display:flex;align-items:center;justify-content:space-between;">
+				<div class="ajforms-settings-field" style="margin:20px 0 12px;display:flex;align-items:center;justify-content:space-between;">
 					<label style="font-weight:600;margin:0;"><?php esc_html_e( 'Tracked Properties', 'ajforms' ); ?></label>
 					<?php if ( ! $read_only && ! empty( $properties ) ) : ?>
-						<button type="button" class="button button-small" id="ajforms-tawk-reset-properties"><?php esc_html_e( 'Reset', 'ajforms' ); ?></button>
+						<button type="button" class="button" id="ajforms-tawk-reset-properties"><?php esc_html_e( 'Reset', 'ajforms' ); ?></button>
 					<?php endif; ?>
 				</div>
-				<p class="ajforms-settings-help" style="margin:-4px 0 8px;"><?php esc_html_e( 'This list only reflects what you\'ve added here — it doesn\'t auto-update if a property is deleted in Tawk.to. If one you removed there is still showing here, use Reset (or its × button) to drop it.', 'ajforms' ); ?></p>
 				<div id="ajforms-tawk-properties">
 					<?php if ( empty( $properties ) ) : ?>
 						<p style="color:#6b7280;font-size:13px;" id="ajforms-tawk-properties-empty"><?php esc_html_e( 'None yet — use Fetch Properties above to add some.', 'ajforms' ); ?></p>
