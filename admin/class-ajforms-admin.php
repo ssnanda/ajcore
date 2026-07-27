@@ -27423,9 +27423,26 @@ class AJForms_Admin {
 			<div style="margin:0 0 18px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:13px;line-height:1.6;">
 				<strong><?php esc_html_e( 'Setup in Tawk.to:', 'ajforms' ); ?></strong>
 				<ol style="margin:8px 0 0 18px;padding:0;">
-					<li><?php esc_html_e( 'In the Tawk.to dashboard, go to Administration → Webhooks (per-property).', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'Paste the Webhook URL below as the target, and enable at least Chat Start, Chat End, and Ticket Created.', 'ajforms' ); ?></li>
-					<li><?php esc_html_e( 'Copy the signing secret Tawk.to shows you and paste it into "Webhook Signing Secret" below, along with the Property ID (Administration → Channels → Widget). Save.', 'ajforms' ); ?></li>
+					<li>
+						<?php
+						printf(
+							/* translators: %s: help.tawk.to article link */
+							esc_html__( 'In the Tawk.to dashboard, click the ⚙ Administration icon in the top nav, then Settings → Webhooks (per-property). %s', 'ajforms' ),
+							'<a href="https://help.tawk.to/article/creating-and-managing-webhooks" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Tawk.to guide: Creating and managing Webhooks ↗', 'ajforms' ) . '</a>'
+						);
+						?>
+					</li>
+					<li><?php esc_html_e( 'Click "Create Webhook", paste the Webhook URL below as the Endpoint URL, and enable at least Chat Start, Chat End, and New Ticket (enable any others you see too — this receiver ignores event types it doesn\'t recognize).', 'ajforms' ); ?></li>
+					<li><?php esc_html_e( 'Copy the signing secret Tawk.to shows you after saving and paste it into "Webhook Signing Secret" below.', 'ajforms' ); ?></li>
+					<li>
+						<?php
+						printf(
+							/* translators: %s: help.tawk.to article link */
+							esc_html__( 'Property ID: Administration → Chat Widget (or the "tawk.to/chat/{propertyId}/{widgetId}" Direct Chat Link). %s', 'ajforms' ),
+							'<a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Tawk.to guide: Where can I find the property and widget ID? ↗', 'ajforms' ) . '</a>'
+						);
+						?>
+					</li>
 				</ol>
 				<div class="ajforms-tawk-webhook-row">
 					<code id="ajforms-tawk-webhook-url"><?php echo esc_html( $webhook_url ); ?></code>
@@ -27447,20 +27464,22 @@ class AJForms_Admin {
 					<div class="ajforms-settings-field">
 						<label for="tawk_property_id"><?php esc_html_e( 'Property ID', 'ajforms' ); ?></label>
 						<input type="text" name="tawk_property_id" id="tawk_property_id" value="<?php echo esc_attr( $settings['tawk_property_id'] ); ?>" autocomplete="off">
+						<div class="ajforms-settings-help"><a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Where do I find this? ↗', 'ajforms' ); ?></a></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="tawk_widget_id"><?php esc_html_e( 'Widget ID', 'ajforms' ); ?></label>
 						<input type="text" name="tawk_widget_id" id="tawk_widget_id" value="<?php echo esc_attr( $settings['tawk_widget_id'] ); ?>" autocomplete="off">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only for now — not used until a chat widget is added.', 'ajforms' ); ?></div>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only for now — not used until a chat widget is added.', 'ajforms' ); ?> <a href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Where do I find this? ↗', 'ajforms' ); ?></a></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="tawk_webhook_secret"><?php esc_html_e( 'Webhook Signing Secret', 'ajforms' ); ?></label>
 						<input type="text" name="tawk_webhook_secret" id="tawk_webhook_secret" value="" placeholder="<?php echo ! empty( $settings['tawk_webhook_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Used to verify the X-Tawk-Signature header on every incoming webhook call.', 'ajforms' ); ?></div>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Used to verify the X-Tawk-Signature header on every incoming webhook call. Shown once, when you create the webhook in Tawk.to (step above) — if you lose it, delete and recreate the webhook to get a new one.', 'ajforms' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="tawk_api_username"><?php esc_html_e( 'REST API Username (optional)', 'ajforms' ); ?></label>
 						<input type="text" name="tawk_api_username" id="tawk_api_username" value="<?php echo esc_attr( $settings['tawk_api_username'] ); ?>" autocomplete="off">
+						<div class="ajforms-settings-help"><a href="https://www.tawk.to/rest-api-beta-access-request/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( "Don't have this? Request REST API access ↗", 'ajforms' ); ?></a></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="tawk_api_password"><?php esc_html_e( 'REST API Password (optional)', 'ajforms' ); ?></label>
