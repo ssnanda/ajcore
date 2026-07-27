@@ -876,6 +876,7 @@ class AJCore_REST_API {
 			'/ops/tawk/events'                        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_events', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/tawk/events/(?P<id>\d+)/acknowledge' => array( 'methods' => 'POST', 'callback' => 'acknowledge_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tawk/properties'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_properties', 'permission' => 'can_manage_ops_api' ),
+			'/ops/tawk/backfill'                       => array( 'methods' => 'POST', 'callback' => 'backfill_ops_tawk_history', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -986,6 +987,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/events', 'auth' => 'Admin', 'purpose' => 'Live Chat alert feed (all connected sites, via the shared DB). Filters: status (new|acknowledged), event_type, site_uuid, property_id.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/events/{id}/acknowledge', 'auth' => 'Admin', 'purpose' => 'Marks a Live Chat alert as acknowledged.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/properties', 'auth' => 'Admin', 'purpose' => 'Configured Tawk.to properties (id + label only, no secrets) for filter dropdowns.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/backfill', 'auth' => 'Admin', 'purpose' => 'Imports past conversations via Tawk.to\'s chat.list API for every tracked property (or one, via property_id param). Stored already-acknowledged; deduped by chat ID.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -6200,6 +6202,135 @@ class AJCore_REST_API {
 	}
 
 	/**
+	 * One-time(-ish) backfill of past conversations via Tawk.to's REST API (POST
+	 * https://api.tawk.to/v1/chat.list, body {"propertyId": "..."}), for chats that happened before
+	 * this integration existed (the webhook only ever sees NEW events going forward). Verified live
+	 * against a real account (2026-07-27): same Basic-auth-with-Key-as-username pattern as
+	 * property.list; response is {"ok":true,"total":N,"data":[{"id","propertyId","status",
+	 * "visitor":{"name","email"},"messageCount","createdOn","updatedOn","messages":[{"sender":
+	 * {"t":"v"|"s"|"a"},"type":"msg"|"nav"|...,"time","msg"}],...}]}. Imported rows are stored
+	 * already-acknowledged (status='acknowledged') so they show up under History without cluttering
+	 * the New-alerts feed, and deduped against both prior backfills and anything the live webhook has
+	 * already logged, keyed on (property_id, tawk_chat_id).
+	 */
+	public function backfill_ops_tawk_history( WP_REST_Request $request ) {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$key       = trim( (string) ( $settings['tawk_api_key'] ?? '' ) );
+		$properties = is_array( $settings['tawk_properties'] ?? null ) ? $settings['tawk_properties'] : array();
+		if ( '' === $key ) {
+			return new WP_Error( 'tawk_api_not_configured', __( 'Add a REST API Key in Live Chat settings first.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( empty( $properties ) ) {
+			return new WP_Error( 'tawk_no_properties', __( 'No tracked properties to backfill.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$only_property_id = sanitize_text_field( (string) ( $request->get_param( 'property_id' ) ?: '' ) );
+		if ( '' !== $only_property_id ) {
+			$properties = array_values( array_filter( $properties, function ( $p ) use ( $only_property_id ) {
+				return isset( $p['property_id'] ) && $p['property_id'] === $only_property_id;
+			} ) );
+		}
+
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_tawk_events_table();
+		if ( ! $this->table_exists( $pdb, $table ) && class_exists( 'AJForms_Activator' ) ) {
+			AJForms_Activator::activate();
+		}
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return new WP_Error( 'tawk_storage_unavailable', __( 'Live Chat storage is not available on this site.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+
+		$results = array();
+		$total_imported = 0;
+		$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
+
+		foreach ( $properties as $property_row ) {
+			$property_id = isset( $property_row['property_id'] ) ? (string) $property_row['property_id'] : '';
+			if ( '' === $property_id ) {
+				continue;
+			}
+
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$existing_ids = $pdb->get_col( $pdb->prepare( "SELECT tawk_chat_id FROM `{$table}` WHERE property_id = %s AND tawk_chat_id <> ''", $property_id ) );
+			$existing_ids = array_flip( array_map( 'strval', (array) $existing_ids ) );
+
+			$response = wp_remote_post(
+				'https://api.tawk.to/v1/chat.list',
+				array(
+					'timeout' => 30,
+					'headers' => array(
+						'Content-Type'  => 'application/json',
+						'Accept'        => 'application/json',
+						'Authorization' => 'Basic ' . base64_encode( $key . ':' ),
+					),
+					'body'    => wp_json_encode( array( 'propertyId' => $property_id ) ),
+				)
+			);
+			if ( is_wp_error( $response ) ) {
+				$results[] = array( 'propertyId' => $property_id, 'label' => $property_row['label'] ?? $property_id, 'error' => $response->get_error_message(), 'imported' => 0 );
+				continue;
+			}
+			$status = wp_remote_retrieve_response_code( $response );
+			$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
+			if ( $status < 200 || $status >= 300 || empty( $decoded['ok'] ) || ! is_array( $decoded['data'] ?? null ) ) {
+				$results[] = array( 'propertyId' => $property_id, 'label' => $property_row['label'] ?? $property_id, 'error' => sprintf( 'HTTP %d', (int) $status ), 'imported' => 0 );
+				continue;
+			}
+
+			$imported = 0;
+			foreach ( $decoded['data'] as $chat ) {
+				$chat_id = (string) ( $chat['id'] ?? '' );
+				if ( '' === $chat_id || isset( $existing_ids[ $chat_id ] ) ) {
+					continue;
+				}
+
+				$first_visitor_message = '';
+				foreach ( (array) ( $chat['messages'] ?? array() ) as $message ) {
+					if ( 'msg' === ( $message['type'] ?? '' ) && 'v' === ( $message['sender']['t'] ?? '' ) ) {
+						$first_visitor_message = (string) ( $message['msg'] ?? '' );
+						break;
+					}
+				}
+
+				$created_on = (string) ( $chat['createdOn'] ?? '' );
+				$created_at = $created_on ? gmdate( 'Y-m-d H:i:s', strtotime( $created_on ) ) : current_time( 'mysql', true );
+
+				$inserted = $pdb->insert(
+					$table,
+					array(
+						'site_uuid'       => $site_uuid,
+						'property_id'     => $property_id,
+						'event_type'      => 'chat_transcript',
+						'tawk_chat_id'    => $chat_id,
+						'visitor_name'    => sanitize_text_field( (string) ( $chat['visitor']['name'] ?? '' ) ),
+						'visitor_email'   => sanitize_email( (string) ( $chat['visitor']['email'] ?? '' ) ),
+						'message_preview' => sanitize_textarea_field( mb_substr( $first_visitor_message, 0, 500 ) ),
+						'payload'         => wp_json_encode( $chat ),
+						'status'          => 'acknowledged',
+						'created_at'      => $created_at,
+						'acknowledged_at' => current_time( 'mysql' ),
+					),
+					array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+				);
+				if ( false !== $inserted ) {
+					$imported++;
+					$existing_ids[ $chat_id ] = true;
+				}
+			}
+
+			$total_imported += $imported;
+			$results[] = array(
+				'propertyId' => $property_id,
+				'label'      => $property_row['label'] ?? $property_id,
+				'found'      => count( $decoded['data'] ),
+				'imported'   => $imported,
+			);
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'imported' => $total_imported, 'results' => $results ) );
+	}
+
+	/**
 	 * Digs a value out of a decoded Tawk.to webhook payload, trying several candidate key paths
 	 * (dot notation) since chat events nest visitor data at the root while the transcript event
 	 * nests it under "chat" — see display_tawk_settings_section() for the setup instructions.
@@ -6326,7 +6457,121 @@ class AJCore_REST_API {
 			return new WP_Error( 'tawk_store_failed', __( 'Could not log this event.', 'ajforms' ), array( 'status' => 500 ) );
 		}
 
+		if ( 'chat_start' === $event_type && '1' === (string) ( $settings['tawk_sms_alerts_enabled'] ?? '' ) ) {
+			$this->send_tawk_chat_alert_sms( $name, $email, $message );
+		}
+
 		return rest_ensure_response( array( 'success' => true, 'id' => (int) $pdb->insert_id ) );
+	}
+
+	/**
+	 * Best-effort SMS alert on a new Tawk.to chat, via the site's existing AJPhone/Zoom Phone
+	 * integration (primary account only — see get_ops_ajphone_settings() in this file for where
+	 * these ajcore_ajphone_* options are managed). Deliberately does not throw/return an error to
+	 * the caller on any failure (missing config, Zoom auth failure, etc.) — logging the chat event
+	 * itself must never be blocked by a broken or unconfigured SMS side-channel. There is no way to
+	 * relay a reply back to the visitor via SMS: Tawk.to's own team has confirmed their API doesn't
+	 * support posting a message into a chat.
+	 */
+	private function send_tawk_chat_alert_sms( $visitor_name, $visitor_email, $message_preview ) {
+		$account_id    = trim( (string) get_option( 'ajcore_ajphone_account_id', '' ) );
+		$client_id     = trim( (string) get_option( 'ajcore_ajphone_client_id', '' ) );
+		$client_secret = trim( (string) get_option( 'ajcore_ajphone_client_secret', '' ) );
+		$from_number   = trim( (string) get_option( 'ajcore_ajphone_phone_number', '' ) );
+		$to_number     = trim( (string) get_option( 'ajcore_ajphone_automation_staff_notify_number', '' ) );
+		if ( '' === $to_number ) {
+			$to_number = '+17043072135'; // Same default AJPhone's own automation cron falls back to.
+		}
+		if ( '' === $account_id || '' === $client_id || '' === $client_secret || '' === $from_number ) {
+			error_log( 'AJCore Tawk.to SMS alert skipped: AJPhone is not fully configured.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			return;
+		}
+
+		$token_response = wp_remote_post(
+			'https://zoom.us/oauth/token?grant_type=account_credentials&account_id=' . rawurlencode( $account_id ),
+			array(
+				'timeout' => 15,
+				'headers' => array(
+					'Authorization' => 'Basic ' . base64_encode( $client_id . ':' . $client_secret ),
+					'Content-Type'  => 'application/x-www-form-urlencoded',
+				),
+			)
+		);
+		if ( is_wp_error( $token_response ) ) {
+			error_log( 'AJCore Tawk.to SMS alert: Zoom OAuth failed — ' . $token_response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			return;
+		}
+		$token_data = json_decode( wp_remote_retrieve_body( $token_response ), true );
+		$access_token = is_array( $token_data ) ? (string) ( $token_data['access_token'] ?? '' ) : '';
+		if ( '' === $access_token ) {
+			error_log( 'AJCore Tawk.to SMS alert: Zoom OAuth returned no access_token — ' . wp_remote_retrieve_body( $token_response ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			return;
+		}
+
+		// Zoom rejects SMS sends from a number without the owning user_id attached (error 7639), so
+		// look it up via /phone/numbers — best-effort; if this fails, still attempt the send below
+		// with just the phone_number (may or may not be accepted depending on the Zoom app's setup).
+		$from_user_id = '';
+		$numbers_response = wp_remote_get(
+			'https://api.zoom.us/v2/phone/numbers?page_size=100&type=assigned',
+			array(
+				'timeout' => 15,
+				'headers' => array( 'Authorization' => 'Bearer ' . $access_token ),
+			)
+		);
+		if ( ! is_wp_error( $numbers_response ) ) {
+			$numbers_data = json_decode( wp_remote_retrieve_body( $numbers_response ), true );
+			$numbers_list = is_array( $numbers_data ) ? ( $numbers_data['phone_numbers'] ?? $numbers_data['numbers'] ?? array() ) : array();
+			$from_digits  = preg_replace( '/\D+/', '', $from_number );
+			foreach ( (array) $numbers_list as $number_row ) {
+				$row_digits = preg_replace( '/\D+/', '', (string) ( $number_row['number'] ?? $number_row['phone_number'] ?? '' ) );
+				if ( '' !== $row_digits && $row_digits === $from_digits ) {
+					$from_user_id = (string) ( $number_row['assignee']['id'] ?? $number_row['owner']['id'] ?? $number_row['user_id'] ?? '' );
+					break;
+				}
+			}
+		}
+
+		$to_digits   = preg_replace( '/\D+/', '', $to_number );
+		$to_e164     = '+1' . ( 10 === strlen( $to_digits ) ? $to_digits : preg_replace( '/^1/', '', $to_digits ) );
+		$from_digits = preg_replace( '/\D+/', '', $from_number );
+		$from_e164   = '+1' . ( 10 === strlen( $from_digits ) ? $from_digits : preg_replace( '/^1/', '', $from_digits ) );
+
+		$who          = trim( $visitor_name ) !== '' ? $visitor_name : ( $visitor_email ?: 'A visitor' );
+		$snippet      = trim( (string) $message_preview );
+		$snippet_part = $snippet ? ( ': "' . mb_substr( $snippet, 0, 140 ) . '". ' ) : '. ';
+		$sms_body     = sprintf( 'New Tawk.to chat from %s%s Open dashboard.tawk.to to reply.', $who, $snippet_part );
+
+		$sender = array( 'phone_number' => $from_e164 );
+		if ( '' !== $from_user_id ) {
+			$sender['user_id'] = $from_user_id;
+		}
+
+		$send_response = wp_remote_post(
+			'https://api.zoom.us/v2/phone/sms/messages',
+			array(
+				'timeout' => 15,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $access_token,
+					'Content-Type'  => 'application/json',
+				),
+				'body'    => wp_json_encode(
+					array(
+						'sender'     => $sender,
+						'to_members' => array( array( 'phone_number' => $to_e164 ) ),
+						'message'    => $sms_body,
+					)
+				),
+			)
+		);
+		if ( is_wp_error( $send_response ) ) {
+			error_log( 'AJCore Tawk.to SMS alert: Zoom send failed — ' . $send_response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			return;
+		}
+		$send_status = wp_remote_retrieve_response_code( $send_response );
+		if ( $send_status < 200 || $send_status >= 300 ) {
+			error_log( 'AJCore Tawk.to SMS alert: Zoom send HTTP ' . $send_status . ' — ' . wp_remote_retrieve_body( $send_response ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		}
 	}
 
 	/** Client mailbox: the current portal user's mail items, without staff-only fields. */

@@ -13178,6 +13178,7 @@ class AJForms_Admin {
 			'tawk_enabled'                    => isset( $_POST['tawk_enabled'] ) ? '1' : '0',
 			'tawk_properties'                 => $this->parse_tawk_properties_from_post( isset( $current_settings['tawk_properties'] ) ? $current_settings['tawk_properties'] : array() ),
 			'tawk_api_key'                     => isset( $_POST['tawk_api_key'] ) ? sanitize_text_field( wp_unslash( $_POST['tawk_api_key'] ) ) : '',
+			'tawk_sms_alerts_enabled'          => isset( $_POST['tawk_sms_alerts_enabled'] ) ? '1' : '0',
 			'default_success_message'        => isset( $_POST['default_success_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['default_success_message'] ) ) : 'Form submitted successfully.',
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
@@ -13241,7 +13242,7 @@ class AJForms_Admin {
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
 			'esign'        => array( 'breezedoc_api_token' ),
-			'tawk'         => array( 'tawk_enabled', 'tawk_properties', 'tawk_api_key' ),
+			'tawk'         => array( 'tawk_enabled', 'tawk_properties', 'tawk_api_key', 'tawk_sms_alerts_enabled' ),
 		);
 
 		foreach ( $section_keys as $section_key => $keys ) {
@@ -21327,7 +21328,51 @@ class AJForms_Admin {
 			<p>
 				<a class="button button-primary" href="https://dashboard.tawk.to/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Open Tawk.to Dashboard ↗', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Live Chat Settings', 'ajforms' ); ?></a>
+				<?php if ( $configured && $enabled ) : ?>
+					<button type="button" class="button" id="ajforms-tawk-backfill-btn"><?php esc_html_e( 'Import History', 'ajforms' ); ?></button>
+				<?php endif; ?>
 			</p>
+			<?php if ( $configured && $enabled ) : ?>
+				<div id="ajforms-tawk-backfill-result" style="display:none;margin:0 0 14px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;"></div>
+				<script>
+				(function() {
+					var btn = document.getElementById( 'ajforms-tawk-backfill-btn' );
+					var result = document.getElementById( 'ajforms-tawk-backfill-result' );
+					if ( ! btn || ! result ) { return; }
+					btn.addEventListener( 'click', function () {
+						btn.disabled = true;
+						btn.textContent = <?php echo wp_json_encode( __( 'Importing…', 'ajforms' ) ); ?>;
+						result.style.display = 'none';
+						fetch( '<?php echo esc_url_raw( rest_url( 'ajcore/v1/ops/tawk/backfill' ) ); ?>', {
+							method: 'POST',
+							headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
+						} )
+							.then( function ( r ) { return r.json().then( function ( d ) { return { ok: r.ok, data: d }; } ); } )
+							.then( function ( result_data ) {
+								result.style.display = 'block';
+								if ( ! result_data.ok || ! result_data.data || ! result_data.data.success ) {
+									result.innerHTML = '<strong style="color:#b91c1c;"><?php echo esc_js( __( 'Import failed:', 'ajforms' ) ); ?></strong> ' + ( ( result_data.data && result_data.data.message ) || <?php echo wp_json_encode( __( 'Unknown error.', 'ajforms' ) ); ?> );
+									return;
+								}
+								var html = '<strong>' + result_data.data.imported + <?php echo wp_json_encode( __( ' chat(s) imported.', 'ajforms' ) ); ?> + '</strong><ul style="margin:6px 0 0 18px;">';
+								( result_data.data.results || [] ).forEach( function ( r ) {
+									html += '<li>' + r.label + ': ' + ( r.error ? ( <?php echo wp_json_encode( __( 'error — ', 'ajforms' ) ); ?> + r.error ) : ( r.imported + ' / ' + r.found + ' ' + <?php echo wp_json_encode( __( 'new', 'ajforms' ) ); ?> ) ) + '</li>';
+								} );
+								html += '</ul><p style="margin:8px 0 0;"><a href="' + window.location.href + '">' + <?php echo wp_json_encode( __( 'Reload to see them', 'ajforms' ) ); ?> + '</a></p>';
+								result.innerHTML = html;
+							} )
+							.catch( function ( e ) {
+								result.style.display = 'block';
+								result.innerHTML = '<strong style="color:#b91c1c;"><?php echo esc_js( __( 'Import failed:', 'ajforms' ) ); ?></strong> ' + e.message;
+							} )
+							.finally( function () {
+								btn.disabled = false;
+								btn.textContent = <?php echo wp_json_encode( __( 'Import History', 'ajforms' ) ); ?>;
+							} );
+					} );
+				})();
+				</script>
+			<?php endif; ?>
 
 			<?php if ( count( $properties ) > 1 ) : ?>
 				<p>
@@ -27554,6 +27599,22 @@ class AJForms_Admin {
 						<?php esc_html_e( 'Enabled', 'ajforms' ); ?>
 					</label>
 					<div class="ajforms-settings-help"><?php esc_html_e( 'While off, the webhook receiver rejects incoming events.', 'ajforms' ); ?></div>
+				</div>
+				<div class="ajforms-settings-field" style="margin-bottom:16px;">
+					<label style="display:flex;align-items:center;gap:8px;font-weight:600;">
+						<input type="checkbox" name="tawk_sms_alerts_enabled" value="1" <?php checked( '1', $settings['tawk_sms_alerts_enabled'] ); ?> <?php disabled( $read_only ); ?>>
+						<?php esc_html_e( 'Text me when a new chat starts', 'ajforms' ); ?>
+					</label>
+					<div class="ajforms-settings-help">
+						<?php
+						$ajphone_notify_number = (string) get_option( 'ajcore_ajphone_automation_staff_notify_number', '' );
+						printf(
+							/* translators: %s: phone number */
+							esc_html__( 'Sent via your existing AJPhone number to %s. Best-effort — a failed text never blocks the alert from showing up here or in AJOps. This only sends a notification; there\'s no way to reply to the visitor by texting back (Tawk.to doesn\'t support that).', 'ajforms' ),
+							esc_html( $ajphone_notify_number ? $ajphone_notify_number : '(704) 307-2135' )
+						);
+						?>
+					</div>
 				</div>
 
 				<div class="ajforms-settings-field">

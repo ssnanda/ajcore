@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.116
+ * Version: 0.7.117
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.116' );
+	define( 'AJCORE_VERSION', '0.7.117' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -181,6 +181,11 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// Properties"/"Test Connection" buttons to list properties — property.list can't return
 			// webhook secrets, so those are still entered manually per selected property, above.
 			'tawk_api_key'                   => '',
+			// Best-effort SMS alert (via the existing AJPhone/Zoom integration) on every new Tawk.to
+			// chat, sent to whatever ajcore_ajphone_automation_staff_notify_number is configured to
+			// (falls back to the same default AJPhone's own automation uses). Never blocks or fails
+			// the webhook itself if Zoom/AJPhone isn't configured or the send errors.
+			'tawk_sms_alerts_enabled'        => '0',
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
@@ -1019,6 +1024,7 @@ if ( ! function_exists( 'ajcore_get_tawk_setting_keys' ) ) {
 			'tawk_enabled',
 			'tawk_properties',
 			'tawk_api_key',
+			'tawk_sms_alerts_enabled',
 		);
 	}
 }
