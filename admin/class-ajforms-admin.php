@@ -21297,6 +21297,9 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['tawk-acknowledged'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Marked as acknowledged.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['tawk-deleted'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Event deleted.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
@@ -21414,6 +21417,7 @@ class AJForms_Admin {
 								<?php if ( 'new' === $event['status'] ) : ?>
 									<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'tawk_action' => 'acknowledge', 'tawk_event_id' => $event['id'] ), $base_url ), 'ajcore_tawk_acknowledge_' . $event['id'] ) ); ?>"><?php esc_html_e( 'Acknowledge', 'ajforms' ); ?></a>
 								<?php endif; ?>
+								<a class="button button-small" style="color:#b91c1c;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'tawk_action' => 'delete', 'tawk_event_id' => $event['id'] ), $base_url ), 'ajcore_tawk_delete_' . $event['id'] ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this Live Chat event? This cannot be undone.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 							</td>
 						</tr>
 					<?php endforeach; ?>
@@ -21430,21 +21434,23 @@ class AJForms_Admin {
 		}
 		$action = sanitize_key( wp_unslash( $_GET['tawk_action'] ) );
 		$id     = absint( $_GET['tawk_event_id'] );
-		if ( 'acknowledge' !== $action || ! $id ) {
+		if ( ! in_array( $action, array( 'acknowledge', 'delete' ), true ) || ! $id ) {
 			return;
 		}
-		check_admin_referer( 'ajcore_tawk_acknowledge_' . $id );
+		check_admin_referer( 'ajcore_tawk_' . $action . '_' . $id );
 
 		$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'tawk' );
 		if ( class_exists( 'AJCore_REST_API' ) ) {
 			$rest    = new AJCore_REST_API();
-			$request = new WP_REST_Request( 'POST' );
+			$request = new WP_REST_Request( 'acknowledge' === $action ? 'POST' : 'DELETE' );
 			$request->set_param( 'id', $id );
-			$result = $rest->acknowledge_ops_tawk_event( $request );
+			$result = 'acknowledge' === $action
+				? $rest->acknowledge_ops_tawk_event( $request )
+				: $rest->delete_ops_tawk_event( $request );
 			if ( is_wp_error( $result ) ) {
 				$args['portal-error'] = rawurlencode( $result->get_error_message() );
 			} else {
-				$args['tawk-acknowledged'] = 1;
+				$args[ 'acknowledge' === $action ? 'tawk-acknowledged' : 'tawk-deleted' ] = 1;
 			}
 		}
 		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );

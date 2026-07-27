@@ -875,6 +875,7 @@ class AJCore_REST_API {
 			// Live Chat (Tawk.to) alerts
 			'/ops/tawk/events'                        => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_events', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/tawk/events/(?P<id>\d+)/acknowledge' => array( 'methods' => 'POST', 'callback' => 'acknowledge_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
+			'/ops/tawk/events/(?P<id>\d+)'             => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_tawk_event', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tawk/properties'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_tawk_properties', 'permission' => 'can_manage_ops_api' ),
 			'/ops/tawk/backfill'                       => array( 'methods' => 'POST', 'callback' => 'backfill_ops_tawk_history', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
@@ -986,6 +987,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/tawk/fetch-properties', 'auth' => 'Admin', 'purpose' => 'Calls Tawk.to\'s REST API (property.list) with the configured Bearer token to list properties for the CP Settings "Fetch Properties" button.', 'app' => 'CP Settings live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/events', 'auth' => 'Admin', 'purpose' => 'Live Chat alert feed (all connected sites, via the shared DB). Filters: status (new|acknowledged), event_type, site_uuid, property_id.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/events/{id}/acknowledge', 'auth' => 'Admin', 'purpose' => 'Marks a Live Chat alert as acknowledged.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'DELETE', 'path' => '/ops/tawk/events/{id}', 'auth' => 'Admin', 'purpose' => 'Deletes a Live Chat event (e.g. test data).', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tawk/properties', 'auth' => 'Admin', 'purpose' => 'Configured Tawk.to properties (id + label only, no secrets) for filter dropdowns.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/tawk/backfill', 'auth' => 'Admin', 'purpose' => 'Imports past conversations via Tawk.to\'s chat.list API for every tracked property (or one, via property_id param). Stored already-acknowledged; deduped by chat ID.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
@@ -6199,6 +6201,20 @@ class AJCore_REST_API {
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$row = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", $id ), ARRAY_A );
 		return rest_ensure_response( $row ? $this->format_tawk_event_row( $row ) : array( 'id' => $id, 'status' => 'acknowledged' ) );
+	}
+
+	public function delete_ops_tawk_event( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_tawk_events_table();
+		$id    = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $table ) || ! $id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat event not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$deleted = $pdb->delete( $table, array( 'id' => $id ), array( '%d' ) );
+		if ( ! $deleted ) {
+			return new WP_Error( 'delete_failed', __( 'Could not delete this event.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		return rest_ensure_response( array( 'success' => true, 'id' => $id ) );
 	}
 
 	/**
