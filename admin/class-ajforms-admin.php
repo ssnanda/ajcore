@@ -13211,7 +13211,7 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'tawk_api_key' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -27558,7 +27558,7 @@ class AJForms_Admin {
 
 				<div class="ajforms-settings-field">
 					<label for="tawk_api_key"><?php esc_html_e( 'REST API Key', 'ajforms' ); ?></label>
-					<input type="text" name="tawk_api_key" id="tawk_api_key" value="<?php echo esc_attr( $settings['tawk_api_key'] ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+					<input type="text" name="tawk_api_key" id="tawk_api_key" value="" placeholder="<?php echo ! empty( $settings['tawk_api_key'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
 				</div>
 				<?php if ( ! $read_only ) : ?>
 					<p style="margin:10px 0 0;">
