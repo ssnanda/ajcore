@@ -21254,6 +21254,7 @@ class AJForms_Admin {
 		$status = isset( $_GET['tawk_status'] ) ? sanitize_key( wp_unslash( $_GET['tawk_status'] ) ) : 'new';
 		$status = in_array( $status, array( 'new', 'acknowledged', 'all' ), true ) ? $status : 'new';
 		$property_filter = isset( $_GET['tawk_property'] ) ? sanitize_text_field( wp_unslash( $_GET['tawk_property'] ) ) : '';
+		$search          = isset( $_GET['tawk_search'] ) ? sanitize_text_field( wp_unslash( $_GET['tawk_search'] ) ) : '';
 
 		$events     = array();
 		$stats      = array( 'total' => 0, 'new' => 0 );
@@ -21266,6 +21267,9 @@ class AJForms_Admin {
 			}
 			if ( '' !== $property_filter ) {
 				$request->set_param( 'property_id', $property_filter );
+			}
+			if ( '' !== $search ) {
+				$request->set_param( 'search', $search );
 			}
 			$request->set_param( 'per_page', 200 );
 			$result = $rest->get_ops_tawk_events( $request );
@@ -21299,6 +21303,12 @@ class AJForms_Admin {
 			<?php endif; ?>
 			<?php if ( isset( $_GET['tawk-deleted'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Event deleted.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['tawk-bulk-acknowledged'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( '%d event(s) acknowledged.', 'ajforms' ), (int) $_GET['tawk-bulk-acknowledged'] ) ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['tawk-bulk-deleted'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( '%d event(s) deleted.', 'ajforms' ), (int) $_GET['tawk-bulk-deleted'] ) ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
@@ -21377,58 +21387,90 @@ class AJForms_Admin {
 				</script>
 			<?php endif; ?>
 
-			<?php if ( count( $properties ) > 1 ) : ?>
-				<p>
-					<label for="ajforms-tawk-property-filter" style="font-weight:600;margin-right:6px;"><?php esc_html_e( 'Property:', 'ajforms' ); ?></label>
-					<select id="ajforms-tawk-property-filter" onchange="if(this.value){window.location.href=this.value;}">
-						<option value="<?php echo esc_url( add_query_arg( 'tawk_status', $status, $base_url ) ); ?>" <?php selected( '', $property_filter ); ?>><?php esc_html_e( 'All properties', 'ajforms' ); ?></option>
+			<form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0;">
+				<input type="hidden" name="page" value="ajforms-client-portal">
+				<input type="hidden" name="tab" value="tawk">
+				<input type="hidden" name="tawk_status" value="<?php echo esc_attr( $status ); ?>">
+				<input type="search" name="tawk_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search visitor, email, message…', 'ajforms' ); ?>" style="min-width:260px;min-height:36px;">
+				<?php if ( count( $properties ) > 1 ) : ?>
+					<select name="tawk_property">
+						<option value="" <?php selected( '', $property_filter ); ?>><?php esc_html_e( 'All properties', 'ajforms' ); ?></option>
 						<?php foreach ( $properties as $property ) : ?>
-							<option value="<?php echo esc_url( add_query_arg( array( 'tawk_status' => $status, 'tawk_property' => $property['propertyId'] ), $base_url ) ); ?>" <?php selected( $property_filter, $property['propertyId'] ); ?>><?php echo esc_html( $property['label'] ); ?></option>
+							<option value="<?php echo esc_attr( $property['propertyId'] ); ?>" <?php selected( $property_filter, $property['propertyId'] ); ?>><?php echo esc_html( $property['label'] ); ?></option>
 						<?php endforeach; ?>
 					</select>
-				</p>
-			<?php endif; ?>
+				<?php endif; ?>
+				<button type="submit" class="button"><?php esc_html_e( 'Filter', 'ajforms' ); ?></button>
+				<?php if ( '' !== $search || '' !== $property_filter ) : ?>
+					<a class="button" href="<?php echo esc_url( add_query_arg( 'tawk_status', $status, $base_url ) ); ?>"><?php esc_html_e( 'Clear', 'ajforms' ); ?></a>
+				<?php endif; ?>
+			</form>
 
 			<?php if ( empty( $events ) ) : ?>
 				<p style="color:#6b7280;"><?php esc_html_e( 'No Live Chat events yet.', 'ajforms' ); ?></p>
 			<?php else : ?>
-				<table class="widefat striped">
-					<thead><tr>
-						<th><?php esc_html_e( 'Type', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Visitor', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Message', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Property', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Site', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'When', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
-						<th></th>
-					</tr></thead>
-					<tbody>
-					<?php foreach ( $events as $event ) : ?>
-						<tr>
-							<td><?php echo esc_html( $event_labels[ $event['eventType'] ] ?? ucfirst( str_replace( '_', ' ', $event['eventType'] ) ) ); ?></td>
-							<td><?php echo esc_html( $event['visitorName'] ?: ( $event['visitorEmail'] ?: '—' ) ); ?></td>
-							<td><?php echo esc_html( wp_trim_words( (string) $event['messagePreview'], 12, '…' ) ); ?></td>
-							<td><?php echo esc_html( $event['propertyLabel'] ?: '—' ); ?></td>
-							<td><?php echo esc_html( $event['siteLabel'] ?: '—' ); ?></td>
-							<td><?php echo esc_html( $event['createdAt'] ); ?></td>
-							<td><?php echo 'new' === $event['status'] ? '<span style="color:#dc2626;font-weight:700;">' . esc_html__( 'New', 'ajforms' ) . '</span>' : esc_html__( 'Acknowledged', 'ajforms' ); ?></td>
-							<td>
-								<?php if ( 'new' === $event['status'] ) : ?>
-									<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'tawk_action' => 'acknowledge', 'tawk_event_id' => $event['id'] ), $base_url ), 'ajcore_tawk_acknowledge_' . $event['id'] ) ); ?>"><?php esc_html_e( 'Acknowledge', 'ajforms' ); ?></a>
-								<?php endif; ?>
-								<a class="button button-small" style="color:#b91c1c;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'tawk_action' => 'delete', 'tawk_event_id' => $event['id'] ), $base_url ), 'ajcore_tawk_delete_' . $event['id'] ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this Live Chat event? This cannot be undone.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
-							</td>
-						</tr>
-					<?php endforeach; ?>
-					</tbody>
-				</table>
+				<form method="post" action="<?php echo esc_url( $base_url ); ?>" id="ajforms-tawk-bulk-form">
+					<?php wp_nonce_field( 'ajcore_tawk_bulk_action', 'ajcore_tawk_bulk_nonce' ); ?>
+					<input type="hidden" name="tawk_status" value="<?php echo esc_attr( $status ); ?>">
+					<table class="widefat striped">
+						<thead><tr>
+							<th style="width:28px;"><input type="checkbox" id="ajforms-tawk-select-all"></th>
+							<th><?php esc_html_e( 'Type', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Visitor', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Message', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Property', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Site', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'When', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+							<th></th>
+						</tr></thead>
+						<tbody>
+						<?php foreach ( $events as $event ) : ?>
+							<tr>
+								<td><input type="checkbox" name="tawk_bulk_ids[]" value="<?php echo esc_attr( $event['id'] ); ?>" class="ajforms-tawk-row-checkbox"></td>
+								<td><?php echo esc_html( $event_labels[ $event['eventType'] ] ?? ucfirst( str_replace( '_', ' ', $event['eventType'] ) ) ); ?></td>
+								<td><?php echo esc_html( $event['visitorName'] ?: ( $event['visitorEmail'] ?: '—' ) ); ?></td>
+								<td><?php echo esc_html( wp_trim_words( (string) $event['messagePreview'], 12, '…' ) ); ?></td>
+								<td><?php echo esc_html( $event['propertyLabel'] ?: '—' ); ?></td>
+								<td><?php echo esc_html( $event['siteLabel'] ?: '—' ); ?></td>
+								<td><?php echo esc_html( $event['createdAt'] ); ?></td>
+								<td><?php echo 'new' === $event['status'] ? '<span style="color:#dc2626;font-weight:700;">' . esc_html__( 'New', 'ajforms' ) . '</span>' : esc_html__( 'Acknowledged', 'ajforms' ); ?></td>
+								<td>
+									<?php if ( 'new' === $event['status'] ) : ?>
+										<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'tawk_action' => 'acknowledge', 'tawk_event_id' => $event['id'] ), $base_url ), 'ajcore_tawk_acknowledge_' . $event['id'] ) ); ?>"><?php esc_html_e( 'Acknowledge', 'ajforms' ); ?></a>
+									<?php endif; ?>
+									<a class="button button-small" style="color:#b91c1c;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'tawk_action' => 'delete', 'tawk_event_id' => $event['id'] ), $base_url ), 'ajcore_tawk_delete_' . $event['id'] ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this Live Chat event? This cannot be undone.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+						</tbody>
+					</table>
+					<p style="margin:12px 0 0;">
+						<button type="submit" name="tawk_bulk_action" value="acknowledge" class="button"><?php esc_html_e( 'Acknowledge Selected', 'ajforms' ); ?></button>
+						<button type="submit" name="tawk_bulk_action" value="delete" class="button" style="color:#b91c1c;" onclick="return confirm('<?php echo esc_js( __( 'Delete all selected Live Chat events? This cannot be undone.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete Selected', 'ajforms' ); ?></button>
+					</p>
+				</form>
+				<script>
+				(function() {
+					var selectAll = document.getElementById( 'ajforms-tawk-select-all' );
+					var form = document.getElementById( 'ajforms-tawk-bulk-form' );
+					if ( ! selectAll || ! form ) { return; }
+					selectAll.addEventListener( 'change', function () {
+						form.querySelectorAll( '.ajforms-tawk-row-checkbox' ).forEach( function ( cb ) { cb.checked = selectAll.checked; } );
+					} );
+				})();
+				</script>
 			<?php endif; ?>
 		</div>
 		<?php
 	}
 
 	private function handle_portal_tawk_actions() {
+		if ( current_user_can( 'manage_options' ) && isset( $_POST['tawk_bulk_action'], $_POST['tawk_bulk_ids'] ) ) {
+			$this->handle_portal_tawk_bulk_action();
+			return;
+		}
+
 		if ( ! current_user_can( 'manage_options' ) || ! isset( $_GET['tawk_action'], $_GET['tawk_event_id'] ) ) {
 			return;
 		}
@@ -21453,6 +21495,39 @@ class AJForms_Admin {
 				$args[ 'acknowledge' === $action ? 'tawk-acknowledged' : 'tawk-deleted' ] = 1;
 			}
 		}
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private function handle_portal_tawk_bulk_action() {
+		check_admin_referer( 'ajcore_tawk_bulk_action', 'ajcore_tawk_bulk_nonce' );
+
+		$action = sanitize_key( wp_unslash( $_POST['tawk_bulk_action'] ) );
+		$ids    = array_filter( array_map( 'absint', (array) wp_unslash( $_POST['tawk_bulk_ids'] ) ) );
+		$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'tawk' );
+		if ( isset( $_POST['tawk_status'] ) ) {
+			$args['tawk_status'] = sanitize_key( wp_unslash( $_POST['tawk_status'] ) );
+		}
+
+		if ( ! in_array( $action, array( 'acknowledge', 'delete' ), true ) || empty( $ids ) || ! class_exists( 'AJCore_REST_API' ) ) {
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		$rest  = new AJCore_REST_API();
+		$count = 0;
+		foreach ( $ids as $id ) {
+			$request = new WP_REST_Request( 'acknowledge' === $action ? 'POST' : 'DELETE' );
+			$request->set_param( 'id', $id );
+			$result = 'acknowledge' === $action
+				? $rest->acknowledge_ops_tawk_event( $request )
+				: $rest->delete_ops_tawk_event( $request );
+			if ( ! is_wp_error( $result ) ) {
+				$count++;
+			}
+		}
+		$args[ 'acknowledge' === $action ? 'tawk-bulk-acknowledged' : 'tawk-bulk-deleted' ] = $count;
+
 		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
 	}

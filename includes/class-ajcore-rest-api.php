@@ -6154,6 +6154,15 @@ class AJCore_REST_API {
 			$params[] = $property_id;
 		}
 
+		$search = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?: '' ) );
+		if ( '' !== $search ) {
+			$like     = '%' . $pdb->esc_like( $search ) . '%';
+			$where[]  = '( e.visitor_name LIKE %s OR e.visitor_email LIKE %s OR e.message_preview LIKE %s )';
+			$params[] = $like;
+			$params[] = $like;
+			$params[] = $like;
+		}
+
 		$per_page = min( 500, max( 1, absint( $request->get_param( 'per_page' ) ?: 200 ) ) );
 		$params[] = $per_page;
 
@@ -6309,7 +6318,10 @@ class AJCore_REST_API {
 				}
 
 				$created_on = (string) ( $chat['createdOn'] ?? '' );
-				$created_at = $created_on ? gmdate( 'Y-m-d H:i:s', strtotime( $created_on ) ) : current_time( 'mysql', true );
+				// get_date_from_gmt() (not gmdate()) so this matches the site-local convention every
+				// other created_at in this table uses (current_time('mysql') on the live webhook path)
+				// — using gmdate() here stored these in UTC, silently disagreeing with live events.
+				$created_at = $created_on ? get_date_from_gmt( gmdate( 'Y-m-d H:i:s', strtotime( $created_on ) ), 'Y-m-d H:i:s' ) : current_time( 'mysql' );
 
 				$inserted = $pdb->insert(
 					$table,
