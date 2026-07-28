@@ -50,7 +50,9 @@
 		"#ajcore-chat-bubble{position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:50%;background:#3157ff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:999998;font-size:26px;border:none;}" +
 		"#ajcore-chat-panel{position:fixed;bottom:88px;right:20px;width:340px;max-width:calc(100vw - 40px);height:460px;max-height:calc(100vh - 120px);background:#fff;border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.25);display:none;flex-direction:column;overflow:hidden;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}" +
 		"#ajcore-chat-panel.open{display:flex;}" +
-		"#ajcore-chat-header{background:#3157ff;color:#fff;padding:14px 16px;font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center;}" +
+		"#ajcore-chat-header{background:#3157ff;color:#fff;padding:14px 16px;font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;}" +
+		"#ajcore-chat-header-actions{display:flex;align-items:center;gap:10px;}" +
+		"#ajcore-chat-end{background:none;border:none;color:rgba(255,255,255,.85);font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline;padding:0;display:none;}" +
 		"#ajcore-chat-close{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;line-height:1;}" +
 		"#ajcore-chat-body{flex:1;overflow-y:auto;padding:14px;background:#f8fafc;}" +
 		"#ajcore-chat-form{padding:14px;display:flex;flex-direction:column;gap:8px;}" +
@@ -88,16 +90,25 @@
 	var panel = document.createElement("div");
 	panel.id = "ajcore-chat-panel";
 	panel.innerHTML =
-		'<div id="ajcore-chat-header"><span>Chat with us</span><button id="ajcore-chat-close" aria-label="Close chat">✕</button></div>' +
+		'<div id="ajcore-chat-header"><span>Chat with us</span><div id="ajcore-chat-header-actions"><button id="ajcore-chat-end">End Chat</button><button id="ajcore-chat-close" aria-label="Close chat">✕</button></div></div>' +
 		'<div id="ajcore-chat-body"></div>';
 	document.body.appendChild(panel);
 
 	var header = panel.querySelector("#ajcore-chat-header");
 	var body = panel.querySelector("#ajcore-chat-body");
 	var closeBtn = panel.querySelector("#ajcore-chat-close");
+	var endChatBtn = panel.querySelector("#ajcore-chat-end");
 
 	var panelOpen = false;
 	var unreadCount = 0;
+	// Whether the CURRENT session is still open — governs both the "End Chat" button's visibility
+	// and the beforeunload warning, so closing the tab only warns while there's actually something
+	// active to lose (not forever, just because this visitor has chatted at some point in the past).
+	var sessionOpen = false;
+
+	function updateEndChatVisibility() {
+		endChatBtn.style.display = (hasVisitorInfo && sessionOpen) ? "inline" : "none";
+	}
 	var previewDismissTimer = null;
 
 	function updateBadge() {
@@ -358,16 +369,63 @@
 		fetch(config.serverUrl + "/api/chat/history?session_uuid=" + encodeURIComponent(sessionUuid))
 			.then(function (r) { return r.ok ? r.json() : null; })
 			.then(function (data) {
-				if (!data || !Array.isArray(data.messages)) return;
-				data.messages.forEach(function (m) {
-					appendMessage(m.senderType, m.body);
-				});
+				if (!data) return;
+				if (Array.isArray(data.messages)) {
+					data.messages.forEach(function (m) {
+						appendMessage(m.senderType, m.body);
+					});
+				}
+				// Corrects the optimistic "assume open" default below — a returning visitor's
+				// session may have been closed by staff or the auto-close cron while they were away.
+				if (data.session) {
+					sessionOpen = data.session.status === "open";
+					updateEndChatVisibility();
+				}
 			})
 			.catch(function () { /* history is a nice-to-have — a failed fetch just starts empty, same as before this existed */ });
 	}
 
+	function endChat() {
+		if (!window.confirm("End this chat? You can always start a new one.")) return;
+		fetch(config.serverUrl + "/api/chat/end", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ session_uuid: sessionUuid }),
+		})
+			.catch(function () { /* still reset locally below even if the request fails — don't trap the visitor in a session they asked to leave */ })
+			.then(function () {
+				sessionOpen = false;
+				updateEndChatVisibility();
+				if (ws) { ws.close(); ws = null; }
+				// A fresh UUID now, not just cleared storage — otherwise clicking the bubble again
+				// in the same page load would still be a closed session (create_chat_session()
+				// looks up by session_uuid and returns the existing, now-closed, row).
+				sessionUuid = uuid();
+				setStored(STORAGE_SESSION, sessionUuid);
+				setStored(STORAGE_NAME, "");
+				setStored(STORAGE_EMAIL, "");
+				setStored(STORAGE_PHONE, "");
+				setStored(STORAGE_PANEL_OPEN, "");
+				visitorName = ""; visitorEmail = ""; visitorPhone = ""; hasVisitorInfo = false;
+				var oldRow = document.getElementById("ajcore-chat-inputrow");
+				if (oldRow) oldRow.remove();
+				body.innerHTML = '<div style="padding:20px;text-align:center;color:#6b7280;font-size:13px;">Chat ended. Starting fresh…</div>';
+				// Brief confirmation, then reset to a ready-for-a-new-conversation form — without
+				// this the panel would stay stuck on the static "ended" message until a full page
+				// reload, since content is normally only rendered once at init. renderPreChatForm()
+				// appends rather than clearing (unlike renderChatUI()), so clear first.
+				setTimeout(function () {
+					body.innerHTML = "";
+					renderPreChatForm();
+				}, 1200);
+			});
+	}
+	endChatBtn.addEventListener("click", endChat);
+
 	function renderChatUI() {
 		body.innerHTML = "";
+		sessionOpen = true; // optimistic default — loadHistory() below corrects it if stale
+		updateEndChatVisibility();
 		loadHistory();
 		requestDesktopNotifyPermission();
 		var row = document.createElement("div");
@@ -446,13 +504,13 @@
 		openPanel();
 	}
 
-	// Warns before closing the tab if the visitor has an active chat (started the conversation,
-	// regardless of whether the panel is currently open/minimized) — reads hasVisitorInfo live via
-	// closure, so it reflects the pre-chat form being submitted after this listener was attached.
-	// Browsers ignore custom beforeunload text and always show their own generic prompt — there's
-	// no way to display the "you have an active chat" wording itself, only to trigger that prompt.
+	// Warns before closing the tab only while the CURRENT session is still open (not forever, just
+	// because this visitor has chatted at some point in the past — sessionOpen gets corrected by
+	// loadHistory()/endChat() as the real session state becomes known). Browsers ignore custom
+	// beforeunload text and always show their own generic prompt — there's no way to display "you
+	// have an active chat" wording itself, only to trigger that prompt.
 	window.addEventListener("beforeunload", function (e) {
-		if (!hasVisitorInfo) return;
+		if (!hasVisitorInfo || !sessionOpen) return;
 		e.preventDefault();
 		e.returnValue = "";
 	});

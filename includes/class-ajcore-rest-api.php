@@ -850,6 +850,7 @@ class AJCore_REST_API {
 			'/chat/sessions'                          => array( 'methods' => 'POST', 'callback' => 'create_chat_session', 'permission' => 'can_manage_ops_api' ),
 			'/chat/sessions/(?P<id>\d+)/messages'     => array( 'methods' => 'POST', 'callback' => 'post_chat_message', 'permission' => 'can_manage_ops_api' ),
 			'/chat/sessions/by-uuid/(?P<uuid>[^/]+)/messages' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_chat_session_messages_by_uuid', 'permission' => 'can_manage_ops_api' ),
+			'/chat/sessions/by-uuid/(?P<uuid>[^/]+)/close'    => array( 'methods' => 'POST', 'callback' => 'close_chat_session_by_uuid', 'permission' => 'can_manage_ops_api' ),
 			'/ops/chat/sessions'                      => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_chat_sessions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/chat/sessions/(?P<id>\d+)/messages' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_chat_session_messages', 'permission' => 'can_manage_ops_api' ),
 			'/ops/chat/sessions/(?P<id>\d+)/reply'    => array( 'methods' => 'POST', 'callback' => 'reply_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
@@ -968,6 +969,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Creates (or fetches, by session_uuid) a Live Chat session from a visitor widget message relayed by AJOps\' WS server.', 'app' => 'Live Chat' ),
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions/{id}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Appends a visitor message to a Live Chat session.', 'app' => 'Live Chat' ),
 			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/chat/sessions/by-uuid/{uuid}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Message history for a returning visitor (restores the widget panel on a fresh tab/reload).', 'app' => 'Live Chat' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions/by-uuid/{uuid}/close', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Visitor-initiated "End Chat" — closes the session and emails a transcript if they gave an email.', 'app' => 'Live Chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/chat/sessions', 'auth' => 'Admin', 'purpose' => 'Live Chat session list (all connected sites, via the shared DB). Filters: status (open|closed), site_uuid.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/chat/sessions/{id}/messages', 'auth' => 'Admin', 'purpose' => 'Full message thread for a Live Chat session.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/reply', 'auth' => 'Admin', 'purpose' => 'Sends a staff reply on a Live Chat session; triggers the /chat/notify push back to AJOps.', 'app' => 'OPS live chat' ),
@@ -6359,12 +6361,42 @@ class AJCore_REST_API {
 	 * so manual and automatic closes behave identically, including the transcript email.
 	 */
 	public function close_ops_chat_session( WP_REST_Request $request ) {
-		$pdb        = $this->get_portal_db();
-		$s_table    = $this->get_chat_sessions_table();
 		$session_id = absint( $request['id'] );
-		if ( ! $this->table_exists( $pdb, $s_table ) || ! $session_id ) {
+		if ( ! $session_id ) {
 			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
+		return $this->close_chat_session_by_id( $session_id );
+	}
+
+	/**
+	 * Visitor-initiated close — called by AJOps' /api/chat/end (service account, same trust model
+	 * as create_chat_session()/post_chat_message()/history: visitors never call AJCore directly).
+	 * Gives the visitor an actual "End Chat" action instead of only ever being closed by staff or
+	 * the stale-session cron.
+	 */
+	public function close_chat_session_by_uuid( WP_REST_Request $request ) {
+		$pdb          = $this->get_portal_db();
+		$s_table      = $this->get_chat_sessions_table();
+		$session_uuid = sanitize_text_field( (string) $request['uuid'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || '' === $session_uuid ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE session_uuid = %s", $session_uuid ), ARRAY_A );
+		if ( ! $session ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		return $this->close_chat_session_by_id( (int) $session['id'] );
+	}
+
+	/**
+	 * Shared close logic — used by the staff "Close conversation" button, the visitor "End Chat"
+	 * button, and the auto-close cron (ajcore_chat_auto_close_stale, class-ajforms.php), so all
+	 * three behave identically, including the transcript email.
+	 */
+	private function close_chat_session_by_id( $session_id ) {
+		$pdb     = $this->get_portal_db();
+		$s_table = $this->get_chat_sessions_table();
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
 		if ( ! $session ) {
