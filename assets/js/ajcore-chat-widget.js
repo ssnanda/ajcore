@@ -100,30 +100,42 @@
 	}
 
 	function connect() {
+		// Without this guard, calling connect() while a socket is already CONNECTING (e.g. the
+		// pre-chat form's Start Chat handler calls renderChatUI() -> connect(), then immediately
+		// sendMessage(), whose own "not open yet" fallback also calls connect()) creates a second
+		// socket and orphans the first — when the first one's onopen later fires, it sends on
+		// `ws`, which by then points at the second (still-connecting) socket, throwing
+		// "Still in CONNECTING state". Only open a new one if there isn't already an active/opening one.
+		if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+			return;
+		}
+		var socket;
 		try {
-			ws = new WebSocket(wsUrl());
+			socket = new WebSocket(wsUrl());
 		} catch (e) {
 			scheduleReconnect();
 			return;
 		}
-		ws.onopen = function () {
+		ws = socket;
+		socket.onopen = function () {
 			if (pendingSend) {
-				ws.send(JSON.stringify(pendingSend));
+				var toSend = pendingSend;
 				pendingSend = null;
+				socket.send(JSON.stringify(toSend));
 			}
 		};
-		ws.onmessage = function (event) {
+		socket.onmessage = function (event) {
 			var payload;
 			try { payload = JSON.parse(event.data); } catch (e) { return; }
 			if (payload && payload.message) {
 				appendMessage(payload.message.senderType, payload.message.body);
 			}
 		};
-		ws.onclose = function () {
+		socket.onclose = function () {
 			scheduleReconnect();
 		};
-		ws.onerror = function () {
-			if (ws) ws.close();
+		socket.onerror = function () {
+			socket.close();
 		};
 	}
 
