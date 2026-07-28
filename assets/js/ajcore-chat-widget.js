@@ -287,9 +287,17 @@
 	// site visitor who never opens the widget.
 	function requestDesktopNotifyPermission() {
 		if (typeof window.Notification === "undefined") return;
-		if (Notification.permission === "default") {
-			Notification.requestPermission();
-		}
+		try {
+			// On an insecure origin (plain http, not localhost) Firefox throws a synchronous
+			// SecurityError here instead of just resolving to "denied" the way Chrome does — left
+			// unguarded, that exception aborted the REST of renderChatUI() (the input box + WS
+			// connect() that follow this call never ran), breaking the whole chat, not just
+			// notifications. Chrome's lenient behavior on http is exactly why this never showed up
+			// in Chrome testing.
+			if (Notification.permission === "default") {
+				Notification.requestPermission();
+			}
+		} catch (e) { /* insecure origin or otherwise unsupported — notifications just stay off */ }
 	}
 	function notifyDesktop(title, body) {
 		if (typeof window.Notification === "undefined" || Notification.permission !== "granted") return;
