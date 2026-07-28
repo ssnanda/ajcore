@@ -143,6 +143,10 @@
 
 	bubble.addEventListener("click", function () {
 		if (panelOpen) { closePanel(); } else { openPanel(); }
+		// A real click is a genuine user gesture — request here too (not just from renderChatUI()
+		// at page load for returning visitors, which some browsers silently ignore since it isn't
+		// gesture-triggered, leaving permission stuck at "default" forever).
+		requestDesktopNotifyPermission();
 	});
 	closeBtn.addEventListener("click", closePanel);
 
