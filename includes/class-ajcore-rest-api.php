@@ -6038,11 +6038,17 @@ class AJCore_REST_API {
 			return;
 		}
 		$secret = (string) ( $settings['chat_notify_secret'] ?? '' );
+		// blocking:true (was false) so a rejected/misconfigured webhook call is actually visible —
+		// with blocking:false, WP never receives the real response at all, so a 401 (secret
+		// mismatch) or wrong URL failed completely silently: the chat message still saved fine,
+		// the visitor/staff reply just never got pushed live, and nothing anywhere logged why. A
+		// few hundred ms of added latency on a chat send is a good trade for that no longer being
+		// a mystery.
 		$response = wp_remote_post(
 			rtrim( $url, '/' ) . '/api/chat/notify',
 			array(
 				'timeout'  => 5,
-				'blocking' => false,
+				'blocking' => true,
 				'headers'  => array(
 					'Content-Type'  => 'application/json',
 					'X-Chat-Secret' => $secret,
@@ -6056,7 +6062,12 @@ class AJCore_REST_API {
 			)
 		);
 		if ( is_wp_error( $response ) ) {
-			error_log( 'AJCore Live Chat notify: ' . $response->get_error_message() ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( 'AJCore Live Chat notify failed (network): ' . $response->get_error_message() . ' — URL: ' . $url ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			return;
+		}
+		$code = wp_remote_retrieve_response_code( $response );
+		if ( $code < 200 || $code >= 300 ) {
+			error_log( 'AJCore Live Chat notify failed (HTTP ' . $code . '): ' . wp_remote_retrieve_body( $response ) . ' — URL: ' . $url ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		}
 	}
 

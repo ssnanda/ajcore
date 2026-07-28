@@ -205,7 +205,16 @@
 			}
 			if (payload && payload.message) {
 				hideStaffTyping();
-				appendMessage(payload.message.senderType, payload.message.body);
+				if (payload.message.senderType === "visitor" && pendingOwnMessages.length && pendingOwnMessages[0] === payload.message.body) {
+					// This is the server echo of a message we already rendered optimistically below
+					// — skip re-rendering it (would otherwise double-print), but still consume it
+					// from the queue. A "visitor" message that DOESN'T match the front of the queue
+					// is a genuine multi-tab case (same visitor, sent from a different tab) and
+					// should render normally — see the queue's other consumer in sendMessage().
+					pendingOwnMessages.shift();
+				} else {
+					appendMessage(payload.message.senderType, payload.message.body);
+				}
 				if (payload.message.senderType === "staff") {
 					playChime();
 					notifyDesktop("New message", payload.message.body);
@@ -228,6 +237,10 @@
 		}, 3000);
 	}
 
+	// Messages rendered optimistically in sendMessage() below, waiting to be matched against the
+	// server's own-message echo (see onmessage above) so that echo doesn't double-print them.
+	var pendingOwnMessages = [];
+
 	function sendMessage(text) {
 		var payload = {
 			body: text,
@@ -235,10 +248,15 @@
 			visitor_email: visitorEmail,
 			visitor_phone: visitorPhone,
 		};
-		// No optimistic local render here — AJCore broadcasts every message back to the sending
-		// visitor's own socket too (see notify_ajops_chat(), "for multi-tab consistency"), and
-		// onmessage below renders it then. Rendering it here too was double-printing every
-		// message the visitor sent (e.g. "test" appearing twice).
+		// Render immediately rather than waiting on AJCore's broadcast echo of the visitor's own
+		// message (see notify_ajops_chat(), originally kept "for multi-tab consistency") — on a
+		// slow/flaky mobile connection that round trip can lag well behind hitting Send, or drop
+		// entirely, making it look like the message never sent at all. The echo is still relied on
+		// for genuine multi-tab sync (a different tab sending), so it isn't removed — just deduped
+		// against this queue instead of always rendering, to avoid the double-print this used to
+		// cause when both the optimistic render and the echo showed the same message.
+		appendMessage("visitor", text);
+		pendingOwnMessages.push(text);
 		if (ws && ws.readyState === WebSocket.OPEN) {
 			ws.send(JSON.stringify(payload));
 		} else {
