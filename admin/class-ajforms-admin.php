@@ -26609,7 +26609,7 @@ class AJForms_Admin {
 	 * types get identified — this list grows incrementally as the user specifies each one.
 	 * Returns null (no rule matched) if the caller should fall back to the filename-only guess.
 	 */
-	private function gmail_intake_classify_pdf_content( $pdf_text, $company_name, $subject = '' ) {
+	private function gmail_intake_classify_pdf_content( $pdf_text, $company_name, $subject = '', $body_text = '' ) {
 		$company_name = trim( (string) $company_name );
 
 		$result = $this->gmail_intake_match_classification_rules( (string) $pdf_text, $company_name );
@@ -26621,15 +26621,21 @@ class AJForms_Admin {
 		// image-only page (the state's stamped charter certificate has no text layer at all), or
 		// our dependency-free extractor failed on this particular PDF's internal encoding (e.g. a
 		// modern compressed object stream, which happened for a real Change of Registered Office/
-		// Agent confirmation — its text simply never made it into $pdf_text). Either way, SOS/NC's
-		// notification emails always put the exact filing type in the subject line (e.g. "NC
-		// Secretary of State Document Filed: ARTICLES OF ORGANIZATION for {company}"), which is a
-		// far more reliable signal than guessing from the PDF binary's internal structure.
-		return $this->gmail_intake_match_classification_rules( (string) $subject, $company_name );
+		// Agent confirmation — its text simply never made it into $pdf_text). Try the subject line
+		// next (some SOS/NC templates put the filing type there), then the email body — the actual
+		// live template puts it there instead: "Document Filed: ARTICLES OF ORGANIZATIONfor
+		// {company}" appears in the forwarded message body, not the subject (confirmed against a
+		// real Patriot Pilot Cars LLC filing 2026-07-27) — see extract_company_name_from_body(),
+		// which already relies on this same body text for the same reason.
+		$result = $this->gmail_intake_match_classification_rules( (string) $subject, $company_name );
+		if ( null !== $result ) {
+			return $result;
+		}
+		return $this->gmail_intake_match_classification_rules( (string) $body_text, $company_name );
 	}
 
-	/** Shared keyword rules, run against either the PDF's own extracted text or (as a fallback)
-	 *  the email subject line — see gmail_intake_classify_pdf_content() above. */
+	/** Shared keyword rules, run against the PDF's own extracted text or (as a fallback) the
+	 *  email subject line, then the email body — see gmail_intake_classify_pdf_content() above. */
 	private function gmail_intake_match_classification_rules( $haystack, $company_name ) {
 		$lower = strtolower( $haystack );
 		if ( '' === $lower ) {
@@ -27059,9 +27065,10 @@ class AJForms_Admin {
 			return $message;
 		}
 
-		$headers = isset( $message['payload']['headers'] ) ? $message['payload']['headers'] : array();
-		$payload = isset( $message['payload'] ) ? $message['payload'] : array();
-		$subject = $this->gmail_intake_header_value( $headers, 'Subject' );
+		$headers   = isset( $message['payload']['headers'] ) ? $message['payload']['headers'] : array();
+		$payload   = isset( $message['payload'] ) ? $message['payload'] : array();
+		$subject   = $this->gmail_intake_header_value( $headers, 'Subject' );
+		$body_text = $this->gmail_intake_get_text_body( $payload );
 
 		// needs_review rows (no matched customer, e.g. a brand-new company formation with no
 		// portal customer yet) have an empty customer_name — company_name_extracted is what was
@@ -27088,7 +27095,7 @@ class AJForms_Admin {
 				$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 				if ( false !== $binary ) {
 					$pdf_text   = $this->gmail_intake_extract_pdf_text( $binary );
-					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, $company_name, $subject );
+					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, $company_name, $subject, $body_text );
 					if ( null !== $classified ) {
 						$suggested_filename  = $classified['filename'];
 						$suggested_category  = $classified['category'];
@@ -27114,7 +27121,7 @@ class AJForms_Admin {
 			'subject'     => $subject,
 			'sender'      => $this->gmail_intake_header_value( $headers, 'From' ),
 			'date'        => $this->gmail_intake_header_value( $headers, 'Date' ),
-			'body_text'   => $this->gmail_intake_get_text_body( $payload ),
+			'body_text'   => $body_text,
 			'attachments' => $attachments,
 		);
 	}
