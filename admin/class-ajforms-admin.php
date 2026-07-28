@@ -27063,13 +27063,21 @@ class AJForms_Admin {
 		$payload = isset( $message['payload'] ) ? $message['payload'] : array();
 		$subject = $this->gmail_intake_header_value( $headers, 'Subject' );
 
+		// needs_review rows (no matched customer, e.g. a brand-new company formation with no
+		// portal customer yet) have an empty customer_name — company_name_extracted is what was
+		// used for the failed match attempt, and is still the best company name we have for
+		// suggesting a filename/classifying the PDF. Without this fallback, the rules below (which
+		// all require a non-empty company name) could never fire for exactly the highest-value
+		// case: a freshly filed Articles of Organization for a company not onboarded yet.
+		$company_name = '' !== trim( (string) $row->customer_name ) ? (string) $row->customer_name : (string) $row->company_name_extracted;
+
 		$pdf_parts = array();
 		$this->gmail_intake_collect_pdf_parts( $payload, $pdf_parts );
 
 		$attachments = array();
 		foreach ( $pdf_parts as $pdf ) {
 			$looks_like_document = $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] );
-			$suggested_filename  = $this->gmail_intake_suggest_filename( $pdf['filename'], (string) $row->customer_name );
+			$suggested_filename  = $this->gmail_intake_suggest_filename( $pdf['filename'], $company_name );
 			$suggested_category  = '';
 			$related_link        = '';
 
@@ -27080,7 +27088,7 @@ class AJForms_Admin {
 				$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 				if ( false !== $binary ) {
 					$pdf_text   = $this->gmail_intake_extract_pdf_text( $binary );
-					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, (string) $row->customer_name, $subject );
+					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, $company_name, $subject );
 					if ( null !== $classified ) {
 						$suggested_filename  = $classified['filename'];
 						$suggested_category  = $classified['category'];
