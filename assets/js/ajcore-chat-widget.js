@@ -129,6 +129,9 @@
 			try { payload = JSON.parse(event.data); } catch (e) { return; }
 			if (payload && payload.message) {
 				appendMessage(payload.message.senderType, payload.message.body);
+				if (payload.message.senderType === "staff") {
+					playChime();
+				}
 			}
 		};
 		socket.onclose = function () {
@@ -154,13 +157,41 @@
 			visitor_email: visitorEmail,
 			visitor_phone: visitorPhone,
 		};
+		// No optimistic local render here — AJCore broadcasts every message back to the sending
+		// visitor's own socket too (see notify_ajops_chat(), "for multi-tab consistency"), and
+		// onmessage below renders it then. Rendering it here too was double-printing every
+		// message the visitor sent (e.g. "test" appearing twice).
 		if (ws && ws.readyState === WebSocket.OPEN) {
 			ws.send(JSON.stringify(payload));
 		} else {
 			pendingSend = payload;
 			connect();
 		}
-		appendMessage("visitor", text);
+	}
+
+	// ── Sound ────────────────────────────────────────────────────────────────
+	var audioCtx = null;
+	function playChime() {
+		try {
+			var Ctx = window.AudioContext || window.webkitAudioContext;
+			if (!Ctx) return;
+			if (!audioCtx) audioCtx = new Ctx();
+			if (audioCtx.state === "suspended") audioCtx.resume();
+			var now = audioCtx.currentTime;
+			[880, 1175].forEach(function (freq, i) {
+				var osc = audioCtx.createOscillator();
+				var gain = audioCtx.createGain();
+				osc.connect(gain);
+				gain.connect(audioCtx.destination);
+				osc.frequency.value = freq;
+				var start = now + i * 0.12;
+				gain.gain.setValueAtTime(0, start);
+				gain.gain.linearRampToValueAtTime(0.18, start + 0.02);
+				gain.gain.exponentialRampToValueAtTime(0.001, start + 0.25);
+				osc.start(start);
+				osc.stop(start + 0.25);
+			});
+		} catch (e) { /* autoplay can be blocked before any user interaction — not worth surfacing */ }
 	}
 
 	// ── Rendering ────────────────────────────────────────────────────────────
