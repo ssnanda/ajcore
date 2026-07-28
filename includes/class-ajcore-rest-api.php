@@ -6010,7 +6010,13 @@ class AJCore_REST_API {
 	 */
 	private function notify_ajops_chat( $session, $message = null ) {
 		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$url      = trim( (string) ( $settings['chat_server_url'] ?? '' ) );
+		// chat_notify_url overrides chat_server_url for this outbound call only — see the
+		// settings-default comment in ajcore.php for why (PHP here vs. the browser can resolve
+		// "the AJOps server" differently in local dev; in production these are the same value).
+		$url = trim( (string) ( $settings['chat_notify_url'] ?? '' ) );
+		if ( '' === $url ) {
+			$url = trim( (string) ( $settings['chat_server_url'] ?? '' ) );
+		}
 		if ( '' === $url ) {
 			return;
 		}

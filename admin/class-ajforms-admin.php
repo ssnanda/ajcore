@@ -27619,6 +27619,7 @@ class AJForms_Admin {
 
 		if ( ! $is_shared_db || $is_master ) {
 			$settings['chat_server_url'] = isset( $_POST['chat_server_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['chat_server_url'] ) ) ) : '';
+			$settings['chat_notify_url'] = isset( $_POST['chat_notify_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['chat_notify_url'] ) ) ) : '';
 			if ( isset( $_POST['chat_notify_secret'] ) && '' !== trim( wp_unslash( $_POST['chat_notify_secret'] ) ) ) {
 				$settings['chat_notify_secret'] = sanitize_text_field( wp_unslash( $_POST['chat_notify_secret'] ) );
 			}
@@ -27695,12 +27696,17 @@ class AJForms_Admin {
 					<div class="ajforms-settings-field">
 						<label for="chat_server_url"><?php esc_html_e( 'AJOps Chat Server URL', 'ajforms' ); ?></label>
 						<input type="text" name="chat_server_url" id="chat_server_url" value="<?php echo esc_attr( $settings['chat_server_url'] ); ?>" placeholder="https://ops.example.com" autocomplete="off" <?php disabled( $read_only ); ?>>
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Where the widget connects and where AJCore pushes new messages so AJOps can relay them live. No trailing slash.', 'ajforms' ); ?></div>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Sent to visitor browsers for the widget\'s connection. No trailing slash.', 'ajforms' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="chat_notify_secret"><?php esc_html_e( 'Notify Secret', 'ajforms' ); ?></label>
 						<input type="text" name="chat_notify_secret" id="chat_notify_secret" value="" placeholder="<?php echo ! empty( $settings['chat_notify_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Any random string. Must match CHAT_NOTIFY_SECRET in the AJOps deployment.', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="chat_notify_url"><?php esc_html_e( 'Notify URL Override (optional)', 'ajforms' ); ?></label>
+						<input type="text" name="chat_notify_url" id="chat_notify_url" value="<?php echo esc_attr( $settings['chat_notify_url'] ?? '' ); ?>" placeholder="<?php esc_attr_e( 'Leave blank to use the URL above', 'ajforms' ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Only needed if this WordPress server can\'t reach the URL above directly — e.g. local dev, where the browser and this server resolve "AJOps" differently (http://localhost:3000 vs http://host.docker.internal:3000). Leave blank in production.', 'ajforms' ); ?></div>
 					</div>
 				</div>
 

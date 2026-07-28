@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.128
+ * Version: 0.7.129
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.128' );
+	define( 'AJCORE_VERSION', '0.7.129' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -176,6 +176,12 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// deliberately LOCAL (per-site, never pushed to the shared DB) so the widget can be
 			// rolled out to individual sites one at a time.
 			'chat_server_url'               => '',
+			// Optional override of chat_server_url for AJCore's own outbound /chat/notify call
+			// only (never sent to the browser). In production these are identical and this stays
+			// blank — it exists because in local ddev, PHP (inside the ddev container) and the
+			// browser resolve "the AJOps server" differently (e.g. http://host.docker.internal:3000
+			// vs http://localhost:3000), and no single URL is reachable from both.
+			'chat_notify_url'                => '',
 			'chat_notify_secret'            => '',
 			'chat_widget_enabled'           => '0',
 			'default_success_message'       => 'Form submitted successfully.',
@@ -1001,6 +1007,7 @@ if ( ! function_exists( 'ajcore_get_chat_setting_keys' ) ) {
 	function ajcore_get_chat_setting_keys() {
 		return array(
 			'chat_server_url',
+			'chat_notify_url',
 			'chat_notify_secret',
 		);
 	}
