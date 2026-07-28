@@ -278,7 +278,8 @@
 	}
 	function notifyDesktop(title, body) {
 		if (typeof window.Notification === "undefined" || Notification.permission !== "granted") return;
-		if (!document.hidden) return; // visitor is already looking at the page — no point notifying
+		// Matches AJOps' own notification behavior — fires on every staff reply regardless of
+		// whether the tab is focused, not just while backgrounded.
 		try {
 			var n = new Notification(title, { body: body });
 			n.onclick = function () { window.focus(); n.close(); };
