@@ -1334,8 +1334,30 @@ class AJForms_Activator {
 			$ops_role->add_cap( 'ajcore_ops_access' );
 		}
 
+		self::drop_legacy_tawk_table();
+
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
 		update_option( 'ajforms_portal_schema_version', '38', false );
+	}
+
+	/**
+	 * One-time cleanup: drops the old aj_portal_tawk_events table (local DB, and the shared DB
+	 * copy if shared mode is enabled) now that the Tawk.to integration has been replaced by the
+	 * self-hosted Live Chat system (aj_portal_chat_sessions/aj_portal_chat_messages). DROP TABLE
+	 * IF EXISTS is safe to run on every upgrade check — it's a no-op once the table is gone, so
+	 * this needs no extra guard and runs automatically on every site the next time this version
+	 * deploys, without any manual DB step.
+	 */
+	private static function drop_legacy_tawk_table() {
+		global $wpdb;
+		$wpdb->query( "DROP TABLE IF EXISTS `{$wpdb->prefix}aj_portal_tawk_events`" );
+
+		if ( function_exists( 'ajcore_get_shared_db' ) ) {
+			$shared_db = ajcore_get_shared_db();
+			if ( $shared_db ) {
+				$shared_db->query( "DROP TABLE IF EXISTS `{$shared_db->prefix}aj_portal_tawk_events`" );
+			}
+		}
 	}
 
 	/** Dedicated durable AJCore records. Stripe cache tables remain disposable. */
