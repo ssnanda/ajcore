@@ -21480,6 +21480,17 @@ class AJForms_Admin {
 				if ( closeBtn ) { closeBtn.addEventListener( 'click', closeThread ); }
 				modal.addEventListener( 'click', function ( e ) { if ( e.target === modal ) { closeThread(); } } );
 
+				// Deep link from the ambient notification bubble (?chat_session=123) — open that
+				// thread on load even if it's not in the currently-filtered/visible list.
+				(function () {
+					var deepLinkId = new URLSearchParams( window.location.search ).get( 'chat_session' );
+					if ( ! deepLinkId ) { return; }
+					var matchingBtn = document.querySelector( '.ajforms-chat-view-btn[data-session-id="' + deepLinkId + '"]' );
+					openThread( deepLinkId, matchingBtn ? matchingBtn.getAttribute( 'data-visitor' ) : <?php echo wp_json_encode( __( 'Visitor', 'ajforms' ) ); ?> );
+					var cleanUrl = window.location.href.replace( /([?&])chat_session=[^&]*(&|$)/, function ( m, p1, p2 ) { return p2 === '&' ? p1 : ''; } ).replace( /[?&]$/, '' );
+					window.history.replaceState( {}, '', cleanUrl );
+				})();
+
 				function sendReply() {
 					var body = ( input.value || '' ).trim();
 					if ( ! body || ! currentSessionId ) { return; }

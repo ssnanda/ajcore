@@ -56,7 +56,7 @@
 	document.head.appendChild(style);
 
 	var dismissTimer = null;
-	function showBubble(who, preview) {
+	function showBubble(who, preview, sessionId) {
 		var existing = document.getElementById("ajcore-admin-chat-bubble");
 		if (existing) existing.remove();
 
@@ -67,7 +67,11 @@
 			'<span><span class="aj-title">New message from ' + escapeHtml(who) + '</span>' +
 			'<span class="aj-preview">' + escapeHtml(preview) + '</span></span>';
 		el.addEventListener("click", function () {
-			window.location.href = config.liveChatUrl;
+			var url = config.liveChatUrl + (sessionId ? "&chat_session=" + encodeURIComponent(sessionId) : "");
+			// window.top, not window.location — some other plugin in this admin (Site Sync?) loads
+			// pages via an iframe for some navigations, and a plain window.location.href only
+			// navigates within that iframe rather than the whole tab in that case.
+			window.top.location.href = url;
 		});
 		document.body.appendChild(el);
 
@@ -106,7 +110,7 @@
 				if (lastSeen && newest.lastMessageAt > lastSeen) {
 					playChime();
 					var who = newest.session.visitorName || newest.session.visitorEmail || newest.session.visitorPhone || "a visitor";
-					showBubble(who, "New activity in Live Chat");
+					showBubble(who, "New activity in Live Chat", newest.session.id);
 				}
 				// First-ever poll on a fresh browser: just set the baseline, don't notify for
 				// pre-existing chats that were already there before this script ever ran.

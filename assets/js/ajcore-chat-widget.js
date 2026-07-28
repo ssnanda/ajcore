@@ -61,15 +61,27 @@
 		".ajcore-chat-msg.staff{background:#e5e7eb;color:#0f172a;margin-right:auto;}" +
 		"#ajcore-chat-inputrow{border-top:1px solid #e5e7eb;padding:10px;display:flex;gap:8px;align-items:flex-end;}" +
 		"#ajcore-chat-input{flex:1;border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;resize:none;max-height:80px;}" +
-		"#ajcore-chat-send{background:#3157ff;color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;}";
+		"#ajcore-chat-send{background:#3157ff;color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;}" +
+		"#ajcore-chat-badge{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#dc2626;color:#fff;font-size:11px;font-weight:700;display:none;align-items:center;justify-content:center;line-height:1;}" +
+		"#ajcore-chat-badge.show{display:flex;}" +
+		"#ajcore-chat-preview{position:fixed;bottom:88px;right:20px;max-width:260px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:12px 14px;cursor:pointer;z-index:999997;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:none;}" +
+		"#ajcore-chat-preview.show{display:block;}" +
+		"#ajcore-chat-preview .aj-title{font-size:12px;font-weight:700;color:#111827;margin:0 0 2px;}" +
+		"#ajcore-chat-preview .aj-body{font-size:12px;color:#4b5563;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}";
 	document.head.appendChild(style);
 
 	// ── Markup ───────────────────────────────────────────────────────────────
 	var bubble = document.createElement("button");
 	bubble.id = "ajcore-chat-bubble";
 	bubble.setAttribute("aria-label", "Open chat");
-	bubble.textContent = "💬";
+	bubble.innerHTML = '<span>💬</span><span id="ajcore-chat-badge"></span>';
 	document.body.appendChild(bubble);
+	var badge = bubble.querySelector("#ajcore-chat-badge");
+
+	// Outside the panel itself, so a reply is visible even while the panel is closed/minimized.
+	var preview = document.createElement("div");
+	preview.id = "ajcore-chat-preview";
+	document.body.appendChild(preview);
 
 	var panel = document.createElement("div");
 	panel.id = "ajcore-chat-panel";
@@ -82,12 +94,53 @@
 	var body = panel.querySelector("#ajcore-chat-body");
 	var closeBtn = panel.querySelector("#ajcore-chat-close");
 
-	bubble.addEventListener("click", function () {
-		panel.classList.toggle("open");
+	var panelOpen = false;
+	var unreadCount = 0;
+	var previewDismissTimer = null;
+
+	function updateBadge() {
+		if (unreadCount > 0) {
+			badge.textContent = String(unreadCount);
+			badge.classList.add("show");
+		} else {
+			badge.classList.remove("show");
+		}
+	}
+
+	function hidePreview() {
+		preview.classList.remove("show");
+		if (previewDismissTimer) { clearTimeout(previewDismissTimer); previewDismissTimer = null; }
+	}
+
+	function showPreview(text) {
+		preview.innerHTML = '<div class="aj-title">New message</div><div class="aj-body"></div>';
+		preview.querySelector(".aj-body").textContent = text;
+		preview.classList.add("show");
+		if (previewDismissTimer) clearTimeout(previewDismissTimer);
+		previewDismissTimer = setTimeout(hidePreview, 10000);
+	}
+
+	preview.addEventListener("click", function () {
+		hidePreview();
+		openPanel();
 	});
-	closeBtn.addEventListener("click", function () {
+
+	function openPanel() {
+		panel.classList.add("open");
+		panelOpen = true;
+		unreadCount = 0;
+		updateBadge();
+		hidePreview();
+	}
+	function closePanel() {
 		panel.classList.remove("open");
+		panelOpen = false;
+	}
+
+	bubble.addEventListener("click", function () {
+		if (panelOpen) { closePanel(); } else { openPanel(); }
 	});
+	closeBtn.addEventListener("click", closePanel);
 
 	// ── WebSocket ────────────────────────────────────────────────────────────
 	var ws = null;
