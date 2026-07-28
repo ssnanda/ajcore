@@ -905,6 +905,9 @@ class AJForms_Activator {
 			visitor_email varchar(190) DEFAULT '' NOT NULL,
 			visitor_phone varchar(30) DEFAULT '' NOT NULL,
 			status varchar(20) DEFAULT 'open' NOT NULL,
+			assigned_staff_id bigint(20) unsigned NULL,
+			assigned_staff_name varchar(255) DEFAULT '' NOT NULL,
+			automation_muted tinyint(1) DEFAULT 0 NOT NULL,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			last_message_at datetime NULL,
 			closed_at datetime NULL,
@@ -912,7 +915,8 @@ class AJForms_Activator {
 			UNIQUE KEY session_uuid (session_uuid),
 			KEY site_uuid (site_uuid),
 			KEY status (status),
-			KEY last_message_at (last_message_at)
+			KEY last_message_at (last_message_at),
+			KEY assigned_staff_id (assigned_staff_id)
 		) $charset_collate;
 
 		CREATE TABLE $table_chat_messages (
@@ -982,8 +986,11 @@ class AJForms_Activator {
 				self::create_esign_documents_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_customer_site_access_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_chat_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
+				self::add_chat_session_claim_columns( $pdb->prefix, $pdb );
 			}
 		}
+
+		self::add_chat_session_claim_columns( $wpdb->prefix, $wpdb );
 
 		$legacy_table_migrations = array(
 			$wpdb->prefix . 'ajforms_forms'         => $table_forms,
@@ -1337,7 +1344,7 @@ class AJForms_Activator {
 		self::drop_legacy_tawk_table();
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '38', false );
+		update_option( 'ajforms_portal_schema_version', '39', false );
 	}
 
 	/**
@@ -2079,6 +2086,28 @@ class AJForms_Activator {
 			KEY session_id (session_id),
 			KEY created_at (created_at)
 		) {$charset_collate}" );
+	}
+
+	/**
+	 * Adds the claim/assign + automation-mute columns to an existing aj_portal_chat_sessions table
+	 * (either $wpdb or the shared portal DB). CREATE TABLE IF NOT EXISTS in
+	 * create_chat_tables_in_portal_db() only handles brand-new installs — on any DB where the table
+	 * already existed before this migration, the columns need an explicit guarded ALTER.
+	 */
+	public static function add_chat_session_claim_columns( $prefix, $db ) {
+		$table = $prefix . 'aj_portal_chat_sessions';
+		if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return;
+		}
+		if ( ! $db->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'assigned_staff_id'" ) ) {
+			$db->query( "ALTER TABLE `{$table}` ADD COLUMN assigned_staff_id bigint(20) unsigned NULL, ADD KEY assigned_staff_id (assigned_staff_id)" );
+		}
+		if ( ! $db->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'assigned_staff_name'" ) ) {
+			$db->query( "ALTER TABLE `{$table}` ADD COLUMN assigned_staff_name varchar(255) DEFAULT '' NOT NULL" );
+		}
+		if ( ! $db->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'automation_muted'" ) ) {
+			$db->query( "ALTER TABLE `{$table}` ADD COLUMN automation_muted tinyint(1) DEFAULT 0 NOT NULL" );
+		}
 	}
 
 	/**

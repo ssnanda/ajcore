@@ -13,6 +13,7 @@
 	var STORAGE_NAME = "ajcore_chat_visitor_name";
 	var STORAGE_EMAIL = "ajcore_chat_visitor_email";
 	var STORAGE_PHONE = "ajcore_chat_visitor_phone";
+	var STORAGE_PANEL_OPEN = "ajcore_chat_panel_open";
 
 	function uuid() {
 		if (window.crypto && window.crypto.randomUUID) {
@@ -67,7 +68,8 @@
 		"#ajcore-chat-preview{position:fixed;bottom:88px;right:20px;max-width:260px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:12px 14px;cursor:pointer;z-index:999997;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:none;}" +
 		"#ajcore-chat-preview.show{display:block;}" +
 		"#ajcore-chat-preview .aj-title{font-size:12px;font-weight:700;color:#111827;margin:0 0 2px;}" +
-		"#ajcore-chat-preview .aj-body{font-size:12px;color:#4b5563;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}";
+		"#ajcore-chat-preview .aj-body{font-size:12px;color:#4b5563;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}" +
+		"#ajcore-chat-offline-banner{background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.4;margin:0 14px 8px;}";
 	document.head.appendChild(style);
 
 	// ── Markup ───────────────────────────────────────────────────────────────
@@ -131,10 +133,12 @@
 		unreadCount = 0;
 		updateBadge();
 		hidePreview();
+		setStored(STORAGE_PANEL_OPEN, "1");
 	}
 	function closePanel() {
 		panel.classList.remove("open");
 		panelOpen = false;
+		setStored(STORAGE_PANEL_OPEN, "");
 	}
 
 	bubble.addEventListener("click", function () {
@@ -180,10 +184,16 @@
 		socket.onmessage = function (event) {
 			var payload;
 			try { payload = JSON.parse(event.data); } catch (e) { return; }
+			if (payload && payload.type === "typing") {
+				if (payload.from === "staff") { showStaffTyping(); }
+				return;
+			}
 			if (payload && payload.message) {
+				hideStaffTyping();
 				appendMessage(payload.message.senderType, payload.message.body);
 				if (payload.message.senderType === "staff") {
 					playChime();
+					notifyDesktop("New message", payload.message.body);
 				}
 			}
 		};
@@ -220,6 +230,81 @@
 			pendingSend = payload;
 			connect();
 		}
+	}
+
+	// ── Typing indicator ─────────────────────────────────────────────────────
+	// Purely ephemeral — relayed directly by server.js, never touches AJCore/the DB.
+	var typingSendTimer = null;
+	function sendTyping() {
+		if (!(ws && ws.readyState === WebSocket.OPEN)) return;
+		if (typingSendTimer) return; // debounce: at most once every 2s
+		ws.send(JSON.stringify({ type: "typing" }));
+		typingSendTimer = setTimeout(function () { typingSendTimer = null; }, 2000);
+	}
+
+	var staffTypingEl = null;
+	var staffTypingClearTimer = null;
+	function showStaffTyping() {
+		if (!staffTypingEl) {
+			staffTypingEl = document.createElement("div");
+			staffTypingEl.id = "ajcore-chat-typing";
+			staffTypingEl.style.cssText = "font-size:12px;color:#9ca3af;font-style:italic;padding:2px 4px;";
+			staffTypingEl.textContent = "Staff is typing…";
+		}
+		if (!staffTypingEl.parentNode) {
+			body.appendChild(staffTypingEl);
+			body.scrollTop = body.scrollHeight;
+		}
+		if (staffTypingClearTimer) clearTimeout(staffTypingClearTimer);
+		staffTypingClearTimer = setTimeout(hideStaffTyping, 4000);
+	}
+	function hideStaffTyping() {
+		if (staffTypingEl && staffTypingEl.parentNode) {
+			staffTypingEl.parentNode.removeChild(staffTypingEl);
+		}
+		if (staffTypingClearTimer) { clearTimeout(staffTypingClearTimer); staffTypingClearTimer = null; }
+	}
+
+	// ── Native OS-level notification (shows even if this tab is backgrounded, not just the
+	// in-page preview bubble) ────────────────────────────────────────────────
+	// Permission is requested once the visitor actually starts chatting (renderChatUI(), covers
+	// both a fresh Start Chat submit and a returning visitor's tab) — not on page load for every
+	// site visitor who never opens the widget.
+	function requestDesktopNotifyPermission() {
+		if (typeof window.Notification === "undefined") return;
+		if (Notification.permission === "default") {
+			Notification.requestPermission();
+		}
+	}
+	function notifyDesktop(title, body) {
+		if (typeof window.Notification === "undefined" || Notification.permission !== "granted") return;
+		if (!document.hidden) return; // visitor is already looking at the page — no point notifying
+		try {
+			var n = new Notification(title, { body: body });
+			n.onclick = function () { window.focus(); n.close(); };
+		} catch (e) { /* some browsers block programmatic notifications */ }
+	}
+
+	// ── Business hours ───────────────────────────────────────────────────────
+	// Reuses the *idea* from AJPhone's automation rules (businessHoursMode), not any shared code —
+	// that field exists there but nothing evaluates it against a real schedule yet. This is a
+	// genuinely new, minimal evaluator: a single "Mon-Fri 09:00-17:00" range, visitor's local clock.
+	var DAY_MAP = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+	function isWithinBusinessHours() {
+		if (!config.businessHoursEnabled || !config.businessHours) return true;
+		var m = /^(\w{3})-(\w{3})\s+(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/i.exec(String(config.businessHours).trim());
+		if (!m) return true; // malformed config — don't block/annoy visitors over a settings typo
+		var startDay = DAY_MAP[m[1].toLowerCase()];
+		var endDay = DAY_MAP[m[2].toLowerCase()];
+		if (startDay === undefined || endDay === undefined) return true;
+		var startMin = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
+		var endMin = parseInt(m[5], 10) * 60 + parseInt(m[6], 10);
+		var now = new Date();
+		var day = now.getDay();
+		var mins = now.getHours() * 60 + now.getMinutes();
+		var dayInRange = startDay <= endDay ? (day >= startDay && day <= endDay) : (day >= startDay || day <= endDay);
+		var timeInRange = startMin <= endMin ? (mins >= startMin && mins < endMin) : (mins >= startMin || mins < endMin);
+		return dayInRange && timeInRange;
 	}
 
 	// ── Sound ────────────────────────────────────────────────────────────────
@@ -262,8 +347,24 @@
 		body.scrollTop = body.scrollHeight;
 	}
 
+	// Restores a returning visitor's prior messages on a fresh tab/reload — the widget already
+	// reconnects to the same session_uuid, but previously started from an empty panel every time.
+	function loadHistory() {
+		fetch(config.serverUrl + "/api/chat/history?session_uuid=" + encodeURIComponent(sessionUuid))
+			.then(function (r) { return r.ok ? r.json() : null; })
+			.then(function (data) {
+				if (!data || !Array.isArray(data.messages)) return;
+				data.messages.forEach(function (m) {
+					appendMessage(m.senderType, m.body);
+				});
+			})
+			.catch(function () { /* history is a nice-to-have — a failed fetch just starts empty, same as before this existed */ });
+	}
+
 	function renderChatUI() {
 		body.innerHTML = "";
+		loadHistory();
+		requestDesktopNotifyPermission();
 		var row = document.createElement("div");
 		row.id = "ajcore-chat-inputrow";
 		row.innerHTML =
@@ -287,11 +388,19 @@
 				doSend();
 			}
 		});
+		input.addEventListener("input", sendTyping);
 
 		connect();
 	}
 
 	function renderPreChatForm() {
+		if (!isWithinBusinessHours()) {
+			var banner = document.createElement("div");
+			banner.id = "ajcore-chat-offline-banner";
+			banner.textContent = "We're currently offline — leave a message and we'll reply as soon as we're back.";
+			body.appendChild(banner);
+		}
+
 		var form = document.createElement("div");
 		form.id = "ajcore-chat-form";
 		form.innerHTML =
@@ -328,4 +437,18 @@
 	} else {
 		renderPreChatForm();
 	}
+	if (getStored(STORAGE_PANEL_OPEN) === "1") {
+		openPanel();
+	}
+
+	// Warns before closing the tab if the visitor has an active chat (started the conversation,
+	// regardless of whether the panel is currently open/minimized) — reads hasVisitorInfo live via
+	// closure, so it reflects the pre-chat form being submitted after this listener was attached.
+	// Browsers ignore custom beforeunload text and always show their own generic prompt — there's
+	// no way to display the "you have an active chat" wording itself, only to trigger that prompt.
+	window.addEventListener("beforeunload", function (e) {
+		if (!hasVisitorInfo) return;
+		e.preventDefault();
+		e.returnValue = "";
+	});
 })();

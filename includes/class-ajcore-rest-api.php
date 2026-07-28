@@ -849,9 +849,15 @@ class AJCore_REST_API {
 			// not public) — visitor browsers never call AJCore directly, only AJOps' WS server does.
 			'/chat/sessions'                          => array( 'methods' => 'POST', 'callback' => 'create_chat_session', 'permission' => 'can_manage_ops_api' ),
 			'/chat/sessions/(?P<id>\d+)/messages'     => array( 'methods' => 'POST', 'callback' => 'post_chat_message', 'permission' => 'can_manage_ops_api' ),
+			'/chat/sessions/by-uuid/(?P<uuid>[^/]+)/messages' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_chat_session_messages_by_uuid', 'permission' => 'can_manage_ops_api' ),
 			'/ops/chat/sessions'                      => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_chat_sessions', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/chat/sessions/(?P<id>\d+)/messages' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_chat_session_messages', 'permission' => 'can_manage_ops_api' ),
 			'/ops/chat/sessions/(?P<id>\d+)/reply'    => array( 'methods' => 'POST', 'callback' => 'reply_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/sessions/(?P<id>\d+)/auto-reply' => array( 'methods' => 'POST', 'callback' => 'auto_reply_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/sessions/(?P<id>\d+)/mute-automation' => array( 'methods' => 'POST', 'callback' => 'mute_ops_chat_session_automation', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/sessions/(?P<id>\d+)/claim'    => array( 'methods' => 'POST', 'callback' => 'claim_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/sessions/(?P<id>\d+)/unclaim'  => array( 'methods' => 'POST', 'callback' => 'unclaim_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
+			'/ops/chat/sessions/(?P<id>\d+)/close'    => array( 'methods' => 'POST', 'callback' => 'close_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
 			'/ops/chat/sessions/(?P<id>\d+)'          => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
 			'/ops/chat/reset'                          => array( 'methods' => 'POST', 'callback' => 'reset_ops_chat_sessions', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
@@ -961,9 +967,15 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/esign/documents/{id}/refresh', 'auth' => 'Admin', 'purpose' => 'Polls BreezeDoc for the current status of a sent document (no webhook exists).', 'app' => 'OPS e-signatures' ),
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Creates (or fetches, by session_uuid) a Live Chat session from a visitor widget message relayed by AJOps\' WS server.', 'app' => 'Live Chat' ),
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions/{id}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Appends a visitor message to a Live Chat session.', 'app' => 'Live Chat' ),
+			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/chat/sessions/by-uuid/{uuid}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Message history for a returning visitor (restores the widget panel on a fresh tab/reload).', 'app' => 'Live Chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/chat/sessions', 'auth' => 'Admin', 'purpose' => 'Live Chat session list (all connected sites, via the shared DB). Filters: status (open|closed), site_uuid.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/chat/sessions/{id}/messages', 'auth' => 'Admin', 'purpose' => 'Full message thread for a Live Chat session.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/reply', 'auth' => 'Admin', 'purpose' => 'Sends a staff reply on a Live Chat session; triggers the /chat/notify push back to AJOps.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/auto-reply', 'auth' => 'Admin', 'purpose' => 'Posts an automated (rule-matched) reply — same as a staff reply visually, but does not mute future automation the way a real staff reply does.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/mute-automation', 'auth' => 'Admin', 'purpose' => 'Silences future automated replies on a session without sending a message.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/close', 'auth' => 'Admin', 'purpose' => 'Closes a Live Chat session and emails the visitor a transcript if they gave an email.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/claim', 'auth' => 'Admin', 'purpose' => 'Assigns a Live Chat session to the calling staff member (or an explicit staffName/staffId when relayed by AJOps).', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/unclaim', 'auth' => 'Admin', 'purpose' => 'Clears a Live Chat session\'s assignment.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'DELETE', 'path' => '/ops/chat/sessions/{id}', 'auth' => 'Admin', 'purpose' => 'Deletes a Live Chat session and its messages (e.g. test data).', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/reset', 'auth' => 'Admin', 'purpose' => 'Deletes every Live Chat session/message across every site. Not scoped or reversible.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
@@ -5976,17 +5988,20 @@ class AJCore_REST_API {
 	private function format_chat_session_row( $row ) {
 		$row = (array) $row;
 		return array(
-			'id'            => (int) $row['id'],
-			'siteUuid'      => (string) $row['site_uuid'],
-			'siteLabel'     => (string) ( $row['site_domain'] ?? '' ),
-			'sessionUuid'   => (string) $row['session_uuid'],
-			'visitorName'   => (string) $row['visitor_name'],
-			'visitorEmail'  => (string) $row['visitor_email'],
-			'visitorPhone'  => (string) $row['visitor_phone'],
-			'status'        => (string) $row['status'],
-			'createdAt'     => (string) $row['created_at'],
-			'lastMessageAt' => (string) ( $row['last_message_at'] ?? '' ),
-			'closedAt'      => (string) ( $row['closed_at'] ?? '' ),
+			'id'                 => (int) $row['id'],
+			'siteUuid'           => (string) $row['site_uuid'],
+			'siteLabel'          => (string) ( $row['site_domain'] ?? '' ),
+			'sessionUuid'        => (string) $row['session_uuid'],
+			'visitorName'        => (string) $row['visitor_name'],
+			'visitorEmail'       => (string) $row['visitor_email'],
+			'visitorPhone'       => (string) $row['visitor_phone'],
+			'status'             => (string) $row['status'],
+			'createdAt'          => (string) $row['created_at'],
+			'lastMessageAt'      => (string) ( $row['last_message_at'] ?? '' ),
+			'closedAt'           => (string) ( $row['closed_at'] ?? '' ),
+			'assignedStaffId'    => isset( $row['assigned_staff_id'] ) && null !== $row['assigned_staff_id'] ? (int) $row['assigned_staff_id'] : null,
+			'assignedStaffName'  => (string) ( $row['assigned_staff_name'] ?? '' ),
+			'automationMuted'    => ! empty( $row['automation_muted'] ),
 		);
 	}
 
@@ -6073,6 +6088,36 @@ class AJCore_REST_API {
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$row = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$m_table}` WHERE id = %d", $pdb->insert_id ), ARRAY_A );
 		return $this->format_chat_message_row( $row );
+	}
+
+	/**
+	 * Message history for a returning visitor — called by AJOps' /api/chat/history (service
+	 * account, same as every other visitor-facing chat route) so the widget can restore prior
+	 * messages on a fresh tab/reload instead of starting from an empty panel. Visitors never call
+	 * AJCore directly, same as create_chat_session()/post_chat_message().
+	 */
+	public function get_chat_session_messages_by_uuid( WP_REST_Request $request ) {
+		$pdb          = $this->get_portal_db();
+		$s_table      = $this->get_chat_sessions_table();
+		$m_table      = $this->get_chat_messages_table();
+		$session_uuid = sanitize_text_field( (string) $request['uuid'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || '' === $session_uuid ) {
+			return rest_ensure_response( array( 'session' => null, 'messages' => array() ) );
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE session_uuid = %s", $session_uuid ), ARRAY_A );
+		if ( ! $session ) {
+			return rest_ensure_response( array( 'session' => null, 'messages' => array() ) );
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$m_table}` WHERE session_id = %d ORDER BY created_at ASC, id ASC", $session['id'] ), ARRAY_A );
+		$rows = is_array( $rows ) ? $rows : array();
+		return rest_ensure_response(
+			array(
+				'session'  => $this->format_chat_session_row( $session ),
+				'messages' => array_map( array( $this, 'format_chat_message_row' ), $rows ),
+			)
+		);
 	}
 
 	/**
@@ -6252,11 +6297,201 @@ class AJCore_REST_API {
 			return $message_row;
 		}
 
+		// A real human just engaged — stop auto-replying on this session so the bot doesn't talk
+		// over them. (Automated replies use a separate endpoint — see auto_reply_ops_chat_session()
+		// below — specifically so THEY don't trip this same flag on themselves.)
+		$pdb->update( $s_table, array( 'automation_muted' => 1 ), array( 'id' => $session_id ), array( '%d' ), array( '%d' ) );
+
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$updated_session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
 		$this->notify_ajops_chat( $this->format_chat_session_row( $updated_session ), $message_row );
 
 		return rest_ensure_response( array( 'message' => $message_row ) );
+	}
+
+	/**
+	 * Posts an automated reply (AJPhone's automation rules, reused for chat) — visually identical
+	 * to a staff reply (sender_type 'staff'), but deliberately a SEPARATE endpoint from
+	 * reply_ops_chat_session() so an automated send doesn't set automation_muted on itself, which
+	 * would silence the bot after its own very first reply.
+	 */
+	public function auto_reply_ops_chat_session( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$s_table    = $this->get_chat_sessions_table();
+		$session_id = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || ! $session_id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$body = sanitize_textarea_field( (string) $request->get_param( 'body' ) );
+		if ( '' === $body ) {
+			return new WP_Error( 'chat_empty_message', __( 'Message body is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$sender_name = sanitize_text_field( (string) ( $request->get_param( 'senderName' ) ?: __( 'Automated reply', 'ajforms' ) ) );
+
+		$message_row = $this->insert_chat_message( $session_id, 'staff', $sender_name, $body );
+		if ( is_wp_error( $message_row ) ) {
+			return $message_row;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$updated_session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		$this->notify_ajops_chat( $this->format_chat_session_row( $updated_session ), $message_row );
+
+		return rest_ensure_response( array( 'message' => $message_row ) );
+	}
+
+	/** Silences future automated replies on a session without sending a message — used when a rule has stopProcessing or unbypassed staffReview. */
+	public function mute_ops_chat_session_automation( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$s_table    = $this->get_chat_sessions_table();
+		$session_id = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || ! $session_id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		$pdb->update( $s_table, array( 'automation_muted' => 1 ), array( 'id' => $session_id ), array( '%d' ), array( '%d' ) );
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	/**
+	 * Closes a session — either the staff "Close conversation" button, or the auto-close cron
+	 * (ajcore_chat_auto_close_stale, class-ajforms.php) for stale open sessions. One shared function
+	 * so manual and automatic closes behave identically, including the transcript email.
+	 */
+	public function close_ops_chat_session( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$s_table    = $this->get_chat_sessions_table();
+		$session_id = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || ! $session_id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		if ( ! $session ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		if ( 'closed' === $session['status'] ) {
+			return rest_ensure_response( array( 'session' => $this->format_chat_session_row( $session ) ) );
+		}
+
+		$now = current_time( 'mysql' );
+		$pdb->update( $s_table, array( 'status' => 'closed', 'closed_at' => $now ), array( 'id' => $session_id ), array( '%s', '%s' ), array( '%d' ) );
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$updated_session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		$formatted       = $this->format_chat_session_row( $updated_session );
+		$this->notify_ajops_chat( $formatted, null );
+
+		$this->maybe_send_chat_transcript_email( $updated_session );
+
+		return rest_ensure_response( array( 'session' => $formatted ) );
+	}
+
+	/** Emails the visitor a transcript when their session closes — silently skipped if they never gave an email, or the templates are all blank. */
+	private function maybe_send_chat_transcript_email( $session ) {
+		$email = trim( (string) ( $session['visitor_email'] ?? '' ) );
+		if ( '' === $email || ! is_email( $email ) ) {
+			return;
+		}
+		$settings    = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$subject_tpl = (string) ( $settings['chat_transcript_email_subject'] ?? '' );
+		$heading_tpl = (string) ( $settings['chat_transcript_email_heading'] ?? '' );
+		$body_tpl    = (string) ( $settings['chat_transcript_email_body'] ?? '' );
+		if ( '' === trim( $subject_tpl . $heading_tpl . $body_tpl ) ) {
+			return;
+		}
+
+		$name       = trim( (string) ( $session['visitor_name'] ?? '' ) );
+		$name_parts = $name ? preg_split( '/\s+/', $name ) : array();
+		$first_name = ! empty( $name_parts[0] ) ? $name_parts[0] : __( 'there', 'ajforms' );
+
+		$replace = array(
+			'{name}'      => $first_name,
+			'{site_name}' => get_bloginfo( 'name' ),
+		);
+		$subject = strtr( $subject_tpl, $replace );
+		$heading = strtr( $heading_tpl, $replace );
+		$body    = strtr( $body_tpl, $replace );
+
+		$pdb     = $this->get_portal_db();
+		$m_table = $this->get_chat_messages_table();
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$messages = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$m_table}` WHERE session_id = %d ORDER BY created_at ASC, id ASC", $session['id'] ), ARRAY_A );
+
+		$transcript_lines = array();
+		foreach ( (array) $messages as $m ) {
+			$who = 'visitor' === $m['sender_type']
+				? ( $name ?: __( 'You', 'ajforms' ) )
+				: ( $m['sender_name'] ?: __( 'Staff', 'ajforms' ) );
+			$transcript_lines[] = esc_html( $who ) . ': ' . esc_html( $m['body'] );
+		}
+
+		$html_body = '<h2>' . esc_html( $heading ) . '</h2><p>' . nl2br( esc_html( $body ) ) . '</p><hr>' . implode( '<br>', $transcript_lines );
+
+		wp_mail( $email, $subject, wp_kses_post( $html_body ), array( 'Content-Type: text/html; charset=UTF-8' ) );
+	}
+
+	/**
+	 * Claims a session for one staff member, so it's clear who's handling it and two people don't
+	 * reply at once. Works identically whether called from WP-admin or relayed by AJOps — both
+	 * authenticate as the actual staff member (AJOps logs a staff member in with their own AJCore
+	 * JWT, same as reply_ops_chat_session() already relies on), so wp_get_current_user() resolves
+	 * correctly either way with no extra identity plumbing needed.
+	 */
+	public function claim_ops_chat_session( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$s_table    = $this->get_chat_sessions_table();
+		$session_id = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || ! $session_id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$user       = wp_get_current_user();
+		$staff_id   = ( $user && $user->exists() ) ? (int) $user->ID : 0;
+		$staff_name = ( $user && $user->exists() ) ? $user->display_name : '';
+		if ( '' === $staff_name ) {
+			return new WP_Error( 'chat_claim_no_identity', __( 'Could not determine the staff member claiming this chat.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$pdb->update(
+			$s_table,
+			array( 'assigned_staff_id' => $staff_id ?: null, 'assigned_staff_name' => $staff_name ),
+			array( 'id' => $session_id ),
+			array( '%d', '%s' ),
+			array( '%d' )
+		);
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$updated_session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		$formatted       = $this->format_chat_session_row( $updated_session );
+		$this->notify_ajops_chat( $formatted, null );
+
+		return rest_ensure_response( array( 'session' => $formatted ) );
+	}
+
+	/** Clears whoever has a session claimed, freeing it up for anyone to pick up. */
+	public function unclaim_ops_chat_session( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$s_table    = $this->get_chat_sessions_table();
+		$session_id = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $s_table ) || ! $session_id ) {
+			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$pdb->update(
+			$s_table,
+			array( 'assigned_staff_id' => null, 'assigned_staff_name' => '' ),
+			array( 'id' => $session_id ),
+			array( '%d', '%s' ),
+			array( '%d' )
+		);
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$updated_session = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$s_table}` WHERE id = %d", $session_id ), ARRAY_A );
+		$formatted       = $this->format_chat_session_row( $updated_session );
+		$this->notify_ajops_chat( $formatted, null );
+
+		return rest_ensure_response( array( 'session' => $formatted ) );
 	}
 
 	public function delete_ops_chat_session( WP_REST_Request $request ) {
@@ -8447,6 +8682,7 @@ class AJCore_REST_API {
 					'to'           => sanitize_text_field( (string) ( $log['to'] ?? '' ) ),
 					'accountKey'   => sanitize_text_field( (string) ( $log['accountKey'] ?? '' ) ),
 					'error'        => sanitize_textarea_field( (string) ( $log['error'] ?? '' ) ),
+					'channel'      => sanitize_text_field( (string) ( $log['channel'] ?? '' ) ),
 				);
 			}
 			update_option( 'ajcore_ajphone_automation_logs', wp_json_encode( $clean_logs ), false );

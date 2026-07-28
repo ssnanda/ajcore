@@ -21260,6 +21260,9 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['chat-bulk-deleted'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( '%d chat(s) deleted.', 'ajforms' ), (int) $_GET['chat-bulk-deleted'] ) ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['chat-closed'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Chat closed.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
@@ -21361,6 +21364,7 @@ class AJForms_Admin {
 							<th><?php esc_html_e( 'Contact', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Site', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'Assigned', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Last Message', 'ajforms' ); ?></th>
 							<th></th>
 						</tr></thead>
@@ -21378,9 +21382,13 @@ class AJForms_Admin {
 										<span style="display:inline-block;padding:1px 7px;border-radius:999px;background:#f1f5f9;color:#64748b;font-size:11px;font-weight:700;"><?php esc_html_e( 'Closed', 'ajforms' ); ?></span>
 									<?php endif; ?>
 								</td>
+								<td><?php echo esc_html( $chat_session['assignedStaffName'] ?: '—' ); ?></td>
 								<td><?php echo esc_html( $chat_session['lastMessageAt'] ?: $chat_session['createdAt'] ); ?></td>
 								<td>
-									<button type="button" class="button button-small button-primary ajforms-chat-view-btn" data-session-id="<?php echo esc_attr( $chat_session['id'] ); ?>" data-visitor="<?php echo esc_attr( $chat_session['visitorName'] ?: ( $chat_session['visitorEmail'] ?: 'Visitor' ) ); ?>"><?php esc_html_e( 'View / Reply', 'ajforms' ); ?></button>
+									<button type="button" class="button button-small button-primary ajforms-chat-view-btn" data-session-id="<?php echo esc_attr( $chat_session['id'] ); ?>" data-visitor="<?php echo esc_attr( $chat_session['visitorName'] ?: ( $chat_session['visitorEmail'] ?: 'Visitor' ) ); ?>" data-assigned="<?php echo esc_attr( $chat_session['assignedStaffName'] ); ?>"><?php esc_html_e( 'View / Reply', 'ajforms' ); ?></button>
+									<?php if ( 'open' === $chat_session['status'] ) : ?>
+										<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'chat_action' => 'close', 'chat_session_id' => $chat_session['id'] ), $base_url ), 'ajcore_chat_close_' . $chat_session['id'] ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Close this chat? The visitor will get an email transcript if they gave one.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Close', 'ajforms' ); ?></a>
+									<?php endif; ?>
 									<a class="button button-small" style="color:#b91c1c;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'chat_action' => 'delete', 'chat_session_id' => $chat_session['id'] ), $base_url ), 'ajcore_chat_delete_' . $chat_session['id'] ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this chat? This cannot be undone.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 								</td>
 							</tr>
@@ -21406,9 +21414,12 @@ class AJForms_Admin {
 
 			<div id="ajforms-chat-thread-modal" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;padding:16px;">
 				<div style="background:#fff;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,0.25);width:100%;max-width:600px;height:80vh;display:flex;flex-direction:column;overflow:hidden;">
-					<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #e5e7eb;">
+					<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #e5e7eb;gap:8px;">
 						<strong id="ajforms-chat-thread-title" style="font-size:13px;"></strong>
-						<button type="button" id="ajforms-chat-thread-close" class="button" style="line-height:1;">✕</button>
+						<div style="display:flex;align-items:center;gap:8px;">
+							<button type="button" id="ajforms-chat-thread-claim" class="button button-small"></button>
+							<button type="button" id="ajforms-chat-thread-close" class="button" style="line-height:1;">✕</button>
+						</div>
 					</div>
 					<div id="ajforms-chat-thread-messages" style="flex:1;overflow-y:auto;padding:12px 16px;"></div>
 					<div style="border-top:1px solid #e5e7eb;padding:10px;display:flex;gap:8px;align-items:flex-end;">
@@ -21425,10 +21436,47 @@ class AJForms_Admin {
 				var input    = document.getElementById( 'ajforms-chat-thread-input' );
 				var sendBtn  = document.getElementById( 'ajforms-chat-thread-send' );
 				var closeBtn = document.getElementById( 'ajforms-chat-thread-close' );
+				var claimBtn = document.getElementById( 'ajforms-chat-thread-claim' );
 				if ( ! modal ) { return; }
 				var nonce = '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>';
+				var currentUserName = <?php echo wp_json_encode( wp_get_current_user()->display_name ); ?>;
 				var currentSessionId = null;
+				var currentAssigned = '';
 				var pollTimer = null;
+
+				function renderClaimBtn() {
+					if ( ! claimBtn ) { return; }
+					if ( ! currentAssigned ) {
+						claimBtn.textContent = <?php echo wp_json_encode( __( 'Claim', 'ajforms' ) ); ?>;
+						claimBtn.style.color = '';
+						claimBtn.onclick = function () { setClaim( true ); };
+					} else if ( currentAssigned === currentUserName ) {
+						claimBtn.textContent = <?php echo wp_json_encode( __( 'Claimed by you · Unclaim', 'ajforms' ) ); ?>;
+						claimBtn.style.color = '#92400e';
+						claimBtn.onclick = function () { setClaim( false ); };
+					} else {
+						claimBtn.textContent = <?php echo wp_json_encode( __( 'Claimed by ', 'ajforms' ) ); ?> + currentAssigned;
+						claimBtn.style.color = '#92400e';
+						claimBtn.onclick = null;
+					}
+				}
+
+				function setClaim( claim ) {
+					if ( ! currentSessionId ) { return; }
+					var action = claim ? 'claim' : 'unclaim';
+					claimBtn.disabled = true;
+					fetch( '<?php echo esc_url_raw( rest_url( 'ajcore/v1/ops/chat/sessions' ) ); ?>/' + currentSessionId + '/' + action, {
+						method: 'POST',
+						headers: { 'X-WP-Nonce': nonce }
+					} )
+						.then( function ( r ) { return r.json(); } )
+						.then( function ( d ) {
+							if ( d && d.session ) { currentAssigned = d.session.assignedStaffName || ''; }
+							renderClaimBtn();
+						} )
+						.catch( function () {} )
+						.finally( function () { claimBtn.disabled = false; } );
+				}
 
 				function escapeHtml( s ) {
 					var d = document.createElement( 'div' );
@@ -21456,9 +21504,11 @@ class AJForms_Admin {
 						.catch( function () {} );
 				}
 
-				function openThread( sessionId, visitorLabel ) {
+				function openThread( sessionId, visitorLabel, assignedName ) {
 					currentSessionId = sessionId;
+					currentAssigned = assignedName || '';
 					title.textContent = visitorLabel;
+					renderClaimBtn();
 					msgBox.innerHTML = '<?php echo esc_js( __( 'Loading…', 'ajforms' ) ); ?>';
 					modal.style.display = 'flex';
 					loadMessages();
@@ -21474,7 +21524,7 @@ class AJForms_Admin {
 
 				document.querySelectorAll( '.ajforms-chat-view-btn' ).forEach( function ( btn ) {
 					btn.addEventListener( 'click', function () {
-						openThread( btn.getAttribute( 'data-session-id' ), btn.getAttribute( 'data-visitor' ) );
+						openThread( btn.getAttribute( 'data-session-id' ), btn.getAttribute( 'data-visitor' ), btn.getAttribute( 'data-assigned' ) );
 					} );
 				} );
 				if ( closeBtn ) { closeBtn.addEventListener( 'click', closeThread ); }
@@ -21486,7 +21536,7 @@ class AJForms_Admin {
 					var deepLinkId = new URLSearchParams( window.location.search ).get( 'chat_session' );
 					if ( ! deepLinkId ) { return; }
 					var matchingBtn = document.querySelector( '.ajforms-chat-view-btn[data-session-id="' + deepLinkId + '"]' );
-					openThread( deepLinkId, matchingBtn ? matchingBtn.getAttribute( 'data-visitor' ) : <?php echo wp_json_encode( __( 'Visitor', 'ajforms' ) ); ?> );
+					openThread( deepLinkId, matchingBtn ? matchingBtn.getAttribute( 'data-visitor' ) : <?php echo wp_json_encode( __( 'Visitor', 'ajforms' ) ); ?>, matchingBtn ? matchingBtn.getAttribute( 'data-assigned' ) : '' );
 					var cleanUrl = window.location.href.replace( /([?&])chat_session=[^&]*(&|$)/, function ( m, p1, p2 ) { return p2 === '&' ? p1 : ''; } ).replace( /[?&]$/, '' );
 					window.history.replaceState( {}, '', cleanUrl );
 				})();
@@ -21528,25 +21578,63 @@ class AJForms_Admin {
 		}
 		$action = sanitize_key( wp_unslash( $_GET['chat_action'] ) );
 		$id     = absint( $_GET['chat_session_id'] );
-		if ( 'delete' !== $action || ! $id ) {
+		if ( ! in_array( $action, array( 'delete', 'close' ), true ) || ! $id ) {
 			return;
 		}
-		check_admin_referer( 'ajcore_chat_delete_' . $id );
+		check_admin_referer( 'ajcore_chat_' . $action . '_' . $id );
 
 		$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'chat' );
 		if ( class_exists( 'AJCore_REST_API' ) ) {
 			$rest    = new AJCore_REST_API();
-			$request = new WP_REST_Request( 'DELETE' );
+			$request = new WP_REST_Request( 'delete' === $action ? 'DELETE' : 'POST' );
 			$request->set_param( 'id', $id );
-			$result = $rest->delete_ops_chat_session( $request );
+			$result = 'delete' === $action ? $rest->delete_ops_chat_session( $request ) : $rest->close_ops_chat_session( $request );
 			if ( is_wp_error( $result ) ) {
 				$args['portal-error'] = rawurlencode( $result->get_error_message() );
 			} else {
-				$args['chat-deleted'] = 1;
+				$args[ 'delete' === $action ? 'chat-deleted' : 'chat-closed' ] = 1;
 			}
 		}
 		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
+	}
+
+	/**
+	 * Auto-closes Live Chat sessions with no activity for chat_auto_close_hours (0/blank =
+	 * disabled), hourly via WP-Cron (ajcore_chat_auto_close_stale, registered in class-ajforms.php).
+	 * Reuses close_ops_chat_session() so manual and automatic closes behave identically, including
+	 * the transcript email.
+	 */
+	public function run_chat_auto_close_job() {
+		if ( ! class_exists( 'AJCore_REST_API' ) ) {
+			return;
+		}
+		$settings = $this->get_plugin_settings();
+		$hours    = absint( $settings['chat_auto_close_hours'] ?? 0 );
+		if ( $hours < 1 ) {
+			return;
+		}
+		$pdb   = $this->get_pdb();
+		$table = $pdb->prefix . 'aj_portal_chat_sessions';
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return;
+		}
+		$stale_ids = $pdb->get_col(
+			$pdb->prepare(
+				"SELECT id FROM `{$table}` WHERE status = 'open' AND last_message_at IS NOT NULL AND last_message_at < DATE_SUB(%s, INTERVAL %d HOUR)",
+				current_time( 'mysql' ),
+				$hours
+			)
+		);
+		if ( empty( $stale_ids ) ) {
+			return;
+		}
+		$rest = new AJCore_REST_API();
+		foreach ( $stale_ids as $id ) {
+			$request = new WP_REST_Request( 'POST' );
+			$request->set_param( 'id', $id );
+			$rest->close_ops_chat_session( $request );
+		}
 	}
 
 	private function handle_portal_chat_bulk_action() {
@@ -27634,6 +27722,12 @@ class AJForms_Admin {
 			if ( isset( $_POST['chat_notify_secret'] ) && '' !== trim( wp_unslash( $_POST['chat_notify_secret'] ) ) ) {
 				$settings['chat_notify_secret'] = sanitize_text_field( wp_unslash( $_POST['chat_notify_secret'] ) );
 			}
+			$settings['chat_business_hours_enabled'] = isset( $_POST['chat_business_hours_enabled'] ) ? '1' : '0';
+			$settings['chat_business_hours']          = isset( $_POST['chat_business_hours'] ) ? sanitize_text_field( wp_unslash( $_POST['chat_business_hours'] ) ) : '';
+			$settings['chat_auto_close_hours']         = isset( $_POST['chat_auto_close_hours'] ) ? absint( $_POST['chat_auto_close_hours'] ) : 0;
+			$settings['chat_transcript_email_subject'] = isset( $_POST['chat_transcript_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['chat_transcript_email_subject'] ) ) : '';
+			$settings['chat_transcript_email_heading'] = isset( $_POST['chat_transcript_email_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['chat_transcript_email_heading'] ) ) : '';
+			$settings['chat_transcript_email_body']    = isset( $_POST['chat_transcript_email_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['chat_transcript_email_body'] ) ) : '';
 		}
 
 		update_option( 'ajforms_settings', $settings );
@@ -27719,6 +27813,45 @@ class AJForms_Admin {
 						<input type="text" name="chat_notify_url" id="chat_notify_url" value="<?php echo esc_attr( $settings['chat_notify_url'] ?? '' ); ?>" placeholder="<?php esc_attr_e( 'Leave blank to use the URL above', 'ajforms' ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Only needed if this WordPress server can\'t reach the URL above directly — e.g. local dev, where the browser and this server resolve "AJOps" differently (http://localhost:3000 vs http://host.docker.internal:3000). Leave blank in production.', 'ajforms' ); ?></div>
 					</div>
+				</div>
+
+				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Business hours', 'ajforms' ); ?></h3>
+				<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'Shows an offline banner in the widget outside these hours — chat still works, it just sets expectations on reply time.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-field" style="margin-bottom:16px;">
+					<label style="display:flex;align-items:center;gap:8px;font-weight:600;">
+						<input type="checkbox" name="chat_business_hours_enabled" value="1" <?php checked( '1', $settings['chat_business_hours_enabled'] ?? '0' ); ?> <?php disabled( $read_only ); ?>>
+						<?php esc_html_e( 'Show an offline banner outside business hours', 'ajforms' ); ?>
+					</label>
+				</div>
+				<div class="ajforms-settings-grid">
+					<div class="ajforms-settings-field">
+						<label for="chat_business_hours"><?php esc_html_e( 'Business Hours', 'ajforms' ); ?></label>
+						<input type="text" name="chat_business_hours" id="chat_business_hours" value="<?php echo esc_attr( $settings['chat_business_hours'] ?? '' ); ?>" placeholder="Mon-Fri 09:00-17:00" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Format: "Mon-Fri 09:00-17:00" (24-hour time, visitor\'s local clock, single range).', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="chat_auto_close_hours"><?php esc_html_e( 'Auto-close after (hours)', 'ajforms' ); ?></label>
+						<input type="number" min="0" name="chat_auto_close_hours" id="chat_auto_close_hours" value="<?php echo esc_attr( $settings['chat_auto_close_hours'] ?? '24' ); ?>" <?php disabled( $read_only ); ?>>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Open chats with no activity for this long auto-close. 0 disables auto-close.', 'ajforms' ); ?></div>
+					</div>
+				</div>
+
+				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Transcript email', 'ajforms' ); ?></h3>
+				<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'Sent to the visitor (if they gave an email) whenever a chat closes, manually or via auto-close.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-grid">
+					<div class="ajforms-settings-field">
+						<label for="chat_transcript_email_subject"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
+						<input type="text" name="chat_transcript_email_subject" id="chat_transcript_email_subject" value="<?php echo esc_attr( $settings['chat_transcript_email_subject'] ?? '' ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="chat_transcript_email_heading"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
+						<input type="text" name="chat_transcript_email_heading" id="chat_transcript_email_heading" value="<?php echo esc_attr( $settings['chat_transcript_email_heading'] ?? '' ); ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+					</div>
+				</div>
+				<div class="ajforms-settings-field" style="margin-top:12px;">
+					<label for="chat_transcript_email_body"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
+					<textarea name="chat_transcript_email_body" id="chat_transcript_email_body" rows="4" style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:12px;padding:10px 13px;font-family:inherit;font-size:14px;" <?php disabled( $read_only ); ?>><?php echo esc_textarea( $settings['chat_transcript_email_body'] ?? '' ); ?></textarea>
+					<div class="ajforms-settings-help"><?php esc_html_e( 'Placeholder: {name}. The full message transcript is appended automatically below this text.', 'ajforms' ); ?></div>
 				</div>
 
 				<p style="margin-top:20px;">

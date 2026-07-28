@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.131
+ * Version: 0.7.132
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.131' );
+	define( 'AJCORE_VERSION', '0.7.132' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -184,6 +184,16 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'chat_notify_url'                => '',
 			'chat_notify_secret'            => '',
 			'chat_widget_enabled'           => '0',
+			// Business hours gate for the widget's offline banner — a simple "Mon-Fri 09:00-17:00"
+			// style string parsed client-side (widget evaluates it against the visitor's local
+			// clock), not a full per-day schedule builder.
+			'chat_business_hours_enabled'   => '0',
+			'chat_business_hours'           => 'Mon-Fri 09:00-17:00',
+			// 0 = disabled. Hours of no activity before an open session auto-closes.
+			'chat_auto_close_hours'         => '24',
+			'chat_transcript_email_subject' => 'Your chat transcript from {site_name}',
+			'chat_transcript_email_heading' => 'Here\'s a copy of your chat',
+			'chat_transcript_email_body'    => "Hi {name},\nThanks for chatting with us. Here's a copy of your conversation for your records.",
 			'default_success_message'       => 'Form submitted successfully.',
 			'validation_mode'               => 'native',
 			'require_unique_form_names'     => '1',
@@ -1009,6 +1019,12 @@ if ( ! function_exists( 'ajcore_get_chat_setting_keys' ) ) {
 			'chat_server_url',
 			'chat_notify_url',
 			'chat_notify_secret',
+			'chat_business_hours_enabled',
+			'chat_business_hours',
+			'chat_auto_close_hours',
+			'chat_transcript_email_subject',
+			'chat_transcript_email_heading',
+			'chat_transcript_email_body',
 		);
 	}
 }
@@ -1188,7 +1204,7 @@ function ajforms_maybe_upgrade() {
 	// re-deploy that keeps the same plugin version number will match this check and skip the
 	// migration entirely, silently leaving the new column/table missing on already-migrated
 	// installs (schema drift that showed up in production as leads queries erroring out).
-	if ( AJFORMS_VERSION === $installed_version && '38' === $portal_schema_version ) {
+	if ( AJFORMS_VERSION === $installed_version && '39' === $portal_schema_version ) {
 		return;
 	}
 
@@ -1346,7 +1362,9 @@ function ajcore_render_chat_widget() {
 	<script>
 		window.AJCoreChatConfig = {
 			serverUrl: <?php echo wp_json_encode( $server_url ); ?>,
-			siteUuid: <?php echo wp_json_encode( $site_uuid ); ?>
+			siteUuid: <?php echo wp_json_encode( $site_uuid ); ?>,
+			businessHoursEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['chat_business_hours_enabled'] ?? '' ) ); ?>,
+			businessHours: <?php echo wp_json_encode( (string) ( $settings['chat_business_hours'] ?? '' ) ); ?>
 		};
 	</script>
 	<script src="<?php echo esc_url( AJFORMS_PLUGIN_URL . 'assets/js/ajcore-chat-widget.js' ); ?>?v=<?php echo esc_attr( AJFORMS_VERSION ); ?>" defer></script>

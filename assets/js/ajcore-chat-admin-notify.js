@@ -88,6 +88,27 @@
 		return d.innerHTML;
 	}
 
+	// ── Native OS-level notification (shows even if the browser is minimized/backgrounded, not
+	// just the in-page bubble above) ────────────────────────────────────────────
+	// No persistent toolbar exists in WP-admin to put an opt-in bell button on (this script runs
+	// admin-wide, not just on the Live Chat tab), so permission is requested the first time there's
+	// something worth notifying about, rather than an explicit opt-in click like AJOps/AJPhone use.
+	function notifyDesktop(title, body, url) {
+		if (typeof window.Notification === "undefined") return;
+		if (Notification.permission === "granted") {
+			try {
+				var n = new Notification(title, { body: body });
+				n.onclick = function () {
+					window.focus();
+					window.top.location.href = url;
+					n.close();
+				};
+			} catch (e) { /* some browsers block programmatic notifications */ }
+		} else if (Notification.permission === "default") {
+			Notification.requestPermission();
+		}
+	}
+
 	// ── Polling ──────────────────────────────────────────────────────────────
 	function poll() {
 		fetch(config.restUrl + "?status=open&per_page=50", {
@@ -111,6 +132,11 @@
 					playChime();
 					var who = newest.session.visitorName || newest.session.visitorEmail || newest.session.visitorPhone || "a visitor";
 					showBubble(who, "New activity in Live Chat", newest.session.id);
+					notifyDesktop(
+						"New message from " + who,
+						"New activity in Live Chat",
+						config.liveChatUrl + "&chat_session=" + encodeURIComponent(newest.session.id)
+					);
 				}
 				// First-ever poll on a fresh browser: just set the baseline, don't notify for
 				// pre-existing chats that were already there before this script ever ran.

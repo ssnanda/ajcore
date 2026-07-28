@@ -68,6 +68,7 @@ class AJForms {
 		add_action( 'ajcore_portal_stripe_sync', array( $plugin_admin, 'run_scheduled_portal_sync_job' ) );
 		add_action( 'ajcore_compliance_reminders', array( $plugin_admin, 'run_compliance_reminder_job' ) );
 		add_action( 'ajcore_local_recurring_transactions', array( $plugin_admin, 'run_local_recurring_transactions_job' ) );
+		add_action( 'ajcore_chat_auto_close_stale', array( $plugin_admin, 'run_chat_auto_close_job' ) );
 		add_action( 'ajcore_manual_sync_run', array( $plugin_admin, 'run_manual_sync_job_from_transient' ) );
 
 		add_action( 'admin_enqueue_scripts',   array( $this, 'enqueue_username_edit_script' ) );
@@ -108,6 +109,9 @@ class AJForms {
 		}
 		if ( ! wp_next_scheduled( 'ajcore_local_recurring_transactions' ) ) {
 			wp_schedule_event( time() + 5 * MINUTE_IN_SECONDS, 'daily', 'ajcore_local_recurring_transactions' );
+		}
+		if ( ! wp_next_scheduled( 'ajcore_chat_auto_close_stale' ) ) {
+			wp_schedule_event( time() + 15 * MINUTE_IN_SECONDS, 'hourly', 'ajcore_chat_auto_close_stale' );
 		}
 
 		$settings = get_option( 'ajcore_portal_sync_settings', array() );
