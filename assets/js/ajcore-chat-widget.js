@@ -446,11 +446,21 @@
 	}
 	function isValidPhone(value) {
 		// Reject letters/symbols outright, then require a real dialable digit count — 10 (US local)
-		// up to 15 (E.164 max, for international visitors with a country code). The previous ">= 7"
-		// floor let through short non-numbers like "70430721" (8 digits, not a real phone number).
+		// up to 15 (E.164 max, for international visitors with a country code).
 		if (!/^[0-9+()\-.\s]+$/.test(value)) return false;
-		var digits = value.replace(/[^0-9]/g, "").length;
-		return digits >= 10 && digits <= 15;
+		var digits = value.replace(/[^0-9]/g, "");
+		if (digits.length < 10 || digits.length > 15) return false;
+		// Same digit repeated the whole way through ("1111111111", "111111111111") is never a real
+		// number at any length, so this check runs before/independent of the NANP check below.
+		if (/^(\d)\1+$/.test(digits)) return false;
+		// A bare 10-digit number, or 11 with a leading country code "1", is meant to be a North
+		// American number — apply NANP's actual structure: both the area code and exchange code
+		// must start with 2-9 (0/1 are reserved prefixes), which is what actually flags something
+		// like "1231231234" as fake even though it has the right digit count and no repeated digit.
+		// International numbers of other lengths skip this (their own numbering rules don't apply).
+		var nanp = digits.length === 11 && digits.charAt(0) === "1" ? digits.slice(1) : digits;
+		if (nanp.length === 10 && !/^[2-9]\d{2}[2-9]\d{6}$/.test(nanp)) return false;
+		return true;
 	}
 
 	// ── Rendering ────────────────────────────────────────────────────────────
@@ -576,7 +586,7 @@
 			'<div class="aj-field-error" id="ajcore-chat-name-error"></div>' +
 			'<input type="email" id="ajcore-chat-email" placeholder="you@example.com" required>' +
 			'<div class="aj-field-error" id="ajcore-chat-email-error"></div>' +
-			'<input type="tel" id="ajcore-chat-phone" placeholder="(555) 123-4567" required>' +
+			'<input type="tel" id="ajcore-chat-phone" placeholder="(704) 555-0123" required>' +
 			'<div class="aj-field-error" id="ajcore-chat-phone-error"></div>' +
 			'<textarea id="ajcore-chat-first-message" rows="3" placeholder="How can we help?" required></textarea>' +
 			'<div class="aj-field-error" id="ajcore-chat-message-error"></div>' +
@@ -613,7 +623,7 @@
 		var validateEmail = fieldValidator(emailInput, form.querySelector("#ajcore-chat-email-error"),
 			isValidEmail, "Please enter a valid email address, like you@example.com.");
 		var validatePhone = fieldValidator(phoneInput, form.querySelector("#ajcore-chat-phone-error"),
-			isValidPhone, "Please enter a valid phone number, like (555) 123-4567.");
+			isValidPhone, "Please enter a valid phone number, like (704) 555-0123.");
 		var validateMessage = fieldValidator(messageInput, form.querySelector("#ajcore-chat-message-error"),
 			function (v) { return v.length > 0; }, "Please tell us how we can help.");
 
