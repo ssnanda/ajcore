@@ -27769,6 +27769,13 @@ class AJForms_Admin {
 		$is_shared_db = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
 		$is_master    = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
 		$read_only    = $is_shared_db && ! $is_master;
+		$secret_preview = static function ( $value ) {
+			$value = (string) $value;
+			if ( '' === $value ) {
+				return __( 'Not generated', 'ajforms' );
+			}
+			return substr( $value, 0, 6 ) . '••••••••' . substr( $value, -6 ) . ' (' . strlen( $value ) . ' characters)';
+		};
 		?>
 		<style>
 			#ajforms-chat-section .ajforms-settings-field input[type="text"],
@@ -27819,18 +27826,21 @@ class AJForms_Admin {
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Sent to visitor browsers for the widget\'s connection. No trailing slash.', 'ajforms' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
-						<label for="chat_notify_secret"><?php esc_html_e( 'Notify Secret', 'ajforms' ); ?></label>
-						<input type="text" name="chat_notify_secret" id="chat_notify_secret" value="" placeholder="<?php echo ! empty( $settings['chat_notify_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
+						<label for="chat_notify_secret_preview"><?php esc_html_e( 'Notify Secret', 'ajforms' ); ?></label>
+						<input type="text" id="chat_notify_secret_preview" value="<?php echo esc_attr( $secret_preview( $settings['chat_notify_secret'] ?? '' ) ); ?>" readonly>
+						<input type="hidden" name="chat_notify_secret" id="chat_notify_secret" value="">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Authenticates AJCore webhook notifications. Synced to AJOps automatically by oc-deploy.', 'ajforms' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
-						<label for="chat_ws_token_secret"><?php esc_html_e( 'WebSocket Token Secret', 'ajforms' ); ?></label>
-						<input type="password" name="chat_ws_token_secret" id="chat_ws_token_secret" value="" placeholder="<?php echo ! empty( $settings['chat_ws_token_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="new-password" <?php disabled( $read_only ); ?>>
+						<label for="chat_ws_token_secret_preview"><?php esc_html_e( 'WebSocket Token Secret', 'ajforms' ); ?></label>
+						<input type="text" id="chat_ws_token_secret_preview" value="<?php echo esc_attr( $secret_preview( $settings['chat_ws_token_secret'] ?? '' ) ); ?>" readonly>
+						<input type="hidden" name="chat_ws_token_secret" id="chat_ws_token_secret" value="">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Signs short-lived AJOps staff WebSocket tokens. Synced automatically by oc-deploy.', 'ajforms' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
-						<label for="chat_internal_secret"><?php esc_html_e( 'Internal Relay Secret', 'ajforms' ); ?></label>
-						<input type="password" name="chat_internal_secret" id="chat_internal_secret" value="" placeholder="<?php echo ! empty( $settings['chat_internal_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="new-password" <?php disabled( $read_only ); ?>>
+						<label for="chat_internal_secret_preview"><?php esc_html_e( 'Internal Relay Secret', 'ajforms' ); ?></label>
+						<input type="text" id="chat_internal_secret_preview" value="<?php echo esc_attr( $secret_preview( $settings['chat_internal_secret'] ?? '' ) ); ?>" readonly>
+						<input type="hidden" name="chat_internal_secret" id="chat_internal_secret" value="">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Authenticates AJOps internal visitor-message relay. Synced automatically by oc-deploy.', 'ajforms' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
@@ -27839,6 +27849,45 @@ class AJForms_Admin {
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Only needed if this WordPress server can\'t reach the URL above directly — e.g. local dev, where the browser and this server resolve "AJOps" differently (http://localhost:3000 vs http://host.docker.internal:3000). Leave blank in production.', 'ajforms' ); ?></div>
 					</div>
 				</div>
+				<?php if ( ! $read_only ) : ?>
+					<div style="margin:14px 0 20px;">
+						<button type="button" class="button" id="ajforms-chat-generate-secrets"><?php esc_html_e( 'Generate / Rotate All Secrets', 'ajforms' ); ?></button>
+						<span id="ajforms-chat-secrets-status" style="display:none;margin-left:8px;color:#92400e;font-size:12px;"><?php esc_html_e( 'New secrets generated. Save Changes, then redeploy AJOps.', 'ajforms' ); ?></span>
+					</div>
+					<script>
+					(function() {
+						var button = document.getElementById( 'ajforms-chat-generate-secrets' );
+						var status = document.getElementById( 'ajforms-chat-secrets-status' );
+						if ( ! button || ! window.crypto || ! window.crypto.getRandomValues ) { return; }
+
+						function randomSecret() {
+							var bytes = new Uint8Array( 32 );
+							window.crypto.getRandomValues( bytes );
+							return Array.prototype.map.call( bytes, function( value ) {
+								return value.toString( 16 ).padStart( 2, '0' );
+							} ).join( '' );
+						}
+
+						function stageSecret( fieldId ) {
+							var field = document.getElementById( fieldId );
+							var preview = document.getElementById( fieldId + '_preview' );
+							var value = randomSecret();
+							field.value = value;
+							preview.value = value.slice( 0, 6 ) + '••••••••' + value.slice( -6 ) + ' (64 characters, pending save)';
+						}
+
+						button.addEventListener( 'click', function() {
+							if ( ! window.confirm( <?php echo wp_json_encode( __( 'Rotate all Live Chat secrets? Existing live connections and webhook delivery will stop working until you save these settings and redeploy AJOps.', 'ajforms' ) ); ?> ) ) {
+								return;
+							}
+							stageSecret( 'chat_notify_secret' );
+							stageSecret( 'chat_ws_token_secret' );
+							stageSecret( 'chat_internal_secret' );
+							status.style.display = 'inline';
+						} );
+					})();
+					</script>
+				<?php endif; ?>
 
 				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Business hours', 'ajforms' ); ?></h3>
 				<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'Shows an offline banner in the widget outside these hours — chat still works, it just sets expectations on reply time.', 'ajforms' ); ?></p>
