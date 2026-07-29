@@ -69,6 +69,9 @@
 		"#ajcore-chat-form{padding:14px;display:flex;flex-direction:column;gap:8px;}" +
 		"#ajcore-chat-form input,#ajcore-chat-form textarea{border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;}" +
 		"#ajcore-chat-form textarea{resize:none;}" +
+		"#ajcore-chat-form input.aj-invalid,#ajcore-chat-form textarea.aj-invalid{border-color:#dc2626;background:#fef2f2;}" +
+		"#ajcore-chat-form .aj-field-error{display:none;color:#dc2626;font-size:11px;line-height:1.3;margin-top:-4px;}" +
+		"#ajcore-chat-form .aj-field-error.show{display:block;}" +
 		"#ajcore-chat-form button{background:#3157ff;color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;}" +
 		".ajcore-chat-msg{margin:0 0 8px;max-width:82%;padding:8px 11px;border-radius:10px;font-size:13px;line-height:1.4;word-wrap:break-word;}" +
 		".ajcore-chat-msg.visitor{background:#3157ff;color:#fff;margin-left:auto;}" +
@@ -568,37 +571,66 @@
 		form.id = "ajcore-chat-form";
 		form.innerHTML =
 			'<input type="text" id="ajcore-chat-name" placeholder="Your name" required>' +
-			'<input type="email" id="ajcore-chat-email" placeholder="Email" required>' +
-			'<input type="tel" id="ajcore-chat-phone" placeholder="Phone" required>' +
+			'<div class="aj-field-error" id="ajcore-chat-name-error"></div>' +
+			'<input type="email" id="ajcore-chat-email" placeholder="you@example.com" required>' +
+			'<div class="aj-field-error" id="ajcore-chat-email-error"></div>' +
+			'<input type="tel" id="ajcore-chat-phone" placeholder="(555) 123-4567" required>' +
+			'<div class="aj-field-error" id="ajcore-chat-phone-error"></div>' +
 			'<textarea id="ajcore-chat-first-message" rows="3" placeholder="How can we help?" required></textarea>' +
-			'<div id="ajcore-chat-form-error" style="display:none;color:#dc2626;font-size:12px;margin-top:-2px;"></div>' +
+			'<div class="aj-field-error" id="ajcore-chat-message-error"></div>' +
 			'<button type="button" id="ajcore-chat-start">Start Chat</button>';
 		body.appendChild(form);
 
-		var errorEl = form.querySelector("#ajcore-chat-form-error");
-		function showFormError(msg) {
-			errorEl.textContent = msg;
-			errorEl.style.display = "block";
+		// Validates one field on blur (and re-validates on input once it's already flagged invalid,
+		// so the error clears the moment the visitor fixes it rather than only on the next blur) —
+		// catches format mistakes as the visitor moves through the form instead of all at once after
+		// they hit Start Chat. Returns the same check so the submit handler below can reuse it as
+		// the final gate without duplicating the validation rule.
+		function fieldValidator(input, errorEl, validate, message) {
+			function run() {
+				var ok = validate(input.value.trim());
+				input.classList.toggle("aj-invalid", !ok);
+				errorEl.textContent = ok ? "" : message;
+				errorEl.classList.toggle("show", !ok);
+				return ok;
+			}
+			input.addEventListener("blur", run);
+			input.addEventListener("input", function () {
+				if (input.classList.contains("aj-invalid")) run();
+			});
+			return run;
 		}
 
+		var nameInput = form.querySelector("#ajcore-chat-name");
+		var emailInput = form.querySelector("#ajcore-chat-email");
+		var phoneInput = form.querySelector("#ajcore-chat-phone");
+		var messageInput = form.querySelector("#ajcore-chat-first-message");
+
+		var validateName = fieldValidator(nameInput, form.querySelector("#ajcore-chat-name-error"),
+			function (v) { return v.length > 0; }, "Please enter your name.");
+		var validateEmail = fieldValidator(emailInput, form.querySelector("#ajcore-chat-email-error"),
+			isValidEmail, "Please enter a valid email address, like you@example.com.");
+		var validatePhone = fieldValidator(phoneInput, form.querySelector("#ajcore-chat-phone-error"),
+			isValidPhone, "Please enter a valid phone number, like (555) 123-4567.");
+		var validateMessage = fieldValidator(messageInput, form.querySelector("#ajcore-chat-message-error"),
+			function (v) { return v.length > 0; }, "Please tell us how we can help.");
+
 		form.querySelector("#ajcore-chat-start").addEventListener("click", function () {
-			var name = form.querySelector("#ajcore-chat-name").value.trim();
-			var email = form.querySelector("#ajcore-chat-email").value.trim();
-			var phone = form.querySelector("#ajcore-chat-phone").value.trim();
-			var message = form.querySelector("#ajcore-chat-first-message").value.trim();
-			if (!name || !email || !phone || !message) {
-				showFormError("Please fill in all fields.");
+			// && (not ||-short-circuit) so every invalid field gets its error shown at once, not just
+			// the first one — validateName() etc. already set the classes/messages as a side effect.
+			var nameOk = validateName();
+			var emailOk = validateEmail();
+			var phoneOk = validatePhone();
+			var messageOk = validateMessage();
+			if (!nameOk || !emailOk || !phoneOk || !messageOk) {
+				(nameOk ? (emailOk ? (phoneOk ? messageInput : phoneInput) : emailInput) : nameInput).focus();
 				return;
 			}
-			if (!isValidEmail(email)) {
-				showFormError("Please enter a valid email address.");
-				return;
-			}
-			if (!isValidPhone(phone)) {
-				showFormError("Please enter a valid phone number.");
-				return;
-			}
-			errorEl.style.display = "none";
+
+			var name = nameInput.value.trim();
+			var email = emailInput.value.trim();
+			var phone = phoneInput.value.trim();
+			var message = messageInput.value.trim();
 			visitorName = name;
 			visitorEmail = email;
 			visitorPhone = phone;
