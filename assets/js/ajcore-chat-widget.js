@@ -437,6 +437,17 @@
 		} catch (e) { /* autoplay can be blocked before any user interaction — not worth surfacing */ }
 	}
 
+	// ── Pre-chat form validation ─────────────────────────────────────────────
+	function isValidEmail(value) {
+		return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
+	}
+	function isValidPhone(value) {
+		// Reject letters/symbols outright, then require enough digits for a real phone number —
+		// catches both "abc" (fails the character check) and "12" (right characters, too few of them).
+		if (!/^[0-9+()\-.\s]+$/.test(value)) return false;
+		return value.replace(/[^0-9]/g, "").length >= 7;
+	}
+
 	// ── Rendering ────────────────────────────────────────────────────────────
 	function escapeHtml(s) {
 		var d = document.createElement("div");
@@ -560,8 +571,15 @@
 			'<input type="email" id="ajcore-chat-email" placeholder="Email" required>' +
 			'<input type="tel" id="ajcore-chat-phone" placeholder="Phone" required>' +
 			'<textarea id="ajcore-chat-first-message" rows="3" placeholder="How can we help?" required></textarea>' +
+			'<div id="ajcore-chat-form-error" style="display:none;color:#dc2626;font-size:12px;margin-top:-2px;"></div>' +
 			'<button type="button" id="ajcore-chat-start">Start Chat</button>';
 		body.appendChild(form);
+
+		var errorEl = form.querySelector("#ajcore-chat-form-error");
+		function showFormError(msg) {
+			errorEl.textContent = msg;
+			errorEl.style.display = "block";
+		}
 
 		form.querySelector("#ajcore-chat-start").addEventListener("click", function () {
 			var name = form.querySelector("#ajcore-chat-name").value.trim();
@@ -569,8 +587,18 @@
 			var phone = form.querySelector("#ajcore-chat-phone").value.trim();
 			var message = form.querySelector("#ajcore-chat-first-message").value.trim();
 			if (!name || !email || !phone || !message) {
+				showFormError("Please fill in all fields.");
 				return;
 			}
+			if (!isValidEmail(email)) {
+				showFormError("Please enter a valid email address.");
+				return;
+			}
+			if (!isValidPhone(phone)) {
+				showFormError("Please enter a valid phone number.");
+				return;
+			}
+			errorEl.style.display = "none";
 			visitorName = name;
 			visitorEmail = email;
 			visitorPhone = phone;
