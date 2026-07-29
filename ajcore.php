@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.137
+ * Version: 0.7.138
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.137' );
+	define( 'AJCORE_VERSION', '0.7.138' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -183,6 +183,8 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// vs http://localhost:3000), and no single URL is reachable from both.
 			'chat_notify_url'                => '',
 			'chat_notify_secret'            => '',
+			'chat_ws_token_secret'          => '',
+			'chat_internal_secret'          => '',
 			'chat_widget_enabled'           => '0',
 			// Business hours gate for the widget's offline banner — a simple "Mon-Fri 09:00-17:00"
 			// style string parsed client-side (widget evaluates it against the visitor's local
@@ -1019,6 +1021,8 @@ if ( ! function_exists( 'ajcore_get_chat_setting_keys' ) ) {
 			'chat_server_url',
 			'chat_notify_url',
 			'chat_notify_secret',
+			'chat_ws_token_secret',
+			'chat_internal_secret',
 			'chat_business_hours_enabled',
 			'chat_business_hours',
 			'chat_auto_close_hours',

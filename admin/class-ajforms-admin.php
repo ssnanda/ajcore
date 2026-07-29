@@ -27721,6 +27721,18 @@ class AJForms_Admin {
 			$settings['chat_notify_url'] = isset( $_POST['chat_notify_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['chat_notify_url'] ) ) ) : '';
 			if ( isset( $_POST['chat_notify_secret'] ) && '' !== trim( wp_unslash( $_POST['chat_notify_secret'] ) ) ) {
 				$settings['chat_notify_secret'] = sanitize_text_field( wp_unslash( $_POST['chat_notify_secret'] ) );
+			} elseif ( empty( $settings['chat_notify_secret'] ) ) {
+				$settings['chat_notify_secret'] = wp_generate_password( 64, false, false );
+			}
+			if ( isset( $_POST['chat_ws_token_secret'] ) && '' !== trim( wp_unslash( $_POST['chat_ws_token_secret'] ) ) ) {
+				$settings['chat_ws_token_secret'] = sanitize_text_field( wp_unslash( $_POST['chat_ws_token_secret'] ) );
+			} elseif ( empty( $settings['chat_ws_token_secret'] ) ) {
+				$settings['chat_ws_token_secret'] = wp_generate_password( 64, false, false );
+			}
+			if ( isset( $_POST['chat_internal_secret'] ) && '' !== trim( wp_unslash( $_POST['chat_internal_secret'] ) ) ) {
+				$settings['chat_internal_secret'] = sanitize_text_field( wp_unslash( $_POST['chat_internal_secret'] ) );
+			} elseif ( empty( $settings['chat_internal_secret'] ) ) {
+				$settings['chat_internal_secret'] = wp_generate_password( 64, false, false );
 			}
 			$settings['chat_business_hours_enabled'] = isset( $_POST['chat_business_hours_enabled'] ) ? '1' : '0';
 			$settings['chat_business_hours']          = isset( $_POST['chat_business_hours'] ) ? sanitize_text_field( wp_unslash( $_POST['chat_business_hours'] ) ) : '';
@@ -27776,6 +27788,9 @@ class AJForms_Admin {
 				);
 				?>
 			</p>
+			<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;">
+				<?php esc_html_e( 'AJCore automatically generates any missing Live Chat secrets when you save this page. Leave the secret fields blank to keep their saved values; enter a new value only when intentionally rotating one.', 'ajforms' ); ?>
+			</p>
 
 			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ajforms' ); ?></p></div>
@@ -27806,7 +27821,17 @@ class AJForms_Admin {
 					<div class="ajforms-settings-field">
 						<label for="chat_notify_secret"><?php esc_html_e( 'Notify Secret', 'ajforms' ); ?></label>
 						<input type="text" name="chat_notify_secret" id="chat_notify_secret" value="" placeholder="<?php echo ! empty( $settings['chat_notify_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="off" <?php disabled( $read_only ); ?>>
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Any random string. Must match CHAT_NOTIFY_SECRET in the AJOps deployment.', 'ajforms' ); ?></div>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Authenticates AJCore webhook notifications. Synced to AJOps automatically by oc-deploy.', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="chat_ws_token_secret"><?php esc_html_e( 'WebSocket Token Secret', 'ajforms' ); ?></label>
+						<input type="password" name="chat_ws_token_secret" id="chat_ws_token_secret" value="" placeholder="<?php echo ! empty( $settings['chat_ws_token_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="new-password" <?php disabled( $read_only ); ?>>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Signs short-lived AJOps staff WebSocket tokens. Synced automatically by oc-deploy.', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="chat_internal_secret"><?php esc_html_e( 'Internal Relay Secret', 'ajforms' ); ?></label>
+						<input type="password" name="chat_internal_secret" id="chat_internal_secret" value="" placeholder="<?php echo ! empty( $settings['chat_internal_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajforms' ) : ''; ?>" autocomplete="new-password" <?php disabled( $read_only ); ?>>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Authenticates AJOps internal visitor-message relay. Synced automatically by oc-deploy.', 'ajforms' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="chat_notify_url"><?php esc_html_e( 'Notify URL Override (optional)', 'ajforms' ); ?></label>

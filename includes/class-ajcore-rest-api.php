@@ -636,6 +636,16 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/chat/deployment-config',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_chat_deployment_config' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/ajphone/conversations',
 			array(
 				array(
@@ -5981,6 +5991,21 @@ class AJCore_REST_API {
 
 	private function get_chat_sessions_table() {
 		return $this->portal_table( 'aj_portal_chat_sessions' );
+	}
+
+	/**
+	 * Deployment-only Live Chat secrets. This is intentionally behind OPS admin JWT auth and is
+	 * consumed by AJOps' oc-deploy script; values are never exposed to visitor or staff browsers.
+	 */
+	public function get_ops_chat_deployment_config( WP_REST_Request $request ) {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		return rest_ensure_response(
+			array(
+				'chat_notify_secret'   => (string) ( $settings['chat_notify_secret'] ?? '' ),
+				'chat_ws_token_secret' => (string) ( $settings['chat_ws_token_secret'] ?? '' ),
+				'chat_internal_secret' => (string) ( $settings['chat_internal_secret'] ?? '' ),
+			)
+		);
 	}
 
 	private function get_chat_messages_table() {
