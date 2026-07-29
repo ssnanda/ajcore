@@ -221,6 +221,11 @@
 				if (payload.message.senderType === "staff") {
 					playChime();
 					notifyDesktop("New message", payload.message.body);
+					if (!panelOpen) {
+						unreadCount += 1;
+						updateBadge();
+						showPreview(payload.message.body);
+					}
 				}
 			}
 		};
