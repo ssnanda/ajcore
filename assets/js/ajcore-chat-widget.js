@@ -9,6 +9,15 @@
 		return;
 	}
 
+	// Desktop/tablet only — the "Mobile" token is what actually distinguishes phones from tablets
+	// here: iPadOS Safari's UA reports as a plain desktop Mac (no match), and Android tablets omit
+	// "Mobile" the way Android phones include it, so this doesn't accidentally hide the widget on
+	// larger touch devices, only phones. Skips creating any DOM/WebSocket for phone visitors
+	// entirely, rather than just hiding it with CSS.
+	if (/iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini|IEMobile/i.test(navigator.userAgent || "")) {
+		return;
+	}
+
 	var STORAGE_SESSION = "ajcore_chat_session_uuid";
 	var STORAGE_NAME = "ajcore_chat_visitor_name";
 	var STORAGE_EMAIL = "ajcore_chat_visitor_email";
