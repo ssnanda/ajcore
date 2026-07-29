@@ -19175,7 +19175,7 @@ class AJForms_Admin {
 			}
 			$tab = 'cp-settings';
 		}
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign', 'chat' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign', 'chat', 'rentec' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -19202,6 +19202,7 @@ class AJForms_Admin {
 			'gmail-intake'       => __( 'Gmail Intake', 'ajforms' ),
 			'esign'              => __( 'E-Signatures', 'ajforms' ),
 			'chat'               => __( 'Live Chat', 'ajforms' ),
+			'rentec'             => __( 'Rentec', 'ajforms' ),
 			'emails'             => __( 'Email Log', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
@@ -19303,6 +19304,8 @@ class AJForms_Admin {
 				$this->display_portal_esign_tab();
 			} elseif ( 'chat' === $tab ) {
 				$this->display_portal_chat_tab();
+			} elseif ( 'rentec' === $tab ) {
+				$this->display_portal_rentec_tab();
 			} elseif ( 'cp-settings' === $tab ) {
 				$this->display_client_portal_cp_settings_tab();
 			} else {
@@ -28096,6 +28099,208 @@ class AJForms_Admin {
 					<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
 				</p>
 			</form>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Read-only Rentec workspace inside the Client Portal admin.
+	 */
+	public function display_portal_rentec_tab() {
+		$settings  = $this->get_plugin_settings();
+		$resources = array(
+			'vendors'      => array(
+				'label'   => __( 'Vendors', 'ajforms' ),
+				'columns' => array(
+					'vendor_id' => __( 'ID', 'ajforms' ),
+					'name'      => __( 'Name', 'ajforms' ),
+					'industry'  => __( 'Industry', 'ajforms' ),
+					'contact'   => __( 'Contact', 'ajforms' ),
+					'email'     => __( 'Email', 'ajforms' ),
+					'phone'     => __( 'Phone', 'ajforms' ),
+				),
+			),
+			'transactions' => array(
+				'label'   => __( 'Transactions', 'ajforms' ),
+				'columns' => array(
+					'transaction_id'   => __( 'ID', 'ajforms' ),
+					'transaction_time' => __( 'Date', 'ajforms' ),
+					'category_name'    => __( 'Category', 'ajforms' ),
+					'description'      => __( 'Description', 'ajforms' ),
+					'amount'           => __( 'Amount', 'ajforms' ),
+					'property_id'      => __( 'Property', 'ajforms' ),
+				),
+			),
+			'work_orders'  => array(
+				'label'   => __( 'Work Orders', 'ajforms' ),
+				'columns' => array(
+					'wo_number'     => __( 'Number', 'ajforms' ),
+					'status'        => __( 'Status', 'ajforms' ),
+					'priority'      => __( 'Priority', 'ajforms' ),
+					'short_desc'    => __( 'Description', 'ajforms' ),
+					'property_id'   => __( 'Property', 'ajforms' ),
+					'date_received' => __( 'Received', 'ajforms' ),
+				),
+			),
+			'files'        => array(
+				'label'   => __( 'Files', 'ajforms' ),
+				'columns' => array(
+					'file_id'      => __( 'ID', 'ajforms' ),
+					'filename'     => __( 'Filename', 'ajforms' ),
+					'upload_date'  => __( 'Uploaded', 'ajforms' ),
+					'bytes'        => __( 'Size', 'ajforms' ),
+					'property_id'  => __( 'Property', 'ajforms' ),
+					'workorder_id' => __( 'Work Order', 'ajforms' ),
+				),
+			),
+			'messages'     => array(
+				'label'   => __( 'Messages', 'ajforms' ),
+				'columns' => array(
+					'email_id'   => __( 'ID', 'ajforms' ),
+					'email_time' => __( 'Date', 'ajforms' ),
+					'direction'  => __( 'Direction', 'ajforms' ),
+					'subject'    => __( 'Subject', 'ajforms' ),
+					'status'     => __( 'Status', 'ajforms' ),
+					'renter_id'  => __( 'Tenant', 'ajforms' ),
+				),
+			),
+		);
+
+		$resource = isset( $_GET['rentec_resource'] ) ? sanitize_key( wp_unslash( $_GET['rentec_resource'] ) ) : 'work_orders';
+		if ( ! isset( $resources[ $resource ] ) ) {
+			$resource = 'work_orders';
+		}
+		$account = isset( $_GET['rentec_account'] ) && '2' === sanitize_text_field( wp_unslash( $_GET['rentec_account'] ) ) ? '2' : '1';
+		$accounts = array(
+			'1' => array(
+				'label' => $settings['rentec_account_label_1'] ?? 'Rentec Account 1',
+				'key'   => $settings['rentec_api_key'] ?? '',
+			),
+			'2' => array(
+				'label' => $settings['rentec_account_label_2'] ?? 'Rentec Account 2',
+				'key'   => $settings['rentec_api_key_2'] ?? '',
+			),
+		);
+		if ( empty( $accounts[ $account ]['key'] ) && ! empty( $accounts[ '1' === $account ? '2' : '1' ]['key'] ) ) {
+			$account = '1' === $account ? '2' : '1';
+		}
+		$base_url = add_query_arg(
+			array(
+				'page' => 'ajforms-client-portal',
+				'tab'  => 'rentec',
+			),
+			admin_url( 'admin.php' )
+		);
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'Rentec Direct', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'Read-only operational view of the Rentec accounts connected in CP Settings.', 'ajforms' ); ?></p>
+				</div>
+				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'rentec' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Rentec Settings', 'ajforms' ); ?></a>
+			</div>
+
+			<?php if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) : ?>
+				<div class="notice notice-warning inline"><p><?php esc_html_e( 'The Rentec integration is disabled. Enable it in CP Settings before loading data.', 'ajforms' ); ?></p></div>
+			<?php else : ?>
+				<form method="get" class="ajforms-settings-inline-actions">
+					<input type="hidden" name="page" value="ajforms-client-portal">
+					<input type="hidden" name="tab" value="rentec">
+					<input type="hidden" name="rentec_resource" value="<?php echo esc_attr( $resource ); ?>">
+					<label for="rentec_account"><strong><?php esc_html_e( 'Account', 'ajforms' ); ?></strong></label>
+					<select name="rentec_account" id="rentec_account">
+						<?php foreach ( $accounts as $index => $configured_account ) : ?>
+							<option value="<?php echo esc_attr( $index ); ?>" <?php selected( $account, $index ); ?> <?php disabled( empty( $configured_account['key'] ) ); ?>><?php echo esc_html( $configured_account['label'] . ( empty( $configured_account['key'] ) ? ' — not configured' : '' ) ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<button class="button button-primary"><?php esc_html_e( 'Load Account', 'ajforms' ); ?></button>
+				</form>
+
+				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'Rentec sections', 'ajforms' ); ?>">
+					<?php foreach ( $resources as $resource_key => $resource_config ) : ?>
+						<a class="ajcore-tab-link <?php echo $resource === $resource_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'rentec_account' => $account, 'rentec_resource' => $resource_key ), $base_url ) ); ?>"><?php echo esc_html( $resource_config['label'] ); ?></a>
+					<?php endforeach; ?>
+				</nav>
+			<?php endif; ?>
+		</div>
+		<?php
+		if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) {
+			return;
+		}
+		if ( empty( $accounts[ $account ]['key'] ) ) {
+			echo '<div class="notice notice-error inline"><p>' . esc_html__( 'The selected Rentec account does not have an API key.', 'ajforms' ) . '</p></div>';
+			return;
+		}
+
+		$endpoint_url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
+		if ( 'work_orders' === $resource ) {
+			$endpoint_url = add_query_arg( 'age', '3650d', $endpoint_url );
+		} elseif ( 'transactions' === $resource ) {
+			$endpoint_url = add_query_arg( 'page', 1, $endpoint_url );
+		}
+		$response = wp_remote_get(
+			$endpoint_url,
+			array(
+				'headers'     => array(
+					'Accept'    => 'application/json',
+					'X-API-Key' => (string) $accounts[ $account ]['key'],
+				),
+				'timeout'     => 15,
+				'redirection' => 0,
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			echo '<div class="notice notice-error inline"><p>' . esc_html( $response->get_error_message() ) . '</p></div>';
+			return;
+		}
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( 200 !== $status || ! is_array( $body ) ) {
+			echo '<div class="notice notice-error inline"><p>' . esc_html( sprintf( __( 'Rentec returned HTTP status %d for this resource.', 'ajforms' ), $status ) ) . '</p></div>';
+			return;
+		}
+
+		$rows        = isset( $body['data'] ) && is_array( $body['data'] ) ? array_slice( $body['data'], 0, 100 ) : array();
+		$total       = isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $rows );
+		$columns     = $resources[ $resource ]['columns'];
+		?>
+		<div class="ajforms-settings-card">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php echo esc_html( $resources[ $resource ]['label'] ); ?></h2>
+					<p><?php echo esc_html( sprintf( __( '%1$s · %2$d records returned. Displaying up to 100.', 'ajforms' ), $accounts[ $account ]['label'], $total ) ); ?></p>
+				</div>
+			</div>
+			<?php if ( empty( $rows ) ) : ?>
+				<p><?php esc_html_e( 'No records were returned.', 'ajforms' ); ?></p>
+			<?php else : ?>
+				<div style="overflow-x:auto;">
+					<table class="widefat striped">
+						<thead><tr><?php foreach ( $columns as $column_label ) : ?><th><?php echo esc_html( $column_label ); ?></th><?php endforeach; ?></tr></thead>
+						<tbody>
+							<?php foreach ( $rows as $row ) : ?>
+								<tr>
+									<?php foreach ( $columns as $field => $column_label ) : ?>
+										<?php
+										$value = isset( $row[ $field ] ) ? $row[ $field ] : '';
+										if ( 'bytes' === $field && is_numeric( $value ) ) {
+											$value = size_format( (int) $value );
+										} elseif ( 'amount' === $field && is_numeric( $value ) ) {
+											$value = number_format_i18n( (float) $value, 2 );
+										} elseif ( is_array( $value ) || is_object( $value ) ) {
+											$value = wp_json_encode( $value );
+										}
+										$value = wp_html_excerpt( (string) $value, 120, '…' );
+										?>
+										<td><?php echo esc_html( $value ); ?></td>
+									<?php endforeach; ?>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php endif; ?>
 		</div>
 		<?php
 	}
