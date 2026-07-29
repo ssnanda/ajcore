@@ -445,10 +445,12 @@
 		return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
 	}
 	function isValidPhone(value) {
-		// Reject letters/symbols outright, then require enough digits for a real phone number —
-		// catches both "abc" (fails the character check) and "12" (right characters, too few of them).
+		// Reject letters/symbols outright, then require a real dialable digit count — 10 (US local)
+		// up to 15 (E.164 max, for international visitors with a country code). The previous ">= 7"
+		// floor let through short non-numbers like "70430721" (8 digits, not a real phone number).
 		if (!/^[0-9+()\-.\s]+$/.test(value)) return false;
-		return value.replace(/[^0-9]/g, "").length >= 7;
+		var digits = value.replace(/[^0-9]/g, "").length;
+		return digits >= 10 && digits <= 15;
 	}
 
 	// ── Rendering ────────────────────────────────────────────────────────────
