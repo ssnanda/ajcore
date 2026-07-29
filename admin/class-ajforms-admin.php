@@ -10293,6 +10293,113 @@ class AJForms_Admin {
 		wp_send_json_success( $result );
 	}
 
+	/**
+	 * Test Rentec Direct API v3 access and return aggregate availability only.
+	 *
+	 * Response bodies are never returned to the browser or persisted. Each resource
+	 * response is reduced to the count supplied by Rentec's summary envelope.
+	 */
+	public function ajax_test_rentec_connection() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ), 403 );
+		}
+
+		check_ajax_referer( 'ajcore_test_rentec_connection', 'nonce' );
+
+		$settings = $this->get_plugin_settings();
+		$api_key  = isset( $_POST['api_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['api_key'] ) ) ) : '';
+		if ( '' === $api_key ) {
+			$api_key = isset( $settings['rentec_api_key'] ) ? trim( (string) $settings['rentec_api_key'] ) : '';
+		}
+
+		if ( '' === $api_key ) {
+			wp_send_json_error( __( 'Enter a Rentec Direct API key or save one first.', 'ajforms' ), 400 );
+		}
+
+		$base_url = 'https://secure.rentecdirect.com/api/v3/';
+		$headers  = array(
+			'Accept'    => 'application/json',
+			'X-API-Key' => $api_key,
+		);
+		$ping     = wp_remote_get(
+			$base_url . 'ping',
+			array(
+				'headers'     => $headers,
+				'timeout'     => 12,
+				'redirection' => 0,
+			)
+		);
+
+		if ( is_wp_error( $ping ) ) {
+			wp_send_json_error( $ping->get_error_message(), 502 );
+		}
+
+		$ping_status = (int) wp_remote_retrieve_response_code( $ping );
+		if ( 200 !== $ping_status ) {
+			$message = 401 === $ping_status
+				? __( 'Rentec rejected the API key.', 'ajforms' )
+				: sprintf( __( 'Rentec connection failed with HTTP status %d.', 'ajforms' ), $ping_status );
+			wp_send_json_error( $message, $ping_status >= 400 && $ping_status < 600 ? $ping_status : 502 );
+		}
+
+		$resources = array(
+			'properties'   => __( 'Properties', 'ajforms' ),
+			'tenants'      => __( 'Tenants', 'ajforms' ),
+			'leases'       => __( 'Leases', 'ajforms' ),
+			'owners'       => __( 'Owners', 'ajforms' ),
+			'vendors'      => __( 'Vendors', 'ajforms' ),
+			'work_orders'  => __( 'Work Orders', 'ajforms' ),
+			'transactions' => __( 'Transactions', 'ajforms' ),
+			'leads'        => __( 'Leads', 'ajforms' ),
+			'messages'     => __( 'Messages', 'ajforms' ),
+			'files'        => __( 'Files', 'ajforms' ),
+		);
+		$metrics   = array();
+
+		foreach ( $resources as $endpoint => $label ) {
+			$url = $base_url . $endpoint;
+			if ( 'work_orders' === $endpoint ) {
+				$url = add_query_arg( 'age', '3650d', $url );
+			} elseif ( 'transactions' === $endpoint ) {
+				$url = add_query_arg( 'page', 1, $url );
+			}
+
+			$response = wp_remote_get(
+				$url,
+				array(
+					'headers'     => $headers,
+					'timeout'     => 12,
+					'redirection' => 0,
+				)
+			);
+
+			if ( is_wp_error( $response ) ) {
+				$metrics[] = array( 'label' => $label, 'available' => false, 'count' => null );
+				continue;
+			}
+
+			$status = (int) wp_remote_retrieve_response_code( $response );
+			$body   = json_decode( wp_remote_retrieve_body( $response ), true );
+			$count  = is_array( $body ) && isset( $body['summary']['records'] )
+				? absint( $body['summary']['records'] )
+				: null;
+
+			$metrics[] = array(
+				'label'     => $label,
+				'available' => 200 === $status,
+				'count'     => 200 === $status ? $count : null,
+			);
+		}
+
+		wp_send_json_success(
+			array(
+				'connected' => true,
+				'metrics'   => $metrics,
+				'note'      => __( 'Counts reflect records returned by each Rentec endpoint and may be limited by that endpoint. No record details were stored or displayed.', 'ajforms' ),
+			)
+		);
+	}
+
 	public function get_plugin_settings() {
 		return function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array(
 			'default_notification_email'     => get_option( 'admin_email' ),
@@ -10316,6 +10423,8 @@ class AJForms_Admin {
 			'asana_personal_access_token'    => '',
 			'asana_workspace_gid'            => '',
 			'asana_project_gid'              => '',
+			'rentec_enabled'                 => '0',
+			'rentec_api_key'                 => '',
 			'breezedoc_api_token'            => '',
 			'stripe_mode'                    => 'test',
 			'stripe_sandbox_publishable_key'  => '',
@@ -13171,6 +13280,8 @@ class AJForms_Admin {
 			'asana_personal_access_token'    => isset( $_POST['asana_personal_access_token'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_personal_access_token'] ) ) : '',
 			'asana_workspace_gid'            => isset( $_POST['asana_workspace_gid'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_workspace_gid'] ) ) : '',
 			'asana_project_gid'              => isset( $_POST['asana_project_gid'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_project_gid'] ) ) : '',
+			'rentec_enabled'                 => isset( $_POST['rentec_enabled'] ) ? '1' : '0',
+			'rentec_api_key'                 => isset( $_POST['rentec_api_key'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_api_key'] ) ) : '',
 			'stripe_mode'                    => isset( $_POST['stripe_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ), array( 'test', 'live' ), true ) ? sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ) : 'test',
 			'stripe_sandbox_publishable_key'  => isset( $_POST['stripe_sandbox_publishable_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_sandbox_publishable_key'] ) ) : '',
 			'stripe_sandbox_secret_key'       => isset( $_POST['stripe_sandbox_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_sandbox_secret_key'] ) ) : '',
@@ -13188,7 +13299,7 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'rentec_api_key' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -13213,7 +13324,7 @@ class AJForms_Admin {
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
 			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
-			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
+			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid', 'rentec_enabled', 'rentec_api_key' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
@@ -29873,6 +29984,121 @@ class AJForms_Admin {
 											if (tokenInput.value.trim()) {
 												syncAsanaData(this.value);
 											}
+										});
+									})();
+									</script>
+								</div>
+
+								<div class="ajforms-settings-card">
+									<span class="ajforms-settings-pill"><?php esc_html_e( 'Property Operations', 'ajforms' ); ?></span>
+									<h3><?php esc_html_e( 'Rentec Direct API v3', 'ajforms' ); ?></h3>
+									<p><?php esc_html_e( 'Connect AJ Core to Rentec Direct. This first phase only checks which operational resources are readable and shows aggregate metrics.', 'ajforms' ); ?></p>
+									<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
+										<input name="rentec_enabled" id="rentec_enabled" type="checkbox" value="1" <?php checked( '1' === (string) ( $settings['rentec_enabled'] ?? '0' ) ); ?>>
+										<div>
+											<strong><?php esc_html_e( 'Enable Rentec Direct integration', 'ajforms' ); ?></strong>
+											<span><?php esc_html_e( 'This saves the connection for future AJOps features. No automatic synchronization is enabled yet.', 'ajforms' ); ?></span>
+										</div>
+									</div>
+									<div class="ajforms-settings-field">
+										<label for="rentec_api_key"><?php esc_html_e( 'Rentec API v3 Key', 'ajforms' ); ?></label>
+										<?php $rentec_key_saved = ! empty( $settings['rentec_api_key'] ); ?>
+										<input name="rentec_api_key" id="rentec_api_key" type="password" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $rentec_key_saved ? __( 'Saved — enter a new key to replace', 'ajforms' ) : __( 'Paste the API key from Rentec Direct', 'ajforms' ) ); ?>">
+										<?php if ( $rentec_key_saved ) : ?>
+											<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings['rentec_api_key'] ) ) ); ?></p>
+										<?php else : ?>
+											<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'Create a Rentec API V3 key under Settings → Utilities → API Keys. Start with read-only permissions.', 'ajforms' ); ?></p>
+										<?php endif; ?>
+									</div>
+									<div class="ajforms-settings-inline-actions" style="margin-top:18px;">
+										<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Rentec Settings', 'ajforms' ); ?></button>
+										<button type="button" class="button" id="ajcore-test-rentec"><?php esc_html_e( 'Test Connection & Data', 'ajforms' ); ?></button>
+										<span id="ajcore-rentec-test-status" class="ajforms-settings-help"></span>
+									</div>
+									<div id="ajcore-rentec-metrics" style="display:none;margin-top:18px;"></div>
+									<script>
+									(function() {
+										const keyInput = document.getElementById('rentec_api_key');
+										const testButton = document.getElementById('ajcore-test-rentec');
+										const statusNode = document.getElementById('ajcore-rentec-test-status');
+										const metricsNode = document.getElementById('ajcore-rentec-metrics');
+										const testNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_test_rentec_connection' ) ); ?>';
+
+										if (!keyInput || !testButton || !statusNode || !metricsNode) {
+											return;
+										}
+
+										function setStatus(message, isError) {
+											statusNode.textContent = message;
+											statusNode.style.color = isError ? '#b32d2e' : '#166534';
+										}
+
+										function renderMetrics(data) {
+											const metrics = Array.isArray(data.metrics) ? data.metrics : [];
+											metricsNode.innerHTML = '';
+
+											const grid = document.createElement('div');
+											grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;';
+
+											metrics.forEach(function(metric) {
+												const card = document.createElement('div');
+												card.style.cssText = 'border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:#f9fafb;';
+
+												const label = document.createElement('strong');
+												label.style.cssText = 'display:block;color:#111827;margin-bottom:6px;';
+												label.textContent = metric.label || '';
+
+												const value = document.createElement('span');
+												value.style.color = metric.available ? '#166534' : '#b32d2e';
+												value.textContent = metric.available
+													? (metric.count === null ? '<?php echo esc_js( __( 'Available', 'ajforms' ) ); ?>' : String(metric.count) + ' <?php echo esc_js( __( 'records', 'ajforms' ) ); ?>')
+													: '<?php echo esc_js( __( 'Not available', 'ajforms' ) ); ?>';
+
+												card.appendChild(label);
+												card.appendChild(value);
+												grid.appendChild(card);
+											});
+
+											const note = document.createElement('p');
+											note.className = 'ajforms-settings-help';
+											note.style.marginTop = '12px';
+											note.textContent = data.note || '';
+
+											metricsNode.appendChild(grid);
+											metricsNode.appendChild(note);
+											metricsNode.style.display = 'block';
+										}
+
+										testButton.addEventListener('click', function() {
+											testButton.disabled = true;
+											metricsNode.style.display = 'none';
+											setStatus('<?php echo esc_js( __( 'Testing Rentec connection and read access...', 'ajforms' ) ); ?>', false);
+
+											const formData = new FormData();
+											formData.append('action', 'ajcore_test_rentec_connection');
+											formData.append('nonce', testNonce);
+											formData.append('api_key', keyInput.value.trim());
+
+											fetch(ajaxurl, { method: 'POST', body: formData })
+												.then(function(response) { return response.json(); })
+												.then(function(response) {
+													if (!response.success) {
+														const message = typeof response.data === 'string'
+															? response.data
+															: '<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>';
+														setStatus(message, true);
+														return;
+													}
+
+													setStatus('<?php echo esc_js( __( 'Connected to Rentec Direct.', 'ajforms' ) ); ?>', false);
+													renderMetrics(response.data || {});
+												})
+												.catch(function() {
+													setStatus('<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>', true);
+												})
+												.finally(function() {
+													testButton.disabled = false;
+												});
 										});
 									})();
 									</script>
