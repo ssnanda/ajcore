@@ -11094,6 +11094,8 @@ class AJForms_Admin {
 					$this->handle_settings_save();
 				} elseif ( 'chat' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 					$this->handle_chat_settings_save();
+				} elseif ( 'rentec' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+					$this->handle_rentec_settings_save();
 				}
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
@@ -11141,6 +11143,8 @@ class AJForms_Admin {
 				$this->handle_settings_save();
 			} elseif ( 'chat' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 				$this->handle_chat_settings_save();
+			} elseif ( 'rentec' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
+				$this->handle_rentec_settings_save();
 			}
 		} elseif ( 'ajforms-auth' === $page ) {
 			$this->handle_auth_settings_save();
@@ -13324,7 +13328,8 @@ class AJForms_Admin {
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
 			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
-			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid', 'rentec_enabled', 'rentec_api_key' ),
+			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
+			'rentec'       => array( 'rentec_enabled', 'rentec_api_key' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
@@ -13355,7 +13360,7 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( 'email-templates' === $section || 'inbox' === $section || 'gmail-intake' === $section || 'esign' === $section ) {
+		if ( 'email-templates' === $section || 'inbox' === $section || 'gmail-intake' === $section || 'esign' === $section || 'rentec' === $section ) {
 			// These sections' forms live on the Client Portal's CP Settings tab, not this page.
 			$redirect_args = array(
 				'page'             => 'ajforms-client-portal',
@@ -13383,6 +13388,38 @@ class AJForms_Admin {
 
 		wp_safe_redirect(
 			add_query_arg( $redirect_args, admin_url( 'admin.php' ) )
+		);
+		exit;
+	}
+
+	private function handle_rentec_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajforms_settings_nonce'] ) ) {
+			return;
+		}
+
+		check_admin_referer( 'ajforms_save_settings', 'ajforms_settings_nonce' );
+
+		$settings                  = $this->get_plugin_settings();
+		$settings['rentec_enabled'] = isset( $_POST['rentec_enabled'] ) ? '1' : '0';
+		$new_api_key               = isset( $_POST['rentec_api_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['rentec_api_key'] ) ) ) : '';
+		if ( '' !== $new_api_key ) {
+			$settings['rentec_api_key'] = $new_api_key;
+		}
+
+		update_option( 'ajforms_settings', $settings );
+		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
+			ajforms_write_synced_settings_file( $settings );
+		}
+
+		wp_safe_redirect(
+			add_query_arg(
+				array(
+					'page'             => 'ajforms-cp-settings',
+					'cp_section'       => 'rentec',
+					'settings-updated' => 'true',
+				),
+				admin_url( 'admin.php' )
+			)
 		);
 		exit;
 	}
@@ -19295,6 +19332,7 @@ class AJForms_Admin {
 			'gmail-intake'    => __( 'Email Intake (Gmail)', 'ajforms' ),
 			'esign'           => __( 'E-Signatures (BreezeDoc)', 'ajforms' ),
 			'chat'            => __( 'Live Chat', 'ajforms' ),
+			'rentec'          => __( 'Rentec Direct', 'ajforms' ),
 			'shared-db'       => __( 'Shared DB / Multi-Site', 'ajforms' ),
 		);
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
@@ -19353,6 +19391,8 @@ class AJForms_Admin {
 			<?php $this->display_breezedoc_settings_section(); ?>
 		<?php elseif ( 'chat' === $cp_section ) : ?>
 			<?php $this->display_chat_settings_section(); ?>
+		<?php elseif ( 'rentec' === $cp_section ) : ?>
+			<?php $this->display_rentec_settings_section(); ?>
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
@@ -28047,6 +28087,126 @@ class AJForms_Admin {
 		<?php
 	}
 
+	/**
+	 * Rentec Direct configuration for the Client Portal/AJOps integration.
+	 */
+	public function display_rentec_settings_section() {
+		$settings         = $this->get_plugin_settings();
+		$rentec_key_saved = ! empty( $settings['rentec_api_key'] );
+		$form_url          = add_query_arg(
+			array(
+				'page'       => 'ajforms-cp-settings',
+				'cp_section' => 'rentec',
+				'section'    => 'rentec',
+			),
+			admin_url( 'admin.php' )
+		);
+		?>
+		<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Rentec Direct settings saved.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+		<div class="ajforms-settings-card" id="ajcore-rentec-settings">
+			<div class="ajcore-section-head">
+				<div>
+					<h2><?php esc_html_e( 'Rentec Direct API v3', 'ajforms' ); ?></h2>
+					<p><?php esc_html_e( 'Connect the Client Portal and AJOps to Rentec Direct. This first phase only checks which operational resources are readable and shows aggregate metrics.', 'ajforms' ); ?></p>
+				</div>
+			</div>
+			<form method="post" action="<?php echo esc_url( $form_url ); ?>">
+				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+				<p>
+					<label>
+						<input name="rentec_enabled" type="checkbox" value="1" <?php checked( '1' === (string) ( $settings['rentec_enabled'] ?? '0' ) ); ?>>
+						<strong><?php esc_html_e( 'Enable Rentec Direct integration', 'ajforms' ); ?></strong>
+					</label>
+				</p>
+				<p class="description"><?php esc_html_e( 'No automatic synchronization is enabled yet. This saves the connection for future Client Portal and AJOps features.', 'ajforms' ); ?></p>
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row"><label for="rentec_api_key"><?php esc_html_e( 'Rentec API v3 Key', 'ajforms' ); ?></label></th>
+						<td>
+							<input name="rentec_api_key" id="rentec_api_key" type="password" class="regular-text" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $rentec_key_saved ? __( 'Saved — enter a new key to replace', 'ajforms' ) : __( 'Paste the API key from Rentec Direct', 'ajforms' ) ); ?>">
+							<?php if ( $rentec_key_saved ) : ?>
+								<p class="description"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings['rentec_api_key'] ) ) ); ?></p>
+							<?php else : ?>
+								<p class="description"><?php esc_html_e( 'Create a Rentec API V3 key under Settings → Utilities → API Keys. Start with read-only permissions.', 'ajforms' ); ?></p>
+							<?php endif; ?>
+						</td>
+					</tr>
+				</table>
+				<div class="ajforms-settings-inline-actions">
+					<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Rentec Settings', 'ajforms' ); ?></button>
+					<button type="button" class="button" id="ajcore-test-rentec"><?php esc_html_e( 'Test Connection & Data', 'ajforms' ); ?></button>
+					<span id="ajcore-rentec-test-status"></span>
+				</div>
+				<div id="ajcore-rentec-metrics" style="display:none;margin-top:18px;"></div>
+			</form>
+		</div>
+		<script>
+		(function() {
+			const keyInput = document.getElementById('rentec_api_key');
+			const testButton = document.getElementById('ajcore-test-rentec');
+			const statusNode = document.getElementById('ajcore-rentec-test-status');
+			const metricsNode = document.getElementById('ajcore-rentec-metrics');
+			const testNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_test_rentec_connection' ) ); ?>';
+			if (!keyInput || !testButton || !statusNode || !metricsNode) return;
+
+			function setStatus(message, isError) {
+				statusNode.textContent = message;
+				statusNode.style.color = isError ? '#b32d2e' : '#166534';
+			}
+
+			testButton.addEventListener('click', function() {
+				testButton.disabled = true;
+				metricsNode.style.display = 'none';
+				setStatus('<?php echo esc_js( __( 'Testing Rentec connection and read access...', 'ajforms' ) ); ?>', false);
+				const formData = new FormData();
+				formData.append('action', 'ajcore_test_rentec_connection');
+				formData.append('nonce', testNonce);
+				formData.append('api_key', keyInput.value.trim());
+
+				fetch(ajaxurl, { method: 'POST', body: formData })
+					.then(function(response) { return response.json(); })
+					.then(function(response) {
+						if (!response.success) {
+							setStatus(typeof response.data === 'string' ? response.data : '<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>', true);
+							return;
+						}
+						setStatus('<?php echo esc_js( __( 'Connected to Rentec Direct.', 'ajforms' ) ); ?>', false);
+						metricsNode.innerHTML = '';
+						const grid = document.createElement('div');
+						grid.className = 'ajcore-kpi-grid';
+						(response.data.metrics || []).forEach(function(metric) {
+							const card = document.createElement('div');
+							card.className = 'ajcore-kpi-card';
+							const label = document.createElement('span');
+							label.textContent = metric.label || '';
+							const value = document.createElement('strong');
+							value.style.color = metric.available ? '#166534' : '#b32d2e';
+							value.textContent = metric.available
+								? (metric.count === null ? '<?php echo esc_js( __( 'Available', 'ajforms' ) ); ?>' : String(metric.count))
+								: '<?php echo esc_js( __( 'Unavailable', 'ajforms' ) ); ?>';
+							card.appendChild(label);
+							card.appendChild(value);
+							grid.appendChild(card);
+						});
+						const note = document.createElement('p');
+						note.className = 'description';
+						note.textContent = response.data.note || '';
+						metricsNode.appendChild(grid);
+						metricsNode.appendChild(note);
+						metricsNode.style.display = 'block';
+					})
+					.catch(function() {
+						setStatus('<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>', true);
+					})
+					.finally(function() { testButton.disabled = false; });
+			});
+		})();
+		</script>
+		<?php
+	}
+
 
 	// -----------------------------------------------------------------
 	// E-Signatures (BreezeDoc)
@@ -29989,6 +30149,7 @@ class AJForms_Admin {
 									</script>
 								</div>
 
+								<?php if ( false ) : // Rentec settings moved to Client Portal → CP Settings → Rentec Direct. ?>
 								<div class="ajforms-settings-card">
 									<span class="ajforms-settings-pill"><?php esc_html_e( 'Property Operations', 'ajforms' ); ?></span>
 									<h3><?php esc_html_e( 'Rentec Direct API v3', 'ajforms' ); ?></h3>
@@ -30103,6 +30264,7 @@ class AJForms_Admin {
 									})();
 									</script>
 								</div>
+								<?php endif; ?>
 
 								<div class="ajforms-settings-card">
 									<span class="ajforms-settings-pill"><?php esc_html_e( 'Integrations', 'ajforms' ); ?></span>
