@@ -10306,10 +10306,12 @@ class AJForms_Admin {
 
 		check_ajax_referer( 'ajcore_test_rentec_connection', 'nonce' );
 
-		$settings = $this->get_plugin_settings();
-		$api_key  = isset( $_POST['api_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['api_key'] ) ) ) : '';
+		$settings      = $this->get_plugin_settings();
+		$account_index = isset( $_POST['account'] ) && '2' === sanitize_text_field( wp_unslash( $_POST['account'] ) ) ? '2' : '1';
+		$setting_key   = '2' === $account_index ? 'rentec_api_key_2' : 'rentec_api_key';
+		$api_key       = isset( $_POST['api_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['api_key'] ) ) ) : '';
 		if ( '' === $api_key ) {
-			$api_key = isset( $settings['rentec_api_key'] ) ? trim( (string) $settings['rentec_api_key'] ) : '';
+			$api_key = isset( $settings[ $setting_key ] ) ? trim( (string) $settings[ $setting_key ] ) : '';
 		}
 
 		if ( '' === $api_key ) {
@@ -10425,6 +10427,9 @@ class AJForms_Admin {
 			'asana_project_gid'              => '',
 			'rentec_enabled'                 => '0',
 			'rentec_api_key'                 => '',
+			'rentec_account_label_1'         => 'Rentec Account 1',
+			'rentec_api_key_2'               => '',
+			'rentec_account_label_2'         => 'Rentec Account 2',
 			'breezedoc_api_token'            => '',
 			'stripe_mode'                    => 'test',
 			'stripe_sandbox_publishable_key'  => '',
@@ -13286,6 +13291,9 @@ class AJForms_Admin {
 			'asana_project_gid'              => isset( $_POST['asana_project_gid'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_project_gid'] ) ) : '',
 			'rentec_enabled'                 => isset( $_POST['rentec_enabled'] ) ? '1' : '0',
 			'rentec_api_key'                 => isset( $_POST['rentec_api_key'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_api_key'] ) ) : '',
+			'rentec_account_label_1'         => isset( $_POST['rentec_account_label_1'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_account_label_1'] ) ) : 'Rentec Account 1',
+			'rentec_api_key_2'               => isset( $_POST['rentec_api_key_2'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_api_key_2'] ) ) : '',
+			'rentec_account_label_2'         => isset( $_POST['rentec_account_label_2'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_account_label_2'] ) ) : 'Rentec Account 2',
 			'stripe_mode'                    => isset( $_POST['stripe_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ), array( 'test', 'live' ), true ) ? sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ) : 'test',
 			'stripe_sandbox_publishable_key'  => isset( $_POST['stripe_sandbox_publishable_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_sandbox_publishable_key'] ) ) : '',
 			'stripe_sandbox_secret_key'       => isset( $_POST['stripe_sandbox_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_sandbox_secret_key'] ) ) : '',
@@ -13303,7 +13311,7 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'rentec_api_key' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'rentec_api_key', 'rentec_api_key_2' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -13329,7 +13337,7 @@ class AJForms_Admin {
 			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
-			'rentec'       => array( 'rentec_enabled', 'rentec_api_key' ),
+			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
@@ -13399,11 +13407,16 @@ class AJForms_Admin {
 
 		check_admin_referer( 'ajforms_save_settings', 'ajforms_settings_nonce' );
 
-		$settings                  = $this->get_plugin_settings();
-		$settings['rentec_enabled'] = isset( $_POST['rentec_enabled'] ) ? '1' : '0';
-		$new_api_key               = isset( $_POST['rentec_api_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['rentec_api_key'] ) ) ) : '';
-		if ( '' !== $new_api_key ) {
-			$settings['rentec_api_key'] = $new_api_key;
+		$settings                           = $this->get_plugin_settings();
+		$settings['rentec_enabled']         = isset( $_POST['rentec_enabled'] ) ? '1' : '0';
+		$settings['rentec_account_label_1'] = isset( $_POST['rentec_account_label_1'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_account_label_1'] ) ) : 'Rentec Account 1';
+		$settings['rentec_account_label_2'] = isset( $_POST['rentec_account_label_2'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_account_label_2'] ) ) : 'Rentec Account 2';
+
+		foreach ( array( 'rentec_api_key', 'rentec_api_key_2' ) as $api_key_field ) {
+			$new_api_key = isset( $_POST[ $api_key_field ] ) ? trim( sanitize_text_field( wp_unslash( $_POST[ $api_key_field ] ) ) ) : '';
+			if ( '' !== $new_api_key ) {
+				$settings[ $api_key_field ] = $new_api_key;
+			}
 		}
 
 		update_option( 'ajforms_settings', $settings );
@@ -28091,9 +28104,10 @@ class AJForms_Admin {
 	 * Rentec Direct configuration for the Client Portal/AJOps integration.
 	 */
 	public function display_rentec_settings_section() {
-		$settings         = $this->get_plugin_settings();
-		$rentec_key_saved = ! empty( $settings['rentec_api_key'] );
-		$form_url          = add_query_arg(
+		$settings           = $this->get_plugin_settings();
+		$rentec_key_1_saved = ! empty( $settings['rentec_api_key'] );
+		$rentec_key_2_saved = ! empty( $settings['rentec_api_key_2'] );
+		$form_url            = add_query_arg(
 			array(
 				'page'       => 'ajforms-cp-settings',
 				'cp_section' => 'rentec',
@@ -28121,49 +28135,75 @@ class AJForms_Admin {
 					</label>
 				</p>
 				<p class="description"><?php esc_html_e( 'No automatic synchronization is enabled yet. This saves the connection for future Client Portal and AJOps features.', 'ajforms' ); ?></p>
-				<table class="form-table" role="presentation">
-					<tr>
-						<th scope="row"><label for="rentec_api_key"><?php esc_html_e( 'Rentec API v3 Key', 'ajforms' ); ?></label></th>
-						<td>
-							<input name="rentec_api_key" id="rentec_api_key" type="password" class="regular-text" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $rentec_key_saved ? __( 'Saved — enter a new key to replace', 'ajforms' ) : __( 'Paste the API key from Rentec Direct', 'ajforms' ) ); ?>">
-							<?php if ( $rentec_key_saved ) : ?>
-								<p class="description"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings['rentec_api_key'] ) ) ); ?></p>
-							<?php else : ?>
-								<p class="description"><?php esc_html_e( 'Create a Rentec API V3 key under Settings → Utilities → API Keys. Start with read-only permissions.', 'ajforms' ); ?></p>
-							<?php endif; ?>
-						</td>
-					</tr>
-				</table>
+				<div class="ajcore-kpi-grid" style="align-items:start;">
+					<?php
+					$rentec_accounts = array(
+						'1' => array(
+							'label'     => $settings['rentec_account_label_1'] ?? 'Rentec Account 1',
+							'key_field' => 'rentec_api_key',
+							'saved'     => $rentec_key_1_saved,
+						),
+						'2' => array(
+							'label'     => $settings['rentec_account_label_2'] ?? 'Rentec Account 2',
+							'key_field' => 'rentec_api_key_2',
+							'saved'     => $rentec_key_2_saved,
+						),
+					);
+					foreach ( $rentec_accounts as $account_index => $account ) :
+						$label_field = 'rentec_account_label_' . $account_index;
+						$key_id      = 'rentec_api_key_' . $account_index;
+						?>
+						<div class="ajforms-settings-card" style="margin:0;">
+							<h3><?php echo esc_html( sprintf( __( 'Account %s', 'ajforms' ), $account_index ) ); ?></h3>
+							<p>
+								<label for="<?php echo esc_attr( $label_field ); ?>"><strong><?php esc_html_e( 'Account Name', 'ajforms' ); ?></strong></label><br>
+								<input name="<?php echo esc_attr( $label_field ); ?>" id="<?php echo esc_attr( $label_field ); ?>" type="text" class="regular-text" value="<?php echo esc_attr( $account['label'] ); ?>">
+							</p>
+							<p>
+								<label for="<?php echo esc_attr( $key_id ); ?>"><strong><?php esc_html_e( 'API v3 Key', 'ajforms' ); ?></strong></label><br>
+								<input name="<?php echo esc_attr( $account['key_field'] ); ?>" id="<?php echo esc_attr( $key_id ); ?>" type="password" class="regular-text" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $account['saved'] ? __( 'Saved — enter a new key to replace', 'ajforms' ) : __( 'Paste the API key from Rentec Direct', 'ajforms' ) ); ?>">
+								<?php if ( $account['saved'] ) : ?>
+									<span class="description" style="display:block;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings[ $account['key_field'] ] ) ) ); ?></span>
+								<?php endif; ?>
+							</p>
+							<div class="ajforms-settings-inline-actions">
+								<button type="button" class="button ajcore-test-rentec" data-account="<?php echo esc_attr( $account_index ); ?>"><?php esc_html_e( 'Test This Account', 'ajforms' ); ?></button>
+								<span id="ajcore-rentec-test-status-<?php echo esc_attr( $account_index ); ?>"></span>
+							</div>
+							<div id="ajcore-rentec-metrics-<?php echo esc_attr( $account_index ); ?>" style="display:none;margin-top:18px;"></div>
+						</div>
+					<?php endforeach; ?>
+				</div>
+				<p class="description"><?php esc_html_e( 'Create API V3 keys under Settings → Utilities → API Keys in each Rentec account. Start with read-only permissions.', 'ajforms' ); ?></p>
 				<div class="ajforms-settings-inline-actions">
 					<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Rentec Settings', 'ajforms' ); ?></button>
-					<button type="button" class="button" id="ajcore-test-rentec"><?php esc_html_e( 'Test Connection & Data', 'ajforms' ); ?></button>
-					<span id="ajcore-rentec-test-status"></span>
 				</div>
-				<div id="ajcore-rentec-metrics" style="display:none;margin-top:18px;"></div>
 			</form>
 		</div>
 		<script>
 		(function() {
-			const keyInput = document.getElementById('rentec_api_key');
-			const testButton = document.getElementById('ajcore-test-rentec');
-			const statusNode = document.getElementById('ajcore-rentec-test-status');
-			const metricsNode = document.getElementById('ajcore-rentec-metrics');
 			const testNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_test_rentec_connection' ) ); ?>';
-			if (!keyInput || !testButton || !statusNode || !metricsNode) return;
+			document.querySelectorAll('.ajcore-test-rentec').forEach(function(testButton) {
+				testButton.addEventListener('click', function() {
+					const account = testButton.dataset.account || '1';
+					const keyInput = document.getElementById('rentec_api_key_' + account);
+					const statusNode = document.getElementById('ajcore-rentec-test-status-' + account);
+					const metricsNode = document.getElementById('ajcore-rentec-metrics-' + account);
+					if (!keyInput || !statusNode || !metricsNode) return;
 
-			function setStatus(message, isError) {
-				statusNode.textContent = message;
-				statusNode.style.color = isError ? '#b32d2e' : '#166534';
-			}
+					function setStatus(message, isError) {
+						statusNode.textContent = message;
+						statusNode.style.color = isError ? '#b32d2e' : '#166534';
+					}
 
-			testButton.addEventListener('click', function() {
-				testButton.disabled = true;
-				metricsNode.style.display = 'none';
-				setStatus('<?php echo esc_js( __( 'Testing Rentec connection and read access...', 'ajforms' ) ); ?>', false);
+					testButton.disabled = true;
+					metricsNode.style.display = 'none';
+					setStatus('<?php echo esc_js( __( 'Testing Rentec connection and read access...', 'ajforms' ) ); ?>', false);
 				const formData = new FormData();
 				formData.append('action', 'ajcore_test_rentec_connection');
 				formData.append('nonce', testNonce);
 				formData.append('api_key', keyInput.value.trim());
+					formData.append('account', account);
 
 				fetch(ajaxurl, { method: 'POST', body: formData })
 					.then(function(response) { return response.json(); })
@@ -28201,6 +28241,7 @@ class AJForms_Admin {
 						setStatus('<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>', true);
 					})
 					.finally(function() { testButton.disabled = false; });
+				});
 			});
 		})();
 		</script>
