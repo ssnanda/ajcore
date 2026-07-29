@@ -35,6 +35,20 @@ class AJCore_REST_API {
 			)
 		);
 
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_rentec_resource' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'account'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'resource' => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+				),
+			)
+		);
+
 		// Browser-driven OAuth redirect from Zoho. current_user_can() can't gate this: WordPress's
 		// REST layer only recognizes a logged-in cookie session when the request also carries its
 		// own X-WP-Nonce, which an external redirect from Zoho has no way to attach — so WP treats
@@ -1202,6 +1216,89 @@ class AJCore_REST_API {
 				'leads_unread'                        => $leads_unread,
 				'chat_unread'                         => $chat_unread,
 				'sync_logs'                           => $this->count_table( $pdb, $this->portal_table( 'aj_portal_sync_logs' ) ),
+			)
+		);
+	}
+
+	public function get_ops_rentec_resource( WP_REST_Request $request ) {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) {
+			return new WP_Error( 'ajcore_rentec_disabled', __( 'The Rentec integration is disabled.', 'ajforms' ), array( 'status' => 409 ) );
+		}
+
+		$allowed_resources = array( 'leads', 'vendors', 'transactions', 'work_orders', 'files', 'messages' );
+		$resource          = sanitize_key( (string) $request->get_param( 'resource' ) );
+		if ( ! in_array( $resource, $allowed_resources, true ) ) {
+			$resource = 'work_orders';
+		}
+
+		$account = '2' === (string) $request->get_param( 'account' ) ? '2' : '1';
+		$accounts = array(
+			'1' => array(
+				'label' => sanitize_text_field( (string) ( $settings['rentec_account_label_1'] ?? 'Rentec Account 1' ) ),
+				'key'   => (string) ( $settings['rentec_api_key'] ?? '' ),
+			),
+			'2' => array(
+				'label' => sanitize_text_field( (string) ( $settings['rentec_account_label_2'] ?? 'Rentec Account 2' ) ),
+				'key'   => (string) ( $settings['rentec_api_key_2'] ?? '' ),
+			),
+		);
+		if ( empty( $accounts[ $account ]['key'] ) && ! empty( $accounts[ '1' === $account ? '2' : '1' ]['key'] ) ) {
+			$account = '1' === $account ? '2' : '1';
+		}
+		if ( empty( $accounts[ $account ]['key'] ) ) {
+			return new WP_Error( 'ajcore_rentec_not_configured', __( 'The selected Rentec account does not have an API key.', 'ajforms' ), array( 'status' => 409 ) );
+		}
+
+		$url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
+		if ( 'work_orders' === $resource ) {
+			$url = add_query_arg( 'age', '3650d', $url );
+		} elseif ( 'transactions' === $resource ) {
+			$url = add_query_arg( 'page', 1, $url );
+		}
+		$response = wp_remote_get(
+			$url,
+			array(
+				'headers'     => array(
+					'Accept'    => 'application/json',
+					'X-API-Key' => $accounts[ $account ]['key'],
+				),
+				'timeout'     => 15,
+				'redirection' => 0,
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'ajcore_rentec_request_failed', $response->get_error_message(), array( 'status' => 502 ) );
+		}
+
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( 200 !== $status || ! is_array( $body ) ) {
+			return new WP_Error(
+				'ajcore_rentec_response_failed',
+				sprintf( __( 'Rentec returned HTTP status %d for this resource.', 'ajforms' ), $status ),
+				array( 'status' => 502 )
+			);
+		}
+
+		$account_summaries = array();
+		foreach ( $accounts as $index => $configured_account ) {
+			$account_summaries[] = array(
+				'id'         => $index,
+				'label'      => $configured_account['label'],
+				'configured' => ! empty( $configured_account['key'] ),
+			);
+		}
+
+		$rows = isset( $body['data'] ) && is_array( $body['data'] ) ? array_slice( $body['data'], 0, 100 ) : array();
+		return rest_ensure_response(
+			array(
+				'account'  => $account,
+				'accounts' => $account_summaries,
+				'resource' => $resource,
+				'total'    => isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $rows ),
+				'rows'     => $rows,
+				'limit'    => 100,
 			)
 		);
 	}
