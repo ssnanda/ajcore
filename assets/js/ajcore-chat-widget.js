@@ -52,6 +52,8 @@
 		"#ajcore-chat-panel.open{display:flex;}" +
 		"#ajcore-chat-header{background:#3157ff;color:#fff;padding:14px 16px;font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;}" +
 		"#ajcore-chat-header-actions{display:flex;align-items:center;gap:10px;}" +
+		"#ajcore-chat-notify{background:none;border:none;color:rgba(255,255,255,.9);font-size:15px;cursor:pointer;padding:0;line-height:1;}" +
+		"#ajcore-chat-notify.enabled{display:none;}" +
 		"#ajcore-chat-end{background:none;border:none;color:rgba(255,255,255,.85);font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline;padding:0;display:none;}" +
 		"#ajcore-chat-close{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;line-height:1;}" +
 		"#ajcore-chat-body{flex:1;overflow-y:auto;padding:14px;background:#f8fafc;}" +
@@ -90,7 +92,7 @@
 	var panel = document.createElement("div");
 	panel.id = "ajcore-chat-panel";
 	panel.innerHTML =
-		'<div id="ajcore-chat-header"><span>Chat with us</span><div id="ajcore-chat-header-actions"><button id="ajcore-chat-end">End Chat</button><button id="ajcore-chat-close" aria-label="Close chat">✕</button></div></div>' +
+		'<div id="ajcore-chat-header"><span>Chat with us</span><div id="ajcore-chat-header-actions"><button id="ajcore-chat-notify" type="button" aria-label="Enable desktop notifications" title="Enable desktop notifications">🔔</button><button id="ajcore-chat-end">End Chat</button><button id="ajcore-chat-close" aria-label="Close chat">✕</button></div></div>' +
 		'<div id="ajcore-chat-body"></div>';
 	document.body.appendChild(panel);
 
@@ -98,6 +100,7 @@
 	var body = panel.querySelector("#ajcore-chat-body");
 	var closeBtn = panel.querySelector("#ajcore-chat-close");
 	var endChatBtn = panel.querySelector("#ajcore-chat-end");
+	var notifyBtn = panel.querySelector("#ajcore-chat-notify");
 
 	var panelOpen = false;
 	var unreadCount = 0;
@@ -304,7 +307,10 @@
 	// both a fresh Start Chat submit and a returning visitor's tab) — not on page load for every
 	// site visitor who never opens the widget.
 	function requestDesktopNotifyPermission() {
-		if (typeof window.Notification === "undefined") return;
+		if (typeof window.Notification === "undefined") {
+			updateNotificationButton();
+			return;
+		}
 		try {
 			// On an insecure origin (plain http, not localhost) Firefox throws a synchronous
 			// SecurityError here instead of just resolving to "denied" the way Chrome does — left
@@ -313,9 +319,39 @@
 			// notifications. Chrome's lenient behavior on http is exactly why this never showed up
 			// in Chrome testing.
 			if (Notification.permission === "default") {
-				Notification.requestPermission();
+				var request = Notification.requestPermission();
+				if (request && typeof request.then === "function") {
+					request.then(updateNotificationButton).catch(updateNotificationButton);
+				}
 			}
+			updateNotificationButton();
 		} catch (e) { /* insecure origin or otherwise unsupported — notifications just stay off */ }
+	}
+	function updateNotificationButton() {
+		if (!notifyBtn) return;
+		if (typeof window.Notification === "undefined") {
+			notifyBtn.style.display = "none";
+			return;
+		}
+		if (Notification.permission === "granted") {
+			notifyBtn.classList.add("enabled");
+			return;
+		}
+		notifyBtn.classList.remove("enabled");
+		notifyBtn.textContent = Notification.permission === "denied" ? "🔕" : "🔔";
+		notifyBtn.title = Notification.permission === "denied"
+			? "Notifications are blocked in this browser's site permissions"
+			: "Enable desktop notifications";
+	}
+	if (notifyBtn) {
+		notifyBtn.addEventListener("click", function () {
+			if (typeof window.Notification !== "undefined" && Notification.permission === "denied") {
+				window.alert("Desktop notifications are blocked for this site. Allow notifications in your browser's site permissions, then reload the page.");
+				return;
+			}
+			requestDesktopNotifyPermission();
+		});
+		updateNotificationButton();
 	}
 	function notifyDesktop(title, body) {
 		if (typeof window.Notification === "undefined" || Notification.permission !== "granted") return;
