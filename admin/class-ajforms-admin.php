@@ -28109,6 +28109,18 @@ class AJForms_Admin {
 	public function display_portal_rentec_tab() {
 		$settings  = $this->get_plugin_settings();
 		$resources = array(
+			'leads'        => array(
+				'label'   => __( 'Leads', 'ajforms' ),
+				'columns' => array(
+					'prospect_id' => __( 'ID', 'ajforms' ),
+					'f_name'     => __( 'First Name', 'ajforms' ),
+					'l_name'     => __( 'Last Name', 'ajforms' ),
+					'email'      => __( 'Email', 'ajforms' ),
+					'phone'      => __( 'Phone', 'ajforms' ),
+					'move_in'    => __( 'Move In', 'ajforms' ),
+					'search_city' => __( 'Search City', 'ajforms' ),
+				),
+			),
 			'vendors'      => array(
 				'label'   => __( 'Vendors', 'ajforms' ),
 				'columns' => array(
