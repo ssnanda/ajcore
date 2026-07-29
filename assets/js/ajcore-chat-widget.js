@@ -61,6 +61,7 @@
 		"#ajcore-chat-panel.open{display:flex;}" +
 		"#ajcore-chat-header{background:#3157ff;color:#fff;padding:14px 16px;font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;}" +
 		"#ajcore-chat-header-actions{display:flex;align-items:center;gap:10px;}" +
+		"#ajcore-chat-textus{color:#fff;font-size:11px;font-weight:600;text-decoration:underline;white-space:nowrap;cursor:pointer;}" +
 		"#ajcore-chat-notify{background:none;border:none;color:rgba(255,255,255,.9);font-size:15px;cursor:pointer;padding:0;line-height:1;}" +
 		"#ajcore-chat-notify.enabled{color:#bbf7d0;}" +
 		"#ajcore-chat-end{background:none;border:none;color:rgba(255,255,255,.85);font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline;padding:0;display:none;}" +
@@ -115,7 +116,7 @@
 	var panel = document.createElement("div");
 	panel.id = "ajcore-chat-panel";
 	panel.innerHTML =
-		'<div id="ajcore-chat-header"><span>Chat with us</span><div id="ajcore-chat-header-actions"><button id="ajcore-chat-notify" type="button" aria-label="Enable desktop notifications" title="Enable desktop notifications">🔔</button><button id="ajcore-chat-end">End Chat</button><button id="ajcore-chat-close" aria-label="Close chat">✕</button></div></div>' +
+		'<div id="ajcore-chat-header"><span>Chat with us</span><div id="ajcore-chat-header-actions"><a id="ajcore-chat-textus" href="#" aria-label="Text us instead of chatting">Text Us</a><button id="ajcore-chat-notify" type="button" aria-label="Enable desktop notifications" title="Enable desktop notifications">🔔</button><button id="ajcore-chat-end">End Chat</button><button id="ajcore-chat-close" aria-label="Close chat">✕</button></div></div>' +
 		'<div id="ajcore-chat-body"></div>';
 	document.body.appendChild(panel);
 
@@ -124,6 +125,19 @@
 	var closeBtn = panel.querySelector("#ajcore-chat-close");
 	var endChatBtn = panel.querySelector("#ajcore-chat-end");
 	var notifyBtn = panel.querySelector("#ajcore-chat-notify");
+	var textUsBtn = panel.querySelector("#ajcore-chat-textus");
+
+	// Same number the portal's own "Text Us" quick action already uses (class-ajforms.php) — lets a
+	// visitor bail out of the web widget and text the business directly instead, from right where
+	// they already are. href is computed fresh on click (not just once at init) since visitorName
+	// isn't known yet until the pre-chat form is submitted.
+	var TEXT_US_NUMBER = "+17043072135";
+	textUsBtn.addEventListener("click", function () {
+		var msg = visitorName
+			? "Hi, I was chatting on your website and wanted to switch to texting instead. My name is " + visitorName + "."
+			: "Hi, I was chatting on your website and wanted to switch to texting instead.";
+		textUsBtn.href = "sms:" + TEXT_US_NUMBER + "?body=" + encodeURIComponent(msg);
+	});
 
 	var panelOpen = false;
 	var unreadCount = 0;
@@ -516,7 +530,7 @@
 	// never end their chat this way (tab close/navigation is far more common) — no point paying for
 	// the extra DOM on every page load.
 	var endOverlay = null;
-	var endEmailInput, endPhoneInput, endEmailError, endPhoneError, endEmailRow, endPhoneRow;
+	var endEmailInput, endPhoneInput, endEmailError, endPhoneError;
 
 	function buildEndOverlay() {
 		endOverlay = document.createElement("div");
@@ -524,11 +538,11 @@
 		endOverlay.innerHTML =
 			'<div class="aj-end-modal">' +
 				'<p class="aj-end-title">End this chat?</p>' +
-				'<p class="aj-end-sub">Want a copy of this conversation? We\'ll use the info below — feel free to correct it first.</p>' +
-				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="email" checked><span>Email it to me</span></label>' +
+				'<p class="aj-end-sub">Want a copy of this conversation? Update your info below if it needs a fix.</p>' +
 				'<div id="aj-end-email-row"><input type="email" id="aj-end-email" placeholder="you@example.com"><div class="aj-field-error" id="aj-end-email-error"></div></div>' +
-				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="text"><span>Text it to me</span></label>' +
-				'<div id="aj-end-phone-row" style="display:none;"><input type="tel" id="aj-end-phone" placeholder="(704) 555-0123"><div class="aj-field-error" id="aj-end-phone-error"></div></div>' +
+				'<div id="aj-end-phone-row"><input type="tel" id="aj-end-phone" placeholder="(704) 555-0123"><div class="aj-field-error" id="aj-end-phone-error"></div></div>' +
+				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="email" checked><span>Email me a copy</span></label>' +
+				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="text"><span>Text me a copy</span></label>' +
 				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="none"><span>No thanks, just end the chat</span></label>' +
 				'<div class="aj-end-actions"><button type="button" id="aj-end-cancel">Cancel</button><button type="button" id="aj-end-confirm">End Chat</button></div>' +
 			'</div>';
@@ -538,16 +552,7 @@
 		endPhoneInput = endOverlay.querySelector("#aj-end-phone");
 		endEmailError = endOverlay.querySelector("#aj-end-email-error");
 		endPhoneError = endOverlay.querySelector("#aj-end-phone-error");
-		endEmailRow = endOverlay.querySelector("#aj-end-email-row");
-		endPhoneRow = endOverlay.querySelector("#aj-end-phone-row");
 
-		var radios = endOverlay.querySelectorAll('input[name="aj-transcript-channel"]');
-		for (var i = 0; i < radios.length; i++) {
-			radios[i].addEventListener("change", function (e) {
-				endEmailRow.style.display = e.target.value === "email" ? "block" : "none";
-				endPhoneRow.style.display = e.target.value === "text" ? "block" : "none";
-			});
-		}
 		endOverlay.querySelector("#aj-end-cancel").addEventListener("click", hideEndOverlay);
 		endOverlay.querySelector("#aj-end-confirm").addEventListener("click", confirmEndChat);
 	}
@@ -561,41 +566,42 @@
 		endEmailError.classList.remove("show");
 		endPhoneError.classList.remove("show");
 		endOverlay.querySelector('input[value="email"]').checked = true;
-		endEmailRow.style.display = "block";
-		endPhoneRow.style.display = "none";
 		endOverlay.classList.add("show");
 	}
 	function hideEndOverlay() {
 		if (endOverlay) endOverlay.classList.remove("show");
 	}
 
+	// Both fields are always shown and always validated/persisted together — regardless of which
+	// single channel is chosen to actually receive the transcript — since this is also the
+	// visitor's chance to correct either one before the session record is closed out.
 	function confirmEndChat() {
 		var checked = endOverlay.querySelector('input[name="aj-transcript-channel"]:checked');
 		var channel = checked ? checked.value : "none";
 		var email = endEmailInput.value.trim();
 		var phone = endPhoneInput.value.trim();
 
-		if (channel === "email" && !isValidEmail(email)) {
-			endEmailInput.classList.add("aj-invalid");
-			endEmailError.textContent = "Please enter a valid email address, like you@example.com.";
-			endEmailError.classList.add("show");
-			return;
-		}
-		if (channel === "text" && !isValidPhone(phone)) {
-			endPhoneInput.classList.add("aj-invalid");
-			endPhoneError.textContent = "Please enter a valid phone number, like (704) 555-0123.";
-			endPhoneError.classList.add("show");
-			return;
-		}
+		var emailOk = isValidEmail(email);
+		var phoneOk = isValidPhone(phone);
+		endEmailInput.classList.toggle("aj-invalid", !emailOk);
+		endEmailError.textContent = emailOk ? "" : "Please enter a valid email address, like you@example.com.";
+		endEmailError.classList.toggle("show", !emailOk);
+		endPhoneInput.classList.toggle("aj-invalid", !phoneOk);
+		endPhoneError.textContent = phoneOk ? "" : "Please enter a valid phone number, like (704) 555-0123.";
+		endPhoneError.classList.toggle("show", !phoneOk);
+		if (!emailOk || !phoneOk) return;
 
 		hideEndOverlay();
 		performEndChat(channel, email, phone);
 	}
 
 	function performEndChat(transcriptChannel, transcriptEmail, transcriptPhone) {
-		var payload = { session_uuid: sessionUuid, transcript_channel: transcriptChannel };
-		if (transcriptChannel === "email") payload.transcript_email = transcriptEmail;
-		if (transcriptChannel === "text") payload.transcript_phone = transcriptPhone;
+		var payload = {
+			session_uuid: sessionUuid,
+			transcript_channel: transcriptChannel,
+			transcript_email: transcriptEmail,
+			transcript_phone: transcriptPhone,
+		};
 
 		fetch(config.serverUrl + "/api/chat/end", {
 			method: "POST",
