@@ -21224,7 +21224,7 @@ class AJForms_Admin {
 		$configured   = '' !== trim( (string) ( $settings['chat_server_url'] ?? '' ) );
 		$settings_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'chat' ), admin_url( 'admin.php' ) );
 
-		$status_filter = isset( $_GET['chat_status'] ) ? sanitize_key( wp_unslash( $_GET['chat_status'] ) ) : 'open';
+		$status_filter = isset( $_GET['chat_status'] ) ? sanitize_key( wp_unslash( $_GET['chat_status'] ) ) : 'all';
 		$status_filter = in_array( $status_filter, array( 'open', 'closed', 'all' ), true ) ? $status_filter : 'open';
 		$search        = isset( $_GET['chat_search'] ) ? sanitize_text_field( wp_unslash( $_GET['chat_search'] ) ) : '';
 

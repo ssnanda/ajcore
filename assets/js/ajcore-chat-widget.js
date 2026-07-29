@@ -765,8 +765,27 @@
 	// loadHistory()/endChat() as the real session state becomes known). Browsers ignore custom
 	// beforeunload text and always show their own generic prompt — there's no way to display "you
 	// have an active chat" wording itself, only to trigger that prompt.
+	//
+	// Also actually ends the session server-side here (explicit product decision: visitors read
+	// that generic browser prompt as "closing this will end my chat," so the code now matches that
+	// expectation) — accepting the trade-off that a plain page REFRESH fires this exact same event
+	// and can't be told apart from a real tab close, so a refresh now also ends the chat instead of
+	// resuming it. navigator.sendBeacon is used instead of fetch() because a fetch() started here
+	// is routinely aborted mid-flight once the browser tears the page down; sendBeacon is built
+	// specifically to survive that. Sent as a "text/plain" Blob (not "application/json") purely to
+	// keep this a CORS "simple request" — a JSON content-type triggers a preflight OPTIONS with no
+	// guarantee of finishing before unload completes, which would silently drop the beacon on this
+	// cross-origin (widget's site → AJOps) call; /api/chat/end parses the body as JSON regardless
+	// of what Content-Type says. transcript_channel is "none" since there's no UI at this point to
+	// ask a transcript preference — the End Chat button remains how a visitor requests one.
 	window.addEventListener("beforeunload", function (e) {
 		if (!hasVisitorInfo || !sessionOpen) return;
+		if (typeof navigator.sendBeacon === "function") {
+			try {
+				var payload = JSON.stringify({ session_uuid: sessionUuid, transcript_channel: "none" });
+				navigator.sendBeacon(config.serverUrl + "/api/chat/end", new Blob([payload], { type: "text/plain" }));
+			} catch (err) { /* best-effort only — the tab is already closing either way */ }
+		}
 		e.preventDefault();
 		e.returnValue = "";
 	});
