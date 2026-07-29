@@ -69,10 +69,21 @@
 		"#ajcore-chat-form{padding:14px;display:flex;flex-direction:column;gap:8px;}" +
 		"#ajcore-chat-form input,#ajcore-chat-form textarea{border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;}" +
 		"#ajcore-chat-form textarea{resize:none;}" +
-		"#ajcore-chat-form input.aj-invalid,#ajcore-chat-form textarea.aj-invalid{border-color:#dc2626;background:#fef2f2;}" +
-		"#ajcore-chat-form .aj-field-error{display:none;color:#dc2626;font-size:11px;line-height:1.3;margin-top:-4px;}" +
-		"#ajcore-chat-form .aj-field-error.show{display:block;}" +
+		".aj-invalid{border-color:#dc2626 !important;background:#fef2f2;}" +
+		".aj-field-error{display:none;color:#dc2626;font-size:11px;line-height:1.3;margin-top:-4px;}" +
+		".aj-field-error.show{display:block;}" +
 		"#ajcore-chat-form button{background:#3157ff;color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;}" +
+		"#ajcore-chat-end-overlay{position:absolute;inset:0;background:rgba(255,255,255,.98);display:none;align-items:center;justify-content:center;padding:20px;z-index:6;}" +
+		"#ajcore-chat-end-overlay.show{display:flex;}" +
+		".aj-end-modal{width:100%;display:flex;flex-direction:column;gap:8px;}" +
+		".aj-end-title{font-size:14px;font-weight:700;color:#0f172a;margin:0;}" +
+		".aj-end-sub{font-size:12px;color:#6b7280;margin:0 0 4px;}" +
+		".aj-end-option{display:flex;align-items:center;gap:8px;font-size:13px;color:#111827;cursor:pointer;}" +
+		"#aj-end-email,#aj-end-phone{border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;width:100%;box-sizing:border-box;}" +
+		".aj-end-actions{display:flex;gap:8px;margin-top:6px;}" +
+		".aj-end-actions button{flex:1;border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;border:none;}" +
+		"#aj-end-cancel{background:#e5e7eb;color:#111827;}" +
+		"#aj-end-confirm{background:#dc2626;color:#fff;}" +
 		".ajcore-chat-msg{margin:0 0 8px;max-width:82%;padding:8px 11px;border-radius:10px;font-size:13px;line-height:1.4;word-wrap:break-word;}" +
 		".ajcore-chat-msg.visitor{background:#3157ff;color:#fff;margin-left:auto;}" +
 		".ajcore-chat-msg.staff{background:#e5e7eb;color:#0f172a;margin-right:auto;}" +
@@ -500,12 +511,96 @@
 			.catch(function () { /* history is a nice-to-have — a failed fetch just starts empty, same as before this existed */ });
 	}
 
-	function endChat() {
-		if (!window.confirm("End this chat? You can always start a new one.")) return;
+	// ── End Chat / transcript prompt ─────────────────────────────────────────
+	// Built lazily (once) on first "End Chat" click rather than at widget init, since most visitors
+	// never end their chat this way (tab close/navigation is far more common) — no point paying for
+	// the extra DOM on every page load.
+	var endOverlay = null;
+	var endEmailInput, endPhoneInput, endEmailError, endPhoneError, endEmailRow, endPhoneRow;
+
+	function buildEndOverlay() {
+		endOverlay = document.createElement("div");
+		endOverlay.id = "ajcore-chat-end-overlay";
+		endOverlay.innerHTML =
+			'<div class="aj-end-modal">' +
+				'<p class="aj-end-title">End this chat?</p>' +
+				'<p class="aj-end-sub">Want a copy of this conversation? We\'ll use the info below — feel free to correct it first.</p>' +
+				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="email" checked><span>Email it to me</span></label>' +
+				'<div id="aj-end-email-row"><input type="email" id="aj-end-email" placeholder="you@example.com"><div class="aj-field-error" id="aj-end-email-error"></div></div>' +
+				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="text"><span>Text it to me</span></label>' +
+				'<div id="aj-end-phone-row" style="display:none;"><input type="tel" id="aj-end-phone" placeholder="(704) 555-0123"><div class="aj-field-error" id="aj-end-phone-error"></div></div>' +
+				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="none"><span>No thanks, just end the chat</span></label>' +
+				'<div class="aj-end-actions"><button type="button" id="aj-end-cancel">Cancel</button><button type="button" id="aj-end-confirm">End Chat</button></div>' +
+			'</div>';
+		panel.appendChild(endOverlay);
+
+		endEmailInput = endOverlay.querySelector("#aj-end-email");
+		endPhoneInput = endOverlay.querySelector("#aj-end-phone");
+		endEmailError = endOverlay.querySelector("#aj-end-email-error");
+		endPhoneError = endOverlay.querySelector("#aj-end-phone-error");
+		endEmailRow = endOverlay.querySelector("#aj-end-email-row");
+		endPhoneRow = endOverlay.querySelector("#aj-end-phone-row");
+
+		var radios = endOverlay.querySelectorAll('input[name="aj-transcript-channel"]');
+		for (var i = 0; i < radios.length; i++) {
+			radios[i].addEventListener("change", function (e) {
+				endEmailRow.style.display = e.target.value === "email" ? "block" : "none";
+				endPhoneRow.style.display = e.target.value === "text" ? "block" : "none";
+			});
+		}
+		endOverlay.querySelector("#aj-end-cancel").addEventListener("click", hideEndOverlay);
+		endOverlay.querySelector("#aj-end-confirm").addEventListener("click", confirmEndChat);
+	}
+
+	function showEndOverlay() {
+		if (!endOverlay) buildEndOverlay();
+		endEmailInput.value = visitorEmail;
+		endPhoneInput.value = visitorPhone;
+		endEmailInput.classList.remove("aj-invalid");
+		endPhoneInput.classList.remove("aj-invalid");
+		endEmailError.classList.remove("show");
+		endPhoneError.classList.remove("show");
+		endOverlay.querySelector('input[value="email"]').checked = true;
+		endEmailRow.style.display = "block";
+		endPhoneRow.style.display = "none";
+		endOverlay.classList.add("show");
+	}
+	function hideEndOverlay() {
+		if (endOverlay) endOverlay.classList.remove("show");
+	}
+
+	function confirmEndChat() {
+		var checked = endOverlay.querySelector('input[name="aj-transcript-channel"]:checked');
+		var channel = checked ? checked.value : "none";
+		var email = endEmailInput.value.trim();
+		var phone = endPhoneInput.value.trim();
+
+		if (channel === "email" && !isValidEmail(email)) {
+			endEmailInput.classList.add("aj-invalid");
+			endEmailError.textContent = "Please enter a valid email address, like you@example.com.";
+			endEmailError.classList.add("show");
+			return;
+		}
+		if (channel === "text" && !isValidPhone(phone)) {
+			endPhoneInput.classList.add("aj-invalid");
+			endPhoneError.textContent = "Please enter a valid phone number, like (704) 555-0123.";
+			endPhoneError.classList.add("show");
+			return;
+		}
+
+		hideEndOverlay();
+		performEndChat(channel, email, phone);
+	}
+
+	function performEndChat(transcriptChannel, transcriptEmail, transcriptPhone) {
+		var payload = { session_uuid: sessionUuid, transcript_channel: transcriptChannel };
+		if (transcriptChannel === "email") payload.transcript_email = transcriptEmail;
+		if (transcriptChannel === "text") payload.transcript_phone = transcriptPhone;
+
 		fetch(config.serverUrl + "/api/chat/end", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ session_uuid: sessionUuid }),
+			body: JSON.stringify(payload),
 		})
 			.catch(function () { /* still reset locally below even if the request fails — don't trap the visitor in a session they asked to leave */ })
 			.then(function () {
@@ -535,7 +630,7 @@
 				}, 1200);
 			});
 	}
-	endChatBtn.addEventListener("click", endChat);
+	endChatBtn.addEventListener("click", showEndOverlay);
 
 	function renderChatUI() {
 		body.innerHTML = "";

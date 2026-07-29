@@ -979,7 +979,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Creates (or fetches, by session_uuid) a Live Chat session from a visitor widget message relayed by AJOps\' WS server.', 'app' => 'Live Chat' ),
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions/{id}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Appends a visitor message to a Live Chat session.', 'app' => 'Live Chat' ),
 			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/chat/sessions/by-uuid/{uuid}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Message history for a returning visitor (restores the widget panel on a fresh tab/reload).', 'app' => 'Live Chat' ),
-			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions/by-uuid/{uuid}/close', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Visitor-initiated "End Chat" — closes the session and emails a transcript if they gave an email.', 'app' => 'Live Chat' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions/by-uuid/{uuid}/close', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Visitor-initiated "End Chat" — closes the session; optional transcript_channel (email|text), transcript_email/transcript_phone (persisted corrections) — emails the transcript only when transcript_channel is "email" (AJOps sends the "text" case itself).', 'app' => 'Live Chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/chat/sessions', 'auth' => 'Admin', 'purpose' => 'Live Chat session list (all connected sites, via the shared DB). Filters: status (open|closed), site_uuid.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/chat/sessions/{id}/messages', 'auth' => 'Admin', 'purpose' => 'Full message thread for a Live Chat session.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/reply', 'auth' => 'Admin', 'purpose' => 'Sends a staff reply on a Live Chat session; triggers the /chat/notify push back to AJOps.', 'app' => 'OPS live chat' ),
@@ -6401,14 +6401,17 @@ class AJCore_REST_API {
 		if ( ! $session_id ) {
 			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
-		return $this->close_chat_session_by_id( $session_id );
+		return $this->close_chat_session_by_id( $session_id, true );
 	}
 
 	/**
 	 * Visitor-initiated close — called by AJOps' /api/chat/end (service account, same trust model
 	 * as create_chat_session()/post_chat_message()/history: visitors never call AJCore directly).
 	 * Gives the visitor an actual "End Chat" action instead of only ever being closed by staff or
-	 * the stale-session cron.
+	 * the stale-session cron. Also handles the transcript prompt AJOps' widget shows on End Chat:
+	 * the visitor picks email/text/neither and can correct their on-file contact info right there,
+	 * so a correction (typo fixed just before ending) persists onto the session row rather than
+	 * only being used for this one send.
 	 */
 	public function close_chat_session_by_uuid( WP_REST_Request $request ) {
 		$pdb          = $this->get_portal_db();
@@ -6422,15 +6425,39 @@ class AJCore_REST_API {
 		if ( ! $session ) {
 			return new WP_Error( 'not_found', __( 'Live Chat session not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
-		return $this->close_chat_session_by_id( (int) $session['id'] );
+
+		$params         = $request->get_json_params();
+		$channel        = isset( $params['transcript_channel'] ) ? sanitize_text_field( (string) $params['transcript_channel'] ) : '';
+		$email_override = isset( $params['transcript_email'] ) ? sanitize_email( trim( (string) $params['transcript_email'] ) ) : '';
+		$phone_override = isset( $params['transcript_phone'] ) ? sanitize_text_field( trim( (string) $params['transcript_phone'] ) ) : '';
+
+		$contact_updates = array();
+		if ( '' !== $email_override && is_email( $email_override ) && $email_override !== $session['visitor_email'] ) {
+			$contact_updates['visitor_email'] = $email_override;
+		}
+		if ( '' !== $phone_override && $phone_override !== $session['visitor_phone'] ) {
+			$contact_updates['visitor_phone'] = $phone_override;
+		}
+		if ( ! empty( $contact_updates ) ) {
+			$pdb->update( $s_table, $contact_updates, array( 'id' => $session['id'] ) );
+			$session = array_merge( $session, $contact_updates );
+		}
+
+		// Visitor-initiated close only emails the transcript when they explicitly asked for it here
+		// (unlike the staff/cron close paths below, which keep the old "email if one's on file"
+		// default) — "text" is handled by AJOps itself after this returns, since AJCore has no SMS
+		// capability of its own; the response's phone/messages are what it needs for that.
+		return $this->close_chat_session_by_id( (int) $session['id'], 'email' === $channel );
 	}
 
 	/**
 	 * Shared close logic — used by the staff "Close conversation" button, the visitor "End Chat"
 	 * button, and the auto-close cron (ajcore_chat_auto_close_stale, class-ajforms.php), so all
-	 * three behave identically, including the transcript email.
+	 * three behave identically. $send_email_transcript defaults true for the staff/cron callers
+	 * (unchanged "email if one's on file" behavior); the visitor path above passes it explicitly
+	 * based on what the visitor actually chose in the transcript prompt.
 	 */
-	private function close_chat_session_by_id( $session_id ) {
+	private function close_chat_session_by_id( $session_id, $send_email_transcript = true ) {
 		$pdb     = $this->get_portal_db();
 		$s_table = $this->get_chat_sessions_table();
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -6450,7 +6477,9 @@ class AJCore_REST_API {
 		$formatted       = $this->format_chat_session_row( $updated_session );
 		$this->notify_ajops_chat( $formatted, null );
 
-		$this->maybe_send_chat_transcript_email( $updated_session );
+		if ( $send_email_transcript ) {
+			$this->maybe_send_chat_transcript_email( $updated_session );
+		}
 
 		return rest_ensure_response( array( 'session' => $formatted ) );
 	}
