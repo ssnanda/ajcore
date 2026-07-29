@@ -53,7 +53,7 @@
 		"#ajcore-chat-header{background:#3157ff;color:#fff;padding:14px 16px;font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;}" +
 		"#ajcore-chat-header-actions{display:flex;align-items:center;gap:10px;}" +
 		"#ajcore-chat-notify{background:none;border:none;color:rgba(255,255,255,.9);font-size:15px;cursor:pointer;padding:0;line-height:1;}" +
-		"#ajcore-chat-notify.enabled{display:none;}" +
+		"#ajcore-chat-notify.enabled{color:#bbf7d0;}" +
 		"#ajcore-chat-end{background:none;border:none;color:rgba(255,255,255,.85);font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline;padding:0;display:none;}" +
 		"#ajcore-chat-close{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;line-height:1;}" +
 		"#ajcore-chat-body{flex:1;overflow-y:auto;padding:14px;background:#f8fafc;}" +
@@ -335,6 +335,8 @@
 		}
 		if (Notification.permission === "granted") {
 			notifyBtn.classList.add("enabled");
+			notifyBtn.textContent = "🔔";
+			notifyBtn.title = "Send a test desktop notification";
 			return;
 		}
 		notifyBtn.classList.remove("enabled");
@@ -349,18 +351,29 @@
 				window.alert("Desktop notifications are blocked for this site. Allow notifications in your browser's site permissions, then reload the page.");
 				return;
 			}
+			if (typeof window.Notification !== "undefined" && Notification.permission === "granted") {
+				var testError = notifyDesktop("Chat notifications are working", "You will receive desktop alerts when staff replies.");
+				if (testError) {
+					window.alert("Desktop notification failed: " + testError);
+				}
+				return;
+			}
 			requestDesktopNotifyPermission();
 		});
 		updateNotificationButton();
 	}
 	function notifyDesktop(title, body) {
-		if (typeof window.Notification === "undefined" || Notification.permission !== "granted") return;
+		if (typeof window.Notification === "undefined") return "This browser does not expose the desktop Notification API.";
+		if (Notification.permission !== "granted") return "Notification permission is " + Notification.permission + ".";
 		// Matches AJOps' own notification behavior — fires on every staff reply regardless of
 		// whether the tab is focused, not just while backgrounded.
 		try {
 			var n = new Notification(title, { body: body });
 			n.onclick = function () { window.focus(); n.close(); };
-		} catch (e) { /* some browsers block programmatic notifications */ }
+			return null;
+		} catch (e) {
+			return e && e.message ? e.message : String(e);
+		}
 	}
 
 	// ── Business hours ───────────────────────────────────────────────────────
