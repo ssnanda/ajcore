@@ -28140,11 +28140,22 @@ class AJForms_Admin {
 	}
 
 	/**
-	 * Read-only Rentec workspace inside the Client Portal admin.
+	 * Rentec workspace inside the Client Portal admin.
 	 */
 	public function display_portal_rentec_tab() {
 		$settings  = $this->get_plugin_settings();
 		$resources = array(
+			'work_orders'  => array(
+				'label'   => __( 'Work Orders', 'ajforms' ),
+				'columns' => array(
+					'wo_number'     => __( 'Number', 'ajforms' ),
+					'status'        => __( 'Status', 'ajforms' ),
+					'priority'      => __( 'Priority', 'ajforms' ),
+					'short_desc'    => __( 'Description', 'ajforms' ),
+					'property_id'   => __( 'Property', 'ajforms' ),
+					'date_received' => __( 'Received', 'ajforms' ),
+				),
+			),
 			'leads'        => array(
 				'label'   => __( 'Leads', 'ajforms' ),
 				'columns' => array(
@@ -28179,17 +28190,6 @@ class AJForms_Admin {
 					'property_id'      => __( 'Property', 'ajforms' ),
 				),
 			),
-			'work_orders'  => array(
-				'label'   => __( 'Work Orders', 'ajforms' ),
-				'columns' => array(
-					'wo_number'     => __( 'Number', 'ajforms' ),
-					'status'        => __( 'Status', 'ajforms' ),
-					'priority'      => __( 'Priority', 'ajforms' ),
-					'short_desc'    => __( 'Description', 'ajforms' ),
-					'property_id'   => __( 'Property', 'ajforms' ),
-					'date_received' => __( 'Received', 'ajforms' ),
-				),
-			),
 			'files'        => array(
 				'label'   => __( 'Files', 'ajforms' ),
 				'columns' => array(
@@ -28218,7 +28218,6 @@ class AJForms_Admin {
 		if ( ! isset( $resources[ $resource ] ) ) {
 			$resource = 'work_orders';
 		}
-		$account = isset( $_GET['rentec_account'] ) && '2' === sanitize_text_field( wp_unslash( $_GET['rentec_account'] ) ) ? '2' : '1';
 		$accounts = array(
 			'1' => array(
 				'label' => $settings['rentec_account_label_1'] ?? 'Rentec Account 1',
@@ -28229,8 +28228,55 @@ class AJForms_Admin {
 				'key'   => $settings['rentec_api_key_2'] ?? '',
 			),
 		);
-		if ( empty( $accounts[ $account ]['key'] ) && ! empty( $accounts[ '1' === $account ? '2' : '1' ]['key'] ) ) {
-			$account = '1' === $account ? '2' : '1';
+		$requested_accounts = isset( $_GET['rentec_accounts'] ) ? (array) wp_unslash( $_GET['rentec_accounts'] ) : array_keys( $accounts );
+		$selected_accounts  = array_values(
+			array_filter(
+				array_map( 'sanitize_text_field', $requested_accounts ),
+				function ( $index ) use ( $accounts ) {
+					return isset( $accounts[ $index ] ) && ! empty( $accounts[ $index ]['key'] );
+				}
+			)
+		);
+		if ( empty( $selected_accounts ) ) {
+			$selected_accounts = array_keys(
+				array_filter(
+					$accounts,
+					function ( $configured_account ) {
+						return ! empty( $configured_account['key'] );
+					}
+				)
+			);
+		}
+		$work_order_statuses = array(
+			'OpenU'     => __( 'Unassigned', 'ajforms' ),
+			'OpenA'     => __( 'Assigned', 'ajforms' ),
+			'Parts'     => __( 'Parts on Order', 'ajforms' ),
+			'Work'      => __( 'Work in Progress', 'ajforms' ),
+			'Finalized' => __( 'Finalized', 'ajforms' ),
+			'Closed'    => __( 'Closed', 'ajforms' ),
+		);
+		$selected_statuses = isset( $_GET['rentec_statuses'] )
+			? array_map( 'sanitize_text_field', (array) wp_unslash( $_GET['rentec_statuses'] ) )
+			: array( 'OpenU', 'OpenA', 'Parts', 'Work', 'Finalized' );
+		$note_result = '';
+		if ( isset( $_POST['ajcore_rentec_note_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajcore_rentec_note_nonce'] ) ), 'ajcore_add_rentec_work_order_note' ) ) {
+			$note_account = isset( $_POST['rentec_note_account'] ) && '2' === sanitize_text_field( wp_unslash( $_POST['rentec_note_account'] ) ) ? '2' : '1';
+			$note_id      = isset( $_POST['rentec_workorder_id'] ) ? absint( $_POST['rentec_workorder_id'] ) : 0;
+			$note_text    = isset( $_POST['rentec_note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['rentec_note'] ) ) : '';
+			if ( $note_id && '' !== trim( $note_text ) && ! empty( $accounts[ $note_account ]['key'] ) ) {
+				$note_response = wp_remote_post(
+					'https://secure.rentecdirect.com/api/v3/work_orders/' . $note_id . '/notes',
+					array(
+						'headers' => array( 'Accept' => 'application/json', 'Content-Type' => 'application/json', 'X-API-Key' => $accounts[ $note_account ]['key'] ),
+						'body'    => wp_json_encode( array( 'note' => $note_text, 'private' => ! empty( $_POST['rentec_note_private'] ) ) ),
+						'timeout' => 15,
+					)
+				);
+				$note_status = is_wp_error( $note_response ) ? 0 : (int) wp_remote_retrieve_response_code( $note_response );
+				$note_result = in_array( $note_status, array( 200, 201 ), true )
+					? __( 'Work-order note added.', 'ajforms' )
+					: ( is_wp_error( $note_response ) ? $note_response->get_error_message() : sprintf( __( 'Rentec returned HTTP status %d while adding the note.', 'ajforms' ), $note_status ) );
+			}
 		}
 		$base_url = add_query_arg(
 			array(
@@ -28244,7 +28290,6 @@ class AJForms_Admin {
 			<div class="ajcore-section-head">
 				<div>
 					<h2><?php esc_html_e( 'Rentec Direct', 'ajforms' ); ?></h2>
-					<p><?php esc_html_e( 'Read-only operational view of the Rentec accounts connected in CP Settings.', 'ajforms' ); ?></p>
 				</div>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'rentec' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Rentec Settings', 'ajforms' ); ?></a>
 			</div>
@@ -28256,18 +28301,22 @@ class AJForms_Admin {
 					<input type="hidden" name="page" value="ajforms-client-portal">
 					<input type="hidden" name="tab" value="rentec">
 					<input type="hidden" name="rentec_resource" value="<?php echo esc_attr( $resource ); ?>">
-					<label for="rentec_account"><strong><?php esc_html_e( 'Account', 'ajforms' ); ?></strong></label>
-					<select name="rentec_account" id="rentec_account">
-						<?php foreach ( $accounts as $index => $configured_account ) : ?>
-							<option value="<?php echo esc_attr( $index ); ?>" <?php selected( $account, $index ); ?> <?php disabled( empty( $configured_account['key'] ) ); ?>><?php echo esc_html( $configured_account['label'] . ( empty( $configured_account['key'] ) ? ' — not configured' : '' ) ); ?></option>
+					<strong><?php esc_html_e( 'Accounts', 'ajforms' ); ?></strong>
+					<?php foreach ( $accounts as $index => $configured_account ) : ?>
+						<label><input type="checkbox" name="rentec_accounts[]" value="<?php echo esc_attr( $index ); ?>" <?php checked( in_array( $index, $selected_accounts, true ) ); ?> <?php disabled( empty( $configured_account['key'] ) ); ?>> <?php echo esc_html( $configured_account['label'] . ( empty( $configured_account['key'] ) ? ' — not configured' : '' ) ); ?></label>
+					<?php endforeach; ?>
+					<?php if ( 'work_orders' === $resource ) : ?>
+						<strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong>
+						<?php foreach ( $work_order_statuses as $status_key => $status_label ) : ?>
+							<label><input type="checkbox" name="rentec_statuses[]" value="<?php echo esc_attr( $status_key ); ?>" <?php checked( in_array( $status_key, $selected_statuses, true ) ); ?>> <?php echo esc_html( $status_label ); ?></label>
 						<?php endforeach; ?>
-					</select>
-					<button class="button button-primary"><?php esc_html_e( 'Load Account', 'ajforms' ); ?></button>
+					<?php endif; ?>
+					<button class="button button-primary"><?php esc_html_e( 'Apply', 'ajforms' ); ?></button>
 				</form>
 
 				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'Rentec sections', 'ajforms' ); ?>">
 					<?php foreach ( $resources as $resource_key => $resource_config ) : ?>
-						<a class="ajcore-tab-link <?php echo $resource === $resource_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'rentec_account' => $account, 'rentec_resource' => $resource_key ), $base_url ) ); ?>"><?php echo esc_html( $resource_config['label'] ); ?></a>
+						<a class="ajcore-tab-link <?php echo $resource === $resource_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'rentec_accounts' => $selected_accounts, 'rentec_resource' => $resource_key ), $base_url ) ); ?>"><?php echo esc_html( $resource_config['label'] ); ?></a>
 					<?php endforeach; ?>
 				</nav>
 			<?php endif; ?>
@@ -28276,50 +28325,60 @@ class AJForms_Admin {
 		if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) {
 			return;
 		}
-		if ( empty( $accounts[ $account ]['key'] ) ) {
-			echo '<div class="notice notice-error inline"><p>' . esc_html__( 'The selected Rentec account does not have an API key.', 'ajforms' ) . '</p></div>';
+		if ( empty( $selected_accounts ) ) {
+			echo '<div class="notice notice-error inline"><p>' . esc_html__( 'No configured Rentec accounts were selected.', 'ajforms' ) . '</p></div>';
 			return;
 		}
-
-		$endpoint_url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
+		$rows  = array();
+		$total = 0;
+		foreach ( $selected_accounts as $account ) {
+			$endpoint_url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
+			if ( 'work_orders' === $resource ) {
+				$endpoint_url = add_query_arg( 'age', '3650d', $endpoint_url );
+			} elseif ( 'transactions' === $resource ) {
+				$endpoint_url = add_query_arg( 'page', 1, $endpoint_url );
+			}
+			$response = wp_remote_get( $endpoint_url, array( 'headers' => array( 'Accept' => 'application/json', 'X-API-Key' => (string) $accounts[ $account ]['key'] ), 'timeout' => 15, 'redirection' => 0 ) );
+			$body     = is_wp_error( $response ) ? null : json_decode( wp_remote_retrieve_body( $response ), true );
+			if ( is_wp_error( $response ) || 200 !== (int) wp_remote_retrieve_response_code( $response ) || ! is_array( $body ) ) {
+				echo '<div class="notice notice-error inline"><p>' . esc_html( is_wp_error( $response ) ? $response->get_error_message() : sprintf( __( 'Rentec returned HTTP status %d for %s.', 'ajforms' ), (int) wp_remote_retrieve_response_code( $response ), $accounts[ $account ]['label'] ) ) . '</p></div>';
+				continue;
+			}
+			$account_rows = isset( $body['data'] ) && is_array( $body['data'] ) ? array_slice( $body['data'], 0, 100 ) : array();
+			foreach ( $account_rows as &$account_row ) {
+				$account_row['_rentec_account']       = $account;
+				$account_row['_rentec_account_label'] = $accounts[ $account ]['label'];
+			}
+			unset( $account_row );
+			$rows   = array_merge( $rows, $account_rows );
+			$total += isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $account_rows );
+		}
 		if ( 'work_orders' === $resource ) {
-			$endpoint_url = add_query_arg( 'age', '3650d', $endpoint_url );
-		} elseif ( 'transactions' === $resource ) {
-			$endpoint_url = add_query_arg( 'page', 1, $endpoint_url );
+			$rows = array_values(
+				array_filter(
+					$rows,
+					function ( $row ) use ( $selected_statuses ) {
+						$status = (string) ( $row['status'] ?? '' );
+						if ( 'Unassigned' === $status ) {
+							$status = 'OpenU';
+						} elseif ( 'Assigned' === $status ) {
+							$status = 'OpenA';
+						}
+						return in_array( $status, $selected_statuses, true );
+					}
+				)
+			);
 		}
-		$response = wp_remote_get(
-			$endpoint_url,
-			array(
-				'headers'     => array(
-					'Accept'    => 'application/json',
-					'X-API-Key' => (string) $accounts[ $account ]['key'],
-				),
-				'timeout'     => 15,
-				'redirection' => 0,
-			)
-		);
-		if ( is_wp_error( $response ) ) {
-			echo '<div class="notice notice-error inline"><p>' . esc_html( $response->get_error_message() ) . '</p></div>';
-			return;
-		}
-		$status = (int) wp_remote_retrieve_response_code( $response );
-		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
-		if ( 200 !== $status || ! is_array( $body ) ) {
-			echo '<div class="notice notice-error inline"><p>' . esc_html( sprintf( __( 'Rentec returned HTTP status %d for this resource.', 'ajforms' ), $status ) ) . '</p></div>';
-			return;
-		}
-
-		$rows        = isset( $body['data'] ) && is_array( $body['data'] ) ? array_slice( $body['data'], 0, 100 ) : array();
-		$total       = isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $rows );
 		$columns     = $resources[ $resource ]['columns'];
 		?>
 		<div class="ajforms-settings-card">
 			<div class="ajcore-section-head">
 				<div>
 					<h2><?php echo esc_html( $resources[ $resource ]['label'] ); ?></h2>
-					<p><?php echo esc_html( sprintf( __( '%1$s · %2$d records returned. Displaying up to 100.', 'ajforms' ), $accounts[ $account ]['label'], $total ) ); ?></p>
+					<p><?php echo esc_html( sprintf( _n( '%1$d account · %2$d records returned.', '%1$d accounts · %2$d records returned.', count( $selected_accounts ), 'ajforms' ), count( $selected_accounts ), $total ) ); ?></p>
 				</div>
 			</div>
+			<?php if ( '' !== $note_result ) : ?><div class="notice notice-info inline"><p><?php echo esc_html( $note_result ); ?></p></div><?php endif; ?>
 			<?php if ( empty( $rows ) ) : ?>
 				<p><?php esc_html_e( 'No records were returned.', 'ajforms' ); ?></p>
 			<?php else : ?>
@@ -28344,6 +28403,30 @@ class AJForms_Admin {
 										<td><?php echo esc_html( $value ); ?></td>
 									<?php endforeach; ?>
 								</tr>
+								<?php if ( 'work_orders' === $resource ) : ?>
+									<tr><td colspan="<?php echo esc_attr( count( $columns ) ); ?>">
+										<details>
+											<summary><strong><?php esc_html_e( 'View details and notes', 'ajforms' ); ?></strong></summary>
+											<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:14px 0;">
+												<?php foreach ( $row as $detail_key => $detail_value ) : ?>
+													<?php if ( 0 === strpos( (string) $detail_key, '_' ) || 'notes' === $detail_key ) { continue; } ?>
+													<div><strong><?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $detail_key ) ) ); ?>:</strong> <?php echo esc_html( is_scalar( $detail_value ) ? (string) $detail_value : wp_json_encode( $detail_value ) ); ?></div>
+												<?php endforeach; ?>
+											</div>
+											<h4><?php esc_html_e( 'Notes & History', 'ajforms' ); ?></h4>
+											<?php foreach ( (array) ( $row['notes'] ?? array() ) as $work_order_note ) : ?>
+												<p><?php echo esc_html( (string) ( $work_order_note['note'] ?? '' ) ); ?> <small><?php echo esc_html( (string) ( $work_order_note['created'] ?? '' ) ); ?><?php echo ! empty( $work_order_note['private'] ) ? ' · ' . esc_html__( 'Private', 'ajforms' ) : ' · ' . esc_html__( 'Shared', 'ajforms' ); ?></small></p>
+											<?php endforeach; ?>
+											<form method="post">
+												<?php wp_nonce_field( 'ajcore_add_rentec_work_order_note', 'ajcore_rentec_note_nonce' ); ?>
+												<input type="hidden" name="rentec_note_account" value="<?php echo esc_attr( $row['_rentec_account'] ); ?>">
+												<input type="hidden" name="rentec_workorder_id" value="<?php echo esc_attr( $row['workorder_id'] ?? 0 ); ?>">
+												<textarea name="rentec_note" rows="3" class="large-text" placeholder="<?php esc_attr_e( 'Add a work-order note…', 'ajforms' ); ?>" required></textarea>
+												<p><label><input type="checkbox" name="rentec_note_private" value="1" checked> <?php esc_html_e( 'Private note', 'ajforms' ); ?></label> <button class="button button-primary"><?php esc_html_e( 'Add Note', 'ajforms' ); ?></button></p>
+											</form>
+										</details>
+									</td></tr>
+								<?php endif; ?>
 							<?php endforeach; ?>
 						</tbody>
 					</table>

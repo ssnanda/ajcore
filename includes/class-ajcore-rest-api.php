@@ -48,6 +48,21 @@ class AJCore_REST_API {
 				),
 			)
 		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec/work-orders/(?P<id>\d+)/notes',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'add_ops_rentec_work_order_note' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'id'      => array( 'required' => true, 'sanitize_callback' => 'absint' ),
+					'account' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'note'    => array( 'required' => true, 'sanitize_callback' => 'sanitize_textarea_field' ),
+					'private' => array( 'required' => false, 'sanitize_callback' => 'rest_sanitize_boolean' ),
+				),
+			)
+		);
 
 		// Browser-driven OAuth redirect from Zoho. current_user_can() can't gate this: WordPress's
 		// REST layer only recognizes a logged-in cookie session when the request also carries its
@@ -1299,6 +1314,64 @@ class AJCore_REST_API {
 				'total'    => isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $rows ),
 				'rows'     => $rows,
 				'limit'    => 100,
+			)
+		);
+	}
+
+	public function add_ops_rentec_work_order_note( WP_REST_Request $request ) {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) {
+			return new WP_Error( 'ajcore_rentec_disabled', __( 'The Rentec integration is disabled.', 'ajforms' ), array( 'status' => 409 ) );
+		}
+
+		$account = '2' === (string) $request->get_param( 'account' ) ? '2' : '1';
+		$key     = '2' === $account ? (string) ( $settings['rentec_api_key_2'] ?? '' ) : (string) ( $settings['rentec_api_key'] ?? '' );
+		$note    = trim( (string) $request->get_param( 'note' ) );
+		if ( '' === $key ) {
+			return new WP_Error( 'ajcore_rentec_not_configured', __( 'The selected Rentec account does not have an API key.', 'ajforms' ), array( 'status' => 409 ) );
+		}
+		if ( '' === $note ) {
+			return new WP_Error( 'ajcore_rentec_note_required', __( 'Enter a note first.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$response = wp_remote_post(
+			'https://secure.rentecdirect.com/api/v3/work_orders/' . absint( $request->get_param( 'id' ) ) . '/notes',
+			array(
+				'headers'     => array(
+					'Accept'       => 'application/json',
+					'Content-Type' => 'application/json',
+					'X-API-Key'    => $key,
+				),
+				'body'        => wp_json_encode(
+					array(
+						'note'    => $note,
+						'private' => rest_sanitize_boolean( $request->get_param( 'private' ) ),
+					)
+				),
+				'timeout'     => 15,
+				'redirection' => 0,
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'ajcore_rentec_request_failed', $response->get_error_message(), array( 'status' => 502 ) );
+		}
+
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( ! in_array( $status, array( 200, 201 ), true ) || ! is_array( $body ) ) {
+			$message = is_array( $body ) && ! empty( $body['message'] )
+				? sanitize_text_field( (string) $body['message'] )
+				: sprintf( __( 'Rentec returned HTTP status %d while adding the note.', 'ajforms' ), $status );
+			return new WP_Error( 'ajcore_rentec_note_failed', $message, array( 'status' => $status >= 400 && $status < 600 ? $status : 502 ) );
+		}
+
+		return rest_ensure_response(
+			array(
+				'success' => true,
+				'data'    => isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array(
+					'note'    => $note,
+					'private' => rest_sanitize_boolean( $request->get_param( 'private' ) ),
+				),
 			)
 		);
 	}
