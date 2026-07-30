@@ -61,6 +61,15 @@ class AJCore_REST_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/rentec/tenants/(?P<id>\d+)',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_rentec_tenant' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/rentec/work-orders',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -1358,7 +1367,7 @@ class AJCore_REST_API {
 			return $selected;
 		}
 
-		$allowed_resources = array( 'leads', 'vendors', 'transactions', 'work_orders', 'files', 'messages' );
+		$allowed_resources = array( 'tenants', 'leads', 'vendors', 'transactions', 'work_orders', 'files', 'messages' );
 		$resource          = sanitize_key( (string) $request->get_param( 'resource' ) );
 		if ( ! in_array( $resource, $allowed_resources, true ) ) {
 			$resource = 'work_orders';
@@ -1423,6 +1432,27 @@ class AJCore_REST_API {
 				'total'    => $total,
 				'rows'     => array_slice( $rows, 0, 100 ),
 				'limit'    => 100,
+			)
+		);
+	}
+
+	public function get_ops_rentec_tenant( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+		$id = absint( $request->get_param( 'id' ) );
+		if ( ! $id ) {
+			return new WP_Error( 'ajcore_rentec_tenant_required', __( 'A valid tenant ID is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$body = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/tenants/' . $id, $selected['account']['key'] );
+		if ( is_wp_error( $body ) ) {
+			return $body;
+		}
+		return rest_ensure_response(
+			array(
+				'account' => $selected['id'],
+				'tenant'  => $body['data'] ?? $body,
 			)
 		);
 	}
