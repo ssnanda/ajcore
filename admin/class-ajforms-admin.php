@@ -2139,7 +2139,7 @@ class AJForms_Admin {
 
 		$pdb->query(
 			$pdb->prepare(
-				"INSERT INTO {$table} (year_month, next_seq) VALUES (%s, 1) ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(next_seq + 1)",
+				"INSERT INTO {$table} (`year_month`, next_seq) VALUES (%s, 1) ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(next_seq + 1)",
 				$year_month
 			)
 		);

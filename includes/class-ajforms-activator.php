@@ -201,9 +201,9 @@ class AJForms_Activator {
 		) $charset_collate;
 
 		CREATE TABLE $table_customer_number_counters (
-			year_month varchar(7) NOT NULL,
+			`year_month` varchar(7) NOT NULL,
 			next_seq int(10) unsigned NOT NULL DEFAULT 1,
-			PRIMARY KEY  (year_month)
+			PRIMARY KEY  (`year_month`)
 		) $charset_collate;
 
 		CREATE TABLE $table_customer_states (
@@ -1226,7 +1226,7 @@ class AJForms_Activator {
 		}
 
 		self::ensure_shared_leads_tables_and_migrate();
-		self::ensure_customer_number_columns_and_counter_table();
+		$customer_number_schema_ready = self::ensure_customer_number_columns_and_counter_table();
 
 		$now = current_time( 'mysql' );
 		$wpdb->query(
@@ -1344,7 +1344,9 @@ class AJForms_Activator {
 		self::drop_legacy_tawk_table();
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		update_option( 'ajforms_portal_schema_version', '39', false );
+		if ( $customer_number_schema_ready ) {
+			update_option( 'ajforms_portal_schema_version', '40', false );
+		}
 	}
 
 	/**
@@ -1876,6 +1878,7 @@ class AJForms_Activator {
 	public static function ensure_customer_number_columns_and_counter_table() {
 		global $wpdb;
 
+		$schema_ready = true;
 		$dbs = array( $wpdb );
 		if ( function_exists( 'ajcore_get_portal_db' ) ) {
 			$pdb = ajcore_get_portal_db();
@@ -1890,11 +1893,14 @@ class AJForms_Activator {
 			$counters_table = $db->prefix . 'aj_portal_customer_number_counters';
 			$db->query(
 				"CREATE TABLE IF NOT EXISTS $counters_table (
-					year_month varchar(7) NOT NULL,
+					`year_month` varchar(7) NOT NULL,
 					next_seq int(10) unsigned NOT NULL DEFAULT 1,
-					PRIMARY KEY  (year_month)
+					PRIMARY KEY  (`year_month`)
 				) $charset"
 			);
+			if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $counters_table ) ) !== $counters_table ) {
+				$schema_ready = false;
+			}
 
 			foreach ( array( 'aj_portal_stripe_customers', 'aj_portal_local_customers' ) as $base ) {
 				$table = $db->prefix . $base;
@@ -1906,6 +1912,8 @@ class AJForms_Activator {
 				}
 			}
 		}
+
+		return $schema_ready;
 	}
 
 	/**
@@ -2184,9 +2192,9 @@ class AJForms_Activator {
 		) $charset_collate;
 
 		CREATE TABLE $t_customer_number_counters (
-			year_month varchar(7) NOT NULL,
+			`year_month` varchar(7) NOT NULL,
 			next_seq int(10) unsigned NOT NULL DEFAULT 1,
-			PRIMARY KEY  (year_month)
+			PRIMARY KEY  (`year_month`)
 		) $charset_collate;
 
 		CREATE TABLE $t_customer_states (
