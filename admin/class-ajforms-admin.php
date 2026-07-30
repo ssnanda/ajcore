@@ -28448,7 +28448,13 @@ class AJForms_Admin {
 													<div><strong><?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $detail_key ) ) ); ?>:</strong> <?php echo esc_html( is_scalar( $detail_value ) ? (string) $detail_value : wp_json_encode( $detail_value ) ); ?></div>
 												<?php endforeach; ?>
 											</div>
-											<h4><?php esc_html_e( 'Attachments', 'ajforms' ); ?></h4>
+											<h4>
+												<?php esc_html_e( 'Attachments', 'ajforms' ); ?>
+												<label class="button button-small" style="margin-left:8px;">
+													<?php esc_html_e( 'Attach Image', 'ajforms' ); ?>
+													<input type="file" class="ajcore-rentec-image-upload" accept="image/jpeg,image/png,image/gif,image/webp" hidden>
+												</label>
+											</h4>
 											<div class="ajcore-rentec-attachments"><p class="description"><?php esc_html_e( 'Open the details to load attachments.', 'ajforms' ); ?></p></div>
 											<h4><?php esc_html_e( 'Notes & History', 'ajforms' ); ?></h4>
 											<p class="description"><?php esc_html_e( 'Rentec API V3 currently supports adding notes, but does not expose an endpoint for changing an existing work-order status.', 'ajforms' ); ?></p>
@@ -28589,6 +28595,44 @@ class AJForms_Admin {
 							details.addEventListener('toggle', function() {
 								if (details.open) loadDetail(row, details);
 							});
+							const upload = details.querySelector('.ajcore-rentec-image-upload');
+							if (upload) {
+								upload.addEventListener('change', function() {
+									const file = upload.files && upload.files[0];
+									upload.value = '';
+									if (!file) return;
+									const formData = new FormData();
+									formData.append('account', row.dataset.rentecAccount || '1');
+									formData.append('file', file);
+									const loading = details.querySelector('.ajcore-rentec-detail-loading');
+									if (loading) {
+										loading.hidden = false;
+										loading.style.color = '';
+										loading.textContent = '<?php echo esc_js( __( 'Uploading image…', 'ajforms' ) ); ?>';
+									}
+									fetch(restBase + '/' + encodeURIComponent(row.dataset.workorderId) + '/attachments', {
+										method: 'POST',
+										headers: { 'X-WP-Nonce': restNonce },
+										body: formData
+									})
+										.then(function(response) {
+											return response.json().then(function(body) {
+												if (!response.ok) throw new Error(body.message || '<?php echo esc_js( __( 'Failed to upload the image.', 'ajforms' ) ); ?>');
+											});
+										})
+										.then(function() {
+											details.dataset.loaded = '0';
+											loadDetail(row, details);
+										})
+										.catch(function(error) {
+											if (loading) {
+												loading.hidden = false;
+												loading.style.color = '#b32d2e';
+												loading.textContent = error.message;
+											}
+										});
+								});
+							}
 						});
 					}());
 					</script>

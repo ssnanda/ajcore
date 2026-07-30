@@ -75,6 +75,19 @@ class AJCore_REST_API {
 				),
 			)
 		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec/work-orders/(?P<id>\d+)/attachments',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'upload_ops_rentec_work_order_attachment' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+				'args'                => array(
+					'id'      => array( 'required' => true, 'sanitize_callback' => 'absint' ),
+					'account' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+				),
+			)
+		);
 		// Browser-driven OAuth redirect from Zoho. current_user_can() can't gate this: WordPress's
 		// REST layer only recognizes a logged-in cookie session when the request also carries its
 		// own X-WP-Nonce, which an external redirect from Zoho has no way to attach — so WP treats
@@ -1389,6 +1402,36 @@ class AJCore_REST_API {
 			return $body;
 		}
 
+		$work_order = $body['data'] ?? $body;
+		$property   = array();
+		$renter     = array();
+		$contact    = array();
+		$lookups    = array(
+			'property'       => array( 'resource' => 'properties', 'id' => absint( $work_order['property_id'] ?? 0 ) ),
+			'renter'         => array( 'resource' => 'tenants', 'id' => absint( $work_order['renter_id'] ?? 0 ) ),
+			'contact_renter' => array( 'resource' => 'tenants', 'id' => absint( $work_order['contact_renter_id'] ?? 0 ) ),
+		);
+		foreach ( $lookups as $lookup_name => $lookup ) {
+			if ( ! $lookup['id'] ) {
+				continue;
+			}
+			$lookup_body = $this->request_rentec_for_ops(
+				'https://secure.rentecdirect.com/api/v3/' . $lookup['resource'] . '/' . $lookup['id'],
+				$selected['account']['key']
+			);
+			if ( is_wp_error( $lookup_body ) ) {
+				continue;
+			}
+			$lookup_value = isset( $lookup_body['data'] ) && is_array( $lookup_body['data'] ) ? $lookup_body['data'] : $lookup_body;
+			if ( 'property' === $lookup_name ) {
+				$property = $lookup_value;
+			} elseif ( 'renter' === $lookup_name ) {
+				$renter = $lookup_value;
+			} else {
+				$contact = $lookup_value;
+			}
+		}
+
 		$files       = array();
 		$files_error = '';
 		$files_body  = $this->request_rentec_for_ops(
@@ -1411,12 +1454,77 @@ class AJCore_REST_API {
 
 		return rest_ensure_response(
 			array(
-				'account'     => $selected['id'],
-				'work_order'  => $body['data'] ?? $body,
-				'files'       => $files,
-				'files_error' => $files_error,
+				'account'        => $selected['id'],
+				'work_order'     => $work_order,
+				'property'       => $property,
+				'renter'         => $renter,
+				'contact_renter' => $contact,
+				'files'          => $files,
+				'files_error'    => $files_error,
 			)
 		);
+	}
+
+	public function upload_ops_rentec_work_order_attachment( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+		$files = $request->get_file_params();
+		$file  = isset( $files['file'] ) && is_array( $files['file'] ) ? $files['file'] : null;
+		if ( ! $file || empty( $file['tmp_name'] ) || ! is_uploaded_file( $file['tmp_name'] ) ) {
+			return new WP_Error( 'ajcore_rentec_file_required', __( 'Choose an image to upload.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( ! empty( $file['error'] ) ) {
+			return new WP_Error( 'ajcore_rentec_file_upload_failed', __( 'The image upload did not complete.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( (int) $file['size'] > 10 * MB_IN_BYTES ) {
+			return new WP_Error( 'ajcore_rentec_file_too_large', __( 'Images must be 10 MB or smaller.', 'ajforms' ), array( 'status' => 413 ) );
+		}
+		$allowed_types = array( 'image/jpeg', 'image/png', 'image/gif', 'image/webp' );
+		$file_type     = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'] );
+		$mime_type     = (string) ( $file_type['type'] ?? $file['type'] ?? '' );
+		if ( ! in_array( $mime_type, $allowed_types, true ) ) {
+			return new WP_Error( 'ajcore_rentec_file_type', __( 'Upload a JPG, PNG, GIF, or WebP image.', 'ajforms' ), array( 'status' => 415 ) );
+		}
+		$file_contents = file_get_contents( $file['tmp_name'] );
+		if ( false === $file_contents ) {
+			return new WP_Error( 'ajcore_rentec_file_read_failed', __( 'The uploaded image could not be read.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$boundary = 'ajcore-' . wp_generate_password( 24, false, false );
+		$eol      = "\r\n";
+		$body     = '--' . $boundary . $eol;
+		$body    .= 'Content-Disposition: form-data; name="workorder_id"' . $eol . $eol;
+		$body    .= absint( $request->get_param( 'id' ) ) . $eol;
+		$body    .= '--' . $boundary . $eol;
+		$body    .= 'Content-Disposition: form-data; name="file"; filename="' . sanitize_file_name( $file['name'] ) . '"' . $eol;
+		$body    .= 'Content-Type: ' . $mime_type . $eol . $eol;
+		$body    .= $file_contents . $eol;
+		$body    .= '--' . $boundary . '--' . $eol;
+
+		$response = wp_remote_post(
+			'https://secure.rentecdirect.com/api/v3/files',
+			array(
+				'headers' => array(
+					'Accept'       => 'application/json',
+					'Content-Type' => 'multipart/form-data; boundary=' . $boundary,
+					'X-API-Key'    => $selected['account']['key'],
+				),
+				'body'    => $body,
+				'timeout' => 30,
+			)
+		);
+		if ( is_wp_error( $response ) ) {
+			return new WP_Error( 'ajcore_rentec_upload_failed', $response->get_error_message(), array( 'status' => 502 ) );
+		}
+		$status   = (int) wp_remote_retrieve_response_code( $response );
+		$response_body = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( $status < 200 || $status >= 300 ) {
+			$message = isset( $response_body['message'] ) ? sanitize_text_field( (string) $response_body['message'] ) : sprintf( __( 'Rentec returned HTTP status %d.', 'ajforms' ), $status );
+			return new WP_Error( 'ajcore_rentec_upload_failed', $message, array( 'status' => 502 ) );
+		}
+		return rest_ensure_response( is_array( $response_body ) ? $response_body : array( 'success' => true ) );
 	}
 
 	public function add_ops_rentec_work_order_note( WP_REST_Request $request ) {
