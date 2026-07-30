@@ -9202,16 +9202,21 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'success' => true, 'primary_id' => $primary_id, 'merged' => $merged ) );
 	}
 
-	/** Auto-detects duplicates within the active Inbox (new/read only — leads already marked
-	 *  won/lost/duplicate are resolved outcomes and left alone) by exact, normalized email match,
-	 *  falling back to phone when email is blank. Keeps the earliest submission per group and
-	 *  archives the rest as duplicates in one pass — this is the "Fix Duplicates" button. */
+	/** Auto-detects duplicates within the active Inbox by exact, normalized email match,
+	 *  falling back to phone when email is blank. The Inbox is defined by the current pipeline
+	 *  status, matching AJOps, rather than the legacy status column. Keeps the earliest submission
+	 *  per group and archives the rest as duplicates in one pass — this is the "Fix Duplicates"
+	 *  button. */
 	public function fix_ops_lead_duplicates( WP_REST_Request $request ) {
 		$wpdb        = $this->get_portal_db();
 		$leads_table = $wpdb->prefix . 'aj_forms_leads';
 
 		$rows = $wpdb->get_results(
-			"SELECT id, lead_data, created_at FROM `{$leads_table}` WHERE status IN ('read','new') ORDER BY created_at ASC, id ASC",
+			"SELECT id, lead_data, created_at
+			 FROM `{$leads_table}`
+			 WHERE COALESCE(lead_status, 'new') NOT IN ('customer','lost')
+			   AND COALESCE(status, '') <> 'duplicate'
+			 ORDER BY created_at ASC, id ASC",
 			ARRAY_A
 		);
 

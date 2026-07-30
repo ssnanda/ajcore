@@ -14679,16 +14679,21 @@ class AJForms_Admin {
 		);
 	}
 
-	/** Auto-detects duplicates within the active Inbox (new/read only) by exact, normalized
-	 *  email match, falling back to phone when email is blank. Keeps the earliest submission per
-	 *  group and archives the rest — mirrors fix_ops_lead_duplicates() in class-ajcore-rest-api.php.
-	 *  Returns array( groups_merged, archived_ids ). */
+	/** Auto-detects duplicates within the active Inbox by exact, normalized email match, falling
+	 *  back to phone when email is blank. The Inbox is defined by the current pipeline status,
+	 *  matching AJOps, rather than the legacy status column. Keeps the earliest submission per
+	 *  group and archives the rest — mirrors fix_ops_lead_duplicates() in
+	 *  class-ajcore-rest-api.php. Returns array( groups_merged, archived_ids ). */
 	public function fix_portal_lead_duplicates() {
 		$wpdb        = $this->get_leads_db();
 		$leads_table = $this->get_leads_table();
 
 		$rows = $wpdb->get_results(
-			"SELECT id, lead_data, created_at FROM `{$leads_table}` WHERE status IN ('read','new') ORDER BY created_at ASC, id ASC",
+			"SELECT id, lead_data, created_at
+			 FROM `{$leads_table}`
+			 WHERE COALESCE(lead_status, 'new') NOT IN ('customer','lost')
+			   AND COALESCE(status, '') <> 'duplicate'
+			 ORDER BY created_at ASC, id ASC",
 			ARRAY_A
 		);
 
