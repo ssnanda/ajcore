@@ -2156,6 +2156,7 @@ class AJForms_Activator {
 			site_uuid varchar(100) NOT NULL,
 			domain varchar(255) DEFAULT '' NOT NULL,
 			is_master tinyint(1) NOT NULL DEFAULT 0,
+			participation longtext NULL,
 			last_seen datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			registered_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),

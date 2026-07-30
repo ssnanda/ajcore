@@ -31702,6 +31702,7 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Domain', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Master', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Participation', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Last Seen', 'ajforms' ); ?></th>
 						<th></th>
 					</tr>
@@ -31709,11 +31710,38 @@ class AJForms_Admin {
 				<tbody>
 					<?php foreach ( $connected_sites as $site ) :
 						$is_this_site = ( (string) $site->site_uuid === $site_uuid );
+						$participation = isset( $site->participation ) ? json_decode( (string) $site->participation, true ) : array();
+						$participation = is_array( $participation ) ? $participation : array();
+						$participation_labels = array();
+						if ( ! empty( $site->is_master ) ) {
+							$participation_labels[] = __( 'Master Operations', 'ajforms' );
+						}
+						if ( ! empty( $participation['client_portal'] ) ) {
+							$participation_labels[] = __( 'Client Portal', 'ajforms' );
+						}
+						if ( ! empty( $participation['forms_leads'] ) ) {
+							$participation_labels[] = __( 'Forms & Leads', 'ajforms' );
+						}
+						if ( ! empty( $participation['live_chat'] ) ) {
+							$participation_labels[] = __( 'Live Chat', 'ajforms' );
+						}
+						if ( empty( $participation_labels ) && ! empty( $participation ) ) {
+							$participation_labels[] = __( 'Shared DB Only', 'ajforms' );
+						}
 					?>
 					<tr<?php echo $is_this_site ? ' style="background:#f0f6fc;"' : ''; ?>>
 						<td><?php echo esc_html( $site->domain ); ?><?php echo $is_this_site ? ' <strong>(' . esc_html__( 'this site', 'ajforms' ) . ')</strong>' : ''; ?></td>
 						<td><code><?php echo esc_html( $site->site_uuid ); ?></code></td>
 						<td><?php echo $site->is_master ? '<span style="color:#166534;font-weight:700;">&#10003; ' . esc_html__( 'Master', 'ajforms' ) . '</span>' : '—'; ?></td>
+						<td>
+							<?php if ( ! empty( $participation_labels ) ) : ?>
+								<?php foreach ( $participation_labels as $participation_label ) : ?>
+									<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:11px;font-weight:700;"><?php echo esc_html( $participation_label ); ?></span>
+								<?php endforeach; ?>
+							<?php else : ?>
+								<span class="description"><?php esc_html_e( 'Not reported yet', 'ajforms' ); ?></span>
+							<?php endif; ?>
+						</td>
 						<td><?php echo esc_html( $site->last_seen ); ?></td>
 						<td>
 							<?php if ( ! $sites_from_cache && $is_current_master && ! $site->is_master ) : ?>

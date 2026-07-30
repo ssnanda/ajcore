@@ -4103,14 +4103,18 @@ class AJCore_REST_API {
 			return rest_ensure_response( array( 'sites' => array() ) );
 		}
 
-		$rows  = $pdb->get_results( "SELECT site_uuid, domain, is_master, last_seen FROM `{$table}` ORDER BY is_master DESC, domain ASC" );
+		$has_participation = (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'participation'" );
+		$participation_sql = $has_participation ? ', participation' : '';
+		$rows  = $pdb->get_results( "SELECT site_uuid, domain, is_master, last_seen{$participation_sql} FROM `{$table}` ORDER BY is_master DESC, domain ASC" );
 		$sites = array();
 		foreach ( (array) $rows as $row ) {
+			$participation = $has_participation ? json_decode( (string) $row->participation, true ) : array();
 			$sites[] = array(
-				'site_uuid' => (string) $row->site_uuid,
-				'domain'    => (string) $row->domain,
-				'is_master' => (bool) $row->is_master,
-				'last_seen' => (string) $row->last_seen,
+				'site_uuid'    => (string) $row->site_uuid,
+				'domain'       => (string) $row->domain,
+				'is_master'    => (bool) $row->is_master,
+				'participation' => is_array( $participation ) ? $participation : array(),
+				'last_seen'    => (string) $row->last_seen,
 			);
 		}
 		return rest_ensure_response( array( 'sites' => $sites ) );
