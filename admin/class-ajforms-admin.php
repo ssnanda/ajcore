@@ -30983,19 +30983,40 @@ class AJForms_Admin {
 		$existing = get_option( 'ajcore_shared_db_settings', array() );
 		$existing = is_array( $existing ) ? $existing : array();
 
+		$shared_db_enabled = ! empty( $_POST['shared_db_enabled'] );
+		$shared_db_host    = sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) );
+		$shared_db_name    = sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) );
+		$shared_db_user    = sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) );
+		$shared_db_prefix  = sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) );
+		$posted_password   = isset( $_POST['shared_db_password'] ) ? (string) wp_unslash( $_POST['shared_db_password'] ) : '';
+		$saved_password    = '' !== $posted_password ? $posted_password : ( $existing['password'] ?? '' );
+
+		if ( $shared_db_enabled && ( '' === $shared_db_host || '' === $shared_db_name || '' === $shared_db_user || '' === $saved_password ) ) {
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'            => 'ajforms-cp-settings',
+						'cp_section'      => 'shared-db',
+						'shared-db-error' => rawurlencode( __( 'Shared DB was not saved. Host, database name, user, and password are required when Shared DB is enabled.', 'ajforms' ) ),
+					),
+					admin_url( 'admin.php' )
+				)
+			);
+			exit;
+		}
+
 		$new = array(
-			'enabled'                    => ! empty( $_POST['shared_db_enabled'] ) ? 1 : 0,
-			'host'                       => sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) ),
-			'name'                       => sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) ),
-			'user'                       => sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) ),
-			'prefix'                     => sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) ),
+			'enabled'                    => $shared_db_enabled ? 1 : 0,
+			'host'                       => $shared_db_host,
+			'name'                       => $shared_db_name,
+			'user'                       => $shared_db_user,
+			'prefix'                     => $shared_db_prefix,
 			'site_client_portal_enabled' => ! empty( $_POST['site_client_portal_enabled'] ) ? 1 : 0,
 			'site_forms_enabled'         => ! empty( $_POST['site_forms_enabled'] ) ? 1 : 0,
 			'site_live_chat_enabled'     => ! empty( $_POST['site_live_chat_enabled'] ) ? 1 : 0,
 		);
 
-		$posted_password = isset( $_POST['shared_db_password'] ) ? (string) wp_unslash( $_POST['shared_db_password'] ) : '';
-		$new['password'] = '' !== $posted_password ? $posted_password : ( $existing['password'] ?? '' );
+		$new['password'] = $saved_password;
 
 		// Don't override fields that are locked by constants.
 		foreach (
@@ -31100,7 +31121,7 @@ class AJForms_Admin {
 			<h3><?php esc_html_e( 'Site Features / Shared DB', 'ajforms' ); ?></h3>
 			<p><?php esc_html_e( 'Choose what this AJCore installation provides, then optionally connect it to the shared AJCore network.', 'ajforms' ); ?></p>
 
-			<form method="post">
+			<form method="post" id="ajcore-site-shared-db-form" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'shared-db' ), admin_url( 'admin.php' ) ) ); ?>">
 				<?php wp_nonce_field( 'ajcore_save_shared_db_settings', 'ajcore_shared_db_nonce' ); ?>
 
 				<h4><?php esc_html_e( 'Features Enabled on This Site', 'ajforms' ); ?></h4>
@@ -31110,7 +31131,7 @@ class AJForms_Admin {
 						<th scope="row"><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="site_client_portal_enabled" value="1" <?php checked( ! empty( $site_features['client_portal'] ) ); ?>>
+								<input type="checkbox" name="site_client_portal_enabled" value="1" form="ajcore-site-shared-db-form" <?php checked( ! empty( $site_features['client_portal'] ) ); ?>>
 								<?php esc_html_e( 'Enable Client Portal features on this site', 'ajforms' ); ?>
 							</label>
 							<p class="description"><?php esc_html_e( 'Enabled by default for compatibility with existing AJCore installations.', 'ajforms' ); ?></p>
@@ -31120,7 +31141,7 @@ class AJForms_Admin {
 						<th scope="row"><?php esc_html_e( 'Forms & Leads', 'ajforms' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="site_forms_enabled" value="1" <?php checked( ! empty( $site_features['forms'] ) ); ?>>
+								<input type="checkbox" name="site_forms_enabled" value="1" form="ajcore-site-shared-db-form" <?php checked( ! empty( $site_features['forms'] ) ); ?>>
 								<?php esc_html_e( 'Enable Forms and lead collection on this site', 'ajforms' ); ?>
 							</label>
 							<p class="description"><?php esc_html_e( 'Can remain enabled when the Client Portal is disabled.', 'ajforms' ); ?></p>
@@ -31130,7 +31151,7 @@ class AJForms_Admin {
 						<th scope="row"><?php esc_html_e( 'Live Chat', 'ajforms' ); ?></th>
 						<td>
 							<label>
-								<input type="checkbox" name="site_live_chat_enabled" value="1" <?php checked( ! empty( $site_features['live_chat'] ) ); ?>>
+								<input type="checkbox" name="site_live_chat_enabled" value="1" form="ajcore-site-shared-db-form" <?php checked( ! empty( $site_features['live_chat'] ) ); ?>>
 								<?php esc_html_e( 'Allow Live Chat features on this site', 'ajforms' ); ?>
 							</label>
 							<p class="description"><?php esc_html_e( 'The visitor widget still has its own rollout switch under Live Chat settings.', 'ajforms' ); ?></p>
@@ -31151,7 +31172,7 @@ class AJForms_Admin {
 						</th>
 						<td>
 							<label>
-								<input type="checkbox" name="shared_db_enabled" value="1"
+								<input type="checkbox" name="shared_db_enabled" value="1" form="ajcore-site-shared-db-form"
 									<?php checked( $is_enabled ); ?>
 									<?php echo defined( 'AJCORE_SHARED_DB_ENABLED' ) ? 'disabled' : ''; ?>>
 								<?php esc_html_e( 'Yes', 'ajforms' ); ?>
@@ -31166,7 +31187,7 @@ class AJForms_Admin {
 							<?php endif; ?>
 						</th>
 						<td>
-							<input type="text" name="shared_db_host" class="regular-text"
+							<input type="text" name="shared_db_host" class="regular-text" form="ajcore-site-shared-db-form"
 								value="<?php echo esc_attr( (string) ( $s['host'] ?? '' ) ); ?>"
 								<?php echo defined( 'AJCORE_SHARED_DB_HOST' ) ? 'readonly' : ''; ?>>
 						</td>
@@ -31179,7 +31200,7 @@ class AJForms_Admin {
 							<?php endif; ?>
 						</th>
 						<td>
-							<input type="text" name="shared_db_name" class="regular-text"
+							<input type="text" name="shared_db_name" class="regular-text" form="ajcore-site-shared-db-form"
 								value="<?php echo esc_attr( (string) ( $s['name'] ?? '' ) ); ?>"
 								<?php echo defined( 'AJCORE_SHARED_DB_NAME' ) ? 'readonly' : ''; ?>>
 						</td>
@@ -31192,7 +31213,7 @@ class AJForms_Admin {
 							<?php endif; ?>
 						</th>
 						<td>
-							<input type="text" name="shared_db_user" class="regular-text"
+							<input type="text" name="shared_db_user" class="regular-text" form="ajcore-site-shared-db-form"
 								value="<?php echo esc_attr( (string) ( $s['user'] ?? '' ) ); ?>"
 								<?php echo defined( 'AJCORE_SHARED_DB_USER' ) ? 'readonly' : ''; ?>>
 						</td>
@@ -31209,11 +31230,11 @@ class AJForms_Admin {
 								<input type="password" class="regular-text" value="••••••••" disabled>
 								<p class="description"><?php esc_html_e( 'Password is set via AJCORE_SHARED_DB_PASSWORD constant.', 'ajforms' ); ?></p>
 							<?php elseif ( $has_password ) : ?>
-								<input type="password" name="shared_db_password" class="regular-text"
+								<input type="password" name="shared_db_password" class="regular-text" form="ajcore-site-shared-db-form"
 									placeholder="<?php esc_attr_e( 'configured — leave blank to keep', 'ajforms' ); ?>">
 								<p class="description"><?php esc_html_e( 'A password is saved. Leave blank to keep it, or enter a new value to replace it.', 'ajforms' ); ?></p>
 							<?php else : ?>
-								<input type="password" name="shared_db_password" class="regular-text"
+								<input type="password" name="shared_db_password" class="regular-text" form="ajcore-site-shared-db-form"
 									placeholder="<?php esc_attr_e( 'Enter DB password', 'ajforms' ); ?>">
 							<?php endif; ?>
 						</td>
@@ -31226,7 +31247,7 @@ class AJForms_Admin {
 							<?php endif; ?>
 						</th>
 						<td>
-							<input type="text" name="shared_db_prefix" class="regular-text"
+							<input type="text" name="shared_db_prefix" class="regular-text" form="ajcore-site-shared-db-form"
 								value="<?php echo esc_attr( (string) ( $s['prefix'] ?? 'wp_' ) ); ?>"
 								<?php echo defined( 'AJCORE_SHARED_DB_PREFIX' ) ? 'readonly' : ''; ?>>
 						</td>
@@ -31262,7 +31283,7 @@ class AJForms_Admin {
 				</table>
 				<?php endif; ?>
 
-				<?php submit_button( __( 'Save Settings', 'ajforms' ) ); ?>
+				<p class="submit"><button type="submit" class="button button-primary" form="ajcore-site-shared-db-form"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button></p>
 			</form>
 		</div>
 
