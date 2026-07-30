@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.160
+ * Version: 0.7.161
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.160' );
+	define( 'AJCORE_VERSION', '0.7.161' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -724,6 +724,9 @@ if ( ! function_exists( 'ajcore_get_shared_db_settings' ) ) {
 				'password'   => '',
 				'prefix'     => 'wp_',
 				'ms_enabled' => false,
+				'site_client_portal_enabled' => true,
+				'site_forms_enabled'         => true,
+				'site_live_chat_enabled'     => true,
 			)
 		);
 
@@ -750,6 +753,31 @@ if ( ! function_exists( 'ajcore_get_shared_db_settings' ) ) {
 		}
 
 		return $s;
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_site_features' ) ) {
+	/**
+	 * Returns the capabilities enabled for this AJCore installation.
+	 *
+	 * These switches are deliberately local even when the database is shared. Existing
+	 * installations default to the full AJCore feature set until an administrator opts out.
+	 */
+	function ajcore_get_site_features() {
+		$settings = ajcore_get_shared_db_settings();
+
+		return array(
+			'client_portal' => ! array_key_exists( 'site_client_portal_enabled', $settings ) || ! empty( $settings['site_client_portal_enabled'] ),
+			'forms'         => ! array_key_exists( 'site_forms_enabled', $settings ) || ! empty( $settings['site_forms_enabled'] ),
+			'live_chat'     => ! array_key_exists( 'site_live_chat_enabled', $settings ) || ! empty( $settings['site_live_chat_enabled'] ),
+		);
+	}
+}
+
+if ( ! function_exists( 'ajcore_is_site_feature_enabled' ) ) {
+	function ajcore_is_site_feature_enabled( $feature ) {
+		$features = ajcore_get_site_features();
+		return isset( $features[ $feature ] ) && $features[ $feature ];
 	}
 }
 

@@ -19349,7 +19349,7 @@ class AJForms_Admin {
 			'esign'           => __( 'E-Signatures (BreezeDoc)', 'ajforms' ),
 			'chat'            => __( 'Live Chat', 'ajforms' ),
 			'rentec'          => __( 'Rentec Direct', 'ajforms' ),
-			'shared-db'       => __( 'Shared DB / Multi-Site', 'ajforms' ),
+			'shared-db'       => __( 'Site Features / Shared DB', 'ajforms' ),
 		);
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
 			$cp_section = 'menu';
@@ -30953,11 +30953,14 @@ class AJForms_Admin {
 		$existing = is_array( $existing ) ? $existing : array();
 
 		$new = array(
-			'enabled' => ! empty( $_POST['shared_db_enabled'] ) ? 1 : 0,
-			'host'    => sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) ),
-			'name'    => sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) ),
-			'user'    => sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) ),
-			'prefix'  => sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) ),
+			'enabled'                    => ! empty( $_POST['shared_db_enabled'] ) ? 1 : 0,
+			'host'                       => sanitize_text_field( wp_unslash( $_POST['shared_db_host'] ?? '' ) ),
+			'name'                       => sanitize_text_field( wp_unslash( $_POST['shared_db_name'] ?? '' ) ),
+			'user'                       => sanitize_text_field( wp_unslash( $_POST['shared_db_user'] ?? '' ) ),
+			'prefix'                     => sanitize_text_field( wp_unslash( $_POST['shared_db_prefix'] ?? 'wp_' ) ),
+			'site_client_portal_enabled' => ! empty( $_POST['site_client_portal_enabled'] ) ? 1 : 0,
+			'site_forms_enabled'         => ! empty( $_POST['site_forms_enabled'] ) ? 1 : 0,
+			'site_live_chat_enabled'     => ! empty( $_POST['site_live_chat_enabled'] ) ? 1 : 0,
 		);
 
 		$posted_password = isset( $_POST['shared_db_password'] ) ? (string) wp_unslash( $_POST['shared_db_password'] ) : '';
@@ -30999,6 +31002,9 @@ class AJForms_Admin {
 		$s          = function_exists( 'ajcore_get_shared_db_settings' ) ? ajcore_get_shared_db_settings() : array();
 		$is_enabled = ! empty( $s['enabled'] );
 		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) ? ajcore_is_multisite_portal_enabled() : false;
+		$site_features = function_exists( 'ajcore_get_site_features' )
+			? ajcore_get_site_features()
+			: array( 'client_portal' => true, 'forms' => true, 'live_chat' => true );
 		$site_uuid  = (string) get_option( 'ajcore_site_uuid', '' );
 		if ( '' === $site_uuid ) {
 			$site_uuid = wp_generate_uuid4();
@@ -31010,7 +31016,7 @@ class AJForms_Admin {
 		$ms_locked    = defined( 'AJCORE_MULTISITE_PORTAL_ENABLED' );
 
 		if ( isset( $_GET['shared-db-saved'] ) ) {
-			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Shared DB settings saved.', 'ajforms' ) . '</p></div>';
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Site features and Shared DB settings saved.', 'ajforms' ) . '</p></div>';
 		}
 		if ( isset( $_GET['shared-db-error'] ) ) {
 			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['shared-db-error'] ) ) ) . '</p></div>';
@@ -31060,14 +31066,50 @@ class AJForms_Admin {
 		<?php
 		?>
 		<div class="ajforms-settings-card">
-			<h3><?php esc_html_e( 'Shared AJ Core DB', 'ajforms' ); ?></h3>
-			<p><?php esc_html_e( 'Connect a shared MySQL database so multiple AJ Core installations can read common portal and business data. Forms, leads, WordPress users, portal files, and file access always remain local.', 'ajforms' ); ?></p>
-			<p class="description"><?php esc_html_e( 'Any setting can be locked by defining the corresponding constant in wp-config.php. Locked fields are shown read-only and cannot be overridden from this screen.', 'ajforms' ); ?></p>
+			<h3><?php esc_html_e( 'Site Features / Shared DB', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'Choose what this AJCore installation provides, then optionally connect it to the shared AJCore network.', 'ajforms' ); ?></p>
 
 			<form method="post">
 				<?php wp_nonce_field( 'ajcore_save_shared_db_settings', 'ajcore_shared_db_nonce' ); ?>
 
+				<h4><?php esc_html_e( 'Features Enabled on This Site', 'ajforms' ); ?></h4>
+				<p class="description"><?php esc_html_e( 'These choices belong to this WordPress site and are not copied to other connected sites. This checkpoint records the choices; feature enforcement will be added incrementally.', 'ajforms' ); ?></p>
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Client Portal', 'ajforms' ); ?></th>
+						<td>
+							<label>
+								<input type="checkbox" name="site_client_portal_enabled" value="1" <?php checked( ! empty( $site_features['client_portal'] ) ); ?>>
+								<?php esc_html_e( 'Enable Client Portal features on this site', 'ajforms' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'Enabled by default for compatibility with existing AJCore installations.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Forms & Leads', 'ajforms' ); ?></th>
+						<td>
+							<label>
+								<input type="checkbox" name="site_forms_enabled" value="1" <?php checked( ! empty( $site_features['forms'] ) ); ?>>
+								<?php esc_html_e( 'Enable Forms and lead collection on this site', 'ajforms' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'Can remain enabled when the Client Portal is disabled.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Live Chat', 'ajforms' ); ?></th>
+						<td>
+							<label>
+								<input type="checkbox" name="site_live_chat_enabled" value="1" <?php checked( ! empty( $site_features['live_chat'] ) ); ?>>
+								<?php esc_html_e( 'Allow Live Chat features on this site', 'ajforms' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'The visitor widget still has its own rollout switch under Live Chat settings.', 'ajforms' ); ?></p>
+						</td>
+					</tr>
+				</table>
+
+				<hr style="margin:24px 0;">
 				<h4><?php esc_html_e( 'Shared DB Settings', 'ajforms' ); ?></h4>
+				<p class="description"><?php esc_html_e( 'Any database setting can be locked by defining the corresponding constant in wp-config.php. Locked fields are shown read-only and cannot be overridden from this screen.', 'ajforms' ); ?></p>
 				<table class="form-table" role="presentation">
 					<tr>
 						<th scope="row">
