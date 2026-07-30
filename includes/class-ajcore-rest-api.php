@@ -1322,30 +1322,40 @@ class AJCore_REST_API {
 			$url = add_query_arg( 'page', 1, $url );
 		}
 
-		$urls = array( $url );
+		$statuses = array();
 		if ( 'work_orders' === $resource ) {
 			$allowed_statuses = array( 'OpenU', 'OpenA', 'Parts', 'Work', 'Finalized', 'Closed' );
 			$statuses         = array_values( array_intersect( $allowed_statuses, array_filter( array_map( 'trim', explode( ',', (string) $request->get_param( 'statuses' ) ) ) ) ) );
 			if ( empty( $statuses ) ) {
 				$statuses = array( 'OpenU', 'OpenA', 'Parts', 'Work', 'Finalized' );
 			}
-			$urls = array();
-			foreach ( $statuses as $work_order_status ) {
-				$urls[] = add_query_arg( array( 'age' => '3650d', 'status' => $work_order_status ), $url );
-			}
+			$url = add_query_arg( 'age', '3650d', $url );
 		}
 
-		$rows  = array();
-		$total = 0;
-		foreach ( $urls as $request_url ) {
-			$body = $this->request_rentec_for_ops( $request_url, $accounts[ $account ]['key'] );
-			if ( is_wp_error( $body ) ) {
-				return $body;
-			}
-			$response_rows = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array();
-			$rows          = array_merge( $rows, $response_rows );
-			$total        += isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $response_rows );
+		$body = $this->request_rentec_for_ops( $url, $accounts[ $account ]['key'] );
+		if ( is_wp_error( $body ) ) {
+			return $body;
 		}
+		$rows = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array();
+		if ( 'work_orders' === $resource ) {
+			$rows = array_values(
+				array_filter(
+					$rows,
+					function ( $row ) use ( $statuses ) {
+						$status = (string) ( $row['status'] ?? '' );
+						if ( 'Unassigned' === $status ) {
+							$status = 'OpenU';
+						} elseif ( 'Assigned' === $status ) {
+							$status = 'OpenA';
+						}
+						return in_array( $status, $statuses, true );
+					}
+				)
+			);
+		}
+		$total = 'work_orders' === $resource
+			? count( $rows )
+			: ( isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $rows ) );
 
 		$account_summaries = array();
 		foreach ( $accounts as $index => $configured_account ) {
