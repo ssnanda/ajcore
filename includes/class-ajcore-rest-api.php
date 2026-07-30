@@ -45,7 +45,28 @@ class AJCore_REST_API {
 				'args'                => array(
 					'account'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'resource' => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+					'statuses' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec/work-orders/(?P<id>\d+)',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_rentec_work_order' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec/work-orders/(?P<id>\d+)/notes',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'add_ops_rentec_work_order_note' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
 			)
 		);
 		register_rest_route(
@@ -1235,20 +1256,9 @@ class AJCore_REST_API {
 		);
 	}
 
-	public function get_ops_rentec_resource( WP_REST_Request $request ) {
+	private function get_rentec_accounts_for_ops() {
 		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
-		if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) {
-			return new WP_Error( 'ajcore_rentec_disabled', __( 'The Rentec integration is disabled.', 'ajforms' ), array( 'status' => 409 ) );
-		}
-
-		$allowed_resources = array( 'leads', 'vendors', 'transactions', 'work_orders', 'files', 'messages' );
-		$resource          = sanitize_key( (string) $request->get_param( 'resource' ) );
-		if ( ! in_array( $resource, $allowed_resources, true ) ) {
-			$resource = 'work_orders';
-		}
-
-		$account = '2' === (string) $request->get_param( 'account' ) ? '2' : '1';
-		$accounts = array(
+		return array(
 			'1' => array(
 				'label' => sanitize_text_field( (string) ( $settings['rentec_account_label_1'] ?? 'Rentec Account 1' ) ),
 				'key'   => (string) ( $settings['rentec_api_key'] ?? '' ),
@@ -1258,42 +1268,93 @@ class AJCore_REST_API {
 				'key'   => (string) ( $settings['rentec_api_key_2'] ?? '' ),
 			),
 		);
+	}
+
+	private function get_rentec_account_for_ops_request( WP_REST_Request $request ) {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) {
+			return new WP_Error( 'ajcore_rentec_disabled', __( 'The Rentec integration is disabled.', 'ajforms' ), array( 'status' => 409 ) );
+		}
+		$accounts = $this->get_rentec_accounts_for_ops();
+		$account  = '2' === (string) $request->get_param( 'account' ) ? '2' : '1';
 		if ( empty( $accounts[ $account ]['key'] ) && ! empty( $accounts[ '1' === $account ? '2' : '1' ]['key'] ) ) {
 			$account = '1' === $account ? '2' : '1';
 		}
 		if ( empty( $accounts[ $account ]['key'] ) ) {
 			return new WP_Error( 'ajcore_rentec_not_configured', __( 'The selected Rentec account does not have an API key.', 'ajforms' ), array( 'status' => 409 ) );
 		}
+		return array( 'id' => $account, 'account' => $accounts[ $account ], 'accounts' => $accounts );
+	}
 
-		$url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
-		if ( 'work_orders' === $resource ) {
-			$url = add_query_arg( 'age', '3650d', $url );
-		} elseif ( 'transactions' === $resource ) {
-			$url = add_query_arg( 'page', 1, $url );
-		}
-		$response = wp_remote_get(
-			$url,
-			array(
-				'headers'     => array(
-					'Accept'    => 'application/json',
-					'X-API-Key' => $accounts[ $account ]['key'],
-				),
-				'timeout'     => 15,
-				'redirection' => 0,
-			)
+	private function request_rentec_for_ops( $url, $api_key, $method = 'GET', $payload = null ) {
+		$args = array(
+			'method'      => $method,
+			'headers'     => array(
+				'Accept'       => 'application/json',
+				'Content-Type' => 'application/json',
+				'X-API-Key'    => $api_key,
+			),
+			'timeout'     => 15,
+			'redirection' => 0,
 		);
+		if ( null !== $payload ) {
+			$args['body'] = wp_json_encode( $payload );
+		}
+		$response = wp_remote_request( $url, $args );
 		if ( is_wp_error( $response ) ) {
 			return new WP_Error( 'ajcore_rentec_request_failed', $response->get_error_message(), array( 'status' => 502 ) );
 		}
-
 		$status = (int) wp_remote_retrieve_response_code( $response );
 		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
-		if ( 200 !== $status || ! is_array( $body ) ) {
-			return new WP_Error(
-				'ajcore_rentec_response_failed',
-				sprintf( __( 'Rentec returned HTTP status %d for this resource.', 'ajforms' ), $status ),
-				array( 'status' => 502 )
-			);
+		if ( $status < 200 || $status >= 300 || ! is_array( $body ) ) {
+			$message = isset( $body['message'] ) ? sanitize_text_field( (string) $body['message'] ) : sprintf( __( 'Rentec returned HTTP status %d.', 'ajforms' ), $status );
+			return new WP_Error( 'ajcore_rentec_response_failed', $message, array( 'status' => 502 ) );
+		}
+		return $body;
+	}
+
+	public function get_ops_rentec_resource( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+
+		$allowed_resources = array( 'leads', 'vendors', 'transactions', 'work_orders', 'files', 'messages' );
+		$resource          = sanitize_key( (string) $request->get_param( 'resource' ) );
+		if ( ! in_array( $resource, $allowed_resources, true ) ) {
+			$resource = 'work_orders';
+		}
+		$account  = $selected['id'];
+		$accounts = $selected['accounts'];
+
+		$url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
+		if ( 'transactions' === $resource ) {
+			$url = add_query_arg( 'page', 1, $url );
+		}
+
+		$urls = array( $url );
+		if ( 'work_orders' === $resource ) {
+			$allowed_statuses = array( 'OpenU', 'OpenA', 'Parts', 'Work', 'Finalized', 'Closed' );
+			$statuses         = array_values( array_intersect( $allowed_statuses, array_filter( array_map( 'trim', explode( ',', (string) $request->get_param( 'statuses' ) ) ) ) ) );
+			if ( empty( $statuses ) ) {
+				$statuses = array( 'OpenU', 'OpenA', 'Parts', 'Work', 'Finalized' );
+			}
+			$urls = array();
+			foreach ( $statuses as $work_order_status ) {
+				$urls[] = add_query_arg( array( 'age' => '3650d', 'status' => $work_order_status ), $url );
+			}
+		}
+
+		$rows  = array();
+		$total = 0;
+		foreach ( $urls as $request_url ) {
+			$body = $this->request_rentec_for_ops( $request_url, $accounts[ $account ]['key'] );
+			if ( is_wp_error( $body ) ) {
+				return $body;
+			}
+			$response_rows = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array();
+			$rows          = array_merge( $rows, $response_rows );
+			$total        += isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $response_rows );
 		}
 
 		$account_summaries = array();
@@ -1305,17 +1366,51 @@ class AJCore_REST_API {
 			);
 		}
 
-		$rows = isset( $body['data'] ) && is_array( $body['data'] ) ? array_slice( $body['data'], 0, 100 ) : array();
 		return rest_ensure_response(
 			array(
 				'account'  => $account,
 				'accounts' => $account_summaries,
 				'resource' => $resource,
-				'total'    => isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $rows ),
-				'rows'     => $rows,
+				'total'    => $total,
+				'rows'     => array_slice( $rows, 0, 100 ),
 				'limit'    => 100,
 			)
 		);
+	}
+
+	public function get_ops_rentec_work_order( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+		$id   = absint( $request->get_param( 'id' ) );
+		$body = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/work_orders/' . $id, $selected['account']['key'] );
+		if ( is_wp_error( $body ) ) {
+			return $body;
+		}
+		return rest_ensure_response( array( 'account' => $selected['id'], 'work_order' => $body['data'] ?? $body ) );
+	}
+
+	public function add_ops_rentec_work_order_note( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+		$note = sanitize_textarea_field( (string) $request->get_param( 'note' ) );
+		if ( '' === $note ) {
+			return new WP_Error( 'ajcore_rentec_note_required', __( 'Enter a note.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$id   = absint( $request->get_param( 'id' ) );
+		$body = $this->request_rentec_for_ops(
+			'https://secure.rentecdirect.com/api/v3/work_orders/' . $id . '/notes',
+			$selected['account']['key'],
+			'POST',
+			array( 'note' => $note, 'private' => rest_sanitize_boolean( $request->get_param( 'private' ) ) )
+		);
+		if ( is_wp_error( $body ) ) {
+			return $body;
+		}
+		return rest_ensure_response( array( 'success' => true, 'note' => $body['data'] ?? $body ) );
 	}
 
 	public function add_ops_rentec_work_order_note( WP_REST_Request $request ) {
