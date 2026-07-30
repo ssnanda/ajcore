@@ -14227,8 +14227,8 @@ class AJForms_Admin {
 
 	/** Leads live on the shared portal DB in multi-site mode; query them via get_leads_db(). */
 	private function get_leads_db() {
-		if ( function_exists( 'ajcore_get_portal_db' ) ) {
-			return ajcore_get_portal_db();
+		if ( function_exists( 'ajcore_get_leads_db' ) ) {
+			return ajcore_get_leads_db();
 		}
 		global $wpdb;
 		return $wpdb;

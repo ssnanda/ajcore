@@ -10455,8 +10455,8 @@ class AJForms {
 	/** Leads live on the shared portal DB in multi-site mode (so every site's form
 	 *  submissions land in one inbox); use get_leads_db() for queries against it. */
 	private function get_leads_db() {
-		if ( function_exists( 'ajcore_get_portal_db' ) ) {
-			return ajcore_get_portal_db();
+		if ( function_exists( 'ajcore_get_leads_db' ) ) {
+			return ajcore_get_leads_db();
 		}
 		global $wpdb;
 		return $wpdb;
@@ -10814,7 +10814,7 @@ class AJForms {
 
 
 	private function get_reply_to_header( $lead_data ) {
-		foreach ( $lead_data as $field ) {
+		foreach ( $lead_data as $field_id => $field ) {
 			if ( ! is_array( $field ) ) {
 				continue;
 			}
