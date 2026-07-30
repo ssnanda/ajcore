@@ -28228,7 +28228,10 @@ class AJForms_Admin {
 				'key'   => $settings['rentec_api_key_2'] ?? '',
 			),
 		);
-		$requested_accounts = isset( $_GET['rentec_accounts'] ) ? (array) wp_unslash( $_GET['rentec_accounts'] ) : array_keys( $accounts );
+		$filters_set        = isset( $_GET['rentec_filters_set'] ) && '1' === sanitize_text_field( wp_unslash( $_GET['rentec_filters_set'] ) );
+		$requested_accounts = isset( $_GET['rentec_accounts'] )
+			? (array) wp_unslash( $_GET['rentec_accounts'] )
+			: ( $filters_set ? array() : array_map( 'strval', array_keys( $accounts ) ) );
 		$selected_accounts  = array_values(
 			array_filter(
 				array_map( 'sanitize_text_field', $requested_accounts ),
@@ -28237,13 +28240,16 @@ class AJForms_Admin {
 				}
 			)
 		);
-		if ( empty( $selected_accounts ) ) {
-			$selected_accounts = array_keys(
+		if ( empty( $selected_accounts ) && ! $filters_set ) {
+			$selected_accounts = array_map(
+				'strval',
+				array_keys(
 				array_filter(
 					$accounts,
 					function ( $configured_account ) {
 						return ! empty( $configured_account['key'] );
 					}
+				)
 				)
 			);
 		}
@@ -28257,7 +28263,7 @@ class AJForms_Admin {
 		);
 		$selected_statuses = isset( $_GET['rentec_statuses'] )
 			? array_map( 'sanitize_text_field', (array) wp_unslash( $_GET['rentec_statuses'] ) )
-			: array( 'OpenU', 'OpenA', 'Parts', 'Work', 'Finalized' );
+			: ( $filters_set ? array() : array( 'OpenU', 'OpenA', 'Parts', 'Work', 'Finalized' ) );
 		$note_result = '';
 		if ( isset( $_POST['ajcore_rentec_note_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajcore_rentec_note_nonce'] ) ), 'ajcore_add_rentec_work_order_note' ) ) {
 			$note_account = isset( $_POST['rentec_note_account'] ) && '2' === sanitize_text_field( wp_unslash( $_POST['rentec_note_account'] ) ) ? '2' : '1';
@@ -28297,13 +28303,14 @@ class AJForms_Admin {
 			<?php if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) : ?>
 				<div class="notice notice-warning inline"><p><?php esc_html_e( 'The Rentec integration is disabled. Enable it in CP Settings before loading data.', 'ajforms' ); ?></p></div>
 			<?php else : ?>
-				<form method="get" class="ajforms-settings-inline-actions">
+				<form method="get" id="ajcore-rentec-filters" class="ajforms-settings-inline-actions">
 					<input type="hidden" name="page" value="ajforms-client-portal">
 					<input type="hidden" name="tab" value="rentec">
 					<input type="hidden" name="rentec_resource" value="<?php echo esc_attr( $resource ); ?>">
+					<input type="hidden" name="rentec_filters_set" value="1">
 					<strong><?php esc_html_e( 'Accounts', 'ajforms' ); ?></strong>
 					<?php foreach ( $accounts as $index => $configured_account ) : ?>
-						<label><input type="checkbox" name="rentec_accounts[]" value="<?php echo esc_attr( $index ); ?>" <?php checked( in_array( $index, $selected_accounts, true ) ); ?> <?php disabled( empty( $configured_account['key'] ) ); ?>> <?php echo esc_html( $configured_account['label'] . ( empty( $configured_account['key'] ) ? ' — not configured' : '' ) ); ?></label>
+						<label><input type="checkbox" name="rentec_accounts[]" value="<?php echo esc_attr( $index ); ?>" <?php checked( in_array( (string) $index, $selected_accounts, true ) ); ?> <?php disabled( empty( $configured_account['key'] ) ); ?>> <?php echo esc_html( $configured_account['label'] . ( empty( $configured_account['key'] ) ? ' — not configured' : '' ) ); ?></label>
 					<?php endforeach; ?>
 					<?php if ( 'work_orders' === $resource ) : ?>
 						<strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong>
@@ -28311,14 +28318,27 @@ class AJForms_Admin {
 							<label><input type="checkbox" name="rentec_statuses[]" value="<?php echo esc_attr( $status_key ); ?>" <?php checked( in_array( $status_key, $selected_statuses, true ) ); ?>> <?php echo esc_html( $status_label ); ?></label>
 						<?php endforeach; ?>
 					<?php endif; ?>
-					<button class="button button-primary"><?php esc_html_e( 'Apply', 'ajforms' ); ?></button>
+					<span id="ajcore-rentec-filter-status" class="description" aria-live="polite"></span>
 				</form>
 
 				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'Rentec sections', 'ajforms' ); ?>">
 					<?php foreach ( $resources as $resource_key => $resource_config ) : ?>
-						<a class="ajcore-tab-link <?php echo $resource === $resource_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'rentec_accounts' => $selected_accounts, 'rentec_resource' => $resource_key ), $base_url ) ); ?>"><?php echo esc_html( $resource_config['label'] ); ?></a>
+						<a class="ajcore-tab-link <?php echo $resource === $resource_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'rentec_accounts' => $selected_accounts, 'rentec_statuses' => $selected_statuses, 'rentec_filters_set' => '1', 'rentec_resource' => $resource_key ), $base_url ) ); ?>"><?php echo esc_html( $resource_config['label'] ); ?></a>
 					<?php endforeach; ?>
 				</nav>
+				<script>
+				(function() {
+					const form = document.getElementById('ajcore-rentec-filters');
+					const status = document.getElementById('ajcore-rentec-filter-status');
+					if (!form) return;
+					form.querySelectorAll('input[type="checkbox"]').forEach(function(input) {
+						input.addEventListener('change', function() {
+							if (status) status.textContent = '<?php echo esc_js( __( 'Updating…', 'ajforms' ) ); ?>';
+							form.requestSubmit();
+						});
+					});
+				}());
+				</script>
 			<?php endif; ?>
 		</div>
 		<?php
