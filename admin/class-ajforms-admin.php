@@ -31592,14 +31592,43 @@ class AJForms_Admin {
 		<?php
 		// Determine shared DB state for the tools/connected-sites panels.
 		$shared_db          = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		$shared_db_error    = function_exists( 'ajcore_get_shared_db_connection_error' ) ? ajcore_get_shared_db_connection_error() : '';
 		$sites_table        = $shared_db ? ( $shared_db->prefix . 'aj_shared_sites' ) : '';
 		$schema_initialized = $shared_db && $sites_table && ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $sites_table ) ) === $sites_table );
 		$connected_sites    = $schema_initialized ? $shared_db->get_results( "SELECT * FROM `{$sites_table}` ORDER BY is_master DESC, last_seen DESC" ) : array();
+		$sites_from_cache   = false;
 
 		// Auto-register this site now that we know the schema is up.
 		if ( $schema_initialized && function_exists( 'ajcore_register_site_in_shared_db' ) ) {
 			ajcore_register_site_in_shared_db();
 			$connected_sites = $shared_db->get_results( "SELECT * FROM `{$sites_table}` ORDER BY is_master DESC, last_seen DESC" );
+		}
+		if ( $schema_initialized && ! empty( $connected_sites ) ) {
+			$cache_rows = array();
+			foreach ( $connected_sites as $cache_site ) {
+				$cache_rows[] = array(
+					'site_uuid' => (string) $cache_site->site_uuid,
+					'domain'    => (string) $cache_site->domain,
+					'is_master' => (int) $cache_site->is_master,
+					'last_seen' => (string) $cache_site->last_seen,
+				);
+			}
+			update_option(
+				'ajcore_connected_sites_cache',
+				array( 'cached_at' => current_time( 'mysql' ), 'sites' => $cache_rows ),
+				false
+			);
+		} elseif ( $is_enabled && ! $shared_db ) {
+			$sites_cache = get_option( 'ajcore_connected_sites_cache', array() );
+			if ( ! empty( $sites_cache['sites'] ) && is_array( $sites_cache['sites'] ) ) {
+				$connected_sites  = array_map(
+					static function ( $site ) {
+						return (object) $site;
+					},
+					$sites_cache['sites']
+				);
+				$sites_from_cache = true;
+			}
 		}
 
 		// Is the current site the designated Master? Use ajcore_is_stripe_sync_owner() for a fresh
@@ -31620,6 +31649,21 @@ class AJForms_Admin {
 			}
 		}
 		?>
+
+		<?php if ( $is_enabled && ! $shared_db ) : ?>
+		<div class="ajforms-settings-card" style="margin-top:16px;border-left:4px solid #dc2626;">
+			<h3 style="color:#991b1b;"><?php esc_html_e( 'Shared DB Connection Unavailable', 'ajforms' ); ?></h3>
+			<p>
+				<?php esc_html_e( 'This site cannot read the connected-sites list or load settings from the Master site until the Shared DB connection is restored.', 'ajforms' ); ?>
+			</p>
+			<?php if ( '' !== $shared_db_error ) : ?>
+				<p><code><?php echo esc_html( $shared_db_error ); ?></code></p>
+			<?php endif; ?>
+			<p class="description">
+				<?php esc_html_e( 'For safety, this installation is being treated as a non-master site while disconnected. Master-owned settings and background sync must remain read-only here.', 'ajforms' ); ?>
+			</p>
+		</div>
+		<?php endif; ?>
 
 		<?php if ( $is_enabled && $shared_db ) : ?>
 		<div class="ajforms-settings-card" style="margin-top:16px;">
@@ -31643,11 +31687,15 @@ class AJForms_Admin {
 			</div>
 			<div id="ajcore-migration-result" style="font-weight:600;margin-top:4px;"></div>
 		</div>
+		<?php endif; ?>
 
-		<?php if ( $schema_initialized && ! empty( $connected_sites ) ) : ?>
+		<?php if ( ! empty( $connected_sites ) ) : ?>
 		<div class="ajforms-settings-card" style="margin-top:16px;">
 			<h3><?php esc_html_e( 'Connected Sites', 'ajforms' ); ?></h3>
 			<p><?php esc_html_e( 'Sites registered in the shared DB control table. The Master site is the only one that runs Stripe sync, cron, and webhook ingestion.', 'ajforms' ); ?></p>
+			<?php if ( $sites_from_cache ) : ?>
+				<p class="notice notice-warning inline"><?php esc_html_e( 'Showing the last successfully loaded site list because the shared DB is currently unavailable.', 'ajforms' ); ?></p>
+			<?php endif; ?>
 			<table class="widefat striped" style="margin-top:8px;">
 				<thead>
 					<tr>
@@ -31668,7 +31716,7 @@ class AJForms_Admin {
 						<td><?php echo $site->is_master ? '<span style="color:#166534;font-weight:700;">&#10003; ' . esc_html__( 'Master', 'ajforms' ) . '</span>' : '—'; ?></td>
 						<td><?php echo esc_html( $site->last_seen ); ?></td>
 						<td>
-							<?php if ( $is_current_master && ! $site->is_master ) : ?>
+							<?php if ( ! $sites_from_cache && $is_current_master && ! $site->is_master ) : ?>
 							<button type="button" class="button button-small ajcore-set-master-btn"
 								data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>"
 								data-domain="<?php echo esc_attr( $site->domain ); ?>">
@@ -31681,8 +31729,6 @@ class AJForms_Admin {
 				</tbody>
 			</table>
 		</div>
-		<?php endif; ?>
-
 		<?php endif; ?>
 
 		<script>

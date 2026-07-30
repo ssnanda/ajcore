@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.176
+ * Version: 0.7.177
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.176' );
+	define( 'AJCORE_VERSION', '0.7.177' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -855,7 +855,10 @@ if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) ) {
 
 		$shared_db = ajcore_get_shared_db();
 		if ( ! $shared_db ) {
-			return $cached = true; // Can't connect — don't silently disable syncing.
+			// A configured shared site must never gain master authority merely because its
+			// connection is temporarily unavailable. Fail closed so Stripe jobs and
+			// master-owned settings cannot silently run from a secondary installation.
+			return $cached = false;
 		}
 
 		$uuid = (string) get_option( 'ajcore_site_uuid', '' );
@@ -943,6 +946,7 @@ if ( ! function_exists( 'ajcore_get_shared_db' ) ) {
 
 		$s = ajcore_get_shared_db_settings();
 		if ( empty( $s['enabled'] ) || '' === $s['host'] || '' === $s['name'] || '' === $s['user'] || '' === $s['password'] ) {
+			$GLOBALS['ajcore_shared_db_connection_error'] = __( 'Shared DB is enabled, but one or more connection fields are missing.', 'ajforms' );
 			return null;
 		}
 
@@ -955,12 +959,37 @@ if ( ! function_exists( 'ajcore_get_shared_db' ) ) {
 		}
 
 		$result = $db->get_var( 'SELECT 1' );
+		if ( '1' !== (string) $result && 'localhost' === strtolower( trim( (string) $s['host'] ) ) ) {
+			// Match the Settings > Test Connection behavior. Some hosting PHP pools
+			// cannot resolve the localhost Unix socket even though TCP MySQL works.
+			$db = new wpdb( $s['user'], $s['password'], $s['name'], '127.0.0.1' );
+			$db->suppress_errors( true );
+			$db->show_errors = false;
+			if ( ! empty( $s['prefix'] ) ) {
+				$db->prefix      = $s['prefix'];
+				$db->base_prefix = $s['prefix'];
+			}
+			$result = $db->get_var( 'SELECT 1' );
+		}
 		if ( '1' !== (string) $result ) {
+			$GLOBALS['ajcore_shared_db_connection_error'] = ! empty( $db->last_error )
+				? sanitize_text_field( (string) $db->last_error )
+				: __( 'The configured Shared DB did not accept the connection.', 'ajforms' );
 			return null;
 		}
 
+		$GLOBALS['ajcore_shared_db_connection_error'] = '';
 		$shared_db_cache = $db;
 		return $shared_db_cache;
+	}
+}
+
+if ( ! function_exists( 'ajcore_get_shared_db_connection_error' ) ) {
+	/**
+	 * Returns the most recent shared connection failure without exposing credentials.
+	 */
+	function ajcore_get_shared_db_connection_error() {
+		return sanitize_text_field( (string) ( $GLOBALS['ajcore_shared_db_connection_error'] ?? '' ) );
 	}
 }
 
