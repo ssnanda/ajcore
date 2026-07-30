@@ -18205,51 +18205,61 @@ class AJForms_Admin {
 
 
 	public function add_plugin_admin_menu() {
+		$client_portal_enabled = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'client_portal' );
+		$forms_enabled         = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'forms' );
+		$landing_callback      = $forms_enabled
+			? array( $this, 'display_forms_page' )
+			: array( $this, 'display_cp_settings_admin_page' );
+
 		add_menu_page(
 			__( 'AJ Core', 'ajforms' ),
 			__( 'AJ Core', 'ajforms' ),
 			'manage_options',
 			'ajforms',
-			array( $this, 'display_forms_page' ),
+			$landing_callback,
 			'dashicons-feedback',
 			25
 		);
 
-		add_submenu_page(
-			'ajforms',
-			__( 'Forms', 'ajforms' ),
-			__( 'Forms', 'ajforms' ),
-			'manage_options',
-			'ajforms',
-			array( $this, 'display_forms_page' )
-		);
+		if ( $forms_enabled ) {
+			add_submenu_page(
+				'ajforms',
+				__( 'Forms', 'ajforms' ),
+				__( 'Forms', 'ajforms' ),
+				'manage_options',
+				'ajforms',
+				array( $this, 'display_forms_page' )
+			);
 
-		add_submenu_page(
-			'ajforms',
-			__( 'Leads', 'ajforms' ),
-			__( 'Leads', 'ajforms' ),
-			'manage_options',
-			'ajforms-leads',
-			array( $this, 'display_leads_page' )
-		);
+			add_submenu_page(
+				'ajforms',
+				__( 'Leads', 'ajforms' ),
+				__( 'Leads', 'ajforms' ),
+				'manage_options',
+				'ajforms-leads',
+				array( $this, 'display_leads_page' )
+			);
 
-		add_submenu_page(
-			'ajforms',
-			__( 'Products', 'ajforms' ),
-			__( 'Products', 'ajforms' ),
-			'manage_options',
-			'ajforms-products',
-			array( $this, 'display_products_page' )
-		);
+			add_submenu_page(
+				'ajforms',
+				__( 'Products', 'ajforms' ),
+				__( 'Products', 'ajforms' ),
+				'manage_options',
+				'ajforms-products',
+				array( $this, 'display_products_page' )
+			);
+		}
 
-		add_submenu_page(
-			'ajforms',
-			__( 'Client Portal', 'ajforms' ),
-			__( 'Client Portal', 'ajforms' ),
-			'manage_options',
-			'ajforms-client-portal',
-			array( $this, 'display_client_portal_page' )
-		);
+		if ( $client_portal_enabled ) {
+			add_submenu_page(
+				'ajforms',
+				__( 'Client Portal', 'ajforms' ),
+				__( 'Client Portal', 'ajforms' ),
+				'manage_options',
+				'ajforms-client-portal',
+				array( $this, 'display_client_portal_page' )
+			);
+		}
 
 		add_submenu_page(
 			'ajforms',
@@ -18260,14 +18270,16 @@ class AJForms_Admin {
 			array( $this, 'display_cp_settings_admin_page' )
 		);
 
-		add_submenu_page(
-			'ajforms',
-			__( 'Auth', 'ajforms' ),
-			__( 'Auth', 'ajforms' ),
-			'manage_options',
-			'ajforms-auth',
-			array( $this, 'display_auth_page' )
-		);
+		if ( $client_portal_enabled ) {
+			add_submenu_page(
+				'ajforms',
+				__( 'Auth', 'ajforms' ),
+				__( 'Auth', 'ajforms' ),
+				'manage_options',
+				'ajforms-auth',
+				array( $this, 'display_auth_page' )
+			);
+		}
 
 		add_submenu_page(
 			'ajforms',
@@ -19153,9 +19165,17 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		$this->ensure_portal_schema();
+		$client_portal_enabled = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'client_portal' );
+		$tab                   = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
+		if ( ! $client_portal_enabled ) {
+			$tab = 'cp-settings';
+			if ( ! isset( $_GET['cp_section'] ) ) {
+				$_GET['cp_section'] = 'shared-db';
+			}
+		} else {
+			$this->ensure_portal_schema();
+		}
 
-		$tab      = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
 		// Menu/Calendar/API/Settings were merged into a single "CP Settings" tab with its own
 		// sub-navigation (cp_section) — keep old bookmarked links working by redirecting them in,
 		// before the tab whitelist below (which no longer contains these old values) resets them.
@@ -19239,12 +19259,14 @@ class AJForms_Admin {
 			<div class="ajcore-app-header">
 				<div class="ajcore-brand">
 					<div class="ajcore-brand-mark" aria-hidden="true">✦</div>
-					<div><h1><?php echo esc_html( $is_cp_settings_page ? __( 'AJ Core - CP Settings', 'ajforms' ) : __( 'AJ Core - Client Portal', 'ajforms' ) ); ?></h1><span><?php echo esc_html( $is_cp_settings_page ? __( 'Client Portal configuration', 'ajforms' ) : ( isset( $tabs[ $tab ] ) ? $tabs[ $tab ] : __( 'Dashboard', 'ajforms' ) ) ); ?></span></div>
+					<div><h1><?php echo esc_html( $is_cp_settings_page ? ( $client_portal_enabled ? __( 'AJ Core - CP Settings', 'ajforms' ) : __( 'AJ Core - Site Settings', 'ajforms' ) ) : __( 'AJ Core - Client Portal', 'ajforms' ) ); ?></h1><span><?php echo esc_html( $is_cp_settings_page ? ( $client_portal_enabled ? __( 'Client Portal configuration', 'ajforms' ) : __( 'Site capabilities and shared database', 'ajforms' ) ) : ( isset( $tabs[ $tab ] ) ? $tabs[ $tab ] : __( 'Dashboard', 'ajforms' ) ) ); ?></span></div>
 				</div>
+				<?php if ( $client_portal_enabled ) : ?>
 				<div class="ajcore-stripe-mini">
 					<span class="stripe-pill <?php echo ! empty( $stripe_mode['has_issues'] ) ? 'is-error' : ( empty( $stripe_mode['is_live'] ) ? 'is-test' : '' ); ?>"><?php echo esc_html( sprintf( __( 'Stripe %s Mode', 'ajforms' ), $stripe_mode['label'] ) ); ?></span>
 					<a href="<?php echo esc_url( $stripe_settings_url ); ?>"><?php esc_html_e( 'Stripe settings', 'ajforms' ); ?></a>
 				</div>
+				<?php endif; ?>
 			</div>
 			<?php if ( ! $is_cp_settings_page ) : ?>
 				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'AJ Core Client Portal sections', 'ajforms' ); ?>">
@@ -19332,29 +19354,36 @@ class AJForms_Admin {
 		}
 
 		$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
-		$sub_tabs   = array(
-			'menu'            => __( 'Menu', 'ajforms' ),
-			'product-catalog' => __( 'Product Catalog', 'ajforms' ),
-			'sync'            => __( 'Sync', 'ajforms' ),
-			'event-log'       => __( 'Event Log', 'ajforms' ),
-			'db-schema'       => __( 'AJCore DB Schema', 'ajforms' ),
-			'calendar'        => __( 'Calendar / Reservations', 'ajforms' ),
-			'api'             => __( 'API', 'ajforms' ),
-			'files'           => __( 'Files', 'ajforms' ),
-			'accounting-catalog' => __( 'Products & Services', 'ajforms' ),
-			'recurring-transactions' => __( 'Recurring Transactions', 'ajforms' ),
-			'storage'         => __( 'Storage', 'ajforms' ),
-			'roles'           => __( 'Role Manager', 'ajforms' ),
-			'email-templates' => __( 'Email Templates', 'ajforms' ),
-			'inbox'           => __( 'Zoho Shared Inbox', 'ajforms' ),
-			'gmail-intake'    => __( 'Email Intake (Gmail)', 'ajforms' ),
-			'esign'           => __( 'E-Signatures (BreezeDoc)', 'ajforms' ),
-			'chat'            => __( 'Live Chat', 'ajforms' ),
-			'rentec'          => __( 'Rentec Direct', 'ajforms' ),
-			'shared-db'       => __( 'Site Features / Shared DB', 'ajforms' ),
-		);
+		$client_portal_enabled = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'client_portal' );
+		$live_chat_enabled     = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'live_chat' );
+		$sub_tabs              = array();
+		if ( $client_portal_enabled ) {
+			$sub_tabs = array(
+				'menu'            => __( 'Menu', 'ajforms' ),
+				'product-catalog' => __( 'Product Catalog', 'ajforms' ),
+				'sync'            => __( 'Sync', 'ajforms' ),
+				'event-log'       => __( 'Event Log', 'ajforms' ),
+				'db-schema'       => __( 'AJCore DB Schema', 'ajforms' ),
+				'calendar'        => __( 'Calendar / Reservations', 'ajforms' ),
+				'api'             => __( 'API', 'ajforms' ),
+				'files'           => __( 'Files', 'ajforms' ),
+				'accounting-catalog' => __( 'Products & Services', 'ajforms' ),
+				'recurring-transactions' => __( 'Recurring Transactions', 'ajforms' ),
+				'storage'         => __( 'Storage', 'ajforms' ),
+				'roles'           => __( 'Role Manager', 'ajforms' ),
+				'email-templates' => __( 'Email Templates', 'ajforms' ),
+				'inbox'           => __( 'Zoho Shared Inbox', 'ajforms' ),
+				'gmail-intake'    => __( 'Email Intake (Gmail)', 'ajforms' ),
+				'esign'           => __( 'E-Signatures (BreezeDoc)', 'ajforms' ),
+				'rentec'          => __( 'Rentec Direct', 'ajforms' ),
+			);
+		}
+		if ( $live_chat_enabled ) {
+			$sub_tabs['chat'] = __( 'Live Chat', 'ajforms' );
+		}
+		$sub_tabs['shared-db'] = __( 'Site Features / Shared DB', 'ajforms' );
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
-			$cp_section = 'menu';
+			$cp_section = $client_portal_enabled ? 'menu' : 'shared-db';
 		}
 
 		$base_url = add_query_arg( array( 'page' => 'ajforms-cp-settings' ), admin_url( 'admin.php' ) );
