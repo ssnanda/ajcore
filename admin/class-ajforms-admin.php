@@ -28333,41 +28333,35 @@ class AJForms_Admin {
 		$total = 0;
 		foreach ( $selected_accounts as $account ) {
 			$endpoint_url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
-			if ( 'work_orders' === $resource ) {
-				$endpoint_url = add_query_arg( 'age', '3650d', $endpoint_url );
-			} elseif ( 'transactions' === $resource ) {
+			if ( 'transactions' === $resource ) {
 				$endpoint_url = add_query_arg( 'page', 1, $endpoint_url );
 			}
-			$response = wp_remote_get( $endpoint_url, array( 'headers' => array( 'Accept' => 'application/json', 'X-API-Key' => (string) $accounts[ $account ]['key'] ), 'timeout' => 15, 'redirection' => 0 ) );
-			$body     = is_wp_error( $response ) ? null : json_decode( wp_remote_retrieve_body( $response ), true );
-			if ( is_wp_error( $response ) || 200 !== (int) wp_remote_retrieve_response_code( $response ) || ! is_array( $body ) ) {
-				echo '<div class="notice notice-error inline"><p>' . esc_html( is_wp_error( $response ) ? $response->get_error_message() : sprintf( __( 'Rentec returned HTTP status %d for %s.', 'ajforms' ), (int) wp_remote_retrieve_response_code( $response ), $accounts[ $account ]['label'] ) ) . '</p></div>';
-				continue;
+			$request_urls = array( $endpoint_url );
+			if ( 'work_orders' === $resource ) {
+				$request_urls = array();
+				foreach ( array_intersect( array_keys( $work_order_statuses ), $selected_statuses ) as $work_order_status ) {
+					$request_urls[] = add_query_arg( array( 'age' => '3650d', 'status' => $work_order_status ), $endpoint_url );
+				}
 			}
-			$account_rows = isset( $body['data'] ) && is_array( $body['data'] ) ? array_slice( $body['data'], 0, 100 ) : array();
+			$account_rows = array();
+			foreach ( $request_urls as $request_url ) {
+				$response = wp_remote_get( $request_url, array( 'headers' => array( 'Accept' => 'application/json', 'X-API-Key' => (string) $accounts[ $account ]['key'] ), 'timeout' => 15, 'redirection' => 0 ) );
+				$body     = is_wp_error( $response ) ? null : json_decode( wp_remote_retrieve_body( $response ), true );
+				if ( is_wp_error( $response ) || 200 !== (int) wp_remote_retrieve_response_code( $response ) || ! is_array( $body ) ) {
+					echo '<div class="notice notice-error inline"><p>' . esc_html( is_wp_error( $response ) ? $response->get_error_message() : sprintf( __( 'Rentec returned HTTP status %d for %s.', 'ajforms' ), (int) wp_remote_retrieve_response_code( $response ), $accounts[ $account ]['label'] ) ) . '</p></div>';
+					continue;
+				}
+				$response_rows = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array();
+				$account_rows  = array_merge( $account_rows, $response_rows );
+				$total        += isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $response_rows );
+			}
+			$account_rows = array_slice( $account_rows, 0, 100 );
 			foreach ( $account_rows as &$account_row ) {
 				$account_row['_rentec_account']       = $account;
 				$account_row['_rentec_account_label'] = $accounts[ $account ]['label'];
 			}
 			unset( $account_row );
 			$rows   = array_merge( $rows, $account_rows );
-			$total += isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $account_rows );
-		}
-		if ( 'work_orders' === $resource ) {
-			$rows = array_values(
-				array_filter(
-					$rows,
-					function ( $row ) use ( $selected_statuses ) {
-						$status = (string) ( $row['status'] ?? '' );
-						if ( 'Unassigned' === $status ) {
-							$status = 'OpenU';
-						} elseif ( 'Assigned' === $status ) {
-							$status = 'OpenA';
-						}
-						return in_array( $status, $selected_statuses, true );
-					}
-				)
-			);
 		}
 		$columns     = $resources[ $resource ]['columns'];
 		?>
@@ -28414,6 +28408,7 @@ class AJForms_Admin {
 												<?php endforeach; ?>
 											</div>
 											<h4><?php esc_html_e( 'Notes & History', 'ajforms' ); ?></h4>
+											<p class="description"><?php esc_html_e( 'Rentec API V3 currently supports adding notes, but does not expose an endpoint for changing an existing work-order status.', 'ajforms' ); ?></p>
 											<?php foreach ( (array) ( $row['notes'] ?? array() ) as $work_order_note ) : ?>
 												<p><?php echo esc_html( (string) ( $work_order_note['note'] ?? '' ) ); ?> <small><?php echo esc_html( (string) ( $work_order_note['created'] ?? '' ) ); ?><?php echo ! empty( $work_order_note['private'] ) ? ' · ' . esc_html__( 'Private', 'ajforms' ) : ' · ' . esc_html__( 'Shared', 'ajforms' ); ?></small></p>
 											<?php endforeach; ?>
