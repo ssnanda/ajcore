@@ -323,6 +323,15 @@ build_zip() {
 
 verify_zip() {
   local zip_file="$1"
+  local required_file
+  local required_files=(
+    "ajcore.php"
+    "includes/class-ajforms.php"
+    "includes/class-ajcore-rest-api.php"
+    "admin/class-ajforms-admin.php"
+    "modules/storage/class-ajcore-s3-client.php"
+    "modules/storage/class-ajcore-storage-service.php"
+  )
   [[ -f "$zip_file" ]] || { echo "Error: zip was not created: $zip_file" >&2; exit 1; }
 
   if ! unzip -l "$zip_file" | awk '{print $4}' | grep -q "^$PLUGIN_SLUG/$"; then
@@ -331,11 +340,12 @@ verify_zip() {
     exit 1
   fi
 
-  if ! unzip -l "$zip_file" | awk '{print $4}' | grep -q "^$PLUGIN_SLUG/ajcore.php$"; then
-    echo "Error: zip is missing $PLUGIN_SLUG/ajcore.php" >&2
-    unzip -l "$zip_file" | head >&2
-    exit 1
-  fi
+  for required_file in "${required_files[@]}"; do
+    if ! unzip -l "$zip_file" | awk '{print $4}' | grep -q "^$PLUGIN_SLUG/$required_file$"; then
+      echo "Error: zip is missing required runtime file $PLUGIN_SLUG/$required_file" >&2
+      exit 1
+    fi
+  done
 }
 
 git_commit_release_files() {
