@@ -28413,7 +28413,15 @@ class AJForms_Admin {
 						<thead><tr><?php foreach ( $columns as $column_label ) : ?><th><?php echo esc_html( $column_label ); ?></th><?php endforeach; ?></tr></thead>
 						<tbody>
 							<?php foreach ( $rows as $row ) : ?>
-								<tr>
+								<tr
+									<?php if ( 'work_orders' === $resource ) : ?>
+										class="ajcore-rentec-work-order-row"
+										data-workorder-id="<?php echo esc_attr( $row['workorder_id'] ?? 0 ); ?>"
+										data-rentec-account="<?php echo esc_attr( $row['_rentec_account'] ?? '1' ); ?>"
+										title="<?php esc_attr_e( 'Double-click to view full details', 'ajforms' ); ?>"
+										style="cursor:pointer;"
+									<?php endif; ?>
+								>
 									<?php foreach ( $columns as $field => $column_label ) : ?>
 										<?php
 										$value = isset( $row[ $field ] ) ? $row[ $field ] : '';
@@ -28431,14 +28439,17 @@ class AJForms_Admin {
 								</tr>
 								<?php if ( 'work_orders' === $resource ) : ?>
 									<tr><td colspan="<?php echo esc_attr( count( $columns ) ); ?>">
-										<details>
+										<details class="ajcore-rentec-work-order-details">
 											<summary><strong><?php esc_html_e( 'View details and notes', 'ajforms' ); ?></strong></summary>
-											<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:14px 0;">
+											<p class="ajcore-rentec-detail-loading description" hidden><?php esc_html_e( 'Loading full work-order details…', 'ajforms' ); ?></p>
+											<div class="ajcore-rentec-detail-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:14px 0;">
 												<?php foreach ( $row as $detail_key => $detail_value ) : ?>
 													<?php if ( 0 === strpos( (string) $detail_key, '_' ) || 'notes' === $detail_key ) { continue; } ?>
 													<div><strong><?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $detail_key ) ) ); ?>:</strong> <?php echo esc_html( is_scalar( $detail_value ) ? (string) $detail_value : wp_json_encode( $detail_value ) ); ?></div>
 												<?php endforeach; ?>
 											</div>
+											<h4><?php esc_html_e( 'Attachments', 'ajforms' ); ?></h4>
+											<div class="ajcore-rentec-attachments"><p class="description"><?php esc_html_e( 'Open the details to load attachments.', 'ajforms' ); ?></p></div>
 											<h4><?php esc_html_e( 'Notes & History', 'ajforms' ); ?></h4>
 											<p class="description"><?php esc_html_e( 'Rentec API V3 currently supports adding notes, but does not expose an endpoint for changing an existing work-order status.', 'ajforms' ); ?></p>
 											<?php foreach ( (array) ( $row['notes'] ?? array() ) as $work_order_note ) : ?>
@@ -28458,6 +28469,130 @@ class AJForms_Admin {
 						</tbody>
 					</table>
 				</div>
+				<?php if ( 'work_orders' === $resource ) : ?>
+					<script>
+					(function() {
+						const restBase = <?php echo wp_json_encode( untrailingslashit( rest_url( 'ajcore/v1/ops/rentec/work-orders' ) ) ); ?>;
+						const restNonce = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
+
+						function valueText(value) {
+							if (value === null || typeof value === 'undefined') return '—';
+							if (typeof value === 'object') {
+								try { return JSON.stringify(value); } catch (error) { return String(value); }
+							}
+							return String(value);
+						}
+
+						function renderDetail(details, body) {
+							const grid = details.querySelector('.ajcore-rentec-detail-grid');
+							const attachments = details.querySelector('.ajcore-rentec-attachments');
+							if (grid) {
+								grid.textContent = '';
+								Object.entries(body.work_order || {}).forEach(function(entry) {
+									const key = entry[0];
+									if (key.charAt(0) === '_' || key === 'notes') return;
+									const item = document.createElement('div');
+									const label = document.createElement('strong');
+									label.textContent = key.replaceAll('_', ' ').replace(/\b\w/g, function(letter) { return letter.toUpperCase(); }) + ': ';
+									item.appendChild(label);
+									item.appendChild(document.createTextNode(valueText(entry[1])));
+									grid.appendChild(item);
+								});
+							}
+							if (attachments) {
+								attachments.textContent = '';
+								if (body.files_error) {
+									const error = document.createElement('p');
+									error.className = 'notice notice-warning inline';
+									error.textContent = '<?php echo esc_js( __( 'Attachments could not be loaded: ', 'ajforms' ) ); ?>' + body.files_error;
+									attachments.appendChild(error);
+									return;
+								}
+								const files = Array.isArray(body.files) ? body.files : [];
+								if (!files.length) {
+									const empty = document.createElement('p');
+									empty.className = 'description';
+									empty.textContent = '<?php echo esc_js( __( 'No attachments are associated with this work order.', 'ajforms' ) ); ?>';
+									attachments.appendChild(empty);
+									return;
+								}
+								files.forEach(function(file, index) {
+									const card = document.createElement('div');
+									card.style.cssText = 'border:1px solid #dcdcde;border-radius:6px;padding:10px;margin:8px 0;';
+									const name = document.createElement('strong');
+									name.textContent = valueText(file.filename || file.name || ('<?php echo esc_js( __( 'Attachment', 'ajforms' ) ); ?> ' + (index + 1)));
+									card.appendChild(name);
+									const meta = document.createElement('div');
+									meta.className = 'description';
+									meta.textContent = [file.upload_date || '', file.bytes ? Number(file.bytes).toLocaleString() + ' bytes' : ''].filter(Boolean).join(' · ');
+									card.appendChild(meta);
+									const fileUrl = file.download_url || file.file_url || file.url || file.link || '';
+									if (fileUrl) {
+										const link = document.createElement('a');
+										link.href = String(fileUrl);
+										link.target = '_blank';
+										link.rel = 'noopener noreferrer';
+										link.className = 'button button-small';
+										link.style.marginTop = '8px';
+										link.textContent = '<?php echo esc_js( __( 'Open attachment', 'ajforms' ) ); ?>';
+										card.appendChild(link);
+									}
+									attachments.appendChild(card);
+								});
+							}
+						}
+
+						function loadDetail(row, details) {
+							if (!row || !details || details.dataset.loaded === '1' || details.dataset.loading === '1') return;
+							const id = row.dataset.workorderId;
+							const account = row.dataset.rentecAccount || '1';
+							if (!id || id === '0') return;
+							const loading = details.querySelector('.ajcore-rentec-detail-loading');
+							details.dataset.loading = '1';
+							if (loading) loading.hidden = false;
+							fetch(restBase + '/' + encodeURIComponent(id) + '?account=' + encodeURIComponent(account), {
+								cache: 'no-store',
+								headers: { 'X-WP-Nonce': restNonce }
+							})
+								.then(function(response) {
+									return response.json().then(function(body) {
+										if (!response.ok) throw new Error(body.message || '<?php echo esc_js( __( 'Failed to load the work order.', 'ajforms' ) ); ?>');
+										return body;
+									});
+								})
+								.then(function(body) {
+									renderDetail(details, body);
+									details.dataset.loaded = '1';
+								})
+								.catch(function(error) {
+									if (loading) {
+										loading.hidden = false;
+										loading.textContent = error.message;
+										loading.style.color = '#b32d2e';
+									}
+								})
+								.finally(function() {
+									details.dataset.loading = '0';
+									if (loading && details.dataset.loaded === '1') loading.hidden = true;
+								});
+						}
+
+						document.querySelectorAll('.ajcore-rentec-work-order-row').forEach(function(row) {
+							const detailRow = row.nextElementSibling;
+							const details = detailRow ? detailRow.querySelector('.ajcore-rentec-work-order-details') : null;
+							if (!details) return;
+							row.addEventListener('dblclick', function() {
+								details.open = true;
+								loadDetail(row, details);
+								details.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+							});
+							details.addEventListener('toggle', function() {
+								if (details.open) loadDetail(row, details);
+							});
+						});
+					}());
+					</script>
+				<?php endif; ?>
 			<?php endif; ?>
 		</div>
 		<?php

@@ -1388,7 +1388,35 @@ class AJCore_REST_API {
 		if ( is_wp_error( $body ) ) {
 			return $body;
 		}
-		return rest_ensure_response( array( 'account' => $selected['id'], 'work_order' => $body['data'] ?? $body ) );
+
+		$files       = array();
+		$files_error = '';
+		$files_body  = $this->request_rentec_for_ops(
+			add_query_arg( 'workorder_id', $id, 'https://secure.rentecdirect.com/api/v3/files' ),
+			$selected['account']['key']
+		);
+		if ( is_wp_error( $files_body ) ) {
+			$files_error = $files_body->get_error_message();
+		} else {
+			$file_rows = isset( $files_body['data'] ) && is_array( $files_body['data'] ) ? $files_body['data'] : array();
+			$files     = array_values(
+				array_filter(
+					$file_rows,
+					static function ( $file ) use ( $id ) {
+						return is_array( $file ) && $id === absint( $file['workorder_id'] ?? 0 );
+					}
+				)
+			);
+		}
+
+		return rest_ensure_response(
+			array(
+				'account'     => $selected['id'],
+				'work_order'  => $body['data'] ?? $body,
+				'files'       => $files,
+				'files_error' => $files_error,
+			)
+		);
 	}
 
 	public function add_ops_rentec_work_order_note( WP_REST_Request $request ) {
