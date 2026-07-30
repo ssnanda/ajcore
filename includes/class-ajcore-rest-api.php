@@ -59,6 +59,42 @@ class AJCore_REST_API {
 				'permission_callback' => array( $this, 'can_manage_ops_api' ),
 			)
 		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec/work-orders',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'create_ops_rentec_work_order' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec/work-order-options',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_rentec_work_order_options' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec/leads',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'create_ops_rentec_lead' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/rentec/vendors',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'create_ops_rentec_vendor' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
 
 		register_rest_route(
 			self::NAMESPACE,
@@ -1403,13 +1439,18 @@ class AJCore_REST_API {
 		}
 
 		$work_order = $body['data'] ?? $body;
+		if ( ! isset( $work_order['notes'] ) && isset( $body['notes'] ) && is_array( $body['notes'] ) ) {
+			$work_order['notes'] = $body['notes'];
+		}
 		$property   = array();
 		$renter     = array();
 		$contact    = array();
+		$vendor     = array();
 		$lookups    = array(
 			'property'       => array( 'resource' => 'properties', 'id' => absint( $work_order['property_id'] ?? 0 ) ),
 			'renter'         => array( 'resource' => 'tenants', 'id' => absint( $work_order['renter_id'] ?? 0 ) ),
 			'contact_renter' => array( 'resource' => 'tenants', 'id' => absint( $work_order['contact_renter_id'] ?? 0 ) ),
+			'vendor'         => array( 'resource' => 'vendors', 'id' => absint( $work_order['vendor_id'] ?? 0 ) ),
 		);
 		foreach ( $lookups as $lookup_name => $lookup ) {
 			if ( ! $lookup['id'] ) {
@@ -1427,8 +1468,10 @@ class AJCore_REST_API {
 				$property = $lookup_value;
 			} elseif ( 'renter' === $lookup_name ) {
 				$renter = $lookup_value;
-			} else {
+			} elseif ( 'contact_renter' === $lookup_name ) {
 				$contact = $lookup_value;
+			} else {
+				$vendor = $lookup_value;
 			}
 		}
 
@@ -1441,12 +1484,19 @@ class AJCore_REST_API {
 		if ( is_wp_error( $files_body ) ) {
 			$files_error = $files_body->get_error_message();
 		} else {
-			$file_rows = isset( $files_body['data'] ) && is_array( $files_body['data'] ) ? $files_body['data'] : array();
+			$file_rows = isset( $files_body['data'] ) && is_array( $files_body['data'] )
+				? $files_body['data']
+				: ( isset( $files_body['files'] ) && is_array( $files_body['files'] ) ? $files_body['files'] : array() );
 			$files     = array_values(
 				array_filter(
 					$file_rows,
 					static function ( $file ) use ( $id ) {
-						return is_array( $file ) && $id === absint( $file['workorder_id'] ?? 0 );
+						if ( ! is_array( $file ) ) {
+							return false;
+						}
+						// The request itself is scoped by workorder_id. Retain rows from API
+						// versions that omit the association field in their list response.
+						return ! array_key_exists( 'workorder_id', $file ) || $id === absint( $file['workorder_id'] );
 					}
 				)
 			);
@@ -1459,10 +1509,154 @@ class AJCore_REST_API {
 				'property'       => $property,
 				'renter'         => $renter,
 				'contact_renter' => $contact,
+				'vendor'         => $vendor,
 				'files'          => $files,
 				'files_error'    => $files_error,
 			)
 		);
+	}
+
+	public function get_ops_rentec_work_order_options( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+		$result = array(
+			'account'    => $selected['id'],
+			'properties' => array(),
+			'tenants'    => array(),
+			'vendors'    => array(),
+		);
+		foreach ( array( 'properties', 'tenants', 'vendors' ) as $resource ) {
+			$body = $this->request_rentec_for_ops(
+				'https://secure.rentecdirect.com/api/v3/' . $resource,
+				$selected['account']['key']
+			);
+			if ( is_wp_error( $body ) ) {
+				return $body;
+			}
+			$result[ $resource ] = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array();
+		}
+		return rest_ensure_response( $result );
+	}
+
+	public function create_ops_rentec_work_order( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+		$property_id = absint( $request->get_param( 'property_id' ) );
+		$short_desc  = sanitize_text_field( (string) $request->get_param( 'short_desc' ) );
+		if ( ! $property_id || '' === $short_desc ) {
+			return new WP_Error( 'ajcore_rentec_work_order_required', __( 'Property and short description are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$payload = array(
+			'property_id' => $property_id,
+			'short_desc'  => function_exists( 'mb_substr' ) ? mb_substr( $short_desc, 0, 100 ) : substr( $short_desc, 0, 100 ),
+			'description' => sanitize_textarea_field( (string) $request->get_param( 'description' ) ),
+			'priority'    => min( 5, max( 1, absint( $request->get_param( 'priority' ) ) ?: 1 ) ),
+		);
+		foreach ( array( 'renter_id', 'contact_renter_id', 'vendor_id' ) as $optional_id ) {
+			$value = absint( $request->get_param( $optional_id ) );
+			if ( $value ) {
+				$payload[ $optional_id ] = $value;
+			}
+		}
+		$body = $this->request_rentec_for_ops(
+			'https://secure.rentecdirect.com/api/v3/work_orders',
+			$selected['account']['key'],
+			'POST',
+			$payload
+		);
+		if ( is_wp_error( $body ) ) {
+			return $body;
+		}
+		return rest_ensure_response(
+			array(
+				'success'    => true,
+				'account'    => $selected['id'],
+				'work_order' => $body['data'] ?? $body,
+			)
+		);
+	}
+
+	public function create_ops_rentec_lead( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+
+		$payload = array(
+			'f_name'           => sanitize_text_field( (string) $request->get_param( 'f_name' ) ),
+			'l_name'           => sanitize_text_field( (string) $request->get_param( 'l_name' ) ),
+			'email'            => sanitize_email( (string) $request->get_param( 'email' ) ),
+			'phone'            => sanitize_text_field( (string) $request->get_param( 'phone' ) ),
+			'mphone'           => sanitize_text_field( (string) $request->get_param( 'mphone' ) ),
+			'monthly_rent_max' => (float) $request->get_param( 'monthly_rent_max' ),
+			'search_city'      => sanitize_text_field( (string) $request->get_param( 'search_city' ) ),
+			'search_state'     => strtoupper( sanitize_text_field( (string) $request->get_param( 'search_state' ) ) ),
+		);
+		if ( '' === $payload['f_name'] || '' === $payload['l_name'] || $payload['monthly_rent_max'] <= 0 || '' === $payload['search_city'] || '' === $payload['search_state'] || ( '' === $payload['phone'] && '' === $payload['mphone'] ) ) {
+			return new WP_Error( 'ajcore_rentec_lead_required', __( 'First name, last name, phone or mobile, maximum rent, city, and state are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		foreach ( array( 'monthly_income', 'monthly_rent_min' ) as $money_field ) {
+			$value = (float) $request->get_param( $money_field );
+			if ( $value > 0 ) {
+				$payload[ $money_field ] = $value;
+			}
+		}
+		foreach ( array( 'occupants', 'bedrooms_min', 'bathrooms_min' ) as $number_field ) {
+			$value = absint( $request->get_param( $number_field ) );
+			if ( $value ) {
+				$payload[ $number_field ] = $value;
+			}
+		}
+		$move_in = sanitize_text_field( (string) $request->get_param( 'move_in' ) );
+		if ( '' !== $move_in ) {
+			$payload['move_in'] = $move_in;
+		}
+		$notes = sanitize_textarea_field( (string) $request->get_param( 'notes' ) );
+		if ( '' !== $notes ) {
+			$payload['notes'] = $notes;
+		}
+
+		$body = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/leads', $selected['account']['key'], 'POST', $payload );
+		if ( is_wp_error( $body ) ) {
+			return $body;
+		}
+		return rest_ensure_response( array( 'success' => true, 'account' => $selected['id'], 'lead' => $body['data'] ?? $body ) );
+	}
+
+	public function create_ops_rentec_vendor( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+
+		$payload = array();
+		foreach ( array( 'name', 'industry', 'contact', 'address', 'address2', 'city', 'state', 'zip', 'phone', 'mphone', 'rate' ) as $field ) {
+			$value = sanitize_text_field( (string) $request->get_param( $field ) );
+			if ( '' !== $value ) {
+				$payload[ $field ] = $value;
+			}
+		}
+		$email = sanitize_email( (string) $request->get_param( 'email' ) );
+		if ( '' !== $email ) {
+			$payload['email'] = $email;
+		}
+		$notes = sanitize_textarea_field( (string) $request->get_param( 'notes' ) );
+		if ( '' !== $notes ) {
+			$payload['notes'] = $notes;
+		}
+		if ( empty( $payload['name'] ) ) {
+			return new WP_Error( 'ajcore_rentec_vendor_required', __( 'Vendor name is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$body = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/vendors', $selected['account']['key'], 'POST', $payload );
+		if ( is_wp_error( $body ) ) {
+			return $body;
+		}
+		return rest_ensure_response( array( 'success' => true, 'account' => $selected['id'], 'vendor' => $body['data'] ?? $body ) );
 	}
 
 	public function upload_ops_rentec_work_order_attachment( WP_REST_Request $request ) {
