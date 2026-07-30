@@ -11132,6 +11132,8 @@ class AJForms_Admin {
 			$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
 			if ( 'files' === $cp_section ) {
 				$this->handle_portal_file_settings_save();
+			} elseif ( 'shared-db' === $cp_section ) {
+				$this->handle_portal_shared_db_settings_save();
 			} elseif ( 'email-templates' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 				$this->handle_settings_save();
 			} elseif ( 'inbox' === $cp_section ) {
