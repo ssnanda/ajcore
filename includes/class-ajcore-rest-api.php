@@ -70,6 +70,15 @@ class AJCore_REST_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/rentec/tenants/overdue',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'get_ops_rentec_tenants_overdue' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/rentec/work-orders',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -1455,6 +1464,122 @@ class AJCore_REST_API {
 				'tenant'  => $body['data'] ?? $body,
 			)
 		);
+	}
+
+	/**
+	 * Rentec's tenant list only exposes an aggregate `balance`, which goes negative the moment
+	 * next month's rent charge posts (often a few days before it's actually due). This checks the
+	 * dated per-tenant transaction ledger and only counts charges/payments dated on or before today,
+	 * so a tenant billed in advance isn't reported as overdue.
+	 *
+	 * Rentec hard-caps the API key at 60 requests/minute (verified: it 429s past that, shared with
+	 * any other concurrent Rentec traffic on the account). Rather than sleeping/retrying inside a
+	 * single request — which risks tripping a reverse-proxy timeout in production — this endpoint
+	 * only ever fetches one small batch per call and reports rate-limited ids back as `retryable`,
+	 * leaving pacing across batches to the caller (AJOps runs the batches on a client-side timer).
+	 */
+	public function get_ops_rentec_tenants_overdue( WP_REST_Request $request ) {
+		$selected = $this->get_rentec_account_for_ops_request( $request );
+		if ( is_wp_error( $selected ) ) {
+			return $selected;
+		}
+
+		$renter_ids = array_values( array_unique( array_filter( array_map( 'absint', (array) $request->get_param( 'renter_ids' ) ) ) ) );
+		if ( empty( $renter_ids ) ) {
+			return new WP_Error( 'ajcore_rentec_overdue_ids_required', __( 'At least one tenant ID is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		// Keep a single call comfortably under the 60/min ceiling even if it lands mid-window
+		// alongside other Rentec traffic from this account.
+		$renter_ids = array_slice( $renter_ids, 0, 30 );
+
+		$api_key       = $selected['account']['key'];
+		$now           = time();
+		$fetch_results = $this->fetch_rentec_tenant_transactions_concurrent( $renter_ids, $api_key );
+
+		$results   = array();
+		$retryable = array();
+		$errors    = 0;
+		foreach ( $renter_ids as $renter_id ) {
+			$outcome = $fetch_results[ $renter_id ] ?? array( 'status' => 0, 'entries' => null );
+			if ( 429 === $outcome['status'] ) {
+				$retryable[] = $renter_id;
+				continue;
+			}
+			if ( null === $outcome['entries'] ) {
+				$errors++;
+				continue;
+			}
+			$true_balance = 0.0;
+			foreach ( $outcome['entries'] as $entry ) {
+				$ts = isset( $entry['transaction_time'] ) ? strtotime( (string) $entry['transaction_time'] ) : false;
+				if ( false === $ts || $ts > $now ) {
+					continue;
+				}
+				$true_balance += (float) ( $entry['amount'] ?? 0 );
+			}
+			$results[] = array(
+				'renter_id'    => $renter_id,
+				'true_balance' => round( $true_balance, 2 ),
+				'overdue'      => $true_balance < -0.01,
+			);
+		}
+
+		return rest_ensure_response(
+			array(
+				'account'   => $selected['id'],
+				'as_of'     => gmdate( 'c', $now ),
+				'results'   => $results,
+				'retryable' => $retryable,
+				'errors'    => $errors,
+			)
+		);
+	}
+
+	/**
+	 * Fetches page 1 of each tenant's transaction ledger concurrently via curl_multi (a sequential
+	 * loop would take ~0.5s per tenant). Tenants with more than one page of history (300+
+	 * transactions, ~12+ years of monthly activity) only get their first page counted — acceptable
+	 * for the near-term "is this actually overdue" question. Returns each renter_id's HTTP status
+	 * alongside its entries so the caller can tell "rate limited, retry" apart from "really failed".
+	 */
+	private function fetch_rentec_tenant_transactions_concurrent( array $renter_ids, $api_key ) {
+		$multi   = curl_multi_init();
+		$handles = array();
+		foreach ( $renter_ids as $renter_id ) {
+			$url = 'https://secure.rentecdirect.com/api/v3/transactions?' . http_build_query( array( 'page' => 1, 'renter_id' => $renter_id ) );
+			$ch  = curl_init( $url );
+			curl_setopt_array(
+				$ch,
+				array(
+					CURLOPT_RETURNTRANSFER => true,
+					CURLOPT_HTTPHEADER     => array( 'Accept: application/json', 'X-API-Key: ' . $api_key ),
+					CURLOPT_TIMEOUT        => 15,
+				)
+			);
+			curl_multi_add_handle( $multi, $ch );
+			$handles[ $renter_id ] = $ch;
+		}
+
+		$running = null;
+		do {
+			curl_multi_exec( $multi, $running );
+			curl_multi_select( $multi );
+		} while ( $running > 0 );
+
+		$results = array();
+		foreach ( $handles as $renter_id => $ch ) {
+			$body    = curl_multi_getcontent( $ch );
+			$code    = (int) curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+			$decoded = json_decode( $body, true );
+			$results[ $renter_id ] = array(
+				'status'  => $code,
+				'entries' => ( 200 === $code && isset( $decoded['data'] ) && is_array( $decoded['data'] ) ) ? $decoded['data'] : null,
+			);
+			curl_multi_remove_handle( $multi, $ch );
+			curl_close( $ch );
+		}
+		curl_multi_close( $multi );
+		return $results;
 	}
 
 	public function get_ops_rentec_work_order( WP_REST_Request $request ) {
