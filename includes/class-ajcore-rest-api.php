@@ -915,6 +915,13 @@ class AJCore_REST_API {
 		);
 
 		return array(
+			'/ops/upos-temps' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_upos_temps', 'permission' => 'can_manage_ops_api' ),
+			'/ops/upos-temps/settings' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_upos_settings', 'permission' => 'can_manage_ops_api' ),
+			'/ops/upos-temps/settings/save' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'save_ops_upos_settings', 'permission' => 'can_manage_ops_api' ),
+			'/ops/upos-temps/system' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'run_ops_upos_system', 'permission' => 'can_manage_ops_api' ),
+			'/ops/upos-temps/fan' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'run_ops_upos_fan', 'permission' => 'can_manage_ops_api' ),
+			'/ops/upos-temps/devices/(?P<device_id>[A-Za-z0-9_-]+)/system' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'run_ops_upos_device_system', 'permission' => 'can_manage_ops_api' ),
+			'/ops/upos-temps/devices/(?P<device_id>[A-Za-z0-9_-]+)/fan' => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'run_ops_upos_device_fan', 'permission' => 'can_manage_ops_api' ),
 			'/ops/summary' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_summary', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customers' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_customers', 'permission' => 'can_manage_ops_api', 'args' => $read_args ),
 			'/ops/customers/(?P<stripe_customer_id>(?:cus_|local_)[A-Za-z0-9_\-]+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_customer', 'permission' => 'can_manage_ops_api' ),
@@ -1038,6 +1045,41 @@ class AJCore_REST_API {
 			'/ops/reservations'                     => array( 'methods' => WP_REST_Server::READABLE,  'callback' => 'ops_get_reservations',               'permission' => 'can_manage_ops_api' ),
 			'/ops/reservations/create'              => array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => 'ops_create_reservation',             'permission' => 'can_manage_ops_api' ),
 		);
+	}
+
+	public function get_ops_upos_temps() {
+		$devices = AJCore_UPOS_Temps::fetch_devices();
+		if ( is_wp_error( $devices ) ) return $devices;
+		return rest_ensure_response( array( 'devices' => $devices, 'settings' => AJCore_UPOS_Temps::status() ) );
+	}
+
+	public function get_ops_upos_settings() {
+		return rest_ensure_response( AJCore_UPOS_Temps::status() );
+	}
+
+	public function save_ops_upos_settings( WP_REST_Request $request ) {
+		if ( ! current_user_can( 'manage_options' ) ) return new WP_Error( 'forbidden', 'Only administrators can update UPOS settings.', array( 'status' => 403 ) );
+		return rest_ensure_response( AJCore_UPOS_Temps::save_settings( $request->get_json_params() ?: array() ) );
+	}
+
+	public function run_ops_upos_system( WP_REST_Request $request ) {
+		$result = AJCore_UPOS_Temps::run_system( sanitize_text_field( (string) $request->get_param( 'mode' ) ) );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	public function run_ops_upos_fan( WP_REST_Request $request ) {
+		$result = AJCore_UPOS_Temps::run_fan( sanitize_text_field( (string) $request->get_param( 'mode' ) ) );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	public function run_ops_upos_device_system( WP_REST_Request $request ) {
+		$result = AJCore_UPOS_Temps::run_system( sanitize_text_field( (string) $request->get_param( 'mode' ) ), sanitize_text_field( (string) $request['device_id'] ) );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+	}
+
+	public function run_ops_upos_device_fan( WP_REST_Request $request ) {
+		$result = AJCore_UPOS_Temps::run_fan( sanitize_text_field( (string) $request->get_param( 'mode' ) ), sanitize_text_field( (string) $request['device_id'] ) );
+		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
 	}
 
 	public static function get_default_api_settings() {
