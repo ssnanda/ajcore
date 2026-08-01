@@ -56,7 +56,8 @@
 	// ── Styles ────────────────────────────────────────────────────────────────
 	var style = document.createElement("style");
 	style.textContent =
-		"#ajcore-chat-bubble{position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:50%;background:#3157ff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:999998;font-size:26px;border:none;}" +
+		"#ajcore-chat-bubble{position:fixed;bottom:20px;right:20px;min-width:64px;height:44px;padding:0 18px;border-radius:22px;background:#3157ff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:999998;font-size:13px;font-weight:700;letter-spacing:.06em;border:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}" +
+		"#ajcore-chat-bubble.offline{background:#0f172a;}" +
 		"#ajcore-chat-panel{position:fixed;bottom:88px;right:20px;width:340px;max-width:calc(100vw - 40px);height:460px;max-height:calc(100vh - 120px);background:#fff;border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.25);display:none;flex-direction:column;overflow:hidden;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}" +
 		"#ajcore-chat-panel.open{display:flex;}" +
 		"#ajcore-chat-header{background:#3157ff;color:#fff;padding:14px 16px;font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;}" +
@@ -103,10 +104,25 @@
 	// ── Markup ───────────────────────────────────────────────────────────────
 	var bubble = document.createElement("button");
 	bubble.id = "ajcore-chat-bubble";
-	bubble.setAttribute("aria-label", "Open chat");
-	bubble.innerHTML = '<span>💬</span><span id="ajcore-chat-badge"></span>';
+	bubble.innerHTML = '<span id="ajcore-chat-bubble-label">CHAT</span><span id="ajcore-chat-badge"></span>';
 	document.body.appendChild(bubble);
 	var badge = bubble.querySelector("#ajcore-chat-badge");
+	var bubbleLabel = bubble.querySelector("#ajcore-chat-bubble-label");
+
+	// Swaps the launcher's label/color to "TEXT" outside business hours so a visitor sees at a
+	// glance that live chat won't be answered right now and can go straight to SMS instead of
+	// opening the panel to discover the offline banner. No-op (always "CHAT") when the site owner
+	// hasn't turned business hours on, matching isWithinBusinessHours()'s own default-open behavior.
+	function updateBubbleLabel() {
+		var offline = !isWithinBusinessHours();
+		bubbleLabel.textContent = offline ? "TEXT" : "CHAT";
+		bubble.classList.toggle("offline", offline);
+		bubble.setAttribute("aria-label", offline ? "Text us" : "Open chat");
+	}
+	updateBubbleLabel();
+	if (config.businessHoursEnabled) {
+		setInterval(updateBubbleLabel, 60000);
+	}
 
 	// Outside the panel itself, so a reply is visible even while the panel is closed/minimized.
 	var preview = document.createElement("div");
@@ -132,11 +148,14 @@
 	// they already are. href is computed fresh on click (not just once at init) since visitorName
 	// isn't known yet until the pre-chat form is submitted.
 	var TEXT_US_NUMBER = "+17043072135";
+	function textUsHref(msg) {
+		return "sms:" + TEXT_US_NUMBER + "?body=" + encodeURIComponent(msg);
+	}
 	textUsBtn.addEventListener("click", function () {
 		var msg = visitorName
 			? "Hi, I was chatting on your website and wanted to switch to texting instead. My name is " + visitorName + "."
 			: "Hi, I was chatting on your website and wanted to switch to texting instead.";
-		textUsBtn.href = "sms:" + TEXT_US_NUMBER + "?body=" + encodeURIComponent(msg);
+		textUsBtn.href = textUsHref(msg);
 	});
 
 	var panelOpen = false;
@@ -193,6 +212,13 @@
 	}
 
 	bubble.addEventListener("click", function () {
+		if (!isWithinBusinessHours()) {
+			var msg = visitorName
+				? "Hi, I'd like to text instead of chatting online. My name is " + visitorName + "."
+				: "Hi, I'd like to text instead of chatting online.";
+			window.location.href = textUsHref(msg);
+			return;
+		}
 		if (panelOpen) { closePanel(); } else { openPanel(); }
 		// A real click is a genuine user gesture — request here too (not just from renderChatUI()
 		// at page load for returning visitors, which some browsers silently ignore since it isn't
