@@ -188,7 +188,7 @@ class AJForms_Admin {
 		return $release_info;
 	}
 
-	private function get_update_status( $force_refresh = false ) {
+	public function get_update_status( $force_refresh = false ) {
 		$latest_release = $this->fetch_latest_release_info( $force_refresh );
 
 		if ( is_wp_error( $latest_release ) ) {
@@ -207,7 +207,7 @@ class AJForms_Admin {
 		);
 	}
 
-	private function install_plugin_update() {
+	public function install_plugin_update() {
 		if ( ! current_user_can( 'update_plugins' ) ) {
 			return new WP_Error( 'insufficient_permissions', __( 'You do not have permission to update plugins.', 'ajforms' ) );
 		}
@@ -31867,6 +31867,13 @@ class AJForms_Admin {
 				$is_current_master = true;
 			}
 		}
+
+		// Fetched once for the whole table (6h-cached, same GitHub lookup the About page's "Update
+		// AJ Core" button uses) so every row can flag itself as outdated without a per-row API call.
+		$latest_update_status = ! empty( $connected_sites ) ? $this->get_update_status() : null;
+		$latest_known_version = ( is_array( $latest_update_status ) && ! empty( $latest_update_status['latest_version'] ) )
+			? $latest_update_status['latest_version']
+			: '';
 		?>
 
 		<?php if ( $is_enabled && ! $shared_db ) : ?>
@@ -31922,6 +31929,7 @@ class AJForms_Admin {
 						<th><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Master', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Participation', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Version', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Last Seen', 'ajforms' ); ?></th>
 						<th></th>
 					</tr>
@@ -31932,6 +31940,8 @@ class AJForms_Admin {
 						$participation = isset( $site->participation ) ? json_decode( (string) $site->participation, true ) : array();
 						$participation = is_array( $participation ) ? $participation : array();
 						$participation_labels = array();
+						$site_version = isset( $site->ajcore_version ) ? (string) $site->ajcore_version : '';
+						$site_is_outdated = ( '' !== $site_version && '' !== $latest_known_version && version_compare( $latest_known_version, $site_version, '>' ) );
 						if ( ! empty( $site->is_master ) ) {
 							$participation_labels[] = __( 'Master Operations', 'ajforms' );
 						}
@@ -31961,6 +31971,16 @@ class AJForms_Admin {
 								<span class="description"><?php esc_html_e( 'Not reported yet', 'ajforms' ); ?></span>
 							<?php endif; ?>
 						</td>
+						<td>
+							<?php if ( '' !== $site_version ) : ?>
+								<code><?php echo esc_html( $site_version ); ?></code>
+								<?php if ( $site_is_outdated ) : ?>
+									<span style="display:inline-block;margin-left:6px;padding:2px 8px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;"><?php echo esc_html( sprintf( __( '%s available', 'ajforms' ), $latest_known_version ) ); ?></span>
+								<?php endif; ?>
+							<?php else : ?>
+								<span class="description"><?php esc_html_e( 'Not reported yet', 'ajforms' ); ?></span>
+							<?php endif; ?>
+						</td>
 						<td><?php echo esc_html( $site->last_seen ); ?></td>
 						<td>
 							<?php if ( ! $sites_from_cache && $is_current_master && ! $site->is_master ) : ?>
@@ -31968,6 +31988,13 @@ class AJForms_Admin {
 								data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>"
 								data-domain="<?php echo esc_attr( $site->domain ); ?>">
 								<?php esc_html_e( 'Set as Master', 'ajforms' ); ?>
+							</button>
+							<?php endif; ?>
+							<?php if ( ! $sites_from_cache && $is_current_master && ! $is_this_site && $site_is_outdated ) : ?>
+							<button type="button" class="button button-small button-primary ajcore-remote-update-btn"
+								data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>"
+								data-domain="<?php echo esc_attr( $site->domain ); ?>">
+								<?php esc_html_e( 'Update', 'ajforms' ); ?>
 							</button>
 							<?php endif; ?>
 						</td>
@@ -32125,6 +32152,42 @@ class AJForms_Admin {
 						}
 					})
 					.catch(function() { masterBtn.disabled = false; });
+			});
+		});
+
+		// Remote update buttons.
+		document.querySelectorAll('.ajcore-remote-update-btn').forEach(function(updateBtn) {
+			updateBtn.addEventListener('click', function() {
+				var uuid   = updateBtn.dataset.uuid;
+				var domain = updateBtn.dataset.domain;
+				if ( ! confirm( '<?php echo esc_js( __( 'Update AJ Core on', 'ajforms' ) ); ?> ' + domain + '<?php echo esc_js( __( '? This installs the latest release immediately.', 'ajforms' ) ); ?>' ) ) return;
+
+				var originalText = updateBtn.textContent;
+				updateBtn.disabled = true;
+				updateBtn.textContent = '<?php echo esc_js( __( 'Updating…', 'ajforms' ) ); ?>';
+
+				var data = new FormData();
+				data.append('action',    'ajcore_remote_update_site');
+				data.append('nonce',     '<?php echo esc_js( wp_create_nonce( 'ajcore_remote_update_site' ) ); ?>');
+				data.append('site_uuid', uuid);
+
+				fetch(ajaxurl, { method: 'POST', body: data })
+					.then(function(r) { return r.json(); })
+					.then(function(res) {
+						if (res.success) {
+							alert((res.data && res.data.message) || '<?php echo esc_js( __( 'Done.', 'ajforms' ) ); ?>');
+							location.reload();
+						} else {
+							alert(res.data || '<?php echo esc_js( __( 'Update failed.', 'ajforms' ) ); ?>');
+							updateBtn.disabled = false;
+							updateBtn.textContent = originalText;
+						}
+					})
+					.catch(function() {
+						alert('<?php echo esc_js( __( 'Request failed.', 'ajforms' ) ); ?>');
+						updateBtn.disabled = false;
+						updateBtn.textContent = originalText;
+					});
 			});
 		});
 
@@ -32305,6 +32368,69 @@ class AJForms_Admin {
 		$shared_db->update( $table, array( 'is_master' => 1 ), array( 'site_uuid' => $target_uuid ), array( '%d' ), array( '%s' ) );
 
 		wp_send_json_success( __( 'Master updated.', 'ajforms' ) );
+	}
+
+	/** Triggers a remote AJCore update on another connected site by calling its own
+	 *  /ops/self-update REST endpoint, authenticated with the update_secret already sitting in
+	 *  that site's aj_shared_sites row (read directly from the shared DB — no extra credentials
+	 *  to manage). See can_trigger_remote_update() in class-ajcore-rest-api.php for the other side. */
+	public function ajax_remote_update_site() {
+		check_ajax_referer( 'ajcore_remote_update_site', 'nonce' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ) );
+			return;
+		}
+
+		$target_uuid = isset( $_POST['site_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['site_uuid'] ) ) : '';
+		if ( '' === $target_uuid ) {
+			wp_send_json_error( __( 'Site UUID is required.', 'ajforms' ) );
+			return;
+		}
+
+		$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		if ( ! $shared_db ) {
+			wp_send_json_error( __( 'Shared DB is not connected.', 'ajforms' ) );
+			return;
+		}
+
+		$table = $shared_db->prefix . 'aj_shared_sites';
+		$site  = $shared_db->get_row( $shared_db->prepare( "SELECT domain, update_secret FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $target_uuid ) );
+		if ( ! $site || empty( $site->domain ) ) {
+			wp_send_json_error( __( 'Site not found.', 'ajforms' ) );
+			return;
+		}
+		if ( empty( $site->update_secret ) ) {
+			wp_send_json_error( __( 'That site has not generated an update secret yet — its Shared DB Settings page needs to load once first.', 'ajforms' ) );
+			return;
+		}
+
+		$url      = rtrim( $site->domain, '/' ) . '/wp-json/ajcore/v1/ops/self-update';
+		$response = wp_remote_post(
+			$url,
+			array(
+				'timeout' => 90,
+				'headers' => array( 'X-AJCore-Update-Secret' => $site->update_secret ),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( $response->get_error_message() );
+			return;
+		}
+
+		$code = (int) wp_remote_retrieve_response_code( $response );
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( 200 !== $code ) {
+			wp_send_json_error( is_array( $body ) && ! empty( $body['message'] ) ? $body['message'] : __( 'Remote update failed.', 'ajforms' ) );
+			return;
+		}
+
+		if ( ! empty( $body['updated'] ) ) {
+			wp_send_json_success( array( 'message' => sprintf( __( 'Updated to %s.', 'ajforms' ), isset( $body['version'] ) ? $body['version'] : '' ) ) );
+		} else {
+			wp_send_json_success( array( 'message' => isset( $body['message'] ) ? $body['message'] : __( 'Already up to date.', 'ajforms' ) ) );
+		}
 	}
 
 	public function ajax_toggle_multisite_portal() {

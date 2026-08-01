@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.182
+ * Version: 0.7.183
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.182' );
+	define( 'AJCORE_VERSION', '0.7.183' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -903,6 +903,12 @@ if ( ! function_exists( 'ajcore_register_site_in_shared_db' ) ) {
 		if ( ! $shared_db->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'participation'" ) ) {
 			$shared_db->query( "ALTER TABLE `{$table}` ADD COLUMN participation longtext NULL AFTER is_master" );
 		}
+		if ( ! $shared_db->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'ajcore_version'" ) ) {
+			$shared_db->query( "ALTER TABLE `{$table}` ADD COLUMN ajcore_version varchar(20) NULL AFTER participation" );
+		}
+		if ( ! $shared_db->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'update_secret'" ) ) {
+			$shared_db->query( "ALTER TABLE `{$table}` ADD COLUMN update_secret varchar(64) NULL AFTER ajcore_version" );
+		}
 
 		$features      = function_exists( 'ajcore_get_site_features' ) ? ajcore_get_site_features() : array();
 		$participation = wp_json_encode(
@@ -914,29 +920,44 @@ if ( ! function_exists( 'ajcore_register_site_in_shared_db' ) ) {
 		);
 		$domain   = (string) home_url( '/' );
 		$existing = $shared_db->get_row(
-			$shared_db->prepare( "SELECT id FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid )
+			$shared_db->prepare( "SELECT id, update_secret FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid )
 		);
+
+		// Each site generates and stores its OWN secret the first time it registers — the Master
+		// reads it straight out of this same shared-DB row (it already has direct DB access, no HTTP
+		// round trip needed) to authenticate the remote-update request it sends this site later. No
+		// new cross-site auth flow: it's the same "coordinate via the shared table" pattern already
+		// used for participation/last_seen.
+		$update_secret = $existing && ! empty( $existing->update_secret ) ? $existing->update_secret : wp_generate_password( 40, false );
 
 		if ( $existing ) {
 			$shared_db->update(
 				$table,
-				array( 'domain' => $domain, 'participation' => $participation, 'last_seen' => current_time( 'mysql' ) ),
+				array(
+					'domain'         => $domain,
+					'participation'  => $participation,
+					'ajcore_version' => AJCORE_VERSION,
+					'update_secret'  => $update_secret,
+					'last_seen'      => current_time( 'mysql' ),
+				),
 				array( 'site_uuid' => $uuid ),
-				array( '%s', '%s', '%s' ),
+				array( '%s', '%s', '%s', '%s', '%s' ),
 				array( '%s' )
 			);
 		} else {
 			$shared_db->insert(
 				$table,
 				array(
-					'site_uuid'     => $uuid,
-					'domain'        => $domain,
-					'is_master'     => 0,
-					'participation' => $participation,
-					'last_seen'     => current_time( 'mysql' ),
-					'registered_at' => current_time( 'mysql' ),
+					'site_uuid'      => $uuid,
+					'domain'         => $domain,
+					'is_master'      => 0,
+					'participation'  => $participation,
+					'ajcore_version' => AJCORE_VERSION,
+					'update_secret'  => $update_secret,
+					'last_seen'      => current_time( 'mysql' ),
+					'registered_at'  => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%d', '%s', '%s', '%s' )
+				array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s' )
 			);
 		}
 	}

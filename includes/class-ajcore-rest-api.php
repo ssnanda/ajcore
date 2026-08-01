@@ -753,6 +753,16 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/self-update',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'handle_ops_self_update' ),
+				'permission_callback' => array( $this, 'can_trigger_remote_update' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/ajphone/conversations',
 			array(
 				array(
@@ -4453,8 +4463,10 @@ class AJCore_REST_API {
 		}
 
 		$has_participation = (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'participation'" );
+		$has_version       = (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'ajcore_version'" );
 		$participation_sql = $has_participation ? ', participation' : '';
-		$rows  = $pdb->get_results( "SELECT site_uuid, domain, is_master, last_seen{$participation_sql} FROM `{$table}` ORDER BY is_master DESC, domain ASC" );
+		$version_sql       = $has_version ? ', ajcore_version' : '';
+		$rows  = $pdb->get_results( "SELECT site_uuid, domain, is_master, last_seen{$participation_sql}{$version_sql} FROM `{$table}` ORDER BY is_master DESC, domain ASC" );
 		$sites = array();
 		foreach ( (array) $rows as $row ) {
 			$participation = $has_participation ? json_decode( (string) $row->participation, true ) : array();
@@ -4463,6 +4475,7 @@ class AJCore_REST_API {
 				'domain'       => (string) $row->domain,
 				'is_master'    => (bool) $row->is_master,
 				'participation' => is_array( $participation ) ? $participation : array(),
+				'ajcore_version' => $has_version ? (string) $row->ajcore_version : '',
 				'last_seen'    => (string) $row->last_seen,
 			);
 		}
@@ -6687,6 +6700,67 @@ class AJCore_REST_API {
 
 	private function get_chat_sessions_table() {
 		return $this->portal_table( 'aj_portal_chat_sessions' );
+	}
+
+	/**
+	 * Auth for /ops/self-update: NOT the usual OPS admin JWT — this is called site-to-site (the
+	 * Master triggering an update on a participant site), so there's no logged-in user on the
+	 * receiving end to check. Instead it reuses the per-site `update_secret` already sitting in
+	 * this site's own `aj_shared_sites` row (generated in ajcore_register_site_in_shared_db()) —
+	 * the Master reads that same row directly from the shared DB to know what to send, so this is
+	 * just the shared-DB-as-coordination pattern the rest of multisite portal already uses, not a
+	 * new trust boundary.
+	 */
+	public function can_trigger_remote_update( WP_REST_Request $request ) {
+		$provided = (string) $request->get_header( 'X-AJCore-Update-Secret' );
+		if ( '' === $provided ) {
+			return new WP_Error( 'missing_secret', 'Update secret required.', array( 'status' => 401 ) );
+		}
+
+		$pdb   = $this->get_portal_db();
+		$table = $pdb->prefix . 'aj_shared_sites';
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return new WP_Error( 'shared_db_unavailable', 'Shared DB control table not found.', array( 'status' => 503 ) );
+		}
+
+		$uuid   = (string) get_option( 'ajcore_site_uuid', '' );
+		$actual = $uuid ? (string) $pdb->get_var( $pdb->prepare( "SELECT update_secret FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid ) ) : '';
+
+		if ( '' === $actual || ! hash_equals( $actual, $provided ) ) {
+			return new WP_Error( 'invalid_secret', 'Invalid update secret.', array( 'status' => 403 ) );
+		}
+
+		return true;
+	}
+
+	/** Triggered remotely (see can_trigger_remote_update()) — installs the latest AJCore release
+	 *  from GitHub using the same Plugin_Upgrader path as the "Update AJ Core" button in wp-admin. */
+	public function handle_ops_self_update( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+
+		$status = $admin->get_update_status( true );
+		if ( is_wp_error( $status ) ) {
+			return $status;
+		}
+		if ( empty( $status['has_update'] ) ) {
+			return rest_ensure_response(
+				array( 'updated' => false, 'version' => $status['current_version'], 'message' => 'Already up to date.' )
+			);
+		}
+
+		$result = $admin->install_plugin_update();
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		if ( function_exists( 'ajcore_register_site_in_shared_db' ) ) {
+			ajcore_register_site_in_shared_db();
+		}
+
+		return rest_ensure_response( array( 'updated' => true, 'version' => $status['latest_version'] ) );
 	}
 
 	/**
