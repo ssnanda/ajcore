@@ -1985,7 +1985,32 @@ class AJCore_REST_API {
 		$customers = $this->attach_customer_site_labels( array_map( array( $this, 'format_ops_customer_row' ), $customers ) );
 		$customers = $this->attach_customer_portal_user_links( $customers );
 		$customers = $this->attach_customer_site_access( $customers );
+		$customers = $this->attach_customer_service_types( $customers );
 		return rest_ensure_response( array( 'customers' => $customers ) );
+	}
+
+	/// Adds `service_types` (array of active subscription / local-contract service names) to
+	/// each row, batched over the whole list in two queries rather than one detail-endpoint
+	/// call per customer — this list view only needs a lightweight "what do they have" label,
+	/// not the full snapshot/ledger reconciliation the customer detail screen does.
+	private function attach_customer_service_types( $customers ) {
+		$customers = (array) $customers;
+		$ids = array_values( array_unique( array_filter( array_map( function ( $c ) {
+			return isset( $c['stripe_customer_id'] ) ? (string) $c['stripe_customer_id'] : '';
+		}, $customers ) ) ) );
+		$by_customer = array();
+		if ( ! empty( $ids ) && class_exists( 'AJForms_Admin' ) ) {
+			$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+			if ( method_exists( $admin, 'api_get_ops_customer_service_types_batch' ) ) {
+				$by_customer = $admin->api_get_ops_customer_service_types_batch( $ids );
+			}
+		}
+		foreach ( $customers as &$customer ) {
+			$cid = isset( $customer['stripe_customer_id'] ) ? (string) $customer['stripe_customer_id'] : '';
+			$customer['service_types'] = $by_customer[ $cid ] ?? array();
+		}
+		unset( $customer );
+		return $customers;
 	}
 
 	private function attach_customer_site_access( $customers ) {

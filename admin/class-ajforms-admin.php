@@ -8417,6 +8417,69 @@ class AJForms_Admin {
 		return $records;
 	}
 
+	/// Lightweight, batched "what service(s) does this customer have" lookup for the /ops/customers
+	/// LIST endpoint — deliberately skips the snapshot/ledger dedupe reconciliation
+	/// api_get_ops_customer_services() does per-customer for the detail screen, since doing that
+	/// once per row would be an N+1 query storm across a customer list. Returns
+	/// [ customer_id => [ service_name, ... ] ] for only the ids that have an active service.
+	public function api_get_ops_customer_service_types_batch( $customer_ids ) {
+		$customer_ids = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', (array) $customer_ids ) ) ) );
+		if ( empty( $customer_ids ) ) {
+			return array();
+		}
+
+		$pdb = $this->get_pdb();
+		$by_customer = array();
+		$placeholders = implode( ',', array_fill( 0, count( $customer_ids ), '%s' ) );
+
+		$subs_table = $this->get_portal_stripe_subscriptions_table();
+		$sub_rows = $pdb->get_results( $pdb->prepare(
+			"SELECT stripe_customer_id, items FROM `{$subs_table}` WHERE status IN ('active','trialing') AND stripe_customer_id IN ({$placeholders})",
+			$customer_ids
+		) );
+		foreach ( (array) $sub_rows as $row ) {
+			$items = json_decode( (string) $row->items, true );
+			if ( ! is_array( $items ) ) {
+				continue;
+			}
+			foreach ( $items as $item ) {
+				if ( ! is_array( $item ) ) {
+					continue;
+				}
+				$identifiers = array(
+					'price_ids'   => ! empty( $item['price_id'] ) ? array( sanitize_text_field( (string) $item['price_id'] ) ) : array(),
+					'product_ids' => ! empty( $item['product_id'] ) ? array( sanitize_text_field( (string) $item['product_id'] ) ) : array(),
+				);
+				$product = $this->resolve_portal_product_from_identifiers( $identifiers );
+				if ( ! $product || empty( $product->name ) ) {
+					continue;
+				}
+				$by_customer[ $row->stripe_customer_id ][ sanitize_text_field( (string) $product->name ) ] = true;
+			}
+		}
+
+		// Local contract services — covers both true local_* customers and $0 tracking-only rows
+		// filed under a cus_* id. local_customer_id already stores the exact id used elsewhere
+		// (it's generated with the 'local_' prefix baked in), so no translation is needed.
+		$local_services_table = $pdb->prefix . 'aj_portal_local_services';
+		$local_rows = $pdb->get_results( $pdb->prepare(
+			"SELECT local_customer_id, service_name FROM `{$local_services_table}` WHERE status='active' AND local_customer_id IN ({$placeholders})",
+			$customer_ids
+		) );
+		foreach ( (array) $local_rows as $row ) {
+			if ( empty( $row->service_name ) ) {
+				continue;
+			}
+			$by_customer[ $row->local_customer_id ][ sanitize_text_field( (string) $row->service_name ) ] = true;
+		}
+
+		$result = array();
+		foreach ( $by_customer as $cid => $names ) {
+			$result[ $cid ] = array_values( array_keys( $names ) );
+		}
+		return $result;
+	}
+
 	public function api_get_ops_customer_services( $stripe_customer_id ) {
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		if ( empty( $stripe_customer_id ) ) {
