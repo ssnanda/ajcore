@@ -1332,9 +1332,17 @@ class AJCore_REST_API {
 
 		$leads_total  = 0;
 		$leads_unread = 0;
+		$leads_active = 0;
 		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $leads_table ) ) === $leads_table ) {
 			$leads_total  = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}`" );
 			$leads_unread = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}` WHERE status = 'new'" );
+			// Pipeline-based, not the raw read/unread flag above — still in the funnel (not yet won
+			// as a customer, not lost). Empty lead_status defaults to 'new' (see format_lead_row),
+			// so it counts as active here too. Matches the mobile app's own "Active" filter exactly
+			// (lead.leadStatus not in customer/lost) — no other conditions.
+			$leads_active = (int) $pdb->get_var(
+				"SELECT COUNT(*) FROM `{$leads_table}` WHERE lead_status IS NULL OR lead_status = '' OR lead_status NOT IN ('customer','lost')"
+			);
 		}
 
 		$sr_stats   = $this->get_service_request_stats_for_ops();
@@ -1359,6 +1367,7 @@ class AJCore_REST_API {
 				'service_requests_needs_action'       => $sr_stats['needs_action'],
 				'leads'                               => $leads_total,
 				'leads_unread'                        => $leads_unread,
+				'leads_active'                        => $leads_active,
 				'chat_unread'                         => $chat_unread,
 				'sync_logs'                           => $this->count_table( $pdb, $this->portal_table( 'aj_portal_sync_logs' ) ),
 			)
