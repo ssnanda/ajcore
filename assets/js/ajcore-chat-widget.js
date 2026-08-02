@@ -9,12 +9,28 @@
 		return;
 	}
 
-	// Desktop/tablet only — the "Mobile" token is what actually distinguishes phones from tablets
-	// here: iPadOS Safari's UA reports as a plain desktop Mac (no match), and Android tablets omit
-	// "Mobile" the way Android phones include it, so this doesn't accidentally hide the widget on
-	// larger touch devices, only phones. Skips creating any DOM/WebSocket for phone visitors
-	// entirely, rather than just hiding it with CSS.
+	// Desktop/tablet only past this point — the "Mobile" token is what actually distinguishes
+	// phones from tablets here: iPadOS Safari's UA reports as a plain desktop Mac (no match), and
+	// Android tablets omit "Mobile" the way Android phones include it, so this doesn't
+	// accidentally affect larger touch devices, only phones.
+	//
+	// Phones get a lightweight standalone "TEXT" bubble instead of the full CHAT widget — no
+	// DOM/WebSocket for the chat panel/session machinery below at all, just a floating button in
+	// the same spot that hands off straight to SMS. This is a plugin-level default (every site
+	// embedding this widget gets it automatically), not something themes need to add per-site.
 	if (/iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini|IEMobile/i.test(navigator.userAgent || "")) {
+		var mobileTextNumber = "+17043072135";
+		var mobileStyle = document.createElement("style");
+		mobileStyle.textContent =
+			"#ajcore-chat-bubble{position:fixed;bottom:20px;right:20px;min-width:64px;height:44px;padding:0 18px;border-radius:22px;background:#3157ff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:999998;font-size:13px;font-weight:700;letter-spacing:.06em;border:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-decoration:none;}";
+		document.head.appendChild(mobileStyle);
+
+		var mobileBubble = document.createElement("a");
+		mobileBubble.id = "ajcore-chat-bubble";
+		mobileBubble.setAttribute("aria-label", "Text us");
+		mobileBubble.textContent = "TEXT";
+		mobileBubble.href = "sms:" + mobileTextNumber + "?body=" + encodeURIComponent("Hi, I'd like to text about your website.");
+		document.body.appendChild(mobileBubble);
 		return;
 	}
 
