@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.194
+ * Version: 0.7.196
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.194' );
+	define( 'AJCORE_VERSION', '0.7.196' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -78,9 +78,17 @@ if ( ! function_exists( 'ajcore_backfill_service_request_numbers' ) ) {
 		$pdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
 		$table = $pdb->prefix . 'aj_portal_service_requests';
 		if ( ! $pdb->get_var( "SHOW COLUMNS FROM {$table} LIKE 'service_request_number'" ) ) return;
-		$rows = $pdb->get_results( "SELECT id, created_at FROM {$table} WHERE service_request_number = '' OR service_request_number IS NULL ORDER BY created_at ASC, id ASC" );
-		foreach ( is_array( $rows ) ? $rows : array() as $row ) {
-			$pdb->update( $table, array( 'service_request_number' => ajcore_generate_service_request_number( $row->created_at ) ), array( 'id' => (int) $row->id ), array( '%s' ), array( '%d' ) );
+		$lock_name = 'ajcore_service_request_number_backfill';
+		$got_lock = (bool) $pdb->get_var( $pdb->prepare( 'SELECT GET_LOCK(%s, 10)', $lock_name ) );
+		if ( ! $got_lock ) return;
+		try {
+			// Re-read after acquiring the lock in case another request completed the work while this one waited.
+			$rows = $pdb->get_results( "SELECT id, created_at FROM {$table} WHERE service_request_number = '' OR service_request_number IS NULL ORDER BY created_at ASC, id ASC" );
+			foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+				$pdb->update( $table, array( 'service_request_number' => ajcore_generate_service_request_number( $row->created_at ) ), array( 'id' => (int) $row->id ), array( '%s' ), array( '%d' ) );
+			}
+		} finally {
+			$pdb->query( $pdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
 		}
 	}
 }
