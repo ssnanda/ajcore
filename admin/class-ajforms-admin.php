@@ -17082,6 +17082,31 @@ class AJForms_Admin {
 		global $wpdb;
 		$pdb = $this->get_pdb();
 
+		// checkout.session.completed and invoice.paid fire within milliseconds of each other for a
+		// new subscription purchase, and each webhook delivery calls this method independently. The
+		// invoice-sourced insert path (backfill_portal_service_requests_from_first_invoices, called
+		// below) only skips creating a duplicate if the checkout session's stripe_transactions row
+		// has already been synced with its invoice_id populated — without serialization, two
+		// concurrent deliveries can both pass that check before either has committed, producing two
+		// service_requests rows for one purchase. A named lock forces the second concurrent call to
+		// wait for the first to fully finish (and commit) before it re-reads state.
+		$lock_name = 'ajcore_service_request_backfill';
+		$got_lock  = (bool) $pdb->get_var( $pdb->prepare( 'SELECT GET_LOCK(%s, 10)', $lock_name ) );
+		if ( ! $got_lock ) {
+			return; // Another process is already backfilling; it will cover any rows pending here.
+		}
+
+		try {
+			$this->backfill_portal_service_requests_from_ledger_locked();
+		} finally {
+			$pdb->query( $pdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+		}
+	}
+
+	private function backfill_portal_service_requests_from_ledger_locked() {
+		global $wpdb;
+		$pdb = $this->get_pdb();
+
 		$this->ensure_portal_schema();
 		$actionable_source_types = array( 'custom_service_request', 'service_quote_request', 'custom_request', 'service_request', 'checkout_session' );
 		$source_placeholders = implode( ',', array_fill( 0, count( $actionable_source_types ), '%s' ) );
@@ -18023,12 +18048,12 @@ class AJForms_Admin {
 									$date_str             = $request->created_at ? date_i18n( 'M j, Y', strtotime( $request->created_at . ' UTC' ) ) : '-';
 									$time_str             = $request->created_at ? date_i18n( 'g:i a', strtotime( $request->created_at . ' UTC' ) ) : '';
 									$amount_str           = (float) $request->amount > 0 ? ( 'usd' === strtolower( (string) $request->currency ) ? '$' . number_format_i18n( (float) $request->amount, 2 ) : strtoupper( (string) $request->currency ) . ' ' . number_format_i18n( (float) $request->amount, 2 ) ) : '—';
-									$search_blob          = strtolower( implode( ' ', array( $request_display_name, $customer_labels['name'], $customer_labels['email'], $request->stripe_customer_id, $request->client_notes, $request->admin_notes, $status_label, $svc_label, $source_label, $source_key, $request->source_object_id ) ) );
+									$search_blob          = strtolower( implode( ' ', array( $request->service_request_number, $request_display_name, $customer_labels['name'], $customer_labels['email'], $request->stripe_customer_id, $request->client_notes, $request->admin_notes, $status_label, $svc_label, $source_label, $source_key, $request->source_object_id ) ) );
 									$detail_id            = 'aj-sr-detail-' . (int) $request->id;
 									?>
 									<tr class="aj-sr-row" data-aj-sr-card data-aj-sr-search="<?php echo esc_attr( $search_blob ); ?>" data-aj-sr-target="<?php echo esc_attr( $detail_id ); ?>" data-date="<?php echo esc_attr( $request->created_at ? $request->created_at : '0' ); ?>" data-service="<?php echo esc_attr( strtolower( $request_display_name ) ); ?>" data-amount="<?php echo esc_attr( (float) $request->amount ); ?>">
 										<td class="aj-sr-td-toggle" onclick="event.stopPropagation()"><input type="checkbox" class="aj-sr-row-check" form="aj-sr-bulk-form" name="request_ids[]" value="<?php echo esc_attr( (int) $request->id ); ?>"></td>
-										<td class="aj-sr-td-date"><?php echo esc_html( $date_str ); ?><?php if ( $time_str ) : ?><br><span style="font-size:11px;color:#94a3b8"><?php echo esc_html( $time_str ); ?></span><?php endif; ?></td>
+										<td class="aj-sr-td-date"><strong style="font-family:monospace"><?php echo esc_html( $request->service_request_number ?: '#' . (int) $request->id ); ?></strong><br><?php echo esc_html( $date_str ); ?><?php if ( $time_str ) : ?><br><span style="font-size:11px;color:#94a3b8"><?php echo esc_html( $time_str ); ?></span><?php endif; ?></td>
 										<td class="aj-sr-td-customer"><strong><?php echo esc_html( $customer_labels['name'] ); ?></strong><span><?php echo esc_html( $customer_labels['email'] ); ?></span></td>
 										<td class="aj-sr-td-service" title="<?php echo esc_attr( $request_display_name ); ?>"><?php echo esc_html( $request_display_name ); ?></td>
 										<td class="aj-sr-td-pay-status"><span class="aj-sr-badge is-<?php echo esc_attr( $status_key ); ?>"><?php echo esc_html( $status_label ); ?></span></td>

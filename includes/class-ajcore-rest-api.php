@@ -2288,7 +2288,7 @@ class AJCore_REST_API {
 				'subscriptions'    => $this->select_by_customer( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'items', 'livemode', 'synced_at' ), $stripe_customer_id, 'synced_at DESC, id DESC' ),
 				'transactions'     => $transactions,
 				'ledger'           => $ledger,
-				'service_requests' => $this->select_by_customer( 'aj_portal_service_requests', array( 'id', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'created_at', 'updated_at' ), $stripe_customer_id, 'updated_at DESC, id DESC' ),
+				'service_requests' => $this->select_by_customer( 'aj_portal_service_requests', array( 'id', 'service_request_number', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'created_at', 'updated_at' ), $stripe_customer_id, 'updated_at DESC, id DESC' ),
 			)
 		);
 	}
@@ -3886,6 +3886,7 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_service_requests( WP_REST_Request $request ) {
+		if ( function_exists( 'ajcore_backfill_service_request_numbers' ) ) ajcore_backfill_service_request_numbers();
 		$pdb         = $this->get_portal_db();
 		$t_sr        = $this->portal_table( 'aj_portal_service_requests' );
 		$t_customers = $this->portal_table( 'aj_portal_stripe_customers' );
@@ -3940,12 +3941,12 @@ class AJCore_REST_API {
 		// Search
 		if ( '' !== $search ) {
 			$like     = '%' . $pdb->esc_like( $search ) . '%';
-			$where[]  = '(r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s OR r.client_notes LIKE %s OR r.admin_notes LIKE %s)';
-			$params   = array_merge( $params, array( $like, $like, $like, $like, $like, $like ) );
+			$where[]  = '(r.service_request_number LIKE %s OR r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s OR r.client_notes LIKE %s OR r.admin_notes LIKE %s)';
+			$params   = array_merge( $params, array( $like, $like, $like, $like, $like, $like, $like ) );
 		}
 
 		$where_sql = implode( ' AND ', $where );
-		$sql       = "SELECT r.id, r.stripe_customer_id, r.service_name, r.request_type, r.status, r.service_status,
+		$sql       = "SELECT r.id, r.service_request_number, r.stripe_customer_id, r.service_name, r.request_type, r.status, r.service_status,
 			r.amount, r.currency, r.source, r.source_type, r.client_notes, r.admin_notes, r.created_at, r.updated_at,
 			r.stripe_price_id, r.stripe_product_id, r.assigned_user_id,
 			c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone
@@ -3981,6 +3982,7 @@ class AJCore_REST_API {
 			$assigned_user_id = (int) $r->assigned_user_id;
 			$service_requests[] = array(
 				'id'                => (int) $r->id,
+				'service_request_number' => (string) $r->service_request_number,
 				'stripe_customer_id' => (string) $r->stripe_customer_id,
 				'service_name'      => (string) $r->service_name,
 				'request_type'      => (string) $r->request_type,

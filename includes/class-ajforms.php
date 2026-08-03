@@ -361,6 +361,7 @@ class AJForms {
 	 * visibility rules live in exactly one place.
 	 */
 	public function api_get_client_service_requests() {
+		if ( function_exists( 'ajcore_backfill_service_request_numbers' ) ) ajcore_backfill_service_request_numbers();
 		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
 		if ( '' === $stripe_customer_id ) {
 			return array( 'service_requests' => array() );
@@ -396,6 +397,7 @@ class AJForms {
 		}
 		return array(
 			'id'             => $id,
+			'service_request_number' => $this->get_pdb()->get_var( $this->get_pdb()->prepare( "SELECT service_request_number FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $id ) ),
 			'title'          => sanitize_text_field( (string) $title ),
 			'description'    => sanitize_textarea_field( (string) $description ),
 			'status'         => 'draft',
@@ -2912,6 +2914,10 @@ class AJForms {
 			array_splice( $formats, -2, 1 );
 			$pdb->update( $this->get_portal_service_requests_table(), $data, array( 'id' => $existing_id ), $formats, array( '%d' ) );
 			return $existing_id;
+		}
+		if ( function_exists( 'ajcore_generate_service_request_number' ) ) {
+			$data['service_request_number'] = ajcore_generate_service_request_number( $data['created_at'] );
+			$formats[] = '%s';
 		}
 
 		$pdb->insert( $this->get_portal_service_requests_table(), $data, $formats );

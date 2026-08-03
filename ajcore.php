@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.188
+ * Version: 0.7.190
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.188' );
+	define( 'AJCORE_VERSION', '0.7.190' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -59,6 +59,32 @@ if ( ! defined( 'AJFORMS_PLUGIN_BASENAME' ) ) {
 
 if ( ! defined( 'AJFORMS_SYNCED_SETTINGS_FILE' ) ) {
 	define( 'AJFORMS_SYNCED_SETTINGS_FILE', AJCORE_SYNCED_SETTINGS_FILE );
+}
+
+if ( ! function_exists( 'ajcore_generate_service_request_number' ) ) {
+	/** Atomically claim the next monthly YYYY-MM-NNNN service-request number. */
+	function ajcore_generate_service_request_number( $created_at = null ) {
+		$pdb   = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+		$table = $pdb->prefix . 'aj_portal_service_request_number_counters';
+		$time  = $created_at ? strtotime( (string) $created_at ) : false;
+		$month = gmdate( 'Y-m', $time ? $time : time() );
+		$pdb->query( $pdb->prepare( "INSERT INTO {$table} (`year_month`, next_seq) VALUES (%s, 1) ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(next_seq + 1)", $month ) );
+		$seq = (int) $pdb->get_var( 'SELECT LAST_INSERT_ID()' );
+		return sprintf( '%s-%04d', $month, $seq > 0 ? $seq : 1 );
+	}
+}
+
+if ( ! function_exists( 'ajcore_backfill_service_request_numbers' ) ) {
+	/** Idempotently number legacy requests in chronological order. */
+	function ajcore_backfill_service_request_numbers() {
+		$pdb   = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+		$table = $pdb->prefix . 'aj_portal_service_requests';
+		if ( ! $pdb->get_var( "SHOW COLUMNS FROM {$table} LIKE 'service_request_number'" ) ) return;
+		$rows = $pdb->get_results( "SELECT id, created_at FROM {$table} WHERE service_request_number = '' OR service_request_number IS NULL ORDER BY created_at ASC, id ASC" );
+		foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+			$pdb->update( $table, array( 'service_request_number' => ajcore_generate_service_request_number( $row->created_at ) ), array( 'id' => (int) $row->id ), array( '%s' ), array( '%d' ) );
+		}
+	}
 }
 
 /** Permanently suppress Hostinger AI's API-token sales notice on AJ Core sites. */
@@ -1439,7 +1465,7 @@ function ajforms_maybe_upgrade() {
 	// re-deploy that keeps the same plugin version number will match this check and skip the
 	// migration entirely, silently leaving the new column/table missing on already-migrated
 	// installs (schema drift that showed up in production as leads queries erroring out).
-	if ( AJFORMS_VERSION === $installed_version && '40' === $portal_schema_version ) {
+	if ( AJFORMS_VERSION === $installed_version && '41' === $portal_schema_version ) {
 		return;
 	}
 

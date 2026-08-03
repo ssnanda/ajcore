@@ -692,6 +692,7 @@ class AJForms_Activator {
 
 		CREATE TABLE $table_service_requests (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			service_request_number varchar(20) DEFAULT '' NOT NULL,
 			wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
 			stripe_customer_id varchar(100) NOT NULL,
 			stripe_price_id varchar(100) DEFAULT '' NOT NULL,
@@ -713,6 +714,7 @@ class AJForms_Activator {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
+			KEY service_request_number (service_request_number),
 			KEY wp_user_id (wp_user_id),
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY stripe_price_id (stripe_price_id),
@@ -1227,6 +1229,7 @@ class AJForms_Activator {
 
 		self::ensure_shared_leads_tables_and_migrate();
 		$customer_number_schema_ready = self::ensure_customer_number_columns_and_counter_table();
+		$service_request_number_schema_ready = self::ensure_service_request_number_schema();
 
 		$now = current_time( 'mysql' );
 		$wpdb->query(
@@ -1344,8 +1347,8 @@ class AJForms_Activator {
 		self::drop_legacy_tawk_table();
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
-		if ( $customer_number_schema_ready ) {
-			update_option( 'ajforms_portal_schema_version', '40', false );
+		if ( $customer_number_schema_ready && $service_request_number_schema_ready ) {
+			update_option( 'ajforms_portal_schema_version', '41', false );
 		}
 	}
 
@@ -1913,6 +1916,31 @@ class AJForms_Activator {
 			}
 		}
 
+		return $schema_ready;
+	}
+
+	/** Adds the public YYYY-MM-NNNN request number and its concurrency-safe monthly counter. */
+	public static function ensure_service_request_number_schema() {
+		global $wpdb;
+		$schema_ready = true;
+		$dbs = array( $wpdb );
+		if ( function_exists( 'ajcore_get_portal_db' ) ) {
+			$pdb = ajcore_get_portal_db();
+			if ( $pdb !== $wpdb ) {
+				$dbs[] = $pdb;
+			}
+		}
+		foreach ( $dbs as $db ) {
+			$table   = $db->prefix . 'aj_portal_service_requests';
+			$counter = $db->prefix . 'aj_portal_service_request_number_counters';
+			$db->query( "CREATE TABLE IF NOT EXISTS $counter (`year_month` varchar(7) NOT NULL, next_seq int(10) unsigned NOT NULL DEFAULT 1, PRIMARY KEY (`year_month`)) " . $db->get_charset_collate() );
+			if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table && ! $db->get_var( "SHOW COLUMNS FROM $table LIKE 'service_request_number'" ) ) {
+				$db->query( "ALTER TABLE $table ADD COLUMN service_request_number varchar(20) DEFAULT '' NOT NULL AFTER id, ADD KEY service_request_number (service_request_number)" );
+			}
+			if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $counter ) ) !== $counter ) {
+				$schema_ready = false;
+			}
+		}
 		return $schema_ready;
 	}
 
@@ -2596,6 +2624,7 @@ class AJForms_Activator {
 
 		CREATE TABLE $t_service_requests (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			service_request_number varchar(20) DEFAULT '' NOT NULL,
 			wp_user_id bigint(20) unsigned NOT NULL DEFAULT 0,
 			stripe_customer_id varchar(100) NOT NULL,
 			stripe_price_id varchar(100) DEFAULT '' NOT NULL,
@@ -2617,6 +2646,7 @@ class AJForms_Activator {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
+			KEY service_request_number (service_request_number),
 			KEY wp_user_id (wp_user_id),
 			KEY stripe_customer_id (stripe_customer_id),
 			KEY stripe_price_id (stripe_price_id),
