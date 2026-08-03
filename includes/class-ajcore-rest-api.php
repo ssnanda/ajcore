@@ -3886,10 +3886,26 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_service_requests( WP_REST_Request $request ) {
-		if ( function_exists( 'ajcore_backfill_service_request_numbers' ) ) ajcore_backfill_service_request_numbers();
 		$pdb         = $this->get_portal_db();
 		$t_sr        = $this->portal_table( 'aj_portal_service_requests' );
 		$t_customers = $this->portal_table( 'aj_portal_stripe_customers' );
+
+		// AJOps must remain usable while an updated plugin is waiting for (or could not complete)
+		// the schema migration. Try the migration once here, then fall back to an empty request
+		// number projection instead of letting an unknown-column SQL error blank the entire queue.
+		$has_request_number = (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$t_sr}` LIKE 'service_request_number'" );
+		if ( ! $has_request_number ) {
+			if ( ! class_exists( 'AJForms_Activator' ) ) {
+				require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+			}
+			if ( class_exists( 'AJForms_Activator' ) ) {
+				AJForms_Activator::ensure_service_request_number_schema();
+				$has_request_number = (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$t_sr}` LIKE 'service_request_number'" );
+			}
+		}
+		if ( $has_request_number && function_exists( 'ajcore_backfill_service_request_numbers' ) ) {
+			ajcore_backfill_service_request_numbers();
+		}
 
 		// Keep requests honest against Stripe (e.g. a subscription canceled after the request was
 		// created) without requiring someone to load the WP admin tab first. Also run the same
@@ -3941,12 +3957,16 @@ class AJCore_REST_API {
 		// Search
 		if ( '' !== $search ) {
 			$like     = '%' . $pdb->esc_like( $search ) . '%';
-			$where[]  = '(r.service_request_number LIKE %s OR r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s OR r.client_notes LIKE %s OR r.admin_notes LIKE %s)';
-			$params   = array_merge( $params, array( $like, $like, $like, $like, $like, $like, $like ) );
+			$search_columns = $has_request_number
+				? 'r.service_request_number LIKE %s OR '
+				: '';
+			$where[]  = '(' . $search_columns . 'r.service_name LIKE %s OR r.stripe_customer_id LIKE %s OR c.email LIKE %s OR c.name LIKE %s OR r.client_notes LIKE %s OR r.admin_notes LIKE %s)';
+			$params   = array_merge( $params, array_fill( 0, $has_request_number ? 7 : 6, $like ) );
 		}
 
 		$where_sql = implode( ' AND ', $where );
-		$sql       = "SELECT r.id, r.service_request_number, r.stripe_customer_id, r.service_name, r.request_type, r.status, r.service_status,
+		$request_number_select = $has_request_number ? 'r.service_request_number' : "'' AS service_request_number";
+		$sql       = "SELECT r.id, {$request_number_select}, r.stripe_customer_id, r.service_name, r.request_type, r.status, r.service_status,
 			r.amount, r.currency, r.source, r.source_type, r.client_notes, r.admin_notes, r.created_at, r.updated_at,
 			r.stripe_price_id, r.stripe_product_id, r.assigned_user_id,
 			c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone
