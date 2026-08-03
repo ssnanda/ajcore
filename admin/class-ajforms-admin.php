@@ -16149,9 +16149,9 @@ class AJForms_Admin {
 			$actions['cancel'] = __( 'Cancel', 'ajforms' );
 		}
 
-		if ( ! $is_stripe_import || 'checkout_session' === $source_type || 'checkout_session' === $ledger_source_type ) {
-			$actions['delete'] = __( 'Delete', 'ajforms' );
-		}
+		// Allow staff to remove duplicates regardless of their import source. The clients
+		// require an explicit confirmation before invoking this destructive action.
+		$actions['delete'] = __( 'Delete', 'ajforms' );
 
 		return $actions;
 	}
