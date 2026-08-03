@@ -1919,29 +1919,24 @@ class AJForms_Activator {
 		return $schema_ready;
 	}
 
-	/** Adds the public YYYY-MM-NNNN request number and its concurrency-safe monthly counter. */
 	public static function ensure_service_request_number_schema() {
 		global $wpdb;
-		$schema_ready = true;
+		$ready = true;
 		$dbs = array( $wpdb );
 		if ( function_exists( 'ajcore_get_portal_db' ) ) {
 			$pdb = ajcore_get_portal_db();
-			if ( $pdb !== $wpdb ) {
-				$dbs[] = $pdb;
-			}
+			if ( $pdb !== $wpdb ) $dbs[] = $pdb;
 		}
 		foreach ( $dbs as $db ) {
-			$table   = $db->prefix . 'aj_portal_service_requests';
+			$table = $db->prefix . 'aj_portal_service_requests';
 			$counter = $db->prefix . 'aj_portal_service_request_number_counters';
 			$db->query( "CREATE TABLE IF NOT EXISTS $counter (`year_month` varchar(7) NOT NULL, next_seq int(10) unsigned NOT NULL DEFAULT 1, PRIMARY KEY (`year_month`)) " . $db->get_charset_collate() );
 			if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table && ! $db->get_var( "SHOW COLUMNS FROM $table LIKE 'service_request_number'" ) ) {
 				$db->query( "ALTER TABLE $table ADD COLUMN service_request_number varchar(20) DEFAULT '' NOT NULL AFTER id, ADD KEY service_request_number (service_request_number)" );
 			}
-			if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $counter ) ) !== $counter ) {
-				$schema_ready = false;
-			}
+			if ( $db->get_var( $db->prepare( 'SHOW TABLES LIKE %s', $counter ) ) !== $counter ) $ready = false;
 		}
-		return $schema_ready;
+		return $ready;
 	}
 
 	/**

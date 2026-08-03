@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.191
+ * Version: 0.7.192
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.191' );
+	define( 'AJCORE_VERSION', '0.7.192' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -62,11 +62,10 @@ if ( ! defined( 'AJFORMS_SYNCED_SETTINGS_FILE' ) ) {
 }
 
 if ( ! function_exists( 'ajcore_generate_service_request_number' ) ) {
-	/** Atomically claim the next monthly YYYY-MM-NNNN service-request number. */
 	function ajcore_generate_service_request_number( $created_at = null ) {
-		$pdb   = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+		$pdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
 		$table = $pdb->prefix . 'aj_portal_service_request_number_counters';
-		$time  = $created_at ? strtotime( (string) $created_at ) : false;
+		$time = $created_at ? strtotime( (string) $created_at ) : false;
 		$month = gmdate( 'Y-m', $time ? $time : time() );
 		$pdb->query( $pdb->prepare( "INSERT INTO {$table} (`year_month`, next_seq) VALUES (%s, 1) ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(next_seq + 1)", $month ) );
 		$seq = (int) $pdb->get_var( 'SELECT LAST_INSERT_ID()' );
@@ -75,9 +74,8 @@ if ( ! function_exists( 'ajcore_generate_service_request_number' ) ) {
 }
 
 if ( ! function_exists( 'ajcore_backfill_service_request_numbers' ) ) {
-	/** Idempotently number legacy requests in chronological order. */
 	function ajcore_backfill_service_request_numbers() {
-		$pdb   = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+		$pdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
 		$table = $pdb->prefix . 'aj_portal_service_requests';
 		if ( ! $pdb->get_var( "SHOW COLUMNS FROM {$table} LIKE 'service_request_number'" ) ) return;
 		$rows = $pdb->get_results( "SELECT id, created_at FROM {$table} WHERE service_request_number = '' OR service_request_number IS NULL ORDER BY created_at ASC, id ASC" );
