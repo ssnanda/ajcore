@@ -1355,10 +1355,13 @@ class AJCore_REST_API {
 			$leads_unread = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$leads_table}` WHERE status = 'new'" );
 			// Pipeline-based, not the raw read/unread flag above — still in the funnel (not yet won
 			// as a customer, not lost). Empty lead_status defaults to 'new' (see format_lead_row),
-			// so it counts as active here too. Matches the mobile app's own "Active" filter exactly
-			// (lead.leadStatus not in customer/lost) — no other conditions.
+			// so it counts as active here too. Also excludes Future Follow-Up leads whose date hasn't
+			// arrived yet, matching both apps' "Hide Future Follow-up" dashboard/list behavior (default
+			// on) — a future-dated follow-up isn't something needing action today.
 			$leads_active = (int) $pdb->get_var(
-				"SELECT COUNT(*) FROM `{$leads_table}` WHERE lead_status IS NULL OR lead_status = '' OR lead_status NOT IN ('customer','lost')"
+				"SELECT COUNT(*) FROM `{$leads_table}`
+				WHERE (lead_status IS NULL OR lead_status = '' OR lead_status NOT IN ('customer','lost'))
+				AND NOT (lead_status = 'future_follow_up' AND lead_follow_up_at IS NOT NULL AND lead_follow_up_at > NOW())"
 			);
 		}
 
