@@ -1521,7 +1521,8 @@ class AJCore_REST_API {
 				$row['_address'] = implode( ', ', array_filter( array_map( 'strval', array( $property['address'] ?? '', $city ) ) ) );
 				$assigned = ! empty( $row['assigned'] ) ? $row['assigned'] : ( $vendor['name'] ?? $vendor['company'] ?? $vendor['contact'] ?? '' );
 				$row['_assigned_to'] = sanitize_text_field( (string) $assigned );
-				$row['_description'] = sanitize_text_field( (string) ( ! empty( $row['description'] ) ? $row['description'] : ( $row['short_desc'] ?? '' ) ) );
+				$row['_description'] = sanitize_text_field( (string) ( $row['short_desc'] ?? '' ) );
+				$row['_details']     = sanitize_textarea_field( (string) ( $row['description'] ?? '' ) );
 			}
 			unset( $row );
 		}
