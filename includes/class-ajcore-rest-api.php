@@ -1497,6 +1497,33 @@ class AJCore_REST_API {
 					}
 				)
 			);
+
+			// Work-order list rows only contain property/vendor IDs. Resolve both resources in
+			// two bulk calls so AJOps can show the address and assignee without an N+1 request.
+			$property_body = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/properties', $accounts[ $account ]['key'] );
+			$vendor_body   = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/vendors', $accounts[ $account ]['key'] );
+			$properties    = array();
+			$vendors       = array();
+			if ( ! is_wp_error( $property_body ) ) {
+				foreach ( (array) ( $property_body['data'] ?? array() ) as $property ) {
+					if ( is_array( $property ) && ! empty( $property['property_id'] ) ) $properties[ absint( $property['property_id'] ) ] = $property;
+				}
+			}
+			if ( ! is_wp_error( $vendor_body ) ) {
+				foreach ( (array) ( $vendor_body['data'] ?? array() ) as $vendor ) {
+					if ( is_array( $vendor ) && ! empty( $vendor['vendor_id'] ) ) $vendors[ absint( $vendor['vendor_id'] ) ] = $vendor;
+				}
+			}
+			foreach ( $rows as &$row ) {
+				$property = $properties[ absint( $row['property_id'] ?? 0 ) ] ?? array();
+				$vendor   = $vendors[ absint( $row['vendor_id'] ?? 0 ) ] ?? array();
+				$city     = implode( ', ', array_filter( array_map( 'strval', array( $property['city'] ?? '', $property['state'] ?? '', $property['zip'] ?? '' ) ) ) );
+				$row['_address'] = implode( ', ', array_filter( array_map( 'strval', array( $property['address'] ?? '', $city ) ) ) );
+				$assigned = ! empty( $row['assigned'] ) ? $row['assigned'] : ( $vendor['name'] ?? $vendor['company'] ?? $vendor['contact'] ?? '' );
+				$row['_assigned_to'] = sanitize_text_field( (string) $assigned );
+				$row['_description'] = sanitize_text_field( (string) ( ! empty( $row['description'] ) ? $row['description'] : ( $row['short_desc'] ?? '' ) ) );
+			}
+			unset( $row );
 		}
 		$total = 'work_orders' === $resource
 			? count( $rows )
