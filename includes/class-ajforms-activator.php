@@ -1353,7 +1353,7 @@ class AJForms_Activator {
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
 		if ( $customer_number_schema_ready && $service_request_number_schema_ready ) {
-			update_option( 'ajforms_portal_schema_version', '41', false );
+			update_option( 'ajforms_portal_schema_version', '42', false );
 		}
 	}
 
@@ -2178,6 +2178,7 @@ class AJForms_Activator {
 		$t_carts                = $prefix . 'aj_portal_carts';
 		$t_leads                = $prefix . 'aj_forms_leads';
 		$t_lead_notes           = $prefix . 'aj_forms_lead_notes';
+		$t_expense_invoices     = $prefix . 'aj_portal_expense_invoices';
 
 		return "CREATE TABLE $t_shared_sites (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -2711,6 +2712,32 @@ class AJForms_Activator {
 			KEY object_id (object_id),
 			KEY processing_status (processing_status),
 			KEY first_seen_at (first_seen_at)
+		) $charset_collate;
+
+		CREATE TABLE $t_expense_invoices (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			rentec_account varchar(20) DEFAULT '' NOT NULL,
+			rentec_property_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			unit_label varchar(255) DEFAULT '' NOT NULL,
+			title varchar(255) DEFAULT '' NOT NULL,
+			vendor varchar(255) DEFAULT '' NOT NULL,
+			attachments longtext NULL,
+			paid tinyint(1) NOT NULL DEFAULT 0,
+			invoice_number varchar(100) DEFAULT '' NOT NULL,
+			invoice_date date NULL,
+			due_date date NULL,
+			amount decimal(12,2) DEFAULT 0 NOT NULL,
+			payment_method varchar(100) DEFAULT '' NOT NULL,
+			payment_date date NULL,
+			comments longtext NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			KEY rentec_property (rentec_account,rentec_property_id),
+			KEY paid (paid),
+			KEY due_date (due_date),
+			KEY invoice_number (invoice_number)
 		) $charset_collate;
 
 		CREATE TABLE $t_leads (
