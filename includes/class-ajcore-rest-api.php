@@ -1448,6 +1448,38 @@ class AJCore_REST_API {
 		return $body;
 	}
 
+	/** Flatten Rentec multi-unit properties and inherit blank sub-unit addresses from the parent. */
+	private function flatten_rentec_properties_for_ops( $rows ) {
+		$flattened = array();
+		$collect = function ( $properties, $parent_id = 0 ) use ( &$collect, &$flattened ) {
+			foreach ( (array) $properties as $property ) {
+				if ( ! is_array( $property ) ) continue;
+				$subunits = isset( $property['subunits'] ) && is_array( $property['subunits'] ) ? $property['subunits'] : array();
+				unset( $property['subunits'] );
+				if ( $parent_id && empty( $property['sub_of'] ) ) $property['sub_of'] = $parent_id;
+				$flattened[] = $property;
+				$collect( $subunits, absint( $property['property_id'] ?? 0 ) );
+			}
+		};
+		$collect( $rows );
+		$by_id = array();
+		foreach ( $flattened as $property ) {
+			if ( ! empty( $property['property_id'] ) ) $by_id[ absint( $property['property_id'] ) ] = $property;
+		}
+		foreach ( $flattened as &$property ) {
+			$parent_id = absint( $property['sub_of'] ?? 0 );
+			$parent = $parent_id ? ( $by_id[ $parent_id ] ?? array() ) : array();
+			if ( ! $parent ) continue;
+			foreach ( array( 'address', 'city', 'state', 'zip' ) as $address_field ) {
+				if ( empty( $property[ $address_field ] ) && ! empty( $parent[ $address_field ] ) ) $property[ $address_field ] = $parent[ $address_field ];
+			}
+			$property['_parent_property_id'] = $parent_id;
+			$property['_parent_nickname'] = sanitize_text_field( (string) ( $parent['nickname'] ?? '' ) );
+		}
+		unset( $property );
+		return $flattened;
+	}
+
 	public function get_ops_rentec_resource( WP_REST_Request $request ) {
 		$selected = $this->get_rentec_account_for_ops_request( $request );
 		if ( is_wp_error( $selected ) ) {
@@ -1500,12 +1532,12 @@ class AJCore_REST_API {
 
 			// Work-order list rows only contain property/vendor IDs. Resolve both resources in
 			// two bulk calls so AJOps can show the address and assignee without an N+1 request.
-			$property_body = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/properties', $accounts[ $account ]['key'] );
+			$property_body = $this->request_rentec_for_ops( add_query_arg( 'include_subunits', 'true', 'https://secure.rentecdirect.com/api/v3/properties' ), $accounts[ $account ]['key'] );
 			$vendor_body   = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/vendors', $accounts[ $account ]['key'] );
 			$properties    = array();
 			$vendors       = array();
 			if ( ! is_wp_error( $property_body ) ) {
-				foreach ( (array) ( $property_body['data'] ?? array() ) as $property ) {
+				foreach ( $this->flatten_rentec_properties_for_ops( $property_body['data'] ?? array() ) as $property ) {
 					if ( is_array( $property ) && ! empty( $property['property_id'] ) ) $properties[ absint( $property['property_id'] ) ] = $property;
 				}
 			}
@@ -1735,6 +1767,20 @@ class AJCore_REST_API {
 				$vendor = $lookup_value;
 			}
 		}
+		if ( $property && empty( $property['address'] ) && ! empty( $property['sub_of'] ) ) {
+			$parent_body = $this->request_rentec_for_ops(
+				'https://secure.rentecdirect.com/api/v3/properties/' . absint( $property['sub_of'] ),
+				$selected['account']['key']
+			);
+			if ( ! is_wp_error( $parent_body ) ) {
+				$parent = isset( $parent_body['data'] ) && is_array( $parent_body['data'] ) ? $parent_body['data'] : $parent_body;
+				foreach ( array( 'address', 'city', 'state', 'zip' ) as $address_field ) {
+					if ( empty( $property[ $address_field ] ) && ! empty( $parent[ $address_field ] ) ) $property[ $address_field ] = $parent[ $address_field ];
+				}
+				$property['_parent_property_id'] = absint( $property['sub_of'] );
+				$property['_parent_nickname'] = sanitize_text_field( (string) ( $parent['nickname'] ?? '' ) );
+			}
+		}
 
 		$files       = array();
 		$files_error = '';
@@ -1789,14 +1835,17 @@ class AJCore_REST_API {
 			'vendors'    => array(),
 		);
 		foreach ( array( 'properties', 'tenants', 'vendors' ) as $resource ) {
+			$url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
+			if ( 'properties' === $resource ) $url = add_query_arg( 'include_subunits', 'true', $url );
 			$body = $this->request_rentec_for_ops(
-				'https://secure.rentecdirect.com/api/v3/' . $resource,
+				$url,
 				$selected['account']['key']
 			);
 			if ( is_wp_error( $body ) ) {
 				return $body;
 			}
-			$result[ $resource ] = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array();
+			$resource_rows = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array();
+			$result[ $resource ] = 'properties' === $resource ? $this->flatten_rentec_properties_for_ops( $resource_rows ) : $resource_rows;
 		}
 		return rest_ensure_response( $result );
 	}
@@ -2660,9 +2709,12 @@ class AJCore_REST_API {
 		foreach ( $accounts as $account_id => $account ) {
 			if ( empty( $account['key'] ) ) continue;
 			foreach ( array( 'properties', 'vendors' ) as $resource ) {
-				$body = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/' . $resource, $account['key'] );
+				$url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
+				if ( 'properties' === $resource ) $url = add_query_arg( 'include_subunits', 'true', $url );
+				$body = $this->request_rentec_for_ops( $url, $account['key'] );
 				if ( is_wp_error( $body ) ) continue;
-				foreach ( (array) ( $body['data'] ?? array() ) as $row ) {
+				$resource_rows = 'properties' === $resource ? $this->flatten_rentec_properties_for_ops( $body['data'] ?? array() ) : (array) ( $body['data'] ?? array() );
+				foreach ( $resource_rows as $row ) {
 					$row['_rentec_account'] = (string) $account_id;
 					$row['_rentec_account_label'] = $account['label'];
 					if ( 'properties' === $resource ) $units[] = $row;
