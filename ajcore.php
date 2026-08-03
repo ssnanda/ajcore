@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.196
+ * Version: 0.7.198
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.196' );
+	define( 'AJCORE_VERSION', '0.7.198' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -87,6 +87,36 @@ if ( ! function_exists( 'ajcore_backfill_service_request_numbers' ) ) {
 			foreach ( is_array( $rows ) ? $rows : array() as $row ) {
 				$pdb->update( $table, array( 'service_request_number' => ajcore_generate_service_request_number( $row->created_at ) ), array( 'id' => (int) $row->id ), array( '%s' ), array( '%d' ) );
 			}
+		} finally {
+			$pdb->query( $pdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+		}
+	}
+}
+
+if ( ! function_exists( 'ajcore_resequence_service_request_numbers' ) ) {
+	/** Compact legacy monthly numbering after the original unlocked backfill created gaps. */
+	function ajcore_resequence_service_request_numbers() {
+		$pdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+		$table = $pdb->prefix . 'aj_portal_service_requests';
+		$counter = $pdb->prefix . 'aj_portal_service_request_number_counters';
+		if ( ! $pdb->get_var( "SHOW COLUMNS FROM {$table} LIKE 'service_request_number'" ) ) return false;
+		$lock_name = 'ajcore_service_request_number_backfill';
+		$got_lock = (bool) $pdb->get_var( $pdb->prepare( 'SELECT GET_LOCK(%s, 10)', $lock_name ) );
+		if ( ! $got_lock ) return false;
+		try {
+			$rows = $pdb->get_results( "SELECT id, created_at FROM {$table} ORDER BY created_at ASC, id ASC" );
+			$counts = array();
+			foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+				$timestamp = $row->created_at ? strtotime( (string) $row->created_at ) : false;
+				$month = gmdate( 'Y-m', $timestamp ? $timestamp : time() );
+				$counts[ $month ] = isset( $counts[ $month ] ) ? $counts[ $month ] + 1 : 1;
+				$pdb->update( $table, array( 'service_request_number' => sprintf( '%s-%04d', $month, $counts[ $month ] ) ), array( 'id' => (int) $row->id ), array( '%s' ), array( '%d' ) );
+			}
+			$pdb->query( "DELETE FROM {$counter}" );
+			foreach ( $counts as $month => $count ) {
+				$pdb->insert( $counter, array( 'year_month' => $month, 'next_seq' => $count ), array( '%s', '%d' ) );
+			}
+			return true;
 		} finally {
 			$pdb->query( $pdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
 		}

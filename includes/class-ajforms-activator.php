@@ -1230,6 +1230,11 @@ class AJForms_Activator {
 		self::ensure_shared_leads_tables_and_migrate();
 		$customer_number_schema_ready = self::ensure_customer_number_columns_and_counter_table();
 		$service_request_number_schema_ready = self::ensure_service_request_number_schema();
+		if ( $service_request_number_schema_ready && '1' !== get_option( 'ajcore_service_request_numbers_resequenced_v1' ) && function_exists( 'ajcore_resequence_service_request_numbers' ) ) {
+			if ( ajcore_resequence_service_request_numbers() ) {
+				update_option( 'ajcore_service_request_numbers_resequenced_v1', '1', false );
+			}
+		}
 
 		$now = current_time( 'mysql' );
 		$wpdb->query(
