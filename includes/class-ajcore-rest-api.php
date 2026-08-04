@@ -1357,11 +1357,16 @@ class AJCore_REST_API {
 			// as a customer, not lost). Empty lead_status defaults to 'new' (see format_lead_row),
 			// so it counts as active here too. Also excludes Future Follow-Up leads whose date hasn't
 			// arrived yet, matching both apps' "Hide Future Follow-up" dashboard/list behavior (default
-			// on) — a future-dated follow-up isn't something needing action today.
+			// on) — a future-dated follow-up isn't something needing action today. And excludes
+			// merged/duplicate leads (status='duplicate') — merging only sets that column, not
+			// lead_status, so a merged lead's old pipeline stage (e.g. "engaged") would otherwise
+			// still count it here even though every app's own Active/Active view already excludes
+			// it (see LeadsClient.tsx's matchesView / ajopsios's LeadsView.active.matches).
 			$leads_active = (int) $pdb->get_var(
 				"SELECT COUNT(*) FROM `{$leads_table}`
 				WHERE (lead_status IS NULL OR lead_status = '' OR lead_status NOT IN ('customer','lost'))
-				AND NOT (lead_status = 'future_follow_up' AND lead_follow_up_at IS NOT NULL AND lead_follow_up_at > NOW())"
+				AND NOT (lead_status = 'future_follow_up' AND lead_follow_up_at IS NOT NULL AND lead_follow_up_at > NOW())
+				AND status != 'duplicate'"
 			);
 		}
 
