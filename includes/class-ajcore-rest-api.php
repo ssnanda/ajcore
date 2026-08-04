@@ -1080,12 +1080,14 @@ class AJCore_REST_API {
 	}
 
 	public function run_ops_upos_system( WP_REST_Request $request ) {
-		$result = AJCore_UPOS_Temps::run_system( sanitize_text_field( (string) $request->get_param( 'mode' ) ) );
+		$device_ids = array_values( array_filter( array_map( 'sanitize_text_field', (array) $request->get_param( 'device_ids' ) ) ) );
+		$result = AJCore_UPOS_Temps::run_system( sanitize_text_field( (string) $request->get_param( 'mode' ) ), $device_ids );
 		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
 	}
 
 	public function run_ops_upos_fan( WP_REST_Request $request ) {
-		$result = AJCore_UPOS_Temps::run_fan( sanitize_text_field( (string) $request->get_param( 'mode' ) ) );
+		$device_ids = array_values( array_filter( array_map( 'sanitize_text_field', (array) $request->get_param( 'device_ids' ) ) ) );
+		$result = AJCore_UPOS_Temps::run_fan( sanitize_text_field( (string) $request->get_param( 'mode' ) ), $device_ids );
 		return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
 	}
 

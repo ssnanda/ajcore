@@ -79,25 +79,27 @@ class AJCore_UPOS_Temps {
 		} ) );
 	}
 
-	/** Every device across every configured location, each tagged with the location_id it came
-	 *  from — unfiltered by the device_ids allowlist (callers filter as needed). One Honeywell API
-	 *  call per location. */
+	/** Every device across every configured location, tagged with its Honeywell location ID/name
+	 *  and unfiltered by the device_ids allowlist (callers filter as needed). */
 	private static function fetch_all_devices_raw( $token, $config ) {
 		$devices = array();
-		foreach ( $config['location_ids'] as $location_id ) {
-			$url = add_query_arg(
-				array( 'locationId' => $location_id, 'apikey' => $config['client_id'] ),
-				self::API_BASE . '/devices'
-			);
-			$response = wp_remote_get( $url, array( 'timeout' => 20, 'headers' => array( 'Authorization' => 'Bearer ' . $token ) ) );
-			$payload = self::response_json( $response, 'Honeywell device fetch failed' );
-			if ( is_wp_error( $payload ) ) return $payload;
-			$raw_devices = isset( $payload['devices'] ) && is_array( $payload['devices'] ) ? $payload['devices'] : $payload;
+		$url = add_query_arg( array( 'apikey' => $config['client_id'] ), self::API_BASE . '/locations' );
+		$response = wp_remote_get( $url, array( 'timeout' => 20, 'headers' => array( 'Authorization' => 'Bearer ' . $token ) ) );
+		$payload = self::response_json( $response, 'Honeywell location fetch failed' );
+		if ( is_wp_error( $payload ) ) return $payload;
+		$raw_locations = isset( $payload['locations'] ) && is_array( $payload['locations'] ) ? $payload['locations'] : $payload;
+		foreach ( is_array( $raw_locations ) ? $raw_locations : array() as $location ) {
+			if ( ! is_array( $location ) ) continue;
+			$location_id = sanitize_text_field( (string) ( $location['locationID'] ?? $location['locationId'] ?? '' ) );
+			if ( '' === $location_id || ! in_array( $location_id, $config['location_ids'], true ) ) continue;
+			$location_name = sanitize_text_field( (string) ( $location['name'] ?? $location_id ) );
+			$raw_devices = isset( $location['devices'] ) && is_array( $location['devices'] ) ? $location['devices'] : array();
 			foreach ( is_array( $raw_devices ) ? $raw_devices : array() as $raw ) {
 				if ( ! is_array( $raw ) ) continue;
 				$device = self::parse_device( $raw );
 				if ( $device ) {
 					$device['location_id'] = $location_id;
+					$device['location_name'] = $location_name;
 					$devices[] = $device;
 				}
 			}
@@ -105,7 +107,7 @@ class AJCore_UPOS_Temps {
 		return $devices;
 	}
 
-	public static function run_system( $mode, $device_id = '' ) {
+	public static function run_system( $mode, $device_ids = '' ) {
 		$payloads = array(
 			'Off'  => array( 'mode' => 'Off',  'thermostatSetpointStatus' => 'NoHold', 'heatSetpoint' => 66, 'coolSetpoint' => 77 ),
 			'Cool' => array( 'mode' => 'Cool', 'thermostatSetpointStatus' => 'NoHold', 'heatSetpoint' => 70, 'coolSetpoint' => 74 ),
@@ -113,15 +115,15 @@ class AJCore_UPOS_Temps {
 			'Auto' => array( 'mode' => 'Auto', 'thermostatSetpointStatus' => 'NoHold', 'heatSetpoint' => 70, 'coolSetpoint' => 74 ),
 		);
 		if ( ! isset( $payloads[ $mode ] ) ) return new WP_Error( 'invalid_upos_mode', 'Unsupported system mode.', array( 'status' => 400 ) );
-		return self::run_for_devices( $device_id, 'system', $payloads[ $mode ] );
+		return self::run_for_devices( $device_ids, 'system', $payloads[ $mode ] );
 	}
 
-	public static function run_fan( $mode, $device_id = '' ) {
+	public static function run_fan( $mode, $device_ids = '' ) {
 		if ( ! in_array( $mode, array( 'On', 'Auto', 'Circulate' ), true ) ) return new WP_Error( 'invalid_upos_fan_mode', 'Unsupported fan mode.', array( 'status' => 400 ) );
-		return self::run_for_devices( $device_id, 'fan', array( 'mode' => $mode ) );
+		return self::run_for_devices( $device_ids, 'fan', array( 'mode' => $mode ) );
 	}
 
-	private static function run_for_devices( $device_id, $action, $payload ) {
+	private static function run_for_devices( $device_ids, $action, $payload ) {
 		list( $token, $config ) = self::access_token();
 		if ( is_wp_error( $token ) ) return $token;
 		// A control call needs the RIGHT location per device, not one global one — with multiple
@@ -132,7 +134,8 @@ class AJCore_UPOS_Temps {
 		foreach ( $all_devices as $device ) {
 			$location_by_id[ $device['id'] ] = $device['location_id'];
 		}
-		$ids = '' !== $device_id ? array( sanitize_text_field( $device_id ) ) : $config['device_ids'];
+		$requested_ids = is_array( $device_ids ) ? $device_ids : ( '' !== $device_ids ? array( $device_ids ) : array() );
+		$ids = $requested_ids ? array_values( array_unique( array_map( 'sanitize_text_field', $requested_ids ) ) ) : $config['device_ids'];
 		foreach ( $ids as $id ) {
 			if ( ! in_array( $id, $config['device_ids'], true ) ) return new WP_Error( 'invalid_upos_device', 'Thermostat is not in the configured device list.', array( 'status' => 403 ) );
 			if ( ! isset( $location_by_id[ $id ] ) ) return new WP_Error( 'upos_device_not_found', 'Thermostat was not found at any configured location.', array( 'status' => 404 ) );
@@ -184,7 +187,7 @@ class AJCore_UPOS_Temps {
 		$heat = self::number( $raw['heatSetpoint'] ?? $change['heatSetpoint'] ?? null );
 		$cool = self::number( $raw['coolSetpoint'] ?? $change['coolSetpoint'] ?? null );
 		return array(
-			'id' => $id, 'name' => sanitize_text_field( (string) ( $raw['name'] ?? 'Unknown' ) ),
+			'id' => $id, 'name' => sanitize_text_field( (string) ( $raw['userDefinedDeviceName'] ?? $raw['name'] ?? 'Unknown' ) ),
 			'indoor_temp' => self::number( $raw['indoorTemperature'] ?? null ),
 			'set_temp' => 'heat' === strtolower( $mode ) ? ( $heat ?? $cool ) : ( $cool ?? $heat ),
 			'mode' => $mode ?: null, 'fan_mode' => $fan['mode'] ?? null,
