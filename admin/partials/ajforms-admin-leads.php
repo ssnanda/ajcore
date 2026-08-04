@@ -387,7 +387,7 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 				<p><?php esc_html_e( 'Manage leads from form submissions and manual entries. Review contacts, source, status, notes, and follow-up activity from one place.', 'ajforms' ); ?></p>
 			</div>
 			<div style="flex-shrink:0;display:flex;gap:8px;align-items:center;">
-				<form method="post" onsubmit="return confirm('<?php echo esc_js( __( 'Scan the Inbox for leads with matching email/phone and archive the newer ones as duplicates?', 'ajforms' ) ); ?>');">
+				<form method="post" onsubmit="return confirm('<?php echo esc_js( __( 'Scan Active for leads with matching email/phone and archive the newer ones as duplicates?', 'ajforms' ) ); ?>');">
 					<?php wp_nonce_field( 'ajf_fix_lead_duplicates', 'ajf_fix_lead_duplicates_nonce' ); ?>
 					<button type="submit" class="button" style="font-size:14px;padding:8px 18px;height:auto;">
 						<?php esc_html_e( 'Fix Duplicates', 'ajforms' ); ?>
@@ -406,7 +406,7 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 					$fixed_count = absint( wp_unslash( $_GET['duplicates_fixed'] ) );
 					echo esc_html( $fixed_count > 0
 						? sprintf( _n( 'Archived %d duplicate lead.', 'Archived %d duplicate leads.', $fixed_count, 'ajforms' ), $fixed_count )
-						: __( 'No duplicates found in the Inbox.', 'ajforms' ) );
+						: __( 'No duplicates found in Active.', 'ajforms' ) );
 					?>
 				</p>
 			</div>
@@ -414,18 +414,18 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 
 		<div class="ajforms-stats-grid">
 			<a href="<?php echo esc_url( $leads_base_url ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['total'] ); ?></strong><span><?php esc_html_e( 'Total Leads', 'ajforms' ); ?></span></a>
-			<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'inbox', $leads_base_url ) ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['inbox'] ); ?></strong><span><?php esc_html_e( 'Inbox', 'ajforms' ); ?></span></a>
+			<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'inbox', $leads_base_url ) ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['inbox'] ); ?></strong><span><?php esc_html_e( 'Active', 'ajforms' ); ?></span></a>
 			<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'lost', $leads_base_url ) ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['lost'] ); ?></strong><span><?php esc_html_e( 'Lost', 'ajforms' ); ?></span></a>
-			<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'archived', $leads_base_url ) ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['archived'] ); ?></strong><span><?php esc_html_e( 'Archived (Won + Duplicate)', 'ajforms' ); ?></span></a>
+			<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'archived', $leads_base_url ) ); ?>" class="ajforms-stat-card" style="text-decoration:none;"><strong><?php echo esc_html( $lead_stats['archived'] ); ?></strong><span><?php esc_html_e( 'Customer (Won + Duplicate)', 'ajforms' ); ?></span></a>
 		</div>
 	</div>
 
 	<div class="ajforms-filter-shell">
 		<div class="ajforms-filter-grid" style="margin-bottom:14px;">
 			<div class="ajforms-queue-tabs">
-				<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'inbox', $leads_base_url ) ); ?>" class="<?php echo 'inbox' === $selected_queue ? 'is-active' : ''; ?>"><?php esc_html_e( 'Inbox', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'inbox', $leads_base_url ) ); ?>" class="<?php echo 'inbox' === $selected_queue ? 'is-active' : ''; ?>"><?php esc_html_e( 'Active', 'ajforms' ); ?></a>
 				<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'lost', $leads_base_url ) ); ?>" class="<?php echo 'lost' === $selected_queue ? 'is-active' : ''; ?>"><?php esc_html_e( 'Lost', 'ajforms' ); ?></a>
-				<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'archived', $leads_base_url ) ); ?>" class="<?php echo 'archived' === $selected_queue ? 'is-active' : ''; ?>"><?php esc_html_e( 'Archived', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( add_query_arg( 'lead_queue', 'archived', $leads_base_url ) ); ?>" class="<?php echo 'archived' === $selected_queue ? 'is-active' : ''; ?>"><?php esc_html_e( 'Customer', 'ajforms' ); ?></a>
 			</div>
 		</div>
 		<form method="get">
