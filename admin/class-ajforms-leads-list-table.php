@@ -337,9 +337,14 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 				$out  = '<div class="ajforms-inline-actions">';
 				$out .= '<span class="ajforms-status-badge lead-pipeline-' . esc_attr( $pipeline_current ) . '">' . esc_html( isset( $pipeline_labels[ $pipeline_current ] ) ? $pipeline_labels[ $pipeline_current ] : ucfirst( $pipeline_current ) ) . '</span>';
 				if ( 'future_follow_up' === $pipeline_current && ! empty( $item['lead_follow_up_at'] ) ) {
-					$follow_up_ts  = strtotime( (string) $item['lead_follow_up_at'] );
-					$follow_up_due = $follow_up_ts && $follow_up_ts <= current_time( 'timestamp' );
-					$out          .= '<span class="ajforms-follow-up-date' . ( $follow_up_due ? ' is-due' : '' ) . '">' . ( $follow_up_due ? esc_html__( 'Due ', 'ajforms' ) : '' ) . esc_html( $follow_up_ts ? date_i18n( 'M j, Y', $follow_up_ts ) : '' ) . '</span>';
+					// lead_follow_up_at is stored as true UTC (see update_lead_pipeline_status_from_ops)
+					// — parse it explicitly as UTC rather than strtotime()'s PHP-default-timezone
+					// guess, and compare against real UTC time() rather than the locally-shifted
+					// current_time('timestamp'). Mismatching those two was going "Due" hours early.
+					$follow_up_utc = date_create_immutable( (string) $item['lead_follow_up_at'], new DateTimeZone( 'UTC' ) );
+					$follow_up_ts  = $follow_up_utc ? $follow_up_utc->getTimestamp() : false;
+					$follow_up_due = $follow_up_ts && $follow_up_ts <= time();
+					$out          .= '<span class="ajforms-follow-up-date' . ( $follow_up_due ? ' is-due' : '' ) . '">' . ( $follow_up_due ? esc_html__( 'Due ', 'ajforms' ) : '' ) . esc_html( $follow_up_ts ? wp_date( 'M j, Y', $follow_up_ts ) : '' ) . '</span>';
 				}
 				$out .= '<a class="button button-small" href="' . esc_url( $detail_url ) . '">' . esc_html__( 'Open', 'ajforms' ) . '</a>';
 

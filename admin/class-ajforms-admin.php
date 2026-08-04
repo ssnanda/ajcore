@@ -14476,11 +14476,17 @@ class AJForms_Admin {
 		$follow_up_at   = sanitize_text_field( (string) $follow_up_at );
 		$follow_up_mysql = '';
 		if ( 'future_follow_up' === $new ) {
-			$follow_up_timestamp = strtotime( $follow_up_at );
-			if ( '' === $follow_up_at || false === $follow_up_timestamp ) {
+			// Interpret the date-picker's plain "Y-m-d" value as midnight in the SITE's own
+			// timezone (wp_timezone() — WordPress deliberately never changes PHP's own default
+			// timezone, so a bare strtotime()/gmdate() here silently treated "2026-08-04" as UTC
+			// midnight instead of the staff member's local midnight, going "due" up to several
+			// hours early). Converted to true UTC for storage so every UTC-based reader (REST API,
+			// the leads_active SQL, the WP-admin list table) agrees on the same instant.
+			$follow_up_local = '' !== $follow_up_at ? date_create_immutable( $follow_up_at . ' 00:00:00', wp_timezone() ) : false;
+			if ( false === $follow_up_local ) {
 				return new WP_Error( 'missing_follow_up_date', __( 'Pick a follow-up date before marking this Future Follow-Up.', 'ajforms' ) );
 			}
-			$follow_up_mysql = gmdate( 'Y-m-d H:i:s', $follow_up_timestamp );
+			$follow_up_mysql = $follow_up_local->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
 		}
 
 		$old  = '' !== (string) $lead->lead_status ? sanitize_key( (string) $lead->lead_status ) : 'new';

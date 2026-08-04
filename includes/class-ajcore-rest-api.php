@@ -1362,11 +1362,18 @@ class AJCore_REST_API {
 			// lead_status, so a merged lead's old pipeline stage (e.g. "engaged") would otherwise
 			// still count it here even though every app's own Active/Active view already excludes
 			// it (see LeadsClient.tsx's matchesView / ajopsios's LeadsView.active.matches).
+			// Uses a PHP-computed UTC "now" (current_time('mysql', true)) rather than MySQL's own
+			// NOW() — lead_follow_up_at is stored as true UTC (see update_lead_pipeline_status_from_ops
+			// in AJForms_Admin), and comparing against a bound UTC value keeps this correct
+			// regardless of what timezone the DB server's own clock happens to be configured for.
 			$leads_active = (int) $pdb->get_var(
-				"SELECT COUNT(*) FROM `{$leads_table}`
-				WHERE (lead_status IS NULL OR lead_status = '' OR lead_status NOT IN ('customer','lost'))
-				AND NOT (lead_status = 'future_follow_up' AND lead_follow_up_at IS NOT NULL AND lead_follow_up_at > NOW())
-				AND status != 'duplicate'"
+				$pdb->prepare(
+					"SELECT COUNT(*) FROM `{$leads_table}`
+					WHERE (lead_status IS NULL OR lead_status = '' OR lead_status NOT IN ('customer','lost'))
+					AND NOT (lead_status = 'future_follow_up' AND lead_follow_up_at IS NOT NULL AND lead_follow_up_at > %s)
+					AND status != 'duplicate'",
+					current_time( 'mysql', true )
+				)
 			);
 		}
 
@@ -9344,6 +9351,20 @@ class AJCore_REST_API {
 		);
 	}
 
+	/** lead_follow_up_at is stored as true UTC "Y-m-d H:i:s" (see update_lead_pipeline_status_from_ops
+	 *  in AJForms_Admin). Emitting it as unambiguous ISO-8601 UTC ("...Z") means every consumer —
+	 *  JS `new Date()`, Dart `DateTime.parse()` — parses it correctly without needing its own
+	 *  timezone-handling logic; a bare "Y-m-d H:i:s" string is ambiguous and gets parsed as the
+	 *  reader's OWN local time instead, which is what caused this to disagree across apps. */
+	private function mysql_utc_to_iso( $value ) {
+		$value = (string) $value;
+		if ( '' === $value || '0000-00-00 00:00:00' === $value ) {
+			return '';
+		}
+		$date = date_create_immutable( $value, new DateTimeZone( 'UTC' ) );
+		return $date ? $date->format( 'Y-m-d\TH:i:s\Z' ) : '';
+	}
+
 	private function format_lead_row( $row, $customers_by_id = array() ) {
 		$decoded    = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
 		$meta       = isset( $decoded['_meta'] ) && is_array( $decoded['_meta'] ) ? $decoded['_meta'] : array();
@@ -9365,7 +9386,7 @@ class AJCore_REST_API {
 			'form_title'          => isset( $row['form_title'] ) ? (string) $row['form_title'] : '',
 			'status'              => isset( $row['status'] ) ? (string) $row['status'] : 'new',
 			'lead_status'         => isset( $row['lead_status'] ) && '' !== $row['lead_status'] ? (string) $row['lead_status'] : 'new',
-			'lead_follow_up_at'   => isset( $row['lead_follow_up_at'] ) ? (string) $row['lead_follow_up_at'] : '',
+			'lead_follow_up_at'   => $this->mysql_utc_to_iso( $row['lead_follow_up_at'] ?? '' ),
 			'name'                => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
 			'email'               => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
 			'phone'               => $this->format_us_phone_for_display( $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) ),
@@ -10100,7 +10121,7 @@ class AJCore_REST_API {
 				'success'         => true,
 				'id'              => (int) $result->id,
 				'lead_status'     => (string) $result->lead_status,
-				'lead_follow_up_at' => isset( $result->lead_follow_up_at ) ? (string) $result->lead_follow_up_at : '',
+				'lead_follow_up_at' => $this->mysql_utc_to_iso( $result->lead_follow_up_at ?? '' ),
 			)
 		);
 	}
