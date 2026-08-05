@@ -501,6 +501,7 @@ class AJCore_REST_API {
 					'source'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'notes'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_textarea_field' ),
 					'status'  => array( 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+					'site_uuid' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 				),
 			)
 		);
@@ -9268,15 +9269,31 @@ class AJCore_REST_API {
 			$updated_any = true;
 		}
 
+		// site_uuid is a top-level DB column, not a lead_data JSON key — handled separately from
+		// $field_map above. Site drives which pipeline stages a lead walks (see
+		// get_lead_pipeline_linear_stages()), resolved fresh from this column on every read, so
+		// changing it here is all that's needed for the stage list to update.
+		$update_data   = array( 'lead_data' => wp_json_encode( $decoded ), 'updated_at' => current_time( 'mysql' ) );
+		$update_format = array( '%s', '%s' );
+		if ( null !== $request->get_param( 'site_uuid' ) ) {
+			$site_uuid = sanitize_text_field( (string) $request->get_param( 'site_uuid' ) );
+			if ( ! $this->is_valid_site_uuid( $site_uuid ) ) {
+				return new WP_Error( 'ajcore_invalid_site', __( 'Unknown site.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+			$update_data['site_uuid'] = $site_uuid;
+			$update_format[]          = '%s';
+			$updated_any              = true;
+		}
+
 		if ( ! $updated_any ) {
 			return new WP_Error( 'ajcore_no_lead_fields', __( 'No editable fields were provided.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 
 		$wpdb->update(
 			$leads_table,
-			array( 'lead_data' => wp_json_encode( $decoded ), 'updated_at' => current_time( 'mysql' ) ),
+			$update_data,
 			array( 'id' => $lead_id ),
-			array( '%s', '%s' ),
+			$update_format,
 			array( '%d' )
 		);
 
@@ -9417,6 +9434,25 @@ class AJCore_REST_API {
 		}
 		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
 		return $admin->get_lead_pipeline_linear_stages( $site_uuid );
+	}
+
+	/** True when $site_uuid matches a row in the shared aj_shared_sites control table — used to
+	 *  validate staff-supplied site_uuid on lead create/update so a typo or stale value can't
+	 *  silently orphan a lead from the site-picker dropdown (which is itself populated from
+	 *  GET /ops/sites, i.e. this same table). Empty string is always valid — it means "unset". */
+	private function is_valid_site_uuid( $site_uuid ) {
+		$site_uuid = (string) $site_uuid;
+		if ( '' === $site_uuid ) {
+			return true;
+		}
+
+		$pdb   = $this->get_portal_db();
+		$table = $pdb->prefix . 'aj_shared_sites';
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return false;
+		}
+
+		return null !== $pdb->get_var( $pdb->prepare( "SELECT site_uuid FROM `{$table}` WHERE site_uuid = %s", $site_uuid ) );
 	}
 
 	/** Human label for a site_uuid, resolved from the shared aj_shared_sites control table
@@ -10364,6 +10400,17 @@ class AJCore_REST_API {
 			return new WP_Error( 'ajcore_missing_name', __( 'Name is required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 
+		// Staff can now pick a site on the New Lead form (it drives which pipeline the lead
+		// walks — see get_lead_pipeline_linear_stages()); default to this install's own site
+		// when omitted, same as before this param existed.
+		$site_uuid_param = $request->get_param( 'site_uuid' );
+		$site_uuid       = null !== $site_uuid_param ? sanitize_text_field( (string) $site_uuid_param ) : '';
+		if ( '' === $site_uuid ) {
+			$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
+		} elseif ( ! $this->is_valid_site_uuid( $site_uuid ) ) {
+			return new WP_Error( 'ajcore_invalid_site', __( 'Unknown site.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
 		$user     = wp_get_current_user();
 		$lead_data = array(
 			'name'    => array( 'label' => 'Name',    'type' => 'text',     'value' => $name ),
@@ -10389,7 +10436,7 @@ class AJCore_REST_API {
 				'ip_address'  => '',
 				'source_url'  => '',
 				'user_agent'  => 'api',
-				'site_uuid'   => (string) get_option( 'ajcore_site_uuid', '' ),
+				'site_uuid'   => $site_uuid,
 				'created_at'  => current_time( 'mysql' ),
 			),
 			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
@@ -10399,21 +10446,13 @@ class AJCore_REST_API {
 			return new WP_Error( 'ajcore_lead_create_failed', __( 'Failed to create lead.', 'ajforms' ), array( 'status' => 500 ) );
 		}
 
-		return rest_ensure_response( array(
-			'success' => true,
-			'lead'    => array(
-				'id'         => (int) $wpdb->insert_id,
-				'form_id'    => 0,
-				'status'     => $status,
-				'name'       => $name,
-				'email'      => $email,
-				'phone'      => $this->format_us_phone_for_display( $phone ),
-				'company'    => $company,
-				'source'     => $source,
-				'notes'      => $notes,
-				'created_at' => current_time( 'mysql' ),
-			),
-		) );
+		// Reuse the same fetch+format path update_ops_lead_fields() uses so the response carries
+		// the full row shape (site_uuid/site_label/lead_pipeline_stages included), not just the
+		// handful of fields this handler happens to know about.
+		$fresh_row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", $wpdb->insert_id ), ARRAY_A );
+		$lead      = $this->format_lead_row( $fresh_row, $this->get_customers_by_id_for_leads( array( $fresh_row ) ) );
+
+		return rest_ensure_response( array( 'success' => true, 'lead' => $lead ) );
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────────────
