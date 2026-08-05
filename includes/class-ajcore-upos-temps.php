@@ -65,6 +65,9 @@ class AJCore_UPOS_Temps {
 			$settings['upos_thermo_refresh_token'] = sanitize_textarea_field( (string) $values['refresh_token'] );
 		}
 		update_option( 'ajforms_settings', $settings );
+		// Credentials/refresh token just changed — drop any cached access token so the next
+		// call re-authenticates against the new values instead of reusing a stale one.
+		delete_transient( 'ajcore_upos_access_token' );
 		return self::status();
 	}
 
@@ -151,12 +154,37 @@ class AJCore_UPOS_Temps {
 	private static function access_token() {
 		$config = self::settings();
 		if ( ! self::is_ready( $config ) ) return array( new WP_Error( 'upos_not_configured', 'UPOS Honeywell settings are incomplete.', array( 'status' => 400 ) ), $config );
+
+		// Honeywell access tokens live for a while and, critically, the refresh_token itself is
+		// ROTATED on every grant call — refreshing on every single fetch/control request (the old
+		// behavior) meant a control tap that landed while the screen's own load()/auto-reload was
+		// still mid-refresh could read the same soon-to-be-stale refresh_token as that other
+		// request, and Honeywell would reject the loser with invalid_grant (surfaces to the app as
+		// an opaque "error" on tapping a mode button). Caching the access token sidesteps almost
+		// all of that by only hitting the token endpoint when nothing valid is cached.
+		$cached = get_transient( 'ajcore_upos_access_token' );
+		if ( is_array( $cached ) && ! empty( $cached['token'] ) ) return array( $cached['token'], $config );
+
+		// Best-effort lock for the remaining case (cache genuinely empty/expired and two requests
+		// arrive together): wait briefly for whichever request got there first to populate the
+		// cache rather than both racing the refresh_token grant.
+		if ( get_transient( 'ajcore_upos_token_lock' ) ) {
+			for ( $i = 0; $i < 20; $i++ ) {
+				usleep( 150000 );
+				$cached = get_transient( 'ajcore_upos_access_token' );
+				if ( is_array( $cached ) && ! empty( $cached['token'] ) ) return array( $cached['token'], $config );
+				if ( ! get_transient( 'ajcore_upos_token_lock' ) ) break;
+			}
+		}
+		set_transient( 'ajcore_upos_token_lock', 1, 10 );
+
 		$response = wp_remote_post( self::AUTH_BASE . '/oauth2/token', array(
 			'timeout' => 20,
 			'headers' => array( 'Authorization' => 'Basic ' . base64_encode( $config['client_id'] . ':' . $config['client_secret'] ), 'Content-Type' => 'application/x-www-form-urlencoded' ),
 			'body' => array( 'grant_type' => 'refresh_token', 'refresh_token' => $config['refresh_token'], 'redirect_uri' => $config['redirect_uri'] ),
 		) );
 		$payload = self::response_json( $response, 'Honeywell token refresh failed' );
+		delete_transient( 'ajcore_upos_token_lock' );
 		if ( is_wp_error( $payload ) ) return array( $payload, $config );
 		$token = trim( (string) ( $payload['access_token'] ?? '' ) );
 		if ( '' === $token ) return array( new WP_Error( 'upos_token_missing', 'Honeywell returned no access token.', array( 'status' => 502 ) ), $config );
@@ -166,6 +194,8 @@ class AJCore_UPOS_Temps {
 			$settings['upos_thermo_refresh_token'] = $new_refresh;
 			update_option( 'ajforms_settings', $settings );
 		}
+		$expires_in = (int) ( $payload['expires_in'] ?? 0 );
+		set_transient( 'ajcore_upos_access_token', array( 'token' => $token ), $expires_in > 60 ? $expires_in - 60 : 60 );
 		return array( $token, $config );
 	}
 
