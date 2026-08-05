@@ -808,11 +808,16 @@
 		openPanel();
 	}
 
-	// Warns before closing the tab only while the CURRENT session is still open (not forever, just
-	// because this visitor has chatted at some point in the past — sessionOpen gets corrected by
-	// loadHistory()/endChat() as the real session state becomes known). Browsers ignore custom
-	// beforeunload text and always show their own generic prompt — there's no way to display "you
-	// have an active chat" wording itself, only to trigger that prompt.
+	// Warns before closing the tab only while the visitor has the chat panel actually OPEN on an
+	// open session (not merely because hasVisitorInfo/sessionOpen persist in localStorage from some
+	// past visit — hasVisitorInfo never clears itself, and sessionOpen defaults optimistically to
+	// true the instant renderChatUI() runs at page load, before loadHistory() has had a chance to
+	// correct it; without the panelOpen check this fires on every navigation for any returning
+	// visitor whose last session is still open server-side, even with the bubble collapsed).
+	// Browsers ignore custom beforeunload text and always show their own generic prompt — there's
+	// no way to display "you have an active chat" wording itself, only to trigger that prompt. Nor
+	// can this distinguish an actual tab/browser close from navigating to another page — both fire
+	// the identical beforeunload event; the browser gives no way to tell them apart.
 	//
 	// Also actually ends the session server-side here (explicit product decision: visitors read
 	// that generic browser prompt as "closing this will end my chat," so the code now matches that
@@ -827,7 +832,7 @@
 	// of what Content-Type says. transcript_channel is "none" since there's no UI at this point to
 	// ask a transcript preference — the End Chat button remains how a visitor requests one.
 	window.addEventListener("beforeunload", function (e) {
-		if (!hasVisitorInfo || !sessionOpen) return;
+		if (!hasVisitorInfo || !sessionOpen || !panelOpen) return;
 		if (typeof navigator.sendBeacon === "function") {
 			try {
 				var payload = JSON.stringify({ session_uuid: sessionUuid, transcript_channel: "none" });

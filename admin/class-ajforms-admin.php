@@ -27127,7 +27127,10 @@ class AJForms_Admin {
 			'/messages',
 			array(
 				'query' => array(
-					'q'          => 'in:inbox -from:google.com',
+					// Excludes Google's own automated mail (security alerts, storage notices, etc.)
+					// and sandip@intlord.com (dev/testing sends from that address routinely land in
+					// this inbox and were piling up the log as needs_review with nothing to file).
+					'q'          => 'in:inbox -from:google.com -from:sandip@intlord.com',
 					'maxResults' => max( 1, min( 50, (int) $max_messages ) ),
 				),
 			)
