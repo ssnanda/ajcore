@@ -27130,14 +27130,19 @@ class AJForms_Admin {
 		// in:inbox used to exclude as a side effect (messages.list already excludes spam/trash
 		// by default, but this makes it explicit rather than relying on that default).
 		//
-		// "sosnc.gov" requires the real signal of a genuine NC Secretary of State filing
-		// notification (Gmail full-text search matches subject + body + headers, not just
-		// subject) — this is what actually separates real filing mail from everything else
-		// that lands in this inbox, not the sender exclusions below, which only existed to
-		// quiet unrelated automated/dev noise.
+		// Filter by subject content, NOT sender: a "Show all mailbox messages" pass on 2026-08-07
+		// showed every real filing forward (e.g. "NC Secretary of State Document Filed: ... for
+		// TherapyQuest, PLLC") comes FROM sandip@intlord.com — this staff mailbox forwards its own
+		// filings there. The old '-from:sandip@intlord.com' exclusion (added to quiet unrelated
+		// dev/test noise from that same address) was silently blocking every real match; '-from:
+		// google.com' is left off entirely now for the same reason — automated Google Voice/
+		// Payments mail already can't match this subject filter, so excluding by sender added risk
+		// for no benefit. "sosnc.gov" never actually appeared in the matched messages' indexed text
+		// (0 results even though real filings were present) — the reliable signal that's actually in
+		// the data is the subject line itself, so that's what's matched on now.
 		$query = '-in:spam -in:trash';
 		if ( ! $show_all ) {
-			$query = 'sosnc.gov ' . $query . ' -from:google.com -from:sandip@intlord.com';
+			$query = '(subject:"Secretary of State" OR sosnc.gov) ' . $query;
 		}
 
 		$list = $this->gmail_intake_api_request(
@@ -27847,7 +27852,7 @@ class AJForms_Admin {
 					<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Gmail Intake? Scheduled processing stops until reconnected.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajforms' ); ?></a>
 				<?php endif; ?>
 			</div>
-			<p class="ajforms-settings-help" style="margin:2px 0 0;"><?php esc_html_e( 'By default, Process Now only matches messages containing "sosnc.gov" (a real NC Secretary of State filing notification) and skips Google\'s own automated mail and dev/test sends. Check the box to process and log every message in the mailbox instead, with a table below showing exactly what was found.', 'ajforms' ); ?></p>
+			<p class="ajforms-settings-help" style="margin:2px 0 0;"><?php esc_html_e( 'By default, Process Now only matches messages with "Secretary of State" in the subject (a real NC Secretary of State filing notification) or "sosnc.gov" anywhere in the message. No sender is excluded — real filing forwards come from the same address as other mail in this box. Check the box to process and log every message in the mailbox instead, with a table below showing exactly what was found.', 'ajforms' ); ?></p>
 
 			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-test-result"></div>
 			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-process-result"></div>
