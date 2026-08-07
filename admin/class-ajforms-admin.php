@@ -27117,9 +27117,23 @@ class AJForms_Admin {
 	 * permanent and lives in the real shared mailbox, so a bug here used to be very hard to undo.
 	 * Returns a summary array for the Test/Process-Now UI.
 	 */
-	public function process_gmail_intake_inbox( $max_messages = 20 ) {
+	public function process_gmail_intake_inbox( $max_messages = 20, $show_all = false ) {
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
 			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajforms' ) );
+		}
+
+		// Was 'in:inbox -from:...' — but a mailbox whose forwarding filter also archives
+		// (skips the inbox, a common setup for a dedicated intake box) never carries the
+		// INBOX label at all, so that query silently matched nothing even though messages
+		// were sitting right there in All Mail (root cause of "Test Connection: 100 total
+		// messages" vs "Process Now: checked 0"). -in:spam -in:trash keeps out the junk
+		// in:inbox used to exclude as a side effect.
+		$query = '-in:spam -in:trash';
+		if ( ! $show_all ) {
+			// Excludes Google's own automated mail (security alerts, storage notices, etc.)
+			// and sandip@intlord.com (dev/testing sends from that address routinely land in
+			// this inbox and were piling up the log as needs_review with nothing to file).
+			$query .= ' -from:google.com -from:sandip@intlord.com';
 		}
 
 		$list = $this->gmail_intake_api_request(
@@ -27127,10 +27141,7 @@ class AJForms_Admin {
 			'/messages',
 			array(
 				'query' => array(
-					// Excludes Google's own automated mail (security alerts, storage notices, etc.)
-					// and sandip@intlord.com (dev/testing sends from that address routinely land in
-					// this inbox and were piling up the log as needs_review with nothing to file).
-					'q'          => 'in:inbox -from:google.com -from:sandip@intlord.com',
+					'q'          => $query,
 					'maxResults' => max( 1, min( 50, (int) $max_messages ) ),
 				),
 			)
@@ -27790,9 +27801,14 @@ class AJForms_Admin {
 				<?php if ( $is_connected ) : ?>
 					<button type="button" class="button" id="ajforms-gmail-intake-test-btn"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
 					<button type="button" class="button" id="ajforms-gmail-intake-process-btn"><?php esc_html_e( 'Process Now', 'ajforms' ); ?></button>
+					<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#374151;margin-left:4px;">
+						<input type="checkbox" id="ajforms-gmail-intake-show-all">
+						<?php esc_html_e( 'Show all mailbox messages (ignore sender filters)', 'ajforms' ); ?>
+					</label>
 					<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Gmail Intake? Scheduled processing stops until reconnected.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajforms' ); ?></a>
 				<?php endif; ?>
 			</div>
+			<p class="ajforms-settings-help" style="margin:2px 0 0;"><?php esc_html_e( 'By default, Process Now skips Google\'s own automated mail and dev/test sends. Check the box to process and log every message in the mailbox instead, so you can see everything that\'s actually there.', 'ajforms' ); ?></p>
 
 			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-test-result"></div>
 			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-process-result"></div>
@@ -27879,12 +27895,14 @@ class AJForms_Admin {
 
 			var processBtn = document.getElementById( 'ajforms-gmail-intake-process-btn' );
 			var processResultBox = document.getElementById( 'ajforms-gmail-intake-process-result' );
+			var showAllCheckbox = document.getElementById( 'ajforms-gmail-intake-show-all' );
 			if ( processBtn && processResultBox ) {
 				processBtn.addEventListener( 'click', function () {
 					processBtn.disabled = true;
 					processBtn.textContent = '<?php echo esc_js( __( 'Processing…', 'ajforms' ) ); ?>';
 					processResultBox.classList.remove( 'is-visible' );
-					fetch( '<?php echo esc_url_raw( $process_url ); ?>', {
+					var showAll = !! ( showAllCheckbox && showAllCheckbox.checked );
+					fetch( '<?php echo esc_url_raw( $process_url ); ?>' + ( showAll ? '?show_all=1' : '' ), {
 						method: 'POST',
 						headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
 					} )
@@ -27892,7 +27910,7 @@ class AJForms_Admin {
 						.then( function ( data ) {
 							var html = '';
 							if ( data && data.success ) {
-								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Processed', 'ajforms' ) ); ?></h4>';
+								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Processed', 'ajforms' ) ); ?>' + ( showAll ? ' <span style="font-weight:400;color:#6b7280;">(<?php echo esc_js( __( 'all mailbox messages, sender filters ignored', 'ajforms' ) ); ?>)</span>' : '' ) + '</h4>';
 								html += '<p style="margin:0;"><?php echo esc_js( __( 'Checked:', 'ajforms' ) ); ?> ' + data.checked + ' — <?php echo esc_js( __( 'Matched (pending file):', 'ajforms' ) ); ?> ' + data.matched_pending_file + ' — <?php echo esc_js( __( 'Needs review:', 'ajforms' ) ); ?> ' + data.needs_review + '</p>';
 								if ( data.errors && data.errors.length ) {
 									html += '<p style="margin:8px 0 0;color:#b91c1c;">' + data.errors.join( '<br>' ) + '</p>';

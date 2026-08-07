@@ -5098,8 +5098,9 @@ class AJCore_REST_API {
 		if ( ! class_exists( 'AJForms_Admin' ) ) {
 			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
 		}
-		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
-		$result = $admin->process_gmail_intake_inbox();
+		$admin    = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$show_all = rest_sanitize_boolean( $request->get_param( 'show_all' ) );
+		$result   = $admin->process_gmail_intake_inbox( 20, $show_all );
 		if ( is_wp_error( $result ) ) {
 			return rest_ensure_response( array( 'success' => false, 'message' => $result->get_error_message() ) );
 		}
@@ -6911,8 +6912,9 @@ class AJCore_REST_API {
 		if ( ! class_exists( 'AJForms_Admin' ) ) {
 			return new WP_Error( 'admin_unavailable', __( 'AJForms admin class not available.', 'ajforms' ), array( 'status' => 500 ) );
 		}
-		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
-		$result = $admin->process_gmail_intake_inbox();
+		$admin    = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$show_all = rest_sanitize_boolean( $request->get_param( 'show_all' ) );
+		$result   = $admin->process_gmail_intake_inbox( 20, $show_all );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
