@@ -27127,13 +27127,17 @@ class AJForms_Admin {
 		// INBOX label at all, so that query silently matched nothing even though messages
 		// were sitting right there in All Mail (root cause of "Test Connection: 100 total
 		// messages" vs "Process Now: checked 0"). -in:spam -in:trash keeps out the junk
-		// in:inbox used to exclude as a side effect.
+		// in:inbox used to exclude as a side effect (messages.list already excludes spam/trash
+		// by default, but this makes it explicit rather than relying on that default).
+		//
+		// "sosnc.gov" requires the real signal of a genuine NC Secretary of State filing
+		// notification (Gmail full-text search matches subject + body + headers, not just
+		// subject) — this is what actually separates real filing mail from everything else
+		// that lands in this inbox, not the sender exclusions below, which only existed to
+		// quiet unrelated automated/dev noise.
 		$query = '-in:spam -in:trash';
 		if ( ! $show_all ) {
-			// Excludes Google's own automated mail (security alerts, storage notices, etc.)
-			// and sandip@intlord.com (dev/testing sends from that address routinely land in
-			// this inbox and were piling up the log as needs_review with nothing to file).
-			$query .= ' -from:google.com -from:sandip@intlord.com';
+			$query = 'sosnc.gov ' . $query . ' -from:google.com -from:sandip@intlord.com';
 		}
 
 		$list = $this->gmail_intake_api_request(
@@ -27150,7 +27154,21 @@ class AJForms_Admin {
 			return $list;
 		}
 
-		$summary = array( 'checked' => 0, 'filed' => 0, 'matched_pending_file' => 0, 'needs_review' => 0, 'skipped_no_attachment' => 0, 'errors' => array() );
+		$summary = array(
+			'checked'               => 0,
+			'filed'                 => 0,
+			'matched_pending_file'  => 0,
+			'needs_review'          => 0,
+			'skipped_no_attachment' => 0,
+			'errors'                => array(),
+			'query'                 => $query,
+			'result_size_estimate'  => isset( $list['resultSizeEstimate'] ) ? (int) $list['resultSizeEstimate'] : count( (array) ( isset( $list['messages'] ) ? $list['messages'] : array() ) ),
+			// Every message the query matched, whether newly processed this run or already
+			// logged from a previous run — this is the actual list a staff member asked to see,
+			// not just a count, so a zero-match query is visibly a zero-match query rather than
+			// silence.
+			'messages'              => array(),
+		);
 
 		foreach ( (array) ( isset( $list['messages'] ) ? $list['messages'] : array() ) as $item ) {
 			if ( empty( $item['id'] ) ) {
@@ -27160,8 +27178,17 @@ class AJForms_Admin {
 
 			// Already logged (any status) — never re-fetch or reprocess. Dedup lives entirely in
 			// our own table now, not as a Gmail label on the message (a Gmail label is permanent
-			// and shared with the real mailbox, so a bug here used to be very hard to undo).
-			if ( $this->gmail_intake_log_exists( $message_id ) ) {
+			// and shared with the real mailbox, so a bug here used to be very hard to undo). Still
+			// shown in the returned list (from the local log row, no extra Gmail API call) so a
+			// re-run doesn't look like it found nothing.
+			$existing_log = $this->fetch_gmail_intake_log_row_by_message_id( $message_id );
+			if ( $existing_log ) {
+				$summary['messages'][] = array(
+					'id'      => $message_id,
+					'subject' => (string) $existing_log['subject'],
+					'sender'  => (string) $existing_log['sender'],
+					'status'  => (string) $existing_log['status'] . ' (already logged)',
+				);
 				continue;
 			}
 
@@ -27183,6 +27210,7 @@ class AJForms_Admin {
 
 			if ( ! $customer ) {
 				$summary['needs_review']++;
+				$summary['messages'][] = array( 'id' => $message_id, 'subject' => $subject, 'sender' => $sender, 'status' => 'needs_review' );
 				$this->log_gmail_intake_item( array(
 					'gmail_message_id'       => $message_id,
 					'subject'                => $subject,
@@ -27212,6 +27240,7 @@ class AJForms_Admin {
 			}
 
 			$summary['matched_pending_file']++;
+			$summary['messages'][] = array( 'id' => $message_id, 'subject' => $subject, 'sender' => $sender, 'status' => 'matched_pending_file' );
 
 			$this->log_gmail_intake_item( array(
 				'gmail_message_id'       => $message_id,
@@ -27251,6 +27280,16 @@ class AJForms_Admin {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
 		return (bool) $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE gmail_message_id = %s", $gmail_message_id ) );
+	}
+
+	/** Like gmail_intake_log_exists() but returns the row (subject/sender/status) instead of a
+	 *  bool, so a re-run of process_gmail_intake_inbox() can list already-logged messages
+	 *  without an extra Gmail API call. Null when not logged. */
+	private function fetch_gmail_intake_log_row_by_message_id( $gmail_message_id ) {
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		$row   = $pdb->get_row( $pdb->prepare( "SELECT subject, sender, status FROM `{$table}` WHERE gmail_message_id = %s", $gmail_message_id ), ARRAY_A );
+		return $row ?: null;
 	}
 
 	/**
@@ -27803,12 +27842,12 @@ class AJForms_Admin {
 					<button type="button" class="button" id="ajforms-gmail-intake-process-btn"><?php esc_html_e( 'Process Now', 'ajforms' ); ?></button>
 					<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#374151;margin-left:4px;">
 						<input type="checkbox" id="ajforms-gmail-intake-show-all">
-						<?php esc_html_e( 'Show all mailbox messages (ignore sender filters)', 'ajforms' ); ?>
+						<?php esc_html_e( 'Show all mailbox messages (ignore filters)', 'ajforms' ); ?>
 					</label>
 					<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Gmail Intake? Scheduled processing stops until reconnected.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajforms' ); ?></a>
 				<?php endif; ?>
 			</div>
-			<p class="ajforms-settings-help" style="margin:2px 0 0;"><?php esc_html_e( 'By default, Process Now skips Google\'s own automated mail and dev/test sends. Check the box to process and log every message in the mailbox instead, so you can see everything that\'s actually there.', 'ajforms' ); ?></p>
+			<p class="ajforms-settings-help" style="margin:2px 0 0;"><?php esc_html_e( 'By default, Process Now only matches messages containing "sosnc.gov" (a real NC Secretary of State filing notification) and skips Google\'s own automated mail and dev/test sends. Check the box to process and log every message in the mailbox instead, with a table below showing exactly what was found.', 'ajforms' ); ?></p>
 
 			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-test-result"></div>
 			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-process-result"></div>
@@ -27902,18 +27941,49 @@ class AJForms_Admin {
 					processBtn.textContent = '<?php echo esc_js( __( 'Processing…', 'ajforms' ) ); ?>';
 					processResultBox.classList.remove( 'is-visible' );
 					var showAll = !! ( showAllCheckbox && showAllCheckbox.checked );
-					fetch( '<?php echo esc_url_raw( $process_url ); ?>' + ( showAll ? '?show_all=1' : '' ), {
+					// show_all as a POST JSON body field, not a query string appended with a bare
+					// "?" — rest_url() already returns a URL with its own "?rest_route=..." query
+					// string on any site without pretty permalinks, and blindly concatenating a
+					// second "?" there produces a malformed URL that silently fails (looked like
+					// the checkbox "did nothing" — it never reached the server).
+					fetch( '<?php echo esc_url_raw( $process_url ); ?>', {
 						method: 'POST',
-						headers: { 'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>' }
+						headers: {
+							'X-WP-Nonce': '<?php echo esc_js( wp_create_nonce( 'wp_rest' ) ); ?>',
+							'Content-Type': 'application/json'
+						},
+						body: JSON.stringify( { show_all: showAll } )
 					} )
 						.then( function ( r ) { return r.json(); } )
 						.then( function ( data ) {
 							var html = '';
 							if ( data && data.success ) {
-								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Processed', 'ajforms' ) ); ?>' + ( showAll ? ' <span style="font-weight:400;color:#6b7280;">(<?php echo esc_js( __( 'all mailbox messages, sender filters ignored', 'ajforms' ) ); ?>)</span>' : '' ) + '</h4>';
+								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Processed', 'ajforms' ) ); ?>' + ( showAll ? ' <span style="font-weight:400;color:#6b7280;">(<?php echo esc_js( __( 'all mailbox messages, filters ignored', 'ajforms' ) ); ?>)</span>' : '' ) + '</h4>';
 								html += '<p style="margin:0;"><?php echo esc_js( __( 'Checked:', 'ajforms' ) ); ?> ' + data.checked + ' — <?php echo esc_js( __( 'Matched (pending file):', 'ajforms' ) ); ?> ' + data.matched_pending_file + ' — <?php echo esc_js( __( 'Needs review:', 'ajforms' ) ); ?> ' + data.needs_review + '</p>';
+								html += '<p style="margin:6px 0 0;color:#6b7280;font-size:12px;"><?php echo esc_js( __( 'Gmail query used:', 'ajforms' ) ); ?> <code>' + ( data.query || '' ) + '</code> — <?php echo esc_js( __( 'result size estimate:', 'ajforms' ) ); ?> ' + ( data.result_size_estimate != null ? data.result_size_estimate : '?' ) + '</p>';
 								if ( data.errors && data.errors.length ) {
 									html += '<p style="margin:8px 0 0;color:#b91c1c;">' + data.errors.join( '<br>' ) + '</p>';
+								}
+								if ( data.messages && data.messages.length ) {
+									// Subject/From come from arbitrary external email content — escape before
+									// innerHTML so a crafted Subject line can't inject markup into this admin page.
+									var escapeHtml = function ( s ) {
+										return String( s == null ? '' : s ).replace( /[&<>"']/g, function ( c ) {
+											return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ c ];
+										} );
+									};
+									html += '<table style="width:100%;margin-top:10px;border-collapse:collapse;font-size:12px;">';
+									html += '<thead><tr style="text-align:left;color:#6b7280;"><th style="padding:4px 6px;">Status</th><th style="padding:4px 6px;">From</th><th style="padding:4px 6px;">Subject</th></tr></thead><tbody>';
+									data.messages.forEach( function ( m ) {
+										html += '<tr style="border-top:1px solid #e2e8f0;">'
+											+ '<td style="padding:4px 6px;white-space:nowrap;">' + escapeHtml( m.status ) + '</td>'
+											+ '<td style="padding:4px 6px;white-space:nowrap;">' + escapeHtml( m.sender ) + '</td>'
+											+ '<td style="padding:4px 6px;">' + ( m.subject ? escapeHtml( m.subject ) : '(no subject)' ) + '</td>'
+											+ '</tr>';
+									} );
+									html += '</tbody></table>';
+								} else {
+									html += '<p style="margin:8px 0 0;color:#6b7280;">' + '<?php echo esc_js( __( 'No messages matched this query — try the "Show all mailbox messages" checkbox to rule out the content filter.', 'ajforms' ) ); ?>' + '</p>';
 								}
 							} else {
 								html += '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Processing failed', 'ajforms' ) ); ?></h4>';
