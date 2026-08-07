@@ -14451,11 +14451,11 @@ class AJForms_Admin {
 	 * atomically, whether the caller is the AJOps stepper UI or the auto-outreach cron's status
 	 * flip. Never update the `lead_status` column directly anywhere else.
 	 */
-	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '', $follow_up_at = '' ) {
+	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '', $follow_up_at = '', $non_stripe_customer_name = '' ) {
 		$pdb     = $this->get_leads_db();
 		$table   = $this->get_leads_table();
 		$lead_id = absint( $lead_id );
-		$lead    = $pdb->get_row( $pdb->prepare( "SELECT id, lead_status, lead_follow_up_at FROM `{$table}` WHERE id = %d", $lead_id ) );
+		$lead    = $pdb->get_row( $pdb->prepare( "SELECT id, lead_status, lead_follow_up_at, lead_data FROM `{$table}` WHERE id = %d", $lead_id ) );
 		if ( ! $lead ) {
 			return new WP_Error( 'not_found', __( 'Lead not found.', 'ajforms' ) );
 		}
@@ -14466,9 +14466,15 @@ class AJForms_Admin {
 			return new WP_Error( 'invalid_status', __( 'Invalid lead status.', 'ajforms' ) );
 		}
 
-		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
-		if ( 'customer' === $new && '' === $stripe_customer_id ) {
-			return new WP_Error( 'missing_customer', __( 'Pick a customer to link this lead to before marking it Customer.', 'ajforms' ) );
+		$stripe_customer_id       = sanitize_text_field( (string) $stripe_customer_id );
+		// Covers customers of other businesses (e.g. office space / residential) that never go
+		// through Stripe and never will — staff record a plain name instead of picking a Stripe
+		// customer. Stored in lead_data._meta rather than a new column (see format_lead_row() in
+		// AJCore_REST_API for the read side); stripe_customer_id stays '' for these leads so
+		// nothing downstream (Payments, Files, portal access) mistakes it for a real Stripe link.
+		$non_stripe_customer_name = sanitize_text_field( (string) $non_stripe_customer_name );
+		if ( 'customer' === $new && '' === $stripe_customer_id && '' === $non_stripe_customer_name ) {
+			return new WP_Error( 'missing_customer', __( 'Pick a customer (or enter a non-Stripe customer name) before marking it Customer.', 'ajforms' ) );
 		}
 
 		// Future Follow-Up is only useful if it actually comes back to someone's attention —
@@ -14503,9 +14509,23 @@ class AJForms_Admin {
 		// though the pipeline (lead_status) is now the primary thing staff interact with.
 		if ( 'customer' === $new ) {
 			$update_data['status']              = 'won';
+			// A Stripe pick always wins and clears any earlier manual name (e.g. a lead first
+			// marked Customer against another business, later actually linked to a real Stripe
+			// customer) — a lead is never both at once.
 			$update_data['stripe_customer_id']  = $stripe_customer_id;
 			$update_formats[]                   = '%s';
 			$update_formats[]                   = '%s';
+
+			$decoded_lead_data                          = json_decode( isset( $lead->lead_data ) ? (string) $lead->lead_data : '{}', true );
+			if ( ! is_array( $decoded_lead_data ) ) {
+				$decoded_lead_data = array();
+			}
+			if ( ! isset( $decoded_lead_data['_meta'] ) || ! is_array( $decoded_lead_data['_meta'] ) ) {
+				$decoded_lead_data['_meta'] = array();
+			}
+			$decoded_lead_data['_meta']['non_stripe_customer_name'] = '' === $stripe_customer_id ? $non_stripe_customer_name : '';
+			$update_data['lead_data']                               = wp_json_encode( $decoded_lead_data );
+			$update_formats[]                                       = '%s';
 		} elseif ( 'lost' === $new ) {
 			$update_data['status'] = 'lost';
 			$update_formats[]      = '%s';
@@ -27052,11 +27072,13 @@ class AJForms_Admin {
 
 		// SOS/NC's confirmation that a Change of Registered Office/Agent filing went through —
 		// this is the proof document for the "RA Change Filed with SOS/NC" service status, so it's
-		// per-company like the AOO scan above, not a generic flyer.
+		// per-company like the AOO scan above, not a generic flyer. Own category ("Change of RA")
+		// rather than the "Others" catch-all it used to land in — see the ajcore_get_portal_file_
+		// settings() backfill in ajcore.php that makes sure this category actually exists.
 		if ( '' !== $company_name && false !== strpos( $lower, 'change of registered office and/or registered agent' ) ) {
 			return array(
 				'filename' => 'RA Change Confirmation - ' . $company_name,
-				'category' => 'Others',
+				'category' => 'Change of RA',
 			);
 		}
 

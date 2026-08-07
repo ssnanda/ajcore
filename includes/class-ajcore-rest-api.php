@@ -9401,6 +9401,13 @@ class AJCore_REST_API {
 		$customer           = '' !== $stripe_customer_id && isset( $customers_by_id[ $stripe_customer_id ] ) ? $customers_by_id[ $stripe_customer_id ] : null;
 		$site_uuid          = isset( $row['site_uuid'] ) ? (string) $row['site_uuid'] : '';
 
+		// Customer of one of the other (non-Stripe) businesses — see update_lead_pipeline_status_
+		// from_ops() in AJForms_Admin. stripe_customer_id stays '' for these so nothing downstream
+		// mistakes the plain name for a real Stripe customer link.
+		$non_stripe_customer_name = '' === $stripe_customer_id && isset( $meta['non_stripe_customer_name'] )
+			? (string) $meta['non_stripe_customer_name']
+			: '';
+
 		return array(
 			'id'                  => (int) $row['id'],
 			'form_id'             => (int) $row['form_id'],
@@ -9419,8 +9426,9 @@ class AJCore_REST_API {
 			'created_at'          => isset( $row['created_at'] ) ? (string) $row['created_at'] : '',
 			'updated_at'          => isset( $row['updated_at'] ) ? (string) $row['updated_at'] : '',
 			'stripe_customer_id'  => $stripe_customer_id,
-			'customer_name'       => $customer ? (string) $customer->name : '',
+			'customer_name'       => $customer ? (string) $customer->name : $non_stripe_customer_name,
 			'customer_email'      => $customer ? (string) $customer->email : '',
+			'non_stripe_customer_name' => $non_stripe_customer_name,
 			'merged_into_lead_id' => isset( $row['merged_into_lead_id'] ) ? (int) $row['merged_into_lead_id'] : 0,
 			'site_uuid'           => $site_uuid,
 			'site_label'          => $this->get_site_label( $site_uuid ),
@@ -10147,7 +10155,8 @@ class AJCore_REST_API {
 			(string) $request->get_param( 'lead_status' ),
 			(string) ( $request->get_param( 'note' ) ?? '' ),
 			(string) ( $request->get_param( 'stripe_customer_id' ) ?? '' ),
-			(string) ( $request->get_param( 'follow_up_at' ) ?? '' )
+			(string) ( $request->get_param( 'follow_up_at' ) ?? '' ),
+			(string) ( $request->get_param( 'non_stripe_customer_name' ) ?? '' )
 		);
 		if ( is_wp_error( $result ) ) {
 			$error_status = 400;
