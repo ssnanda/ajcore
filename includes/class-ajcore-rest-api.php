@@ -1013,6 +1013,13 @@ class AJCore_REST_API {
 			'/ops/chat/sessions/(?P<id>\d+)/close'    => array( 'methods' => 'POST', 'callback' => 'close_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
 			'/ops/chat/sessions/(?P<id>\d+)'          => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_chat_session', 'permission' => 'can_manage_ops_api' ),
 			'/ops/chat/reset'                          => array( 'methods' => 'POST', 'callback' => 'reset_ops_chat_sessions', 'permission' => 'can_manage_ops_api' ),
+			// Visitor History (Live Monitor's durable log) — same service-account trust model as
+			// /chat/sessions above: written by AJOps' server.js when a presence socket disconnects,
+			// never called by a visitor browser directly.
+			'/chat/visitors/log'                       => array( 'methods' => 'POST', 'callback' => 'log_visitor_history', 'permission' => 'can_manage_ops_api' ),
+			'/ops/visitors'                            => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_history', 'permission' => 'can_manage_ops_api' ),
+			'/ops/visitors/(?P<uuid>[^/]+)/link'       => array( 'methods' => 'POST', 'callback' => 'link_ops_visitor_identity', 'permission' => 'can_manage_ops_api' ),
+			'/ops/visitors/(?P<uuid>[^/]+)/unlink'     => array( 'methods' => 'POST', 'callback' => 'unlink_ops_visitor_identity', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -1169,6 +1176,10 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/unclaim', 'auth' => 'Admin', 'purpose' => 'Clears a Live Chat session\'s assignment.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'DELETE', 'path' => '/ops/chat/sessions/{id}', 'auth' => 'Admin', 'purpose' => 'Deletes a Live Chat session and its messages (e.g. test data).', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/reset', 'auth' => 'Admin', 'purpose' => 'Deletes every Live Chat session/message across every site. Not scoped or reversible.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/visitors/log', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Writes one durable Visitor History row when a Live Monitor presence socket disconnects (see server.js presenceSockets).', 'app' => 'Live Chat' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/visitors', 'auth' => 'Admin', 'purpose' => 'Visitor History grouped by visitor_uuid, joined with any linked Lead/Customer. Filters: site_uuid, search.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/visitors/{uuid}/link', 'auth' => 'Admin', 'purpose' => 'Links a visitor_uuid to a Stripe customer OR a lead (mutually exclusive) — persists across every past and future Visitor History row for that visitor.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/visitors/{uuid}/unlink', 'auth' => 'Admin', 'purpose' => 'Clears a visitor_uuid\'s linked Lead/Customer.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -7804,6 +7815,236 @@ class AJCore_REST_API {
 		}
 		$pdb->query( "TRUNCATE TABLE `{$s_table}`" );
 		return rest_ensure_response( array( 'success' => true, 'deleted' => $count ) );
+	}
+
+	private function get_visitor_log_table() {
+		return $this->portal_table( 'aj_portal_visitor_log' );
+	}
+
+	private function get_visitor_identities_table() {
+		return $this->portal_table( 'aj_portal_visitor_identities' );
+	}
+
+	/** Written by AJOps' server.js when a Live Monitor presence socket disconnects — one row per
+	 *  visit, not per heartbeat. See presenceSockets in server.js for the shape this is built from. */
+	public function log_visitor_history( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_visitor_log_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return new WP_Error( 'no_table', __( 'Visitor log table does not exist.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		$visitor_uuid = sanitize_text_field( (string) $request->get_param( 'visitor_uuid' ) );
+		if ( '' === $visitor_uuid ) {
+			return new WP_Error( 'missing_visitor_uuid', __( 'visitor_uuid is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$started_at = sanitize_text_field( (string) $request->get_param( 'started_at' ) );
+		$ended_at   = sanitize_text_field( (string) $request->get_param( 'ended_at' ) );
+
+		$pdb->insert(
+			$table,
+			array(
+				'site_uuid'    => sanitize_text_field( (string) $request->get_param( 'site_uuid' ) ),
+				'visitor_uuid' => $visitor_uuid,
+				'ip_address'   => sanitize_text_field( (string) $request->get_param( 'ip_address' ) ),
+				'country'      => sanitize_text_field( (string) $request->get_param( 'country' ) ),
+				'region'       => sanitize_text_field( (string) $request->get_param( 'region' ) ),
+				'city'         => sanitize_text_field( (string) $request->get_param( 'city' ) ),
+				'browser'      => sanitize_text_field( (string) $request->get_param( 'browser' ) ),
+				'os'           => sanitize_text_field( (string) $request->get_param( 'os' ) ),
+				'device_type'  => sanitize_text_field( (string) $request->get_param( 'device_type' ) ),
+				'landing_page' => esc_url_raw( (string) $request->get_param( 'landing_page' ) ),
+				'last_page'    => esc_url_raw( (string) $request->get_param( 'last_page' ) ),
+				'referrer'     => esc_url_raw( (string) $request->get_param( 'referrer' ) ),
+				'page_views'   => max( 1, absint( $request->get_param( 'page_views' ) ) ),
+				'started_at'   => '' !== $started_at ? $started_at : current_time( 'mysql' ),
+				'ended_at'     => '' !== $ended_at ? $ended_at : current_time( 'mysql' ),
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+		);
+
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	/** Visitor History, grouped by visitor_uuid — one row per unique browser, not per visit, with
+	 *  aggregate stats and (if set) the linked Lead/Customer. IP/geo/device/page reflect that
+	 *  visitor's most recent visit; "grouped by IP+device" in the product ask is a display-side
+	 *  concern (the frontend can further cluster these rows) — this stays the reliable per-browser
+	 *  grouping since IP/device alone are heuristic, not identity. */
+	public function get_ops_visitor_history( WP_REST_Request $request ) {
+		$pdb        = $this->get_portal_db();
+		$log_table  = $this->get_visitor_log_table();
+		$id_table   = $this->get_visitor_identities_table();
+		if ( ! $this->table_exists( $pdb, $log_table ) ) {
+			return rest_ensure_response( array( 'visitors' => array() ) );
+		}
+
+		$site_uuid = sanitize_text_field( (string) ( $request->get_param( 'site_uuid' ) ?? '' ) );
+		$search    = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?? '' ) );
+
+		$where  = array( '1=1' );
+		$params = array();
+		if ( '' !== $site_uuid ) {
+			$where[]  = 'l.site_uuid = %s';
+			$params[] = $site_uuid;
+		}
+		if ( '' !== $search ) {
+			$where[]  = '( l.ip_address LIKE %s OR l.visitor_uuid LIKE %s )';
+			$like     = '%' . $pdb->esc_like( $search ) . '%';
+			$params[] = $like;
+			$params[] = $like;
+		}
+		$where_sql = implode( ' AND ', $where );
+
+		// Latest row per visitor_uuid (for its ip/geo/device/page) joined against aggregates
+		// (first-ever visit, total visit count) — a plain GROUP BY on the log table can't give both
+		// "most recent detail" and "all-time aggregate" in one pass without this self-join.
+		$sql = "SELECT l.*, agg.visits, agg.first_started_at
+			FROM `{$log_table}` l
+			INNER JOIN (
+				SELECT visitor_uuid, MAX(id) AS latest_id, COUNT(*) AS visits, MIN(started_at) AS first_started_at
+				FROM `{$log_table}`
+				GROUP BY visitor_uuid
+			) agg ON agg.visitor_uuid = l.visitor_uuid AND agg.latest_id = l.id
+			WHERE {$where_sql}
+			ORDER BY l.started_at DESC
+			LIMIT 500";
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
+		$rows = empty( $params ) ? $pdb->get_results( $sql, ARRAY_A ) : $pdb->get_results( $pdb->prepare( $sql, $params ), ARRAY_A );
+		$rows = is_array( $rows ) ? $rows : array();
+
+		$identities_by_uuid = array();
+		if ( ! empty( $rows ) && $this->table_exists( $pdb, $id_table ) ) {
+			$uuids = array_values( array_unique( array_map( function ( $r ) { return (string) $r['visitor_uuid']; }, $rows ) ) );
+			if ( ! empty( $uuids ) ) {
+				$placeholders = implode( ',', array_fill( 0, count( $uuids ), '%s' ) );
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$identity_rows = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$id_table}` WHERE visitor_uuid IN ({$placeholders})", $uuids ), ARRAY_A );
+				foreach ( (array) $identity_rows as $ir ) {
+					$identities_by_uuid[ (string) $ir['visitor_uuid'] ] = $ir;
+				}
+			}
+		}
+
+		// Resolve linked customer/lead names in one batched pass rather than N+1 queries.
+		$customer_ids = array();
+		$lead_ids     = array();
+		foreach ( $identities_by_uuid as $id_row ) {
+			if ( ! empty( $id_row['linked_stripe_customer_id'] ) ) {
+				$customer_ids[] = (string) $id_row['linked_stripe_customer_id'];
+			}
+			if ( ! empty( $id_row['linked_lead_id'] ) ) {
+				$lead_ids[] = (int) $id_row['linked_lead_id'];
+			}
+		}
+		$customers_by_id = array();
+		if ( ! empty( $customer_ids ) ) {
+			$customer_ids = array_values( array_unique( $customer_ids ) );
+			$c_table      = $this->portal_table( 'aj_portal_stripe_customers' );
+			if ( $this->table_exists( $pdb, $c_table ) ) {
+				$placeholders = implode( ',', array_fill( 0, count( $customer_ids ), '%s' ) );
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$c_rows = $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id, name, email FROM `{$c_table}` WHERE stripe_customer_id IN ({$placeholders})", $customer_ids ) );
+				foreach ( (array) $c_rows as $c ) {
+					$customers_by_id[ (string) $c->stripe_customer_id ] = array( 'name' => (string) $c->name, 'email' => (string) $c->email );
+				}
+			}
+		}
+		$leads_by_id = array();
+		if ( ! empty( $lead_ids ) ) {
+			$lead_ids       = array_values( array_unique( $lead_ids ) );
+			$leads_table    = $this->portal_table( 'aj_forms_leads' );
+			if ( $this->table_exists( $pdb, $leads_table ) ) {
+				$placeholders = implode( ',', array_fill( 0, count( $lead_ids ), '%d' ) );
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$l_rows = $pdb->get_results( $pdb->prepare( "SELECT id, lead_data FROM `{$leads_table}` WHERE id IN ({$placeholders})", $lead_ids ), ARRAY_A );
+				foreach ( (array) $l_rows as $l ) {
+					$decoded = json_decode( (string) $l['lead_data'], true );
+					$leads_by_id[ (int) $l['id'] ] = array( 'name' => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ) );
+				}
+			}
+		}
+
+		$visitors = array();
+		foreach ( $rows as $row ) {
+			$uuid     = (string) $row['visitor_uuid'];
+			$identity = isset( $identities_by_uuid[ $uuid ] ) ? $identities_by_uuid[ $uuid ] : null;
+			$linked_customer_id = $identity && ! empty( $identity['linked_stripe_customer_id'] ) ? (string) $identity['linked_stripe_customer_id'] : '';
+			$linked_lead_id     = $identity && ! empty( $identity['linked_lead_id'] ) ? (int) $identity['linked_lead_id'] : 0;
+
+			$visitors[] = array(
+				'visitor_uuid'          => $uuid,
+				'site_uuid'             => (string) $row['site_uuid'],
+				'ip_address'            => (string) $row['ip_address'],
+				'country'               => (string) $row['country'],
+				'region'                => (string) $row['region'],
+				'city'                  => (string) $row['city'],
+				'browser'               => (string) $row['browser'],
+				'os'                    => (string) $row['os'],
+				'device_type'           => (string) $row['device_type'],
+				'last_page'             => (string) $row['last_page'],
+				'visits'                => (int) $row['visits'],
+				'first_seen'            => (string) $row['first_started_at'],
+				'last_seen'             => (string) ( $row['ended_at'] ?: $row['started_at'] ),
+				'linked_stripe_customer_id' => $linked_customer_id,
+				'linked_customer_name'  => $linked_customer_id && isset( $customers_by_id[ $linked_customer_id ] ) ? $customers_by_id[ $linked_customer_id ]['name'] : '',
+				'linked_lead_id'        => $linked_lead_id,
+				'linked_lead_name'      => $linked_lead_id && isset( $leads_by_id[ $linked_lead_id ] ) ? $leads_by_id[ $linked_lead_id ]['name'] : '',
+			);
+		}
+
+		return rest_ensure_response( array( 'visitors' => $visitors ) );
+	}
+
+	/** Links a visitor_uuid to a Stripe customer OR a lead (mutually exclusive, same rule leads'
+	 *  own "mark as Customer" uses) — set once, shown on every past AND future Visitor History row
+	 *  for that visitor since the link lives in aj_portal_visitor_identities, not the log rows. */
+	public function link_ops_visitor_identity( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_visitor_identities_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return new WP_Error( 'no_table', __( 'Visitor identities table does not exist.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		$visitor_uuid       = sanitize_text_field( (string) $request['uuid'] );
+		$stripe_customer_id = sanitize_text_field( (string) ( $request->get_param( 'stripe_customer_id' ) ?? '' ) );
+		$lead_id            = absint( $request->get_param( 'lead_id' ) ?? 0 );
+		if ( '' === $visitor_uuid || ( '' === $stripe_customer_id && ! $lead_id ) ) {
+			return new WP_Error( 'missing_link_target', __( 'Provide a stripe_customer_id or a lead_id to link this visitor to.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$user       = wp_get_current_user();
+		$staff_name = ( $user && $user->exists() ) ? $user->display_name : '';
+
+		$data = array(
+			'visitor_uuid'               => $visitor_uuid,
+			// A Stripe pick always wins, same rule as leads' own manual-vs-Stripe customer link.
+			'linked_stripe_customer_id'  => '' !== $stripe_customer_id ? $stripe_customer_id : '',
+			'linked_lead_id'             => '' === $stripe_customer_id && $lead_id ? $lead_id : null,
+			'linked_by'                  => $staff_name,
+			'linked_at'                  => current_time( 'mysql' ),
+		);
+
+		$existing = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$table}` WHERE visitor_uuid = %s", $visitor_uuid ) );
+		if ( $existing ) {
+			$pdb->update( $table, $data, array( 'visitor_uuid' => $visitor_uuid ), array( '%s', '%s', '%d', '%s', '%s' ), array( '%s' ) );
+		} else {
+			$pdb->insert( $table, $data, array( '%s', '%s', '%d', '%s', '%s' ) );
+		}
+
+		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	public function unlink_ops_visitor_identity( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_visitor_identities_table();
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return rest_ensure_response( array( 'success' => true ) );
+		}
+		$visitor_uuid = sanitize_text_field( (string) $request['uuid'] );
+		$pdb->delete( $table, array( 'visitor_uuid' => $visitor_uuid ), array( '%s' ) );
+		return rest_ensure_response( array( 'success' => true ) );
 	}
 
 	/** Client mailbox: the current portal user's mail items, without staff-only fields. */

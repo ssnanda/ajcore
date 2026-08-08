@@ -27,6 +27,83 @@
 		try { window.localStorage.setItem(key, value); } catch (e) { /* ignore */ }
 	}
 
+	// Bare domain (no protocol/path) — every prepopulated "Text Us" SMS body mentions it, so
+	// whoever answers the text immediately knows which site the visitor is asking about, without
+	// having to ask (staff run this widget on more than one site).
+	function siteHost() {
+		try { return window.location.hostname || ""; } catch (e) { return ""; }
+	}
+
+	function defaultTextUsMessage() {
+		var host = siteHost();
+		return host
+			? "Hi, I am on your website " + host + " and I have some questions."
+			: "Hi, I am on your website and I have some questions.";
+	}
+
+	// ── Passive engagement popup ────────────────────────────────────────────
+	// A soft, one-time nudge for a visitor who's been on the page a while without reaching out —
+	// "you decide" on the exact form, this is a small dismissible yes/no callout rather than a
+	// full-screen splash, so it doesn't interrupt whatever the visitor's doing. Shared by both the
+	// mobile TEXT bubble and the desktop CHAT widget branches below (each calls this once, passing
+	// how to build that device's SMS href) so the popup/dismissal logic isn't duplicated twice.
+	var STORAGE_ENGAGE_DISMISSED = "ajcore_engage_dismissed";
+	var ENGAGE_DELAY_MS = 25000;
+
+	function maybeShowEngagementPopup(getSmsHref) {
+		if (getStored(STORAGE_ENGAGE_DISMISSED) === "1") return;
+
+		setTimeout(function () {
+			if (getStored(STORAGE_ENGAGE_DISMISSED) === "1") return;
+			// Desktop only: a returning visitor with the panel already open, or already known to us
+			// (hasVisitorInfo — they've chatted before), doesn't need a cold-open nudge to text.
+			if (typeof panelOpen !== "undefined" && panelOpen) return;
+			if (typeof hasVisitorInfo !== "undefined" && hasVisitorInfo) return;
+			showEngagementPopup(getSmsHref);
+		}, ENGAGE_DELAY_MS);
+	}
+
+	function dismissEngagementPopup(popupEl, remember) {
+		if (remember) setStored(STORAGE_ENGAGE_DISMISSED, "1");
+		if (popupEl && popupEl.parentNode) popupEl.parentNode.removeChild(popupEl);
+	}
+
+	function showEngagementPopup(getSmsHref) {
+		var host = siteHost();
+		var style = document.createElement("style");
+		style.textContent =
+			"#ajcore-engage-popup{position:fixed;bottom:88px;right:20px;max-width:270px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:14px 16px;z-index:999997;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}" +
+			"#ajcore-engage-popup .aj-engage-close{position:absolute;top:6px;right:8px;background:none;border:none;color:#9ca3af;font-size:14px;cursor:pointer;line-height:1;padding:2px;}" +
+			"#ajcore-engage-popup .aj-engage-text{font-size:13px;color:#111827;margin:0 0 10px;padding-right:12px;line-height:1.4;}" +
+			"#ajcore-engage-popup .aj-engage-actions{display:flex;gap:8px;}" +
+			"#ajcore-engage-popup button.aj-engage-btn{flex:1;border-radius:8px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;border:none;}" +
+			"#ajcore-engage-yes{background:#3157ff;color:#fff;}" +
+			"#ajcore-engage-no{background:#f1f5f9;color:#475569;}";
+		document.head.appendChild(style);
+
+		var popup = document.createElement("div");
+		popup.id = "ajcore-engage-popup";
+		popup.innerHTML =
+			'<button type="button" class="aj-engage-close" aria-label="Dismiss">✕</button>' +
+			'<p class="aj-engage-text">👋 Got a question' + (host ? " about " + escapeHtml(host) : "") + '? We usually reply in minutes — want to text us?</p>' +
+			'<div class="aj-engage-actions">' +
+				'<button type="button" class="aj-engage-btn" id="ajcore-engage-no">No thanks</button>' +
+				'<button type="button" class="aj-engage-btn" id="ajcore-engage-yes">Yes, text us</button>' +
+			'</div>';
+		document.body.appendChild(popup);
+
+		popup.querySelector(".aj-engage-close").addEventListener("click", function () { dismissEngagementPopup(popup, true); });
+		popup.querySelector("#ajcore-engage-no").addEventListener("click", function () { dismissEngagementPopup(popup, true); });
+		popup.querySelector("#ajcore-engage-yes").addEventListener("click", function () {
+			dismissEngagementPopup(popup, true);
+			window.location.href = getSmsHref();
+		});
+
+		// Same unobtrusive auto-dismiss as the staff-reply preview bubble further down — but doesn't
+		// mark it "remembered", so it's still eligible to show again on a later visit if ignored here.
+		setTimeout(function () { dismissEngagementPopup(popup, false); }, 20000);
+	}
+
 	// ── Passive visitor presence ("Live Monitor" in AJOps) ────────────────────
 	// Deliberately ahead of the mobile/desktop branch below — presence tracks every visitor who
 	// loads the page, not just ones who get the full chat widget. Entirely separate connection from
@@ -116,14 +193,15 @@
 		mobileBubble.id = "ajcore-chat-bubble";
 		mobileBubble.setAttribute("aria-label", "Text us");
 		mobileBubble.textContent = "TEXT";
-		mobileBubble.href = "sms:" + mobileTextNumber + "?body=" + encodeURIComponent("Hi, I'd like to text about your website.");
+		mobileBubble.href = "sms:" + mobileTextNumber + "?body=" + encodeURIComponent(defaultTextUsMessage());
 		document.body.appendChild(mobileBubble);
 		// A staff "prompt chat" push has no widget panel to open on mobile — send them straight to
 		// the same SMS handoff the TEXT bubble itself offers, with an optional staff-provided lead-in.
 		startPresence(function (message) {
-			var body = message || "Hi, I'd like to text about your website.";
+			var body = message || defaultTextUsMessage();
 			window.location.href = "sms:" + mobileTextNumber + "?body=" + encodeURIComponent(body);
 		});
+		maybeShowEngagementPopup(function () { return mobileBubble.href; });
 		return;
 	}
 
@@ -243,9 +321,11 @@
 		return "sms:" + TEXT_US_NUMBER + "?body=" + encodeURIComponent(msg);
 	}
 	textUsBtn.addEventListener("click", function () {
+		var host = siteHost();
+		var onSite = host ? " on your website " + host : " on your website";
 		var msg = visitorName
-			? "Hi, I was chatting on your website and wanted to switch to texting instead. My name is " + visitorName + "."
-			: "Hi, I was chatting on your website and wanted to switch to texting instead.";
+			? "Hi, I was chatting" + onSite + " and wanted to switch to texting instead. My name is " + visitorName + "."
+			: "Hi, I was chatting" + onSite + " and wanted to switch to texting instead.";
 		textUsBtn.href = textUsHref(msg);
 	});
 
@@ -304,9 +384,11 @@
 
 	bubble.addEventListener("click", function () {
 		if (!isWithinBusinessHours()) {
+			var host = siteHost();
+			var onSite = host ? " on your website " + host : " on your website";
 			var msg = visitorName
-				? "Hi, I'd like to text instead of chatting online. My name is " + visitorName + "."
-				: "Hi, I'd like to text instead of chatting online.";
+				? "Hi, I'd like to text instead of chatting online" + onSite + ". My name is " + visitorName + "."
+				: "Hi, I'd like to text instead of chatting online" + onSite + ".";
 			window.location.href = textUsHref(msg);
 			return;
 		}
@@ -889,6 +971,7 @@
 	startPresence(function () {
 		if (isWithinBusinessHours()) openPanel();
 	});
+	maybeShowEngagementPopup(function () { return textUsHref(defaultTextUsMessage()); });
 
 	// Warns before closing the tab only while the visitor has the chat panel actually OPEN on an
 	// open session (not merely because hasVisitorInfo/sessionOpen persist in localStorage from some

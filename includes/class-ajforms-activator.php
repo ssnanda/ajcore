@@ -48,6 +48,8 @@ class AJForms_Activator {
 		$table_storage_objects        = $wpdb->prefix . 'aj_storage_objects';
 		$table_chat_sessions          = $wpdb->prefix . 'aj_portal_chat_sessions';
 		$table_chat_messages          = $wpdb->prefix . 'aj_portal_chat_messages';
+		$table_visitor_log            = $wpdb->prefix . 'aj_portal_visitor_log';
+		$table_visitor_identities     = $wpdb->prefix . 'aj_portal_visitor_identities';
 
 		$sql = "CREATE TABLE $table_forms (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -933,6 +935,44 @@ class AJForms_Activator {
 			KEY created_at (created_at)
 		) $charset_collate;
 
+		CREATE TABLE $table_visitor_log (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			site_uuid varchar(100) DEFAULT '' NOT NULL,
+			visitor_uuid varchar(64) NOT NULL,
+			ip_address varchar(100) DEFAULT '' NOT NULL,
+			country varchar(10) DEFAULT '' NOT NULL,
+			region varchar(100) DEFAULT '' NOT NULL,
+			city varchar(100) DEFAULT '' NOT NULL,
+			browser varchar(100) DEFAULT '' NOT NULL,
+			os varchar(100) DEFAULT '' NOT NULL,
+			device_type varchar(30) DEFAULT '' NOT NULL,
+			landing_page text NULL,
+			last_page text NULL,
+			referrer text NULL,
+			page_views int(10) unsigned DEFAULT 1 NOT NULL,
+			started_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			ended_at datetime NULL,
+			PRIMARY KEY  (id),
+			KEY site_uuid (site_uuid),
+			KEY visitor_uuid (visitor_uuid),
+			KEY ip_address (ip_address),
+			KEY started_at (started_at)
+		) $charset_collate;
+
+		CREATE TABLE $table_visitor_identities (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			visitor_uuid varchar(64) NOT NULL,
+			linked_stripe_customer_id varchar(191) DEFAULT '' NOT NULL,
+			linked_lead_id bigint(20) unsigned NULL,
+			linked_by varchar(255) DEFAULT '' NOT NULL,
+			linked_at datetime NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY visitor_uuid (visitor_uuid),
+			KEY linked_stripe_customer_id (linked_stripe_customer_id),
+			KEY linked_lead_id (linked_lead_id)
+		) $charset_collate;
+
 		CREATE TABLE $table_ajphone_conversations (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			conversation_key varchar(255) NOT NULL,
@@ -989,6 +1029,7 @@ class AJForms_Activator {
 				self::create_customer_site_access_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_chat_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::add_chat_session_claim_columns( $pdb->prefix, $pdb );
+				self::create_visitor_log_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 			}
 		}
 
@@ -1353,7 +1394,7 @@ class AJForms_Activator {
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
 		if ( $customer_number_schema_ready && $service_request_number_schema_ready ) {
-			update_option( 'ajforms_portal_schema_version', '42', false );
+			update_option( 'ajforms_portal_schema_version', '43', false );
 		}
 	}
 
@@ -2121,6 +2162,56 @@ class AJForms_Activator {
 			PRIMARY KEY  (id),
 			KEY session_id (session_id),
 			KEY created_at (created_at)
+		) {$charset_collate}" );
+	}
+
+	/**
+	 * Durable "Visitor History" log — one row per Live Monitor presence session (see AJOps'
+	 * server.js presenceSockets), written when that presence socket disconnects, plus a separate
+	 * identities table mapping a visitor_uuid to a linked Lead/Customer ONCE, independent of any
+	 * individual visit row, so every past AND future row for that visitor shows the link without
+	 * having to backfill history each time staff identify who a visitor was.
+	 */
+	public static function create_visitor_log_tables_in_portal_db( $prefix, $charset_collate, $pdb ) {
+		$table_log        = $prefix . 'aj_portal_visitor_log';
+		$table_identities = $prefix . 'aj_portal_visitor_identities';
+
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$table_log} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			site_uuid varchar(100) DEFAULT '' NOT NULL,
+			visitor_uuid varchar(64) NOT NULL,
+			ip_address varchar(100) DEFAULT '' NOT NULL,
+			country varchar(10) DEFAULT '' NOT NULL,
+			region varchar(100) DEFAULT '' NOT NULL,
+			city varchar(100) DEFAULT '' NOT NULL,
+			browser varchar(100) DEFAULT '' NOT NULL,
+			os varchar(100) DEFAULT '' NOT NULL,
+			device_type varchar(30) DEFAULT '' NOT NULL,
+			landing_page text NULL,
+			last_page text NULL,
+			referrer text NULL,
+			page_views int(10) unsigned DEFAULT 1 NOT NULL,
+			started_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			ended_at datetime NULL,
+			PRIMARY KEY  (id),
+			KEY site_uuid (site_uuid),
+			KEY visitor_uuid (visitor_uuid),
+			KEY ip_address (ip_address),
+			KEY started_at (started_at)
+		) {$charset_collate}" );
+
+		$pdb->query( "CREATE TABLE IF NOT EXISTS {$table_identities} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			visitor_uuid varchar(64) NOT NULL,
+			linked_stripe_customer_id varchar(191) DEFAULT '' NOT NULL,
+			linked_lead_id bigint(20) unsigned NULL,
+			linked_by varchar(255) DEFAULT '' NOT NULL,
+			linked_at datetime NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY visitor_uuid (visitor_uuid),
+			KEY linked_stripe_customer_id (linked_stripe_customer_id),
+			KEY linked_lead_id (linked_lead_id)
 		) {$charset_collate}" );
 	}
 
