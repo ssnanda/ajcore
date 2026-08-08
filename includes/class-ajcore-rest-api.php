@@ -1017,9 +1017,12 @@ class AJCore_REST_API {
 			// /chat/sessions above: written by AJOps' server.js when a presence socket disconnects,
 			// never called by a visitor browser directly.
 			'/chat/visitors/log'                       => array( 'methods' => 'POST', 'callback' => 'log_visitor_history', 'permission' => 'can_manage_ops_api' ),
+			'/chat/visitors/log/(?P<id>\d+)/close'     => array( 'methods' => 'POST', 'callback' => 'close_visitor_history_row', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitors'                            => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_history', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitors/(?P<uuid>[^/]+)/link'       => array( 'methods' => 'POST', 'callback' => 'link_ops_visitor_identity', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitors/(?P<uuid>[^/]+)/unlink'     => array( 'methods' => 'POST', 'callback' => 'unlink_ops_visitor_identity', 'permission' => 'can_manage_ops_api' ),
+			'/ops/visitor-banners'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
+			'/ops/visitor-banners/save'                => array( 'methods' => 'POST', 'callback' => 'save_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -1176,10 +1179,13 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/sessions/{id}/unclaim', 'auth' => 'Admin', 'purpose' => 'Clears a Live Chat session\'s assignment.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'DELETE', 'path' => '/ops/chat/sessions/{id}', 'auth' => 'Admin', 'purpose' => 'Deletes a Live Chat session and its messages (e.g. test data).', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/chat/reset', 'auth' => 'Admin', 'purpose' => 'Deletes every Live Chat session/message across every site. Not scoped or reversible.', 'app' => 'OPS live chat' ),
-			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/visitors/log', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Writes one durable Visitor History row when a Live Monitor presence socket disconnects (see server.js presenceSockets).', 'app' => 'Live Chat' ),
-			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/visitors', 'auth' => 'Admin', 'purpose' => 'Visitor History grouped by visitor_uuid, joined with any linked Lead/Customer. Filters: site_uuid, search.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/visitors/log', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Opens a Visitor History row (ended_at NULL) when a Live Monitor presence socket connects; returns its id.', 'app' => 'Live Chat' ),
+			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/visitors/log/{id}/close', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Closes a Visitor History row (sets ended_at + final last_page/page_views) when its presence socket disconnects.', 'app' => 'Live Chat' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/visitors', 'auth' => 'Admin', 'purpose' => 'Visitor History grouped by visitor_uuid, joined with any linked Lead/Customer. Filters: site_uuid, search, online (1 = currently connected — ended_at IS NULL on their latest row).', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/visitors/{uuid}/link', 'auth' => 'Admin', 'purpose' => 'Links a visitor_uuid to a Stripe customer OR a lead (mutually exclusive) — persists across every past and future Visitor History row for that visitor.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/visitors/{uuid}/unlink', 'auth' => 'Admin', 'purpose' => 'Clears a visitor_uuid\'s linked Lead/Customer.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/visitor-banners', 'auth' => 'Admin', 'purpose' => 'Lists predefined banner templates (title/body) staff can push live to a visitor via Live Monitor.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/visitor-banners/save', 'auth' => 'Admin', 'purpose' => 'Replaces the whole banner template list.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/event-log', 'auth' => 'Admin', 'purpose' => 'Portal event/audit log.', 'app' => 'OPS audit' ),
 			array( 'surface' => 'Portal', 'method' => 'GET', 'path' => '/portal/me', 'auth' => 'Portal user or Admin', 'purpose' => 'Current WordPress user and linked customer identity.', 'app' => 'iOS app' ),
@@ -7825,8 +7831,11 @@ class AJCore_REST_API {
 		return $this->portal_table( 'aj_portal_visitor_identities' );
 	}
 
-	/** Written by AJOps' server.js when a Live Monitor presence socket disconnects — one row per
-	 *  visit, not per heartbeat. See presenceSockets in server.js for the shape this is built from. */
+	/** Written by AJOps' server.js the moment a Live Monitor presence socket CONNECTS — ended_at
+	 *  starts NULL (an open row means "still on the site"), returning the row id so server.js can
+	 *  close it out later. This makes "currently online" derivable from AJCore itself (get_ops_
+	 *  visitor_history( online=1 )), not just AJOps' in-memory presenceSockets — anything that only
+	 *  talks to AJCore (the iOS app, notably) can poll it the same way it already polls chat. */
 	public function log_visitor_history( WP_REST_Request $request ) {
 		$pdb   = $this->get_portal_db();
 		$table = $this->get_visitor_log_table();
@@ -7859,11 +7868,42 @@ class AJCore_REST_API {
 				'referrer'     => esc_url_raw( (string) $request->get_param( 'referrer' ) ),
 				'page_views'   => max( 1, absint( $request->get_param( 'page_views' ) ) ),
 				'started_at'   => '' !== $started_at ? $started_at : current_time( 'mysql' ),
-				'ended_at'     => '' !== $ended_at ? $ended_at : current_time( 'mysql' ),
+				// $wpdb treats an explicit PHP null as SQL NULL regardless of the '%s' format given —
+				// this is what makes the row read as "still online" until close_visitor_history_row().
+				'ended_at'     => '' !== $ended_at ? $ended_at : null,
 			),
 			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
+		return rest_ensure_response( array( 'success' => true, 'id' => (int) $pdb->insert_id ) );
+	}
+
+	/** Closes out a Visitor History row when its presence socket disconnects — sets ended_at (so it
+	 *  drops out of the online=1 filter) and the visit's final last_page/page_views. */
+	public function close_visitor_history_row( WP_REST_Request $request ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->get_visitor_log_table();
+		$id    = absint( $request['id'] );
+		if ( ! $this->table_exists( $pdb, $table ) || ! $id ) {
+			return rest_ensure_response( array( 'success' => true ) );
+		}
+
+		$ended_at = sanitize_text_field( (string) $request->get_param( 'ended_at' ) );
+		$data     = array( 'ended_at' => '' !== $ended_at ? $ended_at : current_time( 'mysql' ) );
+		$formats  = array( '%s' );
+
+		$last_page = $request->get_param( 'last_page' );
+		if ( null !== $last_page ) {
+			$data['last_page'] = esc_url_raw( (string) $last_page );
+			$formats[]         = '%s';
+		}
+		$page_views = $request->get_param( 'page_views' );
+		if ( null !== $page_views ) {
+			$data['page_views'] = max( 1, absint( $page_views ) );
+			$formats[]          = '%d';
+		}
+
+		$pdb->update( $table, $data, array( 'id' => $id ), $formats, array( '%d' ) );
 		return rest_ensure_response( array( 'success' => true ) );
 	}
 
@@ -7882,6 +7922,7 @@ class AJCore_REST_API {
 
 		$site_uuid = sanitize_text_field( (string) ( $request->get_param( 'site_uuid' ) ?? '' ) );
 		$search    = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?? '' ) );
+		$online    = rest_sanitize_boolean( $request->get_param( 'online' ) ?? false );
 
 		$where  = array( '1=1' );
 		$params = array();
@@ -7894,6 +7935,12 @@ class AJCore_REST_API {
 			$like     = '%' . $pdb->esc_like( $search ) . '%';
 			$params[] = $like;
 			$params[] = $like;
+		}
+		// Read on the LATEST row per visitor — see the self-join below — so this means "their most
+		// recent visit hasn't been closed out yet", i.e. actually still on the site right now. The
+		// DB-backed equivalent of AJOps' in-memory presenceSockets (see log_visitor_history()).
+		if ( $online ) {
+			$where[] = 'l.ended_at IS NULL';
 		}
 		$where_sql = implode( ' AND ', $where );
 
@@ -7987,6 +8034,7 @@ class AJCore_REST_API {
 				'visits'                => (int) $row['visits'],
 				'first_seen'            => (string) $row['first_started_at'],
 				'last_seen'             => (string) ( $row['ended_at'] ?: $row['started_at'] ),
+				'is_online'             => empty( $row['ended_at'] ),
 				'linked_stripe_customer_id' => $linked_customer_id,
 				'linked_customer_name'  => $linked_customer_id && isset( $customers_by_id[ $linked_customer_id ] ) ? $customers_by_id[ $linked_customer_id ]['name'] : '',
 				'linked_lead_id'        => $linked_lead_id,
@@ -8045,6 +8093,32 @@ class AJCore_REST_API {
 		$visitor_uuid = sanitize_text_field( (string) $request['uuid'] );
 		$pdb->delete( $table, array( 'visitor_uuid' => $visitor_uuid ), array( '%s' ) );
 		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	public function get_ops_visitor_banner_templates() {
+		return rest_ensure_response( array( 'templates' => function_exists( 'ajcore_get_visitor_banner_templates' ) ? ajcore_get_visitor_banner_templates() : array() ) );
+	}
+
+	public function save_ops_visitor_banner_templates( WP_REST_Request $request ) {
+		if ( ! function_exists( 'ajcore_update_visitor_banner_templates' ) ) {
+			return new WP_Error( 'unavailable', __( 'Banner templates are unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$raw = $request->get_param( 'templates' );
+		$templates = array();
+		foreach ( (array) $raw as $t ) {
+			$title = isset( $t['title'] ) ? sanitize_text_field( (string) $t['title'] ) : '';
+			$body  = isset( $t['body'] ) ? sanitize_textarea_field( (string) $t['body'] ) : '';
+			if ( '' === $title && '' === $body ) {
+				continue;
+			}
+			$templates[] = array(
+				'id'    => isset( $t['id'] ) && '' !== $t['id'] ? sanitize_text_field( (string) $t['id'] ) : wp_generate_uuid4(),
+				'title' => $title,
+				'body'  => $body,
+			);
+		}
+		ajcore_update_visitor_banner_templates( $templates );
+		return rest_ensure_response( array( 'success' => true, 'templates' => $templates ) );
 	}
 
 	/** Client mailbox: the current portal user's mail items, without staff-only fields. */

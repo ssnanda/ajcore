@@ -55,10 +55,15 @@
 
 		setTimeout(function () {
 			if (getStored(STORAGE_ENGAGE_DISMISSED) === "1") return;
-			// Desktop only: a returning visitor with the panel already open, or already known to us
-			// (hasVisitorInfo — they've chatted before), doesn't need a cold-open nudge to text.
+			// Desktop only: skip the nudge if the panel's already open, or if they have a currently
+			// ACTIVE session — checking sessionOpen rather than hasVisitorInfo deliberately: hasVisitorInfo
+			// is set the first time anyone ever fills the pre-chat form and never clears itself, so it
+			// was permanently suppressing this popup for any returning visitor forever, even ones whose
+			// last chat ended ages ago (this is what silently broke it during testing). By the time this
+			// 25s timer fires, loadHistory()'s fetch (kicked off at page load) has long since corrected
+			// sessionOpen's optimistic page-load default to the real value.
 			if (typeof panelOpen !== "undefined" && panelOpen) return;
-			if (typeof hasVisitorInfo !== "undefined" && hasVisitorInfo) return;
+			if (typeof sessionOpen !== "undefined" && sessionOpen) return;
 			showEngagementPopup(getSmsHref);
 		}, ENGAGE_DELAY_MS);
 	}
@@ -102,6 +107,43 @@
 		// Same unobtrusive auto-dismiss as the staff-reply preview bubble further down — but doesn't
 		// mark it "remembered", so it's still eligible to show again on a later visit if ignored here.
 		setTimeout(function () { dismissEngagementPopup(popup, false); }, 20000);
+	}
+
+	// ── Staff-pushed banner (predefined templates, sent live from AJOps' Live Monitor) ─────────
+	// Same slide-in-corner-card visual language as the engagement popup, but content comes entirely
+	// from the "show_banner" WS push (see startPresence() below) — staff picks a template, this just
+	// renders whatever title/body arrives. Works identically for mobile (TEXT-bubble-only) and
+	// desktop visitors since it only touches document.body, nothing chat-panel-specific.
+	function showPushedBanner(title, body) {
+		var existing = document.getElementById("ajcore-pushed-banner");
+		if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+		var style = document.createElement("style");
+		style.textContent =
+			"#ajcore-pushed-banner{position:fixed;bottom:88px;right:20px;max-width:280px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:14px 16px;z-index:999997;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}" +
+			"#ajcore-pushed-banner .aj-banner-close{position:absolute;top:6px;right:8px;background:none;border:none;color:#9ca3af;font-size:14px;cursor:pointer;line-height:1;padding:2px;}" +
+			"#ajcore-pushed-banner .aj-banner-title{font-size:13px;font-weight:700;color:#111827;margin:0 0 4px;padding-right:14px;}" +
+			"#ajcore-pushed-banner .aj-banner-body{font-size:13px;color:#374151;line-height:1.4;margin:0;}";
+		document.head.appendChild(style);
+
+		var banner = document.createElement("div");
+		banner.id = "ajcore-pushed-banner";
+		banner.innerHTML =
+			'<button type="button" class="aj-banner-close" aria-label="Dismiss">✕</button>' +
+			( title ? '<p class="aj-banner-title"></p>' : '' ) +
+			( body ? '<p class="aj-banner-body"></p>' : '' );
+		document.body.appendChild(banner);
+		// Set as text (not innerHTML) — title/body are staff-authored but arrive over the wire, same
+		// caution as chat messages elsewhere in this file.
+		if (title) banner.querySelector(".aj-banner-title").textContent = title;
+		if (body) banner.querySelector(".aj-banner-body").textContent = body;
+
+		banner.querySelector(".aj-banner-close").addEventListener("click", function () {
+			if (banner.parentNode) banner.parentNode.removeChild(banner);
+		});
+		setTimeout(function () {
+			if (banner.parentNode) banner.parentNode.removeChild(banner);
+		}, 20000);
 	}
 
 	// ── Passive visitor presence ("Live Monitor" in AJOps) ────────────────────
@@ -151,6 +193,8 @@
 				try { payload = JSON.parse(event.data); } catch (e) { return; }
 				if (payload && payload.type === "open_chat" && handleOpenChat) {
 					handleOpenChat(payload.message || "");
+				} else if (payload && payload.type === "show_banner") {
+					showPushedBanner(payload.title || "", payload.body || "");
 				}
 			};
 			presenceWs.onclose = function () {

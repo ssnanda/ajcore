@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.217
+ * Version: 0.7.218
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.217' );
+	define( 'AJCORE_VERSION', '0.7.218' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -1582,6 +1582,49 @@ if ( ! function_exists( 'ajcore_update_portal_file_settings' ) ) {
 			return false !== $db->insert( $table, $data, array( '%s', '%s', '%s' ) );
 		}
 		return update_option( 'ajcore_portal_file_settings', $settings, false );
+	}
+}
+
+// Staff-authored "predefined banners" (Live Monitor's Visitor History question 3) — pushed live to
+// a specific visitor's page over their presence WebSocket. Same aj_shared_settings storage pattern
+// as ajcore_get/update_portal_file_settings() above: one JSON blob under its own setting_name.
+if ( ! function_exists( 'ajcore_get_visitor_banner_templates' ) ) {
+	function ajcore_get_visitor_banner_templates() {
+		$saved = array();
+		if ( ajcore_is_shared_db_enabled() ) {
+			$db = ajcore_get_shared_db();
+			if ( $db ) {
+				$table = $db->prefix . 'aj_shared_settings';
+				$value = $db->get_var( $db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_visitor_banner_templates' ) );
+				$decoded = json_decode( (string) $value, true );
+				$saved = is_array( $decoded ) ? $decoded : array();
+			}
+		} else {
+			$saved = get_option( 'ajcore_visitor_banner_templates', array() );
+		}
+		return is_array( $saved ) ? array_values( $saved ) : array();
+	}
+}
+
+if ( ! function_exists( 'ajcore_update_visitor_banner_templates' ) ) {
+	function ajcore_update_visitor_banner_templates( $templates ) {
+		$templates = is_array( $templates ) ? array_values( $templates ) : array();
+		if ( ajcore_is_shared_db_enabled() ) {
+			$db = ajcore_get_shared_db();
+			if ( ! $db ) {
+				return false;
+			}
+			$table   = $db->prefix . 'aj_shared_settings';
+			$encoded = wp_json_encode( $templates );
+			$exists  = $db->get_var( $db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_visitor_banner_templates' ) );
+			$data    = array( 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) );
+			if ( $exists ) {
+				return false !== $db->update( $table, $data, array( 'setting_name' => 'ajcore_visitor_banner_templates' ), array( '%s', '%s' ), array( '%s' ) );
+			}
+			$data['setting_name'] = 'ajcore_visitor_banner_templates';
+			return false !== $db->insert( $table, $data, array( '%s', '%s', '%s' ) );
+		}
+		return update_option( 'ajcore_visitor_banner_templates', $templates, false );
 	}
 }
 
