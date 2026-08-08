@@ -9,6 +9,93 @@
 		return;
 	}
 
+	function uuid() {
+		if (window.crypto && window.crypto.randomUUID) {
+			return window.crypto.randomUUID();
+		}
+		return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+			var r = (Math.random() * 16) | 0;
+			var v = c === "x" ? r : (r & 0x3) | 0x8;
+			return v.toString(16);
+		});
+	}
+
+	function getStored(key) {
+		try { return window.localStorage.getItem(key) || ""; } catch (e) { return ""; }
+	}
+	function setStored(key, value) {
+		try { window.localStorage.setItem(key, value); } catch (e) { /* ignore */ }
+	}
+
+	// ── Passive visitor presence ("Live Monitor" in AJOps) ────────────────────
+	// Deliberately ahead of the mobile/desktop branch below — presence tracks every visitor who
+	// loads the page, not just ones who get the full chat widget. Entirely separate connection from
+	// the chat session WebSocket further down: opens immediately, independent of whether this
+	// visitor ever opens the chat bubble at all. handleOpenChat is device-specific (called by each
+	// branch below, once its own UI exists) so a staff "prompt chat" push does the right thing
+	// whether this visitor has the full widget or just the mobile TEXT bubble.
+	var STORAGE_VISITOR_UUID = "ajcore_visitor_uuid";
+	var visitorUuid = getStored(STORAGE_VISITOR_UUID);
+	if (!visitorUuid) {
+		visitorUuid = uuid();
+		setStored(STORAGE_VISITOR_UUID, visitorUuid);
+	}
+
+	function startPresence(handleOpenChat) {
+		var presenceWs = null;
+		var reconnectTimer = null;
+
+		function url() {
+			var base = config.serverUrl.replace(/^http/, "ws");
+			return base + "/chat-ws?role=presence" +
+				"&visitor_uuid=" + encodeURIComponent(visitorUuid) +
+				"&site_uuid=" + encodeURIComponent(config.siteUuid) +
+				"&page=" + encodeURIComponent(window.location.href) +
+				"&referrer=" + encodeURIComponent(document.referrer || "");
+		}
+
+		function scheduleReconnect() {
+			if (reconnectTimer) return;
+			reconnectTimer = setTimeout(function () {
+				reconnectTimer = null;
+				connect();
+			}, 5000);
+		}
+
+		function connect() {
+			try {
+				presenceWs = new WebSocket(url());
+			} catch (e) {
+				scheduleReconnect();
+				return;
+			}
+			presenceWs.onmessage = function (event) {
+				var payload;
+				try { payload = JSON.parse(event.data); } catch (e) { return; }
+				if (payload && payload.type === "open_chat" && handleOpenChat) {
+					handleOpenChat(payload.message || "");
+				}
+			};
+			presenceWs.onclose = function () {
+				presenceWs = null;
+				scheduleReconnect();
+			};
+			presenceWs.onerror = function () {
+				if (presenceWs) presenceWs.close();
+			};
+		}
+		connect();
+
+		// A visitor who leaves this tab backgrounded for a while, then returns, may find the socket
+		// already dead (mobile Safari/Chrome both suspend background WS connections) — check and
+		// reconnect on refocus rather than waiting for the visitor to notice they've gone "offline".
+		document.addEventListener("visibilitychange", function () {
+			if (document.visibilityState === "visible" && (!presenceWs || presenceWs.readyState === WebSocket.CLOSED)) {
+				connect();
+			}
+		});
+	}
+
 	// Desktop/tablet only past this point — the "Mobile" token is what actually distinguishes
 	// phones from tablets here: iPadOS Safari's UA reports as a plain desktop Mac (no match), and
 	// Android tablets omit "Mobile" the way Android phones include it, so this doesn't
@@ -31,6 +118,12 @@
 		mobileBubble.textContent = "TEXT";
 		mobileBubble.href = "sms:" + mobileTextNumber + "?body=" + encodeURIComponent("Hi, I'd like to text about your website.");
 		document.body.appendChild(mobileBubble);
+		// A staff "prompt chat" push has no widget panel to open on mobile — send them straight to
+		// the same SMS handoff the TEXT bubble itself offers, with an optional staff-provided lead-in.
+		startPresence(function (message) {
+			var body = message || "Hi, I'd like to text about your website.";
+			window.location.href = "sms:" + mobileTextNumber + "?body=" + encodeURIComponent(body);
+		});
 		return;
 	}
 
@@ -39,24 +132,6 @@
 	var STORAGE_EMAIL = "ajcore_chat_visitor_email";
 	var STORAGE_PHONE = "ajcore_chat_visitor_phone";
 	var STORAGE_PANEL_OPEN = "ajcore_chat_panel_open";
-
-	function uuid() {
-		if (window.crypto && window.crypto.randomUUID) {
-			return window.crypto.randomUUID();
-		}
-		return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
-			var r = (Math.random() * 16) | 0;
-			var v = c === "x" ? r : (r & 0x3) | 0x8;
-			return v.toString(16);
-		});
-	}
-
-	function getStored(key) {
-		try { return window.localStorage.getItem(key) || ""; } catch (e) { return ""; }
-	}
-	function setStored(key, value) {
-		try { window.localStorage.setItem(key, value); } catch (e) { /* ignore */ }
-	}
 
 	var sessionUuid = getStored(STORAGE_SESSION);
 	if (!sessionUuid) {
@@ -807,6 +882,13 @@
 	if (getStored(STORAGE_PANEL_OPEN) === "1") {
 		openPanel();
 	}
+
+	// A staff "prompt chat" push pops the panel open with a normal chat session ready to go —
+	// declining to interrupt outside business hours (matches the bubble's own click behavior) rather
+	// than popping a panel a visitor can't get a live reply from anyway.
+	startPresence(function () {
+		if (isWithinBusinessHours()) openPanel();
+	});
 
 	// Warns before closing the tab only while the visitor has the chat panel actually OPEN on an
 	// open session (not merely because hasVisitorInfo/sessionOpen persist in localStorage from some
