@@ -7879,7 +7879,24 @@ class AJCore_REST_API {
 			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
-		return rest_ensure_response( array( 'success' => true, 'id' => (int) $pdb->insert_id ) );
+		// Total visits + cumulative time-on-site as of right now (including the row just inserted
+		// above) — returned so server.js can seed its in-memory Live Monitor entry with them instead
+		// of Live Monitor only ever knowing about the CURRENT session (presence is transient, never
+		// persisted — see presenceSockets' own comment in server.js). Same total_seconds computation
+		// as get_ops_visitor_history() above, just for one visitor_uuid instead of the whole list.
+		$agg = $pdb->get_row( $pdb->prepare(
+			"SELECT COUNT(*) AS visits, SUM(TIMESTAMPDIFF(SECOND, started_at, COALESCE(ended_at, %s))) AS total_seconds
+			FROM `{$table}` WHERE visitor_uuid = %s",
+			current_time( 'mysql' ),
+			$visitor_uuid
+		), ARRAY_A );
+
+		return rest_ensure_response( array(
+			'success'       => true,
+			'id'            => (int) $pdb->insert_id,
+			'visits'        => $agg ? (int) $agg['visits'] : 1,
+			'total_seconds' => $agg ? (int) $agg['total_seconds'] : 0,
+		) );
 	}
 
 	/** Closes out a Visitor History row when its presence socket disconnects — sets ended_at (so it
@@ -7928,8 +7945,14 @@ class AJCore_REST_API {
 		$search    = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?? '' ) );
 		$online    = rest_sanitize_boolean( $request->get_param( 'online' ) ?? false );
 
+		// "Now", for the online (ended_at IS NULL) rows' still-running duration below — deliberately
+		// AJCore's own current_time('mysql') rather than MySQL's NOW(), since that's what wrote
+		// started_at/ended_at in the first place (see log_visitor_history()); relying on the DB
+		// server's own clock/timezone instead risks a mismatch skewing the running total.
+		$now_mysql = current_time( 'mysql' );
+
 		$where  = array( '1=1' );
-		$params = array();
+		$params = array( $now_mysql );
 		if ( '' !== $site_uuid ) {
 			$where[]  = 'l.site_uuid = %s';
 			$params[] = $site_uuid;
@@ -7949,12 +7972,17 @@ class AJCore_REST_API {
 		$where_sql = implode( ' AND ', $where );
 
 		// Latest row per visitor_uuid (for its ip/geo/device/page) joined against aggregates
-		// (first-ever visit, total visit count) — a plain GROUP BY on the log table can't give both
-		// "most recent detail" and "all-time aggregate" in one pass without this self-join.
-		$sql = "SELECT l.*, agg.visits, agg.first_started_at
+		// (first-ever visit, total visit count, cumulative time-on-site) — a plain GROUP BY on the
+		// log table can't give both "most recent detail" and "all-time aggregate" in one pass without
+		// this self-join. total_seconds sums every past visit's duration PLUS, for a currently-online
+		// visitor (ended_at IS NULL on their latest row), how long today's visit has run so far —
+		// this is the "visit timer" that keeps climbing across repeat visits rather than resetting
+		// each time (see Visitor.totalSeconds client-side).
+		$sql = "SELECT l.*, agg.visits, agg.first_started_at, agg.total_seconds
 			FROM `{$log_table}` l
 			INNER JOIN (
-				SELECT visitor_uuid, MAX(id) AS latest_id, COUNT(*) AS visits, MIN(started_at) AS first_started_at
+				SELECT visitor_uuid, MAX(id) AS latest_id, COUNT(*) AS visits, MIN(started_at) AS first_started_at,
+					SUM(TIMESTAMPDIFF(SECOND, started_at, COALESCE(ended_at, %s))) AS total_seconds
 				FROM `{$log_table}`
 				GROUP BY visitor_uuid
 			) agg ON agg.visitor_uuid = l.visitor_uuid AND agg.latest_id = l.id
@@ -7962,7 +7990,7 @@ class AJCore_REST_API {
 			ORDER BY l.started_at DESC
 			LIMIT 500";
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
-		$rows = empty( $params ) ? $pdb->get_results( $sql, ARRAY_A ) : $pdb->get_results( $pdb->prepare( $sql, $params ), ARRAY_A );
+		$rows = $pdb->get_results( $pdb->prepare( $sql, $params ), ARRAY_A );
 		$rows = is_array( $rows ) ? $rows : array();
 
 		$identities_by_uuid = array();
@@ -8039,6 +8067,9 @@ class AJCore_REST_API {
 				'first_seen'            => (string) $row['first_started_at'],
 				'last_seen'             => (string) ( $row['ended_at'] ?: $row['started_at'] ),
 				'is_online'             => empty( $row['ended_at'] ),
+				// Cumulative across every visit, including how long a still-online visit has run so
+				// far — keeps climbing on a repeat visit rather than resetting to 0 each time.
+				'total_seconds'         => (int) $row['total_seconds'],
 				'linked_stripe_customer_id' => $linked_customer_id,
 				'linked_customer_name'  => $linked_customer_id && isset( $customers_by_id[ $linked_customer_id ] ) ? $customers_by_id[ $linked_customer_id ]['name'] : '',
 				'linked_lead_id'        => $linked_lead_id,
