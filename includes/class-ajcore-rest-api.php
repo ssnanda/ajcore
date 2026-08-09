@@ -1018,6 +1018,10 @@ class AJCore_REST_API {
 			// never called by a visitor browser directly.
 			'/chat/visitors/log'                       => array( 'methods' => 'POST', 'callback' => 'log_visitor_history', 'permission' => 'can_manage_ops_api' ),
 			'/chat/visitors/log/(?P<id>\d+)/close'     => array( 'methods' => 'POST', 'callback' => 'close_visitor_history_row', 'permission' => 'can_manage_ops_api' ),
+			// "Live Visitors" self-identify prompt — same trust model as /chat/visitors/log above:
+			// relayed by AJOps' server.js from the widget's presence socket, never called by a visitor
+			// browser directly. Creates a Lead and auto-links it to the visitor (see identify_visitor()).
+			'/chat/visitors/identify'                  => array( 'methods' => 'POST', 'callback' => 'identify_visitor', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitors'                            => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_history', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitors/(?P<uuid>[^/]+)/link'       => array( 'methods' => 'POST', 'callback' => 'link_ops_visitor_identity', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitors/(?P<uuid>[^/]+)/unlink'     => array( 'methods' => 'POST', 'callback' => 'unlink_ops_visitor_identity', 'permission' => 'can_manage_ops_api' ),
@@ -8093,6 +8097,101 @@ class AJCore_REST_API {
 		$visitor_uuid = sanitize_text_field( (string) $request['uuid'] );
 		$pdb->delete( $table, array( 'visitor_uuid' => $visitor_uuid ), array( '%s' ) );
 		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	/**
+	 * "Live Visitors" self-identify prompt landing point — a visitor voluntarily leaves their name/
+	 * email/phone from the chat widget's presence connection (see ajcore-chat-widget.js), relayed
+	 * here by AJOps' server.js the same way /chat/visitors/log is (never called by a visitor browser
+	 * directly). Creates a Lead — same lead_data shape ops_create_lead() writes, source "Live
+	 * Visitor" — and auto-links it to the visitor_uuid in aj_portal_visitor_identities, so Visitor
+	 * History shows "Lead: Name" immediately with no staff action, mirroring what a staff "Link"
+	 * button click would do.
+	 */
+	public function identify_visitor( WP_REST_Request $request ) {
+		$pdb = $this->get_portal_db();
+
+		$visitor_uuid = sanitize_text_field( (string) $request->get_param( 'visitor_uuid' ) );
+		$site_uuid    = sanitize_text_field( (string) $request->get_param( 'site_uuid' ) );
+		$name         = sanitize_text_field( (string) ( $request->get_param( 'name' ) ?? '' ) );
+		$email_raw    = (string) ( $request->get_param( 'email' ) ?? '' );
+		$email        = is_email( $email_raw ) ? sanitize_email( $email_raw ) : '';
+		$phone        = $this->normalize_us_phone_for_storage( (string) ( $request->get_param( 'phone' ) ?? '' ) );
+
+		if ( '' === $visitor_uuid ) {
+			return new WP_Error( 'missing_visitor_uuid', __( 'visitor_uuid is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		// A name with no way to reach them isn't useful to staff — same bar the widget's own submit
+		// button enforces client-side, checked again here since this is a public-facing relay.
+		if ( '' === $email && '' === $phone ) {
+			return new WP_Error( 'missing_contact_info', __( 'An email or phone number is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$leads_table = $pdb->prefix . 'aj_forms_leads';
+		if ( ! $this->table_exists( $pdb, $leads_table ) ) {
+			return new WP_Error( 'no_table', __( 'Leads table does not exist.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+
+		if ( '' === $site_uuid ) {
+			$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
+		}
+
+		$lead_data = array(
+			'name'   => array( 'label' => 'Name',   'type' => 'text',  'value' => '' !== $name ? $name : __( 'Website visitor', 'ajforms' ) ),
+			'email'  => array( 'label' => 'Email',  'type' => 'email', 'value' => $email ),
+			'phone'  => array( 'label' => 'Phone',  'type' => 'text',  'value' => $phone ),
+			'source' => array( 'label' => 'Source', 'type' => 'text',  'value' => 'Live Visitor' ),
+			'_meta'  => array(
+				'submitted_at' => current_time( 'mysql' ),
+				'source'       => 'live_visitor',
+				'visitor_uuid' => $visitor_uuid,
+			),
+		);
+
+		$result = $pdb->insert(
+			$leads_table,
+			array(
+				'form_id'     => 0,
+				'lead_data'   => wp_json_encode( $lead_data ),
+				'status'      => 'new',
+				'lead_status' => 'new',
+				'ip_address'  => '',
+				'source_url'  => '',
+				'user_agent'  => 'live-visitor-identify',
+				'site_uuid'   => $site_uuid,
+				'created_at'  => current_time( 'mysql' ),
+			),
+			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+		);
+		if ( ! $result ) {
+			return new WP_Error( 'ajcore_lead_create_failed', __( 'Failed to create lead.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		$lead_id = (int) $pdb->insert_id;
+
+		$id_table = $this->get_visitor_identities_table();
+		if ( $this->table_exists( $pdb, $id_table ) ) {
+			$existing = $pdb->get_row( $pdb->prepare( "SELECT id, linked_stripe_customer_id, linked_lead_id FROM `{$id_table}` WHERE visitor_uuid = %s", $visitor_uuid ), ARRAY_A );
+			// Never clobber an existing link — if staff already linked this visitor to a Customer (or
+			// an earlier Lead), leave it alone; their contact info is still captured on the fresh Lead
+			// row above either way. Only auto-link when there's genuinely nothing linked yet.
+			$already_linked = $existing && ( ! empty( $existing['linked_stripe_customer_id'] ) || ! empty( $existing['linked_lead_id'] ) );
+			if ( ! $already_linked ) {
+				$identity_data = array(
+					'visitor_uuid'               => $visitor_uuid,
+					'linked_stripe_customer_id'  => '',
+					'linked_lead_id'             => $lead_id,
+					'linked_by'                  => __( 'Visitor (self-identified)', 'ajforms' ),
+					'linked_at'                  => current_time( 'mysql' ),
+				);
+				if ( $existing ) {
+					$pdb->update( $id_table, $identity_data, array( 'visitor_uuid' => $visitor_uuid ), array( '%s', '%s', '%d', '%s', '%s' ), array( '%s' ) );
+				} else {
+					$pdb->insert( $id_table, $identity_data, array( '%s', '%s', '%d', '%s', '%s' ) );
+				}
+			}
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'lead_id' => $lead_id ) );
 	}
 
 	public function get_ops_visitor_banner_templates() {

@@ -28135,6 +28135,9 @@ class AJForms_Admin {
 		$is_master    = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
 
 		$settings['chat_widget_enabled'] = isset( $_POST['chat_widget_enabled'] ) ? '1' : '0';
+		// Local per-site, same as chat_widget_enabled just above — never gated by $is_shared_db/
+		// $is_master, so it stays editable here regardless of which site owns the shared secrets.
+		$settings['visitor_identify_enabled'] = isset( $_POST['visitor_identify_enabled'] ) ? '1' : '0';
 
 		if ( ! $is_shared_db || $is_master ) {
 			$settings['chat_server_url'] = isset( $_POST['chat_server_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['chat_server_url'] ) ) ) : '';
@@ -28308,6 +28311,16 @@ class AJForms_Admin {
 					})();
 					</script>
 				<?php endif; ?>
+
+				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Live Visitors', 'ajforms' ); ?></h3>
+				<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'A small, dismissible prompt inviting a visitor to leave their name, email, and/or phone number so staff can follow up later — shown even if they never open the chat panel. Every field is optional for the visitor; submitting creates a Lead here (source "Live Visitor") auto-linked to that visitor\'s history. Requires the chat widget enabled above, since the prompt rides its existing connection.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-field" style="margin-bottom:16px;">
+					<label style="display:flex;align-items:center;gap:8px;font-weight:600;">
+						<input type="checkbox" name="visitor_identify_enabled" value="1" <?php checked( '1', $settings['visitor_identify_enabled'] ?? '0' ); ?>>
+						<?php esc_html_e( 'Ask visitors to leave their name, email, and/or phone on this site', 'ajforms' ); ?>
+					</label>
+					<div class="ajforms-settings-help"><?php esc_html_e( 'Off by default. Turn on per site as you roll it out.', 'ajforms' ); ?></div>
+				</div>
 
 				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Business hours', 'ajforms' ); ?></h3>
 				<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'Shows an offline banner in the widget outside these hours — chat still works, it just sets expectations on reply time.', 'ajforms' ); ?></p>

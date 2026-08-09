@@ -109,6 +109,107 @@
 		setTimeout(function () { dismissEngagementPopup(popup, false); }, 20000);
 	}
 
+	// ── "Live Visitors" self-identify prompt ────────────────────────────────
+	// Same soft, one-time, dismissible-corner-card pattern as the engagement popup above, but asking
+	// to leave name/email/phone rather than "want to text us?" — gated server-side by AJCore's
+	// visitor_identify_enabled site setting (config.identifyEnabled), off by default. Submits over
+	// the presence socket (sendIdentify, set inside startPresence()) rather than a direct HTTP call,
+	// so it's authenticated the same way every other visitor-origin write already is: AJOps' server
+	// relays it to AJCore using the service account, never the visitor's own browser.
+	var STORAGE_IDENTIFY_DISMISSED = "ajcore_identify_dismissed";
+	var STORAGE_IDENTIFY_SUBMITTED = "ajcore_identify_submitted";
+	var IDENTIFY_DELAY_MS = 45000;
+
+	function maybeShowIdentifyPopup() {
+		if (!config.identifyEnabled) return;
+		if (getStored(STORAGE_IDENTIFY_DISMISSED) === "1") return;
+		if (getStored(STORAGE_IDENTIFY_SUBMITTED) === "1") return;
+
+		setTimeout(function () {
+			if (getStored(STORAGE_IDENTIFY_DISMISSED) === "1") return;
+			if (getStored(STORAGE_IDENTIFY_SUBMITTED) === "1") return;
+			if (typeof panelOpen !== "undefined" && panelOpen) return;
+			// hasVisitorInfo means the desktop pre-chat form already collected this — asking again
+			// would be redundant. Only meaningful on desktop (undefined on mobile, which has no
+			// pre-chat form), same typeof guard the engagement popup above uses for the same reason.
+			if (typeof hasVisitorInfo !== "undefined" && hasVisitorInfo) return;
+			// Don't stack two corner popups on top of each other — if the "want to text us?" nudge is
+			// currently showing, skip this round; it'll get another chance on a future page load.
+			if (document.getElementById("ajcore-engage-popup")) return;
+			showIdentifyPopup();
+		}, IDENTIFY_DELAY_MS);
+	}
+
+	function showIdentifyPopup() {
+		var style = document.createElement("style");
+		style.textContent =
+			"#ajcore-identify-popup{position:fixed;bottom:88px;right:20px;max-width:280px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:14px 16px;z-index:999997;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}" +
+			"#ajcore-identify-popup .aj-identify-close{position:absolute;top:6px;right:8px;background:none;border:none;color:#9ca3af;font-size:14px;cursor:pointer;line-height:1;padding:2px;}" +
+			"#ajcore-identify-popup .aj-identify-text{font-size:13px;color:#111827;margin:0 0 10px;padding-right:12px;line-height:1.4;}" +
+			"#ajcore-identify-popup input{display:block;width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:7px 9px;font-size:12px;margin-bottom:6px;font-family:inherit;}" +
+			"#ajcore-identify-popup .aj-identify-actions{display:flex;gap:8px;margin-top:4px;}" +
+			"#ajcore-identify-popup button.aj-identify-btn{flex:1;border-radius:8px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;border:none;}" +
+			"#ajcore-identify-submit{background:#3157ff;color:#fff;}" +
+			"#ajcore-identify-submit:disabled{background:#93a3ff;cursor:not-allowed;}" +
+			"#ajcore-identify-no{background:#f1f5f9;color:#475569;}" +
+			"#ajcore-identify-popup .aj-identify-thanks{font-size:13px;color:#065f46;margin:0;}";
+		document.head.appendChild(style);
+
+		var popup = document.createElement("div");
+		popup.id = "ajcore-identify-popup";
+		popup.innerHTML =
+			'<button type="button" class="aj-identify-close" aria-label="Dismiss">✕</button>' +
+			'<p class="aj-identify-text">Want us to follow up about your visit? Leave your info below — totally optional.</p>' +
+			'<input type="text" id="ajcore-identify-name" placeholder="Name" autocomplete="name">' +
+			'<input type="email" id="ajcore-identify-email" placeholder="Email" autocomplete="email">' +
+			'<input type="tel" id="ajcore-identify-phone" placeholder="Phone" autocomplete="tel">' +
+			'<div class="aj-identify-actions">' +
+				'<button type="button" class="aj-identify-btn" id="ajcore-identify-no">No thanks</button>' +
+				'<button type="button" class="aj-identify-btn" id="ajcore-identify-submit" disabled>Send</button>' +
+			"</div>";
+		document.body.appendChild(popup);
+
+		var nameInput = popup.querySelector("#ajcore-identify-name");
+		var emailInput = popup.querySelector("#ajcore-identify-email");
+		var phoneInput = popup.querySelector("#ajcore-identify-phone");
+		var submitBtn = popup.querySelector("#ajcore-identify-submit");
+
+		// At least one way to reach them — a name alone isn't actionable for staff, and AJCore
+		// rejects an identify submission with neither anyway (see identify_visitor() server-side).
+		function refreshSubmitState() {
+			submitBtn.disabled = !(emailInput.value.trim() || phoneInput.value.trim());
+		}
+		emailInput.addEventListener("input", refreshSubmitState);
+		phoneInput.addEventListener("input", refreshSubmitState);
+
+		function close() {
+			if (popup.parentNode) popup.parentNode.removeChild(popup);
+		}
+
+		popup.querySelector(".aj-identify-close").addEventListener("click", function () {
+			setStored(STORAGE_IDENTIFY_DISMISSED, "1");
+			close();
+		});
+		popup.querySelector("#ajcore-identify-no").addEventListener("click", function () {
+			setStored(STORAGE_IDENTIFY_DISMISSED, "1");
+			close();
+		});
+		submitBtn.addEventListener("click", function () {
+			var name = nameInput.value.trim();
+			var email = emailInput.value.trim();
+			var phone = phoneInput.value.trim();
+			if (!email && !phone) return;
+			if (sendIdentify) sendIdentify({ name: name, email: email, phone: phone });
+			setStored(STORAGE_IDENTIFY_SUBMITTED, "1");
+			popup.innerHTML = '<p class="aj-identify-thanks">Thanks' + (name ? ", " + escapeHtml(name) : "") + "! We'll be in touch.</p>";
+			setTimeout(close, 4000);
+		});
+
+		setTimeout(function () {
+			if (getStored(STORAGE_IDENTIFY_SUBMITTED) !== "1") close();
+		}, 30000);
+	}
+
 	// ── Staff-pushed banner (predefined templates, sent live from AJOps' Live Monitor) ─────────
 	// Same slide-in-corner-card visual language as the engagement popup, but content comes entirely
 	// from the "show_banner" WS push (see startPresence() below) — staff picks a template, this just
@@ -160,9 +261,23 @@
 		setStored(STORAGE_VISITOR_UUID, visitorUuid);
 	}
 
+	// Set by startPresence() below, once its presenceWs closure exists — posts an "identify"
+	// message down the visitor's already-open presence socket (see showIdentifyPopup() further
+	// down). null/no-op before startPresence() runs, or whenever the socket happens to be
+	// reconnecting when the visitor hits Send; that's fine, this is a best-effort nudge.
+	var sendIdentify = null;
+
 	function startPresence(handleOpenChat) {
 		var presenceWs = null;
 		var reconnectTimer = null;
+
+		sendIdentify = function (info) {
+			if (presenceWs && presenceWs.readyState === WebSocket.OPEN) {
+				presenceWs.send(JSON.stringify({ type: "identify", name: info.name, email: info.email, phone: info.phone }));
+				return true;
+			}
+			return false;
+		};
 
 		function url() {
 			var base = config.serverUrl.replace(/^http/, "ws");
@@ -246,6 +361,7 @@
 			window.location.href = "sms:" + mobileTextNumber + "?body=" + encodeURIComponent(body);
 		});
 		maybeShowEngagementPopup(function () { return mobileBubble.href; });
+		maybeShowIdentifyPopup();
 		return;
 	}
 
@@ -1016,6 +1132,7 @@
 		if (isWithinBusinessHours()) openPanel();
 	});
 	maybeShowEngagementPopup(function () { return textUsHref(defaultTextUsMessage()); });
+	maybeShowIdentifyPopup();
 
 	// Warns before closing the tab only while the visitor has the chat panel actually OPEN on an
 	// open session (not merely because hasVisitorInfo/sessionOpen persist in localStorage from some
