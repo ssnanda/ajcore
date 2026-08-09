@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.227
+ * Version: 0.7.228
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.227' );
+	define( 'AJCORE_VERSION', '0.7.228' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -262,6 +262,11 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// the widget retries until the engage popup (if any) is off-screen rather than a one-shot
 			// check, so any combination of the two delays below is safe.
 			'visitor_identify_delay_seconds' => '55',
+			// Visitor-facing "visit timer" — a tiny, unlabeled, barely-there number (cumulative
+			// seconds on site across every visit, not just this one) shown in a page corner. Same
+			// per-site/local reasoning as the settings above; also only has any effect where
+			// chat_widget_enabled is on (the presence connection is what carries the number down).
+			'visitor_timer_enabled'         => '0',
 			// Business hours gate for the widget's offline banner — a simple "Mon-Fri 09:00-17:00"
 			// style string parsed client-side (widget evaluates it against the visitor's local
 			// clock), not a full per-day schedule builder.
@@ -1860,7 +1865,8 @@ function ajcore_render_chat_widget() {
 			engagePopupEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['chat_engage_popup_enabled'] ?? '1' ) ); ?>,
 			engagePopupDelayMs: <?php echo wp_json_encode( max( 0, absint( $settings['chat_engage_popup_delay_seconds'] ?? 25 ) ) * 1000 ); ?>,
 			identifyEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['visitor_identify_enabled'] ?? '' ) ); ?>,
-			identifyDelayMs: <?php echo wp_json_encode( max( 0, absint( $settings['visitor_identify_delay_seconds'] ?? 55 ) ) * 1000 ); ?>
+			identifyDelayMs: <?php echo wp_json_encode( max( 0, absint( $settings['visitor_identify_delay_seconds'] ?? 55 ) ) * 1000 ); ?>,
+			timerEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['visitor_timer_enabled'] ?? '' ) ); ?>
 		};
 	</script>
 	<script src="<?php echo esc_url( AJFORMS_PLUGIN_URL . 'assets/js/ajcore-chat-widget.js' ); ?>?v=<?php echo esc_attr( AJFORMS_VERSION ); ?>" defer></script>

@@ -313,6 +313,42 @@
 		}, 20000);
 	}
 
+	// ── Visitor-facing "visit timer" ────────────────────────────────────────
+	// A tiny, unlabeled, barely-there number in a page corner showing cumulative seconds on this
+	// site across every visit, not just this one — gated by config.timerEnabled (CP Settings > Live
+	// Chat > Visit Timer, off by default). Seeded once from the "visit_stats" WS push (server.js,
+	// sent right after AJCore resolves the real cumulative total) and ticks up locally every second
+	// after that, same base+baseAt pattern used for the identify popup's own ack timeout elsewhere
+	// in this file — no reason to round-trip AJCore every second just to redraw a number.
+	var visitTimerBaseSeconds = 0;
+	var visitTimerBaseAt = 0;
+	var visitTimerEl = null;
+
+	function renderVisitTimer() {
+		if (!visitTimerEl) return;
+		var seconds = visitTimerBaseSeconds + Math.floor((Date.now() - visitTimerBaseAt) / 1000);
+		visitTimerEl.textContent = String(seconds);
+	}
+
+	function handleVisitStats(totalSeconds) {
+		if (!config.timerEnabled) return;
+		visitTimerBaseSeconds = totalSeconds;
+		visitTimerBaseAt = Date.now();
+		if (!visitTimerEl) {
+			var style = document.createElement("style");
+			// Deliberately no card/border/background — just faint text sitting on the page, opposite
+			// corner from the chat bubble/popups (all bottom-right) so it never collides with them.
+			style.textContent =
+				"#ajcore-visit-timer{position:fixed;bottom:8px;left:10px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:10px;color:#9ca3af;opacity:.55;z-index:999996;pointer-events:none;user-select:none;}";
+			document.head.appendChild(style);
+			visitTimerEl = document.createElement("div");
+			visitTimerEl.id = "ajcore-visit-timer";
+			document.body.appendChild(visitTimerEl);
+			setInterval(renderVisitTimer, 1000);
+		}
+		renderVisitTimer();
+	}
+
 	// ── Passive visitor presence ("Live Monitor" in AJOps) ────────────────────
 	// Deliberately ahead of the mobile/desktop branch below — presence tracks every visitor who
 	// loads the page, not just ones who get the full chat widget. Entirely separate connection from
@@ -387,6 +423,8 @@
 					var handler = identifyAckHandler;
 					identifyAckHandler = null;
 					handler(!!payload.success);
+				} else if (payload && payload.type === "visit_stats") {
+					handleVisitStats(Number(payload.totalSeconds) || 0);
 				}
 			};
 			presenceWs.onclose = function () {

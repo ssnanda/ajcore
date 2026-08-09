@@ -28172,13 +28172,14 @@ class AJForms_Admin {
 		$is_master    = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
 
 		$settings['chat_widget_enabled'] = isset( $_POST['chat_widget_enabled'] ) ? '1' : '0';
-		// All four below are local per-site, same as chat_widget_enabled just above — never gated by
+		// All five below are local per-site, same as chat_widget_enabled just above — never gated by
 		// $is_shared_db/$is_master, so they stay editable here regardless of which site owns the
 		// shared secrets.
 		$settings['chat_engage_popup_enabled']      = isset( $_POST['chat_engage_popup_enabled'] ) ? '1' : '0';
 		$settings['chat_engage_popup_delay_seconds'] = isset( $_POST['chat_engage_popup_delay_seconds'] ) ? max( 0, absint( $_POST['chat_engage_popup_delay_seconds'] ) ) : 25;
 		$settings['visitor_identify_enabled']       = isset( $_POST['visitor_identify_enabled'] ) ? '1' : '0';
 		$settings['visitor_identify_delay_seconds'] = isset( $_POST['visitor_identify_delay_seconds'] ) ? max( 0, absint( $_POST['visitor_identify_delay_seconds'] ) ) : 55;
+		$settings['visitor_timer_enabled']          = isset( $_POST['visitor_timer_enabled'] ) ? '1' : '0';
 
 		if ( ! $is_shared_db || $is_master ) {
 			$settings['chat_server_url'] = isset( $_POST['chat_server_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['chat_server_url'] ) ) ) : '';
@@ -28380,6 +28381,16 @@ class AJForms_Admin {
 					<label for="visitor_identify_delay_seconds"><?php esc_html_e( 'Delay before showing (seconds)', 'ajforms' ); ?></label>
 					<input type="number" min="0" name="visitor_identify_delay_seconds" id="visitor_identify_delay_seconds" value="<?php echo esc_attr( $settings['visitor_identify_delay_seconds'] ?? '55' ); ?>">
 					<div class="ajforms-settings-help"><?php esc_html_e( 'The widget waits for the Engagement Popup above to be off-screen before showing this one, so any delay combination is safe.', 'ajforms' ); ?></div>
+				</div>
+
+				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Visit Timer', 'ajforms' ); ?></h3>
+				<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'A tiny, unlabeled number in a page corner showing cumulative seconds on this site across every visit, not just this one — ticks up live. Deliberately understated (small, muted, no card or label), there for a visitor who happens to notice it, not a headline feature. Requires the chat widget enabled above, since the number rides its existing connection.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-field" style="margin-bottom:16px;">
+					<label style="display:flex;align-items:center;gap:8px;font-weight:600;">
+						<input type="checkbox" name="visitor_timer_enabled" value="1" <?php checked( '1', $settings['visitor_timer_enabled'] ?? '0' ); ?>>
+						<?php esc_html_e( 'Show a cumulative visit timer to visitors on this site', 'ajforms' ); ?>
+					</label>
+					<div class="ajforms-settings-help"><?php esc_html_e( 'Off by default. Turn on per site as you roll it out.', 'ajforms' ); ?></div>
 				</div>
 
 				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Business hours', 'ajforms' ); ?></h3>
