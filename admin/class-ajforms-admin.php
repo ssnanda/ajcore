@@ -28135,9 +28135,13 @@ class AJForms_Admin {
 		$is_master    = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
 
 		$settings['chat_widget_enabled'] = isset( $_POST['chat_widget_enabled'] ) ? '1' : '0';
-		// Local per-site, same as chat_widget_enabled just above — never gated by $is_shared_db/
-		// $is_master, so it stays editable here regardless of which site owns the shared secrets.
-		$settings['visitor_identify_enabled'] = isset( $_POST['visitor_identify_enabled'] ) ? '1' : '0';
+		// All four below are local per-site, same as chat_widget_enabled just above — never gated by
+		// $is_shared_db/$is_master, so they stay editable here regardless of which site owns the
+		// shared secrets.
+		$settings['chat_engage_popup_enabled']      = isset( $_POST['chat_engage_popup_enabled'] ) ? '1' : '0';
+		$settings['chat_engage_popup_delay_seconds'] = isset( $_POST['chat_engage_popup_delay_seconds'] ) ? max( 0, absint( $_POST['chat_engage_popup_delay_seconds'] ) ) : 25;
+		$settings['visitor_identify_enabled']       = isset( $_POST['visitor_identify_enabled'] ) ? '1' : '0';
+		$settings['visitor_identify_delay_seconds'] = isset( $_POST['visitor_identify_delay_seconds'] ) ? max( 0, absint( $_POST['visitor_identify_delay_seconds'] ) ) : 55;
 
 		if ( ! $is_shared_db || $is_master ) {
 			$settings['chat_server_url'] = isset( $_POST['chat_server_url'] ) ? esc_url_raw( trim( wp_unslash( $_POST['chat_server_url'] ) ) ) : '';
@@ -28312,6 +28316,20 @@ class AJForms_Admin {
 					</script>
 				<?php endif; ?>
 
+				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Engagement Popup', 'ajforms' ); ?></h3>
+				<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'The passive "want to text us?" nudge — a small dismissible corner popup offering a one-tap text-us link to a visitor who\'s been on the page a while.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-field" style="margin-bottom:16px;">
+					<label style="display:flex;align-items:center;gap:8px;font-weight:600;">
+						<input type="checkbox" name="chat_engage_popup_enabled" value="1" <?php checked( '1', $settings['chat_engage_popup_enabled'] ?? '1' ); ?>>
+						<?php esc_html_e( 'Show the "want to text us?" popup on this site', 'ajforms' ); ?>
+					</label>
+					<div class="ajforms-settings-help"><?php esc_html_e( 'On by default.', 'ajforms' ); ?></div>
+				</div>
+				<div class="ajforms-settings-field" style="max-width:200px;margin-bottom:16px;">
+					<label for="chat_engage_popup_delay_seconds"><?php esc_html_e( 'Delay before showing (seconds)', 'ajforms' ); ?></label>
+					<input type="number" min="0" name="chat_engage_popup_delay_seconds" id="chat_engage_popup_delay_seconds" value="<?php echo esc_attr( $settings['chat_engage_popup_delay_seconds'] ?? '25' ); ?>">
+				</div>
+
 				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Live Visitors', 'ajforms' ); ?></h3>
 				<p style="margin:0 0 16px;color:#6b7280;font-size:13px;max-width:680px;"><?php esc_html_e( 'A small, dismissible prompt inviting a visitor to leave their name, email, and/or phone number so staff can follow up later — shown even if they never open the chat panel. Every field is optional for the visitor; submitting creates a Lead here (source "Live Visitor") auto-linked to that visitor\'s history. Requires the chat widget enabled above, since the prompt rides its existing connection.', 'ajforms' ); ?></p>
 				<div class="ajforms-settings-field" style="margin-bottom:16px;">
@@ -28320,6 +28338,11 @@ class AJForms_Admin {
 						<?php esc_html_e( 'Ask visitors to leave their name, email, and/or phone on this site', 'ajforms' ); ?>
 					</label>
 					<div class="ajforms-settings-help"><?php esc_html_e( 'Off by default. Turn on per site as you roll it out.', 'ajforms' ); ?></div>
+				</div>
+				<div class="ajforms-settings-field" style="max-width:200px;margin-bottom:16px;">
+					<label for="visitor_identify_delay_seconds"><?php esc_html_e( 'Delay before showing (seconds)', 'ajforms' ); ?></label>
+					<input type="number" min="0" name="visitor_identify_delay_seconds" id="visitor_identify_delay_seconds" value="<?php echo esc_attr( $settings['visitor_identify_delay_seconds'] ?? '55' ); ?>">
+					<div class="ajforms-settings-help"><?php esc_html_e( 'The widget waits for the Engagement Popup above to be off-screen before showing this one, so any delay combination is safe.', 'ajforms' ); ?></div>
 				</div>
 
 				<h3 style="margin:24px 0 4px;"><?php esc_html_e( 'Business hours', 'ajforms' ); ?></h3>

@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.220
+ * Version: 0.7.221
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.220' );
+	define( 'AJCORE_VERSION', '0.7.221' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -248,12 +248,20 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'chat_ws_token_secret'          => '',
 			'chat_internal_secret'          => '',
 			'chat_widget_enabled'           => '0',
+			// Passive "want to text us?" nudge — on by default (matches the widget's original
+			// always-on behavior, before this toggle existed) so existing sites see no change.
+			'chat_engage_popup_enabled'     => '1',
+			'chat_engage_popup_delay_seconds' => '25',
 			// "Live Visitors" self-identify prompt — a light, dismissible ask (name/email/phone, all
 			// optional) shown from the chat widget's presence connection, independent of whether the
 			// visitor ever opens the chat panel. Deliberately LOCAL per-site, same reasoning as
 			// chat_widget_enabled just above, and only has any effect where that's also on (the prompt
 			// rides the widget's existing presence WebSocket — see ajcore-chat-widget.js).
 			'visitor_identify_enabled'      => '0',
+			// No fixed-collision floor needed against the engage popup's delay/auto-dismiss window —
+			// the widget retries until the engage popup (if any) is off-screen rather than a one-shot
+			// check, so any combination of the two delays below is safe.
+			'visitor_identify_delay_seconds' => '55',
 			// Business hours gate for the widget's offline banner — a simple "Mon-Fri 09:00-17:00"
 			// style string parsed client-side (widget evaluates it against the visitor's local
 			// clock), not a full per-day schedule builder.
@@ -1849,7 +1857,10 @@ function ajcore_render_chat_widget() {
 			siteUuid: <?php echo wp_json_encode( $site_uuid ); ?>,
 			businessHoursEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['chat_business_hours_enabled'] ?? '' ) ); ?>,
 			businessHours: <?php echo wp_json_encode( (string) ( $settings['chat_business_hours'] ?? '' ) ); ?>,
-			identifyEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['visitor_identify_enabled'] ?? '' ) ); ?>
+			engagePopupEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['chat_engage_popup_enabled'] ?? '1' ) ); ?>,
+			engagePopupDelayMs: <?php echo wp_json_encode( max( 0, absint( $settings['chat_engage_popup_delay_seconds'] ?? 25 ) ) * 1000 ); ?>,
+			identifyEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['visitor_identify_enabled'] ?? '' ) ); ?>,
+			identifyDelayMs: <?php echo wp_json_encode( max( 0, absint( $settings['visitor_identify_delay_seconds'] ?? 55 ) ) * 1000 ); ?>
 		};
 	</script>
 	<script src="<?php echo esc_url( AJFORMS_PLUGIN_URL . 'assets/js/ajcore-chat-widget.js' ); ?>?v=<?php echo esc_attr( AJFORMS_VERSION ); ?>" defer></script>

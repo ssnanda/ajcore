@@ -48,9 +48,12 @@
 	// mobile TEXT bubble and the desktop CHAT widget branches below (each calls this once, passing
 	// how to build that device's SMS href) so the popup/dismissal logic isn't duplicated twice.
 	var STORAGE_ENGAGE_DISMISSED = "ajcore_engage_dismissed";
-	var ENGAGE_DELAY_MS = 25000;
+	// Configurable from CP Settings > Live Chat > Engagement Popup; falls back to the original
+	// always-on 25s if an older AJCore (before that setting existed) ever serves this file.
+	var ENGAGE_DELAY_MS = typeof config.engagePopupDelayMs === "number" ? config.engagePopupDelayMs : 25000;
 
 	function maybeShowEngagementPopup(getSmsHref) {
+		if (config.engagePopupEnabled === false) return;
 		if (getStored(STORAGE_ENGAGE_DISMISSED) === "1") return;
 
 		setTimeout(function () {
@@ -118,14 +121,19 @@
 	// relays it to AJCore using the service account, never the visitor's own browser.
 	var STORAGE_IDENTIFY_DISMISSED = "ajcore_identify_dismissed";
 	var STORAGE_IDENTIFY_SUBMITTED = "ajcore_identify_submitted";
-	var IDENTIFY_DELAY_MS = 45000;
+	// Configurable from CP Settings > Live Chat > Live Visitors; falls back to 55s if an older
+	// AJCore (before that setting existed) ever serves this file.
+	var IDENTIFY_DELAY_MS = typeof config.identifyDelayMs === "number" ? config.identifyDelayMs : 55000;
+	var IDENTIFY_RETRY_MS = 3000;
+	var IDENTIFY_MAX_WAIT_MS = 60000;
 
 	function maybeShowIdentifyPopup() {
 		if (!config.identifyEnabled) return;
 		if (getStored(STORAGE_IDENTIFY_DISMISSED) === "1") return;
 		if (getStored(STORAGE_IDENTIFY_SUBMITTED) === "1") return;
 
-		setTimeout(function () {
+		var waitedForEngagePopup = 0;
+		function attempt() {
 			if (getStored(STORAGE_IDENTIFY_DISMISSED) === "1") return;
 			if (getStored(STORAGE_IDENTIFY_SUBMITTED) === "1") return;
 			if (typeof panelOpen !== "undefined" && panelOpen) return;
@@ -134,10 +142,19 @@
 			// pre-chat form), same typeof guard the engagement popup above uses for the same reason.
 			if (typeof hasVisitorInfo !== "undefined" && hasVisitorInfo) return;
 			// Don't stack two corner popups on top of each other — if the "want to text us?" nudge is
-			// currently showing, skip this round; it'll get another chance on a future page load.
-			if (document.getElementById("ajcore-engage-popup")) return;
+			// currently showing, wait it out rather than giving up: both delays are now staff-
+			// configurable (CP Settings > Live Chat), so no fixed gap between them is guaranteed —
+			// this is what silently ate the popup entirely when the two delays happened to coincide.
+			if (document.getElementById("ajcore-engage-popup")) {
+				if (waitedForEngagePopup < IDENTIFY_MAX_WAIT_MS) {
+					waitedForEngagePopup += IDENTIFY_RETRY_MS;
+					setTimeout(attempt, IDENTIFY_RETRY_MS);
+				}
+				return;
+			}
 			showIdentifyPopup();
-		}, IDENTIFY_DELAY_MS);
+		}
+		setTimeout(attempt, IDENTIFY_DELAY_MS);
 	}
 
 	function showIdentifyPopup() {
