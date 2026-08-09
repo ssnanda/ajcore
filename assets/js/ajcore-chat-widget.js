@@ -119,28 +119,47 @@
 	// the presence socket (sendIdentify, set inside startPresence()) rather than a direct HTTP call,
 	// so it's authenticated the same way every other visitor-origin write already is: AJOps' server
 	// relays it to AJCore using the service account, never the visitor's own browser.
-	var STORAGE_IDENTIFY_DISMISSED = "ajcore_identify_dismissed";
+	// A dismissal used to be a permanent "ajcore_identify_dismissed=1" block for that browser
+	// forever. Now it's a timestamp + cooldown instead — a visitor who says "No thanks" but then
+	// keeps browsing well past the cooldown window is a different signal than one who left, so
+	// they're worth asking again rather than being silently written off for good.
+	var STORAGE_IDENTIFY_DISMISSED_AT = "ajcore_identify_dismissed_at";
 	var STORAGE_IDENTIFY_SUBMITTED = "ajcore_identify_submitted";
+	var IDENTIFY_REASK_COOLDOWN_MS = 20 * 60 * 1000; // 20 minutes
 	// Configurable from CP Settings > Live Chat > Live Visitors; falls back to 55s if an older
 	// AJCore (before that setting existed) ever serves this file.
 	var IDENTIFY_DELAY_MS = typeof config.identifyDelayMs === "number" ? config.identifyDelayMs : 55000;
 	var IDENTIFY_RETRY_MS = 3000;
 	var IDENTIFY_MAX_WAIT_MS = 60000;
 
+	// Null once never dismissed / cooldown has fully elapsed; otherwise the ms still remaining.
+	function identifyCooldownRemainingMs() {
+		var at = parseInt(getStored(STORAGE_IDENTIFY_DISMISSED_AT) || "0", 10);
+		if (!at) return 0;
+		var remaining = IDENTIFY_REASK_COOLDOWN_MS - (Date.now() - at);
+		return remaining > 0 ? remaining : 0;
+	}
+
 	function maybeShowIdentifyPopup() {
 		if (!config.identifyEnabled) return;
-		if (getStored(STORAGE_IDENTIFY_DISMISSED) === "1") return;
 		if (getStored(STORAGE_IDENTIFY_SUBMITTED) === "1") return;
 
 		var waitedForEngagePopup = 0;
 		function attempt() {
-			if (getStored(STORAGE_IDENTIFY_DISMISSED) === "1") return;
 			if (getStored(STORAGE_IDENTIFY_SUBMITTED) === "1") return;
 			if (typeof panelOpen !== "undefined" && panelOpen) return;
 			// hasVisitorInfo means the desktop pre-chat form already collected this — asking again
 			// would be redundant. Only meaningful on desktop (undefined on mobile, which has no
 			// pre-chat form), same typeof guard the engagement popup above uses for the same reason.
 			if (typeof hasVisitorInfo !== "undefined" && hasVisitorInfo) return;
+			// Still cooling down from a "No thanks" — check back exactly when the cooldown ends
+			// rather than giving up, so a visitor who stays on the site through the whole window
+			// still gets asked again without needing a fresh page load.
+			var cooldown = identifyCooldownRemainingMs();
+			if (cooldown > 0) {
+				setTimeout(attempt, cooldown);
+				return;
+			}
 			// Don't stack two corner popups on top of each other — if the "want to text us?" nudge is
 			// currently showing, wait it out rather than giving up: both delays are now staff-
 			// configurable (CP Settings > Live Chat), so no fixed gap between them is guaranteed —
@@ -208,11 +227,11 @@
 		}
 
 		popup.querySelector(".aj-identify-close").addEventListener("click", function () {
-			setStored(STORAGE_IDENTIFY_DISMISSED, "1");
+			setStored(STORAGE_IDENTIFY_DISMISSED_AT, String(Date.now()));
 			close();
 		});
 		popup.querySelector("#ajcore-identify-no").addEventListener("click", function () {
-			setStored(STORAGE_IDENTIFY_DISMISSED, "1");
+			setStored(STORAGE_IDENTIFY_DISMISSED_AT, String(Date.now()));
 			close();
 		});
 		var errorEl = document.createElement("p");

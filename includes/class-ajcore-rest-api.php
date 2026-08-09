@@ -1025,6 +1025,7 @@ class AJCore_REST_API {
 			'/ops/visitors'                            => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_history', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitors/(?P<uuid>[^/]+)/link'       => array( 'methods' => 'POST', 'callback' => 'link_ops_visitor_identity', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitors/(?P<uuid>[^/]+)/unlink'     => array( 'methods' => 'POST', 'callback' => 'unlink_ops_visitor_identity', 'permission' => 'can_manage_ops_api' ),
+			'/ops/visitors/(?P<uuid>[^/]+)'            => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_visitor', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners/save'                => array( 'methods' => 'POST', 'callback' => 'save_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
@@ -1188,6 +1189,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/visitors', 'auth' => 'Admin', 'purpose' => 'Visitor History grouped by visitor_uuid, joined with any linked Lead/Customer. Filters: site_uuid, search, online (1 = currently connected — ended_at IS NULL on their latest row).', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/visitors/{uuid}/link', 'auth' => 'Admin', 'purpose' => 'Links a visitor_uuid to a Stripe customer OR a lead (mutually exclusive) — persists across every past and future Visitor History row for that visitor.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/visitors/{uuid}/unlink', 'auth' => 'Admin', 'purpose' => 'Clears a visitor_uuid\'s linked Lead/Customer.', 'app' => 'OPS live chat' ),
+			array( 'surface' => 'OPS', 'method' => 'DELETE', 'path' => '/ops/visitors/{uuid}', 'auth' => 'Admin', 'purpose' => 'Permanently deletes every Visitor History row for a visitor_uuid and clears its identity link. Does NOT delete any Lead/Customer it was linked to.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/visitor-banners', 'auth' => 'Admin', 'purpose' => 'Lists predefined banner templates (title/body) staff can push live to a visitor via Live Monitor.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/visitor-banners/save', 'auth' => 'Admin', 'purpose' => 'Replaces the whole banner template list.', 'app' => 'OPS live chat' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/sync-logs', 'auth' => 'Admin', 'purpose' => 'Stripe/sync job history.', 'app' => 'OPS sync center' ),
@@ -8128,6 +8130,31 @@ class AJCore_REST_API {
 		$visitor_uuid = sanitize_text_field( (string) $request['uuid'] );
 		$pdb->delete( $table, array( 'visitor_uuid' => $visitor_uuid ), array( '%s' ) );
 		return rest_ensure_response( array( 'success' => true ) );
+	}
+
+	/** Permanently deletes every Visitor History row for a visitor_uuid (own test visits, spam,
+	 *  whatever staff wants gone) and clears its identity link — but deliberately does NOT touch any
+	 *  Lead/Customer that link pointed to; deleting browsing history shouldn't silently delete a real
+	 *  Lead someone became. Irreversible, staff-only (can_manage_ops_api), no soft-delete/undo. */
+	public function delete_ops_visitor( WP_REST_Request $request ) {
+		$pdb          = $this->get_portal_db();
+		$visitor_uuid = sanitize_text_field( (string) $request['uuid'] );
+		if ( '' === $visitor_uuid ) {
+			return new WP_Error( 'missing_visitor_uuid', __( 'visitor_uuid is required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+
+		$log_table    = $this->get_visitor_log_table();
+		$deleted_rows = 0;
+		if ( $this->table_exists( $pdb, $log_table ) ) {
+			$deleted_rows = (int) $pdb->delete( $log_table, array( 'visitor_uuid' => $visitor_uuid ), array( '%s' ) );
+		}
+
+		$id_table = $this->get_visitor_identities_table();
+		if ( $this->table_exists( $pdb, $id_table ) ) {
+			$pdb->delete( $id_table, array( 'visitor_uuid' => $visitor_uuid ), array( '%s' ) );
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'deleted_rows' => $deleted_rows ) );
 	}
 
 	/**
