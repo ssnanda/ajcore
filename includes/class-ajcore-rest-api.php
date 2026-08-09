@@ -7886,10 +7886,13 @@ class AJCore_REST_API {
 		// of Live Monitor only ever knowing about the CURRENT session (presence is transient, never
 		// persisted — see presenceSockets' own comment in server.js). Same total_seconds computation
 		// as get_ops_visitor_history() above, just for one visitor_uuid instead of the whole list.
+		// gmdate(), NOT current_time('mysql') — started_at/ended_at are written by AJOps' server.js
+		// via toMysqlDatetime() (Date#toISOString, always UTC), so "now" has to be UTC too or this
+		// silently drifts by whatever this WP site's configured timezone offset is.
 		$agg = $pdb->get_row( $pdb->prepare(
 			"SELECT COUNT(*) AS visits, SUM(TIMESTAMPDIFF(SECOND, started_at, COALESCE(ended_at, %s))) AS total_seconds
 			FROM `{$table}` WHERE visitor_uuid = %s",
-			current_time( 'mysql' ),
+			gmdate( 'Y-m-d H:i:s' ),
 			$visitor_uuid
 		), ARRAY_A );
 
@@ -7947,11 +7950,14 @@ class AJCore_REST_API {
 		$search    = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?? '' ) );
 		$online    = rest_sanitize_boolean( $request->get_param( 'online' ) ?? false );
 
-		// "Now", for the online (ended_at IS NULL) rows' still-running duration below — deliberately
-		// AJCore's own current_time('mysql') rather than MySQL's NOW(), since that's what wrote
-		// started_at/ended_at in the first place (see log_visitor_history()); relying on the DB
-		// server's own clock/timezone instead risks a mismatch skewing the running total.
-		$now_mysql = current_time( 'mysql' );
+		// "Now", for the online (ended_at IS NULL) rows' still-running duration below — gmdate(), NOT
+		// current_time('mysql') or MySQL's own NOW(). started_at/ended_at are supplied by AJOps'
+		// server.js (toMysqlDatetime(), backed by Date#toISOString — always UTC), not by
+		// current_time('mysql')'s WP-site-timezone fallback in log_visitor_history() below, which in
+		// practice server.js never actually leaves unset. Using anything but UTC here silently skews
+		// every running total by this site's configured timezone offset (this is the bug behind the
+		// "date/time shown is off by several hours" report from the iOS app).
+		$now_mysql = gmdate( 'Y-m-d H:i:s' );
 
 		$where  = array( '1=1' );
 		$params = array( $now_mysql );
