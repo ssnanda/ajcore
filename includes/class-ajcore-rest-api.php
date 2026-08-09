@@ -8168,30 +8168,63 @@ class AJCore_REST_API {
 		}
 		$lead_id = (int) $pdb->insert_id;
 
-		$id_table = $this->get_visitor_identities_table();
-		if ( $this->table_exists( $pdb, $id_table ) ) {
-			$existing = $pdb->get_row( $pdb->prepare( "SELECT id, linked_stripe_customer_id, linked_lead_id FROM `{$id_table}` WHERE visitor_uuid = %s", $visitor_uuid ), ARRAY_A );
-			// Never clobber an existing link — if staff already linked this visitor to a Customer (or
-			// an earlier Lead), leave it alone; their contact info is still captured on the fresh Lead
-			// row above either way. Only auto-link when there's genuinely nothing linked yet.
-			$already_linked = $existing && ( ! empty( $existing['linked_stripe_customer_id'] ) || ! empty( $existing['linked_lead_id'] ) );
-			if ( ! $already_linked ) {
-				$identity_data = array(
-					'visitor_uuid'               => $visitor_uuid,
-					'linked_stripe_customer_id'  => '',
-					'linked_lead_id'             => $lead_id,
-					'linked_by'                  => __( 'Visitor (self-identified)', 'ajforms' ),
-					'linked_at'                  => current_time( 'mysql' ),
-				);
-				if ( $existing ) {
-					$pdb->update( $id_table, $identity_data, array( 'visitor_uuid' => $visitor_uuid ), array( '%s', '%s', '%d', '%s', '%s' ), array( '%s' ) );
-				} else {
-					$pdb->insert( $id_table, $identity_data, array( '%s', '%s', '%d', '%s', '%s' ) );
+		// Find this visitor's OTHER visitor_uuids on this site — e.g. they cleared cookies/local
+		// storage between visits, or used a private window once, so an earlier visit logged under a
+		// different visitor_uuid than today's. Matched by this visitor's own latest ip_address +
+		// browser + os — the same "possibly the same person" clusterKey Visitor History already
+		// computes for DISPLAY grouping (never treated as identity there, since shared WiFi/VPN/
+		// carrier NAT all cause false matches on IP alone). Real contact info from this submission is
+		// what makes it safe to actually act on that signal here, not just show it to staff.
+		$log_table       = $this->get_visitor_log_table();
+		$uuids_to_link   = array( $visitor_uuid );
+		if ( $this->table_exists( $pdb, $log_table ) ) {
+			$own_latest = $pdb->get_row( $pdb->prepare( "SELECT ip_address, browser, os FROM `{$log_table}` WHERE visitor_uuid = %s ORDER BY id DESC LIMIT 1", $visitor_uuid ), ARRAY_A );
+			if ( $own_latest && '' !== (string) $own_latest['ip_address'] ) {
+				$cluster_uuids = $pdb->get_col( $pdb->prepare(
+					"SELECT DISTINCT visitor_uuid FROM `{$log_table}` WHERE site_uuid = %s AND ip_address = %s AND browser = %s AND os = %s AND visitor_uuid != %s",
+					$site_uuid,
+					(string) $own_latest['ip_address'],
+					(string) $own_latest['browser'],
+					(string) $own_latest['os'],
+					$visitor_uuid
+				) );
+				if ( ! empty( $cluster_uuids ) ) {
+					$uuids_to_link = array_merge( $uuids_to_link, $cluster_uuids );
 				}
 			}
 		}
 
-		return rest_ensure_response( array( 'success' => true, 'lead_id' => $lead_id ) );
+		$linked_uuids = array();
+		$id_table     = $this->get_visitor_identities_table();
+		if ( $this->table_exists( $pdb, $id_table ) ) {
+			foreach ( $uuids_to_link as $uuid_to_link ) {
+				$existing = $pdb->get_row( $pdb->prepare( "SELECT id, linked_stripe_customer_id, linked_lead_id FROM `{$id_table}` WHERE visitor_uuid = %s", $uuid_to_link ), ARRAY_A );
+				// Never clobber an existing link — if staff (or an earlier self-identify) already
+				// linked this visitor_uuid to a Customer or a different Lead, leave it alone. Only
+				// auto-link when there's genuinely nothing linked yet.
+				$already_linked = $existing && ( ! empty( $existing['linked_stripe_customer_id'] ) || ! empty( $existing['linked_lead_id'] ) );
+				if ( $already_linked ) {
+					continue;
+				}
+				$identity_data = array(
+					'visitor_uuid'               => $uuid_to_link,
+					'linked_stripe_customer_id'  => '',
+					'linked_lead_id'             => $lead_id,
+					'linked_by'                  => $uuid_to_link === $visitor_uuid
+						? __( 'Visitor (self-identified)', 'ajforms' )
+						: __( 'Visitor (self-identified, matched by device)', 'ajforms' ),
+					'linked_at'                  => current_time( 'mysql' ),
+				);
+				if ( $existing ) {
+					$pdb->update( $id_table, $identity_data, array( 'visitor_uuid' => $uuid_to_link ), array( '%s', '%s', '%d', '%s', '%s' ), array( '%s' ) );
+				} else {
+					$pdb->insert( $id_table, $identity_data, array( '%s', '%s', '%d', '%s', '%s' ) );
+				}
+				$linked_uuids[] = $uuid_to_link;
+			}
+		}
+
+		return rest_ensure_response( array( 'success' => true, 'lead_id' => $lead_id, 'linked_visitor_uuids' => $linked_uuids ) );
 	}
 
 	public function get_ops_visitor_banner_templates() {
