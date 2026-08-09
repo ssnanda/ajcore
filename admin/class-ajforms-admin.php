@@ -14233,6 +14233,31 @@ class AJForms_Admin {
 				'
 			);
 		}
+
+		// Global mobile backstop for every AJCore admin page (the $hook_suffix gate above already
+		// scopes this whole method to AJCore's own pages only). Two problems, neither with a
+		// per-page fix everywhere it's needed: (1) .ajcore-tabs-shell's own @media(max-width:1100px)
+		// rule hides every .ajcore-tab-link and expects a sibling .ajcore-tab-select to take over —
+		// true on the main Client Portal tabs nav, but the CP Settings and Rentec sub-navs never got
+		// one, so their tabs just vanished under 1100px with nothing in their place (now fixed at the
+		// markup level, this is a belt-and-suspenders backstop for any other instance of the same
+		// pattern); (2) wide .widefat data tables (Leads, Customers, Tasks, Mail, Gmail Intake, …)
+		// have no horizontal-scroll fallback, so they either overflow the viewport or force it wider
+		// than the phone screen — same display:block+overflow-x:auto trick already used for
+		// .ajcore-schema-table elsewhere in this file.
+		wp_add_inline_style(
+			'wp-admin',
+			'
+			@media (max-width: 782px) {
+				.ajcore-tabs-shell{flex-wrap:wrap}
+				.ajcore-tabs-shell .ajcore-tab-link{display:none!important}
+				.ajcore-tabs-shell .ajcore-tab-select{display:block!important;max-width:none!important}
+				.ajcore-tabs-shell .ajcore-tab-spacer{display:none!important}
+				.wrap .widefat{display:block;overflow-x:auto}
+				.ajforms-settings-card,.ajcore-admin-panel{padding:16px!important}
+			}
+			'
+		);
 	}
 
 	public function enqueue_scripts( $hook_suffix ) {
@@ -19514,6 +19539,18 @@ class AJForms_Admin {
 		?>
 		<div class="ajforms-settings-card" style="padding:10px;">
 			<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'CP Settings sections', 'ajforms' ); ?>" style="margin:0;">
+				<?php
+				// .ajcore-tabs-shell's own @media(max-width:1100px) rule hides every .ajcore-tab-link and
+				// relies on a sibling .ajcore-tab-select to take over — the main Client Portal tabs nav
+				// (see display_client_portal_page() above) has one, this sub-nav didn't, so on any screen
+				// under 1100px (effectively every phone) the whole thing used to just disappear with
+				// nothing in its place. Same select-takeover pattern as that nav, applied here too.
+				?>
+				<select class="ajcore-tab-select" onchange="if(this.value){window.location.href=this.value;}">
+					<?php foreach ( $sub_tabs as $sub_key => $sub_label ) : ?>
+						<option value="<?php echo esc_url( add_query_arg( 'cp_section', $sub_key, $base_url ) ); ?>" <?php selected( $cp_section, $sub_key ); ?>><?php echo esc_html( $sub_label ); ?></option>
+					<?php endforeach; ?>
+				</select>
 				<?php foreach ( $sub_tabs as $sub_key => $sub_label ) : ?>
 					<a class="ajcore-tab-link <?php echo $cp_section === $sub_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'cp_section', $sub_key, $base_url ) ); ?>"><?php echo esc_html( $sub_label ); ?></a>
 				<?php endforeach; ?>
@@ -28794,6 +28831,11 @@ class AJForms_Admin {
 				</form>
 
 				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'Rentec sections', 'ajforms' ); ?>">
+					<select class="ajcore-tab-select" onchange="if(this.value){window.location.href=this.value;}">
+						<?php foreach ( $resources as $resource_key => $resource_config ) : ?>
+							<option value="<?php echo esc_url( add_query_arg( array( 'rentec_accounts' => $selected_accounts, 'rentec_statuses' => $selected_statuses, 'rentec_filters_set' => '1', 'rentec_resource' => $resource_key ), $base_url ) ); ?>" <?php selected( $resource, $resource_key ); ?>><?php echo esc_html( $resource_config['label'] ); ?></option>
+						<?php endforeach; ?>
+					</select>
 					<?php foreach ( $resources as $resource_key => $resource_config ) : ?>
 						<a class="ajcore-tab-link <?php echo $resource === $resource_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'rentec_accounts' => $selected_accounts, 'rentec_statuses' => $selected_statuses, 'rentec_filters_set' => '1', 'rentec_resource' => $resource_key ), $base_url ) ); ?>"><?php echo esc_html( $resource_config['label'] ); ?></a>
 					<?php endforeach; ?>
