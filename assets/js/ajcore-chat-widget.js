@@ -169,7 +169,8 @@
 			"#ajcore-identify-submit{background:#3157ff;color:#fff;}" +
 			"#ajcore-identify-submit:disabled{background:#93a3ff;cursor:not-allowed;}" +
 			"#ajcore-identify-no{background:#f1f5f9;color:#475569;}" +
-			"#ajcore-identify-popup .aj-identify-thanks{font-size:13px;color:#065f46;margin:0;}";
+			"#ajcore-identify-popup .aj-identify-thanks{font-size:13px;color:#065f46;margin:0;}" +
+			"#ajcore-identify-popup .aj-identify-error{font-size:12px;color:#b91c1c;margin:6px 0 0;}";
 		document.head.appendChild(style);
 
 		var popup = document.createElement("div");
@@ -211,19 +212,64 @@
 			setStored(STORAGE_IDENTIFY_DISMISSED, "1");
 			close();
 		});
+		var errorEl = document.createElement("p");
+		errorEl.className = "aj-identify-error";
+		errorEl.style.display = "none";
+		popup.appendChild(errorEl);
+
+		var ACK_TIMEOUT_MS = 8000;
+
+		function showError(message, logDetail) {
+			// Logged for diagnostics (e.g. "AJOps' server.js or AJCore doesn't have this build yet")
+			// — the visitor only ever sees the plain-language message below.
+			console.error("[ajcore-chat-widget] identify submission failed:", logDetail);
+			errorEl.textContent = message;
+			errorEl.style.display = "block";
+			nameInput.disabled = false;
+			emailInput.disabled = false;
+			phoneInput.disabled = false;
+			submitBtn.disabled = false;
+			submitBtn.textContent = "Send";
+		}
+
 		submitBtn.addEventListener("click", function () {
 			var name = nameInput.value.trim();
 			var email = emailInput.value.trim();
 			var phone = phoneInput.value.trim();
 			if (!email && !phone) return;
-			if (sendIdentify) sendIdentify({ name: name, email: email, phone: phone });
-			setStored(STORAGE_IDENTIFY_SUBMITTED, "1");
-			popup.innerHTML = '<p class="aj-identify-thanks">Thanks' + (name ? ", " + escapeHtml(name) : "") + "! We'll be in touch.</p>";
-			setTimeout(close, 4000);
+
+			errorEl.style.display = "none";
+			nameInput.disabled = true;
+			emailInput.disabled = true;
+			phoneInput.disabled = true;
+			submitBtn.disabled = true;
+			submitBtn.textContent = "Sending…";
+
+			var sent = sendIdentify ? sendIdentify({ name: name, email: email, phone: phone }) : false;
+			if (!sent) {
+				showError("Couldn't send right now — please try again.", "presence socket not open (sendIdentify returned false)");
+				return;
+			}
+
+			var timedOut = setTimeout(function () {
+				identifyAckHandler = null;
+				showError("Couldn't confirm this went through — please try again.", "no identify_ack received within " + ACK_TIMEOUT_MS + "ms (AJOps and/or AJCore may not have this build deployed yet)");
+			}, ACK_TIMEOUT_MS);
+
+			identifyAckHandler = function (success) {
+				clearTimeout(timedOut);
+				if (!success) {
+					showError("Something went wrong — please try again.", "AJCore returned success:false for the identify submission");
+					return;
+				}
+				setStored(STORAGE_IDENTIFY_SUBMITTED, "1");
+				popup.innerHTML = '<p class="aj-identify-thanks">Thanks' + (name ? ", " + escapeHtml(name) : "") + "! We'll be in touch.</p>";
+				setTimeout(close, 4000);
+			};
 		});
 
 		setTimeout(function () {
-			if (getStored(STORAGE_IDENTIFY_SUBMITTED) !== "1") close();
+			if (getStored(STORAGE_IDENTIFY_SUBMITTED) !== "1" && !identifyAckHandler) close();
 		}, 30000);
 	}
 
@@ -281,8 +327,15 @@
 	// Set by startPresence() below, once its presenceWs closure exists — posts an "identify"
 	// message down the visitor's already-open presence socket (see showIdentifyPopup() further
 	// down). null/no-op before startPresence() runs, or whenever the socket happens to be
-	// reconnecting when the visitor hits Send; that's fine, this is a best-effort nudge.
+	// reconnecting when the visitor hits Send; that's fine, showIdentifyPopup()'s own submit
+	// handler treats a false return the same as a failure/timeout.
 	var sendIdentify = null;
+
+	// One-shot callback showIdentifyPopup() registers right before calling sendIdentify(), invoked
+	// from presenceWs.onmessage below when AJOps relays AJCore's real "did this actually save"
+	// answer back down the wire — this is what makes Send report success/failure honestly instead
+	// of always showing "Thanks!" the instant it's clicked, regardless of what happened server-side.
+	var identifyAckHandler = null;
 
 	function startPresence(handleOpenChat) {
 		var presenceWs = null;
@@ -327,6 +380,10 @@
 					handleOpenChat(payload.message || "");
 				} else if (payload && payload.type === "show_banner") {
 					showPushedBanner(payload.title || "", payload.body || "");
+				} else if (payload && payload.type === "identify_ack" && identifyAckHandler) {
+					var handler = identifyAckHandler;
+					identifyAckHandler = null;
+					handler(!!payload.success);
 				}
 			};
 			presenceWs.onclose = function () {
