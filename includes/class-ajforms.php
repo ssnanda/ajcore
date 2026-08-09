@@ -1025,8 +1025,7 @@ class AJForms {
 	}
 
 	public function enqueue_custom_login_styles() {
-		$logo_url  = $this->get_custom_login_logo_url();
-		$site_name = wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+		$logo_url = $this->get_custom_login_logo_url();
 		?>
 		<style>
 			body.login {
@@ -1069,9 +1068,6 @@ class AJForms {
 				font-weight: 800;
 				line-height: 1.15;
 				text-decoration: none;
-			}
-			body.login h1 a:before {
-				content: "<?php echo esc_js( $site_name ); ?>";
 			}
 			<?php endif; ?>
 			body.login form {
