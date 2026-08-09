@@ -242,7 +242,8 @@ class AJForms_Admin {
 
 	private function get_about_update_url( $action ) {
 		$args = array(
-			'page'          => 'ajforms-about',
+			'page'          => 'ajforms-settings',
+			'section'       => 'update',
 			'ajf_about_act' => $action,
 		);
 
@@ -260,7 +261,8 @@ class AJForms_Admin {
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'                => 'ajforms-about',
+						'page'                => 'ajforms-settings',
+						'section'             => 'update',
 						'developer-updates'   => 'saved',
 						'already-current'     => '1',
 					),
@@ -277,7 +279,7 @@ class AJForms_Admin {
 			&& ! isset( $_GET['already-current'] )
 			&& ! isset( $_GET['developer-updates'] )
 		) {
-			$args   = array( 'page' => 'ajforms-about' );
+			$args   = array( 'page' => 'ajforms-settings', 'section' => 'update' );
 			$status = $this->get_update_status( true );
 
 			if ( is_wp_error( $status ) ) {
@@ -309,7 +311,8 @@ class AJForms_Admin {
 		check_admin_referer( 'ajf_about_update_' . $action );
 
 		$args = array(
-			'page' => 'ajforms-about',
+			'page'    => 'ajforms-settings',
+			'section' => 'update',
 		);
 
 		if ( 'check' === $action ) {
@@ -11111,6 +11114,19 @@ class AJForms_Admin {
 	public function handle_admin_actions() {
 		$page = isset( $_GET['page'] ) ? sanitize_text_field( wp_unslash( $_GET['page'] ) ) : '';
 
+		// Auth (ajforms-auth) and Update AJ Core (ajforms-about) used to be their own top-level
+		// pages — both are now sections of the unified Settings page, and neither slug is registered
+		// as a menu item anymore, so WordPress would otherwise just show a bare "you don't have
+		// permission" page for anyone with an old bookmark. Redirect them in before the dispatch
+		// below, carrying over every other query arg (nonces, action results, etc.) unchanged.
+		if ( 'ajforms-auth' === $page || 'ajforms-about' === $page ) {
+			$new_args            = wp_unslash( $_GET );
+			$new_args['page']    = 'ajforms-settings';
+			$new_args['section'] = 'ajforms-auth' === $page ? 'auth' : 'update';
+			wp_safe_redirect( add_query_arg( $new_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( 'ajforms' === $page ) {
 			$this->handle_form_actions();
 		} elseif ( 'ajforms-leads' === $page ) {
@@ -11119,6 +11135,16 @@ class AJForms_Admin {
 			$section = isset( $_GET['section'] ) ? sanitize_key( wp_unslash( $_GET['section'] ) ) : '';
 			if ( 'role-manager' === $section || isset( $_GET['role_manager_action'] ) || isset( $_POST['role_manager_action'] ) ) {
 				$this->handle_role_manager_actions();
+			} elseif ( 'auth' === $section ) {
+				// Auth used to be its own page (ajforms-auth) with its own $page-keyed dispatch
+				// branch — now a section of this one, see display_settings_page().
+				$this->handle_auth_settings_save();
+			} elseif ( 'update' === $section ) {
+				// Update AJ Core used to be its own page (ajforms-about) — same reasoning as Auth
+				// above. handle_about_update_action() is GET-triggered (ajf_about_act/ajf_dev_updates
+				// query args, not a POST), which is why this has to run on every load of this
+				// section, not just when handle_settings_save()'s nonce check would fire.
+				$this->handle_about_update_action();
 			} else {
 				$this->handle_settings_save();
 			}
@@ -11216,14 +11242,8 @@ class AJForms_Admin {
 			} elseif ( 'rentec' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 				$this->handle_rentec_settings_save();
 			}
-		} elseif ( 'ajforms-auth' === $page ) {
-			$this->handle_auth_settings_save();
-		} elseif ( 'ajforms-automations' === $page ) {
-			$this->handle_automations_settings_save();
 		} elseif ( 'ajforms-role-manager' === $page ) {
 			$this->handle_role_manager_actions();
-		} elseif ( 'ajforms-about' === $page ) {
-			$this->handle_about_update_action();
 		}
 	}
 
@@ -18419,26 +18439,9 @@ class AJForms_Admin {
 			array( $this, 'display_cp_settings_admin_page' )
 		);
 
-		if ( $client_portal_enabled ) {
-			add_submenu_page(
-				'ajforms',
-				__( 'Auth', 'ajforms' ),
-				__( 'Auth', 'ajforms' ),
-				'manage_options',
-				'ajforms-auth',
-				array( $this, 'display_auth_page' )
-			);
-		}
-
-		add_submenu_page(
-			'ajforms',
-			__( 'Automations', 'ajforms' ),
-			__( 'Automations', 'ajforms' ),
-			'manage_options',
-			'ajforms-automations',
-			array( $this, 'display_automations_page' )
-		);
-
+		// Auth and Update AJ Core used to be their own top-level pages (ajforms-auth, ajforms-about) —
+		// both are now sections of the unified Settings page below (display_settings_page()'s
+		// $sections); old bookmarks to either slug get redirected in, see handle_admin_actions().
 		add_submenu_page(
 			'ajforms',
 			__( 'Settings', 'ajforms' ),
@@ -18448,15 +18451,14 @@ class AJForms_Admin {
 			array( $this, 'display_settings_page' )
 		);
 
-		add_submenu_page(
-			'ajforms',
-			__( 'Update AJ Core', 'ajforms' ),
-			__( 'Update AJ Core', 'ajforms' ),
-			'manage_options',
-			'ajforms-about',
-			array( $this, 'display_about_page' )
-		);
-
+		// "CP Settings" no longer needs its own visible menu entry — every one of its sections is
+		// now reachable from Settings' own sidebar (see display_settings_page()'s $sections, the
+		// entries with a 'cp_section' key). The page itself stays fully registered/functional
+		// (remove_submenu_page() only hides the nav link, not the page or its capability check) —
+		// removing the registration outright would 403 the ~26 places elsewhere in this file that
+		// redirect back to page=ajforms-cp-settings after saving (Files, API, Roles, Inbox, Chat,
+		// E-Signatures, Gmail Intake, Email Templates, …).
+		remove_submenu_page( 'ajforms', 'ajforms-cp-settings' );
 	}
 
 	public function display_cp_settings_admin_page() {
@@ -30637,15 +30639,16 @@ class AJForms_Admin {
 		);
 
 		update_option( 'ajcore_auth_settings', $settings, false );
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-auth', 'settings-updated' => 1 ), admin_url( 'admin.php' ) ) );
+		// Auth used to be its own top-level page (ajforms-auth) — now a section of the unified
+		// Settings page (see display_settings_page()'s $sections).
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'auth', 'settings-updated' => 1 ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
-	public function display_auth_page() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
-		}
-
+	/** Embeddable fragment (no page wrap/heading of its own) — called from display_settings_page()'s
+	 *  'auth' section, same "just a form, host page provides the head/notice" pattern the former CP
+	 *  Settings sections (display_chat_settings_section() etc.) already use. */
+	public function display_auth_settings_section() {
 		$settings = get_option( 'ajcore_auth_settings', array() );
 		$settings = is_array( $settings ) ? wp_parse_args(
 			$settings,
@@ -30663,86 +30666,28 @@ class AJForms_Admin {
 		);
 		$roles = wp_roles()->roles;
 		?>
-		<div class="wrap ajforms-admin-shell">
-			<div class="ajforms-admin-hero" style="margin:18px 0;">
-				<div>
-					<h1><?php esc_html_e( 'Auth', 'ajforms' ); ?></h1>
-					<p><?php esc_html_e( 'Control the customer role and portal login behavior used by AJ Core.', 'ajforms' ); ?></p>
-				</div>
-			</div>
-			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Auth settings saved.', 'ajforms' ); ?></p></div>
-			<?php endif; ?>
-			<form method="post">
-				<?php wp_nonce_field( 'ajcore_save_auth_settings', 'ajcore_auth_nonce' ); ?>
-				<table class="form-table" role="presentation">
-					<tr>
-						<th scope="row"><label for="customer_role"><?php esc_html_e( 'Customer Portal Role', 'ajforms' ); ?></label></th>
-						<td><select name="customer_role" id="customer_role">
-							<?php foreach ( $roles as $role_key => $role ) : ?>
-								<option value="<?php echo esc_attr( $role_key ); ?>" <?php selected( $settings['customer_role'], $role_key ); ?>><?php echo esc_html( translate_user_role( $role['name'] ) . ' (' . $role_key . ')' ); ?></option>
-							<?php endforeach; ?>
-						</select></td>
-					</tr>
-					<tr><th scope="row"><?php esc_html_e( 'Portal User Protection', 'ajforms' ); ?></th><td>
-						<label><input type="checkbox" name="block_wp_admin" value="1" <?php checked( '1', $settings['block_wp_admin'] ); ?>> <?php esc_html_e( 'Redirect portal users away from wp-admin', 'ajforms' ); ?></label><br>
-						<label><input type="checkbox" name="hide_admin_bar" value="1" <?php checked( '1', $settings['hide_admin_bar'] ); ?>> <?php esc_html_e( 'Hide admin bar for portal users', 'ajforms' ); ?></label>
-					</td></tr>
-					<tr><th scope="row"><?php esc_html_e( 'Login Redirect', 'ajforms' ); ?></th><td>
-						<label><input type="radio" name="login_redirect_mode" value="portal" <?php checked( 'portal', $settings['login_redirect_mode'] ); ?>> <?php esc_html_e( 'Send portal users to Client Portal', 'ajforms' ); ?></label><br>
-						<label><input type="radio" name="login_redirect_mode" value="default" <?php checked( 'default', $settings['login_redirect_mode'] ); ?>> <?php esc_html_e( 'Use WordPress default redirect', 'ajforms' ); ?></label>
-					</td></tr>
-				</table>
-				<?php submit_button( __( 'Save Auth Settings', 'ajforms' ) ); ?>
-			</form>
-		</div>
-		<?php
-	}
-
-	private function handle_automations_settings_save() {
-		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_automations_nonce'] ) ) {
-			return;
-		}
-
-		check_admin_referer( 'ajcore_save_automations_settings', 'ajcore_automations_nonce' );
-		$settings = array(
-			'enabled'              => isset( $_POST['automations_enabled'] ) ? '1' : '0',
-			'portal_task_defaults' => isset( $_POST['portal_task_defaults'] ) ? '1' : '0',
-			'notes'                => isset( $_POST['automation_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['automation_notes'] ) ) : '',
-		);
-		update_option( 'ajcore_automations_settings', $settings, false );
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-automations', 'settings-updated' => 1 ), admin_url( 'admin.php' ) ) );
-		exit;
-	}
-
-	public function display_automations_page() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
-		}
-
-		$settings = get_option( 'ajcore_automations_settings', array() );
-		$settings = is_array( $settings ) ? wp_parse_args( $settings, array( 'enabled' => '1', 'portal_task_defaults' => '1', 'notes' => '' ) ) : array( 'enabled' => '1', 'portal_task_defaults' => '1', 'notes' => '' );
-		?>
-		<div class="wrap ajforms-admin-shell">
-			<div class="ajforms-admin-hero" style="margin:18px 0;">
-				<div>
-					<h1><?php esc_html_e( 'Automations', 'ajforms' ); ?></h1>
-					<p><?php esc_html_e( 'Manage lightweight workflow settings for portal tasks and future automated actions.', 'ajforms' ); ?></p>
-				</div>
-			</div>
-			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Automation settings saved.', 'ajforms' ); ?></p></div>
-			<?php endif; ?>
-			<form method="post">
-				<?php wp_nonce_field( 'ajcore_save_automations_settings', 'ajcore_automations_nonce' ); ?>
-				<table class="form-table" role="presentation">
-					<tr><th scope="row"><?php esc_html_e( 'Automation Engine', 'ajforms' ); ?></th><td><label><input type="checkbox" name="automations_enabled" value="1" <?php checked( '1', $settings['enabled'] ); ?>> <?php esc_html_e( 'Enable AJ Core automations', 'ajforms' ); ?></label></td></tr>
-					<tr><th scope="row"><?php esc_html_e( 'Portal Task Defaults', 'ajforms' ); ?></th><td><label><input type="checkbox" name="portal_task_defaults" value="1" <?php checked( '1', $settings['portal_task_defaults'] ); ?>> <?php esc_html_e( 'Show default compliance reminders when no custom task replaces them', 'ajforms' ); ?></label></td></tr>
-					<tr><th scope="row"><label for="automation_notes"><?php esc_html_e( 'Internal Notes', 'ajforms' ); ?></label></th><td><textarea id="automation_notes" name="automation_notes" class="large-text" rows="6"><?php echo esc_textarea( $settings['notes'] ); ?></textarea></td></tr>
-				</table>
-				<?php submit_button( __( 'Save Automation Settings', 'ajforms' ) ); ?>
-			</form>
-		</div>
+		<form method="post">
+			<?php wp_nonce_field( 'ajcore_save_auth_settings', 'ajcore_auth_nonce' ); ?>
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row"><label for="customer_role"><?php esc_html_e( 'Customer Portal Role', 'ajforms' ); ?></label></th>
+					<td><select name="customer_role" id="customer_role">
+						<?php foreach ( $roles as $role_key => $role ) : ?>
+							<option value="<?php echo esc_attr( $role_key ); ?>" <?php selected( $settings['customer_role'], $role_key ); ?>><?php echo esc_html( translate_user_role( $role['name'] ) . ' (' . $role_key . ')' ); ?></option>
+						<?php endforeach; ?>
+					</select></td>
+				</tr>
+				<tr><th scope="row"><?php esc_html_e( 'Portal User Protection', 'ajforms' ); ?></th><td>
+					<label><input type="checkbox" name="block_wp_admin" value="1" <?php checked( '1', $settings['block_wp_admin'] ); ?>> <?php esc_html_e( 'Redirect portal users away from wp-admin', 'ajforms' ); ?></label><br>
+					<label><input type="checkbox" name="hide_admin_bar" value="1" <?php checked( '1', $settings['hide_admin_bar'] ); ?>> <?php esc_html_e( 'Hide admin bar for portal users', 'ajforms' ); ?></label>
+				</td></tr>
+				<tr><th scope="row"><?php esc_html_e( 'Login Redirect', 'ajforms' ); ?></th><td>
+					<label><input type="radio" name="login_redirect_mode" value="portal" <?php checked( 'portal', $settings['login_redirect_mode'] ); ?>> <?php esc_html_e( 'Send portal users to Client Portal', 'ajforms' ); ?></label><br>
+					<label><input type="radio" name="login_redirect_mode" value="default" <?php checked( 'default', $settings['login_redirect_mode'] ); ?>> <?php esc_html_e( 'Use WordPress default redirect', 'ajforms' ); ?></label>
+				</td></tr>
+			</table>
+			<?php submit_button( __( 'Save Auth Settings', 'ajforms' ) ); ?>
+		</form>
 		<?php
 	}
 
@@ -30759,32 +30704,124 @@ class AJForms_Admin {
 		$stripe_cache = $this->get_stripe_products_cache();
 		$stripe_prices = isset( $stripe_cache['prices'] ) && is_array( $stripe_cache['prices'] ) ? $stripe_cache['prices'] : array();
 		$selected_stripe_prices = isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? $settings['stripe_selected_prices'] : array();
+
+		// Every section below actually renders on THIS page/URL. 'cp_section' further down marks
+		// the ones that instead just link out to the existing, fully-working CP Settings page (see
+		// the "CP Settings merge" note on that array) — their internal action links/buttons hardcode
+		// page=ajforms-client-portal URLs in several places, so embedding their content here would
+		// silently break those without a much larger, riskier rewrite. Auth and Update AJ Core don't
+		// have that problem (see display_auth_settings_section()/display_update_ajcore_section()),
+		// so those two render inline like General/Spam/Integrations/Payments always have.
+		$client_portal_enabled = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'client_portal' );
+		$live_chat_enabled     = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'live_chat' );
 		$sections = array(
 			'general'      => array(
 				'label' => __( 'General Settings', 'ajforms' ),
 				'icon'  => 'admin-generic',
+				'group' => __( 'General', 'ajforms' ),
 			),
 			'spam'         => array(
 				'label' => __( 'Spam Protection', 'ajforms' ),
 				'icon'  => 'warning',
+				'group' => __( 'General', 'ajforms' ),
 			),
 			'integrations' => array(
 				'label' => __( 'Integrations', 'ajforms' ),
 				'icon'  => 'admin-links',
+				'group' => __( 'General', 'ajforms' ),
 			),
 			'payments'     => array(
 				'label' => __( 'Stripe Payments', 'ajforms' ),
 				'icon'  => 'cart',
+				'group' => __( 'General', 'ajforms' ),
 			),
 		);
+		if ( $client_portal_enabled ) {
+			$sections['auth'] = array(
+				'label' => __( 'Auth', 'ajforms' ),
+				'icon'  => 'admin-users',
+				'group' => __( 'General', 'ajforms' ),
+			);
+		}
+		$sections['update'] = array(
+			'label' => __( 'Update AJ Core', 'ajforms' ),
+			'icon'  => 'update',
+			'group' => __( 'General', 'ajforms' ),
+		);
 
-		if ( ! isset( $sections[ $section ] ) ) {
+		if ( $client_portal_enabled ) {
+			$client_portal_group = __( 'Client Portal', 'ajforms' );
+			foreach ( array(
+				'menu'                   => array( __( 'Menu', 'ajforms' ), 'menu' ),
+				'product-catalog'        => array( __( 'Product Catalog', 'ajforms' ), 'archive' ),
+				'sync'                   => array( __( 'Sync', 'ajforms' ), 'update' ),
+				'event-log'              => array( __( 'Event Log', 'ajforms' ), 'list-view' ),
+				'db-schema'              => array( __( 'AJCore DB Schema', 'ajforms' ), 'database' ),
+				'calendar'               => array( __( 'Calendar / Reservations', 'ajforms' ), 'calendar-alt' ),
+				'api'                    => array( __( 'API', 'ajforms' ), 'rest-api' ),
+				'files'                  => array( __( 'Files', 'ajforms' ), 'media-default' ),
+				'accounting-catalog'     => array( __( 'Products & Services', 'ajforms' ), 'cart' ),
+				'recurring-transactions' => array( __( 'Recurring Transactions', 'ajforms' ), 'update-alt' ),
+				'storage'                => array( __( 'Storage', 'ajforms' ), 'cloud' ),
+				'rentec'                 => array( __( 'Rentec Direct', 'ajforms' ), 'admin-multisite' ),
+			) as $cp_key => $cp_meta ) {
+				$sections[ $cp_key ] = array(
+					'label'      => $cp_meta[0],
+					'icon'       => $cp_meta[1],
+					'group'      => $client_portal_group,
+					'cp_section' => $cp_key,
+				);
+			}
+
+			$comms_group = __( 'Communications', 'ajforms' );
+			foreach ( array(
+				'email-templates' => array( __( 'Email Templates', 'ajforms' ), 'email' ),
+				'inbox'           => array( __( 'Zoho Shared Inbox', 'ajforms' ), 'email-alt' ),
+				'gmail-intake'    => array( __( 'Email Intake (Gmail)', 'ajforms' ), 'email-alt2' ),
+				'esign'           => array( __( 'E-Signatures (BreezeDoc)', 'ajforms' ), 'edit-page' ),
+			) as $cp_key => $cp_meta ) {
+				$sections[ $cp_key ] = array(
+					'label'      => $cp_meta[0],
+					'icon'       => $cp_meta[1],
+					'group'      => $comms_group,
+					'cp_section' => $cp_key,
+				);
+			}
+		}
+		if ( $live_chat_enabled ) {
+			$sections['chat'] = array(
+				'label'      => __( 'Live Chat', 'ajforms' ),
+				'icon'       => 'format-chat',
+				'group'      => __( 'Communications', 'ajforms' ),
+				'cp_section' => 'chat',
+			);
+		}
+
+		$system_group = __( 'System', 'ajforms' );
+		if ( $client_portal_enabled ) {
+			$sections['roles'] = array(
+				'label'      => __( 'Role Manager', 'ajforms' ),
+				'icon'       => 'admin-network',
+				'group'      => $system_group,
+				'cp_section' => 'roles',
+			);
+		}
+		$sections['shared-db'] = array(
+			'label'      => __( 'Site Features / Shared DB', 'ajforms' ),
+			'icon'       => 'admin-site-alt3',
+			'group'      => $system_group,
+			'cp_section' => 'shared-db',
+		);
+
+		// Link-out entries (anything with 'cp_section') have no inline content on this page — only
+		// 'general'/'spam'/'integrations'/'payments'/'auth'/'update' actually render here.
+		if ( ! isset( $sections[ $section ] ) || ! empty( $sections[ $section ]['cp_section'] ) ) {
 			$section = 'general';
 		}
 
-		if ( empty( $subsection ) && ! empty( $sections[ $section ]['children'] ) ) {
-			$subsection = array_key_first( $sections[ $section ]['children'] );
-		}
+		// Fetched once here (not just inside the 'update' section) so the "update available" notice
+		// below can show regardless of which section is open — see display_update_ajcore_section().
+		$update_status = current_user_can( 'update_plugins' ) ? $this->get_update_status() : null;
 		?>
 		<div class="wrap">
 			<style>
@@ -30799,6 +30836,9 @@ class AJForms_Admin {
 				.ajforms-settings-link{display:flex;align-items:center;gap:14px;padding:14px 28px;color:#4b5563;text-decoration:none;font-size:18px;font-weight:600}
 				.ajforms-settings-link .dashicons{font-size:22px;width:22px;height:22px}
 				.ajforms-settings-link.is-active{color:#111827}
+				.ajforms-settings-link .ajforms-settings-link-external{margin-left:auto;font-size:15px;width:15px;height:15px;opacity:.5}
+				.ajforms-settings-group-label{margin:22px 28px 4px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af}
+				.ajforms-settings-group-label:first-child{margin-top:8px}
 				.ajforms-settings-group{margin-top:12px}
 				.ajforms-settings-sublinks{margin:10px 0 0 52px;padding-left:18px;border-left:1px solid #e5e7eb;display:flex;flex-direction:column;gap:8px}
 				.ajforms-settings-sublinks a{padding:12px 16px;border:1px solid transparent;border-radius:16px;color:#4b5563;text-decoration:none;font-size:16px}
@@ -30863,45 +30903,61 @@ class AJForms_Admin {
 				<div class="ajforms-settings-layout">
 					<aside class="ajforms-settings-sidebar">
 						<nav class="ajforms-settings-menu" aria-label="<?php esc_attr_e( 'Settings navigation', 'ajforms' ); ?>">
-							<?php foreach ( $sections as $section_key => $section_config ) : ?>
-								<?php
-								$section_url = add_query_arg(
-									array(
-										'page'       => 'ajforms-settings',
-										'section'    => $section_key,
-										'subsection' => ! empty( $section_config['children'] ) ? array_key_first( $section_config['children'] ) : '',
-									),
-									admin_url( 'admin.php' )
-								);
+							<?php
+							// Grouped by $section_config['group'] — PHP preserves insertion order, and
+							// $sections above is built group-by-group, so iterating it directly (no
+							// separate sort) already yields General, then Client Portal, then
+							// Communications, then System in that order.
+							$current_group = null;
+							foreach ( $sections as $section_key => $section_config ) :
+								if ( $section_config['group'] !== $current_group ) :
+									$current_group = $section_config['group'];
+									?>
+									<p class="ajforms-settings-group-label"><?php echo esc_html( $current_group ); ?></p>
+									<?php
+								endif;
+								// Client Portal/Communications/System entries link OUT to the existing
+								// CP Settings page instead of rendering inline here — see the big
+								// comment above $sections for why (their internal action links
+								// hardcode the old URL, so embedding them would silently break those).
+								$is_link_out = ! empty( $section_config['cp_section'] );
+								$section_url = $is_link_out
+									? add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => $section_config['cp_section'] ), admin_url( 'admin.php' ) )
+									: add_query_arg( array( 'page' => 'ajforms-settings', 'section' => $section_key ), admin_url( 'admin.php' ) );
 								?>
-								<div class="ajforms-settings-group">
-									<a href="<?php echo esc_url( $section_url ); ?>" class="ajforms-settings-link <?php echo $section === $section_key ? 'is-active' : ''; ?>">
-										<span class="dashicons dashicons-<?php echo esc_attr( $section_config['icon'] ); ?>"></span>
-										<span><?php echo esc_html( $section_config['label'] ); ?></span>
-									</a>
-									<?php if ( ! empty( $section_config['children'] ) ) : ?>
-										<div class="ajforms-settings-sublinks">
-											<?php foreach ( $section_config['children'] as $child_key => $child_label ) : ?>
-												<?php
-												$child_url = add_query_arg(
-													array(
-														'page'       => 'ajforms-settings',
-														'section'    => $section_key,
-														'subsection' => $child_key,
-													),
-													admin_url( 'admin.php' )
-												);
-												?>
-												<a href="<?php echo esc_url( $child_url ); ?>" class="<?php echo $section === $section_key && $subsection === $child_key ? 'is-active' : ''; ?>"><?php echo esc_html( $child_label ); ?></a>
-											<?php endforeach; ?>
-										</div>
+								<a href="<?php echo esc_url( $section_url ); ?>" class="ajforms-settings-link <?php echo ( ! $is_link_out && $section === $section_key ) ? 'is-active' : ''; ?>" <?php echo $is_link_out ? 'target="_blank" rel="noopener"' : ''; ?>>
+									<span class="dashicons dashicons-<?php echo esc_attr( $section_config['icon'] ); ?>"></span>
+									<span><?php echo esc_html( $section_config['label'] ); ?></span>
+									<?php if ( $is_link_out ) : ?>
+										<span class="dashicons dashicons-external ajforms-settings-link-external" aria-hidden="true"></span>
 									<?php endif; ?>
-								</div>
+								</a>
 							<?php endforeach; ?>
 						</nav>
 					</aside>
 
 					<div class="ajforms-settings-content">
+						<?php if ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
+							<div class="notice notice-warning inline" style="margin:0 0 20px;">
+								<p>
+									<?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'An AJ Core developer update is available.', 'ajforms' ) : esc_html__( 'An AJ Core update is available.', 'ajforms' ); ?>
+									<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'update' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View & Update', 'ajforms' ); ?></a>
+								</p>
+							</div>
+						<?php endif; ?>
+						<?php if ( 'auth' === $section ) : ?>
+							<div class="ajforms-settings-head">
+								<h2><?php esc_html_e( 'Auth', 'ajforms' ); ?></h2>
+								<p><?php esc_html_e( 'Control the customer role and portal login behavior used by AJ Core.', 'ajforms' ); ?></p>
+							</div>
+							<?php $this->display_auth_settings_section(); ?>
+						<?php elseif ( 'update' === $section ) : ?>
+							<div class="ajforms-settings-head">
+								<h2><?php esc_html_e( 'Update AJ Core', 'ajforms' ); ?></h2>
+								<p><?php esc_html_e( 'Install the latest AJ Core release when one is available.', 'ajforms' ); ?></p>
+							</div>
+							<?php $this->display_update_ajcore_section( $update_status ); ?>
+						<?php else : ?>
 						<form method="post">
 				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 							<div class="ajforms-settings-head">
@@ -31513,6 +31569,7 @@ class AJForms_Admin {
 								<span style="color:#6b7280;"><?php esc_html_e( 'Changes are stored site-wide for AJ Core.', 'ajforms' ); ?></span>
 							</div>
 						</form>
+						<?php endif; ?>
 					</div>
 				</div>
 			</div>
@@ -31520,114 +31577,103 @@ class AJForms_Admin {
 		<?php
 	}
 
-	public function display_about_page() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
-		}
-
+	/** Embeddable fragment (no page wrap/heading of its own) — called from display_settings_page()'s
+	 *  'update' section, same pattern display_auth_settings_section() above uses. $update_status is
+	 *  passed in rather than fetched again here since display_settings_page() already fetches it
+	 *  once up front (to decide whether to show the cross-section "update available" banner). */
+	public function display_update_ajcore_section( $update_status ) {
 		$developer_updates_enabled = $this->developer_updates_enabled();
 		$developer_toggle_url      = wp_nonce_url(
 			add_query_arg(
 				array(
-					'page'            => 'ajforms-about',
+					'page'            => 'ajforms-settings',
+					'section'         => 'update',
 					'ajf_dev_updates' => $developer_updates_enabled ? '0' : '1',
 				),
 				admin_url( 'admin.php' )
 			),
 			'ajf_toggle_developer_updates'
 		);
-		$update_status             = current_user_can( 'update_plugins' ) ? $this->get_update_status() : null;
-
 		?>
-		<div class="wrap">
-			<style>
-				.ajforms-about-shell{max-width:760px;margin-top:20px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:28px;box-shadow:0 12px 30px rgba(15,23,42,.06)}
-				.ajforms-about-shell h1{margin:0 0 8px;font-size:28px;line-height:1.2;color:#111827}
-				.ajforms-about-shell p{font-size:14px;line-height:1.6;color:#4b5563;margin:0}
-				.ajforms-about-status{margin:22px 0 0;padding:18px;border:1px solid #dbeafe;border-radius:12px;background:#eff6ff;color:#1e3a8a}
-				.ajforms-about-status.is-ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
-				.ajforms-about-status.is-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
-				.ajforms-about-status strong{display:block;margin-bottom:6px;color:inherit;font-size:15px}
-				.ajforms-about-actions{margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-				.ajforms-about-toggle{margin-top:22px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb}
-				.ajforms-about-toggle label{display:flex;align-items:flex-start;gap:10px;font-weight:700;color:#111827}
-				.ajforms-about-toggle span{display:block;margin-top:3px;color:#6b7280;font-weight:400;font-size:13px;line-height:1.4}
-				.ajforms-about-meta{margin-top:22px;width:100%;border-collapse:collapse}
-				.ajforms-about-meta th,.ajforms-about-meta td{padding:11px 0;border-bottom:1px solid #f3f4f6;text-align:left}
-				.ajforms-about-meta th{width:160px;color:#6b7280;font-weight:600}
-			</style>
+		<style>
+			.ajforms-about-status{margin:22px 0 0;padding:18px;border:1px solid #dbeafe;border-radius:12px;background:#eff6ff;color:#1e3a8a}
+			.ajforms-about-status.is-ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
+			.ajforms-about-status.is-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+			.ajforms-about-status strong{display:block;margin-bottom:6px;color:inherit;font-size:15px}
+			.ajforms-about-actions{margin-top:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+			.ajforms-about-toggle{margin-top:22px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb}
+			.ajforms-about-toggle label{display:flex;align-items:flex-start;gap:10px;font-weight:700;color:#111827}
+			.ajforms-about-toggle span{display:block;margin-top:3px;color:#6b7280;font-weight:400;font-size:13px;line-height:1.4}
+			.ajforms-about-meta{margin-top:22px;width:100%;border-collapse:collapse}
+			.ajforms-about-meta th,.ajforms-about-meta td{padding:11px 0;border-bottom:1px solid #f3f4f6;text-align:left}
+			.ajforms-about-meta th{width:160px;color:#6b7280;font-weight:600}
+		</style>
 
-			<div class="ajforms-about-shell">
-				<h1><?php esc_html_e( 'Update AJ Core', 'ajforms' ); ?></h1>
-				<p><?php esc_html_e( 'Install the latest AJ Core release when one is available.', 'ajforms' ); ?></p>
+		<table class="ajforms-about-meta">
+			<tbody>
+				<tr>
+					<th><?php esc_html_e( 'Plugin', 'ajforms' ); ?></th>
+					<td><?php echo esc_html( 'AJ Core ' . AJFORMS_VERSION ); ?></td>
+				</tr>
+				<tr>
+					<th><?php esc_html_e( 'Developer', 'ajforms' ); ?></th>
+					<td><a href="https://itspector.com/" target="_blank" rel="noopener noreferrer">IT Spector LLC</a></td>
+				</tr>
+			</tbody>
+		</table>
 
-				<table class="ajforms-about-meta">
-					<tbody>
-						<tr>
-							<th><?php esc_html_e( 'Plugin', 'ajforms' ); ?></th>
-							<td><?php echo esc_html( 'AJ Core ' . AJFORMS_VERSION ); ?></td>
-						</tr>
-						<tr>
-							<th><?php esc_html_e( 'Developer', 'ajforms' ); ?></th>
-							<td><a href="https://itspector.com/" target="_blank" rel="noopener noreferrer">IT Spector LLC</a></td>
-						</tr>
-					</tbody>
-				</table>
-
-				<?php if ( current_user_can( 'update_plugins' ) ) : ?>
-					<div class="ajforms-about-toggle">
-						<label>
-							<input type="checkbox" <?php checked( $developer_updates_enabled ); ?> onchange="window.location.href='<?php echo esc_url( $developer_toggle_url ); ?>';">
-							<span>
-								<?php esc_html_e( 'Enable developer updates', 'ajforms' ); ?>
-								<span><?php esc_html_e( 'Developer updates include prerelease builds from non-main branches. Leave this off for normal main-branch updates.', 'ajforms' ); ?></span>
-							</span>
-						</label>
-					</div>
-
-					<?php if ( isset( $_GET['update-error'] ) ) : ?>
-						<div class="ajforms-about-status is-error">
-							<strong><?php esc_html_e( 'Update failed.', 'ajforms' ); ?></strong>
-							<?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['update-error'] ) ) ); ?>
-						</div>
-					<?php elseif ( isset( $_GET['update-success'] ) ) : ?>
-						<div class="ajforms-about-status is-ok">
-							<strong><?php esc_html_e( 'AJ Core was updated.', 'ajforms' ); ?></strong>
-							<?php esc_html_e( 'The plugin update completed successfully.', 'ajforms' ); ?>
-						</div>
-					<?php elseif ( is_wp_error( $update_status ) ) : ?>
-						<div class="ajforms-about-status is-error">
-							<strong><?php esc_html_e( 'Unable to check updates.', 'ajforms' ); ?></strong>
-							<?php echo esc_html( $update_status->get_error_message() ); ?>
-						</div>
-					<?php elseif ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
-						<div class="ajforms-about-status">
-							<strong><?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'An AJ Core developer update is available.', 'ajforms' ) : esc_html__( 'An AJ Core update is available.', 'ajforms' ); ?></strong>
-							<?php
-							printf(
-								esc_html__( 'Installed: %1$s. Latest: %2$s.', 'ajforms' ),
-								esc_html( $update_status['current_version'] ),
-								esc_html( $update_status['latest_version'] )
-							);
-							?>
-							<div class="ajforms-about-actions">
-								<a class="button button-primary" href="<?php echo esc_url( $this->get_about_update_url( 'update' ) ); ?>"><?php esc_html_e( 'Update AJ Core', 'ajforms' ); ?></a>
-							</div>
-						</div>
-					<?php elseif ( is_array( $update_status ) ) : ?>
-						<div class="ajforms-about-status is-ok">
-							<strong><?php esc_html_e( 'AJ Core is up to date.', 'ajforms' ); ?></strong>
-							<?php
-							printf(
-								esc_html__( 'Installed version: %s.', 'ajforms' ),
-								esc_html( $update_status['current_version'] )
-							);
-							?>
-						</div>
-					<?php endif; ?>
-				<?php endif; ?>
+		<?php if ( current_user_can( 'update_plugins' ) ) : ?>
+			<div class="ajforms-about-toggle">
+				<label>
+					<input type="checkbox" <?php checked( $developer_updates_enabled ); ?> onchange="window.location.href='<?php echo esc_url( $developer_toggle_url ); ?>';">
+					<span>
+						<?php esc_html_e( 'Enable developer updates', 'ajforms' ); ?>
+						<span><?php esc_html_e( 'Developer updates include prerelease builds from non-main branches. Leave this off for normal main-branch updates.', 'ajforms' ); ?></span>
+					</span>
+				</label>
 			</div>
-		</div>
+
+			<?php if ( isset( $_GET['update-error'] ) ) : ?>
+				<div class="ajforms-about-status is-error">
+					<strong><?php esc_html_e( 'Update failed.', 'ajforms' ); ?></strong>
+					<?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['update-error'] ) ) ); ?>
+				</div>
+			<?php elseif ( isset( $_GET['update-success'] ) ) : ?>
+				<div class="ajforms-about-status is-ok">
+					<strong><?php esc_html_e( 'AJ Core was updated.', 'ajforms' ); ?></strong>
+					<?php esc_html_e( 'The plugin update completed successfully.', 'ajforms' ); ?>
+				</div>
+			<?php elseif ( is_wp_error( $update_status ) ) : ?>
+				<div class="ajforms-about-status is-error">
+					<strong><?php esc_html_e( 'Unable to check updates.', 'ajforms' ); ?></strong>
+					<?php echo esc_html( $update_status->get_error_message() ); ?>
+				</div>
+			<?php elseif ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
+				<div class="ajforms-about-status">
+					<strong><?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'An AJ Core developer update is available.', 'ajforms' ) : esc_html__( 'An AJ Core update is available.', 'ajforms' ); ?></strong>
+					<?php
+					printf(
+						esc_html__( 'Installed: %1$s. Latest: %2$s.', 'ajforms' ),
+						esc_html( $update_status['current_version'] ),
+						esc_html( $update_status['latest_version'] )
+					);
+					?>
+					<div class="ajforms-about-actions">
+						<a class="button button-primary" href="<?php echo esc_url( $this->get_about_update_url( 'update' ) ); ?>"><?php esc_html_e( 'Update AJ Core', 'ajforms' ); ?></a>
+					</div>
+				</div>
+			<?php elseif ( is_array( $update_status ) ) : ?>
+				<div class="ajforms-about-status is-ok">
+					<strong><?php esc_html_e( 'AJ Core is up to date.', 'ajforms' ); ?></strong>
+					<?php
+					printf(
+						esc_html__( 'Installed version: %s.', 'ajforms' ),
+						esc_html( $update_status['current_version'] )
+					);
+					?>
+				</div>
+			<?php endif; ?>
+		<?php endif; ?>
 		<?php
 	}
 
