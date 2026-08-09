@@ -163,7 +163,10 @@
 			"#ajcore-identify-popup{position:fixed;bottom:88px;right:20px;max-width:280px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:14px 16px;z-index:999997;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}" +
 			"#ajcore-identify-popup .aj-identify-close{position:absolute;top:6px;right:8px;background:none;border:none;color:#9ca3af;font-size:14px;cursor:pointer;line-height:1;padding:2px;}" +
 			"#ajcore-identify-popup .aj-identify-text{font-size:13px;color:#111827;margin:0 0 10px;padding-right:12px;line-height:1.4;}" +
-			"#ajcore-identify-popup input{display:block;width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:7px 9px;font-size:12px;margin-bottom:6px;font-family:inherit;}" +
+			// font-size must stay >=16px — anything smaller makes iOS Safari auto-zoom the viewport on
+			// focus, which inside a position:fixed popup like this one is what shows up as "the page
+			// jumps/scrolls to the top" the instant you tap into a field.
+			"#ajcore-identify-popup input{display:block;width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:9px;font-size:16px;margin-bottom:6px;font-family:inherit;}" +
 			"#ajcore-identify-popup .aj-identify-actions{display:flex;gap:8px;margin-top:4px;}" +
 			"#ajcore-identify-popup button.aj-identify-btn{flex:1;border-radius:8px;padding:8px;font-size:12px;font-weight:700;cursor:pointer;border:none;}" +
 			"#ajcore-identify-submit{background:#3157ff;color:#fff;}" +
