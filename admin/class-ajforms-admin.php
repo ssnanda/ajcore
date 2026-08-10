@@ -3686,6 +3686,91 @@ class AJForms_Admin {
 		return (int) $wpdb->insert_id;
 	}
 
+	/**
+	 * One-time cleanup for rows written while Settings > General > Timezone was unset/UTC (the site's
+	 * actual timezone is America/New_York) — every started_at/finished_at above and the
+	 * ajcore_portal_sync_last_run option were stamped via current_time('mysql'), which returns
+	 * whatever WP's timezone SETTING says, not the real site timezone. With that setting wrong, the
+	 * values stored are really UTC wall-clock strings with no marker saying so. This re-interprets
+	 * each one as UTC and converts it to wp_timezone() (correct now that the setting's been fixed),
+	 * so historical Sync History rows read the same way new ones will. Guarded by an option flag so
+	 * it can't be silently run twice and double-shift already-corrected rows; $force bypasses that for
+	 * an intentional re-run (e.g. after realizing the timezone setting was fixed to the wrong zone).
+	 */
+	private function fix_sync_log_utc_timestamps( $force = false ) {
+		if ( ! $force && get_option( 'ajcore_sync_log_tz_fixed_at' ) ) {
+			return new WP_Error( 'already_fixed', __( 'Historical sync timestamps were already fixed once. Use "Run again" to force it.', 'ajforms' ) );
+		}
+
+		$wpdb  = $this->get_pdb();
+		$table = $this->get_portal_sync_logs_table();
+		$tz    = wp_timezone();
+
+		$reinterpret = static function ( $value ) use ( $tz ) {
+			if ( empty( $value ) || '0000-00-00 00:00:00' === $value ) {
+				return null;
+			}
+			$dt = date_create( $value, new DateTimeZone( 'UTC' ) );
+			if ( ! $dt ) {
+				return null;
+			}
+			$dt->setTimezone( $tz );
+			return $dt->format( 'Y-m-d H:i:s' );
+		};
+
+		$rows = $wpdb->get_results( "SELECT id, started_at, finished_at FROM `{$table}`" );
+		$updated = 0;
+		foreach ( (array) $rows as $row ) {
+			$new_started  = $reinterpret( $row->started_at );
+			$new_finished = $row->finished_at ? $reinterpret( $row->finished_at ) : null;
+			$data    = array();
+			$formats = array();
+			if ( $new_started ) {
+				$data['started_at'] = $new_started;
+				$formats[]           = '%s';
+			}
+			if ( $new_finished ) {
+				$data['finished_at'] = $new_finished;
+				$formats[]            = '%s';
+			}
+			if ( ! empty( $data ) ) {
+				$wpdb->update( $table, $data, array( 'id' => (int) $row->id ), $formats, array( '%d' ) );
+				++$updated;
+			}
+		}
+
+		$last_run = get_option( 'ajcore_portal_sync_last_run', '' );
+		if ( $last_run ) {
+			$fixed = $reinterpret( $last_run );
+			if ( $fixed ) {
+				update_option( 'ajcore_portal_sync_last_run', $fixed, false );
+			}
+		}
+
+		update_option( 'ajcore_sync_log_tz_fixed_at', current_time( 'mysql' ), false );
+
+		return $updated;
+	}
+
+	private function handle_sync_log_tz_fix_action() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_fix_sync_tz_nonce'] ) ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_fix_sync_log_tz', 'ajcore_fix_sync_tz_nonce' );
+
+		$force  = ! empty( $_POST['ajcore_fix_sync_tz_force'] );
+		$result = $this->fix_sync_log_utc_timestamps( $force );
+
+		$args = array( 'page' => 'ajforms-settings', 'section' => 'sync' );
+		if ( is_wp_error( $result ) ) {
+			$args['portal-error'] = rawurlencode( $result->get_error_message() );
+		} else {
+			$args['sync-tz-fixed'] = (int) $result;
+		}
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
 	private function get_stripe_event_object_id( $event ) {
 		$object = ! empty( $event['data']['object'] ) && is_array( $event['data']['object'] ) ? $event['data']['object'] : array();
 
@@ -11163,6 +11248,8 @@ class AJForms_Admin {
 				$this->handle_portal_calendar_settings_save();
 			} elseif ( 'shared-db' === $section ) {
 				$this->handle_portal_shared_db_settings_save();
+			} elseif ( 'sync' === $section && isset( $_POST['ajcore_fix_sync_tz_nonce'] ) ) {
+				$this->handle_sync_log_tz_fix_action();
 			} elseif ( 'sync' === $section || 'menu' === $section || 'product-catalog' === $section ) {
 				// Sync, Menu, and Product Catalog all save through the same giant handler Tasks/
 				// Portal-Users/Sold-items still use on the old Client Portal page — safe to call here
@@ -23972,6 +24059,28 @@ class AJForms_Admin {
 			<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 				<div class="notice notice-error inline"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 			<?php endif; ?>
+			<?php if ( isset( $_GET['sync-tz-fixed'] ) ) : ?>
+				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Re-stamped %d historical sync log rows (plus the "last completed run" time) from UTC to this site\'s timezone.', 'ajforms' ), absint( wp_unslash( $_GET['sync-tz-fixed'] ) ) ) ); ?></p></div>
+			<?php endif; ?>
+
+			<?php $tz_already_fixed = get_option( 'ajcore_sync_log_tz_fixed_at' ); ?>
+			<div class="ajforms-settings-card" style="margin:0 0 16px;background:#fffbeb;border-color:#fde68a;">
+				<h4 style="margin-top:0;"><?php esc_html_e( 'Historical Timestamps Look Wrong?', 'ajforms' ); ?></h4>
+				<p class="description">
+					<?php if ( $tz_already_fixed ) : ?>
+						<?php echo esc_html( sprintf( __( 'Already run once, on %s. Only use "Run again" if the timezone setting itself was wrong at that time too.', 'ajforms' ), esc_html( $tz_already_fixed ) ) ); ?>
+					<?php else : ?>
+						<?php esc_html_e( 'If Settings > General > Timezone was unset/UTC when older sync rows below were recorded, their times were stamped in UTC instead of this site\'s real timezone. Run this once after fixing that setting to re-stamp existing rows (and the "last completed run" time above) to match — new rows going forward are already correct.', 'ajforms' ); ?>
+					<?php endif; ?>
+				</p>
+				<form method="post" onsubmit="return window.confirm('<?php echo esc_js( __( 'Re-stamp every historical sync log row from UTC to this site\'s configured timezone? Only do this once, right after fixing Settings > General > Timezone.', 'ajforms' ) ); ?>');">
+					<?php wp_nonce_field( 'ajcore_fix_sync_log_tz', 'ajcore_fix_sync_tz_nonce' ); ?>
+					<?php if ( $tz_already_fixed ) : ?>
+						<label style="display:inline-block;margin-right:10px;"><input type="checkbox" name="ajcore_fix_sync_tz_force" value="1"> <?php esc_html_e( 'Run again anyway', 'ajforms' ); ?></label>
+					<?php endif; ?>
+					<?php submit_button( __( 'Fix Historical Timestamps (UTC → Local)', 'ajforms' ), 'secondary', 'submit', false ); ?>
+				</form>
+			</div>
 
 			<div class="ajforms-settings-inline-actions">
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d customers cached', 'ajforms' ), $cache_counts['customers'] ) ); ?></span>
