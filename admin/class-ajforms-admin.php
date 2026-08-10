@@ -11145,6 +11145,12 @@ class AJForms_Admin {
 				// query args, not a POST), which is why this has to run on every load of this
 				// section, not just when handle_settings_save()'s nonce check would fire.
 				$this->handle_about_update_action();
+			} elseif ( 'chat' === $section ) {
+				// Live Chat: first section migrated from "link out to CP Settings" to fully embedded
+				// (see display_settings_page()'s $sections['chat']) — its own save handler, not the
+				// generic handle_settings_save() the final else below would otherwise run (that one
+				// has no idea what chat_* fields even are).
+				$this->handle_chat_settings_save();
 			} else {
 				$this->handle_settings_save();
 			}
@@ -28217,7 +28223,7 @@ class AJForms_Admin {
 
 		update_option( 'ajforms_settings', $settings );
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'chat', 'settings-updated' => 1 ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'chat', 'settings-updated' => 1 ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -28233,8 +28239,11 @@ class AJForms_Admin {
 		}
 
 		$settings   = $this->get_plugin_settings();
+		// This section now lives on the unified Settings page (see display_settings_page()'s
+		// 'chat' case) — the form has to submit back there explicitly since it's a real <form
+		// action="">, not a bare <form method="post"> that would submit to wherever it's rendered.
 		$action_url = add_query_arg(
-			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'chat', 'section' => 'chat' ),
+			array( 'page' => 'ajforms-settings', 'section' => 'chat' ),
 			admin_url( 'admin.php' )
 		);
 		$live_chat_tab_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'chat' ), admin_url( 'admin.php' ) );
@@ -30795,11 +30804,15 @@ class AJForms_Admin {
 			}
 		}
 		if ( $live_chat_enabled ) {
+			// Pilot for embedding former CP Settings sections directly (no 'cp_section' key — see
+			// the sidebar-render comment below for what that key means) rather than linking out to
+			// the old page. display_chat_settings_section()'s one hardcoded internal link (its own
+			// <form action="">) and handle_chat_settings_save()'s save-redirect were both repointed
+			// at this page to make that safe; see the dispatch case in this same function.
 			$sections['chat'] = array(
-				'label'      => __( 'Live Chat', 'ajforms' ),
-				'icon'       => 'format-chat',
-				'group'      => __( 'Communications', 'ajforms' ),
-				'cp_section' => 'chat',
+				'label' => __( 'Live Chat', 'ajforms' ),
+				'icon'  => 'format-chat',
+				'group' => __( 'Communications', 'ajforms' ),
 			);
 		}
 
@@ -30963,6 +30976,11 @@ class AJForms_Admin {
 								<p><?php esc_html_e( 'Install the latest AJ Core release when one is available.', 'ajforms' ); ?></p>
 							</div>
 							<?php $this->display_update_ajcore_section( $update_status ); ?>
+						<?php elseif ( 'chat' === $section ) : ?>
+							<?php // display_chat_settings_section() renders its own heading/card/form
+							// already (it used to be embedded in the old CP Settings tab strip the
+							// same way) — no extra .ajforms-settings-head wrapper needed here. ?>
+							<?php $this->display_chat_settings_section(); ?>
 						<?php else : ?>
 						<form method="post">
 				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
