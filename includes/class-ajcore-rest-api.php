@@ -4954,7 +4954,7 @@ class AJCore_REST_API {
 	 * navigation (Zoho's OAuth redirect), never called as an API endpoint by AJOps or anything else.
 	 */
 	public function zoho_mail_oauth_callback( WP_REST_Request $request ) {
-		$settings_page_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox' ), admin_url( 'admin.php' ) );
+		$settings_page_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'inbox' ), admin_url( 'admin.php' ) );
 
 		$error = sanitize_text_field( (string) $request->get_param( 'error' ) );
 		if ( '' !== $error ) {
@@ -5049,7 +5049,7 @@ class AJCore_REST_API {
 	 * X-WP-Nonce, so this route can't be capability-gated).
 	 */
 	public function gmail_intake_oauth_callback( WP_REST_Request $request ) {
-		$settings_page_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'gmail-intake' ), admin_url( 'admin.php' ) );
+		$settings_page_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'gmail-intake' ), admin_url( 'admin.php' ) );
 
 		$error = sanitize_text_field( (string) $request->get_param( 'error' ) );
 		if ( '' !== $error ) {

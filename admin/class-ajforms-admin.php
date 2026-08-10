@@ -11133,7 +11133,9 @@ class AJForms_Admin {
 			$this->handle_lead_actions();
 		} elseif ( 'ajforms-settings' === $page ) {
 			$section = isset( $_GET['section'] ) ? sanitize_key( wp_unslash( $_GET['section'] ) ) : '';
-			if ( 'role-manager' === $section || isset( $_GET['role_manager_action'] ) || isset( $_POST['role_manager_action'] ) ) {
+			if ( 'roles' === $section || 'role-manager' === $section || isset( $_GET['role_manager_action'] ) || isset( $_POST['role_manager_action'] ) ) {
+				// Role Manager's own links/redirects use 'roles' (matches $sections['roles'] below);
+				// 'role-manager' kept alongside it in case anything else still refers to that spelling.
 				$this->handle_role_manager_actions();
 			} elseif ( 'auth' === $section ) {
 				// Auth used to be its own page (ajforms-auth) with its own $page-keyed dispatch
@@ -11151,6 +11153,35 @@ class AJForms_Admin {
 				// generic handle_settings_save() the final else below would otherwise run (that one
 				// has no idea what chat_* fields even are).
 				$this->handle_chat_settings_save();
+			} elseif ( 'rentec' === $section ) {
+				$this->handle_rentec_settings_save();
+			} elseif ( 'api' === $section ) {
+				$this->handle_portal_api_settings_save();
+			} elseif ( 'files' === $section ) {
+				$this->handle_portal_file_settings_save();
+			} elseif ( 'calendar' === $section ) {
+				$this->handle_portal_calendar_settings_save();
+			} elseif ( 'shared-db' === $section ) {
+				$this->handle_portal_shared_db_settings_save();
+			} elseif ( 'sync' === $section || 'menu' === $section || 'product-catalog' === $section ) {
+				// Sync, Menu, and Product Catalog all save through the same giant handler Tasks/
+				// Portal-Users/Sold-items still use on the old Client Portal page — safe to call here
+				// too since which branch inside it actually runs is decided by which specific nonce
+				// field is present in the request, not by which page/section the URL claims to be.
+				$this->handle_client_portal_settings_save();
+			} elseif ( 'event-log' === $section ) {
+				$this->handle_portal_event_log_actions();
+			} elseif ( 'inbox' === $section ) {
+				// Zoho Mail's connect/disconnect is GET-triggered (zoho_mail_action query arg), not a
+				// POST — same reasoning as Update AJ Core above, has to run every load, not just when
+				// handle_settings_save()'s nonce check would fire. Falls through to that generic
+				// handler too, since Inbox's actual settings form still uses the shared nonce field.
+				$this->handle_zoho_mail_actions();
+				$this->handle_settings_save();
+			} elseif ( 'gmail-intake' === $section ) {
+				// Same reasoning as Inbox/Zoho above, for Gmail Intake's OAuth connect/disconnect.
+				$this->handle_gmail_intake_actions();
+				$this->handle_settings_save();
 			} else {
 				$this->handle_settings_save();
 			}
@@ -11360,8 +11391,8 @@ class AJForms_Admin {
 				wp_safe_redirect(
 					add_query_arg(
 						array(
-							'page'         => 'ajforms-client-portal',
-							'tab'          => 'sync',
+							'page'         => 'ajforms-settings',
+							'section'      => 'sync',
 							'portal-error' => rawurlencode( __( 'Backup file was not found.', 'ajforms' ) ),
 						),
 						admin_url( 'admin.php' )
@@ -11388,8 +11419,8 @@ class AJForms_Admin {
 					wp_safe_redirect(
 						add_query_arg(
 							array(
-								'page'         => 'ajforms-client-portal',
-								'tab'          => 'sync',
+								'page'         => 'ajforms-settings',
+								'section'      => 'sync',
 								'portal-error' => rawurlencode( $backup->get_error_message() ),
 							),
 							admin_url( 'admin.php' )
@@ -11400,7 +11431,7 @@ class AJForms_Admin {
 			}
 
 			$result = $this->reset_portal_sync_cache();
-			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' );
+			$args   = array( 'page' => 'ajforms-settings', 'section' => 'sync' );
 
 			if ( is_wp_error( $result ) ) {
 				$args['portal-error'] = rawurlencode( $result->get_error_message() );
@@ -11419,7 +11450,7 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_tables_backup', 'ajcore_tables_backup_nonce' );
 
 			$backup = $this->backup_ajcore_tables();
-			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' );
+			$args   = array( 'page' => 'ajforms-settings', 'section' => 'sync' );
 
 			if ( is_wp_error( $backup ) ) {
 				$args['portal-error'] = rawurlencode( $backup->get_error_message() );
@@ -11461,19 +11492,30 @@ class AJForms_Admin {
 				wp_schedule_event( time() + 10 * MINUTE_IN_SECONDS, $frequency, 'ajcore_portal_stripe_sync' );
 			}
 
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal-sync-settings' => 'saved' ), admin_url( 'admin.php' ) ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync', 'portal-sync-settings' => 'saved' ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
 		if ( isset( $_GET['portal_action'], $_GET['_wpnonce'] ) ) {
 			$action     = sanitize_key( wp_unslash( $_GET['portal_action'] ) );
 			$secret_key = $this->get_stripe_secret_key_for_portal();
-			$current_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'menu';
-			// Matches the full tab whitelist in display_portal_dashboard() so "Full Sync Now" (now
-			// available from every tab, not just Sync/Menu/Customers/Product Catalog/Compliance)
-			// redirects back to wherever it was actually clicked from.
-			$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations', 'mail', 'gmail-intake' ), true ) ? $current_tab : 'menu';
-			$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
+			// Sync/Menu were migrated to the unified Settings page (page=ajforms-settings&section=X);
+			// their own buttons (e.g. sync_url above) now land here with 'page' already set to that,
+			// so the redirect-back has to target the same page it was invoked from, not always the
+			// old Client Portal page — otherwise "Sync Products" et al would 404-redirect to a
+			// no-longer-linked screen once clicked from the new Sync section.
+			if ( isset( $_GET['page'] ) && 'ajforms-settings' === sanitize_key( wp_unslash( $_GET['page'] ) ) ) {
+				$current_section = isset( $_GET['section'] ) ? sanitize_key( wp_unslash( $_GET['section'] ) ) : 'sync';
+				$current_section = in_array( $current_section, array( 'sync', 'menu' ), true ) ? $current_section : 'sync';
+				$args             = array( 'page' => 'ajforms-settings', 'section' => $current_section );
+			} else {
+				$current_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'menu';
+				// Matches the full tab whitelist in display_portal_dashboard() so "Full Sync Now" (now
+				// available from every tab, not just Sync/Menu/Customers/Product Catalog/Compliance)
+				// redirects back to wherever it was actually clicked from.
+				$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations', 'mail', 'gmail-intake' ), true ) ? $current_tab : 'menu';
+				$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
+			}
 
 			if ( in_array( $action, array( 'sync_all', 'sync_products', 'sync_customers', 'sync_subscriptions', 'sync_transactions' ), true )
 				&& function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() ) {
@@ -12124,8 +12166,8 @@ class AJForms_Admin {
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'            => 'ajforms-client-portal',
-						'tab'             => 'products-services',
+						'page'            => 'ajforms-settings',
+						'section'         => 'product-catalog',
 						'portal-products' => 'saved',
 					),
 					admin_url( 'admin.php' )
@@ -12323,9 +12365,8 @@ class AJForms_Admin {
 		wp_safe_redirect(
 			add_query_arg(
 				array(
-					'page'           => 'ajforms-client-portal',
-					'tab'            => 'cp-settings',
-					'cp_section'     => 'menu',
+					'page'           => 'ajforms-settings',
+					'section'        => 'menu',
 					'portal-updated' => 1,
 				),
 				admin_url( 'admin.php' )
@@ -13252,8 +13293,8 @@ class AJForms_Admin {
 
 		$action       = sanitize_key( wp_unslash( $_POST['ajcore_event_log_action'] ) );
 		$redirect_args = array(
-			'page' => 'ajforms-client-portal',
-			'tab'  => 'event-log',
+			'page'    => 'ajforms-settings',
+			'section' => 'event-log',
 		);
 
 		if ( 'save_retention' === $action ) {
@@ -13459,8 +13500,14 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( 'email-templates' === $section || 'inbox' === $section || 'gmail-intake' === $section || 'esign' === $section || 'rentec' === $section ) {
-			// These sections' forms live on the Client Portal's CP Settings tab, not this page.
+		if ( 'rentec' === $section ) {
+			// Rentec actually saves through its own dedicated handle_rentec_settings_save() (see
+			// handle_admin_actions()'s dispatch) — this branch is unreachable in practice and kept
+			// only because removing it isn't this change's job. Email Templates/Inbox/Gmail Intake/
+			// E-Signatures used to redirect back to the old CP Settings tab strip here too; now that
+			// they're embedded directly in the unified Settings page (see display_settings_page()'s
+			// $sections), they just fall through to the same default redirect general/spam/
+			// integrations/payments already use below.
 			$redirect_args = array(
 				'page'             => 'ajforms-client-portal',
 				'tab'              => 'cp-settings',
@@ -13523,8 +13570,8 @@ class AJForms_Admin {
 		wp_safe_redirect(
 			add_query_arg(
 				array(
-					'page'             => 'ajforms-cp-settings',
-					'cp_section'       => 'rentec',
+					'page'             => 'ajforms-settings',
+					'section'          => 'rentec',
 					'settings-updated' => 'true',
 				),
 				admin_url( 'admin.php' )
@@ -14143,7 +14190,7 @@ class AJForms_Admin {
 			$role_key = sanitize_key( wp_unslash( $_GET['role'] ) );
 			check_admin_referer( 'ajcore_delete_role_' . $role_key );
 
-			$args = array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'roles' );
+			$args = array( 'page' => 'ajforms-settings', 'section' => 'roles' );
 
 			if ( in_array( $role_key, array( 'subscriber', 'contributor', 'author', 'editor', 'administrator' ), true ) ) {
 				$args['role-error'] = 'wordpress-default-delete';
@@ -14171,7 +14218,7 @@ class AJForms_Admin {
 		$selected_caps       = isset( $_POST['role_capabilities'] ) && is_array( $_POST['role_capabilities'] ) ? $_POST['role_capabilities'] : array();
 		$custom_capabilities = isset( $_POST['custom_capabilities'] ) ? wp_unslash( $_POST['custom_capabilities'] ) : '';
 		$capabilities        = $this->sanitize_role_capability_list( $selected_caps, $custom_capabilities );
-		$args                = array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'roles' );
+		$args                = array( 'page' => 'ajforms-settings', 'section' => 'roles' );
 
 		if ( '' === $role_key || '' === $role_label ) {
 			$args['role-error'] = 'missing-fields';
@@ -20048,7 +20095,7 @@ class AJForms_Admin {
 			$current_settings = ajcore_get_portal_file_settings();
 			$saved = $requested_settings === array_intersect_key( $current_settings, $requested_settings );
 		}
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'files', $saved ? 'saved' : 'save-error' => 1 ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'files', $saved ? 'saved' : 'save-error' => 1 ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -20109,7 +20156,7 @@ class AJForms_Admin {
 			)
 		);
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'api', 'api-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'api', 'api-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -20158,7 +20205,7 @@ class AJForms_Admin {
 		$ms_enabled              = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
 		$app_passwords_available = function_exists( 'wp_is_application_passwords_available' ) ? wp_is_application_passwords_available() : true;
 		$profile_url             = admin_url( 'profile.php#application-passwords-section' );
-		$role_manager_url        = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'roles' ), admin_url( 'admin.php' ) );
+		$role_manager_url        = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'roles' ), admin_url( 'admin.php' ) );
 		$status_url              = rest_url( 'ajcore/v1/status' );
 		$ops_summary_url         = rest_url( 'ajcore/v1/ops/summary' );
 		$portal_me_url           = rest_url( 'ajcore/v1/portal/me' );
@@ -20907,7 +20954,7 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
-		$settings_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox' ), admin_url( 'admin.php' ) );
+		$settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'inbox' ), admin_url( 'admin.php' ) );
 		$settings     = $this->get_plugin_settings();
 		$is_connected = ! empty( $settings['zoho_mail_refresh_token'] );
 
@@ -21040,7 +21087,7 @@ class AJForms_Admin {
 		$event_types = $wpdb->get_col( "SELECT DISTINCT event_type FROM {$table} ORDER BY event_type ASC" );
 		$sources     = $wpdb->get_col( "SELECT DISTINCT source FROM {$table} ORDER BY source ASC" );
 		$severities  = array( 'debug', 'info', 'warning', 'error', 'critical' );
-		$base_url    = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'event-log' ), admin_url( 'admin.php' ) );
+		$base_url    = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'event-log' ), admin_url( 'admin.php' ) );
 		$retention   = $this->get_portal_event_log_retention_settings();
 		$total_rows  = absint( $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ) );
 		$last_purge  = absint( get_option( 'ajcore_portal_event_log_last_auto_purge', 0 ) );
@@ -21595,7 +21642,7 @@ class AJForms_Admin {
 
 		$settings     = $this->get_plugin_settings();
 		$configured   = '' !== trim( (string) ( $settings['chat_server_url'] ?? '' ) );
-		$settings_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'chat' ), admin_url( 'admin.php' ) );
+		$settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'chat' ), admin_url( 'admin.php' ) );
 
 		$status_filter = isset( $_GET['chat_status'] ) ? sanitize_key( wp_unslash( $_GET['chat_status'] ) ) : 'all';
 		$status_filter = in_array( $status_filter, array( 'open', 'closed', 'all' ), true ) ? $status_filter : 'open';
@@ -22045,7 +22092,7 @@ class AJForms_Admin {
 
 		$settings    = $this->get_plugin_settings();
 		$is_connected = ! empty( $settings['breezedoc_api_token'] );
-		$settings_url = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'esign' ), admin_url( 'admin.php' ) );
+		$settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'esign' ), admin_url( 'admin.php' ) );
 
 		$pdb                   = $this->get_pdb();
 		$local_customers_table = $pdb->prefix . 'aj_portal_local_customers';
@@ -23880,7 +23927,7 @@ class AJForms_Admin {
 		$reconciliation = $this->get_portal_sync_reconciliation();
 		$open_log_id  = isset( $_GET['sync_log_id'] ) ? absint( wp_unslash( $_GET['sync_log_id'] ) ) : 0;
 		$open_log_items = $open_log_id ? $pdb->get_results( $pdb->prepare( "SELECT * FROM {$this->get_portal_sync_log_items_table()} WHERE log_id = %d ORDER BY id ASC LIMIT 500", $open_log_id ) ) : array();
-		$sync_url     = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
+		$sync_url     = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync', 'portal_action' => 'sync_all' ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_all' );
 		$reset_plan   = $this->get_portal_master_reset_plan();
 		$table_inventory = $this->get_ajcore_table_inventory();
 		$backup_file  = isset( $_GET['portal-backup-file'] ) ? sanitize_file_name( wp_unslash( $_GET['portal-backup-file'] ) ) : '';
@@ -23892,8 +23939,8 @@ class AJForms_Admin {
 				$backup_download_url = wp_nonce_url(
 					add_query_arg(
 						array(
-							'page' => 'ajforms-client-portal',
-							'tab'  => 'sync',
+							'page'    => 'ajforms-settings',
+							'section' => 'sync',
 							'ajcore_download_tables_backup' => $backup_file,
 						),
 						admin_url( 'admin.php' )
@@ -23965,7 +24012,7 @@ class AJForms_Admin {
 				<div class="ajforms-settings-inline-actions" style="margin-top:12px;">
 					<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Run Selected Sync Now', 'ajforms' ); ?></a>
 					<?php foreach ( $jobs as $job_key => $job_label ) : ?>
-						<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'portal_action' => 'sync_' . $job_key ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_' . $job_key ) ); ?>"><?php echo esc_html( sprintf( __( 'Sync %s', 'ajforms' ), $job_label ) ); ?></a>
+						<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync', 'portal_action' => 'sync_' . $job_key ), admin_url( 'admin.php' ) ), 'ajcore_portal_sync_' . $job_key ) ); ?>"><?php echo esc_html( sprintf( __( 'Sync %s', 'ajforms' ), $job_label ) ); ?></a>
 					<?php endforeach; ?>
 				</div>
 			<?php endif; ?>
@@ -24095,7 +24142,7 @@ class AJForms_Admin {
 								<td>
 									<?php $decoded_message = $this->decode_portal_sync_message( $log->message ); ?>
 									<?php echo esc_html( (string) $decoded_message['summary'] ); ?>
-									<br><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync', 'sync_log_id' => (int) $log->id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open details', 'ajforms' ); ?></a>
+									<br><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync', 'sync_log_id' => (int) $log->id ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open details', 'ajforms' ); ?></a>
 								</td>
 							</tr>
 							<?php if ( $open_log_id === (int) $log->id ) : ?>
@@ -24246,7 +24293,7 @@ class AJForms_Admin {
 		}
 		?>
 		<div class="ajforms-settings-card ajcore-customers-panel">
-			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Stripe customer records with portal access, WordPress user links, lifecycle status, and customer view shortcuts.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a></div>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Stripe customer records with portal access, WordPress user links, lifecycle status, and customer view shortcuts.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a></div>
 
 			<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled for portal access.', 'ajforms' ); ?></p></div>
@@ -24389,7 +24436,7 @@ class AJForms_Admin {
 				<?php wp_nonce_field( 'ajcore_repair_portal_user_links', 'ajcore_repair_portal_user_links_nonce' ); ?>
 					<button type="submit" class="button"><?php esc_html_e( 'Repair WP User Links & Roles', 'ajforms' ); ?></button>
 				</form>
-				<a class="button ajcore-toolbar-spacer" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
+				<a class="button ajcore-toolbar-spacer" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
 
 			<?php if ( ! empty( $available_fields ) ) : ?>
@@ -24435,7 +24482,7 @@ class AJForms_Admin {
 									<p><strong><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></strong></p>
 									<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customer records from the connected Stripe account.', 'ajforms' ); ?></p>
 									<p>
-										<a class="button button-primary" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
+										<a class="button button-primary" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 									</p>
 								</td>
 							</tr>
@@ -24671,7 +24718,7 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d visible in Add Services', 'ajforms' ), $visible_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
 			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
-				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
 		<p class="description"><?php esc_html_e( 'Customer View opens from each customer link in Portal Users, Billing, Transactions, Requests, Tasks, and Files.', 'ajforms' ); ?></p>
 
@@ -25578,7 +25625,7 @@ class AJForms_Admin {
 
 		$settings    = $this->get_plugin_settings();
 		$action_url  = add_query_arg(
-			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'email-templates', 'section' => 'email-templates' ),
+			array( 'page' => 'ajforms-settings', 'section' => 'email-templates' ),
 			admin_url( 'admin.php' )
 		);
 		?>
@@ -25835,7 +25882,7 @@ class AJForms_Admin {
 
 		wp_safe_redirect(
 			add_query_arg(
-				array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox', 'zoho-mail-disconnected' => 'true' ),
+				array( 'page' => 'ajforms-settings', 'section' => 'inbox', 'zoho-mail-disconnected' => 'true' ),
 				admin_url( 'admin.php' )
 			)
 		);
@@ -26284,7 +26331,7 @@ class AJForms_Admin {
 		$settings     = $this->get_plugin_settings();
 		$redirect_uri = rest_url( 'ajcore/v1/zoho-mail/oauth/callback' );
 		$action_url   = add_query_arg(
-			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox', 'section' => 'inbox' ),
+			array( 'page' => 'ajforms-settings', 'section' => 'inbox' ),
 			admin_url( 'admin.php' )
 		);
 
@@ -26326,7 +26373,7 @@ class AJForms_Admin {
 		);
 
 		$disconnect_url = wp_nonce_url(
-			add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'inbox', 'zoho_mail_action' => 'disconnect' ), admin_url( 'admin.php' ) ),
+			add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'inbox', 'zoho_mail_action' => 'disconnect' ), admin_url( 'admin.php' ) ),
 			'ajcore_zoho_mail_disconnect'
 		);
 		$test_url     = rest_url( 'ajcore/v1/zoho-mail/test' );
@@ -26653,7 +26700,7 @@ class AJForms_Admin {
 
 		wp_safe_redirect(
 			add_query_arg(
-				array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'gmail-intake', 'gmail-intake-disconnected' => 'true' ),
+				array( 'page' => 'ajforms-settings', 'section' => 'gmail-intake', 'gmail-intake-disconnected' => 'true' ),
 				admin_url( 'admin.php' )
 			)
 		);
@@ -27784,7 +27831,7 @@ class AJForms_Admin {
 		$settings     = $this->get_plugin_settings();
 		$redirect_uri = $this->get_gmail_intake_redirect_uri();
 		$action_url   = add_query_arg(
-			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'gmail-intake', 'section' => 'gmail-intake' ),
+			array( 'page' => 'ajforms-settings', 'section' => 'gmail-intake' ),
 			admin_url( 'admin.php' )
 		);
 
@@ -27815,7 +27862,7 @@ class AJForms_Admin {
 			'https://accounts.google.com/o/oauth2/v2/auth'
 		);
 		$disconnect_url = wp_nonce_url(
-			add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'gmail-intake', 'gmail_intake_action' => 'disconnect' ), admin_url( 'admin.php' ) ),
+			add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'gmail-intake', 'gmail_intake_action' => 'disconnect' ), admin_url( 'admin.php' ) ),
 			'ajcore_gmail_intake_disconnect'
 		);
 		$test_url    = rest_url( 'ajcore/v1/gmail-intake/test' );
@@ -28097,7 +28144,7 @@ class AJForms_Admin {
 
 		$settings   = $this->get_plugin_settings();
 		$action_url = add_query_arg(
-			array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'esign', 'section' => 'esign' ),
+			array( 'page' => 'ajforms-settings', 'section' => 'esign' ),
 			admin_url( 'admin.php' )
 		);
 		$test_url = rest_url( 'ajcore/v1/esign/test' );
@@ -28621,7 +28668,7 @@ class AJForms_Admin {
 						<?php if ( 'leads' === $resource ) : ?><button type="button" id="ajcore-new-rentec-lead" class="button button-primary"><?php esc_html_e( 'New Lead', 'ajforms' ); ?></button><?php endif; ?>
 						<?php if ( 'vendors' === $resource ) : ?><button type="button" id="ajcore-new-rentec-vendor" class="button button-primary"><?php esc_html_e( 'New Vendor', 'ajforms' ); ?></button><?php endif; ?>
 					<?php endif; ?>
-					<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'rentec' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Rentec Settings', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'rentec' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Rentec Settings', 'ajforms' ); ?></a>
 				</div>
 			</div>
 
@@ -29190,11 +29237,7 @@ class AJForms_Admin {
 		$is_master          = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
 		$read_only          = $is_shared_db && ! $is_master;
 		$form_url            = add_query_arg(
-			array(
-				'page'       => 'ajforms-cp-settings',
-				'cp_section' => 'rentec',
-				'section'    => 'rentec',
-			),
+			array( 'page' => 'ajforms-settings', 'section' => 'rentec' ),
 			admin_url( 'admin.php' )
 		);
 		?>
@@ -29633,7 +29676,7 @@ class AJForms_Admin {
 		$form_label   = $is_editing ? $editing_role['name'] : '';
 		$is_adding    = isset( $_GET['role_manager_action'] ) && 'add' === sanitize_key( wp_unslash( $_GET['role_manager_action'] ) );
 		$form_caps    = $is_editing && ! empty( $editing_role['capabilities'] ) && is_array( $editing_role['capabilities'] ) ? array_keys( array_filter( $editing_role['capabilities'] ) ) : array( 'read' );
-		$base_url     = add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'roles' ), admin_url( 'admin.php' ) );
+		$base_url     = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'roles' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="<?php echo $embedded ? 'ajcore-role-manager' : 'wrap ajcore-role-manager'; ?>">
 			<?php if ( ! $embedded ) : ?>
@@ -29944,7 +29987,7 @@ class AJForms_Admin {
 					<div class="notice notice-warning inline"><p><?php esc_html_e( 'Add your Stripe secret key under Settings > Stripe Payments before syncing portal data.', 'ajforms' ); ?></p></div>
 				<?php endif; ?>
 				<?php if ( $is_sync_owner ) : ?><div class="ajforms-settings-inline-actions">
-					<a class="button button-primary" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
+					<a class="button button-primary" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 				</div><?php endif; ?>
 			</div>
 
@@ -30030,7 +30073,7 @@ class AJForms_Admin {
 								<label><input type="checkbox" name="portal_services_show_add" value="1" <?php checked( ! empty( $service_settings['show_add_services'] ) ); ?>> <?php esc_html_e( 'Show Add Services', 'ajforms' ); ?></label>
 							</div>
 						</div>
-						<p><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Product Catalog', 'ajforms' ); ?></a></p>
+						<p><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'product-catalog' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Product Catalog', 'ajforms' ); ?></a></p>
 					</div>
 
 					<div class="ajforms-settings-actions">
@@ -30766,6 +30809,12 @@ class AJForms_Admin {
 
 		if ( $client_portal_enabled ) {
 			$client_portal_group = __( 'Client Portal', 'ajforms' );
+			// These render inline now (see the dispatch cases in this function's content area and
+			// in handle_admin_actions()) — no 'cp_section' key, same as chat/auth/update above. Menu/
+			// Sync/Product Catalog share handle_client_portal_settings_save() with Tasks/Portal-Users/
+			// Sold-items (which stay on the old Client Portal page) — safe because that handler's
+			// branches are each gated on their own nonce field, not on which page/section the request
+			// claims to be for; see the dispatch case in handle_admin_actions().
 			foreach ( array(
 				'menu'                   => array( __( 'Menu', 'ajforms' ), 'menu' ),
 				'product-catalog'        => array( __( 'Product Catalog', 'ajforms' ), 'archive' ),
@@ -30781,10 +30830,9 @@ class AJForms_Admin {
 				'rentec'                 => array( __( 'Rentec Direct', 'ajforms' ), 'admin-multisite' ),
 			) as $cp_key => $cp_meta ) {
 				$sections[ $cp_key ] = array(
-					'label'      => $cp_meta[0],
-					'icon'       => $cp_meta[1],
-					'group'      => $client_portal_group,
-					'cp_section' => $cp_key,
+					'label' => $cp_meta[0],
+					'icon'  => $cp_meta[1],
+					'group' => $client_portal_group,
 				);
 			}
 
@@ -30796,10 +30844,9 @@ class AJForms_Admin {
 				'esign'           => array( __( 'E-Signatures (BreezeDoc)', 'ajforms' ), 'edit-page' ),
 			) as $cp_key => $cp_meta ) {
 				$sections[ $cp_key ] = array(
-					'label'      => $cp_meta[0],
-					'icon'       => $cp_meta[1],
-					'group'      => $comms_group,
-					'cp_section' => $cp_key,
+					'label' => $cp_meta[0],
+					'icon'  => $cp_meta[1],
+					'group' => $comms_group,
 				);
 			}
 		}
@@ -30819,17 +30866,15 @@ class AJForms_Admin {
 		$system_group = __( 'System', 'ajforms' );
 		if ( $client_portal_enabled ) {
 			$sections['roles'] = array(
-				'label'      => __( 'Role Manager', 'ajforms' ),
-				'icon'       => 'admin-network',
-				'group'      => $system_group,
-				'cp_section' => 'roles',
+				'label' => __( 'Role Manager', 'ajforms' ),
+				'icon'  => 'admin-network',
+				'group' => $system_group,
 			);
 		}
 		$sections['shared-db'] = array(
-			'label'      => __( 'Site Features / Shared DB', 'ajforms' ),
-			'icon'       => 'admin-site-alt3',
-			'group'      => $system_group,
-			'cp_section' => 'shared-db',
+			'label' => __( 'Site Features / Shared DB', 'ajforms' ),
+			'icon'  => 'admin-site-alt3',
+			'group' => $system_group,
 		);
 
 		// Link-out entries (anything with 'cp_section') have no inline content on this page — only
@@ -30981,6 +31026,53 @@ class AJForms_Admin {
 							// already (it used to be embedded in the old CP Settings tab strip the
 							// same way) — no extra .ajforms-settings-head wrapper needed here. ?>
 							<?php $this->display_chat_settings_section(); ?>
+						<?php elseif ( 'menu' === $section ) : ?>
+							<?php // display_client_portal_settings_tab() renders its own heading/cards
+							// already (same reasoning as chat above) — its own form is bare (no
+							// action=), so it already posts back to wherever it's embedded. ?>
+							<?php $this->display_client_portal_settings_tab( 'menu', true ); ?>
+						<?php elseif ( 'product-catalog' === $section ) : ?>
+							<?php $this->display_portal_products_services_tab(); ?>
+						<?php elseif ( 'sync' === $section ) : ?>
+							<?php $this->display_portal_sync_tab(); ?>
+						<?php elseif ( 'event-log' === $section ) : ?>
+							<?php $this->display_portal_event_log_tab(); ?>
+						<?php elseif ( 'rentec' === $section ) : ?>
+							<?php $this->display_rentec_settings_section(); ?>
+						<?php elseif ( 'roles' === $section ) : ?>
+							<div class="ajforms-settings-head">
+								<h2><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h2>
+								<p><?php esc_html_e( 'View, add, edit, and delete WordPress roles used by AJ Core and the rest of the site.', 'ajforms' ); ?></p>
+							</div>
+							<?php $this->display_role_manager_page( true ); ?>
+						<?php elseif ( 'api' === $section ) : ?>
+							<?php $this->display_portal_api_tab(); ?>
+						<?php elseif ( 'files' === $section ) : ?>
+							<?php $this->display_portal_file_settings_tab(); ?>
+						<?php elseif ( 'calendar' === $section ) : ?>
+							<?php $this->display_portal_calendar_settings_tab(); ?>
+						<?php elseif ( 'shared-db' === $section ) : ?>
+							<?php $this->display_portal_shared_db_settings_tab(); ?>
+						<?php elseif ( 'email-templates' === $section ) : ?>
+							<?php $this->display_email_templates_settings_section(); ?>
+						<?php elseif ( 'inbox' === $section ) : ?>
+							<?php $this->display_zoho_mail_settings_section(); ?>
+						<?php elseif ( 'gmail-intake' === $section ) : ?>
+							<?php $this->display_gmail_intake_settings_section(); ?>
+						<?php elseif ( 'esign' === $section ) : ?>
+							<?php $this->display_breezedoc_settings_section(); ?>
+						<?php elseif ( 'db-schema' === $section ) : ?>
+							<?php $this->display_ajcore_db_schema_tab(); ?>
+						<?php elseif ( 'accounting-catalog' === $section ) : ?>
+							<?php $this->display_local_accounting_catalog_settings(); ?>
+						<?php elseif ( 'recurring-transactions' === $section ) : ?>
+							<?php $this->display_local_recurring_transactions_settings(); ?>
+						<?php elseif ( 'storage' === $section ) : ?>
+							<?php
+							if ( class_exists( 'AJCore_Storage_Service' ) ) {
+								AJCore_Storage_Service::instance()->render_settings_page( true );
+							}
+							?>
 						<?php else : ?>
 						<form method="post">
 				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
@@ -31887,8 +31979,8 @@ class AJForms_Admin {
 			wp_safe_redirect(
 				add_query_arg(
 					array(
-						'page'            => 'ajforms-cp-settings',
-						'cp_section'      => 'shared-db',
+						'page'            => 'ajforms-settings',
+						'section'         => 'shared-db',
 						'shared-db-error' => rawurlencode( __( 'Shared DB was not saved. Host, database name, user, and password are required when Shared DB is enabled.', 'ajforms' ) ),
 					),
 					admin_url( 'admin.php' )
@@ -31935,7 +32027,7 @@ class AJForms_Admin {
 
 		wp_safe_redirect(
 			add_query_arg(
-				array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'shared-db', 'shared-db-saved' => '1' ),
+				array( 'page' => 'ajforms-settings', 'section' => 'shared-db', 'shared-db-saved' => '1' ),
 				admin_url( 'admin.php' )
 			)
 		);
@@ -32013,7 +32105,7 @@ class AJForms_Admin {
 			<h3><?php esc_html_e( 'Site Features / Shared DB', 'ajforms' ); ?></h3>
 			<p><?php esc_html_e( 'Choose what this AJCore installation provides, then optionally connect it to the shared AJCore network.', 'ajforms' ); ?></p>
 
-			<form method="post" id="ajcore-site-shared-db-form" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'shared-db' ), admin_url( 'admin.php' ) ) ); ?>">
+			<form method="post" id="ajcore-site-shared-db-form" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'shared-db' ), admin_url( 'admin.php' ) ) ); ?>">
 				<?php wp_nonce_field( 'ajcore_save_shared_db_settings', 'ajcore_shared_db_nonce' ); ?>
 
 				<h4><?php esc_html_e( 'Features Enabled on This Site', 'ajforms' ); ?></h4>
@@ -32923,7 +33015,7 @@ class AJForms_Admin {
 		$ms_enabled = function_exists( 'ajcore_is_multisite_portal_enabled' ) && ajcore_is_multisite_portal_enabled();
 		$is_master  = ! $ms_enabled || ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ajcore_is_stripe_sync_owner() );
 		if ( ! $is_master ) {
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'calendar' ), admin_url( 'admin.php' ) ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'calendar' ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -32997,7 +33089,7 @@ class AJForms_Admin {
 			)
 		);
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'calendar', 'calendar-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'calendar', 'calendar-settings-saved' => '1' ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -33140,10 +33232,10 @@ class AJForms_Admin {
 		$s_embed         = ! empty( $settings['zoho_calendar_embed_url'] );
 		$s_oauth         = ! empty( $settings['zoho_access_token'] ) || ! empty( $settings['zoho_api_token'] ) || ! empty( $settings['zoho_refresh_token'] );
 		$s_freebusy      = $s_oauth && ! empty( $settings['zoho_resource_uid'] ) && ! empty( $settings['zoho_resource_freebusy_url'] );
-		$catalog_url     = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'products-services' ), admin_url( 'admin.php' ) );
+		$catalog_url     = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'product-catalog' ), admin_url( 'admin.php' ) );
 		?>
 
-		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
+		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'calendar' ), admin_url( 'admin.php' ) ) ); ?>">
 			<?php wp_nonce_field( 'ajcore_save_calendar_settings', 'ajcore_calendar_settings_nonce' ); ?>
 			<?php if ( ! $is_master ) : ?>
 			<fieldset disabled style="border:none;padding:0;margin:0;opacity:.55;pointer-events:none">
