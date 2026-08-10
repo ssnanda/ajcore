@@ -3306,7 +3306,13 @@ class AJForms_Admin {
 			return __( 'Not scheduled', 'ajforms' );
 		}
 
-		return date_i18n( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $timestamp );
+		// wp_date(), NOT date_i18n() — wp_next_scheduled() returns a true UTC timestamp, and
+		// date_i18n() converts it using the site's legacy gmt_offset OPTION (a fixed number, only
+		// recalculated when Settings > General is next saved), not wp_timezone()'s DST-aware rules —
+		// it would quietly go an hour off after the next DST transition. wp_date() converts using
+		// wp_timezone() directly, so it stays correct through EDT/EST switches automatically.
+		$formatted = wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $timestamp );
+		return $formatted . ' ' . wp_date( 'T', $timestamp );
 	}
 
 	private function get_portal_sync_reconciliation() {
@@ -3769,6 +3775,31 @@ class AJForms_Admin {
 		}
 		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
+	}
+
+	/**
+	 * Formats a MySQL "Y-m-d H:i:s" datetime string that was written via current_time('mysql') —
+	 * i.e. already in wp_timezone(), not UTC — for display, with the zone's abbreviation (EDT/EST,
+	 * not a fixed offset — resolved per-instant from wp_timezone()'s own DST rules) appended so it's
+	 * unambiguous which clock a displayed time is using. Deliberately NOT strtotime(), which parses a
+	 * bare "Y-m-d H:i:s" string using PHP's own default timezone rather than wp_timezone() — those two
+	 * can disagree (this is exactly what made the Sync History table double-shift even after its
+	 * stored values were corrected: the value was right, but strtotime()+wp_date() displayed it using
+	 * the wrong source zone).
+	 */
+	private function format_site_datetime( $mysql_datetime, $with_tz = true ) {
+		if ( empty( $mysql_datetime ) || '0000-00-00 00:00:00' === $mysql_datetime ) {
+			return '';
+		}
+		$dt = date_create( $mysql_datetime, wp_timezone() );
+		if ( ! $dt ) {
+			return $mysql_datetime;
+		}
+		$out = wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $dt->getTimestamp(), wp_timezone() );
+		if ( $with_tz ) {
+			$out .= ' ' . $dt->format( 'T' );
+		}
+		return $out;
 	}
 
 	private function get_stripe_event_object_id( $event ) {
@@ -19410,10 +19441,16 @@ class AJForms_Admin {
 		$last_success         = $wpdb->get_row( "SELECT * FROM {$sync_logs_table} WHERE status = 'success' ORDER BY finished_at DESC, started_at DESC, id DESC LIMIT 1" );
 		$last_failed          = $wpdb->get_row( "SELECT * FROM {$sync_logs_table} WHERE status = 'failed' ORDER BY finished_at DESC, started_at DESC, id DESC LIMIT 1" );
 		$last_webhook         = $wpdb->get_row( "SELECT * FROM {$sync_logs_table} WHERE source = 'webhook' ORDER BY started_at DESC, id DESC LIMIT 1" );
-		$last_success_time    = $last_success ? strtotime( $last_success->finished_at ? $last_success->finished_at : $last_success->started_at ) : 0;
-		$last_failed_time     = $last_failed ? strtotime( $last_failed->finished_at ? $last_failed->finished_at : $last_failed->started_at ) : 0;
+		// date_create(..., wp_timezone()), NOT strtotime() — these columns are current_time('mysql')
+		// (site-local), and strtotime() would parse the bare string using PHP's own default timezone
+		// instead, which can silently disagree with wp_timezone(). Only used for ordering here, but
+		// worth getting right since a wrong shift can flip which one is "later".
+		$last_success_dt      = $last_success ? date_create( $last_success->finished_at ? $last_success->finished_at : $last_success->started_at, wp_timezone() ) : false;
+		$last_failed_dt       = $last_failed ? date_create( $last_failed->finished_at ? $last_failed->finished_at : $last_failed->started_at, wp_timezone() ) : false;
+		$last_success_time    = $last_success_dt ? $last_success_dt->getTimestamp() : 0;
+		$last_failed_time     = $last_failed_dt ? $last_failed_dt->getTimestamp() : 0;
 		$health_has_issue     = ! empty( $stripe_mode['has_issues'] ) || ! $last_success || ! $last_webhook || ( $last_failed_time > $last_success_time );
-		$health_note          = $last_success ? sprintf( __( 'Last sync: %s', 'ajforms' ), $last_success->finished_at ? $last_success->finished_at : $last_success->started_at ) : __( 'No successful sync found.', 'ajforms' );
+		$health_note          = $last_success ? sprintf( __( 'Last sync: %s', 'ajforms' ), $this->format_site_datetime( $last_success->finished_at ? $last_success->finished_at : $last_success->started_at ) ) : __( 'No successful sync found.', 'ajforms' );
 		if ( $last_webhook ) {
 			$health_note .= ' · ' . sprintf( __( 'Webhook: %s', 'ajforms' ), ucfirst( sanitize_key( (string) $last_webhook->status ) ) );
 		} else {
@@ -24208,7 +24245,7 @@ class AJForms_Admin {
 							<?php endforeach; ?>
 						</select>
 						<p class="description"><?php echo esc_html( sprintf( __( 'Next scheduled run: %s', 'ajforms' ), $this->get_portal_sync_next_run_label() ) ); ?></p>
-						<?php if ( $last_run ) : ?><p class="description"><?php echo esc_html( sprintf( __( 'Last completed run: %s', 'ajforms' ), $last_run ) ); ?></p><?php endif; ?>
+						<?php if ( $last_run ) : ?><p class="description"><?php echo esc_html( sprintf( __( 'Last completed run: %s', 'ajforms' ), $this->format_site_datetime( $last_run ) ) ); ?></p><?php endif; ?>
 					</td>
 				</tr>
 				<tr>
@@ -24243,7 +24280,7 @@ class AJForms_Admin {
 					<?php else : ?>
 						<?php foreach ( $logs as $log ) : ?>
 							<tr>
-								<td><?php echo esc_html( $log->started_at ? wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), strtotime( $log->started_at ) ) : '-' ); ?></td>
+								<td><?php echo esc_html( $log->started_at ? $this->format_site_datetime( $log->started_at ) : '-' ); ?></td>
 								<td><?php echo esc_html( ucfirst( (string) $log->source ) ); ?></td>
 								<td><?php echo esc_html( isset( $jobs[ $log->job_name ] ) ? $jobs[ $log->job_name ] : $log->job_name ); ?></td>
 								<td><span class="ajcore-status-pill <?php echo 'success' === $log->status ? '' : 'off'; ?>"><?php echo esc_html( ucfirst( (string) $log->status ) ); ?></span></td>
