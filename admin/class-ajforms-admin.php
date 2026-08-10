@@ -18453,12 +18453,18 @@ class AJForms_Admin {
 
 		// "CP Settings" no longer needs its own visible menu entry — every one of its sections is
 		// now reachable from Settings' own sidebar (see display_settings_page()'s $sections, the
-		// entries with a 'cp_section' key). The page itself stays fully registered/functional
-		// (remove_submenu_page() only hides the nav link, not the page or its capability check) —
-		// removing the registration outright would 403 the ~26 places elsewhere in this file that
-		// redirect back to page=ajforms-cp-settings after saving (Files, API, Roles, Inbox, Chat,
-		// E-Signatures, Gmail Intake, Email Templates, …).
-		remove_submenu_page( 'ajforms', 'ajforms-cp-settings' );
+		// entries with a 'cp_section' key). Deliberately NOT using remove_submenu_page() here: despite
+		// how it reads, it doesn't just hide the nav link — WordPress resolves a page's required
+		// capability by looking the slug up in the registered $submenu structure, so removing it from
+		// there also breaks direct/redirected access and turns every visit into "Sorry, you are not
+		// allowed to access this page" (this shipped broken once already — see git history). CSS-only
+		// hiding of the menu item, further below, keeps the page's registration/capability check
+		// completely untouched, which the ~26 places elsewhere in this file that redirect back to
+		// page=ajforms-cp-settings after saving (Files, API, Roles, Inbox, Chat, E-Signatures, Gmail
+		// Intake, Email Templates, …) — and now these sidebar links too — depend on.
+		add_action( 'admin_head', function () {
+			echo '<style>#adminmenu a[href*="page=ajforms-cp-settings"]{display:none!important}</style>';
+		} );
 	}
 
 	public function display_cp_settings_admin_page() {
@@ -30925,7 +30931,7 @@ class AJForms_Admin {
 									? add_query_arg( array( 'page' => 'ajforms-cp-settings', 'cp_section' => $section_config['cp_section'] ), admin_url( 'admin.php' ) )
 									: add_query_arg( array( 'page' => 'ajforms-settings', 'section' => $section_key ), admin_url( 'admin.php' ) );
 								?>
-								<a href="<?php echo esc_url( $section_url ); ?>" class="ajforms-settings-link <?php echo ( ! $is_link_out && $section === $section_key ) ? 'is-active' : ''; ?>" <?php echo $is_link_out ? 'target="_blank" rel="noopener"' : ''; ?>>
+								<a href="<?php echo esc_url( $section_url ); ?>" class="ajforms-settings-link <?php echo ( ! $is_link_out && $section === $section_key ) ? 'is-active' : ''; ?>">
 									<span class="dashicons dashicons-<?php echo esc_attr( $section_config['icon'] ); ?>"></span>
 									<span><?php echo esc_html( $section_config['label'] ); ?></span>
 									<?php if ( $is_link_out ) : ?>
