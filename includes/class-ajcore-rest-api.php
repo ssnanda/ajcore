@@ -7873,7 +7873,11 @@ class AJCore_REST_API {
 				'last_page'    => esc_url_raw( (string) $request->get_param( 'last_page' ) ),
 				'referrer'     => esc_url_raw( (string) $request->get_param( 'referrer' ) ),
 				'page_views'   => max( 1, absint( $request->get_param( 'page_views' ) ) ),
-				'started_at'   => '' !== $started_at ? $started_at : current_time( 'mysql' ),
+				// gmdate(), NOT current_time('mysql') — this column is UTC by contract (see the
+				// get_ops_visitor_history() comment below); server.js always sends started_at in
+				// practice, so this fallback is only a safety net, but a WP-local fallback here would
+				// silently corrupt that contract the moment it's ever actually used.
+				'started_at'   => '' !== $started_at ? $started_at : gmdate( 'Y-m-d H:i:s' ),
 				// $wpdb treats an explicit PHP null as SQL NULL regardless of the '%s' format given —
 				// this is what makes the row read as "still online" until close_visitor_history_row().
 				'ended_at'     => '' !== $ended_at ? $ended_at : null,
@@ -7915,7 +7919,9 @@ class AJCore_REST_API {
 		}
 
 		$ended_at = sanitize_text_field( (string) $request->get_param( 'ended_at' ) );
-		$data     = array( 'ended_at' => '' !== $ended_at ? $ended_at : current_time( 'mysql' ) );
+		// gmdate(), NOT current_time('mysql') — same UTC contract as log_visitor_history()'s
+		// started_at above.
+		$data     = array( 'ended_at' => '' !== $ended_at ? $ended_at : gmdate( 'Y-m-d H:i:s' ) );
 		$formats  = array( '%s' );
 
 		$last_page = $request->get_param( 'last_page' );
