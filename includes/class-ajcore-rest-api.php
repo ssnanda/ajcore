@@ -1346,6 +1346,26 @@ class AJCore_REST_API {
 				'api_enabled'                     => '1' === (string) $settings['enabled'],
 				'ops_api_enabled'                 => '1' === (string) $settings['ops_enabled'],
 				'portal_api_enabled'              => '1' === (string) $settings['portal_enabled'],
+				// The single source of truth for "what timezone should every client display times
+				// in" — AJOps and the iOS app fetch this rather than each guessing from their own
+				// device/browser clock, so everyone shows the same wall-clock time for the same
+				// event no matter where they're physically viewing from. wp_timezone_string()
+				// returns an IANA name ("America/New_York") when Settings > General uses a city, or
+				// a fixed "+00:00"-style offset string if it's set to a raw UTC offset instead — a
+				// client can tell which it got by whether it contains a "/". 'timezone_abbr' is
+				// informational only (computed for right now, not per-event — a specific timestamp
+				// can straddle its own DST boundary, so real clients should resolve the abbreviation
+				// themselves from 'timezone' + the event's own moment, e.g. via Intl.DateTimeFormat
+				// with timeZone set to this value).
+				'timezone'                        => function_exists( 'wp_timezone_string' ) ? wp_timezone_string() : 'UTC',
+				'timezone_abbr'                   => wp_date( 'T' ),
+				// Right-now offset in seconds (e.g. -14400 for EDT) — for clients without an IANA
+				// tzdata engine handy (the iOS app), a plain Duration-style add is all that's needed.
+				// Like timezone_abbr, this is only valid for "now"; a client formatting an older
+				// timestamp near a DST boundary would want to re-fetch around that transition rather
+				// than assume this stays correct indefinitely — acceptable since /status is cheap and
+				// DST only flips twice a year.
+				'utc_offset_seconds'              => (int) round( wp_timezone()->getOffset( new DateTime( 'now', wp_timezone() ) ) ),
 			)
 		);
 	}
