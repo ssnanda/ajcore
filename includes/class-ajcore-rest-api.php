@@ -6031,6 +6031,10 @@ class AJCore_REST_API {
 				'assignments'   => $assignments,
 				'tags'          => $this->ops_get_file_tags( (int) $file->id ),
 				'status'        => isset( $file->status ) && 'archived' === $file->status ? 'archived' : 'active',
+				// 'internal' = staff/OPS only, never returned by get_current_user_file_rows() (the
+				// client-portal-facing query) regardless of assignment. Default 'client' — visible
+				// to whichever user(s) it's assigned to, same as before this existed.
+				'visibility'    => isset( $file->visibility ) && 'internal' === $file->visibility ? 'internal' : 'client',
 				'created_at'    => (string) $file->created_at,
 				'updated_at'    => (string) $file->updated_at,
 			);
@@ -6095,6 +6099,7 @@ class AJCore_REST_API {
 		$title       = sanitize_text_field( $request['title'] ?: get_the_title( $attachment_id ) ?: '' );
 		$category    = sanitize_text_field( $request['category'] ?: '' );
 		$description = sanitize_textarea_field( $request['description'] ?: '' );
+		$visibility  = 'internal' === sanitize_key( (string) ( $request['visibility'] ?? 'client' ) ) ? 'internal' : 'client';
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$wpdb->insert(
@@ -6104,10 +6109,11 @@ class AJCore_REST_API {
 				'title'         => $title,
 				'category'      => $category,
 				'description'   => $description,
+				'visibility'    => $visibility,
 				'created_at'    => current_time( 'mysql' ),
 				'updated_at'    => current_time( 'mysql' ),
 			),
-			array( '%d', '%s', '%s', '%s', '%s', '%s' )
+			array( '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 
 		$file_id = (int) $wpdb->insert_id;
@@ -6165,6 +6171,10 @@ class AJCore_REST_API {
 		}
 		if ( null !== $request['status'] && in_array( sanitize_key( (string) $request['status'] ), array( 'active', 'archived' ), true ) ) {
 			$data['status'] = sanitize_key( (string) $request['status'] );
+			$fmt[] = '%s';
+		}
+		if ( null !== $request['visibility'] && in_array( sanitize_key( (string) $request['visibility'] ), array( 'client', 'internal' ), true ) ) {
+			$data['visibility'] = sanitize_key( (string) $request['visibility'] );
 			$fmt[] = '%s';
 		}
 
@@ -6316,6 +6326,7 @@ class AJCore_REST_API {
 			'assignments'   => $assignments,
 			'tags'          => $this->ops_get_file_tags( (int) $file->id ),
 			'status'        => isset( $file->status ) && 'archived' === $file->status ? 'archived' : 'active',
+			'visibility'    => isset( $file->visibility ) && 'internal' === $file->visibility ? 'internal' : 'client',
 			'created_at'    => (string) $file->created_at,
 			'updated_at'    => (string) $file->updated_at,
 		);
@@ -8963,7 +8974,7 @@ class AJCore_REST_API {
 		}
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT f.id, f.attachment_id, f.title, f.description, f.category, f.created_at, f.updated_at FROM `{$files_table}` f INNER JOIN `{$link_table}` fu ON fu.file_id = f.id WHERE ( f.status <> 'archived' OR f.status IS NULL ) AND ( fu.user_id = %d OR fu.user_email = %s ) ORDER BY f.created_at DESC, f.id DESC LIMIT 100",
+				"SELECT f.id, f.attachment_id, f.title, f.description, f.category, f.created_at, f.updated_at FROM `{$files_table}` f INNER JOIN `{$link_table}` fu ON fu.file_id = f.id WHERE ( f.status <> 'archived' OR f.status IS NULL ) AND ( f.visibility <> 'internal' OR f.visibility IS NULL ) AND ( fu.user_id = %d OR fu.user_email = %s ) ORDER BY f.created_at DESC, f.id DESC LIMIT 100",
 				(int) $user->ID,
 				$user->user_email
 			),

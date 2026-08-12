@@ -782,6 +782,15 @@ class AJForms_Admin {
 			AJForms_Activator::activate();
 		}
 
+		// ── Files: internal-only visibility ───────────────────────────────────
+		// aj_portal_files uses the LOCAL $wpdb, not the shared $pdb (files are per-site) — see
+		// get_portal_files_table().
+		$files_table   = $wpdb->prefix . 'aj_portal_files';
+		$files_columns = $wpdb->get_col( "SHOW COLUMNS FROM {$files_table}", 0 );
+		if ( is_array( $files_columns ) && ! in_array( 'visibility', $files_columns, true ) ) {
+			$wpdb->query( "ALTER TABLE {$files_table} ADD COLUMN visibility VARCHAR(20) NOT NULL DEFAULT 'client' AFTER status, ADD KEY visibility (visibility)" );
+		}
+
 		// Ensure product_catalog reservation columns exist (added in later schema versions).
 		$pc_table   = $this->get_portal_product_catalog_table();
 		$pc_columns = $pdb->get_col( "SHOW COLUMNS FROM {$pc_table}", 0 );
