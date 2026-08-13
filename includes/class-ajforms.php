@@ -5024,10 +5024,23 @@ class AJForms {
 		);
 		$text_url             = 'sms:+17043072135?body=' . rawurlencode( $text_message );
 
+		// Genuinely time-sensitive/penalty-bearing (federal BOI reporting), unlike the other 2 items
+		// in the "Helpful Reading" list further down — this gets its own prominent, hard-to-miss
+		// banner at the top of Overview rather than waiting to be noticed in that list. Same
+		// home_url()-based URL building as $portal_resources below, kept as its own variable here
+		// since this renders well before that array is built.
+		$boir_url = home_url( '/do-you-need-to-file-a-beneficial-ownership-information-boi-report/' );
+
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
 			<h2><?php echo esc_html( sprintf( __( 'Welcome, %s', 'ajforms' ), $display_name ) ); ?></h2>
+
+			<div class="aj-portal-boir-banner">
+				<style>.aj-portal-boir-banner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin:0 0 20px;padding:16px 20px;border-radius:16px;background:linear-gradient(135deg,rgba(251,191,36,.14),rgba(239,68,68,.10));border:1px solid rgba(217,119,6,.35)}.aj-portal-boir-banner p{margin:0;font-size:14px;color:#78350f}.aj-portal-boir-banner strong{color:#92400e}.aj-portal-boir-banner .button{white-space:nowrap;background:linear-gradient(135deg,#d97706 0%,#dc2626 100%)!important;box-shadow:0 18px 38px rgba(217,119,6,.24)!important}</style>
+				<p><strong><?php esc_html_e( 'Beneficial Ownership Information (BOI) Report:', 'ajforms' ); ?></strong> <?php esc_html_e( 'a federal filing most LLCs and corporations must submit to FinCEN — significant penalties can apply if you miss the deadline.', 'ajforms' ); ?></p>
+				<a class="button" href="<?php echo esc_url( $boir_url ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'Learn More', 'ajforms' ); ?></a>
+			</div>
 
 			<div class="aj-portal-summary-grid">
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $billing_url ); ?>">
