@@ -198,6 +198,20 @@ class AJCore_REST_API {
 				'permission_callback' => '__return_true',
 			)
 		);
+
+		// Loaded by the recipient's email client, not by anything AJCore controls — necessarily
+		// public. Security is the token being a random, unguessable 32-byte value (see
+		// ajcore_log_outgoing_mail() in ajcore.php, where it's generated), same reasoning as the
+		// OAuth callbacks above.
+		register_rest_route(
+			self::NAMESPACE,
+			'/email-log/track/(?P<token>[a-zA-Z0-9]+)',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'track_email_open' ),
+				'permission_callback' => '__return_true',
+			)
+		);
 		register_rest_route(
 			self::NAMESPACE,
 			'/gmail-intake/test',
@@ -4648,7 +4662,7 @@ class AJCore_REST_API {
 		}
 		$params[] = $per_page;
 		$rows = $wpdb->get_results(
-			$wpdb->prepare( "SELECT id, to_email, subject, status, error_message, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT %d", $params ),
+			$wpdb->prepare( "SELECT id, to_email, subject, status, error_message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT %d", $params ),
 			ARRAY_A
 		);
 
@@ -4966,6 +4980,44 @@ class AJCore_REST_API {
 	}
 
 	/**
+	 * Serves the 1x1 transparent GIF an HTML email's tracking pixel requests once the recipient's
+	 * mail client actually renders images (many clients — Gmail, Outlook — only do this once the
+	 * message is opened, which is the whole mechanism this relies on; some also proxy/prefetch
+	 * images regardless of a genuine open, so "opened" here means "a request for this pixel was
+	 * made", a widely-understood limitation of email open tracking generally, not a bug). Records
+	 * the first open (opened_at) and every open (open_count/last_opened_at) against the matching
+	 * aj_portal_email_log row, found by tracking_token — see ajcore_log_outgoing_mail() in
+	 * ajcore.php for where the pixel is injected and the token generated.
+	 *
+	 * Always returns the same 1x1 GIF regardless of whether the token matched anything, so a
+	 * recipient's mail client (or anything else probing this URL) can never distinguish "known
+	 * token" from "unknown token" by response shape — nothing to gain by trying to enumerate them,
+	 * and no error state that would look broken in a mail client's image slot either way.
+	 */
+	public function track_email_open( WP_REST_Request $request ) {
+		global $wpdb;
+		$token = sanitize_text_field( (string) $request['token'] );
+		$table = $wpdb->prefix . 'aj_portal_email_log';
+		if ( '' !== $token && ajcore_email_log_table_exists() ) {
+			$row = $wpdb->get_row( $wpdb->prepare( "SELECT id, opened_at FROM {$table} WHERE tracking_token = %s LIMIT 1", $token ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( $row ) {
+				$now = current_time( 'mysql' );
+				$wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					"UPDATE {$table} SET open_count = open_count + 1, last_opened_at = %s" . ( empty( $row->opened_at ) ? ', opened_at = %s' : '' ) . ' WHERE id = %d',
+					...( empty( $row->opened_at ) ? array( $now, $now, (int) $row->id ) : array( $now, (int) $row->id ) )
+				) );
+			}
+		}
+
+		nocache_headers();
+		header( 'Content-Type: image/gif' );
+		header( 'Content-Length: 43' );
+		// The smallest valid GIF possible: 1x1, transparent, no comment/extension blocks.
+		echo base64_decode( 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7' ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+		exit;
+	}
+
+	/**
 	 * Handles the browser redirect Zoho sends back after the admin approves (or denies) the
 	 * "Connect Zoho Mail" consent screen. Exchanges the one-time code for an access + refresh
 	 * token pair, discovers the mailbox's Zoho accountId (needed for every later Mail API call),
@@ -5177,7 +5229,7 @@ class AJCore_REST_API {
 			return new WP_Error( 'not_found', __( 'Email not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
 		$row = $wpdb->get_row(
-			$wpdb->prepare( "SELECT id, to_email, subject, headers, message, status, error_message, created_at FROM `{$table}` WHERE id = %d LIMIT 1", absint( $request->get_param( 'id' ) ) ),
+			$wpdb->prepare( "SELECT id, to_email, subject, headers, message, status, error_message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE id = %d LIMIT 1", absint( $request->get_param( 'id' ) ) ),
 			ARRAY_A
 		);
 		if ( ! $row ) {

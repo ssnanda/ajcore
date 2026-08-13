@@ -170,11 +170,16 @@ class AJForms_Activator {
 			message longtext NULL,
 			status varchar(20) DEFAULT 'sent' NOT NULL,
 			error_message text NULL,
+			tracking_token varchar(64) DEFAULT '' NOT NULL,
+			open_count int(10) unsigned DEFAULT 0 NOT NULL,
+			opened_at datetime NULL,
+			last_opened_at datetime NULL,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
 			KEY to_email (to_email),
 			KEY status (status),
-			KEY created_at (created_at)
+			KEY created_at (created_at),
+			KEY tracking_token (tracking_token)
 		) $charset_collate;
 
 		CREATE TABLE $table_stripe_customers (

@@ -1834,6 +1834,16 @@ if ( ! function_exists( 'ajcore_email_log_table_exists' ) ) {
 			global $wpdb;
 			$table  = $wpdb->prefix . 'aj_portal_email_log';
 			$exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+			// Open-tracking columns, added after this table already existed on most installs —
+			// checked/added here (not just via the admin-side ensure_portal_schema() migration
+			// path) because wp_mail() can fire from a plain front-end request (password resets,
+			// etc.) before any wp-admin page has ever loaded post-update to trigger that path.
+			if ( $exists ) {
+				$columns = $wpdb->get_col( "SHOW COLUMNS FROM {$table}", 0 ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				if ( is_array( $columns ) && ! in_array( 'tracking_token', $columns, true ) ) {
+					$wpdb->query( "ALTER TABLE {$table} ADD COLUMN tracking_token VARCHAR(64) NOT NULL DEFAULT '' AFTER error_message, ADD COLUMN open_count INT(10) UNSIGNED NOT NULL DEFAULT 0 AFTER tracking_token, ADD COLUMN opened_at DATETIME NULL AFTER open_count, ADD COLUMN last_opened_at DATETIME NULL AFTER opened_at, ADD KEY tracking_token (tracking_token)" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				}
+			}
 		}
 		return $exists;
 	}
@@ -1847,17 +1857,36 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail' ) ) {
 			$to      = is_array( $to ) ? implode( ', ', array_map( 'sanitize_text_field', $to ) ) : sanitize_text_field( (string) $to );
 			$headers = isset( $atts['headers'] ) ? $atts['headers'] : '';
 			$headers = is_array( $headers ) ? implode( "\n", array_map( 'sanitize_text_field', $headers ) ) : sanitize_text_field( (string) $headers );
+			$message = (string) ( isset( $atts['message'] ) ? $atts['message'] : '' );
+
+			// Open tracking only makes sense for HTML mail — a pixel <img> tag dropped into a
+			// plain-text email would show up as literal, broken-looking markup in the body instead
+			// of silently loading, so this only fires when the headers actually declare HTML.
+			$token = '';
+			if ( false !== stripos( $headers, 'text/html' ) && '' !== $message && function_exists( 'random_bytes' ) ) {
+				$token = bin2hex( random_bytes( 16 ) );
+				$pixel_url = rest_url( 'ajcore/v1/email-log/track/' . $token );
+				$pixel_tag = '<img src="' . esc_url( $pixel_url ) . '" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px;" />';
+				// Inside </body> if there is one (keeps it out of any content after the closing tag,
+				// e.g. a trailing comment some mail clients append), otherwise just tack it on the end.
+				$message = ( false !== stripos( $message, '</body>' ) )
+					? preg_replace( '/<\/body>/i', $pixel_tag . '</body>', $message, 1 )
+					: $message . $pixel_tag;
+				$atts['message'] = $message;
+			}
+
 			$wpdb->insert(
 				$wpdb->prefix . 'aj_portal_email_log',
 				array(
-					'to_email'   => substr( $to, 0, 190 ),
-					'subject'    => substr( sanitize_text_field( (string) ( isset( $atts['subject'] ) ? $atts['subject'] : '' ) ), 0, 255 ),
-					'headers'    => $headers,
-					'message'    => (string) ( isset( $atts['message'] ) ? $atts['message'] : '' ),
-					'status'     => 'sent',
-					'created_at' => current_time( 'mysql' ),
+					'to_email'       => substr( $to, 0, 190 ),
+					'subject'        => substr( sanitize_text_field( (string) ( isset( $atts['subject'] ) ? $atts['subject'] : '' ) ), 0, 255 ),
+					'headers'        => $headers,
+					'message'        => $message,
+					'status'         => 'sent',
+					'tracking_token' => $token,
+					'created_at'     => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s' )
+				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 			);
 		}
 		return $atts;
