@@ -5071,6 +5071,41 @@ class AJForms {
 				<a class="button" href="<?php echo esc_url( $email_us_url ); ?>"><?php esc_html_e( 'Email Us', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( $text_url ); ?>"><?php esc_html_e( 'Text Us', 'ajforms' ); ?></a>
 			</div>
+
+			<?php
+			// Compliance/awareness reading — moved here from one-off PDF attachments sent to every
+			// customer individually (which is how these 3 accumulated dozens of duplicate file rows,
+			// one per recipient). A real blog post is public, gets a real URL to link to, and doesn't
+			// need re-uploading per customer. home_url() rather than a hardcoded domain so this
+			// resolves correctly on whichever site is actually running this code (dev or production).
+			$portal_resources = array(
+				array(
+					'slug'  => 'do-you-need-to-file-a-beneficial-ownership-information-boi-report',
+					'title' => __( 'Do You Need to File a Beneficial Ownership Information (BOI) Report?', 'ajforms' ),
+					'blurb' => __( 'A federal filing with FinCEN, separate from anything you file with NC — significant penalties can apply if you miss it.', 'ajforms' ),
+				),
+				array(
+					'slug'  => 'beware-misleading-mailings-targeting-new-nc-companies',
+					'title' => __( 'Beware: Misleading Mailings Targeting New NC Companies', 'ajforms' ),
+					'blurb' => __( 'Official-looking mail that isn’t from the state, charging well above what NC actually charges — here’s how to spot it.', 'ajforms' ),
+				),
+				array(
+					'slug'  => 'important-notice-to-employers-your-new-nc-llcs-reporting-responsibilities',
+					'title' => __( 'Important Notice to Employers: Your New NC LLC’s Reporting Responsibilities', 'ajforms' ),
+					'blurb' => __( 'Hiring your first employee triggers obligations with three different state agencies — what kicks in and when.', 'ajforms' ),
+				),
+			);
+			?>
+			<h3 class="aj-portal-quick-actions-heading"><?php esc_html_e( 'Helpful Reading', 'ajforms' ); ?></h3>
+			<div class="aj-portal-resources-grid">
+				<style>.aj-portal-resources-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.aj-portal-resource-card{display:block;padding:16px 18px;border-radius:14px;background:var(--ajp-glass);border:1px solid var(--ajp-line);box-shadow:var(--ajp-shadow-soft)}.aj-portal-resource-card strong{display:block;margin-bottom:6px;font-size:14px;color:var(--ajp-ink)}.aj-portal-resource-card span{font-size:13px;color:var(--ajp-muted);font-weight:400}</style>
+				<?php foreach ( $portal_resources as $resource ) : ?>
+					<a class="aj-portal-resource-card" href="<?php echo esc_url( home_url( '/' . $resource['slug'] . '/' ) ); ?>" target="_blank" rel="noopener">
+						<strong><?php echo esc_html( $resource['title'] ); ?></strong>
+						<span><?php echo esc_html( $resource['blurb'] ); ?></span>
+					</a>
+				<?php endforeach; ?>
+			</div>
 		</section>
 		<?php
 		return ob_get_clean();
