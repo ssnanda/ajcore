@@ -32,6 +32,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 			'email'        => __( 'Email', 'ajforms' ),
 			'phone'        => __( 'Phone', 'ajforms' ),
 			'company'      => __( 'Company', 'ajforms' ),
+			'ip_address'   => __( 'IP Address', 'ajforms' ),
 			'status'       => __( 'Status', 'ajforms' ),
 			'created_at'   => __( 'Date & Time', 'ajforms' ),
 			'actions'      => __( 'Lead Status & Actions', 'ajforms' ),
@@ -261,6 +262,10 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 			case 'company':
 				$company = $item['_company'];
 				return '' !== $company ? esc_html( $company ) : '<span class="ajforms-empty">—</span>';
+
+			case 'ip_address':
+				$ip_address = isset( $item['ip_address'] ) ? (string) $item['ip_address'] : '';
+				return '' !== $ip_address ? esc_html( $ip_address ) : '<span class="ajforms-empty">—</span>';
 
 			case 'status':
 				$status = sanitize_text_field( $item['status'] );

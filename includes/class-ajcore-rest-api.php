@@ -10021,6 +10021,7 @@ class AJCore_REST_API {
 			'company'             => $company,
 			'source'              => $source_val,
 			'notes'               => $this->extract_lead_field( $decoded, array( 'notes', 'message', 'comment', 'additional' ) ),
+			'ip_address'          => isset( $row['ip_address'] ) ? (string) $row['ip_address'] : '',
 			'source_url'          => isset( $row['source_url'] ) ? (string) $row['source_url'] : '',
 			'user_agent'          => isset( $row['user_agent'] ) ? (string) $row['user_agent'] : '',
 			'created_at'          => isset( $row['created_at'] ) ? (string) $row['created_at'] : '',
@@ -10137,7 +10138,7 @@ class AJCore_REST_API {
 		// per-site/local, so a JOIN can't resolve titles for leads captured on other sites.
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT l.id, l.form_id, l.form_title, l.lead_data, l.status, l.lead_status, l.lead_follow_up_at, l.source_url, l.user_agent, l.created_at, l.updated_at, l.site_uuid, l.stripe_customer_id, l.merged_into_lead_id
+				"SELECT l.id, l.form_id, l.form_title, l.lead_data, l.status, l.lead_status, l.lead_follow_up_at, l.ip_address, l.source_url, l.user_agent, l.created_at, l.updated_at, l.site_uuid, l.stripe_customer_id, l.merged_into_lead_id
 				 FROM `{$leads_table}` l
 				 WHERE {$where}
 				 ORDER BY l.created_at DESC, l.id DESC
