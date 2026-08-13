@@ -1912,6 +1912,38 @@ function ajcore_render_chat_widget() {
 	if ( '' === $server_url || '' === $site_uuid ) {
 		return;
 	}
+
+	// Logged-in Client Portal customers already told us who they are — prefilling their name/
+	// email/phone into the chat widget's pre-chat form means they don't have to type it again just
+	// to say hello. Gated behind is_user_logged_in() (cheap, WP core already resolved this on every
+	// request) so anonymous visitors — the overwhelming majority of front-end pageviews — never pay
+	// for the extra DB lookups below; this only runs for actual logged-in users.
+	$known_name  = '';
+	$known_email = '';
+	$known_phone = '';
+	if ( is_user_logged_in() ) {
+		$user = wp_get_current_user();
+		if ( $user && $user->ID ) {
+			$known_name  = $user->display_name;
+			$known_email = $user->user_email;
+			global $wpdb;
+			// aj_auth_user_mappings is always local, never in the shared DB — same reasoning as
+			// get_current_user_portal_access_context()'s identical comment on the class-based copy
+			// of this same two-step lookup.
+			$mapping_table = $wpdb->prefix . 'aj_auth_user_mappings';
+			$stripe_customer_id = $wpdb->get_var( $wpdb->prepare( "SELECT stripe_customer_id FROM {$mapping_table} WHERE user_id = %d ORDER BY updated_at DESC, id DESC LIMIT 1", $user->ID ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( $stripe_customer_id && function_exists( 'ajcore_get_portal_db' ) ) {
+				$pdb = ajcore_get_portal_db();
+				$customers_table = $pdb->prefix . 'aj_portal_stripe_customers';
+				$cust = $pdb->get_row( $pdb->prepare( "SELECT name, email, phone FROM {$customers_table} WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				if ( $cust ) {
+					$known_name  = $cust->name ? $cust->name : $known_name;
+					$known_email = $cust->email ? $cust->email : $known_email;
+					$known_phone = (string) $cust->phone;
+				}
+			}
+		}
+	}
 	?>
 	<script>
 		window.AJCoreChatConfig = {
@@ -1923,7 +1955,10 @@ function ajcore_render_chat_widget() {
 			engagePopupDelayMs: <?php echo wp_json_encode( max( 0, absint( $settings['chat_engage_popup_delay_seconds'] ?? 25 ) ) * 1000 ); ?>,
 			identifyEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['visitor_identify_enabled'] ?? '' ) ); ?>,
 			identifyDelayMs: <?php echo wp_json_encode( max( 0, absint( $settings['visitor_identify_delay_seconds'] ?? 55 ) ) * 1000 ); ?>,
-			timerEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['visitor_timer_enabled'] ?? '' ) ); ?>
+			timerEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['visitor_timer_enabled'] ?? '' ) ); ?>,
+			knownName: <?php echo wp_json_encode( $known_name ); ?>,
+			knownEmail: <?php echo wp_json_encode( $known_email ); ?>,
+			knownPhone: <?php echo wp_json_encode( $known_phone ); ?>
 		};
 	</script>
 	<script src="<?php echo esc_url( AJFORMS_PLUGIN_URL . 'assets/js/ajcore-chat-widget.js' ); ?>?v=<?php echo esc_attr( AJFORMS_VERSION ); ?>" defer></script>

@@ -6147,6 +6147,20 @@ class AJForms {
 		);
 		$portal_shell_bg = isset( $portal_bg_presets[ $portal_bg_preset ] ) ? $portal_bg_presets[ $portal_bg_preset ] : $portal_bg_presets['default'];
 
+		// Persistent contact footer — shown at the shell level (below) so it's on every tab, not
+		// just Overview's own "Quick Actions" Email Us/Text Us buttons (which stay as-is). Same
+		// sms: deep link convention as render_customer_portal_overview_tab()'s $text_url, just
+		// without the business-name context (not reliably available outside that tab's own Stripe
+		// customer lookup) — a portal-wide footer only needs to identify the person, not the case.
+		$footer_display_name = $current_user && ! empty( $current_user->display_name ) ? $current_user->display_name : '';
+		$footer_text_message = sprintf(
+			/* translators: %s: portal user's display name */
+			__( 'Hi, I am an existing customer (%s) and I need help with ', 'ajforms' ),
+			$footer_display_name ? $footer_display_name : '-'
+		);
+		$footer_text_url  = 'sms:+17043072135?body=' . rawurlencode( $footer_text_message );
+		$footer_email_url = home_url( '/email-us/' );
+
 		ob_start();
 		?>
 		<div class="ajcore-portal-shell">
@@ -6563,6 +6577,31 @@ class AJForms {
 				echo $this->render_customer_portal_reservations_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
 			?>
+			<div class="aj-portal-contact-footer">
+				<style>
+					.aj-portal-contact-footer{margin-top:28px;padding:18px 22px;border-radius:16px;background:var(--ajp-glass);border:1px solid var(--ajp-line);box-shadow:var(--ajp-shadow-soft);display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px}
+					.aj-portal-contact-footer p{margin:0;font-size:14px;color:var(--ajp-muted)}
+					.aj-portal-contact-footer p a{color:var(--ajp-ink);font-weight:800}
+					.aj-portal-contact-footer .aj-portal-contact-actions{display:flex;gap:10px;flex-wrap:wrap}
+					.aj-portal-contact-footer .button{min-height:38px;padding:9px 16px;font-size:13px}
+				</style>
+				<p>
+					<?php
+					echo wp_kses_post(
+						sprintf(
+							/* translators: 1: phone number link, 2: email link */
+							__( 'Questions about your account? Call or text us at %1$s, or email %2$s.', 'ajforms' ),
+							'<a href="tel:+17043072135">(704) 307-2135</a>',
+							'<a href="mailto:contactus@ncllcagents.com">contactus@ncllcagents.com</a>'
+						)
+					);
+					?>
+				</p>
+				<div class="aj-portal-contact-actions">
+					<a class="button" href="<?php echo esc_url( $footer_text_url ); ?>"><?php esc_html_e( 'Text Us', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $footer_email_url ); ?>"><?php esc_html_e( 'Email Us', 'ajforms' ); ?></a>
+				</div>
+			</div>
 			<?php if ( 'services' === $active_tab || 'reservations' === $active_tab ) : ?>
 				<script src="https://js.stripe.com/v3/"></script>
 			<?php endif; ?>

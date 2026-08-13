@@ -511,9 +511,16 @@
 		setStored(STORAGE_SESSION, sessionUuid);
 	}
 
-	var visitorName = getStored(STORAGE_NAME);
-	var visitorEmail = getStored(STORAGE_EMAIL);
-	var visitorPhone = getStored(STORAGE_PHONE);
+	// A logged-in Client Portal customer's identity (server-supplied via config.knownName/
+	// knownEmail/knownPhone — see ajcore_render_chat_widget()) always wins over whatever's cached
+	// in localStorage from some earlier anonymous visit on this same browser, since it's the
+	// actual account they're signed into right now, not a guess. Not written back to localStorage
+	// here — it's recomputed fresh from the server on every logged-in pageview, and leaving a
+	// signed-out visitor's cached values alone avoids a signed-in customer's name/email lingering
+	// in localStorage for whoever uses this browser next.
+	var visitorName = config.knownName || getStored(STORAGE_NAME);
+	var visitorEmail = config.knownEmail || getStored(STORAGE_EMAIL);
+	var visitorPhone = config.knownPhone || getStored(STORAGE_PHONE);
 	var hasVisitorInfo = !!(visitorName || visitorEmail || visitorPhone);
 
 	// ── Styles ────────────────────────────────────────────────────────────────
