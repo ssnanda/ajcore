@@ -10594,10 +10594,11 @@ class AJForms_Admin {
 	}
 
 	/**
-	 * Test the Cloudflare API Token + Zone ID against the exact endpoint "Mark Spam" blocking
-	 * uses (GET instead of POST so this never actually creates a rule) — confirms the token is
-	 * valid, the Zone ID is correct, AND the token actually has the Firewall Services permission
-	 * IP blocking needs, in one round trip.
+	 * Spam Protection's single Cloudflare "Test Connection" button. Runs the full bootstrap —
+	 * confirm the saved token/account/zone work, create the AJCore-Spam-List list and its WAF rule
+	 * if this is the first run (reporting "already set up" on every run after), then prove write
+	 * access by blocking then immediately unblocking a reserved documentation-only test IP. See
+	 * ajcore_cloudflare_run_full_test() for the actual sequence.
 	 */
 	public function ajax_test_cloudflare_connection() {
 		if ( ! current_user_can( 'manage_options' ) ) {
@@ -10606,51 +10607,16 @@ class AJForms_Admin {
 
 		check_ajax_referer( 'ajcore_test_cloudflare_connection', 'nonce' );
 
-		$settings  = $this->get_plugin_settings();
-		$api_token = isset( $_POST['api_token'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['api_token'] ) ) ) : '';
-		if ( '' === $api_token ) {
-			$api_token = ! empty( $settings['cloudflare_api_token'] ) ? trim( (string) $settings['cloudflare_api_token'] ) : '';
-		}
-		$zone_id = isset( $_POST['zone_id'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['zone_id'] ) ) ) : '';
-		if ( '' === $zone_id ) {
-			$zone_id = ! empty( $settings['cloudflare_zone_id'] ) ? trim( (string) $settings['cloudflare_zone_id'] ) : '';
+		if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
+			wp_send_json_error( __( 'Cloudflare blocking is unavailable right now.', 'ajforms' ), 500 );
 		}
 
-		if ( '' === $api_token || '' === $zone_id ) {
-			wp_send_json_error( __( 'Enter a Cloudflare API Token and Zone ID, or save them first.', 'ajforms' ), 400 );
+		$result = ajcore_cloudflare_run_full_test();
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( $result->get_error_message(), 502 );
 		}
 
-		$response = wp_remote_get(
-			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/firewall/access_rules/rules?per_page=1',
-			array(
-				'headers' => array(
-					'Authorization' => 'Bearer ' . $api_token,
-					'Content-Type'  => 'application/json',
-				),
-				'timeout' => 12,
-			)
-		);
-
-		if ( is_wp_error( $response ) ) {
-			wp_send_json_error( $response->get_error_message(), 502 );
-		}
-
-		$status = (int) wp_remote_retrieve_response_code( $response );
-		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
-
-		if ( 200 === $status && is_array( $body ) && ! empty( $body['success'] ) ) {
-			wp_send_json_success(
-				array(
-					'connected'      => true,
-					'existing_rules' => isset( $body['result_info']['total_count'] ) ? absint( $body['result_info']['total_count'] ) : null,
-					'note'           => __( 'Token verified — it can read and will be able to create IP Access Rules on this zone.', 'ajforms' ),
-				)
-			);
-		}
-
-		$errors  = ( is_array( $body ) && ! empty( $body['errors'] ) && is_array( $body['errors'] ) ) ? $body['errors'] : array();
-		$message = ! empty( $errors[0]['message'] ) ? (string) $errors[0]['message'] : sprintf( __( 'Cloudflare connection failed with HTTP status %d.', 'ajforms' ), $status );
-		wp_send_json_error( $message, $status >= 400 && $status < 600 ? $status : 502 );
+		wp_send_json_success( $result );
 	}
 
 	public function get_plugin_settings() {
@@ -10672,6 +10638,7 @@ class AJForms_Admin {
 			'turnstile_site_key'             => '',
 			'turnstile_secret_key'           => '',
 			'cloudflare_api_token'           => '',
+			'cloudflare_account_id'          => '',
 			'cloudflare_zone_id'             => '',
 			'webhook_url'                    => '',
 			'asana_enabled'                  => '0',
@@ -13606,6 +13573,7 @@ class AJForms_Admin {
 			'turnstile_site_key'             => isset( $_POST['turnstile_site_key'] ) ? sanitize_text_field( wp_unslash( $_POST['turnstile_site_key'] ) ) : '',
 			'turnstile_secret_key'           => isset( $_POST['turnstile_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['turnstile_secret_key'] ) ) : '',
 			'cloudflare_api_token'           => isset( $_POST['cloudflare_api_token'] ) ? sanitize_text_field( wp_unslash( $_POST['cloudflare_api_token'] ) ) : '',
+			'cloudflare_account_id'          => isset( $_POST['cloudflare_account_id'] ) ? sanitize_text_field( wp_unslash( $_POST['cloudflare_account_id'] ) ) : '',
 			'cloudflare_zone_id'             => isset( $_POST['cloudflare_zone_id'] ) ? sanitize_text_field( wp_unslash( $_POST['cloudflare_zone_id'] ) ) : '',
 			'webhook_url'                    => isset( $_POST['webhook_url'] ) ? esc_url_raw( wp_unslash( $_POST['webhook_url'] ) ) : '',
 			'asana_enabled'                  => isset( $_POST['asana_enabled'] ) ? '1' : '0',
@@ -13678,7 +13646,7 @@ class AJForms_Admin {
 		$section_keys = array(
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
 			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ),
-			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_zone_id' ),
+			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
@@ -31498,18 +31466,33 @@ class AJForms_Admin {
 
 								<div class="ajforms-settings-card">
 									<span class="ajforms-settings-pill"><?php esc_html_e( 'Spam Protection', 'ajforms' ); ?></span>
-									<h3><?php esc_html_e( 'Cloudflare IP Blocking', 'ajforms' ); ?></h3>
-									<p><?php esc_html_e( 'Lets "Mark Spam" in AJOps add a lead\'s IP address to a Cloudflare block rule on this domain\'s zone, in addition to hiding the lead here.', 'ajforms' ); ?></p>
+									<h3 style="display:flex;align-items:center;gap:8px;">
+										<?php esc_html_e( 'Cloudflare IP Blocking', 'ajforms' ); ?>
+										<button type="button" id="ajcore-cloudflare-help-toggle" aria-expanded="false" title="<?php esc_attr_e( 'Required API Token permissions', 'ajforms' ); ?>" style="width:22px;height:22px;border-radius:50%;border:1px solid #d1d5db;background:#fff;color:#4b5563;font-weight:700;font-size:13px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;">?</button>
+									</h3>
+									<p><?php esc_html_e( 'Lets "Mark Spam" in AJOps add a lead\'s IP address to a single Cloudflare-managed list ("AJCore-Spam-List") blocked by one WAF rule, in addition to hiding the lead here. Blocking any number of IPs over time never creates more than that one rule.', 'ajforms' ); ?></p>
+									<div id="ajcore-cloudflare-help-panel" class="ajforms-settings-note" style="display:none;">
+										<p style="margin:0 0 10px;font-weight:700;"><?php esc_html_e( 'Required API Token permissions', 'ajforms' ); ?></p>
+										<ul style="margin:0 0 10px;padding-left:20px;">
+											<li><?php esc_html_e( 'Account → Account Filter Lists → Edit', 'ajforms' ); ?></li>
+											<li><?php esc_html_e( 'Zone → WAF → Edit', 'ajforms' ); ?></li>
+										</ul>
+										<p style="margin:0 0 10px;"><?php esc_html_e( 'Under Account Resources, include this account; under Zone Resources, include this specific zone. Create the token at My Profile → API Tokens → Create Custom Token, then click Test Connection below to verify.', 'ajforms' ); ?></p>
+										<p style="margin:0;"><?php esc_html_e( 'Older tokens created for the previous per-IP scheme (Firewall Services: Edit only) will fail Test Connection — add the two permissions above to the existing token, or create a new one.', 'ajforms' ); ?></p>
+									</div>
 									<div class="ajforms-settings-grid">
 										<div class="ajforms-settings-field">
 											<label for="cloudflare_api_token"><?php esc_html_e( 'API Token', 'ajforms' ); ?></label>
 											<?php $cloudflare_token_saved = ! empty( $settings['cloudflare_api_token'] ); ?>
-											<input name="cloudflare_api_token" id="cloudflare_api_token" type="password" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $cloudflare_token_saved ? __( 'Saved — enter a new token to replace', 'ajforms' ) : __( 'Paste a zone-scoped API Token', 'ajforms' ) ); ?>">
+											<input name="cloudflare_api_token" id="cloudflare_api_token" type="password" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $cloudflare_token_saved ? __( 'Saved — enter a new token to replace', 'ajforms' ) : __( 'Paste an API Token (see the ? above for permissions)', 'ajforms' ) ); ?>">
 											<?php if ( $cloudflare_token_saved ) : ?>
 												<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings['cloudflare_api_token'] ) ) ); ?></p>
-											<?php else : ?>
-												<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'Create at My Profile → API Tokens, scoped to this zone, with the "Firewall Services: Edit" permission.', 'ajforms' ); ?></p>
 											<?php endif; ?>
+										</div>
+										<div class="ajforms-settings-field">
+											<label for="cloudflare_account_id"><?php esc_html_e( 'Account ID', 'ajforms' ); ?></label>
+											<input name="cloudflare_account_id" id="cloudflare_account_id" type="text" value="<?php echo esc_attr( $settings['cloudflare_account_id'] ); ?>" placeholder="<?php esc_attr_e( '32-character Account ID', 'ajforms' ); ?>">
+											<div class="ajforms-settings-help"><?php esc_html_e( 'Same Overview page as Zone ID, right-hand sidebar — a separate value from it.', 'ajforms' ); ?></div>
 										</div>
 										<div class="ajforms-settings-field">
 											<label for="cloudflare_zone_id"><?php esc_html_e( 'Zone ID', 'ajforms' ); ?></label>
@@ -31519,22 +31502,30 @@ class AJForms_Admin {
 									</div>
 									<div class="ajforms-settings-help ajforms-settings-help-links">
 										<a href="https://dash.cloudflare.com/?to=/:account/profile/api-tokens" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Manage API Tokens', 'ajforms' ); ?></a>
-										<a href="https://developers.cloudflare.com/waf/tools/ip-access-rules/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'About IP Access Rules', 'ajforms' ); ?></a>
+										<a href="https://developers.cloudflare.com/waf/tools/lists/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'About Cloudflare Lists', 'ajforms' ); ?></a>
 									</div>
 									<div class="ajforms-settings-inline-actions" style="margin-top:18px;">
 										<button type="button" class="button" id="ajcore-test-cloudflare"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
 										<span id="ajcore-cloudflare-test-status" class="ajforms-settings-help"></span>
 									</div>
-									<p class="ajforms-settings-help" style="margin-top:10px;"><?php esc_html_e( 'Test Connection checks the token without saving. Use the "Save Settings" button at the bottom of the page to actually save.', 'ajforms' ); ?></p>
+									<p class="ajforms-settings-help" style="margin-top:10px;"><?php esc_html_e( 'Test Connection uses the currently SAVED token (save first if you just pasted a new one). It creates the AJCore-Spam-List list and its WAF rule the first time it\'s run (reporting "already set up" on every run after), then proves write access by blocking then immediately unblocking 192.0.2.1 — a reserved documentation-only address that never carries real traffic.', 'ajforms' ); ?></p>
 									<script>
 									(function() {
-										const tokenInput  = document.getElementById('cloudflare_api_token');
-										const zoneInput   = document.getElementById('cloudflare_zone_id');
+										const helpToggle = document.getElementById('ajcore-cloudflare-help-toggle');
+										const helpPanel   = document.getElementById('ajcore-cloudflare-help-panel');
+										if (helpToggle && helpPanel) {
+											helpToggle.addEventListener('click', function() {
+												const open = helpPanel.style.display !== 'none';
+												helpPanel.style.display = open ? 'none' : 'block';
+												helpToggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+											});
+										}
+
 										const testButton  = document.getElementById('ajcore-test-cloudflare');
 										const statusNode  = document.getElementById('ajcore-cloudflare-test-status');
 										const testNonce   = '<?php echo esc_js( wp_create_nonce( 'ajcore_test_cloudflare_connection' ) ); ?>';
 
-										if (!tokenInput || !zoneInput || !testButton || !statusNode) {
+										if (!testButton || !statusNode) {
 											return;
 										}
 
@@ -31545,13 +31536,11 @@ class AJForms_Admin {
 
 										testButton.addEventListener('click', function() {
 											testButton.disabled = true;
-											setStatus('<?php echo esc_js( __( 'Testing Cloudflare connection...', 'ajforms' ) ); ?>', false);
+											setStatus('<?php echo esc_js( __( 'Testing — creating the list/rule if needed, then round-tripping a test IP...', 'ajforms' ) ); ?>', false);
 
 											const formData = new FormData();
 											formData.append('action', 'ajcore_test_cloudflare_connection');
 											formData.append('nonce', testNonce);
-											formData.append('api_token', tokenInput.value.trim());
-											formData.append('zone_id', zoneInput.value.trim());
 
 											fetch(ajaxurl, { method: 'POST', body: formData })
 												.then(function(response) { return response.json(); })

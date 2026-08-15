@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.250
+ * Version: 0.7.251
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.250' );
+	define( 'AJCORE_VERSION', '0.7.251' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -288,12 +288,14 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'hcaptcha_secret_key'           => '',
 			'turnstile_site_key'            => '',
 			'turnstile_secret_key'          => '',
-			// Cloudflare IP blocking (Spam Protection -> "Mark Spam" in AJOps). A zone-scoped API
-			// token with the "Firewall Services: Edit" permission — used to add an IP Access Rule
-			// (mode "block") for a lead's IP address. cloudflare_zone_id isn't a secret (it's
-			// visible in the Cloudflare dashboard URL) but travels with the token since one is
-			// useless without the other.
+			// Cloudflare IP blocking (Spam Protection -> "Mark Spam" in AJOps). One account-level
+			// List ("ajcore_spam_list") plus one zone-level WAF Custom Rule blocking it — see
+			// ajcore_cloudflare_block_ip() — so blocking any number of spam IPs over time never
+			// creates more than one rule. Needs a token with Account > Account Filter Lists: Edit
+			// and Zone > WAF: Edit. account_id/zone_id aren't secrets (both visible in the
+			// Cloudflare dashboard) but travel with the token since none of the three works alone.
 			'cloudflare_api_token'          => '',
+			'cloudflare_account_id'         => '',
 			'cloudflare_zone_id'            => '',
 			'webhook_url'                   => '',
 			'asana_enabled'                 => '0',
@@ -716,17 +718,270 @@ if ( ! function_exists( 'ajcore_mask_secret_for_display' ) ) {
 	}
 }
 
+if ( ! function_exists( 'ajcore_cloudflare_api_request' ) ) {
+	/**
+	 * Thin wrapper around wp_remote_request for Cloudflare's v4 API — every ajcore_cloudflare_*
+	 * helper below goes through this so auth headers/timeout/JSON-decoding stay in one place.
+	 *
+	 * @return array{success:bool,body:array,status:int}|WP_Error
+	 */
+	function ajcore_cloudflare_api_request( $method, $url, $api_token, $body = null ) {
+		$args = array(
+			'method'  => $method,
+			'timeout' => 15,
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $api_token,
+				'Content-Type'  => 'application/json',
+			),
+		);
+		if ( null !== $body ) {
+			$args['body'] = wp_json_encode( $body );
+		}
+
+		$response = wp_remote_request( $url, $args );
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$status  = (int) wp_remote_retrieve_response_code( $response );
+		$decoded = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		return array(
+			'success' => is_array( $decoded ) && ! empty( $decoded['success'] ),
+			'body'    => is_array( $decoded ) ? $decoded : array(),
+			'status'  => $status,
+		);
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_api_error_message' ) ) {
+	function ajcore_cloudflare_api_error_message( $body, $status ) {
+		$errors = ( is_array( $body ) && ! empty( $body['errors'] ) && is_array( $body['errors'] ) ) ? $body['errors'] : array();
+		if ( ! empty( $errors[0]['message'] ) ) {
+			return (string) $errors[0]['message'];
+		}
+		return sprintf( /* translators: %d: HTTP status code */ __( 'Cloudflare request failed with HTTP status %d.', 'ajforms' ), $status );
+	}
+}
+
+if ( ! function_exists( 'AJCORE_CLOUDFLARE_LIST_NAME' ) ) {
+	// Cloudflare list names: lowercase letters/digits/underscores only, no hyphens or spaces.
+	define( 'AJCORE_CLOUDFLARE_LIST_NAME', 'ajcore_spam_list' );
+	define( 'AJCORE_CLOUDFLARE_RULE_DESCRIPTION', 'AJCore-Spam-List' );
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_get_settings' ) ) {
+	/**
+	 * Pulls + validates the three Cloudflare fields every helper below needs. Centralized so the
+	 * "not configured yet" error message is worded identically everywhere it can surface.
+	 *
+	 * @return array{api_token:string,account_id:string,zone_id:string}|WP_Error
+	 */
+	function ajcore_cloudflare_get_settings() {
+		$settings   = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$api_token  = ! empty( $settings['cloudflare_api_token'] ) ? trim( (string) $settings['cloudflare_api_token'] ) : '';
+		$account_id = ! empty( $settings['cloudflare_account_id'] ) ? trim( (string) $settings['cloudflare_account_id'] ) : '';
+		$zone_id    = ! empty( $settings['cloudflare_zone_id'] ) ? trim( (string) $settings['cloudflare_zone_id'] ) : '';
+
+		if ( '' === $api_token || '' === $account_id || '' === $zone_id ) {
+			return new WP_Error( 'ajcore_cloudflare_not_configured', __( 'Cloudflare API Token, Account ID, and Zone ID must all be set on the Spam Protection screen first.', 'ajforms' ) );
+		}
+
+		return array( 'api_token' => $api_token, 'account_id' => $account_id, 'zone_id' => $zone_id );
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_get_or_create_list' ) ) {
+	/**
+	 * Finds the account's "ajcore_spam_list" IP list, creating it if this is the first time
+	 * anything has been blocked. Not cached — this only runs when a lead is actually marked spam
+	 * (a human-triggered, infrequent action), so a fresh lookup every time is cheap and immune to
+	 * the list having been renamed/deleted by hand on Cloudflare's side since the last call.
+	 *
+	 * @return string|WP_Error List ID.
+	 */
+	function ajcore_cloudflare_get_or_create_list( $account_id, $api_token ) {
+		$list = ajcore_cloudflare_api_request(
+			'GET',
+			'https://api.cloudflare.com/client/v4/accounts/' . rawurlencode( $account_id ) . '/rules/lists',
+			$api_token
+		);
+		if ( is_wp_error( $list ) ) {
+			return $list;
+		}
+		if ( $list['success'] ) {
+			foreach ( (array) ( $list['body']['result'] ?? array() ) as $existing ) {
+				if ( isset( $existing['name'] ) && AJCORE_CLOUDFLARE_LIST_NAME === $existing['name'] ) {
+					return (string) $existing['id'];
+				}
+			}
+		}
+
+		$created = ajcore_cloudflare_api_request(
+			'POST',
+			'https://api.cloudflare.com/client/v4/accounts/' . rawurlencode( $account_id ) . '/rules/lists',
+			$api_token,
+			array(
+				'name'        => AJCORE_CLOUDFLARE_LIST_NAME,
+				'description' => 'AJCore spam IP blocklist — auto-managed by "Mark Spam" in AJOps, do not edit the name.',
+				'kind'        => 'ip',
+			)
+		);
+		if ( is_wp_error( $created ) ) {
+			return $created;
+		}
+		if ( ! $created['success'] || empty( $created['body']['result']['id'] ) ) {
+			return new WP_Error( 'ajcore_cloudflare_list_create_failed', ajcore_cloudflare_api_error_message( $created['body'], $created['status'] ) );
+		}
+		return (string) $created['body']['result']['id'];
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_ensure_custom_rule' ) ) {
+	/**
+	 * Makes sure exactly one WAF Custom Rule exists on the zone blocking traffic from the list —
+	 * "ip.src in $ajcore_spam_list" — creating the zone's custom-rules entrypoint ruleset first if
+	 * this zone has never had one. One rule total regardless of how many IPs the list holds later.
+	 *
+	 * @return true|WP_Error
+	 */
+	function ajcore_cloudflare_ensure_custom_rule( $zone_id, $api_token ) {
+		$expression = 'ip.src in $' . AJCORE_CLOUDFLARE_LIST_NAME;
+
+		$entrypoint = ajcore_cloudflare_api_request(
+			'GET',
+			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/rulesets/phases/http_request_firewall_custom/entrypoint',
+			$api_token
+		);
+		if ( is_wp_error( $entrypoint ) ) {
+			return $entrypoint;
+		}
+
+		if ( $entrypoint['success'] && ! empty( $entrypoint['body']['result']['id'] ) ) {
+			foreach ( (array) ( $entrypoint['body']['result']['rules'] ?? array() ) as $rule ) {
+				if ( isset( $rule['expression'] ) && $expression === $rule['expression'] ) {
+					return true; // Already there.
+				}
+			}
+			// Ruleset exists, our rule doesn't yet — add it without touching any existing rules.
+			$added = ajcore_cloudflare_api_request(
+				'POST',
+				'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/rulesets/' . rawurlencode( (string) $entrypoint['body']['result']['id'] ) . '/rules',
+				$api_token,
+				array(
+					'action'      => 'block',
+					'expression'  => $expression,
+					'description' => AJCORE_CLOUDFLARE_RULE_DESCRIPTION,
+					'enabled'     => true,
+				)
+			);
+			if ( is_wp_error( $added ) ) {
+				return $added;
+			}
+			if ( ! $added['success'] ) {
+				return new WP_Error( 'ajcore_cloudflare_rule_add_failed', ajcore_cloudflare_api_error_message( $added['body'], $added['status'] ) );
+			}
+			return true;
+		}
+
+		// 404 (or any non-success) on the entrypoint GET means this zone has no custom ruleset at
+		// all yet — create it with our rule as its first entry.
+		$created = ajcore_cloudflare_api_request(
+			'POST',
+			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/rulesets',
+			$api_token,
+			array(
+				'name'  => 'default',
+				'kind'  => 'zone',
+				'phase' => 'http_request_firewall_custom',
+				'rules' => array(
+					array(
+						'action'      => 'block',
+						'expression'  => $expression,
+						'description' => AJCORE_CLOUDFLARE_RULE_DESCRIPTION,
+						'enabled'     => true,
+					),
+				),
+			)
+		);
+		if ( is_wp_error( $created ) ) {
+			return $created;
+		}
+		if ( ! $created['success'] ) {
+			return new WP_Error( 'ajcore_cloudflare_ruleset_create_failed', ajcore_cloudflare_api_error_message( $created['body'], $created['status'] ) );
+		}
+		return true;
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_find_list_item' ) ) {
+	/**
+	 * @return array|null|WP_Error The matching item (with its own "id", distinct from the IP
+	 *                             string, needed to delete it later), null if not present.
+	 */
+	function ajcore_cloudflare_find_list_item( $account_id, $list_id, $api_token, $ip ) {
+		$search = ajcore_cloudflare_api_request(
+			'GET',
+			'https://api.cloudflare.com/client/v4/accounts/' . rawurlencode( $account_id ) . '/rules/lists/' . rawurlencode( $list_id ) . '/items?search=' . rawurlencode( $ip ),
+			$api_token
+		);
+		if ( is_wp_error( $search ) ) {
+			return $search;
+		}
+		if ( ! $search['success'] ) {
+			return new WP_Error( 'ajcore_cloudflare_list_search_failed', ajcore_cloudflare_api_error_message( $search['body'], $search['status'] ) );
+		}
+		foreach ( (array) ( $search['body']['result'] ?? array() ) as $item ) {
+			if ( isset( $item['ip'] ) && $ip === $item['ip'] ) {
+				return $item;
+			}
+		}
+		return null;
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_poll_bulk_operation' ) ) {
+	/**
+	 * List item add/remove calls are async on Cloudflare's side — they return an operation_id
+	 * immediately rather than confirming completion. Polls briefly (these normally finish in well
+	 * under a second for a single item); if it hasn't confirmed by the last attempt, treats it as
+	 * "submitted" rather than failing the whole action over a slow poll.
+	 */
+	function ajcore_cloudflare_poll_bulk_operation( $account_id, $operation_id, $api_token, $attempts = 5 ) {
+		for ( $i = 0; $i < $attempts; $i++ ) {
+			$check = ajcore_cloudflare_api_request(
+				'GET',
+				'https://api.cloudflare.com/client/v4/accounts/' . rawurlencode( $account_id ) . '/rules/lists/bulk_operations/' . rawurlencode( $operation_id ),
+				$api_token
+			);
+			if ( ! is_wp_error( $check ) && $check['success'] && isset( $check['body']['result']['status'] ) ) {
+				$op_status = (string) $check['body']['result']['status'];
+				if ( 'completed' === $op_status ) {
+					return true;
+				}
+				if ( 'failed' === $op_status ) {
+					return new WP_Error( 'ajcore_cloudflare_bulk_op_failed', ! empty( $check['body']['result']['error'] ) ? (string) $check['body']['result']['error'] : __( 'Cloudflare list update failed.', 'ajforms' ) );
+				}
+			}
+			if ( $i < $attempts - 1 ) {
+				usleep( 400000 ); // 0.4s between polls.
+			}
+		}
+		return true; // Submitted but not confirmed within the poll window — not treated as failure.
+	}
+}
+
 if ( ! function_exists( 'ajcore_cloudflare_block_ip' ) ) {
 	/**
-	 * Adds a zone-level Cloudflare IP Access Rule (mode "block") for one IP address — the
-	 * "Mark Spam" action's Cloudflare side. Requires cloudflare_api_token (a token scoped to
-	 * this zone with "Firewall Services: Edit") and cloudflare_zone_id in settings; both are
-	 * entered on the Spam Protection screen. Idempotent: an IP that's already blocked on
-	 * Cloudflare comes back as a "duplicate of an existing rule" error, which this treats as
-	 * success (already_existed => true) rather than surfacing it as a failure.
+	 * Adds one IP address to the account's shared "ajcore_spam_list" — a single Cloudflare List
+	 * that one WAF Custom Rule (AJCore-Spam-List) blocks in its entirety, so blocking any number of
+	 * spam IPs over time never creates more than one rule and never touches the zone's limited
+	 * Custom Rules quota. First call ever (or the first after either has been deleted by hand)
+	 * transparently creates the list and the rule; every call after that just appends to the list.
+	 * Requires cloudflare_api_token, cloudflare_account_id, and cloudflare_zone_id in settings.
 	 *
 	 * @param string $ip   IPv4 or IPv6 address to block.
-	 * @param string $note Freeform note stored on the Cloudflare rule (shows in their dashboard).
+	 * @param string $note Freeform comment stored on the list item (shows in Cloudflare's dashboard).
 	 * @return array{blocked:bool,already_existed:bool}|WP_Error
 	 */
 	function ajcore_cloudflare_block_ip( $ip, $note = '' ) {
@@ -735,58 +990,201 @@ if ( ! function_exists( 'ajcore_cloudflare_block_ip' ) ) {
 			return new WP_Error( 'ajcore_invalid_ip', __( 'Not a valid IP address.', 'ajforms' ) );
 		}
 
-		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
-		$api_token = ! empty( $settings['cloudflare_api_token'] ) ? trim( (string) $settings['cloudflare_api_token'] ) : '';
-		$zone_id   = ! empty( $settings['cloudflare_zone_id'] ) ? trim( (string) $settings['cloudflare_zone_id'] ) : '';
-
-		if ( '' === $api_token || '' === $zone_id ) {
-			return new WP_Error( 'ajcore_cloudflare_not_configured', __( 'Cloudflare API Token and Zone ID must be set on the Spam Protection screen before IPs can be blocked.', 'ajforms' ) );
+		$config = ajcore_cloudflare_get_settings();
+		if ( is_wp_error( $config ) ) {
+			return $config;
 		}
 
-		$response = wp_remote_post(
-			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/firewall/access_rules/rules',
-			array(
-				'timeout' => 15,
-				'headers' => array(
-					'Authorization' => 'Bearer ' . $api_token,
-					'Content-Type'  => 'application/json',
-				),
-				'body'    => wp_json_encode(
-					array(
-						'mode'          => 'block',
-						'configuration' => array(
-							'target' => 'ip',
-							'value'  => $ip,
-						),
-						'notes'         => '' !== $note ? substr( $note, 0, 500 ) : sprintf( 'AJCore: blocked %s', $ip ),
-					)
-				),
-			)
+		$list_id = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
+		if ( is_wp_error( $list_id ) ) {
+			return $list_id;
+		}
+
+		$rule_ready = ajcore_cloudflare_ensure_custom_rule( $config['zone_id'], $config['api_token'] );
+		if ( is_wp_error( $rule_ready ) ) {
+			return $rule_ready;
+		}
+
+		$existing = ajcore_cloudflare_find_list_item( $config['account_id'], $list_id, $config['api_token'], $ip );
+		if ( is_wp_error( $existing ) ) {
+			return $existing;
+		}
+		if ( null !== $existing ) {
+			return array( 'blocked' => true, 'already_existed' => true );
+		}
+
+		$added = ajcore_cloudflare_api_request(
+			'POST',
+			'https://api.cloudflare.com/client/v4/accounts/' . rawurlencode( $config['account_id'] ) . '/rules/lists/' . rawurlencode( $list_id ) . '/items',
+			$config['api_token'],
+			array( array( 'ip' => $ip, 'comment' => '' !== $note ? substr( $note, 0, 500 ) : sprintf( 'AJCore: blocked %s', $ip ) ) )
 		);
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
+		if ( is_wp_error( $added ) ) {
+			return $added;
+		}
+		if ( ! $added['success'] || empty( $added['body']['result']['operation_id'] ) ) {
+			return new WP_Error( 'ajcore_cloudflare_block_failed', ajcore_cloudflare_api_error_message( $added['body'], $added['status'] ) );
 		}
 
-		$body    = json_decode( wp_remote_retrieve_body( $response ), true );
-		$success = is_array( $body ) && ! empty( $body['success'] );
-
-		if ( $success ) {
-			return array( 'blocked' => true, 'already_existed' => false );
+		$polled = ajcore_cloudflare_poll_bulk_operation( $config['account_id'], $added['body']['result']['operation_id'], $config['api_token'] );
+		if ( is_wp_error( $polled ) ) {
+			return $polled;
 		}
 
-		$errors = ( is_array( $body ) && ! empty( $body['errors'] ) && is_array( $body['errors'] ) ) ? $body['errors'] : array();
-		foreach ( $errors as $error ) {
-			// Cloudflare error code 10009 ("config value already exists") — this IP is already
-			// on a block rule for this zone, which is exactly the outcome we wanted anyway.
-			$message = isset( $error['message'] ) ? (string) $error['message'] : '';
-			if ( ( isset( $error['code'] ) && 10009 === (int) $error['code'] ) || false !== stripos( $message, 'already exists' ) ) {
-				return array( 'blocked' => true, 'already_existed' => true );
+		return array( 'blocked' => true, 'already_existed' => false );
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_unblock_ip' ) ) {
+	/**
+	 * Removes one IP from the shared list — used by the Test Connection flow to clean up its own
+	 * dummy test IP, and available generally as the inverse of ajcore_cloudflare_block_ip().
+	 *
+	 * @return array{removed:bool}|WP_Error
+	 */
+	function ajcore_cloudflare_unblock_ip( $ip ) {
+		$ip = trim( (string) $ip );
+		if ( '' === $ip || ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+			return new WP_Error( 'ajcore_invalid_ip', __( 'Not a valid IP address.', 'ajforms' ) );
+		}
+
+		$config = ajcore_cloudflare_get_settings();
+		if ( is_wp_error( $config ) ) {
+			return $config;
+		}
+
+		$list_id = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
+		if ( is_wp_error( $list_id ) ) {
+			return $list_id;
+		}
+
+		$existing = ajcore_cloudflare_find_list_item( $config['account_id'], $list_id, $config['api_token'], $ip );
+		if ( is_wp_error( $existing ) ) {
+			return $existing;
+		}
+		if ( null === $existing ) {
+			return array( 'removed' => true ); // Nothing to do.
+		}
+
+		$removed = ajcore_cloudflare_api_request(
+			'DELETE',
+			'https://api.cloudflare.com/client/v4/accounts/' . rawurlencode( $config['account_id'] ) . '/rules/lists/' . rawurlencode( $list_id ) . '/items',
+			$config['api_token'],
+			array( 'items' => array( array( 'id' => $existing['id'] ) ) )
+		);
+		if ( is_wp_error( $removed ) ) {
+			return $removed;
+		}
+		if ( ! $removed['success'] || empty( $removed['body']['result']['operation_id'] ) ) {
+			return new WP_Error( 'ajcore_cloudflare_unblock_failed', ajcore_cloudflare_api_error_message( $removed['body'], $removed['status'] ) );
+		}
+
+		$polled = ajcore_cloudflare_poll_bulk_operation( $config['account_id'], $removed['body']['result']['operation_id'], $config['api_token'] );
+		if ( is_wp_error( $polled ) ) {
+			return $polled;
+		}
+
+		return array( 'removed' => true );
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
+	/**
+	 * The Spam Protection screen's single "Test Connection" button: proves the token can read,
+	 * ensures the list + rule exist (creating them on first run), round-trips a reserved
+	 * documentation-only test IP (192.0.2.1, RFC 5737 TEST-NET-1 — never real traffic) through
+	 * block-then-unblock to prove write access, and reports exactly what was newly created vs.
+	 * already existed so re-running this after the first time reads as "already set up", not
+	 * "created again".
+	 *
+	 * @return array{list_created:bool,rule_created:bool,note:string}|WP_Error
+	 */
+	function ajcore_cloudflare_run_full_test() {
+		$config = ajcore_cloudflare_get_settings();
+		if ( is_wp_error( $config ) ) {
+			return $config;
+		}
+
+		$list_lookup = ajcore_cloudflare_api_request(
+			'GET',
+			'https://api.cloudflare.com/client/v4/accounts/' . rawurlencode( $config['account_id'] ) . '/rules/lists',
+			$config['api_token']
+		);
+		if ( is_wp_error( $list_lookup ) ) {
+			return $list_lookup;
+		}
+		if ( ! $list_lookup['success'] ) {
+			return new WP_Error( 'ajcore_cloudflare_test_failed', ajcore_cloudflare_api_error_message( $list_lookup['body'], $list_lookup['status'] ) );
+		}
+		$list_existed_already = false;
+		foreach ( (array) ( $list_lookup['body']['result'] ?? array() ) as $existing ) {
+			if ( isset( $existing['name'] ) && AJCORE_CLOUDFLARE_LIST_NAME === $existing['name'] ) {
+				$list_existed_already = true;
+				break;
 			}
 		}
 
-		$error_message = ! empty( $errors[0]['message'] ) ? (string) $errors[0]['message'] : __( 'Cloudflare rejected the request.', 'ajforms' );
-		return new WP_Error( 'ajcore_cloudflare_block_failed', $error_message );
+		$list_id = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
+		if ( is_wp_error( $list_id ) ) {
+			return $list_id;
+		}
+
+		$entrypoint = ajcore_cloudflare_api_request(
+			'GET',
+			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $config['zone_id'] ) . '/rulesets/phases/http_request_firewall_custom/entrypoint',
+			$config['api_token']
+		);
+		$rule_existed_already = false;
+		if ( ! is_wp_error( $entrypoint ) && $entrypoint['success'] ) {
+			foreach ( (array) ( $entrypoint['body']['result']['rules'] ?? array() ) as $rule ) {
+				if ( isset( $rule['description'] ) && AJCORE_CLOUDFLARE_RULE_DESCRIPTION === $rule['description'] ) {
+					$rule_existed_already = true;
+					break;
+				}
+			}
+		}
+
+		$rule_ready = ajcore_cloudflare_ensure_custom_rule( $config['zone_id'], $config['api_token'] );
+		if ( is_wp_error( $rule_ready ) ) {
+			return $rule_ready;
+		}
+
+		$test_ip = '192.0.2.1';
+		$blocked = ajcore_cloudflare_block_ip( $test_ip, 'AJCore Test Connection — round-tripped automatically, should not remain blocked' );
+		if ( is_wp_error( $blocked ) ) {
+			return $blocked;
+		}
+		$unblocked = ajcore_cloudflare_unblock_ip( $test_ip );
+		if ( is_wp_error( $unblocked ) ) {
+			// Write access is proven either way (the block above succeeded) — surface the cleanup
+			// failure as an informational note rather than treating the whole test as failed.
+			return array(
+				'list_created' => ! $list_existed_already,
+				'rule_created' => ! $rule_existed_already,
+				'note'         => sprintf(
+					__( 'Connected — read/write access confirmed, list and rule are ready. Could not remove the %1$s test entry afterward (%2$s); it\'s harmless (reserved, non-routable) but you can remove it manually from the list if you\'d like.', 'ajforms' ),
+					$test_ip,
+					$unblocked->get_error_message()
+				),
+			);
+		}
+
+		if ( $list_existed_already && $rule_existed_already ) {
+			$note = __( 'Success — already set up. List and rule both exist and write access is confirmed.', 'ajforms' );
+		} else {
+			$note = sprintf(
+				__( 'Success — %s Write access confirmed via a round-tripped test IP.', 'ajforms' ),
+				( ! $list_existed_already && ! $rule_existed_already )
+					? __( 'created the AJCore-Spam-List list and rule for the first time.', 'ajforms' )
+					: ( ! $list_existed_already ? __( 'created the missing list (rule already existed).', 'ajforms' ) : __( 'created the missing rule (list already existed).', 'ajforms' ) )
+			);
+		}
+
+		return array(
+			'list_created' => ! $list_existed_already,
+			'rule_created' => ! $rule_existed_already,
+			'note'         => $note,
+		);
 	}
 }
 
