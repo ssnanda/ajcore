@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.248
+ * Version: 0.7.249
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.248' );
+	define( 'AJCORE_VERSION', '0.7.249' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -547,10 +547,21 @@ if ( ! function_exists( 'ajcore_get_settings_encryption_key' ) ) {
 	 * wp-config.php changes/redeploys/salt rotation entirely.
 	 */
 	function ajcore_get_settings_encryption_key() {
+		// BUG FIX (was silently rotating the key on every single call — see the "critical" note in
+		// git history/PR discussion): this used to gate reuse of the stored key behind
+		// function_exists('sodium_crypto_secretbox_keybytes'), but that's the name of a CONSTANT
+		// (SODIUM_CRYPTO_SECRETBOX_KEYBYTES) in PHP's native sodium extension, not a callable
+		// function — function_exists() on it returns false on a standard install, so the "reuse the
+		// stored key" branch below never ran. Every encrypt/decrypt call fell through to generating
+		// and persisting a brand-new random key, overwriting the one anything previously encrypted
+		// actually needs — i.e. the exact "silently undecryptable" failure this whole ajenc2: scheme
+		// was built to prevent, just via a different mechanism. function_exists('sodium_crypto_secretbox')
+		// (the actual function used below and elsewhere in this file) is the right guard for "is
+		// libsodium available", and the key is validated on its own merits (decodes, right length).
 		$stored = get_option( 'ajcore_settings_encryption_key', '' );
 		if ( is_string( $stored ) && '' !== $stored ) {
 			$decoded = base64_decode( $stored, true );
-			if ( false !== $decoded && function_exists( 'sodium_crypto_secretbox_keybytes' ) && SODIUM_CRYPTO_SECRETBOX_KEYBYTES === strlen( $decoded ) ) {
+			if ( false !== $decoded && function_exists( 'sodium_crypto_secretbox' ) && SODIUM_CRYPTO_SECRETBOX_KEYBYTES === strlen( $decoded ) ) {
 				return $decoded;
 			}
 		}
