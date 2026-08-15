@@ -7688,6 +7688,84 @@ class AJForms {
 		return ! empty( $plugin_settings['honeypot_enabled'] ) && '1' === (string) $plugin_settings['honeypot_enabled'];
 	}
 
+	/**
+	 * Content Filtering (Spam Protection) — site-wide, server-side checks run against every
+	 * form's free-text fields (and the blocked-domains list against every Email field) at
+	 * submission time, same "applies automatically, no per-form setup" reasoning as honeypot.
+	 * A tripped check adds to $errors the same way a failed "required" check does, so the
+	 * submission is rejected with a normal validation message and never reaches the leads table
+	 * — the bot's ability to save/submit is what actually stops, not just a UI hint.
+	 */
+	private function get_content_filter_settings() {
+		$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+
+		return array(
+			'block_non_latin'        => ! empty( $plugin_settings['content_filter_block_non_latin'] ) && '1' === (string) $plugin_settings['content_filter_block_non_latin'],
+			'block_links'            => ! empty( $plugin_settings['content_filter_block_links'] ) && '1' === (string) $plugin_settings['content_filter_block_links'],
+			'blocked_email_domains'  => ! empty( $plugin_settings['content_filter_blocked_email_domains'] ) ? (string) $plugin_settings['content_filter_blocked_email_domains'] : '',
+		);
+	}
+
+	/**
+	 * True if $value contains a character from a script no legitimate English-language submitter
+	 * would type — Cyrillic, CJK, Arabic, Hebrew, Thai, Devanagari, Greek. Deliberately NOT a
+	 * blanket non-ASCII check: that would also reject perfectly legitimate accented Latin names
+	 * (café, José, Müller), which this is not meant to touch.
+	 */
+	private function value_contains_non_latin_script( $value ) {
+		if ( ! is_string( $value ) || '' === $value ) {
+			return false;
+		}
+		return (bool) preg_match( '/[\p{Cyrillic}\p{Han}\p{Arabic}\p{Hebrew}\p{Hangul}\p{Hiragana}\p{Katakana}\p{Thai}\p{Devanagari}\p{Greek}]/u', $value );
+	}
+
+	/**
+	 * True if $value looks like it's carrying a link — a full URL, a "www." prefix, or a bare
+	 * domain-looking token (word.tld, optionally with a path) using a real-looking TLD list so
+	 * ordinary sentence punctuation ("e.g.", "etc.") doesn't false-positive.
+	 */
+	private function value_contains_link( $value ) {
+		if ( ! is_string( $value ) || '' === $value ) {
+			return false;
+		}
+		if ( preg_match( '#https?://|www\.#i', $value ) ) {
+			return true;
+		}
+		$common_tlds = 'com|net|org|info|biz|io|co|us|ru|cn|store|xyz|top|site|online|club|shop|link|click|icu|vip|live|pw|tk|cf|ga|ml';
+		return (bool) preg_match( '/\b[a-z0-9][a-z0-9-]*\.(?:' . $common_tlds . ')\b(?:\/\S*)?/i', $value );
+	}
+
+	/**
+	 * Checks an email's domain against the admin-configured blocklist (one entry per line —
+	 * either a bare TLD like ".ru" matched as a suffix, or a full domain like "spamsite.com"
+	 * matched exactly), case-insensitively.
+	 */
+	private function email_domain_is_blocked( $email, $blocked_domains_raw ) {
+		if ( '' === $blocked_domains_raw || false === strpos( (string) $email, '@' ) ) {
+			return false;
+		}
+		$domain = strtolower( substr( (string) $email, strrpos( $email, '@' ) + 1 ) );
+		if ( '' === $domain ) {
+			return false;
+		}
+
+		foreach ( preg_split( '/[\r\n,]+/', $blocked_domains_raw ) as $entry ) {
+			$entry = strtolower( trim( $entry ) );
+			if ( '' === $entry ) {
+				continue;
+			}
+			if ( 0 === strpos( $entry, '.' ) ) {
+				// Bare TLD/suffix entry (".ru") — matches any domain ending in it.
+				if ( strlen( $domain ) >= strlen( $entry ) && $entry === substr( $domain, -strlen( $entry ) ) ) {
+					return true;
+				}
+			} elseif ( $entry === $domain ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private function get_spam_provider_config() {
 		$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 		$provider        = ! empty( $plugin_settings['spam_challenge_provider'] ) ? sanitize_key( $plugin_settings['spam_challenge_provider'] ) : '';
@@ -11390,8 +11468,9 @@ class AJForms {
 			);
 		}
 
-		$lead_data = array();
-		$errors    = array();
+		$lead_data      = array();
+		$errors         = array();
+		$content_filter = $this->get_content_filter_settings();
 
 		foreach ( $this->flatten_form_fields( $fields ) as $field ) {
 			if ( ! is_array( $field ) ) {
@@ -11500,6 +11579,24 @@ class AJForms {
 				}
 
 				$is_empty = '' === $clean_value;
+
+				// Content Filtering — only meaningful against real freeform text the submitter
+				// typed themselves: not email/url (each has its own rule below/none), and not
+				// option-based fields (checkboxes/select/etc. can only hold values the form
+				// itself defined, so filtering them can't do anything a bot would trip).
+				if ( '' !== $clean_value ) {
+					if ( 'email' === $field_type ) {
+						if ( $this->email_domain_is_blocked( $clean_value, $content_filter['blocked_email_domains'] ) ) {
+							$errors[] = sprintf( __( '%s isn\'t accepted.', 'ajforms' ), $field_label );
+						}
+					} elseif ( 'url' !== $field_type && ! $this->field_type_uses_options( $field_type ) ) {
+						if ( $content_filter['block_non_latin'] && $this->value_contains_non_latin_script( $clean_value ) ) {
+							$errors[] = sprintf( __( '%s contains characters that aren\'t allowed.', 'ajforms' ), $field_label );
+						} elseif ( $content_filter['block_links'] && $this->value_contains_link( $clean_value ) ) {
+							$errors[] = sprintf( __( '%s can\'t contain links.', 'ajforms' ), $field_label );
+						}
+					}
+				}
 			}
 
 			if ( $required && $is_empty ) {

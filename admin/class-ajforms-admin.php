@@ -10630,6 +10630,9 @@ class AJForms_Admin {
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
 			'honeypot_enabled'               => '1',
+			'content_filter_block_non_latin'       => '0',
+			'content_filter_block_links'           => '0',
+			'content_filter_blocked_email_domains' => '',
 			'spam_challenge_provider'        => 'turnstile',
 			'recaptcha_site_key'             => '',
 			'recaptcha_secret_key'           => '',
@@ -13565,6 +13568,9 @@ class AJForms_Admin {
 			'validation_mode'                => 'native',
 			'require_unique_form_names'      => '1',
 			'honeypot_enabled'               => isset( $_POST['honeypot_enabled'] ) ? '1' : '0',
+			'content_filter_block_non_latin'       => isset( $_POST['content_filter_block_non_latin'] ) ? '1' : '0',
+			'content_filter_block_links'            => isset( $_POST['content_filter_block_links'] ) ? '1' : '0',
+			'content_filter_blocked_email_domains'  => isset( $_POST['content_filter_blocked_email_domains'] ) ? sanitize_textarea_field( wp_unslash( $_POST['content_filter_blocked_email_domains'] ) ) : '',
 			'spam_challenge_provider'        => isset( $_POST['spam_challenge_provider'] ) && in_array( sanitize_key( wp_unslash( $_POST['spam_challenge_provider'] ) ), array( 'recaptcha', 'hcaptcha', 'turnstile' ), true ) ? sanitize_key( wp_unslash( $_POST['spam_challenge_provider'] ) ) : 'turnstile',
 			'recaptcha_site_key'             => isset( $_POST['recaptcha_site_key'] ) ? sanitize_text_field( wp_unslash( $_POST['recaptcha_site_key'] ) ) : '',
 			'recaptcha_secret_key'           => isset( $_POST['recaptcha_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['recaptcha_secret_key'] ) ) : '',
@@ -13646,7 +13652,7 @@ class AJForms_Admin {
 		$section_keys = array(
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
 			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ),
-			'spam'         => array( 'honeypot_enabled', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
+			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
@@ -31117,25 +31123,33 @@ class AJForms_Admin {
 				.ajforms-settings-content{padding:52px 56px}
 				.ajforms-settings-head h2{margin:0 0 10px;font-size:28px;line-height:1.2;color:#111827}
 				.ajforms-settings-head p{margin:0;color:#6b7280;font-size:16px;max-width:920px}
-				.ajforms-settings-card{margin-top:28px;background:#fff;border:1px solid #eceef2;border-radius:24px;padding:28px 30px;box-shadow:0 10px 30px rgba(15,23,42,.04)}
-				.ajforms-settings-card h3{margin:0 0 8px;font-size:20px;color:#111827}
-				.ajforms-settings-card > p{margin:0 0 24px;color:#6b7280;font-size:15px}
-				.ajforms-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
-				.ajforms-settings-field label{display:block;margin-bottom:8px;font-weight:600;color:#111827}
-				.ajforms-settings-field input[type="text"],.ajforms-settings-field input[type="url"],.ajforms-settings-field input[type="password"],.ajforms-settings-field textarea,.ajforms-settings-field select{width:100%;min-height:46px;border:1px solid #d1d5db;border-radius:14px;padding:11px 14px;background:#fff;box-sizing:border-box}
-				.ajforms-settings-field textarea{min-height:96px}
-				.ajforms-settings-help{margin-top:8px;color:#6b7280;font-size:13px}
-				.ajforms-settings-checkbox{display:flex;align-items:flex-start;gap:12px;padding:16px 18px;border:1px solid #eceef2;border-radius:18px;background:#fcfcfd}
+				.ajforms-settings-card{margin-top:16px;background:#fff;border:1px solid #eef0f3;border-radius:16px;padding:22px 24px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+				.ajforms-settings-card h3{margin:0 0 6px;font-size:18px;color:#111827}
+				.ajforms-settings-card > p{margin:0 0 18px;color:#6b7280;font-size:14px}
+				.ajforms-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+				.ajforms-settings-field label{display:block;margin-bottom:6px;font-weight:600;color:#111827;font-size:14px}
+				.ajforms-settings-field input[type="text"],.ajforms-settings-field input[type="url"],.ajforms-settings-field input[type="password"],.ajforms-settings-field textarea,.ajforms-settings-field select{width:100%;min-height:40px;border:1px solid #d9dce1;border-radius:10px;padding:8px 12px;background:#fff;box-sizing:border-box;font-size:14px}
+				.ajforms-settings-field textarea{min-height:80px}
+				.ajforms-settings-help{margin-top:6px;color:#6b7280;font-size:12.5px}
+				.ajforms-settings-checkbox{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid #eef0f3;border-radius:10px;background:#fafafb}
 				.ajforms-settings-checkbox input{margin-top:2px}
-				.ajforms-settings-checkbox strong{display:block;color:#111827;margin-bottom:2px}
-				.ajforms-settings-note{margin-top:18px;padding:18px 20px;border-radius:18px;background:#f9fafb;color:#4b5563;font-size:15px}
-				.ajforms-settings-pill{display:inline-flex;align-items:center;padding:8px 12px;border-radius:999px;background:#fff7ed;color:#c2410c;font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
-				.ajforms-settings-actions{margin-top:28px;display:flex;align-items:center;gap:14px}
+				.ajforms-settings-checkbox strong{display:block;color:#111827;margin-bottom:2px;font-size:14px}
+				.ajforms-settings-checkbox span{font-size:13px}
+				.ajforms-settings-note{margin-top:14px;padding:14px 16px;border-radius:10px;background:#f9fafb;color:#4b5563;font-size:13.5px}
+				.ajforms-settings-pill{display:inline-flex;align-items:center;padding:6px 11px;border-radius:999px;background:#fff7ed;color:#c2410c;font-weight:700;font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+				.ajforms-settings-actions{margin-top:22px;display:flex;align-items:center;gap:14px}
 				.ajforms-settings-actions .button-primary{background:#ea580c;border-color:#ea580c;padding:0 18px;min-height:42px}
-				.ajforms-settings-inline-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
+				.ajforms-settings-inline-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+				/* Sub-sections within one consolidated card (Spam Protection) — a light top divider
+				   instead of a separate bordered/shadowed .ajforms-settings-card per topic, so related
+				   settings read as one page instead of a stack of boxes-in-boxes. */
+				.ajforms-settings-section{padding-top:20px;margin-top:20px;border-top:1px solid #f0f1f4}
+				.ajforms-settings-section:first-child{padding-top:0;margin-top:0;border-top:0}
+				.ajforms-settings-section h4{margin:0 0 4px;font-size:15px;color:#111827}
+				.ajforms-settings-section > p.ajforms-settings-section-desc{margin:0 0 14px;color:#6b7280;font-size:13px}
 				.ajforms-spam-layout{display:grid;grid-template-columns:280px 1fr;gap:18px;align-items:start}
-				.ajforms-provider-picker{padding:18px;border:1px solid #eceef2;border-radius:20px;background:#fff}
-				.ajforms-provider-editor{padding:18px;border:1px solid #eceef2;border-radius:20px;background:#fff}
+				.ajforms-provider-picker{padding:0}
+				.ajforms-provider-editor{padding:14px 0 0}
 				.ajforms-provider-editor .ajforms-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 				.ajforms-settings-help-links{display:flex;gap:10px;flex-wrap:wrap}
 				#spam_challenge_provider{
@@ -31366,19 +31380,44 @@ class AJForms_Admin {
 							<?php elseif ( 'spam' === $section ) : ?>
 								<div class="ajforms-settings-card">
 									<span class="ajforms-settings-pill"><?php esc_html_e( 'Spam Protection', 'ajforms' ); ?></span>
-									<h3><?php esc_html_e( 'Honeypot', 'ajforms' ); ?></h3>
-									<div class="ajforms-settings-checkbox">
-										<input name="honeypot_enabled" id="honeypot_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['honeypot_enabled'] ); ?>>
-										<div>
-											<strong><?php esc_html_e( 'Enable Honeypot by default', 'ajforms' ); ?></strong>
-											<span><?php esc_html_e( 'Applies to both new and existing forms because the spam check runs during submission, not only when a form is created.', 'ajforms' ); ?></span>
+
+									<div class="ajforms-settings-section">
+										<h4><?php esc_html_e( 'Honeypot', 'ajforms' ); ?></h4>
+										<div class="ajforms-settings-checkbox">
+											<input name="honeypot_enabled" id="honeypot_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['honeypot_enabled'] ); ?>>
+											<div>
+												<strong><?php esc_html_e( 'Enable Honeypot by default', 'ajforms' ); ?></strong>
+												<span><?php esc_html_e( 'Applies to both new and existing forms because the spam check runs during submission, not only when a form is created.', 'ajforms' ); ?></span>
+											</div>
 										</div>
 									</div>
-								</div>
 
-								<div class="ajforms-settings-card">
-									<span class="ajforms-settings-pill"><?php esc_html_e( 'Spam Protection', 'ajforms' ); ?></span>
-									<h3><?php esc_html_e( 'Challenge Providers', 'ajforms' ); ?></h3>
+									<div class="ajforms-settings-section">
+										<h4><?php esc_html_e( 'Content Filtering', 'ajforms' ); ?></h4>
+										<p class="ajforms-settings-section-desc"><?php esc_html_e( 'Checked server-side at submission time, on every form automatically — a bot that trips one of these never gets saved as a lead.', 'ajforms' ); ?></p>
+										<div class="ajforms-settings-checkbox">
+											<input name="content_filter_block_non_latin" id="content_filter_block_non_latin" type="checkbox" value="1" <?php checked( '1' === (string) $settings['content_filter_block_non_latin'] ); ?>>
+											<div>
+												<strong><?php esc_html_e( 'Block non-Latin script in free-text fields', 'ajforms' ); ?></strong>
+												<span><?php esc_html_e( 'Rejects Cyrillic, CJK, Arabic, and similar scripts. Accented Latin names (café, José, Müller) are never affected — this checks script, not just non-ASCII.', 'ajforms' ); ?></span>
+											</div>
+										</div>
+										<div class="ajforms-settings-checkbox" style="margin-top:10px;">
+											<input name="content_filter_block_links" id="content_filter_block_links" type="checkbox" value="1" <?php checked( '1' === (string) $settings['content_filter_block_links'] ); ?>>
+											<div>
+												<strong><?php esc_html_e( 'Block links/URLs in free-text fields', 'ajforms' ); ?></strong>
+												<span><?php esc_html_e( 'Rejects http(s):// links, "www." prefixes, and bare domain-looking text (e.g. "badsite.ru").', 'ajforms' ); ?></span>
+											</div>
+										</div>
+										<div class="ajforms-settings-field" style="margin-top:14px;">
+											<label for="content_filter_blocked_email_domains"><?php esc_html_e( 'Blocked email domains', 'ajforms' ); ?></label>
+											<textarea name="content_filter_blocked_email_domains" id="content_filter_blocked_email_domains" placeholder="<?php esc_attr_e( ".ru\n.store\nspamdomain.com", 'ajforms' ); ?>"><?php echo esc_textarea( $settings['content_filter_blocked_email_domains'] ); ?></textarea>
+											<div class="ajforms-settings-help"><?php esc_html_e( 'One per line. A ".tld" entry blocks any domain ending in it; a full domain (spamdomain.com) blocks only that exact one.', 'ajforms' ); ?></div>
+										</div>
+									</div>
+
+									<div class="ajforms-settings-section">
+										<h4><?php esc_html_e( 'Challenge Providers', 'ajforms' ); ?></h4>
 									<div class="ajforms-settings-field">
 										<label for="spam_challenge_provider"><?php esc_html_e( 'Provider', 'ajforms' ); ?></label>
 										<select name="spam_challenge_provider" id="spam_challenge_provider">
@@ -31464,13 +31503,12 @@ class AJForms_Admin {
 									</script>
 								</div>
 
-								<div class="ajforms-settings-card">
-									<span class="ajforms-settings-pill"><?php esc_html_e( 'Spam Protection', 'ajforms' ); ?></span>
-									<h3 style="display:flex;align-items:center;gap:8px;">
+								<div class="ajforms-settings-section">
+									<h4 style="display:flex;align-items:center;gap:8px;">
 										<?php esc_html_e( 'Cloudflare IP Blocking', 'ajforms' ); ?>
-										<button type="button" id="ajcore-cloudflare-help-toggle" aria-expanded="false" title="<?php esc_attr_e( 'Required API Token permissions', 'ajforms' ); ?>" style="width:22px;height:22px;border-radius:50%;border:1px solid #d1d5db;background:#fff;color:#4b5563;font-weight:700;font-size:13px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;">?</button>
-									</h3>
-									<p><?php esc_html_e( 'Lets "Mark Spam" in AJOps add a lead\'s IP address to a single Cloudflare-managed list ("AJCore-Spam-List") blocked by one WAF rule, in addition to hiding the lead here. Blocking any number of IPs over time never creates more than that one rule.', 'ajforms' ); ?></p>
+										<button type="button" id="ajcore-cloudflare-help-toggle" aria-expanded="false" title="<?php esc_attr_e( 'Required API Token permissions', 'ajforms' ); ?>" style="width:20px;height:20px;border-radius:50%;border:1px solid #d1d5db;background:#fff;color:#4b5563;font-weight:700;font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;">?</button>
+									</h4>
+									<p class="ajforms-settings-section-desc"><?php esc_html_e( 'Lets "Mark Spam" in AJOps add a lead\'s IP address to a single Cloudflare-managed list ("AJCore-Spam-List") blocked by one WAF rule, in addition to hiding the lead here. Blocking any number of IPs over time never creates more than that one rule.', 'ajforms' ); ?></p>
 									<div id="ajcore-cloudflare-help-panel" class="ajforms-settings-note" style="display:none;">
 										<p style="margin:0 0 10px;font-weight:700;"><?php esc_html_e( 'Required API Token permissions', 'ajforms' ); ?></p>
 										<ul style="margin:0 0 10px;padding-left:20px;">
@@ -31563,6 +31601,7 @@ class AJForms_Admin {
 										});
 									})();
 									</script>
+								</div>
 								</div>
 							<?php elseif ( 'integrations' === $section ) : ?>
 								<div class="ajforms-settings-card">
