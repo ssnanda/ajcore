@@ -10619,6 +10619,33 @@ class AJForms_Admin {
 		wp_send_json_success( $result );
 	}
 
+	/**
+	 * Spam Protection's "Deploy block rule to all domains" button — the Free/Pro/Business
+	 * workaround for not having Enterprise-only account-level WAF Custom Rules: creates the same
+	 * "ip.src in $ajcore_spam_list" rule on every zone in the Cloudflare account (skipping zones
+	 * that already have it), so any IP added to the shared account-wide list is enforced on every
+	 * domain rather than only the one zone whose Zone ID happens to be saved on this site. See
+	 * ajcore_cloudflare_deploy_rule_to_all_zones() for the actual sequence.
+	 */
+	public function ajax_deploy_cloudflare_rule_all_zones() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ), 403 );
+		}
+
+		check_ajax_referer( 'ajcore_test_cloudflare_connection', 'nonce' );
+
+		if ( ! function_exists( 'ajcore_cloudflare_deploy_rule_to_all_zones' ) ) {
+			wp_send_json_error( __( 'Cloudflare blocking is unavailable right now.', 'ajforms' ), 500 );
+		}
+
+		$result = ajcore_cloudflare_deploy_rule_to_all_zones();
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( $result->get_error_message(), 502 );
+		}
+
+		wp_send_json_success( $result );
+	}
+
 	public function get_plugin_settings() {
 		return function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array(
 			'default_notification_email'     => get_option( 'admin_email' ),
@@ -31532,7 +31559,14 @@ class AJForms_Admin {
 									<div class="ajforms-settings-inline-actions" style="margin-top:14px;">
 										<button type="button" class="button" id="ajcore-test-cloudflare"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
 										<span id="ajcore-cloudflare-test-status" class="ajforms-settings-help"></span>
+										<a href="#" id="ajcore-cloudflare-list-link" target="_blank" rel="noopener noreferrer" style="display:none;margin-left:8px;"><?php esc_html_e( 'View list in Cloudflare →', 'ajforms' ); ?></a>
 									</div>
+									<div class="ajforms-settings-inline-actions" style="margin-top:10px;">
+										<button type="button" class="button" id="ajcore-deploy-cloudflare-all-zones"><?php esc_html_e( 'Deploy Block Rule to All Domains', 'ajforms' ); ?></button>
+										<span id="ajcore-cloudflare-deploy-status" class="ajforms-settings-help"></span>
+									</div>
+									<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php esc_html_e( 'Your Cloudflare plan doesn\'t support a single account-wide WAF rule, so this creates the same "ip.src in $ajcore_spam_list" rule on every domain in the account individually. They all read from the same shared IP list, so the practical result is the same: block an IP once, and it\'s blocked everywhere. Needs the API Token above to have WAF: Edit on every domain, not just this one — safe to re-run, it skips domains that already have the rule.', 'ajforms' ); ?></p>
+									<ul id="ajcore-cloudflare-deploy-results" style="display:none;margin:8px 0 0;padding-left:20px;font-size:13px;"></ul>
 									<script>
 									(function() {
 										const helpToggle = document.getElementById('ajcore-cloudflare-help-toggle');
@@ -31547,6 +31581,7 @@ class AJForms_Admin {
 
 										const testButton  = document.getElementById('ajcore-test-cloudflare');
 										const statusNode  = document.getElementById('ajcore-cloudflare-test-status');
+										const listLinkNode = document.getElementById('ajcore-cloudflare-list-link');
 										const testNonce   = '<?php echo esc_js( wp_create_nonce( 'ajcore_test_cloudflare_connection' ) ); ?>';
 
 										if (!testButton || !statusNode) {
@@ -31560,7 +31595,10 @@ class AJForms_Admin {
 
 										testButton.addEventListener('click', function() {
 											testButton.disabled = true;
-											setStatus('<?php echo esc_js( __( 'Testing — creating the list/rule if needed, then round-tripping a test IP...', 'ajforms' ) ); ?>', false);
+											setStatus('<?php echo esc_js( __( 'Testing — creating the list/rule if needed, then confirming write access...', 'ajforms' ) ); ?>', false);
+											if (listLinkNode) {
+												listLinkNode.style.display = 'none';
+											}
 
 											const formData = new FormData();
 											formData.append('action', 'ajcore_test_cloudflare_connection');
@@ -31577,12 +31615,81 @@ class AJForms_Admin {
 														return;
 													}
 													setStatus(response.data && response.data.note ? response.data.note : '<?php echo esc_js( __( 'Connected to Cloudflare.', 'ajforms' ) ); ?>', false);
+													if (listLinkNode && response.data && response.data.account_id && response.data.list_id) {
+														listLinkNode.href = 'https://dash.cloudflare.com/' + encodeURIComponent(response.data.account_id) + '/configurations/lists/' + encodeURIComponent(response.data.list_id);
+														listLinkNode.style.display = '';
+													}
 												})
 												.catch(function() {
 													setStatus('<?php echo esc_js( __( 'Unable to reach the server to test the connection.', 'ajforms' ) ); ?>', true);
 												})
 												.finally(function() {
 													testButton.disabled = false;
+												});
+										});
+
+										const deployButton  = document.getElementById('ajcore-deploy-cloudflare-all-zones');
+										const deployStatus  = document.getElementById('ajcore-cloudflare-deploy-status');
+										const deployResults = document.getElementById('ajcore-cloudflare-deploy-results');
+
+										if (!deployButton || !deployStatus || !deployResults) {
+											return;
+										}
+
+										function setDeployStatus(message, isError) {
+											deployStatus.textContent = message;
+											deployStatus.style.color = isError ? '#b32d2e' : '#166534';
+										}
+
+										deployButton.addEventListener('click', function() {
+											if (!window.confirm('<?php echo esc_js( __( 'Create the spam-block WAF rule on every domain in this Cloudflare account? Domains that already have it are skipped.', 'ajforms' ) ); ?>')) {
+												return;
+											}
+											deployButton.disabled = true;
+											deployResults.style.display = 'none';
+											deployResults.innerHTML = '';
+											setDeployStatus('<?php echo esc_js( __( 'Listing domains and deploying the rule to each...', 'ajforms' ) ); ?>', false);
+
+											const formData = new FormData();
+											formData.append('action', 'ajcore_deploy_cloudflare_rule_all_zones');
+											formData.append('nonce', testNonce);
+
+											fetch(ajaxurl, { method: 'POST', body: formData })
+												.then(function(response) { return response.json(); })
+												.then(function(response) {
+													if (!response.success) {
+														const message = typeof response.data === 'string'
+															? response.data
+															: '<?php echo esc_js( __( 'Unable to deploy to all domains.', 'ajforms' ) ); ?>';
+														setDeployStatus(message, true);
+														return;
+													}
+													const results = (response.data && response.data.results) || [];
+													const created = results.filter(function(r) { return r.status === 'created'; }).length;
+													const already = results.filter(function(r) { return r.status === 'already_existed'; }).length;
+													const errors  = results.filter(function(r) { return r.status === 'error'; });
+													setDeployStatus(
+														'<?php echo esc_js( __( 'Done —', 'ajforms' ) ); ?> ' + created + ' <?php echo esc_js( __( 'created,', 'ajforms' ) ); ?> ' + already + ' <?php echo esc_js( __( 'already had it', 'ajforms' ) ); ?>' + (errors.length ? ', ' + errors.length + ' <?php echo esc_js( __( 'failed (see below).', 'ajforms' ) ); ?>' : '.'),
+														errors.length > 0
+													);
+													results.forEach(function(r) {
+														const li = document.createElement('li');
+														if (r.status === 'error') {
+															li.textContent = r.zone + ': ' + r.error;
+															li.style.color = '#b32d2e';
+														} else {
+															li.textContent = r.zone + ': ' + (r.status === 'created' ? '<?php echo esc_js( __( 'rule created', 'ajforms' ) ); ?>' : '<?php echo esc_js( __( 'already had the rule', 'ajforms' ) ); ?>');
+															li.style.color = '#166534';
+														}
+														deployResults.appendChild(li);
+													});
+													deployResults.style.display = results.length ? 'block' : 'none';
+												})
+												.catch(function() {
+													setDeployStatus('<?php echo esc_js( __( 'Unable to reach the server to deploy.', 'ajforms' ) ); ?>', true);
+												})
+												.finally(function() {
+													deployButton.disabled = false;
 												});
 										});
 									})();

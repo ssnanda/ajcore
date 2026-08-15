@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.255
+ * Version: 0.7.256
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.255' );
+	define( 'AJCORE_VERSION', '0.7.256' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -1166,6 +1166,90 @@ if ( ! function_exists( 'ajcore_cloudflare_unblock_ip' ) ) {
 	}
 }
 
+if ( ! function_exists( 'ajcore_cloudflare_list_account_zones' ) ) {
+	/**
+	 * Lists every zone (domain) under the Cloudflare account — used to fan the AJCore-Spam-List
+	 * WAF rule out to all of them. True account-level Custom Rules (one rule Cloudflare applies to
+	 * every zone automatically) require an Enterprise plan; this account is Free/Pro/Business, so
+	 * "block everywhere" instead means creating the same zone-level rule on each zone individually.
+	 * They all reference the same account-wide list, so the end result is the same: block an IP
+	 * once, and it's blocked on every zone that has this rule.
+	 *
+	 * @return array<int,array{id:string,name:string}>|WP_Error
+	 */
+	function ajcore_cloudflare_list_account_zones( $account_id, $api_token ) {
+		$zones = array();
+		$page  = 1;
+		do {
+			$list = ajcore_cloudflare_api_request(
+				'GET',
+				'https://api.cloudflare.com/client/v4/zones?account.id=' . rawurlencode( $account_id ) . '&per_page=50&page=' . $page,
+				$api_token
+			);
+			if ( is_wp_error( $list ) ) {
+				return $list;
+			}
+			if ( ! $list['success'] ) {
+				return new WP_Error( 'ajcore_cloudflare_zones_list_failed', ajcore_cloudflare_api_error_message( $list['body'], $list['status'] ) );
+			}
+			foreach ( (array) ( $list['body']['result'] ?? array() ) as $zone ) {
+				if ( ! empty( $zone['id'] ) && ! empty( $zone['name'] ) ) {
+					$zones[] = array( 'id' => (string) $zone['id'], 'name' => (string) $zone['name'] );
+				}
+			}
+			$total_pages = isset( $list['body']['result_info']['total_pages'] ) ? (int) $list['body']['result_info']['total_pages'] : 1;
+			$page++;
+		} while ( $page <= $total_pages );
+
+		return $zones;
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_deploy_rule_to_all_zones' ) ) {
+	/**
+	 * The "block everywhere" fan-out: ensures the AJCore-Spam-List list exists once, then creates
+	 * the "ip.src in $ajcore_spam_list" WAF rule on EVERY zone in the account (skipping zones that
+	 * already have it). After this runs once, blocking an IP from any single site's Mark Spam
+	 * action — or a future account-wide feature — is enforced on every domain, without each site
+	 * needing its own Test Connection click first. Requires the API token to have WAF: Edit on
+	 * every zone in the account (a token scoped to just one zone will show per-domain errors below
+	 * for the zones it can't reach — that's a token-scope problem, not a bug in this function).
+	 *
+	 * @return array{results:array<int,array{zone:string,status:string,error?:string}>}|WP_Error
+	 */
+	function ajcore_cloudflare_deploy_rule_to_all_zones() {
+		$config = ajcore_cloudflare_get_settings();
+		if ( is_wp_error( $config ) ) {
+			return $config;
+		}
+
+		$list = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
+		if ( is_wp_error( $list ) ) {
+			return $list;
+		}
+
+		$zones = ajcore_cloudflare_list_account_zones( $config['account_id'], $config['api_token'] );
+		if ( is_wp_error( $zones ) ) {
+			return $zones;
+		}
+		if ( empty( $zones ) ) {
+			return new WP_Error( 'ajcore_cloudflare_no_zones', __( 'No zones found on this Cloudflare account.', 'ajforms' ) );
+		}
+
+		$results = array();
+		foreach ( $zones as $zone ) {
+			$rule = ajcore_cloudflare_ensure_custom_rule( $zone['id'], $config['api_token'] );
+			if ( is_wp_error( $rule ) ) {
+				$results[] = array( 'zone' => $zone['name'], 'status' => 'error', 'error' => $rule->get_error_message() );
+			} else {
+				$results[] = array( 'zone' => $zone['name'], 'status' => $rule['created'] ? 'created' : 'already_existed' );
+			}
+		}
+
+		return array( 'results' => $results );
+	}
+}
+
 if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
 	/**
 	 * The Spam Protection screen's single "Test Connection" button: proves the token can read,
@@ -1177,7 +1261,7 @@ if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
 	 * already existed so re-running this after the first time reads as "already set up", not
 	 * "created again".
 	 *
-	 * @return array{list_created:bool,rule_created:bool,note:string}|WP_Error
+	 * @return array{list_created:bool,rule_created:bool,note:string,list_id:string,account_id:string}|WP_Error
 	 */
 	function ajcore_cloudflare_run_full_test() {
 		$config = ajcore_cloudflare_get_settings();
@@ -1229,6 +1313,13 @@ if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
 			'list_created' => ! $list_existed_already,
 			'rule_created' => ! $rule_existed_already,
 			'note'         => $note,
+			// So the caller can link straight to "Manage Account -> Configurations -> Lists ->
+			// ajcore_spam_list" in the Cloudflare dashboard (dash.cloudflare.com/{account_id}/
+			// configurations/lists/{list_id}) instead of making staff hunt for it by hand — that
+			// path was confirmed against a real account, not guessed, but Cloudflare has reorganized
+			// this UI before, so treat it as best-effort rather than permanent.
+			'list_id'      => $list_id,
+			'account_id'   => $config['account_id'],
 		);
 	}
 }
