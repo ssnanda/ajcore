@@ -13570,7 +13570,13 @@ class AJForms_Admin {
 		);
 
 		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'rentec_api_key', 'rentec_api_key_2' ) as $secret_field ) {
+		// The spam challenge-provider secrets (recaptcha/hcaptcha/turnstile) aren't masked in the
+		// UI, but they go through the same visible-field <-> hidden-field JS sync as the site keys
+		// on the Spam Protection screen (see the provider picker script), so any hiccup there — a
+		// stray provider-select re-render, an autofill that sets .value without firing 'input',
+		// landing on this screen with "None selected" and saving — posts them blank and would
+		// otherwise silently erase a previously-configured secret. Guard them the same way.
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'rentec_api_key', 'rentec_api_key_2', 'recaptcha_secret_key', 'hcaptcha_secret_key', 'turnstile_secret_key' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
