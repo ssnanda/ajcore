@@ -13633,17 +13633,31 @@ class AJForms_Admin {
 			'stripe_late_fee_due_days'        => isset( $_POST['stripe_late_fee_due_days'] ) ? max( 1, absint( wp_unslash( $_POST['stripe_late_fee_due_days'] ) ) ) : 7,
 		);
 
-		// Secret-key inputs are masked and post empty when unchanged — keep the stored key.
-		// The spam challenge-provider secrets (recaptcha/hcaptcha/turnstile) aren't masked in the
-		// UI, but they go through the same visible-field <-> hidden-field JS sync as the site keys
-		// on the Spam Protection screen (see the provider picker script), so any hiccup there — a
-		// stray provider-select re-render, an autofill that sets .value without firing 'input',
-		// landing on this screen with "None selected" and saving — posts them blank and would
-		// otherwise silently erase a previously-configured secret. Guard them the same way.
+		// Secret-key inputs are masked (type="password", value="" on every render) and post empty
+		// when the admin leaves them untouched — keep the previously-stored key in that case rather
+		// than overwriting it with blank.
 		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'breezedoc_api_token', 'rentec_api_key', 'rentec_api_key_2', 'recaptcha_secret_key', 'hcaptcha_secret_key', 'turnstile_secret_key', 'cloudflare_api_token' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
+		}
+
+		// TEMPORARY DIAGNOSTIC (remove once the "Turnstile secret won't save" report is resolved):
+		// records exactly what this request's $_POST contained for the fields in question — never
+		// the values themselves, only whether the browser sent anything and how long it was — so
+		// the next save attempt tells us definitively whether this is a browser/JS problem (nothing
+		// arrives here) or a storage/encryption problem (something arrives but doesn't stick).
+		if ( 'spam' === $section ) {
+			$debug_fields = array( 'turnstile_secret_key', 'recaptcha_secret_key', 'hcaptcha_secret_key', 'cloudflare_api_token' );
+			$debug_info   = array();
+			foreach ( $debug_fields as $debug_field ) {
+				$debug_info[ $debug_field ] = array(
+					'posted_present' => isset( $_POST[ $debug_field ] ),
+					'posted_length'  => isset( $_POST[ $debug_field ] ) ? strlen( (string) wp_unslash( $_POST[ $debug_field ] ) ) : 0,
+					'about_to_save_length' => strlen( (string) $settings[ $debug_field ] ),
+				);
+			}
+			set_transient( 'ajcore_spam_save_debug_' . get_current_user_id(), $debug_info, 120 );
 		}
 
 		// OAuth tokens are never edited through this form — only the "Connect Zoho Mail"/"Connect
@@ -31140,7 +31154,7 @@ class AJForms_Admin {
 				.ajforms-settings-card > p{margin:0 0 24px;color:#6b7280;font-size:15px}
 				.ajforms-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
 				.ajforms-settings-field label{display:block;margin-bottom:8px;font-weight:600;color:#111827}
-				.ajforms-settings-field input[type="text"],.ajforms-settings-field input[type="url"],.ajforms-settings-field textarea,.ajforms-settings-field select{width:100%;min-height:46px;border:1px solid #d1d5db;border-radius:14px;padding:11px 14px;background:#fff}
+				.ajforms-settings-field input[type="text"],.ajforms-settings-field input[type="url"],.ajforms-settings-field input[type="password"],.ajforms-settings-field textarea,.ajforms-settings-field select{width:100%;min-height:46px;border:1px solid #d1d5db;border-radius:14px;padding:11px 14px;background:#fff;box-sizing:border-box}
 				.ajforms-settings-field textarea{min-height:96px}
 				.ajforms-settings-help{margin-top:8px;color:#6b7280;font-size:13px}
 				.ajforms-settings-checkbox{display:flex;align-items:flex-start;gap:12px;padding:16px 18px;border:1px solid #eceef2;border-radius:18px;background:#fcfcfd}
@@ -31179,6 +31193,22 @@ class AJForms_Admin {
 
 			<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php
+			// TEMPORARY DIAGNOSTIC — see the matching block in handle_settings_save(). Shows once,
+			// right after the save that set it, then deletes itself.
+			$spam_save_debug = get_transient( 'ajcore_spam_save_debug_' . get_current_user_id() );
+			if ( is_array( $spam_save_debug ) ) :
+				delete_transient( 'ajcore_spam_save_debug_' . get_current_user_id() );
+				?>
+				<div class="notice notice-info is-dismissible"><p><strong>Debug — what this save received:</strong><br>
+				<?php foreach ( $spam_save_debug as $field => $info ) : ?>
+					<code><?php echo esc_html( $field ); ?></code>:
+					<?php echo $info['posted_present'] ? esc_html__( 'field was posted', 'ajforms' ) : esc_html__( 'field NOT posted at all', 'ajforms' ); ?>,
+					<?php echo esc_html( sprintf( __( '%d characters received', 'ajforms' ), $info['posted_length'] ) ); ?>,
+					<?php echo esc_html( sprintf( __( '%d characters about to be saved (after the keep-old-value guard)', 'ajforms' ), $info['about_to_save_length'] ) ); ?><br>
+				<?php endforeach; ?>
+				</p></div>
 			<?php endif; ?>
 
 			<div class="ajforms-settings-shell">
@@ -31492,10 +31522,10 @@ class AJForms_Admin {
 										<a href="https://developers.cloudflare.com/waf/tools/ip-access-rules/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'About IP Access Rules', 'ajforms' ); ?></a>
 									</div>
 									<div class="ajforms-settings-inline-actions" style="margin-top:18px;">
-										<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajforms' ); ?></button>
 										<button type="button" class="button" id="ajcore-test-cloudflare"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
 										<span id="ajcore-cloudflare-test-status" class="ajforms-settings-help"></span>
 									</div>
+									<p class="ajforms-settings-help" style="margin-top:10px;"><?php esc_html_e( 'Test Connection checks the token without saving. Use the "Save Settings" button at the bottom of the page to actually save.', 'ajforms' ); ?></p>
 									<script>
 									(function() {
 										const tokenInput  = document.getElementById('cloudflare_api_token');
