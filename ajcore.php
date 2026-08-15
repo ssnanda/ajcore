@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.251
+ * Version: 0.7.252
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.251' );
+	define( 'AJCORE_VERSION', '0.7.252' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -837,6 +837,59 @@ if ( ! function_exists( 'ajcore_cloudflare_get_or_create_list' ) ) {
 	}
 }
 
+if ( ! function_exists( 'ajcore_cloudflare_find_custom_ruleset' ) ) {
+	/**
+	 * Finds the zone's http_request_firewall_custom-phase ruleset (the one behind Security rules
+	 * -> Custom rules in the dashboard), full rules array included. Deliberately goes through
+	 * GET /zones/{id}/rulesets (list) + GET /zones/{id}/rulesets/{ruleset_id} (by ID) rather than
+	 * the seemingly-equivalent GET /zones/{id}/rulesets/phases/{phase}/entrypoint shortcut — that
+	 * shortcut 403s ("Authentication error") under a token scoped with Zone > WAF: Edit even
+	 * though the by-ID/list endpoints it's supposedly a convenience wrapper for work fine with the
+	 * exact same token, confirmed by hand against a real zone. Cloudflare-side inconsistency, not
+	 * a documented permission difference — this works around it rather than depending on it.
+	 *
+	 * @return array|null|WP_Error The ruleset (with "id" and "rules"), or null if this zone has
+	 *                              no custom ruleset yet.
+	 */
+	function ajcore_cloudflare_find_custom_ruleset( $zone_id, $api_token ) {
+		$list = ajcore_cloudflare_api_request(
+			'GET',
+			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/rulesets',
+			$api_token
+		);
+		if ( is_wp_error( $list ) ) {
+			return $list;
+		}
+		if ( ! $list['success'] ) {
+			return new WP_Error( 'ajcore_cloudflare_ruleset_list_failed', ajcore_cloudflare_api_error_message( $list['body'], $list['status'] ) );
+		}
+
+		$ruleset_id = '';
+		foreach ( (array) ( $list['body']['result'] ?? array() ) as $ruleset ) {
+			if ( isset( $ruleset['phase'] ) && 'http_request_firewall_custom' === $ruleset['phase'] ) {
+				$ruleset_id = (string) $ruleset['id'];
+				break;
+			}
+		}
+		if ( '' === $ruleset_id ) {
+			return null;
+		}
+
+		$detail = ajcore_cloudflare_api_request(
+			'GET',
+			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/rulesets/' . rawurlencode( $ruleset_id ),
+			$api_token
+		);
+		if ( is_wp_error( $detail ) ) {
+			return $detail;
+		}
+		if ( ! $detail['success'] || empty( $detail['body']['result']['id'] ) ) {
+			return new WP_Error( 'ajcore_cloudflare_ruleset_get_failed', ajcore_cloudflare_api_error_message( $detail['body'], $detail['status'] ) );
+		}
+		return $detail['body']['result'];
+	}
+}
+
 if ( ! function_exists( 'ajcore_cloudflare_ensure_custom_rule' ) ) {
 	/**
 	 * Makes sure exactly one WAF Custom Rule exists on the zone blocking traffic from the list —
@@ -848,17 +901,13 @@ if ( ! function_exists( 'ajcore_cloudflare_ensure_custom_rule' ) ) {
 	function ajcore_cloudflare_ensure_custom_rule( $zone_id, $api_token ) {
 		$expression = 'ip.src in $' . AJCORE_CLOUDFLARE_LIST_NAME;
 
-		$entrypoint = ajcore_cloudflare_api_request(
-			'GET',
-			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/rulesets/phases/http_request_firewall_custom/entrypoint',
-			$api_token
-		);
+		$entrypoint = ajcore_cloudflare_find_custom_ruleset( $zone_id, $api_token );
 		if ( is_wp_error( $entrypoint ) ) {
 			return $entrypoint;
 		}
 
-		if ( $entrypoint['success'] && ! empty( $entrypoint['body']['result']['id'] ) ) {
-			foreach ( (array) ( $entrypoint['body']['result']['rules'] ?? array() ) as $rule ) {
+		if ( null !== $entrypoint ) {
+			foreach ( (array) ( $entrypoint['rules'] ?? array() ) as $rule ) {
 				if ( isset( $rule['expression'] ) && $expression === $rule['expression'] ) {
 					return true; // Already there.
 				}
@@ -866,7 +915,7 @@ if ( ! function_exists( 'ajcore_cloudflare_ensure_custom_rule' ) ) {
 			// Ruleset exists, our rule doesn't yet — add it without touching any existing rules.
 			$added = ajcore_cloudflare_api_request(
 				'POST',
-				'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/rulesets/' . rawurlencode( (string) $entrypoint['body']['result']['id'] ) . '/rules',
+				'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/rulesets/' . rawurlencode( (string) $entrypoint['id'] ) . '/rules',
 				$api_token,
 				array(
 					'action'      => 'block',
@@ -1129,14 +1178,10 @@ if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
 			return $list_id;
 		}
 
-		$entrypoint = ajcore_cloudflare_api_request(
-			'GET',
-			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $config['zone_id'] ) . '/rulesets/phases/http_request_firewall_custom/entrypoint',
-			$config['api_token']
-		);
+		$entrypoint = ajcore_cloudflare_find_custom_ruleset( $config['zone_id'], $config['api_token'] );
 		$rule_existed_already = false;
-		if ( ! is_wp_error( $entrypoint ) && $entrypoint['success'] ) {
-			foreach ( (array) ( $entrypoint['body']['result']['rules'] ?? array() ) as $rule ) {
+		if ( ! is_wp_error( $entrypoint ) && null !== $entrypoint ) {
+			foreach ( (array) ( $entrypoint['rules'] ?? array() ) as $rule ) {
 				if ( isset( $rule['description'] ) && AJCORE_CLOUDFLARE_RULE_DESCRIPTION === $rule['description'] ) {
 					$rule_existed_already = true;
 					break;
