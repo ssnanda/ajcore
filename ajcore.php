@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.246
+ * Version: 0.7.247
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.246' );
+	define( 'AJCORE_VERSION', '0.7.247' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -288,6 +288,13 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'hcaptcha_secret_key'           => '',
 			'turnstile_site_key'            => '',
 			'turnstile_secret_key'          => '',
+			// Cloudflare IP blocking (Spam Protection -> "Mark Spam" in AJOps). A zone-scoped API
+			// token with the "Firewall Services: Edit" permission — used to add an IP Access Rule
+			// (mode "block") for a lead's IP address. cloudflare_zone_id isn't a secret (it's
+			// visible in the Cloudflare dashboard URL) but travels with the token since one is
+			// useless without the other.
+			'cloudflare_api_token'          => '',
+			'cloudflare_zone_id'            => '',
 			'webhook_url'                   => '',
 			'asana_enabled'                 => '0',
 			'asana_personal_access_token'   => '',
@@ -520,6 +527,7 @@ if ( ! function_exists( 'ajcore_get_secret_setting_keys' ) ) {
 			'rentec_api_key_2',
 			'upos_thermo_client_secret',
 			'upos_thermo_refresh_token',
+			'cloudflare_api_token',
 		);
 	}
 }
@@ -694,6 +702,80 @@ if ( ! function_exists( 'ajcore_mask_secret_for_display' ) ) {
 			return '••••';
 		}
 		return substr( $value, 0, 8 ) . '••••' . substr( $value, -4 );
+	}
+}
+
+if ( ! function_exists( 'ajcore_cloudflare_block_ip' ) ) {
+	/**
+	 * Adds a zone-level Cloudflare IP Access Rule (mode "block") for one IP address — the
+	 * "Mark Spam" action's Cloudflare side. Requires cloudflare_api_token (a token scoped to
+	 * this zone with "Firewall Services: Edit") and cloudflare_zone_id in settings; both are
+	 * entered on the Spam Protection screen. Idempotent: an IP that's already blocked on
+	 * Cloudflare comes back as a "duplicate of an existing rule" error, which this treats as
+	 * success (already_existed => true) rather than surfacing it as a failure.
+	 *
+	 * @param string $ip   IPv4 or IPv6 address to block.
+	 * @param string $note Freeform note stored on the Cloudflare rule (shows in their dashboard).
+	 * @return array{blocked:bool,already_existed:bool}|WP_Error
+	 */
+	function ajcore_cloudflare_block_ip( $ip, $note = '' ) {
+		$ip = trim( (string) $ip );
+		if ( '' === $ip || ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+			return new WP_Error( 'ajcore_invalid_ip', __( 'Not a valid IP address.', 'ajforms' ) );
+		}
+
+		$settings  = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
+		$api_token = ! empty( $settings['cloudflare_api_token'] ) ? trim( (string) $settings['cloudflare_api_token'] ) : '';
+		$zone_id   = ! empty( $settings['cloudflare_zone_id'] ) ? trim( (string) $settings['cloudflare_zone_id'] ) : '';
+
+		if ( '' === $api_token || '' === $zone_id ) {
+			return new WP_Error( 'ajcore_cloudflare_not_configured', __( 'Cloudflare API Token and Zone ID must be set on the Spam Protection screen before IPs can be blocked.', 'ajforms' ) );
+		}
+
+		$response = wp_remote_post(
+			'https://api.cloudflare.com/client/v4/zones/' . rawurlencode( $zone_id ) . '/firewall/access_rules/rules',
+			array(
+				'timeout' => 15,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $api_token,
+					'Content-Type'  => 'application/json',
+				),
+				'body'    => wp_json_encode(
+					array(
+						'mode'          => 'block',
+						'configuration' => array(
+							'target' => 'ip',
+							'value'  => $ip,
+						),
+						'notes'         => '' !== $note ? substr( $note, 0, 500 ) : sprintf( 'AJCore: blocked %s', $ip ),
+					)
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$body    = json_decode( wp_remote_retrieve_body( $response ), true );
+		$success = is_array( $body ) && ! empty( $body['success'] );
+
+		if ( $success ) {
+			return array( 'blocked' => true, 'already_existed' => false );
+		}
+
+		$errors = ( is_array( $body ) && ! empty( $body['errors'] ) && is_array( $body['errors'] ) ) ? $body['errors'] : array();
+		foreach ( $errors as $error ) {
+			// Cloudflare error code 10009 ("config value already exists") — this IP is already
+			// on a block rule for this zone, which is exactly the outcome we wanted anyway.
+			$message = isset( $error['message'] ) ? (string) $error['message'] : '';
+			if ( ( isset( $error['code'] ) && 10009 === (int) $error['code'] ) || false !== stripos( $message, 'already exists' ) ) {
+				return array( 'blocked' => true, 'already_existed' => true );
+			}
+		}
+
+		$error_message = ! empty( $errors[0]['message'] ) ? (string) $errors[0]['message'] : __( 'Cloudflare rejected the request.', 'ajforms' );
+		return new WP_Error( 'ajcore_cloudflare_block_failed', $error_message );
 	}
 }
 

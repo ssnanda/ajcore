@@ -269,7 +269,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 
 			case 'status':
 				$status = sanitize_text_field( $item['status'] );
-				$labels = array( 'new' => __( 'New', 'ajforms' ), 'read' => __( 'Read', 'ajforms' ), 'won' => __( 'Won', 'ajforms' ), 'lost' => __( 'Lost', 'ajforms' ), 'duplicate' => __( 'Duplicate', 'ajforms' ) );
+				$labels = array( 'new' => __( 'New', 'ajforms' ), 'read' => __( 'Read', 'ajforms' ), 'won' => __( 'Won', 'ajforms' ), 'lost' => __( 'Lost', 'ajforms' ), 'duplicate' => __( 'Duplicate', 'ajforms' ), 'spam' => __( 'Spam', 'ajforms' ) );
 				$label  = isset( $labels[ $status ] ) ? $labels[ $status ] : ucfirst( $status );
 				$out    = '<span class="ajforms-status-badge ' . esc_attr( $status ) . '">' . esc_html( $label ) . '</span>';
 				if ( 'won' === $status && ! empty( $item['stripe_customer_id'] ) ) {
@@ -359,7 +359,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 					$out          .= $quick_link( $toggle_action, $toggle_label );
 					$out          .= $quick_link( 'mark_lost', __( 'Lost', 'ajforms' ) );
 					$out          .= $quick_link( 'mark_duplicate', __( 'Dup', 'ajforms' ) );
-				} elseif ( in_array( $status, array( 'lost', 'duplicate' ), true ) ) {
+				} elseif ( in_array( $status, array( 'lost', 'duplicate', 'spam' ), true ) ) {
 					$out .= $quick_link( 'reopen', __( 'Reopen', 'ajforms' ) );
 				}
 				// "Won" has no quick action here — linking to a customer requires the picker on the detail page.

@@ -10833,6 +10833,71 @@ class AJCore_REST_API {
 			$status = $status_map[ $action ];
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			$wpdb->query( $wpdb->prepare( "UPDATE `{$leads_table}` SET status = %s, updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( $status, current_time( 'mysql' ) ), $ids ) ) );
+		} elseif ( 'mark_spam' === $action ) {
+			// "Mark Spam" — soft-deletes the lead (status = 'spam', same excluded-from-Active
+			// mechanism as 'duplicate', so it stays recoverable) and, best-effort, adds each
+			// distinct IP address among the selected leads to a Cloudflare block rule for this
+			// zone. A Cloudflare failure (not configured, bad token, network error, ...) never
+			// blocks the status update — the leads are hidden either way, and the response below
+			// tells the caller exactly which IPs did/didn't get blocked so AJOps can surface it.
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->query( $wpdb->prepare( "UPDATE `{$leads_table}` SET status = 'spam', updated_at = %s WHERE id IN ({$placeholders})", array_merge( array( current_time( 'mysql' ) ), $ids ) ) );
+
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$ip_rows = $wpdb->get_results( $wpdb->prepare( "SELECT id, ip_address FROM `{$leads_table}` WHERE id IN ({$placeholders})", $ids ), ARRAY_A );
+
+			$blocked_ips         = array();
+			$already_blocked_ips = array();
+			$block_errors        = array();
+			$ips_seen            = array();
+			$actor               = wp_get_current_user();
+
+			foreach ( (array) $ip_rows as $row ) {
+				$ip = trim( (string) $row['ip_address'] );
+				if ( '' === $ip || isset( $ips_seen[ $ip ] ) ) {
+					continue;
+				}
+				$ips_seen[ $ip ] = true;
+
+				$result = function_exists( 'ajcore_cloudflare_block_ip' )
+					? ajcore_cloudflare_block_ip( $ip, sprintf( 'AJCore: lead #%d marked spam by %s', (int) $row['id'], $actor ? $actor->user_email : 'staff' ) )
+					: new WP_Error( 'ajcore_cloudflare_unavailable', __( 'Cloudflare blocking is unavailable.', 'ajforms' ) );
+
+				if ( is_wp_error( $result ) ) {
+					$block_errors[] = array( 'ip' => $ip, 'error' => $result->get_error_message() );
+				} elseif ( ! empty( $result['already_existed'] ) ) {
+					$already_blocked_ips[] = $ip;
+				} else {
+					$blocked_ips[] = $ip;
+				}
+			}
+
+			if ( ! empty( $ip_rows ) ) {
+				$note_rows = array();
+				foreach ( (array) $ip_rows as $row ) {
+					$ip = trim( (string) $row['ip_address'] );
+					$note_rows[] = $wpdb->prepare(
+						'(%d, %s, %d, %s, %s)',
+						(int) $row['id'],
+						'' !== $ip ? sprintf( __( 'Marked as spam by %1$s. IP %2$s: %3$s', 'ajforms' ), $actor ? $actor->display_name : 'staff', $ip, in_array( $ip, $blocked_ips, true ) ? __( 'blocked on Cloudflare.', 'ajforms' ) : ( in_array( $ip, $already_blocked_ips, true ) ? __( 'already blocked on Cloudflare.', 'ajforms' ) : __( 'not blocked (see error).', 'ajforms' ) ) ) : sprintf( __( 'Marked as spam by %s. No IP address on record to block.', 'ajforms' ), $actor ? $actor->display_name : 'staff' ),
+						get_current_user_id(),
+						$actor ? $actor->display_name : '',
+						current_time( 'mysql' )
+					);
+				}
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$wpdb->query( "INSERT INTO `{$lead_notes_table}` (lead_id, note, created_by, author_name, created_at) VALUES " . implode( ',', $note_rows ) );
+			}
+
+			return rest_ensure_response(
+				array(
+					'success'             => true,
+					'affected'            => count( $ids ),
+					'blocked_ips'         => $blocked_ips,
+					'already_blocked_ips' => $already_blocked_ips,
+					'block_errors'        => $block_errors,
+				)
+			);
 		} elseif ( 'send_followup_email' === $action ) {
 			if ( ! class_exists( 'AJForms_Admin' ) ) {
 				return new WP_Error( 'ajcore_admin_unavailable', __( 'Email sending is unavailable right now.', 'ajforms' ), array( 'status' => 500 ) );
