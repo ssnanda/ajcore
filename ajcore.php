@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.253
+ * Version: 0.7.254
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.253' );
+	define( 'AJCORE_VERSION', '0.7.254' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -800,11 +800,16 @@ if ( ! function_exists( 'ajcore_cloudflare_get_settings' ) ) {
 if ( ! function_exists( 'ajcore_cloudflare_get_or_create_list' ) ) {
 	/**
 	 * Finds the account's "ajcore_spam_list" IP list, creating it if this is the first time
-	 * anything has been blocked. Not cached — this only runs when a lead is actually marked spam
-	 * (a human-triggered, infrequent action), so a fresh lookup every time is cheap and immune to
-	 * the list having been renamed/deleted by hand on Cloudflare's side since the last call.
+	 * anything has been blocked. Not cached across requests — this only runs when a lead is
+	 * actually marked spam (a human-triggered, infrequent action) or Test Connection is clicked,
+	 * so one fresh lookup per request is cheap and immune to the list having been renamed/deleted
+	 * by hand on Cloudflare's side since the last call. Callers doing multiple operations in one
+	 * request (Test Connection's block-then-unblock round trip) should call this ONCE and reuse
+	 * the id — see the $list_id override on ajcore_cloudflare_block_ip()/unblock_ip() — rather than
+	 * let each operation re-resolve it, which is what previously made Test Connection slow enough
+	 * to occasionally 502 at the origin (each redundant resolution is its own Cloudflare API call).
 	 *
-	 * @return string|WP_Error List ID.
+	 * @return array{id:string,created:bool}|WP_Error
 	 */
 	function ajcore_cloudflare_get_or_create_list( $account_id, $api_token ) {
 		$list = ajcore_cloudflare_api_request(
@@ -818,7 +823,7 @@ if ( ! function_exists( 'ajcore_cloudflare_get_or_create_list' ) ) {
 		if ( $list['success'] ) {
 			foreach ( (array) ( $list['body']['result'] ?? array() ) as $existing ) {
 				if ( isset( $existing['name'] ) && AJCORE_CLOUDFLARE_LIST_NAME === $existing['name'] ) {
-					return (string) $existing['id'];
+					return array( 'id' => (string) $existing['id'], 'created' => false );
 				}
 			}
 		}
@@ -839,7 +844,7 @@ if ( ! function_exists( 'ajcore_cloudflare_get_or_create_list' ) ) {
 		if ( ! $created['success'] || empty( $created['body']['result']['id'] ) ) {
 			return new WP_Error( 'ajcore_cloudflare_list_create_failed', ajcore_cloudflare_api_error_message( $created['body'], $created['status'] ) );
 		}
-		return (string) $created['body']['result']['id'];
+		return array( 'id' => (string) $created['body']['result']['id'], 'created' => true );
 	}
 }
 
@@ -901,8 +906,10 @@ if ( ! function_exists( 'ajcore_cloudflare_ensure_custom_rule' ) ) {
 	 * Makes sure exactly one WAF Custom Rule exists on the zone blocking traffic from the list —
 	 * "ip.src in $ajcore_spam_list" — creating the zone's custom-rules entrypoint ruleset first if
 	 * this zone has never had one. One rule total regardless of how many IPs the list holds later.
+	 * Callers doing multiple operations in one request should call this ONCE and skip re-checking
+	 * — see the $skip_rule_check param on ajcore_cloudflare_block_ip().
 	 *
-	 * @return true|WP_Error
+	 * @return array{created:bool}|WP_Error
 	 */
 	function ajcore_cloudflare_ensure_custom_rule( $zone_id, $api_token ) {
 		$expression = 'ip.src in $' . AJCORE_CLOUDFLARE_LIST_NAME;
@@ -915,7 +922,7 @@ if ( ! function_exists( 'ajcore_cloudflare_ensure_custom_rule' ) ) {
 		if ( null !== $entrypoint ) {
 			foreach ( (array) ( $entrypoint['rules'] ?? array() ) as $rule ) {
 				if ( isset( $rule['expression'] ) && $expression === $rule['expression'] ) {
-					return true; // Already there.
+					return array( 'created' => false ); // Already there.
 				}
 			}
 			// Ruleset exists, our rule doesn't yet — add it without touching any existing rules.
@@ -936,7 +943,7 @@ if ( ! function_exists( 'ajcore_cloudflare_ensure_custom_rule' ) ) {
 			if ( ! $added['success'] ) {
 				return new WP_Error( 'ajcore_cloudflare_rule_add_failed', ajcore_cloudflare_api_error_message( $added['body'], $added['status'] ) );
 			}
-			return true;
+			return array( 'created' => true );
 		}
 
 		// 404 (or any non-success) on the entrypoint GET means this zone has no custom ruleset at
@@ -965,7 +972,7 @@ if ( ! function_exists( 'ajcore_cloudflare_ensure_custom_rule' ) ) {
 		if ( ! $created['success'] ) {
 			return new WP_Error( 'ajcore_cloudflare_ruleset_create_failed', ajcore_cloudflare_api_error_message( $created['body'], $created['status'] ) );
 		}
-		return true;
+		return array( 'created' => true );
 	}
 }
 
@@ -1002,7 +1009,7 @@ if ( ! function_exists( 'ajcore_cloudflare_poll_bulk_operation' ) ) {
 	 * under a second for a single item); if it hasn't confirmed by the last attempt, treats it as
 	 * "submitted" rather than failing the whole action over a slow poll.
 	 */
-	function ajcore_cloudflare_poll_bulk_operation( $account_id, $operation_id, $api_token, $attempts = 5 ) {
+	function ajcore_cloudflare_poll_bulk_operation( $account_id, $operation_id, $api_token, $attempts = 3 ) {
 		for ( $i = 0; $i < $attempts; $i++ ) {
 			$check = ajcore_cloudflare_api_request(
 				'GET',
@@ -1019,7 +1026,7 @@ if ( ! function_exists( 'ajcore_cloudflare_poll_bulk_operation' ) ) {
 				}
 			}
 			if ( $i < $attempts - 1 ) {
-				usleep( 400000 ); // 0.4s between polls.
+				usleep( 250000 ); // 0.25s between polls.
 			}
 		}
 		return true; // Submitted but not confirmed within the poll window — not treated as failure.
@@ -1035,11 +1042,18 @@ if ( ! function_exists( 'ajcore_cloudflare_block_ip' ) ) {
 	 * transparently creates the list and the rule; every call after that just appends to the list.
 	 * Requires cloudflare_api_token, cloudflare_account_id, and cloudflare_zone_id in settings.
 	 *
-	 * @param string $ip   IPv4 or IPv6 address to block.
-	 * @param string $note Freeform comment stored on the list item (shows in Cloudflare's dashboard).
+	 * @param string      $ip               IPv4 or IPv6 address to block.
+	 * @param string      $note             Freeform comment stored on the list item (shows in
+	 *                                      Cloudflare's dashboard).
+	 * @param string|null $list_id          Skip re-resolving the list when the caller already has
+	 *                                      it (e.g. Test Connection doing block-then-unblock in one
+	 *                                      request) — saves a Cloudflare round trip per call.
+	 * @param bool        $skip_rule_check  Skip re-verifying the WAF rule exists, for the same
+	 *                                      reason — only safe when the caller already confirmed it
+	 *                                      in this same request.
 	 * @return array{blocked:bool,already_existed:bool}|WP_Error
 	 */
-	function ajcore_cloudflare_block_ip( $ip, $note = '' ) {
+	function ajcore_cloudflare_block_ip( $ip, $note = '', $list_id = null, $skip_rule_check = false ) {
 		$ip = trim( (string) $ip );
 		if ( '' === $ip || ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
 			return new WP_Error( 'ajcore_invalid_ip', __( 'Not a valid IP address.', 'ajforms' ) );
@@ -1050,14 +1064,19 @@ if ( ! function_exists( 'ajcore_cloudflare_block_ip' ) ) {
 			return $config;
 		}
 
-		$list_id = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
-		if ( is_wp_error( $list_id ) ) {
-			return $list_id;
+		if ( null === $list_id ) {
+			$list = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
+			if ( is_wp_error( $list ) ) {
+				return $list;
+			}
+			$list_id = $list['id'];
 		}
 
-		$rule_ready = ajcore_cloudflare_ensure_custom_rule( $config['zone_id'], $config['api_token'] );
-		if ( is_wp_error( $rule_ready ) ) {
-			return $rule_ready;
+		if ( ! $skip_rule_check ) {
+			$rule_ready = ajcore_cloudflare_ensure_custom_rule( $config['zone_id'], $config['api_token'] );
+			if ( is_wp_error( $rule_ready ) ) {
+				return $rule_ready;
+			}
 		}
 
 		$existing = ajcore_cloudflare_find_list_item( $config['account_id'], $list_id, $config['api_token'], $ip );
@@ -1095,9 +1114,10 @@ if ( ! function_exists( 'ajcore_cloudflare_unblock_ip' ) ) {
 	 * Removes one IP from the shared list — used by the Test Connection flow to clean up its own
 	 * dummy test IP, and available generally as the inverse of ajcore_cloudflare_block_ip().
 	 *
+	 * @param string|null $list_id Skip re-resolving the list when the caller already has it.
 	 * @return array{removed:bool}|WP_Error
 	 */
-	function ajcore_cloudflare_unblock_ip( $ip ) {
+	function ajcore_cloudflare_unblock_ip( $ip, $list_id = null ) {
 		$ip = trim( (string) $ip );
 		if ( '' === $ip || ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
 			return new WP_Error( 'ajcore_invalid_ip', __( 'Not a valid IP address.', 'ajforms' ) );
@@ -1108,9 +1128,12 @@ if ( ! function_exists( 'ajcore_cloudflare_unblock_ip' ) ) {
 			return $config;
 		}
 
-		$list_id = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
-		if ( is_wp_error( $list_id ) ) {
-			return $list_id;
+		if ( null === $list_id ) {
+			$list = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
+			if ( is_wp_error( $list ) ) {
+				return $list;
+			}
+			$list_id = $list['id'];
 		}
 
 		$existing = ajcore_cloudflare_find_list_item( $config['account_id'], $list_id, $config['api_token'], $ip );
@@ -1160,52 +1183,29 @@ if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
 			return $config;
 		}
 
-		$list_lookup = ajcore_cloudflare_api_request(
-			'GET',
-			'https://api.cloudflare.com/client/v4/accounts/' . rawurlencode( $config['account_id'] ) . '/rules/lists',
-			$config['api_token']
-		);
-		if ( is_wp_error( $list_lookup ) ) {
-			return $list_lookup;
+		// Resolve the list and the rule exactly ONCE each and reuse them for the block/unblock
+		// round trip below — letting each of those re-resolve independently (the original version
+		// of this function) turned one click into ~20 sequential Cloudflare API calls, slow enough
+		// to occasionally 502 at the origin on a real host even though it was fine on fast ddev.
+		$list = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
+		if ( is_wp_error( $list ) ) {
+			return $list;
 		}
-		if ( ! $list_lookup['success'] ) {
-			return new WP_Error( 'ajcore_cloudflare_test_failed', ajcore_cloudflare_api_error_message( $list_lookup['body'], $list_lookup['status'] ) );
-		}
-		$list_existed_already = false;
-		foreach ( (array) ( $list_lookup['body']['result'] ?? array() ) as $existing ) {
-			if ( isset( $existing['name'] ) && AJCORE_CLOUDFLARE_LIST_NAME === $existing['name'] ) {
-				$list_existed_already = true;
-				break;
-			}
-		}
+		$list_id               = $list['id'];
+		$list_existed_already  = ! $list['created'];
 
-		$list_id = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
-		if ( is_wp_error( $list_id ) ) {
-			return $list_id;
+		$rule = ajcore_cloudflare_ensure_custom_rule( $config['zone_id'], $config['api_token'] );
+		if ( is_wp_error( $rule ) ) {
+			return $rule;
 		}
-
-		$entrypoint = ajcore_cloudflare_find_custom_ruleset( $config['zone_id'], $config['api_token'] );
-		$rule_existed_already = false;
-		if ( ! is_wp_error( $entrypoint ) && null !== $entrypoint ) {
-			foreach ( (array) ( $entrypoint['rules'] ?? array() ) as $rule ) {
-				if ( isset( $rule['description'] ) && AJCORE_CLOUDFLARE_RULE_DESCRIPTION === $rule['description'] ) {
-					$rule_existed_already = true;
-					break;
-				}
-			}
-		}
-
-		$rule_ready = ajcore_cloudflare_ensure_custom_rule( $config['zone_id'], $config['api_token'] );
-		if ( is_wp_error( $rule_ready ) ) {
-			return $rule_ready;
-		}
+		$rule_existed_already = ! $rule['created'];
 
 		$test_ip = '192.0.2.1';
-		$blocked = ajcore_cloudflare_block_ip( $test_ip, 'AJCore Test Connection — round-tripped automatically, should not remain blocked' );
+		$blocked = ajcore_cloudflare_block_ip( $test_ip, 'AJCore Test Connection — round-tripped automatically, should not remain blocked', $list_id, true );
 		if ( is_wp_error( $blocked ) ) {
 			return $blocked;
 		}
-		$unblocked = ajcore_cloudflare_unblock_ip( $test_ip );
+		$unblocked = ajcore_cloudflare_unblock_ip( $test_ip, $list_id );
 		if ( is_wp_error( $unblocked ) ) {
 			// Write access is proven either way (the block above succeeded) — surface the cleanup
 			// failure as an informational note rather than treating the whole test as failed.

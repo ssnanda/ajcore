@@ -31135,6 +31135,9 @@ class AJForms_Admin {
 				.ajforms-settings-checkbox input{margin-top:2px}
 				.ajforms-settings-checkbox strong{display:block;color:#111827;margin-bottom:2px;font-size:14px}
 				.ajforms-settings-checkbox span{font-size:13px}
+				/* Flat checkbox row, no box/border — label text carries the meaning on its own. */
+				.ajforms-simple-checkbox{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#111827;padding:5px 0;cursor:pointer}
+				.ajforms-simple-checkbox input{margin:0}
 				.ajforms-settings-note{margin-top:14px;padding:14px 16px;border-radius:10px;background:#f9fafb;color:#4b5563;font-size:13.5px}
 				.ajforms-settings-pill{display:inline-flex;align-items:center;padding:6px 11px;border-radius:999px;background:#fff7ed;color:#c2410c;font-weight:700;font-size:11px;letter-spacing:.04em;text-transform:uppercase}
 				.ajforms-settings-actions{margin-top:22px;display:flex;align-items:center;gap:14px}
@@ -31383,36 +31386,25 @@ class AJForms_Admin {
 
 									<div class="ajforms-settings-section">
 										<h4><?php esc_html_e( 'Honeypot', 'ajforms' ); ?></h4>
-										<div class="ajforms-settings-checkbox">
+										<label class="ajforms-simple-checkbox">
 											<input name="honeypot_enabled" id="honeypot_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['honeypot_enabled'] ); ?>>
-											<div>
-												<strong><?php esc_html_e( 'Enable Honeypot by default', 'ajforms' ); ?></strong>
-												<span><?php esc_html_e( 'Applies to both new and existing forms because the spam check runs during submission, not only when a form is created.', 'ajforms' ); ?></span>
-											</div>
-										</div>
+											<?php esc_html_e( 'Enable Honeypot by default', 'ajforms' ); ?>
+										</label>
 									</div>
 
 									<div class="ajforms-settings-section">
 										<h4><?php esc_html_e( 'Content Filtering', 'ajforms' ); ?></h4>
-										<p class="ajforms-settings-section-desc"><?php esc_html_e( 'Checked server-side at submission time, on every form automatically — a bot that trips one of these never gets saved as a lead.', 'ajforms' ); ?></p>
-										<div class="ajforms-settings-checkbox">
+										<label class="ajforms-simple-checkbox">
 											<input name="content_filter_block_non_latin" id="content_filter_block_non_latin" type="checkbox" value="1" <?php checked( '1' === (string) $settings['content_filter_block_non_latin'] ); ?>>
-											<div>
-												<strong><?php esc_html_e( 'Block non-Latin script in free-text fields', 'ajforms' ); ?></strong>
-												<span><?php esc_html_e( 'Rejects Cyrillic, CJK, Arabic, and similar scripts. Accented Latin names (café, José, Müller) are never affected — this checks script, not just non-ASCII.', 'ajforms' ); ?></span>
-											</div>
-										</div>
-										<div class="ajforms-settings-checkbox" style="margin-top:10px;">
+											<?php esc_html_e( 'Block non-Latin script (Cyrillic, CJK, Arabic, etc.) in free-text fields', 'ajforms' ); ?>
+										</label>
+										<label class="ajforms-simple-checkbox">
 											<input name="content_filter_block_links" id="content_filter_block_links" type="checkbox" value="1" <?php checked( '1' === (string) $settings['content_filter_block_links'] ); ?>>
-											<div>
-												<strong><?php esc_html_e( 'Block links/URLs in free-text fields', 'ajforms' ); ?></strong>
-												<span><?php esc_html_e( 'Rejects http(s):// links, "www." prefixes, and bare domain-looking text (e.g. "badsite.ru").', 'ajforms' ); ?></span>
-											</div>
-										</div>
-										<div class="ajforms-settings-field" style="margin-top:14px;">
+											<?php esc_html_e( 'Block links/URLs in free-text fields', 'ajforms' ); ?>
+										</label>
+										<div class="ajforms-settings-field" style="margin-top:10px;">
 											<label for="content_filter_blocked_email_domains"><?php esc_html_e( 'Blocked email domains', 'ajforms' ); ?></label>
 											<textarea name="content_filter_blocked_email_domains" id="content_filter_blocked_email_domains" placeholder="<?php esc_attr_e( ".ru\n.store\nspamdomain.com", 'ajforms' ); ?>"><?php echo esc_textarea( $settings['content_filter_blocked_email_domains'] ); ?></textarea>
-											<div class="ajforms-settings-help"><?php esc_html_e( 'One per line. A ".tld" entry blocks any domain ending in it; a full domain (spamdomain.com) blocks only that exact one.', 'ajforms' ); ?></div>
 										</div>
 									</div>
 
@@ -31426,7 +31418,6 @@ class AJForms_Admin {
 											<option value="hcaptcha" <?php selected( $settings['spam_challenge_provider'], 'hcaptcha' ); ?>><?php esc_html_e( 'hCaptcha by Intuition Machines', 'ajforms' ); ?></option>
 											<option value="turnstile" <?php selected( $settings['spam_challenge_provider'], 'turnstile' ); ?>><?php esc_html_e( 'Turnstile by Cloudflare', 'ajforms' ); ?></option>
 										</select>
-										<div class="ajforms-settings-help"><?php esc_html_e( 'Choose one challenge provider. Honeypot remains compatible with any one of these.', 'ajforms' ); ?></div>
 									</div>
 
 									<?php
@@ -31472,7 +31463,7 @@ class AJForms_Admin {
 													<label for="<?php echo esc_attr( $secret_key_field ); ?>"><?php esc_html_e( 'Secret Key', 'ajforms' ); ?></label>
 													<input type="password" name="<?php echo esc_attr( $secret_key_field ); ?>" id="<?php echo esc_attr( $secret_key_field ); ?>" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $secret_saved ? __( 'Saved — enter a new key to replace', 'ajforms' ) : __( 'Paste the secret key', 'ajforms' ) ); ?>">
 													<?php if ( $secret_saved ) : ?>
-														<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings[ $secret_key_field ] ) ) ); ?></p>
+														<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s', 'ajforms' ), ajcore_mask_secret_for_display( $settings[ $secret_key_field ] ) ) ); ?></p>
 													<?php endif; ?>
 												</div>
 											</div>
@@ -31508,45 +31499,40 @@ class AJForms_Admin {
 										<?php esc_html_e( 'Cloudflare IP Blocking', 'ajforms' ); ?>
 										<button type="button" id="ajcore-cloudflare-help-toggle" aria-expanded="false" title="<?php esc_attr_e( 'Required API Token permissions', 'ajforms' ); ?>" style="width:20px;height:20px;border-radius:50%;border:1px solid #d1d5db;background:#fff;color:#4b5563;font-weight:700;font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;">?</button>
 									</h4>
-									<p class="ajforms-settings-section-desc"><?php esc_html_e( 'Lets "Mark Spam" in AJOps add a lead\'s IP address to a single Cloudflare-managed list ("AJCore-Spam-List") blocked by one WAF rule, in addition to hiding the lead here. Blocking any number of IPs over time never creates more than that one rule.', 'ajforms' ); ?></p>
 									<div id="ajcore-cloudflare-help-panel" class="ajforms-settings-note" style="display:none;">
 										<p style="margin:0 0 10px;font-weight:700;"><?php esc_html_e( 'Required API Token permissions', 'ajforms' ); ?></p>
 										<ul style="margin:0 0 10px;padding-left:20px;">
 											<li><?php esc_html_e( 'Account → Account Filter Lists → Edit', 'ajforms' ); ?></li>
 											<li><?php esc_html_e( 'Zone → WAF → Edit', 'ajforms' ); ?></li>
 										</ul>
-										<p style="margin:0 0 10px;"><?php esc_html_e( 'Under Account Resources, include this account; under Zone Resources, include this specific zone. Create the token at My Profile → API Tokens → Create Custom Token, then click Test Connection below to verify.', 'ajforms' ); ?></p>
-										<p style="margin:0;"><?php esc_html_e( 'Older tokens created for the previous per-IP scheme (Firewall Services: Edit only) will fail Test Connection — add the two permissions above to the existing token, or create a new one.', 'ajforms' ); ?></p>
+										<p style="margin:0 0 10px;"><?php esc_html_e( 'Account ID and Zone ID are both on the domain\'s Overview page, right-hand sidebar.', 'ajforms' ); ?></p>
+										<div class="ajforms-settings-help-links">
+											<a href="https://dash.cloudflare.com/?to=/:account/profile/api-tokens" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Manage API Tokens', 'ajforms' ); ?></a>
+											<a href="https://developers.cloudflare.com/waf/tools/lists/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'About Cloudflare Lists', 'ajforms' ); ?></a>
+										</div>
 									</div>
 									<div class="ajforms-settings-grid">
 										<div class="ajforms-settings-field">
 											<label for="cloudflare_api_token"><?php esc_html_e( 'API Token', 'ajforms' ); ?></label>
 											<?php $cloudflare_token_saved = ! empty( $settings['cloudflare_api_token'] ); ?>
-											<input name="cloudflare_api_token" id="cloudflare_api_token" type="password" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $cloudflare_token_saved ? __( 'Saved — enter a new token to replace', 'ajforms' ) : __( 'Paste an API Token (see the ? above for permissions)', 'ajforms' ) ); ?>">
+											<input name="cloudflare_api_token" id="cloudflare_api_token" type="password" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $cloudflare_token_saved ? __( 'Saved — enter a new token to replace', 'ajforms' ) : __( 'Paste an API Token', 'ajforms' ) ); ?>">
 											<?php if ( $cloudflare_token_saved ) : ?>
-												<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings['cloudflare_api_token'] ) ) ); ?></p>
+												<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s', 'ajforms' ), ajcore_mask_secret_for_display( $settings['cloudflare_api_token'] ) ) ); ?></p>
 											<?php endif; ?>
 										</div>
 										<div class="ajforms-settings-field">
 											<label for="cloudflare_account_id"><?php esc_html_e( 'Account ID', 'ajforms' ); ?></label>
 											<input name="cloudflare_account_id" id="cloudflare_account_id" type="text" value="<?php echo esc_attr( $settings['cloudflare_account_id'] ); ?>" placeholder="<?php esc_attr_e( '32-character Account ID', 'ajforms' ); ?>">
-											<div class="ajforms-settings-help"><?php esc_html_e( 'Same Overview page as Zone ID, right-hand sidebar — a separate value from it.', 'ajforms' ); ?></div>
 										</div>
 										<div class="ajforms-settings-field">
 											<label for="cloudflare_zone_id"><?php esc_html_e( 'Zone ID', 'ajforms' ); ?></label>
 											<input name="cloudflare_zone_id" id="cloudflare_zone_id" type="text" value="<?php echo esc_attr( $settings['cloudflare_zone_id'] ); ?>" placeholder="<?php esc_attr_e( '32-character Zone ID', 'ajforms' ); ?>">
-											<div class="ajforms-settings-help"><?php esc_html_e( 'Found on the domain\'s Overview page in the Cloudflare dashboard, right-hand sidebar.', 'ajforms' ); ?></div>
 										</div>
 									</div>
-									<div class="ajforms-settings-help ajforms-settings-help-links">
-										<a href="https://dash.cloudflare.com/?to=/:account/profile/api-tokens" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Manage API Tokens', 'ajforms' ); ?></a>
-										<a href="https://developers.cloudflare.com/waf/tools/lists/" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'About Cloudflare Lists', 'ajforms' ); ?></a>
-									</div>
-									<div class="ajforms-settings-inline-actions" style="margin-top:18px;">
+									<div class="ajforms-settings-inline-actions" style="margin-top:14px;">
 										<button type="button" class="button" id="ajcore-test-cloudflare"><?php esc_html_e( 'Test Connection', 'ajforms' ); ?></button>
 										<span id="ajcore-cloudflare-test-status" class="ajforms-settings-help"></span>
 									</div>
-									<p class="ajforms-settings-help" style="margin-top:10px;"><?php esc_html_e( 'Test Connection uses the currently SAVED token (save first if you just pasted a new one). It creates the AJCore-Spam-List list and its WAF rule the first time it\'s run (reporting "already set up" on every run after), then proves write access by blocking then immediately unblocking 192.0.2.1 — a reserved documentation-only address that never carries real traffic.', 'ajforms' ); ?></p>
 									<script>
 									(function() {
 										const helpToggle = document.getElementById('ajcore-cloudflare-help-toggle');
