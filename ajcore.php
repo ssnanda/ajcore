@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.254
+ * Version: 0.7.255
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.254' );
+	define( 'AJCORE_VERSION', '0.7.255' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -1169,9 +1169,11 @@ if ( ! function_exists( 'ajcore_cloudflare_unblock_ip' ) ) {
 if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
 	/**
 	 * The Spam Protection screen's single "Test Connection" button: proves the token can read,
-	 * ensures the list + rule exist (creating them on first run), round-trips a reserved
-	 * documentation-only test IP (192.0.2.1, RFC 5737 TEST-NET-1 — never real traffic) through
-	 * block-then-unblock to prove write access, and reports exactly what was newly created vs.
+	 * ensures the list + rule exist (creating them on first run), and blocks a real spam IP
+	 * (91.84.124.42 — lead #81, ncllcagents.com "Guide Me" form, marked spam but never confirmed
+	 * blocked) to prove write access. Deliberately does NOT unblock it afterward — this is a
+	 * one-off manual re-block for that specific IP, not a disposable round-trip test like the old
+	 * 192.0.2.1 (RFC 5737 TEST-NET-1) version was. Reports exactly what was newly created vs.
 	 * already existed so re-running this after the first time reads as "already set up", not
 	 * "created again".
 	 *
@@ -1183,10 +1185,10 @@ if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
 			return $config;
 		}
 
-		// Resolve the list and the rule exactly ONCE each and reuse them for the block/unblock
-		// round trip below — letting each of those re-resolve independently (the original version
-		// of this function) turned one click into ~20 sequential Cloudflare API calls, slow enough
-		// to occasionally 502 at the origin on a real host even though it was fine on fast ddev.
+		// Resolve the list and the rule exactly ONCE each and reuse them below — letting each of
+		// those re-resolve independently (the original version of this function) turned one click
+		// into ~20 sequential Cloudflare API calls, slow enough to occasionally 502 at the origin
+		// on a real host even though it was fine on fast ddev.
 		$list = ajcore_cloudflare_get_or_create_list( $config['account_id'], $config['api_token'] );
 		if ( is_wp_error( $list ) ) {
 			return $list;
@@ -1200,34 +1202,26 @@ if ( ! function_exists( 'ajcore_cloudflare_run_full_test' ) ) {
 		}
 		$rule_existed_already = ! $rule['created'];
 
-		$test_ip = '192.0.2.1';
-		$blocked = ajcore_cloudflare_block_ip( $test_ip, 'AJCore Test Connection — round-tripped automatically, should not remain blocked', $list_id, true );
+		$test_ip = '91.84.124.42';
+		$blocked = ajcore_cloudflare_block_ip( $test_ip, 'AJCore Test Connection — manually re-blocked (lead #81, ncllcagents.com)', $list_id, true );
 		if ( is_wp_error( $blocked ) ) {
 			return $blocked;
 		}
-		$unblocked = ajcore_cloudflare_unblock_ip( $test_ip, $list_id );
-		if ( is_wp_error( $unblocked ) ) {
-			// Write access is proven either way (the block above succeeded) — surface the cleanup
-			// failure as an informational note rather than treating the whole test as failed.
-			return array(
-				'list_created' => ! $list_existed_already,
-				'rule_created' => ! $rule_existed_already,
-				'note'         => sprintf(
-					__( 'Connected — read/write access confirmed, list and rule are ready. Could not remove the %1$s test entry afterward (%2$s); it\'s harmless (reserved, non-routable) but you can remove it manually from the list if you\'d like.', 'ajforms' ),
-					$test_ip,
-					$unblocked->get_error_message()
-				),
-			);
-		}
 
 		if ( $list_existed_already && $rule_existed_already ) {
-			$note = __( 'Success — already set up. List and rule both exist and write access is confirmed.', 'ajforms' );
+			$note = sprintf(
+				/* translators: %s: IP address */
+				__( 'Success — already set up. List and rule both exist, and %s is now blocked (write access confirmed).', 'ajforms' ),
+				$test_ip
+			);
 		} else {
 			$note = sprintf(
-				__( 'Success — %s Write access confirmed via a round-tripped test IP.', 'ajforms' ),
+				/* translators: 1: setup description, 2: IP address */
+				__( 'Success — %1$s %2$s is now blocked (write access confirmed).', 'ajforms' ),
 				( ! $list_existed_already && ! $rule_existed_already )
 					? __( 'created the AJCore-Spam-List list and rule for the first time.', 'ajforms' )
-					: ( ! $list_existed_already ? __( 'created the missing list (rule already existed).', 'ajforms' ) : __( 'created the missing rule (list already existed).', 'ajforms' ) )
+					: ( ! $list_existed_already ? __( 'created the missing list (rule already existed).', 'ajforms' ) : __( 'created the missing rule (list already existed).', 'ajforms' ) ),
+				$test_ip
 			);
 		}
 
