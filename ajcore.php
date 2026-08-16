@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.257
+ * Version: 0.7.258
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.257' );
+	define( 'AJCORE_VERSION', '0.7.258' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -38,7 +38,7 @@ if ( ! defined( 'AJCORE_SYNCED_SETTINGS_FILE' ) ) {
 }
 
 if ( ! defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ) {
-	define( 'AJCORE_SYSTEM_FROM_EMAIL', 'donotreply@ncllcagents.com' );
+	define( 'AJCORE_SYSTEM_FROM_EMAIL', function_exists( 'get_option' ) ? get_option( 'admin_email' ) : '' );
 }
 
 if ( ! defined( 'AJFORMS_VERSION' ) ) {
@@ -153,7 +153,14 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'default_from_name'             => get_bloginfo( 'name' ),
 			'default_reply_to_mode'         => 'submitter',
 			'wp_email_templates_enabled'    => '1',
-			'wp_email_from_email'           => defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? AJCORE_SYSTEM_FROM_EMAIL : 'donotreply@ncllcagents.com',
+			// Per-site opt-in for the University Place Office Suites brand variant in the Email
+			// Templates admin UI (see $brands in display_email_templates_settings_section() and the
+			// preserve-on-save loop in handle_settings_save(), both in class-ajforms-admin.php). Off
+			// by default so the other 10 sites this plugin ships to don't see a different business's
+			// branded fields; ncllc/upos turn it on locally since their lead/customer brand-switch
+			// (get_customer_brand_setting_key()) actually uses the university_* settings below.
+			'enable_university_brand_templates' => '0',
+			'wp_email_from_email'           => defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? AJCORE_SYSTEM_FROM_EMAIL : get_option( 'admin_email' ),
 			'wp_email_from_name'            => get_bloginfo( 'name' ),
 			'wp_password_reset_subject'     => 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
@@ -173,6 +180,11 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'wp_welcome_from_name'          => '',
 			'wp_service_status_from_email'  => '',
 			'wp_service_status_from_name'   => '',
+			// University Place Office Suites brand overrides (see get_customer_brand_setting_key()
+			// in class-ajforms-admin.php) — only take effect when a customer/lead's domain resolves
+			// to universityofficesuites.com. Only shown in the Email Templates admin UI when
+			// enable_university_brand_templates is on (see above); otherwise these stay real,
+			// preserved settings that brand-switch email sending still reads normally.
 			'university_wp_password_reset_subject'    => 'Password reset for your University Place Office Suites portal login',
 			'university_wp_password_reset_heading'    => 'Set your client portal password',
 			'university_wp_password_reset_body'       => "Hi {name},\nUse the secure button below to create a new password for your client portal account. This link is private and should only be used by you.",
@@ -193,13 +205,13 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'university_lead_followup_body'           => "Hi {name},\nWe wanted to follow up on your recent inquiry with University Place Office Suites. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
 			'university_lead_followup_from_email'     => 'donotreply@universityofficesuites.com',
 			'university_lead_followup_from_name'      => 'University Place Office Suites',
-			'lead_followup_from_email'      => 'contactus@ncllcagents.com',
+			'lead_followup_from_email'      => '',
 			'lead_followup_from_name'       => '',
 			// Zoho Mail shared-inbox OAuth app (Inbox settings). client_id/secret/account_email/
 			// data_center are admin-entered; the rest are written only by the OAuth callback itself.
 			'zoho_mail_client_id'           => '',
 			'zoho_mail_client_secret'       => '',
-			'zoho_mail_account_email'       => 'agent@ncllcagents.com',
+			'zoho_mail_account_email'       => '',
 			// The Zoho Organization ID (zoid) — there's no reliable non-partner API to discover
 			// this for a regular admin, so it's entered manually. Visible in the Zoho Mail Admin
 			// Console under Organization -> Profile.

@@ -13452,6 +13452,7 @@ class AJForms_Admin {
 			'default_from_name'              => isset( $_POST['default_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['default_from_name'] ) ) : get_bloginfo( 'name' ),
 			'default_reply_to_mode'          => isset( $_POST['default_reply_to_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ), array( 'submitter', 'site' ), true ) ? sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ) : 'submitter',
 			'wp_email_templates_enabled'     => isset( $_POST['wp_email_templates_enabled'] ) ? '1' : '0',
+			'enable_university_brand_templates' => isset( $_POST['enable_university_brand_templates'] ) ? '1' : '0',
 			'wp_email_from_email'            => isset( $_POST['wp_email_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_email_from_email'] ) ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? AJCORE_SYSTEM_FROM_EMAIL : 'donotreply@ncllcagents.com' ),
 			'wp_email_from_name'             => isset( $_POST['wp_email_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_email_from_name'] ) ) : get_bloginfo( 'name' ),
 			'wp_password_reset_subject'      => isset( $_POST['wp_password_reset_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_subject'] ) ) : 'Password reset for your Portal Login for NC LLC Agents Inc',
@@ -13585,13 +13586,30 @@ class AJForms_Admin {
 			$settings[ $gmail_token_field ] = isset( $current_settings[ $gmail_token_field ] ) ? $current_settings[ $gmail_token_field ] : '';
 		}
 
+		// University Place Office Suites brand fields are hidden from the Email Templates form
+		// (as separate <input>s) unless enable_university_brand_templates is on, so on most sites/
+		// most saves $_POST never carries them. Same "never let an absent field silently reset a
+		// real value" reasoning as the OAuth token loops above — preserve the existing saved value
+		// (or, for a site that's never saved one yet, keep the fallback default computed above)
+		// whenever this exact save didn't actually post the field, instead of letting section_keys
+		// scoping (which no longer lists these) decide it.
+		foreach ( array( 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ) as $university_field ) {
+			if ( ! isset( $_POST[ $university_field ] ) && isset( $current_settings[ $university_field ] ) ) {
+				$settings[ $university_field ] = $current_settings[ $university_field ];
+			}
+		}
+
 		$active_stripe_prefix = 'live' === $settings['stripe_mode'] ? 'stripe_live' : 'stripe_sandbox';
 		$settings['stripe_publishable_key'] = isset( $settings[ $active_stripe_prefix . '_publishable_key' ] ) ? $settings[ $active_stripe_prefix . '_publishable_key' ] : '';
 		$settings['stripe_secret_key']      = isset( $settings[ $active_stripe_prefix . '_secret_key' ] ) ? $settings[ $active_stripe_prefix . '_secret_key' ] : '';
 
 		$section_keys = array(
 			'general'      => array( 'default_notification_email', 'default_notification_subject', 'default_notifications_enabled', 'default_from_name', 'default_reply_to_mode', 'default_success_message', 'validation_mode', 'require_unique_form_names' ),
-			'email-templates' => array( 'wp_email_templates_enabled', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ),
+			// The 20 university_* keys are deliberately NOT listed here (or under any other section) —
+			// they're preserved by their own dedicated loop above instead of this section-scoped
+			// restore, since they're only ever posted from this tab and only when
+			// enable_university_brand_templates is on. See that loop's comment for why.
+			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
@@ -25783,10 +25801,15 @@ class AJForms_Admin {
 					<input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>>
 					<strong><?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></strong>
 				</div>
+				<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
+					<input name="enable_university_brand_templates" id="enable_university_brand_templates" type="checkbox" value="1" <?php checked( '1' === (string) $settings['enable_university_brand_templates'] ); ?>>
+					<strong><?php esc_html_e( 'Show University Place Office Suites brand variant', 'ajforms' ); ?></strong>
+					<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php esc_html_e( 'Only turn this on for a site that actually sends emails to University Place Office Suites customers/leads — it adds a second, differently-branded copy of every template below.', 'ajforms' ); ?></p>
+				</div>
 				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
-						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="donotreply@ncllcagents.com" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="donotreply@yourdomain.com" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
@@ -25862,9 +25885,14 @@ class AJForms_Admin {
 			);
 
 			$brands = array(
-				'ncllc'      => array( 'label' => __( 'NC LLC Agents', 'ajforms' ), 'prefix' => '', 'entity_name' => 'NC LLC Agents Inc', 'site_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
-				'university' => array( 'label' => __( 'University Office Suites', 'ajforms' ), 'prefix' => 'university_', 'entity_name' => 'University Place Office Suites LLC', 'site_name' => 'University Place Office Suites' ),
+				'ncllc' => array( 'label' => __( 'NC LLC Agents', 'ajforms' ), 'prefix' => '', 'entity_name' => 'NC LLC Agents Inc', 'site_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
 			);
+			// University Place Office Suites variant only renders (dropdown option + its own set of
+			// <input>s) when this site has opted in — see enable_university_brand_templates.
+			// Everywhere else this stays a single-brand form, same as before this setting existed.
+			if ( '1' === (string) $settings['enable_university_brand_templates'] ) {
+				$brands['university'] = array( 'label' => __( 'University Office Suites', 'ajforms' ), 'prefix' => 'university_', 'entity_name' => 'University Place Office Suites LLC', 'site_name' => 'University Place Office Suites' );
+			}
 
 			$email_variants = array();
 			foreach ( $brands as $brand_key => $brand ) {
