@@ -10987,6 +10987,41 @@ class AJForms_Admin {
 		);
 	}
 
+	private function get_duplicate_schema_field_names( $schema ) {
+		$normalized = $this->normalize_imported_schema( $schema );
+		$counts     = array();
+		$walk       = function ( $fields ) use ( &$walk, &$counts ) {
+			foreach ( (array) $fields as $field ) {
+				if ( ! is_array( $field ) ) {
+					continue;
+				}
+
+				$type = isset( $field['type'] ) ? sanitize_key( $field['type'] ) : 'text';
+				if ( ! in_array( $type, array( 'separator', 'note', 'heading', 'container' ), true ) ) {
+					$name = isset( $field['field_name'] ) ? sanitize_key( $field['field_name'] ) : '';
+					if ( '' !== $name ) {
+						$counts[ $name ] = isset( $counts[ $name ] ) ? $counts[ $name ] + 1 : 1;
+					}
+				}
+
+				if ( 'container' === $type && ! empty( $field['fields'] ) && is_array( $field['fields'] ) ) {
+					$walk( $field['fields'] );
+				}
+			}
+		};
+
+		$walk( $normalized['fields'] );
+
+		return array_keys(
+			array_filter(
+				$counts,
+				static function ( $count ) {
+					return $count > 1;
+				}
+			)
+		);
+	}
+
 	private function delete_forms_and_related_data( $form_ids, $permanent = false ) {
 		global $wpdb;
 
@@ -32155,6 +32190,18 @@ class AJForms_Admin {
 			wp_send_json_error( __( 'Invalid form schema.', 'ajforms' ), 400 );
 		}
 
+		$duplicate_field_names = $this->get_duplicate_schema_field_names( $schema );
+		if ( ! empty( $duplicate_field_names ) ) {
+			wp_send_json_error(
+				sprintf(
+					/* translators: %s: comma-separated field names. */
+					__( 'Duplicate field names found: %s. Every field name must be unique.', 'ajforms' ),
+					esc_html( implode( ', ', $duplicate_field_names ) )
+				),
+				400
+			);
+		}
+
 		$sanitized_schema = $this->sanitize_schema_for_storage( $schema );
 
 		global $wpdb;
@@ -32251,6 +32298,17 @@ class AJForms_Admin {
 		}
 
 		$schema            = isset( $decoded['schema'] ) && is_array( $decoded['schema'] ) ? $decoded['schema'] : $decoded;
+		$duplicate_field_names = $this->get_duplicate_schema_field_names( $schema );
+		if ( ! empty( $duplicate_field_names ) ) {
+			wp_send_json_error(
+				sprintf(
+					/* translators: %s: comma-separated field names. */
+					__( 'Import contains duplicate field names: %s. Make every field name unique and try again.', 'ajforms' ),
+					esc_html( implode( ', ', $duplicate_field_names ) )
+				),
+				400
+			);
+		}
 		$sanitized_schema  = $this->sanitize_schema_for_storage( $schema );
 
 		global $wpdb;

@@ -164,7 +164,7 @@ function initAJFormsBuilder() {
         return slugifyFieldName(label) || `option_${fallbackIndex + 1}`;
     }
 
-    function getFieldNameBase(type) {
+    function getFieldNameBase(type, label = '') {
         const bases = {
             question: 'question',
             text: 'text',
@@ -186,11 +186,28 @@ function initAJFormsBuilder() {
             container: 'container'
         };
 
-        return bases[type] || 'field';
+        const genericLabels = new Set([
+            '', 'question', 'text', 'text_field', 'textarea', 'dropdown',
+            'single_choice', 'multiple_choice', 'number', 'email', 'url',
+            'phone', 'address', 'date', 'file_upload'
+        ]);
+        const labelBase = slugifyFieldName(label);
+
+        return labelBase && !genericLabels.has(labelBase) ? labelBase : (bases[type] || 'field');
     }
 
-    function getUniqueFieldName(type, excludeFieldId = null) {
-        const base = getFieldNameBase(type);
+    function getFormFieldPrefix() {
+        const titleInput = document.getElementById('wpf-form-title');
+        const title = titleInput && titleInput.value.trim()
+            ? titleInput.value
+            : formSchema.title;
+
+        return slugifyFieldName(title || 'form').slice(0, 30) || 'form';
+    }
+
+    function getUniqueFieldName(type, excludeFieldId = null, label = '') {
+        const base = getFieldNameBase(type, label);
+        const prefix = getFormFieldPrefix();
         const usedNames = new Set();
         walkFields((field) => {
             if (field.id !== excludeFieldId) {
@@ -202,14 +219,37 @@ function initAJFormsBuilder() {
         });
 
         let index = 1;
-        let candidate = `${base}${index}`;
+        let candidate = `${prefix}_${base}${index}`;
 
         while (usedNames.has(candidate)) {
             index += 1;
-            candidate = `${base}${index}`;
+            candidate = `${prefix}_${base}${index}`;
         }
 
         return candidate;
+    }
+
+    function getDuplicateFieldNames() {
+        const counts = new Map();
+
+        walkFields((field) => {
+            if (['separator', 'note', 'heading', 'container'].includes(field.type)) {
+                return;
+            }
+
+            const name = slugifyFieldName(field.field_name);
+            if (name) {
+                counts.set(name, (counts.get(name) || 0) + 1);
+            }
+        });
+
+        return Array.from(counts.entries())
+            .filter(([, count]) => count > 1)
+            .map(([name]) => name);
+    }
+
+    function isDuplicateFieldName(fieldName) {
+        return getDuplicateFieldNames().includes(slugifyFieldName(fieldName));
     }
 
     function getActiveFieldIndex() {
@@ -467,7 +507,7 @@ function initAJFormsBuilder() {
         field.id = 'field_' + Math.random().toString(36).slice(2, 11);
         field.field_name = ['separator', 'note', 'heading', 'container'].includes(field.type)
             ? ''
-            : getUniqueFieldName(field.type);
+            : getUniqueFieldName(field.type, null, field.label);
 
         if (field.type === 'container' && Array.isArray(field.fields)) {
             field.fields.forEach(regenerateFieldIdentity);
@@ -477,6 +517,7 @@ function initAJFormsBuilder() {
     function normalizeFieldNames(fields) {
         const usedNames = new Set();
         const counters = {};
+        const prefix = getFormFieldPrefix();
 
         return fields.map((field) => {
             const normalized = Object.assign({}, field);
@@ -485,9 +526,9 @@ function initAJFormsBuilder() {
                 return normalized;
             }
 
-            const base = getFieldNameBase(normalized.type);
+            const base = getFieldNameBase(normalized.type, normalized.label);
             const currentName = slugifyFieldName(normalized.field_name || '');
-            const shouldGenerateName = !currentName || currentName === base || usedNames.has(currentName);
+            const shouldGenerateName = !currentName || currentName === base;
 
             if (!shouldGenerateName) {
                 normalized.field_name = currentName;
@@ -497,10 +538,10 @@ function initAJFormsBuilder() {
 
             counters[base] = counters[base] || 1;
 
-            let generatedName = `${base}${counters[base]}`;
+            let generatedName = `${prefix}_${base}${counters[base]}`;
             while (usedNames.has(generatedName)) {
                 counters[base] += 1;
-                generatedName = `${base}${counters[base]}`;
+                generatedName = `${prefix}_${base}${counters[base]}`;
             }
 
             normalized.field_name = generatedName;
@@ -740,7 +781,7 @@ function initAJFormsBuilder() {
             id: 'field_' + Math.random().toString(36).slice(2, 11),
             type: type,
             label: displayDefault.label || defaultLabel,
-            field_name: getUniqueFieldName(type),
+            field_name: getUniqueFieldName(type, null, displayDefault.label || defaultLabel),
             placeholder: '',
             required: !['separator', 'note', 'heading', 'container'].includes(type),
             css_class: '',
@@ -1837,8 +1878,9 @@ function initAJFormsBuilder() {
             : `
                         <div class="wpf-setting-row">
                             <label>Field Name</label>
-                            <input type="text" class="wpf-live-input" data-key="field_name" value="${escapeHtml(field.field_name || '')}">
+                            <input type="text" class="wpf-live-input" data-key="field_name" value="${escapeHtml(field.field_name || '')}" aria-describedby="wpf-field-name-status">
                             <p class="wpf-setting-help">Use this in messages as <code>{${escapeHtml(field.field_name || 'field_name')}}</code>.</p>
+                            <p class="wpf-setting-help" id="wpf-field-name-status" style="${isDuplicateFieldName(field.field_name) ? 'color:#b32d2e;font-weight:600;' : 'display:none;'}">This field name is already used. Every field name must be unique.</p>
                         </div>
             `;
         const fieldBehaviorControls = isDisplayBlock
@@ -1997,9 +2039,30 @@ function initAJFormsBuilder() {
                     pushed = true;
                 }
 
+                const previousLabel = field.label;
+                const previousFieldName = field.field_name;
                 field[e.target.dataset.key] = e.target.dataset.key === 'field_name' ? slugifyFieldName(e.target.value) : e.target.value;
                 if (e.target.dataset.key === 'field_name') {
                     e.target.value = field.field_name;
+                    const statusNode = fieldSettingsPanel.querySelector('#wpf-field-name-status');
+                    const duplicate = isDuplicateFieldName(field.field_name);
+                    e.target.setAttribute('aria-invalid', duplicate ? 'true' : 'false');
+                    if (statusNode) {
+                        statusNode.style.display = duplicate ? '' : 'none';
+                    }
+                }
+                if (e.target.dataset.key === 'label') {
+                    const oldLabelBase = getFieldNameBase(field.type, previousLabel);
+                    const typeBase = getFieldNameBase(field.type);
+                    const prefix = getFormFieldPrefix();
+                    const wasAutoGenerated = new RegExp(`^(?:${prefix}_)?(?:${oldLabelBase}|${typeBase})\\d+$`).test(previousFieldName || '');
+                    if (wasAutoGenerated) {
+                        field.field_name = getUniqueFieldName(field.type, field.id, field.label);
+                        const fieldNameInput = fieldSettingsPanel.querySelector('[data-key="field_name"]');
+                        if (fieldNameInput) {
+                            fieldNameInput.value = field.field_name;
+                        }
+                    }
                 }
                 renderCanvas();
                 const titleNode = fieldSettingsPanel.querySelector('.wpf-field-settings-title');
@@ -2388,6 +2451,12 @@ function initAJFormsBuilder() {
 
         if (!title || title === 'Untitled Form') {
             window.alert('Please enter a unique form title.');
+            return;
+        }
+
+        const duplicateFieldNames = getDuplicateFieldNames();
+        if (duplicateFieldNames.length) {
+            window.alert(`Duplicate field name${duplicateFieldNames.length > 1 ? 's' : ''}: ${duplicateFieldNames.join(', ')}. Give every field a unique name before saving.`);
             return;
         }
 
