@@ -6045,9 +6045,22 @@ class AJForms {
 		$user_id    = get_current_user_id();
 		$user_email = strtolower( (string) $user->user_email );
 
+		$files_table  = $this->get_portal_files_table();
+		$users_table  = $this->get_portal_file_users_table();
+		$file_columns = $wpdb->get_col( "SHOW COLUMNS FROM `{$files_table}`", 0 );
+		$status_clause = in_array( 'status', (array) $file_columns, true )
+			? "AND ( f.status <> 'archived' OR f.status IS NULL )"
+			: '';
+		$visibility_clause = in_array( 'visibility', (array) $file_columns, true )
+			? "AND ( f.visibility <> 'internal' OR f.visibility IS NULL )"
+			: '';
+
 		$count = $wpdb->get_var(
 			$wpdb->prepare(
-				"SELECT COUNT(*) FROM {$this->get_portal_file_users_table()} WHERE file_id = %d AND (user_id = %d OR LOWER(user_email) = %s)",
+				"SELECT COUNT(*) FROM `{$files_table}` f
+				INNER JOIN `{$users_table}` fu ON fu.file_id = f.id
+				WHERE f.id = %d {$status_clause} {$visibility_clause}
+				AND ( fu.user_id = %d OR LOWER(fu.user_email) = %s )",
 				absint( $file_id ),
 				$user_id,
 				$user_email
@@ -6072,12 +6085,15 @@ class AJForms {
 		$status_clause = in_array( 'status', (array) $file_columns, true )
 			? "( f.status <> 'archived' OR f.status IS NULL ) AND "
 			: '';
+		$visibility_clause = in_array( 'visibility', (array) $file_columns, true )
+			? "( f.visibility <> 'internal' OR f.visibility IS NULL ) AND "
+			: '';
 
 		return $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT DISTINCT f.* FROM `{$files_table}` f
 				INNER JOIN `{$users_table}` fu ON fu.file_id = f.id
-				WHERE {$status_clause}( fu.user_id = %d OR LOWER(fu.user_email) = %s )
+				WHERE {$status_clause}{$visibility_clause}( fu.user_id = %d OR LOWER(fu.user_email) = %s )
 				ORDER BY f.category ASC, f.created_at DESC",
 				get_current_user_id(),
 				$user_email
