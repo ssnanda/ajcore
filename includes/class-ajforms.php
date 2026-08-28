@@ -4648,6 +4648,47 @@ class AJForms {
 		);
 	}
 
+	// Portal support contact shown in the footer. Each site runs its own plugin instance, so
+	// this resolves per-site: an explicit ajforms_settings value wins, otherwise the email is
+	// derived from the site's own domain (contactus@<domain>), with the NC LLC Agents details
+	// as the final fallback. Override wholesale with the 'ajcore_portal_support_contact' filter.
+	private function get_portal_support_contact() {
+		$settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : get_option( 'ajforms_settings', array() );
+		$settings = is_array( $settings ) ? $settings : array();
+
+		$phone = ! empty( $settings['portal_support_phone'] ) ? sanitize_text_field( (string) $settings['portal_support_phone'] ) : '(704) 307-2135';
+
+		$email = '';
+		if ( ! empty( $settings['portal_support_email'] ) && is_email( $settings['portal_support_email'] ) ) {
+			$email = sanitize_email( (string) $settings['portal_support_email'] );
+		}
+		if ( '' === $email ) {
+			$host = wp_parse_url( home_url(), PHP_URL_HOST );
+			$host = is_string( $host ) ? preg_replace( '/^www\./i', '', strtolower( $host ) ) : '';
+			$is_local = '' === $host || false === strpos( $host, '.' )
+				|| false !== strpos( $host, 'localhost' )
+				|| (bool) preg_match( '/\.(test|local|ddev\.site)$/', $host );
+			if ( ! $is_local ) {
+				$email = 'contactus@' . $host;
+			}
+		}
+		if ( '' === $email ) {
+			$email = 'contactus@ncllcagents.com';
+		}
+
+		$digits   = preg_replace( '/\D+/', '', $phone );
+		$tel_href = '' !== $digits ? '+' . ( 10 === strlen( $digits ) ? '1' : '' ) . $digits : '';
+
+		return apply_filters(
+			'ajcore_portal_support_contact',
+			array(
+				'phone'    => $phone,
+				'tel_href' => $tel_href,
+				'email'    => $email,
+			)
+		);
+	}
+
 	private function get_portal_pay_ledger_nonce() {
 		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
 
@@ -4679,13 +4720,14 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'Billing', 'ajforms' ); ?></h2>
 
-			<div class="aj-portal-open-balance" style="margin:0 0 24px;padding:20px;border:1px solid #dbeafe;border-radius:22px;background:#eff6ff;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+			<div class="aj-portal-billing-cards" style="display:flex;gap:16px;flex-wrap:wrap;align-items:stretch;margin:0 0 24px;">
+			<div class="aj-portal-open-balance" style="flex:2 1 340px;padding:20px;border:1px solid #dbeafe;border-radius:22px;background:#eff6ff;display:flex;flex-direction:column;gap:14px;">
 				<div>
 					<h3 style="margin:0 0 6px;"><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></h3>
 					<div style="font-size:24px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_money( $balance_due, $balance_currency ) ); ?></div>
 					<p style="margin:6px 0 0;color:#475569;"><?php esc_html_e( 'Make a payment or pay your current balance in one checkout.', 'ajforms' ); ?></p>
 				</div>
-				<div class="aj-portal-payment-box" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;justify-content:flex-end;">
+				<div class="aj-portal-payment-box" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;justify-content:flex-start;margin-top:auto;">
 					<label style="display:flex;flex-direction:column;gap:6px;font-weight:700;color:#334155;min-width:170px;">
 						<span><?php esc_html_e( 'Payment Amount', 'ajforms' ); ?></span>
 						<input type="number" class="aj-portal-payment-amount-input" min="0.01" step="0.01" inputmode="decimal" value="<?php echo esc_attr( $balance_due > 0 ? number_format( $balance_due, 2, '.', '' ) : '' ); ?>" placeholder="0.00" style="width:170px;border:1px solid #bfdbfe;border-radius:14px;padding:10px 12px;font-weight:800;background:#fff;">
@@ -4694,7 +4736,7 @@ class AJForms {
 				</div>
 			</div>
 
-			<div class="aj-portal-autopay" style="margin:0 0 24px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+			<div class="aj-portal-autopay" style="flex:1 1 240px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;flex-direction:column;gap:12px;justify-content:space-between;">
 				<div>
 					<strong><?php esc_html_e( 'Payment Methods & AutoPay', 'ajforms' ); ?></strong>
 					<p style="margin:4px 0 0;color:#64748b;"><?php esc_html_e( 'Securely add or update the payment method Stripe uses for eligible recurring subscriptions.', 'ajforms' ); ?></p>
@@ -4702,12 +4744,13 @@ class AJForms {
 				<button type="button" class="button aj-portal-billing-portal-button" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_stripe_customer_portal' ) ); ?>"><?php esc_html_e( 'Manage Payment Methods / AutoPay', 'ajforms' ); ?></button>
 			</div>
 
-			<div class="aj-portal-balance-summary" style="margin:0 0 24px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+			<div class="aj-portal-balance-summary" style="flex:1 1 220px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;flex-direction:column;gap:8px;justify-content:space-between;">
 				<div>
 					<strong><?php esc_html_e( 'Final Ledger Balance', 'ajforms' ); ?></strong>
 					<p style="margin:4px 0 0;color:#64748b;"><?php esc_html_e( 'Running total after all visible billing history rows.', 'ajforms' ); ?></p>
 				</div>
 				<div style="font-size:20px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_balance_amount( $final_balance, $balance_currency ) ); ?></div>
+			</div>
 			</div>
 
 			<?php if ( ! empty( $pending_draft_invoices ) ) : ?>
@@ -5195,7 +5238,8 @@ class AJForms {
 			$business_name ? $business_name : '-',
 			$display_name ? $display_name : '-'
 		);
-		$text_url             = 'sms:+17043072135?body=' . rawurlencode( $text_message );
+		$overview_support     = $this->get_portal_support_contact();
+		$text_url             = 'sms:' . ( '' !== $overview_support['tel_href'] ? $overview_support['tel_href'] : '+17043072135' ) . '?body=' . rawurlencode( $text_message );
 
 		// Genuinely time-sensitive/penalty-bearing (federal BOI reporting), unlike the other 2 items
 		// in the "Helpful Reading" list further down — this gets its own prominent, hard-to-miss
@@ -6395,7 +6439,9 @@ class AJForms {
 			__( 'Hi, I am an existing customer (%s) and I need help with ', 'ajforms' ),
 			$footer_display_name ? $footer_display_name : '-'
 		);
-		$footer_text_url  = 'sms:+17043072135?body=' . rawurlencode( $footer_text_message );
+		$footer_support_contact = $this->get_portal_support_contact();
+		$footer_sms_target      = '' !== $footer_support_contact['tel_href'] ? $footer_support_contact['tel_href'] : '+17043072135';
+		$footer_text_url  = 'sms:' . $footer_sms_target . '?body=' . rawurlencode( $footer_text_message );
 		$footer_email_url = home_url( '/email-us/' );
 
 		ob_start();
@@ -6824,12 +6870,13 @@ class AJForms {
 				</style>
 				<p>
 					<?php
+					$footer_support = $this->get_portal_support_contact();
 					echo wp_kses_post(
 						sprintf(
 							/* translators: 1: phone number link, 2: email link */
 							__( 'Questions about your account? Call or text us at %1$s, or email %2$s.', 'ajforms' ),
-							'<a href="tel:+17043072135">(704) 307-2135</a>',
-							'<a href="mailto:contactus@ncllcagents.com">contactus@ncllcagents.com</a>'
+							'<a href="tel:' . esc_attr( $footer_support['tel_href'] ) . '">' . esc_html( $footer_support['phone'] ) . '</a>',
+							'<a href="mailto:' . esc_attr( $footer_support['email'] ) . '">' . esc_html( $footer_support['email'] ) . '</a>'
 						)
 					);
 					?>
