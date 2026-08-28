@@ -2898,7 +2898,14 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_products( WP_REST_Request $request ) {
-		return rest_ensure_response( array( 'products' => $this->select_rows( $this->portal_table( 'aj_portal_stripe_products' ), array( 'stripe_product_id', 'stripe_price_id', 'name', 'description', 'price_amount', 'currency', 'recurring_interval', 'active', 'visibility', 'custom_label', 'sort_order', 'livemode', 'synced_at' ), $request, array( 'name', 'stripe_product_id', 'stripe_price_id' ), 'sort_order ASC, name ASC, id DESC' ) ) );
+		$products = $this->select_rows( $this->portal_table( 'aj_portal_stripe_products' ), array( 'stripe_product_id', 'stripe_price_id', 'name', 'description', 'price_amount', 'currency', 'recurring_interval', 'active', 'visibility', 'custom_label', 'sort_order', 'livemode', 'synced_at', 'raw_data' ), $request, array( 'name', 'stripe_product_id', 'stripe_price_id' ), 'sort_order ASC, name ASC, id DESC' );
+		foreach ( $products as &$product ) {
+			$raw_data = isset( $product['raw_data'] ) && is_array( $product['raw_data'] ) ? $product['raw_data'] : array();
+			$product['price_description'] = ! empty( $raw_data['nickname'] ) ? sanitize_text_field( (string) $raw_data['nickname'] ) : '';
+			unset( $product['raw_data'] );
+		}
+		unset( $product );
+		return rest_ensure_response( array( 'products' => $products ) );
 	}
 
 	public function get_ops_subscriptions( WP_REST_Request $request ) {
