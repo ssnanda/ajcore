@@ -2394,6 +2394,10 @@ class AJForms_Admin {
 			}
 		}
 
+		if ( '' === $summary['subscription_id'] ) {
+			$summary['subscription_id'] = $this->get_invoice_subscription_id_from_raw_data( $invoice );
+		}
+
 		return $summary;
 	}
 
