@@ -3346,9 +3346,11 @@ class AJForms {
 				if ( ! in_array( $subscription->status, array( 'active', 'trialing' ), true ) ) {
 					return false;
 				}
+				// Show the next scheduled charge for every active subscription regardless of how
+				// far out it is — a yearly plan renewing in 11 months still belongs here.
 				$period  = $this->get_subscription_period_context( $subscription );
 				$renewal = ! empty( $period['end'] ) ? strtotime( $period['end'] . ' UTC' ) : 0;
-				return $renewal && $renewal >= time() && $renewal <= time() + ( 10 * DAY_IN_SECONDS );
+				return $renewal && $renewal >= ( time() - DAY_IN_SECONDS );
 			}
 		);
 		$active_subscriptions = array_filter(
@@ -3674,7 +3676,11 @@ class AJForms {
 				$payment_time = ! empty( $payment_entry->ledger_date ) ? strtotime( $payment_entry->ledger_date . ' UTC' ) : 0;
 				$amount_date_match = abs( abs( (float) $service_entry->amount ) - abs( (float) $payment_entry->amount ) ) < 0.00001
 					&& sanitize_key( (string) $service_entry->currency ) === sanitize_key( (string) $payment_entry->currency )
-					&& $service_time && $payment_time && abs( $service_time - $payment_time ) <= 2 * DAY_IN_SECONDS;
+					// Subscription invoices are dated to the service-period start but can be paid
+					// well into that period (deferred payment method, dunning retry, staff
+					// attaching a card later), so the amount fallback allows a full billing
+					// cycle of lag before giving up and treating the paid invoice as net-zero.
+					&& $service_time && $payment_time && abs( $service_time - $payment_time ) <= 45 * DAY_IN_SECONDS;
 				if ( $strong_match ) {
 					$matched_index = $payment_index;
 					break;
@@ -4556,6 +4562,16 @@ class AJForms {
 				WHERE parent_invoice.source_type = 'invoice'
 				AND parent_invoice.source_object_id = l.invoice_id
 				AND parent_invoice.status IN ('canceled','cancelled','void','voided','draft')
+			)
+			AND NOT (
+				l.source_type = 'invoice'
+				AND l.invoice_id <> ''
+				AND EXISTS (
+					SELECT 1 FROM {$this->get_portal_ledger_table()} invoice_line
+					WHERE invoice_line.source_type IN ('service_charge','invoice_line_item','checkout_line_item')
+					AND invoice_line.invoice_id = l.invoice_id
+					AND invoice_line.stripe_customer_id = l.stripe_customer_id
+				)
 			)";
 
 		$ledger_ids = array_values( array_filter( array_map( 'absint', (array) $ledger_ids ) ) );
@@ -4668,7 +4684,7 @@ class AJForms {
 				</div>
 			<?php endif; ?>
 
-			<h3><?php esc_html_e( 'Upcoming Payments — Next 10 Days', 'ajforms' ); ?></h3>
+			<h3><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></h3>
 			<?php if ( empty( $upcoming ) ) : ?>
 				<p><?php esc_html_e( 'No upcoming payment is currently scheduled.', 'ajforms' ); ?></p>
 			<?php else : ?>

@@ -2911,6 +2911,19 @@ class AJForms_Admin {
 
 			$currency = isset( $invoice['currency'] ) ? strtolower( sanitize_key( $invoice['currency'] ) ) : 'usd';
 			$line_summary = $this->get_invoice_line_summary( $invoice );
+			// Basil dropped charge.invoice and the flat invoice.payment_intent / invoice.charge
+			// fields, so a paid invoice can only be joined to its payment through invoice.payments.
+			// The list call does not expand that sub-list, so pull it per invoice when a paid
+			// invoice arrives without a resolvable payment reference.
+			$invoice_payment_refs = $this->get_invoice_payment_reference_ids( $invoice );
+			if ( '' === $invoice_payment_refs['payment_intent_id'] && '' === $invoice_payment_refs['charge_id']
+				&& 'paid' === sanitize_key( (string) ( $invoice['status'] ?? '' ) ) ) {
+				$expanded_invoice = $this->stripe_api_get( 'invoices/' . rawurlencode( (string) $invoice['id'] ), $secret_key, array( 'expand[]' => 'payments' ) );
+				if ( ! is_wp_error( $expanded_invoice ) && is_array( $expanded_invoice ) && ! empty( $expanded_invoice['id'] ) ) {
+					$invoice              = $expanded_invoice;
+					$invoice_payment_refs = $this->get_invoice_payment_reference_ids( $invoice );
+				}
+			}
 			$invoice_amount = isset( $invoice['total'] ) ? $invoice['total'] : ( isset( $invoice['amount_paid'] ) ? $invoice['amount_paid'] : ( isset( $invoice['amount_due'] ) ? $invoice['amount_due'] : 0 ) );
 			$transaction_date = ! empty( $invoice['created'] ) ? $this->stripe_timestamp_to_mysql( $invoice['created'] ) : null;
 			// AJOps manual one-off invoices use the operator-selected line date. Subscription invoices
@@ -2923,8 +2936,8 @@ class AJForms_Admin {
 				'object_type'        => 'invoice',
 				'stripe_customer_id' => sanitize_text_field( (string) $invoice['customer'] ),
 				'invoice_id'         => sanitize_text_field( (string) $invoice['id'] ),
-				'payment_intent_id'  => ! empty( $invoice['payment_intent'] ) ? sanitize_text_field( (string) $invoice['payment_intent'] ) : '',
-				'charge_id'          => ! empty( $invoice['charge'] ) ? sanitize_text_field( (string) $invoice['charge'] ) : '',
+				'payment_intent_id'  => $invoice_payment_refs['payment_intent_id'],
+				'charge_id'          => $invoice_payment_refs['charge_id'],
 				'description'        => ! empty( $invoice['description'] ) ? sanitize_text_field( (string) $invoice['description'] ) : ( ! empty( $line_summary['description'] ) ? $line_summary['description'] : sprintf( __( 'Invoice %s', 'ajforms' ), $invoice['id'] ) ),
 				'amount'             => $this->stripe_amount_to_decimal( $invoice_amount, $currency ),
 				'currency'           => $currency,
@@ -6852,6 +6865,10 @@ class AJForms_Admin {
 			$next_billing_date = $period_end;
 		}
 		$price_label  = $this->format_portal_money( $amount, $currency ) . ( '' !== $interval ? '/' . $interval : '' );
+		// Resolve the payment reference the same way the transaction sync does, so paid
+		// invoice service rows carry a payment_intent/charge id the portal ledger matcher
+		// can join to the charge row (Basil no longer exposes charge.invoice).
+		$parent_payment_refs = $this->get_invoice_payment_reference_ids( $parent );
 
 		return $this->upsert_portal_service_snapshot(
 			array_merge(
@@ -6868,8 +6885,8 @@ class AJForms_Admin {
 					'billing_type'          => $billing_type,
 					'checkout_session_id'   => 'checkout_session' === $source_type && ! empty( $parent['id'] ) ? sanitize_text_field( (string) $parent['id'] ) : '',
 					'invoice_id'            => 'invoice' === $source_type && ! empty( $parent['id'] ) ? sanitize_text_field( (string) $parent['id'] ) : ( ! empty( $parent['invoice'] ) && is_scalar( $parent['invoice'] ) ? sanitize_text_field( (string) $parent['invoice'] ) : '' ),
-					'payment_intent_id'     => ! empty( $parent['payment_intent'] ) && is_scalar( $parent['payment_intent'] ) ? sanitize_text_field( (string) $parent['payment_intent'] ) : '',
-					'charge_id'             => 'charge' === $source_type && ! empty( $parent['id'] ) ? sanitize_text_field( (string) $parent['id'] ) : ( ! empty( $parent['charge'] ) && is_scalar( $parent['charge'] ) ? sanitize_text_field( (string) $parent['charge'] ) : '' ),
+					'payment_intent_id'     => $parent_payment_refs['payment_intent_id'],
+					'charge_id'             => 'charge' === $source_type && ! empty( $parent['id'] ) ? sanitize_text_field( (string) $parent['id'] ) : $parent_payment_refs['charge_id'],
 					'subscription_id'       => $subscription_id,
 					'service_period_start'  => $period_start,
 					'service_period_end'    => $period_end,
@@ -16585,6 +16602,53 @@ class AJForms_Admin {
 	}
 
 	/**
+	 * Resolves the payment_intent / charge a Stripe invoice was settled with, across API
+	 * versions. Basil (2025-03-31+) exposes them only through the invoice.payments list
+	 * (payments.data[].payment.payment_intent | .charge) and dropped charge.invoice, so
+	 * without this a paid invoice can no longer be joined to its charge row by ID. Older
+	 * invoices carry the flat invoice.payment_intent / invoice.charge fields.
+	 */
+	private function get_invoice_payment_reference_ids( $invoice ) {
+		$refs = array( 'payment_intent_id' => '', 'charge_id' => '' );
+		if ( ! is_array( $invoice ) ) {
+			return $refs;
+		}
+
+		$scalar_id = static function ( $value ) {
+			if ( is_array( $value ) ) {
+				$value = $value['id'] ?? '';
+			}
+			return is_scalar( $value ) ? sanitize_text_field( (string) $value ) : '';
+		};
+
+		$refs['payment_intent_id'] = ! empty( $invoice['payment_intent'] ) ? $scalar_id( $invoice['payment_intent'] ) : '';
+		$refs['charge_id']         = ! empty( $invoice['charge'] ) ? $scalar_id( $invoice['charge'] ) : '';
+
+		$payments = ! empty( $invoice['payments']['data'] ) && is_array( $invoice['payments']['data'] ) ? $invoice['payments']['data'] : array();
+		foreach ( $payments as $payment_entry ) {
+			if ( ! is_array( $payment_entry ) ) {
+				continue;
+			}
+			$status = isset( $payment_entry['status'] ) ? sanitize_key( (string) $payment_entry['status'] ) : '';
+			if ( '' !== $status && ! in_array( $status, array( 'paid', 'succeeded' ), true ) ) {
+				continue;
+			}
+			$payment = ! empty( $payment_entry['payment'] ) && is_array( $payment_entry['payment'] ) ? $payment_entry['payment'] : array();
+			if ( '' === $refs['payment_intent_id'] && ! empty( $payment['payment_intent'] ) ) {
+				$refs['payment_intent_id'] = $scalar_id( $payment['payment_intent'] );
+			}
+			if ( '' === $refs['charge_id'] && ! empty( $payment['charge'] ) ) {
+				$refs['charge_id'] = $scalar_id( $payment['charge'] );
+			}
+			if ( '' !== $refs['payment_intent_id'] || '' !== $refs['charge_id'] ) {
+				break;
+			}
+		}
+
+		return $refs;
+	}
+
+	/**
 	 * Keeps invoice-sourced service requests honest against Stripe: if the subscription an
 	 * invoice belongs to has since been canceled, the request's workflow status is moved to
 	 * "Cancelled" so staff stop seeing follow-up actions for a subscription that no longer exists —
@@ -20147,7 +20211,7 @@ class AJForms_Admin {
 		);
 		?>
 		<style>
-			.ajcore-schema-view-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.ajcore-schema-view-tabs .button.is-active{background:#0f172a!important;border-color:#0f172a!important;color:#fff!important}.ajcore-schema-view[hidden]{display:none}.ajcore-schema-map{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.ajcore-schema-group{padding:18px;border:1px solid #dbe7f3;border-radius:18px;background:linear-gradient(145deg,#fff,#f8fafc)}.ajcore-schema-group h3{margin:0 0 5px!important}.ajcore-schema-group>p{min-height:42px;margin:0 0 12px;color:#64748b}.ajcore-schema-chips{display:flex;gap:7px;flex-wrap:wrap}.ajcore-schema-chip{padding:6px 9px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#334155;font-family:monospace;font-size:12px;cursor:pointer}.ajcore-schema-chip:hover{border-color:#3157ff;color:#1d4ed8}.ajcore-schema-flow-list{display:grid;gap:14px}.ajcore-schema-flow-card{padding:18px;border:1px solid #dbe7f3;border-radius:18px;background:#fff}.ajcore-schema-flow-card h3{margin:0 0 4px!important}.ajcore-schema-flow-card>p{margin:0 0 14px;color:#64748b}.ajcore-schema-flow-steps{display:flex;align-items:stretch;gap:8px;overflow-x:auto;padding-bottom:4px}.ajcore-schema-flow-step{display:flex;align-items:center;min-width:180px;padding:12px;border:1px solid #c7d2fe;border-radius:13px;background:#eef2ff;color:#312e81;font-family:monospace;font-weight:800;overflow-wrap:anywhere}.ajcore-schema-flow-arrow{display:grid;place-items:center;color:#3157ff;font-size:22px;font-weight:900}.ajcore-schema-row-focus td{animation:ajcoreSchemaFocus 2.4s ease}@keyframes ajcoreSchemaFocus{0%,100%{background:inherit}20%,75%{background:#fef3c7}}.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-query{display:grid;grid-template-columns:170px minmax(280px,1fr) auto;gap:10px;margin:16px 0;padding:14px;border:1px solid #c7d2fe;border-radius:16px;background:#eef2ff}.ajcore-schema-query select,.ajcore-schema-query input{width:100%;min-height:42px}.ajcore-schema-filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr));gap:10px;margin:16px 0;padding:14px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-filters input,.ajcore-schema-filters select{width:100%;min-height:40px}.ajcore-schema-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:14px;background:#eff6ff}.ajcore-schema-actions.is-visible{display:flex}.ajcore-schema-actions strong{margin-right:4px}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}.ajcore-schema-related{display:flex;flex-direction:column;gap:5px;min-width:210px}.ajcore-schema-related code{white-space:normal}.ajcore-schema-empty{display:none;margin:14px 0 0;color:#64748b;font-weight:700}.ajcore-schema-result-modal[hidden]{display:none}.ajcore-schema-result-modal{position:fixed;inset:0;z-index:100110;display:grid;place-items:center;padding:24px;background:rgba(15,23,42,.5)}.ajcore-schema-result-dialog{display:flex;flex-direction:column;width:min(1200px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:hidden;border:1px solid #cbd5e1;border-radius:18px;background:#fff;box-shadow:0 28px 80px rgba(15,23,42,.3)}.ajcore-schema-result-head,.ajcore-schema-result-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;border-bottom:1px solid #e2e8f0}.ajcore-schema-result-head h2{margin:0!important;font-size:22px}.ajcore-schema-result-close{display:grid;place-items:center;width:38px;height:38px;padding:0;border:0;background:transparent;color:#64748b;font-size:30px;cursor:pointer}.ajcore-schema-result-body{overflow:auto;padding:20px 22px}.ajcore-schema-results-scroll{max-height:calc(100vh - 210px);overflow:auto;border:1px solid #dbe7f3;border-radius:14px}.ajcore-schema-result-body table{margin:0!important;border:0!important;border-radius:0!important}.ajcore-schema-result-body td{max-width:420px;white-space:normal;overflow-wrap:anywhere;vertical-align:top}.ajcore-schema-result-body td .ajcore-schema-cellval{display:block;max-height:140px;overflow:auto;white-space:pre-wrap}.ajcore-schema-copybar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px}.ajcore-schema-copybar .ajcore-schema-copied{color:#15803d;font-weight:800;font-size:12px}.ajcore-schema-result-body table td .ajcore-schema-cellcopy{display:block;margin-top:4px;font-size:11px;color:#2563eb;background:none;border:0;padding:0;cursor:pointer}.ajcore-schema-result-foot{justify-content:space-between;border-top:1px solid #e2e8f0;border-bottom:0}@media(max-width:1000px){.ajcore-schema-filters{grid-template-columns:1fr 1fr}}@media(max-width:782px){.ajcore-schema-query,.ajcore-schema-filters{grid-template-columns:1fr}.ajcore-schema-table{display:block;overflow-x:auto}.ajcore-schema-result-modal{padding:10px}.ajcore-schema-result-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px)}.ajcore-schema-flow-steps{flex-direction:column}.ajcore-schema-flow-arrow{transform:rotate(90deg)}}
+			.ajcore-schema-view-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.ajcore-schema-view-tabs .button.is-active{background:#0f172a!important;border-color:#0f172a!important;color:#fff!important}.ajcore-schema-view[hidden]{display:none}.ajcore-schema-map{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.ajcore-schema-group{padding:18px;border:1px solid #dbe7f3;border-radius:18px;background:linear-gradient(145deg,#fff,#f8fafc)}.ajcore-schema-group h3{margin:0 0 5px!important}.ajcore-schema-group>p{min-height:42px;margin:0 0 12px;color:#64748b}.ajcore-schema-chips{display:flex;gap:7px;flex-wrap:wrap}.ajcore-schema-chip{padding:6px 9px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#334155;font-family:monospace;font-size:12px;cursor:pointer}.ajcore-schema-chip:hover{border-color:#3157ff;color:#1d4ed8}.ajcore-schema-flow-list{display:grid;gap:14px}.ajcore-schema-flow-card{padding:18px;border:1px solid #dbe7f3;border-radius:18px;background:#fff}.ajcore-schema-flow-card h3{margin:0 0 4px!important}.ajcore-schema-flow-card>p{margin:0 0 14px;color:#64748b}.ajcore-schema-flow-steps{display:flex;align-items:stretch;gap:8px;overflow-x:auto;padding-bottom:4px}.ajcore-schema-flow-step{display:flex;align-items:center;min-width:180px;padding:12px;border:1px solid #c7d2fe;border-radius:13px;background:#eef2ff;color:#312e81;font-family:monospace;font-weight:800;overflow-wrap:anywhere}.ajcore-schema-flow-arrow{display:grid;place-items:center;color:#3157ff;font-size:22px;font-weight:900}.ajcore-schema-row-focus td{animation:ajcoreSchemaFocus 2.4s ease}@keyframes ajcoreSchemaFocus{0%,100%{background:inherit}20%,75%{background:#fef3c7}}.ajcore-schema-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.ajcore-schema-direct{background:#e0e7ff;color:#3730a3}.ajcore-schema-derived{background:#fef3c7;color:#92400e}.ajcore-schema-local{background:#f1f5f9;color:#475569}.ajcore-schema-query{display:grid;grid-template-columns:170px minmax(280px,1fr) auto;gap:10px;margin:16px 0;padding:14px;border:1px solid #c7d2fe;border-radius:16px;background:#eef2ff}.ajcore-schema-query select,.ajcore-schema-query input{width:100%;min-height:42px}.ajcore-schema-filters{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr));gap:10px;margin:16px 0;padding:14px;border:1px solid #dbe7f3;border-radius:16px;background:#f8fafc}.ajcore-schema-filters input,.ajcore-schema-filters select{width:100%;min-height:40px}.ajcore-schema-actions{display:none;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:14px;background:#eff6ff}.ajcore-schema-actions.is-visible{display:flex}.ajcore-schema-actions strong{margin-right:4px}.ajcore-schema-table code{white-space:nowrap}.ajcore-schema-table td{vertical-align:top!important}.ajcore-schema-related{display:flex;flex-direction:column;gap:5px;min-width:210px}.ajcore-schema-related code{white-space:normal}.ajcore-schema-empty{display:none;margin:14px 0 0;color:#64748b;font-weight:700}.ajcore-schema-result-modal[hidden]{display:none}.ajcore-schema-result-modal{position:fixed;inset:0;z-index:100110;display:grid;place-items:center;padding:24px;background:rgba(15,23,42,.5)}.ajcore-schema-result-dialog{display:flex;flex-direction:column;width:min(1800px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:hidden;border:1px solid #cbd5e1;border-radius:18px;background:#fff;box-shadow:0 28px 80px rgba(15,23,42,.3)}.ajcore-schema-result-head,.ajcore-schema-result-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 22px;border-bottom:1px solid #e2e8f0}.ajcore-schema-result-head h2{margin:0!important;font-size:22px}.ajcore-schema-result-close{display:grid;place-items:center;width:38px;height:38px;padding:0;border:0;background:transparent;color:#64748b;font-size:30px;cursor:pointer}.ajcore-schema-result-body{overflow:auto;padding:20px 22px}.ajcore-schema-results-scroll{max-height:calc(100vh - 210px);overflow:auto;border:1px solid #dbe7f3;border-radius:14px}.ajcore-schema-result-body table{margin:0!important;border:0!important;border-radius:0!important}.ajcore-schema-result-body td{max-width:420px;white-space:normal;overflow-wrap:anywhere;vertical-align:top}.ajcore-schema-result-body td .ajcore-schema-cellval{display:block;max-height:160px;overflow:auto;white-space:pre-wrap}.ajcore-schema-result-body td.ajcore-schema-nowrap .ajcore-schema-cellval{white-space:pre}.ajcore-schema-resultbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;color:#64748b;font-weight:700;font-size:13px}.ajcore-schema-result-foot{justify-content:flex-end;flex-wrap:wrap;gap:10px;border-top:1px solid #e2e8f0;border-bottom:0}.ajcore-schema-result-foot .button{min-height:44px;padding:8px 20px;font-size:14px;font-weight:700}.ajcore-schema-result-foot .ajcore-schema-copied{align-self:center;color:#15803d;font-weight:800;font-size:13px}@media(max-width:1000px){.ajcore-schema-filters{grid-template-columns:1fr 1fr}}@media(max-width:782px){.ajcore-schema-query,.ajcore-schema-filters{grid-template-columns:1fr}.ajcore-schema-table{display:block;overflow-x:auto}.ajcore-schema-result-modal{padding:10px}.ajcore-schema-result-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px)}.ajcore-schema-flow-steps{flex-direction:column}.ajcore-schema-flow-arrow{transform:rotate(90deg)}}
 		</style>
 		<div class="ajforms-settings-card">
 			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'AJCore Database Inventory', 'ajforms' ); ?></h2><p><?php esc_html_e( 'One numbered row per physical table, with a concise purpose, saved row count, data source, and known relationships.', 'ajforms' ); ?></p></div><form method="post" style="margin:0;"><?php wp_nonce_field( 'ajcore_refresh_schema_counts', 'ajcore_schema_counts_nonce' ); ?><button type="submit" class="button" name="ajcore_refresh_schema_counts" value="1"><?php esc_html_e( 'Update Row Counts', 'ajforms' ); ?></button></form></div>
@@ -20199,7 +20263,7 @@ class AJForms_Admin {
 				<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Data Flows', 'ajforms' ); ?></h2><p><?php esc_html_e( 'These simplified journeys explain how information moves through AJCore. They describe application behavior, not necessarily database foreign keys.', 'ajforms' ); ?></p></div></div>
 				<div class="ajcore-schema-flow-list"><?php foreach ( $data_flows as $flow ) : ?><article class="ajcore-schema-flow-card"><h3><?php echo esc_html( $flow['title'] ); ?></h3><p><?php echo esc_html( $flow['description'] ); ?></p><div class="ajcore-schema-flow-steps"><?php foreach ( $flow['steps'] as $step_index => $step ) : ?><?php if ( $step_index ) : ?><span class="ajcore-schema-flow-arrow">→</span><?php endif; ?><?php $step_is_table = isset( $table_group_lookup[ $step ] ); ?><?php if ( $step_is_table ) : ?><button type="button" class="ajcore-schema-flow-step ajcore-schema-chip" data-schema-focus-logical="<?php echo esc_attr( $step ); ?>"><?php echo esc_html( $step ); ?></button><?php else : ?><span class="ajcore-schema-flow-step"><?php echo esc_html( $step ); ?></span><?php endif; ?><?php endforeach; ?></div></article><?php endforeach; ?></div>
 			</section>
-			<?php if ( $query_error || $query_label ) : ?><div class="ajcore-schema-result-modal" id="ajcore-schema-result-modal" role="dialog" aria-modal="true" aria-labelledby="ajcore-schema-result-title"><div class="ajcore-schema-result-dialog"><div class="ajcore-schema-result-head"><h2 id="ajcore-schema-result-title"><?php echo esc_html( $query_error ? __( 'Query Error', 'ajforms' ) : $query_label ); ?></h2><button type="button" class="ajcore-schema-result-close" data-schema-result-close aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-schema-result-body"><?php if ( $query_error ) : ?><div class="notice notice-error inline"><p><?php echo esc_html( $query_error ); ?></p></div><?php elseif ( empty( $query_rows ) ) : ?><p><?php esc_html_e( 'The query completed successfully and returned no rows.', 'ajforms' ); ?></p><?php else : ?><div class="ajcore-schema-copybar"><button type="button" class="button" data-schema-copy="tsv"><?php esc_html_e( 'Copy all (TSV)', 'ajforms' ); ?></button><button type="button" class="button" data-schema-copy="json"><?php esc_html_e( 'Copy all (JSON)', 'ajforms' ); ?></button><span class="ajcore-schema-copied" data-schema-copied hidden><?php esc_html_e( 'Copied', 'ajforms' ); ?></span><span style="color:#64748b;font-size:12px;"><?php echo esc_html( sprintf( _n( '%d row', '%d rows', count( $query_rows ), 'ajforms' ), count( $query_rows ) ) ); ?></span></div><div class="ajcore-schema-results-scroll"><table class="widefat striped" id="ajcore-schema-result-table"><thead><tr><?php foreach ( $query_columns as $column ) : ?><th><?php echo esc_html( $column ); ?></th><?php endforeach; ?></tr></thead><tbody><?php foreach ( $query_rows as $query_row ) : ?><tr><?php foreach ( $query_columns as $column ) : ?><?php $value = isset( $query_row[ $column ] ) ? $query_row[ $column ] : null; $value = is_scalar( $value ) || null === $value ? (string) $value : wp_json_encode( $value ); ?><td><span class="ajcore-schema-cellval"><?php echo esc_html( $value ); ?></span><button type="button" class="ajcore-schema-cellcopy" data-schema-cellcopy><?php esc_html_e( 'copy', 'ajforms' ); ?></button></td><?php endforeach; ?></tr><?php endforeach; ?></tbody></table></div><?php endif; ?></div><div class="ajcore-schema-result-foot"><button type="button" class="button button-primary" data-schema-result-close><?php esc_html_e( 'Close', 'ajforms' ); ?></button></div></div></div><?php endif; ?>
+			<?php if ( $query_error || $query_label ) : ?><div class="ajcore-schema-result-modal" id="ajcore-schema-result-modal" role="dialog" aria-modal="true" aria-labelledby="ajcore-schema-result-title"><div class="ajcore-schema-result-dialog"><div class="ajcore-schema-result-head"><h2 id="ajcore-schema-result-title"><?php echo esc_html( $query_error ? __( 'Query Error', 'ajforms' ) : $query_label ); ?></h2><button type="button" class="ajcore-schema-result-close" data-schema-result-close aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-schema-result-body"><?php if ( $query_error ) : ?><div class="notice notice-error inline"><p><?php echo esc_html( $query_error ); ?></p></div><?php elseif ( empty( $query_rows ) ) : ?><p><?php esc_html_e( 'The query completed successfully and returned no rows.', 'ajforms' ); ?></p><?php else : ?><div class="ajcore-schema-resultbar"><span><?php echo esc_html( sprintf( _n( '%d row', '%d rows', count( $query_rows ), 'ajforms' ), count( $query_rows ) ) ); ?></span><button type="button" class="button button-small" data-schema-wrap-toggle><?php esc_html_e( 'Toggle wrap', 'ajforms' ); ?></button></div><div class="ajcore-schema-results-scroll"><table class="widefat striped" id="ajcore-schema-result-table"><thead><tr><?php foreach ( $query_columns as $column ) : ?><th><?php echo esc_html( $column ); ?></th><?php endforeach; ?></tr></thead><tbody><?php foreach ( $query_rows as $query_row ) : ?><tr><?php foreach ( $query_columns as $column ) : ?><?php $value = isset( $query_row[ $column ] ) ? $query_row[ $column ] : null; $value = is_scalar( $value ) || null === $value ? (string) $value : wp_json_encode( $value ); ?><td><span class="ajcore-schema-cellval"><?php echo esc_html( $value ); ?></span></td><?php endforeach; ?></tr><?php endforeach; ?></tbody></table></div><?php endif; ?></div><div class="ajcore-schema-result-foot"><?php if ( ! empty( $query_rows ) ) : ?><span class="ajcore-schema-copied" data-schema-copied hidden><?php esc_html_e( 'Copied', 'ajforms' ); ?></span><button type="button" class="button" data-schema-copy="tsv"><?php esc_html_e( 'Copy TSV', 'ajforms' ); ?></button><button type="button" class="button" data-schema-copy="markdown"><?php esc_html_e( 'Copy Markdown', 'ajforms' ); ?></button><button type="button" class="button" data-schema-copy="json"><?php esc_html_e( 'Copy JSON', 'ajforms' ); ?></button><button type="button" class="button" data-schema-download-csv><?php esc_html_e( 'Download CSV', 'ajforms' ); ?></button><?php endif; ?><button type="button" class="button button-primary" data-schema-result-close><?php esc_html_e( 'Close', 'ajforms' ); ?></button></div></div></div><?php endif; ?>
 		</div>
 		<script>
 		(function(){
@@ -20230,17 +20294,26 @@ class AJForms_Admin {
 				var copyFlash=function(){var f=resultModal.querySelector('[data-schema-copied]');if(!f){return;}f.hidden=false;setTimeout(function(){f.hidden=true;},1600);};
 				var writeClip=function(text){if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(copyFlash,function(){});return;}var ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');copyFlash();}catch(e){}document.body.removeChild(ta);};
 				var resultTable=document.getElementById('ajcore-schema-result-table');
+				var gridData=function(){
+					if(!resultTable){return{heads:[],rows:[]};}
+					return{
+						heads:Array.prototype.slice.call(resultTable.querySelectorAll('thead th')).map(function(th){return th.textContent;}),
+						rows:Array.prototype.slice.call(resultTable.querySelectorAll('tbody tr')).map(function(tr){return Array.prototype.slice.call(tr.querySelectorAll('.ajcore-schema-cellval')).map(function(c){return c.textContent;});})
+					};
+				};
+				var csvCell=function(v){v=String(v==null?'':v);return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
 				resultModal.addEventListener('click',function(event){
-					var cellBtn=event.target.closest('[data-schema-cellcopy]');
-					if(cellBtn){var v=cellBtn.parentNode.querySelector('.ajcore-schema-cellval');writeClip(v?v.textContent:'');return;}
+					if(event.target.closest('[data-schema-wrap-toggle]')&&resultTable){Array.prototype.slice.call(resultTable.querySelectorAll('tbody td')).forEach(function(td){td.classList.toggle('ajcore-schema-nowrap');});return;}
+					if(event.target.closest('[data-schema-download-csv]')){
+						var g=gridData();var csv=[g.heads.map(csvCell).join(',')].concat(g.rows.map(function(r){return r.map(csvCell).join(',');})).join('\r\n');
+						var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='ajcore-query-'+Date.now()+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(function(){URL.revokeObjectURL(a.href);},2000);return;
+					}
 					var allBtn=event.target.closest('[data-schema-copy]');
-					if(!allBtn||!resultTable){return;}
-					var mode=allBtn.getAttribute('data-schema-copy');
-					var heads=Array.prototype.slice.call(resultTable.querySelectorAll('thead th')).map(function(th){return th.textContent;});
-					var bodyRows=Array.prototype.slice.call(resultTable.querySelectorAll('tbody tr')).map(function(tr){return Array.prototype.slice.call(tr.querySelectorAll('.ajcore-schema-cellval')).map(function(c){return c.textContent;});});
-					var out;
-					if(mode==='json'){out=JSON.stringify(bodyRows.map(function(r){var o={};heads.forEach(function(h,i){o[h]=r[i];});return o;}),null,2);}
-					else{out=[heads.join('\t')].concat(bodyRows.map(function(r){return r.join('\t');})).join('\n');}
+					if(!allBtn){return;}
+					var d=gridData();var mode=allBtn.getAttribute('data-schema-copy');var out;
+					if(mode==='json'){out=JSON.stringify(d.rows.map(function(r){var o={};d.heads.forEach(function(h,i){o[h]=r[i];});return o;}),null,2);}
+					else if(mode==='markdown'){out=['| '+d.heads.join(' | ')+' |','| '+d.heads.map(function(){return '---';}).join(' | ')+' |'].concat(d.rows.map(function(r){return '| '+r.map(function(c){return String(c==null?'':c).replace(/\|/g,'\\|').replace(/\r?\n/g,' ');}).join(' | ')+' |';})).join('\n');}
+					else{out=[d.heads.join('\t')].concat(d.rows.map(function(r){return r.join('\t');})).join('\n');}
 					writeClip(out);
 				});
 			}
