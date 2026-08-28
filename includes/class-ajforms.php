@@ -4679,7 +4679,14 @@ class AJForms {
 							<?php foreach ( $upcoming as $subscription ) : ?>
 								<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
 								<tr>
-									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
+									<td><?php
+										$upcoming_service_name = $this->get_subscription_service_name( $subscription, $subscription_ledger_entry );
+										$upcoming_price_desc   = $this->get_subscription_price_description( $subscription );
+										if ( '' !== $upcoming_price_desc && false === stripos( $upcoming_service_name, $upcoming_price_desc ) ) {
+											$upcoming_service_name .= ' — ' . $upcoming_price_desc;
+										}
+										echo esc_html( $upcoming_service_name );
+										?></td>
 									<td data-label="<?php esc_attr_e( 'Next Billing Date', 'ajforms' ); ?>"><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Amount', 'ajforms' ); ?>"><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
 								</tr>
@@ -4695,13 +4702,25 @@ class AJForms {
 			<?php else : ?>
 				<div class="aj-portal-table-wrap">
 					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Debit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Credit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
+						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Debit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Credit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
 							<?php foreach ( $ledger as $entry ) : ?>
 								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ); ?>
 								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'PDF', 'ajforms' ); ?>
 								<?php $entry_invoice_id = ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' ); ?>
 								<?php $entry_client_note = $this->get_ledger_metadata_value( $entry, 'client_notes' ); ?>
+									<?php
+									$entry_service_period = $this->get_ledger_metadata_value( $entry, 'service_period' );
+									if ( '' === $entry_service_period ) {
+										$entry_sp_start = $this->get_ledger_metadata_value( $entry, 'service_period_start' );
+										$entry_sp_end   = $this->get_ledger_metadata_value( $entry, 'service_period_end' );
+										if ( $entry_sp_start && $entry_sp_end ) {
+											$entry_service_period = $this->format_portal_date( $entry_sp_start ) . ' – ' . $this->format_portal_date( $entry_sp_end );
+										}
+									}
+									$entry_hosted_url = $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' );
+									$entry_is_payable = ( '' !== $entry_hosted_url && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) );
+									?>
 								<?php $entry_display_description = $this->get_portal_ledger_display_description( $entry ); ?>
 								<?php $entry_is_open = ( $balance_due > 0 && (float) $entry->amount > 0 && in_array( sanitize_key( (string) $entry->status ), $this->get_portal_open_ledger_statuses(), true ) ); ?>
 								<?php $entry_debit_credit = $this->get_portal_ledger_debit_credit( $entry ); ?>
@@ -4717,13 +4736,15 @@ class AJForms {
 								?>
 								<tr>
 									<td data-label="<?php esc_attr_e( 'Date', 'ajforms' ); ?>"><?php echo esc_html( $entry_display_date ? $this->format_portal_date( $entry_display_date ) : '-' ); ?></td>
-									<td><?php echo esc_html( $entry_display_description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td>
+									<td><?php echo esc_html( $entry_display_description ); ?><?php if ( $entry_client_note ) : ?><br><small><?php echo esc_html( $entry_client_note ); ?></small><?php endif; ?></td><td data-label="<?php esc_attr_e( 'Service Period', 'ajforms' ); ?>" class="<?php echo '' !== $entry_service_period ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( '' !== $entry_service_period ? $entry_service_period : '-' ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Status', 'ajforms' ); ?>"><?php echo esc_html( 'admin_review_required' === $entry->status ? __( 'Under Review', 'ajforms' ) : ucwords( str_replace( '_', ' ', $entry->status ) ) ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Debit', 'ajforms' ); ?>" class="<?php echo $entry_debit_credit['debit'] ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( $entry_debit_credit['debit'] ? $entry_debit_credit['debit'] : '-' ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Credit', 'ajforms' ); ?>" class="<?php echo $entry_debit_credit['credit'] ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( $entry_debit_credit['credit'] ? $entry_debit_credit['credit'] : '-' ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Running Balance', 'ajforms' ); ?>"><?php echo esc_html( $this->format_portal_balance_amount( isset( $running_balances[ (int) $entry->id ] ) ? $running_balances[ (int) $entry->id ] : 0, $entry->currency ) ); ?></td>
-									<td data-label="<?php esc_attr_e( 'Invoice', 'ajforms' ); ?>" class="<?php echo ( $entry_invoice_url || $entry_invoice_id || '' !== $entry_actions_html ) ? '' : 'aj-portal-td-empty'; ?>">
-										<?php if ( $entry_invoice_url ) : ?>
+									<td data-label="<?php esc_attr_e( 'Invoice', 'ajforms' ); ?>" class="<?php echo ( $entry_is_payable || $entry_invoice_url || $entry_invoice_id || '' !== $entry_actions_html ) ? '' : 'aj-portal-td-empty'; ?>">
+										<?php if ( $entry_is_payable ) : ?>
+											<a href="<?php echo esc_url( $entry_hosted_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label && 'PDF' !== $entry_invoice_label ? sprintf( __( 'Pay %s', 'ajforms' ), $entry_invoice_label ) : __( 'Pay invoice', 'ajforms' ) ); ?></a>
+										<?php elseif ( $entry_invoice_url ) : ?>
 											<a href="<?php echo esc_url( $entry_invoice_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $entry_invoice_label ); ?></a>
 										<?php elseif ( $entry_invoice_id ) : ?>
 											<?php echo esc_html( $entry_invoice_label && 'PDF' !== $entry_invoice_label ? $entry_invoice_label : __( 'Invoice', 'ajforms' ) ); ?>
