@@ -3296,6 +3296,7 @@ class AJForms {
 				'customer'            => null,
 				'subscriptions'       => array(),
 				'ledger'              => array(),
+				'pending_draft_invoices'=> array(),
 				'upcoming'            => array(),
 				'active_subscriptions'=> array(),
 			);
@@ -3318,6 +3319,24 @@ class AJForms {
 			$pdb->prepare(
 				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s AND source_type <> 'refund' AND " . $this->get_ignored_unpaid_checkout_sql_fragment() . " ORDER BY ledger_date ASC, id ASC LIMIT 100",
 				$stripe_customer_id
+			)
+		);
+		$active_subscription_ids = array();
+		foreach ( $subscriptions as $subscription ) {
+			if ( $this->is_current_portal_subscription( $subscription ) && ! empty( $subscription->stripe_subscription_id ) ) {
+				$active_subscription_ids[ sanitize_text_field( (string) $subscription->stripe_subscription_id ) ] = true;
+			}
+		}
+		$pending_draft_invoices = array_values(
+			array_filter(
+				$ledger,
+				function ( $entry ) use ( $active_subscription_ids ) {
+					if ( 'invoice' !== sanitize_key( (string) $entry->source_type ) || 'draft' !== sanitize_key( (string) $entry->status ) ) {
+						return false;
+					}
+					$subscription_id = $this->get_ledger_metadata_value( $entry, 'subscription_id' );
+					return '' !== $subscription_id && isset( $active_subscription_ids[ $subscription_id ] );
+				}
 			)
 		);
 		$ledger = $this->get_customer_portal_display_ledger( $ledger );
@@ -3344,6 +3363,7 @@ class AJForms {
 			'subscriptions'        => $subscriptions,
 			'service_snapshots'    => $snapshots,
 			'ledger'               => $ledger,
+			'pending_draft_invoices'=> $pending_draft_invoices,
 			'upcoming'             => $upcoming,
 			'active_subscriptions' => $active_subscriptions,
 		);
@@ -4580,6 +4600,7 @@ class AJForms {
 		}
 
 		$ledger        = $context['ledger'];
+		$pending_draft_invoices = $context['pending_draft_invoices'];
 		$upcoming      = $context['upcoming'];
 		$subscriptions = $context['subscriptions'];
 		$open_ledger   = $this->get_current_user_open_portal_ledger();
@@ -4626,6 +4647,25 @@ class AJForms {
 				</div>
 				<div style="font-size:20px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_balance_amount( $final_balance, $balance_currency ) ); ?></div>
 			</div>
+
+			<?php if ( ! empty( $pending_draft_invoices ) ) : ?>
+				<h3><?php esc_html_e( 'Pending Charges', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'These draft invoices are awaiting finalization and are not included in your open balance yet.', 'ajforms' ); ?></p>
+				<div class="aj-portal-table-wrap">
+					<table class="aj-portal-table">
+						<thead><tr><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th></tr></thead>
+						<tbody>
+							<?php foreach ( $pending_draft_invoices as $invoice ) : ?>
+								<tr>
+									<td><?php echo esc_html( $this->get_portal_ledger_display_description( $invoice ) ); ?></td>
+									<td><?php echo esc_html( $this->format_portal_money( $invoice->amount, $invoice->currency ) ); ?></td>
+									<td><?php esc_html_e( 'Draft — pending finalization', 'ajforms' ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php endif; ?>
 
 			<h3><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></h3>
 			<?php if ( empty( $upcoming ) ) : ?>
