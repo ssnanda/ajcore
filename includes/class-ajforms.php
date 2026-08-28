@@ -2254,7 +2254,7 @@ class AJForms {
 			if ( isset( $price['unit_amount'] ) ) {
 				$currency = ! empty( $price['currency'] ) ? $price['currency'] : 'usd';
 				$amount   = in_array( strtolower( $currency ), array( 'jpy', 'krw', 'vnd' ), true ) ? (float) $price['unit_amount'] : (float) $price['unit_amount'] / 100;
-				$interval = ! empty( $price['recurring']['interval'] ) ? '/' . sanitize_text_field( (string) $price['recurring']['interval'] ) : '';
+				$interval = ! empty( $price['recurring']['interval'] ) ? ' / ' . sanitize_text_field( (string) $price['recurring']['interval'] ) : '';
 
 				return $this->format_portal_money( $amount, $currency ) . $interval;
 			}
@@ -3507,6 +3507,15 @@ class AJForms {
 		return isset( $ranks[ $status ] ) ? $ranks[ $status ] : 20;
 	}
 
+	// Final dedup tiebreaker: when two rows for the same charge rank equally, keep the one
+	// that actually carries a service period so the Billing History column isn't blank.
+	private function get_customer_portal_ledger_detail_rank( $entry ) {
+		$has_period = '' !== $this->get_ledger_metadata_value( $entry, 'service_period' )
+			|| '' !== $this->get_ledger_metadata_value( $entry, 'service_period_start' );
+
+		return $has_period ? 0 : 1;
+	}
+
 	private function customer_portal_ledger_entry_is_recurring_service( $entry ) {
 		$metadata = $this->decode_portal_json( isset( $entry->metadata ) ? $entry->metadata : '' );
 		$product_interval = $this->get_portal_product_recurring_interval_from_ids(
@@ -3635,7 +3644,12 @@ class AJForms {
 				$existing_rank = $this->get_customer_portal_ledger_display_rank( $existing );
 				$current_ref_rank = $this->get_customer_portal_ledger_reference_rank( $entry );
 				$existing_ref_rank = $this->get_customer_portal_ledger_reference_rank( $existing );
-				if ( $current_rank < $existing_rank || ( $current_rank === $existing_rank && ( $current_ref_rank < $existing_ref_rank || ( $current_ref_rank === $existing_ref_rank && $this->get_customer_portal_ledger_status_rank( $entry ) < $this->get_customer_portal_ledger_status_rank( $existing ) ) ) ) ) {
+				$current_status_rank  = $this->get_customer_portal_ledger_status_rank( $entry );
+				$existing_status_rank = $this->get_customer_portal_ledger_status_rank( $existing );
+				if ( $current_rank < $existing_rank
+					|| ( $current_rank === $existing_rank && $current_ref_rank < $existing_ref_rank )
+					|| ( $current_rank === $existing_rank && $current_ref_rank === $existing_ref_rank && $current_status_rank < $existing_status_rank )
+					|| ( $current_rank === $existing_rank && $current_ref_rank === $existing_ref_rank && $current_status_rank === $existing_status_rank && $this->get_customer_portal_ledger_detail_rank( $entry ) < $this->get_customer_portal_ledger_detail_rank( $existing ) ) ) {
 					$display[ $key ] = $entry;
 				}
 				continue;
@@ -4690,19 +4704,18 @@ class AJForms {
 			<?php else : ?>
 				<div class="aj-portal-table-wrap">
 					<table class="aj-portal-table">
-						<thead><tr><th><?php esc_html_e( 'Service Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th></tr></thead>
+						<thead><tr><th><?php esc_html_e( 'Service Name', 'ajforms' ); ?></th><th><?php esc_html_e( 'Shipping Frequency', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th><th><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Amount', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
 							<?php foreach ( $upcoming as $subscription ) : ?>
-								<?php $subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger ); ?>
+								<?php
+								$subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger );
+								$upcoming_ship_freq        = $this->get_subscription_price_description( $subscription );
+								$upcoming_service_period   = $this->get_subscription_service_period( $subscription, $subscription_ledger_entry );
+								?>
 								<tr>
-									<td><?php
-										$upcoming_service_name = $this->get_subscription_service_name( $subscription, $subscription_ledger_entry );
-										$upcoming_price_desc   = $this->get_subscription_price_description( $subscription );
-										if ( '' !== $upcoming_price_desc && false === stripos( $upcoming_service_name, $upcoming_price_desc ) ) {
-											$upcoming_service_name .= ' — ' . $upcoming_price_desc;
-										}
-										echo esc_html( $upcoming_service_name );
-										?></td>
+									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Shipping Frequency', 'ajforms' ); ?>" class="<?php echo '' !== $upcoming_ship_freq ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( '' !== $upcoming_ship_freq ? $upcoming_ship_freq : '—' ); ?></td>
+									<td data-label="<?php esc_attr_e( 'Service Period', 'ajforms' ); ?>" class="<?php echo ( '' !== $upcoming_service_period && '-' !== $upcoming_service_period ) ? '' : 'aj-portal-td-empty'; ?>"><?php echo esc_html( ( '' !== $upcoming_service_period && '-' !== $upcoming_service_period ) ? $upcoming_service_period : '—' ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Next Billing Date', 'ajforms' ); ?>"><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></td>
 									<td data-label="<?php esc_attr_e( 'Amount', 'ajforms' ); ?>"><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></td>
 								</tr>
@@ -4732,6 +4745,23 @@ class AJForms {
 										$entry_sp_end   = $this->get_ledger_metadata_value( $entry, 'service_period_end' );
 										if ( $entry_sp_start && $entry_sp_end ) {
 											$entry_service_period = $this->format_portal_date( $entry_sp_start ) . ' – ' . $this->format_portal_date( $entry_sp_end );
+										}
+									}
+									if ( '' === $entry_service_period ) {
+										// Subscription charges whose invoice line carried no period (e.g. a
+										// standalone first invoice) still have a service window — the one the
+										// customer sees on My Services. Fall back to the linked subscription.
+										$entry_subscription_id = $this->get_ledger_metadata_value( $entry, 'subscription_id' );
+										if ( '' !== $entry_subscription_id ) {
+											foreach ( $subscriptions as $entry_subscription ) {
+												if ( ! empty( $entry_subscription->stripe_subscription_id ) && (string) $entry_subscription->stripe_subscription_id === $entry_subscription_id ) {
+													$entry_subscription_period = $this->get_subscription_service_period( $entry_subscription );
+													if ( '' !== $entry_subscription_period && '-' !== $entry_subscription_period ) {
+														$entry_service_period = $entry_subscription_period;
+													}
+													break;
+												}
+											}
 										}
 									}
 									$entry_hosted_url = $this->get_ledger_metadata_value( $entry, 'hosted_invoice_url' );
