@@ -3343,11 +3343,12 @@ class AJForms {
 		$upcoming = array_filter(
 			$subscriptions,
 			function ( $subscription ) {
-				if ( empty( $subscription->current_period_end ) || ! in_array( $subscription->status, array( 'active', 'trialing' ), true ) ) {
+				if ( ! in_array( $subscription->status, array( 'active', 'trialing' ), true ) ) {
 					return false;
 				}
-				$renewal = strtotime( $subscription->current_period_end . ' UTC' );
-				return $renewal && $renewal >= time();
+				$period  = $this->get_subscription_period_context( $subscription );
+				$renewal = ! empty( $period['end'] ) ? strtotime( $period['end'] . ' UTC' ) : 0;
+				return $renewal && $renewal >= time() && $renewal <= time() + ( 10 * DAY_IN_SECONDS );
 			}
 		);
 		$active_subscriptions = array_filter(
@@ -4667,7 +4668,7 @@ class AJForms {
 				</div>
 			<?php endif; ?>
 
-			<h3><?php esc_html_e( 'Upcoming Payments', 'ajforms' ); ?></h3>
+			<h3><?php esc_html_e( 'Upcoming Payments — Next 10 Days', 'ajforms' ); ?></h3>
 			<?php if ( empty( $upcoming ) ) : ?>
 				<p><?php esc_html_e( 'No upcoming payment is currently scheduled.', 'ajforms' ); ?></p>
 			<?php else : ?>
