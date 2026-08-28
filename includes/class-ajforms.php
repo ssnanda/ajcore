@@ -4720,36 +4720,34 @@ class AJForms {
 		<section class="aj-customer-portal-panel">
 			<h2><?php esc_html_e( 'Billing', 'ajforms' ); ?></h2>
 
-			<div class="aj-portal-billing-cards" style="display:flex;gap:16px;flex-wrap:wrap;align-items:stretch;margin:0 0 24px;">
-			<div class="aj-portal-open-balance" style="flex:2 1 340px;padding:20px;border:1px solid #dbeafe;border-radius:22px;background:#eff6ff;display:flex;flex-direction:column;gap:14px;">
-				<div>
-					<h3 style="margin:0 0 6px;"><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></h3>
-					<div style="font-size:24px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_money( $balance_due, $balance_currency ) ); ?></div>
-					<p style="margin:6px 0 0;color:#475569;"><?php esc_html_e( 'Make a payment or pay your current balance in one checkout.', 'ajforms' ); ?></p>
+			<div class="aj-portal-billing-cards" style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;margin:0 0 16px;">
+			<div class="aj-portal-open-balance" style="flex:2 1 360px;padding:14px 16px;border:1px solid #dbeafe;border-radius:16px;background:#eff6ff;display:flex;flex-direction:column;gap:12px;">
+				<div style="display:flex;flex-wrap:wrap;gap:6px 30px;">
+					<div>
+						<div style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#64748b;"><?php esc_html_e( 'Open Balance', 'ajforms' ); ?></div>
+						<div style="font-size:24px;font-weight:900;line-height:1.1;color:#0f172a;"><?php echo esc_html( $this->format_portal_money( $balance_due, $balance_currency ) ); ?></div>
+					</div>
+					<div>
+						<div style="font-size:11px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#64748b;"><?php esc_html_e( 'Ledger Balance', 'ajforms' ); ?></div>
+						<div style="font-size:20px;font-weight:800;line-height:1.1;color:#334155;"><?php echo esc_html( $this->format_portal_balance_amount( $final_balance, $balance_currency ) ); ?></div>
+						<div style="font-size:11px;color:#94a3b8;"><?php esc_html_e( 'After all billing history rows', 'ajforms' ); ?></div>
+					</div>
 				</div>
-				<div class="aj-portal-payment-box" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;justify-content:flex-start;margin-top:auto;">
-					<label style="display:flex;flex-direction:column;gap:6px;font-weight:700;color:#334155;min-width:170px;">
+				<div class="aj-portal-payment-box" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:auto;">
+					<label style="display:flex;flex-direction:column;gap:4px;font-weight:700;color:#334155;font-size:12px;">
 						<span><?php esc_html_e( 'Payment Amount', 'ajforms' ); ?></span>
-						<input type="number" class="aj-portal-payment-amount-input" min="0.01" step="0.01" inputmode="decimal" value="<?php echo esc_attr( $balance_due > 0 ? number_format( $balance_due, 2, '.', '' ) : '' ); ?>" placeholder="0.00" style="width:170px;border:1px solid #bfdbfe;border-radius:14px;padding:10px 12px;font-weight:800;background:#fff;">
+						<input type="number" class="aj-portal-payment-amount-input" min="0.01" step="0.01" inputmode="decimal" value="<?php echo esc_attr( $balance_due > 0 ? number_format( $balance_due, 2, '.', '' ) : '' ); ?>" placeholder="0.00" style="width:150px;border:1px solid #bfdbfe;border-radius:12px;padding:9px 12px;font-weight:800;background:#fff;">
 					</label>
 					<button type="button" class="button aj-portal-pay-ledger-button" data-ledger-ids="<?php echo esc_attr( $balance_due > 0 ? 'all' : '' ); ?>" data-payment-mode="<?php echo esc_attr( $balance_due > 0 ? 'balance' : 'custom' ); ?>" data-payment-amount="<?php echo esc_attr( $balance_due > 0 ? number_format( $balance_due, 2, '.', '' ) : '' ); ?>" data-payment-currency="<?php echo esc_attr( $balance_currency ); ?>" data-nonce="<?php echo esc_attr( $pay_nonce ); ?>"><?php esc_html_e( 'Make a Payment', 'ajforms' ); ?></button>
 				</div>
 			</div>
 
-			<div class="aj-portal-autopay" style="flex:1 1 240px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;flex-direction:column;gap:12px;justify-content:space-between;">
+			<div class="aj-portal-autopay" style="flex:1 1 240px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:16px;background:#fff;display:flex;flex-direction:column;gap:10px;justify-content:space-between;">
 				<div>
 					<strong><?php esc_html_e( 'Payment Methods & AutoPay', 'ajforms' ); ?></strong>
-					<p style="margin:4px 0 0;color:#64748b;"><?php esc_html_e( 'Securely add or update the payment method Stripe uses for eligible recurring subscriptions.', 'ajforms' ); ?></p>
+					<p style="margin:3px 0 0;color:#64748b;font-size:13px;line-height:1.45;"><?php esc_html_e( 'Add or update the card Stripe charges for recurring subscriptions.', 'ajforms' ); ?></p>
 				</div>
 				<button type="button" class="button aj-portal-billing-portal-button" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_stripe_customer_portal' ) ); ?>"><?php esc_html_e( 'Manage Payment Methods / AutoPay', 'ajforms' ); ?></button>
-			</div>
-
-			<div class="aj-portal-balance-summary" style="flex:1 1 220px;padding:16px 18px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;display:flex;flex-direction:column;gap:8px;justify-content:space-between;">
-				<div>
-					<strong><?php esc_html_e( 'Final Ledger Balance', 'ajforms' ); ?></strong>
-					<p style="margin:4px 0 0;color:#64748b;"><?php esc_html_e( 'Running total after all visible billing history rows.', 'ajforms' ); ?></p>
-				</div>
-				<div style="font-size:20px;font-weight:900;color:#0f172a;"><?php echo esc_html( $this->format_portal_balance_amount( $final_balance, $balance_currency ) ); ?></div>
 			</div>
 			</div>
 
@@ -5283,14 +5281,18 @@ class AJForms {
 				</a>
 			</div>
 
-			<?php echo $this->render_customer_portal_service_summary( $active_subscriptions, $context['ledger'], $business_name, $tracking_services ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-
-			<?php if ( false !== strpos( home_url( '/' ), 'universityofficesuites.com' ) || ! empty( $tracking_services ) ) : ?>
-				<div class="aj-portal-account-summary aj-portal-office-address">
-					<h3><?php esc_html_e( 'Our Office Address', 'ajforms' ); ?></h3>
-					<p><strong><?php esc_html_e( 'University Place Office Suites', 'ajforms' ); ?></strong><br>1914 J N PEASE PL.<br>CHARLOTTE, NC 28262</p>
-				</div>
-			<?php endif; ?>
+			<?php $show_office_address = ( false !== strpos( home_url( '/' ), 'universityofficesuites.com' ) || ! empty( $tracking_services ) ); ?>
+			<div class="aj-portal-overview-info" style="display:flex;gap:16px;flex-wrap:wrap;align-items:stretch;margin-top:16px;">
+				<div style="flex:2 1 360px;min-width:0;"><?php echo $this->render_customer_portal_service_summary( $active_subscriptions, $context['ledger'], $business_name, $tracking_services ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+				<?php if ( $show_office_address ) : ?>
+					<div style="flex:1 1 240px;min-width:0;">
+						<div class="aj-portal-account-summary aj-portal-office-address">
+							<h3><?php esc_html_e( 'Our Office Address', 'ajforms' ); ?></h3>
+							<p><strong><?php esc_html_e( 'University Place Office Suites', 'ajforms' ); ?></strong><br>1914 J N PEASE PL.<br>CHARLOTTE, NC 28262</p>
+						</div>
+					</div>
+				<?php endif; ?>
+			</div>
 
 			<h3 class="aj-portal-quick-actions-heading"><?php esc_html_e( 'Quick Actions', 'ajforms' ); ?></h3>
 			<div class="aj-portal-quick-actions">
@@ -5327,15 +5329,12 @@ class AJForms {
 			);
 			?>
 			<h3 class="aj-portal-quick-actions-heading"><?php esc_html_e( 'Helpful Reading', 'ajforms' ); ?></h3>
-			<div class="aj-portal-resources-grid">
-				<style>.aj-portal-resources-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.aj-portal-resource-card{display:block;padding:16px 18px;border-radius:14px;background:var(--ajp-glass);border:1px solid var(--ajp-line);box-shadow:var(--ajp-shadow-soft)}.aj-portal-resource-card strong{display:block;margin-bottom:6px;font-size:14px;color:var(--ajp-ink)}.aj-portal-resource-card span{font-size:13px;color:var(--ajp-muted);font-weight:400}</style>
+			<ul class="aj-portal-resources-list">
+				<style>.aj-portal-resources-list{list-style:none;margin:0;padding:10px 16px;border-radius:14px;background:var(--ajp-glass);border:1px solid var(--ajp-line);box-shadow:var(--ajp-shadow-soft)}.aj-portal-resources-list li{padding:9px 0;border-bottom:1px solid var(--ajp-line)}.aj-portal-resources-list li:first-child{padding-top:0}.aj-portal-resources-list li:last-child{padding-bottom:0;border-bottom:0}.aj-portal-resources-list a{display:block;font-size:14px;font-weight:800;line-height:1.35;color:var(--ajp-ink)}.aj-portal-resources-list a:hover{color:#1d4ed8}.aj-portal-resources-list small{display:block;margin-top:2px;font-size:12px;font-weight:400;color:var(--ajp-muted);line-height:1.4}</style>
 				<?php foreach ( $portal_resources as $resource ) : ?>
-					<a class="aj-portal-resource-card" href="<?php echo esc_url( home_url( '/' . $resource['slug'] . '/' ) ); ?>" target="_blank" rel="noopener">
-						<strong><?php echo esc_html( $resource['title'] ); ?></strong>
-						<span><?php echo esc_html( $resource['blurb'] ); ?></span>
-					</a>
+					<li><a href="<?php echo esc_url( home_url( '/' . $resource['slug'] . '/' ) ); ?>" target="_blank" rel="noopener"><?php echo esc_html( $resource['title'] ); ?><small><?php echo esc_html( $resource['blurb'] ); ?></small></a></li>
 				<?php endforeach; ?>
-			</div>
+			</ul>
 		</section>
 		<?php
 		return ob_get_clean();
@@ -6465,8 +6464,10 @@ class AJForms {
 					isolation:isolate;
 					width:calc(100vw - 48px);
 					max-width:none;
-					margin:18px 0 0 calc(50% - 50vw + 24px);
-					padding:0 0 44px;
+					/* Pulls up into the host theme's page-section top padding so the portal does
+					   not start far below the site header. */
+					margin:-20px 0 0 calc(50% - 50vw + 24px);
+					padding:0 0 20px;
 					font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 					color:var(--ajp-ink);
 				}
@@ -6474,18 +6475,18 @@ class AJForms {
 					content:"";
 					position:absolute;
 					z-index:-1;
-					inset:-34px -28px auto;
-					height:170px;
+					inset:-16px -28px auto;
+					height:110px;
 					background:<?php echo esc_html( $portal_shell_bg ); ?>;
 					filter:blur(8px);
 					pointer-events:none;
 				}
 				.ajcore-portal-shell *{box-sizing:border-box}
-				.ajcore-portal-shell h1{margin:0 0 14px;padding:0;font-size:28px;line-height:1.08;letter-spacing:-.04em;color:var(--ajp-ink)}
-				.ajcore-portal-shell h2{margin:0 0 16px;padding:0;font-size:clamp(28px,2.45vw,36px);line-height:1;letter-spacing:-.055em;background:linear-gradient(135deg,#1d4ed8 0%,#3157ff 42%,#7c3aed 100%);-webkit-background-clip:text;background-clip:text;color:transparent;text-wrap:balance}
-				.ajcore-portal-shell h3{margin:22px 0 10px;padding:0;font-size:20px;line-height:1.16;letter-spacing:-.04em;color:var(--ajp-ink)}
+				.ajcore-portal-shell h1{margin:0 0 8px;padding:0;font-size:22px;line-height:1.08;letter-spacing:-.04em;color:var(--ajp-ink)}
+				.ajcore-portal-shell h2{margin:0 0 12px;padding:0;font-size:clamp(22px,1.9vw,28px);line-height:1;letter-spacing:-.055em;background:linear-gradient(135deg,#1d4ed8 0%,#3157ff 42%,#7c3aed 100%);-webkit-background-clip:text;background-clip:text;color:transparent;text-wrap:balance}
+				.ajcore-portal-shell h3{margin:16px 0 8px;padding:0;font-size:18px;line-height:1.16;letter-spacing:-.04em;color:var(--ajp-ink)}
 				.ajcore-portal-shell h3:first-of-type{margin-top:0}
-				.ajcore-portal-shell p{color:#334155;line-height:1.65;font-size:16px}
+				.ajcore-portal-shell p{color:#334155;line-height:1.5;font-size:14.5px}
 				.ajcore-portal-shell a{color:#2563eb;text-decoration:none;font-weight:800}
 				.ajcore-portal-shell a:hover{text-decoration:none;color:#1d4ed8}
 				.ajcore-portal-shell .button,
@@ -6511,18 +6512,24 @@ class AJForms {
 				.ajcore-portal-shell button.button:hover{transform:translateY(-2px);box-shadow:0 24px 52px rgba(49,87,255,.28);filter:saturate(1.05)}
 				.ajcore-portal-shell .button.disabled,
 				.ajcore-portal-shell button.button:disabled{background:#e5e7eb!important;color:#94a3b8!important;box-shadow:none;cursor:not-allowed;transform:none;opacity:1}
+				.ajcore-portal-shell .ajcore-impersonation-banner{flex-wrap:wrap}
+				.ajcore-portal-shell .ajcore-impersonation-banner .button{min-height:32px;padding:5px 14px;font-size:12px;font-weight:800;border-radius:8px;box-shadow:none;white-space:nowrap}
+				.ajcore-portal-shell .ajcore-impersonation-banner .button:hover{transform:none;box-shadow:none}
 				.ajcore-portal-shell .aj-customer-portal-tabs{
+					position:sticky;
+					top:6px;
+					z-index:30;
 					display:flex;
 					align-items:center;
 					gap:8px;
-					margin:0 0 18px;
-					padding:6px;
+					margin:0 0 12px;
+					padding:5px;
 					overflow-x:auto;
 					-webkit-overflow-scrolling:touch;
 					scrollbar-width:none;
 					border:1px solid rgba(219,231,243,.9);
 					border-radius:22px;
-					background:linear-gradient(180deg,rgba(255,255,255,.94),rgba(255,255,255,.78));
+					background:linear-gradient(180deg,rgba(255,255,255,.97),rgba(255,255,255,.9));
 					box-shadow:var(--ajp-shadow-soft);
 					backdrop-filter:blur(18px);
 				}
@@ -6533,11 +6540,11 @@ class AJForms {
 					display:inline-flex;
 					align-items:center;
 					justify-content:center;
-					min-height:40px;
-					padding:9px 14px;
-					border-radius:15px;
+					min-height:36px;
+					padding:7px 13px;
+					border-radius:13px;
 					color:#475569;
-					font-size:15px;
+					font-size:14.5px;
 					font-weight:950;
 					letter-spacing:-.02em;
 					text-decoration:none;
@@ -6548,10 +6555,10 @@ class AJForms {
 				.ajcore-portal-shell .aj-customer-portal-logout{margin-left:auto;background:#f8fafc;border:1px solid #e2e8f0;color:#334155}
 				.ajcore-portal-shell .aj-customer-portal-logout:hover{background:#fff1f2;border-color:#fecdd3;color:#be123c}
 				.ajcore-portal-shell .aj-customer-portal-panel{position:relative;margin:0;padding:0;min-height:0;animation:ajp-fade-up .28s ease both}
-				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 16px}
+				.ajcore-portal-shell .aj-customer-portal-panel>h2{margin:0 0 10px}
 				@keyframes ajp-fade-up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
-				.ajcore-portal-shell .aj-portal-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px;margin:0 0 24px;width:100%}
+				.ajcore-portal-shell .aj-portal-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin:0 0 16px;width:100%}
 				.ajcore-portal-shell .aj-portal-summary-card{
 					position:relative;
 					overflow:hidden;
@@ -6649,9 +6656,9 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-service-checkout-header h4{margin:0;font-size:22px;color:#111827}
 				.ajcore-portal-shell .aj-portal-service-checkout-close{background:#f1f5f9;color:#475569}
 
-				.ajcore-portal-shell .aj-portal-table-wrap{overflow:auto;margin:0 0 28px;border-radius:22px;border:1px solid rgba(219,231,243,.95);background:rgba(255,255,255,.88);box-shadow:0 18px 46px rgba(15,23,42,.07);backdrop-filter:blur(12px);width:100%;max-width:none}
-				.ajcore-portal-shell .aj-portal-table{width:100%;border-collapse:separate;border-spacing:0;background:transparent;border:0;font-size:15px;min-width:760px}
-				.ajcore-portal-shell .aj-portal-table th,.ajcore-portal-shell .aj-portal-table td{padding:14px 18px;border-bottom:1px solid #e8eef6;text-align:left;vertical-align:top}
+				.ajcore-portal-shell .aj-portal-table-wrap{overflow:auto;margin:0 0 18px;border-radius:18px;border:1px solid rgba(219,231,243,.95);background:rgba(255,255,255,.88);box-shadow:0 18px 46px rgba(15,23,42,.07);backdrop-filter:blur(12px);width:100%;max-width:none}
+				.ajcore-portal-shell .aj-portal-table{width:100%;border-collapse:separate;border-spacing:0;background:transparent;border:0;font-size:14.5px;min-width:760px}
+				.ajcore-portal-shell .aj-portal-table th,.ajcore-portal-shell .aj-portal-table td{padding:10px 16px;border-bottom:1px solid #e8eef6;text-align:left;vertical-align:top}
 				.ajcore-portal-shell .aj-portal-table tr:last-child td{border-bottom:0}
 				.ajcore-portal-shell .aj-portal-table th{font-size:13px;font-weight:950;color:#475569;background:#f8fbff;text-transform:uppercase;letter-spacing:.065em}
 				.ajcore-portal-shell .aj-portal-table td{color:#0f172a;line-height:1.55}
@@ -6718,9 +6725,12 @@ class AJForms {
 				.ajcore-portal-shell .aj-portal-upload-form input[type="text"],.ajcore-portal-shell .aj-portal-upload-form input[type="file"]{width:100%;border:1px solid #dbe7f3;border-radius:16px;padding:12px 14px;background:#fff;color:#0f172a;font-weight:700}
 
 				.ajcore-portal-shell .aj-portal-tab-intro{margin:-8px 0 24px;color:#475569;font-size:clamp(16px,1.3vw,19px);line-height:1.7;max-width:880px}
-				.ajcore-portal-shell .aj-portal-account-summary{margin:30px 0 0;padding:28px 32px;border:1px solid rgba(191,219,254,.9);border-radius:28px;background:linear-gradient(135deg,rgba(255,255,255,.96),rgba(239,246,255,.72));box-shadow:0 22px 60px rgba(15,23,42,.07)}
-				.ajcore-portal-shell .aj-portal-account-summary h3{margin:0 0 12px;color:#0f172a;font-size:clamp(22px,1.8vw,30px)}
-				.ajcore-portal-shell .aj-portal-account-summary p{margin:10px 0 0;color:#172033;font-size:clamp(16px,1.25vw,19px);line-height:1.75}
+				.ajcore-portal-shell .aj-portal-account-summary{margin:16px 0 0;padding:18px 22px;border:1px solid rgba(191,219,254,.9);border-radius:20px;background:linear-gradient(135deg,rgba(255,255,255,.96),rgba(239,246,255,.72));box-shadow:0 22px 60px rgba(15,23,42,.07)}
+				.ajcore-portal-shell .aj-portal-account-summary h3{margin:0 0 10px;color:#0f172a;font-size:clamp(19px,1.5vw,24px)}
+				.ajcore-portal-shell .aj-portal-overview-info{margin-top:16px}
+				.ajcore-portal-shell .aj-portal-overview-info>div{display:flex}
+				.ajcore-portal-shell .aj-portal-overview-info .aj-portal-account-summary{margin:0;width:100%}
+				.ajcore-portal-shell .aj-portal-account-summary p{margin:8px 0 0;color:#172033;font-size:clamp(14px,1vw,15.5px);line-height:1.55}
 
 
 				@media (min-width:1280px){
@@ -6754,15 +6764,15 @@ class AJForms {
 				}
 
 				@media (max-width:1050px){
-					.ajcore-portal-shell .aj-portal-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 				}
 				@media (max-width:760px){
-					.ajcore-portal-shell{width:auto;max-width:none;margin:18px auto 0;padding:0 14px 36px}
-					.ajcore-portal-shell:before{inset:-44px -20px auto;height:260px}
-					.ajcore-portal-shell h2{font-size:27px;margin-bottom:16px}
-					.ajcore-portal-shell h3{font-size:19px;margin:24px 0 12px}
-					.ajcore-portal-shell p{font-size:15px}
+					.ajcore-portal-shell{width:auto;max-width:none;margin:-16px auto 0;padding:0 14px 20px}
+					.ajcore-portal-shell:before{inset:-16px -20px auto;height:120px}
+					.ajcore-portal-shell h1{font-size:21px;margin:0 0 8px}
+					.ajcore-portal-shell h2{font-size:22px;margin-bottom:10px}
+					.ajcore-portal-shell h3{font-size:17px;margin:16px 0 8px}
+					.ajcore-portal-shell p{font-size:14px}
 					.ajcore-portal-shell .aj-portal-tab-intro{margin:-4px 0 18px}
 					.ajcore-portal-shell .aj-customer-portal-tabs{
 						position:sticky;
@@ -6771,9 +6781,9 @@ class AJForms {
 						display:flex;
 						flex-wrap:nowrap;
 						gap:6px;
-						margin:0 0 22px;
-						border-radius:18px;
-						padding:6px;
+						margin:0 0 12px;
+						border-radius:16px;
+						padding:5px;
 						overflow-x:auto;
 						overscroll-behavior-x:contain;
 					}
@@ -6795,8 +6805,8 @@ class AJForms {
 					.ajcore-portal-shell .aj-portal-service-card-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 14px}
 					.ajcore-portal-shell .aj-portal-service-card-grid div:first-child{grid-column:1 / -1}
 					.ajcore-portal-shell .aj-portal-add-service-grid{grid-template-columns:1fr}
-					.ajcore-portal-shell .aj-portal-account-summary{margin-top:22px;padding:18px 16px;border-radius:20px}
-					.ajcore-portal-shell .aj-portal-account-summary p{font-size:15px;line-height:1.6}
+					.ajcore-portal-shell .aj-portal-account-summary{margin-top:14px;padding:14px 16px;border-radius:18px}
+					.ajcore-portal-shell .aj-portal-account-summary p{font-size:14px;line-height:1.5}
 					.ajcore-portal-shell .aj-portal-open-balance{padding:16px;border-radius:18px}
 					.ajcore-portal-shell .aj-portal-payment-box{width:100%}
 					.ajcore-portal-shell .aj-portal-payment-box label{width:100%;min-width:0}
@@ -6806,12 +6816,14 @@ class AJForms {
 					.ajcore-portal-shell .aj-portal-table{min-width:0;font-size:15px}
 					.ajcore-portal-shell .aj-portal-table thead{display:none}
 					.ajcore-portal-shell .aj-portal-table tbody,.ajcore-portal-shell .aj-portal-table tr,.ajcore-portal-shell .aj-portal-table td{display:block;width:100%}
-					.ajcore-portal-shell .aj-portal-table tr{border-bottom:1px solid #e8eef6;padding:12px 0}
+					.ajcore-portal-shell .aj-portal-table tr{border-bottom:1px solid #e8eef6;padding:10px 0}
 					.ajcore-portal-shell .aj-portal-table tr:last-child{border-bottom:0}
-					.ajcore-portal-shell .aj-portal-table td{border:0;padding:7px 16px}
-					.ajcore-portal-shell .aj-portal-table td:first-child{font-weight:900;color:#0f172a}
+					.ajcore-portal-shell .aj-portal-table td{border:0;padding:4px 16px}
+					.ajcore-portal-shell .aj-portal-table td:first-child{font-weight:900;color:#0f172a;font-size:15px;padding-bottom:6px}
 					.ajcore-portal-shell .aj-portal-table td.aj-portal-td-empty{display:none}
-					.ajcore-portal-shell .aj-portal-table td[data-label]:before{content:attr(data-label);display:block;margin-bottom:2px;font-size:11px;font-weight:950;color:#64748b;text-transform:uppercase;letter-spacing:.06em}
+					.ajcore-portal-shell .aj-portal-table td[data-label]{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:2px 14px}
+					.ajcore-portal-shell .aj-portal-table td[data-label]:before{content:attr(data-label) ":";flex:0 0 auto;font-size:11px;font-weight:950;color:#64748b;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+					.ajcore-portal-shell .aj-portal-table td[data-label]>*{text-align:right}
 					.ajcore-portal-shell .aj-portal-upload-card{grid-template-columns:1fr;padding:22px;border-radius:24px}
 					.ajcore-portal-shell .aj-customer-file-row{grid-template-columns:1fr;gap:14px;padding:18px}
 					.ajcore-portal-shell .aj-customer-file-actions{justify-content:flex-start}
@@ -6823,7 +6835,7 @@ class AJForms {
 			<?php endif; ?>
 			<?php $impersonation = $this->get_active_impersonation_payload(); ?>
 			<?php if ( $impersonation ) : ?>
-				<div class="ajcore-impersonation-banner" style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 18px;padding:12px 16px;border:1px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#92400e;font-weight:700;">
+				<div class="ajcore-impersonation-banner" style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 10px;padding:7px 14px;border:1px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#92400e;font-weight:700;font-size:13px;">
 					<span><?php echo esc_html( sprintf( __( 'Viewing as client: %s.', 'ajforms' ), ! empty( $impersonation['customer_name'] ) ? $impersonation['customer_name'] : __( 'Client', 'ajforms' ) ) ); ?></span>
 					<a class="button" href="<?php echo esc_url( add_query_arg( 'ajcore_end_impersonation', rawurlencode( $impersonation['return_token'] ), $this->get_customer_portal_url() ) ); ?>"><?php esc_html_e( 'Return to Admin', 'ajforms' ); ?></a>
 				</div>
