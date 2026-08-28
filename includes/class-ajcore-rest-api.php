@@ -9650,6 +9650,14 @@ class AJCore_REST_API {
 		if ( ! $customer ) {
 			return new WP_Error( 'customer_not_found', 'Customer not found.', array( 'status' => 404 ) );
 		}
+		if ( 'regenerate_customer_number' === $action ) {
+			$new_number = AJForms_Admin::$instance->generate_customer_number( ! empty( $customer->created_at ) ? $customer->created_at : null );
+			$updated    = $pdb->update( $customer_table, array( 'customer_number' => $new_number ), array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s' ), array( '%s' ) );
+			if ( false === $updated ) {
+				return new WP_Error( 'customer_number_update_failed', 'Customer # could not be regenerated.', array( 'status' => 500 ) );
+			}
+			return rest_ensure_response( array( 'success' => true, 'message' => 'Customer # regenerated.', 'customer_number' => $new_number ) );
+		}
 
 		$mapping_table   = $wpdb->prefix . 'aj_auth_user_mappings';
 		$mapping         = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$mapping_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id ) );
@@ -9663,13 +9671,6 @@ class AJCore_REST_API {
 		$result        = true;
 
 		switch ( $action ) {
-			case 'regenerate_customer_number':
-				$new_number = AJForms_Admin::$instance->generate_customer_number( ! empty( $customer->created_at ) ? $customer->created_at : null );
-				$table      = 0 === strpos( $stripe_customer_id, 'local_' ) ? $this->portal_table( 'aj_portal_local_customers' ) : $customer_table;
-				$id_column  = 0 === strpos( $stripe_customer_id, 'local_' ) ? 'local_customer_id' : 'stripe_customer_id';
-				$result     = false !== $pdb->update( $table, array( 'customer_number' => $new_number ), array( $id_column => $stripe_customer_id ), array( '%s' ), array( '%s' ) );
-				break;
-
 			case 'enable':
 			case 'restore':
 				$result = AJForms_Admin::$instance->enable_stripe_customer_as_portal_user( $stripe_customer_id );
