@@ -3334,8 +3334,13 @@ class AJForms {
 					if ( 'invoice' !== sanitize_key( (string) $entry->source_type ) || 'draft' !== sanitize_key( (string) $entry->status ) ) {
 						return false;
 					}
-					$subscription_id = $this->get_ledger_metadata_value( $entry, 'subscription_id' );
-					return '' !== $subscription_id && isset( $active_subscription_ids[ $subscription_id ] );
+					$identifiers = $this->get_portal_service_identifiers_from_ledger_entry( $entry );
+					foreach ( $identifiers['subscription_ids'] as $subscription_id ) {
+						if ( isset( $active_subscription_ids[ $subscription_id ] ) ) {
+							return true;
+						}
+					}
+					return false;
 				}
 			)
 		);
