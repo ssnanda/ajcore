@@ -2357,6 +2357,40 @@ class AJForms {
 		return ! empty( $period['end'] ) ? $this->format_portal_date( $period['end'] ) : '-';
 	}
 
+	private function get_subscription_billing_interval( $subscription ) {
+		$items = $this->decode_portal_json( isset( $subscription->items ) ? $subscription->items : '' );
+		foreach ( (array) $items as $item ) {
+			if ( is_array( $item ) && ! empty( $item['price']['recurring']['interval'] ) ) {
+				return sanitize_key( (string) $item['price']['recurring']['interval'] );
+			}
+		}
+
+		return '';
+	}
+
+	// The service window the *next* charge will cover: it starts on the next billing date
+	// (= current period end) and runs one billing interval, shown inclusive of the last day.
+	private function get_subscription_upcoming_service_period( $subscription ) {
+		$period = $this->get_subscription_period_context( $subscription );
+		if ( empty( $period['end'] ) ) {
+			return '';
+		}
+
+		$next_start = strtotime( $period['end'] . ' UTC' );
+		if ( ! $next_start ) {
+			return '';
+		}
+
+		$modifiers = array( 'day' => '+1 day', 'week' => '+1 week', 'month' => '+1 month', 'year' => '+1 year' );
+		$interval  = $this->get_subscription_billing_interval( $subscription );
+		$next_end  = strtotime( ( isset( $modifiers[ $interval ] ) ? $modifiers[ $interval ] : '+1 month' ) . ' -1 day', $next_start );
+		if ( ! $next_end || $next_end <= $next_start ) {
+			return '';
+		}
+
+		return $this->format_portal_date( gmdate( 'Y-m-d H:i:s', $next_start ) ) . ' - ' . $this->format_portal_date( gmdate( 'Y-m-d H:i:s', $next_end ) );
+	}
+
 	private function normalize_portal_stripe_timestamp_for_display( $value ) {
 		if ( empty( $value ) ) {
 			return '';
@@ -4292,8 +4326,7 @@ class AJForms {
 							<div class="aj-portal-service-card-grid">
 								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
-								<?php if ( $subscription_price_description ) : ?><div><strong><?php esc_html_e( 'Price Option', 'ajforms' ); ?></strong><span><?php echo esc_html( $subscription_price_description ); ?></span></div><?php endif; ?>
-								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<?php if ( $subscription_price_description ) : ?><div><strong><?php esc_html_e( 'Shipping Frequency', 'ajforms' ); ?></strong><span><?php echo esc_html( $subscription_price_description ); ?></span></div><?php endif; ?>
 								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_next_billing_date( $subscription, $subscription_ledger_entry ) ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
 							</div>
@@ -4323,7 +4356,6 @@ class AJForms {
 								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( 'cancelled' === $service->status ? __( 'Ended', 'ajforms' ) : ucfirst( (string) $service->status ) ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Service Start', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->format_portal_date( $service->contract_start_date ) ); ?></span></div>
-								<div><strong><?php esc_html_e( 'Service End', 'ajforms' ); ?></strong><span><?php echo esc_html( ! empty( $service->contract_end_date ) ? $this->format_portal_date( $service->contract_end_date ) : __( 'Ongoing', 'ajforms' ) ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Billing', 'ajforms' ); ?></strong><span><?php esc_html_e( 'Provided through your service partner', 'ajforms' ); ?></span></div>
 							</div>
 						</div>
@@ -4344,8 +4376,7 @@ class AJForms {
 							<div class="aj-portal-service-card-grid">
 								<div><strong><?php esc_html_e( 'Business Name', 'ajforms' ); ?></strong><span><?php echo esc_html( $business_name ? $business_name : '-' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong><span><?php echo esc_html( ucfirst( $subscription->status ) ); ?></span></div>
-								<?php if ( $subscription_price_description ) : ?><div><strong><?php esc_html_e( 'Price Option', 'ajforms' ); ?></strong><span><?php echo esc_html( $subscription_price_description ); ?></span></div><?php endif; ?>
-								<div><strong><?php esc_html_e( 'Service Period', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_service_period( $subscription, $subscription_ledger_entry ) ); ?></span></div>
+								<?php if ( $subscription_price_description ) : ?><div><strong><?php esc_html_e( 'Shipping Frequency', 'ajforms' ); ?></strong><span><?php echo esc_html( $subscription_price_description ); ?></span></div><?php endif; ?>
 								<div><strong><?php esc_html_e( 'Next Billing Date', 'ajforms' ); ?></strong><span><?php esc_html_e( 'No future billing', 'ajforms' ); ?></span></div>
 								<div><strong><?php esc_html_e( 'Amount', 'ajforms' ); ?></strong><span><?php echo esc_html( $this->get_subscription_amount_label( $subscription ) ); ?></span></div>
 							</div>
@@ -4710,7 +4741,7 @@ class AJForms {
 								<?php
 								$subscription_ledger_entry = $this->get_subscription_ledger_entry( $subscription, $ledger );
 								$upcoming_ship_freq        = $this->get_subscription_price_description( $subscription );
-								$upcoming_service_period   = $this->get_subscription_service_period( $subscription, $subscription_ledger_entry );
+								$upcoming_service_period   = $this->get_subscription_upcoming_service_period( $subscription );
 								?>
 								<tr>
 									<td><?php echo esc_html( $this->get_subscription_service_name( $subscription, $subscription_ledger_entry ) ); ?></td>
