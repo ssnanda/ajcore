@@ -346,6 +346,8 @@ class AJCore_REST_API {
 					'description'     => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'business_name'   => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'individual_name' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'customer_number' => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+					'pmb_number'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'addr_line1'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'addr_line2'      => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 					'addr_city'       => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
@@ -9387,6 +9389,8 @@ class AJCore_REST_API {
 		$description        = sanitize_text_field( (string) ( $request->get_param( 'description' ) ?? '' ) );
 		$business_name      = sanitize_text_field( (string) ( $request->get_param( 'business_name' ) ?? '' ) );
 		$individual_name    = sanitize_text_field( (string) ( $request->get_param( 'individual_name' ) ?? '' ) );
+		$customer_number    = strtoupper( sanitize_text_field( (string) ( $request->get_param( 'customer_number' ) ?? '' ) ) );
+		$pmb_number         = sanitize_text_field( (string) ( $request->get_param( 'pmb_number' ) ?? '' ) );
 		$addr_line1         = sanitize_text_field( (string) ( $request->get_param( 'addr_line1' ) ?? '' ) );
 		$addr_line2         = sanitize_text_field( (string) ( $request->get_param( 'addr_line2' ) ?? '' ) );
 		$addr_city          = sanitize_text_field( (string) ( $request->get_param( 'addr_city' ) ?? '' ) );
@@ -9398,16 +9402,45 @@ class AJCore_REST_API {
 		if ( empty( $name ) || empty( $email ) || empty( $phone ) ) {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
 		}
+		if ( '' !== $customer_number && ! preg_match( '/^\d{4}-\d{2}-\d{4}$/', $customer_number ) ) {
+			return new WP_Error( 'ajcore_invalid_customer_number', 'Customer # must use YYYY-MM-NNNN format.', array( 'status' => 400 ) );
+		}
+		$pdb = $this->get_portal_db();
+		$current_table  = 0 === strpos( $stripe_customer_id, 'local_' ) ? $this->portal_table( 'aj_portal_local_customers' ) : $this->portal_table( 'aj_portal_stripe_customers' );
+		$current_id_col = 0 === strpos( $stripe_customer_id, 'local_' ) ? 'local_customer_id' : 'stripe_customer_id';
+		$current_number = (string) $pdb->get_var( $pdb->prepare( "SELECT customer_number FROM `{$current_table}` WHERE `{$current_id_col}`=%s LIMIT 1", $stripe_customer_id ) );
+		if ( '' !== $customer_number && $customer_number !== $current_number ) {
+			$stripe_table = $this->portal_table( 'aj_portal_stripe_customers' );
+			$local_table  = $this->portal_table( 'aj_portal_local_customers' );
+			$duplicate = $pdb->get_var( $pdb->prepare( "SELECT stripe_customer_id FROM `{$stripe_table}` WHERE customer_number=%s AND stripe_customer_id<>%s LIMIT 1", $customer_number, $stripe_customer_id ) );
+			if ( ! $duplicate && $this->table_exists( $pdb, $local_table ) ) {
+				$duplicate = $pdb->get_var( $pdb->prepare( "SELECT local_customer_id FROM `{$local_table}` WHERE customer_number=%s AND local_customer_id<>%s LIMIT 1", $customer_number, $stripe_customer_id ) );
+			}
+			if ( $duplicate ) {
+				return new WP_Error( 'ajcore_duplicate_customer_number', 'That Customer # is already assigned.', array( 'status' => 409 ) );
+			}
+		}
+		$profile_table = $this->portal_table( 'aj_portal_customer_profiles' );
+		if ( $this->ensure_customer_profiles_table( $pdb, $profile_table ) ) {
+			$profile_id = $pdb->get_var( $pdb->prepare( "SELECT id FROM `{$profile_table}` WHERE customer_id=%s LIMIT 1", $stripe_customer_id ) );
+			if ( $profile_id ) {
+				$pdb->update( $profile_table, array( 'pmb_number' => $pmb_number, 'updated_at' => current_time( 'mysql' ) ), array( 'id' => absint( $profile_id ) ), array( '%s', '%s' ), array( '%d' ) );
+			} elseif ( '' !== $pmb_number ) {
+				$pdb->insert( $profile_table, array( 'customer_id' => $stripe_customer_id, 'pmb_number' => $pmb_number, 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ) ), array( '%s', '%s', '%s', '%s' ) );
+			}
+		}
 
 		if ( 0 === strpos( $stripe_customer_id, 'local_' ) ) {
 			$pdb = $this->get_portal_db();
 			$customer_table = $this->portal_table( 'aj_portal_local_customers' );
 			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
 			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
-			$updated = $pdb->update( $customer_table, array(
+			$local_updates = array(
 				'name' => $name, 'email' => $email, 'phone' => $phone, 'description' => $description,
 				'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ), 'updated_at' => current_time( 'mysql' ),
-			), array( 'local_customer_id' => $stripe_customer_id ), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' ), array( '%s' ) );
+			);
+			if ( '' !== $customer_number ) { $local_updates['customer_number'] = $customer_number; }
+			$updated = $pdb->update( $customer_table, $local_updates, array( 'local_customer_id' => $stripe_customer_id ) );
 			if ( false === $updated ) { return new WP_Error( 'ajcore_local_customer_update_failed', 'Could not update the local AJCore customer.', array( 'status' => 500 ) ); }
 			if ( '' !== $site_domain ) { $this->update_customer_site_domain( $stripe_customer_id, $site_domain ); }
 			return rest_ensure_response( array( 'stripe_customer_id' => $stripe_customer_id, 'name' => $name, 'email' => $email, 'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description, 'address' => $address_data, 'metadata' => $metadata, 'portal_status' => 'active', 'synced_at' => current_time( 'mysql' ) ) );
@@ -9472,6 +9505,9 @@ class AJCore_REST_API {
 		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
 
 		if ( $this->table_exists( $pdb, $customer_table ) ) {
+			if ( '' !== $customer_number ) {
+				$pdb->update( $customer_table, array( 'customer_number' => $customer_number ), array( 'stripe_customer_id' => $stripe_customer_id ), array( '%s' ), array( '%s' ) );
+			}
 			// Add description column if missing.
 			$cols = $pdb->get_col( "SHOW COLUMNS FROM `{$customer_table}` LIKE 'description'" );
 			if ( empty( $cols ) ) {
@@ -9583,7 +9619,7 @@ class AJCore_REST_API {
 	public function ops_customer_action( WP_REST_Request $request ) {
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$action             = sanitize_key( (string) $request->get_param( 'action' ) );
-		$allowed            = array( 'enable', 'disable', 'archive', 'restore', 'enable_repair', 'reset_password', 'send_welcome', 'delete_archived' );
+		$allowed            = array( 'enable', 'disable', 'archive', 'restore', 'enable_repair', 'reset_password', 'send_welcome', 'regenerate_customer_number', 'delete_archived' );
 
 		if ( ! in_array( $action, $allowed, true ) ) {
 			return new WP_Error( 'invalid_action', 'Invalid action.', array( 'status' => 400 ) );
@@ -9627,6 +9663,13 @@ class AJCore_REST_API {
 		$result        = true;
 
 		switch ( $action ) {
+			case 'regenerate_customer_number':
+				$new_number = AJForms_Admin::$instance->generate_customer_number( ! empty( $customer->created_at ) ? $customer->created_at : null );
+				$table      = 0 === strpos( $stripe_customer_id, 'local_' ) ? $this->portal_table( 'aj_portal_local_customers' ) : $customer_table;
+				$id_column  = 0 === strpos( $stripe_customer_id, 'local_' ) ? 'local_customer_id' : 'stripe_customer_id';
+				$result     = false !== $pdb->update( $table, array( 'customer_number' => $new_number ), array( $id_column => $stripe_customer_id ), array( '%s' ), array( '%s' ) );
+				break;
+
 			case 'enable':
 			case 'restore':
 				$result = AJForms_Admin::$instance->enable_stripe_customer_as_portal_user( $stripe_customer_id );

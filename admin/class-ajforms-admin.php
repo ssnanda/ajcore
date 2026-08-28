@@ -2148,17 +2148,25 @@ class AJForms_Admin {
 
 		$timestamp  = $created_at ? strtotime( (string) $created_at ) : false;
 		$year_month = gmdate( 'Y-m', $timestamp ? $timestamp : time() );
+		$like       = $pdb->esc_like( $year_month . '-' ) . '%';
+		$max_seq    = 0;
+		foreach ( array( $this->get_portal_stripe_customers_table(), $pdb->prefix . 'aj_portal_local_customers' ) as $customer_table ) {
+			if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $customer_table ) ) === $customer_table ) {
+				$stored = (int) $pdb->get_var( $pdb->prepare( "SELECT MAX(CAST(SUBSTRING_INDEX(customer_number, '-', -1) AS UNSIGNED)) FROM `{$customer_table}` WHERE customer_number LIKE %s", $like ) );
+				$max_seq = max( $max_seq, $stored );
+			}
+		}
+		$next_floor = $max_seq + 1;
 
 		$pdb->query(
 			$pdb->prepare(
-				"INSERT INTO {$table} (`year_month`, next_seq) VALUES (%s, 1) ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(next_seq + 1)",
-				$year_month
+				"INSERT INTO {$table} (`year_month`, next_seq) VALUES (%s, LAST_INSERT_ID(%d)) ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(GREATEST(next_seq + 1, %d))",
+				$year_month,
+				$next_floor,
+				$next_floor
 			)
 		);
 		$seq = (int) $pdb->get_var( 'SELECT LAST_INSERT_ID()' );
-		if ( 0 === $seq ) {
-			$seq = 1;
-		}
 
 		return sprintf( '%s-%04d', $year_month, $seq );
 	}
