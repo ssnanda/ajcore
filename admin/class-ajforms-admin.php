@@ -8673,7 +8673,6 @@ class AJForms_Admin {
 
 		if ( $service_start_ts > 0 && $service_start_ts < $this->get_portal_subscription_today_timestamp() ) {
 			$body['backdate_start_date'] = $service_start_ts;
-			$body['proration_behavior']  = 'none';
 		}
 
 		if ( $service_end_ts > 0 ) {
@@ -8688,10 +8687,9 @@ class AJForms_Admin {
 
 		if ( $billing_start_ts > 0 ) {
 			$body['billing_cycle_anchor'] = $billing_start_ts;
-			// "Prorate first period" bills today→anchor immediately (e.g. move in mid-month, then
-			// full price on the 1st). Never combined with a backdated start: prorations against a
-			// backdate_start_date would invoice the entire past period.
-			$body['proration_behavior'] = ( $prorate_first && empty( $body['backdate_start_date'] ) ) ? 'create_prorations' : 'none';
+			// "Prorate first period" bills service start (or today when not backdated) through the
+			// future anchor, then begins full recurring billing on the anchor date.
+			$body['proration_behavior'] = $prorate_first ? 'create_prorations' : 'none';
 		} elseif ( $trial_days > 0 ) {
 			$body['trial_period_days'] = $trial_days;
 		}
