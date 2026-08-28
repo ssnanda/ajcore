@@ -2154,8 +2154,31 @@ class AJCore_REST_API {
 		$customers = $this->attach_customer_site_labels( array_map( array( $this, 'format_ops_customer_row' ), $customers ) );
 		$customers = $this->attach_customer_portal_user_links( $customers );
 		$customers = $this->attach_customer_site_access( $customers );
+		$customers = $this->attach_customer_pmb_numbers( $customers );
 		$customers = $this->attach_customer_service_types( $customers );
 		return rest_ensure_response( array( 'customers' => $customers ) );
+	}
+
+	private function attach_customer_pmb_numbers( $customers ) {
+		$customers = (array) $customers;
+		$ids = array_values( array_unique( array_filter( array_map( function ( $customer ) {
+			return isset( $customer['stripe_customer_id'] ) ? (string) $customer['stripe_customer_id'] : '';
+		}, $customers ) ) ) );
+		$by_customer = array();
+		$pdb          = $this->get_portal_db();
+		$table        = $this->portal_table( 'aj_portal_customer_profiles' );
+		if ( ! empty( $ids ) && $this->table_exists( $pdb, $table ) ) {
+			$placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
+			$rows = $pdb->get_results( $pdb->prepare( "SELECT customer_id, pmb_number FROM `{$table}` WHERE customer_id IN ({$placeholders})", $ids ), ARRAY_A );
+			foreach ( (array) $rows as $row ) {
+				$by_customer[ (string) $row['customer_id'] ] = (string) $row['pmb_number'];
+			}
+		}
+		foreach ( $customers as &$customer ) {
+			$customer['pmb_number'] = $by_customer[ (string) ( $customer['stripe_customer_id'] ?? '' ) ] ?? '';
+		}
+		unset( $customer );
+		return $customers;
 	}
 
 	/// Adds `service_types` (array of active subscription / local-contract service names) to
