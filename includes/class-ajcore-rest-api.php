@@ -2193,7 +2193,7 @@ class AJCore_REST_API {
 		$table = $pdb->prefix . 'aj_portal_customer_site_access';
 		if ( ! empty( $ids ) && $this->table_exists( $pdb, $table ) ) {
 			$placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
-			$rows = $pdb->get_results( $pdb->prepare( "SELECT a.*, s.domain FROM `{$table}` a LEFT JOIN `{$pdb->prefix}aj_shared_sites` s ON s.site_uuid=a.site_uuid WHERE a.stripe_customer_id IN ({$placeholders})", $ids ) );
+			$rows = $pdb->get_results( $pdb->prepare( "SELECT a.*, s.domain FROM `{$table}` a LEFT JOIN `{$pdb->prefix}aj_shared_sites` s ON s.site_uuid=a.site_uuid WHERE a.stripe_customer_id IN ({$placeholders}) ORDER BY a.updated_at DESC, a.id DESC", $ids ) );
 			foreach ( (array) $rows as $row ) {
 				$host  = strtolower( (string) wp_parse_url( false === strpos( (string) $row->domain, '://' ) ? 'https://' . $row->domain : (string) $row->domain, PHP_URL_HOST ) );
 				$entry = array( 'status' => $row->portal_status, 'enabled' => (bool) $row->enabled_portal, 'user_email' => $row->portal_user_email, 'site_uuid' => (string) $row->site_uuid );
@@ -2201,9 +2201,10 @@ class AJCore_REST_API {
 				if ( '' === $host ) {
 					continue; // Access row written by a site not (yet) registered in aj_shared_sites.
 				}
-				// Two site_uuids can resolve to the same host (e.g. a site re-registered under a
-				// new uuid) — when they collide, an enabled row must win over a disabled one.
-				if ( ! isset( $access_by_customer[ $row->stripe_customer_id ][ $host ] ) || ( $entry['enabled'] && empty( $access_by_customer[ $row->stripe_customer_id ][ $host ]['enabled'] ) ) ) {
+				// Two site_uuids can resolve to the same host after a site is re-registered.
+				// Rows are newest-first, so keep the latest state instead of allowing a stale
+				// enabled row to override a more recent disable/archive action.
+				if ( ! isset( $access_by_customer[ $row->stripe_customer_id ][ $host ] ) ) {
 					$access_by_customer[ $row->stripe_customer_id ][ $host ] = $entry;
 				}
 			}
