@@ -8700,12 +8700,21 @@ class AJForms_Admin {
 		}
 
 		$this->upsert_portal_subscription_cache_row( $subscription, $stripe_customer_id );
+		// Stripe creates the initial prorated invoice as part of subscription creation. Refresh this
+		// customer's invoice/ledger cache now so the client portal can show the draft under Pending
+		// Charges without waiting for a webhook or a manual Full Sync.
+		$customer_sync = $this->sync_portal_stripe_transactions( $secret_key, $stripe_customer_id );
 
-		return array(
+		$result = array(
 			'success'         => true,
 			'subscription_id' => ! empty( $subscription['id'] ) ? sanitize_text_field( (string) $subscription['id'] ) : '',
 			'status'          => ! empty( $subscription['status'] ) ? sanitize_key( (string) $subscription['status'] ) : '',
 		);
+		if ( is_wp_error( $customer_sync ) ) {
+			$result['warning'] = sprintf( __( 'The subscription was created, but the customer billing view could not refresh automatically: %s', 'ajforms' ), $customer_sync->get_error_message() );
+		}
+
+		return $result;
 	}
 
 	/**
