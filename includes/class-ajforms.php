@@ -4805,7 +4805,8 @@ class AJForms {
 					<table class="aj-portal-table">
 						<thead><tr><th><?php esc_html_e( 'Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Description', 'ajforms' ); ?></th><th><?php esc_html_e( 'Service Period', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Debit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Credit', 'ajforms' ); ?></th><th><?php esc_html_e( 'Running Balance', 'ajforms' ); ?></th><th><?php esc_html_e( 'Invoice', 'ajforms' ); ?></th></tr></thead>
 						<tbody>
-							<?php foreach ( $ledger as $entry ) : ?>
+							<?php // Newest first for display; running-balance values are keyed by id and stay correct. ?>
+							<?php foreach ( array_reverse( $ledger ) as $entry ) : ?>
 								<?php $entry_invoice_url = $this->get_ledger_metadata_value( $entry, 'invoice_pdf' ); ?>
 								<?php $entry_invoice_label = $this->get_ledger_metadata_value( $entry, 'invoice_number' ) ? $this->get_ledger_metadata_value( $entry, 'invoice_number' ) : __( 'PDF', 'ajforms' ); ?>
 								<?php $entry_invoice_id = ! empty( $entry->invoice_id ) ? sanitize_text_field( (string) $entry->invoice_id ) : $this->get_ledger_metadata_value( $entry, 'invoice_id' ); ?>
