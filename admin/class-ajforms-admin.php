@@ -1081,6 +1081,45 @@ class AJForms_Admin {
 		);
 	}
 
+	/**
+	 * A customer's portal login belongs to exactly one site (aj_portal_customer_states.site_uuid);
+	 * partner-billed customers (opus / alliance_vo) are pinned to their partner's site. Returns a
+	 * WP_Error when the customer must NOT be enabled as a portal user on THIS site, or true when
+	 * it may be. Guards the enable / enable-repair paths so a customer can't be activated on a
+	 * site that isn't theirs (e.g. an OPUS customer getting a login on ncllcagents.com).
+	 */
+	private function customer_portal_enable_allowed_here( $customer ) {
+		if ( ! is_object( $customer ) || empty( $customer->stripe_customer_id ) ) {
+			return true;
+		}
+
+		$wrong_site = new WP_Error(
+			'wrong_portal_site',
+			__( 'This customer\'s portal login belongs to a different site and cannot be enabled here.', 'ajforms' )
+		);
+
+		// Partner-billed customers (opus / alliance_vo) are pinned to universityofficesuites.com —
+		// same hard mapping AJCore's REST layer applies when stamping their assigned site. This
+		// holds even before an aj_portal_customer_states row exists for them.
+		$partner_key = isset( $customer->partner_key ) ? sanitize_key( (string) $customer->partner_key ) : '';
+		if ( in_array( $partner_key, array( 'opus', 'alliance_vo' ), true ) ) {
+			$current_host = strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) );
+			$current_host = preg_replace( '/^www\./', '', $current_host );
+			return false !== strpos( $current_host, 'universityofficesuites.com' ) ? true : $wrong_site;
+		}
+
+		// Everyone else: a customer's portal login belongs to exactly one site
+		// (aj_portal_customer_states.site_uuid). Block a cross-site enable only when an operator
+		// set that assignment, so an incidental stale state row can't wall off a legit customer.
+		$state    = $this->get_portal_customer_state( (string) $customer->stripe_customer_id );
+		$assigned = $state && ! empty( $state->site_uuid ) ? sanitize_text_field( (string) $state->site_uuid ) : '';
+		if ( '' === $assigned || $assigned === $this->get_ajcore_site_uuid() ) {
+			return true;
+		}
+
+		return ( $state && 'ajops_edit' === sanitize_key( (string) $state->status_source ) ) ? $wrong_site : true;
+	}
+
 	private function upsert_portal_customer_state( $stripe_customer_id, $portal_status, $source = '', $reason = '', $details = array() ) {
 		global $wpdb;
 		$pdb = $this->get_pdb();
@@ -1746,7 +1785,22 @@ class AJForms_Admin {
 					array( '%d', '%s', '%s', '%s', '%s', '%s' ),
 					'stripe_customer_id'
 				);
-				if ( $activate_matches ) {
+				$site_check = $activate_matches ? $this->customer_portal_enable_allowed_here( $customer ) : true;
+				if ( $activate_matches && is_wp_error( $site_check ) ) {
+					$stats['skipped']++;
+					if ( $log_items ) {
+						$this->log_portal_event(
+							'enable_repair_wrong_site_skipped',
+							array(
+								'severity'           => 'warning',
+								'source'             => 'enable_repair',
+								'customer_id'        => isset( $customer->id ) ? (int) $customer->id : 0,
+								'stripe_customer_id' => $customer->stripe_customer_id,
+								'details'            => array( 'reason' => $site_check->get_error_message() ),
+							)
+						);
+					}
+				} elseif ( $activate_matches ) {
 					$status_before = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' );
 					$this->set_portal_customer_status(
 						$customer->stripe_customer_id,
@@ -4988,18 +5042,44 @@ class AJForms_Admin {
 				$stripe_customer_id
 			)
 		);
+		$customer = $this->get_pdb()->get_row(
+			$this->get_pdb()->prepare(
+				"SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
 
+		// Revoke the role from every local WP user that could be this customer's portal login:
+		// the mapped user AND any user matching the customer's known emails. A missing or stale
+		// aj_auth_user_mappings row must not leave a live portal account behind on this site.
+		$candidate_ids = array();
 		if ( $mapping && ! empty( $mapping->user_id ) ) {
-			$user = get_userdata( (int) $mapping->user_id );
-			if ( $user && in_array( 'aj_portal_user', (array) $user->roles, true ) ) {
+			$candidate_ids[] = (int) $mapping->user_id;
+		}
+		foreach ( $this->get_portal_customer_link_emails( $customer, $mapping ) as $link_email ) {
+			$user_by_email = get_user_by( 'email', $link_email );
+			if ( $user_by_email ) {
+				$candidate_ids[] = (int) $user_by_email->ID;
+			}
+		}
+		foreach ( array_values( array_unique( array_filter( $candidate_ids ) ) ) as $candidate_id ) {
+			$user = get_userdata( $candidate_id );
+			if ( ! $user || $this->user_has_elevated_role( $user ) ) {
+				continue; // Never touch staff / admin accounts.
+			}
+			if ( in_array( 'aj_portal_user', (array) $user->roles, true ) || user_can( $user, 'ajcore_customer_portal_access' ) ) {
 				$user->remove_role( 'aj_portal_user' );
+				$user->remove_cap( 'ajcore_customer_portal_access' );
 				$this->log_portal_event(
 					'role_removed',
 					array(
 						'stripe_customer_id' => $stripe_customer_id,
 						'wp_user_id_before'  => (int) $user->ID,
 						'email_before'       => $user->user_email,
-						'details'            => array( 'role' => 'aj_portal_user' ),
+						'details'            => array(
+							'role'       => 'aj_portal_user',
+							'matched_by' => ( $mapping && (int) $mapping->user_id === (int) $user->ID ) ? 'mapping' : 'email',
+						),
 					)
 				);
 			}
@@ -9993,6 +10073,10 @@ class AJForms_Admin {
 
 		if ( ! $customer || empty( $customer->email ) || ! is_email( $customer->email ) ) {
 			return new WP_Error( 'missing_customer_email', __( 'This Stripe customer needs a valid email before it can be enabled as a portal user.', 'ajforms' ) );
+		}
+		$site_check = $this->customer_portal_enable_allowed_here( $customer );
+		if ( is_wp_error( $site_check ) ) {
+			return $site_check;
 		}
 		$status_before = ! empty( $customer->portal_status ) ? sanitize_key( (string) $customer->portal_status ) : ( ! empty( $customer->enabled_portal ) ? 'active' : 'disabled' );
 		$mapping_before = $wpdb->get_row(
