@@ -2234,6 +2234,7 @@ class AJCore_REST_API {
 				}
 			}
 		}
+		$this_site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
 		foreach ( $customers as &$customer ) {
 			$cid = (string) ( $customer['stripe_customer_id'] ?? '' );
 			$assigned      = (string) ( $customer['site_label'] ?? '' );
@@ -2242,17 +2243,34 @@ class AJCore_REST_API {
 			$customer['site_access'] = $access;
 			// Match the assigned site by host label, falling back to a direct site_uuid match so a
 			// stale/missing aj_shared_sites registration can't hide a real access row.
-			$assigned_status = isset( $access[ $assigned ] ) ? $access[ $assigned ]['status'] : '';
-			if ( '' === $assigned_status && '' !== $assigned_uuid ) {
+			$assigned_entry = isset( $access[ $assigned ] ) ? $access[ $assigned ] : null;
+			if ( null === $assigned_entry && '' !== $assigned_uuid ) {
 				foreach ( $rows_by_customer[ $cid ] ?? array() as $entry ) {
 					if ( $entry['site_uuid'] === $assigned_uuid ) {
-						$assigned_status = $entry['status'];
+						$assigned_entry = $entry;
 						break;
 					}
 				}
 			}
+			$assigned_status = $assigned_entry ? (string) $assigned_entry['status'] : '';
 			$customer['assigned_site_status'] = '' !== $assigned_status ? $assigned_status : 'not_enabled';
 			$customer['active_site_labels'] = array_keys( array_filter( $access, function ( $item ) { return ! empty( $item['enabled'] ); } ) );
+
+			// has_portal_login (set by attach_customer_portal_user_links) is derived from THIS site's
+			// local wp_aj_auth_user_mappings. When a customer's portal user lives on another site,
+			// that lookup can't see the mapping, so the ops UI would show "No portal login" for a
+			// customer who is actually enabled on their assigned site. Fall back to the shared
+			// per-site access record for cross-site customers.
+			if ( empty( $customer['has_portal_login'] ) && $assigned_entry && ! empty( $assigned_entry['enabled'] ) ) {
+				$assigned_entry_uuid = (string) ( $assigned_entry['site_uuid'] ?? '' );
+				if ( '' !== $assigned_entry_uuid && $assigned_entry_uuid !== $this_site_uuid ) {
+					$customer['has_portal_login']  = true;
+					$customer['portal_user_count'] = max( 1, (int) ( $customer['portal_user_count'] ?? 0 ) );
+					if ( empty( $customer['portal_user_email'] ) && ! empty( $assigned_entry['user_email'] ) ) {
+						$customer['portal_user_email'] = (string) $assigned_entry['user_email'];
+					}
+				}
+			}
 		}
 		unset( $customer );
 		return $customers;
