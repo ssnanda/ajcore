@@ -7280,14 +7280,23 @@ class AJCore_REST_API {
 			return new WP_Error( 'missing_secret', 'Update secret required.', array( 'status' => 401 ) );
 		}
 
-		$pdb   = $this->get_portal_db();
-		$table = $pdb->prefix . 'aj_shared_sites';
-		if ( ! $this->table_exists( $pdb, $table ) ) {
+		// The control table and this site's update_secret live in the SHARED DB, always — not this
+		// site's *portal* DB. A Forms-&-Leads-only participant has the multi-site portal off, so
+		// $this->get_portal_db() would hand back the local wpdb (where aj_shared_sites doesn't
+		// exist) and every remote update from the Master would 503. Read the shared connection
+		// directly instead; forms/leads participation already implies shared-DB connectivity.
+		$shared = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		if ( ! $shared ) {
+			return new WP_Error( 'shared_db_unavailable', 'Shared DB is not connected on this site.', array( 'status' => 503 ) );
+		}
+
+		$table = $shared->prefix . 'aj_shared_sites';
+		if ( ! $this->table_exists( $shared, $table ) ) {
 			return new WP_Error( 'shared_db_unavailable', 'Shared DB control table not found.', array( 'status' => 503 ) );
 		}
 
 		$uuid   = (string) get_option( 'ajcore_site_uuid', '' );
-		$actual = $uuid ? (string) $pdb->get_var( $pdb->prepare( "SELECT update_secret FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid ) ) : '';
+		$actual = $uuid ? (string) $shared->get_var( $shared->prepare( "SELECT update_secret FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid ) ) : '';
 
 		if ( '' === $actual || ! hash_equals( $actual, $provided ) ) {
 			return new WP_Error( 'invalid_secret', 'Invalid update secret.', array( 'status' => 403 ) );
@@ -7309,12 +7318,16 @@ class AJCore_REST_API {
 			return $status;
 		}
 		if ( empty( $status['has_update'] ) ) {
+			$this->report_ajcore_version_to_shared_db( isset( $status['current_version'] ) ? (string) $status['current_version'] : '' );
 			return rest_ensure_response(
 				array( 'updated' => false, 'version' => $status['current_version'], 'message' => 'Already up to date.' )
 			);
 		}
 
-		$result = $admin->install_plugin_update();
+		// This is a site-to-site call authenticated by the shared-DB update secret
+		// (can_trigger_remote_update()), so there is no logged-in user — skip the
+		// current_user_can( 'update_plugins' ) gate that the wp-admin button relies on.
+		$result = $admin->install_plugin_update( false );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -7323,7 +7336,42 @@ class AJCore_REST_API {
 			ajcore_register_site_in_shared_db();
 		}
 
-		return rest_ensure_response( array( 'updated' => true, 'version' => $status['latest_version'] ) );
+		// ajcore_register_site_in_shared_db() writes AJCORE_VERSION, but this PHP process still
+		// holds the PRE-update constant in memory, so it would re-report the old version. Write
+		// the version we actually just installed straight into the control row instead.
+		$new_version = isset( $status['latest_version'] ) ? (string) $status['latest_version'] : '';
+		$this->report_ajcore_version_to_shared_db( $new_version );
+
+		return rest_ensure_response( array( 'updated' => true, 'version' => $new_version ) );
+	}
+
+	/** Write a known AJCore version straight into this site's aj_shared_sites control row, so the
+	 *  Master's Connected Sites list reflects it immediately after a remote self-update (the running
+	 *  PHP process still has the old AJCORE_VERSION constant, so it can't be trusted here). */
+	private function report_ajcore_version_to_shared_db( $version ) {
+		$version = trim( (string) $version );
+		if ( '' === $version || ! function_exists( 'ajcore_get_shared_db' ) ) {
+			return;
+		}
+
+		$shared = ajcore_get_shared_db();
+		$uuid   = (string) get_option( 'ajcore_site_uuid', '' );
+		if ( ! $shared || '' === $uuid ) {
+			return;
+		}
+
+		$table = $shared->prefix . 'aj_shared_sites';
+		if ( ! $this->table_exists( $shared, $table ) ) {
+			return;
+		}
+
+		$shared->update(
+			$table,
+			array( 'ajcore_version' => $version, 'last_seen' => current_time( 'mysql' ) ),
+			array( 'site_uuid' => $uuid ),
+			array( '%s', '%s' ),
+			array( '%s' )
+		);
 	}
 
 	/**

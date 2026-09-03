@@ -7892,7 +7892,7 @@ class AJForms {
 		return array(
 			'submit_text'           => 'Submit',
 			'notifications_enabled' => isset( $plugin_settings['default_notifications_enabled'] ) ? '1' === (string) $plugin_settings['default_notifications_enabled'] : true,
-			'notification_email'    => isset( $plugin_settings['default_notification_email'] ) ? $plugin_settings['default_notification_email'] : get_option( 'admin_email' ),
+			'notification_email'    => ! empty( $plugin_settings['default_notification_email'] ) ? $plugin_settings['default_notification_email'] : ajcore_default_notification_email(),
 			'notification_subject'  => isset( $plugin_settings['default_notification_subject'] ) ? $plugin_settings['default_notification_subject'] : 'New submission for {form_title}',
 			'notification_body'     => "{submission_table}{submission_details_table}",
 			'notification_from_name' => isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ),

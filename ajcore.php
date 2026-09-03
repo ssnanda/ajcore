@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.282
+ * Version: 0.7.283
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.282' );
+	define( 'AJCORE_VERSION', '0.7.283' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -61,18 +61,14 @@ if ( ! defined( 'AJFORMS_SYNCED_SETTINGS_FILE' ) ) {
 	define( 'AJFORMS_SYNCED_SETTINGS_FILE', AJCORE_SYNCED_SETTINGS_FILE );
 }
 
-if ( ! function_exists( 'ajcore_default_system_from_email' ) ) {
+if ( ! function_exists( 'ajcore_site_domain' ) ) {
 	/**
-	 * Per-site default "From" address for plugin-sent mail: donotreply@<this site's domain>.
+	 * This site's bare domain (no scheme, no www., no port) for building per-site email
+	 * addresses. Falls back to "localhost" when nothing resolvable is available.
 	 *
-	 * Used only when no explicit From email has been configured (the "System From Email"
-	 * setting, or a form's "Notification From" field). Keeps the sender on the sending
-	 * site's own domain instead of a shared hard-coded address, which matters for SPF/DKIM
-	 * alignment now that this plugin ships to many sites.
-	 *
-	 * @return string e.g. "donotreply@freesiem.com".
+	 * @return string e.g. "freesiem.com".
 	 */
-	function ajcore_default_system_from_email() {
+	function ajcore_site_domain() {
 		$host = '';
 		if ( function_exists( 'home_url' ) ) {
 			$host = (string) wp_parse_url( home_url(), PHP_URL_HOST );
@@ -85,7 +81,55 @@ if ( ! function_exists( 'ajcore_default_system_from_email' ) ) {
 		// Drop any :port and anything that isn't a plausible hostname character.
 		$host = preg_replace( '/[^a-z0-9.\-].*$/', '', (string) $host );
 
-		return '' !== $host ? 'donotreply@' . $host : 'donotreply@localhost';
+		return '' !== $host ? $host : 'localhost';
+	}
+}
+
+if ( ! function_exists( 'ajcore_site_mailbox' ) ) {
+	/**
+	 * A <mailbox>@<this site's domain> address, for per-site plugin mail defaults.
+	 * Keeps senders/recipients on the sending site's own domain instead of a shared
+	 * hard-coded address, which matters for SPF/DKIM alignment now that this plugin
+	 * ships to many sites.
+	 *
+	 * @param string $mailbox Local part, e.g. "donotreply" or "leads".
+	 * @return string e.g. "leads@freesiem.com".
+	 */
+	function ajcore_site_mailbox( $mailbox ) {
+		$mailbox = preg_replace( '/[^a-z0-9._\-]/', '', strtolower( (string) $mailbox ) );
+		if ( '' === $mailbox ) {
+			$mailbox = 'noreply';
+		}
+
+		return $mailbox . '@' . ajcore_site_domain();
+	}
+}
+
+if ( ! function_exists( 'ajcore_default_system_from_email' ) ) {
+	/**
+	 * Per-site default "From" address for plugin-sent mail: donotreply@<this site's domain>.
+	 *
+	 * Used only when no explicit From email has been configured (the "System From Email"
+	 * setting, or a form's "Notification From" field).
+	 *
+	 * @return string e.g. "donotreply@freesiem.com".
+	 */
+	function ajcore_default_system_from_email() {
+		return ajcore_site_mailbox( 'donotreply' );
+	}
+}
+
+if ( ! function_exists( 'ajcore_default_notification_email' ) ) {
+	/**
+	 * Per-site default recipient for form notifications: leads@<this site's domain>.
+	 *
+	 * Seeds the "Default Notification Email" setting and any new form that doesn't
+	 * override it. Admins can still point individual forms elsewhere in the builder.
+	 *
+	 * @return string e.g. "leads@freesiem.com".
+	 */
+	function ajcore_default_notification_email() {
+		return ajcore_site_mailbox( 'leads' );
 	}
 }
 
@@ -175,7 +219,7 @@ if ( ! function_exists( 'ajcore_suppress_hostinger_ai_token_notice' ) ) {
 if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 	function ajforms_get_settings_defaults() {
 		return array(
-			'default_notification_email'    => get_option( 'admin_email' ),
+			'default_notification_email'    => ajcore_default_notification_email(),
 			'default_notification_subject'  => 'New submission for {form_title}',
 			'default_notifications_enabled' => '1',
 			'default_from_name'             => get_bloginfo( 'name' ),

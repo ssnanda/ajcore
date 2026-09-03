@@ -207,8 +207,11 @@ class AJForms_Admin {
 		);
 	}
 
-	public function install_plugin_update() {
-		if ( ! current_user_can( 'update_plugins' ) ) {
+	public function install_plugin_update( $require_capability = true ) {
+		// $require_capability is false only for the site-to-site REST self-update path
+		// (handle_ops_self_update()), which authenticates via the shared-DB update secret and
+		// runs with no logged-in user. Every wp-admin caller leaves it at the default.
+		if ( $require_capability && ! current_user_can( 'update_plugins' ) ) {
 			return new WP_Error( 'insufficient_permissions', __( 'You do not have permission to update plugins.', 'ajforms' ) );
 		}
 
@@ -11368,6 +11371,18 @@ class AJForms_Admin {
 	public function handle_admin_actions() {
 		$page = isset( $_GET['page'] ) ? sanitize_text_field( wp_unslash( $_GET['page'] ) ) : '';
 
+		// Heartbeat: keep this site's aj_shared_sites control row (version, domain, participation,
+		// last_seen) current so the Master's Connected Sites list is accurate. Registration
+		// otherwise only runs on a handful of portal-specific save paths, so a Forms-&-Leads-only
+		// site could sit for weeks reporting a stale version. Throttled to once per 10 minutes.
+		if ( current_user_can( 'manage_options' )
+			&& function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled()
+			&& function_exists( 'ajcore_register_site_in_shared_db' )
+			&& false === get_transient( 'ajcore_shared_site_heartbeat' ) ) {
+			set_transient( 'ajcore_shared_site_heartbeat', 1, 10 * MINUTE_IN_SECONDS );
+			ajcore_register_site_in_shared_db();
+		}
+
 		// Auth (ajforms-auth) and Update AJ Core (ajforms-about) used to be their own top-level
 		// pages — both are now sections of the unified Settings page, and neither slug is registered
 		// as a menu item anymore, so WordPress would otherwise just show a bare "you don't have
@@ -13601,7 +13616,7 @@ class AJForms_Admin {
 		$current_settings = $this->get_plugin_settings();
 
 		$settings = array(
-			'default_notification_email'     => isset( $_POST['default_notification_email'] ) ? sanitize_text_field( wp_unslash( $_POST['default_notification_email'] ) ) : get_option( 'admin_email' ),
+			'default_notification_email'     => isset( $_POST['default_notification_email'] ) ? sanitize_text_field( wp_unslash( $_POST['default_notification_email'] ) ) : ajcore_default_notification_email(),
 			'default_notification_subject'   => isset( $_POST['default_notification_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['default_notification_subject'] ) ) : 'New submission for {form_title}',
 			'default_notifications_enabled'  => isset( $_POST['default_notifications_enabled'] ) ? '1' : '0',
 			'default_from_name'              => isset( $_POST['default_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['default_from_name'] ) ) : get_bloginfo( 'name' ),
@@ -31528,8 +31543,8 @@ class AJForms_Admin {
 									<div class="ajforms-settings-grid">
 										<div class="ajforms-settings-field">
 											<label for="default_notification_email"><?php esc_html_e( 'Default Notification Email', 'ajforms' ); ?></label>
-											<input name="default_notification_email" id="default_notification_email" type="text" value="<?php echo esc_attr( $settings['default_notification_email'] ); ?>">
-											<div class="ajforms-settings-help"><?php esc_html_e( 'Comma-separated addresses are supported.', 'ajforms' ); ?></div>
+											<input name="default_notification_email" id="default_notification_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_notification_email() ); ?>" value="<?php echo esc_attr( $settings['default_notification_email'] ); ?>">
+											<div class="ajforms-settings-help"><?php printf( esc_html__( 'Where new forms send submissions. Comma-separated addresses are supported. Leave blank to use %s.', 'ajforms' ), esc_html( ajcore_default_notification_email() ) ); ?></div>
 										</div>
 										<div class="ajforms-settings-field">
 											<label for="default_notification_subject"><?php esc_html_e( 'Default Notification Subject', 'ajforms' ); ?></label>
