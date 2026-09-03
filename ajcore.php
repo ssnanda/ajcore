@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.280
+ * Version: 0.7.281
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.280' );
+	define( 'AJCORE_VERSION', '0.7.281' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -59,6 +59,34 @@ if ( ! defined( 'AJFORMS_PLUGIN_BASENAME' ) ) {
 
 if ( ! defined( 'AJFORMS_SYNCED_SETTINGS_FILE' ) ) {
 	define( 'AJFORMS_SYNCED_SETTINGS_FILE', AJCORE_SYNCED_SETTINGS_FILE );
+}
+
+if ( ! function_exists( 'ajcore_default_system_from_email' ) ) {
+	/**
+	 * Per-site default "From" address for plugin-sent mail: donotreply@<this site's domain>.
+	 *
+	 * Used only when no explicit From email has been configured (the "System From Email"
+	 * setting, or a form's "Notification From" field). Keeps the sender on the sending
+	 * site's own domain instead of a shared hard-coded address, which matters for SPF/DKIM
+	 * alignment now that this plugin ships to many sites.
+	 *
+	 * @return string e.g. "donotreply@freesiem.com".
+	 */
+	function ajcore_default_system_from_email() {
+		$host = '';
+		if ( function_exists( 'home_url' ) ) {
+			$host = (string) wp_parse_url( home_url(), PHP_URL_HOST );
+		}
+		if ( '' === $host && isset( $_SERVER['HTTP_HOST'] ) ) {
+			$host = (string) sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) );
+		}
+
+		$host = preg_replace( '/^www\./i', '', strtolower( $host ) );
+		// Drop any :port and anything that isn't a plausible hostname character.
+		$host = preg_replace( '/[^a-z0-9.\-].*$/', '', (string) $host );
+
+		return '' !== $host ? 'donotreply@' . $host : 'donotreply@localhost';
+	}
 }
 
 if ( ! function_exists( 'ajcore_generate_service_request_number' ) ) {
@@ -160,7 +188,7 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// branded fields; ncllc/upos turn it on locally since their lead/customer brand-switch
 			// (get_customer_brand_setting_key()) actually uses the university_* settings below.
 			'enable_university_brand_templates' => '0',
-			'wp_email_from_email'           => defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? AJCORE_SYSTEM_FROM_EMAIL : get_option( 'admin_email' ),
+			'wp_email_from_email'           => ajcore_default_system_from_email(),
 			'wp_email_from_name'            => get_bloginfo( 'name' ),
 			'wp_password_reset_subject'     => 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',

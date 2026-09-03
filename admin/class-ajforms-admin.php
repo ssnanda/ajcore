@@ -5108,10 +5108,10 @@ class AJForms_Admin {
 			}
 		}
 		if ( '' === $from_email ) {
-			$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
+			$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : sanitize_email( ajcore_default_system_from_email() );
 		}
 		if ( ! is_email( $from_email ) ) {
-			$from_email = 'donotreply@ncllcagents.com';
+			$from_email = ajcore_default_system_from_email();
 		}
 
 		$from_name = '';
@@ -13608,7 +13608,7 @@ class AJForms_Admin {
 			'default_reply_to_mode'          => isset( $_POST['default_reply_to_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ), array( 'submitter', 'site' ), true ) ? sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ) : 'submitter',
 			'wp_email_templates_enabled'     => isset( $_POST['wp_email_templates_enabled'] ) ? '1' : '0',
 			'enable_university_brand_templates' => isset( $_POST['enable_university_brand_templates'] ) ? '1' : '0',
-			'wp_email_from_email'            => isset( $_POST['wp_email_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_email_from_email'] ) ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? AJCORE_SYSTEM_FROM_EMAIL : 'donotreply@ncllcagents.com' ),
+			'wp_email_from_email'            => isset( $_POST['wp_email_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_email_from_email'] ) ) : ajcore_default_system_from_email(),
 			'wp_email_from_name'             => isset( $_POST['wp_email_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_email_from_name'] ) ) : get_bloginfo( 'name' ),
 			'wp_password_reset_subject'      => isset( $_POST['wp_password_reset_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_subject'] ) ) : 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'       => isset( $_POST['wp_welcome_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_email_subject'] ) ) : 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
@@ -26036,7 +26036,8 @@ class AJForms_Admin {
 				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
-						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="donotreply@yourdomain.com" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+						<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php printf( esc_html__( 'Leave blank to send as %s (this site’s domain).', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></p>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>

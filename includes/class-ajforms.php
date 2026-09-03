@@ -1161,7 +1161,7 @@ class AJForms {
 	public function filter_wp_mail_from( $email ) {
 		$settings = get_option( 'ajforms_settings', array() );
 		$settings = is_array( $settings ) ? $settings : array();
-		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
+		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : sanitize_email( ajcore_default_system_from_email() );
 
 		return is_email( $from_email ) ? $from_email : $email;
 	}
@@ -11471,7 +11471,7 @@ class AJForms {
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		$from_name = ! empty( $settings['notification_from_name'] ) ? sanitize_text_field( $this->replace_template_tags( (string) $settings['notification_from_name'], $form, $lead_data ) ) : '';
-		$from_email = ! empty( $settings['notification_from_email'] ) ? sanitize_email( $settings['notification_from_email'] ) : ( defined( 'AJCORE_SYSTEM_FROM_EMAIL' ) ? sanitize_email( AJCORE_SYSTEM_FROM_EMAIL ) : 'donotreply@ncllcagents.com' );
+		$from_email = ! empty( $settings['notification_from_email'] ) ? sanitize_email( $settings['notification_from_email'] ) : sanitize_email( ajcore_default_system_from_email() );
 		$reply_to = $this->get_notification_reply_to_header( $settings, $form, $lead_data );
 		$attachments = array();
 
