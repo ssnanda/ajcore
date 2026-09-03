@@ -13754,6 +13754,16 @@ class AJForms_Admin {
 			}
 		}
 
+		// System "From" identity for all plugin mail. Editable from both the General Settings form
+		// and the Email Templates form, so it belongs to no single $section_keys entry — preserve
+		// the stored value on any save that didn't actually post these fields (same reasoning as
+		// the OAuth/university loops above).
+		foreach ( array( 'wp_email_from_email', 'wp_email_from_name' ) as $sender_field ) {
+			if ( ! isset( $_POST[ $sender_field ] ) && array_key_exists( $sender_field, $current_settings ) ) {
+				$settings[ $sender_field ] = $current_settings[ $sender_field ];
+			}
+		}
+
 		$active_stripe_prefix = 'live' === $settings['stripe_mode'] ? 'stripe_live' : 'stripe_sandbox';
 		$settings['stripe_publishable_key'] = isset( $settings[ $active_stripe_prefix . '_publishable_key' ] ) ? $settings[ $active_stripe_prefix . '_publishable_key' ] : '';
 		$settings['stripe_secret_key']      = isset( $settings[ $active_stripe_prefix . '_secret_key' ] ) ? $settings[ $active_stripe_prefix . '_secret_key' ] : '';
@@ -13764,7 +13774,12 @@ class AJForms_Admin {
 			// they're preserved by their own dedicated loop above instead of this section-scoped
 			// restore, since they're only ever posted from this tab and only when
 			// enable_university_brand_templates is on. See that loop's comment for why.
-			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_email_from_email', 'wp_email_from_name', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name' ),
+			// wp_email_from_email / wp_email_from_name are intentionally NOT scoped to a section —
+			// they're editable from BOTH this Email Templates form and the always-visible General
+			// Settings form (they govern all plugin mail, not just portal templates), so a
+			// section-scoped restore would let a save on one form wipe the other's value.
+			// Preserved by their own loop above instead, like the OAuth/university fields.
+			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
@@ -31539,6 +31554,24 @@ class AJForms_Admin {
 										<div>
 											<strong><?php esc_html_e( 'Enable notifications by default', 'ajforms' ); ?></strong>
 											<span><?php esc_html_e( 'Every new form starts with notifications turned on unless you switch it off in the builder.', 'ajforms' ); ?></span>
+										</div>
+									</div>
+								</div>
+
+								<div class="ajforms-settings-card">
+									<span class="ajforms-settings-pill"><?php esc_html_e( 'WordPress Mail', 'ajforms' ); ?></span>
+									<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
+									<p><?php esc_html_e( 'The "From" address AJ Core puts on every message it sends — form notifications, portal mail, and WordPress system email.', 'ajforms' ); ?></p>
+									<div class="ajforms-settings-grid">
+										<div class="ajforms-settings-field">
+											<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
+											<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+											<div class="ajforms-settings-help"><?php printf( esc_html__( 'Leave blank to send as %s (this site’s own domain), which keeps SPF/DKIM aligned.', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></div>
+										</div>
+										<div class="ajforms-settings-field">
+											<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
+											<input name="wp_email_from_name" id="wp_email_from_name" type="text" placeholder="<?php echo esc_attr( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
+											<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the site title.', 'ajforms' ); ?></div>
 										</div>
 									</div>
 								</div>
