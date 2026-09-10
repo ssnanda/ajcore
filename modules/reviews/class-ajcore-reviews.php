@@ -86,6 +86,7 @@ final class AJCore_Reviews {
 			$start = microtime( true ); $config = self::config();
 			$trigger = in_array( $trigger, array( 'manual', 'scheduled', 'retry' ), true ) ? $trigger : 'manual';
 			if ( empty( $config['account'] ) || empty( $config['location'] ) ) { return new WP_Error( 'invalid_location' ); }
+			delete_option( 'ajcore_reviews_api_error' ); // A refusal describes this attempt, not the previous one.
 			if ( ! self::snapshot() ) { AJCore_Reviews_Vault::delete( 'ajcore_reviews_snapshot' ); }
 			try { $data = self::provider()->fetch( $config['account'], $config['location'] ); }
 			catch ( Throwable $e ) { $data = new WP_Error( 'operation_failed' ); }
@@ -142,6 +143,7 @@ final class AJCore_Reviews {
 
 	/** Caller holds the shared lock. Local credentials are erased even if revocation fails. */
 	public static function disconnect() {
+		delete_option( 'ajcore_reviews_api_error' ); // Cleared first, so a refusal from revoke itself survives.
 		try { $result = self::provider()->revoke(); } catch ( Throwable $e ) { $result = new WP_Error( 'revoke_failed' ); }
 		foreach ( array( 'credentials', 'snapshot', 'selection', 'choices', 'oauth', 'config', 'sync_meta' ) as $key ) { AJCore_Reviews_Vault::delete( 'ajcore_reviews_' . $key ); }
 		self::unschedule();

@@ -34,11 +34,35 @@ final class AJCore_Google_Review_Provider implements AJCore_Review_Provider {
 		$status = wp_remote_retrieve_response_code( $response );
 		if ( $status < 200 || $status >= 300 ) {
 			$code = $status === 429 || $status >= 500 ? 'temporary_error' : ( in_array( $status, array( 400, 401 ), true ) ? 'authorization_failed' : 'access_denied' );
+			self::record_failure( $url, $status, wp_remote_retrieve_body( $response ) );
 			return new WP_Error( $code );
 		}
 		if ( $empty_response_allowed ) { return true; }
 		$data = json_decode( wp_remote_retrieve_body( $response ), true );
 		return is_array( $data ) ? $data : new WP_Error( 'invalid_response' );
+	}
+
+	/**
+	 * Google's 403s all read the same in the UI, so keep the machine-readable part of
+	 * the last one: which endpoint, which status enum, which reason, which service.
+	 * Enum-shaped fields only — no message text, no response body, no credentials.
+	 */
+	private static function record_failure( $url, $status, $body ) {
+		$data = json_decode( (string) $body, true );
+		$error = is_array( $data ) && is_array( $data['error'] ?? null ) ? $data['error'] : array();
+		$enum = function( $value ) { return is_string( $value ) && preg_match( '/^[A-Za-z0-9_.\/-]{1,120}$/D', $value ) ? $value : ''; };
+		$reason = ''; $service = '';
+		foreach ( (array) ( $error['details'] ?? array() ) as $detail ) {
+			if ( ! is_array( $detail ) ) { continue; }
+			if ( $reason === '' ) { $reason = $enum( $detail['reason'] ?? '' ); }
+			if ( $service === '' ) { $service = $enum( $detail['metadata']['service'] ?? '' ); }
+		}
+		$parts = wp_parse_url( $url );
+		update_option( 'ajcore_reviews_api_error', array(
+			'time' => time(), 'http' => (int) $status, 'status' => $enum( $error['status'] ?? '' ),
+			'reason' => $reason, 'service' => $service,
+			'endpoint' => ( $parts['host'] ?? '' ) . ( $parts['path'] ?? '' ),
+		), false );
 	}
 
 	private function token_request( $fields ) {

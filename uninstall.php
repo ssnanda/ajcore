@@ -8,7 +8,7 @@ $ajcore_reviews_remove_site = function() {
 		delete_transient( 'ajcore_reviews_' . $key );
 		delete_option( '_transient_ajcore_reviews_' . $key ); delete_option( '_transient_timeout_ajcore_reviews_' . $key );
 	}
-	foreach ( array( 'credentials', 'config', 'selection', 'sync_meta', 'history', 'display' ) as $key ) { delete_option( 'ajcore_reviews_' . $key ); }
+	foreach ( array( 'credentials', 'config', 'selection', 'sync_meta', 'history', 'display', 'api_error' ) as $key ) { delete_option( 'ajcore_reviews_' . $key ); }
 	// Explicit site-owner opt-in only. The shared encryption key and other AJ Core data are untouched.
 	if ( defined( 'AJCORE_DELETE_MANUAL_TESTIMONIALS' ) && AJCORE_DELETE_MANUAL_TESTIMONIALS ) {
 		global $wpdb;

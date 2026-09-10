@@ -26,6 +26,8 @@ final class AJCore_Reviews_Admin {
 		if ( ( $_SERVER['REQUEST_METHOD'] ?? '' ) !== 'POST' ) { wp_die( esc_html__( 'A POST request is required.', 'ajcore' ), '', array( 'response' => 405 ) ); }
 		check_admin_referer( 'ajcore_reviews_action' );
 		$operation = sanitize_key( self::value( 'operation' ) );
+		// A refusal describes the attempt in progress, never the previous one.
+		delete_option( 'ajcore_reviews_api_error' );
 		if ( $operation === 'sync' ) { self::finish( AJCore_Reviews::sync(), 'reviews' ); }
 		$result = AJCore_Reviews::locked( function() use ( $operation ) {
 			switch ( $operation ) {
@@ -195,6 +197,12 @@ final class AJCore_Reviews_Admin {
 			__( 'Content expires', 'ajcore' )               => esc_html( self::time( $status['expires_at'] ) ),
 		);
 		if ( ! empty( $meta['last_error'] ) ) { $rows[ __( 'Last error', 'ajcore' ) ] = esc_html( self::message( $meta['last_error'] ) ); }
+		// What Google actually said, when the generic refusal is not enough to act on.
+		$api = (array) get_option( 'ajcore_reviews_api_error', array() );
+		if ( ! empty( $api['time'] ) ) {
+			$facts = array_filter( array( 'HTTP ' . (int) $api['http'], $api['status'] ?? '', $api['reason'] ?? '', $api['service'] ?? '', $api['endpoint'] ?? '' ) );
+			$rows[ __( 'Last Google refusal', 'ajcore' ) ] = esc_html( self::time( (int) $api['time'] ) ) . '<br><code>' . esc_html( implode( ' · ', $facts ) ) . '</code>';
+		}
 		foreach ( $rows as $label => $value ) { echo '<tr><th scope="row" style="width:16em">' . esc_html( $label ) . '</th><td>' . $value . '</td></tr>'; }
 		echo '</tbody></table>';
 		// Replaces the old Sync History tab: same rows, folded away until asked for.
