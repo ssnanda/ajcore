@@ -130,7 +130,7 @@ final class AJCore_Reviews {
 	}
 
 	public static function safe_code( $code ) {
-		$allowed = array( 'success', 'busy', 'credentials_required', 'not_connected', 'authorization_failed', 'refresh_token_required', 'access_denied', 'invalid_location', 'invalid_response', 'invalid_data', 'snapshot_changed', 'sync_limit', 'temporary_error', 'transport_error', 'encryption_unavailable', 'encryption_key_invalid', 'storage_failed', 'forms_unavailable', 'oauth_state_invalid', 'operation_failed', 'disconnected', 'revoke_failed' );
+		$allowed = array( 'success', 'connection_ok', 'accounts_loaded', 'locations_loaded', 'location_selected', 'busy', 'credentials_required', 'not_connected', 'authorization_failed', 'refresh_token_required', 'access_denied', 'invalid_location', 'invalid_response', 'invalid_data', 'snapshot_changed', 'sync_limit', 'temporary_error', 'transport_error', 'encryption_unavailable', 'encryption_key_invalid', 'storage_failed', 'forms_unavailable', 'oauth_state_invalid', 'operation_failed', 'disconnected', 'revoke_failed' );
 		return in_array( $code, $allowed, true ) ? $code : 'operation_failed';
 	}
 
