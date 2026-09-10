@@ -5,6 +5,7 @@ require_once __DIR__ . '/interface-ajcore-review-provider.php';
 require_once __DIR__ . '/class-ajcore-google-review-provider.php';
 require_once __DIR__ . '/class-ajcore-reviews.php';
 require_once __DIR__ . '/class-ajcore-testimonials.php';
+require_once __DIR__ . '/class-ajcore-reviews-setup.php';
 require_once __DIR__ . '/class-ajcore-reviews-admin.php';
 require_once __DIR__ . '/public-api.php';
 AJCore_Reviews::init();

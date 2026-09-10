@@ -26,11 +26,11 @@ Use a WordPress version supporting the repositories' existing native block archi
 1. Obtain Google Business Profile API access for the appropriate business/tool provider Google Cloud project. A business must be verified, and the connecting Google account must own or be authorized to manage the selected location. An ordinary Maps API key is not sufficient.
 2. Enable the Google My Business API (review v4), My Business Account Management API, and My Business Business Information API in the approved project. Confirm usable quota. API approval and OAuth consent verification are separate requirements.
 3. Configure a Web application OAuth client and consent screen, including applicable privacy policy, terms, authorized domains, test users during testing, and production verification. Request `https://www.googleapis.com/auth/business.manage`, `openid`, and `email`. This integration reads reviews; it does not use the broader scope to change listings.
-4. In **AJ Core → Reviews & Testimonials → Google Connection**, copy the exact displayed authorized redirect URI to the Google OAuth client's redirect list. Its shape is `https://your-site.example/wp-admin/admin-post.php?action=ajcore_reviews_oauth`; use the actual site-specific URI, including any subdirectory. Use HTTPS, including behind a correctly configured reverse proxy.
+4. In **AJ Core → Reviews & Testimonials → Settings**, copy the exact displayed authorized redirect URI to the Google OAuth client's redirect list. Its shape is `https://your-site.example/wp-admin/admin-post.php?action=ajcore_reviews_oauth`; use the actual site-specific URI, including any subdirectory. Use HTTPS, including behind a correctly configured reverse proxy.
 5. Save the client ID and client secret. The secret field is always blank when rendered; leaving it blank retains an existing saved secret. Changing either credential disconnects the old integration. Do not place credentials in code or block attributes.
 6. Choose **Connect Google Account**, approve access, and return in the same browser and WordPress user session within ten minutes. The page displays the authorized Google email when Google provides a verified email.
 7. Choose **Load Business Accounts**, select an account, choose **Load Locations**, select a location, then **Use This Location**. The choices expire after 15 minutes; reload if necessary. The selected account and location identifiers remain visible in administration.
-8. Choose **Test Connection**, then **Sync Now**. Test Connection validates access to the selected location; Sync Now additionally exercises the reviews API. In **Review Inbox**, select reviews and set their display order. No review is selected automatically, regardless of rating.
+8. Choose **Test Connection**, then **Sync Now**. Test Connection validates access to the selected location; Sync Now additionally exercises the reviews API. On the **Reviews & Testimonials** tab, select reviews and set their display order. No review is selected automatically, regardless of rating.
 
 No live credentials are supplied with the repositories. Fixtures contain clearly synthetic, nonfunctional token strings only. Google OAuth test-mode refresh tokens can have limited lifetimes; use Google's current production verification guidance rather than relying on development consent indefinitely.
 
@@ -38,13 +38,10 @@ For agency/tool-provider deployment, resolve the Google project ownership model 
 
 ## Administration
 
-- **Overview:** connection/content state, valid local count, last success, next scheduled sync/retry, expiry, and sanitized last error.
-- **Google Connection:** credentials, redirect URI, OAuth, identity, account/location selectors, test, manual sync, disconnect.
-- **Review Inbox:** read-only original reviewer/text/rating/date, attribution/source link when available, retrieval and expiry, feature/unfeature, and display order. Twenty records per page.
-- **Featured Reviews:** the selected current records in business display order.
-- **Manual Testimonials:** links to WordPress's permanent testimonial list and editor.
-- **Display Settings:** plain-text frontend empty fallback (default empty) and default featured ordering.
-- **Sync History:** at most 50 operational entries. Each contains timestamp, safe status/error code, processed count, duration, and trigger. The UI translates the safe code into a fixed summary. API bodies, reviewer data, exception messages, and credentials are never logged here.
+Two tabs: one for everything you configure, one for everything you publish. The earlier seven-tab layout (Overview, Google Connection, Review Inbox, Featured Reviews, Manual Testimonials, Display Settings, Sync History) is gone; its `?tab=` links redirect to whichever of the two now holds that content, so old bookmarks keep working.
+
+- **Settings** — status panel (connection/content state, valid local count, last success, next scheduled sync, expiry, sanitized last error), then the Google connection (credentials with an inline "where do I get these" walkthrough, redirect URI, OAuth, identity, account/location selectors, test, disconnect), then the Rate Us prompt and display options. The last ten sync-history rows sit in a collapsed **Recent sync activity** block; the option still keeps at most 50 entries of timestamp, safe status/error code, processed count, duration, and trigger. The UI translates the safe code into a fixed summary. API bodies, reviewer data, exception messages, and credentials are never logged there.
+- **Reviews & Testimonials** — one list holding both sources. Checkboxes at the top choose which are shown (**Google reviews**, **Manual testimonials**, and **Only what is published on the site**, which replaces the old Featured Reviews tab); all sources show by default. **Sync Google Reviews Now** lives here, next to Add / All Manual Testimonial links. Google entries stay read-only — original reviewer/text/rating/date, attribution/source link when available, retrieval and expiry — with feature/unfeature and display order, twenty per page. Manual entries show status, an excerpt, and an Edit link into WordPress's permanent testimonial editor.
 
 HTTP mutations are POST-only with a WordPress nonce and `manage_options`. OAuth uses a random one-time state bound to site storage, user, WordPress session, expiry, and a PKCE verifier; the callback checks administrator permission. Malformed or replayed states fail before exchanging the authorization code. The callback clears the state even for denied authorization. A new authorization requires location selection again.
 
@@ -174,11 +171,28 @@ See the [verification report](reviews-implementation-report.md) for exact manual
 
 ## Rating-neutral Rate Us prompt
 
-Display Settings also includes **Enable the Rate Us header prompt**, its label,
+The Settings tab also includes **Enable the Rate Us header prompt**, its label,
 a private-feedback HTTPS URL, and an optional Google Write a Review HTTPS URL.
-The default is disabled. Enter the URL of an existing feedback form; this feature
-links to that form and does not create it, ingest its submissions, or publish them
-as testimonials. Any later publication requires permission and administrator review.
+The default is disabled. Where the stars sit on the page is a theme concern, set
+in AJNanda's Customizer, not here.
+
+**Create the feedback page and form** builds the private destination for you:
+an AJ Forms form titled *What Can We Improve* (an optional experience rating, a
+required "What can we improve?" textarea, and optional name/email) plus a
+published page at `/what-can-we-improve/` that renders it with `[ajforms]`. It is
+idempotent — an existing form of that title or page on that slug is adopted
+rather than duplicated, and a page that already renders some AJ Forms form is left
+untouched — and it fills the private-feedback URL in for you when that field is
+empty. Before the page exists the suggested URL is only a placeholder, so nobody
+saves a link to a 404. Submissions land in AJ Core's own leads storage like any
+other form; nothing is ingested into reviews or published as a testimonial. Any
+later publication requires permission and administrator review. If AJ Forms
+storage is unavailable the button is replaced by a note and the URL is entered by
+hand.
+
+The Google Write a Review field shows an example of the expected
+`https://search.google.com/local/writereview?placeid=…` shape; left empty, the
+connected location supplies its own link.
 
 All five ratings expose the same private-feedback and Google-review destinations.
 There are no low/high rating thresholds, hidden Google choices, automatic
