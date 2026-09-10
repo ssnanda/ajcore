@@ -219,3 +219,38 @@ A manually configured feedback URL and Google URL keep the invitation usable
 without OAuth; they do not connect a Google account or synchronize any reviews.
 Configure real site URLs through administration, not in the reusable repositories.
 For a non-AJNanda theme, see the integration example in AJNanda's review guide.
+
+## Rate Us page
+
+Next to the feedback-page card, **Create the Rate Us page** publishes a page at
+`/rate-us/` holding the `[ajcore_rate_us]` shortcode. It is idempotent in the same
+way: an existing page on that slug is adopted, and one that does not already carry
+the shortcode has it appended rather than having its content replaced.
+
+The shortcode renders two things:
+
+1. The same five stars as the header prompt, at page scale — one to four stars go
+   to the private feedback page, the fifth to Google, with the identical
+   left-to-right hover fill. There are no rating thresholds, no prefilled rating,
+   and no tracking; the destinations come from the same two settings. The stars
+   work whether or not the header prompt bar itself is enabled.
+2. A **Visit Us** block: a keyless Google Maps embed for the business address
+   beside the standard welcome paragraph, the address (linked to Google Maps
+   directions) and the phone number (a `tel:` link).
+
+Address and phone default to the theme settings the prompt bar already reads —
+`seo_business_address` and `seo_business_phone`, which AJNanda's Search & AI
+profile writes. Attributes: `heading`, `intro`, and `visit="no"` to render the
+stars alone. Filters: `ajcore_rate_us_business` (name/address/phone),
+`ajcore_rate_us_map_url` (paste a place-specific embed URL instead of the derived
+one; non-HTTPS values are discarded) and `ajcore_rate_us_visit_intro`.
+
+Markup and styles are self-contained so the page renders on any theme. With the
+two destination URLs unset the stars are omitted entirely and only administrators
+see a note saying which fields to fill in. When the Google link comes from the
+synchronized snapshot rather than an override, the page sends `DONOTCACHEPAGE` and
+no-store headers so a cached copy cannot outlive the snapshot's expiry.
+
+`ajcore_get_review_destinations()` resolves those two URLs independently of the
+header prompt's on/off state and returns `available`, `label`, `feedback_url`,
+`google_review_url` and `expires_at`.

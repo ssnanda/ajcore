@@ -6,10 +6,12 @@ require_once __DIR__ . '/class-ajcore-google-review-provider.php';
 require_once __DIR__ . '/class-ajcore-reviews.php';
 require_once __DIR__ . '/class-ajcore-testimonials.php';
 require_once __DIR__ . '/class-ajcore-reviews-setup.php';
+require_once __DIR__ . '/class-ajcore-rate-us.php';
 require_once __DIR__ . '/class-ajcore-reviews-admin.php';
 require_once __DIR__ . '/public-api.php';
 AJCore_Reviews::init();
 AJCore_Testimonials::init();
+AJCore_Rate_Us::init();
 AJCore_Reviews_Admin::init();
 
 // Keep data on deactivation. WordPress core expires the encrypted transients independently.

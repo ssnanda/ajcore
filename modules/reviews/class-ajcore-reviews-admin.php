@@ -97,6 +97,9 @@ final class AJCore_Reviews_Admin {
 						do_action( 'ajcore_reviews_content_changed' );
 					}
 					return true;
+				case 'provision_rate_us':
+					$result = AJCore_Rate_Us::provision();
+					return is_wp_error( $result ) ? $result : true;
 				case 'display':
 					$display = array( 'fallback' => sanitize_text_field( self::value( 'fallback' ) ), 'order' => self::value( 'order' ) === 'date' ? 'date' : 'manual' );
 					$prompt = ajcore_sanitize_review_prompt_settings( array( 'prompt_enabled' => self::value( 'prompt_enabled' ) === '1', 'prompt_label' => self::value( 'prompt_label' ), 'feedback_url' => self::value( 'feedback_url' ), 'google_review_url' => self::value( 'google_review_url' ) ) );
@@ -270,6 +273,19 @@ final class AJCore_Reviews_Admin {
 		} else {
 			echo '<p>' . esc_html__( 'AJ Forms storage is unavailable. Build the page yourself and paste its URL below.', 'ajcore' ) . '</p>';
 		}
+		echo '</div>';
+
+		$rate_us_url  = AJCore_Rate_Us::suggested_url();
+		$rate_us_page = AJCore_Rate_Us::page_exists();
+		echo '<div class="card" style="max-width:100%"><h3 style="margin-top:0">' . esc_html__( 'Rate Us page', 'ajcore' ) . '</h3>';
+		echo '<p>' . esc_html__( 'A public page with the same five stars as the header prompt — one to four stars go to the private feedback page, five to Google — followed by a Visit Us block with your map, address and phone.', 'ajcore' ) . '</p>';
+		if ( $rate_us_page ) {
+			echo '<p><a href="' . esc_url( $rate_us_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( $rate_us_url ) . '</a></p>';
+		} else {
+			echo '<p><code>' . esc_html( $rate_us_url ) . '</code></p>';
+		}
+		self::button( 'provision_rate_us', $rate_us_page ? __( 'Recreate anything missing', 'ajcore' ) : __( 'Create the Rate Us page', 'ajcore' ) );
+		echo '<p class="description">' . esc_html__( 'The address and phone come from Business Address and Business Phone in the theme\'s SEO settings; the shortcode is [ajcore_rate_us] if you would rather place it yourself.', 'ajcore' ) . '</p>';
 		echo '</div>';
 
 		self::form( 'display' );
