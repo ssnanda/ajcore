@@ -50,22 +50,29 @@ final class AJCore_Reviews_Admin {
 					$url = AJCore_Reviews::provider()->authorization_url( $state, $challenge );
 					return is_wp_error( $url ) ? $url : array( 'redirect' => $url );
 				case 'disconnect': return AJCore_Reviews::disconnect();
-				case 'accounts':
+				// One button, one list: every location under every authorized account.
+				case 'load':
 					$accounts = AJCore_Reviews::provider()->accounts();
-					return is_wp_error( $accounts ) ? $accounts : AJCore_Reviews_Vault::write( 'ajcore_reviews_choices', array( 'accounts' => $accounts, 'expires_at' => time() + 900 ) );
-				case 'locations':
-					$choices = self::choices(); $account = self::value( 'account' );
-					if ( ! in_array( $account, array_column( $choices['accounts'] ?? array(), 'name' ), true ) ) { return new WP_Error( 'invalid_location' ); }
-					$locations = AJCore_Reviews::provider()->locations( $account );
-					if ( is_wp_error( $locations ) ) { return $locations; }
-					return AJCore_Reviews_Vault::write( 'ajcore_reviews_choices', array( 'accounts' => $choices['accounts'], 'account' => $account, 'locations' => $locations, 'expires_at' => time() + 900 ) );
+					if ( is_wp_error( $accounts ) ) { return $accounts; }
+					$options = array();
+					foreach ( array_slice( $accounts, 0, 10 ) as $account ) {
+						$locations = AJCore_Reviews::provider()->locations( $account['name'] );
+						if ( is_wp_error( $locations ) ) { return $locations; }
+						foreach ( $locations as $location ) {
+							if ( ! preg_match( '#^locations/[0-9]+$#D', (string) $location['name'] ) ) { continue; }
+							$options[] = array( 'account' => $account['name'], 'location' => $location['name'], 'label' => ( $location['title'] ?? $location['name'] ) . ' — ' . ( $account['accountName'] ?? $account['name'] ) );
+						}
+					}
+					if ( ! $options ) { return new WP_Error( 'invalid_location' ); }
+					return AJCore_Reviews_Vault::write( 'ajcore_reviews_choices', array( 'options' => $options, 'expires_at' => time() + 900 ) );
 				case 'location':
-					$choices = self::choices(); $location = self::value( 'location' );
-					if ( empty( $choices['account'] ) || ! in_array( $location, array_column( $choices['locations'] ?? array(), 'name' ), true ) || ! preg_match( '#^locations/[0-9]+$#D', $location ) ) { return new WP_Error( 'invalid_location' ); }
-					if ( AJCore_Reviews::config() !== array( 'account' => $choices['account'], 'location' => $location ) ) {
+					$options = self::choices()['options'] ?? array();
+					$pick = $options[ (int) self::value( 'choice' ) ] ?? null;
+					if ( ! $pick || ! preg_match( '#^accounts/[0-9]+$#D', (string) $pick['account'] ) || ! preg_match( '#^locations/[0-9]+$#D', (string) $pick['location'] ) ) { return new WP_Error( 'invalid_location' ); }
+					if ( AJCore_Reviews::config() !== array( 'account' => $pick['account'], 'location' => $pick['location'] ) ) {
 						foreach ( array( 'snapshot', 'selection', 'sync_meta' ) as $key ) { AJCore_Reviews_Vault::delete( 'ajcore_reviews_' . $key ); }
 						AJCore_Reviews::unschedule();
-						update_option( 'ajcore_reviews_config', array( 'account' => $choices['account'], 'location' => $location ), false );
+						update_option( 'ajcore_reviews_config', array( 'account' => $pick['account'], 'location' => $pick['location'] ), false );
 						do_action( 'ajcore_reviews_content_changed' );
 					}
 					AJCore_Reviews::schedule(); return true;
@@ -97,7 +104,7 @@ final class AJCore_Reviews_Admin {
 			return new WP_Error( 'operation_failed' );
 		} );
 		if ( is_array( $result ) && isset( $result['redirect'] ) && wp_parse_url( $result['redirect'], PHP_URL_HOST ) === 'accounts.google.com' && wp_parse_url( $result['redirect'], PHP_URL_SCHEME ) === 'https' ) { wp_redirect( $result['redirect'] ); exit; }
-		$success = array( 'test' => 'connection_ok', 'accounts' => 'accounts_loaded', 'locations' => 'locations_loaded', 'location' => 'location_selected' );
+		$success = array( 'test' => 'connection_ok', 'load' => 'locations_loaded', 'location' => 'location_selected' );
 		self::finish( $result, $operation === 'feature' ? 'reviews' : 'settings', $success[ $operation ] ?? 'success' );
 	}
 
@@ -197,68 +204,41 @@ final class AJCore_Reviews_Admin {
 			foreach ( $history as $row ) { echo '<tr><td>' . esc_html( self::time( $row['timestamp'] ) ) . '</td><td>' . esc_html( self::message( $row['status'] ) ) . ' <code>' . esc_html( $row['status'] ) . '</code></td><td>' . (int) $row['count'] . '</td><td>' . esc_html( $row['duration'] ) . '</td><td>' . esc_html( $row['trigger'] ) . '</td></tr>'; }
 			echo '</tbody></table></details>';
 		}
-		echo '<p class="description">' . esc_html__( 'Refresh runs every 28 days. Selected reviews are disclosed as business-selected. Read docs/reviews-testimonials.md for Google access requirements, retention, cache exclusions, and policy limitations.', 'ajcore' ) . '</p>';
 	}
 
 	private static function connection() {
 		$c = AJCore_Reviews_Vault::read( 'ajcore_reviews_credentials' ); $config = AJCore_Reviews::config();
 		$saved = ! empty( $c['client_id'] ); $connected = AJCore_Reviews::connected(); $located = ! empty( $config['location'] );
 
-		// Three things have to be true before anything can sync. Say which are, and
-		// what the next unfinished one needs, so "is it connected?" is answerable here.
+		// Three facts, no prose: what is done, and what each done step resolved to.
 		echo '<div class="card" style="max-width:100%"><h3 style="margin-top:0">' . esc_html__( 'Connection status', 'ajcore' ) . '</h3><ul style="margin:0">';
-		self::step( $saved, __( 'OAuth client saved', 'ajcore' ), $saved ? $c['client_id'] : __( 'Save a client ID and secret in Google credentials below.', 'ajcore' ) );
-		self::step( $connected, __( 'Google account connected', 'ajcore' ), $connected ? sprintf( __( 'Authorized as %s', 'ajcore' ), $c['email'] ?? __( 'an unidentified account', 'ajcore' ) ) : __( 'Press Connect Google Account below and grant Business Profile access.', 'ajcore' ) );
-		self::step( $located, __( 'Business location selected', 'ajcore' ), $located ? ( ( $config['account'] ?? '' ) . ' / ' . $config['location'] ) : __( 'Press Load Business Accounts below, then choose an account and a location.', 'ajcore' ) );
-		echo '</ul>';
-		echo '<p style="margin-bottom:0">' . esc_html( $saved && $connected && $located ? __( 'Setup is complete. Test Connection re-checks the location with Google; reviews are pulled with Sync Google Reviews Now on the Reviews & Testimonials tab.', 'ajcore' ) : __( 'Reviews cannot sync until all three lines above are complete.', 'ajcore' ) ) . '</p></div>';
-
-		echo '<p>' . esc_html__( 'Authorized redirect URI:', 'ajcore' ) . ' <code>' . esc_html( AJCore_Google_Review_Provider::redirect_uri() ) . '</code></p>';
-
-		// Where the two credentials come from. Only stable entry points are linked;
-		// the in-console path is spelled out because Google moves its deep links.
-		echo '<details style="margin:1em 0;padding:.6em 1em;background:#fff;border:1px solid #c3c4c7"><summary><strong>' . esc_html__( 'Where do I get the client ID and secret?', 'ajcore' ) . '</strong></summary><ol>';
-		echo '<li>' . esc_html__( 'Open the Google Cloud console and pick (or create) the project that owns this integration.', 'ajcore' ) . ' <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">console.cloud.google.com</a></li>';
-		echo '<li>' . esc_html__( 'Enable the Business Profile APIs for that project, and request Business Profile API access from Google if you have not already — approval is required before any review can be read.', 'ajcore' ) . '</li>';
-		echo '<li>' . esc_html__( 'Go to APIs & Services → OAuth consent screen and complete it, including the privacy policy, terms, authorized domain, and test users while in testing.', 'ajcore' ) . '</li>';
-		echo '<li>' . esc_html__( 'Go to APIs & Services → Credentials → Create credentials → OAuth client ID, and choose the Web application type.', 'ajcore' ) . '</li>';
-		echo '<li>' . esc_html__( 'Paste the authorized redirect URI shown above into that client\'s Authorized redirect URIs list, exactly as displayed.', 'ajcore' ) . '</li>';
-		echo '<li>' . esc_html__( 'Google then shows the client ID (ending in .apps.googleusercontent.com) and the client secret. Copy both into the fields below.', 'ajcore' ) . '</li>';
-		echo '</ol><p>' . esc_html__( 'Google reference:', 'ajcore' ) . ' <a href="https://developers.google.com/my-business/content/implement-oauth" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Business Profile OAuth', 'ajcore' ) . '</a> · <a href="https://developers.google.com/identity/protocols/oauth2/web-server" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Web server OAuth 2.0', 'ajcore' ) . '</a></p></details>';
+		self::step( $saved, __( 'OAuth client saved', 'ajcore' ), $saved ? $c['client_id'] : __( 'Not saved', 'ajcore' ) );
+		self::step( $connected, __( 'Google account connected', 'ajcore' ), $connected ? ( $c['email'] ?? __( 'Account not identified', 'ajcore' ) ) : __( 'Not connected', 'ajcore' ) );
+		self::step( $located, __( 'Business location selected', 'ajcore' ), $located ? ( ( $config['account'] ?? '' ) . ' / ' . $config['location'] ) : __( 'Not selected', 'ajcore' ) );
+		echo '</ul></div>';
 
 		echo '<h3>' . esc_html__( 'Google credentials', 'ajcore' ) . '</h3>';
+		echo '<p>' . esc_html__( 'Authorized redirect URI', 'ajcore' ) . '<br><code>' . esc_html( AJCore_Google_Review_Provider::redirect_uri() ) . '</code></p>';
 		self::form( 'credentials' );
-		echo '<p><label>' . esc_html__( 'OAuth client ID', 'ajcore' ) . '<br><input class="large-text" name="client_id" value="' . esc_attr( $c['client_id'] ?? '' ) . '" required autocomplete="off" placeholder="000000000000-abcdefghijklmnop.apps.googleusercontent.com"></label><br><span class="description">' . esc_html__( 'Ends in .apps.googleusercontent.com. From APIs & Services → Credentials → your Web application client.', 'ajcore' ) . '</span></p>';
-		echo '<p><label>' . esc_html__( 'OAuth client secret (leave empty to retain the saved secret)', 'ajcore' ) . '<br><input class="regular-text" type="password" name="client_secret" value="" autocomplete="new-password"></label><br><span class="description">' . esc_html__( 'Shown by Google once, beside the client ID. If you have lost it, use that client\'s Reset secret and paste the new one here.', 'ajcore' ) . '</span></p>';
-		echo '<p>' . esc_html__( 'Changing credentials disconnects the previous account. Secret and tokens are never displayed.', 'ajcore' ) . '</p>';
+		echo '<p><label>' . esc_html__( 'OAuth client ID', 'ajcore' ) . '<br><input class="large-text" name="client_id" value="' . esc_attr( $c['client_id'] ?? '' ) . '" required autocomplete="off" placeholder="000000000000-abcdefghijklmnop.apps.googleusercontent.com"></label></p>';
+		echo '<p><label>' . esc_html__( 'OAuth client secret (leave empty to keep the saved one)', 'ajcore' ) . '<br><input class="regular-text" type="password" name="client_secret" value="" autocomplete="new-password"></label></p>';
 		submit_button( __( 'Save Credentials', 'ajcore' ) ); echo '</form>';
 
-		echo '<h3>' . esc_html__( 'Google account', 'ajcore' ) . '</h3>';
+		echo '<h3>' . esc_html__( 'Business location', 'ajcore' ) . '</h3>';
 		echo '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">';
-		foreach ( array( 'connect' => __( 'Connect Google Account', 'ajcore' ), 'accounts' => __( 'Load Business Accounts', 'ajcore' ), 'test' => __( 'Test Connection', 'ajcore' ), 'disconnect' => __( 'Disconnect and remove local credentials', 'ajcore' ) ) as $key => $label ) { self::button( $key, $label ); }
+		self::button( 'connect', $connected ? __( 'Reconnect Google Account', 'ajcore' ) : __( 'Connect Google Account', 'ajcore' ) );
+		if ( $connected ) { self::button( 'load', __( 'Find Locations', 'ajcore' ) ); }
+		if ( $located ) { self::button( 'test', __( 'Test Connection', 'ajcore' ) ); }
+		if ( $saved || $connected ) { self::button( 'disconnect', __( 'Disconnect', 'ajcore' ) ); }
 		echo '</div>';
-		echo '<p class="description">' . esc_html__( 'Load Business Accounts asks Google which accounts this authorization can see; whatever it returns appears under Business account and location below. Test Connection re-reads the selected location from Google and reports back at the top of this page.', 'ajcore' ) . '</p>';
 
-		// The pickers are always labelled, even when empty, so it is obvious where the
-		// result of Load Business Accounts is supposed to land.
-		$choices = self::choices();
-		echo '<h3>' . esc_html__( 'Business account and location', 'ajcore' ) . '</h3>';
-		if ( ! $connected ) {
-			echo '<p class="description">' . esc_html__( 'Connect a Google account first. Nothing can be listed until then.', 'ajcore' ) . '</p>';
-		} elseif ( empty( $choices['accounts'] ) ) {
-			echo '<p class="description">' . esc_html__( 'No accounts loaded yet. Press Load Business Accounts above and the list appears here. A loaded list is kept for 15 minutes, then has to be loaded again.', 'ajcore' ) . '</p>';
-		}
-		if ( ! empty( $choices['accounts'] ) ) {
-			echo '<p class="description">' . esc_html( sprintf( _n( 'Google returned %d business account.', 'Google returned %d business accounts.', count( $choices['accounts'] ), 'ajcore' ), count( $choices['accounts'] ) ) ) . '</p>';
-			self::form( 'locations' ); echo '<p><label>' . esc_html__( 'Business account', 'ajcore' ) . '<br><select name="account">';
-			foreach ( $choices['accounts'] as $account ) { echo '<option value="' . esc_attr( $account['name'] ) . '" ' . selected( $choices['account'] ?? '', $account['name'], false ) . '>' . esc_html( ( $account['accountName'] ?? $account['name'] ) . ' (' . $account['name'] . ')' ) . '</option>'; }
-			echo '</select></label> '; submit_button( __( 'Load Locations', 'ajcore' ), 'secondary', 'submit', false ); echo '</p></form>';
-			if ( empty( $choices['locations'] ) ) { echo '<p class="description">' . esc_html__( 'Choose an account and press Load Locations. Its locations appear below.', 'ajcore' ) . '</p>'; }
-		}
-		if ( ! empty( $choices['locations'] ) ) {
-			self::form( 'location' ); echo '<p><label>' . esc_html__( 'Location', 'ajcore' ) . '<br><select name="location">';
-			foreach ( $choices['locations'] as $location ) { echo '<option value="' . esc_attr( $location['name'] ) . '" ' . selected( $config['location'] ?? '', $location['name'], false ) . '>' . esc_html( ( $location['title'] ?? $location['name'] ) . ' (' . $location['name'] . ')' ) . '</option>'; }
-			echo '</select></label> '; submit_button( __( 'Use This Location', 'ajcore' ), 'secondary', 'submit', false ); echo '</p></form>';
+		// One list of real locations, chosen and saved in a single step.
+		$options = self::choices()['options'] ?? array();
+		if ( $options ) {
+			$current = ( $config['account'] ?? '' ) . '|' . ( $config['location'] ?? '' );
+			self::form( 'location' ); echo '<p><label>' . esc_html__( 'Location', 'ajcore' ) . '<br><select name="choice">';
+			foreach ( $options as $index => $option ) { echo '<option value="' . (int) $index . '" ' . selected( $current, $option['account'] . '|' . $option['location'], false ) . '>' . esc_html( $option['label'] ) . '</option>'; }
+			echo '</select></label> '; submit_button( __( 'Use This Location', 'ajcore' ), 'primary', 'submit', false ); echo '</p></form>';
 		}
 	}
 
@@ -268,43 +248,36 @@ final class AJCore_Reviews_Admin {
 		$suggested = AJCore_Reviews_Setup::suggested_url();
 		$has_page  = AJCore_Reviews_Setup::page_exists();
 
-		echo '<p>' . esc_html__( 'In AJNanda, stars 1–4 open the private feedback page and star 5 opens the Google review link. The rating is not submitted to either destination. Feedback is not automatically published as a testimonial. Where the stars sit on the page is a theme setting, in Appearance → Customize → Reviews & Testimonials.', 'ajcore' ) . '</p>';
-
-		// The feedback page is content, so it gets its own form and its own button.
 		echo '<div class="card" style="max-width:100%"><h3 style="margin-top:0">' . esc_html__( 'Private feedback page', 'ajcore' ) . '</h3>';
 		if ( $has_page ) {
-			echo '<p>' . esc_html__( 'This page already exists:', 'ajcore' ) . ' <a href="' . esc_url( $suggested ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( $suggested ) . '</a>';
+			echo '<p><a href="' . esc_url( $suggested ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( $suggested ) . '</a>';
 			$form_id = AJCore_Reviews_Setup::form_id();
 			if ( $form_id ) { echo ' — ' . esc_html( sprintf( __( 'AJ Forms form #%d', 'ajcore' ), $form_id ) ); }
 			echo '</p>';
 		} else {
-			echo '<p>' . esc_html__( 'Stars 1–4 need somewhere private to land. AJ Core can build both halves for you: an AJ Forms feedback form, and a page that renders it.', 'ajcore' ) . '</p>';
-			echo '<p>' . esc_html__( 'It will be created at:', 'ajcore' ) . ' <code>' . esc_html( $suggested ) . '</code></p>';
+			echo '<p><code>' . esc_html( $suggested ) . '</code></p>';
 		}
 		if ( AJCore_Reviews_Setup::forms_available() ) {
 			self::button( 'provision', $has_page ? __( 'Recreate anything missing', 'ajcore' ) : __( 'Create the feedback page and form', 'ajcore' ) );
-			echo '<p class="description">' . esc_html__( 'Nothing is overwritten: an existing form or page is reused, and a page that already renders a form is left alone. Submissions arrive under AJ Core → Leads.', 'ajcore' ) . '</p>';
 		} else {
-			echo '<p class="description">' . esc_html__( 'AJ Forms storage is not available on this site, so the form cannot be created automatically. Build the page yourself and paste its URL below.', 'ajcore' ) . '</p>';
+			echo '<p>' . esc_html__( 'AJ Forms storage is unavailable. Build the page yourself and paste its URL below.', 'ajcore' ) . '</p>';
 		}
 		echo '</div>';
 
 		self::form( 'display' );
 		echo '<h3>' . esc_html__( 'Rate Us header prompt', 'ajcore' ) . '</h3>';
 		echo '<p><label><input type="checkbox" name="prompt_enabled" value="1" ' . checked( $prompt['prompt_enabled'], true, false ) . '> ' . esc_html__( 'Enable the Rate Us header prompt', 'ajcore' ) . '</label></p>';
-		echo '<p><label>' . esc_html__( 'Prompt label (defaults to Rate Us)', 'ajcore' ) . '<br><input class="large-text" type="text" name="prompt_label" value="' . esc_attr( $prompt['prompt_label'] ) . '" placeholder="' . esc_attr__( 'Rate Us', 'ajcore' ) . '"></label></p>';
+		echo '<p><label>' . esc_html__( 'Prompt label', 'ajcore' ) . '<br><input class="large-text" type="text" name="prompt_label" value="' . esc_attr( $prompt['prompt_label'] ) . '" placeholder="' . esc_attr__( 'Rate Us', 'ajcore' ) . '"></label></p>';
 
 		// Auto-filled once the page exists; before that the suggestion is only a
 		// placeholder, so nobody saves a URL that would 404.
 		$feedback_value = $prompt['feedback_url'] !== '' ? $prompt['feedback_url'] : ( $has_page ? $suggested : '' );
-		echo '<p><label>' . esc_html__( 'Private feedback page URL (HTTPS)', 'ajcore' ) . '<br><input class="large-text" type="url" name="feedback_url" value="' . esc_attr( $feedback_value ) . '" placeholder="' . esc_attr( $suggested ) . '"></label><br><span class="description">' . esc_html__( 'Filled in for you when you create the page above. Must be HTTPS — an http:// URL is discarded on save.', 'ajcore' ) . '</span></p>';
-
-		echo '<p><label>' . esc_html__( 'Google Write a Review URL (HTTPS; optional override)', 'ajcore' ) . '<br><input class="large-text" type="url" name="google_review_url" value="' . esc_attr( $prompt['google_review_url'] ) . '" placeholder="https://search.google.com/local/writereview?placeid=ChIJ..."></label><br><span class="description">' . esc_html__( 'Leave empty and the connected location supplies its own link. To override, use the Write a Review link for your Place ID. Example:', 'ajcore' ) . ' <code>https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4</code><br>' . esc_html__( 'Find your Place ID in the Google Business Profile manager for the location, or from the share link Google Maps gives that listing.', 'ajcore' ) . '</span></p>';
+		echo '<p><label>' . esc_html__( 'Private feedback page URL (HTTPS)', 'ajcore' ) . '<br><input class="large-text" type="url" name="feedback_url" value="' . esc_attr( $feedback_value ) . '" placeholder="' . esc_attr( $suggested ) . '"></label></p>';
+		echo '<p><label>' . esc_html__( 'Google Write a Review URL (HTTPS; optional override)', 'ajcore' ) . '<br><input class="large-text" type="url" name="google_review_url" value="' . esc_attr( $prompt['google_review_url'] ) . '" placeholder="https://search.google.com/local/writereview?placeid=ChIJ..."></label></p>';
 
 		echo '<h3>' . esc_html__( 'Collection display', 'ajcore' ) . '</h3>';
-		echo '<p><label>' . esc_html__( 'Frontend fallback (empty by default)', 'ajcore' ) . '<br><input class="large-text" name="fallback" value="' . esc_attr( $data['fallback'] ) . '"></label><br><span class="description">' . esc_html__( 'Shown when a review block has nothing to display.', 'ajcore' ) . '</span></p>';
+		echo '<p><label>' . esc_html__( 'Frontend fallback', 'ajcore' ) . '<br><input class="large-text" name="fallback" value="' . esc_attr( $data['fallback'] ) . '"></label></p>';
 		echo '<p><label>' . esc_html__( 'Default featured ordering', 'ajcore' ) . ' <select name="order"><option value="manual" ' . selected( $data['order'], 'manual', false ) . '>' . esc_html__( 'Business display order', 'ajcore' ) . '</option><option value="date" ' . selected( $data['order'], 'date', false ) . '>' . esc_html__( 'Publication date, newest first', 'ajcore' ) . '</option></select></label></p>';
-		echo '<p class="description">' . esc_html__( 'The prompt stays hidden unless both destinations are available. AJNanda displays it automatically; other themes must use the documented PHP integration. These links do not create or connect a submission form.', 'ajcore' ) . '</p>';
 		submit_button(); echo '</form>';
 	}
 
@@ -335,7 +308,6 @@ final class AJCore_Reviews_Admin {
 		submit_button( __( 'Apply', 'ajcore' ), 'secondary', '', false );
 		echo '</form>';
 
-		echo '<p>' . esc_html__( 'Select reviews neutrally. Nothing is featured automatically. Google review text and attribution cannot be edited. Selection is disclosed publicly.', 'ajcore' ) . '</p>';
 		if ( ! $f['google'] && ! $f['manual'] ) { echo '<p>' . esc_html__( 'Both sources are switched off, so there is nothing to show. Tick one above.', 'ajcore' ) . '</p>'; return; }
 		if ( $f['google'] ) { self::google_list( $f['featured'] ); }
 		if ( $f['manual'] ) { self::manual_list( $f['featured'] ); }
@@ -348,7 +320,7 @@ final class AJCore_Reviews_Admin {
 		$total = count( $reviews ); $pages = max( 1, (int) ceil( $total / 20 ) );
 		$page  = max( 1, min( $pages, absint( self::value( 'review_page', $_GET ) ) ) );
 		echo '<h2>' . esc_html__( 'Google reviews', 'ajcore' ) . ' <span class="count">(' . (int) $total . ')</span></h2>';
-		if ( ! $total ) { echo '<p>' . esc_html__( 'No valid Google reviews. Connect a location on the Settings tab, then Sync Google Reviews Now.', 'ajcore' ) . '</p>'; return; }
+		if ( ! $total ) { echo '<p>' . esc_html__( 'No Google reviews. Select a location on the Settings tab, then Sync Google Reviews Now.', 'ajcore' ) . '</p>'; return; }
 		foreach ( array_slice( $reviews, ( $page - 1 ) * 20, 20, true ) as $key => $review ) {
 			echo '<section class="card" style="max-width:900px"><h3>' . esc_html( $review['name'] ?: __( 'Anonymous reviewer', 'ajcore' ) ) . ' — ' . (int) $review['rating'] . '/5' . ( isset( $selection[$key] ) ? ' <span style="font-size:12px;color:#1d4ed8">' . esc_html__( '· on the site', 'ajcore' ) . '</span>' : '' ) . '</h3><p>' . nl2br( esc_html( $review['text'] ) ) . '</p><p>' . esc_html( $review['date'] ) . '</p><p>' . esc_html__( 'Retrieved:', 'ajcore' ) . ' ' . esc_html( self::time( $review['retrieved_at'] ) ) . ' · ' . esc_html__( 'Expires:', 'ajcore' ) . ' ' . esc_html( self::time( $review['expires_at'] ) ) . '</p>';
 			if ( $review['avatar'] ) { echo '<p><img src="' . esc_url( $review['avatar'] ) . '" alt="" width="56" height="56" loading="lazy" referrerpolicy="no-referrer"></p>'; }
@@ -375,7 +347,6 @@ final class AJCore_Reviews_Admin {
 			$rows[] = array( 'post' => $post, 'meta' => $meta, 'live' => $live );
 		}
 		echo '<h2>' . esc_html__( 'Manual testimonials', 'ajcore' ) . ' <span class="count">(' . count( $rows ) . ')</span></h2>';
-		echo '<p class="description">' . esc_html__( 'Administrator-written content, independent of Google. A testimonial appears on the site only when it is published and marked Featured. Google reviews are never converted into testimonials.', 'ajcore' ) . '</p>';
 		if ( ! $rows ) { echo '<p>' . esc_html__( 'No manual testimonials yet. Use Add Manual Testimonial above.', 'ajcore' ) . '</p>'; return; }
 		foreach ( $rows as $row ) {
 			$post = $row['post']; $meta = $row['meta'];
@@ -391,13 +362,12 @@ final class AJCore_Reviews_Admin {
 	public static function message( $code ) {
 		$messages = array(
 			'success' => __( 'Operation completed.', 'ajcore' ),
-			'connection_ok' => __( 'Connection test passed: Google accepted the credentials and returned the selected location.', 'ajcore' ),
-			'accounts_loaded' => __( 'Business accounts loaded from Google. Choose one under Business account and location.', 'ajcore' ),
-			'locations_loaded' => __( 'Locations loaded for that account. Choose one and press Use This Location.', 'ajcore' ),
-			'location_selected' => __( 'Location selected. Sync Google Reviews Now on the Reviews & Testimonials tab to pull reviews.', 'ajcore' ), 'busy' => __( 'Another reviews operation is running. Try again shortly.', 'ajcore' ),
+			'connection_ok' => __( 'Connection test passed.', 'ajcore' ),
+			'locations_loaded' => __( 'Locations loaded. Choose one and press Use This Location.', 'ajcore' ),
+			'location_selected' => __( 'Location saved.', 'ajcore' ), 'busy' => __( 'Another reviews operation is running. Try again shortly.', 'ajcore' ),
 			'credentials_required' => __( 'Save a valid Google OAuth client ID and secret first.', 'ajcore' ), 'not_connected' => __( 'Connect a Google account first.', 'ajcore' ),
 			'authorization_failed' => __( 'Google authorization failed. Reconnect and grant Business Profile access.', 'ajcore' ), 'refresh_token_required' => __( 'Google did not provide offline access. Reconnect with consent.', 'ajcore' ),
-			'access_denied' => __( 'Google denied API access. Check project approval, enabled APIs, and location permissions.', 'ajcore' ), 'invalid_location' => __( 'Load business accounts and select an authorized location.', 'ajcore' ),
+			'access_denied' => __( 'Google denied API access. Check project approval, enabled APIs, and location permissions.', 'ajcore' ), 'invalid_location' => __( 'Press Find Locations, then choose a location.', 'ajcore' ),
 			'temporary_error' => __( 'Google is temporarily unavailable or rate limited. A bounded retry will be scheduled for sync failures.', 'ajcore' ), 'transport_error' => __( 'Google could not be reached. Check outbound HTTPS access.', 'ajcore' ),
 			'snapshot_changed' => __( 'The review collection changed while it was being retrieved. The previous snapshot remains within its original expiry.', 'ajcore' ),
 			'invalid_response' => __( 'The provider returned incomplete or invalid data. No partial snapshot was published.', 'ajcore' ), 'sync_limit' => __( 'The request exceeded the supported size or time limit. No partial snapshot was published.', 'ajcore' ),
