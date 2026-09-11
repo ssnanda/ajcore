@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.295
+ * Version: 0.7.296
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.295' );
+	define( 'AJCORE_VERSION', '0.7.296' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -238,6 +238,11 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
 			'wp_service_status_subject'     => 'Update on {service_name}: {status_label}',
 			'lead_followup_email_subject'   => 'Following up from NC LLC Agents',
+			// Registered Agent authorization notice (NC LLC Agents only — see the ncllc_only flag
+			// on this type in display_email_templates_settings_section(); there is deliberately no
+			// university_* variant because University Place Office Suites has no registered-agent
+			// address of its own to authorize).
+			'ra_authorization_subject'      => 'Registered Agent Authorization and Address Use for {company}',
 			'wp_password_reset_heading'     => 'Set your client portal password',
 			'wp_password_reset_body'        => "Hi {name},\nUse the secure button below to create a new password for your client portal account. This link is private and should only be used by you.",
 			'wp_welcome_heading'            => 'Welcome to your client portal',
@@ -245,6 +250,11 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'wp_service_status_heading'     => 'Your service request was updated',
 			'wp_service_status_body'        => "Hi {name},\nThe status of \"{service_name}\" has changed.",
 			'lead_followup_heading'         => "We'd love to hear from you",
+			'ra_authorization_heading'      => 'Registered Agent Authorization',
+			// Lines starting with "- " render as the checklist under the address box; every other
+			// line is an intro paragraph above it (see split_email_copy_bullets()).
+			'ra_authorization_body'         => "You are authorized to use the following information for Registered Agent purposes only:\n- Do not use our phone number anywhere on the filing.\n- The address above is the Registered Agent / Registered Office address only. It is not authorized for use as the company's Principal Office address, Mailing Address, or Business Address.\n- We authorize use of this address only for the North Carolina Secretary of State filing through the SOSNC website.\n- This authorization does not permit use of our address on Google, business directories, websites, bank accounts, licenses, marketing materials, vendor accounts, or any other registrations or filings.\n- If you need to use our address anywhere other than the Registered Agent section of the NC Secretary of State filing, please text or contact us first for approval.",
+			'ra_authorization_address'      => "NC LLC Agents Inc.\n1914 J N Pease Pl.\nCharlotte, NC 28262\nagent@ncllcagents.com",
 			'lead_followup_body'            => "Hi {name},\nWe wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
 			'wp_password_reset_from_email'  => '',
 			'wp_password_reset_from_name'   => '',
@@ -279,6 +289,8 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'university_lead_followup_from_name'      => 'University Place Office Suites',
 			'lead_followup_from_email'      => '',
 			'lead_followup_from_name'       => '',
+			'ra_authorization_from_email'   => '',
+			'ra_authorization_from_name'    => '',
 			// Zoho Mail shared-inbox OAuth app (Inbox settings). client_id/secret/account_email/
 			// data_center are admin-entered; the rest are written only by the OAuth callback itself.
 			'zoho_mail_client_id'           => '',
@@ -2565,6 +2577,161 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
 		);
 	}
 	add_action( 'wp_mail_failed', 'ajcore_log_outgoing_mail_failed' );
+}
+
+/**
+ * Purchase attribution: one row per Stripe Checkout Session started from an AJCore buy button,
+ * cart, or portal "add service" button, holding the same visitor/system context AJCore forms
+ * already record for a lead (see AJForms::get_submission_meta()) plus where the visitor came
+ * from — referrer, landing page, UTM/click IDs — and the chat widget's ajcore_visitor_uuid when
+ * one is present, which is what ties a purchase back to that visitor's browsing history in
+ * aj_portal_visitor_log.
+ *
+ * Created lazily here rather than only in the activator because the write happens on a plain
+ * front-end admin-ajax request: a site may never have loaded wp-admin since updating, so the
+ * admin-side ensure_portal_schema() migration path cannot be relied on. Same reasoning as the
+ * open-tracking columns in ajcore_email_log_table_exists() above.
+ */
+if ( ! function_exists( 'ajcore_checkout_attribution_db' ) ) {
+	function ajcore_checkout_attribution_db() {
+		return function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+	}
+}
+
+if ( ! function_exists( 'ajcore_checkout_attribution_table' ) ) {
+	function ajcore_checkout_attribution_table() {
+		return ajcore_checkout_attribution_db()->prefix . 'aj_portal_checkout_attribution';
+	}
+}
+
+if ( ! function_exists( 'ajcore_checkout_attribution_table_exists' ) ) {
+	function ajcore_checkout_attribution_table_exists() {
+		static $exists = null;
+		if ( null !== $exists ) {
+			return $exists;
+		}
+
+		$pdb   = ajcore_checkout_attribution_db();
+		$table = ajcore_checkout_attribution_table();
+
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			$charset_collate = $pdb->get_charset_collate();
+			$pdb->query(
+				"CREATE TABLE IF NOT EXISTS {$table} (
+					id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+					site_uuid varchar(100) DEFAULT '' NOT NULL,
+					checkout_session_id varchar(191) NOT NULL,
+					stripe_customer_id varchar(191) DEFAULT '' NOT NULL,
+					visitor_uuid varchar(64) DEFAULT '' NOT NULL,
+					surface varchar(100) DEFAULT '' NOT NULL,
+					price_ids text NULL,
+					ip_address varchar(100) DEFAULT '' NOT NULL,
+					device_type varchar(30) DEFAULT '' NOT NULL,
+					browser varchar(100) DEFAULT '' NOT NULL,
+					os varchar(100) DEFAULT '' NOT NULL,
+					user_agent text NULL,
+					landing_page text NULL,
+					referrer text NULL,
+					utm_source varchar(191) DEFAULT '' NOT NULL,
+					utm_medium varchar(191) DEFAULT '' NOT NULL,
+					utm_campaign varchar(191) DEFAULT '' NOT NULL,
+					utm_term varchar(191) DEFAULT '' NOT NULL,
+					utm_content varchar(191) DEFAULT '' NOT NULL,
+					click_id varchar(191) DEFAULT '' NOT NULL,
+					screen_size varchar(50) DEFAULT '' NOT NULL,
+					timezone varchar(100) DEFAULT '' NOT NULL,
+					language varchar(50) DEFAULT '' NOT NULL,
+					status varchar(20) DEFAULT 'started' NOT NULL,
+					completed_at datetime NULL,
+					created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+					PRIMARY KEY  (id),
+					UNIQUE KEY checkout_session_id (checkout_session_id),
+					KEY stripe_customer_id (stripe_customer_id),
+					KEY visitor_uuid (visitor_uuid),
+					KEY status (status),
+					KEY created_at (created_at)
+				) {$charset_collate}"
+			); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
+
+		$exists = ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+		return $exists;
+	}
+}
+
+/**
+ * Prints the one shared helper every AJCore checkout button uses to attach where-they-came-from
+ * context to its admin-ajax request. Mirrors AJForms::render_tracking_inputs() field-for-field so
+ * a purchase and a form lead carry the same shape of data, and adds the click IDs ad platforms
+ * append (gclid/fbclid/msclkid) plus the chat widget's visitor id.
+ *
+ * Referrer and UTMs are read from a first-touch record in sessionStorage, not just the current
+ * URL: by the time someone clicks Buy they have usually navigated away from the ad-tagged landing
+ * page, so reading window.location alone would attribute almost every purchase to the site itself.
+ */
+if ( ! function_exists( 'ajcore_print_checkout_attribution_script' ) ) {
+	function ajcore_print_checkout_attribution_script() {
+		static $printed = false;
+		if ( $printed ) {
+			return;
+		}
+		$printed = true;
+		?>
+		<script>
+		(function () {
+			var FIRST_TOUCH_KEY = 'ajcore_first_touch';
+			var PARAM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
+			var CLICK_KEYS = ['gclid', 'fbclid', 'msclkid'];
+
+			function readFirstTouch() {
+				try { return JSON.parse(window.sessionStorage.getItem(FIRST_TOUCH_KEY) || '{}') || {}; }
+				catch (e) { return {}; }
+			}
+
+			function recordFirstTouch() {
+				var params = new URLSearchParams(window.location.search || '');
+				var stored = readFirstTouch();
+				// Only the FIRST tagged page view of a session wins — a later untagged page must not
+				// overwrite the ad/campaign that actually brought the visitor here.
+				if (stored.landing_page) {
+					return stored;
+				}
+				var touch = {
+					landing_page: window.location.href || '',
+					referrer: document.referrer || '',
+					click_id: ''
+				};
+				PARAM_KEYS.forEach(function (key) { touch[key] = params.get(key) || ''; });
+				CLICK_KEYS.forEach(function (key) {
+					if (!touch.click_id && params.get(key)) { touch.click_id = key + ':' + params.get(key); }
+				});
+				try { window.sessionStorage.setItem(FIRST_TOUCH_KEY, JSON.stringify(touch)); } catch (e) { /* private mode */ }
+				return touch;
+			}
+
+			function visitorUuid() {
+				try { return window.localStorage.getItem('ajcore_visitor_uuid') || ''; } catch (e) { return ''; }
+			}
+
+			var touch = recordFirstTouch();
+
+			window.ajcoreAppendAttribution = function (formData) {
+				if (!formData || typeof formData.append !== 'function') { return formData; }
+				formData.append('ajf_landing_page', touch.landing_page || window.location.href || '');
+				formData.append('ajf_referrer', touch.referrer || document.referrer || '');
+				PARAM_KEYS.forEach(function (key) { formData.append('ajf_' + key, touch[key] || ''); });
+				formData.append('ajf_click_id', touch.click_id || '');
+				formData.append('ajf_visitor_uuid', visitorUuid());
+				formData.append('ajf_screen_size', window.screen ? window.screen.width + 'x' + window.screen.height : '');
+				try { formData.append('ajf_timezone', Intl.DateTimeFormat().resolvedOptions().timeZone || ''); } catch (e) { formData.append('ajf_timezone', ''); }
+				formData.append('ajf_language', navigator.language || '');
+				return formData;
+			};
+		})();
+		</script>
+		<?php
+	}
+	add_action( 'wp_footer', 'ajcore_print_checkout_attribution_script', 1 );
 }
 
 /**

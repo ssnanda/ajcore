@@ -444,6 +444,16 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>[A-Za-z0-9_\-]+)/attribution',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_customer_attribution' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/impersonation-link',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -1157,6 +1167,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/summary', 'auth' => 'Admin', 'purpose' => 'Counts for customers, products, subscriptions, ledger, tasks, service requests and sync logs.', 'app' => 'OPS dashboard' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers', 'auth' => 'Admin', 'purpose' => 'Customer list with portal status and Stripe customer references.', 'app' => 'OPS customers' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers/{stripe_customer_id}', 'auth' => 'Admin', 'purpose' => 'Single customer profile with subscriptions, ledger, service requests and tasks.', 'app' => 'OPS customer view' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers/{stripe_customer_id}/attribution', 'auth' => 'Admin', 'purpose' => 'How this customer found us: referrer, landing page, UTM/click IDs, device and chat visitor id captured on each Checkout Session they started (completed or abandoned).', 'app' => 'OPS customer view' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/customers/{stripe_customer_id}/subscriptions', 'auth' => 'Admin', 'purpose' => 'Create a Stripe subscription for a customer from a synced recurring price.', 'app' => 'OPS customer view' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/products', 'auth' => 'Admin', 'purpose' => 'Synced Stripe/product catalog rows for product management.', 'app' => 'OPS catalog' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/subscriptions', 'auth' => 'Admin', 'purpose' => 'Subscription list for services and renewals.', 'app' => 'OPS services' ),
@@ -9692,7 +9703,7 @@ class AJCore_REST_API {
 	public function ops_customer_action( WP_REST_Request $request ) {
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$action             = sanitize_key( (string) $request->get_param( 'action' ) );
-		$allowed            = array( 'enable', 'disable', 'archive', 'restore', 'enable_repair', 'reset_password', 'send_welcome', 'regenerate_customer_number', 'delete_archived' );
+		$allowed            = array( 'enable', 'disable', 'archive', 'restore', 'enable_repair', 'reset_password', 'send_welcome', 'send_ra_authorization', 'regenerate_customer_number', 'delete_archived' );
 
 		if ( ! in_array( $action, $allowed, true ) ) {
 			return new WP_Error( 'invalid_action', 'Invalid action.', array( 'status' => 400 ) );
@@ -9780,6 +9791,16 @@ class AJCore_REST_API {
 				}
 				break;
 
+			case 'send_ra_authorization':
+				// Deliberately not gated on a linked WP user or active portal access (unlike
+				// send_welcome): this notice goes to the customer record's own email address, and
+				// plenty of registered-agent-only customers never get a portal login.
+				$result = AJForms_Admin::$instance->send_registered_agent_authorization_email(
+					$stripe_customer_id,
+					(string) $request->get_param( 'company' )
+				);
+				break;
+
 			case 'delete_archived':
 				if ( 'archived' !== $portal_status ) {
 					return new WP_Error( 'not_archived', 'Customer must be archived before deletion.', array( 'status' => 400 ) );
@@ -9795,6 +9816,62 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( array( 'success' => true, 'message' => $action . ' completed.' ) );
+	}
+
+	/**
+	 * "How they found us" for one customer: every Checkout Session they started (completed or
+	 * abandoned) with the referrer/UTM/device context captured at the time, newest first.
+	 *
+	 * Returns an empty list rather than an error when the table does not exist yet — a site that
+	 * has not taken a purchase since this shipped simply has nothing to show, and that should read
+	 * as "no data" in AJOps, not as a broken panel.
+	 */
+	public function get_ops_customer_attribution( WP_REST_Request $request ) {
+		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		if ( '' === $stripe_customer_id || ! function_exists( 'ajcore_checkout_attribution_table_exists' ) || ! ajcore_checkout_attribution_table_exists() ) {
+			return rest_ensure_response( array( 'attribution' => array() ) );
+		}
+
+		$pdb   = ajcore_checkout_attribution_db();
+		$table = ajcore_checkout_attribution_table();
+		$rows  = $pdb->get_results(
+			$pdb->prepare(
+				"SELECT * FROM `{$table}` WHERE stripe_customer_id = %s ORDER BY created_at DESC LIMIT 50",
+				$stripe_customer_id
+			),
+			ARRAY_A
+		);
+
+		$out = array();
+		foreach ( (array) $rows as $row ) {
+			$out[] = array(
+				'checkoutSessionId' => (string) $row['checkout_session_id'],
+				'status'            => (string) $row['status'],
+				'surface'           => (string) $row['surface'],
+				'priceIds'          => array_values( array_filter( explode( ',', (string) $row['price_ids'] ) ) ),
+				'visitorUuid'       => (string) $row['visitor_uuid'],
+				'ipAddress'         => (string) $row['ip_address'],
+				'deviceType'        => (string) $row['device_type'],
+				'browser'           => (string) $row['browser'],
+				'os'                => (string) $row['os'],
+				'userAgent'         => (string) $row['user_agent'],
+				'landingPage'       => (string) $row['landing_page'],
+				'referrer'          => (string) $row['referrer'],
+				'utmSource'         => (string) $row['utm_source'],
+				'utmMedium'         => (string) $row['utm_medium'],
+				'utmCampaign'       => (string) $row['utm_campaign'],
+				'utmTerm'           => (string) $row['utm_term'],
+				'utmContent'        => (string) $row['utm_content'],
+				'clickId'           => (string) $row['click_id'],
+				'screenSize'        => (string) $row['screen_size'],
+				'timezone'          => (string) $row['timezone'],
+				'language'          => (string) $row['language'],
+				'completedAt'       => (string) $row['completed_at'],
+				'createdAt'         => (string) $row['created_at'],
+			);
+		}
+
+		return rest_ensure_response( array( 'attribution' => $out ) );
 	}
 
 	public function ops_create_customer_impersonation_link( WP_REST_Request $request ) {

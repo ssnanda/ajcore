@@ -7468,6 +7468,9 @@ class AJForms {
 					formData.append('items', JSON.stringify(items));
 					formData.append('nonce', portalCartWrap.dataset.cartNonce || '');
 					formData.append('current_url', window.location.href);
+					// Where this buyer came from (first-touch referrer/UTM, device, visitor id) — see
+					// ajcore_print_checkout_attribution_script() in ajcore.php.
+					if (window.ajcoreAppendAttribution) { window.ajcoreAppendAttribution(formData); }
 
 					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 						method: 'POST',
@@ -9231,6 +9234,15 @@ class AJForms {
 			}
 		}
 
+		// Where this buyer came from. Captured before the session is created so the compact subset
+		// can ride along as Stripe metadata; the full record is written against the session id
+		// immediately after. metadata[source] above says which AJCore surface sold it — these say
+		// which ad, search, or referring site brought the person to that surface.
+		$attribution_meta = $this->get_checkout_attribution_meta();
+		foreach ( $this->get_checkout_attribution_stripe_metadata( $attribution_meta ) as $meta_key => $meta_value ) {
+			$body[ 'metadata[' . $meta_key . ']' ] = $meta_value;
+		}
+
 		$response         = $this->stripe_api_request(
 			'checkout/sessions',
 			$stripe_settings['secret_key'],
@@ -9240,6 +9252,16 @@ class AJForms {
 
 		if ( is_wp_error( $response ) ) {
 			wp_send_json_error( $response->get_error_message(), 400 );
+		}
+
+		if ( ! empty( $response['id'] ) ) {
+			$this->record_checkout_attribution(
+				$response['id'],
+				$attribution_meta,
+				isset( $body['metadata[source]'] ) ? (string) $body['metadata[source]'] : ( $portal_add_service ? 'ajcore_portal_add_service' : 'ajcore_product_buy' ),
+				$requested_price_ids,
+				$mapped_stripe_customer_id
+			);
 		}
 
 		if ( $portal_add_service && ! empty( $response['id'] ) && '' !== $mapped_stripe_customer_id ) {
@@ -10532,6 +10554,9 @@ class AJForms {
 				formData.append('nonce', root.dataset.cartNonce);
 				formData.append('include_archived', root.dataset.includeArchived || 'no');
 				formData.append('current_url', window.location.href);
+				// Where this buyer came from (first-touch referrer/UTM, device, visitor id) — see
+				// ajcore_print_checkout_attribution_script() in ajcore.php.
+				if (window.ajcoreAppendAttribution) { window.ajcoreAppendAttribution(formData); }
 				formData.append('embedded_checkout', '1');
 				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 					method: 'POST',
@@ -10714,6 +10739,9 @@ class AJForms {
 				formData.append('nonce', button.dataset.nonce);
 				formData.append('include_archived', root.dataset.includeArchived || 'no');
 				formData.append('current_url', window.location.href);
+				// Where this buyer came from (first-touch referrer/UTM, device, visitor id) — see
+				// ajcore_print_checkout_attribution_script() in ajcore.php.
+				if (window.ajcoreAppendAttribution) { window.ajcoreAppendAttribution(formData); }
 				fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 					method: 'POST',
 					credentials: 'same-origin',
@@ -10756,6 +10784,9 @@ class AJForms {
 					formData.append('nonce', root.dataset.cartNonce);
 					formData.append('include_archived', root.dataset.includeArchived || 'no');
 					formData.append('current_url', window.location.href);
+					// Where this buyer came from (first-touch referrer/UTM, device, visitor id) — see
+					// ajcore_print_checkout_attribution_script() in ajcore.php.
+					if (window.ajcoreAppendAttribution) { window.ajcoreAppendAttribution(formData); }
 					fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
 						method: 'POST',
 						credentials: 'same-origin',
@@ -11126,6 +11157,127 @@ class AJForms {
 			'timezone'    => isset( $_POST['ajf_timezone'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_timezone'] ) ) : '',
 			'language'    => isset( $_POST['ajf_language'] ) ? sanitize_text_field( wp_unslash( $_POST['ajf_language'] ) ) : '',
 			'submitted_at'=> current_time( 'mysql' ),
+		);
+	}
+
+	/**
+	 * Purchase-side twin of get_submission_meta(): the same visitor/system context a form lead
+	 * records, for someone who bought instead of filling in a form. The browser half (first-touch
+	 * referrer, landing page, UTM/click IDs, screen, timezone, language, chat visitor id) arrives
+	 * from ajcore_print_checkout_attribution_script(); IP and user agent are read server-side here
+	 * where they are authoritative.
+	 */
+	private function get_checkout_attribution_meta() {
+		$user_agent = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_textarea_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
+		$parsed     = $this->parse_user_agent( $user_agent );
+		$post_text  = function ( $key ) {
+			return isset( $_POST[ $key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $key ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		};
+		$post_url   = function ( $key ) {
+			return isset( $_POST[ $key ] ) ? esc_url_raw( wp_unslash( $_POST[ $key ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		};
+
+		return array(
+			'ip_address'   => $this->get_client_ip_address(),
+			'device_type'  => $parsed['device_type'],
+			'browser'      => $parsed['browser'],
+			'os'           => $parsed['os'],
+			'user_agent'   => $user_agent,
+			'landing_page' => '' !== $post_url( 'ajf_landing_page' ) ? $post_url( 'ajf_landing_page' ) : $post_url( 'current_url' ),
+			// Falls back to the HTTP referer header, which on an admin-ajax POST is the page the
+			// buy button was on — not the original external referrer, but better than nothing when
+			// sessionStorage is unavailable (private mode, storage blocked).
+			'referrer'     => '' !== $post_url( 'ajf_referrer' ) ? $post_url( 'ajf_referrer' ) : ( isset( $_SERVER['HTTP_REFERER'] ) ? esc_url_raw( wp_unslash( $_SERVER['HTTP_REFERER'] ) ) : '' ),
+			'utm_source'   => $post_text( 'ajf_utm_source' ),
+			'utm_medium'   => $post_text( 'ajf_utm_medium' ),
+			'utm_campaign' => $post_text( 'ajf_utm_campaign' ),
+			'utm_term'     => $post_text( 'ajf_utm_term' ),
+			'utm_content'  => $post_text( 'ajf_utm_content' ),
+			'click_id'     => $post_text( 'ajf_click_id' ),
+			'visitor_uuid' => $post_text( 'ajf_visitor_uuid' ),
+			'screen_size'  => $post_text( 'ajf_screen_size' ),
+			'timezone'     => $post_text( 'ajf_timezone' ),
+			'language'     => $post_text( 'ajf_language' ),
+		);
+	}
+
+	/**
+	 * The subset of the attribution meta worth carrying on the Stripe Checkout Session itself, so
+	 * the origin of a payment is visible in the Stripe dashboard without cross-referencing AJCore.
+	 * Deliberately small: Stripe caps metadata at 50 keys and 500 characters per value, and the
+	 * full record (user agent, device, IP, screen/timezone) already lives in AJCore.
+	 */
+	private function get_checkout_attribution_stripe_metadata( $meta ) {
+		$referrer_host = '';
+		if ( ! empty( $meta['referrer'] ) ) {
+			$referrer_host = (string) wp_parse_url( (string) $meta['referrer'], PHP_URL_HOST );
+		}
+
+		$fields = array(
+			'ajcore_referrer'     => $referrer_host,
+			'ajcore_landing_page' => (string) $meta['landing_page'],
+			'ajcore_utm_source'   => (string) $meta['utm_source'],
+			'ajcore_utm_medium'   => (string) $meta['utm_medium'],
+			'ajcore_utm_campaign' => (string) $meta['utm_campaign'],
+			'ajcore_click_id'     => (string) $meta['click_id'],
+			'ajcore_device'       => (string) $meta['device_type'],
+			'ajcore_visitor_uuid' => (string) $meta['visitor_uuid'],
+		);
+
+		return array_filter(
+			array_map(
+				function ( $value ) {
+					return substr( (string) $value, 0, 500 );
+				},
+				$fields
+			),
+			function ( $value ) {
+				return '' !== $value;
+			}
+		);
+	}
+
+	/**
+	 * Records a started Checkout Session's attribution. The row is written with status "started";
+	 * the Stripe webhook fills in stripe_customer_id and flips it to "completed" once the customer
+	 * actually pays (see link_checkout_attribution_to_customer() in class-ajforms-admin.php), so
+	 * abandoned checkouts stay visible as exactly that instead of silently disappearing.
+	 */
+	private function record_checkout_attribution( $checkout_session_id, $meta, $surface, $price_ids, $stripe_customer_id = '' ) {
+		$checkout_session_id = sanitize_text_field( (string) $checkout_session_id );
+		if ( '' === $checkout_session_id || ! function_exists( 'ajcore_checkout_attribution_table_exists' ) || ! ajcore_checkout_attribution_table_exists() ) {
+			return;
+		}
+
+		$pdb = ajcore_checkout_attribution_db();
+		$pdb->replace(
+			ajcore_checkout_attribution_table(),
+			array(
+				'site_uuid'           => (string) get_option( 'ajcore_site_uuid', '' ),
+				'checkout_session_id' => $checkout_session_id,
+				'stripe_customer_id'  => sanitize_text_field( (string) $stripe_customer_id ),
+				'visitor_uuid'        => substr( (string) $meta['visitor_uuid'], 0, 64 ),
+				'surface'             => substr( sanitize_text_field( (string) $surface ), 0, 100 ),
+				'price_ids'           => implode( ',', array_map( 'sanitize_text_field', (array) $price_ids ) ),
+				'ip_address'          => substr( (string) $meta['ip_address'], 0, 100 ),
+				'device_type'         => substr( (string) $meta['device_type'], 0, 30 ),
+				'browser'             => substr( (string) $meta['browser'], 0, 100 ),
+				'os'                  => substr( (string) $meta['os'], 0, 100 ),
+				'user_agent'          => (string) $meta['user_agent'],
+				'landing_page'        => (string) $meta['landing_page'],
+				'referrer'            => (string) $meta['referrer'],
+				'utm_source'          => substr( (string) $meta['utm_source'], 0, 191 ),
+				'utm_medium'          => substr( (string) $meta['utm_medium'], 0, 191 ),
+				'utm_campaign'        => substr( (string) $meta['utm_campaign'], 0, 191 ),
+				'utm_term'            => substr( (string) $meta['utm_term'], 0, 191 ),
+				'utm_content'         => substr( (string) $meta['utm_content'], 0, 191 ),
+				'click_id'            => substr( (string) $meta['click_id'], 0, 191 ),
+				'screen_size'         => substr( (string) $meta['screen_size'], 0, 50 ),
+				'timezone'            => substr( (string) $meta['timezone'], 0, 100 ),
+				'language'            => substr( (string) $meta['language'], 0, 50 ),
+				'status'              => 'started',
+				'created_at'          => current_time( 'mysql' ),
+			)
 		);
 	}
 

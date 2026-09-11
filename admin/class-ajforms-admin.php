@@ -657,6 +657,84 @@ class AJForms_Admin {
 		return ! empty( $settings['stripe_mode'] ) && 'live' === sanitize_key( (string) $settings['stripe_mode'] ) ? 1 : 0;
 	}
 
+	/**
+	 * Closes the loop on purchase attribution: marks the Checkout Session's attribution row
+	 * completed and stamps it with the Stripe customer the session actually produced (for a guest
+	 * checkout the customer does not exist yet when the session is created, so it can only be
+	 * known here), then links that customer to the chat widget's visitor id.
+	 *
+	 * The visitor link is what makes the data worth collecting — aj_portal_visitor_identities is
+	 * the same table staff fill in by hand from Live Chat, so once a purchase writes it, every
+	 * past AND future aj_portal_visitor_log row for that browser shows as this customer, giving
+	 * their full pre-purchase browsing history for free.
+	 *
+	 * Deliberately non-fatal: attribution is reporting data, and a failure here must never fail
+	 * the webhook and make Stripe retry a payment that was processed correctly.
+	 */
+	private function link_checkout_attribution_to_customer( $checkout_session_id, $stripe_customer_id ) {
+		$checkout_session_id = sanitize_text_field( (string) $checkout_session_id );
+		$stripe_customer_id  = sanitize_text_field( (string) $stripe_customer_id );
+		if ( '' === $checkout_session_id || ! function_exists( 'ajcore_checkout_attribution_table_exists' ) || ! ajcore_checkout_attribution_table_exists() ) {
+			return;
+		}
+
+		$pdb   = ajcore_checkout_attribution_db();
+		$table = ajcore_checkout_attribution_table();
+		$row   = $pdb->get_row(
+			$pdb->prepare( "SELECT id, visitor_uuid FROM `{$table}` WHERE checkout_session_id = %s LIMIT 1", $checkout_session_id ),
+			ARRAY_A
+		);
+		if ( ! $row ) {
+			return;
+		}
+
+		$pdb->update(
+			$table,
+			array(
+				'stripe_customer_id' => $stripe_customer_id,
+				'status'             => 'completed',
+				'completed_at'       => current_time( 'mysql' ),
+			),
+			array( 'id' => absint( $row['id'] ) ),
+			array( '%s', '%s', '%s' ),
+			array( '%d' )
+		);
+
+		$visitor_uuid = isset( $row['visitor_uuid'] ) ? sanitize_text_field( (string) $row['visitor_uuid'] ) : '';
+		if ( '' === $visitor_uuid || 0 !== strpos( $stripe_customer_id, 'cus_' ) ) {
+			return;
+		}
+
+		$identities = $pdb->prefix . 'aj_portal_visitor_identities';
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $identities ) ) !== $identities ) {
+			return;
+		}
+
+		$existing = $pdb->get_row(
+			$pdb->prepare( "SELECT id, linked_stripe_customer_id FROM `{$identities}` WHERE visitor_uuid = %s LIMIT 1", $visitor_uuid ),
+			ARRAY_A
+		);
+		// Never overwrite a link a staff member made by hand, or one an earlier purchase already
+		// established — a shared browser would otherwise keep reassigning the visitor's history to
+		// whoever bought most recently.
+		if ( $existing && ! empty( $existing['linked_stripe_customer_id'] ) ) {
+			return;
+		}
+
+		$data = array(
+			'visitor_uuid'              => $visitor_uuid,
+			'linked_stripe_customer_id' => $stripe_customer_id,
+			'linked_lead_id'            => null,
+			'linked_by'                 => 'purchase',
+			'linked_at'                 => current_time( 'mysql' ),
+		);
+		if ( $existing ) {
+			$pdb->update( $identities, $data, array( 'id' => absint( $existing['id'] ) ), array( '%s', '%s', '%d', '%s', '%s' ), array( '%d' ) );
+		} else {
+			$pdb->insert( $identities, $data, array( '%s', '%s', '%d', '%s', '%s' ) );
+		}
+	}
+
 	private function ensure_portal_schema() {
 		global $wpdb;
 		$pdb = $this->get_pdb();
@@ -4882,6 +4960,10 @@ class AJForms_Admin {
 			}
 		}
 
+		if ( 'checkout.session.completed' === $type && is_array( $object ) && ! empty( $object['id'] ) ) {
+			$this->link_checkout_attribution_to_customer( (string) $object['id'], $stripe_customer_id );
+		}
+
 		$deferred_one_time_result = 0;
 		if ( 'checkout.session.completed' === $type && is_array( $object ) ) {
 			$deferred_one_time_result = $this->maybe_charge_deferred_one_time_items_for_checkout_session( $object, $secret_key );
@@ -5323,9 +5405,11 @@ class AJForms_Admin {
 		if ( '' !== (string) $a['info_box_value'] ) {
 			$info_box_style = 'margin:0 0 28px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;font-size:16px;line-height:1.55;color:#0f172a;';
 			if ( 'stacked' === $a['info_box_layout'] ) {
+				// nl2br so a multi-line value (e.g. the Registered Agent address block) keeps its
+				// line breaks; single-line values — every other caller — are unaffected.
 				$info_box_html = '<p style="' . $info_box_style . '">'
 					. ( '' !== (string) $a['info_box_label'] ? '<strong>' . esc_html( $a['info_box_label'] ) . '</strong><br>' : '' )
-					. esc_html( $a['info_box_value'] ) . '</p>';
+					. nl2br( esc_html( $a['info_box_value'] ) ) . '</p>';
 			} else {
 				$info_box_html = '<p style="' . $info_box_style . '">'
 					. ( '' !== (string) $a['info_box_label'] ? '<strong>' . esc_html( $a['info_box_label'] ) . ':</strong> ' : '' )
@@ -5407,6 +5491,44 @@ class AJForms_Admin {
 	 * each was hardcoded twice (once per call site) and could silently drift out of sync, which is
 	 * exactly what happened when a footer note was added to the send function but not the preview.
 	 */
+	/** Splits a resolve_email_copy() result into intro paragraphs and checklist items for the
+	 *  templates whose editable body mixes both: a line starting with "- " becomes a checklist
+	 *  item (rendered under the info box by render_branded_email_html()), every other line stays
+	 *  a paragraph above it. Used by both the real send function and the Settings preview so the
+	 *  two can't drift. Templates without the 'bullets' flag never call this. */
+	private function split_email_copy_bullets( $copy ) {
+		$paragraphs = array();
+		$bullets    = array();
+		foreach ( (array) $copy['paragraphs'] as $line ) {
+			$line = trim( (string) $line );
+			if ( '' === $line ) {
+				continue;
+			}
+			if ( 0 === strpos( $line, '- ' ) ) {
+				$bullets[] = trim( substr( $line, 2 ) );
+			} else {
+				$paragraphs[] = $line;
+			}
+		}
+		return array( 'heading' => $copy['heading'], 'paragraphs' => $paragraphs, 'checklist_items' => $bullets );
+	}
+
+	/** Registered Agent authorization notice. NC LLC Agents only — the address itself is an
+	 *  editable setting (ra_authorization_address) rather than a constant here, because it is the
+	 *  one piece of this email a staff member would realistically need to change. */
+	private function get_ra_authorization_email_static_parts( $address = '' ) {
+		$signature = trim( preg_replace( '/\s*\n\s*/', " \xc2\xb7 ", trim( (string) $address ) ) );
+
+		return array(
+			'info_box_label'  => __( 'Registered Agent / Registered Office address', 'ajforms' ),
+			'info_box_layout' => 'stacked',
+			'checklist_title' => __( 'Please note the following important requirements', 'ajforms' ),
+			'footer_note'     => '' !== $signature
+				? sprintf( __( 'Thank you, %s', 'ajforms' ), $signature )
+				: __( 'Thank you,', 'ajforms' ),
+		);
+	}
+
 	private function get_password_reset_email_static_parts() {
 		return array(
 			'cta_text'      => __( 'Set New Password', 'ajforms' ),
@@ -5567,6 +5689,117 @@ class AJForms_Admin {
 		}
 
 		return $this->send_branded_wp_mail( $user->user_email, $subject, $message, $headers, $from_email, $from_name );
+	}
+
+	/**
+	 * Sends the Registered Agent authorization / address-use notice for a customer.
+	 *
+	 * Unlike the portal welcome and password-reset emails this does NOT need a linked WordPress
+	 * user — it is addressed to the customer record's own email, so it can go out to a customer
+	 * who has never been given portal access. Tracking is automatic: wp_mail() is filtered into
+	 * aj_portal_email_log with an open-tracking pixel (see ajcore_log_outgoing_mail() in
+	 * ajcore.php), which is what AJOps' Email Log screen reads.
+	 *
+	 * @param string $stripe_customer_id Customer to notify.
+	 * @param string $company            Optional company/LLC name for {company}; falls back to
+	 *                                   the customer record's name.
+	 * @return true|WP_Error
+	 */
+	public function send_registered_agent_authorization_email( $stripe_customer_id, $company = '' ) {
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$customer           = $this->get_pdb()->get_row(
+			$this->get_pdb()->prepare(
+				"SELECT name, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+				$stripe_customer_id
+			)
+		);
+		if ( ! $customer ) {
+			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajforms' ) );
+		}
+		if ( ! is_email( (string) $customer->email ) ) {
+			return new WP_Error( 'no_customer_email', __( 'This customer has no valid email address on file.', 'ajforms' ) );
+		}
+
+		$settings   = $this->get_plugin_settings();
+		$brand      = $this->get_customer_brand_context( $stripe_customer_id );
+		$sender     = $this->resolve_email_sender( $settings, 'ra_authorization_from_email', 'ra_authorization_from_name' );
+		$from_email = $sender['from_email'];
+		$from_name  = $sender['from_name'];
+
+		$company_name = sanitize_text_field( (string) $company );
+		if ( '' === $company_name ) {
+			$company_name = sanitize_text_field( (string) $customer->name );
+		}
+		if ( '' === $company_name ) {
+			$company_name = (string) $customer->email;
+		}
+
+		$tokens = array(
+			'{name}'      => '' !== (string) $customer->name ? (string) $customer->name : (string) $customer->email,
+			'{company}'   => $company_name,
+			'{site_name}' => $brand['site_name'],
+		);
+
+		$subject_template = ! empty( $settings['ra_authorization_subject'] )
+			? sanitize_text_field( (string) $settings['ra_authorization_subject'] )
+			: __( 'Registered Agent Authorization and Address Use for {company}', 'ajforms' );
+		$subject = strtr( $subject_template, $tokens );
+
+		$copy = $this->split_email_copy_bullets(
+			$this->resolve_email_copy(
+				$settings,
+				'ra_authorization_heading',
+				'ra_authorization_body',
+				__( 'Registered Agent Authorization', 'ajforms' ),
+				$this->get_ra_authorization_default_body_lines(),
+				$tokens
+			)
+		);
+
+		$address = isset( $settings['ra_authorization_address'] ) && '' !== trim( (string) $settings['ra_authorization_address'] )
+			? (string) $settings['ra_authorization_address']
+			: $this->get_ra_authorization_default_address();
+
+		$message = $this->render_branded_email_html( array_merge(
+			array(
+				'kicker'          => $brand['site_name'],
+				'heading'         => $copy['heading'],
+				'paragraphs'      => $copy['paragraphs'],
+				'checklist_items' => $copy['checklist_items'],
+				'info_box_value'  => $address,
+			),
+			$this->get_ra_authorization_email_static_parts( $address )
+		) );
+
+		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+		if ( is_email( $from_email ) ) {
+			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
+			$headers[] = 'Reply-To: ' . $from_email;
+		}
+
+		$sent = $this->send_branded_wp_mail( $customer->email, $subject, $message, $headers, $from_email, $from_name );
+		if ( ! $sent ) {
+			return new WP_Error( 'ra_authorization_failed', __( 'Registered Agent authorization email could not be sent.', 'ajforms' ) );
+		}
+
+		return true;
+	}
+
+	/** Built-in copy for the Registered Agent authorization email, shared by the send function
+	 *  and the Settings preview so an un-customized template previews exactly what ships. */
+	private function get_ra_authorization_default_body_lines() {
+		return array(
+			__( 'You are authorized to use the following information for Registered Agent purposes only:', 'ajforms' ),
+			__( '- Do not use our phone number anywhere on the filing.', 'ajforms' ),
+			__( "- The address above is the Registered Agent / Registered Office address only. It is not authorized for use as the company's Principal Office address, Mailing Address, or Business Address.", 'ajforms' ),
+			__( '- We authorize use of this address only for the North Carolina Secretary of State filing through the SOSNC website.', 'ajforms' ),
+			__( '- This authorization does not permit use of our address on Google, business directories, websites, bank accounts, licenses, marketing materials, vendor accounts, or any other registrations or filings.', 'ajforms' ),
+			__( '- If you need to use our address anywhere other than the Registered Agent section of the NC Secretary of State filing, please text or contact us first for approval.', 'ajforms' ),
+		);
+	}
+
+	private function get_ra_authorization_default_address() {
+		return "NC LLC Agents Inc.\n1914 J N Pease Pl.\nCharlotte, NC 28262\nagent@ncllcagents.com";
 	}
 
 	/**
@@ -13664,6 +13897,12 @@ class AJForms_Admin {
 			'university_wp_service_status_from_name'  => isset( $_POST['university_wp_service_status_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_from_name'] ) ) : 'University Place Office Suites',
 			'lead_followup_from_email'       => isset( $_POST['lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['lead_followup_from_email'] ) ) : 'contactus@ncllcagents.com',
 			'lead_followup_from_name'        => isset( $_POST['lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_from_name'] ) ) : '',
+			'ra_authorization_subject'       => isset( $_POST['ra_authorization_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_subject'] ) ) : 'Registered Agent Authorization and Address Use for {company}',
+			'ra_authorization_heading'       => isset( $_POST['ra_authorization_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_heading'] ) ) : 'Registered Agent Authorization',
+			'ra_authorization_body'          => isset( $_POST['ra_authorization_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_body'] ) ) : "You are authorized to use the following information for Registered Agent purposes only:\n- Do not use our phone number anywhere on the filing.\n- The address above is the Registered Agent / Registered Office address only. It is not authorized for use as the company's Principal Office address, Mailing Address, or Business Address.\n- We authorize use of this address only for the North Carolina Secretary of State filing through the SOSNC website.\n- This authorization does not permit use of our address on Google, business directories, websites, bank accounts, licenses, marketing materials, vendor accounts, or any other registrations or filings.\n- If you need to use our address anywhere other than the Registered Agent section of the NC Secretary of State filing, please text or contact us first for approval.",
+			'ra_authorization_address'       => isset( $_POST['ra_authorization_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_address'] ) ) : "NC LLC Agents Inc.\n1914 J N Pease Pl.\nCharlotte, NC 28262\nagent@ncllcagents.com",
+			'ra_authorization_from_email'    => isset( $_POST['ra_authorization_from_email'] ) ? sanitize_email( wp_unslash( $_POST['ra_authorization_from_email'] ) ) : '',
+			'ra_authorization_from_name'     => isset( $_POST['ra_authorization_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_from_name'] ) ) : '',
 			'university_lead_followup_email_subject' => isset( $_POST['university_lead_followup_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_email_subject'] ) ) : 'Following up from University Place Office Suites',
 			'university_lead_followup_heading'       => isset( $_POST['university_lead_followup_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_heading'] ) ) : "We'd love to hear from you",
 			'university_lead_followup_body'          => isset( $_POST['university_lead_followup_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_lead_followup_body'] ) ) : "Hi {name},\nWe wanted to follow up on your recent inquiry with University Place Office Suites. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
@@ -13798,7 +14037,7 @@ class AJForms_Admin {
 			// Settings form (they govern all plugin mail, not just portal templates), so a
 			// section-scoped restore would let a save on one form wipe the other's value.
 			// Preserved by their own loop above instead, like the OAuth/university fields.
-			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name' ),
+			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name' ),
 			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
@@ -26144,6 +26383,26 @@ class AJForms_Admin {
 					'static_parts'      => null, // brand-dependent — resolved per-variant below.
 					'sample_extra'      => array(),
 				),
+				array(
+					'id'                => 'ra_authorization',
+					'label'             => __( 'Registered Agent Authorization', 'ajforms' ),
+					'subject_key'       => 'ra_authorization_subject',
+					'from_email_key'    => 'ra_authorization_from_email',
+					'from_name_key'     => 'ra_authorization_from_name',
+					'heading_key'       => 'ra_authorization_heading',
+					'body_key'          => 'ra_authorization_body',
+					'address_key'       => 'ra_authorization_address',
+					'bullets'           => true,
+					// NC LLC Agents only: there is no University Place Office Suites registered-agent
+					// address to authorize, and inventing one in a legal notice would be worse than
+					// not offering the template — same reasoning as the lead-follow-up static parts.
+					'ncllc_only'        => true,
+					'placeholders'      => '{name}, {company}',
+					'default_heading'   => __( 'Registered Agent Authorization', 'ajforms' ),
+					'default_body'      => $this->get_ra_authorization_default_body_lines(),
+					'static_parts'      => 'get_ra_authorization_email_static_parts',
+					'sample_extra'      => array(),
+				),
 			);
 
 			$brands = array(
@@ -26159,15 +26418,29 @@ class AJForms_Admin {
 			$email_variants = array();
 			foreach ( $brands as $brand_key => $brand ) {
 				foreach ( $type_defs as $type ) {
+					if ( ! empty( $type['ncllc_only'] ) && 'ncllc' !== $brand_key ) {
+						continue;
+					}
 					$key = function ( $base ) use ( $brand ) {
 						return '' === $brand['prefix'] ? $base : $brand['prefix'] . $base;
 					};
 					$tokens = array( '{name}' => 'Jane Doe', '{service_name}' => 'Registered Agent - 1 year', '{status_label}' => 'Active', '{site_name}' => $brand['site_name'] );
 					$copy   = $this->resolve_email_copy( $settings, $key( $type['heading_key'] ), $key( $type['body_key'] ), $type['default_heading'], $type['default_body'], $tokens );
 
+					// The one template with an editable address block feeds it to both the info box
+					// and its own static parts (the footer signature is derived from it), so the
+					// preview reflects an edited address exactly like a real send does.
+					$address      = ! empty( $type['address_key'] ) ? (string) $settings[ $type['address_key'] ] : '';
 					$static_parts = 'lead_followup' === $type['id']
 						? $this->get_lead_followup_email_static_parts( array( 'entity_name' => $brand['entity_name'] ) )
-						: $this->{$type['static_parts']}();
+						: ( ! empty( $type['address_key'] ) ? $this->{$type['static_parts']}( $address ) : $this->{$type['static_parts']}() );
+
+					$sample_body = empty( $type['bullets'] )
+						? array( 'paragraphs' => $copy['paragraphs'] )
+						: $this->split_email_copy_bullets( $copy );
+					if ( '' !== $address ) {
+						$sample_body['info_box_value'] = $address;
+					}
 
 					$email_variants[] = array_merge( $type, array(
 						'variant_key'    => $brand_key . '_' . $type['id'],
@@ -26178,12 +26451,13 @@ class AJForms_Admin {
 						'body_key'       => $key( $type['body_key'] ),
 						'from_email_key' => $key( $type['from_email_key'] ),
 						'from_name_key'  => $key( $type['from_name_key'] ),
+						'address_key'    => ! empty( $type['address_key'] ) ? $key( $type['address_key'] ) : '',
 						'sample_html'    => $this->render_branded_email_html( array_merge(
 							array(
-								'kicker'     => $brand['site_name'],
-								'heading'    => $copy['heading'],
-								'paragraphs' => $copy['paragraphs'],
+								'kicker'  => $brand['site_name'],
+								'heading' => $copy['heading'],
 							),
+							$sample_body,
 							$type['sample_extra'],
 							$static_parts
 						) ),
@@ -26235,7 +26509,17 @@ class AJForms_Admin {
 									<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
 									<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="6"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
 									<div class="ajforms-settings-help"><?php echo esc_html( sprintf( __( 'Placeholders: %s', 'ajforms' ), $type['placeholders'] ) ); ?></div>
+									<?php if ( ! empty( $type['bullets'] ) ) : ?>
+										<div class="ajforms-settings-help"><?php esc_html_e( 'One line per paragraph. A line starting with "- " becomes a bulleted requirement listed under the address box.', 'ajforms' ); ?></div>
+									<?php endif; ?>
 								</div>
+								<?php if ( ! empty( $type['address_key'] ) ) : ?>
+									<div class="ajforms-settings-field">
+										<label for="<?php echo esc_attr( $type['address_key'] ); ?>"><?php esc_html_e( 'Registered Agent address block', 'ajforms' ); ?></label>
+										<textarea name="<?php echo esc_attr( $type['address_key'] ); ?>" id="<?php echo esc_attr( $type['address_key'] ); ?>" rows="4"><?php echo esc_textarea( $settings[ $type['address_key'] ] ); ?></textarea>
+										<div class="ajforms-settings-help"><?php esc_html_e( 'Shown in the highlighted box and, joined onto one line, in the closing signature.', 'ajforms' ); ?></div>
+									</div>
+								<?php endif; ?>
 							</div>
 							<div>
 								<div class="ajforms-settings-help" style="margin-bottom:6px;"><?php esc_html_e( 'Preview', 'ajforms' ); ?></div>
