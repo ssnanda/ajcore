@@ -444,6 +444,21 @@ class AJCore_REST_API {
 
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>[A-Za-z0-9_\-]+)/email-preview',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_ops_customer_email_preview' ),
+				// Same permission as the action that actually sends it: whoever can preview an
+				// email can send it, so the two must not diverge.
+				'permission_callback' => array( $this, 'can_manage_site_ops_api' ),
+				'args'                => array(
+					'template' => array( 'required' => true, 'sanitize_callback' => 'sanitize_key' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/customers/(?P<stripe_customer_id>[A-Za-z0-9_\-]+)/attribution',
 			array(
 				'methods'             => WP_REST_Server::READABLE,
@@ -1167,6 +1182,7 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/summary', 'auth' => 'Admin', 'purpose' => 'Counts for customers, products, subscriptions, ledger, tasks, service requests and sync logs.', 'app' => 'OPS dashboard' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers', 'auth' => 'Admin', 'purpose' => 'Customer list with portal status and Stripe customer references.', 'app' => 'OPS customers' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers/{stripe_customer_id}', 'auth' => 'Admin', 'purpose' => 'Single customer profile with subscriptions, ledger, service requests and tasks.', 'app' => 'OPS customer view' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers/{stripe_customer_id}/email-preview', 'auth' => 'Admin', 'purpose' => 'Renders From/To/Subject and the full HTML body of a customer email (template=welcome|ra_authorization) without sending it, for the confirm-before-send preview.', 'app' => 'OPS customer view' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers/{stripe_customer_id}/attribution', 'auth' => 'Admin', 'purpose' => 'How this customer found us: referrer, landing page, UTM/click IDs, device and chat visitor id captured on each Checkout Session they started (completed or abandoned).', 'app' => 'OPS customer view' ),
 			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/customers/{stripe_customer_id}/subscriptions', 'auth' => 'Admin', 'purpose' => 'Create a Stripe subscription for a customer from a synced recurring price.', 'app' => 'OPS customer view' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/products', 'auth' => 'Admin', 'purpose' => 'Synced Stripe/product catalog rows for product management.', 'app' => 'OPS catalog' ),
@@ -1574,7 +1590,12 @@ class AJCore_REST_API {
 			return $selected;
 		}
 
-		$allowed_resources = array( 'tenants', 'leads', 'vendors', 'transactions', 'work_orders', 'files', 'messages' );
+		// 'leases' backs AJOps' Insurance tab. Rentec's v3 API exposes NO insurance data of its own
+		// — there is no /insurance endpoint and no policy/carrier/coverage field on any schema
+		// (confirmed against the published OpenAPI spec) — so the closest real thing the API can
+		// give that screen is the lease roster: who currently occupies which property, and for how
+		// long. That is the list renters insurance is tracked against.
+		$allowed_resources = array( 'tenants', 'leads', 'vendors', 'transactions', 'work_orders', 'files', 'messages', 'leases' );
 		$resource          = sanitize_key( (string) $request->get_param( 'resource' ) );
 		if ( ! in_array( $resource, $allowed_resources, true ) ) {
 			$resource = 'work_orders';
@@ -1646,6 +1667,50 @@ class AJCore_REST_API {
 			}
 			unset( $row );
 		}
+		if ( 'leases' === $resource ) {
+			// Lease rows carry only renter_id/property_id. Resolve both in two bulk calls (same
+			// approach as work_orders above) so the tab can show who and where without an N+1.
+			$tenant_body   = $this->request_rentec_for_ops( 'https://secure.rentecdirect.com/api/v3/tenants', $accounts[ $account ]['key'] );
+			$property_body = $this->request_rentec_for_ops( add_query_arg( 'include_subunits', 'true', 'https://secure.rentecdirect.com/api/v3/properties' ), $accounts[ $account ]['key'] );
+			$tenants       = array();
+			$properties    = array();
+			if ( ! is_wp_error( $tenant_body ) ) {
+				foreach ( (array) ( $tenant_body['data'] ?? array() ) as $tenant ) {
+					if ( is_array( $tenant ) && ! empty( $tenant['renter_id'] ) ) {
+						$tenants[ absint( $tenant['renter_id'] ) ] = $tenant;
+					}
+				}
+			}
+			if ( ! is_wp_error( $property_body ) ) {
+				foreach ( $this->flatten_rentec_properties_for_ops( $property_body['data'] ?? array() ) as $property ) {
+					if ( is_array( $property ) && ! empty( $property['property_id'] ) ) {
+						$properties[ absint( $property['property_id'] ) ] = $property;
+					}
+				}
+			}
+
+			$today = current_time( 'Y-m-d' );
+			foreach ( $rows as &$row ) {
+				$tenant   = $tenants[ absint( $row['renter_id'] ?? 0 ) ] ?? array();
+				$property = $properties[ absint( $row['property_id'] ?? 0 ) ] ?? array();
+				$name     = trim( (string) ( $tenant['f_name'] ?? '' ) . ' ' . (string) ( $tenant['l_name'] ?? '' ) );
+				if ( '' === $name ) {
+					$name = (string) ( $tenant['company'] ?? '' );
+				}
+				$city = implode( ', ', array_filter( array_map( 'strval', array( $property['city'] ?? '', $property['state'] ?? '', $property['zip'] ?? '' ) ) ) );
+
+				$row['_tenant_name']  = sanitize_text_field( $name );
+				$row['_tenant_email'] = sanitize_text_field( (string) ( $tenant['email'] ?? '' ) );
+				$row['_tenant_phone'] = sanitize_text_field( (string) ( $tenant['phone'] ?? $tenant['mphone'] ?? '' ) );
+				$row['_address']      = implode( ', ', array_filter( array_map( 'strval', array( $property['address'] ?? '', $city ) ) ) );
+
+				// A lease with no end date is open-ended, not expired.
+				$lease_end          = substr( (string) ( $row['lease_end'] ?? '' ), 0, 10 );
+				$row['_lease_state'] = '' === $lease_end ? 'Open-ended' : ( $lease_end < $today ? 'Expired' : 'Active' );
+			}
+			unset( $row );
+		}
+
 		$total = 'work_orders' === $resource
 			? count( $rows )
 			: ( isset( $body['summary']['records'] ) ? absint( $body['summary']['records'] ) : count( $rows ) );
@@ -9816,6 +9881,62 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( array( 'success' => true, 'message' => $action . ' completed.' ) );
+	}
+
+	/**
+	 * Renders exactly what a "send this email" action would send — From, To, Subject and the full
+	 * HTML body — so AJOps can show staff the real thing before they commit to mailing a customer.
+	 *
+	 * Built by the same build_*_email() methods the send path uses, so a preview cannot drift from
+	 * what actually goes out. Nothing here writes or sends: the welcome preview in particular is
+	 * built in preview mode so it does not mint (and thereby invalidate) a password-reset key.
+	 */
+	public function get_ops_customer_email_preview( WP_REST_Request $request ) {
+		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$template           = sanitize_key( (string) $request->get_param( 'template' ) );
+
+		if ( ! class_exists( 'AJForms_Admin' ) || ! AJForms_Admin::$instance ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+
+		if ( 'ra_authorization' === $template ) {
+			$built = AJForms_Admin::$instance->build_registered_agent_authorization_email(
+				$stripe_customer_id,
+				(string) $request->get_param( 'company' )
+			);
+		} elseif ( 'welcome' === $template ) {
+			global $wpdb;
+			$mapping_table = $wpdb->prefix . 'aj_auth_user_mappings';
+			$user_id       = (int) $wpdb->get_var(
+				$wpdb->prepare( "SELECT user_id FROM `{$mapping_table}` WHERE stripe_customer_id = %s LIMIT 1", $stripe_customer_id )
+			);
+			if ( ! $user_id ) {
+				return new WP_Error( 'no_wp_user', 'No linked WordPress user. Run Enable & Repair first.', array( 'status' => 400 ) );
+			}
+			$built = AJForms_Admin::$instance->build_portal_user_welcome_email( $user_id, true );
+		} else {
+			return new WP_Error( 'invalid_template', 'Unknown email template.', array( 'status' => 400 ) );
+		}
+
+		if ( is_wp_error( $built ) ) {
+			return new WP_Error( 'preview_failed', $built->get_error_message(), array( 'status' => 400 ) );
+		}
+
+		return rest_ensure_response(
+			array(
+				'success'   => true,
+				'template'  => $template,
+				'to'        => (string) $built['to'],
+				'fromEmail' => (string) $built['from_email'],
+				'fromName'  => (string) $built['from_name'],
+				'subject'   => (string) $built['subject'],
+				'html'      => (string) $built['message'],
+				// The welcome email's real "Set password" link is only minted at send time, so the
+				// preview shows a placeholder button. Flagged here so AJOps can say so rather than
+				// letting staff think the button is broken.
+				'linkPlaceholder' => ( 'welcome' === $template ),
+			)
+		);
 	}
 
 	/**

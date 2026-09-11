@@ -5638,20 +5638,45 @@ class AJForms_Admin {
 	}
 
 	public function send_portal_user_welcome_email( $user_id ) {
+		$built = $this->build_portal_user_welcome_email( $user_id );
+		if ( is_wp_error( $built ) ) {
+			return $built;
+		}
+
+		return $this->send_branded_wp_mail( $built['to'], $built['subject'], $built['message'], $built['headers'], $built['from_email'], $built['from_name'] );
+	}
+
+	/**
+	 * Assembles the portal welcome email without sending it, so the exact same bytes can be shown
+	 * to staff as a confirmation preview and then sent. Every branded email that AJOps can trigger
+	 * by hand is built this way — a preview rendered by separate code is a preview that can lie.
+	 *
+	 * @param int  $user_id WordPress user to welcome.
+	 * @param bool $preview When true, no password-reset key is generated. get_password_reset_key()
+	 *                      WRITES a new key and invalidates the previous one, so previewing must
+	 *                      never call it — merely looking at this email would otherwise break a
+	 *                      reset link the customer had already been sent.
+	 * @return array|WP_Error
+	 */
+	public function build_portal_user_welcome_email( $user_id, $preview = false ) {
 		$user = get_userdata( absint( $user_id ) );
 		if ( ! $user ) {
 			return new WP_Error( 'missing_user', __( 'WordPress user was not found.', 'ajforms' ) );
 		}
 
-		$key = get_password_reset_key( $user );
-		if ( is_wp_error( $key ) ) {
-			return $key;
-		}
+		if ( $preview ) {
+			$reset_url = '#set-password-link';
+		} else {
+			$key = get_password_reset_key( $user );
+			if ( is_wp_error( $key ) ) {
+				return $key;
+			}
 
-		$reset_url = network_site_url(
-			'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user->user_login ),
-			'login'
-		);
+			$reset_url = network_site_url(
+				'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user->user_login ),
+				'login'
+			);
+		}
 		$settings = $this->get_plugin_settings();
 		$brand   = $this->get_customer_brand_context( '', $user->ID );
 		$subject_key = $this->get_customer_brand_setting_key( 'wp_welcome_email_subject', $brand );
@@ -5688,7 +5713,14 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $from_email;
 		}
 
-		return $this->send_branded_wp_mail( $user->user_email, $subject, $message, $headers, $from_email, $from_name );
+		return array(
+			'to'         => $user->user_email,
+			'subject'    => $subject,
+			'message'    => $message,
+			'headers'    => $headers,
+			'from_email' => $from_email,
+			'from_name'  => $from_name,
+		);
 	}
 
 	/**
@@ -5706,6 +5738,22 @@ class AJForms_Admin {
 	 * @return true|WP_Error
 	 */
 	public function send_registered_agent_authorization_email( $stripe_customer_id, $company = '' ) {
+		$built = $this->build_registered_agent_authorization_email( $stripe_customer_id, $company );
+		if ( is_wp_error( $built ) ) {
+			return $built;
+		}
+
+		$sent = $this->send_branded_wp_mail( $built['to'], $built['subject'], $built['message'], $built['headers'], $built['from_email'], $built['from_name'] );
+		if ( ! $sent ) {
+			return new WP_Error( 'ra_authorization_failed', __( 'Registered Agent authorization email could not be sent.', 'ajforms' ) );
+		}
+
+		return true;
+	}
+
+	/** Assembles the Registered Agent notice without sending it — see
+	 *  build_portal_user_welcome_email() for why every manually-triggered email is built this way. */
+	public function build_registered_agent_authorization_email( $stripe_customer_id, $company = '' ) {
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		$customer           = $this->get_pdb()->get_row(
 			$this->get_pdb()->prepare(
@@ -5721,7 +5769,6 @@ class AJForms_Admin {
 		}
 
 		$settings   = $this->get_plugin_settings();
-		$brand      = $this->get_customer_brand_context( $stripe_customer_id );
 		$sender     = $this->resolve_email_sender( $settings, 'ra_authorization_from_email', 'ra_authorization_from_name' );
 		$from_email = $sender['from_email'];
 		$from_name  = $sender['from_name'];
@@ -5734,10 +5781,22 @@ class AJForms_Admin {
 			$company_name = (string) $customer->email;
 		}
 
+		$address = isset( $settings['ra_authorization_address'] ) && '' !== trim( (string) $settings['ra_authorization_address'] )
+			? (string) $settings['ra_authorization_address']
+			: $this->get_ra_authorization_default_address();
+
+		// This notice is always FROM the registered agent, whichever site the customer is assigned
+		// to — a University Place Office Suites customer being authorized to use NC LLC Agents'
+		// registered-agent address must not see the email branded as University Place. So the
+		// kicker comes from the first line of the address block above (the agent's own entity
+		// name), never from get_customer_brand_context().
+		$address_lines = preg_split( '/\r\n|\r|\n/', trim( $address ) );
+		$agent_name    = ! empty( $address_lines[0] ) ? trim( (string) $address_lines[0] ) : get_bloginfo( 'name' );
+
 		$tokens = array(
 			'{name}'      => '' !== (string) $customer->name ? (string) $customer->name : (string) $customer->email,
 			'{company}'   => $company_name,
-			'{site_name}' => $brand['site_name'],
+			'{site_name}' => $agent_name,
 		);
 
 		$subject_template = ! empty( $settings['ra_authorization_subject'] )
@@ -5756,13 +5815,9 @@ class AJForms_Admin {
 			)
 		);
 
-		$address = isset( $settings['ra_authorization_address'] ) && '' !== trim( (string) $settings['ra_authorization_address'] )
-			? (string) $settings['ra_authorization_address']
-			: $this->get_ra_authorization_default_address();
-
 		$message = $this->render_branded_email_html( array_merge(
 			array(
-				'kicker'          => $brand['site_name'],
+				'kicker'          => $agent_name,
 				'heading'         => $copy['heading'],
 				'paragraphs'      => $copy['paragraphs'],
 				'checklist_items' => $copy['checklist_items'],
@@ -5777,12 +5832,14 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $from_email;
 		}
 
-		$sent = $this->send_branded_wp_mail( $customer->email, $subject, $message, $headers, $from_email, $from_name );
-		if ( ! $sent ) {
-			return new WP_Error( 'ra_authorization_failed', __( 'Registered Agent authorization email could not be sent.', 'ajforms' ) );
-		}
-
-		return true;
+		return array(
+			'to'         => $customer->email,
+			'subject'    => $subject,
+			'message'    => $message,
+			'headers'    => $headers,
+			'from_email' => $from_email,
+			'from_name'  => $from_name,
+		);
 	}
 
 	/** Built-in copy for the Registered Agent authorization email, shared by the send function
