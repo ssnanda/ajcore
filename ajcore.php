@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.297
+ * Version: 0.7.298
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.297' );
+	define( 'AJCORE_VERSION', '0.7.298' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -291,6 +291,14 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'lead_followup_from_name'       => '',
 			'ra_authorization_from_email'   => '',
 			'ra_authorization_from_name'    => '',
+			// Sender identity footer on every branded email (see get_branded_email_footer_parts()).
+			// A real postal address is a standard legitimate-sender signal; its absence is one of
+			// the few content-level things that measurably hurts transactional deliverability.
+			'email_footer_address'          => "NC LLC Agents Inc.\n1914 J N Pease Pl., Charlotte, NC 28262\n(704) 307-2135 \xc2\xb7 contactus@ncllcagents.com",
+			// Deliberately blank: University Place Office Suites' postal address has never been
+			// provided, and guessing one in a customer email would be a real-world error. Fill it
+			// in Settings -> Email Templates to switch their footer on.
+			'university_email_footer_address' => '',
 			// Zoho Mail shared-inbox OAuth app (Inbox settings). client_id/secret/account_email/
 			// data_center are admin-entered; the rest are written only by the OAuth callback itself.
 			'zoho_mail_client_id'           => '',
@@ -2577,6 +2585,71 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
 		);
 	}
 	add_action( 'wp_mail_failed', 'ajcore_log_outgoing_mail_failed' );
+}
+
+/**
+ * Adds a plain-text alternative to every HTML email AJCore sends.
+ *
+ * An HTML-only message (no text/plain part) is one of the oldest and most reliable spam
+ * heuristics there is — legitimate mailers send multipart/alternative, bulk senders and phishing
+ * kits usually don't. WordPress's wp_mail() sets ContentType to text/html and leaves AltBody
+ * empty, so every branded AJCore email was going out single-part until now.
+ *
+ * Runs at phpmailer_init so it sees the FINAL body (after ajcore_log_outgoing_mail() has injected
+ * the open-tracking pixel), and never overwrites an AltBody a caller set deliberately.
+ */
+if ( ! function_exists( 'ajcore_html_email_to_plain_text' ) ) {
+	function ajcore_html_email_to_plain_text( $html ) {
+		$text = (string) $html;
+		// Drop anything that has no text meaning before tags are stripped.
+		$text = preg_replace( '#<(style|script|head|title)\b[^>]*>.*?</\1>#is', '', $text );
+		// Keep link targets — a text part whose links vanished reads as broken.
+		$text = preg_replace_callback(
+			'#<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>#is',
+			function ( $m ) {
+				$label = trim( html_entity_decode( wp_strip_all_tags( $m[2] ), ENT_QUOTES, 'UTF-8' ) );
+				$href  = trim( $m[1] );
+				if ( '' === $label || $label === $href ) {
+					return $href;
+				}
+				return $label . ' ( ' . $href . ' )';
+			},
+			$text
+		);
+		// Block-level boundaries become line breaks so the text part keeps the layout's structure.
+		// <br> swallows the whitespace after it: nl2br() emits "<br />\n", which would otherwise
+		// double every line of a multi-line block like the registered-agent address.
+		$text = preg_replace( '#<br\s*/?>\s*#i', "\n", $text );
+		$text = preg_replace( '#</(p|div|tr|h1|h2|h3|h4|li|table)>#i', "\n\n", $text );
+		// Cells sit side by side on one visual line (checklist tick + its text), so they need a
+		// separating space, not a line break, once the tags are gone.
+		$text = preg_replace( '#</t[dh]>#i', ' ', $text );
+		$text = wp_strip_all_tags( $text );
+		$text = html_entity_decode( $text, ENT_QUOTES, 'UTF-8' );
+		$text = str_replace( "\xc2\xa0", ' ', $text );
+		// Collapse runs of spaces/blank lines left behind by the table-based HTML layout.
+		$text = preg_replace( '#[ \t]+#', ' ', $text );
+		$text = preg_replace( '#\n[ \t]+#', "\n", $text );
+		$text = preg_replace( '#\n{3,}#', "\n\n", $text );
+
+		return trim( $text );
+	}
+}
+
+if ( ! function_exists( 'ajcore_add_plain_text_email_alternative' ) ) {
+	function ajcore_add_plain_text_email_alternative( $phpmailer ) {
+		if ( ! is_object( $phpmailer ) || 'text/html' !== strtolower( (string) $phpmailer->ContentType ) ) {
+			return;
+		}
+		if ( '' !== trim( (string) $phpmailer->AltBody ) ) {
+			return;
+		}
+		$text = ajcore_html_email_to_plain_text( $phpmailer->Body );
+		if ( '' !== $text ) {
+			$phpmailer->AltBody = $text;
+		}
+	}
+	add_action( 'phpmailer_init', 'ajcore_add_plain_text_email_alternative', 1000 );
 }
 
 /**

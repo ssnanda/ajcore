@@ -5389,6 +5389,12 @@ class AJForms_Admin {
 				'cta_url'         => '',
 				'fallback_note'   => '',
 				'footer_note'     => '',
+				// Sender identity + postal address, and a one-line "why you got this". Both are
+				// standard legitimate-sender signals that spam filters actively look for, and
+				// their absence is one of the few content-level things that genuinely costs
+				// deliverability on an otherwise clean transactional email.
+				'footer_address'  => '',
+				'footer_reason'   => '',
 			)
 		);
 
@@ -5449,6 +5455,19 @@ class AJForms_Admin {
 		if ( '' !== (string) $a['footer_note'] ) {
 			$footer_html = '<p style="margin:24px 0 0;font-size:13px;line-height:1.5;color:#64748b;">' . esc_html( $a['footer_note'] ) . '</p>';
 		}
+
+		$identity_html = '';
+		if ( '' !== trim( (string) $a['footer_reason'] ) || '' !== trim( (string) $a['footer_address'] ) ) {
+			$identity_html = '<div style="margin:28px 0 0;padding:16px 0 0;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.6;color:#94a3b8;">';
+			if ( '' !== trim( (string) $a['footer_reason'] ) ) {
+				$identity_html .= '<p style="margin:0 0 8px;">' . esc_html( $a['footer_reason'] ) . '</p>';
+			}
+			if ( '' !== trim( (string) $a['footer_address'] ) ) {
+				$identity_html .= '<p style="margin:0;">' . nl2br( esc_html( trim( (string) $a['footer_address'] ) ) ) . '</p>';
+			}
+			$identity_html .= '</div>';
+		}
+		$footer_html .= $identity_html;
 
 		return sprintf(
 			'<!doctype html><html><body style="margin:0;padding:0;background:#f6f8fc;color:#0f172a;font-family:Arial,Helvetica,sans-serif;">
@@ -5526,6 +5545,26 @@ class AJForms_Admin {
 			'footer_note'     => '' !== $signature
 				? sprintf( __( 'Thank you, %s', 'ajforms' ), $signature )
 				: __( 'Thank you,', 'ajforms' ),
+		);
+	}
+
+	/**
+	 * Sender identity block appended to every branded email: who legally sent it and where they
+	 * are physically located. Merged in by each send function AND the Settings preview, same
+	 * pattern as the per-template static parts, so the two cannot drift.
+	 *
+	 * Editable per brand. The University Place Office Suites address is intentionally EMPTY by
+	 * default — unlike NC LLC Agents' it has never been given, and a wrong postal address in a
+	 * customer-facing email is a real-world error, not a cosmetic one. An empty value simply
+	 * renders no address block; fill it in Settings to get one.
+	 */
+	private function get_branded_email_footer_parts( $brand = array(), $reason = '' ) {
+		$settings = $this->get_plugin_settings();
+		$key      = $this->get_customer_brand_setting_key( 'email_footer_address', $brand );
+
+		return array(
+			'footer_address' => isset( $settings[ $key ] ) ? (string) $settings[ $key ] : '',
+			'footer_reason'  => (string) $reason,
 		);
 	}
 
@@ -5626,7 +5665,8 @@ class AJForms_Admin {
 				'paragraphs' => $copy['paragraphs'],
 				'cta_url'    => $reset_url,
 			),
-			$this->get_password_reset_email_static_parts()
+			$this->get_password_reset_email_static_parts(),
+			$this->get_branded_email_footer_parts( $brand, sprintf( __( 'You received this because a password reset was requested for your %s client portal account.', 'ajforms' ), $site_name ) )
 		) );
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		if ( is_email( $from_email ) ) {
@@ -5705,7 +5745,8 @@ class AJForms_Admin {
 				'info_box_value' => $user->user_email,
 				'cta_url'        => $reset_url,
 			),
-			$this->get_welcome_email_static_parts()
+			$this->get_welcome_email_static_parts(),
+			$this->get_branded_email_footer_parts( $brand, sprintf( __( 'You received this because a client portal account was created for you at %s.', 'ajforms' ), $site_name ) )
 		) );
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
 		if ( is_email( $from_email ) ) {
@@ -5823,7 +5864,8 @@ class AJForms_Admin {
 				'checklist_items' => $copy['checklist_items'],
 				'info_box_value'  => $address,
 			),
-			$this->get_ra_authorization_email_static_parts( $address )
+			$this->get_ra_authorization_email_static_parts( $address ),
+			$this->get_branded_email_footer_parts( array(), __( 'You received this because we act as the Registered Agent for your company.', 'ajforms' ) )
 		) );
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
@@ -6029,7 +6071,8 @@ class AJForms_Admin {
 				'heading'    => $copy['heading'],
 				'paragraphs' => $copy['paragraphs'],
 			),
-			$this->get_lead_followup_email_static_parts( $brand )
+			$this->get_lead_followup_email_static_parts( $brand ),
+			$this->get_branded_email_footer_parts( $brand, sprintf( __( 'You received this because you contacted %s about our services.', 'ajforms' ), $site_name ) )
 		) );
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
@@ -13958,6 +14001,8 @@ class AJForms_Admin {
 			'ra_authorization_heading'       => isset( $_POST['ra_authorization_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_heading'] ) ) : 'Registered Agent Authorization',
 			'ra_authorization_body'          => isset( $_POST['ra_authorization_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_body'] ) ) : "You are authorized to use the following information for Registered Agent purposes only:\n- Do not use our phone number anywhere on the filing.\n- The address above is the Registered Agent / Registered Office address only. It is not authorized for use as the company's Principal Office address, Mailing Address, or Business Address.\n- We authorize use of this address only for the North Carolina Secretary of State filing through the SOSNC website.\n- This authorization does not permit use of our address on Google, business directories, websites, bank accounts, licenses, marketing materials, vendor accounts, or any other registrations or filings.\n- If you need to use our address anywhere other than the Registered Agent section of the NC Secretary of State filing, please text or contact us first for approval.",
 			'ra_authorization_address'       => isset( $_POST['ra_authorization_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_address'] ) ) : "NC LLC Agents Inc.\n1914 J N Pease Pl.\nCharlotte, NC 28262\nagent@ncllcagents.com",
+			'email_footer_address'           => isset( $_POST['email_footer_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['email_footer_address'] ) ) : "NC LLC Agents Inc.\n1914 J N Pease Pl., Charlotte, NC 28262\n(704) 307-2135 \xc2\xb7 contactus@ncllcagents.com",
+			'university_email_footer_address' => isset( $_POST['university_email_footer_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_email_footer_address'] ) ) : '',
 			'ra_authorization_from_email'    => isset( $_POST['ra_authorization_from_email'] ) ? sanitize_email( wp_unslash( $_POST['ra_authorization_from_email'] ) ) : '',
 			'ra_authorization_from_name'     => isset( $_POST['ra_authorization_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_from_name'] ) ) : '',
 			'university_lead_followup_email_subject' => isset( $_POST['university_lead_followup_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_email_subject'] ) ) : 'Following up from University Place Office Suites',
@@ -14063,7 +14108,7 @@ class AJForms_Admin {
 		// (or, for a site that's never saved one yet, keep the fallback default computed above)
 		// whenever this exact save didn't actually post the field, instead of letting section_keys
 		// scoping (which no longer lists these) decide it.
-		foreach ( array( 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name' ) as $university_field ) {
+		foreach ( array( 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name', 'university_email_footer_address' ) as $university_field ) {
 			if ( ! isset( $_POST[ $university_field ] ) && isset( $current_settings[ $university_field ] ) ) {
 				$settings[ $university_field ] = $current_settings[ $university_field ];
 			}
@@ -14094,7 +14139,7 @@ class AJForms_Admin {
 			// Settings form (they govern all plugin mail, not just portal templates), so a
 			// section-scoped restore would let a save on one form wipe the other's value.
 			// Preserved by their own loop above instead, like the OAuth/university fields.
-			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name' ),
+			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name', 'email_footer_address' ),
 			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
@@ -16214,7 +16259,8 @@ class AJForms_Admin {
 				'paragraphs'     => $copy['paragraphs'],
 				'info_box_value' => $status_label,
 			),
-			$this->get_service_request_status_email_static_parts()
+			$this->get_service_request_status_email_static_parts(),
+			$this->get_branded_email_footer_parts( $brand, sprintf( __( 'You received this because you have an active service request with %s.', 'ajforms' ), $site_name ) )
 		) );
 
 		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
@@ -26374,6 +26420,18 @@ class AJForms_Admin {
 						<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
 					</div>
 				</div>
+				<div class="ajforms-settings-field" style="margin-top:16px;">
+					<label for="email_footer_address"><?php esc_html_e( 'Sender identity footer (postal address)', 'ajforms' ); ?></label>
+					<textarea name="email_footer_address" id="email_footer_address" rows="3"><?php echo esc_textarea( $settings['email_footer_address'] ); ?></textarea>
+					<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php esc_html_e( 'Shown at the bottom of every branded email. A real postal address is a standard legitimate-sender signal that spam filters look for — leaving this blank makes mail more likely to be filtered.', 'ajforms' ); ?></p>
+				</div>
+				<?php if ( '1' === (string) $settings['enable_university_brand_templates'] ) : ?>
+					<div class="ajforms-settings-field" style="margin-top:16px;">
+						<label for="university_email_footer_address"><?php esc_html_e( 'Sender identity footer — University Office Suites', 'ajforms' ); ?></label>
+						<textarea name="university_email_footer_address" id="university_email_footer_address" rows="3"><?php echo esc_textarea( $settings['university_email_footer_address'] ); ?></textarea>
+						<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php esc_html_e( 'Empty by default because this address has never been provided — fill it in rather than leaving University-branded emails without one.', 'ajforms' ); ?></p>
+					</div>
+				<?php endif; ?>
 			</div>
 
 			<?php
@@ -26492,6 +26550,12 @@ class AJForms_Admin {
 						? $this->get_lead_followup_email_static_parts( array( 'entity_name' => $brand['entity_name'] ) )
 						: ( ! empty( $type['address_key'] ) ? $this->{$type['static_parts']}( $address ) : $this->{$type['static_parts']}() );
 
+					// Same identity footer the real send adds, so the preview stays honest.
+					$footer_parts = $this->get_branded_email_footer_parts(
+						array( 'entity_name' => $brand['entity_name'] ),
+						sprintf( __( 'You received this because you are a customer of %s.', 'ajforms' ), $brand['site_name'] )
+					);
+
 					$sample_body = empty( $type['bullets'] )
 						? array( 'paragraphs' => $copy['paragraphs'] )
 						: $this->split_email_copy_bullets( $copy );
@@ -26516,7 +26580,8 @@ class AJForms_Admin {
 							),
 							$sample_body,
 							$type['sample_extra'],
-							$static_parts
+							$static_parts,
+							$footer_parts
 						) ),
 					) );
 				}
