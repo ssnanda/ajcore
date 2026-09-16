@@ -35,10 +35,44 @@ class AJForms_Forms_List_Table extends WP_List_Table {
 	}
 
 	public function process_bulk_action() {
+		if ( 'bulk-edit-settings' === $this->current_action() ) {
+			check_admin_referer( 'bulk-' . $this->_args['plural'] );
+
+			$form_ids = isset( $_REQUEST['form_id'] ) ? array_filter( array_map( 'intval', (array) wp_unslash( $_REQUEST['form_id'] ) ) ) : array();
+
+			if ( ! empty( $form_ids ) && current_user_can( 'manage_options' ) ) {
+				// The bulk-edit screen is a GET view so it survives a reload; the ids ride along in
+				// the URL and are re-checked against the DB when the screen renders.
+				wp_safe_redirect(
+					add_query_arg(
+						array(
+							'page'     => 'ajforms',
+							'view'     => 'bulk-settings',
+							'form_ids' => implode( ',', $form_ids ),
+						),
+						admin_url( 'admin.php' )
+					)
+				);
+				exit;
+			}
+
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'            => 'ajforms',
+						'bulk_no_selection' => 1,
+					),
+					admin_url( 'admin.php' )
+				)
+			);
+			exit;
+		}
+
 		if ( 'bulk-delete' === $this->current_action() ) {
 			check_admin_referer( 'bulk-' . $this->_args['plural'] );
 
-			$form_ids = isset( $_POST['form_id'] ) ? array_map( 'intval', wp_unslash( $_POST['form_id'] ) ) : array();
+			// #forms-filter is a GET form, so the checked ids land in the query string, not POST.
+			$form_ids = isset( $_REQUEST['form_id'] ) ? array_filter( array_map( 'intval', (array) wp_unslash( $_REQUEST['form_id'] ) ) ) : array();
 
 			if ( ! empty( $form_ids ) && current_user_can( 'manage_options' ) ) {
 				$admin = new AJForms_Admin();
@@ -244,7 +278,8 @@ class AJForms_Forms_List_Table extends WP_List_Table {
 
 	public function get_bulk_actions() {
 		return array(
-			'bulk-delete' => __( 'Delete', 'ajforms' ),
+			'bulk-edit-settings' => __( 'Edit Settings', 'ajforms' ),
+			'bulk-delete'        => __( 'Delete', 'ajforms' ),
 		);
 	}
 

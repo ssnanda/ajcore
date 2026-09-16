@@ -11661,6 +11661,33 @@ class AJForms_Admin {
 		);
 	}
 
+	/**
+	 * Run the Forms list-table bulk actions on admin_init.
+	 *
+	 * These used to be processed from inside the listing partial, which renders after the admin
+	 * header has already been sent — so every wp_safe_redirect() in process_bulk_action() was a
+	 * no-op on a "headers already sent" warning. Running it here means the redirects (and the
+	 * hand-off to the bulk settings screen) actually happen.
+	 */
+	private function handle_forms_bulk_actions() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$action = isset( $_REQUEST['action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['action'] ) ) : '';
+		$action2 = isset( $_REQUEST['action2'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['action2'] ) ) : '';
+
+		if ( ! in_array( 'bulk-delete', array( $action, $action2 ), true )
+			&& ! in_array( 'bulk-edit-settings', array( $action, $action2 ), true ) ) {
+			return;
+		}
+
+		require_once AJFORMS_PLUGIN_DIR . 'admin/class-ajforms-forms-list-table.php';
+
+		$list_table = new AJForms_Forms_List_Table();
+		$list_table->process_bulk_action();
+	}
+
 	private function handle_form_actions() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -11735,6 +11762,7 @@ class AJForms_Admin {
 
 		if ( 'ajforms' === $page ) {
 			$this->handle_form_actions();
+			$this->handle_forms_bulk_actions();
 		} elseif ( 'ajforms-leads' === $page ) {
 			$this->handle_lead_actions();
 		} elseif ( 'ajforms-settings' === $page ) {
@@ -19270,9 +19298,12 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 		$action = isset( $_GET['action'] ) ? sanitize_text_field( wp_unslash( $_GET['action'] ) ) : '';
+		$view   = isset( $_GET['view'] ) ? sanitize_key( wp_unslash( $_GET['view'] ) ) : '';
 
 		if ( in_array( $action, array( 'add', 'edit' ), true ) ) {
 			require_once AJFORMS_PLUGIN_DIR . 'admin/partials/ajforms-admin-builder.php';
+		} elseif ( 'bulk-settings' === $view ) {
+			require_once AJFORMS_PLUGIN_DIR . 'admin/partials/ajforms-admin-forms-bulk-settings.php';
 		} else {
 			require_once AJFORMS_PLUGIN_DIR . 'admin/class-ajforms-forms-list-table.php';
 			require_once AJFORMS_PLUGIN_DIR . 'admin/partials/ajforms-admin-forms.php';
@@ -33006,6 +33037,398 @@ class AJForms_Admin {
 
 	public function bulk_delete_forms( $form_ids ) {
 		$this->delete_forms_and_related_data( $form_ids );
+	}
+
+	/**
+	 * The subset of per-form schema settings that make sense to change across many forms at once.
+	 *
+	 * Deliberately excluded: anything that is only meaningful for one specific form — the field
+	 * list, form_description, confirmation_rules (they reference field names), and every Stripe
+	 * setting (price id / amount is per-form by definition, so a bulk overwrite would silently
+	 * repoint payments).
+	 *
+	 * Shape: group => array( label, description, fields => key => array( label, type, ... ) ).
+	 * Consumed by both the bulk-edit screen (rendering) and apply_bulk_form_settings() (sanitizing),
+	 * so a field added here shows up and saves without touching either side.
+	 */
+	public function get_bulk_editable_form_settings() {
+		return array(
+			'notifications' => array(
+				'label'       => __( 'Email Notification', 'ajforms' ),
+				'description' => __( 'Where submissions land and how the admin email is addressed.', 'ajforms' ),
+				'fields'      => array(
+					'notifications_enabled'   => array(
+						'label' => __( 'Send Email Notifications', 'ajforms' ),
+						'type'  => 'toggle',
+					),
+					'notification_email'      => array(
+						'label' => __( 'Send Email To', 'ajforms' ),
+						'type'  => 'text',
+						'help'  => __( 'Comma-separated addresses are supported. Merge tags such as {field_id} work here too.', 'ajforms' ),
+					),
+					'notification_subject'    => array(
+						'label' => __( 'Email Subject', 'ajforms' ),
+						'type'  => 'text',
+						'help'  => __( 'Supports {form_title}.', 'ajforms' ),
+					),
+					'notification_from_name'  => array(
+						'label' => __( 'From Name', 'ajforms' ),
+						'type'  => 'text',
+					),
+					'notification_from_email' => array(
+						'label' => __( 'From Email', 'ajforms' ),
+						'type'  => 'email',
+						'help'  => __( 'Leave blank to use the site default.', 'ajforms' ),
+					),
+					'notification_reply_to'   => array(
+						'label' => __( 'Reply-To', 'ajforms' ),
+						'type'  => 'text',
+					),
+					'notification_body'       => array(
+						'label' => __( 'Email Body', 'ajforms' ),
+						'type'  => 'html',
+						'help'  => __( 'Supports {submission_table} and {submission_details_table}.', 'ajforms' ),
+					),
+				),
+			),
+			'autoresponder' => array(
+				'label'       => __( 'Autoresponder', 'ajforms' ),
+				'description' => __( 'The confirmation email sent back to whoever submitted the form.', 'ajforms' ),
+				'fields'      => array(
+					'autoresponder_enabled'   => array(
+						'label' => __( 'Send Autoresponder', 'ajforms' ),
+						'type'  => 'toggle',
+					),
+					'autoresponder_subject'   => array(
+						'label' => __( 'Autoresponder Subject', 'ajforms' ),
+						'type'  => 'text',
+					),
+					'autoresponder_from_name' => array(
+						'label' => __( 'Autoresponder From Name', 'ajforms' ),
+						'type'  => 'text',
+					),
+					'autoresponder_body'      => array(
+						'label' => __( 'Autoresponder Body', 'ajforms' ),
+						'type'  => 'html',
+					),
+				),
+			),
+			'confirmation'  => array(
+				'label'       => __( 'Confirmation', 'ajforms' ),
+				'description' => __( 'What the visitor sees after a successful submission. Per-form conditional confirmation rules are never touched.', 'ajforms' ),
+				'fields'      => array(
+					'success_message'   => array(
+						'label' => __( 'Success Message', 'ajforms' ),
+						'type'  => 'textarea',
+					),
+					'confirmation_type' => array(
+						'label'   => __( 'Confirmation Type', 'ajforms' ),
+						'type'    => 'select',
+						'options' => array(
+							'message'  => __( 'Show message', 'ajforms' ),
+							'redirect' => __( 'Redirect to URL', 'ajforms' ),
+						),
+					),
+					'redirect_url'      => array(
+						'label' => __( 'Redirect URL', 'ajforms' ),
+						'type'  => 'url',
+					),
+				),
+			),
+			'asana'         => array(
+				'label'       => __( 'Asana Task', 'ajforms' ),
+				'description' => __( 'Route submissions from several forms into the same Asana project.', 'ajforms' ),
+				'fields'      => array(
+					'asana_task_enabled'  => array(
+						'label' => __( 'Create Asana Task', 'ajforms' ),
+						'type'  => 'toggle',
+					),
+					'asana_project_gid'   => array(
+						'label' => __( 'Asana Project GID', 'ajforms' ),
+						'type'  => 'text',
+					),
+					'asana_assignee_gid'  => array(
+						'label' => __( 'Asana Assignee GID', 'ajforms' ),
+						'type'  => 'text',
+					),
+					'asana_due_date'      => array(
+						'label'   => __( 'Due Date', 'ajforms' ),
+						'type'    => 'select',
+						'options' => array(
+							'none'  => __( 'No due date', 'ajforms' ),
+							'today' => __( 'Today', 'ajforms' ),
+						),
+					),
+					'asana_task_name'     => array(
+						'label' => __( 'Task Name', 'ajforms' ),
+						'type'  => 'text',
+						'help'  => __( 'Supports {form_title}.', 'ajforms' ),
+					),
+					'asana_task_notes'    => array(
+						'label' => __( 'Task Notes', 'ajforms' ),
+						'type'  => 'textarea',
+					),
+				),
+			),
+			'appearance'    => array(
+				'label'       => __( 'Appearance', 'ajforms' ),
+				'description' => __( 'Give every selected form the same look.', 'ajforms' ),
+				'fields'      => array(
+					'submit_text'              => array(
+						'label' => __( 'Submit Button Text', 'ajforms' ),
+						'type'  => 'text',
+					),
+					'button_alignment'         => array(
+						'label'   => __( 'Button Alignment', 'ajforms' ),
+						'type'    => 'select',
+						'options' => array(
+							'left'   => __( 'Left', 'ajforms' ),
+							'center' => __( 'Center', 'ajforms' ),
+							'right'  => __( 'Right', 'ajforms' ),
+							'full'   => __( 'Full width', 'ajforms' ),
+						),
+					),
+					'use_label_placeholders'   => array(
+						'label' => __( 'Use Labels As Placeholders', 'ajforms' ),
+						'type'  => 'toggle',
+					),
+					'form_theme'               => array(
+						'label'   => __( 'Theme', 'ajforms' ),
+						'type'    => 'select',
+						'options' => array(
+							'clean'    => __( 'Clean', 'ajforms' ),
+							'soft'     => __( 'Soft', 'ajforms' ),
+							'contrast' => __( 'Contrast', 'ajforms' ),
+						),
+					),
+					'background_mode'          => array(
+						'label'   => __( 'Background Mode', 'ajforms' ),
+						'type'    => 'select',
+						'options' => array(
+							'solid'    => __( 'Solid', 'ajforms' ),
+							'gradient' => __( 'Gradient', 'ajforms' ),
+						),
+					),
+					'background_color'         => array(
+						'label'   => __( 'Background Color', 'ajforms' ),
+						'type'    => 'color',
+						'default' => '#ffffff',
+					),
+					'background_gradient_start' => array(
+						'label'   => __( 'Gradient Start', 'ajforms' ),
+						'type'    => 'color',
+						'default' => '#ffffff',
+					),
+					'background_gradient_end'  => array(
+						'label'   => __( 'Gradient End', 'ajforms' ),
+						'type'    => 'color',
+						'default' => '#f3f7fb',
+					),
+					'primary_color'            => array(
+						'label'   => __( 'Primary Color', 'ajforms' ),
+						'type'    => 'color',
+						'default' => '#0f7ac6',
+					),
+					'text_color'               => array(
+						'label'   => __( 'Text Color', 'ajforms' ),
+						'type'    => 'color',
+						'default' => '#1f2937',
+					),
+					'input_background'         => array(
+						'label'   => __( 'Input Background', 'ajforms' ),
+						'type'    => 'color',
+						'default' => '#ffffff',
+					),
+					'input_border_color'       => array(
+						'label'   => __( 'Input Border Color', 'ajforms' ),
+						'type'    => 'color',
+						'default' => '#d7dce3',
+					),
+					'border_radius'            => array(
+						'label' => __( 'Border Radius', 'ajforms' ),
+						'type'  => 'number',
+						'min'   => 0,
+						'max'   => 32,
+					),
+					'custom_css'               => array(
+						'label' => __( 'Custom CSS', 'ajforms' ),
+						'type'  => 'textarea',
+						'help'  => __( 'Replaces the existing custom CSS on every selected form.', 'ajforms' ),
+					),
+				),
+			),
+		);
+	}
+
+	/** Flattened key => definition map for the bulk-editable settings above. */
+	private function get_bulk_editable_settings_map() {
+		$map = array();
+
+		foreach ( $this->get_bulk_editable_form_settings() as $group ) {
+			foreach ( $group['fields'] as $key => $definition ) {
+				$map[ $key ] = $definition;
+			}
+		}
+
+		return $map;
+	}
+
+	/** Sanitize one posted bulk value the same way sanitize_schema_for_storage() would. */
+	private function sanitize_bulk_setting_value( $key, $value, $definition ) {
+		$type = isset( $definition['type'] ) ? $definition['type'] : 'text';
+
+		switch ( $type ) {
+			case 'toggle':
+				return ! empty( $value );
+
+			case 'email':
+				return sanitize_email( (string) $value );
+
+			case 'url':
+				return esc_url_raw( (string) $value );
+
+			case 'html':
+				return wp_kses_post( (string) $value );
+
+			case 'textarea':
+				return 'custom_css' === $key
+					? wp_strip_all_tags( (string) $value )
+					: sanitize_textarea_field( (string) $value );
+
+			case 'select':
+				$options = isset( $definition['options'] ) ? array_keys( $definition['options'] ) : array();
+				$value   = sanitize_key( (string) $value );
+				return in_array( $value, $options, true ) ? $value : reset( $options );
+
+			case 'color':
+				$color = sanitize_hex_color( (string) $value );
+				return null === $color ? ( isset( $definition['default'] ) ? $definition['default'] : '#ffffff' ) : $color;
+
+			case 'number':
+				$min = isset( $definition['min'] ) ? (int) $definition['min'] : 0;
+				$max = isset( $definition['max'] ) ? (int) $definition['max'] : PHP_INT_MAX;
+				return min( $max, max( $min, absint( $value ) ) );
+
+			default:
+				return sanitize_text_field( (string) $value );
+		}
+	}
+
+	/**
+	 * Merge a settings patch into each given form's stored schema.
+	 *
+	 * Only the keys present in $patch are written — everything else in the schema (fields,
+	 * confirmation rules, Stripe config, settings nobody asked to change) is left byte-for-byte
+	 * alone, which is why this patches the decoded JSON directly instead of round-tripping
+	 * through sanitize_schema_for_storage(): that would re-normalize fields on forms the user
+	 * only meant to repoint an email address for.
+	 *
+	 * @return int Number of forms actually updated.
+	 */
+	public function apply_bulk_form_settings( $form_ids, $patch, $new_status = '' ) {
+		global $wpdb;
+
+		$form_ids = array_filter( array_map( 'absint', (array) $form_ids ) );
+
+		if ( empty( $form_ids ) || ( empty( $patch ) && '' === $new_status ) ) {
+			return 0;
+		}
+
+		$table   = $this->get_forms_table();
+		$updated = 0;
+
+		foreach ( $form_ids as $form_id ) {
+			$row = $wpdb->get_row(
+				$wpdb->prepare( "SELECT id, form_schema FROM {$table} WHERE id = %d", $form_id ),
+				ARRAY_A
+			);
+
+			if ( ! $row ) {
+				continue;
+			}
+
+			$data    = array( 'updated_at' => current_time( 'mysql' ) );
+			$formats = array( '%s' );
+
+			if ( ! empty( $patch ) ) {
+				$schema = json_decode( (string) $row['form_schema'], true );
+
+				if ( ! is_array( $schema ) ) {
+					continue;
+				}
+
+				if ( ! isset( $schema['settings'] ) || ! is_array( $schema['settings'] ) ) {
+					$schema['settings'] = array();
+				}
+
+				$schema['settings'] = array_merge( $schema['settings'], $patch );
+
+				$encoded = wp_json_encode( $schema );
+
+				if ( false === $encoded ) {
+					continue;
+				}
+
+				$data['form_schema'] = $encoded;
+				$formats[]           = '%s';
+			}
+
+			if ( in_array( $new_status, array( 'draft', 'published' ), true ) ) {
+				$data['status'] = $new_status;
+				$formats[]      = '%s';
+			}
+
+			if ( false !== $wpdb->update( $table, $data, array( 'id' => $form_id ), $formats, array( '%d' ) ) ) {
+				++$updated;
+			}
+		}
+
+		return $updated;
+	}
+
+	/** admin-post handler behind the Forms → bulk "Edit Settings" screen. */
+	public function handle_bulk_form_settings_save() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		check_admin_referer( 'ajf_bulk_form_settings' );
+
+		$form_ids = isset( $_POST['form_ids'] ) ? array_filter( array_map( 'absint', (array) wp_unslash( $_POST['form_ids'] ) ) ) : array();
+		$apply    = isset( $_POST['apply'] ) ? array_map( 'sanitize_key', array_keys( (array) wp_unslash( $_POST['apply'] ) ) ) : array();
+		$map      = $this->get_bulk_editable_settings_map();
+		$patch    = array();
+
+		foreach ( $apply as $key ) {
+			if ( ! isset( $map[ $key ] ) ) {
+				continue;
+			}
+
+			// A checkbox that is off posts nothing at all, so an unset value here is a real "no"
+			// for a toggle rather than a reason to skip the key.
+			$raw = isset( $_POST['settings'][ $key ] ) ? wp_unslash( $_POST['settings'][ $key ] ) : '';
+
+			$patch[ $key ] = $this->sanitize_bulk_setting_value( $key, $raw, $map[ $key ] );
+		}
+
+		$new_status = '';
+		if ( in_array( 'form_status', $apply, true ) ) {
+			$posted_status = isset( $_POST['settings']['form_status'] ) ? sanitize_key( wp_unslash( $_POST['settings']['form_status'] ) ) : '';
+			$new_status    = in_array( $posted_status, array( 'draft', 'published' ), true ) ? $posted_status : '';
+		}
+
+		$updated = $this->apply_bulk_form_settings( $form_ids, $patch, $new_status );
+
+		wp_safe_redirect(
+			add_query_arg(
+				array(
+					'page'         => 'ajforms',
+					'bulk_updated' => $updated,
+				),
+				admin_url( 'admin.php' )
+			)
+		);
+		exit;
 	}
 
 	private function handle_portal_shared_db_settings_save() {

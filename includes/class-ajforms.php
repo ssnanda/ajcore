@@ -49,6 +49,7 @@ class AJForms {
 		add_action( 'admin_init', array( $plugin_admin, 'handle_admin_actions' ) );
 		add_action( 'admin_init', array( $this, 'redirect_frontend_portal_users_from_admin' ), 1 );
 		add_action( 'admin_post_ajf_export_form', array( $plugin_admin, 'handle_export_form_request' ) );
+		add_action( 'admin_post_ajf_bulk_form_settings', array( $plugin_admin, 'handle_bulk_form_settings_save' ) );
 		add_action( 'admin_menu', array( $plugin_admin, 'add_plugin_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_styles' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_scripts' ) );

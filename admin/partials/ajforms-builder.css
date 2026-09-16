@@ -301,6 +301,77 @@
 	overflow-wrap: anywhere;
 }
 
+.wpf-structure-toolbar {
+	display: flex;
+	justify-content: flex-end;
+	margin-bottom: 10px;
+}
+
+.wpf-structure-copy-all {
+	border: 1px solid #dce3ea;
+	background: #f8fafc;
+	color: #475569;
+	border-radius: 999px;
+	padding: 4px 12px;
+	font-size: 11px;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.wpf-structure-copy-all:hover {
+	border-color: #0f7ac6;
+	color: #0f5f9d;
+	background: #eff8ff;
+}
+
+.wpf-structure-copy {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+	max-width: 100%;
+	padding: 1px 6px;
+	margin: -1px -6px;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+	cursor: pointer;
+	font: inherit;
+	text-align: right;
+}
+
+.wpf-structure-copy strong {
+	font-family: Menlo, Consolas, monospace;
+	font-size: 12px;
+}
+
+.wpf-structure-copy .wpf-structure-copy-icon {
+	color: #94a3b8;
+	font-size: 12px;
+}
+
+.wpf-structure-copy:hover {
+	border-color: #bfdbfe;
+	background: #eff6ff;
+}
+
+.wpf-structure-copy:hover .wpf-structure-copy-icon {
+	color: #0f5f9d;
+}
+
+.wpf-structure-copy.is-copied,
+.wpf-structure-copy-all.is-copied {
+	border-color: #86efac;
+	background: #ecfdf3;
+	color: #166534;
+}
+
+.wpf-structure-copy.is-copied .wpf-structure-copy-icon::after,
+.wpf-structure-copy-all.is-copied::after {
+	content: ' Copied';
+	color: #166534;
+	font-weight: 700;
+}
+
 .wpf-structure-badges {
 	display: flex;
 	flex-wrap: wrap;

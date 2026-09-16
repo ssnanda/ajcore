@@ -9,8 +9,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 global $wpdb;
 
+// Bulk actions are processed on admin_init (AJForms_Admin::handle_forms_bulk_actions) so their
+// redirects fire before any output; by the time this view renders there is nothing left to do.
 $forms_list_table = new AJForms_Forms_List_Table();
-$forms_list_table->process_bulk_action();
 $forms_list_table->prepare_items();
 
 $add_new_url = add_query_arg(
@@ -285,6 +286,25 @@ $stats = array(
 
 	<?php if ( isset( $_GET['restored'] ) ) : ?>
 		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Form restored.', 'ajforms' ); ?></p></div>
+	<?php endif; ?>
+
+	<?php if ( isset( $_GET['bulk_updated'] ) ) : ?>
+		<div class="notice notice-success is-dismissible">
+			<p>
+				<?php
+				$bulk_updated = absint( wp_unslash( $_GET['bulk_updated'] ) );
+				printf(
+					/* translators: %d: number of forms updated. */
+					esc_html( _n( 'Settings updated on %d form.', 'Settings updated on %d forms.', $bulk_updated, 'ajforms' ) ),
+					$bulk_updated
+				);
+				?>
+			</p>
+		</div>
+	<?php endif; ?>
+
+	<?php if ( isset( $_GET['bulk_no_selection'] ) ) : ?>
+		<div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'Select at least one form before applying a bulk action.', 'ajforms' ); ?></p></div>
 	<?php endif; ?>
 
 	<div class="ajforms-list-shell">

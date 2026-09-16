@@ -1198,12 +1198,32 @@ function initAJFormsBuilder() {
         }
 
         const rows = [];
+        const copyableNames = [];
+
         walkFields((field, index, fields, parent) => {
+            const isDisplayOnly = ['separator', 'note', 'heading', 'container'].includes(field.type);
+            // Same fallback the canvas and save path use, so what you copy is what actually gets
+            // submitted even when the field was never explicitly renamed.
+            const fieldName = isDisplayOnly ? '' : (field.field_name || getFieldNameBase(field.type) + (index + 1));
+
+            if (fieldName) {
+                copyableNames.push(fieldName);
+            }
+
+            const nameLine = fieldName
+                ? `<div class="wpf-structure-line"><span>Field Name</span><button type="button" class="wpf-structure-copy" data-copy="${encodeURIComponent(fieldName)}" title="Copy field name"><strong>${escapeHtml(fieldName)}</strong><span class="wpf-structure-copy-icon" aria-hidden="true">⧉</span></button></div>`
+                : `<div class="wpf-structure-line"><span>Field Name</span><strong>Display only</strong></div>`;
+
+            const parentLine = parent
+                ? `<div class="wpf-structure-line"><span>Inside</span><strong>${escapeHtml(parent.label || 'Container')}</strong></div>`
+                : '';
+
             rows.push(`
             <div class="wpf-structure-item ${field.id === activeFieldId ? 'active' : ''}" data-id="${escapeHtml(field.id)}">
                 <div class="wpf-structure-lines">
                     <div class="wpf-structure-line"><span>Field Type</span><strong>${escapeHtml(formatFieldTypeLabel(field.type))}</strong></div>
-                    <div class="wpf-structure-line"><span>${parent ? 'Inside' : 'Field Name'}</span><strong>${escapeHtml(parent ? (parent.label || 'Container') : (['separator', 'note', 'heading', 'container'].includes(field.type) ? 'Display only' : (field.field_name || getFieldNameBase(field.type) + (index + 1))))}</strong></div>
+                    ${parentLine}
+                    ${nameLine}
                     <div class="wpf-structure-badges">
                         <span class="${field.required ? 'is-on' : 'is-off'}">Req ${field.required ? 'Yes' : 'No'}</span>
                         <span class="${field.conversational ? 'is-on' : 'is-off'}">Conv ${field.conversational ? 'Yes' : 'No'}</span>
@@ -1212,7 +1232,26 @@ function initAJFormsBuilder() {
             </div>
             `);
         });
-        structureList.innerHTML = rows.join('');
+
+        const copyAllBar = copyableNames.length
+            ? `<div class="wpf-structure-toolbar">
+                    <button type="button" class="wpf-structure-copy-all" data-copy="${encodeURIComponent(copyableNames.join('\n'))}">Copy all field names (${copyableNames.length})</button>
+               </div>`
+            : '';
+
+        structureList.innerHTML = copyAllBar + rows.join('');
+
+        structureList.querySelectorAll('[data-copy]').forEach((button) => {
+            button.addEventListener('click', (e) => {
+                // Without this the click bubbles to the row handler and yanks the user into the
+                // field settings panel every time they copy a name.
+                e.preventDefault();
+                e.stopPropagation();
+                // Stored percent-encoded: an HTML attribute collapses the newlines that separate
+                // the names in the "copy all" payload.
+                copyTextToClipboard(decodeURIComponent(button.getAttribute('data-copy') || ''), button);
+            });
+        });
 
         structureList.querySelectorAll('.wpf-structure-item').forEach((item) => {
             item.addEventListener('click', () => {
@@ -1226,6 +1265,49 @@ function initAJFormsBuilder() {
                 openFieldSettings(field);
             });
         });
+    }
+
+    function copyTextToClipboard(text, sourceButton) {
+        if (!text) {
+            return;
+        }
+
+        const flash = () => {
+            if (!sourceButton) {
+                return;
+            }
+
+            sourceButton.classList.add('is-copied');
+            window.setTimeout(() => sourceButton.classList.remove('is-copied'), 1200);
+        };
+
+        // navigator.clipboard is unavailable on plain-HTTP admin URLs, which plenty of local and
+        // staging sites still are, so keep the execCommand path as a fallback.
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(flash).catch(() => legacyCopy(text, flash));
+            return;
+        }
+
+        legacyCopy(text, flash);
+    }
+
+    function legacyCopy(text, onDone) {
+        const scratch = document.createElement('textarea');
+        scratch.value = text;
+        scratch.setAttribute('readonly', '');
+        scratch.style.position = 'fixed';
+        scratch.style.opacity = '0';
+        document.body.appendChild(scratch);
+        scratch.select();
+
+        try {
+            document.execCommand('copy');
+            onDone();
+        } catch (err) {
+            window.prompt('Copy field name:', text);
+        }
+
+        document.body.removeChild(scratch);
     }
 
     function renderNotificationVariables() {
