@@ -15880,6 +15880,53 @@ class AJForms_Admin {
 		return $flat_fields;
 	}
 
+	/**
+	 * Option-based fields store the human-readable LABEL the submitter picked,
+	 * not the option's slug value — AJForms::handle_form_submission() runs every
+	 * selection through map_option_value_to_label() before the entry is saved.
+	 * The entry editor renders its inputs with the slug value, so it has to
+	 * accept either spelling when deciding what was selected, or nothing ever
+	 * looks checked and re-saving the entry silently wipes the answer.
+	 */
+	private function lead_field_uses_options( $field_type ) {
+		return in_array( $field_type, array( 'checkboxes', 'multiple_choice', 'question', 'select' ), true );
+	}
+
+	private function lead_field_option_pairs( $field ) {
+		$options = ! empty( $field['options'] ) && is_array( $field['options'] ) ? $field['options'] : array();
+		$pairs   = array();
+
+		foreach ( $options as $option ) {
+			$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
+			$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
+
+			$pairs[] = array(
+				'label' => (string) $option_label,
+				'value' => (string) $option_value,
+			);
+		}
+
+		return $pairs;
+	}
+
+	private function lead_option_is_selected( $option_value, $option_label, $stored_value ) {
+		$stored = array_map( 'strval', is_array( $stored_value ) ? $stored_value : array( $stored_value ) );
+
+		return in_array( (string) $option_value, $stored, true ) || in_array( (string) $option_label, $stored, true );
+	}
+
+	private function map_lead_option_value_to_label( $field, $value ) {
+		$value = (string) $value;
+
+		foreach ( $this->lead_field_option_pairs( $field ) as $pair ) {
+			if ( $value === $pair['value'] ) {
+				return sanitize_text_field( $pair['label'] );
+			}
+		}
+
+		return $value;
+	}
+
 	private function sanitize_lead_value_for_field( $field, $posted_value, $existing_value ) {
 		$field_type = isset( $field['type'] ) ? $field['type'] : 'text';
 		$field_id   = isset( $field['id'] ) ? $field['id'] : '';
@@ -15976,6 +16023,20 @@ class AJForms_Admin {
 			}
 
 			$is_empty = '' === $clean_value;
+		}
+
+		// Keep admin edits in the same shape the front end writes: labels, not slugs.
+		if ( $this->lead_field_uses_options( $field_type ) ) {
+			if ( is_array( $clean_value ) ) {
+				$clean_value = array_map(
+					function ( $selected_value ) use ( $field ) {
+						return $this->map_lead_option_value_to_label( $field, $selected_value );
+					},
+					$clean_value
+				);
+			} elseif ( '' !== $clean_value ) {
+				$clean_value = $this->map_lead_option_value_to_label( $field, $clean_value );
+			}
 		}
 
 		if ( $required && $is_empty ) {

@@ -543,7 +543,7 @@ $delete_url = wp_nonce_url(
 														$option_label = is_array( $option ) && isset( $option['label'] ) ? $option['label'] : $option;
 														$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
 														?>
-														<option value="<?php echo esc_attr( $option_value ); ?>" <?php selected( $value, $option_value ); ?>><?php echo esc_html( $option_label ); ?></option>
+														<option value="<?php echo esc_attr( $option_value ); ?>" <?php selected( $this->lead_option_is_selected( $option_value, $option_label, $value ) ); ?>><?php echo esc_html( $option_label ); ?></option>
 													<?php endforeach; ?>
 												</select>
 											<?php elseif ( 'checkboxes' === $field_type ) : ?>
@@ -554,7 +554,7 @@ $delete_url = wp_nonce_url(
 													$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
 													?>
 													<label style="display:block;margin-bottom:6px;">
-														<input type="checkbox" name="<?php echo esc_attr( $field_id ); ?>[]" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( in_array( $option_value, $checked_values, true ) ); ?>>
+														<input type="checkbox" name="<?php echo esc_attr( $field_id ); ?>[]" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( $this->lead_option_is_selected( $option_value, $option_label, $checked_values ) ); ?>>
 														<?php echo esc_html( $option_label ); ?>
 													</label>
 												<?php endforeach; ?>
@@ -565,7 +565,7 @@ $delete_url = wp_nonce_url(
 													$option_value = is_array( $option ) && isset( $option['value'] ) ? $option['value'] : $option_label;
 													?>
 													<label style="display:block;margin-bottom:6px;">
-														<input type="radio" name="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( $value, $option_value ); ?>>
+														<input type="radio" name="<?php echo esc_attr( $field_id ); ?>" value="<?php echo esc_attr( $option_value ); ?>" <?php checked( $this->lead_option_is_selected( $option_value, $option_label, $value ) ); ?>>
 														<?php echo esc_html( $option_label ); ?>
 													</label>
 												<?php endforeach; ?>
