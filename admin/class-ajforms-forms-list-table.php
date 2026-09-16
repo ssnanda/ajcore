@@ -34,8 +34,33 @@ class AJForms_Forms_List_Table extends WP_List_Table {
 		);
 	}
 
+	/**
+	 * Which bulk action was submitted, checking both selects.
+	 *
+	 * WP_List_Table::current_action() only looks at $_REQUEST['action'] as of WP 7.x — it no longer
+	 * falls back to 'action2', which is the select rendered next to the *bottom* Apply button. So
+	 * relying on it means the bottom Apply silently does nothing. Resolve it here instead.
+	 */
+	private function get_requested_bulk_action() {
+		if ( ! empty( $_REQUEST['filter_action'] ) ) {
+			return '';
+		}
+
+		foreach ( array( 'action', 'action2' ) as $key ) {
+			$value = isset( $_REQUEST[ $key ] ) ? sanitize_text_field( wp_unslash( $_REQUEST[ $key ] ) ) : '';
+
+			if ( '' !== $value && '-1' !== $value ) {
+				return $value;
+			}
+		}
+
+		return '';
+	}
+
 	public function process_bulk_action() {
-		if ( 'bulk-edit-settings' === $this->current_action() ) {
+		$action = $this->get_requested_bulk_action();
+
+		if ( 'bulk-edit-settings' === $action ) {
 			check_admin_referer( 'bulk-' . $this->_args['plural'] );
 
 			$form_ids = isset( $_REQUEST['form_id'] ) ? array_filter( array_map( 'intval', (array) wp_unslash( $_REQUEST['form_id'] ) ) ) : array();
@@ -68,7 +93,7 @@ class AJForms_Forms_List_Table extends WP_List_Table {
 			exit;
 		}
 
-		if ( 'bulk-delete' === $this->current_action() ) {
+		if ( 'bulk-delete' === $action ) {
 			check_admin_referer( 'bulk-' . $this->_args['plural'] );
 
 			// #forms-filter is a GET form, so the checked ids land in the query string, not POST.
@@ -267,14 +292,35 @@ class AJForms_Forms_List_Table extends WP_List_Table {
 
 	protected function display_tablenav( $which ) {
 		if ( 'top' === $which ) {
-			echo '<div class="tablenav top">';
+			// WP_List_Table::display_tablenav() is where core prints the bulk-action nonce, so an
+			// override that skips parent:: has to print it here or every bulk action fails its
+			// check_admin_referer().
+			wp_nonce_field( 'bulk-' . $this->_args['plural'] );
+
+			echo '<div class="tablenav top ajforms-tablenav">';
+			echo '<div class="ajforms-tablenav-left">';
+			$this->bulk_actions( $which );
+			echo '</div>';
+			echo '<div class="ajforms-tablenav-right">';
+			// Rendered inside the toolbar rather than above the table so search, bulk actions and
+			// the item count share one row instead of stacking into three near-empty ones.
+			$this->search_box( __( 'Search Forms', 'ajforms' ), 'form-search-input' );
 			$this->pagination( $which );
-			echo '<br class="clear" /></div>';
+			echo '</div>';
+			echo '</div>';
 			return;
 		}
 
-		parent::display_tablenav( $which );
+		echo '<div class="tablenav bottom ajforms-tablenav">';
+		echo '<div class="ajforms-tablenav-left">';
+		$this->bulk_actions( $which );
+		echo '</div>';
+		echo '<div class="ajforms-tablenav-right">';
+		$this->pagination( $which );
+		echo '</div>';
+		echo '</div>';
 	}
+
 
 	public function get_bulk_actions() {
 		return array(

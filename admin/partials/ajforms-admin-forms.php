@@ -41,7 +41,7 @@ $stats = array(
 			align-items: flex-start;
 			justify-content: space-between;
 			gap: 20px;
-			padding: 28px 30px;
+			padding: 20px 26px;
 			background: linear-gradient(135deg, #fff 0%, #f7fafc 48%, #eef7ff 100%);
 			border: 1px solid #dde7f2;
 			border-radius: 26px;
@@ -73,11 +73,11 @@ $stats = array(
 			display: grid;
 			grid-template-columns: repeat(4, minmax(0, 1fr));
 			gap: 14px;
-			margin: 18px 0 22px;
+			margin: 14px 0 0;
 		}
 
 		.ajforms-stat-card {
-			padding: 18px 20px;
+			padding: 14px 18px;
 			background: #fff;
 			border: 1px solid #e4ebf3;
 			border-radius: 20px;
@@ -86,7 +86,7 @@ $stats = array(
 
 		.ajforms-stat-card strong {
 			display: block;
-			font-size: 28px;
+			font-size: 26px;
 			line-height: 1;
 			color: #0f172a;
 			margin-bottom: 8px;
@@ -99,16 +99,87 @@ $stats = array(
 
 		.ajforms-list-shell {
 			margin-top: 8px;
-			padding: 20px;
+			padding: 14px 18px 6px;
 			background: #fff;
 			border: 1px solid #e4ebf3;
 			border-radius: 24px;
 			box-shadow: 0 18px 42px rgba(15, 23, 42, 0.05);
 		}
 
+		/* One toolbar row: bulk actions on the left, search + item count on the right. Core's
+		   default stacks a floated search box above a near-empty tablenav, which is where most of
+		   the dead vertical space on this screen came from. */
+		#forms-filter .ajforms-tablenav {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			flex-wrap: wrap;
+			gap: 10px 16px;
+			height: auto;
+			margin: 0;
+			padding: 4px 0 10px;
+		}
+
+		#forms-filter .ajforms-tablenav.bottom {
+			padding: 10px 0 4px;
+			border-top: 1px solid #eef2f7;
+		}
+
+		#forms-filter .ajforms-tablenav-left,
+		#forms-filter .ajforms-tablenav-right {
+			display: flex;
+			align-items: center;
+			flex-wrap: wrap;
+			gap: 8px 12px;
+			float: none;
+		}
+
+		#forms-filter .ajforms-tablenav .bulkactions {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			float: none;
+			margin: 0;
+			padding: 0;
+		}
+
+		#forms-filter .ajforms-tablenav .search-box {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			float: none;
+			margin: 0;
+		}
+
+		#forms-filter .ajforms-tablenav .search-box input[type="search"] {
+			margin: 0;
+		}
+
+		#forms-filter .ajforms-tablenav .tablenav-pages {
+			float: none;
+			margin: 0;
+			height: auto;
+		}
+
+		#forms-filter .ajforms-tablenav .displaying-num {
+			margin: 0;
+			color: #64748b;
+		}
+
+		#forms-filter .ajforms-tablenav br.clear {
+			display: none;
+		}
+
+		/* Core repeats the column headers in a <tfoot>; on a short list it just reads as a stray
+		   duplicate row between the last form and the bulk actions. */
+		#forms-filter .wp-list-table tfoot {
+			display: none;
+		}
+
 		#forms-filter .wp-list-table {
 			table-layout: fixed;
 			border: 0;
+			margin: 0;
 		}
 
 		#forms-filter .column-cb {
@@ -116,28 +187,40 @@ $stats = array(
 		}
 
 		#forms-filter .column-title {
-			width: 19%;
+			width: 21%;
 		}
 
 		#forms-filter .column-shortcode {
-			width: 16%;
+			width: 12%;
 		}
 
 		#forms-filter .column-entries {
-			width: 8%;
+			width: 6%;
 			white-space: nowrap;
 		}
 
 		#forms-filter .column-date {
-			width: 14%;
+			width: 16%;
+			white-space: nowrap;
 		}
 
 		#forms-filter .column-status {
-			width: 11%;
+			width: 12%;
+		}
+
+		/* The status column header holds a filter <select>; without a cap it overflows the column
+		   and collides with the Actions header. */
+		#forms-filter .column-status .ajforms-status-filter {
+			max-width: 100%;
+			min-width: 0;
+		}
+
+		#forms-filter th.column-status > label {
+			max-width: 100%;
 		}
 
 		#forms-filter .column-actions {
-			width: 28%;
+			width: 33%;
 		}
 
 		#forms-filter .column-actions .ajforms-inline-actions {
@@ -233,7 +316,7 @@ $stats = array(
 		}
 
 		.ajforms-toolbar-note {
-			margin: 14px 0 0;
+			margin: 10px 0 0;
 			color: #64748b;
 			font-size: 13px;
 		}
@@ -311,7 +394,6 @@ $stats = array(
 		<form id="forms-filter" method="get">
 			<input type="hidden" name="page" value="ajforms" />
 			<?php
-			$forms_list_table->search_box( __( 'Search Forms', 'ajforms' ), 'search_id' );
 			$forms_list_table->display();
 			?>
 		</form>
