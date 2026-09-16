@@ -322,6 +322,42 @@ class AJForms_Forms_List_Table extends WP_List_Table {
 	}
 
 
+	/**
+	 * Render the bulk actions as plain buttons instead of core's select + Apply.
+	 *
+	 * With only two actions, a dropdown whose default option ("Bulk actions") is a no-op costs
+	 * three clicks to do anything and reads as a placeholder. Each button is its own submit that
+	 * carries the action in its own name/value, so the same $_REQUEST['action'] handling applies.
+	 */
+	protected function bulk_actions( $which = '' ) {
+		$actions = $this->get_bulk_actions();
+
+		if ( empty( $actions ) ) {
+			return;
+		}
+
+		echo '<div class="alignleft actions bulkactions ajforms-bulk-buttons">';
+
+		foreach ( $actions as $name => $label ) {
+			$classes = 'button ajforms-bulk-btn ajforms-bulk-btn-' . sanitize_html_class( $name );
+			$confirm = '';
+
+			if ( 'bulk-delete' === $name ) {
+				$confirm = ' onclick="return confirm(\'' . esc_js( __( 'Move the selected forms to deleted?', 'ajforms' ) ) . '\');"';
+			}
+
+			printf(
+				'<button type="submit" name="action" value="%1$s" class="%2$s"%3$s>%4$s</button>',
+				esc_attr( $name ),
+				esc_attr( $classes ),
+				$confirm, // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from esc_js above.
+				esc_html( $label )
+			);
+		}
+
+		echo '</div>';
+	}
+
 	public function get_bulk_actions() {
 		return array(
 			'bulk-edit-settings' => __( 'Edit Settings', 'ajforms' ),

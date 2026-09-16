@@ -260,6 +260,40 @@ $stats = array(
 			padding: 0;
 		}
 
+		/* Bulk actions are buttons, not a select + Apply -- see AJForms_Forms_List_Table::bulk_actions(). */
+		#forms-filter .ajforms-bulk-btn.button {
+			height: auto;
+			margin: 0;
+			padding: 5px 14px;
+			border-radius: 999px;
+			font-weight: 600;
+			line-height: 1.5;
+		}
+
+		#forms-filter .ajforms-bulk-btn-bulk-edit-settings {
+			border-color: #bfdbfe;
+			background: #eff6ff;
+			color: #1d4ed8;
+		}
+
+		#forms-filter .ajforms-bulk-btn-bulk-edit-settings:hover {
+			border-color: #60a5fa;
+			background: #dbeafe;
+			color: #1e40af;
+		}
+
+		#forms-filter .ajforms-bulk-btn-bulk-delete {
+			border-color: #fecaca;
+			background: #fef2f2;
+			color: #b91c1c;
+		}
+
+		#forms-filter .ajforms-bulk-btn-bulk-delete:hover {
+			border-color: #f87171;
+			background: #fee2e2;
+			color: #991b1b;
+		}
+
 		#forms-filter .ajforms-tablenav .search-box {
 			display: flex;
 			align-items: center;
