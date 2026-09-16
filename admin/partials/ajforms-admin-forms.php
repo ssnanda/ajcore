@@ -38,63 +38,180 @@ $stats = array(
 
 		.ajforms-admin-hero {
 			display: flex;
-			align-items: flex-start;
+			align-items: center;
 			justify-content: space-between;
-			gap: 20px;
-			padding: 20px 26px;
+			flex-wrap: wrap;
+			gap: 16px 24px;
+			padding: 16px 22px;
 			background: linear-gradient(135deg, #fff 0%, #f7fafc 48%, #eef7ff 100%);
 			border: 1px solid #dde7f2;
-			border-radius: 26px;
-			box-shadow: 0 22px 48px rgba(15, 23, 42, 0.06);
+			border-radius: 20px;
+			box-shadow: 0 14px 34px rgba(15, 23, 42, 0.05);
+		}
+
+		.ajforms-hero-lead {
+			display: flex;
+			align-items: center;
+			flex-wrap: wrap;
+			gap: 10px 18px;
+			min-width: 0;
 		}
 
 		.ajforms-admin-hero h1 {
-			margin: 0 0 10px;
-			font-size: 32px;
+			margin: 0;
+			padding: 0;
+			font-size: 26px;
 			line-height: 1.1;
+			color: #0f172a;
 		}
 
-		.ajforms-admin-hero p {
-			margin: 0;
-			max-width: 700px;
-			color: #5f6b7a;
+		/* Counts as compact chips instead of four big cards: they read at a glance and each one
+		   links to that status filter. */
+		.ajforms-stat-chips {
+			display: flex;
+			align-items: center;
+			flex-wrap: wrap;
+			gap: 8px;
+		}
+
+		.ajforms-stat-chip {
+			display: inline-flex;
+			align-items: baseline;
+			gap: 6px;
+			padding: 5px 12px;
+			border-radius: 999px;
+			border: 1px solid #dbe5f0;
+			background: #fff;
+			text-decoration: none;
+			line-height: 1.2;
+			box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+		}
+
+		.ajforms-stat-chip strong {
 			font-size: 15px;
-			line-height: 1.7;
+			color: #0f172a;
+		}
+
+		.ajforms-stat-chip span {
+			font-size: 12px;
+			font-weight: 600;
+			color: #64748b;
+		}
+
+		.ajforms-stat-chip:hover {
+			border-color: #94b8d8;
+			box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+		}
+
+		.ajforms-stat-chip.is-published {
+			border-color: #bbf7d0;
+			background: #f0fdf4;
+		}
+
+		.ajforms-stat-chip.is-published strong {
+			color: #166534;
+		}
+
+		.ajforms-stat-chip.is-draft {
+			border-color: #fde68a;
+			background: #fffbeb;
+		}
+
+		.ajforms-stat-chip.is-draft strong {
+			color: #92400e;
+		}
+
+		.ajforms-stat-chip.is-deleted {
+			border-color: #fecaca;
+			background: #fef2f2;
+		}
+
+		.ajforms-stat-chip.is-deleted strong {
+			color: #b91c1c;
 		}
 
 		.ajforms-admin-actions {
 			display: flex;
-			gap: 10px;
+			gap: 8px;
 			flex-wrap: wrap;
 			justify-content: flex-end;
 		}
 
-		.ajforms-stats-grid {
-			display: grid;
-			grid-template-columns: repeat(4, minmax(0, 1fr));
-			gap: 14px;
-			margin: 14px 0 0;
-		}
-
-		.ajforms-stat-card {
-			padding: 14px 18px;
-			background: #fff;
-			border: 1px solid #e4ebf3;
-			border-radius: 20px;
-			box-shadow: 0 10px 26px rgba(15, 23, 42, 0.04);
-		}
-
-		.ajforms-stat-card strong {
-			display: block;
-			font-size: 26px;
-			line-height: 1;
-			color: #0f172a;
-			margin-bottom: 8px;
-		}
-
-		.ajforms-stat-card span {
-			color: #64748b;
+		/* WP's grey default buttons all look alike; give each action its own colour so the primary
+		   one is obvious and Import/Export are distinguishable at a glance. */
+		.ajforms-admin-actions .ajforms-btn.button {
+			height: auto;
+			margin: 0;
+			padding: 7px 16px;
+			border: 0;
+			border-radius: 999px;
+			color: #fff;
 			font-weight: 600;
+			line-height: 1.5;
+			text-shadow: none;
+			box-shadow: 0 4px 12px rgba(15, 23, 42, 0.14);
+		}
+
+		.ajforms-admin-actions .ajforms-btn.button:hover,
+		.ajforms-admin-actions .ajforms-btn.button:focus {
+			color: #fff;
+			transform: translateY(-1px);
+			box-shadow: 0 7px 18px rgba(15, 23, 42, 0.2);
+		}
+
+		.ajforms-admin-actions .ajforms-btn-new {
+			background: linear-gradient(135deg, #2563eb, #1d4ed8);
+		}
+
+		.ajforms-admin-actions .ajforms-btn-import {
+			background: linear-gradient(135deg, #059669, #047857);
+		}
+
+		.ajforms-admin-actions .ajforms-btn-export {
+			background: linear-gradient(135deg, #7c3aed, #6d28d9);
+		}
+
+		/* WP injects admin notices directly after the first h1, which lands the Stripe mode notice
+		   inside this hero. Render it as a pill that hugs its own text instead of a full-width
+		   notice block -- including overriding the 4px accent border WP puts on .notice. */
+		.ajforms-admin-shell .notice.ajcore-stripe-mode-notice {
+			flex: 0 1 auto;
+			order: 3;
+			display: inline-flex;
+			align-items: center;
+			max-width: 100%;
+			margin: 0;
+			padding: 5px 14px;
+			border: 1px solid #e2e8f0;
+			border-left: 1px solid #e2e8f0;
+			border-radius: 999px;
+			background: #fff;
+			box-shadow: none;
+		}
+
+		.ajforms-admin-shell .notice.ajcore-stripe-mode-notice.notice-warning,
+		.ajforms-admin-shell .notice.ajcore-stripe-mode-notice.notice-error {
+			border-color: #fbbf24;
+			background: #fffbeb;
+		}
+
+		.ajforms-admin-shell .ajcore-stripe-mode-notice p {
+			margin: 0;
+			padding: 0;
+			font-size: 12px;
+			color: #475569;
+			display: flex;
+			align-items: center;
+			flex-wrap: wrap;
+			gap: 8px;
+		}
+
+		.ajforms-admin-shell .ajcore-stripe-mode-notice code {
+			padding: 2px 8px;
+			border-radius: 6px;
+			background: #f1f5f9;
+			font-size: 12px;
+			letter-spacing: 0.04em;
 		}
 
 		.ajforms-list-shell {
@@ -334,31 +451,56 @@ $stats = array(
 		@media (max-width: 1100px) {
 			.ajforms-admin-hero {
 				flex-direction: column;
+				align-items: flex-start;
 			}
 
-			.ajforms-stats-grid {
-				grid-template-columns: repeat(2, minmax(0, 1fr));
+			.ajforms-admin-actions {
+				justify-content: flex-start;
 			}
+
 		}
 	</style>
 
 	<div class="ajforms-admin-shell">
 		<div class="ajforms-admin-hero">
-			<div>
+			<div class="ajforms-hero-lead">
 				<h1><?php esc_html_e( 'Forms', 'ajforms' ); ?></h1>
-				<p><?php esc_html_e( 'Build, publish, preview, duplicate, export, and keep your form library organized from one place.', 'ajforms' ); ?></p>
+				<?php
+				// "Active" was just published + drafts, which reads as a duplicate of Published on
+				// the common case of a site with no drafts. Show the states that actually exist.
+				$stat_chips = array(
+					array( 'key' => 'published', 'label' => __( 'Published', 'ajforms' ), 'count' => $stats['published'], 'always' => true ),
+					array( 'key' => 'draft', 'label' => _n( 'Draft', 'Drafts', $stats['draft'], 'ajforms' ), 'count' => $stats['draft'], 'always' => false ),
+					array( 'key' => 'deleted', 'label' => __( 'Deleted', 'ajforms' ), 'count' => $stats['deleted'], 'always' => false ),
+				);
+				?>
+				<div class="ajforms-stat-chips">
+					<?php
+					foreach ( $stat_chips as $chip ) :
+						if ( ! $chip['always'] && $chip['count'] < 1 ) {
+							continue;
+						}
+
+						$chip_url = add_query_arg(
+							array(
+								'page'        => 'ajforms',
+								'form_status' => $chip['key'],
+							),
+							admin_url( 'admin.php' )
+						);
+						?>
+						<a class="ajforms-stat-chip is-<?php echo esc_attr( $chip['key'] ); ?>" href="<?php echo esc_url( $chip_url ); ?>">
+							<strong><?php echo esc_html( $chip['count'] ); ?></strong>
+							<span><?php echo esc_html( $chip['label'] ); ?></span>
+						</a>
+					<?php endforeach; ?>
+				</div>
 			</div>
 			<div class="ajforms-admin-actions">
-				<a href="<?php echo esc_url( $add_new_url ); ?>" class="button button-primary"><?php esc_html_e( 'Add New Form', 'ajforms' ); ?></a>
-				<a href="#" id="wpf-import-form-btn" class="button"><?php esc_html_e( 'Import Form', 'ajforms' ); ?></a>
-				<a href="#" id="wpf-export-form-btn" class="button"><?php esc_html_e( 'Export Form', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( $add_new_url ); ?>" class="button ajforms-btn ajforms-btn-new"><?php esc_html_e( 'Add New', 'ajforms' ); ?></a>
+				<a href="#" id="wpf-import-form-btn" class="button ajforms-btn ajforms-btn-import"><?php esc_html_e( 'Import', 'ajforms' ); ?></a>
+				<a href="#" id="wpf-export-form-btn" class="button ajforms-btn ajforms-btn-export"><?php esc_html_e( 'Export', 'ajforms' ); ?></a>
 			</div>
-		</div>
-		<div class="ajforms-stats-grid">
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $stats['total'] ); ?></strong><span><?php esc_html_e( 'Active Forms', 'ajforms' ); ?></span></div>
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $stats['published'] ); ?></strong><span><?php esc_html_e( 'Published', 'ajforms' ); ?></span></div>
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $stats['draft'] ); ?></strong><span><?php esc_html_e( 'Drafts', 'ajforms' ); ?></span></div>
-			<div class="ajforms-stat-card"><strong><?php echo esc_html( $stats['deleted'] ); ?></strong><span><?php esc_html_e( 'Deleted', 'ajforms' ); ?></span></div>
 		</div>
 		<input type="file" id="wpf-import-file" accept=".json" style="display:none;" />
 	</div>

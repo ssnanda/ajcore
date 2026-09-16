@@ -11117,13 +11117,13 @@ class AJForms_Admin {
 		?>
 		<div class="notice <?php echo esc_attr( $notice_class ); ?> ajcore-stripe-mode-notice">
 			<p>
-				<strong><?php echo esc_html( sprintf( __( 'Stripe %s Mode', 'ajforms' ), $data['label'] ) ); ?></strong>
+				<strong><?php echo esc_html( sprintf( __( 'Stripe %s', 'ajforms' ), $data['label'] ) ); ?></strong>
 				<?php if ( ! empty( $data['is_live'] ) ) : ?>
-					<?php esc_html_e( 'Real customer payments are enabled.', 'ajforms' ); ?>
+					<?php esc_html_e( 'Real payments enabled.', 'ajforms' ); ?>
 				<?php else : ?>
-					<?php esc_html_e( 'Sandbox payments only. Use Stripe sandbox/test cards such as 4242 4242 4242 4242.', 'ajforms' ); ?>
+					<?php esc_html_e( 'Test card', 'ajforms' ); ?> <code>4242 4242 4242 4242</code>
 				<?php endif; ?>
-				<a href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Stripe settings', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'Settings', 'ajforms' ); ?></a>
 			</p>
 			<?php if ( ! empty( $data['issues'] ) ) : ?>
 				<ul style="margin-top:0;list-style:disc;padding-left:22px;">
