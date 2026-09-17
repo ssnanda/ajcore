@@ -14044,7 +14044,9 @@ class AJForms_Admin {
 			'enable_university_brand_templates' => isset( $_POST['enable_university_brand_templates'] ) ? '1' : '0',
 			'wp_email_from_email'            => isset( $_POST['wp_email_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_email_from_email'] ) ) : ajcore_default_system_from_email(),
 			'wp_email_from_name'             => isset( $_POST['wp_email_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_email_from_name'] ) ) : get_bloginfo( 'name' ),
-			'mail_mode'                      => isset( $_POST['mail_mode'] ) && 'smtp' === sanitize_key( wp_unslash( $_POST['mail_mode'] ) ) ? 'smtp' : 'php',
+			'mail_mode'                      => isset( $_POST['mail_mode'] )
+				? ( 'php' === sanitize_key( wp_unslash( $_POST['mail_mode'] ) ) ? 'php' : 'smtp' )
+				: ( isset( $current_settings['mail_mode'] ) && 'php' === $current_settings['mail_mode'] ? 'php' : 'smtp' ),
 			'smtp_host'                      => isset( $_POST['smtp_host'] ) ? sanitize_text_field( wp_unslash( $_POST['smtp_host'] ) ) : '',
 			'smtp_port'                      => isset( $_POST['smtp_port'] ) ? (string) absint( wp_unslash( $_POST['smtp_port'] ) ) : '587',
 			'smtp_encryption'                => isset( $_POST['smtp_encryption'] ) && in_array( sanitize_key( wp_unslash( $_POST['smtp_encryption'] ) ), array( 'tls', 'ssl', 'none' ), true ) ? sanitize_key( wp_unslash( $_POST['smtp_encryption'] ) ) : 'tls',
@@ -21769,7 +21771,10 @@ class AJForms_Admin {
 		if ( ! is_email( $default_test_to ) ) {
 			$default_test_to = $current->user_email;
 		}
-		$mail_mode   = isset( $settings['mail_mode'] ) && 'smtp' === $settings['mail_mode'] ? 'smtp' : 'php';
+		// SMTP is the default (see the 'mail_mode' default in ajcore.php) — only an explicit 'php'
+		// opts back out to the host's mailer.
+		$mail_mode   = isset( $settings['mail_mode'] ) && 'php' === $settings['mail_mode'] ? 'php' : 'smtp';
+		$smtp_ready  = 'smtp' === $mail_mode && ! empty( $settings['smtp_host'] );
 		$smtp_password_is_constant = defined( 'AJCORE_SMTP_PASSWORD' ) && '' !== (string) AJCORE_SMTP_PASSWORD;
 		$smtp_password_is_set      = ! empty( $settings['smtp_password'] );
 		?>
@@ -21843,7 +21848,15 @@ class AJForms_Admin {
 							<?php endif; ?>
 							<tr>
 								<td><strong><?php esc_html_e( 'Currently sending via', 'ajforms' ); ?></strong></td>
-								<td><?php echo 'smtp' === $mail_mode ? esc_html__( 'SMTP (settings below)', 'ajforms' ) : esc_html__( 'PHP mail()', 'ajforms' ); ?></td>
+								<td>
+									<?php if ( $smtp_ready ) : ?>
+										<?php echo esc_html( sprintf( __( 'SMTP — %s', 'ajforms' ), $settings['smtp_host'] ) ); ?>
+									<?php elseif ( 'smtp' === $mail_mode ) : ?>
+										<span style="color:#b45309;"><?php esc_html_e( 'PHP mail() — SMTP is selected but no host is configured yet, so WordPress still uses mail().', 'ajforms' ); ?></span>
+									<?php else : ?>
+										<?php esc_html_e( 'PHP mail()', 'ajforms' ); ?>
+									<?php endif; ?>
+								</td>
 							</tr>
 						</tbody>
 					</table>
@@ -21860,8 +21873,8 @@ class AJForms_Admin {
 					<div class="ajforms-settings-field" style="max-width:420px;">
 						<label for="mail_mode"><?php esc_html_e( 'Send mail using', 'ajforms' ); ?></label>
 						<select name="mail_mode" id="mail_mode">
+							<option value="smtp" <?php selected( $mail_mode, 'smtp' ); ?>><?php esc_html_e( 'SMTP — your mail provider (recommended)', 'ajforms' ); ?></option>
 							<option value="php" <?php selected( $mail_mode, 'php' ); ?>><?php esc_html_e( 'PHP mail() — the host’s built-in mailer', 'ajforms' ); ?></option>
-							<option value="smtp" <?php selected( $mail_mode, 'smtp' ); ?>><?php esc_html_e( 'SMTP — your mail provider', 'ajforms' ); ?></option>
 						</select>
 					</div>
 

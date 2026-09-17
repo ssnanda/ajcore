@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.308
+ * Version: 0.7.309
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.308' );
+	define( 'AJCORE_VERSION', '0.7.309' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -234,9 +234,12 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'enable_university_brand_templates' => '0',
 			'wp_email_from_email'           => ajcore_default_system_from_email(),
 			'wp_email_from_name'            => get_bloginfo( 'name' ),
-			// Outgoing transport. 'php' = whatever mail() does on this host; 'smtp' = the settings
-			// below, applied in ajcore_configure_smtp_mailer(). See Settings → Email.
-			'mail_mode'                     => 'php',
+			// Outgoing transport. 'smtp' = the settings below, applied in ajcore_configure_smtp_mailer();
+			// 'php' = whatever mail() does on this host. SMTP is the default because shared hosts
+			// routinely break mail() (see that function's comment) — authenticated submission is the
+			// reliable path. Harmless before it's configured: with no smtp_host set, that function
+			// bows out and WordPress falls back to mail() exactly as before. See Settings → Email.
+			'mail_mode'                     => 'smtp',
 			'smtp_host'                     => '',
 			'smtp_port'                     => '587',
 			'smtp_encryption'               => 'tls',
