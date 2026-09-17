@@ -11809,6 +11809,13 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( 'ajcore-mail' === $page ) {
+			// Same pair the Settings → Email section used before the split: the test email has its own
+			// nonce, the settings form uses the shared ajforms_settings_nonce.
+			$this->handle_send_test_email();
+			$this->handle_settings_save();
+		}
+
 		if ( 'ajforms' === $page ) {
 			$this->handle_form_actions();
 			$this->handle_forms_bulk_actions();
@@ -14279,6 +14286,12 @@ class AJForms_Admin {
 				'page'             => 'ajforms-client-portal',
 				'tab'              => 'cp-settings',
 				'cp_section'       => $section,
+				'settings-updated' => 'true',
+			);
+		} elseif ( isset( $_GET['page'] ) && 'ajcore-mail' === sanitize_text_field( wp_unslash( $_GET['page'] ) ) ) {
+			// AJ Core Mail posts with section=email (for the key scoping above) but is its own page.
+			$redirect_args = array(
+				'page'             => 'ajcore-mail',
 				'settings-updated' => 'true',
 			);
 		} else {
@@ -19348,6 +19361,19 @@ class AJForms_Admin {
 			);
 		}
 
+		// Own top-level item rather than a Settings section: mail transport is what you reach for when
+		// mail is broken, and hunting for it inside Settings' sidebar is the wrong place for that.
+		// Position 79 puts it between Tools (75) and Settings (80).
+		add_menu_page(
+			__( 'AJ Core Mail', 'ajforms' ),
+			__( 'AJ Core Mail', 'ajforms' ),
+			'manage_options',
+			'ajcore-mail',
+			array( $this, 'display_ajcore_mail_page' ),
+			'dashicons-email-alt',
+			79
+		);
+
 		if ( $client_portal_enabled ) {
 			add_submenu_page(
 				'ajforms',
@@ -21753,12 +21779,19 @@ class AJForms_Admin {
 	}
 
 	/**
-	 * Settings → Email: "Outgoing Mail" (system From identity + test email) and the "Email Log".
-	 * Shown on every site regardless of the client_portal feature flag. Transport is either the
-	 * host's mail() or SMTP — see ajcore_configure_smtp_mailer() in ajcore.php.
+	 * "AJ Core Mail": its own top-level menu (outgoing transport, sender identity, test email).
+	 * Split out of Settings → Email, which now holds only the log — see display_email_log_section().
+	 * Transport itself is applied by ajcore_configure_smtp_mailer() in ajcore.php.
 	 */
-	private function display_email_settings_section( $settings ) {
-		$section_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) );
+	public function display_ajcore_mail_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+
+		$settings    = $this->get_plugin_settings();
+		// section=email keeps handle_settings_save()'s key scoping pointed at the mail keys even though
+		// this is its own page now; its redirect branch sends the user back here.
+		$section_url = add_query_arg( array( 'page' => 'ajcore-mail', 'section' => 'email' ), admin_url( 'admin.php' ) );
 		$test_status = isset( $_GET['test-email'] ) ? sanitize_key( wp_unslash( $_GET['test-email'] ) ) : '';
 		$test_to     = isset( $_GET['test-email-to'] ) ? sanitize_email( wp_unslash( $_GET['test-email-to'] ) ) : '';
 		$test_error  = isset( $_GET['test-email-error'] ) ? sanitize_text_field( wp_unslash( $_GET['test-email-error'] ) ) : '';
@@ -21778,15 +21811,37 @@ class AJForms_Admin {
 		$smtp_password_is_constant = defined( 'AJCORE_SMTP_PASSWORD' ) && '' !== (string) AJCORE_SMTP_PASSWORD;
 		$smtp_password_is_set      = ! empty( $settings['smtp_password'] );
 		?>
+		<div class="wrap ajcore-mail-page">
 		<style>
-			/* The log's markup came from the Client Portal page, whose .ajcore-* styles don't load here. */
-			#ajcore-email-log .ajcore-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
-			#ajcore-email-log .ajcore-status-pill{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534}
-			#ajcore-email-log .ajcore-status-pill.archived{background:#fee2e2;color:#991b1b}
+			/* Standalone page now, so it carries the .ajforms-settings-* styles it used to inherit
+			   from display_settings_page()'s own <style> block. Kept to just what this markup uses. */
+			.ajcore-mail-page .ajforms-settings-head h2{margin:0 0 10px;font-size:28px;line-height:1.2;color:#111827}
+			.ajcore-mail-page .ajforms-settings-head p{margin:0;color:#6b7280;font-size:16px;max-width:920px}
+			.ajcore-mail-page .ajforms-settings-card{margin-top:16px;background:#fff;border:1px solid #eef0f3;border-radius:16px;padding:22px 24px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+			.ajcore-mail-page .ajforms-settings-card h3{margin:0 0 6px;font-size:18px;color:#111827}
+			.ajcore-mail-page .ajforms-settings-card > p{margin:0 0 18px;color:#6b7280;font-size:14px}
+			.ajcore-mail-page .ajforms-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+			.ajcore-mail-page .ajforms-settings-field label{display:block;margin-bottom:6px;font-weight:600;color:#111827;font-size:14px}
+			.ajcore-mail-page .ajforms-settings-field input[type="text"],.ajcore-mail-page .ajforms-settings-field input[type="email"],.ajcore-mail-page .ajforms-settings-field input[type="password"],.ajcore-mail-page .ajforms-settings-field select{width:100%;min-height:40px;border:1px solid #d9dce1;border-radius:10px;padding:8px 12px;background:#fff;box-sizing:border-box;font-size:14px}
+			.ajcore-mail-page .ajforms-settings-help{margin-top:6px;color:#6b7280;font-size:12.5px}
+			.ajcore-mail-page .ajforms-settings-note{margin-top:14px;padding:14px 16px;border-radius:10px;background:#f9fafb;color:#4b5563;font-size:13.5px}
+			.ajcore-mail-page .ajforms-settings-pill{display:inline-flex;align-items:center;padding:6px 11px;border-radius:999px;background:#fff7ed;color:#c2410c;font-weight:700;font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+			.ajcore-mail-page .ajforms-settings-actions{margin-top:22px;display:flex;align-items:center;gap:14px}
+			.ajcore-mail-page .ajforms-settings-actions .button-primary{background:#ea580c;border-color:#ea580c;padding:0 18px;min-height:42px}
+			.ajcore-mail-page .ajforms-settings-inline-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+			.ajcore-mail-page .ajforms-settings-section{padding-top:20px;margin-top:20px;border-top:1px solid #f0f1f4}
+			.ajcore-mail-page .ajforms-settings-section h4{margin:0 0 4px;font-size:15px;color:#111827}
+			.ajcore-mail-page .ajforms-settings-section > p.ajforms-settings-section-desc{margin:0 0 14px;color:#6b7280;font-size:13px}
+			.ajcore-mail-page .ajforms-simple-checkbox{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#111827;padding:5px 0;cursor:pointer}
+			.ajcore-mail-page .ajforms-simple-checkbox input{margin:0}
+			@media (max-width: 1100px){.ajcore-mail-page .ajforms-settings-grid{grid-template-columns:1fr}}
 		</style>
+		<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
 		<div class="ajforms-settings-head">
-			<h2><?php esc_html_e( 'Email', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'How this site sends mail, and a log of everything it has sent.', 'ajforms' ); ?></p>
+			<h2><?php esc_html_e( 'AJ Core Mail', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'How this site sends outgoing mail. The log of what it has sent lives in AJ Core → Settings → Email Log.', 'ajforms' ); ?></p>
 		</div>
 
 		<?php if ( 'sent' === $test_status ) : ?>
@@ -21949,9 +22004,9 @@ class AJForms_Admin {
 				<button type="submit" class="button"><?php esc_html_e( 'Send Test Email', 'ajforms' ); ?></button>
 			</div>
 		</form>
-
-		<div id="ajcore-email-log" style="margin-top:28px;">
-			<?php $this->display_email_log_section(); ?>
+		<p style="margin-top:22px;">
+			<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View the Email Log →', 'ajforms' ); ?></a>
+		</p>
 		</div>
 		<?php
 	}
@@ -21963,7 +22018,7 @@ class AJForms_Admin {
 		}
 		check_admin_referer( 'ajcore_send_test_email', 'ajcore_send_test_email_nonce' );
 
-		$args = array( 'page' => 'ajforms-settings', 'section' => 'email' );
+		$args = array( 'page' => 'ajcore-mail' );
 		$to   = isset( $_POST['test_email_to'] ) ? sanitize_email( wp_unslash( $_POST['test_email_to'] ) ) : '';
 		if ( ! is_email( $to ) ) {
 			$args['test-email'] = 'invalid';
@@ -22037,6 +22092,10 @@ class AJForms_Admin {
 			$where  = $has_from ? '(to_email LIKE %s OR subject LIKE %s OR from_email LIKE %s)' : '(to_email LIKE %s OR subject LIKE %s)';
 			$params = $has_from ? array( $like, $like, $like ) : array( $like, $like );
 		}
+
+		// Carries its own copy of the two .ajcore-* rules its markup needs: they're defined on the
+		// Client Portal page (scoped to .ajcore-modern-admin), which isn't where this renders.
+		echo '<style>#ajcore-email-log .ajcore-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}#ajcore-email-log .ajcore-status-pill{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534}#ajcore-email-log .ajcore-status-pill.archived{background:#fee2e2;color:#991b1b}</style>';
 
 		$select = 'id, headers, to_email, subject, status, error_message, message, created_at';
 		$select .= $has_from ? ', from_email' : ", '' AS from_email";
@@ -32059,7 +32118,7 @@ class AJForms_Admin {
 			),
 			// Always present (not gated on client_portal) — form notifications need the log too.
 			'email'        => array(
-				'label' => __( 'Email', 'ajforms' ),
+				'label' => __( 'Email Log', 'ajforms' ),
 				'icon'  => 'email',
 				'group' => __( 'General', 'ajforms' ),
 			),
@@ -32342,7 +32401,11 @@ class AJForms_Admin {
 						<?php elseif ( 'rentec' === $section ) : ?>
 							<?php $this->display_rentec_settings_section(); ?>
 						<?php elseif ( 'email' === $section ) : ?>
-							<?php $this->display_email_settings_section( $settings ); ?>
+							<div class="ajforms-settings-head">
+								<h2><?php esc_html_e( 'Email Log', 'ajforms' ); ?></h2>
+								<p><?php echo wp_kses_post( sprintf( __( 'Every email this site has sent. Sending settings moved to <a href="%s">AJ Core Mail</a>.', 'ajforms' ), esc_url( add_query_arg( array( 'page' => 'ajcore-mail' ), admin_url( 'admin.php' ) ) ) ) ); ?></p>
+							</div>
+							<div id="ajcore-email-log"><?php $this->display_email_log_section(); ?></div>
 						<?php elseif ( 'roles' === $section ) : ?>
 							<div class="ajforms-settings-head">
 								<h2><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h2>
