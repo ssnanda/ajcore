@@ -11797,6 +11797,18 @@ class AJForms_Admin {
 			exit;
 		}
 
+		// The Email Log used to be a Client Portal tab (?page=ajforms-client-portal&tab=emails) — it
+		// now lives in Settings → Email for every site, portal or not. Redirect old links in (keeping
+		// e.g. email_search), before the CP page's own tab whitelist would reset them to Dashboard.
+		if ( 'ajforms-client-portal' === $page && isset( $_GET['tab'] ) && 'emails' === sanitize_key( wp_unslash( $_GET['tab'] ) ) ) {
+			$new_args            = wp_unslash( $_GET );
+			$new_args['page']    = 'ajforms-settings';
+			$new_args['section'] = 'email';
+			unset( $new_args['tab'] );
+			wp_safe_redirect( add_query_arg( $new_args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( 'ajforms' === $page ) {
 			$this->handle_form_actions();
 			$this->handle_forms_bulk_actions();
@@ -11826,6 +11838,11 @@ class AJForms_Admin {
 				$this->handle_chat_settings_save();
 			} elseif ( 'rentec' === $section ) {
 				$this->handle_rentec_settings_save();
+			} elseif ( 'email' === $section ) {
+				// Test email has its own nonce; the Outgoing Mail form itself uses the shared
+				// ajforms_settings_nonce, so fall through to the generic handler too.
+				$this->handle_send_test_email();
+				$this->handle_settings_save();
 			} elseif ( 'api' === $section ) {
 				$this->handle_portal_api_settings_save();
 			} elseif ( 'files' === $section ) {
@@ -12184,7 +12201,7 @@ class AJForms_Admin {
 				// Matches the full tab whitelist in display_portal_dashboard() so "Full Sync Now" (now
 				// available from every tab, not just Sync/Menu/Customers/Product Catalog/Compliance)
 				// redirects back to wherever it was actually clicked from.
-				$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations', 'mail', 'gmail-intake' ), true ) ? $current_tab : 'menu';
+				$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations', 'mail', 'gmail-intake' ), true ) ? $current_tab : 'menu';
 				$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
 			}
 
@@ -14179,8 +14196,8 @@ class AJForms_Admin {
 			}
 		}
 
-		// System "From" identity for all plugin mail. Editable from both the General Settings form
-		// and the Email Templates form, so it belongs to no single $section_keys entry — preserve
+		// System "From" identity for all plugin mail. Editable from both Settings → Email (Outgoing
+		// Mail) and the Email Templates form, so it belongs to no single $section_keys entry — preserve
 		// the stored value on any save that didn't actually post these fields (same reasoning as
 		// the OAuth/university loops above).
 		foreach ( array( 'wp_email_from_email', 'wp_email_from_name' ) as $sender_field ) {
@@ -14200,8 +14217,8 @@ class AJForms_Admin {
 			// restore, since they're only ever posted from this tab and only when
 			// enable_university_brand_templates is on. See that loop's comment for why.
 			// wp_email_from_email / wp_email_from_name are intentionally NOT scoped to a section —
-			// they're editable from BOTH this Email Templates form and the always-visible General
-			// Settings form (they govern all plugin mail, not just portal templates), so a
+			// they're editable from BOTH this Email Templates form and the always-visible Settings →
+			// Email form (they govern all plugin mail, not just portal templates), so a
 			// section-scoped restore would let a save on one form wipe the other's value.
 			// Preserved by their own loop above instead, like the OAuth/university fields.
 			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name', 'email_footer_address' ),
@@ -20263,7 +20280,7 @@ class AJForms_Admin {
 			}
 			$tab = 'cp-settings';
 		}
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'emails', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign', 'chat', 'rentec' ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign', 'chat', 'rentec' ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -20291,7 +20308,6 @@ class AJForms_Admin {
 			'esign'              => __( 'E-Signatures', 'ajforms' ),
 			'chat'               => __( 'Live Chat', 'ajforms' ),
 			'rentec'             => __( 'Rentec', 'ajforms' ),
-			'emails'             => __( 'Email Log', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
 		$external_tab_urls = array(
@@ -20370,8 +20386,6 @@ class AJForms_Admin {
 				$this->display_portal_sync_tab();
 			} elseif ( 'event-log' === $tab ) {
 				$this->display_portal_event_log_tab();
-			} elseif ( 'emails' === $tab ) {
-				$this->display_portal_emails_tab();
 			} elseif ( 'partners' === $tab ) {
 				$this->display_portal_partners_tab();
 			} elseif ( 'portal-users' === $tab ) {
@@ -21726,7 +21740,117 @@ class AJForms_Admin {
 		<?php
 	}
 
-	private function display_portal_emails_tab() {
+	/**
+	 * Settings → Email: "Outgoing Mail" (system From identity + test email) and the "Email Log".
+	 * Shown on every site regardless of the client_portal feature flag. Mail itself still goes out
+	 * through WordPress's normal wp_mail()/PHP mail (the host's mailer) — there's no SMTP layer here.
+	 */
+	private function display_email_settings_section( $settings ) {
+		$section_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) );
+		$test_status = isset( $_GET['test-email'] ) ? sanitize_key( wp_unslash( $_GET['test-email'] ) ) : '';
+		$test_to     = isset( $_GET['test-email-to'] ) ? sanitize_email( wp_unslash( $_GET['test-email-to'] ) ) : '';
+		$test_error  = isset( $_GET['test-email-error'] ) ? sanitize_text_field( wp_unslash( $_GET['test-email-error'] ) ) : '';
+		$current     = wp_get_current_user();
+		?>
+		<style>
+			/* The log's markup came from the Client Portal page, whose .ajcore-* styles don't load here. */
+			#ajcore-email-log .ajcore-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
+			#ajcore-email-log .ajcore-status-pill{display:inline-block;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534}
+			#ajcore-email-log .ajcore-status-pill.archived{background:#fee2e2;color:#991b1b}
+		</style>
+		<div class="ajforms-settings-head">
+			<h2><?php esc_html_e( 'Email', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'How this site sends mail, and a log of everything it has sent.', 'ajforms' ); ?></p>
+		</div>
+
+		<?php if ( 'sent' === $test_status ) : ?>
+			<div class="notice notice-success is-dismissible inline"><p><?php echo esc_html( sprintf( __( 'Test email handed off to the mail server for %s. Check that inbox (and spam) — delivery can still fail after this point.', 'ajforms' ), $test_to ) ); ?></p></div>
+		<?php elseif ( 'failed' === $test_status ) : ?>
+			<div class="notice notice-error is-dismissible inline"><p><?php echo esc_html( sprintf( __( 'Test email to %1$s failed: %2$s', 'ajforms' ), $test_to, '' !== $test_error ? $test_error : __( 'wp_mail() returned false.', 'ajforms' ) ) ); ?></p></div>
+		<?php elseif ( 'invalid' === $test_status ) : ?>
+			<div class="notice notice-error is-dismissible inline"><p><?php esc_html_e( 'Enter a valid email address to send the test to.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+
+		<form method="post" action="<?php echo esc_url( $section_url ); ?>">
+			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+			<div class="ajforms-settings-card">
+				<span class="ajforms-settings-pill"><?php esc_html_e( 'Outgoing Mail', 'ajforms' ); ?></span>
+				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'The "From" address AJ Core puts on every message it sends — form notifications, portal mail, and WordPress system email. Mail is sent through this host\'s normal PHP mail.', 'ajforms' ); ?></p>
+				<div class="ajforms-settings-grid">
+					<div class="ajforms-settings-field">
+						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
+						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+						<div class="ajforms-settings-help"><?php printf( esc_html__( 'Leave blank to send as %s (this site’s own domain), which keeps SPF/DKIM aligned.', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
+						<input name="wp_email_from_name" id="wp_email_from_name" type="text" placeholder="<?php echo esc_attr( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the site title.', 'ajforms' ); ?></div>
+					</div>
+				</div>
+				<div class="ajforms-settings-actions">
+					<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
+				</div>
+			</div>
+		</form>
+
+		<form method="post" action="<?php echo esc_url( $section_url ); ?>" class="ajforms-settings-card">
+			<?php wp_nonce_field( 'ajcore_send_test_email', 'ajcore_send_test_email_nonce' ); ?>
+			<h3><?php esc_html_e( 'Send a test email', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'Sends a short message using the saved sender identity above. It shows up in the Email Log below either way.', 'ajforms' ); ?></p>
+			<div class="ajforms-settings-inline-actions">
+				<input type="email" name="test_email_to" value="<?php echo esc_attr( $current->user_email ); ?>" style="min-width:280px;" required>
+				<button type="submit" class="button"><?php esc_html_e( 'Send Test Email', 'ajforms' ); ?></button>
+			</div>
+		</form>
+
+		<div id="ajcore-email-log" style="margin-top:28px;">
+			<?php $this->display_email_log_section(); ?>
+		</div>
+		<?php
+	}
+
+	/** POST handler for Settings → Email's "Send a test email" (runs on admin_init, PRG redirect). */
+	private function handle_send_test_email() {
+		if ( ! isset( $_POST['ajcore_send_test_email_nonce'] ) || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_send_test_email', 'ajcore_send_test_email_nonce' );
+
+		$args = array( 'page' => 'ajforms-settings', 'section' => 'email' );
+		$to   = isset( $_POST['test_email_to'] ) ? sanitize_email( wp_unslash( $_POST['test_email_to'] ) ) : '';
+		if ( ! is_email( $to ) ) {
+			$args['test-email'] = 'invalid';
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		$error_message = '';
+		$capture       = static function ( $error ) use ( &$error_message ) {
+			if ( is_wp_error( $error ) ) {
+				$error_message = $error->get_error_message();
+			}
+		};
+		add_action( 'wp_mail_failed', $capture );
+		$sent = wp_mail(
+			$to,
+			sprintf( __( 'Test email from %s', 'ajforms' ), wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
+			sprintf( __( "This is a test email sent from AJ Core on %1\$s (%2\$s).\n\nIf you received it, outgoing mail from this site is working.", 'ajforms' ), home_url( '/' ), current_time( 'mysql' ) )
+		);
+		remove_action( 'wp_mail_failed', $capture );
+
+		$args['test-email']    = $sent ? 'sent' : 'failed';
+		$args['test-email-to'] = rawurlencode( $to );
+		if ( ! $sent && '' !== $error_message ) {
+			$args['test-email-error'] = rawurlencode( $error_message );
+		}
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	/** The outgoing email log (formerly the Client Portal "Email Log" tab). */
+	private function display_email_log_section() {
 		global $wpdb;
 		$table = $wpdb->prefix . 'aj_portal_email_log';
 
@@ -21736,7 +21860,7 @@ class AJForms_Admin {
 		}
 
 		// Delete one / delete all.
-		if ( isset( $_POST['ajcore_email_log_delete_nonce'] ) ) {
+		if ( isset( $_POST['ajcore_email_log_delete_nonce'] ) && current_user_can( 'manage_options' ) ) {
 			check_admin_referer( 'ajcore_email_log_delete', 'ajcore_email_log_delete_nonce' );
 			if ( isset( $_POST['delete_all_emails'] ) ) {
 				$wpdb->query( "TRUNCATE TABLE `{$table}`" );
@@ -21756,24 +21880,24 @@ class AJForms_Admin {
 			$params = array( $like, $like );
 		}
 
-		$sql  = "SELECT id, to_email, subject, status, error_message, message, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT 200";
+		$sql  = "SELECT id, to_email, subject, status, error_message, message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT 200";
 		$rows = $params ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
 		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
 		?>
 		<div class="ajforms-settings-card">
 			<div class="ajcore-section-head">
 				<div>
-					<h2><?php esc_html_e( 'Emails', 'ajforms' ); ?></h2>
-					<p><?php esc_html_e( 'Every email sent from this site (welcome emails, password resets, service request updates, form notifications).', 'ajforms' ); ?></p>
+					<h3><?php esc_html_e( 'Email Log', 'ajforms' ); ?></h3>
+					<p><?php esc_html_e( 'Every email sent from this site (welcome emails, password resets, service request updates, form notifications). Opens are tracked for HTML emails only, and only when the recipient\'s mail client loads images.', 'ajforms' ); ?></p>
 				</div>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d emails logged', 'ajforms' ), $total ) ); ?></span>
 			</div>
 			<form method="get" class="ajforms-settings-inline-actions" style="align-items:center;gap:10px;">
-				<input type="hidden" name="page" value="ajforms-client-portal">
-				<input type="hidden" name="tab" value="emails">
+				<input type="hidden" name="page" value="ajforms-settings">
+				<input type="hidden" name="section" value="email">
 				<input type="search" name="email_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search recipient or subject…', 'ajforms' ); ?>" style="min-width:280px;">
 				<button class="button"><?php esc_html_e( 'Search', 'ajforms' ); ?></button>
-				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'emails' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
+				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) . '#ajcore-email-log' ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
 			</form>
 			<form method="post" style="margin:0 0 6px;" onsubmit="return window.confirm('<?php echo esc_js( __( 'Delete ALL logged emails? This cannot be undone.', 'ajforms' ) ); ?>');">
 				<?php wp_nonce_field( 'ajcore_email_log_delete', 'ajcore_email_log_delete_nonce' ); ?>
@@ -21785,12 +21909,13 @@ class AJForms_Admin {
 						<th style="width:170px;"><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'To', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Subject', 'ajforms' ); ?></th>
+						<th style="width:150px;"><?php esc_html_e( 'Opens', 'ajforms' ); ?></th>
 						<th style="width:110px;"><?php esc_html_e( 'Status', 'ajforms' ); ?></th>
 					</tr>
 				</thead>
 				<tbody>
 					<?php if ( empty( $rows ) ) : ?>
-						<tr><td colspan="4"><?php esc_html_e( 'No emails logged yet.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="5"><?php esc_html_e( 'No emails logged yet.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $rows as $row ) : ?>
 							<tr>
@@ -21806,6 +21931,17 @@ class AJForms_Admin {
 											<summary style="cursor:pointer;color:#2563eb;"><?php esc_html_e( 'View email', 'ajforms' ); ?></summary>
 											<iframe sandbox="" srcdoc="<?php echo esc_attr( $row->message ); ?>" style="width:100%;max-width:720px;height:420px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;margin-top:8px;"></iframe>
 										</details>
+									<?php endif; ?>
+								</td>
+								<td>
+									<?php if ( (int) $row->open_count > 0 ) : ?>
+										<?php echo esc_html( sprintf( _n( 'Opened %d time', 'Opened %d times', (int) $row->open_count, 'ajforms' ), (int) $row->open_count ) ); ?>
+										<br><span class="description" title="<?php esc_attr_e( 'First opened', 'ajforms' ); ?>"><?php echo esc_html( $this->format_portal_date( $row->opened_at ) ); ?></span>
+										<?php if ( ! empty( $row->last_opened_at ) && $row->last_opened_at !== $row->opened_at ) : ?>
+											<br><span class="description" title="<?php esc_attr_e( 'Last opened', 'ajforms' ); ?>"><?php echo esc_html( sprintf( __( 'Last: %s', 'ajforms' ), $this->format_portal_date( $row->last_opened_at ) ) ); ?></span>
+										<?php endif; ?>
+									<?php else : ?>
+										<span class="description">—</span>
 									<?php endif; ?>
 								</td>
 								<td>
@@ -26792,7 +26928,7 @@ class AJForms_Admin {
 				})();
 				</script>
 				<div class="ajforms-settings-note" style="margin-top:20px;">
-					<?php echo wp_kses_post( sprintf( '<a href="%s">%s</a>', esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'emails' ), admin_url( 'admin.php' ) ) ), esc_html__( 'View sent emails →', 'ajforms' ) ) ); ?>
+					<?php echo wp_kses_post( sprintf( '<a href="%s">%s</a>', esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) . '#ajcore-email-log' ), esc_html__( 'View sent emails →', 'ajforms' ) ) ); ?>
 				</div>
 			</div>
 
@@ -31750,6 +31886,12 @@ class AJForms_Admin {
 				'icon'  => 'admin-links',
 				'group' => __( 'General', 'ajforms' ),
 			),
+			// Always present (not gated on client_portal) — form notifications need the log too.
+			'email'        => array(
+				'label' => __( 'Email', 'ajforms' ),
+				'icon'  => 'email',
+				'group' => __( 'General', 'ajforms' ),
+			),
 			'payments'     => array(
 				'label' => __( 'Stripe Payments', 'ajforms' ),
 				'icon'  => 'cart',
@@ -32028,6 +32170,8 @@ class AJForms_Admin {
 							<?php $this->display_portal_event_log_tab(); ?>
 						<?php elseif ( 'rentec' === $section ) : ?>
 							<?php $this->display_rentec_settings_section(); ?>
+						<?php elseif ( 'email' === $section ) : ?>
+							<?php $this->display_email_settings_section( $settings ); ?>
 						<?php elseif ( 'roles' === $section ) : ?>
 							<div class="ajforms-settings-head">
 								<h2><?php esc_html_e( 'Role Manager', 'ajforms' ); ?></h2>
@@ -32115,24 +32259,6 @@ class AJForms_Admin {
 										<div>
 											<strong><?php esc_html_e( 'Enable notifications by default', 'ajforms' ); ?></strong>
 											<span><?php esc_html_e( 'Every new form starts with notifications turned on unless you switch it off in the builder.', 'ajforms' ); ?></span>
-										</div>
-									</div>
-								</div>
-
-								<div class="ajforms-settings-card">
-									<span class="ajforms-settings-pill"><?php esc_html_e( 'WordPress Mail', 'ajforms' ); ?></span>
-									<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
-									<p><?php esc_html_e( 'The "From" address AJ Core puts on every message it sends — form notifications, portal mail, and WordPress system email.', 'ajforms' ); ?></p>
-									<div class="ajforms-settings-grid">
-										<div class="ajforms-settings-field">
-											<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
-											<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
-											<div class="ajforms-settings-help"><?php printf( esc_html__( 'Leave blank to send as %s (this site’s own domain), which keeps SPF/DKIM aligned.', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></div>
-										</div>
-										<div class="ajforms-settings-field">
-											<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
-											<input name="wp_email_from_name" id="wp_email_from_name" type="text" placeholder="<?php echo esc_attr( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
-											<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the site title.', 'ajforms' ); ?></div>
 										</div>
 									</div>
 								</div>

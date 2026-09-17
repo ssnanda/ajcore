@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.304
+ * Version: 0.7.305
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.304' );
+	define( 'AJCORE_VERSION', '0.7.305' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -2554,10 +2554,21 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail' ) ) {
 				),
 				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 			);
+			// Remembered so a wp_mail_failed for this same send updates THIS row to 'failed' instead
+			// of inserting a second one — the row is written here, before PHPMailer actually tries,
+			// so without this every failed email showed up twice (a false "sent" + a "failed").
+			$GLOBALS['ajcore_email_log_pending_id'] = (int) $wpdb->insert_id;
 		}
 		return $atts;
 	}
 	add_filter( 'wp_mail', 'ajcore_log_outgoing_mail', 999 );
+	// Send completed normally: the row already says 'sent', just forget it.
+	add_action(
+		'wp_mail_succeeded',
+		static function () {
+			$GLOBALS['ajcore_email_log_pending_id'] = 0;
+		}
+	);
 }
 
 if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
@@ -2570,6 +2581,27 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
 		$data = is_array( $data ) ? $data : array();
 		$to   = isset( $data['to'] ) ? $data['to'] : '';
 		$to   = is_array( $to ) ? implode( ', ', array_map( 'sanitize_text_field', $to ) ) : sanitize_text_field( (string) $to );
+
+		// One row per message: flip the row ajcore_log_outgoing_mail() just wrote for this send.
+		$pending_id = isset( $GLOBALS['ajcore_email_log_pending_id'] ) ? (int) $GLOBALS['ajcore_email_log_pending_id'] : 0;
+		$GLOBALS['ajcore_email_log_pending_id'] = 0;
+		if ( $pending_id > 0 ) {
+			$updated = $wpdb->update(
+				$wpdb->prefix . 'aj_portal_email_log',
+				array(
+					'status'        => 'failed',
+					'error_message' => sanitize_text_field( $error->get_error_message() ),
+				),
+				array( 'id' => $pending_id ),
+				array( '%s', '%s' ),
+				array( '%d' )
+			);
+			if ( $updated ) {
+				return;
+			}
+		}
+
+		// No matching row (logged before this fix, or the insert above failed) — record it on its own.
 		$wpdb->insert(
 			$wpdb->prefix . 'aj_portal_email_log',
 			array(
