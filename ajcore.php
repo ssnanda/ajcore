@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.306
+ * Version: 0.7.307
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.306' );
+	define( 'AJCORE_VERSION', '0.7.307' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -234,6 +234,15 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'enable_university_brand_templates' => '0',
 			'wp_email_from_email'           => ajcore_default_system_from_email(),
 			'wp_email_from_name'            => get_bloginfo( 'name' ),
+			// Outgoing transport. 'php' = whatever mail() does on this host; 'smtp' = the settings
+			// below, applied in ajcore_configure_smtp_mailer(). See Settings → Email.
+			'mail_mode'                     => 'php',
+			'smtp_host'                     => '',
+			'smtp_port'                     => '587',
+			'smtp_encryption'               => 'tls',
+			'smtp_auth'                     => '1',
+			'smtp_username'                 => '',
+			'smtp_password'                 => '',
 			'wp_password_reset_subject'     => 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
 			'wp_service_status_subject'     => 'Update on {service_name}: {status_label}',
@@ -2646,6 +2655,62 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
 		);
 	}
 	add_action( 'wp_mail_failed', 'ajcore_log_outgoing_mail_failed' );
+}
+
+/**
+ * Sends mail over SMTP instead of PHP's mail() when Settings → Email is set to SMTP.
+ *
+ * Hosts that disable mail() (or ship it without a working sendmail_path) make PHPMailer throw
+ * "Could not instantiate mail function", which fails EVERY outgoing email — form notifications,
+ * password resets, portal mail. SMTP sidesteps the local binary entirely.
+ *
+ * Priority 5, so anything hooking later (including a dedicated SMTP plugin, if one is ever added
+ * to a site) still wins, and so the sender-capture in ajcore_log_outgoing_mail() still sees the
+ * final From. The password can be defined as AJCORE_SMTP_PASSWORD in wp-config.php to keep it out
+ * of the database entirely; that constant takes precedence over the stored value.
+ */
+if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
+	function ajcore_get_smtp_password() {
+		if ( defined( 'AJCORE_SMTP_PASSWORD' ) && '' !== (string) AJCORE_SMTP_PASSWORD ) {
+			return (string) AJCORE_SMTP_PASSWORD;
+		}
+		$settings = get_option( 'ajforms_settings', array() );
+		return is_array( $settings ) && ! empty( $settings['smtp_password'] ) ? (string) $settings['smtp_password'] : '';
+	}
+
+	function ajcore_configure_smtp_mailer( $phpmailer ) {
+		$settings = get_option( 'ajforms_settings', array() );
+		$settings = is_array( $settings ) ? $settings : array();
+		if ( 'smtp' !== ( isset( $settings['mail_mode'] ) ? $settings['mail_mode'] : 'php' ) ) {
+			return;
+		}
+		$host = isset( $settings['smtp_host'] ) ? trim( (string) $settings['smtp_host'] ) : '';
+		if ( '' === $host ) {
+			// Mode says SMTP but nothing's configured — leave mail() in place rather than handing
+			// PHPMailer a half-built SMTP config that would fail in a more confusing way.
+			return;
+		}
+
+		$encryption = isset( $settings['smtp_encryption'] ) ? (string) $settings['smtp_encryption'] : 'tls';
+		$port       = isset( $settings['smtp_port'] ) ? absint( $settings['smtp_port'] ) : 0;
+
+		$phpmailer->isSMTP();
+		$phpmailer->Host       = $host;
+		$phpmailer->Port       = $port > 0 ? $port : ( 'ssl' === $encryption ? 465 : 587 );
+		$phpmailer->SMTPSecure = in_array( $encryption, array( 'ssl', 'tls' ), true ) ? $encryption : '';
+		$phpmailer->SMTPAutoTLS = 'none' !== $encryption;
+
+		$username = isset( $settings['smtp_username'] ) ? (string) $settings['smtp_username'] : '';
+		$password = ajcore_get_smtp_password();
+		if ( ! empty( $settings['smtp_auth'] ) && '' !== $username ) {
+			$phpmailer->SMTPAuth = true;
+			$phpmailer->Username = $username;
+			$phpmailer->Password = $password;
+		} else {
+			$phpmailer->SMTPAuth = false;
+		}
+	}
+	add_action( 'phpmailer_init', 'ajcore_configure_smtp_mailer', 5 );
 }
 
 /**
