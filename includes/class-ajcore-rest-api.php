@@ -4777,6 +4777,12 @@ class AJCore_REST_API {
 		if ( ! $this->table_exists( $wpdb, $table ) ) {
 			return rest_ensure_response( array( 'emails' => array() ) );
 		}
+		// Runs the log table's own column migrations (from_email, the open-tracking columns) —
+		// they otherwise only fire when this install sends mail, so a site whose first post-update
+		// request is this endpoint would be missing the columns selected below. See ajcore.php.
+		if ( function_exists( 'ajcore_email_log_table_exists' ) ) {
+			ajcore_email_log_table_exists();
+		}
 
 		$per_page = min( 2000, max( 1, absint( $request->get_param( 'per_page' ) ) ) );
 		$search   = sanitize_text_field( (string) $request->get_param( 'search' ) );
@@ -4784,12 +4790,12 @@ class AJCore_REST_API {
 		$params   = array();
 		if ( '' !== $search ) {
 			$like   = '%' . $wpdb->esc_like( $search ) . '%';
-			$where  = '(to_email LIKE %s OR subject LIKE %s)';
-			$params = array( $like, $like );
+			$where  = '(to_email LIKE %s OR subject LIKE %s OR from_email LIKE %s)';
+			$params = array( $like, $like, $like );
 		}
 		$params[] = $per_page;
 		$rows = $wpdb->get_results(
-			$wpdb->prepare( "SELECT id, to_email, subject, status, error_message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT %d", $params ),
+			$wpdb->prepare( "SELECT id, from_email, to_email, subject, status, error_message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT %d", $params ),
 			ARRAY_A
 		);
 
@@ -5355,8 +5361,12 @@ class AJCore_REST_API {
 		if ( ! $this->table_exists( $wpdb, $table ) ) {
 			return new WP_Error( 'not_found', __( 'Email not found.', 'ajforms' ), array( 'status' => 404 ) );
 		}
+		// Same column-migration guard as get_ops_email_log() above.
+		if ( function_exists( 'ajcore_email_log_table_exists' ) ) {
+			ajcore_email_log_table_exists();
+		}
 		$row = $wpdb->get_row(
-			$wpdb->prepare( "SELECT id, to_email, subject, headers, message, status, error_message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE id = %d LIMIT 1", absint( $request->get_param( 'id' ) ) ),
+			$wpdb->prepare( "SELECT id, from_email, to_email, subject, headers, message, status, error_message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE id = %d LIMIT 1", absint( $request->get_param( 'id' ) ) ),
 			ARRAY_A
 		);
 		if ( ! $row ) {
