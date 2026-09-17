@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.305
+ * Version: 0.7.306
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.305' );
+	define( 'AJCORE_VERSION', '0.7.306' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -2509,6 +2509,10 @@ if ( ! function_exists( 'ajcore_email_log_table_exists' ) ) {
 				if ( is_array( $columns ) && ! in_array( 'tracking_token', $columns, true ) ) {
 					$wpdb->query( "ALTER TABLE {$table} ADD COLUMN tracking_token VARCHAR(64) NOT NULL DEFAULT '' AFTER error_message, ADD COLUMN open_count INT(10) UNSIGNED NOT NULL DEFAULT 0 AFTER tracking_token, ADD COLUMN opened_at DATETIME NULL AFTER open_count, ADD COLUMN last_opened_at DATETIME NULL AFTER opened_at, ADD KEY tracking_token (tracking_token)" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				}
+				// Sender column, added later still — same reasoning as the open-tracking columns above.
+				if ( is_array( $columns ) && ! in_array( 'from_email', $columns, true ) ) {
+					$wpdb->query( "ALTER TABLE {$table} ADD COLUMN from_email VARCHAR(255) NOT NULL DEFAULT '' AFTER error_message" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				}
 			}
 		}
 		return $exists;
@@ -2558,6 +2562,31 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail' ) ) {
 			// of inserting a second one — the row is written here, before PHPMailer actually tries,
 			// so without this every failed email showed up twice (a false "sent" + a "failed").
 			$GLOBALS['ajcore_email_log_pending_id'] = (int) $wpdb->insert_id;
+
+			// Record the sender. The From isn't known yet at this point — wp_mail() resolves it
+			// later (headers, then wp_mail_from/_name, then e.g. send_branded_wp_mail()'s own
+			// phpmailer_init setFrom()), so read it off PHPMailer right before sending. Added here,
+			// during this wp_mail() call, so it runs after any PHP_INT_MAX phpmailer_init hook the
+			// caller registered beforehand; removes itself so it only ever sees this one message.
+			// Drop a capture left over from a send that failed before phpmailer_init ever fired
+			// (e.g. an invalid address) — otherwise it would stamp its row with THIS message's sender.
+			if ( ! empty( $GLOBALS['ajcore_email_log_from_capture'] ) ) {
+				remove_action( 'phpmailer_init', $GLOBALS['ajcore_email_log_from_capture'], PHP_INT_MAX );
+			}
+			$log_id  = (int) $wpdb->insert_id;
+			$capture = static function ( $phpmailer ) use ( $log_id, &$capture ) {
+				remove_action( 'phpmailer_init', $capture, PHP_INT_MAX );
+				if ( $log_id <= 0 || empty( $phpmailer->From ) ) {
+					return;
+				}
+				global $wpdb;
+				$from = '' !== (string) $phpmailer->FromName
+					? sprintf( '%s <%s>', sanitize_text_field( $phpmailer->FromName ), sanitize_email( $phpmailer->From ) )
+					: sanitize_email( $phpmailer->From );
+				$wpdb->update( $wpdb->prefix . 'aj_portal_email_log', array( 'from_email' => substr( $from, 0, 255 ) ), array( 'id' => $log_id ), array( '%s' ), array( '%d' ) );
+			};
+			add_action( 'phpmailer_init', $capture, PHP_INT_MAX );
+			$GLOBALS['ajcore_email_log_from_capture'] = $capture;
 		}
 		return $atts;
 	}

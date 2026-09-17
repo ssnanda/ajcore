@@ -21876,11 +21876,11 @@ class AJForms_Admin {
 		$params = array();
 		if ( '' !== $search ) {
 			$like   = '%' . $wpdb->esc_like( $search ) . '%';
-			$where  = '(to_email LIKE %s OR subject LIKE %s)';
-			$params = array( $like, $like );
+			$where  = '(to_email LIKE %s OR subject LIKE %s OR from_email LIKE %s)';
+			$params = array( $like, $like, $like );
 		}
 
-		$sql  = "SELECT id, to_email, subject, status, error_message, message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT 200";
+		$sql  = "SELECT id, from_email, headers, to_email, subject, status, error_message, message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT 200";
 		$rows = $params ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
 		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
 		?>
@@ -21895,7 +21895,7 @@ class AJForms_Admin {
 			<form method="get" class="ajforms-settings-inline-actions" style="align-items:center;gap:10px;">
 				<input type="hidden" name="page" value="ajforms-settings">
 				<input type="hidden" name="section" value="email">
-				<input type="search" name="email_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search recipient or subject…', 'ajforms' ); ?>" style="min-width:280px;">
+				<input type="search" name="email_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search sender, recipient or subject…', 'ajforms' ); ?>" style="min-width:280px;">
 				<button class="button"><?php esc_html_e( 'Search', 'ajforms' ); ?></button>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) . '#ajcore-email-log' ); ?>"><?php esc_html_e( 'Reset', 'ajforms' ); ?></a>
 			</form>
@@ -21907,6 +21907,7 @@ class AJForms_Admin {
 				<thead>
 					<tr>
 						<th style="width:170px;"><?php esc_html_e( 'Date', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'From', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'To', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Subject', 'ajforms' ); ?></th>
 						<th style="width:150px;"><?php esc_html_e( 'Opens', 'ajforms' ); ?></th>
@@ -21915,11 +21916,20 @@ class AJForms_Admin {
 				</thead>
 				<tbody>
 					<?php if ( empty( $rows ) ) : ?>
-						<tr><td colspan="5"><?php esc_html_e( 'No emails logged yet.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="6"><?php esc_html_e( 'No emails logged yet.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $rows as $row ) : ?>
+							<?php
+							// Rows logged before from_email existed: fall back to an explicit From: header
+							// if the caller passed one (otherwise the sender wasn't recorded).
+							$from = (string) $row->from_email;
+							if ( '' === $from && preg_match( '/(?:^|\s)From:\s*(.+?)(?=\s+[A-Za-z][A-Za-z0-9-]*:\s|$)/mi', (string) $row->headers, $from_match ) ) {
+								$from = trim( $from_match[1] );
+							}
+							?>
 							<tr>
 								<td><?php echo esc_html( $this->format_portal_date( $row->created_at ) ); ?></td>
+								<td><?php echo '' !== $from ? esc_html( $from ) : '<span class="description">—</span>'; ?></td>
 								<td><?php echo esc_html( $row->to_email ); ?></td>
 								<td>
 									<?php echo esc_html( $row->subject ); ?>

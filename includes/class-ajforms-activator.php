@@ -170,6 +170,7 @@ class AJForms_Activator {
 			message longtext NULL,
 			status varchar(20) DEFAULT 'sent' NOT NULL,
 			error_message text NULL,
+			from_email varchar(255) DEFAULT '' NOT NULL,
 			tracking_token varchar(64) DEFAULT '' NOT NULL,
 			open_count int(10) unsigned DEFAULT 0 NOT NULL,
 			opened_at datetime NULL,
