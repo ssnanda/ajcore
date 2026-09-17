@@ -26989,7 +26989,7 @@ class AJForms_Admin {
 			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 			<div class="ajforms-settings-card">
 				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
-				<div class="ajforms-settings-grid ajf-3">
+				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
 						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
@@ -27000,19 +27000,34 @@ class AJForms_Admin {
 						<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Blank = site title', 'ajforms' ); ?></div>
 					</div>
+				</div>
+				<?php
+				// Both brands' footers side by side and always visible: which one is used depends on
+				// the CUSTOMER's brand, not on this site, so a site that ever emails a University
+				// Place customer needs its address filled in even when the site itself is NC LLC.
+				$university_footer_empty = '' === trim( (string) $settings['university_email_footer_address'] );
+				?>
+				<div class="ajforms-settings-grid" style="margin-top:10px;">
 					<div class="ajforms-settings-field">
-						<label for="email_footer_address"><?php esc_html_e( 'Footer postal address', 'ajforms' ); ?></label>
+						<label for="email_footer_address"><?php esc_html_e( 'Footer postal address — NC LLC Agents', 'ajforms' ); ?></label>
 						<textarea name="email_footer_address" id="email_footer_address" rows="3"><?php echo esc_textarea( $settings['email_footer_address'] ); ?></textarea>
-						<div class="ajforms-settings-help"><?php esc_html_e( 'On every branded email — spam filters look for a real one.', 'ajforms' ); ?></div>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Shown on NC-branded emails. Spam filters look for a real postal address.', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="university_email_footer_address"><?php esc_html_e( 'Footer postal address — University Office Suites', 'ajforms' ); ?></label>
+						<textarea name="university_email_footer_address" id="university_email_footer_address" rows="3"><?php echo esc_textarea( $settings['university_email_footer_address'] ); ?></textarea>
+						<div class="ajforms-settings-help"<?php echo $university_footer_empty ? ' style="color:#b45309;"' : ''; ?>>
+							<?php
+							echo $university_footer_empty
+								? esc_html__( 'Empty — University-branded emails currently go out with no postal address, which makes them likelier to be filtered.', 'ajforms' )
+								: esc_html__( 'Shown on University-branded emails (used whenever the customer’s brand is University Place, on either site).', 'ajforms' );
+							?>
+						</div>
 					</div>
 				</div>
 				<div style="display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;">
 					<label class="ajf-opt"><input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>> <?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></label>
 				</div>
-					<div class="ajforms-settings-field" style="margin-top:12px;max-width:420px;">
-						<label for="university_email_footer_address"><?php esc_html_e( 'Footer postal address — University Office Suites', 'ajforms' ); ?></label>
-						<textarea name="university_email_footer_address" id="university_email_footer_address" rows="3"><?php echo esc_textarea( $settings['university_email_footer_address'] ); ?></textarea>
-					</div>
 			</div>
 
 			<?php
