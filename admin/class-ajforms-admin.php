@@ -14058,6 +14058,7 @@ class AJForms_Admin {
 			'smtp_port'                      => isset( $_POST['smtp_port'] ) ? (string) absint( wp_unslash( $_POST['smtp_port'] ) ) : '587',
 			'smtp_encryption'                => isset( $_POST['smtp_encryption'] ) && in_array( sanitize_key( wp_unslash( $_POST['smtp_encryption'] ) ), array( 'tls', 'ssl', 'none' ), true ) ? sanitize_key( wp_unslash( $_POST['smtp_encryption'] ) ) : 'tls',
 			'smtp_auth'                      => isset( $_POST['smtp_auth'] ) ? '1' : '0',
+			'smtp_envelope_from_username'    => isset( $_POST['smtp_envelope_from_username'] ) ? '1' : '0',
 			'smtp_username'                  => isset( $_POST['smtp_username'] ) ? sanitize_text_field( wp_unslash( $_POST['smtp_username'] ) ) : '',
 			// Password field is rendered empty on purpose (never echo a stored credential), so an
 			// empty POST means "leave it alone", not "clear it". Clearing is the explicit checkbox.
@@ -14241,7 +14242,7 @@ class AJForms_Admin {
 			// Preserved by their own loop above instead, like the OAuth/university fields.
 			'email-templates' => array( 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name', 'email_footer_address' ),
 			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
-			'email'        => array( 'mail_mode', 'smtp_host', 'smtp_port', 'smtp_encryption', 'smtp_auth', 'smtp_username', 'smtp_password' ),
+			'email'        => array( 'mail_mode', 'smtp_host', 'smtp_port', 'smtp_encryption', 'smtp_auth', 'smtp_username', 'smtp_password', 'smtp_envelope_from_username' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
@@ -21973,6 +21974,19 @@ class AJForms_Admin {
 							</div>
 						</div>
 						<label class="ajforms-simple-checkbox" style="margin-top:10px;"><input type="checkbox" name="smtp_auth" value="1" <?php checked( '1' === (string) $settings['smtp_auth'] ); ?>> <?php esc_html_e( 'This server requires authentication (almost always yes)', 'ajforms' ); ?></label>
+						<label class="ajforms-simple-checkbox"><input type="checkbox" name="smtp_envelope_from_username" value="1" <?php checked( '1' === (string) $settings['smtp_envelope_from_username'] ); ?>> <?php esc_html_e( 'Send on behalf of the username above (recommended)', 'ajforms' ); ?></label>
+						<div class="ajforms-settings-help" style="margin:2px 0 0 26px;">
+							<?php
+							$envelope_from = ! empty( $settings['smtp_username'] ) && is_email( $settings['smtp_username'] ) ? $settings['smtp_username'] : __( 'the SMTP username', 'ajforms' );
+							$header_from   = ! empty( $settings['wp_email_from_email'] ) && is_email( $settings['wp_email_from_email'] ) ? $settings['wp_email_from_email'] : ajcore_default_system_from_email();
+							echo esc_html( sprintf(
+								/* translators: 1: SMTP username, 2: System From Email. */
+								__( 'Keeps each brand’s own From address on the message while the mailbox you log in as carries the delivery. Most providers only relay mail sent on behalf of the account you authenticated with, so leaving this on is usually what lets one login send for several domains. Recipients see “%2$s via %1$s” (Gmail) or “%1$s on behalf of %2$s” (Outlook). Turn it off only if your provider accepts any From address.', 'ajforms' ),
+								$envelope_from,
+								$header_from
+							) );
+							?>
+						</div>
 						<div class="ajforms-settings-note">
 							<?php esc_html_e( 'Save first, then use “Send a test email” below — a failed send now reports the SMTP server’s own error, which is usually enough to tell a wrong password from a blocked port.', 'ajforms' ); ?>
 						</div>

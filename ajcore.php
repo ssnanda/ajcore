@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.311
+ * Version: 0.7.312
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.311' );
+	define( 'AJCORE_VERSION', '0.7.312' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -246,6 +246,8 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'smtp_auth'                     => '1',
 			'smtp_username'                 => '',
 			'smtp_password'                 => '',
+			// On by default: see the envelope-sender block in ajcore_configure_smtp_mailer().
+			'smtp_envelope_from_username'   => '1',
 			'wp_password_reset_subject'     => 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
 			'wp_service_status_subject'     => 'Update on {service_name}: {status_label}',
@@ -2711,6 +2713,22 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 			$phpmailer->Password = $password;
 		} else {
 			$phpmailer->SMTPAuth = false;
+		}
+
+		// Envelope sender = the authenticated mailbox, while the header From stays whatever AJCore
+		// set (the per-brand donotreply@ address). Two reasons:
+		//
+		// 1. Most providers only relay mail whose ENVELOPE sender is the mailbox you logged in as,
+		//    and reject or rewrite anything else. PHPMailer uses Sender for the envelope (MAIL FROM)
+		//    when it's set, and falls back to From otherwise — so without this, one shared login
+		//    forces every site's visible From down to that one address.
+		// 2. It's the standard way to say "sent on behalf of": clients render the From/Sender split
+		//    as "donotreply@ncllcagents.com via itspector.com" (Gmail) or "… on behalf of …"
+		//    (Outlook), and bounces route back to the mailbox that can actually receive them.
+		//
+		// Note this is the envelope only — nothing here touches From, Reply-To, or the brand name.
+		if ( ! empty( $settings['smtp_envelope_from_username'] ) && is_email( $username ) ) {
+			$phpmailer->Sender = $username;
 		}
 	}
 	add_action( 'phpmailer_init', 'ajcore_configure_smtp_mailer', 5 );
