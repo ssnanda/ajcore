@@ -14060,9 +14060,9 @@ class AJForms_Admin {
 			'smtp_auth'                      => isset( $_POST['smtp_auth'] ) ? '1' : '0',
 			'smtp_envelope_from_username'    => isset( $_POST['smtp_envelope_from_username'] ) ? '1' : '0',
 			'smtp_username'                  => isset( $_POST['smtp_username'] ) ? sanitize_text_field( wp_unslash( $_POST['smtp_username'] ) ) : '',
-			// Password field is rendered empty on purpose (never echo a stored credential), so an
-			// empty POST means "leave it alone", not "clear it". Clearing is the explicit checkbox.
-			'smtp_password'                  => isset( $_POST['smtp_clear_password'] ) ? '' : ( isset( $_POST['smtp_password'] ) && '' !== $_POST['smtp_password'] ? (string) wp_unslash( $_POST['smtp_password'] ) : ( isset( $current_settings['smtp_password'] ) ? (string) $current_settings['smtp_password'] : '' ) ),
+			// Rendered empty on purpose (never echo a stored credential), so an empty POST means
+			// "keep the saved one" — type a new password to replace it.
+			'smtp_password'                  => isset( $_POST['smtp_password'] ) && '' !== $_POST['smtp_password'] ? (string) wp_unslash( $_POST['smtp_password'] ) : ( isset( $current_settings['smtp_password'] ) ? (string) $current_settings['smtp_password'] : '' ),
 			'wp_password_reset_subject'      => isset( $_POST['wp_password_reset_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_subject'] ) ) : 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'       => isset( $_POST['wp_welcome_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_email_subject'] ) ) : 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
 			'wp_service_status_subject'      => isset( $_POST['wp_service_status_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_service_status_subject'] ) ) : 'Update on {service_name}: {status_label}',
@@ -21783,6 +21783,11 @@ class AJForms_Admin {
 	 * "AJ Core Mail": its own top-level menu (outgoing transport, sender identity, test email).
 	 * Split out of Settings → Email, which now holds only the log — see display_email_log_section().
 	 * Transport itself is applied by ajcore_configure_smtp_mailer() in ajcore.php.
+	 *
+	 * Laid out to fit one screen without scrolling: the two things you actually touch (sender
+	 * identity, test send) sit at the top, the SMTP credentials below them, and the server
+	 * diagnostics collapse into a single strip — this is a screen people open when mail is broken,
+	 * so it should read at a glance rather than explain itself in paragraphs.
 	 */
 	public function display_ajcore_mail_page() {
 		if ( ! current_user_can( 'manage_options' ) ) {
@@ -21796,10 +21801,8 @@ class AJForms_Admin {
 		$test_status = isset( $_GET['test-email'] ) ? sanitize_key( wp_unslash( $_GET['test-email'] ) ) : '';
 		$test_to     = isset( $_GET['test-email-to'] ) ? sanitize_email( wp_unslash( $_GET['test-email-to'] ) ) : '';
 		$test_error  = isset( $_GET['test-email-error'] ) ? sanitize_text_field( wp_unslash( $_GET['test-email-error'] ) ) : '';
-		// Default the test recipient to a mailbox on this site's OWN domain. Sending to an
-		// off-domain address (the logged-in admin's, which is what this used to prefill) tests the
-		// recipient's provider as much as this site's mail, and an off-domain sender/recipient pair
-		// is exactly what shared hosts tend to refuse.
+		// Default the test recipient to a mailbox on this site's OWN domain — an off-domain address
+		// tests the recipient's provider as much as this site's mail.
 		$default_test_to = function_exists( 'ajcore_site_mailbox' ) ? ajcore_site_mailbox( 'admin' ) : '';
 		$current         = wp_get_current_user();
 		if ( ! is_email( $default_test_to ) ) {
@@ -21811,216 +21814,187 @@ class AJForms_Admin {
 		$smtp_ready  = 'smtp' === $mail_mode && ! empty( $settings['smtp_host'] );
 		$smtp_password_is_constant = defined( 'AJCORE_SMTP_PASSWORD' ) && '' !== (string) AJCORE_SMTP_PASSWORD;
 		$smtp_password_is_set      = ! empty( $settings['smtp_password'] );
+
+		$disable_functions = (string) ini_get( 'disable_functions' );
+		$mail_disabled     = in_array( 'mail', array_map( 'trim', explode( ',', $disable_functions ) ), true );
+		$mail_callable     = function_exists( 'mail' ) && ! $mail_disabled;
+		$sendmail_path     = (string) ini_get( 'sendmail_path' );
+		$header_from       = ! empty( $settings['wp_email_from_email'] ) && is_email( $settings['wp_email_from_email'] ) ? $settings['wp_email_from_email'] : ajcore_default_system_from_email();
+		$envelope_from     = ! empty( $settings['smtp_username'] ) && is_email( $settings['smtp_username'] ) ? $settings['smtp_username'] : '';
 		?>
 		<div class="wrap ajcore-mail-page">
 		<style>
-			/* Standalone page now, so it carries the .ajforms-settings-* styles it used to inherit
-			   from display_settings_page()'s own <style> block. Kept to just what this markup uses. */
-			.ajcore-mail-page .ajforms-settings-head h2{margin:0 0 10px;font-size:28px;line-height:1.2;color:#111827}
-			.ajcore-mail-page .ajforms-settings-head p{margin:0;color:#6b7280;font-size:16px;max-width:920px}
-			.ajcore-mail-page .ajforms-settings-card{margin-top:16px;background:#fff;border:1px solid #eef0f3;border-radius:16px;padding:22px 24px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
-			.ajcore-mail-page .ajforms-settings-card h3{margin:0 0 6px;font-size:18px;color:#111827}
-			.ajcore-mail-page .ajforms-settings-card > p{margin:0 0 18px;color:#6b7280;font-size:14px}
-			.ajcore-mail-page .ajforms-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-			.ajcore-mail-page .ajforms-settings-field label{display:block;margin-bottom:6px;font-weight:600;color:#111827;font-size:14px}
-			.ajcore-mail-page .ajforms-settings-field input[type="text"],.ajcore-mail-page .ajforms-settings-field input[type="email"],.ajcore-mail-page .ajforms-settings-field input[type="password"],.ajcore-mail-page .ajforms-settings-field select{width:100%;min-height:40px;border:1px solid #d9dce1;border-radius:10px;padding:8px 12px;background:#fff;box-sizing:border-box;font-size:14px}
-			.ajcore-mail-page .ajforms-settings-help{margin-top:6px;color:#6b7280;font-size:12.5px}
-			.ajcore-mail-page .ajforms-settings-note{margin-top:14px;padding:14px 16px;border-radius:10px;background:#f9fafb;color:#4b5563;font-size:13.5px}
-			.ajcore-mail-page .ajforms-settings-pill{display:inline-flex;align-items:center;padding:6px 11px;border-radius:999px;background:#fff7ed;color:#c2410c;font-weight:700;font-size:11px;letter-spacing:.04em;text-transform:uppercase}
-			.ajcore-mail-page .ajforms-settings-actions{margin-top:22px;display:flex;align-items:center;gap:14px}
-			.ajcore-mail-page .ajforms-settings-actions .button-primary{background:#ea580c;border-color:#ea580c;padding:0 18px;min-height:42px}
-			.ajcore-mail-page .ajforms-settings-inline-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
-			.ajcore-mail-page .ajforms-settings-section{padding-top:20px;margin-top:20px;border-top:1px solid #f0f1f4}
-			.ajcore-mail-page .ajforms-settings-section h4{margin:0 0 4px;font-size:15px;color:#111827}
-			.ajcore-mail-page .ajforms-settings-section > p.ajforms-settings-section-desc{margin:0 0 14px;color:#6b7280;font-size:13px}
-			.ajcore-mail-page .ajforms-simple-checkbox{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#111827;padding:5px 0;cursor:pointer}
-			.ajcore-mail-page .ajforms-simple-checkbox input{margin:0}
-			@media (max-width: 1100px){.ajcore-mail-page .ajforms-settings-grid{grid-template-columns:1fr}}
+			.ajcore-mail-page{max-width:1500px}
+			.ajcore-mail-page h1{margin:0 0 2px;font-size:23px}
+			.ajcore-mail-page .ajcm-sub{margin:0 0 14px;color:#6b7280;font-size:13px}
+			.ajcore-mail-page .ajcm-cols{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;align-items:start}
+			.ajcore-mail-page .ajcm-card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px}
+			.ajcore-mail-page .ajcm-card h2{margin:0 0 10px;font-size:14px;font-weight:700;color:#111827;text-transform:uppercase;letter-spacing:.04em}
+			.ajcore-mail-page .ajcm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px}
+			.ajcore-mail-page .ajcm-grid.ajcm-3{grid-template-columns:2fr 1fr 1fr}
+			.ajcore-mail-page label.ajcm-label{display:block;margin:0 0 3px;font-size:12px;font-weight:600;color:#374151}
+			.ajcore-mail-page .ajcm-card input[type="text"],.ajcore-mail-page .ajcm-card input[type="email"],.ajcore-mail-page .ajcm-card input[type="password"],.ajcore-mail-page .ajcm-card select{width:100%;min-height:32px;border:1px solid #d1d5db;border-radius:6px;padding:4px 9px;box-sizing:border-box;font-size:13px;background:#fff}
+			.ajcore-mail-page .ajcm-hint{margin:3px 0 0;color:#9ca3af;font-size:11.5px}
+			.ajcore-mail-page .ajcm-check{display:flex;align-items:center;gap:7px;font-size:12.5px;color:#374151;margin-top:7px}
+			.ajcore-mail-page .ajcm-check input{margin:0}
+			.ajcore-mail-page .ajcm-row{display:flex;align-items:center;gap:8px}
+			.ajcore-mail-page .ajcm-row input{flex:1 1 auto;min-width:0}
+			.ajcore-mail-page .ajcm-actions{margin-top:12px;display:flex;align-items:center;gap:10px}
+			.ajcore-mail-page .button-primary{background:#ea580c;border-color:#ea580c}
+			.ajcore-mail-page .ajcm-env{margin-top:14px;flex-direction:column;align-items:flex-start;padding:9px 13px;background:#f9fafb;border:1px solid #eceef2;border-radius:8px;font-size:12px;color:#4b5563;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center}
+			.ajcore-mail-page .ajcm-env code{background:none;padding:0;font-size:11.5px;color:#374151}
+			.ajcore-mail-page .ajcm-env .ajcm-warn{color:#b45309;font-weight:600}
+			.ajcore-mail-page .ajcm-env .ajcm-ok{color:#166534;font-weight:600}
+			.ajcore-mail-page details.ajcm-more{margin-top:8px;font-size:12px;color:#6b7280}
+			.ajcore-mail-page details.ajcm-more summary{cursor:pointer;color:#2563eb}
+			.ajcore-mail-page details.ajcm-more p{margin:6px 0 0;max-width:900px;line-height:1.5}
+			.ajcore-mail-page .notice{margin:0 0 12px}
+			.ajcore-mail-page .ajcm-foot{margin-top:12px;font-size:12.5px}
+			@media (max-width:1200px){.ajcore-mail-page .ajcm-cols{grid-template-columns:1fr}}
 		</style>
+
+		<h1><?php esc_html_e( 'AJ Core Mail', 'ajforms' ); ?></h1>
+		<p class="ajcm-sub"><?php esc_html_e( 'How this site sends outgoing mail.', 'ajforms' ); ?></p>
+
 		<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
 			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ajforms' ); ?></p></div>
 		<?php endif; ?>
-		<div class="ajforms-settings-head">
-			<h2><?php esc_html_e( 'AJ Core Mail', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'How this site sends outgoing mail. The log of what it has sent lives in AJ Core → Settings → Email Log.', 'ajforms' ); ?></p>
-		</div>
-
 		<?php if ( 'sent' === $test_status ) : ?>
-			<div class="notice notice-success is-dismissible inline"><p><?php echo esc_html( sprintf( __( 'Test email handed off to the mail server for %s. Check that inbox (and spam) — delivery can still fail after this point.', 'ajforms' ), $test_to ) ); ?></p></div>
+			<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Test email accepted for %s — check that inbox (and spam).', 'ajforms' ), $test_to ) ); ?></p></div>
 		<?php elseif ( 'failed' === $test_status ) : ?>
-			<div class="notice notice-error is-dismissible inline"><p><?php echo esc_html( sprintf( __( 'Test email to %1$s failed: %2$s', 'ajforms' ), $test_to, '' !== $test_error ? $test_error : __( 'wp_mail() returned false.', 'ajforms' ) ) ); ?></p></div>
+			<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sprintf( __( 'Test email to %1$s failed: %2$s', 'ajforms' ), $test_to, '' !== $test_error ? $test_error : __( 'wp_mail() returned false.', 'ajforms' ) ) ); ?></p></div>
 		<?php elseif ( 'invalid' === $test_status ) : ?>
-			<div class="notice notice-error is-dismissible inline"><p><?php esc_html_e( 'Enter a valid email address to send the test to.', 'ajforms' ); ?></p></div>
+			<div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'Enter a valid email address to send the test to.', 'ajforms' ); ?></p></div>
 		<?php endif; ?>
 
-		<form method="post" action="<?php echo esc_url( $section_url ); ?>">
-			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
-			<div class="ajforms-settings-card">
-				<span class="ajforms-settings-pill"><?php esc_html_e( 'Outgoing Mail', 'ajforms' ); ?></span>
-				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'The "From" address AJ Core puts on every message it sends — form notifications, portal mail, and WordPress system email.', 'ajforms' ); ?></p>
-				<div class="ajforms-settings-grid">
-					<div class="ajforms-settings-field">
-						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
-						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
-						<div class="ajforms-settings-help"><?php printf( esc_html__( 'Leave blank to send as %s (this site’s own domain), which keeps SPF/DKIM aligned.', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></div>
-					</div>
-					<div class="ajforms-settings-field">
-						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
-						<input name="wp_email_from_name" id="wp_email_from_name" type="text" placeholder="<?php echo esc_attr( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Leave blank to use the site title.', 'ajforms' ); ?></div>
-					</div>
-				</div>
-				<div class="ajforms-settings-section">
-					<h4><?php esc_html_e( 'Mail environment', 'ajforms' ); ?></h4>
-					<p class="ajforms-settings-section-desc"><?php esc_html_e( 'What PHP on this server actually reports. "Could not instantiate mail function" means mail() returned false — which happens when mail() is disabled, when sendmail_path is empty or wrong, or when the host refused the message (a send limit, or a sender it will not relay for).', 'ajforms' ); ?></p>
-					<?php
-					$disable_functions = (string) ini_get( 'disable_functions' );
-					$mail_disabled     = in_array( 'mail', array_map( 'trim', explode( ',', $disable_functions ) ), true );
-					$mail_callable     = function_exists( 'mail' ) && ! $mail_disabled;
-					$sendmail_path     = (string) ini_get( 'sendmail_path' );
-					?>
-					<table class="widefat striped" style="max-width:720px;">
-						<tbody>
-							<tr>
-								<td style="width:220px;"><strong><?php esc_html_e( 'PHP mail() available', 'ajforms' ); ?></strong></td>
-								<td><?php echo $mail_callable ? esc_html__( 'Yes', 'ajforms' ) : esc_html__( 'No — disabled on this server', 'ajforms' ); ?></td>
-							</tr>
-							<tr>
-								<td><strong><?php esc_html_e( 'sendmail_path', 'ajforms' ); ?></strong></td>
-								<td>
-									<?php if ( '' === $sendmail_path ) : ?>
-										<span style="color:#b91c1c;"><?php esc_html_e( 'Empty — PHP has no mail binary to hand the message to, so mail() cannot succeed. This alone causes "Could not instantiate mail function".', 'ajforms' ); ?></span>
-									<?php else : ?>
-										<code><?php echo esc_html( $sendmail_path ); ?></code>
-									<?php endif; ?>
-								</td>
-							</tr>
-							<?php if ( '' !== $disable_functions ) : ?>
-								<tr>
-									<td><strong><?php esc_html_e( 'disable_functions', 'ajforms' ); ?></strong></td>
-									<td><code style="word-break:break-all;"><?php echo esc_html( $disable_functions ); ?></code></td>
-								</tr>
-							<?php endif; ?>
-							<tr>
-								<td><strong><?php esc_html_e( 'Currently sending via', 'ajforms' ); ?></strong></td>
-								<td>
-									<?php if ( $smtp_ready ) : ?>
-										<?php echo esc_html( sprintf( __( 'SMTP — %s', 'ajforms' ), $settings['smtp_host'] ) ); ?>
-									<?php elseif ( 'smtp' === $mail_mode ) : ?>
-										<span style="color:#b45309;"><?php esc_html_e( 'PHP mail() — SMTP is selected but no host is configured yet, so WordPress still uses mail().', 'ajforms' ); ?></span>
-									<?php else : ?>
-										<?php esc_html_e( 'PHP mail()', 'ajforms' ); ?>
-									<?php endif; ?>
-								</td>
-							</tr>
-						</tbody>
-					</table>
-					<?php if ( 'smtp' !== $mail_mode && ( ! $mail_callable || '' === $sendmail_path ) ) : ?>
-						<div class="ajforms-settings-note" style="border-left:3px solid #b91c1c;">
-							<?php esc_html_e( 'This server cannot send mail with PHP mail(). Switch the mode below to SMTP and enter your mail provider’s settings — that is the fix, not a workaround.', 'ajforms' ); ?>
+		<?php // Two columns: everything that saves together on the left in ONE form, the test send
+		// (its own nonce, its own form — forms can't nest) and the server readout on the right. ?>
+		<div class="ajcm-cols">
+			<form method="post" action="<?php echo esc_url( $section_url ); ?>">
+				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+
+				<div class="ajcm-card">
+					<h2><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h2>
+					<div class="ajcm-grid">
+						<div>
+							<label class="ajcm-label" for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
+							<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+							<p class="ajcm-hint"><?php echo esc_html( sprintf( __( 'Blank = %s. Must be an address your SMTP provider will send as.', 'ajforms' ), ajcore_default_system_from_email() ) ); ?></p>
 						</div>
-					<?php endif; ?>
+						<div>
+							<label class="ajcm-label" for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
+							<input name="wp_email_from_name" id="wp_email_from_name" type="text" placeholder="<?php echo esc_attr( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
+							<p class="ajcm-hint"><?php esc_html_e( 'Blank = site title.', 'ajforms' ); ?></p>
+						</div>
+					</div>
 				</div>
 
-				<div class="ajforms-settings-section">
-					<h4><?php esc_html_e( 'How mail is sent', 'ajforms' ); ?></h4>
-					<p class="ajforms-settings-section-desc"><?php esc_html_e( 'Many hosts disable PHP’s mail() function. When that happens every outgoing email fails with “Could not instantiate mail function” — switch to SMTP and mail goes out through your mail provider instead.', 'ajforms' ); ?></p>
-					<div class="ajforms-settings-field" style="max-width:420px;">
-						<label for="mail_mode"><?php esc_html_e( 'Send mail using', 'ajforms' ); ?></label>
-						<select name="mail_mode" id="mail_mode">
-							<option value="smtp" <?php selected( $mail_mode, 'smtp' ); ?>><?php esc_html_e( 'SMTP — your mail provider (recommended)', 'ajforms' ); ?></option>
-							<option value="php" <?php selected( $mail_mode, 'php' ); ?>><?php esc_html_e( 'PHP mail() — the host’s built-in mailer', 'ajforms' ); ?></option>
-						</select>
+				<div class="ajcm-card" style="margin-top:14px;">
+					<h2><?php esc_html_e( 'How mail is sent', 'ajforms' ); ?></h2>
+					<div class="ajcm-grid ajcm-3">
+						<div>
+							<label class="ajcm-label" for="mail_mode"><?php esc_html_e( 'Send using', 'ajforms' ); ?></label>
+							<select name="mail_mode" id="mail_mode">
+								<option value="smtp" <?php selected( $mail_mode, 'smtp' ); ?>><?php esc_html_e( 'SMTP (recommended)', 'ajforms' ); ?></option>
+								<option value="php" <?php selected( $mail_mode, 'php' ); ?>><?php esc_html_e( 'PHP mail() — host mailer', 'ajforms' ); ?></option>
+							</select>
+						</div>
 					</div>
-
-					<div id="ajcore-smtp-fields" style="<?php echo 'smtp' === $mail_mode ? '' : 'display:none;'; ?>margin-top:16px;">
-						<div class="ajforms-settings-grid">
-							<div class="ajforms-settings-field">
-								<label for="smtp_host"><?php esc_html_e( 'SMTP Host', 'ajforms' ); ?></label>
-								<input name="smtp_host" id="smtp_host" type="text" placeholder="smtp.hostinger.com" value="<?php echo esc_attr( $settings['smtp_host'] ); ?>">
-								<div class="ajforms-settings-help"><?php esc_html_e( 'From your mail provider (e.g. smtp.hostinger.com, smtp.zoho.com, smtp.gmail.com).', 'ajforms' ); ?></div>
+					<div id="ajcore-smtp-fields" style="<?php echo 'smtp' === $mail_mode ? '' : 'display:none;'; ?>margin-top:12px;">
+						<div class="ajcm-grid ajcm-3">
+							<div>
+								<label class="ajcm-label" for="smtp_host"><?php esc_html_e( 'SMTP Host', 'ajforms' ); ?></label>
+								<input name="smtp_host" id="smtp_host" type="text" placeholder="smtp.zoho.com" value="<?php echo esc_attr( $settings['smtp_host'] ); ?>">
 							</div>
-							<div class="ajforms-settings-field">
-								<label for="smtp_encryption"><?php esc_html_e( 'Encryption', 'ajforms' ); ?></label>
+							<div>
+								<label class="ajcm-label" for="smtp_encryption"><?php esc_html_e( 'Encryption', 'ajforms' ); ?></label>
 								<select name="smtp_encryption" id="smtp_encryption">
-									<option value="tls" <?php selected( $settings['smtp_encryption'], 'tls' ); ?>><?php esc_html_e( 'STARTTLS (usually port 587)', 'ajforms' ); ?></option>
-									<option value="ssl" <?php selected( $settings['smtp_encryption'], 'ssl' ); ?>><?php esc_html_e( 'SSL/TLS (usually port 465)', 'ajforms' ); ?></option>
-									<option value="none" <?php selected( $settings['smtp_encryption'], 'none' ); ?>><?php esc_html_e( 'None (not recommended)', 'ajforms' ); ?></option>
+									<option value="tls" <?php selected( $settings['smtp_encryption'], 'tls' ); ?>><?php esc_html_e( 'STARTTLS (587)', 'ajforms' ); ?></option>
+									<option value="ssl" <?php selected( $settings['smtp_encryption'], 'ssl' ); ?>><?php esc_html_e( 'SSL/TLS (465)', 'ajforms' ); ?></option>
+									<option value="none" <?php selected( $settings['smtp_encryption'], 'none' ); ?>><?php esc_html_e( 'None', 'ajforms' ); ?></option>
 								</select>
 							</div>
-							<div class="ajforms-settings-field">
-								<label for="smtp_port"><?php esc_html_e( 'Port', 'ajforms' ); ?></label>
-								<input name="smtp_port" id="smtp_port" type="text" inputmode="numeric" placeholder="587" value="<?php echo esc_attr( $settings['smtp_port'] ); ?>">
+							<div>
+								<label class="ajcm-label" for="smtp_port"><?php esc_html_e( 'Port', 'ajforms' ); ?></label>
+								<input name="smtp_port" id="smtp_port" type="text" inputmode="numeric" placeholder="465" value="<?php echo esc_attr( $settings['smtp_port'] ); ?>">
 							</div>
-							<div class="ajforms-settings-field">
-								<label for="smtp_username"><?php esc_html_e( 'Username', 'ajforms' ); ?></label>
-								<input name="smtp_username" id="smtp_username" type="text" autocomplete="off" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['smtp_username'] ); ?>">
-								<div class="ajforms-settings-help"><?php esc_html_e( 'Usually the full mailbox address.', 'ajforms' ); ?></div>
+						</div>
+						<div class="ajcm-grid" style="margin-top:10px;">
+							<div>
+								<label class="ajcm-label" for="smtp_username"><?php esc_html_e( 'Username', 'ajforms' ); ?></label>
+								<input name="smtp_username" id="smtp_username" type="text" autocomplete="off" value="<?php echo esc_attr( $settings['smtp_username'] ); ?>">
 							</div>
-							<div class="ajforms-settings-field">
-								<label for="smtp_password"><?php esc_html_e( 'Password', 'ajforms' ); ?></label>
+							<div>
+								<label class="ajcm-label" for="smtp_password"><?php esc_html_e( 'Password', 'ajforms' ); ?></label>
 								<?php if ( $smtp_password_is_constant ) : ?>
-									<p class="ajforms-settings-help" style="margin:0;"><?php esc_html_e( 'Set in wp-config.php via AJCORE_SMTP_PASSWORD — it is used instead of anything stored here, and cannot be changed from this screen.', 'ajforms' ); ?></p>
+									<p class="ajcm-hint" style="margin:8px 0 0;"><?php esc_html_e( 'Set in wp-config.php (AJCORE_SMTP_PASSWORD).', 'ajforms' ); ?></p>
 								<?php else : ?>
-									<input name="smtp_password" id="smtp_password" type="password" autocomplete="new-password" value="" placeholder="<?php echo $smtp_password_is_set ? esc_attr__( '•••••••• (unchanged)', 'ajforms' ) : ''; ?>">
-									<div class="ajforms-settings-help">
-										<?php esc_html_e( 'Leave blank to keep the saved password. For a mailbox password you’d rather keep out of the database, define AJCORE_SMTP_PASSWORD in wp-config.php instead.', 'ajforms' ); ?>
-									</div>
-									<?php if ( $smtp_password_is_set ) : ?>
-										<label class="ajforms-simple-checkbox" style="margin-top:6px;"><input type="checkbox" name="smtp_clear_password" value="1"> <?php esc_html_e( 'Clear the saved password', 'ajforms' ); ?></label>
-									<?php endif; ?>
+									<input name="smtp_password" id="smtp_password" type="password" autocomplete="new-password" value="" placeholder="<?php echo $smtp_password_is_set ? esc_attr__( '•••••••• saved — type to replace', 'ajforms' ) : ''; ?>">
 								<?php endif; ?>
 							</div>
 						</div>
-						<label class="ajforms-simple-checkbox" style="margin-top:10px;"><input type="checkbox" name="smtp_auth" value="1" <?php checked( '1' === (string) $settings['smtp_auth'] ); ?>> <?php esc_html_e( 'This server requires authentication (almost always yes)', 'ajforms' ); ?></label>
-						<label class="ajforms-simple-checkbox"><input type="checkbox" name="smtp_envelope_from_username" value="1" <?php checked( '1' === (string) $settings['smtp_envelope_from_username'] ); ?>> <?php esc_html_e( 'Send on behalf of the username above (recommended)', 'ajforms' ); ?></label>
-						<div class="ajforms-settings-help" style="margin:2px 0 0 26px;">
-							<?php
-							$envelope_from = ! empty( $settings['smtp_username'] ) && is_email( $settings['smtp_username'] ) ? $settings['smtp_username'] : __( 'the SMTP username', 'ajforms' );
-							$header_from   = ! empty( $settings['wp_email_from_email'] ) && is_email( $settings['wp_email_from_email'] ) ? $settings['wp_email_from_email'] : ajcore_default_system_from_email();
-							echo esc_html( sprintf(
-								/* translators: 1: SMTP username, 2: System From Email. */
-								__( 'Keeps each brand’s own From address on the message while the mailbox you log in as carries the delivery. Most providers only relay mail sent on behalf of the account you authenticated with, so leaving this on is usually what lets one login send for several domains. Recipients see “%2$s via %1$s” (Gmail) or “%1$s on behalf of %2$s” (Outlook). Turn it off only if your provider accepts any From address.', 'ajforms' ),
-								$envelope_from,
-								$header_from
-							) );
-							?>
-						</div>
-						<div class="ajforms-settings-note">
-							<?php esc_html_e( 'Save first, then use “Send a test email” below — a failed send now reports the SMTP server’s own error, which is usually enough to tell a wrong password from a blocked port.', 'ajforms' ); ?>
-						</div>
+						<label class="ajcm-check"><input type="checkbox" name="smtp_auth" value="1" <?php checked( '1' === (string) $settings['smtp_auth'] ); ?>> <?php esc_html_e( 'Server requires authentication', 'ajforms' ); ?></label>
+						<label class="ajcm-check"><input type="checkbox" name="smtp_envelope_from_username" value="1" <?php checked( '1' === (string) $settings['smtp_envelope_from_username'] ); ?>> <?php esc_html_e( 'Send on behalf of the username', 'ajforms' ); ?></label>
+						<details class="ajcm-more">
+							<summary><?php esc_html_e( 'What recipients see', 'ajforms' ); ?></summary>
+							<p>
+								<?php
+								echo esc_html( sprintf(
+									/* translators: 1: SMTP username, 2: System From Email. */
+									__( 'Keeps each brand’s From address on the message while the mailbox you log in as carries the delivery: Gmail shows “%2$s via %1$s”, Outlook “%1$s on behalf of %2$s”. Some providers (Zoho among them) reject any From address the account does not own, whatever the envelope says — those need the From to be a mailbox or verified alias on that account.', 'ajforms' ),
+									'' !== $envelope_from ? $envelope_from : __( 'the SMTP username', 'ajforms' ),
+									$header_from
+								) );
+								?>
+							</p>
+						</details>
 					</div>
-					<script>
-					(function () {
-						var mode = document.getElementById( 'mail_mode' ),
-							fields = document.getElementById( 'ajcore-smtp-fields' );
-						if ( ! mode || ! fields ) { return; }
-						mode.addEventListener( 'change', function () {
-							fields.style.display = 'smtp' === mode.value ? '' : 'none';
-						} );
-					})();
-					</script>
+					<div class="ajcm-actions">
+						<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
+					</div>
+				</div>
+			</form>
+
+			<div>
+				<div class="ajcm-card">
+					<h2><?php esc_html_e( 'Send a test email', 'ajforms' ); ?></h2>
+					<form method="post" action="<?php echo esc_url( $section_url ); ?>">
+						<?php wp_nonce_field( 'ajcore_send_test_email', 'ajcore_send_test_email_nonce' ); ?>
+						<div class="ajcm-row">
+							<input type="email" name="test_email_to" value="<?php echo esc_attr( $default_test_to ); ?>" required>
+							<button type="submit" class="button button-secondary" style="white-space:nowrap;"><?php esc_html_e( 'Send Test', 'ajforms' ); ?></button>
+						</div>
+						<p class="ajcm-hint"><?php esc_html_e( 'Uses the saved settings and appears in the Email Log. Save changes first.', 'ajforms' ); ?></p>
+					</form>
 				</div>
 
-				<div class="ajforms-settings-actions">
-					<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
+				<div class="ajcm-env">
+					<span><strong><?php esc_html_e( 'Sending via', 'ajforms' ); ?>:</strong>
+						<?php if ( $smtp_ready ) : ?>
+							<span class="ajcm-ok"><?php echo esc_html( sprintf( 'SMTP — %s', $settings['smtp_host'] ) ); ?></span>
+						<?php elseif ( 'smtp' === $mail_mode ) : ?>
+							<span class="ajcm-warn"><?php esc_html_e( 'PHP mail() — SMTP selected, no host set', 'ajforms' ); ?></span>
+						<?php else : ?>
+							<?php esc_html_e( 'PHP mail()', 'ajforms' ); ?>
+						<?php endif; ?>
+					</span>
+					<span><strong><?php esc_html_e( 'mail()', 'ajforms' ); ?>:</strong> <?php echo $mail_callable ? esc_html__( 'available', 'ajforms' ) : '<span class="ajcm-warn">' . esc_html__( 'disabled', 'ajforms' ) . '</span>'; ?></span>
+					<span><strong>sendmail_path:</strong> <?php echo '' !== $sendmail_path ? '<code>' . esc_html( $sendmail_path ) . '</code>' : '<span class="ajcm-warn">' . esc_html__( 'empty', 'ajforms' ) . '</span>'; ?></span>
+					<span><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Email Log →', 'ajforms' ); ?></a></span>
 				</div>
 			</div>
-		</form>
+		</div>
 
-		<form method="post" action="<?php echo esc_url( $section_url ); ?>" class="ajforms-settings-card">
-			<?php wp_nonce_field( 'ajcore_send_test_email', 'ajcore_send_test_email_nonce' ); ?>
-			<h3><?php esc_html_e( 'Send a test email', 'ajforms' ); ?></h3>
-			<p><?php esc_html_e( 'Sends a short message using the saved sender identity above. It shows up in the Email Log below either way. Defaults to a mailbox on this site’s own domain — test with that first, since an on-domain send is the one your host is least likely to refuse.', 'ajforms' ); ?></p>
-			<div class="ajforms-settings-inline-actions">
-				<input type="email" name="test_email_to" value="<?php echo esc_attr( $default_test_to ); ?>" style="min-width:280px;" required>
-				<button type="submit" class="button"><?php esc_html_e( 'Send Test Email', 'ajforms' ); ?></button>
-			</div>
-		</form>
-		<p style="margin-top:22px;">
-			<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View the Email Log →', 'ajforms' ); ?></a>
-		</p>
+		<script>
+		(function () {
+			var mode = document.getElementById( 'mail_mode' ),
+				fields = document.getElementById( 'ajcore-smtp-fields' );
+			if ( ! mode || ! fields ) { return; }
+			mode.addEventListener( 'change', function () {
+				fields.style.display = 'smtp' === mode.value ? '' : 'none';
+			} );
+		})();
+		</script>
 		</div>
 		<?php
 	}
