@@ -975,6 +975,19 @@ function initAJFormsBuilder() {
         if (successMessageInput) {
             successMessageInput.value = formSchema.settings.success_message || 'Form submitted successfully.';
         }
+        const successContentInput = document.getElementById('wpf-form-success-content');
+        const showSubmissionSummaryInput = document.getElementById('wpf-form-show-submission-summary');
+        const submissionSummaryHeadingInput = document.getElementById('wpf-form-submission-summary-heading');
+        if (successContentInput) {
+            successContentInput.value = formSchema.settings.success_content || '';
+        }
+        if (showSubmissionSummaryInput) {
+            showSubmissionSummaryInput.checked = !!formSchema.settings.show_submission_summary;
+        }
+        if (submissionSummaryHeadingInput) {
+            submissionSummaryHeadingInput.value = formSchema.settings.submission_summary_heading || 'Here\'s what you submitted';
+        }
+        renderSuccessButtons();
         if (buttonAlignmentInput) {
             buttonAlignmentInput.value = formSchema.settings.button_alignment || 'left';
         }
@@ -1579,6 +1592,65 @@ function initAJFormsBuilder() {
                 renderConfirmationRules();
             });
         });
+    }
+
+    function normalizeSuccessButtons(buttons) {
+        return (Array.isArray(buttons) ? buttons : []).map((button) => ({
+            label: button && button.label ? String(button.label) : '',
+            url: button && button.url ? String(button.url) : '',
+            new_tab: !!(button && button.new_tab)
+        }));
+    }
+
+    function renderSuccessButtons() {
+        const node = document.getElementById('wpf-success-buttons');
+        if (!node) {
+            return;
+        }
+
+        const buttons = normalizeSuccessButtons(formSchema.settings.success_buttons);
+        formSchema.settings.success_buttons = buttons;
+
+        if (!buttons.length) {
+            node.innerHTML = '<p class="wpf-setting-help">No buttons yet.</p>';
+            return;
+        }
+
+        node.innerHTML = buttons.map((button, buttonIndex) => `
+            <div class="wpf-field-settings-card wpf-success-button" data-button-index="${buttonIndex}" style="margin-bottom:8px;">
+                <div class="wpf-setting-row">
+                    <label>Button Label</label>
+                    <input type="text" class="wpf-success-button-label" value="${escapeHtml(button.label)}" placeholder="Text Office Space">
+                </div>
+                <div class="wpf-setting-row">
+                    <label>Button Link</label>
+                    <input type="text" class="wpf-success-button-url" value="${escapeHtml(button.url)}" placeholder="https://… or sms:+15555555555">
+                </div>
+                <label class="wpf-toggle-row">
+                    <span>Open in new tab</span>
+                    <input type="checkbox" class="wpf-success-button-new-tab" ${button.new_tab ? 'checked' : ''}>
+                </label>
+                <button type="button" class="wpf-btn wpf-btn-secondary wpf-remove-success-button" style="margin-top:8px;">Remove</button>
+            </div>
+        `).join('');
+    }
+
+    function collectSuccessButtonsFromDom() {
+        const node = document.getElementById('wpf-success-buttons');
+        if (!node) {
+            return normalizeSuccessButtons(formSchema.settings.success_buttons);
+        }
+
+        const buttons = [];
+        node.querySelectorAll('.wpf-success-button').forEach((buttonEl) => {
+            buttons.push({
+                label: (buttonEl.querySelector('.wpf-success-button-label')?.value || '').trim(),
+                url: (buttonEl.querySelector('.wpf-success-button-url')?.value || '').trim(),
+                new_tab: !!buttonEl.querySelector('.wpf-success-button-new-tab')?.checked
+            });
+        });
+
+        return buttons;
     }
 
     function collectConfirmationRulesFromDom() {
@@ -2463,8 +2535,37 @@ function initAJFormsBuilder() {
         });
     }
 
+    const addSuccessButtonBtn = document.getElementById('wpf-add-success-button');
+    if (addSuccessButtonBtn) {
+        addSuccessButtonBtn.addEventListener('click', () => {
+            const buttons = collectSuccessButtonsFromDom();
+            if (buttons.length >= 6) {
+                window.alert('You can add up to 6 buttons.');
+                return;
+            }
+            buttons.push({ label: '', url: '', new_tab: false });
+            formSchema.settings.success_buttons = buttons;
+            renderSuccessButtons();
+        });
+    }
+
+    const successButtonsNode = document.getElementById('wpf-success-buttons');
+    if (successButtonsNode) {
+        successButtonsNode.addEventListener('click', (event) => {
+            const removeBtn = event.target.closest('.wpf-remove-success-button');
+            if (!removeBtn) {
+                return;
+            }
+            const buttonEl = removeBtn.closest('.wpf-success-button');
+            const removeIndex = buttonEl ? parseInt(buttonEl.dataset.buttonIndex, 10) : -1;
+            formSchema.settings.success_buttons = collectSuccessButtonsFromDom().filter((button, index) => index !== removeIndex);
+            renderSuccessButtons();
+        });
+    }
+
     activateFormSettingsSection('basics');
     renderConfirmationRules();
+    renderSuccessButtons();
     updateConfirmationModePanels();
 
     if (undoBtn) {
@@ -2593,6 +2694,13 @@ function initAJFormsBuilder() {
         formSchema.settings.autoresponder_body = autoresponderBodyInput ? autoresponderBodyInput.value.trim() : '';
         formSchema.settings.form_description = descriptionInput ? descriptionInput.value.trim() : '';
         formSchema.settings.success_message = successMessageInput ? (successMessageInput.value.trim() || 'Form submitted successfully.') : 'Form submitted successfully.';
+        const successContentInput = document.getElementById('wpf-form-success-content');
+        const showSubmissionSummaryInput = document.getElementById('wpf-form-show-submission-summary');
+        const submissionSummaryHeadingInput = document.getElementById('wpf-form-submission-summary-heading');
+        formSchema.settings.success_content = successContentInput ? successContentInput.value.trim() : (formSchema.settings.success_content || '');
+        formSchema.settings.success_buttons = collectSuccessButtonsFromDom().filter((button) => button.label && button.url);
+        formSchema.settings.show_submission_summary = showSubmissionSummaryInput ? !!showSubmissionSummaryInput.checked : !!formSchema.settings.show_submission_summary;
+        formSchema.settings.submission_summary_heading = submissionSummaryHeadingInput ? (submissionSummaryHeadingInput.value.trim() || 'Here\'s what you submitted') : (formSchema.settings.submission_summary_heading || 'Here\'s what you submitted');
         formSchema.settings.button_alignment = buttonAlignmentInput ? (buttonAlignmentInput.value || 'left') : 'left';
         formSchema.settings.confirmation_mode = confirmationModeInput ? (confirmationModeInput.value || 'default') : 'default';
         formSchema.settings.confirmation_type = confirmationTypeInput ? (confirmationTypeInput.value || 'message') : 'message';

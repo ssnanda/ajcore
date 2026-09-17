@@ -7916,6 +7916,12 @@ class AJForms {
 			'confirmation_type'     => 'message',
 			'redirect_url'          => '',
 			'confirmation_rules'    => array(),
+			// Rich success screen (opt-in): all empty/off by default, so a form only gets the
+			// rich screen once someone fills one of these in for that form.
+			'success_content'            => '',
+			'success_buttons'            => array(),
+			'show_submission_summary'    => false,
+			'submission_summary_heading' => "Here's what you submitted",
 			'use_label_placeholders' => false,
 			'custom_css'            => '',
 			'asana_task_enabled'    => false,
@@ -11856,9 +11862,13 @@ class AJForms {
 
 				if ( 'show_message' === $action['type'] ) {
 					$result['message'] = ! empty( $action['message'] ) ? $this->replace_template_tags( (string) $action['message'], $form, $lead_data ) : $result['message'];
+					if ( ! empty( $action['message'] ) ) {
+						$result['rule_message'] = true;
+					}
 				} elseif ( 'redirect' === $action['type'] ) {
 					$result['redirect_url'] = ! empty( $action['url'] ) ? esc_url_raw( $this->replace_template_tags( (string) $action['url'], $form, $lead_data ) ) : $result['redirect_url'];
 					$result['message']      = __( 'Redirecting...', 'ajforms' );
+					unset( $result['rule_message'] );
 				} elseif ( 'webhook' === $action['type'] ) {
 					$plugin_settings = function_exists( 'ajforms_get_settings' ) ? ajforms_get_settings() : array();
 					$webhook_url     = ! empty( $action['url'] ) ? (string) $action['url'] : ( isset( $plugin_settings['webhook_url'] ) ? (string) $plugin_settings['webhook_url'] : '' );
@@ -12147,12 +12157,229 @@ class AJForms {
 			exit;
 		}
 
-		return array(
+		$submission_result = array(
 			'submitted'    => true,
 			'success'      => true,
 			'message'      => ! empty( $confirmation_result['message'] ) ? $confirmation_result['message'] : 'Form submitted successfully.',
 			'redirect_url' => $redirect_url,
 		);
+
+		// Opt-in rich success screen. Built in memory from this request's validated lead data
+		// and rendered straight into this POST response — never stored or put in a URL.
+		if ( '' === $redirect_url && $this->form_uses_rich_success_screen( $settings ) ) {
+			$submission_result['rich_success'] = $this->build_rich_success_screen( $form, $lead_data, $settings, $confirmation_result );
+		}
+
+		return $submission_result;
+	}
+
+	/**
+	 * Whether a form has opted in to the rich success screen. Forms that never set any of the
+	 * new settings (every existing form) return false and keep the plain success message.
+	 */
+	private function form_uses_rich_success_screen( $settings ) {
+		return ( isset( $settings['success_content'] ) && '' !== trim( (string) $settings['success_content'] ) )
+			|| ! empty( $this->get_success_buttons( $settings ) )
+			|| ! empty( $settings['show_submission_summary'] );
+	}
+
+	private function get_success_button_protocols() {
+		return array( 'http', 'https', 'tel', 'sms', 'mailto' );
+	}
+
+	private function get_success_buttons( $settings ) {
+		$buttons = array();
+		$raw     = isset( $settings['success_buttons'] ) && is_array( $settings['success_buttons'] ) ? $settings['success_buttons'] : array();
+
+		foreach ( $raw as $button ) {
+			if ( ! is_array( $button ) ) {
+				continue;
+			}
+
+			$label = isset( $button['label'] ) ? sanitize_text_field( (string) $button['label'] ) : '';
+			$url   = isset( $button['url'] ) ? esc_url_raw( trim( (string) $button['url'] ), $this->get_success_button_protocols() ) : '';
+
+			if ( '' === $label || '' === $url ) {
+				continue;
+			}
+
+			$buttons[] = array(
+				'label'   => $label,
+				'url'     => $url,
+				'new_tab' => ! empty( $button['new_tab'] ),
+			);
+		}
+
+		return $buttons;
+	}
+
+	/**
+	 * Merge tags for success_content. Unlike replace_template_tags() (used for emails), every
+	 * value is HTML-escaped, file fields resolve to the file name only, and the submission_*
+	 * table tags are blanked because they carry file URLs and request metadata.
+	 */
+	private function replace_success_content_tags( $content, $form, $lead_data ) {
+		$replacements = array(
+			'{form_title}'               => esc_html( isset( $form->title ) ? (string) $form->title : '' ),
+			'{submitted_at}'             => esc_html( isset( $lead_data['_meta']['submitted_at'] ) ? (string) $lead_data['_meta']['submitted_at'] : current_time( 'mysql' ) ),
+			'{submission_count}'         => '1',
+			'{submission_fields}'        => '',
+			'{submission_details}'       => '',
+			'{submission_table}'         => '',
+			'{submission_details_table}' => '',
+		);
+
+		$field_index = 1;
+		foreach ( $lead_data as $field_id => $field ) {
+			if ( ! is_array( $field ) || 0 === strpos( (string) $field_id, '_' ) ) {
+				continue;
+			}
+
+			$value = esc_html( $this->get_summary_display_value( $field ) );
+
+			$replacements[ '{field_' . $field_index . '}' ] = $value;
+			$replacements[ '{' . $field_id . '}' ]         = $value;
+
+			if ( ! empty( $field['field_name'] ) ) {
+				$replacements[ '{' . sanitize_key( $field['field_name'] ) . '}' ] = $value;
+			}
+
+			$field_index++;
+		}
+
+		return strtr( $content, $replacements );
+	}
+
+	/**
+	 * Plain-text display value for a lead field. File fields return only the file name.
+	 */
+	private function get_summary_display_value( $field ) {
+		$type = isset( $field['type'] ) ? (string) $field['type'] : '';
+
+		if ( 'file' === $type ) {
+			return ! empty( $field['file_name'] ) ? sanitize_file_name( wp_basename( (string) $field['file_name'] ) ) : '';
+		}
+
+		if ( 'textarea' === $type && isset( $field['value'] ) && is_string( $field['value'] ) ) {
+			return trim( sanitize_textarea_field( $field['value'] ) );
+		}
+
+		return isset( $field['value'] ) ? trim( $this->format_lead_value_for_display( $field['value'] ) ) : '';
+	}
+
+	private function build_submission_summary_rows( $lead_data ) {
+		$excluded_types = array( 'hidden', 'payment', 'stripe', 'password', 'captcha', 'honeypot' );
+		$rows           = array();
+
+		foreach ( $lead_data as $field_id => $field ) {
+			// "_"-prefixed entries are tracking/meta (_meta) and payment data (_stripe_payment).
+			if ( ! is_array( $field ) || 0 === strpos( (string) $field_id, '_' ) ) {
+				continue;
+			}
+
+			$type = isset( $field['type'] ) ? (string) $field['type'] : 'text';
+			if ( in_array( $type, $excluded_types, true ) || $this->is_display_only_form_field( $type ) ) {
+				continue;
+			}
+
+			$value = $this->get_summary_display_value( $field );
+			if ( '' === $value ) {
+				continue;
+			}
+
+			$rows[] = array(
+				'label' => ! empty( $field['label'] ) ? sanitize_text_field( (string) $field['label'] ) : sanitize_text_field( (string) $field_id ),
+				'value' => $value,
+				'full'  => 'textarea' === $type || 'address' === $type || strlen( $value ) > 80,
+			);
+		}
+
+		return $rows;
+	}
+
+	private function build_rich_success_screen( $form, $lead_data, $settings, $confirmation_result ) {
+		$success_content = isset( $settings['success_content'] ) ? (string) $settings['success_content'] : '';
+		$message         = ! empty( $confirmation_result['message'] ) ? (string) $confirmation_result['message'] : 'Form submitted successfully.';
+
+		// A matched conditional rule's own "show message" text wins over the form-level
+		// success_content; buttons and the summary are form-level and still apply.
+		if ( empty( $confirmation_result['rule_message'] ) && '' !== trim( $success_content ) ) {
+			$content_html = wp_kses_post( $this->replace_success_content_tags( wp_kses_post( $success_content ), $form, $lead_data ) );
+		} else {
+			$content_html = '<p>' . nl2br( esc_html( $message ) ) . '</p>';
+		}
+
+		$heading = isset( $settings['submission_summary_heading'] ) ? sanitize_text_field( (string) $settings['submission_summary_heading'] ) : '';
+
+		return array(
+			'content_html'    => $content_html,
+			'buttons'         => $this->get_success_buttons( $settings ),
+			'summary_rows'    => ! empty( $settings['show_submission_summary'] ) ? $this->build_submission_summary_rows( $lead_data ) : array(),
+			'summary_heading' => '' !== $heading ? $heading : __( "Here's what you submitted", 'ajforms' ),
+		);
+	}
+
+	private function render_rich_success_screen( $submission_result ) {
+		if ( empty( $submission_result['success'] ) || empty( $submission_result['rich_success'] ) || ! is_array( $submission_result['rich_success'] ) ) {
+			return '';
+		}
+
+		$screen = $submission_result['rich_success'];
+
+		ob_start();
+		?>
+		<style>
+			.ajforms-success-rich{margin:0 0 20px;color:var(--ajforms-text)}
+			.ajforms-success-rich__content{padding:16px 18px;border:1px solid var(--ajforms-input-border);border-left:4px solid var(--ajforms-primary);border-radius:min(var(--ajforms-radius),14px);background:var(--ajforms-input-bg);line-height:1.6}
+			.ajforms-success-rich__content>:first-child{margin-top:0}
+			.ajforms-success-rich__content>:last-child{margin-bottom:0}
+			.ajforms-success-rich__buttons{display:flex;flex-wrap:wrap;gap:12px;margin-top:18px}
+			.ajforms-success-rich__button{display:inline-flex;align-items:center;justify-content:center;min-width:200px;padding:14px 22px;border:2px solid var(--ajforms-primary);border-radius:999px;background:var(--ajforms-primary);color:#fff;font-weight:700;line-height:1.2;text-align:center;text-decoration:none}
+			.ajforms-success-rich__button:hover,.ajforms-success-rich__button:focus-visible{filter:brightness(.92);color:#fff;text-decoration:none}
+			.ajforms-success-rich__button:focus-visible{outline:3px solid var(--ajforms-primary);outline-offset:3px}
+			.ajforms-success-rich__button+.ajforms-success-rich__button{background:transparent;color:var(--ajforms-primary)}
+			.ajforms-success-rich__button+.ajforms-success-rich__button:hover,.ajforms-success-rich__button+.ajforms-success-rich__button:focus-visible{color:var(--ajforms-primary)}
+			.ajforms-success-rich__summary{margin-top:22px;padding:20px;border:1px solid var(--ajforms-input-border);border-radius:min(var(--ajforms-radius),18px)}
+			.ajforms-success-rich__summary-title{margin:0 0 14px;font-size:1.25rem;line-height:1.3;color:var(--ajforms-text)}
+			.ajforms-success-rich__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}
+			.ajforms-success-rich__item{min-width:0;margin:0;padding:12px 14px;border:1px solid var(--ajforms-input-border);border-radius:min(var(--ajforms-radius),12px);background:var(--ajforms-input-bg)}
+			.ajforms-success-rich__item--full{grid-column:1/-1}
+			.ajforms-success-rich__label{margin:0 0 4px;font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ajforms-primary)}
+			.ajforms-success-rich__value{margin:0;line-height:1.55;white-space:pre-line;overflow-wrap:anywhere}
+			@media (max-width:640px){
+				.ajforms-success-rich__buttons{flex-direction:column}
+				.ajforms-success-rich__button{width:100%;min-width:0;box-sizing:border-box}
+				.ajforms-success-rich__grid{grid-template-columns:1fr}
+			}
+		</style>
+		<div class="ajforms-message success ajforms-success-rich" role="status">
+			<div class="ajforms-success-rich__content">
+				<?php echo wp_kses_post( $screen['content_html'] ); ?>
+			</div>
+			<?php if ( ! empty( $screen['buttons'] ) ) : ?>
+				<div class="ajforms-success-rich__buttons">
+					<?php foreach ( $screen['buttons'] as $button ) : ?>
+						<a class="ajforms-success-rich__button" href="<?php echo esc_url( $button['url'], $this->get_success_button_protocols() ); ?>"<?php echo ! empty( $button['new_tab'] ) ? ' target="_blank" rel="noopener noreferrer"' : ''; ?>><?php echo esc_html( $button['label'] ); ?></a>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+			<?php if ( ! empty( $screen['summary_rows'] ) ) : ?>
+				<div class="ajforms-success-rich__summary">
+					<h3 class="ajforms-success-rich__summary-title"><?php echo esc_html( $screen['summary_heading'] ); ?></h3>
+					<dl class="ajforms-success-rich__grid">
+						<?php foreach ( $screen['summary_rows'] as $row ) : ?>
+							<div class="ajforms-success-rich__item<?php echo ! empty( $row['full'] ) ? ' ajforms-success-rich__item--full' : ''; ?>">
+								<dt class="ajforms-success-rich__label"><?php echo esc_html( $row['label'] ); ?></dt>
+								<dd class="ajforms-success-rich__value"><?php echo esc_html( $row['value'] ); ?></dd>
+							</div>
+						<?php endforeach; ?>
+					</dl>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+
+		return ob_get_clean();
 	}
 
 	private function render_submission_redirect( $submission_result ) {
@@ -12442,11 +12669,11 @@ class AJForms {
 
 			<?php echo $this->render_submission_redirect( $submission_result ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
-			<?php if ( $submission_result['submitted'] ) : ?>
+			<?php if ( $submission_result['submitted'] && empty( $submission_result['rich_success'] ) ) : ?>
 				<div class="ajforms-message <?php echo $submission_result['success'] ? 'success' : 'error'; ?>" style="margin-bottom:20px;padding:12px;border-radius:4px;<?php echo $submission_result['success'] ? 'background:#edfaef;color:#116329;' : 'background:#fcf0f1;color:#8a2424;'; ?>">
 					<?php echo esc_html( $submission_result['message'] ); ?>
 				</div>
-			<?php endif; ?>
+			<?php endif; echo $this->render_rich_success_screen( $submission_result ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<?php if ( ! $submission_result['success'] ) : ?>
 				<?php foreach ( $question_fields as $field ) : ?>
@@ -12921,11 +13148,11 @@ class AJForms {
 
 			<?php echo $this->render_submission_redirect( $submission_result ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
-			<?php if ( $submission_result['submitted'] ) : ?>
+			<?php if ( $submission_result['submitted'] && empty( $submission_result['rich_success'] ) ) : ?>
 				<div class="ajforms-message <?php echo $submission_result['success'] ? 'success' : 'error'; ?>" style="margin-bottom:20px;padding:12px;border-radius:4px;<?php echo $submission_result['success'] ? 'background:#edfaef;color:#116329;' : 'background:#fcf0f1;color:#8a2424;'; ?>">
 					<?php echo esc_html( $submission_result['message'] ); ?>
 				</div>
-			<?php endif; ?>
+			<?php endif; echo $this->render_rich_success_screen( $submission_result ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 			<?php if ( ! $submission_result['success'] ) : ?>
 				<?php if ( $challenge_enabled ) : ?>

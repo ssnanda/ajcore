@@ -518,6 +518,32 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 								<button type="button" class="wpf-btn wpf-btn-secondary" id="wpf-add-confirmation-rule" style="margin-top:12px;">Add Rule</button>
 							</div>
 							</div>
+							<div class="wpf-field-settings-card" id="wpf-rich-success-settings" style="margin-top:16px;">
+								<div class="wpf-field-settings-card-title">Rich Success Screen (optional)</div>
+								<p class="wpf-setting-help">Leave all of these empty/off to keep the plain success message. Applies whenever a message is shown (default mode, or a conditional rule that doesn't redirect). Redirects are unchanged.</p>
+								<div class="wpf-setting-row">
+									<label>Success Content (HTML)</label>
+									<textarea id="wpf-form-success-content" rows="5"><?php echo esc_textarea( isset( $initial_data['schema']['settings']['success_content'] ) ? $initial_data['schema']['settings']['success_content'] : '' ); ?></textarea>
+									<p class="wpf-setting-help">Replaces the Success Message on screen when filled in, e.g. <code>&lt;h3&gt;Thanks, {name1}!&lt;/h3&gt;&lt;p&gt;We'll be in touch.&lt;/p&gt;</code>. Supports <code>{form_title}</code>, <code>{field_1}</code> and field-name tags (values are escaped; file fields show the file name). A matching conditional rule's own message takes priority.</p>
+								</div>
+								<div class="wpf-setting-row">
+									<label>Action Buttons</label>
+									<div id="wpf-success-buttons"></div>
+									<button type="button" class="wpf-btn wpf-btn-secondary" id="wpf-add-success-button" style="margin-top:8px;">Add Button</button>
+									<p class="wpf-setting-help">Links may start with https://, http://, tel:, sms: or mailto:. Up to 6 buttons.</p>
+								</div>
+								<div class="wpf-setting-row">
+									<label class="wpf-toggle-row">
+										<span>Show Submission Summary</span>
+										<input type="checkbox" id="wpf-form-show-submission-summary" <?php checked( ! empty( $initial_data['schema']['settings']['show_submission_summary'] ) ); ?>>
+									</label>
+									<p class="wpf-setting-help">Shows the visitor what they just submitted, using field labels. Empty values and payment/tracking data are skipped; file uploads show file names only.</p>
+								</div>
+								<div class="wpf-setting-row">
+									<label>Summary Heading</label>
+									<input type="text" id="wpf-form-submission-summary-heading" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['submission_summary_heading'] ) ? $initial_data['schema']['settings']['submission_summary_heading'] : "Here's what you submitted" ); ?>">
+								</div>
+							</div>
 						</div>
 
 						<div class="wpf-inspector-section" data-settings-section="integrations">

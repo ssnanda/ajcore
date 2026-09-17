@@ -11382,6 +11382,39 @@ class AJForms_Admin {
 		return $sanitized;
 	}
 
+	/**
+	 * Rich success screen buttons: label + URL (http/https/tel/sms/mailto) + new-tab flag.
+	 * Rows missing a label or a valid URL are dropped.
+	 */
+	private function sanitize_success_buttons_for_storage( $buttons ) {
+		$sanitized = array();
+
+		foreach ( $buttons as $button ) {
+			if ( ! is_array( $button ) ) {
+				continue;
+			}
+
+			$label = isset( $button['label'] ) ? sanitize_text_field( (string) $button['label'] ) : '';
+			$url   = isset( $button['url'] ) ? esc_url_raw( trim( (string) $button['url'] ), array( 'http', 'https', 'tel', 'sms', 'mailto' ) ) : '';
+
+			if ( '' === $label || '' === $url ) {
+				continue;
+			}
+
+			$sanitized[] = array(
+				'label'   => $label,
+				'url'     => $url,
+				'new_tab' => ! empty( $button['new_tab'] ),
+			);
+
+			if ( count( $sanitized ) >= 6 ) {
+				break;
+			}
+		}
+
+		return $sanitized;
+	}
+
 	private function sanitize_schema_for_storage( $schema ) {
 		$normalized = $this->normalize_imported_schema( $schema );
 		$fields     = array();
@@ -11418,6 +11451,10 @@ class AJForms_Admin {
 				'confirmation_type'     => isset( $normalized['settings']['confirmation_type'] ) && in_array( sanitize_key( $normalized['settings']['confirmation_type'] ), array( 'message', 'redirect' ), true ) ? sanitize_key( $normalized['settings']['confirmation_type'] ) : 'message',
 				'redirect_url'          => isset( $normalized['settings']['redirect_url'] ) ? esc_url_raw( $normalized['settings']['redirect_url'] ) : '',
 				'confirmation_rules'    => isset( $normalized['settings']['confirmation_rules'] ) && is_array( $normalized['settings']['confirmation_rules'] ) ? $this->sanitize_rules_for_storage( $normalized['settings']['confirmation_rules'], 'confirmation' ) : array(),
+				'success_content'            => isset( $normalized['settings']['success_content'] ) ? wp_kses_post( (string) $normalized['settings']['success_content'] ) : '',
+				'success_buttons'            => isset( $normalized['settings']['success_buttons'] ) && is_array( $normalized['settings']['success_buttons'] ) ? $this->sanitize_success_buttons_for_storage( $normalized['settings']['success_buttons'] ) : array(),
+				'show_submission_summary'    => ! empty( $normalized['settings']['show_submission_summary'] ),
+				'submission_summary_heading' => isset( $normalized['settings']['submission_summary_heading'] ) ? sanitize_text_field( $normalized['settings']['submission_summary_heading'] ) : "Here's what you submitted",
 				'use_label_placeholders' => ! empty( $normalized['settings']['use_label_placeholders'] ),
 				'custom_css'            => isset( $normalized['settings']['custom_css'] ) ? wp_strip_all_tags( $normalized['settings']['custom_css'] ) : '',
 				'asana_task_enabled'    => ! empty( $normalized['settings']['asana_task_enabled'] ),
