@@ -5183,7 +5183,8 @@ class AJForms_Admin {
 	 *  (e.g. lead_followup_from_email) when set and valid, otherwise falling back to the global
 	 *  "System From Email/Name" settings (and finally hardcoded safe defaults). Lets an admin route
 	 *  one email type — e.g. Lead Follow-up — through a different inbox like contactus@ without
-	 *  affecting the others. */
+	 *  affecting the others. Portal welcome emails use the authenticated SMTP mailbox when
+	 *  configured, preserving the brand's display name. */
 	private function resolve_email_sender( $settings, $from_email_key = '', $from_name_key = '' ) {
 		$from_email = '';
 		if ( '' !== $from_email_key && ! empty( $settings[ $from_email_key ] ) ) {
@@ -5197,6 +5198,18 @@ class AJForms_Admin {
 		}
 		if ( ! is_email( $from_email ) ) {
 			$from_email = ajcore_default_system_from_email();
+		}
+
+		// Portal welcome previews and sends must use the authenticated SMTP mailbox.
+		// Setting only the envelope sender leaves a branded From that providers can reject.
+		if ( in_array( $from_email_key, array( 'wp_welcome_from_email', 'university_wp_welcome_from_email' ), true )
+			&& isset( $settings['mail_mode'] ) && 'smtp' === $settings['mail_mode']
+			&& ! empty( $settings['smtp_host'] ) && '' !== trim( (string) $settings['smtp_host'] )
+			&& ! empty( $settings['smtp_auth'] ) ) {
+			$smtp_username = isset( $settings['smtp_username'] ) ? trim( (string) $settings['smtp_username'] ) : '';
+			if ( is_email( $smtp_username ) ) {
+				$from_email = $smtp_username;
+			}
 		}
 
 		$from_name = '';
@@ -21822,9 +21835,8 @@ class AJForms_Admin {
 		foreach ( $brands as $prefix => $brand_label ) {
 			foreach ( $types as $type_key => $type_label ) {
 				$key = $prefix . $type_key . '_from_email';
-				if ( ! empty( $settings[ $key ] ) ) {
-					$add( $settings[ $key ], sprintf( '%s — %s', $brand_label, $type_label ) );
-				}
+				$sender = $this->resolve_email_sender( $settings, $key, $prefix . $type_key . '_from_name' );
+				$add( $sender['from_email'], sprintf( '%s — %s', $brand_label, $type_label ) );
 			}
 		}
 		if ( ! empty( $settings['ra_authorization_from_email'] ) ) {
