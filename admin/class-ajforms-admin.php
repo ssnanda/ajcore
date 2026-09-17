@@ -21811,6 +21811,50 @@ class AJForms_Admin {
 					</div>
 				</div>
 				<div class="ajforms-settings-section">
+					<h4><?php esc_html_e( 'Mail environment', 'ajforms' ); ?></h4>
+					<p class="ajforms-settings-section-desc"><?php esc_html_e( 'What PHP on this server actually reports. "Could not instantiate mail function" means mail() returned false — which happens when mail() is disabled, when sendmail_path is empty or wrong, or when the host refused the message (a send limit, or a sender it will not relay for).', 'ajforms' ); ?></p>
+					<?php
+					$disable_functions = (string) ini_get( 'disable_functions' );
+					$mail_disabled     = in_array( 'mail', array_map( 'trim', explode( ',', $disable_functions ) ), true );
+					$mail_callable     = function_exists( 'mail' ) && ! $mail_disabled;
+					$sendmail_path     = (string) ini_get( 'sendmail_path' );
+					?>
+					<table class="widefat striped" style="max-width:720px;">
+						<tbody>
+							<tr>
+								<td style="width:220px;"><strong><?php esc_html_e( 'PHP mail() available', 'ajforms' ); ?></strong></td>
+								<td><?php echo $mail_callable ? esc_html__( 'Yes', 'ajforms' ) : esc_html__( 'No — disabled on this server', 'ajforms' ); ?></td>
+							</tr>
+							<tr>
+								<td><strong><?php esc_html_e( 'sendmail_path', 'ajforms' ); ?></strong></td>
+								<td>
+									<?php if ( '' === $sendmail_path ) : ?>
+										<span style="color:#b91c1c;"><?php esc_html_e( 'Empty — PHP has no mail binary to hand the message to, so mail() cannot succeed. This alone causes "Could not instantiate mail function".', 'ajforms' ); ?></span>
+									<?php else : ?>
+										<code><?php echo esc_html( $sendmail_path ); ?></code>
+									<?php endif; ?>
+								</td>
+							</tr>
+							<?php if ( '' !== $disable_functions ) : ?>
+								<tr>
+									<td><strong><?php esc_html_e( 'disable_functions', 'ajforms' ); ?></strong></td>
+									<td><code style="word-break:break-all;"><?php echo esc_html( $disable_functions ); ?></code></td>
+								</tr>
+							<?php endif; ?>
+							<tr>
+								<td><strong><?php esc_html_e( 'Currently sending via', 'ajforms' ); ?></strong></td>
+								<td><?php echo 'smtp' === $mail_mode ? esc_html__( 'SMTP (settings below)', 'ajforms' ) : esc_html__( 'PHP mail()', 'ajforms' ); ?></td>
+							</tr>
+						</tbody>
+					</table>
+					<?php if ( 'smtp' !== $mail_mode && ( ! $mail_callable || '' === $sendmail_path ) ) : ?>
+						<div class="ajforms-settings-note" style="border-left:3px solid #b91c1c;">
+							<?php esc_html_e( 'This server cannot send mail with PHP mail(). Switch the mode below to SMTP and enter your mail provider’s settings — that is the fix, not a workaround.', 'ajforms' ); ?>
+						</div>
+					<?php endif; ?>
+				</div>
+
+				<div class="ajforms-settings-section">
 					<h4><?php esc_html_e( 'How mail is sent', 'ajforms' ); ?></h4>
 					<p class="ajforms-settings-section-desc"><?php esc_html_e( 'Many hosts disable PHP’s mail() function. When that happens every outgoing email fails with “Could not instantiate mail function” — switch to SMTP and mail goes out through your mail provider instead.', 'ajforms' ); ?></p>
 					<div class="ajforms-settings-field" style="max-width:420px;">
@@ -21947,6 +21991,19 @@ class AJForms_Admin {
 			return;
 		}
 
+		// Run the table's column migrations (from_email, the open-tracking columns) before selecting
+		// them. They otherwise only fire when this install sends mail, so opening this screen first
+		// on a freshly-updated site queried columns that didn't exist yet — a DB error, and an empty
+		// log. Still tolerate the column being absent (e.g. the DB user can't ALTER) rather than
+		// erroring again: the From column just shows the header fallback.
+		if ( function_exists( 'ajcore_email_log_table_exists' ) ) {
+			ajcore_email_log_table_exists();
+		}
+		$log_columns  = $wpdb->get_col( "SHOW COLUMNS FROM `{$table}`", 0 ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$log_columns  = is_array( $log_columns ) ? $log_columns : array();
+		$has_from     = in_array( 'from_email', $log_columns, true );
+		$has_tracking = in_array( 'open_count', $log_columns, true );
+
 		// Delete one / delete all.
 		if ( isset( $_POST['ajcore_email_log_delete_nonce'] ) && current_user_can( 'manage_options' ) ) {
 			check_admin_referer( 'ajcore_email_log_delete', 'ajcore_email_log_delete_nonce' );
@@ -21964,11 +22021,14 @@ class AJForms_Admin {
 		$params = array();
 		if ( '' !== $search ) {
 			$like   = '%' . $wpdb->esc_like( $search ) . '%';
-			$where  = '(to_email LIKE %s OR subject LIKE %s OR from_email LIKE %s)';
-			$params = array( $like, $like, $like );
+			$where  = $has_from ? '(to_email LIKE %s OR subject LIKE %s OR from_email LIKE %s)' : '(to_email LIKE %s OR subject LIKE %s)';
+			$params = $has_from ? array( $like, $like, $like ) : array( $like, $like );
 		}
 
-		$sql  = "SELECT id, from_email, headers, to_email, subject, status, error_message, message, open_count, opened_at, last_opened_at, created_at FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT 200";
+		$select = 'id, headers, to_email, subject, status, error_message, message, created_at';
+		$select .= $has_from ? ', from_email' : ", '' AS from_email";
+		$select .= $has_tracking ? ', open_count, opened_at, last_opened_at' : ", 0 AS open_count, NULL AS opened_at, NULL AS last_opened_at";
+		$sql  = "SELECT {$select} FROM `{$table}` WHERE {$where} ORDER BY id DESC LIMIT 200";
 		$rows = $params ? $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : $wpdb->get_results( $sql );
 		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
 		?>
