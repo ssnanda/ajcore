@@ -14048,7 +14048,9 @@ class AJForms_Admin {
 			'default_from_name'              => isset( $_POST['default_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['default_from_name'] ) ) : get_bloginfo( 'name' ),
 			'default_reply_to_mode'          => isset( $_POST['default_reply_to_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ), array( 'submitter', 'site' ), true ) ? sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ) : 'submitter',
 			'wp_email_templates_enabled'     => isset( $_POST['wp_email_templates_enabled'] ) ? '1' : '0',
-			'enable_university_brand_templates' => isset( $_POST['enable_university_brand_templates'] ) ? '1' : '0',
+			// No longer a checkbox (both brands always render — see the $brands array in
+			// display_email_templates_settings_section()); keep whatever is stored.
+			'enable_university_brand_templates' => isset( $current_settings['enable_university_brand_templates'] ) ? (string) $current_settings['enable_university_brand_templates'] : '0',
 			'wp_email_from_email'            => isset( $_POST['wp_email_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_email_from_email'] ) ) : ajcore_default_system_from_email(),
 			'wp_email_from_name'             => isset( $_POST['wp_email_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_email_from_name'] ) ) : get_bloginfo( 'name' ),
 			'mail_mode'                      => isset( $_POST['mail_mode'] )
@@ -21780,6 +21782,59 @@ class AJForms_Admin {
 	}
 
 	/**
+	 * Every From address this site can actually send as, keyed by address, with what uses each one.
+	 *
+	 * Mail fails per-address, not per-site: an SMTP login is usually only allowed to send as its own
+	 * mailbox and aliases, so one template override pointing somewhere else fails while everything
+	 * else works. Resolution mirrors resolve_email_sender() (per-type override, else System From),
+	 * including the university_* brand keys get_customer_brand_setting_key() switches to for
+	 * University Place customers — those are the ones that used to be invisible here.
+	 *
+	 * @return array address => array( 'used_by' => string[] )
+	 */
+	private function get_email_from_addresses_in_use( $settings ) {
+		$types = array(
+			'wp_password_reset' => __( 'Password Reset', 'ajforms' ),
+			'wp_welcome'        => __( 'Welcome', 'ajforms' ),
+			'wp_service_status' => __( 'Service Status', 'ajforms' ),
+			'lead_followup'     => __( 'Lead Follow-up', 'ajforms' ),
+		);
+		$brands = array(
+			''           => __( 'NC LLC Agents', 'ajforms' ),
+			'university_' => __( 'University Office Suites', 'ajforms' ),
+		);
+
+		$rows   = array();
+		$add    = function ( $email, $label ) use ( &$rows ) {
+			$email = strtolower( sanitize_email( (string) $email ) );
+			if ( ! is_email( $email ) ) {
+				return;
+			}
+			if ( ! isset( $rows[ $email ] ) ) {
+				$rows[ $email ] = array( 'used_by' => array() );
+			}
+			$rows[ $email ]['used_by'][] = $label;
+		};
+
+		$system = ! empty( $settings['wp_email_from_email'] ) ? $settings['wp_email_from_email'] : ajcore_default_system_from_email();
+		$add( $system, __( 'System From (forms, WordPress mail, anything without its own From)', 'ajforms' ) );
+
+		foreach ( $brands as $prefix => $brand_label ) {
+			foreach ( $types as $type_key => $type_label ) {
+				$key = $prefix . $type_key . '_from_email';
+				if ( ! empty( $settings[ $key ] ) ) {
+					$add( $settings[ $key ], sprintf( '%s — %s', $brand_label, $type_label ) );
+				}
+			}
+		}
+		if ( ! empty( $settings['ra_authorization_from_email'] ) ) {
+			$add( $settings['ra_authorization_from_email'], sprintf( '%s — %s', $brands[''], __( 'Registered Agent Authorization', 'ajforms' ) ) );
+		}
+
+		return $rows;
+	}
+
+	/**
 	 * "AJ Core Mail": its own top-level menu (outgoing transport, sender identity, test email).
 	 * Split out of Settings → Email, which now holds only the log — see display_email_log_section().
 	 * Transport itself is applied by ajcore_configure_smtp_mailer() in ajcore.php.
@@ -21821,6 +21876,8 @@ class AJForms_Admin {
 		$sendmail_path     = (string) ini_get( 'sendmail_path' );
 		$header_from       = ! empty( $settings['wp_email_from_email'] ) && is_email( $settings['wp_email_from_email'] ) ? $settings['wp_email_from_email'] : ajcore_default_system_from_email();
 		$envelope_from     = ! empty( $settings['smtp_username'] ) && is_email( $settings['smtp_username'] ) ? $settings['smtp_username'] : '';
+		$from_addresses    = $this->get_email_from_addresses_in_use( $settings );
+		$templates_url     = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email-templates' ), admin_url( 'admin.php' ) );
 		?>
 		<div class="wrap ajcore-mail-page">
 		<style>
@@ -21843,6 +21900,12 @@ class AJForms_Admin {
 			.ajcore-mail-page .button-primary{background:#ea580c;border-color:#ea580c}
 			.ajcore-mail-page .ajcm-env{margin-top:14px;flex-direction:column;align-items:flex-start;padding:9px 13px;background:#f9fafb;border:1px solid #eceef2;border-radius:8px;font-size:12px;color:#4b5563;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center}
 			.ajcore-mail-page .ajcm-env code{background:none;padding:0;font-size:11.5px;color:#374151}
+			.ajcore-mail-page .ajcm-from-table{width:100%;border-collapse:collapse}
+			.ajcore-mail-page .ajcm-from-table td{padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:12.5px}
+			.ajcore-mail-page .ajcm-from-table tr:last-child td{border-bottom:0}
+			.ajcore-mail-page .ajcm-from-table code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:12px}
+			.ajcore-mail-page .ajcm-used-by{color:#9ca3af;font-size:11.5px;margin-top:2px}
+			.ajcore-mail-page .ajcm-warn{color:#b45309;font-weight:700}
 			.ajcore-mail-page .ajcm-env .ajcm-warn{color:#b45309;font-weight:600}
 			.ajcore-mail-page .ajcm-env .ajcm-ok{color:#166534;font-weight:600}
 			.ajcore-mail-page details.ajcm-more{margin-top:8px;font-size:12px;color:#6b7280}
@@ -21966,6 +22029,40 @@ class AJForms_Admin {
 						</div>
 						<p class="ajcm-hint"><?php esc_html_e( 'Uses the saved settings and appears in the Email Log. Save changes first.', 'ajforms' ); ?></p>
 					</form>
+				</div>
+
+				<div class="ajcm-card" style="margin-top:16px;">
+					<h2><?php esc_html_e( 'Addresses this site sends as', 'ajforms' ); ?></h2>
+					<table class="ajcm-from-table">
+						<tbody>
+						<?php foreach ( $from_addresses as $address => $info ) : ?>
+							<?php $allowed = ! $smtp_ready || ! is_email( $envelope_from ) || strtolower( $address ) === strtolower( $envelope_from ); ?>
+							<tr>
+								<td>
+									<code><?php echo esc_html( $address ); ?></code>
+									<?php if ( ! $allowed ) : ?>
+										<span class="ajcm-warn" title="<?php esc_attr_e( 'Your SMTP provider must allow this address (a mailbox on its domain, or an alias on the login) or these sends are rejected.', 'ajforms' ); ?>">⚠</span>
+									<?php endif; ?>
+									<div class="ajcm-used-by"><?php echo esc_html( implode( ' · ', $info['used_by'] ) ); ?></div>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+						</tbody>
+					</table>
+					<?php
+					$flagged = 0;
+					foreach ( $from_addresses as $address => $info ) {
+						if ( $smtp_ready && is_email( $envelope_from ) && strtolower( $address ) !== strtolower( $envelope_from ) ) {
+							$flagged++;
+						}
+					}
+					?>
+					<?php if ( $flagged > 0 ) : ?>
+						<p class="ajcm-hint" style="color:#b45309;">
+							<?php echo esc_html( sprintf( _n( '%d address is not the SMTP login — it must be an alias on that account (or a mailbox on its own domain), or those emails are rejected.', '%d addresses are not the SMTP login — each must be an alias on that account (or a mailbox on its own domain), or those emails are rejected.', $flagged, 'ajforms' ), $flagged ) ); ?>
+						</p>
+					<?php endif; ?>
+					<p class="ajcm-hint"><a href="<?php echo esc_url( $templates_url ); ?>"><?php esc_html_e( 'Edit per-email From addresses →', 'ajforms' ); ?></a></p>
 				</div>
 
 				<div class="ajcm-env">
@@ -26870,51 +26967,52 @@ class AJForms_Admin {
 			#ajforms-email-templates-section .ajforms-settings-field input[type="text"],
 			#ajforms-email-templates-section .ajforms-settings-field input[type="email"],
 			#ajforms-email-templates-section .ajforms-settings-field textarea,
-			#ajforms-email-templates-section .ajforms-settings-field select { width: 100%; box-sizing: border-box; min-height: 44px; border: 1px solid #d1d5db; border-radius: 12px; padding: 10px 13px; font-family: inherit; font-size: 14px; }
-			#ajforms-email-templates-section .ajforms-settings-field textarea { min-height: auto; resize: vertical; }
-			#ajforms-email-templates-section .ajforms-settings-field label { display: block; margin-bottom: 6px; font-weight: 600; color: #111827; }
-			#ajforms-email-templates-section .ajforms-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-			.ajforms-email-variant-layout { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(360px, 480px); gap: 28px; align-items: start; }
+			#ajforms-email-templates-section .ajforms-settings-field select { width: 100%; box-sizing: border-box; min-height: 34px; border: 1px solid #d1d5db; border-radius: 6px; padding: 5px 10px; font-family: inherit; font-size: 13px; }
+			#ajforms-email-templates-section .ajforms-settings-field textarea { min-height: auto; resize: vertical; line-height: 1.45; }
+			#ajforms-email-templates-section .ajforms-settings-field label { display: block; margin-bottom: 3px; font-weight: 600; color: #374151; font-size: 12px; }
+			#ajforms-email-templates-section .ajforms-settings-help { margin-top: 3px; color: #9ca3af; font-size: 11.5px; }
+			#ajforms-email-templates-section .ajforms-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+			#ajforms-email-templates-section .ajforms-settings-grid.ajf-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+			#ajforms-email-templates-section .ajforms-settings-card { padding: 14px 16px; }
+			#ajforms-email-templates-section .ajforms-settings-card h3 { margin: 0 0 10px; font-size: 15px; }
+			/* Flat, single-line opt-in rows instead of the boxed checkbox blocks — three stacked
+			   boxes with 22px margins each was most of this screen's height. */
+			#ajforms-email-templates-section .ajf-opt { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: #374151; }
+			#ajforms-email-templates-section .ajf-opt input { margin: 0; }
+			.ajforms-email-variant-layout { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(300px, 380px); gap: 20px; align-items: start; }
 			@media (max-width: 1100px) { .ajforms-email-variant-layout { grid-template-columns: 1fr; } }
-			.ajforms-email-variant-layout .ajforms-settings-field + .ajforms-settings-field { margin-top: 14px; }
+			.ajforms-email-variant-layout .ajforms-settings-field + .ajforms-settings-field { margin-top: 10px; }
+			/* Preview follows you down the longer templates instead of scrolling away. */
+			.ajforms-email-variant-layout > div:last-child { position: sticky; top: 40px; }
 		</style>
 		<form method="post" action="<?php echo esc_url( $action_url ); ?>" id="ajforms-email-templates-section">
 			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 			<div class="ajforms-settings-card">
-				<span class="ajforms-settings-pill"><?php esc_html_e( 'WordPress Mail', 'ajforms' ); ?></span>
 				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
-				<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
-					<input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>>
-					<strong><?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></strong>
-				</div>
-				<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
-					<input name="enable_university_brand_templates" id="enable_university_brand_templates" type="checkbox" value="1" <?php checked( '1' === (string) $settings['enable_university_brand_templates'] ); ?>>
-					<strong><?php esc_html_e( 'Show University Place Office Suites brand variant', 'ajforms' ); ?></strong>
-					<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php esc_html_e( 'Only turn this on for a site that actually sends emails to University Place Office Suites customers/leads — it adds a second, differently-branded copy of every template below.', 'ajforms' ); ?></p>
-				</div>
-				<div class="ajforms-settings-grid">
+				<div class="ajforms-settings-grid ajf-3">
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
 						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
-						<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php printf( esc_html__( 'Leave blank to send as %s (this site’s domain).', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></p>
+						<div class="ajforms-settings-help"><?php printf( esc_html__( 'Blank = %s', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
 						<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Blank = site title', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="email_footer_address"><?php esc_html_e( 'Footer postal address', 'ajforms' ); ?></label>
+						<textarea name="email_footer_address" id="email_footer_address" rows="3"><?php echo esc_textarea( $settings['email_footer_address'] ); ?></textarea>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'On every branded email — spam filters look for a real one.', 'ajforms' ); ?></div>
 					</div>
 				</div>
-				<div class="ajforms-settings-field" style="margin-top:16px;">
-					<label for="email_footer_address"><?php esc_html_e( 'Sender identity footer (postal address)', 'ajforms' ); ?></label>
-					<textarea name="email_footer_address" id="email_footer_address" rows="3"><?php echo esc_textarea( $settings['email_footer_address'] ); ?></textarea>
-					<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php esc_html_e( 'Shown at the bottom of every branded email. A real postal address is a standard legitimate-sender signal that spam filters look for — leaving this blank makes mail more likely to be filtered.', 'ajforms' ); ?></p>
+				<div style="display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;">
+					<label class="ajf-opt"><input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>> <?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></label>
 				</div>
-				<?php if ( '1' === (string) $settings['enable_university_brand_templates'] ) : ?>
-					<div class="ajforms-settings-field" style="margin-top:16px;">
-						<label for="university_email_footer_address"><?php esc_html_e( 'Sender identity footer — University Office Suites', 'ajforms' ); ?></label>
+					<div class="ajforms-settings-field" style="margin-top:12px;max-width:420px;">
+						<label for="university_email_footer_address"><?php esc_html_e( 'Footer postal address — University Office Suites', 'ajforms' ); ?></label>
 						<textarea name="university_email_footer_address" id="university_email_footer_address" rows="3"><?php echo esc_textarea( $settings['university_email_footer_address'] ); ?></textarea>
-						<p class="ajforms-settings-help" style="margin:4px 0 0;"><?php esc_html_e( 'Empty by default because this address has never been provided — fill it in rather than leaving University-branded emails without one.', 'ajforms' ); ?></p>
 					</div>
-				<?php endif; ?>
 			</div>
 
 			<?php
@@ -27006,12 +27104,13 @@ class AJForms_Admin {
 			$brands = array(
 				'ncllc' => array( 'label' => __( 'NC LLC Agents', 'ajforms' ), 'prefix' => '', 'entity_name' => 'NC LLC Agents Inc', 'site_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
 			);
-			// University Place Office Suites variant only renders (dropdown option + its own set of
-			// <input>s) when this site has opted in — see enable_university_brand_templates.
-			// Everywhere else this stays a single-brand form, same as before this setting existed.
-			if ( '1' === (string) $settings['enable_university_brand_templates'] ) {
-				$brands['university'] = array( 'label' => __( 'University Office Suites', 'ajforms' ), 'prefix' => 'university_', 'entity_name' => 'University Place Office Suites LLC', 'site_name' => 'University Place Office Suites' );
-			}
+			// Both brands always render. This used to be gated on enable_university_brand_templates,
+			// which hid the university_* fields — but get_customer_brand_setting_key() picks those
+			// keys off the CUSTOMER's brand and never consulted that setting, so a site could be
+			// sending from university_wp_welcome_from_email's hardcoded donotreply@ default with no
+			// way to see or change it (which is exactly how a welcome email ended up failing SMTP
+			// with an address the admin couldn't find). Everything that can send is now on screen.
+			$brands['university'] = array( 'label' => __( 'University Office Suites', 'ajforms' ), 'prefix' => 'university_', 'entity_name' => 'University Place Office Suites LLC', 'site_name' => 'University Place Office Suites' );
 
 			$email_variants = array();
 			foreach ( $brands as $brand_key => $brand ) {
@@ -27071,10 +27170,9 @@ class AJForms_Admin {
 			}
 			?>
 			<div class="ajforms-settings-card">
-				<span class="ajforms-settings-pill"><?php esc_html_e( 'Templates', 'ajforms' ); ?></span>
-				<h3><?php esc_html_e( 'Email types', 'ajforms' ); ?></h3>
-				<div class="ajforms-settings-field" style="max-width:420px;margin-bottom:6px;">
-					<label for="ajforms-email-variant-select"><?php esc_html_e( 'Email', 'ajforms' ); ?></label>
+				<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+				<div class="ajforms-settings-field" style="min-width:280px;max-width:380px;flex:1 1 auto;">
+					<label for="ajforms-email-variant-select"><?php esc_html_e( 'Email template', 'ajforms' ); ?></label>
 					<select id="ajforms-email-variant-select">
 						<?php foreach ( $brands as $brand_key => $brand ) : ?>
 							<optgroup label="<?php echo esc_attr( $brand['label'] ); ?>">
@@ -27087,12 +27185,34 @@ class AJForms_Admin {
 						<?php endforeach; ?>
 					</select>
 				</div>
+				<?php // Save sits with the picker as well as at the foot of the form — on a screen this
+				// tall you're usually editing one template and want to save without hunting. ?>
+				<div><?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit_top', false ); ?></div>
+				</div>
 				<?php foreach ( $email_variants as $i => $type ) : ?>
 					<div class="ajforms-email-variant-panel" data-variant="<?php echo esc_attr( $type['variant_key'] ); ?>" style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;<?php echo 0 === $i ? '' : 'display:none;'; ?>">
-						<h4 style="margin:0 0 14px;font-size:15px;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
+						<?php
+						// Spells out the address this template will actually send as, override or not —
+						// the same resolution the send functions use, so the screen can't disagree
+						// with what goes out.
+						$effective   = $this->resolve_email_sender( $settings, $type['from_email_key'], $type['from_name_key'] );
+						$is_override = ! empty( $settings[ $type['from_email_key'] ] );
+						$smtp_user   = isset( $settings['smtp_username'] ) ? (string) $settings['smtp_username'] : '';
+						$smtp_on     = ( ! isset( $settings['mail_mode'] ) || 'php' !== $settings['mail_mode'] ) && ! empty( $settings['smtp_host'] );
+						$mismatch    = $smtp_on && is_email( $smtp_user ) && strtolower( $effective['from_email'] ) !== strtolower( $smtp_user );
+						?>
+						<h4 style="margin:0 0 6px;font-size:13px;font-weight:700;color:#111827;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
+						<p style="margin:0 0 10px;font-size:12px;color:#4b5563;">
+							<?php esc_html_e( 'Sends as', 'ajforms' ); ?>
+							<code style="background:#f3f4f6;padding:1px 5px;border-radius:4px;"><?php echo esc_html( sprintf( '%s <%s>', $effective['from_name'], $effective['from_email'] ) ); ?></code>
+							<span style="color:#9ca3af;"><?php echo $is_override ? esc_html__( '— this template’s own From', 'ajforms' ) : esc_html__( '— inherited from System From (leave From Email blank to keep inheriting)', 'ajforms' ); ?></span>
+							<?php if ( $mismatch ) : ?>
+								<br><span style="color:#b45309;"><?php echo esc_html( sprintf( __( 'Not the SMTP login (%s) — your provider must allow sending as this address (an alias, or a mailbox on its domain), or the send is rejected.', 'ajforms' ), $smtp_user ) ); ?></span>
+							<?php endif; ?>
+						</p>
 						<div class="ajforms-email-variant-layout">
 							<div>
-								<div class="ajforms-settings-grid">
+								<div class="ajforms-settings-grid ajf-3">
 									<div class="ajforms-settings-field">
 										<label for="<?php echo esc_attr( $type['from_email_key'] ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
 										<input name="<?php echo esc_attr( $type['from_email_key'] ); ?>" id="<?php echo esc_attr( $type['from_email_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_email_key'] ] ); ?>">
@@ -27101,18 +27221,18 @@ class AJForms_Admin {
 										<label for="<?php echo esc_attr( $type['from_name_key'] ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
 										<input name="<?php echo esc_attr( $type['from_name_key'] ); ?>" id="<?php echo esc_attr( $type['from_name_key'] ); ?>" type="text" placeholder="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>" value="<?php echo esc_attr( $settings[ $type['from_name_key'] ] ); ?>">
 									</div>
+									<div class="ajforms-settings-field">
+										<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
+										<textarea name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" rows="1"><?php echo esc_textarea( $settings[ $type['heading_key'] ] ); ?></textarea>
+									</div>
 								</div>
 								<div class="ajforms-settings-field">
 									<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
-									<textarea name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" rows="2"><?php echo esc_textarea( $settings[ $type['subject_key'] ] ); ?></textarea>
-								</div>
-								<div class="ajforms-settings-field">
-									<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
-									<textarea name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" rows="2"><?php echo esc_textarea( $settings[ $type['heading_key'] ] ); ?></textarea>
+									<textarea name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" rows="1"><?php echo esc_textarea( $settings[ $type['subject_key'] ] ); ?></textarea>
 								</div>
 								<div class="ajforms-settings-field">
 									<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
-									<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="6"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
+									<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="5"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
 									<div class="ajforms-settings-help"><?php echo esc_html( sprintf( __( 'Placeholders: %s', 'ajforms' ), $type['placeholders'] ) ); ?></div>
 									<?php if ( ! empty( $type['bullets'] ) ) : ?>
 										<div class="ajforms-settings-help"><?php esc_html_e( 'One line per paragraph. A line starting with "- " becomes a bulleted requirement listed under the address box.', 'ajforms' ); ?></div>
@@ -27121,14 +27241,14 @@ class AJForms_Admin {
 								<?php if ( ! empty( $type['address_key'] ) ) : ?>
 									<div class="ajforms-settings-field">
 										<label for="<?php echo esc_attr( $type['address_key'] ); ?>"><?php esc_html_e( 'Registered Agent address block', 'ajforms' ); ?></label>
-										<textarea name="<?php echo esc_attr( $type['address_key'] ); ?>" id="<?php echo esc_attr( $type['address_key'] ); ?>" rows="4"><?php echo esc_textarea( $settings[ $type['address_key'] ] ); ?></textarea>
+										<textarea name="<?php echo esc_attr( $type['address_key'] ); ?>" id="<?php echo esc_attr( $type['address_key'] ); ?>" rows="3"><?php echo esc_textarea( $settings[ $type['address_key'] ] ); ?></textarea>
 										<div class="ajforms-settings-help"><?php esc_html_e( 'Shown in the highlighted box and, joined onto one line, in the closing signature.', 'ajforms' ); ?></div>
 									</div>
 								<?php endif; ?>
 							</div>
 							<div>
-								<div class="ajforms-settings-help" style="margin-bottom:6px;"><?php esc_html_e( 'Preview', 'ajforms' ); ?></div>
-								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;height:560px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;"></iframe>
+								<div class="ajforms-settings-help" style="margin-bottom:4px;"><?php esc_html_e( 'Preview', 'ajforms' ); ?></div>
+								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;height:430px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;"></iframe>
 							</div>
 						</div>
 					</div>
