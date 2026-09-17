@@ -5186,11 +5186,13 @@ class AJForms_Admin {
 	 *  affecting the others. Portal welcome emails use the authenticated SMTP mailbox when
 	 *  configured, preserving the brand's display name. */
 	private function resolve_email_sender( $settings, $from_email_key = '', $from_name_key = '' ) {
+		$email_source = __( 'System From Email / site default', 'ajforms' );
 		$from_email = '';
 		if ( '' !== $from_email_key && ! empty( $settings[ $from_email_key ] ) ) {
 			$candidate = sanitize_email( (string) $settings[ $from_email_key ] );
 			if ( is_email( $candidate ) ) {
 				$from_email = $candidate;
+				$email_source = __( 'Template From Email', 'ajforms' );
 			}
 		}
 		if ( '' === $from_email ) {
@@ -5209,6 +5211,7 @@ class AJForms_Admin {
 			$smtp_username = isset( $settings['smtp_username'] ) ? trim( (string) $settings['smtp_username'] ) : '';
 			if ( is_email( $smtp_username ) ) {
 				$from_email = $smtp_username;
+				$email_source = __( 'SMTP username (required for portal welcome; overrides From Email)', 'ajforms' );
 			}
 		}
 
@@ -5223,6 +5226,10 @@ class AJForms_Admin {
 		return array(
 			'from_email' => $from_email,
 			'from_name'  => $from_name,
+			'email_source' => $email_source,
+			'name_source' => '' !== $from_name_key && ! empty( $settings[ $from_name_key ] )
+				? __( 'Template From Name', 'ajforms' )
+				: __( 'System From Name / default name / site title', 'ajforms' ),
 		);
 	}
 
@@ -5945,20 +5952,17 @@ class AJForms_Admin {
 			'{site_name}'    => $site_name,
 		);
 
+		$template = $this->get_additional_branded_email_templates()[ 'service_purchase_welcome' ];
 		$subject_key      = $this->get_customer_brand_setting_key( 'wp_service_purchase_welcome_subject', $brand );
-		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : __( 'Welcome to {site_name} \xe2\x80\x93 Next steps for {service_name}', 'ajforms' );
+		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : $template['default_subject'];
 		$subject          = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
 
 		$copy = $this->resolve_email_copy(
 			$settings,
 			$this->get_customer_brand_setting_key( 'wp_service_purchase_welcome_heading', $brand ),
 			$this->get_customer_brand_setting_key( 'wp_service_purchase_welcome_body', $brand ),
-			__( 'Thank you for your purchase', 'ajforms' ),
-			array(
-				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-				sprintf( __( 'Thank you for choosing %s for %s. We are excited to get started.', 'ajforms' ), '{site_name}', '{service_name}' ),
-				__( 'Our team will be in touch soon with next steps. In the meantime, feel free to reach out with any questions.', 'ajforms' ),
-			),
+			$template['default_heading'],
+			$template['default_body'],
 			$email_tokens
 		);
 
@@ -6094,7 +6098,7 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $from_email;
 		}
 
-		$sent = wp_mail( $email, $subject, $message, $headers );
+		$sent = $this->send_branded_wp_mail( $email, $subject, $message, $headers, $from_email, $from_name );
 		if ( $sent ) {
 			$actor = wp_get_current_user();
 			$wpdb->insert(
@@ -14206,6 +14210,19 @@ class AJForms_Admin {
 			set_transient( 'ajcore_spam_save_debug_' . get_current_user_id(), $debug_info, 120 );
 		}
 
+		// Read-only catalog entries have no POST fields; preserve their existing overrides.
+		foreach ( $this->get_additional_branded_email_templates() as $template ) {
+			foreach ( $template['brand_variants'] ? array( '', 'university_' ) : array( '' ) as $prefix ) {
+				$keys = array( $template['key'] . '_subject', $template['key'] . '_heading', $template['key'] . '_body', $template['sender_key'] . '_from_email', $template['sender_key'] . '_from_name' );
+				foreach ( $keys as $key ) {
+					$key = $prefix . $key;
+					if ( ! array_key_exists( $key, $settings ) && array_key_exists( $key, $current_settings ) ) {
+						$settings[ $key ] = $current_settings[ $key ];
+					}
+				}
+			}
+		}
+
 		// OAuth tokens are never edited through this form — only the "Connect Zoho Mail"/"Connect
 		// Gmail Intake" callbacks write them directly. Without this, they'd silently reset to ''
 		// on every unrelated settings save anywhere in the plugin, since they belong to no
@@ -16411,13 +16428,10 @@ class AJForms_Admin {
 		// gets its own copy (and its own settings keys, left blank by default) instead of reusing the
 		// generic "status changed" template, which already has non-empty saved defaults of its own.
 		if ( 'updating_sosn' === $new_service_status && 'registered_agent_subscription' === $product_type ) {
-			$default_subject = __( 'We filed your Registered Agent change with SOS/NC', 'ajforms' );
-			$default_heading = __( 'Your Registered Agent change has been filed', 'ajforms' );
-			$default_body    = array(
-				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-				sprintf( __( 'We\'ve submitted the Change of Registered Agent form to the NC Secretary of State, naming %1$s as the new registered agent for %2$s.', 'ajforms' ), '{agent_name}', '{service_name}' ),
-				__( "No action is needed from you right now — once the state processes this filing, we'll mark your service active.", 'ajforms' ),
-			);
+			$template = $this->get_additional_branded_email_templates()[ 'ra_change_filed' ];
+			$default_subject = $template['default_subject'];
+			$default_heading = $template['default_heading'];
+			$default_body    = $template['default_body'];
 			$subject_setting_key = 'wp_ra_change_filed_subject';
 			$heading_setting_key = 'wp_ra_change_filed_heading';
 			$body_setting_key    = 'wp_ra_change_filed_body';
@@ -16539,23 +16553,18 @@ class AJForms_Admin {
 		);
 
 		if ( $is_sop ) {
-			$default_subject = __( 'URGENT: Legal document received for you — {mail_type}', 'ajforms' );
-			$default_heading = __( 'A legal document was delivered to your registered agent', 'ajforms' );
-			$default_body    = array(
-				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-				__( 'We received service of process or another time-sensitive legal document addressed to you: {mail_type} from {sender_name}.', 'ajforms' ),
-				__( 'Legal documents often carry response deadlines. Please review it as soon as possible.', 'ajforms' ),
-			);
+			$template = $this->get_additional_branded_email_templates()[ 'mail_item_sop' ];
+			$default_subject = $template['default_subject'];
+			$default_heading = $template['default_heading'];
+			$default_body    = $template['default_body'];
 			$subject_key = 'wp_mail_item_sop_subject';
 			$heading_key = 'wp_mail_item_sop_heading';
 			$body_key    = 'wp_mail_item_sop_body';
 		} else {
-			$default_subject = __( 'New mail received for you: {mail_type}', 'ajforms' );
-			$default_heading = __( 'You have new mail at our office', 'ajforms' );
-			$default_body    = array(
-				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-				__( 'We received a {mail_type} addressed to you from {sender_name}.', 'ajforms' ),
-			);
+			$template = $this->get_additional_branded_email_templates()[ 'mail_item' ];
+			$default_subject = $template['default_subject'];
+			$default_heading = $template['default_heading'];
+			$default_body    = $template['default_body'];
 			$subject_key = 'wp_mail_item_subject';
 			$heading_key = 'wp_mail_item_heading';
 			$body_key    = 'wp_mail_item_body';
@@ -16591,7 +16600,7 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $sender['from_email'];
 		}
 
-		return (bool) wp_mail( $customer_email, $subject, $message, $headers );
+		return (bool) $this->send_branded_wp_mail( $customer_email, $subject, $message, $headers, $sender['from_email'], $sender['from_name'] );
 	}
 
 	/**
@@ -16619,13 +16628,10 @@ class AJForms_Admin {
 			'{files}' => '' !== $file_list ? $file_list : __( 'your documents', 'ajforms' ),
 		);
 
-		$default_subject = __( 'Your business formation documents are ready', 'ajforms' );
-		$default_heading = __( 'Your documents are in your portal', 'ajforms' );
-		$default_body    = array(
-			sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-			__( "We've added the following document(s) to your client portal: {files}.", 'ajforms' ),
-			__( 'Reminder: most new companies are required to file a Beneficial Ownership Information Report (BOIR) with FinCEN. You can file directly at boiefiling.fincen.gov/boir/html.', 'ajforms' ),
-		);
+		$template = $this->get_additional_branded_email_templates()[ 'gmail_intake' ];
+		$default_subject = $template['default_subject'];
+		$default_heading = $template['default_heading'];
+		$default_body    = $template['default_body'];
 
 		$subject_template = ! empty( $settings['wp_gmail_intake_subject'] ) ? sanitize_text_field( (string) $settings['wp_gmail_intake_subject'] ) : $default_subject;
 		$subject          = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
@@ -16692,24 +16698,18 @@ class AJForms_Admin {
 		);
 
 		if ( $overdue ) {
-			$default_subject = __( 'OVERDUE: {year} {state} Annual Report for {entity_name}', 'ajforms' );
-			$default_heading = __( 'The annual report for {entity_name} is past due', 'ajforms' );
-			$default_body    = array(
-				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-				__( 'The {year} annual report for {entity_name} was due {due_date} and has not been filed with the {state} Secretary of State.', 'ajforms' ),
-				__( 'A missed annual report can lead to administrative dissolution. We can prepare and file it for you — reply to this email or contact us to get it taken care of.', 'ajforms' ),
-			);
+			$template = $this->get_additional_branded_email_templates()[ 'compliance_overdue' ];
+			$default_subject = $template['default_subject'];
+			$default_heading = $template['default_heading'];
+			$default_body    = $template['default_body'];
 			$subject_key = 'wp_compliance_overdue_subject';
 			$heading_key = 'wp_compliance_overdue_heading';
 			$body_key    = 'wp_compliance_overdue_body';
 		} else {
-			$default_subject = __( 'Reminder: {year} {state} Annual Report for {entity_name} is due {due_date}', 'ajforms' );
-			$default_heading = __( 'An annual report deadline is coming up', 'ajforms' );
-			$default_body    = array(
-				sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-				__( 'The {year} annual report for {entity_name} is due {due_date} with the {state} Secretary of State.', 'ajforms' ),
-				__( 'We can prepare and file it for you so nothing slips — reply to this email or contact us and we will handle the rest.', 'ajforms' ),
-			);
+			$template = $this->get_additional_branded_email_templates()[ 'compliance_reminder' ];
+			$default_subject = $template['default_subject'];
+			$default_heading = $template['default_heading'];
+			$default_body    = $template['default_body'];
 			$subject_key = 'wp_compliance_reminder_subject';
 			$heading_key = 'wp_compliance_reminder_heading';
 			$body_key    = 'wp_compliance_reminder_body';
@@ -16745,7 +16745,7 @@ class AJForms_Admin {
 			$headers[] = 'Reply-To: ' . $sender['from_email'];
 		}
 
-		return (bool) wp_mail( $customer_email, $subject, $message, $headers );
+		return (bool) $this->send_branded_wp_mail( $customer_email, $subject, $message, $headers, $sender['from_email'], $sender['from_name'] );
 	}
 
 	/**
@@ -21841,6 +21841,13 @@ class AJForms_Admin {
 		}
 		if ( ! empty( $settings['ra_authorization_from_email'] ) ) {
 			$add( $settings['ra_authorization_from_email'], sprintf( '%s — %s', $brands[''], __( 'Registered Agent Authorization', 'ajforms' ) ) );
+		}
+
+		foreach ( $this->get_additional_branded_email_templates() as $template ) {
+			foreach ( $template['brand_variants'] ? array( '', 'university_' ) : array( '' ) as $prefix ) {
+				$sender = $this->resolve_email_sender( $settings, $prefix . $template['sender_key'] . '_from_email', $prefix . $template['sender_key'] . '_from_name' );
+				$add( $sender['from_email'], ( '' !== $prefix ? $brands['university_'] . ' — ' : '' ) . $template['label'] );
+			}
 		}
 
 		return $rows;
@@ -26961,6 +26968,223 @@ class AJForms_Admin {
 		<?php
 	}
 
+	/** Show addresses separately from the display name and explain where each comes from. */
+	private function display_email_delivery_details( $settings, $sender, $to, $reply_to = true ) {
+		$smtp_user = isset( $settings['smtp_username'] ) ? trim( (string) $settings['smtp_username'] ) : '';
+		$smtp_on = isset( $settings['mail_mode'] ) && 'smtp' === $settings['mail_mode'] && ! empty( $settings['smtp_host'] );
+		$envelope = $smtp_on && ! empty( $settings['smtp_envelope_from_username'] ) && is_email( $smtp_user ) ? $smtp_user : $sender['from_email'];
+		$fields = array(
+			__( 'From name', 'ajforms' ) => $sender['from_name'],
+			__( 'From email', 'ajforms' ) => $sender['from_email'],
+			__( 'From header submitted by AJCore', 'ajforms' ) => sprintf( '%s <%s>', $sender['from_name'], $sender['from_email'] ),
+			__( 'To (recipient rule)', 'ajforms' ) => $to,
+			__( 'Reply-To', 'ajforms' ) => $reply_to ? $sender['from_email'] : __( 'No explicit Reply-To; replies use From.', 'ajforms' ),
+			__( 'CC / BCC', 'ajforms' ) => __( 'None set by this template.', 'ajforms' ),
+			__( 'Envelope sender', 'ajforms' ) => $envelope,
+			__( 'Email address source', 'ajforms' ) => $sender['email_source'],
+			__( 'Display name source', 'ajforms' ) => $sender['name_source'],
+		);
+		?>
+		<table class="widefat striped" style="margin:10px 0;">
+			<tbody>
+				<?php foreach ( $fields as $label => $value ) : ?>
+					<tr><th scope="row" style="width:200px;"><?php echo esc_html( $label ); ?></th><td style="overflow-wrap:anywhere;"><?php echo esc_html( $value ); ?></td></tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+		<?php if ( $smtp_on && is_email( $smtp_user ) && 0 !== strcasecmp( $sender['from_email'], $smtp_user ) ) : ?>
+			<p style="color:#b45309;"><?php echo esc_html( sprintf( __( 'The From address differs from the SMTP login (%s). Your provider must allow this sender address.', 'ajforms' ), $smtp_user ) ); ?></p>
+		<?php endif;
+	}
+
+	/** Inventory for templates whose content is currently configured in code, not this form. */
+	private function display_additional_branded_email_templates( $settings, $brands ) {
+		$templates = $this->get_additional_branded_email_templates();
+		$templates['chat_transcript'] = array(
+			'label' => __( 'Live Chat Transcript', 'ajforms' ),
+			'key' => 'chat_transcript_email',
+			'sender_key' => '',
+			'brand_variants' => false,
+			'to' => __( 'Visitor email saved on the chat session.', 'ajforms' ),
+			'fixed' => __( 'Appends the conversation in chronological order, with sender names. Sent on staff/automatic close when an email is present, or when the visitor requests an email on close. All three copy fields blank disables the transcript email. Edit this copy in Live Chat settings. {name} is the visitor’s first name; {site_name} is this site’s title.', 'ajforms' ),
+			'default_subject' => (string) ( $settings['chat_transcript_email_subject'] ?? '' ),
+			'default_heading' => (string) ( $settings['chat_transcript_email_heading'] ?? '' ),
+			'default_body' => array( (string) ( $settings['chat_transcript_email_body'] ?? '' ) ),
+		);
+		if ( AJForms::$instance ) {
+			$content = AJForms::$instance->get_wp_password_reset_email_content( '{name}', '{password_reset_url}' );
+			$templates['wordpress_password_reset'] = array(
+				'label' => __( 'WordPress Lost Password', 'ajforms' ),
+				'key' => 'wp_password_reset',
+				'sender_key' => '',
+				'brand_variants' => false,
+				'to' => __( 'WordPress account email from the Lost Password request.', 'ajforms' ),
+				'fixed' => implode( "\n", array( $content['button_label'] . ': ' . $content['button_url'], $content['link_intro'], $content['footer'] ) ),
+				'default_subject' => __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' ),
+				'default_heading' => $content['headline'],
+				'default_body' => array( $content['greeting'], $content['body'] ),
+			);
+		}
+		?>
+		<div class="ajforms-settings-card">
+			<h3><?php esc_html_e( 'Additional branded emails — read-only inventory', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'These sending paths were not listed in the template editor. Expand an email to see its saved overrides or built-in copy, sender, recipient rule and fixed content. Placeholders are replaced at send time.', 'ajforms' ); ?></p>
+			<?php foreach ( $templates as $id => $template ) : ?>
+				<?php
+				$native = 'wordpress_password_reset' === $id;
+				$system_sender = $native || 'chat_transcript' === $id;
+				$template_brands = $system_sender ? array( 'ncllc' => $brands['ncllc'] ) : $brands;
+				foreach ( $template_brands as $brand_key => $brand ) :
+					$prefix = $template['brand_variants'] ? $brand['prefix'] : '';
+					$key = $prefix . $template['key'];
+					$sender_key = $prefix . $template['sender_key'];
+					$sender = $this->resolve_email_sender( $settings, $sender_key . '_from_email', $sender_key . '_from_name' );
+					$subject = ! empty( $settings[ $key . '_subject' ] ) ? sanitize_text_field( (string) $settings[ $key . '_subject' ] ) : $template['default_subject'];
+					$copy = $this->resolve_email_copy( $settings, $key . '_heading', $key . '_body', $template['default_heading'], $template['default_body'], array() );
+					if ( $system_sender ) {
+						// These paths use the plugin-wide System From filters, not portal overrides.
+						$sender = $this->resolve_email_sender( $settings );
+						$sender['from_name'] = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+						$sender['name_source'] = __( 'System From Name / site title', 'ajforms' );
+						$copy = array( 'heading' => $template['default_heading'], 'paragraphs' => $template['default_body'] );
+					} else {
+						$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
+						if ( 'university' === $brand_key && in_array( $id, array( 'mail_item', 'mail_item_sop', 'compliance_reminder', 'compliance_overdue' ), true ) ) {
+							$sender['from_name'] = $brand['site_name'];
+							$sender['name_source'] = __( 'Customer brand name (fixed by this sending path)', 'ajforms' );
+						}
+					}
+					?>
+					<details style="margin:12px 0;padding:12px;border:1px solid #e2e8f0;border-radius:6px;">
+						<summary><strong><?php echo esc_html( $brand['label'] . ' — ' . $template['label'] ); ?></strong></summary>
+						<?php $this->display_email_delivery_details( $settings, $sender, $template['to'], ! $system_sender ); ?>
+						<p><strong><?php esc_html_e( 'Subject:', 'ajforms' ); ?></strong> <?php echo esc_html( $subject ); ?></p>
+						<p><strong><?php esc_html_e( 'Heading:', 'ajforms' ); ?></strong> <?php echo esc_html( $copy['heading'] ); ?></p>
+						<div style="white-space:pre-line;"><strong><?php esc_html_e( 'Body:', 'ajforms' ); ?></strong><?php foreach ( $copy['paragraphs'] as $paragraph ) : ?><p><?php echo esc_html( $paragraph ); ?></p><?php endforeach; ?></div>
+						<p style="white-space:pre-line;"><strong><?php esc_html_e( 'Fixed content / sending rule:', 'ajforms' ); ?></strong> <?php echo esc_html( $template['fixed'] ); ?></p>
+						<?php if ( ! $template['brand_variants'] && ! $system_sender ) : ?>
+							<p><?php esc_html_e( 'Both brands share the same content and sender settings for this email type; the customer determines the brand shown in the message.', 'ajforms' ); ?></p>
+						<?php endif; ?>
+						<?php if ( $native ) : ?>
+							<p><?php echo '1' === (string) $settings['wp_email_templates_enabled'] ? esc_html__( 'Branded WordPress reset template enabled. Shares the default Password Reset subject; body and button text are fixed.', 'ajforms' ) : esc_html__( 'Branded WordPress reset template disabled; WordPress supplies its standard message.', 'ajforms' ); ?></p>
+						<?php endif; ?>
+					</details>
+				<?php endforeach; ?>
+			<?php endforeach; ?>
+		</div>
+		<?php
+	}
+
+	/** Built-in templates shown read-only in Settings; senders share these defaults. */
+	private function get_additional_branded_email_templates() {
+		return array(
+			'service_purchase_welcome' => array(
+				'label' => __( 'Service Purchase Welcome', 'ajforms' ),
+				'key' => 'wp_service_purchase_welcome',
+				'sender_key' => 'wp_service_purchase_welcome',
+				'brand_variants' => true,
+				'to' => __( 'Email on the new service request’s Stripe customer record.', 'ajforms' ),
+				'fixed' => __( 'Sent once for a new add_service request. Fixed contact block and footer: (704) 307-2135. This is separate from the portal-access welcome email.', 'ajforms' ),
+				'default_subject' => __( 'Welcome to {site_name} \xe2\x80\x93 Next steps for {service_name}', 'ajforms' ),
+				'default_heading' => __( 'Thank you for your purchase', 'ajforms' ),
+				'default_body' => array(
+					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+					sprintf( __( 'Thank you for choosing %s for %s. We are excited to get started.', 'ajforms' ), '{site_name}', '{service_name}' ),
+					__( 'Our team will be in touch soon with next steps. In the meantime, feel free to reach out with any questions.', 'ajforms' ),
+				),
+			),
+			'mail_item_sop' => array(
+				'label' => __( 'Service of Process / Urgent Mail', 'ajforms' ),
+				'key' => 'wp_mail_item_sop',
+				'sender_key' => 'wp_mail_item',
+				'brand_variants' => false,
+				'to' => __( 'Customer email supplied by the mail-item notification action.', 'ajforms' ),
+				'fixed' => __( 'Urgent copy when the mail item is marked as service of process. Shows mail type, sender and received date; View Scanned Document appears only when a scan URL exists.', 'ajforms' ),
+				'default_subject' => __( 'URGENT: Legal document received for you — {mail_type}', 'ajforms' ),
+				'default_heading' => __( 'A legal document was delivered to your registered agent', 'ajforms' ),
+				'default_body' => array(
+					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+					__( 'We received service of process or another time-sensitive legal document addressed to you: {mail_type} from {sender_name}.', 'ajforms' ),
+					__( 'Legal documents often carry response deadlines. Please review it as soon as possible.', 'ajforms' ),
+				),
+			),
+			'mail_item' => array(
+				'label' => __( 'Physical Mail Received', 'ajforms' ),
+				'key' => 'wp_mail_item',
+				'sender_key' => 'wp_mail_item',
+				'brand_variants' => false,
+				'to' => __( 'Customer email supplied by the mail-item notification action.', 'ajforms' ),
+				'fixed' => __( 'Shows mail type, sender and received date; View Scanned Document appears only when a scan URL exists.', 'ajforms' ),
+				'default_subject' => __( 'New mail received for you: {mail_type}', 'ajforms' ),
+				'default_heading' => __( 'You have new mail at our office', 'ajforms' ),
+				'default_body' => array(
+					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+					__( 'We received a {mail_type} addressed to you from {sender_name}.', 'ajforms' ),
+				),
+			),
+			'gmail_intake' => array(
+				'label' => __( 'Documents Filed (Gmail Intake)', 'ajforms' ),
+				'key' => 'wp_gmail_intake',
+				'sender_key' => 'wp_gmail_intake',
+				'brand_variants' => false,
+				'to' => __( 'Customer email supplied when intake documents are filed.', 'ajforms' ),
+				'fixed' => __( 'Fixed checklist: Get your EIN from the IRS at irs.gov; Open a business bank account; Get liability insurance for your business. View Your Files links to the configured customer portal page, falling back to /client-portal/.', 'ajforms' ),
+				'default_subject' => __( 'Your business formation documents are ready', 'ajforms' ),
+				'default_heading' => __( 'Your documents are in your portal', 'ajforms' ),
+				'default_body' => array(
+					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+					__( "We've added the following document(s) to your client portal: {files}.", 'ajforms' ),
+					__( 'Reminder: most new companies are required to file a Beneficial Ownership Information Report (BOIR) with FinCEN. You can file directly at boiefiling.fincen.gov/boir/html.', 'ajforms' ),
+				),
+			),
+			'compliance_overdue' => array(
+				'label' => __( 'Annual Report Overdue', 'ajforms' ),
+				'key' => 'wp_compliance_overdue',
+				'sender_key' => 'wp_compliance',
+				'brand_variants' => false,
+				'to' => __( 'Email of the customer linked to the compliance entity.', 'ajforms' ),
+				'fixed' => __( 'Shown when the filing due date has passed. Deadline box includes entity, report year and due date. Footer: You are receiving this because we serve as registered agent for this entity.', 'ajforms' ),
+				'default_subject' => __( 'OVERDUE: {year} {state} Annual Report for {entity_name}', 'ajforms' ),
+				'default_heading' => __( 'The annual report for {entity_name} is past due', 'ajforms' ),
+				'default_body' => array(
+					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+					__( 'The {year} annual report for {entity_name} was due {due_date} and has not been filed with the {state} Secretary of State.', 'ajforms' ),
+					__( 'A missed annual report can lead to administrative dissolution. We can prepare and file it for you — reply to this email or contact us to get it taken care of.', 'ajforms' ),
+				),
+			),
+			'compliance_reminder' => array(
+				'label' => __( 'Annual Report Reminder', 'ajforms' ),
+				'key' => 'wp_compliance_reminder',
+				'sender_key' => 'wp_compliance',
+				'brand_variants' => false,
+				'to' => __( 'Email of the customer linked to the compliance entity.', 'ajforms' ),
+				'fixed' => __( 'Sent by Remind now or the scheduled reminder windows. Deadline box includes entity, report year and due date. Footer: You are receiving this because we serve as registered agent for this entity.', 'ajforms' ),
+				'default_subject' => __( 'Reminder: {year} {state} Annual Report for {entity_name} is due {due_date}', 'ajforms' ),
+				'default_heading' => __( 'An annual report deadline is coming up', 'ajforms' ),
+				'default_body' => array(
+					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+					__( 'The {year} annual report for {entity_name} is due {due_date} with the {state} Secretary of State.', 'ajforms' ),
+					__( 'We can prepare and file it for you so nothing slips — reply to this email or contact us and we will handle the rest.', 'ajforms' ),
+				),
+			),
+			'ra_change_filed' => array(
+				'label' => __( 'Registered Agent Change Filed', 'ajforms' ),
+				'key' => 'wp_ra_change_filed',
+				'sender_key' => 'wp_service_status',
+				'brand_variants' => true,
+				'to' => __( 'Email on the service request’s Stripe customer record.', 'ajforms' ),
+				'fixed' => __( 'Used for registered-agent subscriptions with status updating_sosn. Shares the Service Status sender settings and fixed status/footer content.', 'ajforms' ),
+				'default_subject' => __( 'We filed your Registered Agent change with SOS/NC', 'ajforms' ),
+				'default_heading' => __( 'Your Registered Agent change has been filed', 'ajforms' ),
+				'default_body' => array(
+					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
+					sprintf( __( 'We\'ve submitted the Change of Registered Agent form to the NC Secretary of State, naming %1$s as the new registered agent for %2$s.', 'ajforms' ), '{agent_name}', '{service_name}' ),
+					__( "No action is needed from you right now — once the state processes this filing, we'll mark your service active.", 'ajforms' ),
+				),
+			),
+		);
+	}
+
 	public function display_email_templates_settings_section() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
@@ -27001,6 +27225,7 @@ class AJForms_Admin {
 			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 			<div class="ajforms-settings-card">
 				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
+				<p><?php esc_html_e( 'From Name is the display name; From Email is the mailbox address. The details below show saved values submitted by AJCore. To investigate an email showing only the address, compare its original From header with the sender in the AJCore email log.', 'ajforms' ); ?></p>
 				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
@@ -27129,7 +27354,7 @@ class AJForms_Admin {
 			);
 
 			$brands = array(
-				'ncllc' => array( 'label' => __( 'NC LLC Agents', 'ajforms' ), 'prefix' => '', 'entity_name' => 'NC LLC Agents Inc', 'site_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
+				'ncllc' => array( 'label' => __( 'Default templates', 'ajforms' ), 'prefix' => '', 'entity_name' => 'NC LLC Agents Inc', 'site_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
 			);
 			// Both brands always render. This used to be gated on enable_university_brand_templates,
 			// which hid the university_* fields — but get_customer_brand_setting_key() picks those
@@ -27174,7 +27399,7 @@ class AJForms_Admin {
 
 					$email_variants[] = array_merge( $type, array(
 						'variant_key'    => $brand_key . '_' . $type['id'],
-						'variant_label'  => $brand['label'] . ' — ' . $type['label'],
+						'variant_label'  => ( ! empty( $type['ncllc_only'] ) ? __( 'NC LLC Agents', 'ajforms' ) : $brand['label'] ) . ' — ' . $type['label'],
 						'brand_label'    => $brand['label'],
 						'subject_key'    => $key( $type['subject_key'] ),
 						'heading_key'    => $key( $type['heading_key'] ),
@@ -27182,6 +27407,7 @@ class AJForms_Admin {
 						'from_email_key' => $key( $type['from_email_key'] ),
 						'from_name_key'  => $key( $type['from_name_key'] ),
 						'address_key'    => ! empty( $type['address_key'] ) ? $key( $type['address_key'] ) : '',
+						'fixed_parts'    => $static_parts,
 						'sample_html'    => $this->render_branded_email_html( array_merge(
 							array(
 								'kicker'  => $brand['site_name'],
@@ -27200,6 +27426,7 @@ class AJForms_Admin {
 				<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
 				<div class="ajforms-settings-field" style="min-width:280px;max-width:380px;flex:1 1 auto;">
 					<label for="ajforms-email-variant-select"><?php esc_html_e( 'Email template', 'ajforms' ); ?></label>
+					<p><?php esc_html_e( 'Default templates use this site’s settings. University templates are selected by the customer or lead’s brand, on either site. Registered Agent Authorization always identifies NC LLC Agents.', 'ajforms' ); ?></p>
 					<select id="ajforms-email-variant-select">
 						<?php foreach ( $brands as $brand_key => $brand ) : ?>
 							<optgroup label="<?php echo esc_attr( $brand['label'] ); ?>">
@@ -27223,20 +27450,23 @@ class AJForms_Admin {
 						// the same resolution the send functions use, so the screen can't disagree
 						// with what goes out.
 						$effective   = $this->resolve_email_sender( $settings, $type['from_email_key'], $type['from_name_key'] );
-						$is_override = ! empty( $settings[ $type['from_email_key'] ] );
-						$smtp_user   = isset( $settings['smtp_username'] ) ? (string) $settings['smtp_username'] : '';
-						$smtp_on     = ( ! isset( $settings['mail_mode'] ) || 'php' !== $settings['mail_mode'] ) && ! empty( $settings['smtp_host'] );
-						$mismatch    = $smtp_on && is_email( $smtp_user ) && strtolower( $effective['from_email'] ) !== strtolower( $smtp_user );
+						$recipients = array(
+							'password_reset' => __( 'Linked WordPress user’s account email.', 'ajforms' ),
+							'welcome' => __( 'Linked WordPress user’s account email.', 'ajforms' ),
+							'service_status' => __( 'Email on the service request’s Stripe customer record.', 'ajforms' ),
+							'lead_followup' => __( 'Email extracted from the lead’s submitted form data.', 'ajforms' ),
+							'ra_authorization' => __( 'Email on the Stripe customer record; no WordPress account required.', 'ajforms' ),
+						);
 						?>
 						<h4 style="margin:0 0 6px;font-size:13px;font-weight:700;color:#111827;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
-						<p style="margin:0 0 10px;font-size:12px;color:#4b5563;">
-							<?php esc_html_e( 'Sends as', 'ajforms' ); ?>
-							<code style="background:#f3f4f6;padding:1px 5px;border-radius:4px;"><?php echo esc_html( sprintf( '%s <%s>', $effective['from_name'], $effective['from_email'] ) ); ?></code>
-							<span style="color:#9ca3af;"><?php echo $is_override ? esc_html__( '— this template’s own From', 'ajforms' ) : esc_html__( '— inherited from System From (leave From Email blank to keep inheriting)', 'ajforms' ); ?></span>
-							<?php if ( $mismatch ) : ?>
-								<br><span style="color:#b45309;"><?php echo esc_html( sprintf( __( 'Not the SMTP login (%s) — your provider must allow sending as this address (an alias, or a mailbox on its domain), or the send is rejected.', 'ajforms' ), $smtp_user ) ); ?></span>
-							<?php endif; ?>
-						</p>
+						<?php $this->display_email_delivery_details( $settings, $effective, $recipients[ $type['id'] ] ); ?>
+						<details style="margin:10px 0;">
+							<summary><?php esc_html_e( 'Fixed content (read-only)', 'ajforms' ); ?></summary>
+							<?php foreach ( $type['fixed_parts'] as $part => $value ) : ?>
+								<p><strong><?php echo esc_html( ucwords( str_replace( '_', ' ', $part ) ) ); ?>:</strong> <?php echo esc_html( $value ); ?></p>
+							<?php endforeach; ?>
+							<p><?php esc_html_e( 'Recipient, password links, customer details and status values are filled in at send time. From Name is separate from From Email. Blank fields inherit their defaults, except portal welcome From Email uses the authenticated SMTP username.', 'ajforms' ); ?></p>
+						</details>
 						<div class="ajforms-email-variant-layout">
 							<div>
 								<div class="ajforms-settings-grid ajf-3">
@@ -27296,6 +27526,8 @@ class AJForms_Admin {
 					<?php echo wp_kses_post( sprintf( '<a href="%s">%s</a>', esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) . '#ajcore-email-log' ), esc_html__( 'View sent emails →', 'ajforms' ) ) ); ?>
 				</div>
 			</div>
+
+			<?php $this->display_additional_branded_email_templates( $settings, $brands ); ?>
 
 			<div class="ajforms-settings-actions">
 				<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>

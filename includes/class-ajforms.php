@@ -1193,19 +1193,22 @@ class AJForms {
 		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
 		$defaults['subject'] = $subject;
 		$defaults['headers'] = array( 'Content-Type: text/html; charset=UTF-8' );
-		$defaults['message'] = $this->build_wp_email_template(
-			array(
-				'headline'      => __( 'Set your client portal password', 'ajforms' ),
-				'greeting'      => sprintf( __( 'Hi %s,', 'ajforms' ), $user_data->display_name ),
-				'body'          => __( 'Use the secure button below to create a new password for your account. This link is private and should only be used by you.', 'ajforms' ),
-				'button_label'  => __( 'Set New Password', 'ajforms' ),
-				'button_url'    => $reset_url,
-				'link_intro'    => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
-				'footer'        => __( 'If you did not request this email, you can ignore it.', 'ajforms' ),
-			)
-		);
+		$defaults['message'] = $this->build_wp_email_template( $this->get_wp_password_reset_email_content( $user_data->display_name, $reset_url ) );
 
 		return $defaults;
+	}
+
+	/** Shared with the read-only Email Templates inventory; never generates a reset key. */
+	public function get_wp_password_reset_email_content( $display_name, $reset_url ) {
+		return array(
+			'headline'      => __( 'Set your client portal password', 'ajforms' ),
+			'greeting'      => sprintf( __( 'Hi %s,', 'ajforms' ), $display_name ),
+			'body'          => __( 'Use the secure button below to create a new password for your account. This link is private and should only be used by you.', 'ajforms' ),
+			'button_label'  => __( 'Set New Password', 'ajforms' ),
+			'button_url'    => $reset_url,
+			'link_intro'    => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
+			'footer'        => __( 'If you did not request this email, you can ignore it.', 'ajforms' ),
+		);
 	}
 
 	private function build_wp_email_template( $args ) {
