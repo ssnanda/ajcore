@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.323
+ * Version: 0.7.324
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.323' );
+	define( 'AJCORE_VERSION', '0.7.324' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -2857,6 +2857,10 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 		$port       = $profile['port'];
 
 		$phpmailer->isSMTP();
+		// Fail fast on a wrong host or a blocked port: PHPMailer's default is 300s, which looks like
+		// a hung admin screen rather than a misconfiguration. 15s is well beyond a healthy handshake.
+		$phpmailer->Timeout    = 15;
+		$phpmailer->SMTPKeepAlive = false;
 		$phpmailer->Host       = $host;
 		$phpmailer->Port       = $port > 0 ? $port : ( 'ssl' === $encryption ? 465 : 587 );
 		$phpmailer->SMTPSecure = in_array( $encryption, array( 'ssl', 'tls' ), true ) ? $encryption : '';
