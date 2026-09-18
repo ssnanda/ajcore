@@ -5200,9 +5200,9 @@ class AJForms_Admin {
 		// System From. Precedence: template → profile → System From → site default.
 		$sending_profile = $profile_key;
 		if ( '' === $sending_profile ) {
-			$sending_profile = isset( $settings['mail_route_customer'] ) && 'smtp' === $settings['mail_route_customer'] ? 'smtp' : 'smtp2';
+			$sending_profile = function_exists( 'ajcore_default_mail_profile' ) ? ajcore_default_mail_profile( $settings ) : 'smtp';
 		}
-		$profile_from = function_exists( 'ajcore_get_mail_profile_from' ) && isset( $settings['mail_mode'] ) && 'smtp' === $settings['mail_mode']
+		$profile_from = function_exists( 'ajcore_get_mail_profile_from' )
 			? ajcore_get_mail_profile_from( $settings, $sending_profile )
 			: array( 'from_email' => '', 'from_name' => '' );
 
@@ -5236,8 +5236,7 @@ class AJForms_Admin {
 		// From header, which is not a valid sender at all.
 		if ( '' === $profile_from['from_email']
 			&& empty( $settings[ $from_email_key ] )
-			&& in_array( $from_email_key, array( 'wp_welcome_from_email', 'university_wp_welcome_from_email' ), true )
-			&& isset( $settings['mail_mode'] ) && 'smtp' === $settings['mail_mode'] ) {
+			&& in_array( $from_email_key, array( 'wp_welcome_from_email', 'university_wp_welcome_from_email' ), true ) ) {
 			$prefix = 'smtp2' === $sending_profile ? 'smtp2_' : 'smtp_';
 			if ( '' === trim( (string) $settings[ $prefix . 'host' ] ) ) {
 				$prefix = 'smtp_'; // profile 2 routed but unconfigured — the send falls back to 1.
@@ -5320,8 +5319,7 @@ class AJForms_Admin {
 			return;
 		}
 		$settings = $this->get_plugin_settings();
-		$route    = isset( $settings['mail_route_customer'] ) ? (string) $settings['mail_route_customer'] : 'smtp2';
-		ajcore_set_mail_profile( 'smtp' === $route ? 'smtp' : 'smtp2' );
+		ajcore_set_mail_profile( function_exists( 'ajcore_default_mail_profile' ) ? ajcore_default_mail_profile( $settings ) : 'smtp' );
 	}
 
 	/** Resolve the legal/customer-facing brand from the durable customer partner assignment. */
@@ -14173,8 +14171,7 @@ class AJForms_Admin {
 			'university_wp_welcome_mail_profile'        => $this->sanitize_mail_profile_post( 'university_wp_welcome_mail_profile' ),
 			'university_wp_service_status_mail_profile' => $this->sanitize_mail_profile_post( 'university_wp_service_status_mail_profile' ),
 			'university_lead_followup_mail_profile'     => $this->sanitize_mail_profile_post( 'university_lead_followup_mail_profile' ),
-			'mail_route_customer'            => isset( $_POST['mail_route_customer'] ) && 'smtp' === sanitize_key( wp_unslash( $_POST['mail_route_customer'] ) ) ? 'smtp' : 'smtp2',
-			'mail_route_forms'               => isset( $_POST['mail_route_forms'] ) && 'smtp2' === sanitize_key( wp_unslash( $_POST['mail_route_forms'] ) ) ? 'smtp2' : 'smtp',
+			'mail_default_profile'           => isset( $_POST['mail_default_profile'] ) && 'smtp2' === sanitize_key( wp_unslash( $_POST['mail_default_profile'] ) ) ? 'smtp2' : ( isset( $_POST['mail_default_profile'] ) ? 'smtp' : ( isset( $current_settings['mail_default_profile'] ) && 'smtp2' === $current_settings['mail_default_profile'] ? 'smtp2' : 'smtp' ) ),
 			'smtp_username'                  => isset( $_POST['smtp_username'] ) ? sanitize_text_field( wp_unslash( $_POST['smtp_username'] ) ) : '',
 			// Rendered empty on purpose (never echo a stored credential), so an empty POST means
 			// "keep the saved one" — type a new password to replace it.
@@ -14371,7 +14368,7 @@ class AJForms_Admin {
 			// Preserved by their own loop above instead, like the OAuth/university fields.
 			'email-templates' => array( 'wp_password_reset_mail_profile', 'wp_welcome_mail_profile', 'wp_service_status_mail_profile', 'lead_followup_mail_profile', 'ra_authorization_mail_profile', 'university_wp_password_reset_mail_profile', 'university_wp_welcome_mail_profile', 'university_wp_service_status_mail_profile', 'university_lead_followup_mail_profile', 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name', 'email_footer_address' ),
 			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
-			'email'        => array( 'mail_mode', 'smtp_host', 'smtp_port', 'smtp_encryption', 'smtp_auth', 'smtp_username', 'smtp_password', 'smtp_envelope_from_username', 'smtp_label', 'smtp2_label', 'smtp2_host', 'smtp2_port', 'smtp2_encryption', 'smtp2_auth', 'smtp2_username', 'smtp2_password', 'smtp2_envelope_from_username', 'smtp_from_email', 'smtp_from_name', 'smtp2_from_email', 'smtp2_from_name', 'mail_route_customer', 'mail_route_forms' ),
+			'email'        => array( 'mail_mode', 'smtp_host', 'smtp_port', 'smtp_encryption', 'smtp_auth', 'smtp_username', 'smtp_password', 'smtp_envelope_from_username', 'smtp_label', 'smtp2_label', 'smtp2_host', 'smtp2_port', 'smtp2_encryption', 'smtp2_auth', 'smtp2_username', 'smtp2_password', 'smtp2_envelope_from_username', 'smtp_from_email', 'smtp_from_name', 'smtp2_from_email', 'smtp2_from_name', 'mail_default_profile' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
 			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
@@ -19559,12 +19556,40 @@ class AJForms_Admin {
 		return $links;
 	}
 
+	/** Admin notice naming any SMTP profile that can't send yet. Shown where mail gets triggered —
+	 *  Forms and the Client Portal — so a broken profile surfaces before someone sends with it. */
+	private function render_mail_profile_warnings() {
+		if ( ! function_exists( 'ajcore_mail_profile_issues' ) ) {
+			return;
+		}
+		$settings = $this->get_plugin_settings();
+		$lines    = array();
+		foreach ( array( 'smtp', 'smtp2' ) as $profile_key ) {
+			$issues = ajcore_mail_profile_issues( $settings, $profile_key );
+			if ( $issues ) {
+				$lines[] = sprintf( '%s — %s', ajcore_mail_profile_label( $profile_key, $settings ), implode( ', ', $issues ) );
+			}
+		}
+		if ( ! $lines ) {
+			return;
+		}
+		printf(
+			'<div class="notice notice-warning"><p><strong>%s</strong> %s &nbsp;<a href="%s">%s</a></p></div>',
+			esc_html__( 'SMTP not configured:', 'ajforms' ),
+			esc_html( implode( ' · ', $lines ) ),
+			esc_url( add_query_arg( array( 'page' => 'ajcore-mail' ), admin_url( 'admin.php' ) ) ),
+			esc_html__( 'AJ Core Mail →', 'ajforms' )
+		);
+	}
+
 	public function display_forms_page() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 		$action = isset( $_GET['action'] ) ? sanitize_text_field( wp_unslash( $_GET['action'] ) ) : '';
 		$view   = isset( $_GET['view'] ) ? sanitize_key( wp_unslash( $_GET['view'] ) ) : '';
+
+		$this->render_mail_profile_warnings();
 
 		if ( in_array( $action, array( 'add', 'edit' ), true ) ) {
 			require_once AJFORMS_PLUGIN_DIR . 'admin/partials/ajforms-admin-builder.php';
@@ -20409,6 +20434,8 @@ class AJForms_Admin {
 		} else {
 			$this->ensure_portal_schema();
 		}
+
+		$this->render_mail_profile_warnings();
 
 		// Menu/Calendar/API/Settings were merged into a single "CP Settings" tab with its own
 		// sub-navigation (cp_section) — keep old bookmarked links working by redirecting them in,
@@ -21921,10 +21948,6 @@ class AJForms_Admin {
 		if ( ! is_email( $default_test_to ) ) {
 			$default_test_to = $current->user_email;
 		}
-		// SMTP is the default (see the 'mail_mode' default in ajcore.php) — only an explicit 'php'
-		// opts back out to the host's mailer.
-		$mail_mode   = isset( $settings['mail_mode'] ) && 'php' === $settings['mail_mode'] ? 'php' : 'smtp';
-		$smtp_ready  = 'smtp' === $mail_mode && ! empty( $settings['smtp_host'] );
 		$smtp_password_is_constant = defined( 'AJCORE_SMTP_PASSWORD' ) && '' !== (string) AJCORE_SMTP_PASSWORD;
 		$smtp_password_is_set      = ! empty( $settings['smtp_password'] );
 
@@ -21934,10 +21957,9 @@ class AJForms_Admin {
 		$sendmail_path     = (string) ini_get( 'sendmail_path' );
 		$header_from       = ! empty( $settings['wp_email_from_email'] ) && is_email( $settings['wp_email_from_email'] ) ? $settings['wp_email_from_email'] : ajcore_default_system_from_email();
 		$envelope_from     = ! empty( $settings['smtp_username'] ) && is_email( $settings['smtp_username'] ) ? $settings['smtp_username'] : '';
-		$route_forms       = isset( $settings['mail_route_forms'] ) && 'smtp2' === $settings['mail_route_forms'] ? 'smtp2' : 'smtp';
-		$route_customer    = isset( $settings['mail_route_customer'] ) && 'smtp' === $settings['mail_route_customer'] ? 'smtp' : 'smtp2';
-		$label1            = '' !== trim( (string) $settings['smtp_label'] ) ? $settings['smtp_label'] : __( 'Profile 1', 'ajforms' );
-		$label2            = '' !== trim( (string) $settings['smtp2_label'] ) ? $settings['smtp2_label'] : __( 'Profile 2', 'ajforms' );
+		$label1            = ajcore_mail_profile_label( 'smtp', $settings );
+		$label2            = ajcore_mail_profile_label( 'smtp2', $settings );
+		$default_profile   = ajcore_default_mail_profile( $settings );
 		$system_from_email = ! empty( $settings['wp_email_from_email'] ) ? $settings['wp_email_from_email'] : ajcore_default_system_from_email();
 		$system_from_name  = ! empty( $settings['wp_email_from_name'] ) ? $settings['wp_email_from_name'] : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 		$templates_url     = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email-templates' ), admin_url( 'admin.php' ) );
@@ -21961,7 +21983,7 @@ class AJForms_Admin {
 			.ajcore-mail-page .ajcm-row input{flex:1 1 auto;min-width:0}
 			.ajcore-mail-page .ajcm-actions{margin-top:12px;display:flex;align-items:center;gap:10px}
 			.ajcore-mail-page .button-primary{background:#ea580c;border-color:#ea580c}
-			.ajcore-mail-page .ajcm-env{margin-top:14px;flex-direction:column;align-items:flex-start;padding:9px 13px;background:#f9fafb;border:1px solid #eceef2;border-radius:8px;font-size:12px;color:#4b5563;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center}
+			.ajcore-mail-page .ajcm-env{margin-top:14px;padding:9px 13px;background:#f9fafb;border:1px solid #eceef2;border-radius:8px;font-size:12px;color:#4b5563;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center}
 			.ajcore-mail-page .ajcm-env code{background:none;padding:0;font-size:11.5px;color:#374151}
 			.ajcore-mail-page .ajcm-from-table{width:100%;border-collapse:collapse}
 			.ajcore-mail-page .ajcm-from-table td{padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:12.5px}
@@ -21973,8 +21995,8 @@ class AJForms_Admin {
 			.ajcore-mail-page .ajcm-sends code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:12px}
 			.ajcore-mail-page .ajcm-sends div{margin-top:2px}
 			.ajcore-mail-page .ajcm-warn{color:#b45309;font-weight:700}
+			.ajcore-mail-page .ajcm-alert{margin-top:10px;padding:7px 11px;border-radius:6px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:12.5px}
 			.ajcore-mail-page .ajcm-prof-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-			.ajcore-mail-page .ajcm-prof-name{max-width:180px;min-height:28px!important;font-size:12.5px!important;padding:2px 8px!important}
 			.ajcore-mail-page .ajcm-prof-tag{margin-left:auto;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#6b7280;background:#f3f4f6;border-radius:999px;padding:3px 9px}
 			.ajcore-mail-page .ajcm-env .ajcm-warn{color:#b45309;font-weight:600}
 			.ajcore-mail-page .ajcm-env .ajcm-ok{color:#166534;font-weight:600}
@@ -21999,215 +22021,125 @@ class AJForms_Admin {
 			<div class="notice notice-error is-dismissible"><p><?php esc_html_e( 'Enter a valid email address to send the test to.', 'ajforms' ); ?></p></div>
 		<?php endif; ?>
 
-		<?php // Two columns: everything that saves together on the left in ONE form, the test send
-		// (its own nonce, its own form — forms can't nest) and the server readout on the right. ?>
-		<div class="ajcm-cols">
-			<form method="post" action="<?php echo esc_url( $section_url ); ?>">
-				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
-
+		<form method="post" action="<?php echo esc_url( $section_url ); ?>">
+			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
+			<div class="ajcm-grid" style="align-items:start;">
+			<?php
+			// One card per profile, side by side. Each is self-contained: credentials, its own sender
+			// identity, and its own test send. Routing (which mail uses which) lives with the mail
+			// itself — per form in the builder, per template in Email Templates.
+			foreach ( array(
+				array( 'p' => '', 'id' => 'smtp', 'title' => $label1, 'ph' => 'smtp.zoho.com' ),
+				array( 'p' => '2', 'id' => 'smtp2', 'title' => $label2, 'ph' => 'smtp.zeptomail.com' ),
+			) as $prof ) :
+				$k           = 'smtp' . $prof['p'] . '_';
+				$pw_constant = ( '2' === $prof['p'] ? defined( 'AJCORE_SMTP2_PASSWORD' ) && '' !== (string) AJCORE_SMTP2_PASSWORD : $smtp_password_is_constant );
+				$pw_saved    = ! empty( $settings[ $k . 'password' ] );
+				$sends_as    = ! empty( $settings[ $k . 'from_email' ] ) ? $settings[ $k . 'from_email' ] : $system_from_email;
+				$sends_nm    = ! empty( $settings[ $k . 'from_name' ] ) ? $settings[ $k . 'from_name' ] : $system_from_name;
+				$host_set    = '' !== trim( (string) $settings[ $k . 'host' ] );
+				$issues      = ajcore_mail_profile_issues( $settings, $prof['id'] );
+				?>
 				<div class="ajcm-card">
-					<h2><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h2>
-					<div class="ajcm-grid">
-						<div>
-							<label class="ajcm-label" for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
-							<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
-							<p class="ajcm-hint"><?php echo esc_html( sprintf( __( 'Blank = %s', 'ajforms' ), ajcore_default_system_from_email() ) ); ?></p>
-						</div>
-						<div>
-							<label class="ajcm-label" for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
-							<input name="wp_email_from_name" id="wp_email_from_name" type="text" placeholder="<?php echo esc_attr( wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
-							<p class="ajcm-hint"><?php esc_html_e( 'Blank = site title', 'ajforms' ); ?></p>
-						</div>
+					<div class="ajcm-prof-head">
+						<h2 style="margin:0;"><?php echo esc_html( $prof['title'] ); ?></h2>
+						<label class="ajcm-check ajcm-prof-tag" style="margin:0 0 0 auto;">
+							<input type="radio" name="mail_default_profile" value="<?php echo esc_attr( $prof['id'] ); ?>" <?php checked( $default_profile, $prof['id'] ); ?>>
+							<?php esc_html_e( 'Default', 'ajforms' ); ?>
+						</label>
 					</div>
-				</div>
-
-				<div class="ajcm-card" style="margin-top:14px;">
-					<h2><?php esc_html_e( 'How mail is sent', 'ajforms' ); ?></h2>
-					<div class="ajcm-grid ajcm-3">
+					<?php if ( $issues ) : ?>
+						<div class="ajcm-alert">
+							<?php
+							echo esc_html( $host_set
+								? sprintf( __( 'Incomplete: %s', 'ajforms' ), implode( ', ', $issues ) )
+								: __( 'Not configured — mail routed here falls back to PHP mail()', 'ajforms' ) );
+							?>
+						</div>
+					<?php endif; ?>
+					<div class="ajcm-grid ajcm-3" style="margin-top:10px;">
 						<div>
-							<label class="ajcm-label" for="mail_mode"><?php esc_html_e( 'Send using', 'ajforms' ); ?></label>
-							<select name="mail_mode" id="mail_mode">
-								<option value="smtp" <?php selected( $mail_mode, 'smtp' ); ?>><?php esc_html_e( 'SMTP', 'ajforms' ); ?></option>
-								<option value="php" <?php selected( $mail_mode, 'php' ); ?>><?php esc_html_e( 'PHP mail()', 'ajforms' ); ?></option>
+							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'host' ); ?>"><?php esc_html_e( 'Host', 'ajforms' ); ?></label>
+							<input name="<?php echo esc_attr( $k . 'host' ); ?>" id="<?php echo esc_attr( $k . 'host' ); ?>" type="text" placeholder="<?php echo esc_attr( $prof['ph'] ); ?>" value="<?php echo esc_attr( $settings[ $k . 'host' ] ); ?>">
+						</div>
+						<div>
+							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'encryption' ); ?>"><?php esc_html_e( 'Encryption', 'ajforms' ); ?></label>
+							<select name="<?php echo esc_attr( $k . 'encryption' ); ?>" id="<?php echo esc_attr( $k . 'encryption' ); ?>">
+								<option value="tls" <?php selected( $settings[ $k . 'encryption' ], 'tls' ); ?>><?php esc_html_e( 'STARTTLS', 'ajforms' ); ?></option>
+								<option value="ssl" <?php selected( $settings[ $k . 'encryption' ], 'ssl' ); ?>><?php esc_html_e( 'SSL/TLS', 'ajforms' ); ?></option>
+								<option value="none" <?php selected( $settings[ $k . 'encryption' ], 'none' ); ?>><?php esc_html_e( 'None', 'ajforms' ); ?></option>
 							</select>
 						</div>
 						<div>
-							<label class="ajcm-label" for="mail_route_forms"><?php esc_html_e( 'Forms & admin mail', 'ajforms' ); ?></label>
-							<select name="mail_route_forms" id="mail_route_forms">
-								<option value="smtp" <?php selected( $route_forms, 'smtp' ); ?>><?php echo esc_html( $label1 ); ?></option>
-								<option value="smtp2" <?php selected( $route_forms, 'smtp2' ); ?>><?php echo esc_html( $label2 ); ?></option>
-							</select>
+							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'port' ); ?>"><?php esc_html_e( 'Port', 'ajforms' ); ?></label>
+							<input name="<?php echo esc_attr( $k . 'port' ); ?>" id="<?php echo esc_attr( $k . 'port' ); ?>" type="text" inputmode="numeric" value="<?php echo esc_attr( $settings[ $k . 'port' ] ); ?>">
+						</div>
+					</div>
+					<div class="ajcm-grid" style="margin-top:10px;">
+						<div>
+							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'username' ); ?>"><?php esc_html_e( 'Username', 'ajforms' ); ?></label>
+							<input name="<?php echo esc_attr( $k . 'username' ); ?>" id="<?php echo esc_attr( $k . 'username' ); ?>" type="text" autocomplete="off" value="<?php echo esc_attr( $settings[ $k . 'username' ] ); ?>">
 						</div>
 						<div>
-							<label class="ajcm-label" for="mail_route_customer"><?php esc_html_e( 'Customer & portal mail', 'ajforms' ); ?></label>
-							<select name="mail_route_customer" id="mail_route_customer">
-								<option value="smtp" <?php selected( $route_customer, 'smtp' ); ?>><?php echo esc_html( $label1 ); ?></option>
-								<option value="smtp2" <?php selected( $route_customer, 'smtp2' ); ?>><?php echo esc_html( $label2 ); ?></option>
-							</select>
+							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'password' ); ?>"><?php esc_html_e( 'Password', 'ajforms' ); ?></label>
+							<?php if ( $pw_constant ) : ?>
+								<p class="ajcm-hint" style="margin:8px 0 0;"><?php echo esc_html( '2' === $prof['p'] ? 'AJCORE_SMTP2_PASSWORD' : 'AJCORE_SMTP_PASSWORD' ); ?></p>
+							<?php else : ?>
+								<input name="<?php echo esc_attr( $k . 'password' ); ?>" id="<?php echo esc_attr( $k . 'password' ); ?>" type="password" autocomplete="new-password" value="" placeholder="<?php echo $pw_saved ? esc_attr__( '•••••••• saved', 'ajforms' ) : ''; ?>">
+							<?php endif; ?>
+						</div>
+						<div>
+							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'from_email' ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
+							<input name="<?php echo esc_attr( $k . 'from_email' ); ?>" id="<?php echo esc_attr( $k . 'from_email' ); ?>" type="text" placeholder="<?php echo esc_attr( $system_from_email ); ?>" value="<?php echo esc_attr( $settings[ $k . 'from_email' ] ); ?>">
+						</div>
+						<div>
+							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'from_name' ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
+							<input name="<?php echo esc_attr( $k . 'from_name' ); ?>" id="<?php echo esc_attr( $k . 'from_name' ); ?>" type="text" placeholder="<?php echo esc_attr( $system_from_name ); ?>" value="<?php echo esc_attr( $settings[ $k . 'from_name' ] ); ?>">
 						</div>
 					</div>
-				</div>
-
-				<div id="ajcore-smtp-fields" style="<?php echo 'smtp' === $mail_mode ? '' : 'display:none;'; ?>">
-				<?php
-				// One markup block per profile — identical fields, different key prefix. Profile 1 is
-				// the fallback whenever profile 2 is routed to but not configured.
-				foreach ( array(
-					array( 'p' => '', 'id' => 'smtp', 'label' => $label1, 'title' => __( 'Profile 1', 'ajforms' ) ),
-					array( 'p' => '2', 'id' => 'smtp2', 'label' => $label2, 'title' => __( 'Profile 2', 'ajforms' ) ),
-				) as $prof ) :
-					$k               = 'smtp' . $prof['p'] . '_';
-					$pw_constant     = ( '2' === $prof['p'] ? defined( 'AJCORE_SMTP2_PASSWORD' ) && '' !== (string) AJCORE_SMTP2_PASSWORD : $smtp_password_is_constant );
-					$pw_saved        = ! empty( $settings[ $k . 'password' ] );
-					$used_for        = array();
-					if ( $route_forms === $prof['id'] ) {
-						$used_for[] = __( 'Forms & admin', 'ajforms' );
-					}
-					if ( $route_customer === $prof['id'] ) {
-						$used_for[] = __( 'Customer & portal', 'ajforms' );
-					}
-					?>
-					<div class="ajcm-card" style="margin-top:14px;">
-						<div class="ajcm-prof-head">
-							<h2 style="margin:0;"><?php echo esc_html( $prof['title'] ); ?></h2>
-							<input class="ajcm-prof-name" name="<?php echo esc_attr( $k . 'label' ); ?>" type="text" value="<?php echo esc_attr( $prof['label'] ); ?>" aria-label="<?php esc_attr_e( 'Profile name', 'ajforms' ); ?>">
-							<span class="ajcm-prof-tag"><?php echo $used_for ? esc_html( implode( ' · ', $used_for ) ) : esc_html__( 'Unused', 'ajforms' ); ?></span>
-						</div>
-						<div class="ajcm-grid ajcm-3" style="margin-top:10px;">
-							<div>
-								<label class="ajcm-label" for="<?php echo esc_attr( $k . 'host' ); ?>"><?php esc_html_e( 'Host', 'ajforms' ); ?></label>
-								<input name="<?php echo esc_attr( $k . 'host' ); ?>" id="<?php echo esc_attr( $k . 'host' ); ?>" type="text" placeholder="<?php echo '2' === $prof['p'] ? 'smtp.zeptomail.com' : 'smtp.zoho.com'; ?>" value="<?php echo esc_attr( $settings[ $k . 'host' ] ); ?>">
-							</div>
-							<div>
-								<label class="ajcm-label" for="<?php echo esc_attr( $k . 'encryption' ); ?>"><?php esc_html_e( 'Encryption', 'ajforms' ); ?></label>
-								<select name="<?php echo esc_attr( $k . 'encryption' ); ?>" id="<?php echo esc_attr( $k . 'encryption' ); ?>">
-									<option value="tls" <?php selected( $settings[ $k . 'encryption' ], 'tls' ); ?>><?php esc_html_e( 'STARTTLS (587)', 'ajforms' ); ?></option>
-									<option value="ssl" <?php selected( $settings[ $k . 'encryption' ], 'ssl' ); ?>><?php esc_html_e( 'SSL/TLS (465)', 'ajforms' ); ?></option>
-									<option value="none" <?php selected( $settings[ $k . 'encryption' ], 'none' ); ?>><?php esc_html_e( 'None', 'ajforms' ); ?></option>
-								</select>
-							</div>
-							<div>
-								<label class="ajcm-label" for="<?php echo esc_attr( $k . 'port' ); ?>"><?php esc_html_e( 'Port', 'ajforms' ); ?></label>
-								<input name="<?php echo esc_attr( $k . 'port' ); ?>" id="<?php echo esc_attr( $k . 'port' ); ?>" type="text" inputmode="numeric" value="<?php echo esc_attr( $settings[ $k . 'port' ] ); ?>">
-							</div>
-						</div>
-						<div class="ajcm-grid" style="margin-top:10px;">
-							<div>
-								<label class="ajcm-label" for="<?php echo esc_attr( $k . 'username' ); ?>"><?php esc_html_e( 'Username', 'ajforms' ); ?></label>
-								<input name="<?php echo esc_attr( $k . 'username' ); ?>" id="<?php echo esc_attr( $k . 'username' ); ?>" type="text" autocomplete="off" value="<?php echo esc_attr( $settings[ $k . 'username' ] ); ?>">
-							</div>
-							<div>
-								<label class="ajcm-label" for="<?php echo esc_attr( $k . 'password' ); ?>"><?php esc_html_e( 'Password', 'ajforms' ); ?></label>
-								<?php if ( $pw_constant ) : ?>
-									<p class="ajcm-hint" style="margin:8px 0 0;"><?php echo esc_html( '2' === $prof['p'] ? 'AJCORE_SMTP2_PASSWORD' : 'AJCORE_SMTP_PASSWORD' ); ?></p>
-								<?php else : ?>
-									<input name="<?php echo esc_attr( $k . 'password' ); ?>" id="<?php echo esc_attr( $k . 'password' ); ?>" type="password" autocomplete="new-password" value="" placeholder="<?php echo $pw_saved ? esc_attr__( '•••••••• saved — type to replace', 'ajforms' ) : ''; ?>">
-								<?php endif; ?>
-							</div>
-						</div>
-						<div class="ajcm-grid" style="margin-top:10px;">
-							<div>
-								<label class="ajcm-label" for="<?php echo esc_attr( $k . 'from_email' ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
-								<input name="<?php echo esc_attr( $k . 'from_email' ); ?>" id="<?php echo esc_attr( $k . 'from_email' ); ?>" type="text" placeholder="<?php echo esc_attr( $system_from_email ); ?>" value="<?php echo esc_attr( $settings[ $k . 'from_email' ] ); ?>">
-								<p class="ajcm-hint"><?php esc_html_e( 'Blank = System From', 'ajforms' ); ?></p>
-							</div>
-							<div>
-								<label class="ajcm-label" for="<?php echo esc_attr( $k . 'from_name' ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
-								<input name="<?php echo esc_attr( $k . 'from_name' ); ?>" id="<?php echo esc_attr( $k . 'from_name' ); ?>" type="text" placeholder="<?php echo esc_attr( $system_from_name ); ?>" value="<?php echo esc_attr( $settings[ $k . 'from_name' ] ); ?>">
-							</div>
-						</div>
-						<div style="display:flex;gap:18px;flex-wrap:wrap;">
-							<label class="ajcm-check"><input type="checkbox" name="<?php echo esc_attr( $k . 'auth' ); ?>" value="1" <?php checked( '1' === (string) $settings[ $k . 'auth' ] ); ?>> <?php esc_html_e( 'Authentication', 'ajforms' ); ?></label>
-							<label class="ajcm-check"><input type="checkbox" name="<?php echo esc_attr( $k . 'envelope_from_username' ); ?>" value="1" <?php checked( '1' === (string) $settings[ $k . 'envelope_from_username' ] ); ?>> <?php esc_html_e( 'Send on behalf of the username', 'ajforms' ); ?></label>
-						</div>
-						<?php
-						// Sender belongs to the profile: its From Email is what every message it
-						// carries goes out as. Blank falls back to System From, shown here so the
-						// card always states the actual address rather than an empty field.
-						$profile_sends_as = ! empty( $settings[ $k . 'from_email' ] ) ? $settings[ $k . 'from_email' ] : $system_from_email;
-						$profile_sends_nm = ! empty( $settings[ $k . 'from_name' ] ) ? $settings[ $k . 'from_name' ] : $system_from_name;
-						?>
-						<?php if ( $used_for ) : ?>
-							<div class="ajcm-sends">
-								<span class="ajcm-sends-h"><?php esc_html_e( 'Sends as', 'ajforms' ); ?></span>
-								<div>
-									<code><?php echo esc_html( sprintf( '%s <%s>', $profile_sends_nm, $profile_sends_as ) ); ?></code>
-									<?php if ( empty( $settings[ $k . 'from_email' ] ) ) : ?>
-										<span class="ajcm-used-by"><?php esc_html_e( 'System From', 'ajforms' ); ?></span>
-									<?php endif; ?>
-								</div>
-							</div>
-						<?php endif; ?>
+					<div style="display:flex;gap:18px;flex-wrap:wrap;">
+						<label class="ajcm-check"><input type="checkbox" name="<?php echo esc_attr( $k . 'auth' ); ?>" value="1" <?php checked( '1' === (string) $settings[ $k . 'auth' ] ); ?>> <?php esc_html_e( 'Authentication', 'ajforms' ); ?></label>
+						<label class="ajcm-check"><input type="checkbox" name="<?php echo esc_attr( $k . 'envelope_from_username' ); ?>" value="1" <?php checked( '1' === (string) $settings[ $k . 'envelope_from_username' ] ); ?>> <?php esc_html_e( 'Send on behalf of the username', 'ajforms' ); ?></label>
 					</div>
-				<?php endforeach; ?>
-				</div>
-				<div class="ajcm-actions">
-					<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
-				</div>
-			</form>
-
-			<div>
-				<div class="ajcm-card">
-					<h2><?php esc_html_e( 'Send a test email', 'ajforms' ); ?></h2>
-					<form method="post" action="<?php echo esc_url( $section_url ); ?>">
-						<?php wp_nonce_field( 'ajcore_send_test_email', 'ajcore_send_test_email_nonce' ); ?>
+					<div class="ajcm-sends">
+						<span class="ajcm-sends-h"><?php esc_html_e( 'Sends as', 'ajforms' ); ?></span>
+						<div>
+							<code><?php echo esc_html( sprintf( '%s <%s>', $sends_nm, $sends_as ) ); ?></code>
+							<?php if ( empty( $settings[ $k . 'from_email' ] ) ) : ?>
+								<span class="ajcm-used-by"><?php esc_html_e( 'System From', 'ajforms' ); ?></span>
+							<?php endif; ?>
+						</div>
+					</div>
+					<?php // Belongs to the test form below, not to the settings form it sits inside. ?>
+					<div class="ajcm-sends">
+						<span class="ajcm-sends-h"><?php esc_html_e( 'Test this profile', 'ajforms' ); ?></span>
 						<div class="ajcm-row">
-							<input type="email" name="test_email_to" value="<?php echo esc_attr( $default_test_to ); ?>" required>
-							<button type="submit" class="button button-secondary" style="white-space:nowrap;"><?php esc_html_e( 'Send Test', 'ajforms' ); ?></button>
+							<input form="<?php echo esc_attr( 'ajcm-test-' . $prof['id'] ); ?>" type="email" name="test_email_to" value="<?php echo esc_attr( $default_test_to ); ?>" required>
+							<button form="<?php echo esc_attr( 'ajcm-test-' . $prof['id'] ); ?>" type="submit" class="button" style="white-space:nowrap;"<?php disabled( ! $host_set ); ?>><?php esc_html_e( 'Send Test', 'ajforms' ); ?></button>
 						</div>
-						<div style="margin-top:8px;">
-							<select name="test_email_profile">
-								<option value=""><?php esc_html_e( 'Route default', 'ajforms' ); ?></option>
-								<option value="smtp"><?php echo esc_html( $label1 ); ?></option>
-								<option value="smtp2"><?php echo esc_html( $label2 ); ?></option>
-							</select>
-						</div>
-					</form>
+					</div>
 				</div>
-
-				<div class="ajcm-env">
-					<?php
-					// What each route resolves to right now, including profile 2 falling back to 1.
-					$route_host = function ( $route ) use ( $settings, $mail_mode ) {
-						if ( 'smtp' !== $mail_mode ) {
-							return array( 'php', __( 'PHP mail()', 'ajforms' ) );
-						}
-						$host = 'smtp2' === $route ? trim( (string) $settings['smtp2_host'] ) : trim( (string) $settings['smtp_host'] );
-						if ( '' === $host && 'smtp2' === $route ) {
-							$host = trim( (string) $settings['smtp_host'] );
-							return '' !== $host ? array( 'fallback', $host ) : array( 'none', __( 'PHP mail() — no host set', 'ajforms' ) );
-						}
-						return '' !== $host ? array( 'ok', $host ) : array( 'none', __( 'PHP mail() — no host set', 'ajforms' ) );
-					};
-					$forms_via    = $route_host( $route_forms );
-					$customer_via = $route_host( $route_customer );
-					?>
-					<span><strong><?php esc_html_e( 'Forms & admin', 'ajforms' ); ?>:</strong>
-						<span class="<?php echo 'ok' === $forms_via[0] ? 'ajcm-ok' : ( 'php' === $forms_via[0] ? '' : 'ajcm-warn' ); ?>"><?php echo esc_html( $forms_via[1] ); ?></span>
-					</span>
-					<span><strong><?php esc_html_e( 'Customer & portal', 'ajforms' ); ?>:</strong>
-						<span class="<?php echo 'ok' === $customer_via[0] ? 'ajcm-ok' : ( 'php' === $customer_via[0] ? '' : 'ajcm-warn' ); ?>"><?php echo esc_html( $customer_via[1] ); ?></span>
-						<?php if ( 'fallback' === $customer_via[0] ) : ?>
-							<span class="ajcm-warn"><?php esc_html_e( '(profile 2 not configured)', 'ajforms' ); ?></span>
-						<?php endif; ?>
-					</span>
-					<span><strong><?php esc_html_e( 'mail()', 'ajforms' ); ?>:</strong> <?php echo $mail_callable ? esc_html__( 'available', 'ajforms' ) : '<span class="ajcm-warn">' . esc_html__( 'disabled', 'ajforms' ) . '</span>'; ?></span>
-					<span><strong>sendmail_path:</strong> <?php echo '' !== $sendmail_path ? '<code>' . esc_html( $sendmail_path ) . '</code>' : '<span class="ajcm-warn">' . esc_html__( 'empty', 'ajforms' ) . '</span>'; ?></span>
-					<span><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Email Log →', 'ajforms' ); ?></a></span>
-				</div>
+			<?php endforeach; ?>
 			</div>
-		</div>
+			<div class="ajcm-actions">
+				<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
+			</div>
+		</form>
 
-		<script>
-		(function () {
-			var mode = document.getElementById( 'mail_mode' ),
-				fields = document.getElementById( 'ajcore-smtp-fields' );
-			if ( ! mode || ! fields ) { return; }
-			mode.addEventListener( 'change', function () {
-				fields.style.display = 'smtp' === mode.value ? '' : 'none';
-			} );
-		})();
-		</script>
+		<?php // Kept outside the settings form (forms can't nest); the cards' inputs join them by id. ?>
+		<?php foreach ( array( 'smtp', 'smtp2' ) as $test_profile ) : ?>
+			<form method="post" action="<?php echo esc_url( $section_url ); ?>" id="<?php echo esc_attr( 'ajcm-test-' . $test_profile ); ?>">
+				<?php wp_nonce_field( 'ajcore_send_test_email', 'ajcore_send_test_email_nonce' ); ?>
+				<input type="hidden" name="test_email_profile" value="<?php echo esc_attr( $test_profile ); ?>">
+			</form>
+		<?php endforeach; ?>
+
+		<div class="ajcm-env">
+			<span><strong><?php esc_html_e( 'mail()', 'ajforms' ); ?>:</strong> <?php echo $mail_callable ? esc_html__( 'available', 'ajforms' ) : '<span class="ajcm-warn">' . esc_html__( 'disabled', 'ajforms' ) . '</span>'; ?></span>
+			<span><strong>sendmail_path:</strong> <?php echo '' !== $sendmail_path ? '<code>' . esc_html( $sendmail_path ) . '</code>' : '<span class="ajcm-warn">' . esc_html__( 'empty', 'ajforms' ) . '</span>'; ?></span>
+			<span><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Email Log →', 'ajforms' ); ?></a></span>
+			<span><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email-templates' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Email Templates →', 'ajforms' ); ?></a></span>
+		</div>
 		</div>
 		<?php
 	}
@@ -22233,7 +22165,7 @@ class AJForms_Admin {
 			ajcore_set_mail_profile( $profile );
 		}
 		$settings_now = $this->get_plugin_settings();
-		$used_key     = '' !== $profile ? $profile : ( isset( $settings_now['mail_route_forms'] ) && 'smtp2' === $settings_now['mail_route_forms'] ? 'smtp2' : 'smtp' );
+		$used_key     = '' !== $profile ? $profile : ajcore_default_mail_profile( $settings_now );
 		$used_host    = 'smtp2' === $used_key ? trim( (string) $settings_now['smtp2_host'] ) : trim( (string) $settings_now['smtp_host'] );
 		if ( '' === $used_host && 'smtp2' === $used_key ) {
 			$used_host = trim( (string) $settings_now['smtp_host'] );
@@ -27338,6 +27270,8 @@ class AJForms_Admin {
 			#ajforms-email-templates-section .ajf-tpl-map tbody tr.is-active td { background: #fff7ed; }
 			#ajforms-email-templates-section .ajf-tpl-map code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 			#ajforms-email-templates-section .ajf-tpl-subject { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6b7280; }
+			#ajforms-email-templates-section .ajf-tpl-warn { color: #b45309; font-size: 11.5px; white-space: nowrap; }
+			#ajforms-email-templates-section .ajf-tpl-alert { margin: 0 0 10px; padding: 7px 11px; border-radius: 6px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 12.5px; }
 		</style>
 		<form method="post" action="<?php echo esc_url( $action_url ); ?>" id="ajforms-email-templates-section">
 			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
@@ -27545,10 +27479,10 @@ class AJForms_Admin {
 			// same calls the send path uses, so this table can't drift from reality.
 			$mail_url        = add_query_arg( array( 'page' => 'ajcore-mail' ), admin_url( 'admin.php' ) );
 			$profile_names   = array(
-				'smtp'  => '' !== trim( (string) $settings['smtp_label'] ) ? $settings['smtp_label'] : __( 'Profile 1', 'ajforms' ),
-				'smtp2' => '' !== trim( (string) $settings['smtp2_label'] ) ? $settings['smtp2_label'] : __( 'Profile 2', 'ajforms' ),
+				'smtp'  => ajcore_mail_profile_label( 'smtp', $settings ),
+				'smtp2' => ajcore_mail_profile_label( 'smtp2', $settings ),
 			);
-			$customer_route  = isset( $settings['mail_route_customer'] ) && 'smtp' === $settings['mail_route_customer'] ? 'smtp' : 'smtp2';
+			$customer_route  = ajcore_default_mail_profile( $settings );
 			$recipient_rules = array(
 				'password_reset'   => __( 'WordPress user’s account email', 'ajforms' ),
 				'welcome'          => __( 'WordPress user’s account email', 'ajforms' ),
@@ -27580,10 +27514,16 @@ class AJForms_Admin {
 							? __( 'Template', 'ajforms' )
 							: ( ! empty( $settings[ $row_prefix . 'from_email' ] ) ? __( 'Profile', 'ajforms' ) : __( 'System', 'ajforms' ) );
 						$row_subject  = ! empty( $settings[ $type['subject_key'] ] ) ? (string) $settings[ $type['subject_key'] ] : '';
+						$row_issues   = ajcore_mail_profile_issues( $settings, $row_profile );
 						?>
 						<tr data-variant="<?php echo esc_attr( $type['variant_key'] ); ?>">
 							<td><?php echo esc_html( $type['variant_label'] ); ?></td>
-							<td><?php echo esc_html( $profile_names[ $row_profile ] ); ?><?php echo '' !== $row_override ? ' *' : ''; ?></td>
+							<td>
+								<?php echo esc_html( $profile_names[ $row_profile ] ); ?><?php echo '' !== $row_override ? ' *' : ''; ?>
+								<?php if ( $row_issues ) : ?>
+									<span class="ajf-tpl-warn" title="<?php echo esc_attr( implode( ', ', $row_issues ) ); ?>">⚠ <?php echo esc_html( implode( ', ', $row_issues ) ); ?></span>
+								<?php endif; ?>
+							</td>
 							<td><?php echo esc_html( $row_sender['from_name'] ); ?></td>
 							<td><code><?php echo esc_html( $row_sender['from_email'] ); ?></code></td>
 							<td><?php echo esc_html( $row_set_by ); ?></td>
@@ -27593,7 +27533,7 @@ class AJForms_Admin {
 					<?php endforeach; ?>
 					</tbody>
 				</table>
-				<p class="ajforms-settings-help"><a href="<?php echo esc_url( $mail_url ); ?>"><?php esc_html_e( 'Profiles & routing →', 'ajforms' ); ?></a></p>
+				<p class="ajforms-settings-help"><a href="<?php echo esc_url( $mail_url ); ?>"><?php esc_html_e( 'SMTP profiles →', 'ajforms' ); ?></a></p>
 			</div>
 
 			<div class="ajforms-settings-card">
@@ -27628,6 +27568,7 @@ class AJForms_Admin {
 						$panel_override = isset( $settings[ str_replace( '_from_email', '_mail_profile', $type['from_email_key'] ) ] ) ? (string) $settings[ str_replace( '_from_email', '_mail_profile', $type['from_email_key'] ) ] : '';
 						$panel_profile  = in_array( $panel_override, array( 'smtp', 'smtp2' ), true ) ? $panel_override : $customer_route;
 						$panel_pfrom    = ! empty( $settings[ ( 'smtp2' === $panel_profile ? 'smtp2_' : 'smtp_' ) . 'from_email' ] );
+						$panel_issues   = ajcore_mail_profile_issues( $settings, $panel_profile );
 						?>
 						<h4 style="margin:0 0 4px;font-size:13px;font-weight:700;color:#111827;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
 						<p style="margin:0 0 10px;font-size:12px;color:#4b5563;">
@@ -27641,6 +27582,9 @@ class AJForms_Admin {
 								?>
 							</span>
 						</p>
+						<?php if ( $panel_issues ) : ?>
+							<p class="ajf-tpl-alert"><?php echo esc_html( sprintf( __( '%1$s is not ready to send: %2$s', 'ajforms' ), $profile_names[ $panel_profile ], implode( ', ', $panel_issues ) ) ); ?> <a href="<?php echo esc_url( $mail_url ); ?>"><?php esc_html_e( 'Fix →', 'ajforms' ); ?></a></p>
+						<?php endif; ?>
 						<details style="margin:0 0 10px;"><summary style="font-size:12px;color:#2563eb;cursor:pointer;"><?php esc_html_e( 'Delivery details', 'ajforms' ); ?></summary>
 						<?php $this->display_email_delivery_details( $settings, $effective, isset( $recipient_rules[ $type['id'] ] ) ? $recipient_rules[ $type['id'] ] : '' ); ?>
 						</details>
@@ -27671,18 +27615,14 @@ class AJForms_Admin {
 									<div class="ajforms-settings-field">
 										<?php
 										$profile_key_name = str_replace( '_from_email', '_mail_profile', $type['from_email_key'] );
-										$profile_current  = isset( $settings[ $profile_key_name ] ) ? (string) $settings[ $profile_key_name ] : '';
-										$route_default    = isset( $settings['mail_route_customer'] ) && 'smtp' === $settings['mail_route_customer'] ? 'smtp' : 'smtp2';
-										$profile_labels   = array(
-											'smtp'  => '' !== trim( (string) $settings['smtp_label'] ) ? $settings['smtp_label'] : __( 'Profile 1', 'ajforms' ),
-											'smtp2' => '' !== trim( (string) $settings['smtp2_label'] ) ? $settings['smtp2_label'] : __( 'Profile 2', 'ajforms' ),
-										);
+										$profile_current  = isset( $settings[ $profile_key_name ] ) && in_array( $settings[ $profile_key_name ], array( 'smtp', 'smtp2' ), true )
+											? (string) $settings[ $profile_key_name ]
+											: $customer_route;
 										?>
 										<label for="<?php echo esc_attr( $profile_key_name ); ?>"><?php esc_html_e( 'Sender SMTP', 'ajforms' ); ?></label>
 										<select name="<?php echo esc_attr( $profile_key_name ); ?>" id="<?php echo esc_attr( $profile_key_name ); ?>">
-											<option value=""><?php echo esc_html( sprintf( __( 'Default — %s', 'ajforms' ), $profile_labels[ $route_default ] ) ); ?></option>
-											<option value="smtp" <?php selected( $profile_current, 'smtp' ); ?>><?php echo esc_html( $profile_labels['smtp'] ); ?></option>
-											<option value="smtp2" <?php selected( $profile_current, 'smtp2' ); ?>><?php echo esc_html( $profile_labels['smtp2'] ); ?></option>
+											<option value="smtp" <?php selected( $profile_current, 'smtp' ); ?>><?php echo esc_html( $profile_names['smtp'] ); ?></option>
+											<option value="smtp2" <?php selected( $profile_current, 'smtp2' ); ?>><?php echo esc_html( $profile_names['smtp2'] ); ?></option>
 										</select>
 									</div>
 								</div>
@@ -34135,7 +34075,7 @@ class AJForms_Admin {
 					'mail_profile'            => array(
 						'label'   => __( 'Sender SMTP', 'ajforms' ),
 						'type'    => 'select',
-						'options' => array( '' => __( 'Default', 'ajforms' ), 'smtp' => __( 'Profile 1', 'ajforms' ), 'smtp2' => __( 'Profile 2', 'ajforms' ) ),
+						'options' => array( 'smtp' => __( 'Non-metered SMTP', 'ajforms' ), 'smtp2' => __( 'Metered SMTP', 'ajforms' ) ),
 					),
 					'notification_body'       => array(
 						'label' => __( 'Email Body', 'ajforms' ),

@@ -423,23 +423,52 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 								</div>
 							</div>
 							<?php
-							// Sender SMTP profile for this form's mail; blank = the Forms & admin route
-							// set in AJ Core Mail. Profile names are admin-editable, so read them here.
+							// Which SMTP profile carries this form's notification mail. Named after the
+							// two profiles on the AJ Core Mail screen, with the provider appended once
+							// a host is set there.
 							$mail_profile_labels = array(
-								'smtp'  => ! empty( $plugin_settings['smtp_label'] ) ? $plugin_settings['smtp_label'] : __( 'Profile 1', 'ajforms' ),
-								'smtp2' => ! empty( $plugin_settings['smtp2_label'] ) ? $plugin_settings['smtp2_label'] : __( 'Profile 2', 'ajforms' ),
+								'smtp'  => ajcore_mail_profile_label( 'smtp', $plugin_settings ),
+								'smtp2' => ajcore_mail_profile_label( 'smtp2', $plugin_settings ),
 							);
-							$mail_profile_default = ( isset( $plugin_settings['mail_route_forms'] ) && 'smtp2' === $plugin_settings['mail_route_forms'] ) ? 'smtp2' : 'smtp';
-							$mail_profile_current = isset( $initial_data['schema']['settings']['mail_profile'] ) ? $initial_data['schema']['settings']['mail_profile'] : '';
+							$mail_profile_current = isset( $initial_data['schema']['settings']['mail_profile'] ) && in_array( $initial_data['schema']['settings']['mail_profile'], array( 'smtp', 'smtp2' ), true )
+								? $initial_data['schema']['settings']['mail_profile']
+								: ajcore_default_mail_profile( $plugin_settings );
+							?>
+							<?php
+							// Warning text per profile, so switching the dropdown updates it without a
+							// reload. Empty string = that profile is ready to send.
+							$mail_profile_issues = array(
+								'smtp'  => implode( ', ', ajcore_mail_profile_issues( $plugin_settings, 'smtp' ) ),
+								'smtp2' => implode( ', ', ajcore_mail_profile_issues( $plugin_settings, 'smtp2' ) ),
+							);
 							?>
 							<div class="wpf-setting-row">
 								<label>Sender SMTP</label>
-								<select id="wpf-form-mail-profile">
-									<option value=""<?php selected( $mail_profile_current, '' ); ?>><?php echo esc_html( sprintf( __( 'Default — %s', 'ajforms' ), $mail_profile_labels[ $mail_profile_default ] ) ); ?></option>
+								<select id="wpf-form-mail-profile"
+									data-issues-smtp="<?php echo esc_attr( $mail_profile_issues['smtp'] ); ?>"
+									data-issues-smtp2="<?php echo esc_attr( $mail_profile_issues['smtp2'] ); ?>">
 									<option value="smtp"<?php selected( $mail_profile_current, 'smtp' ); ?>><?php echo esc_html( $mail_profile_labels['smtp'] ); ?></option>
 									<option value="smtp2"<?php selected( $mail_profile_current, 'smtp2' ); ?>><?php echo esc_html( $mail_profile_labels['smtp2'] ); ?></option>
 								</select>
+								<p id="wpf-form-mail-profile-warning" style="margin:4px 0 0;color:#b45309;font-size:12px;<?php echo '' === $mail_profile_issues[ $mail_profile_current ] ? 'display:none;' : ''; ?>">
+									<?php echo esc_html( '' !== $mail_profile_issues[ $mail_profile_current ] ? sprintf( __( 'Not ready to send: %s', 'ajforms' ), $mail_profile_issues[ $mail_profile_current ] ) : '' ); ?>
+									<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajcore-mail' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Fix →', 'ajforms' ); ?></a>
+								</p>
 							</div>
+							<script>
+							(function () {
+								var sel = document.getElementById( 'wpf-form-mail-profile' ),
+									warn = document.getElementById( 'wpf-form-mail-profile-warning' );
+								if ( ! sel || ! warn ) { return; }
+								var link = warn.querySelector( 'a' );
+								sel.addEventListener( 'change', function () {
+									var issues = sel.getAttribute( 'data-issues-' + sel.value ) || '';
+									warn.style.display = issues ? '' : 'none';
+									warn.childNodes[0].nodeValue = issues ? <?php echo wp_json_encode( __( 'Not ready to send: ', 'ajforms' ) ); ?> + issues + ' ' : '';
+									if ( link ) { link.style.display = issues ? '' : 'none'; }
+								} );
+							})();
+							</script>
 							<div class="wpf-setting-row">
 								<label>Reply to Address</label>
 								<input type="text" id="wpf-form-notification-reply-to" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_reply_to'] ) ? $initial_data['schema']['settings']['notification_reply_to'] : '' ); ?>">

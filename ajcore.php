@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.319
+ * Version: 0.7.320
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.319' );
+	define( 'AJCORE_VERSION', '0.7.320' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -264,10 +264,9 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'smtp2_envelope_from_username'  => '1',
 			'smtp2_from_email'              => '',
 			'smtp2_from_name'               => '',
-			// Which profile each category of mail uses by default. Per-form and per-email-type
-			// settings can override these; see ajcore_current_mail_profile_key().
-			'mail_route_customer'           => 'smtp2',
-			'mail_route_forms'              => 'smtp',
+			// The profile used by anything that doesn't name one: WordPress system mail, and any form
+			// or template saved before profiles existed. Set on the AJ Core Mail screen.
+			'mail_default_profile'          => 'smtp',
 			'wp_password_reset_subject'     => 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
 			'wp_service_status_subject'     => 'Update on {service_name}: {status_label}',
@@ -2720,14 +2719,69 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 		$GLOBALS['ajcore_mail_profile'] = in_array( $profile, array( 'smtp', 'smtp2' ), true ) ? $profile : '';
 	}
 
-	/** Profile for the send in flight: an explicit mark, else the Forms/admin category default. */
+	/** Profile for the send in flight: an explicit mark, else the default profile. */
 	function ajcore_current_mail_profile_key( $settings ) {
 		$marked = isset( $GLOBALS['ajcore_mail_profile'] ) ? (string) $GLOBALS['ajcore_mail_profile'] : '';
 		if ( in_array( $marked, array( 'smtp', 'smtp2' ), true ) ) {
 			return $marked;
 		}
-		$route = isset( $settings['mail_route_forms'] ) ? (string) $settings['mail_route_forms'] : 'smtp';
-		return 'smtp2' === $route ? 'smtp2' : 'smtp';
+		return ajcore_default_mail_profile( $settings );
+	}
+
+	/**
+	 * Fixed, self-describing names — what every screen calls the two profiles — with the provider
+	 * appended once a host is configured ("Metered SMTP ZeptoMail"). The provider is the host's
+	 * own domain label, so it names whatever you actually point it at.
+	 */
+	function ajcore_mail_profile_label( $profile_key, $settings = null ) {
+		$base = 'smtp2' === $profile_key ? __( 'Metered SMTP', 'ajforms' ) : __( 'Non-metered SMTP', 'ajforms' );
+		if ( ! is_array( $settings ) ) {
+			return $base;
+		}
+		$host = 'smtp2' === $profile_key
+			? trim( (string) ( isset( $settings['smtp2_host'] ) ? $settings['smtp2_host'] : '' ) )
+			: trim( (string) ( isset( $settings['smtp_host'] ) ? $settings['smtp_host'] : '' ) );
+		if ( '' === $host ) {
+			return $base;
+		}
+		$parts    = array_values( array_filter( explode( '.', strtolower( $host ) ) ) );
+		$provider = count( $parts ) >= 2 ? $parts[ count( $parts ) - 2 ] : $parts[0];
+		return $base . ' ' . ucfirst( $provider );
+	}
+
+	/**
+	 * What's missing before this profile can send, as a list of short phrases (empty = ready).
+	 * Shared by every screen that names a profile so the warnings can't disagree with each other.
+	 */
+	function ajcore_mail_profile_issues( $settings, $profile_key ) {
+		$p        = 'smtp2' === $profile_key ? 'smtp2_' : 'smtp_';
+		$issues   = array();
+		$host     = trim( (string) ( isset( $settings[ $p . 'host' ] ) ? $settings[ $p . 'host' ] : '' ) );
+		$auth     = ! empty( $settings[ $p . 'auth' ] );
+		$username = trim( (string) ( isset( $settings[ $p . 'username' ] ) ? $settings[ $p . 'username' ] : '' ) );
+		$constant = 'smtp2' === $profile_key ? 'AJCORE_SMTP2_PASSWORD' : 'AJCORE_SMTP_PASSWORD';
+		$password = ( defined( $constant ) && '' !== (string) constant( $constant ) ) || ! empty( $settings[ $p . 'password' ] );
+
+		if ( '' === $host ) {
+			$issues[] = __( 'no host', 'ajforms' );
+			return $issues; // Nothing else matters until there's a server to talk to.
+		}
+		if ( absint( isset( $settings[ $p . 'port' ] ) ? $settings[ $p . 'port' ] : 0 ) < 1 ) {
+			$issues[] = __( 'no port', 'ajforms' );
+		}
+		if ( $auth && '' === $username ) {
+			$issues[] = __( 'no username', 'ajforms' );
+		}
+		if ( $auth && ! $password ) {
+			$issues[] = __( 'no password', 'ajforms' );
+		}
+		return $issues;
+	}
+
+	/** The profile marked Default on the AJ Core Mail screen. */
+	function ajcore_default_mail_profile( $settings ) {
+		$default = isset( $settings['mail_default_profile'] ) ? (string) $settings['mail_default_profile'] : 'smtp';
+		return 'smtp2' === $default ? 'smtp2' : 'smtp';
 	}
 
 	/**
@@ -2769,10 +2823,9 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 	function ajcore_configure_smtp_mailer( $phpmailer ) {
 		$settings = get_option( 'ajforms_settings', array() );
 		$settings = is_array( $settings ) ? $settings : array();
-		if ( 'smtp' !== ( isset( $settings['mail_mode'] ) ? $settings['mail_mode'] : 'php' ) ) {
-			return;
-		}
 
+		// No mode switch any more: a profile with a host sends over SMTP, a profile without one
+		// leaves WordPress on mail(). See AJ Core Mail, which is SMTP settings only.
 		$profile = ajcore_get_mail_profile( $settings, ajcore_current_mail_profile_key( $settings ) );
 		if ( '' === $profile['host'] && 'smtp' !== $profile['key'] ) {
 			// Routed to a profile that isn't set up yet — fall back to profile 1 rather than
