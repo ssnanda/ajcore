@@ -27279,6 +27279,16 @@ class AJForms_Admin {
 			#ajforms-email-templates-section .ajf-tpl-meta-warn { color: #b45309; }
 			#ajforms-email-templates-section .ajf-tpl-detail { margin: 0 0 8px; }
 			#ajforms-email-templates-section .ajf-tpl-detail summary { font-size: 12px; color: #2563eb; cursor: pointer; }
+			#ajforms-email-templates-section .ajf-tpl-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+			.ajf-tpl-modal { position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 100000; display: flex; align-items: flex-start; justify-content: center; padding: 30px 16px; overflow: auto; }
+			.ajf-tpl-modal[hidden] { display: none; }
+			.ajf-tpl-modal-box { background: #fff; border-radius: 12px; width: min(860px, 100%); box-shadow: 0 24px 60px rgba(15,23,42,.35); overflow: hidden; }
+			.ajf-tpl-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #eceef2; font-size: 14px; }
+			.ajf-tpl-modal-envelope { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+			.ajf-tpl-modal-envelope th { text-align: left; width: 130px; padding: 5px 16px; color: #6b7280; font-weight: 600; vertical-align: top; }
+			.ajf-tpl-modal-envelope td { padding: 5px 16px 5px 0; color: #111827; overflow-wrap: anywhere; }
+			.ajf-tpl-modal-envelope tr:last-child th, .ajf-tpl-modal-envelope tr:last-child td { padding-bottom: 10px; border-bottom: 1px solid #eceef2; }
+			.ajf-tpl-modal-preview { width: 100%; height: 70vh; border: 0; background: #f6f8fc; display: block; }
 			/* Preview matches the editor column's height instead of clipping the email at a fixed size. */
 			.ajforms-email-variant-layout { align-items: stretch; }
 			.ajforms-email-variant-layout > div:last-child { display: flex; flex-direction: column; }
@@ -27562,7 +27572,25 @@ class AJForms_Admin {
 								<?php endif; ?>
 							</div>
 							<div>
-								<div class="ajforms-settings-help" style="margin-bottom:4px;"><?php esc_html_e( 'Preview', 'ajforms' ); ?></div>
+								<div class="ajf-tpl-preview-head">
+									<span class="ajforms-settings-help"><?php esc_html_e( 'Preview', 'ajforms' ); ?></span>
+									<?php
+									// The envelope this template would actually go out with, for the full-size
+									// preview. Subject/body come from the fields at click time so the modal
+									// shows unsaved edits too.
+									$panel_envelope = $panel_issues || empty( $settings[ ( 'smtp2' === $panel_profile ? 'smtp2_' : 'smtp_' ) . 'envelope_from_username' ] )
+										? $effective['from_email']
+										: ( is_email( (string) $settings[ ( 'smtp2' === $panel_profile ? 'smtp2_' : 'smtp_' ) . 'username' ] ) ? $settings[ ( 'smtp2' === $panel_profile ? 'smtp2_' : 'smtp_' ) . 'username' ] : $effective['from_email'] );
+									?>
+									<button type="button" class="button button-small ajf-tpl-preview-open"
+										data-template="<?php echo esc_attr( $type['variant_label'] ); ?>"
+										data-from="<?php echo esc_attr( sprintf( '%s <%s>', $effective['from_name'], $effective['from_email'] ) ); ?>"
+										data-replyto="<?php echo esc_attr( $effective['from_email'] ); ?>"
+										data-to="<?php echo esc_attr( isset( $recipient_rules[ $type['id'] ] ) ? $recipient_rules[ $type['id'] ] : '—' ); ?>"
+										data-profile="<?php echo esc_attr( $profile_names[ $panel_profile ] ); ?>"
+										data-envelope="<?php echo esc_attr( $panel_envelope ); ?>"
+										data-subject-field="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Full preview', 'ajforms' ); ?></button>
+								</div>
 								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>"></iframe>
 							</div>
 						</div>
@@ -27618,6 +27646,51 @@ class AJForms_Admin {
 				</div>
 			</div>
 			<?php $this->display_additional_branded_email_templates( $settings, $brands ); ?>
+		<div class="ajf-tpl-modal" id="ajf-tpl-modal" hidden>
+			<div class="ajf-tpl-modal-box" role="dialog" aria-modal="true" aria-labelledby="ajf-tpl-modal-title">
+				<div class="ajf-tpl-modal-head">
+					<strong id="ajf-tpl-modal-title"></strong>
+					<button type="button" class="button button-small ajf-tpl-modal-close">&times;</button>
+				</div>
+				<table class="ajf-tpl-modal-envelope">
+					<tbody>
+						<tr><th><?php esc_html_e( 'From', 'ajforms' ); ?></th><td data-field="from"></td></tr>
+						<tr><th><?php esc_html_e( 'Reply-To', 'ajforms' ); ?></th><td data-field="replyto"></td></tr>
+						<tr><th><?php esc_html_e( 'To', 'ajforms' ); ?></th><td data-field="to"></td></tr>
+						<tr><th><?php esc_html_e( 'Subject', 'ajforms' ); ?></th><td data-field="subject"></td></tr>
+						<tr><th><?php esc_html_e( 'Sent via', 'ajforms' ); ?></th><td data-field="profile"></td></tr>
+						<tr><th><?php esc_html_e( 'Envelope sender', 'ajforms' ); ?></th><td data-field="envelope"></td></tr>
+					</tbody>
+				</table>
+				<iframe class="ajf-tpl-modal-preview" sandbox=""></iframe>
+			</div>
+		</div>
+		<script>
+		(function () {
+			var modal = document.getElementById( 'ajf-tpl-modal' );
+			if ( ! modal ) { return; }
+			var frame = modal.querySelector( '.ajf-tpl-modal-preview' );
+			function close() { modal.hidden = true; frame.removeAttribute( 'srcdoc' ); }
+			document.querySelectorAll( '.ajf-tpl-preview-open' ).forEach( function ( btn ) {
+				btn.addEventListener( 'click', function () {
+					var panel = btn.closest( '.ajforms-email-variant-panel' );
+					var small = panel ? panel.querySelector( '.ajforms-email-variant-preview' ) : null;
+					var subjectField = document.getElementById( btn.getAttribute( 'data-subject-field' ) );
+					modal.querySelector( '#ajf-tpl-modal-title' ).textContent = btn.getAttribute( 'data-template' ) || '';
+					[ 'from', 'replyto', 'to', 'profile', 'envelope' ].forEach( function ( key ) {
+						var cell = modal.querySelector( '[data-field="' + key + '"]' );
+						if ( cell ) { cell.textContent = btn.getAttribute( 'data-' + key ) || ''; }
+					} );
+					var subjectCell = modal.querySelector( '[data-field="subject"]' );
+					if ( subjectCell ) { subjectCell.textContent = subjectField ? subjectField.value : ''; }
+					if ( small ) { frame.setAttribute( 'srcdoc', small.getAttribute( 'srcdoc' ) || '' ); }
+					modal.hidden = false;
+				} );
+			} );
+			modal.addEventListener( 'click', function ( e ) { if ( e.target === modal || e.target.classList.contains( 'ajf-tpl-modal-close' ) ) { close(); } } );
+			document.addEventListener( 'keydown', function ( e ) { if ( 'Escape' === e.key && ! modal.hidden ) { close(); } } );
+		})();
+		</script>
 
 		</form>
 		<?php
@@ -32682,21 +32755,27 @@ class AJForms_Admin {
 				.ajforms-settings-brand{display:flex;align-items:center;gap:10px;margin-right:4px}
 				.ajforms-settings-brand-badge{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:13px;letter-spacing:.04em}
 				.ajforms-settings-brand-title{font-size:18px;font-weight:700;color:#1f2937}
+				.ajforms-settings-topbar-section{font-size:14px;font-weight:600;color:#6b7280;border-left:1px solid #e5e7eb;padding-left:18px}
+				.ajforms-settings-topbar-update{margin-left:auto;font-size:12.5px;font-weight:600;color:#c2410c;background:#fff7ed;border-radius:999px;padding:4px 12px;text-decoration:none}
 				.ajforms-settings-layout{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:auto}
 				.ajforms-settings-sidebar{background:#fff;border-right:1px solid #eceef2;padding:12px 0}
 				.ajforms-settings-menu{display:flex;flex-direction:column;gap:1px}
 				.ajforms-settings-link{display:flex;align-items:center;gap:9px;padding:6px 14px;color:#4b5563;text-decoration:none;font-size:13px;font-weight:600;line-height:1.3}
 				.ajforms-settings-link .dashicons{font-size:16px;width:16px;height:16px}
-				.ajforms-settings-link.is-active{color:#111827}
+				.ajforms-settings-link:hover{background:#f9fafb;color:#111827}
+				.ajforms-settings-link.is-active{background:#fff7ed;color:#9a3412;font-weight:800;box-shadow:inset 3px 0 0 #ea580c}
+				.ajforms-settings-link.is-active .dashicons{color:#ea580c}
+				.ajforms-settings-link.is-active:hover{background:#ffedd5}
 				.ajforms-settings-link .ajforms-settings-link-external{margin-left:auto;font-size:13px;width:13px;height:13px;opacity:.5}
 				.ajforms-settings-group-label{margin:12px 14px 3px;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af}
 				.ajforms-settings-group-label:first-child{margin-top:2px}
 				.ajforms-settings-group{margin-top:6px}
 				.ajforms-settings-sublinks{margin:4px 0 0 30px;padding-left:12px;border-left:1px solid #e5e7eb;display:flex;flex-direction:column;gap:2px}
 				.ajforms-settings-sublinks a{padding:5px 10px;border:1px solid transparent;border-radius:8px;color:#4b5563;text-decoration:none;font-size:12.5px}
-				.ajforms-settings-sublinks a.is-active{border-color:#fb923c;background:#fff7ed;color:#111827}
-				.ajforms-settings-content{padding:16px 20px}
-				.ajforms-settings-head h2{margin:0 0 4px;font-size:19px;line-height:1.2;color:#111827}
+				.ajforms-settings-sublinks a.is-active{border-color:#fb923c;background:#fff7ed;color:#9a3412;font-weight:700}
+				.ajforms-settings-content{padding:10px 18px 18px}
+				.ajforms-settings-head{margin-bottom:8px}
+				.ajforms-settings-head h2{margin:0 0 2px;font-size:16px;line-height:1.2;color:#111827}
 				.ajforms-settings-head p{margin:0 0 4px;color:#6b7280;font-size:13px;max-width:920px}
 				.ajforms-settings-card{margin-top:10px;background:#fff;border:1px solid #eef0f3;border-radius:10px;padding:14px 16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
 				.ajforms-settings-card:first-child{margin-top:0}
@@ -32778,6 +32857,12 @@ class AJForms_Admin {
 						<div class="ajforms-settings-brand-badge">F</div>
 						<div class="ajforms-settings-brand-title"><?php esc_html_e( 'Settings', 'ajforms' ); ?></div>
 					</div>
+					<span class="ajforms-settings-topbar-section"><?php echo esc_html( $sections[ $section ]['label'] ); ?></span>
+					<?php if ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
+						<a class="ajforms-settings-topbar-update" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'update' ), admin_url( 'admin.php' ) ) ); ?>">
+							<?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'Developer update available', 'ajforms' ) : esc_html__( 'Update available', 'ajforms' ); ?>
+						</a>
+					<?php endif; ?>
 				</div>
 
 				<div class="ajforms-settings-layout">
@@ -32817,14 +32902,6 @@ class AJForms_Admin {
 					</aside>
 
 					<div class="ajforms-settings-content">
-						<?php if ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
-							<div class="notice notice-warning inline" style="margin:0 0 20px;">
-								<p>
-									<?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'An AJ Core developer update is available.', 'ajforms' ) : esc_html__( 'An AJ Core update is available.', 'ajforms' ); ?>
-									<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'update' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'View & Update', 'ajforms' ); ?></a>
-								</p>
-							</div>
-						<?php endif; ?>
 						<?php if ( 'auth' === $section ) : ?>
 							<div class="ajforms-settings-head">
 								<h2><?php esc_html_e( 'Auth', 'ajforms' ); ?></h2>
