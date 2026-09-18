@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.320
+ * Version: 0.7.321
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.320' );
+	define( 'AJCORE_VERSION', '0.7.321' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -2776,6 +2776,20 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 			$issues[] = __( 'no password', 'ajforms' );
 		}
 		return $issues;
+	}
+
+	/**
+	 * Customer-facing mail (portal templates, welcome, password resets to customers) defaults to the
+	 * metered profile — that's what a transactional provider is for. Forms and admin notifications
+	 * default to the non-metered one, and anything that names neither uses the Default radio on the
+	 * AJ Core Mail screen. A per-template or per-form choice overrides this.
+	 */
+	function ajcore_customer_mail_profile() {
+		return 'smtp2';
+	}
+
+	function ajcore_forms_mail_profile() {
+		return 'smtp';
 	}
 
 	/** The profile marked Default on the AJ Core Mail screen. */

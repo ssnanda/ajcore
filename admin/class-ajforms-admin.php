@@ -5200,7 +5200,7 @@ class AJForms_Admin {
 		// System From. Precedence: template → profile → System From → site default.
 		$sending_profile = $profile_key;
 		if ( '' === $sending_profile ) {
-			$sending_profile = function_exists( 'ajcore_default_mail_profile' ) ? ajcore_default_mail_profile( $settings ) : 'smtp';
+			$sending_profile = function_exists( 'ajcore_customer_mail_profile' ) ? ajcore_customer_mail_profile() : 'smtp2';
 		}
 		$profile_from = function_exists( 'ajcore_get_mail_profile_from' )
 			? ajcore_get_mail_profile_from( $settings, $sending_profile )
@@ -5318,8 +5318,7 @@ class AJForms_Admin {
 			ajcore_set_mail_profile( $profile_key );
 			return;
 		}
-		$settings = $this->get_plugin_settings();
-		ajcore_set_mail_profile( function_exists( 'ajcore_default_mail_profile' ) ? ajcore_default_mail_profile( $settings ) : 'smtp' );
+		ajcore_set_mail_profile( function_exists( 'ajcore_customer_mail_profile' ) ? ajcore_customer_mail_profile() : 'smtp2' );
 	}
 
 	/** Resolve the legal/customer-facing brand from the durable customer partner assignment. */
@@ -11516,7 +11515,7 @@ class AJForms_Admin {
 				'notification_from_name' => isset( $normalized['settings']['notification_from_name'] ) ? sanitize_text_field( $normalized['settings']['notification_from_name'] ) : ( isset( $plugin_settings['default_from_name'] ) ? $plugin_settings['default_from_name'] : get_bloginfo( 'name' ) ),
 				'notification_from_email' => isset( $normalized['settings']['notification_from_email'] ) ? sanitize_email( $normalized['settings']['notification_from_email'] ) : '',
 				// Which SMTP profile this form's mail uses; '' = the Forms & admin route.
-				'mail_profile'            => isset( $normalized['settings']['mail_profile'] ) && in_array( $normalized['settings']['mail_profile'], array( 'smtp', 'smtp2' ), true ) ? $normalized['settings']['mail_profile'] : '',
+				'mail_profile'            => isset( $normalized['settings']['mail_profile'] ) && 'smtp2' === $normalized['settings']['mail_profile'] ? 'smtp2' : 'smtp',
 				'notification_reply_to' => isset( $normalized['settings']['notification_reply_to'] ) ? sanitize_text_field( $normalized['settings']['notification_reply_to'] ) : '',
 				'autoresponder_enabled'   => ! empty( $normalized['settings']['autoresponder_enabled'] ),
 				'autoresponder_subject'   => isset( $normalized['settings']['autoresponder_subject'] ) ? sanitize_text_field( $normalized['settings']['autoresponder_subject'] ) : 'We received your message',
@@ -14104,13 +14103,15 @@ class AJForms_Admin {
 		exit;
 	}
 
-	/** '' (use the category default), 'smtp' or 'smtp2' from a posted sender-SMTP dropdown. */
+	/** 'smtp' or 'smtp2' from a posted sender-SMTP dropdown; customer-facing templates default to
+	 *  the metered profile when the field isn't posted (see ajcore_customer_mail_profile()). */
 	private function sanitize_mail_profile_post( $field ) {
+		$default = function_exists( 'ajcore_customer_mail_profile' ) ? ajcore_customer_mail_profile() : 'smtp2';
 		if ( ! isset( $_POST[ $field ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
-			return '';
+			return $default;
 		}
 		$value = sanitize_key( wp_unslash( $_POST[ $field ] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
-		return in_array( $value, array( 'smtp', 'smtp2' ), true ) ? $value : '';
+		return in_array( $value, array( 'smtp', 'smtp2' ), true ) ? $value : $default;
 	}
 
 	private function handle_settings_save() {
@@ -27069,8 +27070,8 @@ class AJForms_Admin {
 		}
 		?>
 		<div class="ajforms-settings-card">
-			<h3><?php esc_html_e( 'Additional branded emails — read-only inventory', 'ajforms' ); ?></h3>
-			<p><?php esc_html_e( 'These sending paths were not listed in the template editor. Expand an email to see its saved overrides or built-in copy, sender, recipient rule and fixed content. Placeholders are replaced at send time.', 'ajforms' ); ?></p>
+			<details>
+				<summary style="cursor:pointer;font-size:14px;font-weight:700;color:#111827;"><?php esc_html_e( 'Other branded emails (read-only)', 'ajforms' ); ?></summary>
 			<?php foreach ( $templates as $id => $template ) : ?>
 				<?php
 				$native = 'wordpress_password_reset' === $id;
@@ -27105,7 +27106,6 @@ class AJForms_Admin {
 						<div style="white-space:pre-line;"><strong><?php esc_html_e( 'Body:', 'ajforms' ); ?></strong><?php foreach ( $copy['paragraphs'] as $paragraph ) : ?><p><?php echo esc_html( $paragraph ); ?></p><?php endforeach; ?></div>
 						<p style="white-space:pre-line;"><strong><?php esc_html_e( 'Fixed content / sending rule:', 'ajforms' ); ?></strong> <?php echo esc_html( $template['fixed'] ); ?></p>
 						<?php if ( ! $template['brand_variants'] && ! $system_sender ) : ?>
-							<p><?php esc_html_e( 'Both brands share the same content and sender settings for this email type; the customer determines the brand shown in the message.', 'ajforms' ); ?></p>
 						<?php endif; ?>
 						<?php if ( $native ) : ?>
 							<p><?php echo '1' === (string) $settings['wp_email_templates_enabled'] ? esc_html__( 'Branded WordPress reset template enabled. Shares the default Password Reset subject; body and button text are fixed.', 'ajforms' ) : esc_html__( 'Branded WordPress reset template disabled; WordPress supplies its standard message.', 'ajforms' ); ?></p>
@@ -27113,6 +27113,7 @@ class AJForms_Admin {
 					</details>
 				<?php endforeach; ?>
 			<?php endforeach; ?>
+			</details>
 		</div>
 		<?php
 	}
@@ -27262,22 +27263,16 @@ class AJForms_Admin {
 			.ajforms-email-variant-layout .ajforms-settings-field + .ajforms-settings-field { margin-top: 10px; }
 			/* Preview follows you down the longer templates instead of scrolling away. */
 			.ajforms-email-variant-layout > div:last-child { position: sticky; top: 40px; }
-			#ajforms-email-templates-section .ajf-tpl-map { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-			#ajforms-email-templates-section .ajf-tpl-map th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; border-bottom: 1px solid #e5e7eb; padding: 0 10px 5px 0; }
-			#ajforms-email-templates-section .ajf-tpl-map td { padding: 5px 10px 5px 0; border-bottom: 1px solid #f3f4f6; }
-			#ajforms-email-templates-section .ajf-tpl-map tbody tr { cursor: pointer; }
-			#ajforms-email-templates-section .ajf-tpl-map tbody tr:hover td { background: #f9fafb; }
-			#ajforms-email-templates-section .ajf-tpl-map tbody tr.is-active td { background: #fff7ed; }
-			#ajforms-email-templates-section .ajf-tpl-map code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-			#ajforms-email-templates-section .ajf-tpl-subject { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6b7280; }
-			#ajforms-email-templates-section .ajf-tpl-warn { color: #b45309; font-size: 11.5px; white-space: nowrap; }
+			#ajforms-email-templates-section .ajf-tpl-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin: 0 0 12px; font-size: 12.5px; }
+			#ajforms-email-templates-section .ajf-tpl-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #9ca3af; margin: 0; }
+			#ajforms-email-templates-section .ajf-tpl-facts dd { margin: 1px 0 0; color: #374151; }
+			#ajforms-email-templates-section .ajf-tpl-facts code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 			#ajforms-email-templates-section .ajf-tpl-alert { margin: 0 0 10px; padding: 7px 11px; border-radius: 6px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 12.5px; }
 		</style>
 		<form method="post" action="<?php echo esc_url( $action_url ); ?>" id="ajforms-email-templates-section">
 			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
 			<div class="ajforms-settings-card">
 				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
-				<p><?php esc_html_e( 'From Name is the display name; From Email is the mailbox address. The details below show saved values submitted by AJCore. To investigate an email showing only the address, compare its original From header with the sender in the AJCore email log.', 'ajforms' ); ?></p>
 				<div class="ajforms-settings-grid">
 					<div class="ajforms-settings-field">
 						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
@@ -27290,28 +27285,10 @@ class AJForms_Admin {
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Blank = site title', 'ajforms' ); ?></div>
 					</div>
 				</div>
-				<?php
-				// Both brands' footers side by side and always visible: which one is used depends on
-				// the CUSTOMER's brand, not on this site, so a site that ever emails a University
-				// Place customer needs its address filled in even when the site itself is NC LLC.
-				$university_footer_empty = '' === trim( (string) $settings['university_email_footer_address'] );
-				?>
 				<div class="ajforms-settings-grid" style="margin-top:10px;">
 					<div class="ajforms-settings-field">
-						<label for="email_footer_address"><?php esc_html_e( 'Footer postal address — NC LLC Agents', 'ajforms' ); ?></label>
+						<label for="email_footer_address"><?php esc_html_e( 'Footer postal address', 'ajforms' ); ?></label>
 						<textarea name="email_footer_address" id="email_footer_address" rows="3"><?php echo esc_textarea( $settings['email_footer_address'] ); ?></textarea>
-						<div class="ajforms-settings-help"><?php esc_html_e( 'NC-branded emails', 'ajforms' ); ?></div>
-					</div>
-					<div class="ajforms-settings-field">
-						<label for="university_email_footer_address"><?php esc_html_e( 'Footer postal address — University Office Suites', 'ajforms' ); ?></label>
-						<textarea name="university_email_footer_address" id="university_email_footer_address" rows="3"><?php echo esc_textarea( $settings['university_email_footer_address'] ); ?></textarea>
-						<div class="ajforms-settings-help"<?php echo $university_footer_empty ? ' style="color:#b45309;"' : ''; ?>>
-							<?php
-							echo $university_footer_empty
-								? esc_html__( 'Empty — University-branded emails send with no postal address', 'ajforms' )
-								: esc_html__( 'University-branded emails, on either site', 'ajforms' );
-							?>
-						</div>
 					</div>
 				</div>
 				<div style="display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;">
@@ -27405,16 +27382,14 @@ class AJForms_Admin {
 				),
 			);
 
-			$brands = array(
-				'ncllc' => array( 'label' => __( 'Default templates', 'ajforms' ), 'prefix' => '', 'entity_name' => 'NC LLC Agents Inc', 'site_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ) ),
+			$site_identity = ! empty( $settings['wp_email_from_name'] ) ? (string) $settings['wp_email_from_name'] : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
+			$brands        = array(
+				'ncllc' => array( 'label' => $site_identity, 'prefix' => '', 'entity_name' => $site_identity, 'site_name' => $site_identity ),
 			);
-			// Both brands always render. This used to be gated on enable_university_brand_templates,
-			// which hid the university_* fields — but get_customer_brand_setting_key() picks those
-			// keys off the CUSTOMER's brand and never consulted that setting, so a site could be
-			// sending from university_wp_welcome_from_email's hardcoded donotreply@ default with no
-			// way to see or change it (which is exactly how a welcome email ended up failing SMTP
-			// with an address the admin couldn't find). Everything that can send is now on screen.
-			$brands['university'] = array( 'label' => __( 'University Office Suites', 'ajforms' ), 'prefix' => 'university_', 'entity_name' => 'University Place Office Suites LLC', 'site_name' => 'University Place Office Suites' );
+			// One brand per install: another business's templates belong on that business's own site,
+			// which is the install AJOps sends their customers' mail from (send_welcome and the other
+			// customer actions are scoped to the customer's assigned site). The university_* settings
+			// stay in the database untouched, so nothing is lost if this ever needs reversing.
 
 			$email_variants = array();
 			foreach ( $brands as $brand_key => $brand ) {
@@ -27451,7 +27426,7 @@ class AJForms_Admin {
 
 					$email_variants[] = array_merge( $type, array(
 						'variant_key'    => $brand_key . '_' . $type['id'],
-						'variant_label'  => ( ! empty( $type['ncllc_only'] ) ? __( 'NC LLC Agents', 'ajforms' ) : $brand['label'] ) . ' — ' . $type['label'],
+						'variant_label'  => $type['label'],
 						'brand_label'    => $brand['label'],
 						'subject_key'    => $key( $type['subject_key'] ),
 						'heading_key'    => $key( $type['heading_key'] ),
@@ -27482,7 +27457,7 @@ class AJForms_Admin {
 				'smtp'  => ajcore_mail_profile_label( 'smtp', $settings ),
 				'smtp2' => ajcore_mail_profile_label( 'smtp2', $settings ),
 			);
-			$customer_route  = ajcore_default_mail_profile( $settings );
+			$customer_route  = ajcore_customer_mail_profile();
 			$recipient_rules = array(
 				'password_reset'   => __( 'WordPress user’s account email', 'ajforms' ),
 				'welcome'          => __( 'WordPress user’s account email', 'ajforms' ),
@@ -27491,51 +27466,6 @@ class AJForms_Admin {
 				'ra_authorization' => __( 'Stripe customer record', 'ajforms' ),
 			);
 			?>
-			<div class="ajforms-settings-card">
-				<h3 style="margin:0 0 8px;"><?php esc_html_e( 'Templates', 'ajforms' ); ?></h3>
-				<table class="ajf-tpl-map">
-					<thead><tr>
-						<th><?php esc_html_e( 'Template', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Profile', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'From name', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'From email', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Set by', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'To', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Subject', 'ajforms' ); ?></th>
-					</tr></thead>
-					<tbody>
-					<?php foreach ( $email_variants as $type ) : ?>
-						<?php
-						$row_override = isset( $settings[ str_replace( '_from_email', '_mail_profile', $type['from_email_key'] ) ] ) ? (string) $settings[ str_replace( '_from_email', '_mail_profile', $type['from_email_key'] ) ] : '';
-						$row_profile  = in_array( $row_override, array( 'smtp', 'smtp2' ), true ) ? $row_override : $customer_route;
-						$row_sender   = $this->resolve_email_sender( $settings, $type['from_email_key'], $type['from_name_key'] );
-						$row_prefix   = 'smtp2' === $row_profile ? 'smtp2_' : 'smtp_';
-						$row_set_by   = ! empty( $settings[ $type['from_email_key'] ] )
-							? __( 'Template', 'ajforms' )
-							: ( ! empty( $settings[ $row_prefix . 'from_email' ] ) ? __( 'Profile', 'ajforms' ) : __( 'System', 'ajforms' ) );
-						$row_subject  = ! empty( $settings[ $type['subject_key'] ] ) ? (string) $settings[ $type['subject_key'] ] : '';
-						$row_issues   = ajcore_mail_profile_issues( $settings, $row_profile );
-						?>
-						<tr data-variant="<?php echo esc_attr( $type['variant_key'] ); ?>">
-							<td><?php echo esc_html( $type['variant_label'] ); ?></td>
-							<td>
-								<?php echo esc_html( $profile_names[ $row_profile ] ); ?><?php echo '' !== $row_override ? ' *' : ''; ?>
-								<?php if ( $row_issues ) : ?>
-									<span class="ajf-tpl-warn" title="<?php echo esc_attr( implode( ', ', $row_issues ) ); ?>">⚠ <?php echo esc_html( implode( ', ', $row_issues ) ); ?></span>
-								<?php endif; ?>
-							</td>
-							<td><?php echo esc_html( $row_sender['from_name'] ); ?></td>
-							<td><code><?php echo esc_html( $row_sender['from_email'] ); ?></code></td>
-							<td><?php echo esc_html( $row_set_by ); ?></td>
-							<td><?php echo esc_html( isset( $recipient_rules[ $type['id'] ] ) ? $recipient_rules[ $type['id'] ] : '—' ); ?></td>
-							<td class="ajf-tpl-subject" title="<?php echo esc_attr( $row_subject ); ?>"><?php echo esc_html( $row_subject ); ?></td>
-						</tr>
-					<?php endforeach; ?>
-					</tbody>
-				</table>
-				<p class="ajforms-settings-help"><a href="<?php echo esc_url( $mail_url ); ?>"><?php esc_html_e( 'SMTP profiles →', 'ajforms' ); ?></a></p>
-			</div>
-
 			<div class="ajforms-settings-card">
 				<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
 				<div class="ajforms-settings-field" style="min-width:280px;max-width:380px;flex:1 1 auto;">
@@ -27570,18 +27500,20 @@ class AJForms_Admin {
 						$panel_pfrom    = ! empty( $settings[ ( 'smtp2' === $panel_profile ? 'smtp2_' : 'smtp_' ) . 'from_email' ] );
 						$panel_issues   = ajcore_mail_profile_issues( $settings, $panel_profile );
 						?>
-						<h4 style="margin:0 0 4px;font-size:13px;font-weight:700;color:#111827;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
-						<p style="margin:0 0 10px;font-size:12px;color:#4b5563;">
-							<?php echo esc_html( $profile_names[ $panel_profile ] ); ?>
-							· <code style="background:#f3f4f6;padding:1px 5px;border-radius:4px;"><?php echo esc_html( sprintf( '%s <%s>', $effective['from_name'], $effective['from_email'] ) ); ?></code>
-							<span style="color:#9ca3af;">
+						<h4 style="margin:0 0 6px;font-size:14px;font-weight:700;color:#111827;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
+						<?php // Everything that decides how this one template sends, for the template you picked. ?>
+						<dl class="ajf-tpl-facts">
+							<div><dt><?php esc_html_e( 'Profile', 'ajforms' ); ?></dt><dd><?php echo esc_html( $profile_names[ $panel_profile ] ); ?></dd></div>
+							<div><dt><?php esc_html_e( 'Sends as', 'ajforms' ); ?></dt><dd><code><?php echo esc_html( sprintf( '%s <%s>', $effective['from_name'], $effective['from_email'] ) ); ?></code></dd></div>
+							<div><dt><?php esc_html_e( 'Set by', 'ajforms' ); ?></dt><dd>
 								<?php
 								echo ! empty( $settings[ $type['from_email_key'] ] )
-									? esc_html__( '· template override', 'ajforms' )
-									: ( $panel_pfrom ? esc_html__( '· from the profile', 'ajforms' ) : esc_html__( '· System From', 'ajforms' ) );
+									? esc_html__( 'Template', 'ajforms' )
+									: ( $panel_pfrom ? esc_html__( 'Profile', 'ajforms' ) : esc_html__( 'System From', 'ajforms' ) );
 								?>
-							</span>
-						</p>
+							</dd></div>
+							<div><dt><?php esc_html_e( 'To', 'ajforms' ); ?></dt><dd><?php echo esc_html( isset( $recipient_rules[ $type['id'] ] ) ? $recipient_rules[ $type['id'] ] : '—' ); ?></dd></div>
+						</dl>
 						<?php if ( $panel_issues ) : ?>
 							<p class="ajf-tpl-alert"><?php echo esc_html( sprintf( __( '%1$s is not ready to send: %2$s', 'ajforms' ), $profile_names[ $panel_profile ], implode( ', ', $panel_issues ) ) ); ?> <a href="<?php echo esc_url( $mail_url ); ?>"><?php esc_html_e( 'Fix →', 'ajforms' ); ?></a></p>
 						<?php endif; ?>
@@ -27659,30 +27591,14 @@ class AJForms_Admin {
 				<?php endforeach; ?>
 				<script>
 				(function () {
-					var rows = document.querySelectorAll( '.ajf-tpl-map tbody tr' );
 					var select = document.getElementById( 'ajforms-email-variant-select' );
-					function syncRows( value ) {
-						rows.forEach( function ( row ) {
-							row.classList.toggle( 'is-active', row.getAttribute( 'data-variant' ) === value );
-						} );
-					}
-					rows.forEach( function ( row ) {
-						row.addEventListener( 'click', function () {
-							if ( ! select ) { return; }
-							select.value = row.getAttribute( 'data-variant' );
-							select.dispatchEvent( new Event( 'change' ) );
-							document.getElementById( 'ajforms-email-variant-select' ).scrollIntoView( { behavior: 'smooth', block: 'start' } );
-						} );
-					} );
 					var panels = document.querySelectorAll( '.ajforms-email-variant-panel' );
 					if ( ! select ) { return; }
 					select.addEventListener( 'change', function () {
 						panels.forEach( function ( panel ) {
 							panel.style.display = panel.getAttribute( 'data-variant' ) === select.value ? '' : 'none';
 						} );
-						syncRows( select.value );
 					} );
-					syncRows( select.value );
 				})();
 				</script>
 				<div class="ajforms-settings-note" style="margin-top:20px;">

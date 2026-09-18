@@ -32,7 +32,7 @@ function initAJFormsBuilder() {
             notification_body: '{submission_table}{submission_details_table}',
             notification_from_name: '',
             notification_from_email: '',
-            mail_profile: '',
+            mail_profile: 'smtp',
             notification_reply_to: '',
             autoresponder_enabled: false,
             autoresponder_subject: 'We received your message',
@@ -571,9 +571,7 @@ function initAJFormsBuilder() {
                     notification_body: '{submission_table}{submission_details_table}',
                     notification_from_name: '',
                     notification_from_email: '',
-                mail_profile: '',
-                    mail_profile: '',
-            mail_profile: '',
+                    mail_profile: 'smtp',
                     notification_reply_to: '',
                     autoresponder_enabled: false,
                     autoresponder_subject: 'We received your message',
@@ -630,10 +628,7 @@ function initAJFormsBuilder() {
                         notification_body: '{submission_table}{submission_details_table}',
                         notification_from_name: '',
                         notification_from_email: '',
-                mail_profile: '',
-                        mail_profile: '',
-                    mail_profile: '',
-            mail_profile: '',
+                        mail_profile: 'smtp',
                         notification_reply_to: '',
                         autoresponder_enabled: false,
                         autoresponder_subject: 'We received your message',
@@ -690,8 +685,7 @@ function initAJFormsBuilder() {
                 notification_body: '{submission_table}{submission_details_table}',
                 notification_from_name: '',
                 notification_from_email: '',
-                mail_profile: '',
-            mail_profile: '',
+                mail_profile: 'smtp',
                 notification_reply_to: '',
                 autoresponder_enabled: false,
                 autoresponder_subject: 'We received your message',
@@ -962,7 +956,8 @@ function initAJFormsBuilder() {
             notificationFromEmailInput.value = formSchema.settings.notification_from_email || '';
         }
         if (mailProfileInput) {
-            mailProfileInput.value = formSchema.settings.mail_profile || '';
+            var savedProfile = formSchema.settings.mail_profile;
+            mailProfileInput.value = ( 'smtp' === savedProfile || 'smtp2' === savedProfile ) ? savedProfile : 'smtp';
         }
         if (notificationReplyToInput) {
             notificationReplyToInput.value = formSchema.settings.notification_reply_to || '';
@@ -2698,7 +2693,7 @@ function initAJFormsBuilder() {
         formSchema.settings.notification_body = notificationBodyInput ? (notificationBodyInput.value.trim() || '{submission_table}{submission_details_table}') : '{submission_table}{submission_details_table}';
         formSchema.settings.notification_from_name = notificationFromNameInput ? notificationFromNameInput.value.trim() : '';
         formSchema.settings.notification_from_email = notificationFromEmailInput ? notificationFromEmailInput.value.trim() : '';
-        formSchema.settings.mail_profile = mailProfileInput ? mailProfileInput.value : '';
+        formSchema.settings.mail_profile = mailProfileInput ? mailProfileInput.value : 'smtp';
         formSchema.settings.notification_reply_to = notificationReplyToInput ? notificationReplyToInput.value.trim() : '';
         const autoresponderEnabledInput = document.getElementById('wpf-form-autoresponder-enabled');
         const autoresponderSubjectInput = document.getElementById('wpf-form-autoresponder-subject');

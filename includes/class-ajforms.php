@@ -1228,8 +1228,8 @@ class AJForms {
 
 		// Runs immediately before core's wp_mail(), so marking here routes a customer's reset through
 		// the customer SMTP profile; staff resets stay on the Forms/admin one.
-		if ( function_exists( 'ajcore_set_mail_profile' ) && function_exists( 'ajcore_default_mail_profile' ) && $this->is_portal_user( $user_data ) ) {
-			ajcore_set_mail_profile( ajcore_default_mail_profile( $settings ) );
+		if ( function_exists( 'ajcore_set_mail_profile' ) && function_exists( 'ajcore_customer_mail_profile' ) && $this->is_portal_user( $user_data ) ) {
+			ajcore_set_mail_profile( ajcore_customer_mail_profile() );
 		}
 
 		$reset_url = network_site_url(
