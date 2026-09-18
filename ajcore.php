@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.318
+ * Version: 0.7.319
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.318' );
+	define( 'AJCORE_VERSION', '0.7.319' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -249,6 +249,9 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// On by default: see the envelope-sender block in ajcore_configure_smtp_mailer().
 			'smtp_envelope_from_username'   => '1',
 			'smtp_label'                    => 'Non-metered',
+			// Sender identity for mail sent on this profile. Blank falls back to System From.
+			'smtp_from_email'               => '',
+			'smtp_from_name'                => '',
 			// Profile 2: a metered/transactional provider (ZeptoMail, Postmark, SES…). Unset until a
 			// host is entered, in which case everything routed here falls back to profile 1.
 			'smtp2_label'                   => 'Metered',
@@ -259,6 +262,8 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'smtp2_username'                => '',
 			'smtp2_password'                => '',
 			'smtp2_envelope_from_username'  => '1',
+			'smtp2_from_email'              => '',
+			'smtp2_from_name'               => '',
 			// Which profile each category of mail uses by default. Per-form and per-email-type
 			// settings can override these; see ajcore_current_mail_profile_key().
 			'mail_route_customer'           => 'smtp2',
@@ -2723,6 +2728,27 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 		}
 		$route = isset( $settings['mail_route_forms'] ) ? (string) $settings['mail_route_forms'] : 'smtp';
 		return 'smtp2' === $route ? 'smtp2' : 'smtp';
+	}
+
+	/**
+	 * The From this profile declares, if any. Each provider only relays certain addresses, so the
+	 * sender identity belongs to the profile rather than to the site: switching profiles switches
+	 * the From with it. Blank means "use System From".
+	 *
+	 * Precedence, highest first: per-email-type override → profile From → System From → site default.
+	 */
+	function ajcore_get_mail_profile_from( $settings, $profile_key ) {
+		$p     = 'smtp2' === $profile_key ? 'smtp2_' : 'smtp_';
+		$email = isset( $settings[ $p . 'from_email' ] ) ? trim( (string) $settings[ $p . 'from_email' ] ) : '';
+		// A profile routed to but not configured falls back to profile 1 at send time, so its
+		// sender identity has to fall back in step or the From would name the wrong provider.
+		if ( 'smtp2' === $profile_key && '' === trim( (string) ( isset( $settings['smtp2_host'] ) ? $settings['smtp2_host'] : '' ) ) ) {
+			return ajcore_get_mail_profile_from( $settings, 'smtp' );
+		}
+		return array(
+			'from_email' => is_email( $email ) ? $email : '',
+			'from_name'  => isset( $settings[ $p . 'from_name' ] ) ? trim( (string) $settings[ $p . 'from_name' ] ) : '',
+		);
 	}
 
 	/** One profile's settings, flattened to plain keys. '' prefix = profile 1, '2' = profile 2. */

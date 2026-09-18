@@ -1162,6 +1162,16 @@ class AJForms {
 	public function filter_wp_mail_from( $email ) {
 		$settings = get_option( 'ajforms_settings', array() );
 		$settings = is_array( $settings ) ? $settings : array();
+
+		// The SMTP profile carrying this send declares its own sender when set — see
+		// ajcore_get_mail_profile_from() in ajcore.php.
+		if ( function_exists( 'ajcore_get_mail_profile_from' ) && function_exists( 'ajcore_current_mail_profile_key' ) ) {
+			$profile_from = ajcore_get_mail_profile_from( $settings, ajcore_current_mail_profile_key( $settings ) );
+			if ( '' !== $profile_from['from_email'] ) {
+				return $profile_from['from_email'];
+			}
+		}
+
 		$from_email = ! empty( $settings['wp_email_from_email'] ) ? sanitize_email( (string) $settings['wp_email_from_email'] ) : sanitize_email( ajcore_default_system_from_email() );
 
 		return is_email( $from_email ) ? $from_email : $email;
@@ -1170,6 +1180,14 @@ class AJForms {
 	public function filter_wp_mail_from_name( $name ) {
 		$settings = get_option( 'ajforms_settings', array() );
 		$settings = is_array( $settings ) ? $settings : array();
+
+		if ( function_exists( 'ajcore_get_mail_profile_from' ) && function_exists( 'ajcore_current_mail_profile_key' ) ) {
+			$profile_from = ajcore_get_mail_profile_from( $settings, ajcore_current_mail_profile_key( $settings ) );
+			if ( '' !== $profile_from['from_name'] ) {
+				return $profile_from['from_name'];
+			}
+		}
+
 		$from_name = ! empty( $settings['wp_email_from_name'] ) ? sanitize_text_field( (string) $settings['wp_email_from_name'] ) : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 
 		return '' !== $from_name ? $from_name : $name;
