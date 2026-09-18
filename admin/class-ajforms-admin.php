@@ -27264,6 +27264,10 @@ class AJForms_Admin {
 			.ajforms-email-variant-layout .ajforms-settings-field + .ajforms-settings-field { margin-top: 8px; }
 			#ajforms-email-templates-section .ajforms-settings-actions { margin-top: 10px; }
 			#ajforms-email-templates-section details { margin: 0 0 8px; }
+			#ajforms-email-templates-section .ajf-tpl-shell { display: grid; grid-template-columns: minmax(0, 4fr) minmax(210px, 1fr); gap: 12px; align-items: start; }
+			#ajforms-email-templates-section .ajf-tpl-side .ajforms-settings-card { margin-top: 0; }
+			#ajforms-email-templates-section .ajf-sender-stack { display: flex; flex-direction: column; gap: 8px; }
+			@media (max-width: 1200px) { #ajforms-email-templates-section .ajf-tpl-shell { grid-template-columns: minmax(0, 1fr); } }
 			#ajforms-email-templates-section .ajf-tpl-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 			#ajforms-email-templates-section .ajf-tpl-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 			#ajforms-email-templates-section .ajf-tpl-tab { border: 1px solid #d1d5db; background: #fff; border-radius: 999px; padding: 5px 13px; font-size: 12.5px; font-weight: 600; color: #4b5563; cursor: pointer; }
@@ -27282,31 +27286,6 @@ class AJForms_Admin {
 		</style>
 		<form method="post" action="<?php echo esc_url( $action_url ); ?>" id="ajforms-email-templates-section">
 			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
-			<div class="ajforms-settings-card">
-				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
-				<div class="ajforms-settings-grid">
-					<div class="ajforms-settings-field">
-						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
-						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
-						<div class="ajforms-settings-help"><?php printf( esc_html__( 'Blank = %s', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></div>
-					</div>
-					<div class="ajforms-settings-field">
-						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
-						<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Blank = site title', 'ajforms' ); ?></div>
-					</div>
-				</div>
-				<div class="ajforms-settings-grid" style="margin-top:10px;">
-					<div class="ajforms-settings-field">
-						<label for="email_footer_address"><?php esc_html_e( 'Footer postal address', 'ajforms' ); ?></label>
-						<textarea name="email_footer_address" id="email_footer_address" rows="3"><?php echo esc_textarea( $settings['email_footer_address'] ); ?></textarea>
-					</div>
-				</div>
-				<div style="display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;">
-					<label class="ajf-opt"><input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>> <?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></label>
-				</div>
-			</div>
-
 			<?php
 			// One shared definition per email TYPE, expanded into a NC LLC + University VARIANT
 			// each — replaces what used to be two separate loops (a University-only card above,
@@ -27477,6 +27456,8 @@ class AJForms_Admin {
 				'ra_authorization' => __( 'Stripe customer record', 'ajforms' ),
 			);
 			?>
+			<div class="ajf-tpl-shell">
+				<div class="ajf-tpl-main">
 			<div class="ajforms-settings-card">
 				<div class="ajf-tpl-bar">
 					<div class="ajf-tpl-tabs">
@@ -27607,6 +27588,35 @@ class AJForms_Admin {
 				</div>
 			</div>
 
+				</div>
+				<div class="ajf-tpl-side">
+			<div class="ajforms-settings-card">
+				<h3><?php esc_html_e( 'Sender identity', 'ajforms' ); ?></h3>
+				<div class="ajf-sender-stack">
+					<div class="ajforms-settings-field">
+						<label for="wp_email_from_email"><?php esc_html_e( 'System From Email', 'ajforms' ); ?></label>
+						<input name="wp_email_from_email" id="wp_email_from_email" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings['wp_email_from_email'] ); ?>">
+						<div class="ajforms-settings-help"><?php printf( esc_html__( 'Blank = %s', 'ajforms' ), esc_html( ajcore_default_system_from_email() ) ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="wp_email_from_name"><?php esc_html_e( 'System From Name', 'ajforms' ); ?></label>
+						<input name="wp_email_from_name" id="wp_email_from_name" type="text" value="<?php echo esc_attr( $settings['wp_email_from_name'] ); ?>">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Blank = site title', 'ajforms' ); ?></div>
+					</div>
+				</div>
+				<div class="ajf-sender-stack" style="margin-top:8px;">
+					<div class="ajforms-settings-field">
+						<label for="email_footer_address"><?php esc_html_e( 'Footer postal address', 'ajforms' ); ?></label>
+						<textarea name="email_footer_address" id="email_footer_address" rows="3"><?php echo esc_textarea( $settings['email_footer_address'] ); ?></textarea>
+					</div>
+				</div>
+				<div style="display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:12px;">
+					<label class="ajf-opt"><input name="wp_email_templates_enabled" id="wp_email_templates_enabled" type="checkbox" value="1" <?php checked( '1' === (string) $settings['wp_email_templates_enabled'] ); ?>> <?php esc_html_e( 'Use AJ Core branded WordPress email templates', 'ajforms' ); ?></label>
+				</div>
+			</div>
+
+				</div>
+			</div>
 			<?php $this->display_additional_branded_email_templates( $settings, $brands ); ?>
 
 		</form>
@@ -32667,28 +32677,29 @@ class AJForms_Admin {
 		?>
 		<div class="wrap">
 			<style>
-				.ajforms-settings-shell{margin-top:18px;background:#f7f7f9;border:1px solid #e5e7eb;border-radius:24px;overflow:hidden;box-shadow:0 18px 45px rgba(15,23,42,.06)}
-				.ajforms-settings-topbar{display:flex;align-items:center;gap:28px;padding:0 28px;background:#fff;border-bottom:1px solid #eceef2;min-height:74px}
-				.ajforms-settings-brand{display:flex;align-items:center;gap:14px;margin-right:8px}
-				.ajforms-settings-brand-badge{width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:18px;letter-spacing:.04em}
-				.ajforms-settings-brand-title{font-size:28px;font-weight:700;color:#1f2937}
-				.ajforms-settings-layout{display:grid;grid-template-columns:320px 1fr;min-height:720px}
-				.ajforms-settings-sidebar{background:#fff;border-right:1px solid #eceef2;padding:28px 0}
-				.ajforms-settings-menu{display:flex;flex-direction:column;gap:8px}
-				.ajforms-settings-link{display:flex;align-items:center;gap:14px;padding:14px 28px;color:#4b5563;text-decoration:none;font-size:18px;font-weight:600}
-				.ajforms-settings-link .dashicons{font-size:22px;width:22px;height:22px}
+				.ajforms-settings-shell{margin-top:10px;background:#f7f7f9;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;box-shadow:0 10px 28px rgba(15,23,42,.05)}
+				.ajforms-settings-topbar{display:flex;align-items:center;gap:18px;padding:0 18px;background:#fff;border-bottom:1px solid #eceef2;min-height:50px}
+				.ajforms-settings-brand{display:flex;align-items:center;gap:10px;margin-right:4px}
+				.ajforms-settings-brand-badge{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:13px;letter-spacing:.04em}
+				.ajforms-settings-brand-title{font-size:18px;font-weight:700;color:#1f2937}
+				.ajforms-settings-layout{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:auto}
+				.ajforms-settings-sidebar{background:#fff;border-right:1px solid #eceef2;padding:12px 0}
+				.ajforms-settings-menu{display:flex;flex-direction:column;gap:1px}
+				.ajforms-settings-link{display:flex;align-items:center;gap:9px;padding:6px 14px;color:#4b5563;text-decoration:none;font-size:13px;font-weight:600;line-height:1.3}
+				.ajforms-settings-link .dashicons{font-size:16px;width:16px;height:16px}
 				.ajforms-settings-link.is-active{color:#111827}
-				.ajforms-settings-link .ajforms-settings-link-external{margin-left:auto;font-size:15px;width:15px;height:15px;opacity:.5}
-				.ajforms-settings-group-label{margin:22px 28px 4px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af}
-				.ajforms-settings-group-label:first-child{margin-top:8px}
-				.ajforms-settings-group{margin-top:12px}
-				.ajforms-settings-sublinks{margin:10px 0 0 52px;padding-left:18px;border-left:1px solid #e5e7eb;display:flex;flex-direction:column;gap:8px}
-				.ajforms-settings-sublinks a{padding:12px 16px;border:1px solid transparent;border-radius:16px;color:#4b5563;text-decoration:none;font-size:16px}
+				.ajforms-settings-link .ajforms-settings-link-external{margin-left:auto;font-size:13px;width:13px;height:13px;opacity:.5}
+				.ajforms-settings-group-label{margin:12px 14px 3px;font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af}
+				.ajforms-settings-group-label:first-child{margin-top:2px}
+				.ajforms-settings-group{margin-top:6px}
+				.ajforms-settings-sublinks{margin:4px 0 0 30px;padding-left:12px;border-left:1px solid #e5e7eb;display:flex;flex-direction:column;gap:2px}
+				.ajforms-settings-sublinks a{padding:5px 10px;border:1px solid transparent;border-radius:8px;color:#4b5563;text-decoration:none;font-size:12.5px}
 				.ajforms-settings-sublinks a.is-active{border-color:#fb923c;background:#fff7ed;color:#111827}
-				.ajforms-settings-content{padding:52px 56px}
-				.ajforms-settings-head h2{margin:0 0 10px;font-size:28px;line-height:1.2;color:#111827}
-				.ajforms-settings-head p{margin:0;color:#6b7280;font-size:16px;max-width:920px}
-				.ajforms-settings-card{margin-top:16px;background:#fff;border:1px solid #eef0f3;border-radius:16px;padding:22px 24px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+				.ajforms-settings-content{padding:16px 20px}
+				.ajforms-settings-head h2{margin:0 0 4px;font-size:19px;line-height:1.2;color:#111827}
+				.ajforms-settings-head p{margin:0 0 4px;color:#6b7280;font-size:13px;max-width:920px}
+				.ajforms-settings-card{margin-top:10px;background:#fff;border:1px solid #eef0f3;border-radius:10px;padding:14px 16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+				.ajforms-settings-card:first-child{margin-top:0}
 				.ajforms-settings-card h3{margin:0 0 6px;font-size:18px;color:#111827}
 				.ajforms-settings-card > p{margin:0 0 18px;color:#6b7280;font-size:14px}
 				.ajforms-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
@@ -32734,7 +32745,7 @@ class AJForms_Admin {
 					cursor:pointer;
 				}
 				@media (max-width: 1100px){
-					.ajforms-settings-layout{grid-template-columns:1fr}
+					.ajforms-settings-layout{grid-template-columns:minmax(0,1fr)}
 					.ajforms-settings-sidebar{border-right:0;border-bottom:1px solid #eceef2}
 					.ajforms-settings-grid{grid-template-columns:1fr}
 					.ajforms-spam-layout,.ajforms-provider-editor .ajforms-settings-grid{grid-template-columns:1fr}
