@@ -422,6 +422,24 @@ window.ajFormsInitialData = <?php echo wp_json_encode( $initial_data ); ?>;
 									<input type="text" id="wpf-form-notification-from-email" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_from_email'] ) ? $initial_data['schema']['settings']['notification_from_email'] : '' ); ?>">
 								</div>
 							</div>
+							<?php
+							// Sender SMTP profile for this form's mail; blank = the Forms & admin route
+							// set in AJ Core Mail. Profile names are admin-editable, so read them here.
+							$mail_profile_labels = array(
+								'smtp'  => ! empty( $plugin_settings['smtp_label'] ) ? $plugin_settings['smtp_label'] : __( 'Profile 1', 'ajforms' ),
+								'smtp2' => ! empty( $plugin_settings['smtp2_label'] ) ? $plugin_settings['smtp2_label'] : __( 'Profile 2', 'ajforms' ),
+							);
+							$mail_profile_default = ( isset( $plugin_settings['mail_route_forms'] ) && 'smtp2' === $plugin_settings['mail_route_forms'] ) ? 'smtp2' : 'smtp';
+							$mail_profile_current = isset( $initial_data['schema']['settings']['mail_profile'] ) ? $initial_data['schema']['settings']['mail_profile'] : '';
+							?>
+							<div class="wpf-setting-row">
+								<label>Sender SMTP</label>
+								<select id="wpf-form-mail-profile">
+									<option value=""<?php selected( $mail_profile_current, '' ); ?>><?php echo esc_html( sprintf( __( 'Default — %s', 'ajforms' ), $mail_profile_labels[ $mail_profile_default ] ) ); ?></option>
+									<option value="smtp"<?php selected( $mail_profile_current, 'smtp' ); ?>><?php echo esc_html( $mail_profile_labels['smtp'] ); ?></option>
+									<option value="smtp2"<?php selected( $mail_profile_current, 'smtp2' ); ?>><?php echo esc_html( $mail_profile_labels['smtp2'] ); ?></option>
+								</select>
+							</div>
 							<div class="wpf-setting-row">
 								<label>Reply to Address</label>
 								<input type="text" id="wpf-form-notification-reply-to" value="<?php echo esc_attr( isset( $initial_data['schema']['settings']['notification_reply_to'] ) ? $initial_data['schema']['settings']['notification_reply_to'] : '' ); ?>">

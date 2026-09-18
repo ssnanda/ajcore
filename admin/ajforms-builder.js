@@ -32,6 +32,7 @@ function initAJFormsBuilder() {
             notification_body: '{submission_table}{submission_details_table}',
             notification_from_name: '',
             notification_from_email: '',
+            mail_profile: '',
             notification_reply_to: '',
             autoresponder_enabled: false,
             autoresponder_subject: 'We received your message',
@@ -570,6 +571,9 @@ function initAJFormsBuilder() {
                     notification_body: '{submission_table}{submission_details_table}',
                     notification_from_name: '',
                     notification_from_email: '',
+                mail_profile: '',
+                    mail_profile: '',
+            mail_profile: '',
                     notification_reply_to: '',
                     autoresponder_enabled: false,
                     autoresponder_subject: 'We received your message',
@@ -626,6 +630,10 @@ function initAJFormsBuilder() {
                         notification_body: '{submission_table}{submission_details_table}',
                         notification_from_name: '',
                         notification_from_email: '',
+                mail_profile: '',
+                        mail_profile: '',
+                    mail_profile: '',
+            mail_profile: '',
                         notification_reply_to: '',
                         autoresponder_enabled: false,
                         autoresponder_subject: 'We received your message',
@@ -682,6 +690,8 @@ function initAJFormsBuilder() {
                 notification_body: '{submission_table}{submission_details_table}',
                 notification_from_name: '',
                 notification_from_email: '',
+                mail_profile: '',
+            mail_profile: '',
                 notification_reply_to: '',
                 autoresponder_enabled: false,
                 autoresponder_subject: 'We received your message',
@@ -923,6 +933,7 @@ function initAJFormsBuilder() {
         const notificationBodyInput = document.getElementById('wpf_form_notification_body');
         const notificationFromNameInput = document.getElementById('wpf-form-notification-from-name');
         const notificationFromEmailInput = document.getElementById('wpf-form-notification-from-email');
+        const mailProfileInput = document.getElementById('wpf-form-mail-profile');
         const notificationReplyToInput = document.getElementById('wpf-form-notification-reply-to');
         const descriptionInput = document.getElementById('wpf-form-description');
         const successMessageInput = document.getElementById('wpf-form-success-message');
@@ -949,6 +960,9 @@ function initAJFormsBuilder() {
         }
         if (notificationFromEmailInput) {
             notificationFromEmailInput.value = formSchema.settings.notification_from_email || '';
+        }
+        if (mailProfileInput) {
+            mailProfileInput.value = formSchema.settings.mail_profile || '';
         }
         if (notificationReplyToInput) {
             notificationReplyToInput.value = formSchema.settings.notification_reply_to || '';
@@ -2630,6 +2644,7 @@ function initAJFormsBuilder() {
         const notificationBodyInput = document.getElementById('wpf_form_notification_body');
         const notificationFromNameInput = document.getElementById('wpf-form-notification-from-name');
         const notificationFromEmailInput = document.getElementById('wpf-form-notification-from-email');
+        const mailProfileInput = document.getElementById('wpf-form-mail-profile');
         const notificationReplyToInput = document.getElementById('wpf-form-notification-reply-to');
         const descriptionInput = document.getElementById('wpf-form-description');
         const successMessageInput = document.getElementById('wpf-form-success-message');
@@ -2683,6 +2698,7 @@ function initAJFormsBuilder() {
         formSchema.settings.notification_body = notificationBodyInput ? (notificationBodyInput.value.trim() || '{submission_table}{submission_details_table}') : '{submission_table}{submission_details_table}';
         formSchema.settings.notification_from_name = notificationFromNameInput ? notificationFromNameInput.value.trim() : '';
         formSchema.settings.notification_from_email = notificationFromEmailInput ? notificationFromEmailInput.value.trim() : '';
+        formSchema.settings.mail_profile = mailProfileInput ? mailProfileInput.value : '';
         formSchema.settings.notification_reply_to = notificationReplyToInput ? notificationReplyToInput.value.trim() : '';
         const autoresponderEnabledInput = document.getElementById('wpf-form-autoresponder-enabled');
         const autoresponderSubjectInput = document.getElementById('wpf-form-autoresponder-subject');

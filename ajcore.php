@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.317
+ * Version: 0.7.318
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.317' );
+	define( 'AJCORE_VERSION', '0.7.318' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -248,6 +248,21 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'smtp_password'                 => '',
 			// On by default: see the envelope-sender block in ajcore_configure_smtp_mailer().
 			'smtp_envelope_from_username'   => '1',
+			'smtp_label'                    => 'Non-metered',
+			// Profile 2: a metered/transactional provider (ZeptoMail, Postmark, SES…). Unset until a
+			// host is entered, in which case everything routed here falls back to profile 1.
+			'smtp2_label'                   => 'Metered',
+			'smtp2_host'                    => '',
+			'smtp2_port'                    => '587',
+			'smtp2_encryption'              => 'tls',
+			'smtp2_auth'                    => '1',
+			'smtp2_username'                => '',
+			'smtp2_password'                => '',
+			'smtp2_envelope_from_username'  => '1',
+			// Which profile each category of mail uses by default. Per-form and per-email-type
+			// settings can override these; see ajcore_current_mail_profile_key().
+			'mail_route_customer'           => 'smtp2',
+			'mail_route_forms'              => 'smtp',
 			'wp_password_reset_subject'     => 'Password reset for your Portal Login for NC LLC Agents Inc',
 			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
 			'wp_service_status_subject'     => 'Update on {service_name}: {status_label}',
@@ -2610,6 +2625,7 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail' ) ) {
 		'wp_mail_succeeded',
 		static function () {
 			$GLOBALS['ajcore_email_log_pending_id'] = 0;
+			ajcore_set_mail_profile( '' );
 		}
 	);
 }
@@ -2628,6 +2644,9 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
 		// One row per message: flip the row ajcore_log_outgoing_mail() just wrote for this send.
 		$pending_id = isset( $GLOBALS['ajcore_email_log_pending_id'] ) ? (int) $GLOBALS['ajcore_email_log_pending_id'] : 0;
 		$GLOBALS['ajcore_email_log_pending_id'] = 0;
+		if ( function_exists( 'ajcore_set_mail_profile' ) ) {
+			ajcore_set_mail_profile( '' );
+		}
 		if ( $pending_id > 0 ) {
 			$updated = $wpdb->update(
 				$wpdb->prefix . 'aj_portal_email_log',
@@ -2675,12 +2694,50 @@ if ( ! function_exists( 'ajcore_log_outgoing_mail_failed' ) ) {
  * of the database entirely; that constant takes precedence over the stored value.
  */
 if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
-	function ajcore_get_smtp_password() {
-		if ( defined( 'AJCORE_SMTP_PASSWORD' ) && '' !== (string) AJCORE_SMTP_PASSWORD ) {
-			return (string) AJCORE_SMTP_PASSWORD;
+	function ajcore_get_smtp_password( $profile_key = 'smtp' ) {
+		$constant = 'smtp2' === $profile_key ? 'AJCORE_SMTP2_PASSWORD' : 'AJCORE_SMTP_PASSWORD';
+		if ( defined( $constant ) && '' !== (string) constant( $constant ) ) {
+			return (string) constant( $constant );
 		}
+		$key      = 'smtp2' === $profile_key ? 'smtp2_password' : 'smtp_password';
 		$settings = get_option( 'ajforms_settings', array() );
-		return is_array( $settings ) && ! empty( $settings['smtp_password'] ) ? (string) $settings['smtp_password'] : '';
+		return is_array( $settings ) && ! empty( $settings[ $key ] ) ? (string) $settings[ $key ] : '';
+	}
+
+	/**
+	 * Marks the profile the NEXT wp_mail() should use, for code that knows what it's sending.
+	 * Cleared once that send finishes (see the wp_mail_succeeded/failed handlers), so an unmarked
+	 * send always falls back to the category default rather than inheriting the last one's profile.
+	 *
+	 * @param string $profile 'smtp' (profile 1), 'smtp2' (profile 2), or '' to clear.
+	 */
+	function ajcore_set_mail_profile( $profile ) {
+		$GLOBALS['ajcore_mail_profile'] = in_array( $profile, array( 'smtp', 'smtp2' ), true ) ? $profile : '';
+	}
+
+	/** Profile for the send in flight: an explicit mark, else the Forms/admin category default. */
+	function ajcore_current_mail_profile_key( $settings ) {
+		$marked = isset( $GLOBALS['ajcore_mail_profile'] ) ? (string) $GLOBALS['ajcore_mail_profile'] : '';
+		if ( in_array( $marked, array( 'smtp', 'smtp2' ), true ) ) {
+			return $marked;
+		}
+		$route = isset( $settings['mail_route_forms'] ) ? (string) $settings['mail_route_forms'] : 'smtp';
+		return 'smtp2' === $route ? 'smtp2' : 'smtp';
+	}
+
+	/** One profile's settings, flattened to plain keys. '' prefix = profile 1, '2' = profile 2. */
+	function ajcore_get_mail_profile( $settings, $key ) {
+		$p = 'smtp2' === $key ? 'smtp2_' : 'smtp_';
+		return array(
+			'key'           => 'smtp2' === $key ? 'smtp2' : 'smtp',
+			'label'         => isset( $settings[ $p . 'label' ] ) ? (string) $settings[ $p . 'label' ] : '',
+			'host'          => isset( $settings[ $p . 'host' ] ) ? trim( (string) $settings[ $p . 'host' ] ) : '',
+			'port'          => isset( $settings[ $p . 'port' ] ) ? absint( $settings[ $p . 'port' ] ) : 0,
+			'encryption'    => isset( $settings[ $p . 'encryption' ] ) ? (string) $settings[ $p . 'encryption' ] : 'tls',
+			'auth'          => ! empty( $settings[ $p . 'auth' ] ),
+			'username'      => isset( $settings[ $p . 'username' ] ) ? (string) $settings[ $p . 'username' ] : '',
+			'envelope_from' => ! empty( $settings[ $p . 'envelope_from_username' ] ),
+		);
 	}
 
 	function ajcore_configure_smtp_mailer( $phpmailer ) {
@@ -2689,15 +2746,22 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 		if ( 'smtp' !== ( isset( $settings['mail_mode'] ) ? $settings['mail_mode'] : 'php' ) ) {
 			return;
 		}
-		$host = isset( $settings['smtp_host'] ) ? trim( (string) $settings['smtp_host'] ) : '';
+
+		$profile = ajcore_get_mail_profile( $settings, ajcore_current_mail_profile_key( $settings ) );
+		if ( '' === $profile['host'] && 'smtp' !== $profile['key'] ) {
+			// Routed to a profile that isn't set up yet — fall back to profile 1 rather than
+			// dropping to mail(), which on most hosts means the message doesn't go at all.
+			$profile = ajcore_get_mail_profile( $settings, 'smtp' );
+		}
+		$host = $profile['host'];
 		if ( '' === $host ) {
 			// Mode says SMTP but nothing's configured — leave mail() in place rather than handing
 			// PHPMailer a half-built SMTP config that would fail in a more confusing way.
 			return;
 		}
 
-		$encryption = isset( $settings['smtp_encryption'] ) ? (string) $settings['smtp_encryption'] : 'tls';
-		$port       = isset( $settings['smtp_port'] ) ? absint( $settings['smtp_port'] ) : 0;
+		$encryption = $profile['encryption'];
+		$port       = $profile['port'];
 
 		$phpmailer->isSMTP();
 		$phpmailer->Host       = $host;
@@ -2705,9 +2769,9 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 		$phpmailer->SMTPSecure = in_array( $encryption, array( 'ssl', 'tls' ), true ) ? $encryption : '';
 		$phpmailer->SMTPAutoTLS = 'none' !== $encryption;
 
-		$username = isset( $settings['smtp_username'] ) ? (string) $settings['smtp_username'] : '';
-		$password = ajcore_get_smtp_password();
-		if ( ! empty( $settings['smtp_auth'] ) && '' !== $username ) {
+		$username = $profile['username'];
+		$password = ajcore_get_smtp_password( $profile['key'] );
+		if ( $profile['auth'] && '' !== $username ) {
 			$phpmailer->SMTPAuth = true;
 			$phpmailer->Username = $username;
 			$phpmailer->Password = $password;
@@ -2727,7 +2791,7 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 		//    (Outlook), and bounces route back to the mailbox that can actually receive them.
 		//
 		// Note this is the envelope only — nothing here touches From, Reply-To, or the brand name.
-		if ( ! empty( $settings['smtp_envelope_from_username'] ) && is_email( $username ) ) {
+		if ( $profile['envelope_from'] && is_email( $username ) ) {
 			$phpmailer->Sender = $username;
 		}
 	}

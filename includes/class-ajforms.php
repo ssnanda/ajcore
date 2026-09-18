@@ -1175,6 +1175,28 @@ class AJForms {
 		return '' !== $from_name ? $from_name : $name;
 	}
 
+	/** Per-form SMTP profile ('mail_profile' in the form's settings); unmarked sends fall through to
+	 *  the Forms/admin category default. See ajcore_current_mail_profile_key() in ajcore.php. */
+	private function mark_form_mail_profile( $settings ) {
+		if ( ! function_exists( 'ajcore_set_mail_profile' ) ) {
+			return;
+		}
+		$profile = isset( $settings['mail_profile'] ) ? (string) $settings['mail_profile'] : '';
+		ajcore_set_mail_profile( in_array( $profile, array( 'smtp', 'smtp2' ), true ) ? $profile : '' );
+	}
+
+	/** True when this user is a client-portal customer rather than staff — password resets and
+	 *  account mail for them are customer mail, so they follow the customer SMTP route. */
+	private function is_portal_user( $user_data ) {
+		if ( ! is_object( $user_data ) || empty( $user_data->ID ) ) {
+			return false;
+		}
+		$auth          = get_option( 'ajcore_auth_settings', array() );
+		$customer_role = is_array( $auth ) && ! empty( $auth['customer_role'] ) ? (string) $auth['customer_role'] : 'aj_portal_user';
+		$user          = get_userdata( $user_data->ID );
+		return $user && is_array( $user->roles ) && in_array( $customer_role, $user->roles, true );
+	}
+
 	public function filter_wp_password_reset_email( $defaults, $key, $user_login, $user_data ) {
 		$settings = get_option( 'ajforms_settings', array() );
 		$settings = is_array( $settings ) ? $settings : array();
@@ -1184,6 +1206,13 @@ class AJForms {
 
 		if ( ! $user_data instanceof WP_User ) {
 			return $defaults;
+		}
+
+		// Runs immediately before core's wp_mail(), so marking here routes a customer's reset through
+		// the customer SMTP profile; staff resets stay on the Forms/admin one.
+		if ( function_exists( 'ajcore_set_mail_profile' ) && $this->is_portal_user( $user_data ) ) {
+			$route = isset( $settings['mail_route_customer'] ) ? (string) $settings['mail_route_customer'] : 'smtp2';
+			ajcore_set_mail_profile( 'smtp' === $route ? 'smtp' : 'smtp2' );
 		}
 
 		$reset_url = network_site_url(
@@ -11660,6 +11689,7 @@ class AJForms {
 			$headers[] = 'From: ' . ( '' !== $from_name ? $from_name . ' ' : '' ) . '<' . $from_email . '>';
 		}
 
+		$this->mark_form_mail_profile( $settings );
 		wp_mail( $recipients, $subject, wp_kses_post( $body ), $headers, $attachments );
 	}
 
@@ -11720,6 +11750,7 @@ class AJForms {
 			}
 		}
 
+		$this->mark_form_mail_profile( $settings );
 		wp_mail( $to, $subject, wp_kses_post( $body ), $headers );
 	}
 
