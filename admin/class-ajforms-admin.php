@@ -27252,18 +27252,26 @@ class AJForms_Admin {
 			#ajforms-email-templates-section .ajforms-settings-help { margin-top: 3px; color: #9ca3af; font-size: 11.5px; }
 			#ajforms-email-templates-section .ajforms-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
 			#ajforms-email-templates-section .ajforms-settings-grid.ajf-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-			#ajforms-email-templates-section .ajforms-settings-card { padding: 14px 16px; }
+			#ajforms-email-templates-section .ajforms-settings-card { padding: 12px 14px; margin-top: 10px; }
+			#ajforms-email-templates-section .ajforms-settings-card:first-of-type { margin-top: 0; }
 			#ajforms-email-templates-section .ajforms-settings-card h3 { margin: 0 0 10px; font-size: 15px; }
 			/* Flat, single-line opt-in rows instead of the boxed checkbox blocks — three stacked
 			   boxes with 22px margins each was most of this screen's height. */
 			#ajforms-email-templates-section .ajf-opt { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: #374151; }
 			#ajforms-email-templates-section .ajf-opt input { margin: 0; }
-			.ajforms-email-variant-layout { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(300px, 380px); gap: 20px; align-items: start; }
+			.ajforms-email-variant-layout { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(280px, 340px); gap: 18px; align-items: start; }
 			@media (max-width: 1100px) { .ajforms-email-variant-layout { grid-template-columns: 1fr; } }
-			.ajforms-email-variant-layout .ajforms-settings-field + .ajforms-settings-field { margin-top: 10px; }
+			.ajforms-email-variant-layout .ajforms-settings-field + .ajforms-settings-field { margin-top: 8px; }
+			#ajforms-email-templates-section .ajforms-settings-actions { margin-top: 10px; }
+			#ajforms-email-templates-section details { margin: 0 0 8px; }
 			/* Preview follows you down the longer templates instead of scrolling away. */
 			.ajforms-email-variant-layout > div:last-child { position: sticky; top: 40px; }
-			#ajforms-email-templates-section .ajf-tpl-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin: 0 0 12px; font-size: 12.5px; }
+			#ajforms-email-templates-section .ajf-tpl-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+			#ajforms-email-templates-section .ajf-tpl-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+			#ajforms-email-templates-section .ajf-tpl-tab { border: 1px solid #d1d5db; background: #fff; border-radius: 999px; padding: 5px 13px; font-size: 12.5px; font-weight: 600; color: #4b5563; cursor: pointer; }
+			#ajforms-email-templates-section .ajf-tpl-tab:hover { border-color: #9ca3af; color: #111827; }
+			#ajforms-email-templates-section .ajf-tpl-tab.is-active { background: #ea580c; border-color: #ea580c; color: #fff; }
+			#ajforms-email-templates-section .ajf-tpl-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin: 0 0 10px; font-size: 12.5px; }
 			#ajforms-email-templates-section .ajf-tpl-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #9ca3af; margin: 0; }
 			#ajforms-email-templates-section .ajf-tpl-facts dd { margin: 1px 0 0; color: #374151; }
 			#ajforms-email-templates-section .ajf-tpl-facts code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
@@ -27467,27 +27475,16 @@ class AJForms_Admin {
 			);
 			?>
 			<div class="ajforms-settings-card">
-				<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-				<div class="ajforms-settings-field" style="min-width:280px;max-width:380px;flex:1 1 auto;">
-					<label for="ajforms-email-variant-select"><?php esc_html_e( 'Edit template', 'ajforms' ); ?></label>
-					<select id="ajforms-email-variant-select">
-						<?php foreach ( $brands as $brand_key => $brand ) : ?>
-							<optgroup label="<?php echo esc_attr( $brand['label'] ); ?>">
-								<?php foreach ( $email_variants as $variant ) : ?>
-									<?php if ( strpos( $variant['variant_key'], $brand_key . '_' ) === 0 ) : ?>
-										<option value="<?php echo esc_attr( $variant['variant_key'] ); ?>"><?php echo esc_html( $variant['label'] ); ?></option>
-									<?php endif; ?>
-								<?php endforeach; ?>
-							</optgroup>
+				<div class="ajf-tpl-bar">
+					<div class="ajf-tpl-tabs">
+						<?php foreach ( $email_variants as $i => $variant ) : ?>
+							<button type="button" class="ajf-tpl-tab<?php echo 0 === $i ? ' is-active' : ''; ?>" data-variant="<?php echo esc_attr( $variant['variant_key'] ); ?>"><?php echo esc_html( $variant['label'] ); ?></button>
 						<?php endforeach; ?>
-					</select>
-				</div>
-				<?php // Save sits with the picker as well as at the foot of the form — on a screen this
-				// tall you're usually editing one template and want to save without hunting. ?>
-				<div><?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit_top', false ); ?></div>
+					</div>
+					<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit_top', false ); ?>
 				</div>
 				<?php foreach ( $email_variants as $i => $type ) : ?>
-					<div class="ajforms-email-variant-panel" data-variant="<?php echo esc_attr( $type['variant_key'] ); ?>" style="margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0;<?php echo 0 === $i ? '' : 'display:none;'; ?>">
+					<div class="ajforms-email-variant-panel" data-variant="<?php echo esc_attr( $type['variant_key'] ); ?>" style="margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0;<?php echo 0 === $i ? '' : 'display:none;'; ?>">
 						<?php
 						// Spells out the address this template will actually send as, override or not —
 						// the same resolution the send functions use, so the screen can't disagree
@@ -27584,33 +27581,33 @@ class AJForms_Admin {
 							</div>
 							<div>
 								<div class="ajforms-settings-help" style="margin-bottom:4px;"><?php esc_html_e( 'Preview', 'ajforms' ); ?></div>
-								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;height:430px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;"></iframe>
+								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;height:340px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;"></iframe>
 							</div>
 						</div>
 					</div>
 				<?php endforeach; ?>
 				<script>
 				(function () {
-					var select = document.getElementById( 'ajforms-email-variant-select' );
+					var tabs = document.querySelectorAll( '.ajf-tpl-tab' );
 					var panels = document.querySelectorAll( '.ajforms-email-variant-panel' );
-					if ( ! select ) { return; }
-					select.addEventListener( 'change', function () {
-						panels.forEach( function ( panel ) {
-							panel.style.display = panel.getAttribute( 'data-variant' ) === select.value ? '' : 'none';
+					tabs.forEach( function ( tab ) {
+						tab.addEventListener( 'click', function () {
+							var target = tab.getAttribute( 'data-variant' );
+							tabs.forEach( function ( t ) { t.classList.toggle( 'is-active', t === tab ); } );
+							panels.forEach( function ( panel ) {
+								panel.style.display = panel.getAttribute( 'data-variant' ) === target ? '' : 'none';
+							} );
 						} );
 					} );
 				})();
 				</script>
-				<div class="ajforms-settings-note" style="margin-top:20px;">
+				<div class="ajforms-settings-help" style="margin-top:10px;">
 					<?php echo wp_kses_post( sprintf( '<a href="%s">%s</a>', esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'email' ), admin_url( 'admin.php' ) ) . '#ajcore-email-log' ), esc_html__( 'View sent emails →', 'ajforms' ) ) ); ?>
 				</div>
 			</div>
 
 			<?php $this->display_additional_branded_email_templates( $settings, $brands ); ?>
 
-			<div class="ajforms-settings-actions">
-				<?php submit_button( __( 'Save Settings', 'ajforms' ), 'primary', 'submit', false ); ?>
-			</div>
 		</form>
 		<?php
 	}
