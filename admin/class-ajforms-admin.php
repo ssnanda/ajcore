@@ -27264,18 +27264,21 @@ class AJForms_Admin {
 			.ajforms-email-variant-layout .ajforms-settings-field + .ajforms-settings-field { margin-top: 8px; }
 			#ajforms-email-templates-section .ajforms-settings-actions { margin-top: 10px; }
 			#ajforms-email-templates-section details { margin: 0 0 8px; }
-			/* Preview follows you down the longer templates instead of scrolling away. */
-			.ajforms-email-variant-layout > div:last-child { position: sticky; top: 40px; }
 			#ajforms-email-templates-section .ajf-tpl-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 			#ajforms-email-templates-section .ajf-tpl-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 			#ajforms-email-templates-section .ajf-tpl-tab { border: 1px solid #d1d5db; background: #fff; border-radius: 999px; padding: 5px 13px; font-size: 12.5px; font-weight: 600; color: #4b5563; cursor: pointer; }
 			#ajforms-email-templates-section .ajf-tpl-tab:hover { border-color: #9ca3af; color: #111827; }
 			#ajforms-email-templates-section .ajf-tpl-tab.is-active { background: #ea580c; border-color: #ea580c; color: #fff; }
-			#ajforms-email-templates-section .ajf-tpl-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin: 0 0 10px; font-size: 12.5px; }
-			#ajforms-email-templates-section .ajf-tpl-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #9ca3af; margin: 0; }
-			#ajforms-email-templates-section .ajf-tpl-facts dd { margin: 1px 0 0; color: #374151; }
-			#ajforms-email-templates-section .ajf-tpl-facts code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-			#ajforms-email-templates-section .ajf-tpl-alert { margin: 0 0 10px; padding: 7px 11px; border-radius: 6px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 12.5px; }
+			#ajforms-email-templates-section .ajf-tpl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 0 0 8px; font-size: 12.5px; color: #4b5563; }
+			#ajforms-email-templates-section .ajf-tpl-meta code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+			#ajforms-email-templates-section .ajf-tpl-meta em { font-style: normal; color: #9ca3af; font-size: 11.5px; }
+			#ajforms-email-templates-section .ajf-tpl-meta-warn { color: #b45309; }
+			#ajforms-email-templates-section .ajf-tpl-detail { margin: 0 0 8px; }
+			#ajforms-email-templates-section .ajf-tpl-detail summary { font-size: 12px; color: #2563eb; cursor: pointer; }
+			/* Preview matches the editor column's height instead of clipping the email at a fixed size. */
+			.ajforms-email-variant-layout { align-items: stretch; }
+			.ajforms-email-variant-layout > div:last-child { display: flex; flex-direction: column; }
+			.ajforms-email-variant-preview { flex: 1 1 auto; width: 100%; min-height: 420px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
 		</style>
 		<form method="post" action="<?php echo esc_url( $action_url ); ?>" id="ajforms-email-templates-section">
 			<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
@@ -27497,27 +27500,25 @@ class AJForms_Admin {
 						$panel_pfrom    = ! empty( $settings[ ( 'smtp2' === $panel_profile ? 'smtp2_' : 'smtp_' ) . 'from_email' ] );
 						$panel_issues   = ajcore_mail_profile_issues( $settings, $panel_profile );
 						?>
-						<h4 style="margin:0 0 6px;font-size:14px;font-weight:700;color:#111827;"><?php echo esc_html( $type['variant_label'] ); ?></h4>
-						<?php // Everything that decides how this one template sends, for the template you picked. ?>
-						<dl class="ajf-tpl-facts">
-							<div><dt><?php esc_html_e( 'Profile', 'ajforms' ); ?></dt><dd><?php echo esc_html( $profile_names[ $panel_profile ] ); ?></dd></div>
-							<div><dt><?php esc_html_e( 'Sends as', 'ajforms' ); ?></dt><dd><code><?php echo esc_html( sprintf( '%s <%s>', $effective['from_name'], $effective['from_email'] ) ); ?></code></dd></div>
-							<div><dt><?php esc_html_e( 'Set by', 'ajforms' ); ?></dt><dd>
-								<?php
-								echo ! empty( $settings[ $type['from_email_key'] ] )
-									? esc_html__( 'Template', 'ajforms' )
-									: ( $panel_pfrom ? esc_html__( 'Profile', 'ajforms' ) : esc_html__( 'System From', 'ajforms' ) );
-								?>
-							</dd></div>
-							<div><dt><?php esc_html_e( 'To', 'ajforms' ); ?></dt><dd><?php echo esc_html( isset( $recipient_rules[ $type['id'] ] ) ? $recipient_rules[ $type['id'] ] : '—' ); ?></dd></div>
-						</dl>
-						<?php if ( $panel_issues ) : ?>
-							<p class="ajf-tpl-alert"><?php echo esc_html( sprintf( __( '%1$s is not ready to send: %2$s', 'ajforms' ), $profile_names[ $panel_profile ], implode( ', ', $panel_issues ) ) ); ?> <a href="<?php echo esc_url( $mail_url ); ?>"><?php esc_html_e( 'Fix →', 'ajforms' ); ?></a></p>
-						<?php endif; ?>
-						<details style="margin:0 0 10px;"><summary style="font-size:12px;color:#2563eb;cursor:pointer;"><?php esc_html_e( 'Delivery details', 'ajforms' ); ?></summary>
+						<?php
+						// One meta line: who carries it, what it goes out as, where it lands. The active
+						// pill above already names the template, so no heading here.
+						$panel_set_by = ! empty( $settings[ $type['from_email_key'] ] )
+							? __( 'template', 'ajforms' )
+							: ( $panel_pfrom ? __( 'profile', 'ajforms' ) : __( 'system', 'ajforms' ) );
+						?>
+						<p class="ajf-tpl-meta">
+							<span><?php echo esc_html( $profile_names[ $panel_profile ] ); ?></span>
+							<span><code><?php echo esc_html( sprintf( '%s <%s>', $effective['from_name'], $effective['from_email'] ) ); ?></code> <em><?php echo esc_html( $panel_set_by ); ?></em></span>
+							<span><?php esc_html_e( 'To:', 'ajforms' ); ?> <?php echo esc_html( isset( $recipient_rules[ $type['id'] ] ) ? $recipient_rules[ $type['id'] ] : '—' ); ?></span>
+							<?php if ( $panel_issues ) : ?>
+								<span class="ajf-tpl-meta-warn">⚠ <?php echo esc_html( sprintf( __( '%1$s: %2$s', 'ajforms' ), $profile_names[ $panel_profile ], implode( ', ', $panel_issues ) ) ); ?> <a href="<?php echo esc_url( $mail_url ); ?>"><?php esc_html_e( 'Fix', 'ajforms' ); ?></a></span>
+							<?php endif; ?>
+						</p>
+						<details class="ajf-tpl-detail"><summary><?php esc_html_e( 'Delivery details', 'ajforms' ); ?></summary>
 						<?php $this->display_email_delivery_details( $settings, $effective, isset( $recipient_rules[ $type['id'] ] ) ? $recipient_rules[ $type['id'] ] : '' ); ?>
 						</details>
-						<details style="margin:10px 0;">
+						<details class="ajf-tpl-detail">
 							<summary><?php esc_html_e( 'Fixed content (read-only)', 'ajforms' ); ?></summary>
 							<?php foreach ( $type['fixed_parts'] as $part => $value ) : ?>
 								<p><strong><?php echo esc_html( ucwords( str_replace( '_', ' ', $part ) ) ); ?>:</strong> <?php echo esc_html( $value ); ?></p>
@@ -27556,16 +27557,16 @@ class AJForms_Admin {
 									</div>
 								</div>
 								<div class="ajforms-settings-field">
-									<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
-									<textarea name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" rows="1"><?php echo esc_textarea( $settings[ $type['heading_key'] ] ); ?></textarea>
-								</div>
-								<div class="ajforms-settings-field">
 									<label for="<?php echo esc_attr( $type['subject_key'] ); ?>"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
 									<textarea name="<?php echo esc_attr( $type['subject_key'] ); ?>" id="<?php echo esc_attr( $type['subject_key'] ); ?>" rows="1"><?php echo esc_textarea( $settings[ $type['subject_key'] ] ); ?></textarea>
 								</div>
 								<div class="ajforms-settings-field">
+									<label for="<?php echo esc_attr( $type['heading_key'] ); ?>"><?php esc_html_e( 'Heading', 'ajforms' ); ?></label>
+									<textarea name="<?php echo esc_attr( $type['heading_key'] ); ?>" id="<?php echo esc_attr( $type['heading_key'] ); ?>" rows="1"><?php echo esc_textarea( $settings[ $type['heading_key'] ] ); ?></textarea>
+								</div>
+								<div class="ajforms-settings-field">
 									<label for="<?php echo esc_attr( $type['body_key'] ); ?>"><?php esc_html_e( 'Body', 'ajforms' ); ?></label>
-									<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="5"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
+									<textarea name="<?php echo esc_attr( $type['body_key'] ); ?>" id="<?php echo esc_attr( $type['body_key'] ); ?>" rows="7"><?php echo esc_textarea( $settings[ $type['body_key'] ] ); ?></textarea>
 									<div class="ajforms-settings-help"><?php echo esc_html( sprintf( __( 'Placeholders: %s', 'ajforms' ), $type['placeholders'] ) ); ?></div>
 									<?php if ( ! empty( $type['bullets'] ) ) : ?>
 										<div class="ajforms-settings-help"><?php esc_html_e( 'One line per paragraph. A line starting with "- " becomes a bulleted requirement listed under the address box.', 'ajforms' ); ?></div>
@@ -27581,7 +27582,7 @@ class AJForms_Admin {
 							</div>
 							<div>
 								<div class="ajforms-settings-help" style="margin-bottom:4px;"><?php esc_html_e( 'Preview', 'ajforms' ); ?></div>
-								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>" style="width:100%;height:340px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;"></iframe>
+								<iframe class="ajforms-email-variant-preview" sandbox="" srcdoc="<?php echo esc_attr( $type['sample_html'] ); ?>"></iframe>
 							</div>
 						</div>
 					</div>
