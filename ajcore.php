@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.324
+ * Version: 0.7.325
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.324' );
+	define( 'AJCORE_VERSION', '0.7.325' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -2807,7 +2807,12 @@ if ( ! function_exists( 'ajcore_configure_smtp_mailer' ) ) {
 	 */
 	function ajcore_get_mail_profile_from( $settings, $profile_key ) {
 		$p     = 'smtp2' === $profile_key ? 'smtp2_' : 'smtp_';
+		// Blank means this site's own donotreply@ address — the domain the site actually is, which is
+		// what a provider will have verified for it. An address typed here overrides that.
 		$email = isset( $settings[ $p . 'from_email' ] ) ? trim( (string) $settings[ $p . 'from_email' ] ) : '';
+		if ( '' === $email ) {
+			$email = ajcore_default_system_from_email();
+		}
 		// A profile routed to but not configured falls back to profile 1 at send time, so its
 		// sender identity has to fall back in step or the From would name the wrong provider.
 		if ( 'smtp2' === $profile_key && '' === trim( (string) ( isset( $settings['smtp2_host'] ) ? $settings['smtp2_host'] : '' ) ) ) {

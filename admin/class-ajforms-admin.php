@@ -22036,7 +22036,7 @@ class AJForms_Admin {
 				$k           = 'smtp' . $prof['p'] . '_';
 				$pw_constant = ( '2' === $prof['p'] ? defined( 'AJCORE_SMTP2_PASSWORD' ) && '' !== (string) AJCORE_SMTP2_PASSWORD : $smtp_password_is_constant );
 				$pw_saved    = ! empty( $settings[ $k . 'password' ] );
-				$sends_as    = ! empty( $settings[ $k . 'from_email' ] ) ? $settings[ $k . 'from_email' ] : $system_from_email;
+				$sends_as    = ! empty( $settings[ $k . 'from_email' ] ) ? $settings[ $k . 'from_email' ] : ajcore_default_system_from_email();
 				$sends_nm    = ! empty( $settings[ $k . 'from_name' ] ) ? $settings[ $k . 'from_name' ] : $system_from_name;
 				$host_set    = '' !== trim( (string) $settings[ $k . 'host' ] );
 				$issues      = ajcore_mail_profile_issues( $settings, $prof['id'] );
@@ -22091,7 +22091,7 @@ class AJForms_Admin {
 						</div>
 						<div>
 							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'from_email' ); ?>"><?php esc_html_e( 'From Email', 'ajforms' ); ?></label>
-							<input name="<?php echo esc_attr( $k . 'from_email' ); ?>" id="<?php echo esc_attr( $k . 'from_email' ); ?>" type="text" placeholder="<?php echo esc_attr( $system_from_email ); ?>" value="<?php echo esc_attr( $settings[ $k . 'from_email' ] ); ?>">
+							<input name="<?php echo esc_attr( $k . 'from_email' ); ?>" id="<?php echo esc_attr( $k . 'from_email' ); ?>" type="text" placeholder="<?php echo esc_attr( ajcore_default_system_from_email() ); ?>" value="<?php echo esc_attr( $settings[ $k . 'from_email' ] ); ?>">
 						</div>
 						<div>
 							<label class="ajcm-label" for="<?php echo esc_attr( $k . 'from_name' ); ?>"><?php esc_html_e( 'From Name', 'ajforms' ); ?></label>
@@ -22107,7 +22107,7 @@ class AJForms_Admin {
 						<div>
 							<code><?php echo esc_html( sprintf( '%s <%s>', $sends_nm, $sends_as ) ); ?></code>
 							<?php if ( empty( $settings[ $k . 'from_email' ] ) ) : ?>
-								<span class="ajcm-used-by"><?php esc_html_e( 'System From', 'ajforms' ); ?></span>
+								<span class="ajcm-used-by"><?php esc_html_e( 'site default', 'ajforms' ); ?></span>
 							<?php endif; ?>
 						</div>
 					</div>
