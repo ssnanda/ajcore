@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.326
+ * Version: 0.7.327
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.326' );
+	define( 'AJCORE_VERSION', '0.7.327' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -32,6 +32,11 @@ if ( ! defined( 'AJCORE_PLUGIN_URL' ) ) {
 if ( ! defined( 'AJCORE_PLUGIN_BASENAME' ) ) {
 	define( 'AJCORE_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 }
+
+// Reports this install (site, versions) to freeSIEM Core. Must load at the top level
+// of this file so its activation hook registers.
+require_once AJCORE_PLUGIN_DIR . 'includes/freesiem-dial-home-ajcore.php';
+Freesiem_Dial_Home_ajcore::boot( __FILE__ );
 
 if ( ! defined( 'AJCORE_SYNCED_SETTINGS_FILE' ) ) {
 	define( 'AJCORE_SYNCED_SETTINGS_FILE', AJCORE_PLUGIN_DIR . 'config/synced-settings.json' );
