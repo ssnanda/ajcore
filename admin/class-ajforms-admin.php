@@ -11927,6 +11927,8 @@ class AJForms_Admin {
 				// ajforms_settings_nonce, so fall through to the generic handler too.
 				$this->handle_send_test_email();
 				$this->handle_settings_save();
+			} elseif ( 'overview' === $section ) {
+				$this->handle_portal_overview_settings_save();
 			} elseif ( 'api' === $section ) {
 				$this->handle_portal_api_settings_save();
 			} elseif ( 'files' === $section ) {
@@ -11969,7 +11971,9 @@ class AJForms_Admin {
 			// sub-navigation (cp_section) now carries what used to be the top-level tab.
 			if ( 'cp-settings' === $tab ) {
 				$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
-				if ( 'api' === $cp_section ) {
+				if ( 'overview' === $cp_section ) {
+					$this->handle_portal_overview_settings_save();
+				} elseif ( 'api' === $cp_section ) {
 					$this->handle_portal_api_settings_save();
 				} elseif ( 'calendar' === $cp_section ) {
 					$this->handle_portal_calendar_settings_save();
@@ -12028,7 +12032,9 @@ class AJForms_Admin {
 			// every cp_section whose settings form posts back to THIS page slug (email-templates,
 			// inbox, files) needs its own save routing here too, not just in the other branch above.
 			$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
-			if ( 'files' === $cp_section ) {
+			if ( 'overview' === $cp_section ) {
+				$this->handle_portal_overview_settings_save();
+			} elseif ( 'files' === $cp_section ) {
 				$this->handle_portal_file_settings_save();
 			} elseif ( 'shared-db' === $cp_section ) {
 				$this->handle_portal_shared_db_settings_save();
@@ -20619,6 +20625,7 @@ class AJForms_Admin {
 		if ( $client_portal_enabled ) {
 			$sub_tabs = array(
 				'menu'            => __( 'Menu', 'ajforms' ),
+				'overview'        => __( 'Overview', 'ajforms' ),
 				'product-catalog' => __( 'Product Catalog', 'ajforms' ),
 				'sync'            => __( 'Sync', 'ajforms' ),
 				'event-log'       => __( 'Event Log', 'ajforms' ),
@@ -20669,6 +20676,8 @@ class AJForms_Admin {
 
 		<?php if ( 'menu' === $cp_section ) : ?>
 			<?php $this->display_client_portal_settings_tab( 'menu', true ); ?>
+		<?php elseif ( 'overview' === $cp_section ) : ?>
+			<?php $this->display_portal_overview_settings(); ?>
 		<?php elseif ( 'product-catalog' === $cp_section ) : ?>
 			<?php $this->display_portal_products_services_tab(); ?>
 		<?php elseif ( 'sync' === $cp_section ) : ?>
@@ -20714,6 +20723,98 @@ class AJForms_Admin {
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
+		<?php
+	}
+
+	private function handle_portal_overview_settings_save() {
+		if ( ! isset( $_POST['ajcore_overview_nonce'] ) ) {
+			return;
+		}
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+		check_admin_referer( 'ajcore_save_overview', 'ajcore_overview_nonce' );
+		$input = isset( $_POST['overview'] ) && is_array( $_POST['overview'] ) ? wp_unslash( $_POST['overview'] ) : array();
+		$text = static function ( $row, $key ) {
+			return isset( $row[ $key ] ) && is_string( $row[ $key ] ) ? $row[ $key ] : '';
+		};
+		$settings = array(
+			'banner_enabled' => ! empty( $input['banner_enabled'] ),
+			'banner_heading' => sanitize_text_field( $text( $input, 'banner_heading' ) ),
+			'banner_message' => sanitize_textarea_field( $text( $input, 'banner_message' ) ),
+			'banner_button'  => sanitize_text_field( $text( $input, 'banner_button' ) ),
+			'banner_url'     => esc_url_raw( $text( $input, 'banner_url' ), array( 'http', 'https' ) ),
+			'resources'      => array(),
+		);
+		$rows = isset( $input['resources'] ) && is_array( $input['resources'] ) ? $input['resources'] : array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$title = sanitize_text_field( $text( $row, 'title' ) );
+			$url   = esc_url_raw( $text( $row, 'url' ), array( 'http', 'https' ) );
+			$blurb = sanitize_textarea_field( $text( $row, 'blurb' ) );
+			if ( '' === $title && '' === $url && '' === $blurb ) {
+				continue;
+			}
+			$settings['resources'][] = array(
+				'enabled' => ! empty( $row['enabled'] ),
+				'title'   => $title,
+				'url'     => $url,
+				'blurb'   => $blurb,
+			);
+		}
+		update_option( 'ajcore_customer_portal_overview', $settings, false );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'overview', 'overview-saved' => '1' ), admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	private function display_portal_overview_settings() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
+		}
+		$settings = AJForms::get_portal_overview_settings();
+		$resources = $settings['resources'];
+		$resources[] = array( 'enabled' => false, 'title' => '', 'url' => '', 'blurb' => '' );
+		?>
+		<div class="ajforms-settings-head">
+			<h2><?php esc_html_e( 'Client Portal Overview', 'ajforms' ); ?></h2>
+			<p><?php esc_html_e( 'Manage the announcement and Helpful Reading shown on this site’s client portal Overview.', 'ajforms' ); ?></p>
+		</div>
+		<?php if ( isset( $_GET['overview-saved'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Overview settings saved.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=ajforms-settings&section=overview' ) ); ?>" class="ajforms-settings-card">
+			<?php wp_nonce_field( 'ajcore_save_overview', 'ajcore_overview_nonce' ); ?>
+			<h3><?php esc_html_e( 'Announcement Banner', 'ajforms' ); ?></h3>
+			<p><label><input type="checkbox" name="overview[banner_enabled]" value="1" <?php checked( ! empty( $settings['banner_enabled'] ) ); ?>> <?php esc_html_e( 'Show announcement banner', 'ajforms' ); ?></label></p>
+			<?php foreach ( array( 'banner_heading' => __( 'Heading', 'ajforms' ), 'banner_message' => __( 'Message', 'ajforms' ), 'banner_button' => __( 'Button label', 'ajforms' ), 'banner_url' => __( 'Button URL', 'ajforms' ) ) as $key => $label ) : ?>
+				<p><label for="ajcore-<?php echo esc_attr( $key ); ?>"><?php echo esc_html( $label ); ?></label><br>
+				<?php if ( 'banner_message' === $key ) : ?>
+					<textarea class="large-text" rows="4" id="ajcore-<?php echo esc_attr( $key ); ?>" name="overview[<?php echo esc_attr( $key ); ?>]"><?php echo esc_textarea( $settings[ $key ] ); ?></textarea>
+				<?php else : ?>
+					<input class="large-text" type="<?php echo 'banner_url' === $key ? 'url' : 'text'; ?>" id="ajcore-<?php echo esc_attr( $key ); ?>" name="overview[<?php echo esc_attr( $key ); ?>]" value="<?php echo esc_attr( $settings[ $key ] ); ?>">
+				<?php endif; ?></p>
+			<?php endforeach; ?>
+			<p class="description"><?php esc_html_e( 'Use plain text. Leave the button label or URL blank to hide the button. Links open in a new tab.', 'ajforms' ); ?></p>
+			<h3><?php esc_html_e( 'Helpful Reading', 'ajforms' ); ?></h3>
+			<p><?php esc_html_e( 'Enable or disable each entry independently. Only enabled entries with a title and URL appear. The section is hidden when none appear. Use the blank entry to add a link; clear all text fields to remove an entry.', 'ajforms' ); ?></p>
+			<?php foreach ( $resources as $index => $resource ) : ?>
+				<fieldset style="border:1px solid #ddd;padding:16px;margin:16px 0;">
+					<legend><?php echo esc_html( $index === count( $resources ) - 1 ? __( 'Add reading link', 'ajforms' ) : sprintf( __( 'Reading link %d', 'ajforms' ), $index + 1 ) ); ?></legend>
+					<label><input type="checkbox" name="overview[resources][<?php echo esc_attr( $index ); ?>][enabled]" value="1" <?php checked( ! empty( $resource['enabled'] ) ); ?>> <?php esc_html_e( 'Show this entry', 'ajforms' ); ?></label>
+					<?php foreach ( array( 'title' => __( 'Title', 'ajforms' ), 'url' => __( 'URL', 'ajforms' ), 'blurb' => __( 'Description', 'ajforms' ) ) as $key => $label ) : ?>
+						<p><label for="ajcore-reading-<?php echo esc_attr( $index . '-' . $key ); ?>"><?php echo esc_html( $label ); ?></label><br>
+						<?php if ( 'blurb' === $key ) : ?>
+							<textarea class="large-text" rows="2" id="ajcore-reading-<?php echo esc_attr( $index . '-' . $key ); ?>" name="overview[resources][<?php echo esc_attr( $index ); ?>][<?php echo esc_attr( $key ); ?>]"><?php echo esc_textarea( $resource[ $key ] ); ?></textarea>
+						<?php else : ?>
+							<input class="large-text" type="<?php echo 'url' === $key ? 'url' : 'text'; ?>" id="ajcore-reading-<?php echo esc_attr( $index . '-' . $key ); ?>" name="overview[resources][<?php echo esc_attr( $index ); ?>][<?php echo esc_attr( $key ); ?>]" value="<?php echo esc_attr( $resource[ $key ] ); ?>">
+						<?php endif; ?></p>
+					<?php endforeach; ?>
+				</fieldset>
+			<?php endforeach; ?>
+			<?php submit_button( __( 'Save Overview Settings', 'ajforms' ) ); ?>
+		</form>
 		<?php
 	}
 
@@ -32679,6 +32780,7 @@ class AJForms_Admin {
 			// claims to be for; see the dispatch case in handle_admin_actions().
 			foreach ( array(
 				'menu'                   => array( __( 'Menu', 'ajforms' ), 'menu' ),
+				'overview'               => array( __( 'Overview', 'ajforms' ), 'welcome-widgets-menus' ),
 				'product-catalog'        => array( __( 'Product Catalog', 'ajforms' ), 'archive' ),
 				'sync'                   => array( __( 'Sync', 'ajforms' ), 'update' ),
 				'event-log'              => array( __( 'Event Log', 'ajforms' ), 'list-view' ),
@@ -32925,6 +33027,8 @@ class AJForms_Admin {
 							// already (same reasoning as chat above) — its own form is bare (no
 							// action=), so it already posts back to wherever it's embedded. ?>
 							<?php $this->display_client_portal_settings_tab( 'menu', true ); ?>
+						<?php elseif ( 'overview' === $section ) : ?>
+							<?php $this->display_portal_overview_settings(); ?>
 						<?php elseif ( 'product-catalog' === $section ) : ?>
 							<?php $this->display_portal_products_services_tab(); ?>
 						<?php elseif ( 'sync' === $section ) : ?>

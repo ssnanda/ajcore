@@ -1684,20 +1684,22 @@ class AJForms {
 						$file_category = '' !== (string) $file->category ? (string) $file->category : __( 'File', 'ajforms' );
 						$file_date     = ! empty( $file->created_at ) ? $this->format_portal_date( $file->created_at ) : '';
 						?>
-						<div class="aj-customer-file-row" role="listitem">
-							<div class="aj-customer-file-main">
-								<div class="aj-customer-file-title"><?php echo esc_html( $file->title ); ?></div>
-								<div class="aj-customer-file-meta">
-									<span><?php echo esc_html( $file_category ); ?></span>
-									<?php if ( $file_date ) : ?><span><?php echo esc_html( $file_date ); ?></span><?php endif; ?>
+						<div class="aj-customer-file-item" role="listitem">
+							<a class="aj-customer-file-row" href="<?php echo esc_url( $download_url ); ?>" aria-label="<?php echo esc_attr( sprintf( __( 'Download %s', 'ajforms' ), $file->title ) ); ?>">
+								<div class="aj-customer-file-main">
+									<div class="aj-customer-file-title"><?php echo esc_html( $file->title ); ?></div>
+									<div class="aj-customer-file-meta">
+										<span><?php echo esc_html( $file_category ); ?></span>
+										<?php if ( $file_date ) : ?><span><?php echo esc_html( $file_date ); ?></span><?php endif; ?>
+									</div>
+									<?php if ( '' !== (string) $file->description ) : ?>
+										<p><?php echo esc_html( $file->description ); ?></p>
+									<?php endif; ?>
 								</div>
-								<?php if ( '' !== (string) $file->description ) : ?>
-									<p><?php echo esc_html( $file->description ); ?></p>
-								<?php endif; ?>
-							</div>
-							<div class="aj-customer-file-actions">
-								<a class="button" href="<?php echo esc_url( $download_url ); ?>"><?php esc_html_e( 'Download', 'ajforms' ); ?></a>
-							</div>
+								<div class="aj-customer-file-actions">
+									<span class="button aj-customer-file-download"><?php esc_html_e( 'Download', 'ajforms' ); ?></span>
+								</div>
+							</a>
 						</div>
 					<?php endforeach; ?>
 				</div>
@@ -5257,6 +5259,40 @@ class AJForms {
 		return '<span class="aj-portal-inline-actions">' . implode( ' ', $actions ) . '</span>';
 	}
 
+	/** Site-local content shared by the Overview settings form and client portal. */
+	public static function get_portal_overview_settings() {
+		$resources = array(
+			array(
+				'url'     => home_url( '/do-you-need-to-file-a-beneficial-ownership-information-boi-report/' ),
+				'enabled' => true,
+				'title'   => __( 'Do You Need to File a Beneficial Ownership Information (BOI) Report?', 'ajforms' ),
+				'blurb'   => __( 'A federal filing with FinCEN, separate from anything you file with NC — significant penalties can apply if you miss it.', 'ajforms' ),
+			),
+			array(
+				'url'     => home_url( '/beware-misleading-mailings-targeting-new-nc-companies/' ),
+				'enabled' => true,
+				'title'   => __( 'Beware: Misleading Mailings Targeting New NC Companies', 'ajforms' ),
+				'blurb'   => __( 'Official-looking mail that isn’t from the state, charging well above what NC actually charges — here’s how to spot it.', 'ajforms' ),
+			),
+			array(
+				'url'     => home_url( '/important-notice-to-employers-your-new-nc-llcs-reporting-responsibilities/' ),
+				'enabled' => true,
+				'title'   => __( 'Important Notice to Employers: Your New NC LLC’s Reporting Responsibilities', 'ajforms' ),
+				'blurb'   => __( 'Hiring your first employee triggers obligations with three different state agencies — what kicks in and when.', 'ajforms' ),
+			),
+		);
+		$defaults = array(
+			'banner_enabled' => true,
+			'banner_heading' => __( 'Beneficial Ownership Information (BOI) Report:', 'ajforms' ),
+			'banner_message' => __( 'a federal filing most LLCs and corporations must submit to FinCEN — significant penalties can apply if you miss the deadline.', 'ajforms' ),
+			'banner_button'  => __( 'Learn More', 'ajforms' ),
+			'banner_url'     => home_url( '/do-you-need-to-file-a-beneficial-ownership-information-boi-report/' ),
+			'resources'      => $resources,
+		);
+		$saved = get_option( 'ajcore_customer_portal_overview', array() );
+		return array_replace( $defaults, is_array( $saved ) ? $saved : array() );
+	}
+
 	private function render_customer_portal_overview_tab() {
 		$context = $this->get_current_user_portal_billing_context();
 		$customer = $context['customer'];
@@ -5290,23 +5326,22 @@ class AJForms {
 		$overview_support     = $this->get_portal_support_contact();
 		$text_url             = 'sms:' . ( '' !== $overview_support['tel_href'] ? $overview_support['tel_href'] : '+17043072135' ) . '?body=' . rawurlencode( $text_message );
 
-		// Genuinely time-sensitive/penalty-bearing (federal BOI reporting), unlike the other 2 items
-		// in the "Helpful Reading" list further down — this gets its own prominent, hard-to-miss
-		// banner at the top of Overview rather than waiting to be noticed in that list. Same
-		// home_url()-based URL building as $portal_resources below, kept as its own variable here
-		// since this renders well before that array is built.
-		$boir_url = home_url( '/do-you-need-to-file-a-beneficial-ownership-information-boi-report/' );
+		$overview_settings = self::get_portal_overview_settings();
 
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
 			<h2><?php echo esc_html( sprintf( __( 'Welcome, %s', 'ajforms' ), $display_name ) ); ?></h2>
 
+			<?php if ( $overview_settings['banner_enabled'] ) : ?>
 			<div class="aj-portal-boir-banner">
 				<style>.aj-portal-boir-banner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin:0 0 20px;padding:16px 20px;border-radius:16px;background:linear-gradient(135deg,rgba(251,191,36,.14),rgba(239,68,68,.10));border:1px solid rgba(217,119,6,.35)}.aj-portal-boir-banner p{margin:0;font-size:14px;color:#78350f}.aj-portal-boir-banner strong{color:#92400e}.aj-portal-boir-banner .button{white-space:nowrap;background:linear-gradient(135deg,#d97706 0%,#dc2626 100%)!important;box-shadow:0 18px 38px rgba(217,119,6,.24)!important}</style>
-				<p><strong><?php esc_html_e( 'Beneficial Ownership Information (BOI) Report:', 'ajforms' ); ?></strong> <?php esc_html_e( 'a federal filing most LLCs and corporations must submit to FinCEN — significant penalties can apply if you miss the deadline.', 'ajforms' ); ?></p>
-				<a class="button" href="<?php echo esc_url( $boir_url ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'Learn More', 'ajforms' ); ?></a>
+				<p><strong><?php echo esc_html( $overview_settings['banner_heading'] ); ?></strong> <?php echo nl2br( esc_html( $overview_settings['banner_message'] ) ); ?></p>
+				<?php if ( '' !== $overview_settings['banner_url'] && '' !== $overview_settings['banner_button'] ) : ?>
+					<a class="button" href="<?php echo esc_url( $overview_settings['banner_url'] ); ?>" target="_blank" rel="noopener"><?php echo esc_html( $overview_settings['banner_button'] ); ?></a>
+				<?php endif; ?>
 			</div>
+			<?php endif; ?>
 
 			<div class="aj-portal-summary-grid">
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $billing_url ); ?>">
@@ -5356,36 +5391,19 @@ class AJForms {
 			</div>
 
 			<?php
-			// Compliance/awareness reading — moved here from one-off PDF attachments sent to every
-			// customer individually (which is how these 3 accumulated dozens of duplicate file rows,
-			// one per recipient). A real blog post is public, gets a real URL to link to, and doesn't
-			// need re-uploading per customer. home_url() rather than a hardcoded domain so this
-			// resolves correctly on whichever site is actually running this code (dev or production).
-			$portal_resources = array(
-				array(
-					'slug'  => 'do-you-need-to-file-a-beneficial-ownership-information-boi-report',
-					'title' => __( 'Do You Need to File a Beneficial Ownership Information (BOI) Report?', 'ajforms' ),
-					'blurb' => __( 'A federal filing with FinCEN, separate from anything you file with NC — significant penalties can apply if you miss it.', 'ajforms' ),
-				),
-				array(
-					'slug'  => 'beware-misleading-mailings-targeting-new-nc-companies',
-					'title' => __( 'Beware: Misleading Mailings Targeting New NC Companies', 'ajforms' ),
-					'blurb' => __( 'Official-looking mail that isn’t from the state, charging well above what NC actually charges — here’s how to spot it.', 'ajforms' ),
-				),
-				array(
-					'slug'  => 'important-notice-to-employers-your-new-nc-llcs-reporting-responsibilities',
-					'title' => __( 'Important Notice to Employers: Your New NC LLC’s Reporting Responsibilities', 'ajforms' ),
-					'blurb' => __( 'Hiring your first employee triggers obligations with three different state agencies — what kicks in and when.', 'ajforms' ),
-				),
-			);
+			$portal_resources = array_filter( $overview_settings['resources'], static function ( $resource ) {
+				return ! empty( $resource['enabled'] ) && '' !== $resource['title'] && '' !== $resource['url'];
+			} );
 			?>
+			<?php if ( ! empty( $portal_resources ) ) : ?>
 			<h3 class="aj-portal-quick-actions-heading"><?php esc_html_e( 'Helpful Reading', 'ajforms' ); ?></h3>
 			<ul class="aj-portal-resources-list">
 				<style>.aj-portal-resources-list{list-style:none;margin:0;padding:10px 16px;border-radius:14px;background:var(--ajp-glass);border:1px solid var(--ajp-line);box-shadow:var(--ajp-shadow-soft)}.aj-portal-resources-list li{padding:9px 0;border-bottom:1px solid var(--ajp-line)}.aj-portal-resources-list li:first-child{padding-top:0}.aj-portal-resources-list li:last-child{padding-bottom:0;border-bottom:0}.aj-portal-resources-list a{display:block;font-size:14px;font-weight:800;line-height:1.35;color:var(--ajp-ink)}.aj-portal-resources-list a:hover{color:#1d4ed8}.aj-portal-resources-list small{display:block;margin-top:2px;font-size:12px;font-weight:400;color:var(--ajp-muted);line-height:1.4}</style>
 				<?php foreach ( $portal_resources as $resource ) : ?>
-					<li><a href="<?php echo esc_url( home_url( '/' . $resource['slug'] . '/' ) ); ?>" target="_blank" rel="noopener"><?php echo esc_html( $resource['title'] ); ?><small><?php echo esc_html( $resource['blurb'] ); ?></small></a></li>
+					<li><a href="<?php echo esc_url( $resource['url'] ); ?>" target="_blank" rel="noopener"><?php echo esc_html( $resource['title'] ); ?><small><?php echo esc_html( $resource['blurb'] ); ?></small></a></li>
 				<?php endforeach; ?>
 			</ul>
+			<?php endif; ?>
 		</section>
 		<?php
 		return ob_get_clean();
@@ -6743,11 +6761,14 @@ class AJForms {
 				.ajcore-portal-shell .aj-customer-file-list{overflow:hidden;border:1px solid rgba(219,231,243,.95);border-radius:28px;background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);box-shadow:var(--ajp-shadow);position:relative}
 				.ajcore-portal-shell .aj-customer-file-list:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#06b6d4,#3157ff,#7c3aed)}
 				.ajcore-portal-shell .aj-customer-file-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;align-items:center;padding:22px 26px;border-top:1px solid #e8eef6}
-				.ajcore-portal-shell .aj-customer-file-row:first-child{border-top:0;padding-top:28px}
-				.ajcore-portal-shell .aj-customer-file-row:hover{background:rgba(248,251,255,.9)}
+				.ajcore-portal-shell .aj-customer-file-item:first-child .aj-customer-file-row{border-top:0;padding-top:28px}
+				.ajcore-portal-shell .aj-customer-file-row:hover{background:#eef4ff}
+				.ajcore-portal-shell .aj-customer-file-row:focus-visible{outline:3px solid #3157ff;outline-offset:-3px;background:#eef4ff}
+				.ajcore-portal-shell .aj-customer-file-main{min-width:0;font-weight:400;overflow-wrap:anywhere}
+				.ajcore-portal-shell .aj-customer-file-download{box-sizing:border-box;min-height:50px;min-width:132px;padding:14px 24px;font-size:16px;line-height:1.4}
 				.ajcore-portal-shell .aj-customer-file-title{font-size:clamp(18px,1.5vw,24px);line-height:1.15;font-weight:950;letter-spacing:-.04em;color:#111827;overflow-wrap:anywhere}
 				.ajcore-portal-shell .aj-customer-file-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.065em}
-				.ajcore-portal-shell .aj-customer-file-meta span{display:inline-flex;align-items:center;border:1px solid #dbe7f3;background:#f8fbff;border-radius:999px;padding:5px 9px}
+				.ajcore-portal-shell .aj-customer-file-meta span{max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;display:inline-flex;align-items:center;border:1px solid #dbe7f3;background:#f8fbff;border-radius:999px;padding:5px 9px}
 				.ajcore-portal-shell .aj-customer-file-main p{margin:10px 0 0;color:#52616f}
 				.ajcore-portal-shell .aj-customer-file-actions{display:flex;justify-content:flex-end;align-items:center;gap:10px}
 
@@ -6877,7 +6898,11 @@ class AJForms {
 					.ajcore-portal-shell .aj-portal-table td[data-label]>*{text-align:right}
 					.ajcore-portal-shell .aj-portal-upload-card{grid-template-columns:1fr;padding:22px;border-radius:24px}
 					.ajcore-portal-shell .aj-customer-file-row{grid-template-columns:1fr;gap:14px;padding:18px}
-					.ajcore-portal-shell .aj-customer-file-actions{justify-content:flex-start}
+					.ajcore-portal-shell .aj-customer-file-item:first-child .aj-customer-file-row{padding-top:22px}
+					.ajcore-portal-shell .aj-customer-file-title{font-size:18px;line-height:1.35;letter-spacing:-.02em}
+					.ajcore-portal-shell .aj-customer-file-meta{gap:6px;font-size:11px;letter-spacing:.03em}
+					.ajcore-portal-shell .aj-customer-file-actions{justify-content:stretch;min-width:0}
+					.ajcore-portal-shell .aj-customer-file-download{width:100%;min-width:0}
 					.ajcore-portal-shell .aj-portal-quick-actions-heading,.ajcore-portal-shell .aj-portal-quick-actions{display:none}
 				}
 			</style>
