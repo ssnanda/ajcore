@@ -8,6 +8,8 @@
  * change to this class, so extensions can gate on it.
  * API 2: added rest_namespace() / can_manage_ops() / can_manage_site_ops() so an extension
  * can register routes into AJCore's namespace behind AJCore's own auth.
+ * API 3: 'ajforms_settings_defaults' and 'ajcore_portal_overview_defaults' filters; AJCore's
+ * own defaults are neutral and extensions supply business-specific ones.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -21,7 +23,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 2 );
+	define( 'AJCORE_EXTENSION_API', 3 );
 }
 
 class AJCore_Extensions {

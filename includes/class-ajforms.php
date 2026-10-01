@@ -1236,7 +1236,7 @@ class AJForms {
 			'wp-login.php?action=rp&key=' . rawurlencode( $key ) . '&login=' . rawurlencode( $user_login ),
 			'login'
 		);
-		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
+		$subject = ! empty( $settings['wp_password_reset_subject'] ) ? sanitize_text_field( (string) $settings['wp_password_reset_subject'] ) : sprintf( __( 'Password reset for your Portal Login for %s', 'ajforms' ), get_bloginfo( 'name' ) );
 		$defaults['subject'] = $subject;
 		$defaults['headers'] = array( 'Content-Type: text/html; charset=UTF-8' );
 		$defaults['message'] = $this->build_wp_email_template( $this->get_wp_password_reset_email_content( $user_data->display_name, $reset_url ) );
@@ -5261,34 +5261,17 @@ class AJForms {
 
 	/** Site-local content shared by the Overview settings form and client portal. */
 	public static function get_portal_overview_settings() {
-		$resources = array(
-			array(
-				'url'     => home_url( '/do-you-need-to-file-a-beneficial-ownership-information-boi-report/' ),
-				'enabled' => true,
-				'title'   => __( 'Do You Need to File a Beneficial Ownership Information (BOI) Report?', 'ajforms' ),
-				'blurb'   => __( 'A federal filing with FinCEN, separate from anything you file with NC — significant penalties can apply if you miss it.', 'ajforms' ),
-			),
-			array(
-				'url'     => home_url( '/beware-misleading-mailings-targeting-new-nc-companies/' ),
-				'enabled' => true,
-				'title'   => __( 'Beware: Misleading Mailings Targeting New NC Companies', 'ajforms' ),
-				'blurb'   => __( 'Official-looking mail that isn’t from the state, charging well above what NC actually charges — here’s how to spot it.', 'ajforms' ),
-			),
-			array(
-				'url'     => home_url( '/important-notice-to-employers-your-new-nc-llcs-reporting-responsibilities/' ),
-				'enabled' => true,
-				'title'   => __( 'Important Notice to Employers: Your New NC LLC’s Reporting Responsibilities', 'ajforms' ),
-				'blurb'   => __( 'Hiring your first employee triggers obligations with three different state agencies — what kicks in and when.', 'ajforms' ),
-			),
-		);
+		// Neutral by default: AJCore-RA supplies the BOI banner and Helpful Reading links through
+		// the 'ajcore_portal_overview_defaults' filter. Site-saved overview settings still win.
 		$defaults = array(
-			'banner_enabled' => true,
-			'banner_heading' => __( 'Beneficial Ownership Information (BOI) Report:', 'ajforms' ),
-			'banner_message' => __( 'a federal filing most LLCs and corporations must submit to FinCEN — significant penalties can apply if you miss the deadline.', 'ajforms' ),
-			'banner_button'  => __( 'Learn More', 'ajforms' ),
-			'banner_url'     => home_url( '/do-you-need-to-file-a-beneficial-ownership-information-boi-report/' ),
-			'resources'      => $resources,
+			'banner_enabled' => false,
+			'banner_heading' => '',
+			'banner_message' => '',
+			'banner_button'  => '',
+			'banner_url'     => '',
+			'resources'      => array(),
 		);
+		$defaults = apply_filters( 'ajcore_portal_overview_defaults', $defaults );
 		$saved = get_option( 'ajcore_customer_portal_overview', array() );
 		return array_replace( $defaults, is_array( $saved ) ? $saved : array() );
 	}

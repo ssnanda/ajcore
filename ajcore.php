@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.330
+ * Version: 0.7.331
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.330' );
+	define( 'AJCORE_VERSION', '0.7.331' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -226,7 +226,7 @@ if ( ! function_exists( 'ajcore_suppress_hostinger_ai_token_notice' ) ) {
 
 if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 	function ajforms_get_settings_defaults() {
-		return array(
+		$defaults = array(
 			'default_notification_email'    => ajcore_default_notification_email(),
 			'default_notification_subject'  => 'New submission for {form_title}',
 			'default_notifications_enabled' => '1',
@@ -275,10 +275,10 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// The profile used by anything that doesn't name one: WordPress system mail, and any form
 			// or template saved before profiles existed. Set on the AJ Core Mail screen.
 			'mail_default_profile'          => 'smtp',
-			'wp_password_reset_subject'     => 'Password reset for your Portal Login for NC LLC Agents Inc',
-			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
+			'wp_password_reset_subject'     => 'Password reset for your Portal Login for ' . get_bloginfo( 'name' ),
+			'wp_welcome_email_subject'      => 'Welcome : Your portal access is enabled to ' . get_bloginfo( 'name' ),
 			'wp_service_status_subject'     => 'Update on {service_name}: {status_label}',
-			'lead_followup_email_subject'   => 'Following up from NC LLC Agents',
+			'lead_followup_email_subject'   => 'Following up from ' . get_bloginfo( 'name' ),
 			// Registered Agent authorization notice (NC LLC Agents only — see the ncllc_only flag
 			// on this type in display_email_templates_settings_section(); there is deliberately no
 			// university_* variant because University Place Office Suites has no registered-agent
@@ -296,7 +296,7 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// line is an intro paragraph above it (see split_email_copy_bullets()).
 			'ra_authorization_body'         => "You are authorized to use the following information for Registered Agent purposes only:\n- Do not use our phone number anywhere on the filing.\n- The address above is the Registered Agent / Registered Office address only. It is not authorized for use as the company's Principal Office address, Mailing Address, or Business Address.\n- We authorize use of this address only for the North Carolina Secretary of State filing through the SOSNC website.\n- This authorization does not permit use of our address on Google, business directories, websites, bank accounts, licenses, marketing materials, vendor accounts, or any other registrations or filings.\n- If you need to use our address anywhere other than the Registered Agent section of the NC Secretary of State filing, please text or contact us first for approval.",
 			'ra_authorization_address'      => "NC LLC Agents Inc.\n1914 J N Pease Pl.\nCharlotte, NC 28262\nagent@ncllcagents.com",
-			'lead_followup_body'            => "Hi {name},\nWe wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
+			'lead_followup_body'            => "Hi {name},\nWe wanted to follow up on your recent inquiry with " . get_bloginfo( 'name' ) . ". If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
 			'wp_password_reset_from_email'  => '',
 			'wp_password_reset_from_name'   => '',
 			'wp_welcome_from_email'         => '',
@@ -335,7 +335,7 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			// Sender identity footer on every branded email (see get_branded_email_footer_parts()).
 			// A real postal address is a standard legitimate-sender signal; its absence is one of
 			// the few content-level things that measurably hurts transactional deliverability.
-			'email_footer_address'          => "NC LLC Agents Inc.\n1914 J N Pease Pl., Charlotte, NC 28262\n(704) 307-2135 \xc2\xb7 contactus@ncllcagents.com",
+			'email_footer_address'          => '',
 			// Deliberately blank: University Place Office Suites' postal address has never been
 			// provided, and guessing one in a customer email would be a real-world error. Fill it
 			// in Settings -> Email Templates to switch their footer on.
@@ -520,6 +520,9 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'reservation_business_hours_label'  => 'Business Hours (Mon–Fri 9am–5pm)',
 			'reservation_after_hours_label'     => 'After-Hours / Weekend',
 		);
+
+		// Extensions (AJCore-RA) layer their business-specific defaults here; saved settings still win.
+		return apply_filters( 'ajforms_settings_defaults', $defaults );
 	}
 }
 
