@@ -6,6 +6,14 @@
  * confirmed AJCore is present. AJCore never loads or requires any extension; an
  * empty registry is the normal state. Bump AJCORE_EXTENSION_API only on a breaking
  * change to this class, so extensions can gate on it.
+ * API 2: added rest_namespace() / can_manage_ops() / can_manage_site_ops() so an extension
+ * can register routes into AJCore's namespace behind AJCore's own auth.
+ * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
+ *
+ * Moving a route out of AJCore: register it in the extension, delete the AJCore
+ * registration and catalog entry in the same change. A private AJCore helper the moved
+ * callback needs is either moved too (if only that feature uses it) or made public (if
+ * core code also uses it); decide per move, don't pre-expose.
  */
 
 if ( ! defined( 'WPINC' ) ) {
@@ -13,7 +21,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 1 );
+	define( 'AJCORE_EXTENSION_API', 2 );
 }
 
 class AJCore_Extensions {
@@ -45,6 +53,25 @@ class AJCore_Extensions {
 	/** @return array<string,array> */
 	public static function all() {
 		return self::$extensions;
+	}
+
+	/** AJCore's REST namespace; extension routes register here so URLs stay unchanged. */
+	public static function rest_namespace() {
+		return AJCore_REST_API::NAMESPACE;
+	}
+
+	/**
+	 * permission_callback for extension routes that must match AJCore's ops routes exactly
+	 * (same enabled/master-site/login/role checks). AJCore_REST_API has no state, so a
+	 * fresh instance is equivalent to the one that registers the core routes.
+	 */
+	public static function can_manage_ops() {
+		return ( new AJCore_REST_API() )->can_manage_ops_api();
+	}
+
+	/** Same as can_manage_ops() but for site-local routes (matches can_manage_site_ops_api). */
+	public static function can_manage_site_ops() {
+		return ( new AJCore_REST_API() )->can_manage_site_ops_api();
 	}
 
 	public static function init() {

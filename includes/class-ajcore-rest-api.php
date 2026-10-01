@@ -1176,7 +1176,7 @@ class AJCore_REST_API {
 	}
 
 	public static function get_endpoint_catalog() {
-		return array(
+		$catalog = array(
 			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/status', 'auth' => 'Public or Admin, based on API settings', 'purpose' => 'Health check, version, site UUID, shared DB and master-site status.', 'app' => 'OPS / diagnostics' ),
 			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/docs', 'auth' => 'Admin', 'purpose' => 'Machine-readable API catalog.', 'app' => 'OPS / developer tools' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/summary', 'auth' => 'Admin', 'purpose' => 'Counts for customers, products, subscriptions, ledger, tasks, service requests and sync logs.', 'app' => 'OPS dashboard' ),
@@ -1258,6 +1258,10 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/reservations',       'auth' => 'Admin', 'purpose' => 'All reservations with optional filters: status, resource_key, date_from, date_to, per_page.', 'app' => 'OPS reservations' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/reservations/{id}',  'auth' => 'Admin', 'purpose' => 'Single reservation detail (admin view — includes Stripe/Zoho IDs, customer notes, admin notes).', 'app' => 'OPS reservations' ),
 		);
+
+		// Extensions (e.g. AJCore-RA) append the routes they own, so /docs and the admin
+		// catalog list them only while the extension is active.
+		return apply_filters( 'ajcore_endpoint_catalog', $catalog );
 	}
 
 	public function public_permission() {
