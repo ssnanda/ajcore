@@ -5368,13 +5368,7 @@ class AJForms_Admin {
 			);
 		}
 
-		return array(
-			'entity_name' => 'NC LLC Agents Inc',
-			'site_name'   => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
-			'site_url'    => home_url( '/' ),
-			'from_email'  => 'donotreply@ncllcagents.com',
-			'partner_key' => sanitize_key( $partner_key ),
-		);
+		return $this->get_default_brand_context( sanitize_key( $partner_key ) );
 	}
 
 	/** Same brand shape as get_customer_brand_context(), resolved from a lead's site_uuid instead
@@ -5394,17 +5388,49 @@ class AJForms_Admin {
 			);
 		}
 
-		return array(
-			'entity_name' => 'NC LLC Agents Inc',
+		return $this->get_default_brand_context( '' );
+	}
+
+	/**
+	 * Brand used when a customer/lead isn't University Place. Neutral (site name, site-domain
+	 * donotreply@) unless an extension supplies its own via 'ajcore_default_brand'
+	 * (AJCore-RA supplies the NC LLC Agents identity).
+	 */
+	private function get_default_brand_context( $partner_key ) {
+		$brand = array(
+			'entity_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
 			'site_name'   => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
 			'site_url'    => home_url( '/' ),
-			'from_email'  => 'donotreply@ncllcagents.com',
-			'partner_key' => '',
+			'from_email'  => function_exists( 'ajcore_default_system_from_email' ) ? ajcore_default_system_from_email() : '',
+			'partner_key' => $partner_key,
 		);
+		$brand = apply_filters( 'ajcore_default_brand', $brand );
+		$brand['partner_key'] = $partner_key;
+		return $brand;
+	}
+
+	private function is_university_brand( $brand ) {
+		return ! empty( $brand['entity_name'] ) && 'University Place Office Suites LLC' === $brand['entity_name'];
+	}
+
+	/**
+	 * Business contact details used in email static parts. Blank by default so no phone, email
+	 * or link is invented; AJCore-RA supplies them through 'ajcore_business_contact'.
+	 */
+	private function get_business_contact() {
+		$contact = apply_filters(
+			'ajcore_business_contact',
+			array(
+				'phone'       => '',
+				'email'       => '',
+				'service_url' => '',
+			)
+		);
+		return is_array( $contact ) ? array_merge( array( 'phone' => '', 'email' => '', 'service_url' => '' ), $contact ) : array( 'phone' => '', 'email' => '', 'service_url' => '' );
 	}
 
 	private function apply_customer_brand_to_subject( $subject, $brand ) {
-		if ( empty( $brand['entity_name'] ) || 'NC LLC Agents Inc' === $brand['entity_name'] ) {
+		if ( ! $this->is_university_brand( $brand ) ) {
 			return $subject;
 		}
 
@@ -5674,10 +5700,14 @@ class AJForms_Admin {
 	}
 
 	private function get_service_request_status_email_static_parts() {
-		return array(
+		$parts = array(
 			'info_box_label' => __( 'New status', 'ajforms' ),
-			'footer_note'    => __( 'Questions? Call or text us at (704) 307-2135.', 'ajforms' ),
 		);
+		$contact = $this->get_business_contact();
+		if ( '' !== $contact['phone'] ) {
+			$parts['footer_note'] = sprintf( __( 'Questions? Call or text us at %s.', 'ajforms' ), $contact['phone'] );
+		}
+		return $parts;
 	}
 
 	/** NC LLC Agents' contact info here is real (call/text number, services page, contact email) —
@@ -5693,22 +5723,32 @@ class AJForms_Admin {
 				'fallback_note' => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
 			);
 		}
-		return array(
-			'info_box_label' => __( 'Call or text us', 'ajforms' ),
-			'info_box_value' => __( '(704) 307-2135', 'ajforms' ),
-			'cta_text'       => __( 'View Our Services', 'ajforms' ),
-			'cta_url'        => 'https://ncllcagents.com/service',
-			'fallback_note'  => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
-			'footer_note'    => __( 'Prefer email? Reach us anytime at contactus@ncllcagents.com.', 'ajforms' ),
-		);
+		$contact = $this->get_business_contact();
+		$parts   = array();
+		if ( '' !== $contact['phone'] ) {
+			$parts['info_box_label'] = __( 'Call or text us', 'ajforms' );
+			$parts['info_box_value'] = $contact['phone'];
+		}
+		if ( '' !== $contact['service_url'] ) {
+			$parts['cta_text']      = __( 'View Our Services', 'ajforms' );
+			$parts['cta_url']       = $contact['service_url'];
+			$parts['fallback_note'] = __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' );
+		}
+		if ( '' !== $contact['email'] ) {
+			$parts['footer_note'] = sprintf( __( 'Prefer email? Reach us anytime at %s.', 'ajforms' ), $contact['email'] );
+		}
+		return $parts;
 	}
 
 	private function get_service_purchase_welcome_email_static_parts() {
-		return array(
-			'info_box_label' => __( 'Call or text us', 'ajforms' ),
-			'info_box_value' => __( '(704) 307-2135', 'ajforms' ),
-			'footer_note'    => __( 'Questions about your order? Call or text us anytime at (704) 307-2135.', 'ajforms' ),
-		);
+		$contact = $this->get_business_contact();
+		$parts   = array();
+		if ( '' !== $contact['phone'] ) {
+			$parts['info_box_label'] = __( 'Call or text us', 'ajforms' );
+			$parts['info_box_value'] = $contact['phone'];
+			$parts['footer_note']    = sprintf( __( 'Questions about your order? Call or text us anytime at %s.', 'ajforms' ), $contact['phone'] );
+		}
+		return $parts;
 	}
 
 	public function send_portal_user_password_reset( $user_id ) {
@@ -5729,7 +5769,7 @@ class AJForms_Admin {
 		$settings = $this->get_plugin_settings();
 		$brand   = $this->get_customer_brand_context( '', $user->ID );
 		$subject_key = $this->get_customer_brand_setting_key( 'wp_password_reset_subject', $brand );
-		$subject = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' );
+		$subject = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : sprintf( __( 'Password reset for your Portal Login for %s', 'ajforms' ), get_bloginfo( 'name' ) );
 		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
 		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'wp_password_reset_from_email', $brand ), $this->get_customer_brand_setting_key( 'wp_password_reset_from_name', $brand ) );
 		$from_email = $sender['from_email'];
@@ -5808,7 +5848,7 @@ class AJForms_Admin {
 		$settings = $this->get_plugin_settings();
 		$brand   = $this->get_customer_brand_context( '', $user->ID );
 		$subject_key = $this->get_customer_brand_setting_key( 'wp_welcome_email_subject', $brand );
-		$subject = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : __( 'Welcome : Your portal access is enabled to NC LLC Agents Inc', 'ajforms' );
+		$subject = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : sprintf( __( 'Welcome : Your portal access is enabled to %s', 'ajforms' ), get_bloginfo( 'name' ) );
 		$subject = $this->apply_customer_brand_to_subject( $subject, $brand );
 		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'wp_welcome_from_email', $brand ), $this->get_customer_brand_setting_key( 'wp_welcome_from_name', $brand ) );
 		$from_email = $sender['from_email'];
@@ -5975,18 +6015,11 @@ class AJForms_Admin {
 	/** Built-in copy for the Registered Agent authorization email, shared by the send function
 	 *  and the Settings preview so an un-customized template previews exactly what ships. */
 	private function get_ra_authorization_default_body_lines() {
-		return array(
-			__( 'You are authorized to use the following information for Registered Agent purposes only:', 'ajforms' ),
-			__( '- Do not use our phone number anywhere on the filing.', 'ajforms' ),
-			__( "- The address above is the Registered Agent / Registered Office address only. It is not authorized for use as the company's Principal Office address, Mailing Address, or Business Address.", 'ajforms' ),
-			__( '- We authorize use of this address only for the North Carolina Secretary of State filing through the SOSNC website.', 'ajforms' ),
-			__( '- This authorization does not permit use of our address on Google, business directories, websites, bank accounts, licenses, marketing materials, vendor accounts, or any other registrations or filings.', 'ajforms' ),
-			__( '- If you need to use our address anywhere other than the Registered Agent section of the NC Secretary of State filing, please text or contact us first for approval.', 'ajforms' ),
-		);
+		return (array) apply_filters( 'ajcore_ra_authorization_default_body_lines', array() );
 	}
 
 	private function get_ra_authorization_default_address() {
-		return "NC LLC Agents Inc.\n1914 J N Pease Pl.\nCharlotte, NC 28262\nagent@ncllcagents.com";
+		return (string) apply_filters( 'ajcore_ra_authorization_default_address', '' );
 	}
 
 	/**
@@ -14145,6 +14178,7 @@ class AJForms_Admin {
 		$subsection = isset( $_GET['subsection'] ) ? sanitize_key( wp_unslash( $_GET['subsection'] ) ) : '';
 		$current_settings = $this->get_plugin_settings();
 
+		$ajf_defaults = ajforms_get_settings_defaults();
 		$settings = array(
 			'default_notification_email'     => isset( $_POST['default_notification_email'] ) ? sanitize_text_field( wp_unslash( $_POST['default_notification_email'] ) ) : ajcore_default_notification_email(),
 			'default_notification_subject'   => isset( $_POST['default_notification_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['default_notification_subject'] ) ) : 'New submission for {form_title}',
@@ -14193,10 +14227,10 @@ class AJForms_Admin {
 			// Rendered empty on purpose (never echo a stored credential), so an empty POST means
 			// "keep the saved one" — type a new password to replace it.
 			'smtp_password'                  => isset( $_POST['smtp_password'] ) && '' !== $_POST['smtp_password'] ? (string) wp_unslash( $_POST['smtp_password'] ) : ( isset( $current_settings['smtp_password'] ) ? (string) $current_settings['smtp_password'] : '' ),
-			'wp_password_reset_subject'      => isset( $_POST['wp_password_reset_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_subject'] ) ) : 'Password reset for your Portal Login for NC LLC Agents Inc',
-			'wp_welcome_email_subject'       => isset( $_POST['wp_welcome_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_email_subject'] ) ) : 'Welcome : Your portal access is enabled to NC LLC Agents Inc',
+			'wp_password_reset_subject'      => isset( $_POST['wp_password_reset_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_subject'] ) ) : $ajf_defaults['wp_password_reset_subject'],
+			'wp_welcome_email_subject'       => isset( $_POST['wp_welcome_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_email_subject'] ) ) : $ajf_defaults['wp_welcome_email_subject'],
 			'wp_service_status_subject'      => isset( $_POST['wp_service_status_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_service_status_subject'] ) ) : 'Update on {service_name}: {status_label}',
-			'lead_followup_email_subject'    => isset( $_POST['lead_followup_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_email_subject'] ) ) : 'Following up from NC LLC Agents',
+			'lead_followup_email_subject'    => isset( $_POST['lead_followup_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_email_subject'] ) ) : $ajf_defaults['lead_followup_email_subject'],
 			'wp_password_reset_heading'      => isset( $_POST['wp_password_reset_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_heading'] ) ) : 'Set your client portal password',
 			'wp_password_reset_body'         => isset( $_POST['wp_password_reset_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['wp_password_reset_body'] ) ) : "Hi {name},\nUse the secure button below to create a new password for your client portal account. This link is private and should only be used by you.",
 			'wp_welcome_heading'             => isset( $_POST['wp_welcome_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_heading'] ) ) : 'Welcome to your client portal',
@@ -14204,7 +14238,7 @@ class AJForms_Admin {
 			'wp_service_status_heading'      => isset( $_POST['wp_service_status_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_service_status_heading'] ) ) : 'Your service request was updated',
 			'wp_service_status_body'         => isset( $_POST['wp_service_status_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['wp_service_status_body'] ) ) : "Hi {name},\nThe status of \"{service_name}\" has changed.",
 			'lead_followup_heading'          => isset( $_POST['lead_followup_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_heading'] ) ) : "We'd love to hear from you",
-			'lead_followup_body'             => isset( $_POST['lead_followup_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['lead_followup_body'] ) ) : "Hi {name},\nWe wanted to follow up on your recent inquiry with NC LLC Agents. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
+			'lead_followup_body'             => isset( $_POST['lead_followup_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['lead_followup_body'] ) ) : $ajf_defaults['lead_followup_body'],
 			'wp_password_reset_from_email'   => isset( $_POST['wp_password_reset_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_password_reset_from_email'] ) ) : '',
 			'wp_password_reset_from_name'    => isset( $_POST['wp_password_reset_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_password_reset_from_name'] ) ) : '',
 			'wp_welcome_from_email'          => isset( $_POST['wp_welcome_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_welcome_from_email'] ) ) : '',
@@ -14226,13 +14260,13 @@ class AJForms_Admin {
 			'university_wp_service_status_body'       => isset( $_POST['university_wp_service_status_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_wp_service_status_body'] ) ) : "Hi {name},\nThe status of \"{service_name}\" has changed.",
 			'university_wp_service_status_from_email' => isset( $_POST['university_wp_service_status_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_wp_service_status_from_email'] ) ) : 'donotreply@universityofficesuites.com',
 			'university_wp_service_status_from_name'  => isset( $_POST['university_wp_service_status_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_from_name'] ) ) : 'University Place Office Suites',
-			'lead_followup_from_email'       => isset( $_POST['lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['lead_followup_from_email'] ) ) : 'contactus@ncllcagents.com',
+			'lead_followup_from_email'       => isset( $_POST['lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['lead_followup_from_email'] ) ) : $ajf_defaults['lead_followup_from_email'],
 			'lead_followup_from_name'        => isset( $_POST['lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_from_name'] ) ) : '',
-			'ra_authorization_subject'       => isset( $_POST['ra_authorization_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_subject'] ) ) : 'Registered Agent Authorization and Address Use for {company}',
-			'ra_authorization_heading'       => isset( $_POST['ra_authorization_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_heading'] ) ) : 'Registered Agent Authorization',
-			'ra_authorization_body'          => isset( $_POST['ra_authorization_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_body'] ) ) : "You are authorized to use the following information for Registered Agent purposes only:\n- Do not use our phone number anywhere on the filing.\n- The address above is the Registered Agent / Registered Office address only. It is not authorized for use as the company's Principal Office address, Mailing Address, or Business Address.\n- We authorize use of this address only for the North Carolina Secretary of State filing through the SOSNC website.\n- This authorization does not permit use of our address on Google, business directories, websites, bank accounts, licenses, marketing materials, vendor accounts, or any other registrations or filings.\n- If you need to use our address anywhere other than the Registered Agent section of the NC Secretary of State filing, please text or contact us first for approval.",
-			'ra_authorization_address'       => isset( $_POST['ra_authorization_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_address'] ) ) : "NC LLC Agents Inc.\n1914 J N Pease Pl.\nCharlotte, NC 28262\nagent@ncllcagents.com",
-			'email_footer_address'           => isset( $_POST['email_footer_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['email_footer_address'] ) ) : "NC LLC Agents Inc.\n1914 J N Pease Pl., Charlotte, NC 28262\n(704) 307-2135 \xc2\xb7 contactus@ncllcagents.com",
+			'ra_authorization_subject'       => isset( $_POST['ra_authorization_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_subject'] ) ) : $ajf_defaults['ra_authorization_subject'],
+			'ra_authorization_heading'       => isset( $_POST['ra_authorization_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_heading'] ) ) : $ajf_defaults['ra_authorization_heading'],
+			'ra_authorization_body'          => isset( $_POST['ra_authorization_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_body'] ) ) : $ajf_defaults['ra_authorization_body'],
+			'ra_authorization_address'       => isset( $_POST['ra_authorization_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_address'] ) ) : $ajf_defaults['ra_authorization_address'],
+			'email_footer_address'           => isset( $_POST['email_footer_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['email_footer_address'] ) ) : $ajf_defaults['email_footer_address'],
 			'university_email_footer_address' => isset( $_POST['university_email_footer_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_email_footer_address'] ) ) : '',
 			'ra_authorization_from_email'    => isset( $_POST['ra_authorization_from_email'] ) ? sanitize_email( wp_unslash( $_POST['ra_authorization_from_email'] ) ) : '',
 			'ra_authorization_from_name'     => isset( $_POST['ra_authorization_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_from_name'] ) ) : '',
@@ -16645,7 +16679,7 @@ class AJForms_Admin {
 		$brand     = $this->get_customer_brand_context( ! empty( $item['stripe_customer_id'] ) ? $item['stripe_customer_id'] : '', 0, $customer_email );
 		$sender    = $this->resolve_email_sender( $settings, 'wp_mail_item_from_email', 'wp_mail_item_from_name' );
 		$site_name = $brand['site_name'];
-		if ( 'NC LLC Agents Inc' !== $brand['entity_name'] ) {
+		if ( $this->is_university_brand( $brand ) ) {
 			$sender['from_name'] = $brand['site_name'];
 		}
 
@@ -16800,7 +16834,7 @@ class AJForms_Admin {
 		$brand     = $this->get_customer_brand_context( ! empty( $entity->stripe_customer_id ) ? $entity->stripe_customer_id : '', 0, $customer_email );
 		$sender    = $this->resolve_email_sender( $settings, 'wp_compliance_from_email', 'wp_compliance_from_name' );
 		$site_name = $brand['site_name'];
-		if ( 'NC LLC Agents Inc' !== $brand['entity_name'] ) {
+		if ( $this->is_university_brand( $brand ) ) {
 			$sender['from_name'] = $brand['site_name'];
 		}
 
@@ -27183,7 +27217,7 @@ class AJForms_Admin {
 				'brand_variants' => false,
 				'to' => __( 'WordPress account email from the Lost Password request.', 'ajforms' ),
 				'fixed' => implode( "\n", array( $content['button_label'] . ': ' . $content['button_url'], $content['link_intro'], $content['footer'] ) ),
-				'default_subject' => __( 'Password reset for your Portal Login for NC LLC Agents Inc', 'ajforms' ),
+				'default_subject' => sprintf( __( 'Password reset for your Portal Login for %s', 'ajforms' ), get_bloginfo( 'name' ) ),
 				'default_heading' => $content['headline'],
 				'default_body' => array( $content['greeting'], $content['body'] ),
 			);
@@ -27247,7 +27281,7 @@ class AJForms_Admin {
 				'sender_key' => 'wp_service_purchase_welcome',
 				'brand_variants' => true,
 				'to' => __( 'Email on the new service request’s Stripe customer record.', 'ajforms' ),
-				'fixed' => __( 'Sent once for a new add_service request. Fixed contact block and footer: (704) 307-2135. This is separate from the portal-access welcome email.', 'ajforms' ),
+				'fixed' => __( 'Sent once for a new add_service request. Fixed contact block and footer (when business contact details are set). This is separate from the portal-access welcome email.', 'ajforms' ),
 				'default_subject' => __( 'Welcome to {site_name} \xe2\x80\x93 Next steps for {service_name}', 'ajforms' ),
 				'default_heading' => __( 'Thank you for your purchase', 'ajforms' ),
 				'default_body' => array(

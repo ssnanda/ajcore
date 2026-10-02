@@ -12,6 +12,9 @@
  * own defaults are neutral and extensions supply business-specific ones.
  * API 4: 'ajcore_ra_authorization_enabled' filter gates the Registered Agent Authorization
  * email template (Email Templates tab and the ops send/preview routes).
+ * API 5: email templates carry no business text of their own — 'ajcore_default_brand',
+ * 'ajcore_business_contact', 'ajcore_ra_authorization_default_body_lines' and
+ * 'ajcore_ra_authorization_default_address' filters let an extension supply it.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -25,7 +28,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 4 );
+	define( 'AJCORE_EXTENSION_API', 5 );
 }
 
 class AJCore_Extensions {
