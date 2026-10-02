@@ -14358,6 +14358,14 @@ class AJForms_Admin {
 			}
 		}
 
+		// Registered Agent Authorization fields aren't on the form unless AJCore-RA is active, so a
+		// save without them must keep the stored values instead of resetting them to defaults.
+		foreach ( array( 'ra_authorization_mail_profile', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name' ) as $ra_auth_field ) {
+			if ( ! isset( $_POST[ $ra_auth_field ] ) && array_key_exists( $ra_auth_field, $current_settings ) ) {
+				$settings[ $ra_auth_field ] = $current_settings[ $ra_auth_field ];
+			}
+		}
+
 		// System "From" identity for all plugin mail. Editable from both Settings → Email (Outgoing
 		// Mail) and the Email Templates form, so it belongs to no single $section_keys entry — preserve
 		// the stored value on any save that didn't actually post these fields (same reasoning as
@@ -27493,6 +27501,19 @@ class AJForms_Admin {
 					'sample_extra'      => array(),
 				),
 			);
+
+			// Registered Agent Authorization is an AJCore-RA feature: no tab unless an extension
+			// (AJCore-RA) says it's enabled via 'ajcore_ra_authorization_enabled'.
+			if ( ! apply_filters( 'ajcore_ra_authorization_enabled', false ) ) {
+				$type_defs = array_values(
+					array_filter(
+						$type_defs,
+						static function ( $type ) {
+							return 'ra_authorization' !== ( isset( $type['id'] ) ? $type['id'] : '' );
+						}
+					)
+				);
+			}
 
 			$site_identity = ! empty( $settings['wp_email_from_name'] ) ? (string) $settings['wp_email_from_name'] : wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES );
 			$brands        = array(

@@ -9871,6 +9871,9 @@ class AJCore_REST_API {
 				break;
 
 			case 'send_ra_authorization':
+				if ( ! apply_filters( 'ajcore_ra_authorization_enabled', false ) ) {
+					return new WP_Error( 'ajcore_ra_required', 'Registered Agent authorization email requires the AJCore-RA plugin.', array( 'status' => 404 ) );
+				}
 				// Deliberately not gated on a linked WP user or active portal access (unlike
 				// send_welcome): this notice goes to the customer record's own email address, and
 				// plenty of registered-agent-only customers never get a portal login.
@@ -9911,6 +9914,10 @@ class AJCore_REST_API {
 
 		if ( ! class_exists( 'AJForms_Admin' ) || ! AJForms_Admin::$instance ) {
 			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+
+		if ( 'ra_authorization' === $template && ! apply_filters( 'ajcore_ra_authorization_enabled', false ) ) {
+			return new WP_Error( 'ajcore_ra_required', 'Registered Agent authorization email requires the AJCore-RA plugin.', array( 'status' => 404 ) );
 		}
 
 		if ( 'ra_authorization' === $template ) {

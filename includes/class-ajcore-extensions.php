@@ -10,6 +10,8 @@
  * can register routes into AJCore's namespace behind AJCore's own auth.
  * API 3: 'ajforms_settings_defaults' and 'ajcore_portal_overview_defaults' filters; AJCore's
  * own defaults are neutral and extensions supply business-specific ones.
+ * API 4: 'ajcore_ra_authorization_enabled' filter gates the Registered Agent Authorization
+ * email template (Email Templates tab and the ops send/preview routes).
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -23,7 +25,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 3 );
+	define( 'AJCORE_EXTENSION_API', 4 );
 }
 
 class AJCore_Extensions {
