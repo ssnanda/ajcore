@@ -5547,6 +5547,14 @@ class AJForms_Admin {
 		}
 		$footer_html .= $identity_html;
 
+		// Tiny credit line below the card. Extensions (AJCore-RA) can extend it; return '' from
+		// the 'ajcore_email_powered_by' filter to hide it.
+		$powered_html = '';
+		$powered_by   = trim( (string) apply_filters( 'ajcore_email_powered_by', __( 'Powered by AJ Core', 'ajforms' ) ) );
+		if ( '' !== $powered_by ) {
+			$powered_html = '<p style="margin:14px 0 0;text-align:center;font-size:10px;line-height:1.4;color:#a0aec0;">' . esc_html( $powered_by ) . '</p>';
+		}
+
 		return sprintf(
 			'<!doctype html><html><body style="margin:0;padding:0;background:#f6f8fc;color:#0f172a;font-family:Arial,Helvetica,sans-serif;">
 				<table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background:#f6f8fc;padding:32px 16px;">
@@ -5564,6 +5572,7 @@ class AJForms_Admin {
 									</td>
 								</tr>
 							</table>
+							%8$s
 						</td>
 					</tr>
 				</table>
@@ -5574,7 +5583,8 @@ class AJForms_Admin {
 			$info_box_html,
 			$checklist_html,
 			$cta_html,
-			$fallback_html . $footer_html
+			$fallback_html . $footer_html,
+			$powered_html
 		);
 	}
 
