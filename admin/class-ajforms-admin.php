@@ -12067,7 +12067,7 @@ class AJForms_Admin {
 		$default_items = array(
 			array( 'id' => 'overview', 'label' => __( 'Overview', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'services', 'label' => __( 'My Services', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
-			array( 'id' => 'tasks', 'label' => __( 'Compliance', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
+			array( 'id' => 'tasks', 'label' => __( 'Tasks', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'billing', 'label' => __( 'Billing', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'file-library', 'label' => __( 'File Library', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'profile', 'label' => __( 'Profile', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
@@ -20655,7 +20655,7 @@ class AJForms_Admin {
 			'aj_portal_service_snapshots' => 'Purchased-service snapshots', 'aj_portal_service_states' => 'Service lifecycle state',
 			'aj_portal_files' => 'Client file records', 'aj_portal_file_users' => 'File-to-user assignments', 'aj_portal_file_tags' => 'File tags',
 			'aj_storage_objects' => 'Attachment-to-object-storage mappings', 'aj_auth_user_mappings' => 'WordPress user-to-customer mappings',
-			'aj_portal_tasks' => 'Compliance task definitions', 'aj_portal_task_statuses' => 'Per-customer task status', 'aj_portal_task_comments' => 'Task comments',
+			'aj_portal_tasks' => 'Task definitions', 'aj_portal_task_statuses' => 'Per-customer task status', 'aj_portal_task_comments' => 'Task comments',
 			'aj_portal_compliance_entities' => 'Compliance entities', 'aj_portal_compliance_filings' => 'Compliance filing history',
 			'aj_portal_service_requests' => 'Customer service requests', 'aj_portal_service_request_history' => 'Service request audit history',
 			'aj_portal_sync_logs' => 'Stripe sync runs', 'aj_portal_sync_log_items' => 'Stripe sync run details',
@@ -20855,7 +20855,7 @@ class AJForms_Admin {
 			'customers'   => array( 'label' => 'Customers & Access', 'description' => 'Connects Stripe customers, portal state, WordPress users, and external entities.' ),
 			'billing'     => array( 'label' => 'Stripe & Billing', 'description' => 'Caches Stripe records and derives billing, purchase, and service history.' ),
 			'files'       => array( 'label' => 'Files & Storage', 'description' => 'Tracks documents, user assignments, tags, and object-storage locations.' ),
-			'compliance'  => array( 'label' => 'Compliance & Tasks', 'description' => 'Tracks compliance entities, filings, tasks, statuses, and comments.' ),
+			'compliance'  => array( 'label' => 'Tasks', 'description' => 'Tracks compliance entities, filings, tasks, statuses, and comments.' ),
 			'services'    => array( 'label' => 'Service Operations', 'description' => 'Handles service requests, status history, mail, and reservations.' ),
 			'logs'        => array( 'label' => 'Logs & Synchronization', 'description' => 'Records sync runs, webhooks, emails, and audit events.' ),
 			'shared'      => array( 'label' => 'Shared Multi-Site', 'description' => 'Coordinates AJCore settings and connected WordPress sites.' ),
@@ -20887,7 +20887,7 @@ class AJForms_Admin {
 			array( 'title' => 'Stripe billing', 'description' => 'Stripe activity is cached and converted into operational billing history.', 'steps' => array( 'Stripe', 'aj_portal_stripe_transactions', 'aj_portal_ledger', 'aj_portal_service_snapshots' ) ),
 			array( 'title' => 'Products and subscriptions', 'description' => 'Stripe products and subscriptions become services visible in AJCore.', 'steps' => array( 'aj_portal_stripe_products', 'aj_portal_product_catalog', 'aj_portal_stripe_subscriptions', 'aj_portal_service_states' ) ),
 			array( 'title' => 'Client documents', 'description' => 'Uploaded files are stored, assigned to users, and categorized.', 'steps' => array( 'aj_portal_files', 'aj_storage_objects', 'aj_portal_file_users', 'aj_portal_file_tags' ) ),
-			array( 'title' => 'Compliance work', 'description' => 'Entities generate filings and customer-specific compliance tasks.', 'steps' => array( 'aj_portal_compliance_entities', 'aj_portal_compliance_filings', 'aj_portal_tasks', 'aj_portal_task_statuses' ) ),
+			array( 'title' => 'Task work', 'description' => 'Entities generate filings and customer-specific compliance tasks.', 'steps' => array( 'aj_portal_compliance_entities', 'aj_portal_compliance_filings', 'aj_portal_tasks', 'aj_portal_task_statuses' ) ),
 			array( 'title' => 'Service fulfillment', 'description' => 'A purchase or request becomes tracked operational work.', 'steps' => array( 'aj_portal_ledger', 'aj_portal_service_requests', 'aj_portal_service_request_history', 'Customer update' ) ),
 		);
 		?>
@@ -24222,7 +24222,7 @@ class AJForms_Admin {
 				<div class="ajcore-customer-quick-actions">
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'payments', array( 'pay_customer' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Payments', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
-					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Compliance', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'file-library' ) ); ?>"><?php esc_html_e( 'Files', 'ajforms' ); ?></a>
 				</div>
 			</div>

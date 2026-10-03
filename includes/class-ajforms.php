@@ -1527,7 +1527,7 @@ class AJForms {
 			),
 			array(
 				'id'      => 'tasks',
-				'label'   => __( 'Compliance', 'ajforms' ),
+				'label'   => __( 'Tasks', 'ajforms' ),
 				'type'    => 'built_in',
 				'url'     => '',
 				'enabled' => true,
@@ -5206,7 +5206,7 @@ class AJForms {
 		$customer = $context['customer'];
 
 		if ( '' === $context['stripe_customer_id'] || ! $customer ) {
-			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Compliance', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Tasks', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
 		}
 
 		$tasks = $this->get_current_user_portal_tasks();
@@ -5214,8 +5214,8 @@ class AJForms {
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
-			<h2><?php esc_html_e( 'Compliance', 'ajforms' ); ?></h2>
-			<p class="aj-portal-intro-text"><?php esc_html_e( 'Review action items and important compliance dates for your account.', 'ajforms' ); ?></p>
+			<h2><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h2>
+			<p class="aj-portal-intro-text"><?php esc_html_e( 'Review your action items.', 'ajforms' ); ?></p>
 			<?php if ( isset( $_GET['task-updated'] ) ) : ?>
 				<div class="aj-portal-add-service-message is-success"><?php esc_html_e( 'Task updated.', 'ajforms' ); ?></div>
 			<?php endif; ?>
