@@ -5911,6 +5911,96 @@ class AJForms_Admin {
 	}
 
 	/**
+	 * Task templates supplied by extensions ('ajcore_task_templates'), keyed by slug:
+	 * label, title, action_required, task_frequency (one_time|recurring), task_scope
+	 * (client|global), client_visible (bool). AJCore ships none.
+	 *
+	 * @return array<string,array>
+	 */
+	private function get_task_templates() {
+		$out = array();
+		foreach ( (array) apply_filters( 'ajcore_task_templates', array() ) as $key => $template ) {
+			if ( is_array( $template ) && ! empty( $template['title'] ) ) {
+				$out[ sanitize_key( (string) $key ) ] = array(
+					'label'           => isset( $template['label'] ) ? (string) $template['label'] : (string) $template['title'],
+					'title'           => (string) $template['title'],
+					'action_required' => isset( $template['action_required'] ) ? (string) $template['action_required'] : '',
+					'task_frequency'  => isset( $template['task_frequency'] ) && 'recurring' === $template['task_frequency'] ? 'recurring' : 'one_time',
+					'task_scope'      => isset( $template['task_scope'] ) && 'global' === $template['task_scope'] ? 'global' : 'client',
+					'client_visible'  => ! isset( $template['client_visible'] ) || ! empty( $template['client_visible'] ),
+				);
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Task helpers for extensions (AJCore-RA creates and updates a task per compliance filing).
+	 * Closures, so the table getters stay private. Customer-specific tasks only.
+	 *
+	 * @return array<string,callable>
+	 */
+	public function get_task_toolkit() {
+		return array(
+			// Creates a client-visible task for one customer; returns the task id or 0.
+			'create'    => function ( $stripe_customer_id, $title, $due_date, $action_required, $status = 'open' ) {
+				$allowed = array( 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled' );
+				$pdb     = $this->get_pdb();
+				$ok      = $pdb->insert(
+					$this->get_portal_tasks_table(),
+					array(
+						'stripe_customer_id' => sanitize_text_field( (string) $stripe_customer_id ),
+						'task_scope'         => 'client',
+						'task_frequency'     => 'one_time',
+						'title'              => sanitize_text_field( (string) $title ),
+						'status'             => in_array( $status, $allowed, true ) ? $status : 'open',
+						'due_date'           => preg_match( '/^\d{4}-\d{2}-\d{2}$/', (string) $due_date ) ? $due_date : null,
+						'action_required'    => sanitize_textarea_field( (string) $action_required ),
+						'client_visible'     => 1,
+						'created_by'         => get_current_user_id(),
+						'updated_at'         => current_time( 'mysql' ),
+					),
+					array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s' )
+				);
+				return $ok ? (int) $pdb->insert_id : 0;
+			},
+			// array( task_status, customer_status ) or null when the task no longer exists.
+			'state'     => function ( $task_id, $stripe_customer_id ) {
+				$pdb  = $this->get_pdb();
+				$task = $pdb->get_row( $pdb->prepare( "SELECT status FROM {$this->get_portal_tasks_table()} WHERE id = %d", absint( $task_id ) ) );
+				if ( ! $task ) {
+					return null;
+				}
+				$cust = $pdb->get_var( $pdb->prepare( "SELECT status FROM {$this->get_portal_task_statuses_table()} WHERE task_id = %d AND stripe_customer_id = %s LIMIT 1", absint( $task_id ), (string) $stripe_customer_id ) );
+				return array( 'task_status' => (string) $task->status, 'customer_status' => null === $cust ? '' : (string) $cust );
+			},
+			// Sets the task's status and the customer's own status row, like a portal completion does.
+			'set_status' => function ( $task_id, $stripe_customer_id, $status ) {
+				$allowed = array( 'open', 'waiting_on_client', 'in_progress', 'upcoming', 'completed', 'cancelled' );
+				$status  = in_array( $status, $allowed, true ) ? $status : 'open';
+				$task_id = absint( $task_id );
+				$pdb     = $this->get_pdb();
+				$pdb->update( $this->get_portal_tasks_table(), array( 'status' => $status, 'updated_at' => current_time( 'mysql' ) ), array( 'id' => $task_id ), array( '%s', '%s' ), array( '%d' ) );
+				$sid = $pdb->get_var( $pdb->prepare( "SELECT id FROM {$this->get_portal_task_statuses_table()} WHERE task_id = %d AND stripe_customer_id = %s LIMIT 1", $task_id, (string) $stripe_customer_id ) );
+				$row = array(
+					'task_id'            => $task_id,
+					'stripe_customer_id' => (string) $stripe_customer_id,
+					'status'             => $status,
+					'completed_at'       => 'completed' === $status ? current_time( 'mysql' ) : null,
+					'updated_by'         => get_current_user_id(),
+				);
+				$fmt = array( '%d', '%s', '%s', '%s', '%d' );
+				if ( $sid ) {
+					$pdb->update( $this->get_portal_task_statuses_table(), $row, array( 'id' => absint( $sid ) ), $fmt, array( '%d' ) );
+				} else {
+					$pdb->insert( $this->get_portal_task_statuses_table(), $row, $fmt );
+				}
+				return true;
+			},
+		);
+	}
+
+	/**
 	 * Email helpers for extensions (AJCore-RA builds its Registered Agent notice with these).
 	 * Closures, so the private helpers stay private; nothing here is new behavior.
 	 *
@@ -26486,6 +26576,20 @@ class AJForms_Admin {
 					<?php wp_nonce_field( 'ajcore_save_portal_task', 'ajcore_portal_task_nonce' ); ?>
 					<input type="hidden" name="portal_task_id" value="<?php echo esc_attr( $editing_task ? (int) $editing_task->id : 0 ); ?>">
 					<table class="form-table" role="presentation"><tbody>
+						<?php $task_templates = $editing_task ? array() : $this->get_task_templates(); ?>
+						<?php if ( ! empty( $task_templates ) ) : ?>
+						<tr>
+							<th><label for="ajcore-task-template"><?php esc_html_e( 'Start from template', 'ajforms' ); ?></label></th>
+							<td>
+								<select id="ajcore-task-template" data-templates="<?php echo esc_attr( wp_json_encode( $task_templates ) ); ?>">
+									<option value=""><?php esc_html_e( 'Blank task', 'ajforms' ); ?></option>
+									<?php foreach ( $task_templates as $tpl_key => $tpl ) : ?>
+										<option value="<?php echo esc_attr( $tpl_key ); ?>"><?php echo esc_html( $tpl['label'] ); ?></option>
+									<?php endforeach; ?>
+								</select>
+							</td>
+						</tr>
+						<?php endif; ?>
 						<tr>
 							<th><label for="task_scope"><?php esc_html_e( 'Task Type', 'ajforms' ); ?></label></th>
 							<td><select id="task_scope" name="task_scope"><?php foreach ( $scopes as $scope_key => $scope_label ) : ?><option value="<?php echo esc_attr( $scope_key ); ?>" <?php selected( $current_scope, $scope_key ); ?>><?php echo esc_html( $scope_label ); ?></option><?php endforeach; ?></select><p class="description"><?php esc_html_e( 'Global tasks show to every portal user. Client-specific tasks show only to the selected customer.', 'ajforms' ); ?></p></td>
@@ -26610,6 +26714,25 @@ class AJForms_Admin {
 			if(scope){scope.addEventListener('change', syncClientRequirement); syncClientRequirement();}
 			var checkAll = document.getElementById('ajcore-check-all-tasks');
 			var selectBtn = document.getElementById('ajcore-select-all-tasks');
+			(function(){
+				var pick = document.getElementById('ajcore-task-template');
+				if(!pick){return;}
+				var templates = {};
+				try{templates = JSON.parse(pick.getAttribute('data-templates') || '{}');}catch(e){}
+				pick.addEventListener('change', function(){
+					var t = templates[pick.value];
+					if(!t){return;}
+					function set(id, v){var el = document.getElementById(id); if(el){el.value = v;}}
+					set('task_title', t.title);
+					set('task_action_required', t.action_required);
+					set('task_frequency', t.task_frequency);
+					set('task_scope', t.task_scope);
+					var vis = document.querySelector('input[name="task_client_visible"]');
+					if(vis){vis.checked = !!t.client_visible;}
+					var scope = document.getElementById('task_scope');
+					if(scope){scope.dispatchEvent(new Event('change'));}
+				});
+			})();
 			function setAllTasks(checked){document.querySelectorAll('.ajcore-task-checkbox').forEach(function(box){box.checked = checked;}); if(checkAll){checkAll.checked = checked;}}
 			if(checkAll){checkAll.addEventListener('change', function(){setAllTasks(checkAll.checked);});}
 			if(selectBtn){selectBtn.addEventListener('click', function(){setAllTasks(true);});}

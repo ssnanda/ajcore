@@ -28,6 +28,8 @@
  * API 11: email toolkit grows (brand, copy_raw, send profile) and the
  * 'ajcore_additional_branded_email_templates' / 'ajcore_preserved_setting_prefixes' filters; the
  * annual-report reminder email, daily job and their templates live in AJCore-RA.
+ * API 12: 'ajcore_task_templates' filter (Start from template on the Tasks form) and
+ * AJForms_Admin::get_task_toolkit() so an extension can create and update customer tasks.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -41,7 +43,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 11 );
+	define( 'AJCORE_EXTENSION_API', 12 );
 }
 
 class AJCore_Extensions {
