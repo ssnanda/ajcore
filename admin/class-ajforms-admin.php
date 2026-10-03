@@ -20446,7 +20446,7 @@ class AJForms_Admin {
 			'service-requests'   => __( 'Service Requests', 'ajforms' ),
 			'payments'           => __( 'Payments', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
-			'tasks'              => __( 'Compliance', 'ajforms' ),
+			'tasks'              => __( 'Tasks', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'mail'               => __( 'Mail', 'ajforms' ),
 			'gmail-intake'       => __( 'Gmail Intake', 'ajforms' ),
@@ -26624,8 +26624,8 @@ class AJForms_Admin {
 			</style>
 			<div class="ajcore-task-head">
 				<div>
-					<h2><?php esc_html_e( 'Compliance — Action Items', 'ajforms' ); ?></h2>
-					<p><?php echo $selected_customer ? esc_html( sprintf( __( 'Showing tasks for %s, including global tasks assigned to all portal users.', 'ajforms' ), $selected_customer->name ? $selected_customer->name : $selected_customer->email ) ) : esc_html__( 'Create global tasks for every portal user or client-specific tasks for one customer. Portal users can comment and mark visible tasks complete from their portal.', 'ajforms' ); ?></p>
+					<h2><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h2>
+					<?php if ( $selected_customer ) : ?><p><?php echo esc_html( sprintf( __( 'Showing tasks for %s, including global tasks assigned to all portal users.', 'ajforms' ), $selected_customer->name ? $selected_customer->name : $selected_customer->email ) ); ?></p><?php endif; ?>
 				</div>
 				<button type="button" class="button button-primary" id="ajcore-toggle-task-form"><?php echo esc_html( $editing_task ? __( 'Edit Task', 'ajforms' ) : __( 'New Task', 'ajforms' ) ); ?></button>
 			</div>

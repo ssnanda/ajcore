@@ -5350,14 +5350,19 @@ class AJForms {
 				</a>
 			</div>
 
-			<?php $show_office_address = ( false !== strpos( home_url( '/' ), 'universityofficesuites.com' ) || ! empty( $tracking_services ) ); ?>
+			<?php
+			// Office address card: none unless an extension (AJCore-RA) supplies one as
+			// array( 'title' => ..., 'name' => ..., 'lines' => array( ... ) ).
+			$office_address = apply_filters( 'ajcore_portal_office_address', null, array( 'has_tracking_services' => ! empty( $tracking_services ) ) );
+			$show_office_address = is_array( $office_address ) && ! empty( $office_address['lines'] );
+			?>
 			<div class="aj-portal-overview-info" style="display:flex;gap:16px;flex-wrap:wrap;align-items:stretch;margin-top:16px;">
 				<div style="flex:2 1 360px;min-width:0;"><?php echo $this->render_customer_portal_service_summary( $active_subscriptions, $context['ledger'], $business_name, $tracking_services ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
 				<?php if ( $show_office_address ) : ?>
 					<div style="flex:1 1 240px;min-width:0;">
 						<div class="aj-portal-account-summary aj-portal-office-address">
-							<h3><?php esc_html_e( 'Our Office Address', 'ajforms' ); ?></h3>
-							<p><strong><?php esc_html_e( 'University Place Office Suites', 'ajforms' ); ?></strong><br>1914 J N PEASE PL.<br>CHARLOTTE, NC 28262</p>
+							<h3><?php echo esc_html( ! empty( $office_address['title'] ) ? $office_address['title'] : __( 'Our Office Address', 'ajforms' ) ); ?></h3>
+							<p><?php if ( ! empty( $office_address['name'] ) ) : ?><strong><?php echo esc_html( $office_address['name'] ); ?></strong><br><?php endif; ?><?php echo wp_kses( implode( '<br>', array_map( 'esc_html', (array) $office_address['lines'] ) ), array( 'br' => array() ) ); ?></p>
 						</div>
 					</div>
 				<?php endif; ?>

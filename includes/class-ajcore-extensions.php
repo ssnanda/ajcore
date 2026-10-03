@@ -22,6 +22,9 @@
  * brand (name, sender, 'settings_prefix'); AJCore itself has no University Place values.
  * API 8: 'ajcore_brand_setting_prefixes' filter; AJCore carries no university_* defaults or
  * save handling and preserves stored keys with an extension's brand prefix.
+ * API 9: 'ajcore_portal_office_address' filter supplies the portal Overview office address card.
+ * API 10: rest_toolkit() and can_use_portal() for extension routes; the compliance API is
+ * registered by AJCore-RA, not AJCore.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -35,7 +38,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 8 );
+	define( 'AJCORE_EXTENSION_API', 10 );
 }
 
 class AJCore_Extensions {
@@ -81,6 +84,16 @@ class AJCore_Extensions {
 	 */
 	public static function can_manage_ops() {
 		return ( new AJCore_REST_API() )->can_manage_ops_api();
+	}
+
+	/** permission_callback matching AJCore's client-portal routes (can_use_portal_api). */
+	public static function can_use_portal() {
+		return ( new AJCore_REST_API() )->can_use_portal_api();
+	}
+
+	/** Portal-DB helpers (db handle, table names, current customer) for extension handlers. */
+	public static function rest_toolkit() {
+		return ( new AJCore_REST_API() )->get_extension_toolkit();
 	}
 
 	/** Same as can_manage_ops() but for site-local routes (matches can_manage_site_ops_api). */
