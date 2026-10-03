@@ -12433,7 +12433,7 @@ class AJForms_Admin {
 			}
 			$selected_ids = array_values( array_filter( array_unique( $selected_ids ) ) );
 			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password', 'send_welcome', 'delete_archived' );
-			$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
+			$args = array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), $this->get_portal_customer_list_state() );
 			$updated = 0;
 			$skipped = 0;
 			$errors = array();
@@ -12608,7 +12608,7 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_portal_user_action_' . $stripe_customer_id, 'ajcore_portal_user_action_nonce' );
 
 			$action = sanitize_key( wp_unslash( $_POST['portal_user_action'] ) );
-			$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
+			$args   = array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), $this->get_portal_customer_list_state() );
 
 			if ( 'restore' === $action || 'enable' === $action ) {
 				$result = $this->enable_stripe_customer_as_portal_user( $stripe_customer_id );
@@ -25654,6 +25654,22 @@ class AJForms_Admin {
 		<?php
 	}
 
+	/**
+	 * The Customers list view state (search, status filter, KPI filter) to return to after an
+	 * action. Read from the bulk form's hidden fields (POST), falling back to the URL.
+	 */
+	private function get_portal_customer_list_state() {
+		$state = array();
+		foreach ( array( 'customer_search', 'portal_user_status', 'customer_metric' ) as $key ) {
+			$value = isset( $_POST[ $key ] ) ? $_POST[ $key ] : ( isset( $_GET[ $key ] ) ? $_GET[ $key ] : '' ); // phpcs:ignore WordPress.Security.NonceVerification
+			$value = 'customer_search' === $key ? trim( sanitize_text_field( wp_unslash( $value ) ) ) : sanitize_key( wp_unslash( $value ) );
+			if ( '' !== $value ) {
+				$state[ $key ] = $value;
+			}
+		}
+		return $state;
+	}
+
 	private function display_portal_users_tab() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
@@ -25986,6 +26002,10 @@ class AJForms_Admin {
 			<form method="post" id="ajcore-portal-users-bulk-form">
 				<?php wp_nonce_field( 'ajcore_portal_bulk_user_action', 'ajcore_portal_bulk_user_nonce' ); ?>
 				<input type="hidden" name="portal_bulk_action" id="ajcore-portal-bulk-action" value="">
+				<?php // Return to the same filtered/searched list after an action. ?>
+				<input type="hidden" name="customer_search" id="ajcore-bulk-search" value="<?php echo esc_attr( $customer_search ); ?>">
+				<input type="hidden" name="portal_user_status" value="<?php echo esc_attr( $status_filter ); ?>">
+				<input type="hidden" name="customer_metric" value="<?php echo esc_attr( $metric_filter ); ?>">
 
 				<table class="widefat striped ajcore-portal-users-table">
 					<thead>
@@ -26172,6 +26192,8 @@ class AJForms_Admin {
 					if(checkAll){checkAll.checked = false;}
 					updateSelection();
 					if(searchCount){searchCount.textContent = active ? shown + ' / ' + rows.length : '';}
+					var bulkSearch = document.getElementById('ajcore-bulk-search');
+					if(bulkSearch){bulkSearch.value = searchInput.value.trim();}
 				}
 				if(searchInput){
 					var searchTimer = null;
