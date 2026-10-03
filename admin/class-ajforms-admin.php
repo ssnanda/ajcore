@@ -5358,17 +5358,14 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( false !== strpos( $site_domain, 'universityofficesuites.com' ) || in_array( sanitize_key( $partner_key ), array( 'opus', 'alliance_vo' ), true ) ) {
-			return array(
-				'entity_name' => 'University Place Office Suites LLC',
-				'site_name'   => 'University Place Office Suites',
-				'site_url'    => 'https://universityofficesuites.com/',
-				'from_email'  => 'donotreply@universityofficesuites.com',
+		return $this->get_default_brand_context(
+			sanitize_key( $partner_key ),
+			array(
+				'kind'        => 'customer',
+				'site_domain' => $site_domain,
 				'partner_key' => sanitize_key( $partner_key ),
-			);
-		}
-
-		return $this->get_default_brand_context( sanitize_key( $partner_key ) );
+			)
+		);
 	}
 
 	/** Same brand shape as get_customer_brand_context(), resolved from a lead's site_uuid instead
@@ -5378,17 +5375,14 @@ class AJForms_Admin {
 	private function get_lead_brand_context( $site_uuid ) {
 		$domain = $this->get_lead_site_domain( $site_uuid );
 
-		if ( false !== strpos( $domain, 'universityofficesuites.com' ) ) {
-			return array(
-				'entity_name' => 'University Place Office Suites LLC',
-				'site_name'   => 'University Place Office Suites',
-				'site_url'    => 'https://universityofficesuites.com/',
-				'from_email'  => 'donotreply@universityofficesuites.com',
+		return $this->get_default_brand_context(
+			'',
+			array(
+				'kind'        => 'lead',
+				'site_domain' => $domain,
 				'partner_key' => '',
-			);
-		}
-
-		return $this->get_default_brand_context( '' );
+			)
+		);
 	}
 
 	/**
@@ -5396,7 +5390,25 @@ class AJForms_Admin {
 	 * donotreply@) unless an extension supplies its own via 'ajcore_default_brand'
 	 * (AJCore-RA supplies the NC LLC Agents identity).
 	 */
-	private function get_default_brand_context( $partner_key ) {
+	private function get_default_brand_context( $partner_key, $context = array() ) {
+		// An extension may claim this customer/lead for another brand (AJCore-RA does this for
+		// University Place Office Suites). It returns the full brand array, including
+		// 'settings_prefix' (e.g. 'university_') so that brand's own saved settings are used.
+		$override = apply_filters( 'ajcore_customer_brand', null, $context );
+		if ( is_array( $override ) && ! empty( $override['entity_name'] ) ) {
+			$override = array_merge(
+				array(
+					'site_name'       => $override['entity_name'],
+					'site_url'        => home_url( '/' ),
+					'from_email'      => '',
+					'settings_prefix' => '',
+				),
+				$override
+			);
+			$override['partner_key'] = $partner_key;
+			return $override;
+		}
+
 		$brand = array(
 			'entity_name' => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
 			'site_name'   => wp_specialchars_decode( get_bloginfo( 'name' ), ENT_QUOTES ),
@@ -5409,8 +5421,10 @@ class AJForms_Admin {
 		return $brand;
 	}
 
-	private function is_university_brand( $brand ) {
-		return ! empty( $brand['entity_name'] ) && 'University Place Office Suites LLC' === $brand['entity_name'];
+	/** True when an extension supplied a separate brand with its own saved settings
+	 *  (settings_prefix), as opposed to the site's default brand. */
+	private function is_brand_variant( $brand ) {
+		return ! empty( $brand['settings_prefix'] );
 	}
 
 	/**
@@ -5430,7 +5444,7 @@ class AJForms_Admin {
 	}
 
 	private function apply_customer_brand_to_subject( $subject, $brand ) {
-		if ( ! $this->is_university_brand( $brand ) ) {
+		if ( ! $this->is_brand_variant( $brand ) ) {
 			return $subject;
 		}
 
@@ -5438,7 +5452,7 @@ class AJForms_Admin {
 	}
 
 	private function get_customer_brand_setting_key( $key, $brand ) {
-		return ! empty( $brand['entity_name'] ) && 'University Place Office Suites LLC' === $brand['entity_name'] ? 'university_' . $key : $key;
+		return ! empty( $brand['settings_prefix'] ) ? $brand['settings_prefix'] . $key : $key;
 	}
 
 	/** Resolves the editable heading + body-paragraphs for a branded email from plugin settings,
@@ -5708,7 +5722,7 @@ class AJForms_Admin {
 	 *  the same way the other four static-parts methods would need their own University branch
 	 *  if they ever gain real per-brand contact info. */
 	private function get_lead_followup_email_static_parts( $brand = array() ) {
-		if ( ! empty( $brand['entity_name'] ) && 'University Place Office Suites LLC' === $brand['entity_name'] ) {
+		if ( $this->is_brand_variant( $brand ) ) {
 			return array(
 				'fallback_note' => __( 'If the button does not work, copy and paste this link into your browser:', 'ajforms' ),
 			);
@@ -16586,7 +16600,7 @@ class AJForms_Admin {
 		$brand     = $this->get_customer_brand_context( ! empty( $item['stripe_customer_id'] ) ? $item['stripe_customer_id'] : '', 0, $customer_email );
 		$sender    = $this->resolve_email_sender( $settings, 'wp_mail_item_from_email', 'wp_mail_item_from_name' );
 		$site_name = $brand['site_name'];
-		if ( $this->is_university_brand( $brand ) ) {
+		if ( $this->is_brand_variant( $brand ) ) {
 			$sender['from_name'] = $brand['site_name'];
 		}
 
@@ -16741,7 +16755,7 @@ class AJForms_Admin {
 		$brand     = $this->get_customer_brand_context( ! empty( $entity->stripe_customer_id ) ? $entity->stripe_customer_id : '', 0, $customer_email );
 		$sender    = $this->resolve_email_sender( $settings, 'wp_compliance_from_email', 'wp_compliance_from_name' );
 		$site_name = $brand['site_name'];
-		if ( $this->is_university_brand( $brand ) ) {
+		if ( $this->is_brand_variant( $brand ) ) {
 			$sender['from_name'] = $brand['site_name'];
 		}
 

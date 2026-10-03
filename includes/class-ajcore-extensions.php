@@ -18,6 +18,8 @@
  * API 6: the Registered Agent authorization email is built and sent by AJCore-RA
  * ('ajcore_ra_authorization_build' / '_send' / '_static_parts' filters); AJForms_Admin::
  * get_email_toolkit() exposes the email helpers an extension needs.
+ * API 7: 'ajcore_customer_brand' filter lets an extension claim a customer/lead for another
+ * brand (name, sender, 'settings_prefix'); AJCore itself has no University Place values.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -31,7 +33,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 6 );
+	define( 'AJCORE_EXTENSION_API', 7 );
 }
 
 class AJCore_Extensions {
