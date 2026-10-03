@@ -35000,6 +35000,10 @@ class AJForms_Admin {
 				<h3 style="margin:0;"><?php esc_html_e( 'Connected Sites', 'ajforms' ); ?></h3>
 				<span>
 					<span id="ajcore-refresh-versions-result" style="margin-right:8px;font-weight:600;"></span>
+					<?php if ( ! $sites_from_cache && $is_current_master ) : ?>
+						<span id="ajcore-selected-sites-count" style="margin-right:6px;color:#646970;"></span>
+						<button type="button" id="ajcore-update-selected-sites" class="button button-primary" disabled><?php esc_html_e( 'Update selected', 'ajforms' ); ?></button>
+					<?php endif; ?>
 					<button type="button" id="ajcore-refresh-versions" class="button"><?php esc_html_e( 'Refresh versions', 'ajforms' ); ?></button>
 				</span>
 			</div>
@@ -35010,6 +35014,9 @@ class AJForms_Admin {
 			<table class="widefat striped" style="margin-top:8px;">
 				<thead>
 					<tr>
+						<?php if ( ! $sites_from_cache && $is_current_master ) : ?>
+						<th style="width:28px;"><input type="checkbox" id="ajcore-sites-check-outdated" title="<?php esc_attr_e( 'Select every site that is behind', 'ajforms' ); ?>"></th>
+						<?php endif; ?>
 						<th><?php esc_html_e( 'Domain', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Master', 'ajforms' ); ?></th>
@@ -35044,6 +35051,12 @@ class AJForms_Admin {
 						}
 					?>
 					<tr<?php echo $is_this_site ? ' style="background:#f0f6fc;"' : ''; ?>>
+						<?php if ( ! $sites_from_cache && $is_current_master ) : ?>
+						<td><input type="checkbox" class="ajcore-site-check" value="<?php echo esc_attr( $site->site_uuid ); ?>"
+							data-domain="<?php echo esc_attr( $site->domain ); ?>"
+							data-self="<?php echo $is_this_site ? '1' : '0'; ?>"
+							data-outdated="<?php echo $site_is_outdated ? '1' : '0'; ?>"></td>
+						<?php endif; ?>
 						<td><?php echo esc_html( $site->domain ); ?><?php echo $is_this_site ? ' <strong>(' . esc_html__( 'this site', 'ajforms' ) . ')</strong>' : ''; ?></td>
 						<td><code><?php echo esc_html( $site->site_uuid ); ?></code></td>
 						<td><?php echo $site->is_master ? '<span style="color:#166534;font-weight:700;">&#10003; ' . esc_html__( 'Master', 'ajforms' ) . '</span>' : '—'; ?></td>
@@ -35082,6 +35095,7 @@ class AJForms_Admin {
 								<?php esc_html_e( 'Update', 'ajforms' ); ?>
 							</button>
 							<?php endif; ?>
+							<span class="ajcore-site-update-status" data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>" style="font-weight:600;"></span>
 						</td>
 					</tr>
 					<?php endforeach; ?>
@@ -35269,6 +35283,77 @@ class AJForms_Admin {
 						refreshBtn.disabled = false;
 						refreshBtn.textContent = label;
 					});
+			});
+		}
+
+		// Bulk update: tick sites, then "Update selected". Other sites go first, one at a time (each
+		// can take up to ~90s), and this site, if ticked, goes last because it reloads the page.
+		var checks = Array.prototype.slice.call(document.querySelectorAll('.ajcore-site-check'));
+		var bulkBtn = document.getElementById('ajcore-update-selected-sites');
+		var bulkCount = document.getElementById('ajcore-selected-sites-count');
+		var checkOutdated = document.getElementById('ajcore-sites-check-outdated');
+		function refreshBulkState() {
+			var n = checks.filter(function(c) { return c.checked; }).length;
+			if (bulkBtn) { bulkBtn.disabled = n === 0; }
+			if (bulkCount) { bulkCount.textContent = n ? n + ' <?php echo esc_js( __( 'selected', 'ajforms' ) ); ?>' : ''; }
+		}
+		checks.forEach(function(c) { c.addEventListener('change', refreshBulkState); });
+		if (checkOutdated) {
+			checkOutdated.addEventListener('change', function() {
+				checks.forEach(function(c) { if (c.getAttribute('data-outdated') === '1') { c.checked = checkOutdated.checked; } });
+				refreshBulkState();
+			});
+		}
+		function siteStatus(uuid, text, color) {
+			var el = document.querySelector('.ajcore-site-update-status[data-uuid="' + uuid + '"]');
+			if (el) { el.textContent = text; el.style.color = color || ''; }
+		}
+		function postAjax(action, nonce, extra) {
+			var d = new FormData();
+			d.append('action', action);
+			d.append('nonce', nonce);
+			Object.keys(extra || {}).forEach(function(k) { d.append(k, extra[k]); });
+			return fetch(ajaxurl, { method: 'POST', body: d }).then(function(r) { return r.json(); });
+		}
+		if (bulkBtn) {
+			bulkBtn.addEventListener('click', function() {
+				var picked = checks.filter(function(c) { return c.checked; });
+				if (!picked.length) { return; }
+				var names = picked.map(function(c) { return c.getAttribute('data-domain'); }).join('\n');
+				if (!confirm('<?php echo esc_js( __( 'Update AJ Core now on:', 'ajforms' ) ); ?>\n\n' + names + '\n\n<?php echo esc_js( __( 'Each site installs the latest release immediately.', 'ajforms' ) ); ?>')) { return; }
+
+				var others = picked.filter(function(c) { return c.getAttribute('data-self') !== '1'; });
+				var self = picked.filter(function(c) { return c.getAttribute('data-self') === '1'; })[0];
+				var remoteNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_remote_update_site' ) ); ?>';
+				var selfNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_update_this_site' ) ); ?>';
+				var out = document.getElementById('ajcore-refresh-versions-result');
+				bulkBtn.disabled = true;
+				checks.forEach(function(c) { c.disabled = true; });
+				var failed = 0, done = 0;
+
+				function finish() {
+					if (out) { out.textContent = done + ' <?php echo esc_js( __( 'updated', 'ajforms' ) ); ?>' + (failed ? ', ' + failed + ' <?php echo esc_js( __( 'failed', 'ajforms' ) ); ?>' : ''); }
+					setTimeout(function() { location.reload(); }, failed ? 4000 : 1500);
+				}
+				function runSelf() {
+					if (!self) { return finish(); }
+					siteStatus(self.value, '<?php echo esc_js( __( 'Updating…', 'ajforms' ) ); ?>', '#646970');
+					postAjax('ajcore_update_this_site', selfNonce, {}).then(function(res) {
+						if (res.success) { done++; siteStatus(self.value, '✓ ' + ((res.data && res.data.message) || ''), '#166534'); }
+						else { failed++; siteStatus(self.value, '✗ ' + (res.data || ''), '#b32d2e'); }
+						finish();
+					}).catch(function() { failed++; siteStatus(self.value, '✗', '#b32d2e'); finish(); });
+				}
+				(function next(i) {
+					if (i >= others.length) { return runSelf(); }
+					var c = others[i];
+					siteStatus(c.value, '<?php echo esc_js( __( 'Updating…', 'ajforms' ) ); ?>', '#646970');
+					postAjax('ajcore_remote_update_site', remoteNonce, { site_uuid: c.value }).then(function(res) {
+						if (res.success) { done++; siteStatus(c.value, '✓ ' + ((res.data && res.data.message) || ''), '#166534'); }
+						else { failed++; siteStatus(c.value, '✗ ' + (typeof res.data === 'string' ? res.data : '<?php echo esc_js( __( 'failed', 'ajforms' ) ); ?>'), '#b32d2e'); }
+						next(i + 1);
+					}).catch(function() { failed++; siteStatus(c.value, '✗ <?php echo esc_js( __( 'no answer', 'ajforms' ) ); ?>', '#b32d2e'); next(i + 1); });
+				})(0);
 			});
 		}
 
@@ -35560,6 +35645,21 @@ class AJForms_Admin {
 			$summary .= ' ' . sprintf( __( 'No answer from: %s.', 'ajforms' ), implode( ', ', $fail ) );
 		}
 		wp_send_json_success( array( 'summary' => $summary, 'unreachable' => $fail ) );
+	}
+
+	/** Connected Sites bulk update: installs the latest release on THIS site (the Master). */
+	public function ajax_update_this_site() {
+		check_ajax_referer( 'ajcore_update_this_site', 'nonce' );
+		if ( ! current_user_can( 'update_plugins' ) ) {
+			wp_send_json_error( __( 'You do not have permission to update plugins.', 'ajforms' ) );
+			return;
+		}
+		$result = $this->install_plugin_update();
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( $result->get_error_message() );
+			return;
+		}
+		wp_send_json_success( array( 'message' => __( 'Updated.', 'ajforms' ) ) );
 	}
 
 	public function ajax_remote_update_site() {
