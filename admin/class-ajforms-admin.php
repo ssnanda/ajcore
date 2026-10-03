@@ -25788,7 +25788,22 @@ class AJForms_Admin {
 		}
 		?>
 		<div class="ajforms-settings-card ajcore-customers-panel">
-			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Stripe customer records with portal access, WordPress user links, lifecycle status, and customer view shortcuts.', 'ajforms' ); ?></p></div><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a></div>
+			<style>
+				/* Compact, AJOps-style Customers screen: pill tiles, full-width search, tight toolbar. */
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-kpi-grid{display:flex!important;flex-wrap:wrap!important;gap:8px!important;margin:10px 0!important}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-kpi-card{flex-direction:row-reverse!important;align-items:center!important;justify-content:flex-end!important;min-height:0!important;gap:6px!important;padding:8px 14px!important;border-radius:12px!important;box-shadow:none!important;background:#fff!important}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-kpi-card strong{font-size:14px!important;font-weight:700!important;line-height:1.2!important}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-kpi-card strong:before{content:"\00b7\00a0"}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-kpi-card span{font-size:13px!important;font-weight:700!important;letter-spacing:0!important;text-transform:none!important;color:#0f172a!important}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-kpi-card small{display:none!important}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-portal-users-toolbar{gap:6px;margin:10px 0}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-portal-users-toolbar>form{flex:1 1 100%;order:-1}
+				.ajcore-modern-admin .ajcore-customers-panel #ajcore-customer-search{flex:1 1 auto;min-width:240px;height:38px;border-radius:10px}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-portal-users-toolbar:not(.has-selection) [data-portal-bulk-action],.ajcore-modern-admin .ajcore-customers-panel .ajcore-portal-users-toolbar:not(.has-selection) #ajcore-selected-count{display:none!important}
+				.ajcore-modern-admin .ajcore-customers-panel #ajcore-selected-count{font-size:12px;font-weight:700;color:#3157ff;padding:0 4px}
+				.ajcore-modern-admin .ajcore-customers-panel .ajcore-portal-users-toolbar .button{min-height:30px;padding:0 12px;font-size:12px;line-height:28px;border-radius:8px;box-shadow:none}
+			</style>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Customers', 'ajforms' ); ?></h2></div><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a></div>
 
 			<?php if ( isset( $_GET['portal-user-enabled'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe customer enabled for portal access.', 'ajforms' ); ?></p></div>
@@ -25928,6 +25943,7 @@ class AJForms_Admin {
 						<option value="without_login" <?php selected( $status_filter, 'without_login' ); ?>><?php esc_html_e( 'Without portal login', 'ajforms' ); ?></option>
 					</select>
 				</form>
+				<span id="ajcore-selected-count"></span>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="enable"><?php esc_html_e( 'Enable', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="enable_repair"><?php esc_html_e( 'Enable & Repair Selected Customers', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="disable"><?php esc_html_e( 'Disable', 'ajforms' ); ?></button>
@@ -26110,7 +26126,15 @@ class AJForms_Admin {
 				}
 				function boxes(){return Array.prototype.slice.call(document.querySelectorAll('.ajcore-portal-user-checkbox'));}
 				function rowVisible(box){var tr = box.closest('tr'); return !tr || !tr.hidden;}
-				function setAll(checked){boxes().forEach(function(box){box.checked = checked && rowVisible(box);}); if(checkAll){checkAll.checked = checked;}}
+				var bulkToolbar = document.querySelector('.ajcore-portal-users-toolbar');
+				var selectedCount = document.getElementById('ajcore-selected-count');
+				function updateSelection(){
+					var n = boxes().filter(function(box){return box.checked;}).length;
+					if(bulkToolbar){bulkToolbar.classList.toggle('has-selection', n > 0);}
+					if(selectedCount){selectedCount.textContent = n + ' selected';}
+				}
+				function setAll(checked){boxes().forEach(function(box){box.checked = checked && rowVisible(box);}); if(checkAll){checkAll.checked = checked;} updateSelection();}
+				document.addEventListener('change', function(e){if(e.target && e.target.classList && e.target.classList.contains('ajcore-portal-user-checkbox')){updateSelection();}});
 				if(openCustomerModal){openCustomerModal.addEventListener('click', showModal);}
 				if(customerModal){
 					customerModal.addEventListener('click', function(event){
@@ -26138,6 +26162,7 @@ class AJForms_Admin {
 						else{var cb = tr.querySelector('.ajcore-portal-user-checkbox'); if(cb){cb.checked = false;}}
 					});
 					if(checkAll){checkAll.checked = false;}
+					updateSelection();
 					if(searchCount){searchCount.textContent = active ? shown + ' / ' + rows.length : '';}
 				}
 				if(searchInput){
