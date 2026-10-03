@@ -9877,7 +9877,9 @@ class AJCore_REST_API {
 				// Deliberately not gated on a linked WP user or active portal access (unlike
 				// send_welcome): this notice goes to the customer record's own email address, and
 				// plenty of registered-agent-only customers never get a portal login.
-				$result = AJForms_Admin::$instance->send_registered_agent_authorization_email(
+				$result = apply_filters(
+					'ajcore_ra_authorization_send',
+					new WP_Error( 'ajcore_ra_required', 'Registered Agent authorization email requires the AJCore-RA plugin.', array( 'status' => 404 ) ),
 					$stripe_customer_id,
 					(string) $request->get_param( 'company' )
 				);
@@ -9921,7 +9923,9 @@ class AJCore_REST_API {
 		}
 
 		if ( 'ra_authorization' === $template ) {
-			$built = AJForms_Admin::$instance->build_registered_agent_authorization_email(
+			$built = apply_filters(
+				'ajcore_ra_authorization_build',
+				new WP_Error( 'ajcore_ra_required', 'Registered Agent authorization email requires the AJCore-RA plugin.', array( 'status' => 404 ) ),
 				$stripe_customer_id,
 				(string) $request->get_param( 'company' )
 			);

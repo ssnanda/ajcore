@@ -5646,20 +5646,10 @@ class AJForms_Admin {
 		return array( 'heading' => $copy['heading'], 'paragraphs' => $paragraphs, 'checklist_items' => $bullets );
 	}
 
-	/** Registered Agent authorization notice. NC LLC Agents only — the address itself is an
-	 *  editable setting (ra_authorization_address) rather than a constant here, because it is the
-	 *  one piece of this email a staff member would realistically need to change. */
+	/** Layout/labels for the Registered Agent authorization template. Supplied by AJCore-RA
+	 *  ('ajcore_ra_authorization_static_parts'); empty without it. */
 	private function get_ra_authorization_email_static_parts( $address = '' ) {
-		$signature = trim( preg_replace( '/\s*\n\s*/', " \xc2\xb7 ", trim( (string) $address ) ) );
-
-		return array(
-			'info_box_label'  => __( 'Registered Agent / Registered Office address', 'ajforms' ),
-			'info_box_layout' => 'stacked',
-			'checklist_title' => __( 'Please note the following important requirements', 'ajforms' ),
-			'footer_note'     => '' !== $signature
-				? sprintf( __( 'Thank you, %s', 'ajforms' ), $signature )
-				: __( 'Thank you,', 'ajforms' ),
-		);
+		return (array) apply_filters( 'ajcore_ra_authorization_static_parts', array(), (string) $address );
 	}
 
 	/**
@@ -5893,122 +5883,39 @@ class AJForms_Admin {
 	}
 
 	/**
-	 * Sends the Registered Agent authorization / address-use notice for a customer.
+	 * Email helpers for extensions (AJCore-RA builds its Registered Agent notice with these).
+	 * Closures, so the private helpers stay private; nothing here is new behavior.
 	 *
-	 * Unlike the portal welcome and password-reset emails this does NOT need a linked WordPress
-	 * user — it is addressed to the customer record's own email, so it can go out to a customer
-	 * who has never been given portal access. Tracking is automatic: wp_mail() is filtered into
-	 * aj_portal_email_log with an open-tracking pixel (see ajcore_log_outgoing_mail() in
-	 * ajcore.php), which is what AJOps' Email Log screen reads.
-	 *
-	 * @param string $stripe_customer_id Customer to notify.
-	 * @param string $company            Optional company/LLC name for {company}; falls back to
-	 *                                   the customer record's name.
-	 * @return true|WP_Error
+	 * @return array<string,callable>
 	 */
-	public function send_registered_agent_authorization_email( $stripe_customer_id, $company = '' ) {
-		$built = $this->build_registered_agent_authorization_email( $stripe_customer_id, $company );
-		if ( is_wp_error( $built ) ) {
-			return $built;
-		}
-
-		$sent = $this->send_branded_wp_mail( $built['to'], $built['subject'], $built['message'], $built['headers'], $built['from_email'], $built['from_name'] );
-		if ( ! $sent ) {
-			return new WP_Error( 'ra_authorization_failed', __( 'Registered Agent authorization email could not be sent.', 'ajforms' ) );
-		}
-
-		return true;
-	}
-
-	/** Assembles the Registered Agent notice without sending it — see
-	 *  build_portal_user_welcome_email() for why every manually-triggered email is built this way. */
-	public function build_registered_agent_authorization_email( $stripe_customer_id, $company = '' ) {
-		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
-		$customer           = $this->get_pdb()->get_row(
-			$this->get_pdb()->prepare(
-				"SELECT name, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
-				$stripe_customer_id
-			)
-		);
-		if ( ! $customer ) {
-			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajforms' ) );
-		}
-		if ( ! is_email( (string) $customer->email ) ) {
-			return new WP_Error( 'no_customer_email', __( 'This customer has no valid email address on file.', 'ajforms' ) );
-		}
-
-		$settings   = $this->get_plugin_settings();
-		$sender     = $this->resolve_email_sender( $settings, 'ra_authorization_from_email', 'ra_authorization_from_name' );
-		$from_email = $sender['from_email'];
-		$from_name  = $sender['from_name'];
-
-		$company_name = sanitize_text_field( (string) $company );
-		if ( '' === $company_name ) {
-			$company_name = sanitize_text_field( (string) $customer->name );
-		}
-		if ( '' === $company_name ) {
-			$company_name = (string) $customer->email;
-		}
-
-		$address = isset( $settings['ra_authorization_address'] ) && '' !== trim( (string) $settings['ra_authorization_address'] )
-			? (string) $settings['ra_authorization_address']
-			: $this->get_ra_authorization_default_address();
-
-		// This notice is always FROM the registered agent, whichever site the customer is assigned
-		// to — a University Place Office Suites customer being authorized to use NC LLC Agents'
-		// registered-agent address must not see the email branded as University Place. So the
-		// kicker comes from the first line of the address block above (the agent's own entity
-		// name), never from get_customer_brand_context().
-		$address_lines = preg_split( '/\r\n|\r|\n/', trim( $address ) );
-		$agent_name    = ! empty( $address_lines[0] ) ? trim( (string) $address_lines[0] ) : get_bloginfo( 'name' );
-
-		$tokens = array(
-			'{name}'      => '' !== (string) $customer->name ? (string) $customer->name : (string) $customer->email,
-			'{company}'   => $company_name,
-			'{site_name}' => $agent_name,
-		);
-
-		$subject_template = ! empty( $settings['ra_authorization_subject'] )
-			? sanitize_text_field( (string) $settings['ra_authorization_subject'] )
-			: __( 'Registered Agent Authorization and Address Use for {company}', 'ajforms' );
-		$subject = strtr( $subject_template, $tokens );
-
-		$copy = $this->split_email_copy_bullets(
-			$this->resolve_email_copy(
-				$settings,
-				'ra_authorization_heading',
-				'ra_authorization_body',
-				__( 'Registered Agent Authorization', 'ajforms' ),
-				$this->get_ra_authorization_default_body_lines(),
-				$tokens
-			)
-		);
-
-		$message = $this->render_branded_email_html( array_merge(
-			array(
-				'kicker'          => $agent_name,
-				'heading'         => $copy['heading'],
-				'paragraphs'      => $copy['paragraphs'],
-				'checklist_items' => $copy['checklist_items'],
-				'info_box_value'  => $address,
-			),
-			$this->get_ra_authorization_email_static_parts( $address ),
-			$this->get_branded_email_footer_parts( array(), __( 'You received this because we act as the Registered Agent for your company.', 'ajforms' ) )
-		) );
-
-		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
-		if ( is_email( $from_email ) ) {
-			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
-			$headers[] = 'Reply-To: ' . $from_email;
-		}
-
+	public function get_email_toolkit() {
 		return array(
-			'to'         => $customer->email,
-			'subject'    => $subject,
-			'message'    => $message,
-			'headers'    => $headers,
-			'from_email' => $from_email,
-			'from_name'  => $from_name,
+			'settings'      => function () {
+				return $this->get_plugin_settings();
+			},
+			'customer'      => function ( $stripe_customer_id ) {
+				return $this->get_pdb()->get_row(
+					$this->get_pdb()->prepare(
+						"SELECT name, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id = %s LIMIT 1",
+						sanitize_text_field( (string) $stripe_customer_id )
+					)
+				);
+			},
+			'sender'        => function ( $settings, $from_email_key, $from_name_key ) {
+				return $this->resolve_email_sender( $settings, $from_email_key, $from_name_key );
+			},
+			'copy'          => function ( $settings, $heading_key, $body_key, $default_heading, $default_body_lines, $tokens ) {
+				return $this->split_email_copy_bullets( $this->resolve_email_copy( $settings, $heading_key, $body_key, $default_heading, $default_body_lines, $tokens ) );
+			},
+			'render'        => function ( $args ) {
+				return $this->render_branded_email_html( $args );
+			},
+			'footer_parts'  => function ( $brand, $reason ) {
+				return $this->get_branded_email_footer_parts( $brand, $reason );
+			},
+			'send'          => function ( $to, $subject, $message, $headers, $from_email, $from_name ) {
+				return $this->send_branded_wp_mail( $to, $subject, $message, $headers, $from_email, $from_name );
+			},
 		);
 	}
 

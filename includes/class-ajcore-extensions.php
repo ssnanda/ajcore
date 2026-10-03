@@ -15,6 +15,9 @@
  * API 5: email templates carry no business text of their own — 'ajcore_default_brand',
  * 'ajcore_business_contact', 'ajcore_ra_authorization_default_body_lines' and
  * 'ajcore_ra_authorization_default_address' filters let an extension supply it.
+ * API 6: the Registered Agent authorization email is built and sent by AJCore-RA
+ * ('ajcore_ra_authorization_build' / '_send' / '_static_parts' filters); AJForms_Admin::
+ * get_email_toolkit() exposes the email helpers an extension needs.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -28,7 +31,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 5 );
+	define( 'AJCORE_EXTENSION_API', 6 );
 }
 
 class AJCore_Extensions {
