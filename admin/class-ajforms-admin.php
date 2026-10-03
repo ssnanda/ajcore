@@ -34953,6 +34953,22 @@ class AJForms_Admin {
 		$latest_known_version = ( is_array( $latest_update_status ) && ! empty( $latest_update_status['latest_version'] ) )
 			? $latest_update_status['latest_version']
 			: '';
+		// "Behind" means behind the newest version we know of from ANY source: the latest release,
+		// this site, or any connected site. A release lookup can lag (cached) or be unreachable,
+		// and the Master is often ahead of what is published (e.g. a build deployed locally first).
+		if ( ! empty( $connected_sites ) ) {
+			$known_versions = array( AJFORMS_VERSION );
+			foreach ( $connected_sites as $known_site ) {
+				if ( ! empty( $known_site->ajcore_version ) ) {
+					$known_versions[] = (string) $known_site->ajcore_version;
+				}
+			}
+			foreach ( $known_versions as $known_version ) {
+				if ( preg_match( '/^\d+\.\d+\.\d+/', $known_version ) && ( '' === $latest_known_version || version_compare( $known_version, $latest_known_version, '>' ) ) ) {
+					$latest_known_version = $known_version;
+				}
+			}
+		}
 		?>
 
 		<?php if ( $is_enabled && ! $shared_db ) : ?>
@@ -35002,6 +35018,7 @@ class AJForms_Admin {
 					<span id="ajcore-refresh-versions-result" style="margin-right:8px;font-weight:600;"></span>
 					<?php if ( ! $sites_from_cache && $is_current_master ) : ?>
 						<span id="ajcore-selected-sites-count" style="margin-right:6px;color:#646970;"></span>
+						<button type="button" id="ajcore-select-outdated-sites" class="button"><?php esc_html_e( 'Select outdated', 'ajforms' ); ?></button>
 						<button type="button" id="ajcore-update-selected-sites" class="button button-primary" disabled><?php esc_html_e( 'Update selected', 'ajforms' ); ?></button>
 					<?php endif; ?>
 					<button type="button" id="ajcore-refresh-versions" class="button"><?php esc_html_e( 'Refresh versions', 'ajforms' ); ?></button>
@@ -35015,7 +35032,7 @@ class AJForms_Admin {
 				<thead>
 					<tr>
 						<?php if ( ! $sites_from_cache && $is_current_master ) : ?>
-						<th style="width:28px;"><input type="checkbox" id="ajcore-sites-check-outdated" title="<?php esc_attr_e( 'Select every site that is behind', 'ajforms' ); ?>"></th>
+						<th style="width:28px;"><input type="checkbox" id="ajcore-sites-check-all" title="<?php esc_attr_e( 'Select all sites', 'ajforms' ); ?>"></th>
 						<?php endif; ?>
 						<th><?php esc_html_e( 'Domain', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Site UUID', 'ajforms' ); ?></th>
@@ -35291,16 +35308,29 @@ class AJForms_Admin {
 		var checks = Array.prototype.slice.call(document.querySelectorAll('.ajcore-site-check'));
 		var bulkBtn = document.getElementById('ajcore-update-selected-sites');
 		var bulkCount = document.getElementById('ajcore-selected-sites-count');
-		var checkOutdated = document.getElementById('ajcore-sites-check-outdated');
+		var checkAll = document.getElementById('ajcore-sites-check-all');
+		var selectOutdated = document.getElementById('ajcore-select-outdated-sites');
 		function refreshBulkState() {
 			var n = checks.filter(function(c) { return c.checked; }).length;
 			if (bulkBtn) { bulkBtn.disabled = n === 0; }
 			if (bulkCount) { bulkCount.textContent = n ? n + ' <?php echo esc_js( __( 'selected', 'ajforms' ) ); ?>' : ''; }
 		}
-		checks.forEach(function(c) { c.addEventListener('change', refreshBulkState); });
-		if (checkOutdated) {
-			checkOutdated.addEventListener('change', function() {
-				checks.forEach(function(c) { if (c.getAttribute('data-outdated') === '1') { c.checked = checkOutdated.checked; } });
+		checks.forEach(function(c) {
+			c.addEventListener('change', function() {
+				if (checkAll) { checkAll.checked = checks.every(function(x) { return x.checked; }); }
+				refreshBulkState();
+			});
+		});
+		if (checkAll) {
+			checkAll.addEventListener('change', function() {
+				checks.forEach(function(c) { c.checked = checkAll.checked; });
+				refreshBulkState();
+			});
+		}
+		if (selectOutdated) {
+			selectOutdated.addEventListener('click', function() {
+				checks.forEach(function(c) { c.checked = c.getAttribute('data-outdated') === '1'; });
+				if (checkAll) { checkAll.checked = false; }
 				refreshBulkState();
 			});
 		}
