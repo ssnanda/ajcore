@@ -25666,6 +25666,7 @@ class AJForms_Admin {
 		$allowed_status_filters = array( 'active', 'disabled', 'archived', 'without_login' );
 		$status_filter = in_array( $status_filter, $allowed_status_filters, true ) ? $status_filter : '';
 		$metric_filter = isset( $_GET['customer_metric'] ) ? sanitize_key( wp_unslash( $_GET['customer_metric'] ) ) : '';
+		$customer_search = isset( $_GET['customer_search'] ) ? trim( sanitize_text_field( wp_unslash( $_GET['customer_search'] ) ) ) : '';
 		$product_counts = $this->get_portal_core_subscription_product_counts();
 
 		// Build WHERE against stripe_customers only; without_login is applied in PHP after merging mapping data.
@@ -25678,6 +25679,22 @@ class AJForms_Admin {
 			$where[] = "c.portal_status = 'archived'";
 		} elseif ( 'without_login' !== $status_filter ) {
 			$where[] = "(c.portal_status IS NULL OR c.portal_status <> 'archived')";
+		}
+
+		// Search: name, email, phone, description, customer number and Stripe/local customer id.
+		// Applied in SQL so it finds customers beyond the 300-row page limit.
+		$search_like = '';
+		if ( '' !== $customer_search ) {
+			$search_like = '%' . $pdb->esc_like( $customer_search ) . '%';
+			$where[]     = $pdb->prepare(
+				'(c.name LIKE %s OR c.email LIKE %s OR c.phone LIKE %s OR c.description LIKE %s OR c.customer_number LIKE %s OR c.stripe_customer_id LIKE %s)',
+				$search_like,
+				$search_like,
+				$search_like,
+				$search_like,
+				$search_like,
+				$search_like
+			);
 		}
 
 		// Step 1: Fetch stripe_customers from shared DB (or local in single-site mode).
@@ -25696,6 +25713,16 @@ class AJForms_Admin {
 				$local_where[] = '1=0'; // These filters describe portal access; local reporting customers have no login.
 			} elseif ( 'without_login' !== $status_filter ) {
 				$local_where[] = "status <> 'archived'";
+			}
+			if ( '' !== $search_like ) {
+				$local_where[] = $pdb->prepare(
+					'(name LIKE %s OR email LIKE %s OR phone LIKE %s OR description LIKE %s OR local_customer_id LIKE %s)',
+					$search_like,
+					$search_like,
+					$search_like,
+					$search_like,
+					$search_like
+				);
 			}
 			$local_rows = $pdb->get_results( "SELECT id,local_customer_id AS stripe_customer_id,email,name,phone,description,address,metadata,partner_key,status AS portal_status,0 AS enabled_portal,0 AS livemode,created_at,updated_at AS synced_at FROM `{$local_customers_table}` WHERE " . implode( ' AND ', $local_where ) . ' ORDER BY name ASC,email ASC LIMIT 300' );
 			$customers_raw = array_merge( (array) $customers_raw, (array) $local_rows );
@@ -25884,6 +25911,15 @@ class AJForms_Admin {
 				<form method="get" id="ajcore-portal-users-filter-form">
 					<input type="hidden" name="page" value="ajforms-client-portal">
 					<input type="hidden" name="tab" value="portal-users">
+					<?php if ( '' !== $metric_filter ) : ?>
+						<input type="hidden" name="customer_metric" value="<?php echo esc_attr( $metric_filter ); ?>">
+					<?php endif; ?>
+					<input type="search" id="ajcore-customer-search" name="customer_search" value="<?php echo esc_attr( $customer_search ); ?>" placeholder="<?php esc_attr_e( 'Search customers (3+ characters)', 'ajforms' ); ?>" autocomplete="off" style="min-width:260px;">
+					<span id="ajcore-customer-search-count" style="color:#646970;min-width:56px;"></span>
+					<button type="submit" class="button"><?php esc_html_e( 'Search all', 'ajforms' ); ?></button>
+					<?php if ( '' !== $customer_search ) : ?>
+						<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Clear', 'ajforms' ); ?></a>
+					<?php endif; ?>
 					<select name="portal_user_status" id="ajcore-portal-user-status-filter">
 						<option value=""><?php esc_html_e( 'All except archived', 'ajforms' ); ?></option>
 						<option value="active" <?php selected( $status_filter, 'active' ); ?>><?php esc_html_e( 'Active portal access', 'ajforms' ); ?></option>
@@ -25983,8 +26019,25 @@ class AJForms_Admin {
 								}
 								$customer_email      = ! empty( $customer->email ) ? sanitize_email( (string) $customer->email ) : '';
 								$customer_unique_key = sanitize_text_field( (string) $customer->stripe_customer_id ) . '|' . strtolower( $customer_email );
+								// Text the live customer search matches against (lowercased).
+								$row_search = strtolower(
+									implode(
+										' ',
+										array_filter(
+											array(
+												(string) $customer->name,
+												$customer_email,
+												(string) $customer->stripe_customer_id,
+												isset( $customer->customer_number ) ? (string) $customer->customer_number : '',
+												isset( $customer->phone ) ? (string) $customer->phone : '',
+												isset( $customer->description ) ? (string) $customer->description : '',
+												! empty( $customer->portal_user_email ) ? (string) $customer->portal_user_email : '',
+											)
+										)
+									)
+								);
 								?>
-								<tr class="<?php echo esc_attr( $row_class ); ?>">
+								<tr class="<?php echo esc_attr( $row_class ); ?>" data-customer-search="<?php echo esc_attr( $row_search ); ?>">
 									<td><input type="checkbox" class="ajcore-portal-user-checkbox" name="portal_customer_ids[]" value="<?php echo esc_attr( $customer_unique_key ); ?>" data-customer-id="<?php echo esc_attr( $customer->stripe_customer_id ); ?>" data-customer-email="<?php echo esc_attr( $customer_email ); ?>"></td>
 									<td><span class="ajcore-status-pill <?php echo esc_attr( $status_class ); ?>"><?php echo esc_html( $status_label ); ?></span></td>
 									<td><code><?php echo esc_html( $customer->stripe_customer_id ); ?></code></td>
@@ -26056,7 +26109,8 @@ class AJForms_Admin {
 					if(firstField){firstField.focus();}
 				}
 				function boxes(){return Array.prototype.slice.call(document.querySelectorAll('.ajcore-portal-user-checkbox'));}
-				function setAll(checked){boxes().forEach(function(box){box.checked = checked;}); if(checkAll){checkAll.checked = checked;}}
+				function rowVisible(box){var tr = box.closest('tr'); return !tr || !tr.hidden;}
+				function setAll(checked){boxes().forEach(function(box){box.checked = checked && rowVisible(box);}); if(checkAll){checkAll.checked = checked;}}
 				if(openCustomerModal){openCustomerModal.addEventListener('click', showModal);}
 				if(customerModal){
 					customerModal.addEventListener('click', function(event){
@@ -26065,6 +26119,32 @@ class AJForms_Admin {
 					document.addEventListener('keydown', function(event){if('Escape' === event.key && !customerModal.hidden){closeModal();}});
 				}
 				if(statusFilter && filterForm){statusFilter.addEventListener('change', function(){filterForm.submit();});}
+				// Live customer search: from 3 characters, hide rows that don't match every word.
+				// Hidden rows are also unchecked so a bulk action can never reach them. Enter (or
+				// the Search button) runs the full database search for customers beyond this page.
+				var searchInput = document.getElementById('ajcore-customer-search');
+				var searchCount = document.getElementById('ajcore-customer-search-count');
+				function applyCustomerSearch(){
+					if(!searchInput){return;}
+					var words = searchInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+					var active = searchInput.value.trim().length >= 3;
+					var rows = Array.prototype.slice.call(document.querySelectorAll('tr[data-customer-search]'));
+					var shown = 0;
+					rows.forEach(function(tr){
+						var hay = tr.getAttribute('data-customer-search') || '';
+						var match = !active || words.every(function(w){return hay.indexOf(w) !== -1;});
+						tr.hidden = !match;
+						if(match){shown++;}
+						else{var cb = tr.querySelector('.ajcore-portal-user-checkbox'); if(cb){cb.checked = false;}}
+					});
+					if(checkAll){checkAll.checked = false;}
+					if(searchCount){searchCount.textContent = active ? shown + ' / ' + rows.length : '';}
+				}
+				if(searchInput){
+					var searchTimer = null;
+					searchInput.addEventListener('input', function(){clearTimeout(searchTimer); searchTimer = setTimeout(applyCustomerSearch, 120);});
+					applyCustomerSearch();
+				}
 				if(checkAll){checkAll.addEventListener('change', function(){setAll(checkAll.checked);});}
 				if(form){
 					form.addEventListener('submit', function(event){
