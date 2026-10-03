@@ -72,7 +72,6 @@ class AJForms {
 		add_action( 'wp_ajax_ajcore_toggle_multisite_portal', array( $plugin_admin, 'ajax_toggle_multisite_portal' ) );
 		add_action( 'ajforms_daily_asana_sync', array( $plugin_admin, 'sync_asana_reference_data' ) );
 		add_action( 'ajcore_portal_stripe_sync', array( $plugin_admin, 'run_scheduled_portal_sync_job' ) );
-		add_action( 'ajcore_compliance_reminders', array( $plugin_admin, 'run_compliance_reminder_job' ) );
 		add_action( 'ajcore_local_recurring_transactions', array( $plugin_admin, 'run_local_recurring_transactions_job' ) );
 		add_action( 'ajcore_chat_auto_close_stale', array( $plugin_admin, 'run_chat_auto_close_job' ) );
 		add_action( 'ajcore_manual_sync_run', array( $plugin_admin, 'run_manual_sync_job_from_transient' ) );
@@ -110,9 +109,6 @@ class AJForms {
 			wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'ajforms_daily_asana_sync' );
 		}
 
-		if ( ! wp_next_scheduled( 'ajcore_compliance_reminders' ) ) {
-			wp_schedule_event( time() + 2 * HOUR_IN_SECONDS, 'daily', 'ajcore_compliance_reminders' );
-		}
 		if ( ! wp_next_scheduled( 'ajcore_local_recurring_transactions' ) ) {
 			wp_schedule_event( time() + 5 * MINUTE_IN_SECONDS, 'daily', 'ajcore_local_recurring_transactions' );
 		}

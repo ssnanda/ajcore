@@ -5429,6 +5429,12 @@ class AJForms_Admin {
 		return array_values( array_filter( array_map( 'strval', (array) apply_filters( 'ajcore_brand_setting_prefixes', array() ) ) ) );
 	}
 
+	/** Stored settings keys starting with any of these are kept as-is by the settings save:
+	 *  brand prefixes plus other extension-owned prefixes ('ajcore_preserved_setting_prefixes'). */
+	private function get_preserved_setting_prefixes() {
+		return array_values( array_unique( array_merge( $this->get_brand_setting_prefixes(), array_filter( array_map( 'strval', (array) apply_filters( 'ajcore_preserved_setting_prefixes', array() ) ) ) ) ) );
+	}
+
 	/** True when an extension supplied a separate brand with its own saved settings
 	 *  (settings_prefix), as opposed to the site's default brand. */
 	private function is_brand_variant( $brand ) {
@@ -5935,8 +5941,20 @@ class AJForms_Admin {
 			'footer_parts'  => function ( $brand, $reason ) {
 				return $this->get_branded_email_footer_parts( $brand, $reason );
 			},
-			'send'          => function ( $to, $subject, $message, $headers, $from_email, $from_name ) {
-				return $this->send_branded_wp_mail( $to, $subject, $message, $headers, $from_email, $from_name );
+			'send'          => function ( $to, $subject, $message, $headers, $from_email, $from_name, $profile_key = '' ) {
+				return $this->send_branded_wp_mail( $to, $subject, $message, $headers, $from_email, $from_name, $profile_key );
+			},
+			'brand'         => function ( $stripe_customer_id, $customer_email ) {
+				return $this->get_customer_brand_context( $stripe_customer_id, 0, $customer_email );
+			},
+			'is_brand_variant' => function ( $brand ) {
+				return $this->is_brand_variant( $brand );
+			},
+			'brand_subject' => function ( $subject, $brand ) {
+				return $this->apply_customer_brand_to_subject( $subject, $brand );
+			},
+			'copy_raw'      => function ( $settings, $heading_key, $body_key, $default_heading, $default_body_lines, $tokens ) {
+				return $this->resolve_email_copy( $settings, $heading_key, $body_key, $default_heading, $default_body_lines, $tokens );
 			},
 		);
 	}
@@ -14292,7 +14310,7 @@ class AJForms_Admin {
 		// scoping (which no longer lists these) decide it.
 		// Keys owned by an extension's brands (AJCore-RA: university_*) aren't on this form, so keep
 		// every stored one exactly as it is instead of dropping it with the rebuilt settings.
-		foreach ( $this->get_brand_setting_prefixes() as $brand_prefix ) {
+		foreach ( $this->get_preserved_setting_prefixes() as $brand_prefix ) {
 			foreach ( $current_settings as $stored_key => $stored_value ) {
 				if ( 0 === strpos( (string) $stored_key, $brand_prefix ) && ! array_key_exists( $stored_key, $settings ) ) {
 					$settings[ $stored_key ] = $stored_value;
@@ -16726,186 +16744,6 @@ class AJForms_Admin {
 		}
 
 		return (bool) $this->send_branded_wp_mail( $customer_email, $subject, $message, $headers, $sender['from_email'], $sender['from_name'], isset( $sender['profile'] ) ? $sender['profile'] : '' );
-	}
-
-	/**
-	 * Branded compliance-deadline reminder (annual report). Used by the ops REST
-	 * "Remind now" action and the daily reminder cron.
-	 */
-	public function send_compliance_reminder_for_ops( $entity, $filing, $customer_name, $customer_email ) {
-		$customer_email = sanitize_email( (string) $customer_email );
-		if ( ! is_email( $customer_email ) ) {
-			return false;
-		}
-
-		$settings  = $this->get_plugin_settings();
-		$brand     = $this->get_customer_brand_context( ! empty( $entity->stripe_customer_id ) ? $entity->stripe_customer_id : '', 0, $customer_email );
-		$sender    = $this->resolve_email_sender( $settings, 'wp_compliance_from_email', 'wp_compliance_from_name' );
-		$site_name = $brand['site_name'];
-		if ( $this->is_brand_variant( $brand ) ) {
-			$sender['from_name'] = $brand['site_name'];
-		}
-
-		$due_date  = mysql2date( get_option( 'date_format' ), (string) $filing->due_date . ' 00:00:00' );
-		$days_left = (int) floor( ( strtotime( (string) $filing->due_date ) - strtotime( gmdate( 'Y-m-d' ) ) ) / DAY_IN_SECONDS );
-		$overdue   = $days_left < 0;
-
-		$email_tokens = array(
-			'{name}'        => '' !== trim( (string) $customer_name ) ? $customer_name : $customer_email,
-			'{entity_name}' => (string) $entity->entity_name,
-			'{year}'        => (string) $filing->period_year,
-			'{due_date}'    => $due_date,
-			'{state}'       => (string) $entity->jurisdiction,
-		);
-
-		if ( $overdue ) {
-			$template = $this->get_additional_branded_email_templates()[ 'compliance_overdue' ];
-			$default_subject = $template['default_subject'];
-			$default_heading = $template['default_heading'];
-			$default_body    = $template['default_body'];
-			$subject_key = 'wp_compliance_overdue_subject';
-			$heading_key = 'wp_compliance_overdue_heading';
-			$body_key    = 'wp_compliance_overdue_body';
-		} else {
-			$template = $this->get_additional_branded_email_templates()[ 'compliance_reminder' ];
-			$default_subject = $template['default_subject'];
-			$default_heading = $template['default_heading'];
-			$default_body    = $template['default_body'];
-			$subject_key = 'wp_compliance_reminder_subject';
-			$heading_key = 'wp_compliance_reminder_heading';
-			$body_key    = 'wp_compliance_reminder_body';
-		}
-
-		$subject_template = ! empty( $settings[ $subject_key ] ) ? sanitize_text_field( (string) $settings[ $subject_key ] ) : $default_subject;
-		$subject          = $this->apply_customer_brand_to_subject( strtr( $subject_template, $email_tokens ), $brand );
-
-		$copy = $this->resolve_email_copy( $settings, $heading_key, $body_key, $default_heading, $default_body, $email_tokens );
-
-		$info_value = sprintf(
-			/* translators: 1: entity name, 2: report year, 3: due date */
-			__( '%1$s — %2$s annual report — due %3$s', 'ajforms' ),
-			(string) $entity->entity_name,
-			(string) $filing->period_year,
-			$due_date
-		);
-
-		$message = $this->render_branded_email_html(
-			array(
-				'kicker'         => $site_name,
-				'heading'        => $copy['heading'],
-				'paragraphs'     => $copy['paragraphs'],
-				'info_box_label' => __( 'Deadline', 'ajforms' ),
-				'info_box_value' => $info_value,
-				'footer_note'    => __( 'You are receiving this because we serve as registered agent for this entity.', 'ajforms' ),
-			)
-		);
-
-		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
-		if ( is_email( $sender['from_email'] ) ) {
-			$headers[] = 'From: ' . $sender['from_name'] . ' <' . $sender['from_email'] . '>';
-			$headers[] = 'Reply-To: ' . $sender['from_email'];
-		}
-
-		return (bool) $this->send_branded_wp_mail( $customer_email, $subject, $message, $headers, $sender['from_email'], $sender['from_name'], isset( $sender['profile'] ) ? $sender['profile'] : '' );
-	}
-
-	/**
-	 * Daily cron: walk pending filings and email the linked customer as each
-	 * reminder window opens (60/30/14/7 days out, then overdue). Stage tracking on
-	 * the filing row makes the job idempotent — each window fires at most once.
-	 */
-	public function run_compliance_reminder_job() {
-		if ( '1' !== (string) get_option( 'ajcore_compliance_reminders_enabled', '1' ) ) {
-			return;
-		}
-		if ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() ) {
-			return;
-		}
-
-		$pdb         = $this->get_pdb();
-		$t_entities  = $pdb->prefix . 'aj_portal_compliance_entities';
-		$t_filings   = $pdb->prefix . 'aj_portal_compliance_filings';
-		$t_customers = $pdb->prefix . 'aj_portal_stripe_customers';
-		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $t_filings ) ) !== $t_filings ) {
-			return;
-		}
-
-		// Seed the current year's filing row for any active entity missing one, so
-		// reminders fire after Jan 1 even if nobody has opened the ops calendar yet.
-		$current_year = (int) gmdate( 'Y' );
-		$entities     = $pdb->get_results( "SELECT * FROM `{$t_entities}` WHERE entity_status = 'active'" );
-		foreach ( (array) $entities as $entity ) {
-			$year   = max( $current_year, (int) $entity->first_report_year );
-			$exists = (int) $pdb->get_var( $pdb->prepare(
-				"SELECT COUNT(*) FROM `{$t_filings}` WHERE entity_id = %d AND filing_type = 'annual_report' AND period_year = %d",
-				(int) $entity->id,
-				$year
-			) );
-			if ( ! $exists ) {
-				$month = max( 1, min( 12, (int) $entity->due_month ) );
-				$day   = max( 1, min( 28, (int) $entity->due_day ) );
-				$pdb->query( $pdb->prepare(
-					"INSERT IGNORE INTO `{$t_filings}` (entity_id, filing_type, period_year, due_date) VALUES (%d, 'annual_report', %d, %s)",
-					(int) $entity->id,
-					$year,
-					sprintf( '%04d-%02d-%02d', $year, $month, $day )
-				) );
-			}
-		}
-
-		$horizon = gmdate( 'Y-m-d', time() + 60 * DAY_IN_SECONDS );
-		$rows    = $pdb->get_results( $pdb->prepare(
-			"SELECT f.*, e.entity_name, e.jurisdiction, e.stripe_customer_id, c.name AS customer_name, c.email AS customer_email
-			FROM `{$t_filings}` f
-			INNER JOIN `{$t_entities}` e ON e.id = f.entity_id AND e.entity_status = 'active'
-			LEFT JOIN `{$t_customers}` c ON c.stripe_customer_id = e.stripe_customer_id
-			WHERE f.status = 'pending' AND f.client_completed = 0 AND f.due_date <= %s
-			ORDER BY f.due_date ASC
-			LIMIT 500",
-			$horizon
-		) );
-
-		$stage_rank = array( '' => 0, '60d' => 1, '30d' => 2, '14d' => 3, '7d' => 4, 'overdue' => 5 );
-		$today_ts   = strtotime( gmdate( 'Y-m-d' ) );
-
-		foreach ( (array) $rows as $row ) {
-			if ( ! is_email( (string) $row->customer_email ) ) {
-				continue;
-			}
-
-			$days_left = (int) floor( ( strtotime( (string) $row->due_date ) - $today_ts ) / DAY_IN_SECONDS );
-			if ( $days_left < 0 ) {
-				$desired = 'overdue';
-			} elseif ( $days_left <= 7 ) {
-				$desired = '7d';
-			} elseif ( $days_left <= 14 ) {
-				$desired = '14d';
-			} elseif ( $days_left <= 30 ) {
-				$desired = '30d';
-			} else {
-				$desired = '60d';
-			}
-
-			$current = isset( $stage_rank[ (string) $row->reminder_stage ] ) ? (string) $row->reminder_stage : '';
-			if ( $stage_rank[ $desired ] <= $stage_rank[ $current ] ) {
-				continue;
-			}
-
-			$sent = $this->send_compliance_reminder_for_ops( $row, $row, (string) $row->customer_name, (string) $row->customer_email );
-			if ( $sent ) {
-				$pdb->update(
-					$t_filings,
-					array(
-						'reminder_stage'   => $desired,
-						'last_reminder_at' => current_time( 'mysql' ),
-						'reminders_sent'   => (int) $row->reminders_sent + 1,
-					),
-					array( 'id' => (int) $row->id ),
-					array( '%s', '%s', '%d' ),
-					array( '%d' )
-				);
-			}
-		}
 	}
 
 	/** Public entry point for the ops REST API — returns the workflow status options for a request. */
@@ -27317,7 +27155,7 @@ class AJForms_Admin {
 
 	/** Built-in templates shown read-only in Settings; senders share these defaults. */
 	private function get_additional_branded_email_templates() {
-		return array(
+		$templates = array(
 			'service_purchase_welcome' => array(
 				'label' => __( 'Service Purchase Welcome', 'ajforms' ),
 				'key' => 'wp_service_purchase_welcome',
@@ -27377,36 +27215,6 @@ class AJForms_Admin {
 					__( 'Reminder: most new companies are required to file a Beneficial Ownership Information Report (BOIR) with FinCEN. You can file directly at boiefiling.fincen.gov/boir/html.', 'ajforms' ),
 				),
 			),
-			'compliance_overdue' => array(
-				'label' => __( 'Annual Report Overdue', 'ajforms' ),
-				'key' => 'wp_compliance_overdue',
-				'sender_key' => 'wp_compliance',
-				'brand_variants' => false,
-				'to' => __( 'Email of the customer linked to the compliance entity.', 'ajforms' ),
-				'fixed' => __( 'Shown when the filing due date has passed. Deadline box includes entity, report year and due date. Footer: You are receiving this because we serve as registered agent for this entity.', 'ajforms' ),
-				'default_subject' => __( 'OVERDUE: {year} {state} Annual Report for {entity_name}', 'ajforms' ),
-				'default_heading' => __( 'The annual report for {entity_name} is past due', 'ajforms' ),
-				'default_body' => array(
-					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-					__( 'The {year} annual report for {entity_name} was due {due_date} and has not been filed with the {state} Secretary of State.', 'ajforms' ),
-					__( 'A missed annual report can lead to administrative dissolution. We can prepare and file it for you — reply to this email or contact us to get it taken care of.', 'ajforms' ),
-				),
-			),
-			'compliance_reminder' => array(
-				'label' => __( 'Annual Report Reminder', 'ajforms' ),
-				'key' => 'wp_compliance_reminder',
-				'sender_key' => 'wp_compliance',
-				'brand_variants' => false,
-				'to' => __( 'Email of the customer linked to the compliance entity.', 'ajforms' ),
-				'fixed' => __( 'Sent by Remind now or the scheduled reminder windows. Deadline box includes entity, report year and due date. Footer: You are receiving this because we serve as registered agent for this entity.', 'ajforms' ),
-				'default_subject' => __( 'Reminder: {year} {state} Annual Report for {entity_name} is due {due_date}', 'ajforms' ),
-				'default_heading' => __( 'An annual report deadline is coming up', 'ajforms' ),
-				'default_body' => array(
-					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
-					__( 'The {year} annual report for {entity_name} is due {due_date} with the {state} Secretary of State.', 'ajforms' ),
-					__( 'We can prepare and file it for you so nothing slips — reply to this email or contact us and we will handle the rest.', 'ajforms' ),
-				),
-			),
 			'ra_change_filed' => array(
 				'label' => __( 'Registered Agent Change Filed', 'ajforms' ),
 				'key' => 'wp_ra_change_filed',
@@ -27423,6 +27231,9 @@ class AJForms_Admin {
 				),
 			),
 		);
+
+		// Extensions add their own (AJCore-RA: the annual-report reminder emails).
+		return apply_filters( 'ajcore_additional_branded_email_templates', $templates );
 	}
 
 	public function display_email_templates_settings_section() {

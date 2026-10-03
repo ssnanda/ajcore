@@ -25,6 +25,9 @@
  * API 9: 'ajcore_portal_office_address' filter supplies the portal Overview office address card.
  * API 10: rest_toolkit() and can_use_portal() for extension routes; the compliance API is
  * registered by AJCore-RA, not AJCore.
+ * API 11: email toolkit grows (brand, copy_raw, send profile) and the
+ * 'ajcore_additional_branded_email_templates' / 'ajcore_preserved_setting_prefixes' filters; the
+ * annual-report reminder email, daily job and their templates live in AJCore-RA.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -38,7 +41,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 10 );
+	define( 'AJCORE_EXTENSION_API', 11 );
 }
 
 class AJCore_Extensions {
