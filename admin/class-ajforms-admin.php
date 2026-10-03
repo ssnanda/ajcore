@@ -16775,7 +16775,7 @@ class AJForms_Admin {
 	/**
 	 * Notifies a customer that document(s) from the Gmail Intake mailbox were just filed to
 	 * their portal Files — short and to the point (modeled after, but much shorter than, the real
-	 * NC SOS approval email): what was filed, a BOIR reminder with the direct filing link, and a
+	 * NC SOS approval email): what was filed and a
 	 * getting-started checklist. Subject/heading/body are settings-overridable like every other
 	 * branded email (see resolve_email_copy()); the checklist itself is not (yet) editable.
 	 */
@@ -26596,7 +26596,7 @@ class AJForms_Admin {
 						</tr>
 						<tr>
 							<th><label for="task_frequency"><?php esc_html_e( 'Task Frequency', 'ajforms' ); ?></label></th>
-							<td><select id="task_frequency" name="task_frequency"><?php foreach ( $frequencies as $frequency_key => $frequency_label ) : ?><option value="<?php echo esc_attr( $frequency_key ); ?>" <?php selected( $current_frequency, $frequency_key ); ?>><?php echo esc_html( $frequency_label ); ?></option><?php endforeach; ?></select><p class="description"><?php esc_html_e( 'Use One-time for BOI-type tasks. Use Recurring for annual reports and tax reminders.', 'ajforms' ); ?></p></td>
+							<td><select id="task_frequency" name="task_frequency"><?php foreach ( $frequencies as $frequency_key => $frequency_label ) : ?><option value="<?php echo esc_attr( $frequency_key ); ?>" <?php selected( $current_frequency, $frequency_key ); ?>><?php echo esc_html( $frequency_label ); ?></option><?php endforeach; ?></select><p class="description"><?php esc_html_e( 'One-time for a single task, Recurring for one that repeats each year.', 'ajforms' ); ?></p></td>
 						</tr>
 						<tr>
 							<th><label for="task_stripe_customer_id"><?php esc_html_e( 'Client', 'ajforms' ); ?></label></th>
@@ -27335,7 +27335,6 @@ class AJForms_Admin {
 				'default_body' => array(
 					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
 					__( "We've added the following document(s) to your client portal: {files}.", 'ajforms' ),
-					__( 'Reminder: most new companies are required to file a Beneficial Ownership Information Report (BOIR) with FinCEN. You can file directly at boiefiling.fincen.gov/boir/html.', 'ajforms' ),
 				),
 			),
 			'ra_change_filed' => array(
@@ -29176,7 +29175,6 @@ class AJForms_Admin {
 			'rural rise'           => array( 'label' => 'Rural Rise' ),
 			'misleading mailings'  => array( 'label' => 'Misleading Mailings Targeting New Companies' ),
 			'notice to employers'  => array( 'label' => 'Important Notice to Employers' ),
-			'beneficial ownership' => array( 'label' => 'Beneficial Ownership Information Reporting Requirement', 'link' => 'https://boiefiling.fincen.gov/boir/html' ),
 		);
 		foreach ( $flyer_rules as $keyword => $rule ) {
 			if ( false !== strpos( $lower, $keyword ) ) {

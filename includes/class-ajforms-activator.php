@@ -1303,69 +1303,6 @@ class AJForms_Activator {
 			)
 		);
 
-		$current_year = (int) current_time( 'Y' );
-		$march_15 = strtotime( $current_year . '-03-15 00:00:00' ) < current_time( 'timestamp' ) ? ( $current_year + 1 ) . '-03-15' : $current_year . '-03-15';
-		$april_15 = strtotime( $current_year . '-04-15 00:00:00' ) < current_time( 'timestamp' ) ? ( $current_year + 1 ) . '-04-15' : $current_year . '-04-15';
-
-		$default_tasks = array(
-			array(
-				'title'           => 'BOI Report',
-				'status'          => 'open',
-				'due_date'        => null,
-				'action_required' => 'Confirm whether BOI reporting is required and mark completed when filed.',
-				'task_frequency'  => 'one_time',
-			),
-			array(
-				'title'           => 'Annual Report',
-				'status'          => 'upcoming',
-				'due_date'        => $april_15,
-				'action_required' => 'File the annual report with the state if not already completed.',
-				'task_frequency'  => 'recurring',
-			),
-			array(
-				'title'           => 'Tax Return for Multi-Member LLCs / K-1s',
-				'status'          => 'upcoming',
-				'due_date'        => $march_15,
-				'action_required' => 'Prepare partnership return and issue K-1s if applicable.',
-				'task_frequency'  => 'recurring',
-			),
-			array(
-				'title'           => 'Tax Return for Pass-Through LLCs',
-				'status'          => 'upcoming',
-				'due_date'        => $april_15,
-				'action_required' => 'Prepare pass-through LLC tax filing if applicable.',
-				'task_frequency'  => 'recurring',
-			),
-		);
-
-		foreach ( $default_tasks as $default_task ) {
-			$existing_task_id = $wpdb->get_var(
-				$wpdb->prepare(
-					"SELECT id FROM $table_tasks WHERE task_scope = %s AND title = %s LIMIT 1",
-					'global',
-					$default_task['title']
-				)
-			);
-
-			if ( ! $existing_task_id ) {
-				$wpdb->insert(
-					$table_tasks,
-					array(
-						'stripe_customer_id' => '',
-						'task_scope'         => 'global',
-						'task_frequency'     => $default_task['task_frequency'],
-						'title'              => $default_task['title'],
-						'status'             => $default_task['status'],
-						'due_date'           => $default_task['due_date'],
-						'action_required'    => $default_task['action_required'],
-						'client_visible'     => 1,
-						'created_by'         => 0,
-					),
-					array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d' )
-				);
-			}
-		}
-
 		add_role(
 			'aj_portal_user',
 			__( 'AJ Portal User', 'ajforms' ),

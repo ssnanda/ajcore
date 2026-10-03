@@ -5257,8 +5257,9 @@ class AJForms {
 
 	/** Site-local content shared by the Overview settings form and client portal. */
 	public static function get_portal_overview_settings() {
-		// Neutral by default: AJCore-RA supplies the BOI banner and Helpful Reading links through
-		// the 'ajcore_portal_overview_defaults' filter. Site-saved overview settings still win.
+		// Empty by default: the announcement banner and Helpful Reading list are set in the UI
+		// (Settings > Overview). An extension may supply defaults through
+		// 'ajcore_portal_overview_defaults'; site-saved overview settings always win.
 		$defaults = array(
 			'banner_enabled' => false,
 			'banner_heading' => '',
@@ -5313,8 +5314,8 @@ class AJForms {
 			<h2><?php echo esc_html( sprintf( __( 'Welcome, %s', 'ajforms' ), $display_name ) ); ?></h2>
 
 			<?php if ( $overview_settings['banner_enabled'] ) : ?>
-			<div class="aj-portal-boir-banner">
-				<style>.aj-portal-boir-banner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin:0 0 20px;padding:16px 20px;border-radius:16px;background:linear-gradient(135deg,rgba(251,191,36,.14),rgba(239,68,68,.10));border:1px solid rgba(217,119,6,.35)}.aj-portal-boir-banner p{margin:0;font-size:14px;color:#78350f}.aj-portal-boir-banner strong{color:#92400e}.aj-portal-boir-banner .button{white-space:nowrap;background:linear-gradient(135deg,#d97706 0%,#dc2626 100%)!important;box-shadow:0 18px 38px rgba(217,119,6,.24)!important}</style>
+			<div class="aj-portal-announcement-banner">
+				<style>.aj-portal-announcement-banner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;margin:0 0 20px;padding:16px 20px;border-radius:16px;background:linear-gradient(135deg,rgba(251,191,36,.14),rgba(239,68,68,.10));border:1px solid rgba(217,119,6,.35)}.aj-portal-announcement-banner p{margin:0;font-size:14px;color:#78350f}.aj-portal-announcement-banner strong{color:#92400e}.aj-portal-announcement-banner .button{white-space:nowrap;background:linear-gradient(135deg,#d97706 0%,#dc2626 100%)!important;box-shadow:0 18px 38px rgba(217,119,6,.24)!important}</style>
 				<p><strong><?php echo esc_html( $overview_settings['banner_heading'] ); ?></strong> <?php echo nl2br( esc_html( $overview_settings['banner_message'] ) ); ?></p>
 				<?php if ( '' !== $overview_settings['banner_url'] && '' !== $overview_settings['banner_button'] ) : ?>
 					<a class="button" href="<?php echo esc_url( $overview_settings['banner_url'] ); ?>" target="_blank" rel="noopener"><?php echo esc_html( $overview_settings['banner_button'] ); ?></a>
