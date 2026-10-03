@@ -20,6 +20,8 @@
  * get_email_toolkit() exposes the email helpers an extension needs.
  * API 7: 'ajcore_customer_brand' filter lets an extension claim a customer/lead for another
  * brand (name, sender, 'settings_prefix'); AJCore itself has no University Place values.
+ * API 8: 'ajcore_brand_setting_prefixes' filter; AJCore carries no university_* defaults or
+ * save handling and preserves stored keys with an extension's brand prefix.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -33,7 +35,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 7 );
+	define( 'AJCORE_EXTENSION_API', 8 );
 }
 
 class AJCore_Extensions {

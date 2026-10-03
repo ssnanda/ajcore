@@ -5236,7 +5236,7 @@ class AJForms_Admin {
 		// From header, which is not a valid sender at all.
 		if ( '' === $profile_from['from_email']
 			&& empty( $settings[ $from_email_key ] )
-			&& in_array( $from_email_key, array( 'wp_welcome_from_email', 'university_wp_welcome_from_email' ), true ) ) {
+			&& in_array( $from_email_key, array_merge( array( 'wp_welcome_from_email' ), array_map( function ( $brand_prefix ) { return $brand_prefix . 'wp_welcome_from_email'; }, $this->get_brand_setting_prefixes() ) ), true ) ) {
 			$prefix = 'smtp2' === $sending_profile ? 'smtp2_' : 'smtp_';
 			if ( '' === trim( (string) $settings[ $prefix . 'host' ] ) ) {
 				$prefix = 'smtp_'; // profile 2 routed but unconfigured — the send falls back to 1.
@@ -5419,6 +5419,14 @@ class AJForms_Admin {
 		$brand = apply_filters( 'ajcore_default_brand', $brand );
 		$brand['partner_key'] = $partner_key;
 		return $brand;
+	}
+
+	/**
+	 * Settings-key prefixes an extension owns for its own brands (AJCore-RA: 'university_').
+	 * Saved keys with these prefixes are never touched by AJCore's settings save.
+	 */
+	private function get_brand_setting_prefixes() {
+		return array_values( array_filter( array_map( 'strval', (array) apply_filters( 'ajcore_brand_setting_prefixes', array() ) ) ) );
 	}
 
 	/** True when an extension supplied a separate brand with its own saved settings
@@ -14139,10 +14147,6 @@ class AJForms_Admin {
 			'wp_service_status_mail_profile' => $this->sanitize_mail_profile_post( 'wp_service_status_mail_profile' ),
 			'lead_followup_mail_profile'     => $this->sanitize_mail_profile_post( 'lead_followup_mail_profile' ),
 			'ra_authorization_mail_profile'  => $this->sanitize_mail_profile_post( 'ra_authorization_mail_profile' ),
-			'university_wp_password_reset_mail_profile' => $this->sanitize_mail_profile_post( 'university_wp_password_reset_mail_profile' ),
-			'university_wp_welcome_mail_profile'        => $this->sanitize_mail_profile_post( 'university_wp_welcome_mail_profile' ),
-			'university_wp_service_status_mail_profile' => $this->sanitize_mail_profile_post( 'university_wp_service_status_mail_profile' ),
-			'university_lead_followup_mail_profile'     => $this->sanitize_mail_profile_post( 'university_lead_followup_mail_profile' ),
 			'mail_default_profile'           => isset( $_POST['mail_default_profile'] ) && 'smtp2' === sanitize_key( wp_unslash( $_POST['mail_default_profile'] ) ) ? 'smtp2' : ( isset( $_POST['mail_default_profile'] ) ? 'smtp' : ( isset( $current_settings['mail_default_profile'] ) && 'smtp2' === $current_settings['mail_default_profile'] ? 'smtp2' : 'smtp' ) ),
 			'smtp_username'                  => isset( $_POST['smtp_username'] ) ? sanitize_text_field( wp_unslash( $_POST['smtp_username'] ) ) : '',
 			// Rendered empty on purpose (never echo a stored credential), so an empty POST means
@@ -14166,21 +14170,6 @@ class AJForms_Admin {
 			'wp_welcome_from_name'           => isset( $_POST['wp_welcome_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_welcome_from_name'] ) ) : '',
 			'wp_service_status_from_email'   => isset( $_POST['wp_service_status_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_service_status_from_email'] ) ) : '',
 			'wp_service_status_from_name'    => isset( $_POST['wp_service_status_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_service_status_from_name'] ) ) : '',
-			'university_wp_password_reset_subject'    => isset( $_POST['university_wp_password_reset_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_password_reset_subject'] ) ) : 'Password reset for your University Place Office Suites portal login',
-			'university_wp_password_reset_heading'    => isset( $_POST['university_wp_password_reset_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_password_reset_heading'] ) ) : 'Set your client portal password',
-			'university_wp_password_reset_body'       => isset( $_POST['university_wp_password_reset_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_wp_password_reset_body'] ) ) : "Hi {name},\nUse the secure button below to create a new password for your client portal account. This link is private and should only be used by you.",
-			'university_wp_password_reset_from_email' => isset( $_POST['university_wp_password_reset_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_wp_password_reset_from_email'] ) ) : 'donotreply@universityofficesuites.com',
-			'university_wp_password_reset_from_name'  => isset( $_POST['university_wp_password_reset_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_password_reset_from_name'] ) ) : 'University Place Office Suites',
-			'university_wp_welcome_email_subject'     => isset( $_POST['university_wp_welcome_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_welcome_email_subject'] ) ) : 'Welcome : Your portal access is enabled to University Place Office Suites LLC',
-			'university_wp_welcome_heading'           => isset( $_POST['university_wp_welcome_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_welcome_heading'] ) ) : 'Welcome to your client portal',
-			'university_wp_welcome_body'              => isset( $_POST['university_wp_welcome_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_wp_welcome_body'] ) ) : "Hi {name},\nYour client portal access has been enabled. Use the button below to set your password and sign in securely.",
-			'university_wp_welcome_from_email'        => isset( $_POST['university_wp_welcome_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_wp_welcome_from_email'] ) ) : 'donotreply@universityofficesuites.com',
-			'university_wp_welcome_from_name'         => isset( $_POST['university_wp_welcome_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_welcome_from_name'] ) ) : 'University Place Office Suites',
-			'university_wp_service_status_subject'    => isset( $_POST['university_wp_service_status_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_subject'] ) ) : 'Update on {service_name}: {status_label}',
-			'university_wp_service_status_heading'    => isset( $_POST['university_wp_service_status_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_heading'] ) ) : 'Your service request was updated',
-			'university_wp_service_status_body'       => isset( $_POST['university_wp_service_status_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_wp_service_status_body'] ) ) : "Hi {name},\nThe status of \"{service_name}\" has changed.",
-			'university_wp_service_status_from_email' => isset( $_POST['university_wp_service_status_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_wp_service_status_from_email'] ) ) : 'donotreply@universityofficesuites.com',
-			'university_wp_service_status_from_name'  => isset( $_POST['university_wp_service_status_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_wp_service_status_from_name'] ) ) : 'University Place Office Suites',
 			'lead_followup_from_email'       => isset( $_POST['lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['lead_followup_from_email'] ) ) : $ajf_defaults['lead_followup_from_email'],
 			'lead_followup_from_name'        => isset( $_POST['lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['lead_followup_from_name'] ) ) : '',
 			'ra_authorization_subject'       => isset( $_POST['ra_authorization_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_subject'] ) ) : $ajf_defaults['ra_authorization_subject'],
@@ -14188,14 +14177,8 @@ class AJForms_Admin {
 			'ra_authorization_body'          => isset( $_POST['ra_authorization_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_body'] ) ) : $ajf_defaults['ra_authorization_body'],
 			'ra_authorization_address'       => isset( $_POST['ra_authorization_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['ra_authorization_address'] ) ) : $ajf_defaults['ra_authorization_address'],
 			'email_footer_address'           => isset( $_POST['email_footer_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['email_footer_address'] ) ) : $ajf_defaults['email_footer_address'],
-			'university_email_footer_address' => isset( $_POST['university_email_footer_address'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_email_footer_address'] ) ) : '',
 			'ra_authorization_from_email'    => isset( $_POST['ra_authorization_from_email'] ) ? sanitize_email( wp_unslash( $_POST['ra_authorization_from_email'] ) ) : '',
 			'ra_authorization_from_name'     => isset( $_POST['ra_authorization_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['ra_authorization_from_name'] ) ) : '',
-			'university_lead_followup_email_subject' => isset( $_POST['university_lead_followup_email_subject'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_email_subject'] ) ) : 'Following up from University Place Office Suites',
-			'university_lead_followup_heading'       => isset( $_POST['university_lead_followup_heading'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_heading'] ) ) : "We'd love to hear from you",
-			'university_lead_followup_body'          => isset( $_POST['university_lead_followup_body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['university_lead_followup_body'] ) ) : "Hi {name},\nWe wanted to follow up on your recent inquiry with University Place Office Suites. If you have any questions or would like to talk through your options, give us a call — we are happy to help.\nReady to get started? You can review our services and pricing anytime on our website.",
-			'university_lead_followup_from_email'    => isset( $_POST['university_lead_followup_from_email'] ) ? sanitize_email( wp_unslash( $_POST['university_lead_followup_from_email'] ) ) : 'donotreply@universityofficesuites.com',
-			'university_lead_followup_from_name'     => isset( $_POST['university_lead_followup_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['university_lead_followup_from_name'] ) ) : 'University Place Office Suites',
 			'zoho_mail_client_id'            => isset( $_POST['zoho_mail_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_id'] ) ) : '',
 			'zoho_mail_client_secret'        => isset( $_POST['zoho_mail_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_secret'] ) ) : '',
 			'zoho_mail_account_email'        => isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : 'agent@ncllcagents.com',
@@ -14278,7 +14261,7 @@ class AJForms_Admin {
 
 		// Read-only catalog entries have no POST fields; preserve their existing overrides.
 		foreach ( $this->get_additional_branded_email_templates() as $template ) {
-			foreach ( $template['brand_variants'] ? array( '', 'university_' ) : array( '' ) as $prefix ) {
+			foreach ( $template['brand_variants'] ? array_merge( array( '' ), $this->get_brand_setting_prefixes() ) : array( '' ) as $prefix ) {
 				$keys = array( $template['key'] . '_subject', $template['key'] . '_heading', $template['key'] . '_body', $template['sender_key'] . '_from_email', $template['sender_key'] . '_from_name' );
 				foreach ( $keys as $key ) {
 					$key = $prefix . $key;
@@ -14307,9 +14290,13 @@ class AJForms_Admin {
 		// (or, for a site that's never saved one yet, keep the fallback default computed above)
 		// whenever this exact save didn't actually post the field, instead of letting section_keys
 		// scoping (which no longer lists these) decide it.
-		foreach ( array( 'university_wp_password_reset_subject', 'university_wp_password_reset_heading', 'university_wp_password_reset_body', 'university_wp_password_reset_from_email', 'university_wp_password_reset_from_name', 'university_wp_welcome_email_subject', 'university_wp_welcome_heading', 'university_wp_welcome_body', 'university_wp_welcome_from_email', 'university_wp_welcome_from_name', 'university_wp_service_status_subject', 'university_wp_service_status_heading', 'university_wp_service_status_body', 'university_wp_service_status_from_email', 'university_wp_service_status_from_name', 'university_lead_followup_email_subject', 'university_lead_followup_heading', 'university_lead_followup_body', 'university_lead_followup_from_email', 'university_lead_followup_from_name', 'university_email_footer_address' ) as $university_field ) {
-			if ( ! isset( $_POST[ $university_field ] ) && isset( $current_settings[ $university_field ] ) ) {
-				$settings[ $university_field ] = $current_settings[ $university_field ];
+		// Keys owned by an extension's brands (AJCore-RA: university_*) aren't on this form, so keep
+		// every stored one exactly as it is instead of dropping it with the rebuilt settings.
+		foreach ( $this->get_brand_setting_prefixes() as $brand_prefix ) {
+			foreach ( $current_settings as $stored_key => $stored_value ) {
+				if ( 0 === strpos( (string) $stored_key, $brand_prefix ) && ! array_key_exists( $stored_key, $settings ) ) {
+					$settings[ $stored_key ] = $stored_value;
+				}
 			}
 		}
 
@@ -14346,7 +14333,7 @@ class AJForms_Admin {
 			// Email form (they govern all plugin mail, not just portal templates), so a
 			// section-scoped restore would let a save on one form wipe the other's value.
 			// Preserved by their own loop above instead, like the OAuth/university fields.
-			'email-templates' => array( 'wp_password_reset_mail_profile', 'wp_welcome_mail_profile', 'wp_service_status_mail_profile', 'lead_followup_mail_profile', 'ra_authorization_mail_profile', 'university_wp_password_reset_mail_profile', 'university_wp_welcome_mail_profile', 'university_wp_service_status_mail_profile', 'university_lead_followup_mail_profile', 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name', 'email_footer_address' ),
+			'email-templates' => array( 'wp_password_reset_mail_profile', 'wp_welcome_mail_profile', 'wp_service_status_mail_profile', 'lead_followup_mail_profile', 'ra_authorization_mail_profile', 'wp_email_templates_enabled', 'enable_university_brand_templates', 'wp_password_reset_subject', 'wp_welcome_email_subject', 'wp_service_status_subject', 'lead_followup_email_subject', 'wp_password_reset_heading', 'wp_password_reset_body', 'wp_welcome_heading', 'wp_welcome_body', 'wp_service_status_heading', 'wp_service_status_body', 'lead_followup_heading', 'lead_followup_body', 'wp_password_reset_from_email', 'wp_password_reset_from_name', 'wp_welcome_from_email', 'wp_welcome_from_name', 'wp_service_status_from_email', 'wp_service_status_from_name', 'lead_followup_from_email', 'lead_followup_from_name', 'ra_authorization_subject', 'ra_authorization_heading', 'ra_authorization_body', 'ra_authorization_address', 'ra_authorization_from_email', 'ra_authorization_from_name', 'email_footer_address' ),
 			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
 			'email'        => array( 'mail_mode', 'smtp_host', 'smtp_port', 'smtp_encryption', 'smtp_auth', 'smtp_username', 'smtp_password', 'smtp_envelope_from_username', 'smtp_label', 'smtp2_label', 'smtp2_host', 'smtp2_port', 'smtp2_encryption', 'smtp2_auth', 'smtp2_username', 'smtp2_password', 'smtp2_envelope_from_username', 'smtp_from_email', 'smtp_from_name', 'smtp2_from_email', 'smtp2_from_name', 'mail_default_profile' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
