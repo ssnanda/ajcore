@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.349
+ * Version: 0.7.350
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.349' );
+	define( 'AJCORE_VERSION', '0.7.350' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -3226,10 +3226,12 @@ run_ajforms();
  * Annual Report and two tax-return tasks). They are gone from AJCore, but updating from an older
  * version runs that older code once more, which adds them back; this removes them on the next
  * request. It only removes rows that are still untouched: global, never edited (created_by 0),
- * exact original title, and no customer status or comment on them. Runs once per site.
+ * exact original title, and no customer status or comment on them. Runs once after each AJCore
+ * update (not once ever): the older version's update step can add the tasks again after an earlier
+ * run, so each new version gets its own pass.
  */
 function ajcore_remove_seeded_default_tasks() {
-	if ( '1' === (string) get_option( 'ajcore_seeded_tasks_removed', '' ) ) {
+	if ( AJCORE_VERSION === (string) get_option( 'ajcore_seeded_tasks_removed', '' ) ) {
 		return;
 	}
 	$pdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
@@ -3254,7 +3256,7 @@ function ajcore_remove_seeded_default_tasks() {
 			$pdb->delete( $tasks, array( 'id' => $id ), array( '%d' ) );
 		}
 	}
-	update_option( 'ajcore_seeded_tasks_removed', '1', false );
+	update_option( 'ajcore_seeded_tasks_removed', AJCORE_VERSION, false );
 }
 add_action( 'plugins_loaded', 'ajcore_remove_seeded_default_tasks', 30 );
 
