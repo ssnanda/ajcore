@@ -4957,7 +4957,7 @@ class AJForms {
 		$count = 0;
 		foreach ( (array) $tasks as $task ) {
 			$status = isset( $task->portal_status ) && '' !== (string) $task->portal_status ? sanitize_key( (string) $task->portal_status ) : ( isset( $task->status ) ? sanitize_key( (string) $task->status ) : '' );
-			if ( ! in_array( $status, array( 'completed', 'cancelled', 'closed' ), true ) ) {
+			if ( ! in_array( $status, array( 'completed', 'cancelled', 'closed', 'upcoming' ), true ) ) { // upcoming isn't open yet
 				$count++;
 			}
 		}
