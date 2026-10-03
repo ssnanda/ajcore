@@ -34996,7 +34996,13 @@ class AJForms_Admin {
 
 		<?php if ( ! empty( $connected_sites ) ) : ?>
 		<div class="ajforms-settings-card" style="margin-top:16px;">
-			<h3><?php esc_html_e( 'Connected Sites', 'ajforms' ); ?></h3>
+			<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+				<h3 style="margin:0;"><?php esc_html_e( 'Connected Sites', 'ajforms' ); ?></h3>
+				<span>
+					<span id="ajcore-refresh-versions-result" style="margin-right:8px;font-weight:600;"></span>
+					<button type="button" id="ajcore-refresh-versions" class="button"><?php esc_html_e( 'Refresh versions', 'ajforms' ); ?></button>
+				</span>
+			</div>
 			<p><?php esc_html_e( 'Sites registered in the shared DB control table. The Master site is the only one that runs Stripe sync, cron, and webhook ingestion.', 'ajforms' ); ?></p>
 			<?php if ( $sites_from_cache ) : ?>
 				<p class="notice notice-warning inline"><?php esc_html_e( 'Showing the last successfully loaded site list because the shared DB is currently unavailable.', 'ajforms' ); ?></p>
@@ -35234,6 +35240,38 @@ class AJForms_Admin {
 			});
 		});
 
+		// Refresh versions: ask every connected site for its live version, then reload the table.
+		var refreshBtn = document.getElementById('ajcore-refresh-versions');
+		if (refreshBtn) {
+			refreshBtn.addEventListener('click', function() {
+				var out = document.getElementById('ajcore-refresh-versions-result');
+				var label = refreshBtn.textContent;
+				refreshBtn.disabled = true;
+				refreshBtn.textContent = '<?php echo esc_js( __( 'Checking…', 'ajforms' ) ); ?>';
+				if (out) { out.textContent = ''; }
+				var data = new FormData();
+				data.append('action', 'ajcore_refresh_site_versions');
+				data.append('nonce',  '<?php echo esc_js( wp_create_nonce( 'ajcore_refresh_site_versions' ) ); ?>');
+				fetch(ajaxurl, { method: 'POST', body: data })
+					.then(function(r) { return r.json(); })
+					.then(function(res) {
+						if (res.success) {
+							if (out) { out.textContent = res.data.summary; }
+							setTimeout(function() { location.reload(); }, 1200);
+						} else {
+							if (out) { out.textContent = res.data || '<?php echo esc_js( __( 'Refresh failed.', 'ajforms' ) ); ?>'; }
+							refreshBtn.disabled = false;
+							refreshBtn.textContent = label;
+						}
+					})
+					.catch(function() {
+						if (out) { out.textContent = '<?php echo esc_js( __( 'Request failed.', 'ajforms' ) ); ?>'; }
+						refreshBtn.disabled = false;
+						refreshBtn.textContent = label;
+					});
+			});
+		}
+
 		// Remote update buttons.
 		document.querySelectorAll('.ajcore-remote-update-btn').forEach(function(updateBtn) {
 			updateBtn.addEventListener('click', function() {
@@ -35453,6 +35491,77 @@ class AJForms_Admin {
 	 *  /ops/self-update REST endpoint, authenticated with the update_secret already sitting in
 	 *  that site's aj_shared_sites row (read directly from the shared DB — no extra credentials
 	 *  to manage). See can_trigger_remote_update() in class-ajcore-rest-api.php for the other side. */
+	/**
+	 * Connected Sites > "Refresh versions". Asks each registered site for its live version (the
+	 * public /status endpoint) and writes it into the shared control table, so the list is right
+	 * without waiting for each site's own admin heartbeat. This site refreshes itself directly.
+	 * Sites that can't be reached, or have the public status endpoint off, keep their last
+	 * reported version and are listed in the result.
+	 */
+	public function ajax_refresh_site_versions() {
+		check_ajax_referer( 'ajcore_refresh_site_versions', 'nonce' );
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ) );
+			return;
+		}
+		$shared_db = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		if ( ! $shared_db ) {
+			wp_send_json_error( __( 'Shared DB is not connected.', 'ajforms' ) );
+			return;
+		}
+
+		// This site first, straight from its own code.
+		if ( function_exists( 'ajcore_register_site_in_shared_db' ) ) {
+			ajcore_register_site_in_shared_db();
+		}
+
+		$table = $shared_db->prefix . 'aj_shared_sites';
+		$sites = $shared_db->get_results( "SELECT site_uuid, domain, ajcore_version FROM `{$table}`" );
+		$own   = (string) get_option( 'ajcore_site_uuid', '' );
+		$ok    = 0;
+		$moved = 0;
+		$fail  = array();
+
+		foreach ( (array) $sites as $site ) {
+			if ( '' !== $own && (string) $site->site_uuid === $own ) {
+				$ok++;
+				continue;
+			}
+			$base = rtrim( (string) $site->domain, '/' );
+			if ( '' === $base ) {
+				continue;
+			}
+			$response = wp_remote_get(
+				$base . '/wp-json/ajcore/v1/status',
+				array(
+					'timeout' => 10,
+					'headers' => array( 'Accept' => 'application/json' ),
+				)
+			);
+			$body    = is_wp_error( $response ) ? null : json_decode( wp_remote_retrieve_body( $response ), true );
+			$version = ( is_array( $body ) && ! empty( $body['version'] ) ) ? sanitize_text_field( (string) $body['version'] ) : '';
+			if ( '' === $version || ! preg_match( '/^\d+\.\d+\.\d+/', $version ) ) {
+				$fail[] = preg_replace( '#^https?://#', '', $base );
+				continue;
+			}
+			$ok++;
+			if ( $version !== (string) $site->ajcore_version ) {
+				$shared_db->update( $table, array( 'ajcore_version' => $version ), array( 'site_uuid' => $site->site_uuid ), array( '%s' ), array( '%s' ) );
+				$moved++;
+			}
+		}
+
+		// Also re-check the latest release, so the "available" badges are current.
+		delete_transient( 'ajforms_latest_release_info' );
+		delete_transient( 'ajforms_latest_developer_release_info' );
+
+		$summary = sprintf( __( 'Checked %1$d site(s), %2$d version(s) updated.', 'ajforms' ), $ok, $moved );
+		if ( $fail ) {
+			$summary .= ' ' . sprintf( __( 'No answer from: %s.', 'ajforms' ), implode( ', ', $fail ) );
+		}
+		wp_send_json_success( array( 'summary' => $summary, 'unreachable' => $fail ) );
+	}
+
 	public function ajax_remote_update_site() {
 		check_ajax_referer( 'ajcore_remote_update_site', 'nonce' );
 		if ( ! current_user_can( 'manage_options' ) ) {

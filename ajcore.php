@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.348
+ * Version: 0.7.349
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.348' );
+	define( 'AJCORE_VERSION', '0.7.349' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -3220,5 +3220,42 @@ function run_ajforms() {
 }
 
 run_ajforms();
+
+/**
+ * One-time cleanup of the four sample tasks older AJCore versions added to every site (BOI Report,
+ * Annual Report and two tax-return tasks). They are gone from AJCore, but updating from an older
+ * version runs that older code once more, which adds them back; this removes them on the next
+ * request. It only removes rows that are still untouched: global, never edited (created_by 0),
+ * exact original title, and no customer status or comment on them. Runs once per site.
+ */
+function ajcore_remove_seeded_default_tasks() {
+	if ( '1' === (string) get_option( 'ajcore_seeded_tasks_removed', '' ) ) {
+		return;
+	}
+	$pdb = function_exists( 'ajcore_get_portal_db' ) ? ajcore_get_portal_db() : $GLOBALS['wpdb'];
+	if ( ! $pdb ) {
+		return;
+	}
+	$tasks = $pdb->prefix . 'aj_portal_tasks';
+	if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $tasks ) ) !== $tasks ) {
+		return; // portal tables not set up here yet: try again next time
+	}
+	$statuses = $pdb->prefix . 'aj_portal_task_statuses';
+	$comments = $pdb->prefix . 'aj_portal_task_comments';
+	$titles   = array( 'BOI Report', 'Annual Report', 'Tax Return for Multi-Member LLCs / K-1s', 'Tax Return for Pass-Through LLCs' );
+	$in       = implode( ',', array_fill( 0, count( $titles ), '%s' ) );
+	$ids      = (array) $pdb->get_col(
+		$pdb->prepare( "SELECT id FROM `{$tasks}` WHERE task_scope = 'global' AND created_by = 0 AND title IN ({$in})", $titles )
+	);
+	foreach ( $ids as $id ) {
+		$id   = (int) $id;
+		$used = (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$statuses}` WHERE task_id = {$id}" ) + (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$comments}` WHERE task_id = {$id}" );
+		if ( 0 === $used ) {
+			$pdb->delete( $tasks, array( 'id' => $id ), array( '%d' ) );
+		}
+	}
+	update_option( 'ajcore_seeded_tasks_removed', '1', false );
+}
+add_action( 'plugins_loaded', 'ajcore_remove_seeded_default_tasks', 30 );
 
 require_once AJCORE_PLUGIN_DIR . 'modules/reviews/bootstrap.php';
