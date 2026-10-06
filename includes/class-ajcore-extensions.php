@@ -32,7 +32,10 @@
  * AJForms_Admin::get_task_toolkit() so an extension can create and update customer tasks.
  * API 13: 'ajcore_portal_menu_default_items' and 'ajcore_portal_tab_content' filters let an extension
  * add a client-portal tab (AJCore-RA's Website tab).
- * API 14: 'ajcore_admin_portal_tabs' filter adds a tab (label + url) to the Client Portal admin tab bar.
+ * API 14/15: 'ajcore_admin_portal_tabs' adds a tab to the Client Portal admin tab bar (label, optional url;
+ * no url = opens in the page and is drawn on the 'ajcore_admin_portal_tab_render' action).
+ * 'ajcore_current_portal_customer_id' filter returns the logged-in portal user's customer id, the same
+ * way the portal pages resolve it.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -46,7 +49,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 14 );
+	define( 'AJCORE_EXTENSION_API', 15 );
 }
 
 class AJCore_Extensions {

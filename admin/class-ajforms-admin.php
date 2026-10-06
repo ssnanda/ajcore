@@ -20361,7 +20361,15 @@ class AJForms_Admin {
 			}
 			$tab = 'cp-settings';
 		}
-		$tab      = in_array( $tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign', 'chat', 'rentec' ), true ) ? $tab : 'dashboard';
+		// Tabs added by an extension (AJCore-RA): key => array( label [, url] ). Without a url the tab
+		// opens in this page and the extension draws it on 'ajcore_admin_portal_tab_render'.
+		$ext_portal_tabs = array();
+		foreach ( (array) apply_filters( 'ajcore_admin_portal_tabs', array() ) as $ext_key => $ext_tab ) {
+			if ( is_array( $ext_tab ) && ! empty( $ext_tab['label'] ) ) {
+				$ext_portal_tabs[ sanitize_key( $ext_key ) ] = $ext_tab;
+			}
+		}
+		$tab      = in_array( $tab, array_merge( array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'esign', 'chat', 'rentec' ), array_keys( $ext_portal_tabs ) ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -20394,11 +20402,12 @@ class AJForms_Admin {
 		$external_tab_urls = array(
 			'leads' => add_query_arg( array( 'page' => 'ajforms-leads' ), admin_url( 'admin.php' ) ),
 		);
-		// Extensions (AJCore-RA) add tabs that open their own admin page: key => array( label, url ).
-		foreach ( (array) apply_filters( 'ajcore_admin_portal_tabs', array() ) as $ext_key => $ext_tab ) {
-			if ( ! empty( $ext_tab['label'] ) && ! empty( $ext_tab['url'] ) && ! isset( $tabs[ $ext_key ] ) ) {
-				$tabs[ sanitize_key( $ext_key ) ]              = (string) $ext_tab['label'];
-				$external_tab_urls[ sanitize_key( $ext_key ) ] = (string) $ext_tab['url'];
+		foreach ( $ext_portal_tabs as $ext_key => $ext_tab ) {
+			if ( ! isset( $tabs[ $ext_key ] ) ) {
+				$tabs[ $ext_key ] = (string) $ext_tab['label'];
+				if ( ! empty( $ext_tab['url'] ) ) {
+					$external_tab_urls[ $ext_key ] = (string) $ext_tab['url'];
+				}
 			}
 		}
 		?>
@@ -20500,6 +20509,8 @@ class AJForms_Admin {
 				$this->display_portal_rentec_tab();
 			} elseif ( 'cp-settings' === $tab ) {
 				$this->display_client_portal_cp_settings_tab();
+			} elseif ( isset( $ext_portal_tabs[ $tab ] ) ) {
+				do_action( 'ajcore_admin_portal_tab_render', $tab );
 			} else {
 				$this->display_file_library_page( true );
 			}

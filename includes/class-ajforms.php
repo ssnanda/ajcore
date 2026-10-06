@@ -18,6 +18,14 @@ class AJForms {
 		$this->define_rest_hooks();
 		add_filter( 'cron_schedules', array( $this, 'add_ajcore_cron_schedules' ) );
 		add_action( 'init', array( $this, 'schedule_recurring_events' ) );
+		// Extensions ask who the logged-in portal customer is the same way the portal pages do.
+		add_filter( 'ajcore_current_portal_customer_id', array( $this, 'filter_current_portal_customer_id' ) );
+	}
+
+	/** The logged-in user's portal customer (Stripe customer id), or '' when not a portal user. */
+	public function filter_current_portal_customer_id( $default = '' ) {
+		$id = $this->get_current_user_stripe_customer_id();
+		return '' !== $id ? $id : $default;
 	}
 
 	private function format_us_phone_for_display( $phone ) {
