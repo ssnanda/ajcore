@@ -12174,6 +12174,8 @@ class AJForms_Admin {
 			} )(),
 		);
 
+		$default_items = (array) apply_filters( 'ajcore_portal_menu_default_items', $default_items );
+
 		$built_in_ids    = wp_list_pluck( $default_items, 'id' );
 		$built_in_labels = array_map( 'strtolower', wp_list_pluck( $default_items, 'label' ) );
 
@@ -20392,6 +20394,13 @@ class AJForms_Admin {
 		$external_tab_urls = array(
 			'leads' => add_query_arg( array( 'page' => 'ajforms-leads' ), admin_url( 'admin.php' ) ),
 		);
+		// Extensions (AJCore-RA) add tabs that open their own admin page: key => array( label, url ).
+		foreach ( (array) apply_filters( 'ajcore_admin_portal_tabs', array() ) as $ext_key => $ext_tab ) {
+			if ( ! empty( $ext_tab['label'] ) && ! empty( $ext_tab['url'] ) && ! isset( $tabs[ $ext_key ] ) ) {
+				$tabs[ sanitize_key( $ext_key ) ]              = (string) $ext_tab['label'];
+				$external_tab_urls[ sanitize_key( $ext_key ) ] = (string) $ext_tab['url'];
+			}
+		}
 		?>
 		<div class="wrap ajforms-client-portal-admin ajcore-modern-admin">
 			<style>

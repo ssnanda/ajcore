@@ -1577,6 +1577,9 @@ class AJForms {
 			),
 		);
 
+		// Extensions (AJCore-RA) add their own built-in tabs here: array( id, label, type, url, enabled ).
+		$default_items = (array) apply_filters( 'ajcore_portal_menu_default_items', $default_items );
+
 		$built_in_ids    = wp_list_pluck( $default_items, 'id' );
 		$built_in_labels = array_map( 'strtolower', wp_list_pluck( $default_items, 'label' ) );
 
@@ -6933,6 +6936,9 @@ class AJForms {
 				echo $this->render_customer_portal_service_requests_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'reservations' === $active_tab ) {
 				echo $this->render_customer_portal_reservations_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			} else {
+				// A tab added by an extension: it returns the finished (escaped) HTML.
+				echo apply_filters( 'ajcore_portal_tab_content', '', $active_tab, array( 'stripe_customer_id' => $this->get_current_user_stripe_customer_id() ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
 			?>
 			<div class="aj-portal-contact-footer">

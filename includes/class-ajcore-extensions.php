@@ -30,6 +30,9 @@
  * annual-report reminder email, daily job and their templates live in AJCore-RA.
  * API 12: 'ajcore_task_templates' filter (Start from template on the Tasks form) and
  * AJForms_Admin::get_task_toolkit() so an extension can create and update customer tasks.
+ * API 13: 'ajcore_portal_menu_default_items' and 'ajcore_portal_tab_content' filters let an extension
+ * add a client-portal tab (AJCore-RA's Website tab).
+ * API 14: 'ajcore_admin_portal_tabs' filter adds a tab (label + url) to the Client Portal admin tab bar.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -43,7 +46,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 12 );
+	define( 'AJCORE_EXTENSION_API', 14 );
 }
 
 class AJCore_Extensions {
