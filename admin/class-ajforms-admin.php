@@ -2050,6 +2050,12 @@ class AJForms_Admin {
 		}
 		$existing_id = $existing ? (int) $existing->id : 0;
 
+		// Transaction/ledger `description` columns are varchar(255); Stripe text can be longer.
+		if ( isset( $data['description'] ) && is_string( $data['description'] )
+			&& ( $table === $this->get_portal_stripe_transactions_table() || $table === $this->get_portal_ledger_table() ) ) {
+			$data['description'] = mb_substr( $data['description'], 0, 255 );
+		}
+
 		$mode_scoped_tables = array(
 			$this->get_portal_stripe_products_table(),
 			$this->get_portal_stripe_subscriptions_table(),
