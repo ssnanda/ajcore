@@ -5587,6 +5587,7 @@ class AJCore_REST_API {
 				'description'   => (string) $file->description,
 				'file_url'      => $attachment_url ? (string) $attachment_url : '',
 				'filename'      => $filename,
+				'storage_path'  => $this->ops_file_storage_path( (int) $file->attachment_id ),
 				'assignments'   => $assignments,
 				'tags'          => $this->ops_get_file_tags( (int) $file->id ),
 				'status'        => isset( $file->status ) && 'archived' === $file->status ? 'archived' : 'active',
@@ -5819,6 +5820,15 @@ class AJCore_REST_API {
 		}
 	}
 
+	/** "bucket/object_key" for an offloaded attachment, '' when it still lives on the local disk. Staff-only (AJOps). */
+	private function ops_file_storage_path( $attachment_id ) {
+		if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
+			return '';
+		}
+		$record = AJCore_Storage_Service::get_remote_record( (int) $attachment_id );
+		return $record ? $record->bucket . '/' . $record->object_key : '';
+	}
+
 	private function ops_file_settings() {
 		$settings = function_exists( 'ajcore_get_portal_file_settings' ) ? ajcore_get_portal_file_settings() : array();
 		return array( 'categories' => array_values( (array) ( $settings['categories'] ?? array() ) ), 'tags' => (object) (array) ( $settings['tags'] ?? array() ) );
@@ -5882,6 +5892,7 @@ class AJCore_REST_API {
 			'description'   => (string) $file->description,
 			'file_url'      => $attachment_url ?: '',
 			'filename'      => $filename,
+			'storage_path'  => $this->ops_file_storage_path( (int) $file->attachment_id ),
 			'assignments'   => $assignments,
 			'tags'          => $this->ops_get_file_tags( (int) $file->id ),
 			'status'        => isset( $file->status ) && 'archived' === $file->status ? 'archived' : 'active',
