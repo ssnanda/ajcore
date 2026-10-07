@@ -16787,7 +16787,7 @@ class AJForms_Admin {
 	 * getting-started checklist. Subject/heading/body are settings-overridable like every other
 	 * branded email (see resolve_email_copy()); the checklist itself is not (yet) editable.
 	 */
-	public function send_gmail_intake_filed_notification( $stripe_customer_id, $customer_name, $customer_email, $filed_filenames ) {
+	public function send_gmail_intake_filed_notification( $stripe_customer_id, $customer_name, $customer_email, $filed_filenames, $filed_categories = array() ) {
 		$customer_email = sanitize_email( (string) $customer_email );
 		if ( ! is_email( $customer_email ) ) {
 			return false;
@@ -16815,6 +16815,26 @@ class AJForms_Admin {
 
 		$copy = $this->resolve_email_copy( $settings, 'wp_gmail_intake_heading', 'wp_gmail_intake_body', $default_heading, $default_body, $email_tokens );
 
+		// Group filed files as Important / Extra (File Settings); only when categories are known.
+		$paragraphs = $copy['paragraphs'];
+		if ( ! empty( $filed_categories ) ) {
+			$file_settings = ajcore_get_portal_file_settings();
+			$grouped       = array( 'important' => array(), 'extra' => array(), 'other' => array() );
+			foreach ( (array) $filed_filenames as $filed_name ) {
+				$grouped[ ajcore_portal_file_category_group( $filed_categories[ $filed_name ] ?? '', $file_settings ) ][] = sanitize_text_field( $filed_name );
+			}
+			$group_labels = array(
+				'important' => __( 'Important', 'ajforms' ),
+				'extra'     => __( 'Extra', 'ajforms' ),
+				'other'     => __( 'Other', 'ajforms' ),
+			);
+			foreach ( $grouped as $group => $names ) {
+				if ( $names ) {
+					$paragraphs[] = $group_labels[ $group ] . ': ' . implode( ', ', $names );
+				}
+			}
+		}
+
 		$portal_page_id = absint( get_option( 'ajcore_customer_portal_page_id', 0 ) );
 		$portal_url     = $portal_page_id ? get_permalink( $portal_page_id ) : home_url( '/client-portal/' );
 
@@ -16822,7 +16842,7 @@ class AJForms_Admin {
 			array(
 				'kicker'          => $site_name,
 				'heading'         => $copy['heading'],
-				'paragraphs'      => $copy['paragraphs'],
+				'paragraphs'      => $paragraphs,
 				'checklist_title' => __( 'Your next steps:', 'ajforms' ),
 				'checklist_items' => array(
 					__( 'Get your EIN from the IRS at irs.gov', 'ajforms' ),
@@ -21178,7 +21198,9 @@ class AJForms_Admin {
 		$migration_tags = isset( $_POST['migration_tags'] ) && is_array( $_POST['migration_tags'] )
 			? array_values( array_intersect( array_map( 'sanitize_key', wp_unslash( $_POST['migration_tags'] ) ), array_keys( $tags ) ) )
 			: array();
-		$requested_settings = compact( 'categories', 'tags', 'migration_tags' );
+		$important_categories = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', preg_split( '/\R/', (string) wp_unslash( $_POST['important_categories'] ?? '' ) ) ) ) ) );
+		$extra_categories     = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', preg_split( '/\R/', (string) wp_unslash( $_POST['extra_categories'] ?? '' ) ) ) ) ) );
+		$requested_settings = compact( 'categories', 'tags', 'migration_tags', 'important_categories', 'extra_categories' );
 		$saved = ajcore_update_portal_file_settings( $requested_settings );
 		if ( ! $saved ) {
 			$current_settings = ajcore_get_portal_file_settings();
@@ -21204,6 +21226,12 @@ class AJForms_Admin {
 				<fieldset <?php disabled( $locked ); ?> style="border:0;margin:0;padding:0;<?php echo $locked ? 'opacity:.6;' : ''; ?>">
 					<p><label for="file_categories"><strong><?php esc_html_e( 'Categories', 'ajforms' ); ?></strong></label><br>
 					<textarea id="file_categories" name="file_categories" rows="7" class="large-text"><?php echo esc_textarea( implode( "\n", $settings['categories'] ) ); ?></textarea><br><span class="description"><?php esc_html_e( 'One category per line.', 'ajforms' ); ?></span></p>
+					<div style="display:flex;gap:16px;">
+						<p style="flex:1;"><label for="important_categories"><strong><?php esc_html_e( 'Important Categories', 'ajforms' ); ?></strong></label><br>
+						<textarea id="important_categories" name="important_categories" rows="4" class="large-text"><?php echo esc_textarea( implode( "\n", $settings['important_categories'] ) ); ?></textarea></p>
+						<p style="flex:1;"><label for="extra_categories"><strong><?php esc_html_e( 'Extra Categories', 'ajforms' ); ?></strong></label><br>
+						<textarea id="extra_categories" name="extra_categories" rows="4" class="large-text"><?php echo esc_textarea( implode( "\n", $settings['extra_categories'] ) ); ?></textarea></p>
+					</div>
 					<p><label for="file_tags"><strong><?php esc_html_e( 'Internal Tags', 'ajforms' ); ?></strong></label><br>
 					<textarea id="file_tags" name="file_tags" rows="6" class="large-text"><?php echo esc_textarea( implode( "\n", array_map( function ( $label ) { return '#' . $label; }, $settings['tags'] ) ) ); ?></textarea><br><span class="description"><?php esc_html_e( 'One tag per line. The # prefix is optional.', 'ajforms' ); ?></span></p>
 					<p><strong><?php esc_html_e( 'Tags Allowed for Migration', 'ajforms' ); ?></strong></p>
@@ -29771,8 +29799,9 @@ class AJForms_Admin {
 			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajforms' ) );
 		}
 
-		$filed_filenames = array();
-		$errors          = array();
+		$filed_filenames  = array();
+		$filed_categories = array();
+		$errors           = array();
 		foreach ( $attachments as $attachment ) {
 			$attachment_id = isset( $attachment['attachment_id'] ) ? (string) $attachment['attachment_id'] : '';
 			$filename      = isset( $attachment['filename'] ) ? sanitize_file_name( (string) $attachment['filename'] ) : '';
@@ -29807,7 +29836,8 @@ class AJForms_Admin {
 			if ( is_wp_error( $result ) ) {
 				$errors[] = $result->get_error_message();
 			} else {
-				$filed_filenames[] = $filename;
+				$filed_filenames[]            = $filename;
+				$filed_categories[ $filename ] = $category;
 			}
 			if ( file_exists( $tmp_path ) ) {
 				unlink( $tmp_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
@@ -29833,7 +29863,7 @@ class AJForms_Admin {
 
 		$notified = false;
 		if ( $notify && ! empty( $customer->email ) ) {
-			$notified = $this->send_gmail_intake_filed_notification( $customer->stripe_customer_id, $customer->name, $customer->email, $filed_filenames );
+			$notified = $this->send_gmail_intake_filed_notification( $customer->stripe_customer_id, $customer->name, $customer->email, $filed_filenames, $filed_categories );
 		}
 
 		return array( 'notified' => $notified );

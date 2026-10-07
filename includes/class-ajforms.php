@@ -91,6 +91,7 @@ class AJForms {
 		add_action( 'personal_options_update',    array( $this, 'save_username_change' ) );
 		add_action( 'edit_user_profile_update',   array( $this, 'save_username_change' ) );
 		add_action( 'admin_notices', array( $this, 'render_username_storage_notice' ) );
+		add_action( 'profile_update', array( $this, 'sync_portal_assignments_on_email_change' ), 10, 2 );
 	}
 
 	public function add_ajcore_cron_schedules( $schedules ) {
@@ -1687,8 +1688,24 @@ class AJForms {
 					<p><?php esc_html_e( 'Documents shared with your portal account and documents you upload will appear here.', 'ajforms' ); ?></p>
 				</div>
 			<?php else : ?>
+				<?php
+				$file_settings = ajcore_get_portal_file_settings();
+				$file_groups   = array( 'important' => array(), 'extra' => array(), 'other' => array() );
+				foreach ( $files as $grouped_file ) {
+					$file_groups[ ajcore_portal_file_category_group( $grouped_file->category, $file_settings ) ][] = $grouped_file;
+				}
+				$file_group_labels = array(
+					'important' => __( 'Important', 'ajforms' ),
+					'extra'     => __( 'Extra', 'ajforms' ),
+					'other'     => __( 'Other', 'ajforms' ),
+				);
+				$show_group_headings = count( array_filter( $file_groups ) ) > 1;
+				?>
+				<?php foreach ( $file_groups as $group_key => $group_files ) : ?>
+				<?php if ( empty( $group_files ) ) { continue; } ?>
+				<?php if ( $show_group_headings ) : ?><h3 class="aj-customer-file-group"><?php echo esc_html( $file_group_labels[ $group_key ] ); ?></h3><?php endif; ?>
 				<div class="aj-customer-file-list" role="list">
-					<?php foreach ( $files as $file ) : ?>
+					<?php foreach ( $group_files as $file ) : ?>
 						<?php
 						$download_url = wp_nonce_url(
 							add_query_arg(
@@ -1721,6 +1738,7 @@ class AJForms {
 						</div>
 					<?php endforeach; ?>
 				</div>
+				<?php endforeach; ?>
 			<?php endif; ?>
 		</section>
 		<?php
@@ -15878,6 +15896,21 @@ class AJForms {
 			desc.style.color = '#b91c1c';
 			desc.style.fontWeight = '700';
 			field.closest('td').appendChild(desc);
+			var emailField = document.getElementById('email');
+			var originalEmail = emailField ? emailField.value : '';
+			if (emailField) {
+				var emailDesc = document.createElement('p');
+				emailDesc.className = 'description';
+				emailDesc.textContent = 'WARNING: Changing this email re-links this customer\'s File Library assignments to the new address. Also update the same email on the customer in AJOps.';
+				emailDesc.style.color = '#b91c1c';
+				emailDesc.style.fontWeight = '700';
+				emailField.closest('td').appendChild(emailDesc);
+				emailField.form.addEventListener('submit', function (event) {
+					if (emailField.value !== originalEmail && !window.confirm('Changing this email will re-link this customer\'s File Library assignments. Continue?')) {
+						event.preventDefault();
+					}
+				});
+			}
 			var originalLogin = field.value;
 			field.form.addEventListener('submit', function (event) {
 				if (field.value !== originalLogin && !window.confirm('Changing this username will also move this customer\'s mapped RustFS files to a new folder path. Continue?')) {
@@ -15941,6 +15974,36 @@ class AJForms {
 			return;
 		}
 		clean_user_cache( $user_id );
+	}
+
+	/**
+	 * Keeps portal File Library assignments and the auth mapping in step with a WP user's email.
+	 * aj_portal_file_users stores an email per assignment; AJOps and the portal both match on it,
+	 * so a stale value hides files. RustFS object keys are unaffected (looked up via aj_storage_objects).
+	 */
+	public function sync_portal_assignments_on_email_change( $user_id, $old_user_data ) {
+		$user_id = (int) $user_id;
+		$user    = get_userdata( $user_id );
+		if ( ! $user || ! $old_user_data ) {
+			return;
+		}
+		$old_email = strtolower( (string) $old_user_data->user_email );
+		$new_email = strtolower( (string) $user->user_email );
+		if ( '' === $new_email || $old_email === $new_email ) {
+			return;
+		}
+		global $wpdb;
+		$users_table = $this->get_portal_file_users_table();
+		// phpcs:disable WordPress.DB.DirectDatabaseQuery
+		$wpdb->update( $users_table, array( 'user_email' => $new_email ), array( 'user_id' => $user_id ), array( '%s' ), array( '%d' ) );
+		if ( '' !== $old_email ) {
+			$wpdb->query( $wpdb->prepare( "UPDATE `{$users_table}` SET user_id = %d, user_email = %s WHERE user_id = 0 AND LOWER(user_email) = %s", $user_id, $new_email, $old_email ) );
+		}
+		$mapping_table = $wpdb->prefix . 'aj_auth_user_mappings';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $mapping_table ) ) === $mapping_table ) {
+			$wpdb->update( $mapping_table, array( 'portal_user_email' => $new_email ), array( 'user_id' => $user_id ), array( '%s' ), array( '%d' ) );
+		}
+		// phpcs:enable WordPress.DB.DirectDatabaseQuery
 	}
 
 	public function render_username_storage_notice() {
