@@ -9159,7 +9159,7 @@ class AJCore_REST_API {
 	public function ops_customer_action( WP_REST_Request $request ) {
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$action             = sanitize_key( (string) $request->get_param( 'action' ) );
-		$allowed            = array( 'enable', 'disable', 'archive', 'restore', 'enable_repair', 'reset_password', 'send_welcome', 'send_ra_authorization', 'regenerate_customer_number', 'delete_archived' );
+		$allowed            = array( 'enable', 'disable', 'archive', 'restore', 'enable_repair', 'reset_password', 'send_welcome', 'send_ra_authorization', 'regenerate_customer_number', 'delete_archived', 'sync_portal_email' );
 
 		if ( ! in_array( $action, $allowed, true ) ) {
 			return new WP_Error( 'invalid_action', 'Invalid action.', array( 'status' => 400 ) );
@@ -9172,6 +9172,38 @@ class AJCore_REST_API {
 		$pdb            = $this->get_portal_db();
 		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
 		$customer       = null;
+
+		if ( 'sync_portal_email' === $action ) {
+			// Runs on the customer's assigned site: points the linked WP login at the new email.
+			// wp_update_user() fires profile_update, which re-links File Library assignments.
+			$new_email = sanitize_email( (string) $request->get_param( 'email' ) );
+			if ( ! is_email( $new_email ) ) {
+				return new WP_Error( 'invalid_email', 'Enter a valid email address.', array( 'status' => 400 ) );
+			}
+			$mapping_table = $wpdb->prefix . 'aj_auth_user_mappings';
+			$link_user_id  = $this->table_exists( $wpdb, $mapping_table )
+				? (int) $wpdb->get_var( $wpdb->prepare( "SELECT user_id FROM `{$mapping_table}` WHERE stripe_customer_id = %s AND user_id > 0 LIMIT 1", $stripe_customer_id ) )
+				: 0;
+			$link_user = $link_user_id ? get_userdata( $link_user_id ) : false;
+			if ( ! $link_user ) {
+				return rest_ensure_response( array( 'success' => true, 'message' => 'No portal login on this site.' ) );
+			}
+			if ( strtolower( $link_user->user_email ) === strtolower( $new_email ) ) {
+				return rest_ensure_response( array( 'success' => true, 'message' => 'Portal login already uses this email.' ) );
+			}
+			$holder = email_exists( $new_email );
+			if ( $holder && (int) $holder !== $link_user_id ) {
+				return new WP_Error( 'email_in_use', 'Another portal user on this site already uses that email.', array( 'status' => 409 ) );
+			}
+			$updated_user = wp_update_user( array( 'ID' => $link_user_id, 'user_email' => $new_email ) );
+			if ( is_wp_error( $updated_user ) ) {
+				return new WP_Error( 'email_update_failed', $updated_user->get_error_message(), array( 'status' => 500 ) );
+			}
+			if ( $this->table_exists( $wpdb, $mapping_table ) ) {
+				$wpdb->update( $mapping_table, array( 'portal_user_email' => strtolower( $new_email ) ), array( 'user_id' => $link_user_id ), array( '%s' ), array( '%d' ) );
+			}
+			return rest_ensure_response( array( 'success' => true, 'message' => 'Portal login email updated.' ) );
+		}
 
 		if ( 'enable_repair' === $action ) {
 			// Ensure the WP user + mapping exist first; repair alone only relinks existing users.
