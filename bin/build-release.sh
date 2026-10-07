@@ -300,6 +300,14 @@ build_zip() {
     --exclude='releases' \
     --exclude='bin' \
     --exclude='README.md' \
+    --exclude='/CLAUDE.local.md' \
+    --exclude='/CLAUDE.md' \
+    --exclude='/AGENTS.md' \
+    --exclude='/tests' \
+    --exclude='/phpunit-*.xml' \
+    --exclude='/docs' \
+    --exclude='/*.pdf' \
+    --exclude='/lslar.txt' \
     --exclude='*.zip' \
     --exclude='.vscode' \
     --exclude='.idea' \
