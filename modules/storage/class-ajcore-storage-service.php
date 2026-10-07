@@ -389,6 +389,17 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			);
 		}
 
+		/**
+		 * True when another attachment's mapping still points at this bucket/key. Older uploads
+		 * keyed objects by tag/customer/filename only, so same-named files share one object; never
+		 * delete such an object while another attachment still references it.
+		 */
+		private static function object_key_shared( $bucket, $object_key, $exclude_attachment_id ) {
+			global $wpdb;
+			$table = self::table();
+			return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$table}` WHERE bucket = %s AND object_key = %s AND attachment_id <> %d", $bucket, $object_key, (int) $exclude_attachment_id ) ) > 0;
+		}
+
 		private static function save_remote_record( $attachment_id, $bucket, $object_key, $size_bytes, $content_type ) {
 			global $wpdb;
 			$table   = self::table();
@@ -436,9 +447,11 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					}
 				}
 			}
-			$result = $client->delete_object( $record->object_key );
-			if ( is_wp_error( $result ) ) {
-				return $result;
+			if ( ! self::object_key_shared( $record->bucket, $record->object_key, $attachment_id ) ) {
+				$result = $client->delete_object( $record->object_key );
+				if ( is_wp_error( $result ) ) {
+					return $result;
+				}
 			}
 			if ( ! self::delete_remote_record( $attachment_id ) ) {
 				return new WP_Error( 'ajcore_storage_mapping_delete', __( 'The remote file was deleted, but its storage mapping could not be removed.', 'ajforms' ) );
@@ -477,7 +490,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				$user_login = $user ? $user->user_login : '';
 			}
 			$customer = $user_id ? 'user-' . $user_id . '-' . sanitize_title( $user_login ) : ( $assigned_email ? 'customer-' . sanitize_title( $assigned_email ) : 'unassigned' );
-			return $tag . '/' . $customer . '/' . sanitize_file_name( $filename );
+			// The attachment ID keeps same-named files (e.g. a flyer uploaded twice) from overwriting each other.
+			$base = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', sanitize_file_name( $filename ) );
+			return $tag . '/' . $customer . '/' . $attachment_id . '-' . $base;
 		}
 
 		// -----------------------------------------------------------------
@@ -709,6 +724,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					return new WP_Error( 'ajcore_storage_mapping_update', __( 'Could not update the RustFS path mapping.', 'ajforms' ) );
 				}
 				foreach ( $objects as $old_key => $target_key ) {
+					if ( $old_key === $record->object_key && self::object_key_shared( $record->bucket, $old_key, $attachment_id ) ) { continue; }
 					if ( in_array( $target_key, $copied, true ) ) { $client->delete_object( $old_key ); }
 				}
 			}
@@ -751,6 +767,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				return new WP_Error( 'ajcore_storage_mapping_update', __( 'Could not update the remote storage mapping.', 'ajforms' ) );
 			}
 			foreach ( $objects as $old_key => $target_key ) {
+				if ( $old_key === $record->object_key && self::object_key_shared( $record->bucket, $old_key, $attachment_id ) ) { continue; }
 				if ( in_array( $target_key, $copied, true ) ) { $source_client->delete_object( $old_key ); }
 			}
 			return true;
@@ -802,7 +819,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 					$client->delete_object( $new_key );
 					return new WP_Error( 'ajcore_storage_mapping_update', __( 'Could not update the remote storage mapping.', 'ajforms' ) );
 				}
-				$client->delete_object( $record->object_key );
+				if ( ! self::object_key_shared( $record->bucket, $record->object_key, $attachment_id ) ) {
+					$client->delete_object( $record->object_key );
+				}
 				wp_update_post( array( 'ID' => $attachment_id, 'post_title' => sanitize_text_field( pathinfo( $new_filename, PATHINFO_FILENAME ) ) ) );
 
 				return true;
