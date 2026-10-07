@@ -1445,6 +1445,15 @@ class AJForms {
 			return;
 		}
 
+		// Extensions (AJCore-RA) post portal forms to admin-post.php; let only the actions they list through.
+		global $pagenow;
+		if ( 'admin-post.php' === $pagenow && isset( $_REQUEST['action'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification -- each handler checks its own nonce.
+			$allowed = (array) apply_filters( 'ajcore_portal_admin_post_actions', array() );
+			if ( in_array( sanitize_key( wp_unslash( $_REQUEST['action'] ) ), $allowed, true ) ) {
+				return;
+			}
+		}
+
 		$portal_url = $this->get_customer_portal_url();
 		$current_url = set_url_scheme( 'http://' . ( isset( $_SERVER['HTTP_HOST'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) : '' ) . ( isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '' ) );
 
