@@ -3563,6 +3563,7 @@ class AJForms_Admin {
 				array( 'table' => $this->get_portal_ledger_table(), 'scope' => __( 'Generated Stripe billing ledger rows', 'ajforms' ), 'mode' => sprintf( __( 'Rows where source_type is %s', 'ajforms' ), implode( ', ', $generated_ledger_source_types ) ) ),
 			),
 			'preserved_tables' => array(
+				array( 'table' => $this->get_portal_customer_merges_table(), 'scope' => __( 'Durable merged-customer identity links', 'ajforms' ) ),
 				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_customers', 'scope' => __( 'Local AJCore customers', 'ajforms' ) ),
 				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_services', 'scope' => __( 'Local AJCore service contracts', 'ajforms' ) ),
 				array( 'table' => $this->get_pdb()->prefix . 'aj_portal_local_ledger', 'scope' => __( 'Local AJCore ledger and Rentec imports', 'ajforms' ) ),
@@ -6390,6 +6391,10 @@ class AJForms_Admin {
 
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		$is_local = 0 === strpos( $stripe_customer_id, 'local_' );
+		$identity_ids = $is_local ? array( $stripe_customer_id ) : $this->get_portal_customer_identity_ids( $stripe_customer_id );
+		if ( ! $is_local && ! empty( $identity_ids ) ) {
+			$stripe_customer_id = $identity_ids[0];
+		}
 		if ( $is_local ) {
 			$local_customers = $pdb->prefix . 'aj_portal_local_customers';
 			$customer = $pdb->get_row( $pdb->prepare( "SELECT id,local_customer_id AS stripe_customer_id,email,name,phone,description,address,metadata,partner_key,status AS portal_status,0 AS enabled_portal,0 AS livemode,created_at,updated_at AS synced_at FROM `{$local_customers}` WHERE local_customer_id=%s", $stripe_customer_id ) );
@@ -6400,34 +6405,32 @@ class AJForms_Admin {
 		if ( ! $customer ) {
 			return null;
 		}
+		$identity_customers = array( $customer );
+		if ( ! $is_local && count( $identity_ids ) > 1 ) {
+			$identity_params = array();
+			$identity_where  = $this->prepare_portal_customer_identity_condition( 'stripe_customer_id', $identity_ids, $identity_params );
+			$identity_customers = $pdb->get_results( $pdb->prepare( "SELECT * FROM {$this->get_portal_stripe_customers_table()} WHERE {$identity_where} ORDER BY stripe_customer_id = %s DESC, id ASC", array_merge( $identity_params, array( $stripe_customer_id ) ) ) );
+		}
 
-		// user_mappings is always local — not in shared DB.
-		$mapping = $wpdb->get_row(
-			$wpdb->prepare(
-				"SELECT * FROM {$this->get_portal_user_mappings_table()} WHERE stripe_customer_id = %s",
-				$stripe_customer_id
-			)
-		);
+		// user_mappings is always local — not in shared DB. Prefer the primary mapping, then an alias.
+		$mapping_params = array();
+		$mapping_where  = $this->prepare_portal_customer_identity_condition( 'stripe_customer_id', $identity_ids, $mapping_params );
+		$mapping_params[] = $stripe_customer_id;
+		$mapping = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$this->get_portal_user_mappings_table()} WHERE {$mapping_where} ORDER BY stripe_customer_id = %s DESC, id ASC LIMIT 1", $mapping_params ) );
 		$user = $this->get_valid_portal_mapping_user( $customer, $mapping );
 
-		$subscriptions = $is_local ? array() : $pdb->get_results(
-			$pdb->prepare(
-				"SELECT * FROM {$this->get_portal_stripe_subscriptions_table()} WHERE stripe_customer_id = %s ORDER BY current_period_end DESC, id DESC",
-				$stripe_customer_id
-			)
-		);
+		$subscription_params = array();
+		$subscription_where  = $this->prepare_portal_customer_identity_condition( 'stripe_customer_id', $identity_ids, $subscription_params );
+		$subscriptions = $is_local ? array() : $pdb->get_results( $pdb->prepare( "SELECT * FROM {$this->get_portal_stripe_subscriptions_table()} WHERE {$subscription_where} ORDER BY current_period_end DESC, id DESC", $subscription_params ) );
 
 		if ( $is_local ) {
 			$local_ledger = $pdb->prefix . 'aj_portal_local_ledger';
 			$ledger = $pdb->get_results( $pdb->prepare( "SELECT id,local_customer_id AS stripe_customer_id,source_object_id,source_type,ledger_date,description,amount,currency,status,metadata,created_at FROM `{$local_ledger}` WHERE local_customer_id=%s ORDER BY ledger_date DESC,id DESC", $stripe_customer_id ) );
 		} else {
-			$ledger = $pdb->get_results(
-			$pdb->prepare(
-				"SELECT * FROM {$this->get_portal_ledger_table()} WHERE stripe_customer_id = %s ORDER BY ledger_date DESC, id DESC LIMIT %d",
-				$stripe_customer_id,
-				100
-			)
-		);
+			$ledger_params = array();
+			$ledger_where  = $this->prepare_portal_customer_identity_condition( 'stripe_customer_id', $identity_ids, $ledger_params );
+			$ledger_params[] = 100;
+			$ledger = $pdb->get_results( $pdb->prepare( "SELECT * FROM {$this->get_portal_ledger_table()} WHERE {$ledger_where} ORDER BY ledger_date DESC, id DESC LIMIT %d", $ledger_params ) );
 		}
 		// Remove charge/payment entries whose description is generic (e.g. "Payment for Invoice")
 		// when a more descriptive service_charge or invoice entry exists for the same payment.
@@ -6440,58 +6443,49 @@ class AJForms_Admin {
 			return ! $this->is_generic_portal_service_label( $description );
 		} ) );
 
-		$requests = $pdb->get_results(
-			$pdb->prepare(
-				"SELECT * FROM {$this->get_portal_service_requests_table()} WHERE stripe_customer_id = %s ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT %d",
-				$stripe_customer_id,
-				100
-			)
-		);
+		$request_params = array();
+		$request_where  = $this->prepare_portal_customer_identity_condition( 'stripe_customer_id', $identity_ids, $request_params );
+		$request_params[] = 100;
+		$requests = $pdb->get_results( $pdb->prepare( "SELECT * FROM {$this->get_portal_service_requests_table()} WHERE {$request_where} ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT %d", $request_params ) );
 
-		$tasks = $pdb->get_results(
-			$pdb->prepare(
-				"SELECT t.*, ts.status AS customer_status, ts.completed_at AS customer_completed_at, ts.updated_at AS customer_status_updated_at
-				FROM {$this->get_portal_tasks_table()} t
-				LEFT JOIN {$this->get_portal_task_statuses_table()} ts ON ts.task_id = t.id AND ts.stripe_customer_id = %s
-				WHERE t.stripe_customer_id = %s OR t.task_scope = 'global'
-				ORDER BY t.due_date IS NULL ASC, t.due_date ASC, t.updated_at DESC, t.id DESC
-				LIMIT %d",
-				$stripe_customer_id,
-				$stripe_customer_id,
-				100
-			)
-		);
+		$task_status_params = array();
+		$task_status_where  = $this->prepare_portal_customer_identity_condition( 'ts.stripe_customer_id', $identity_ids, $task_status_params );
+		$task_params        = array();
+		$task_where         = $this->prepare_portal_customer_identity_condition( 't.stripe_customer_id', $identity_ids, $task_params );
+		$tasks = $pdb->get_results( $pdb->prepare(
+			"SELECT DISTINCT t.*, ts.status AS customer_status, ts.completed_at AS customer_completed_at, ts.updated_at AS customer_status_updated_at
+			FROM {$this->get_portal_tasks_table()} t
+			LEFT JOIN {$this->get_portal_task_statuses_table()} ts ON ts.task_id = t.id AND {$task_status_where}
+			WHERE {$task_where} OR t.task_scope = 'global'
+			ORDER BY t.due_date IS NULL ASC, t.due_date ASC, t.updated_at DESC, t.id DESC LIMIT %d",
+			array_merge( $task_status_params, $task_params, array( 100 ) )
+		) );
 
-		$task_comments = $pdb->get_results(
-			$pdb->prepare(
-				"SELECT tc.*, t.title AS task_title
-				FROM {$this->get_portal_task_comments_table()} tc
-				LEFT JOIN {$this->get_portal_tasks_table()} t ON t.id = tc.task_id
-				WHERE tc.stripe_customer_id = %s
-				ORDER BY tc.created_at DESC, tc.id DESC
-				LIMIT %d",
-				$stripe_customer_id,
-				50
-			)
-		);
+		$comment_params = array();
+		$comment_where  = $this->prepare_portal_customer_identity_condition( 'tc.stripe_customer_id', $identity_ids, $comment_params );
+		$comment_params[] = 50;
+		$task_comments = $pdb->get_results( $pdb->prepare(
+			"SELECT tc.*, t.title AS task_title FROM {$this->get_portal_task_comments_table()} tc
+			LEFT JOIN {$this->get_portal_tasks_table()} t ON t.id = tc.task_id
+			WHERE {$comment_where} ORDER BY tc.created_at DESC, tc.id DESC LIMIT %d",
+			$comment_params
+		) );
 
-		$entities = $pdb->get_results(
-			$pdb->prepare(
-				"SELECT * FROM {$this->get_portal_entity_mappings_table()} WHERE stripe_customer_id = %s ORDER BY entity_label ASC, entity_key ASC",
-				$stripe_customer_id
-			)
-		);
+		$entity_params = array();
+		$entity_where  = $this->prepare_portal_customer_identity_condition( 'stripe_customer_id', $identity_ids, $entity_params );
+		$entities = $pdb->get_results( $pdb->prepare( "SELECT * FROM {$this->get_portal_entity_mappings_table()} WHERE {$entity_where} ORDER BY entity_label ASC, entity_key ASC", $entity_params ) );
 
 		$files = array();
 		if ( $user || ! empty( $customer->email ) ) {
 			$user_id = $user ? (int) $user->ID : 0;
-			$email   = ! empty( $customer->email ) ? strtolower( sanitize_email( $customer->email ) ) : '';
+			$emails  = array_values( array_unique( array_filter( array_map( function ( $identity_customer ) { return ! empty( $identity_customer->email ) ? strtolower( sanitize_email( $identity_customer->email ) ) : ''; }, $identity_customers ) ) ) );
+			$email_conditions = array_fill( 0, count( $emails ), 'LOWER(fu.user_email) = %s' );
+			$file_params = array_merge( array( $user_id ), $emails );
 			// Files and their assignments are always local tables — query on $wpdb, not the shared portal DB.
 			$files   = $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT DISTINCT f.* FROM {$this->get_portal_files_table()} f INNER JOIN {$this->get_portal_file_users_table()} fu ON fu.file_id = f.id WHERE fu.user_id = %d OR LOWER(fu.user_email) = %s ORDER BY f.created_at DESC",
-					$user_id,
-					$email
+					"SELECT DISTINCT f.* FROM {$this->get_portal_files_table()} f INNER JOIN {$this->get_portal_file_users_table()} fu ON fu.file_id = f.id WHERE fu.user_id = %d" . ( $email_conditions ? ' OR ' . implode( ' OR ', $email_conditions ) : '' ) . ' ORDER BY f.created_at DESC',
+					$file_params
 				)
 			);
 		}
@@ -6500,11 +6494,15 @@ class AJForms_Admin {
 		foreach ( $active_subscriptions as $subscription ) {
 			$subscription->billing_type = $this->get_portal_billing_type_label( 'subscription' );
 		}
-		$active_recurring_services = array_merge(
-			$this->get_portal_service_records_from_snapshots( 'recurring', $stripe_customer_id, 100 ),
-			$this->get_portal_service_records_from_subscriptions( $active_subscriptions ),
-			$this->get_portal_recurring_service_records_from_ledger( $stripe_customer_id, 100 )
-		);
+		$snapshot_services = array();
+		$ledger_services   = array();
+		$one_time_services = array();
+		foreach ( $identity_ids as $identity_id ) {
+			$snapshot_services = array_merge( $snapshot_services, $this->get_portal_service_records_from_snapshots( 'recurring', $identity_id, 100 ) );
+			$ledger_services   = array_merge( $ledger_services, $this->get_portal_recurring_service_records_from_ledger( $identity_id, 100 ) );
+			$one_time_services = array_merge( $one_time_services, $this->get_portal_one_time_paid_services( $identity_id, 100 ) );
+		}
+		$active_recurring_services = array_merge( $snapshot_services, $this->get_portal_service_records_from_subscriptions( $active_subscriptions ), $ledger_services );
 		if ( $is_local ) {
 			$local_services_table = $pdb->prefix . 'aj_portal_local_services';
 			$local_services = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$local_services_table}` WHERE local_customer_id=%s ORDER BY contract_start_date DESC,id DESC", $stripe_customer_id ) );
@@ -6531,12 +6529,13 @@ class AJForms_Admin {
 
 		return array(
 			'customer'          => $customer,
+			'identity_customers' => $identity_customers,
 			'mapping'           => $mapping,
 			'user'              => $user,
 			'subscriptions'     => $subscriptions,
 			'active_subs'       => $active_subscriptions,
 			'active_recurring_services' => $active_recurring_services,
-			'one_time_services' => $this->get_portal_one_time_paid_services( $stripe_customer_id, 100 ),
+			'one_time_services' => $one_time_services,
 			'purchased_products' => $this->get_portal_customer_purchased_products( $subscriptions, $ledger ),
 			'ledger'            => $ledger,
 			'requests'          => $requests,
@@ -12556,7 +12555,7 @@ class AJForms_Admin {
 				$selected_ids[] = sanitize_text_field( (string) $parts[0] );
 			}
 			$selected_ids = array_values( array_filter( array_unique( $selected_ids ) ) );
-			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password', 'send_welcome', 'delete_archived' );
+			$allowed_actions = array( 'enable', 'enable_repair', 'disable', 'archive', 'restore', 'reset_password', 'send_welcome', 'delete_archived', 'merge' );
 			$args = array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' ), $this->get_portal_customer_list_state() );
 			$updated = 0;
 			$skipped = 0;
@@ -12572,6 +12571,56 @@ class AJForms_Admin {
 				$stats = $this->repair_portal_user_links_and_roles( true, true, true, $selected_ids );
 				$args['portal-bulk-updated'] = absint( $stats['relinked'] );
 				$args['portal-bulk-skipped'] = absint( $stats['skipped'] );
+				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+				exit;
+			}
+
+			if ( 'merge' === $action ) {
+				$primary_id = isset( $_POST['portal_primary_customer_id'] ) ? sanitize_text_field( wp_unslash( $_POST['portal_primary_customer_id'] ) ) : '';
+				$all_are_stripe_customers = count( $selected_ids ) === count( array_filter( $selected_ids, function ( $customer_id ) { return 0 === strpos( $customer_id, 'cus_' ); } ) );
+				if ( count( $selected_ids ) < 2 || ! in_array( $primary_id, $selected_ids, true ) || ! $all_are_stripe_customers ) {
+					$args['portal-error'] = rawurlencode( __( 'Select at least two Stripe customers and choose one selected customer as the primary.', 'ajforms' ) );
+					wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+					exit;
+				}
+				$merge_table = $this->get_portal_customer_merges_table();
+				if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $merge_table ) ) !== $merge_table ) {
+					require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajforms-activator.php';
+					AJForms_Activator::activate();
+				}
+				$all_identity_ids = array();
+				foreach ( $selected_ids as $selected_id ) {
+					$all_identity_ids = array_merge( $all_identity_ids, $this->get_portal_customer_identity_ids( $selected_id ) );
+				}
+				$all_identity_ids = array_values( array_unique( array_filter( $all_identity_ids ) ) );
+				foreach ( $all_identity_ids as $identity_id ) {
+					$pdb->delete( $merge_table, array( 'merged_customer_id' => $identity_id ), array( '%s' ) );
+					if ( $identity_id === $primary_id ) {
+						continue;
+					}
+					$result = $pdb->replace(
+						$merge_table,
+						array(
+							'primary_customer_id' => $primary_id,
+							'merged_customer_id'  => $identity_id,
+							'created_by'           => get_current_user_id(),
+							'created_at'           => current_time( 'mysql' ),
+						),
+						array( '%s', '%s', '%d', '%s' )
+					);
+					if ( false === $result ) {
+						$errors[] = sprintf( __( 'Could not merge Stripe customer %s.', 'ajforms' ), $identity_id );
+					} else {
+						$updated++;
+					}
+				}
+				$this->log_portal_event( 'portal_customers_merged', array( 'source' => 'portal_users', 'stripe_customer_id' => $primary_id, 'details' => array( 'primary_customer_id' => $primary_id, 'customer_ids' => $all_identity_ids ) ) );
+				if ( ! empty( $errors ) ) {
+					$args['portal-error'] = rawurlencode( implode( ' ', array_unique( $errors ) ) );
+				} else {
+					$args['portal-customers-merged'] = count( $all_identity_ids ) - 1;
+					$args['stripe_customer_id']      = $primary_id;
+				}
 				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 				exit;
 			}
@@ -12701,6 +12750,16 @@ class AJForms_Admin {
 			$args['portal-bulk-skipped'] = $skipped;
 
 			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_customer_unmerge_nonce'], $_POST['primary_customer_id'], $_POST['merged_customer_id'] ) ) {
+			$primary_id = sanitize_text_field( wp_unslash( $_POST['primary_customer_id'] ) );
+			$merged_id  = sanitize_text_field( wp_unslash( $_POST['merged_customer_id'] ) );
+			check_admin_referer( 'ajcore_customer_unmerge_' . $primary_id . '_' . $merged_id, 'ajcore_customer_unmerge_nonce' );
+			$this->get_pdb()->delete( $this->get_portal_customer_merges_table(), array( 'primary_customer_id' => $primary_id, 'merged_customer_id' => $merged_id ), array( '%s', '%s' ) );
+			$this->log_portal_event( 'portal_customer_unmerged', array( 'source' => 'customer_detail', 'stripe_customer_id' => $primary_id, 'details' => array( 'primary_customer_id' => $primary_id, 'merged_customer_id' => $merged_id ) ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $primary_id, 'portal-customer-unmerged' => 1 ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -13453,11 +13512,17 @@ class AJForms_Admin {
 			if ( '' === $secret_key ) {
 				$redirect_args['portal-error'] = rawurlencode( __( 'Stripe secret key is required.', 'ajforms' ) );
 			} else {
-				$result = $this->sync_single_portal_stripe_customer( $secret_key, $stripe_customer_id );
-				if ( is_wp_error( $result ) ) {
-					$redirect_args['portal-error'] = rawurlencode( $result->get_error_message() );
-				} else {
-					$redirect_args['portal-synced'] = absint( $result );
+				$synced = 0;
+				foreach ( $this->get_portal_customer_identity_ids( $stripe_customer_id ) as $identity_id ) {
+					$result = $this->sync_single_portal_stripe_customer( $secret_key, $identity_id );
+					if ( is_wp_error( $result ) ) {
+						$redirect_args['portal-error'] = rawurlencode( $result->get_error_message() );
+						break;
+					}
+					$synced += absint( $result );
+				}
+				if ( ! isset( $redirect_args['portal-error'] ) ) {
+					$redirect_args['portal-synced'] = $synced;
 				}
 			}
 
@@ -15956,6 +16021,33 @@ class AJForms_Admin {
 
 	private function get_portal_stripe_customers_table() {
 		return $this->get_pdb()->prefix . 'aj_portal_stripe_customers';
+	}
+
+	private function get_portal_customer_merges_table() {
+		return $this->get_pdb()->prefix . 'aj_portal_customer_merges';
+	}
+
+	private function get_portal_customer_identity_ids( $stripe_customer_id ) {
+		$pdb                = $this->get_pdb();
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$table              = $this->get_portal_customer_merges_table();
+		if ( '' === $stripe_customer_id || $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return '' === $stripe_customer_id ? array() : array( $stripe_customer_id );
+		}
+
+		$primary = (string) $pdb->get_var( $pdb->prepare( "SELECT primary_customer_id FROM {$table} WHERE merged_customer_id = %s LIMIT 1", $stripe_customer_id ) );
+		if ( '' !== $primary ) {
+			$stripe_customer_id = $primary;
+		}
+		$merged = (array) $pdb->get_col( $pdb->prepare( "SELECT merged_customer_id FROM {$table} WHERE primary_customer_id = %s ORDER BY id ASC", $stripe_customer_id ) );
+
+		return array_values( array_unique( array_merge( array( $stripe_customer_id ), array_map( 'sanitize_text_field', $merged ) ) ) );
+	}
+
+	private function prepare_portal_customer_identity_condition( $column, $customer_ids, &$params ) {
+		$customer_ids = array_values( array_filter( array_map( 'sanitize_text_field', (array) $customer_ids ) ) );
+		$params       = array_merge( $params, $customer_ids );
+		return $column . ' IN (' . implode( ',', array_fill( 0, count( $customer_ids ), '%s' ) ) . ')';
 	}
 
 	private function get_portal_stripe_products_table() {
@@ -20784,7 +20876,7 @@ class AJForms_Admin {
 			'aj_forms' => 'Legacy form definitions', 'aj_forms_forms' => 'AJCore form definitions and form-builder configuration',
 			'aj_leads' => 'Legacy CRM lead records', 'aj_lead_notes' => 'Notes attached to legacy CRM leads',
 			'aj_forms_leads' => 'Form submissions promoted into AJCore CRM lead records', 'aj_forms_lead_notes' => 'Notes and follow-up history attached to AJCore leads',
-			'aj_portal_stripe_customers' => 'Stripe customer cache and portal status', 'aj_portal_customer_states' => 'Per-site customer portal state',
+			'aj_portal_stripe_customers' => 'Stripe customer cache and portal status', 'aj_portal_customer_merges' => 'Durable merged Stripe-customer identities', 'aj_portal_customer_states' => 'Per-site customer portal state',
 			'aj_portal_stripe_products' => 'Stripe product and price cache', 'aj_portal_product_catalog' => 'Portal catalog overrides',
 			'aj_portal_stripe_subscriptions' => 'Stripe subscription cache', 'aj_portal_stripe_transactions' => 'Stripe transaction cache',
 			'aj_portal_stripe_events' => 'Processed Stripe webhook events', 'aj_portal_ledger' => 'Derived billing ledger',
@@ -20803,6 +20895,7 @@ class AJForms_Admin {
 			'aj_shared_settings' => 'AJCore settings synchronized across connected sites',
 		);
 		$relationships = array(
+			array( 'aj_portal_stripe_customers', 'aj_portal_customer_merges', 'primary/merged customer IDs' ),
 			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_subscriptions', 'stripe_customer_id' ),
 			array( 'aj_portal_stripe_customers', 'aj_portal_stripe_transactions', 'stripe_customer_id' ),
 			array( 'aj_portal_stripe_customers', 'aj_auth_user_mappings', 'stripe_customer_id' ),
@@ -21706,9 +21799,11 @@ class AJForms_Admin {
 		$vo_customers  = array();
 		$any_customers = array();
 		foreach ( (array) $rows as $row ) {
+			$identity_ids = $this->get_portal_customer_identity_ids( (string) $row->stripe_customer_id );
+			$customer_id  = ! empty( $identity_ids ) ? (string) $identity_ids[0] : (string) $row->stripe_customer_id;
 			// Any active/trialing subscription row at all counts as "has a subscription",
 			// even if its price doesn't match a known RA/VO product below.
-			$any_customers[ (string) $row->stripe_customer_id ] = true;
+			$any_customers[ $customer_id ] = true;
 
 			$items = json_decode( (string) $row->items, true );
 			if ( ! is_array( $items ) ) {
@@ -21733,9 +21828,9 @@ class AJForms_Admin {
 				}
 				$name = strtolower( ! empty( $product->custom_label ) ? (string) $product->custom_label : (string) $product->name );
 				if ( false !== strpos( $name, 'registered agent' ) ) {
-					$ra_customers[ (string) $row->stripe_customer_id ] = true;
+					$ra_customers[ $customer_id ] = true;
 				} elseif ( false !== strpos( $name, 'virtual office' ) && false === strpos( $name, 'setup' ) ) {
-					$vo_customers[ (string) $row->stripe_customer_id ] = true;
+					$vo_customers[ $customer_id ] = true;
 				}
 			}
 		}
@@ -24015,6 +24110,7 @@ class AJForms_Admin {
 		}
 
 		$customer     = $detail['customer'];
+		$identity_customers = ! empty( $detail['identity_customers'] ) ? $detail['identity_customers'] : array( $customer );
 		$is_local     = 0 === strpos( (string) $customer->stripe_customer_id, 'local_' );
 		$user         = $detail['user'];
 		$active_services_count = count( $detail['active_recurring_services'] ) + count( $detail['one_time_services'] );
@@ -24145,6 +24241,9 @@ class AJForms_Admin {
 		<?php if ( isset( $_GET['portal-error'] ) ) : ?>
 			<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['portal-error'] ) ) ); ?></p></div>
 		<?php endif; ?>
+		<?php if ( isset( $_GET['portal-customer-unmerged'] ) ) : ?>
+			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Stripe identity separated from this AJCore customer.', 'ajforms' ); ?></p></div>
+		<?php endif; ?>
 		<?php if ( isset( $_GET['portal-fields-updated'] ) ) : ?>
 			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Display fields saved.', 'ajforms' ); ?></p></div>
 		<?php endif; ?>
@@ -24183,6 +24282,24 @@ class AJForms_Admin {
 
 		<div class="ajcore-customer-grid <?php echo $is_local ? 'is-local' : ''; ?>">
 			<div class="ajcore-customer-col-side">
+			<?php if ( ! $is_local && count( $identity_customers ) > 1 ) : ?>
+			<div class="ajcore-customer-card">
+				<h3><?php esc_html_e( 'Merged Stripe Identities', 'ajforms' ); ?></h3>
+				<?php foreach ( $identity_customers as $identity_customer ) : ?>
+					<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid #f0f0f1;">
+						<div><code><?php echo esc_html( $identity_customer->stripe_customer_id ); ?></code><br><small><?php echo esc_html( $identity_customer->email ); ?><?php echo $identity_customer->stripe_customer_id === $customer->stripe_customer_id ? ' · ' . esc_html__( 'Primary', 'ajforms' ) : ''; ?></small></div>
+						<?php if ( $identity_customer->stripe_customer_id !== $customer->stripe_customer_id ) : ?>
+						<form method="post" onsubmit="return confirm('<?php echo esc_js( __( 'Separate this Stripe identity? Its history will return to its own AJCore customer.', 'ajforms' ) ); ?>');">
+							<?php wp_nonce_field( 'ajcore_customer_unmerge_' . $customer->stripe_customer_id . '_' . $identity_customer->stripe_customer_id, 'ajcore_customer_unmerge_nonce' ); ?>
+							<input type="hidden" name="primary_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
+							<input type="hidden" name="merged_customer_id" value="<?php echo esc_attr( $identity_customer->stripe_customer_id ); ?>">
+							<button type="submit" class="button button-small"><?php esc_html_e( 'Separate', 'ajforms' ); ?></button>
+						</form>
+						<?php endif; ?>
+					</div>
+				<?php endforeach; ?>
+			</div>
+			<?php endif; ?>
 			<div class="ajcore-customer-card ajcore-customer-profile-card <?php echo $is_editing ? 'is-editing' : ''; ?>">
 				<div class="ajcore-customer-card-head">
 					<h3><?php echo esc_html( $is_local ? __( 'Local Customer Profile', 'ajforms' ) : __( 'Stripe Customer Profile', 'ajforms' ) ); ?></h3>
@@ -25656,6 +25773,10 @@ class AJForms_Admin {
 
 		// Build WHERE against stripe_customers only; without_login is applied in PHP after merging mapping data.
 		$where = array( '1=1' );
+		$merge_table = $this->get_portal_customer_merges_table();
+		if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $merge_table ) ) === $merge_table ) {
+			$where[] = "NOT EXISTS (SELECT 1 FROM {$merge_table} cm WHERE cm.merged_customer_id = c.stripe_customer_id)";
+		}
 		if ( 'active' === $status_filter ) {
 			$where[] = "c.portal_status = 'active' AND c.enabled_portal = 1";
 		} elseif ( 'disabled' === $status_filter ) {
@@ -25760,10 +25881,11 @@ class AJForms_Admin {
 		}
 
 		$local_total = $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $local_customers_table ) ) === $local_customers_table ? (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$local_customers_table}`" ) : 0;
-		$total_customers = (int) $pdb->get_var( 'SELECT COUNT(*) FROM ' . $this->get_portal_stripe_customers_table() ) + $local_total;
-		$enabled_count   = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'active' AND enabled_portal = 1" );
-		$archived_count  = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status = 'archived'" );
-		$non_archived_ids = (array) $pdb->get_col( "SELECT stripe_customer_id FROM {$this->get_portal_stripe_customers_table()} WHERE portal_status IS NULL OR portal_status <> 'archived'" );
+		$visible_customer_clause = $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $merge_table ) ) === $merge_table ? " AND NOT EXISTS (SELECT 1 FROM {$merge_table} cm WHERE cm.merged_customer_id = c.stripe_customer_id)" : '';
+		$total_customers = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} c WHERE 1=1{$visible_customer_clause}" ) + $local_total;
+		$enabled_count   = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} c WHERE portal_status = 'active' AND enabled_portal = 1{$visible_customer_clause}" );
+		$archived_count  = (int) $pdb->get_var( "SELECT COUNT(*) FROM {$this->get_portal_stripe_customers_table()} c WHERE portal_status = 'archived'{$visible_customer_clause}" );
+		$non_archived_ids = (array) $pdb->get_col( "SELECT stripe_customer_id FROM {$this->get_portal_stripe_customers_table()} c WHERE (portal_status IS NULL OR portal_status <> 'archived'){$visible_customer_clause}" );
 		if ( $local_total ) $non_archived_ids = array_merge( $non_archived_ids, (array) $pdb->get_col( "SELECT local_customer_id FROM `{$local_customers_table}` WHERE status <> 'archived'" ) );
 		$no_subscription_count = count( array_diff( $non_archived_ids, $product_counts['any_subscription_customers'] ) );
 		$available_fields = $this->discover_portal_customer_scalar_fields( $customers );
@@ -25810,6 +25932,9 @@ class AJForms_Admin {
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-user-archived'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer archived. Billing, requests, files, tasks, and history were kept.', 'ajforms' ); ?></p></div>
+			<?php endif; ?>
+			<?php if ( isset( $_GET['portal-customers-merged'] ) ) : ?>
+				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( _n( '%d customer identity merged into the primary customer.', '%d customer identities merged into the primary customer.', absint( wp_unslash( $_GET['portal-customers-merged'] ) ), 'ajforms' ), absint( wp_unslash( $_GET['portal-customers-merged'] ) ) ) ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-users-deleted'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( __( 'Archived customer records deleted from the local cache: %1$d. Skipped: %2$d.', 'ajforms' ), absint( wp_unslash( $_GET['portal-users-deleted'] ) ), isset( $_GET['portal-bulk-skipped'] ) ? absint( wp_unslash( $_GET['portal-bulk-skipped'] ) ) : 0 ) ); ?></p></div>
@@ -25942,6 +26067,7 @@ class AJForms_Admin {
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="enable_repair"><?php esc_html_e( 'Enable & Repair Selected Customers', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="disable"><?php esc_html_e( 'Disable', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="archive"><?php esc_html_e( 'Archive', 'ajforms' ); ?></button>
+				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="merge" data-portal-merge-action><?php esc_html_e( 'Merge Selected', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button button-primary" data-portal-bulk-action="restore"><?php esc_html_e( 'Restore / Enable', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="reset_password"><?php esc_html_e( 'Reset Password', 'ajforms' ); ?></button>
 				<button type="submit" form="ajcore-portal-users-bulk-form" class="button" data-portal-bulk-action="send_welcome"><?php esc_html_e( 'Send Welcome Email', 'ajforms' ); ?></button>
@@ -25980,6 +26106,7 @@ class AJForms_Admin {
 					<thead>
 						<tr>
 							<th style="width:34px;"><input type="checkbox" id="ajcore-check-all-portal-users"></th>
+							<th style="width:64px;"><?php esc_html_e( 'Primary', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Portal Status', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Customer ID', 'ajforms' ); ?></th>
 							<th><?php esc_html_e( 'Stripe Customer', 'ajforms' ); ?></th>
@@ -25995,7 +26122,7 @@ class AJForms_Admin {
 					<tbody>
 						<?php if ( empty( $customers ) ) : ?>
 							<tr>
-								<td colspan="<?php echo esc_attr( 7 + count( $display_fields ) ); ?>">
+									<td colspan="<?php echo esc_attr( 8 + count( $display_fields ) ); ?>">
 									<p><strong><?php esc_html_e( 'No synced Stripe customers yet.', 'ajforms' ); ?></strong></p>
 									<p><?php esc_html_e( 'Click Sync Stripe Customers to pull saved Stripe Customer records from the connected Stripe account.', 'ajforms' ); ?></p>
 									<p>
@@ -26052,6 +26179,7 @@ class AJForms_Admin {
 								?>
 								<tr class="<?php echo esc_attr( $row_class ); ?>" data-customer-search="<?php echo esc_attr( $row_search ); ?>">
 									<td><input type="checkbox" class="ajcore-portal-user-checkbox" name="portal_customer_ids[]" value="<?php echo esc_attr( $customer_unique_key ); ?>" data-customer-id="<?php echo esc_attr( $customer->stripe_customer_id ); ?>" data-customer-email="<?php echo esc_attr( $customer_email ); ?>"></td>
+									<td><input type="radio" name="portal_primary_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>" aria-label="<?php echo esc_attr( sprintf( __( 'Use %s as the primary customer', 'ajforms' ), $customer->name ? $customer->name : $customer->stripe_customer_id ) ); ?>"></td>
 									<td><span class="ajcore-status-pill <?php echo esc_attr( $status_class ); ?>"><?php echo esc_html( $status_label ); ?></span></td>
 									<td><code><?php echo esc_html( $customer->stripe_customer_id ); ?></code></td>
 									<td>
@@ -26183,6 +26311,19 @@ class AJForms_Admin {
 						if('delete_archived' === action && !window.confirm('<?php echo esc_js( __( 'Delete selected archived portal customer records from the local AJ Core cache? WordPress users, Stripe records, billing, requests, files, tasks, and history will not be deleted.', 'ajforms' ) ); ?>')){
 							event.preventDefault();
 							return;
+						}
+						if('merge' === action){
+							var selected = boxes().filter(function(box){return box.checked;});
+							var primary = form.querySelector('input[name="portal_primary_customer_id"]:checked');
+							if(selected.length < 2 || !primary || !selected.some(function(box){return box.getAttribute('data-customer-id') === primary.value;})){
+								event.preventDefault();
+								window.alert('<?php echo esc_js( __( 'Select at least two customers, then choose the Primary radio button on one selected row.', 'ajforms' ) ); ?>');
+								return;
+							}
+							if(!window.confirm('<?php echo esc_js( __( 'Merge the selected Stripe identities in AJCore? Stripe records and payment methods remain separate, while AJCore shows their combined history under the primary customer.', 'ajforms' ) ); ?>')){
+								event.preventDefault();
+								return;
+							}
 						}
 						actionInput.value = action;
 					});
@@ -35488,6 +35629,7 @@ class AJForms_Admin {
 	private function get_shared_portal_table_bases() {
 		return array(
 			'aj_portal_stripe_customers',
+			'aj_portal_customer_merges',
 			'aj_portal_customer_states',
 			'aj_portal_stripe_products',
 			'aj_portal_product_catalog',

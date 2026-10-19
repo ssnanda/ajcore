@@ -431,6 +431,26 @@ class AJCore_REST_API {
 		) );
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/customers/merge',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_merge_customers' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/unmerge',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'ops_unmerge_customer' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/customers/(?P<stripe_customer_id>cus_[A-Za-z0-9_\-]+)/action',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -2167,7 +2187,48 @@ class AJCore_REST_API {
 		$customers = $this->attach_customer_site_access( $customers );
 		$customers = $this->attach_customer_pmb_numbers( $customers );
 		$customers = $this->attach_customer_service_types( $customers );
+		$customers = $this->collapse_merged_ops_customers( $customers );
 		return rest_ensure_response( array( 'customers' => $customers ) );
+	}
+
+	private function collapse_merged_ops_customers( $customers ) {
+		$customers = array_values( (array) $customers );
+		$merges    = $this->get_ops_customer_merge_rows();
+		if ( empty( $merges ) ) {
+			return $customers;
+		}
+
+		$by_id = array();
+		foreach ( $customers as $index => $customer ) {
+			$by_id[ (string) ( $customer['stripe_customer_id'] ?? '' ) ] = $index;
+			$customers[ $index ]['merged_customers'] = array();
+		}
+		$hidden = array();
+		foreach ( $merges as $merge ) {
+			$primary_id = (string) $merge['primary_customer_id'];
+			$merged_id  = (string) $merge['merged_customer_id'];
+			if ( ! isset( $by_id[ $primary_id ], $by_id[ $merged_id ] ) ) {
+				continue;
+			}
+			$primary_index = $by_id[ $primary_id ];
+			$merged        = $customers[ $by_id[ $merged_id ] ];
+			$customers[ $primary_index ]['merged_customers'][] = array(
+				'stripe_customer_id' => $merged_id,
+				'name'               => (string) ( $merged['name'] ?? '' ),
+				'email'              => (string) ( $merged['email'] ?? '' ),
+				'phone'              => (string) ( $merged['phone'] ?? '' ),
+				'synced_at'          => (string) ( $merged['synced_at'] ?? '' ),
+			);
+			$customers[ $primary_index ]['service_types'] = array_values( array_unique( array_merge(
+				(array) ( $customers[ $primary_index ]['service_types'] ?? array() ),
+				(array) ( $merged['service_types'] ?? array() )
+			) ) );
+			$hidden[ $merged_id ] = true;
+		}
+
+		return array_values( array_filter( $customers, function ( $customer ) use ( $hidden ) {
+			return empty( $hidden[ (string) ( $customer['stripe_customer_id'] ?? '' ) ] );
+		} ) );
 	}
 
 	private function attach_customer_pmb_numbers( $customers ) {
@@ -2370,6 +2431,10 @@ class AJCore_REST_API {
 		$pdb = $this->get_portal_db();
 		$stripe_customer_id = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
 		$is_local       = 0 === strpos( $stripe_customer_id, 'local_' );
+		$identity_ids   = $is_local ? array( $stripe_customer_id ) : $this->get_ops_customer_identity_ids( $stripe_customer_id );
+		if ( ! $is_local && ! empty( $identity_ids ) ) {
+			$stripe_customer_id = $identity_ids[0];
+		}
 		$customer_table = $this->portal_table( $is_local ? 'aj_portal_local_customers' : 'aj_portal_stripe_customers' );
 		$desired_cols   = array( 'stripe_customer_id', 'email', 'name', 'phone', 'description', 'address', 'metadata', 'raw_data', 'portal_status', 'enabled_portal', 'partner_key', 'livemode', 'synced_at' );
 		if ( $is_local ) {
@@ -2436,7 +2501,11 @@ class AJCore_REST_API {
 		} elseif ( class_exists( 'AJForms_Admin' ) ) {
 			$admin = new AJForms_Admin();
 			if ( method_exists( $admin, 'api_get_ops_customer_services' ) ) {
-				$services = $admin->api_get_ops_customer_services( $stripe_customer_id );
+				foreach ( $identity_ids as $identity_id ) {
+					$identity_services = $admin->api_get_ops_customer_services( $identity_id );
+					$services['subscriptions'] = array_merge( $services['subscriptions'], (array) ( $identity_services['subscriptions'] ?? array() ) );
+					$services['one_time_services'] = array_merge( $services['one_time_services'], (array) ( $identity_services['one_time_services'] ?? array() ) );
+				}
 			}
 		}
 
@@ -2445,7 +2514,11 @@ class AJCore_REST_API {
 		$tracking_services = array();
 		if ( ! $is_local ) {
 			$local_services_table = $this->portal_table( 'aj_portal_local_services' );
-			$tracking_rows = $this->table_exists( $pdb, $local_services_table ) ? $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$local_services_table}` WHERE local_customer_id=%s ORDER BY contract_start_date DESC,id DESC", $stripe_customer_id ), ARRAY_A ) : array();
+			$tracking_rows = array();
+			if ( $this->table_exists( $pdb, $local_services_table ) && ! empty( $identity_ids ) ) {
+				$tracking_placeholders = implode( ',', array_fill( 0, count( $identity_ids ), '%s' ) );
+				$tracking_rows = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$local_services_table}` WHERE local_customer_id IN ({$tracking_placeholders}) ORDER BY contract_start_date DESC,id DESC", $identity_ids ), ARRAY_A );
+			}
 			foreach ( (array) $tracking_rows as $row ) {
 				$tracking_services[] = array(
 					'local_service_id' => $row['local_service_id'], 'service_name' => $row['service_name'],
@@ -2460,7 +2533,7 @@ class AJCore_REST_API {
 			$local_ledger = $this->portal_table( 'aj_portal_local_ledger' );
 			$ledger = $this->table_exists( $pdb, $local_ledger ) ? $pdb->get_results( $pdb->prepare( "SELECT id,local_customer_id AS stripe_customer_id,source_object_id,source_type,ledger_date,description,amount,currency,status,'' AS invoice_id,'' AS payment_intent_id,'' AS charge_id,metadata,created_at FROM `{$local_ledger}` WHERE local_customer_id=%s ORDER BY ledger_date ASC,id ASC", $stripe_customer_id ), ARRAY_A ) : array();
 		} else {
-			$ledger = $this->select_by_customer( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_object_id', 'source_type', 'ledger_date', 'description', 'amount', 'currency', 'status', 'invoice_id', 'payment_intent_id', 'charge_id', 'metadata', 'created_at' ), $stripe_customer_id, 'ledger_date ASC, id ASC' );
+			$ledger = $this->select_by_customers( 'aj_portal_ledger', array( 'id', 'stripe_customer_id', 'source_object_id', 'source_type', 'ledger_date', 'description', 'amount', 'currency', 'status', 'invoice_id', 'payment_intent_id', 'charge_id', 'metadata', 'created_at' ), $identity_ids, 'ledger_date ASC, id ASC' );
 		}
 		foreach ( $ledger as &$ledger_entry ) {
 			if ( isset( $ledger_entry['metadata'] ) && is_string( $ledger_entry['metadata'] ) ) {
@@ -2471,7 +2544,7 @@ class AJCore_REST_API {
 		unset( $ledger_entry );
 
 		// Build billing_type lookup from service snapshots: payment_intent_id / invoice_id → 'subscription' | 'one_time'.
-		$snapshots = $this->select_by_customer( 'aj_portal_service_snapshots', array( 'payment_intent_id', 'invoice_id', 'billing_type' ), $stripe_customer_id, 'created_at DESC' );
+		$snapshots = $this->select_by_customers( 'aj_portal_service_snapshots', array( 'payment_intent_id', 'invoice_id', 'billing_type' ), $identity_ids, 'created_at DESC' );
 		$pi_billing  = array();
 		$inv_billing = array();
 		foreach ( (array) $snapshots as $snap ) {
@@ -2483,7 +2556,7 @@ class AJCore_REST_API {
 		}
 
 		// Fetch transactions and annotate with billing_type; remove charge duplicates of invoice transactions.
-		$transactions = $this->select_by_customer( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at', 'raw_data' ), $stripe_customer_id, 'transaction_date DESC, id DESC' );
+		$transactions = $this->select_by_customers( 'aj_portal_stripe_transactions', array( 'id', 'stripe_object_id', 'object_type', 'stripe_customer_id', 'description', 'amount', 'currency', 'status', 'transaction_date', 'due_date', 'invoice_id', 'payment_intent_id', 'charge_id', 'livemode', 'synced_at', 'raw_data' ), $identity_ids, 'transaction_date DESC, id DESC' );
 
 		$transactions = $this->dedupe_stripe_transaction_rows( $transactions );
 		$transactions = $this->attach_payment_display_fields( $transactions );
@@ -2501,16 +2574,34 @@ class AJCore_REST_API {
 		}
 		unset( $tx );
 
+		$customer_identities = array();
+		if ( ! $is_local ) {
+			$identity_placeholders = implode( ',', array_fill( 0, count( $identity_ids ), '%s' ) );
+			$identity_rows = $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id,name,email,phone,synced_at FROM `{$customer_table}` WHERE stripe_customer_id IN ({$identity_placeholders})", $identity_ids ), ARRAY_A );
+			$identity_by_id = array();
+			foreach ( (array) $identity_rows as $identity_row ) {
+				$identity_by_id[ (string) $identity_row['stripe_customer_id'] ] = $identity_row;
+			}
+			foreach ( $identity_ids as $identity_id ) {
+				if ( isset( $identity_by_id[ $identity_id ] ) ) {
+					$customer_identities[] = $identity_by_id[ $identity_id ];
+				}
+			}
+		}
+		$decoded['merged_customers'] = array_values( array_filter( $customer_identities, function ( $identity ) use ( $stripe_customer_id ) {
+			return (string) ( $identity['stripe_customer_id'] ?? '' ) !== $stripe_customer_id;
+		} ) );
+
 		return rest_ensure_response(
 			array(
 				'customer'         => $decoded,
 				'profile'          => $this->get_customer_profile_row( $stripe_customer_id ),
 				'tracking_services' => $tracking_services,
 				'services'         => $services,
-				'subscriptions'    => $this->select_by_customer( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'items', 'livemode', 'synced_at' ), $stripe_customer_id, 'synced_at DESC, id DESC' ),
+				'subscriptions'    => $this->select_by_customers( 'aj_portal_stripe_subscriptions', array( 'stripe_subscription_id', 'stripe_customer_id', 'status', 'current_period_end', 'cancel_at_period_end', 'items', 'livemode', 'synced_at' ), $identity_ids, 'synced_at DESC, id DESC' ),
 				'transactions'     => $transactions,
 				'ledger'           => $ledger,
-				'service_requests' => $this->select_by_customer( 'aj_portal_service_requests', array( 'id', 'service_request_number', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'created_at', 'updated_at' ), $stripe_customer_id, 'updated_at DESC, id DESC' ),
+				'service_requests' => $this->select_by_customers( 'aj_portal_service_requests', array( 'id', 'service_request_number', 'stripe_customer_id', 'title', 'status', 'service_status', 'amount', 'currency', 'created_at', 'updated_at' ), $identity_ids, 'updated_at DESC, id DESC' ),
 			)
 		);
 	}
@@ -8266,6 +8357,52 @@ class AJCore_REST_API {
 		return $this->get_customer_rows( $suffix, $columns, $stripe_customer_id, $order_by );
 	}
 
+	private function get_ops_customer_merge_rows() {
+		$pdb   = $this->get_portal_db();
+		$table = $this->portal_table( 'aj_portal_customer_merges' );
+		if ( ! $this->table_exists( $pdb, $table ) ) {
+			return array();
+		}
+		$rows = $pdb->get_results( "SELECT primary_customer_id, merged_customer_id, created_at FROM `{$table}` ORDER BY id ASC", ARRAY_A );
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	private function get_ops_customer_identity_ids( $stripe_customer_id ) {
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$primary_id         = $stripe_customer_id;
+		$merges             = $this->get_ops_customer_merge_rows();
+		foreach ( $merges as $merge ) {
+			if ( (string) $merge['merged_customer_id'] === $stripe_customer_id ) {
+				$primary_id = (string) $merge['primary_customer_id'];
+				break;
+			}
+		}
+		$ids = array( $primary_id );
+		foreach ( $merges as $merge ) {
+			if ( (string) $merge['primary_customer_id'] === $primary_id ) {
+				$ids[] = (string) $merge['merged_customer_id'];
+			}
+		}
+		return array_values( array_unique( array_filter( $ids ) ) );
+	}
+
+	private function select_by_customers( $suffix, $columns, $customer_ids, $order_by = 'id DESC' ) {
+		$pdb   = $this->get_portal_db();
+		$table = $this->portal_table( $suffix );
+		$ids   = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', (array) $customer_ids ) ) ) );
+		if ( empty( $ids ) || ! $this->table_exists( $pdb, $table ) ) {
+			return array();
+		}
+		$columns   = $this->existing_columns( $pdb, $table, $columns );
+		$available = $this->table_columns( $pdb, $table );
+		if ( empty( $columns ) || ! in_array( 'stripe_customer_id', $available, true ) ) {
+			return array();
+		}
+		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%s' ) );
+		$rows = $pdb->get_results( $pdb->prepare( 'SELECT `' . implode( '`,`', $columns ) . "` FROM `{$table}` WHERE stripe_customer_id IN ({$placeholders}) ORDER BY {$order_by} LIMIT 500", $ids ), ARRAY_A );
+		return is_array( $rows ) ? array_map( array( $this, 'decode_known_json_fields' ), $rows ) : array();
+	}
+
 	private function get_customer_rows( $suffix, $columns, $stripe_customer_id, $order_by = 'id DESC' ) {
 		$pdb = $this->get_portal_db();
 		$table = $this->portal_table( $suffix );
@@ -9154,6 +9291,79 @@ class AJCore_REST_API {
 			$pdb->insert( $states_table, array( 'stripe_customer_id' => sanitize_text_field( $stripe_customer_id ), 'site_uuid' => $site_uuid, 'status_source' => 'ajops_edit', 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ) ), array( '%s', '%s', '%s', '%s', '%s' ) );
 		}
 		return true;
+	}
+
+	public function ops_merge_customers( WP_REST_Request $request ) {
+		$pdb         = $this->get_portal_db();
+		$merge_table = $this->portal_table( 'aj_portal_customer_merges' );
+		$customer_table = $this->portal_table( 'aj_portal_stripe_customers' );
+		$primary_id  = sanitize_text_field( (string) $request->get_param( 'primary_customer_id' ) );
+		$requested   = (array) $request->get_param( 'customer_ids' );
+		$requested[] = $primary_id;
+		$requested   = array_values( array_unique( array_filter( array_map( 'sanitize_text_field', $requested ) ) ) );
+
+		if ( count( $requested ) < 2 || ! in_array( $primary_id, $requested, true ) ) {
+			return new WP_Error( 'ajcore_invalid_customer_merge', 'Choose at least two customers and one primary customer.', array( 'status' => 400 ) );
+		}
+		foreach ( $requested as $customer_id ) {
+			if ( 0 !== strpos( $customer_id, 'cus_' ) ) {
+				return new WP_Error( 'ajcore_invalid_customer_merge', 'Only Stripe customers can be merged.', array( 'status' => 400 ) );
+			}
+		}
+		if ( ! $this->table_exists( $pdb, $merge_table ) ) {
+			return new WP_Error( 'ajcore_customer_merge_unavailable', 'Customer merge storage is unavailable. Run the AJCore database upgrade first.', array( 'status' => 503 ) );
+		}
+
+		$all_ids = array();
+		foreach ( $requested as $customer_id ) {
+			$all_ids = array_merge( $all_ids, $this->get_ops_customer_identity_ids( $customer_id ) );
+		}
+		$all_ids = array_values( array_unique( array_filter( $all_ids ) ) );
+		if ( ! in_array( $primary_id, $all_ids, true ) ) {
+			$all_ids[] = $primary_id;
+		}
+		$placeholders = implode( ',', array_fill( 0, count( $all_ids ), '%s' ) );
+		$existing_ids = $this->table_exists( $pdb, $customer_table )
+			? $pdb->get_col( $pdb->prepare( "SELECT stripe_customer_id FROM `{$customer_table}` WHERE stripe_customer_id IN ({$placeholders})", $all_ids ) )
+			: array();
+		if ( count( array_unique( (array) $existing_ids ) ) !== count( $all_ids ) ) {
+			return new WP_Error( 'ajcore_customer_merge_not_found', 'One or more selected Stripe customers were not found.', array( 'status' => 404 ) );
+		}
+
+		$pdb->query( 'START TRANSACTION' );
+		$pdb->query( $pdb->prepare( "DELETE FROM `{$merge_table}` WHERE primary_customer_id IN ({$placeholders}) OR merged_customer_id IN ({$placeholders})", array_merge( $all_ids, $all_ids ) ) );
+		foreach ( $all_ids as $customer_id ) {
+			if ( $customer_id === $primary_id ) {
+				continue;
+			}
+			$inserted = $pdb->insert(
+				$merge_table,
+				array( 'primary_customer_id' => $primary_id, 'merged_customer_id' => $customer_id, 'created_by' => get_current_user_id(), 'created_at' => current_time( 'mysql' ) ),
+				array( '%s', '%s', '%d', '%s' )
+			);
+			if ( false === $inserted ) {
+				$pdb->query( 'ROLLBACK' );
+				return new WP_Error( 'ajcore_customer_merge_failed', 'The customer identities could not be linked.', array( 'status' => 500 ) );
+			}
+		}
+		$pdb->query( 'COMMIT' );
+
+		return rest_ensure_response( array( 'success' => true, 'primary_customer_id' => $primary_id, 'customer_ids' => $all_ids ) );
+	}
+
+	public function ops_unmerge_customer( WP_REST_Request $request ) {
+		$pdb         = $this->get_portal_db();
+		$merge_table = $this->portal_table( 'aj_portal_customer_merges' );
+		$primary_id  = sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) );
+		$merged_id   = sanitize_text_field( (string) $request->get_param( 'merged_customer_id' ) );
+		if ( '' === $merged_id || $primary_id === $merged_id || ! $this->table_exists( $pdb, $merge_table ) ) {
+			return new WP_Error( 'ajcore_invalid_customer_unmerge', 'Choose a linked customer identity to separate.', array( 'status' => 400 ) );
+		}
+		$deleted = $pdb->delete( $merge_table, array( 'primary_customer_id' => $primary_id, 'merged_customer_id' => $merged_id ), array( '%s', '%s' ) );
+		if ( ! $deleted ) {
+			return new WP_Error( 'ajcore_customer_unmerge_not_found', 'That customer identity is not linked to this primary customer.', array( 'status' => 404 ) );
+		}
+		return rest_ensure_response( array( 'success' => true, 'primary_customer_id' => $primary_id, 'merged_customer_id' => $merged_id ) );
 	}
 
 	public function ops_customer_action( WP_REST_Request $request ) {

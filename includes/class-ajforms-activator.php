@@ -17,6 +17,7 @@ class AJForms_Activator {
 		$table_email_log         = $wpdb->prefix . 'aj_portal_email_log';
 		$table_partners          = $wpdb->prefix . 'aj_portal_partners';
 		$table_stripe_customers     = $wpdb->prefix . 'aj_portal_stripe_customers';
+		$table_customer_merges      = $wpdb->prefix . 'aj_portal_customer_merges';
 		$table_customer_number_counters = $wpdb->prefix . 'aj_portal_customer_number_counters';
 		$table_stripe_products      = $wpdb->prefix . 'aj_portal_stripe_products';
 		$table_product_catalog      = $wpdb->prefix . 'aj_portal_product_catalog';
@@ -208,6 +209,18 @@ class AJForms_Activator {
 			KEY partner_key (partner_key),
 			KEY enabled_portal (enabled_portal),
 			KEY portal_status (portal_status)
+		) $charset_collate;
+
+		CREATE TABLE $table_customer_merges (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			primary_customer_id varchar(100) NOT NULL,
+			merged_customer_id varchar(100) NOT NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY merged_customer_id (merged_customer_id),
+			KEY primary_customer_id (primary_customer_id),
+			KEY created_by (created_by)
 		) $charset_collate;
 
 		CREATE TABLE $table_customer_number_counters (
@@ -1018,6 +1031,7 @@ class AJForms_Activator {
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 		dbDelta( $sql );
+		self::create_customer_merges_table( $wpdb );
 		self::create_and_migrate_local_business_tables( $wpdb );
 
 		// Records created before file archiving had no status value. Keep them
@@ -1028,6 +1042,7 @@ class AJForms_Activator {
 		if ( function_exists( 'ajcore_get_portal_db' ) ) {
 			$pdb = ajcore_get_portal_db();
 			if ( $pdb !== $wpdb ) {
+				self::create_customer_merges_table( $pdb );
 				self::create_and_migrate_local_business_tables( $pdb );
 				$pdb_charset = $pdb->get_charset_collate();
 				self::create_reservation_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
@@ -1339,8 +1354,24 @@ class AJForms_Activator {
 
 		update_option( 'ajforms_version', AJFORMS_VERSION, false );
 		if ( $customer_number_schema_ready && $service_request_number_schema_ready ) {
-			update_option( 'ajforms_portal_schema_version', '43', false );
+			update_option( 'ajforms_portal_schema_version', '44', false );
 		}
+	}
+
+	private static function create_customer_merges_table( $db ) {
+		$table   = $db->prefix . 'aj_portal_customer_merges';
+		$charset = $db->get_charset_collate();
+		$db->query( "CREATE TABLE IF NOT EXISTS {$table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			primary_customer_id varchar(100) NOT NULL,
+			merged_customer_id varchar(100) NOT NULL,
+			created_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY (id),
+			UNIQUE KEY merged_customer_id (merged_customer_id),
+			KEY primary_customer_id (primary_customer_id),
+			KEY created_by (created_by)
+		) {$charset}" );
 	}
 
 	/**
