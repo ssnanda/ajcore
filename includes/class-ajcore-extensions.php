@@ -36,6 +36,7 @@
  * no url = opens in the page and is drawn on the 'ajcore_admin_portal_tab_render' action).
  * 'ajcore_current_portal_customer_id' filter returns the logged-in portal user's customer id, the same
  * way the portal pages resolve it.
+ * API 16: E-Signatures (BreezeDoc) is registered by AJCore-RA, not AJCore (routes /ops/esign/*, /esign/*, Client Portal tab).
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -49,7 +50,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 15 );
+	define( 'AJCORE_EXTENSION_API', 16 );
 }
 
 class AJCore_Extensions {
