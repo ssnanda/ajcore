@@ -19057,7 +19057,8 @@ class AJForms_Admin {
 
 	/** Admin notice naming any SMTP profile that can't send yet. Shown where mail gets triggered —
 	 *  Forms and the Client Portal — so a broken profile surfaces before someone sends with it. */
-	private function render_mail_profile_warnings() {
+	/** Prints the SMTP warning as a WP notice, or (when $inline) returns a compact chip for the portal header. */
+	private function render_mail_profile_warnings( $inline = false ) {
 		if ( ! function_exists( 'ajcore_mail_profile_issues' ) ) {
 			return;
 		}
@@ -19070,7 +19071,16 @@ class AJForms_Admin {
 			}
 		}
 		if ( ! $lines ) {
-			return;
+			return '';
+		}
+		if ( $inline ) {
+			return sprintf(
+				'<div class="ajcore-mail-warn"><strong>%s</strong> %s &nbsp;<a href="%s">%s</a></div>',
+				esc_html__( 'SMTP not configured:', 'ajforms' ),
+				esc_html( implode( ' · ', $lines ) ),
+				esc_url( add_query_arg( array( 'page' => 'ajcore-mail' ), admin_url( 'admin.php' ) ) ),
+				esc_html__( 'AJ Core Mail →', 'ajforms' )
+			);
 		}
 		printf(
 			'<div class="notice notice-warning"><p><strong>%s</strong> %s &nbsp;<a href="%s">%s</a></p></div>',
@@ -19934,7 +19944,8 @@ class AJForms_Admin {
 			$this->ensure_portal_schema();
 		}
 
-		$this->render_mail_profile_warnings();
+		// Shown inside the portal header (a .notice would be moved under the page title by WordPress).
+		$mail_warning_html = $this->render_mail_profile_warnings( true );
 
 		// Menu/Calendar/API/Settings were merged into a single "CP Settings" tab with its own
 		// sub-navigation (cp_section) — keep old bookmarked links working by redirecting them in,
@@ -20023,15 +20034,16 @@ class AJForms_Admin {
 				.ajcore-customer-modal[hidden]{display:none}.ajcore-customer-modal{position:fixed;inset:0;z-index:100100;display:grid;place-items:center;padding:24px;background:rgba(15,23,42,.46)}.ajcore-customer-modal-dialog{display:flex;flex-direction:column;width:min(980px,calc(100vw - 48px));max-height:calc(100vh - 48px);overflow:hidden;border:1px solid #cbd5e1;border-radius:18px;background:#fff;box-shadow:0 28px 80px rgba(15,23,42,.28)}.ajcore-customer-modal-head,.ajcore-customer-modal-foot{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 30px;border-bottom:1px solid #e5e7eb}.ajcore-customer-modal-head h2{margin:0!important;font-size:28px}.ajcore-customer-modal-close{display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;background:transparent;color:#94a3b8;font-size:32px;line-height:1;cursor:pointer}.ajcore-customer-modal-close:hover{color:#0f172a}.ajcore-customer-modal-body{overflow-y:auto;padding:28px 30px}.ajcore-customer-modal-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 24px}.ajcore-customer-modal-grid label{display:flex;flex-direction:column;gap:8px;color:#334155;font-size:16px;font-weight:800}.ajcore-customer-modal-grid label>span small{color:#dc2626}.ajcore-customer-modal-grid input,.ajcore-customer-modal-grid select{width:100%;min-height:48px;padding:8px 14px;font-size:16px}.ajcore-customer-modal-wide,.ajcore-customer-modal-section{grid-column:1/-1}.ajcore-customer-modal-section{margin:4px 0 -2px;color:#64748b;font-size:13px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}.ajcore-customer-modal-location{display:grid;grid-template-columns:2fr 1fr 1fr;gap:20px 24px;grid-column:1/-1}.ajcore-customer-modal-foot{justify-content:flex-end;border-top:1px solid #e5e7eb;border-bottom:0}.ajcore-customer-modal-foot .button{min-height:46px;padding:5px 24px!important;font-size:16px}.ajcore-customer-modal-foot .button:not(.button-primary){background:#fff}.ajcore-modal-open{overflow:hidden}
 				.ajcore-app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0 8px;padding:8px 14px;border:1px solid var(--ajc-line);border-radius:16px;background:radial-gradient(circle at 0% 0%,rgba(49,87,255,.16),transparent 28rem),linear-gradient(135deg,#fff 0%,#f8fbff 100%);box-shadow:0 6px 16px rgba(15,23,42,.05)}
 				.ajcore-brand{display:flex;align-items:center;gap:10px}.ajcore-brand-mark{width:32px;height:32px;border-radius:11px;background:linear-gradient(135deg,#3157ff,#7c3aed);display:grid;place-items:center;color:#fff;font-size:16px;box-shadow:0 6px 14px rgba(49,87,255,.25)}.ajcore-brand h1{margin:0;font-size:18px;line-height:1.15;color:var(--ajc-ink)}.ajcore-brand span{display:block;margin-top:1px;font-size:12px;color:var(--ajc-muted);font-weight:700}
-				.ajcore-stripe-mini{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.ajcore-stripe-mini .stripe-pill{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800;border:1px solid #fde68a;background:#fffbeb;color:#92400e}.ajcore-stripe-mini .stripe-pill.is-test{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}.ajcore-stripe-mini .stripe-pill.is-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+				.ajcore-mail-warn{flex:1;min-width:0;margin:0 8px;padding:5px 12px;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#92400e;font-size:12px;line-height:1.4}.ajcore-mail-warn a{font-weight:800}.ajcore-stripe-mini{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.ajcore-stripe-mini .stripe-pill{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800;border:1px solid #fde68a;background:#fffbeb;color:#92400e}.ajcore-stripe-mini .stripe-pill.is-test{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}.ajcore-stripe-mini .stripe-pill.is-error{border-color:#fecaca;background:#fef2f2;color:#991b1b}
 				.ajcore-tabs-shell{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin:0 0 8px;padding:4px 8px;border:1px solid var(--ajc-line);border-radius:14px;background:#fff;box-shadow:0 4px 12px rgba(15,23,42,.03)}.ajcore-tabs-shell .button{min-height:28px;padding:0 12px;line-height:26px;font-size:12px}.ajcore-tab-link{display:inline-flex;align-items:center;padding:6px 10px;border-radius:10px;font-size:13px;text-decoration:none;font-weight:800;color:#334155}.ajcore-tab-link:hover{background:#f1f5f9;color:#0f172a}.ajcore-tab-link.is-active{background:#0f172a;color:#fff}.ajcore-tab-select{display:none;width:100%;max-width:360px}.ajcore-tab-spacer{flex:1}
 				@media(max-width:1100px){.ajcore-app-header{align-items:flex-start;flex-direction:column}.ajcore-tabs-shell .ajcore-tab-link{display:none}.ajcore-tab-select{display:block}.ajcore-tab-spacer{display:none}}@media(max-width:700px){.ajcore-customer-modal{padding:10px}.ajcore-customer-modal-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px)}.ajcore-customer-modal-head,.ajcore-customer-modal-body,.ajcore-customer-modal-foot{padding:18px}.ajcore-customer-modal-head h2{font-size:22px}.ajcore-customer-modal-grid,.ajcore-customer-modal-location{grid-template-columns:1fr}.ajcore-customer-modal-location{gap:20px}.ajcore-customer-modal-foot .button{flex:1}}
 			</style>
 			<div class="ajcore-app-header">
 				<div class="ajcore-brand">
 					<div class="ajcore-brand-mark" aria-hidden="true">✦</div>
-					<div><h1><?php echo esc_html( $is_cp_settings_page ? ( $client_portal_enabled ? __( 'AJ Core - CP Settings', 'ajforms' ) : __( 'AJ Core - Site Settings', 'ajforms' ) ) : __( 'AJ Core - Client Portal', 'ajforms' ) ); ?></h1><span><?php echo esc_html( $is_cp_settings_page ? ( $client_portal_enabled ? __( 'Client Portal configuration', 'ajforms' ) : __( 'Site capabilities and shared database', 'ajforms' ) ) : ( isset( $tabs[ $tab ] ) ? $tabs[ $tab ] : __( 'Dashboard', 'ajforms' ) ) ); ?></span></div>
+					<div><h1><?php echo esc_html( $is_cp_settings_page ? ( $client_portal_enabled ? __( 'AJ Core - CP Settings', 'ajforms' ) : __( 'AJ Core - Site Settings', 'ajforms' ) ) : __( 'AJ Core - Client Portal', 'ajforms' ) ); ?></h1><?php if ( $is_cp_settings_page ) : ?><span><?php echo esc_html( $client_portal_enabled ? __( 'Client Portal configuration', 'ajforms' ) : __( 'Site capabilities and shared database', 'ajforms' ) ); ?></span><?php endif; ?></div>
 				</div>
+				<?php echo $mail_warning_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built and escaped in render_mail_profile_warnings(). ?>
 				<?php if ( $client_portal_enabled ) : ?>
 				<div class="ajcore-stripe-mini">
 					<span class="stripe-pill <?php echo ! empty( $stripe_mode['has_issues'] ) ? 'is-error' : ( empty( $stripe_mode['is_live'] ) ? 'is-test' : '' ); ?>"><?php echo esc_html( sprintf( __( 'Stripe %s Mode', 'ajforms' ), $stripe_mode['label'] ) ); ?></span>
