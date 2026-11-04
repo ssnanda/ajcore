@@ -37,6 +37,8 @@
  * 'ajcore_current_portal_customer_id' filter returns the logged-in portal user's customer id, the same
  * way the portal pages resolve it.
  * API 16: E-Signatures (BreezeDoc) is registered by AJCore-RA, not AJCore (routes /ops/esign/*, /esign/*, Client Portal tab).
+ * API 17: Rentec Direct is registered by AJCore-RA (routes /ops/rentec/*, Client Portal tab, settings, connection test); the
+ * 'ajcore_expense_invoice_options' filter supplies units/vendors to the expense-invoice options endpoint.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -50,7 +52,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 16 );
+	define( 'AJCORE_EXTENSION_API', 17 );
 }
 
 class AJCore_Extensions {

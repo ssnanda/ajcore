@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.363
+ * Version: 0.7.364
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.363' );
+	define( 'AJCORE_VERSION', '0.7.364' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -424,13 +424,6 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'asana_personal_access_token'   => '',
 			'asana_workspace_gid'           => '',
 			'asana_project_gid'             => '',
-			// Rentec Direct API v3. The API key is encrypted at rest with the other
-			// integration credentials and is only used server-side by AJ Core.
-			'rentec_enabled'                => '0',
-			'rentec_api_key'                => '',
-			'rentec_account_label_1'        => 'Rentec Account 1',
-			'rentec_api_key_2'              => '',
-			'rentec_account_label_2'        => 'Rentec Account 2',
 			// UPOS Honeywell Home thermostat integration. Credentials remain server-side;
 			// AJOps only receives masked configuration status and thermostat data.
 			'upos_thermo_client_id'          => '',
@@ -590,12 +583,6 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 						$settings = array_merge( $settings, $shared_chat );
 					}
 				}
-				if ( function_exists( 'ajcore_read_shared_rentec_settings' ) ) {
-					$shared_rentec = ajcore_read_shared_rentec_settings();
-					if ( ! empty( $shared_rentec ) ) {
-						$settings = array_merge( $settings, $shared_rentec );
-					}
-				}
 				if ( function_exists( 'ajcore_read_shared_gmail_intake_settings' ) ) {
 					$shared_gmail_intake = ajcore_read_shared_gmail_intake_settings();
 					if ( ! empty( $shared_gmail_intake ) ) {
@@ -653,8 +640,6 @@ if ( ! function_exists( 'ajcore_get_secret_setting_keys' ) ) {
 			'hcaptcha_secret_key',
 			'turnstile_secret_key',
 			'asana_personal_access_token',
-			'rentec_api_key',
-			'rentec_api_key_2',
 			'upos_thermo_client_secret',
 			'upos_thermo_refresh_token',
 			'cloudflare_api_token',
@@ -2040,83 +2025,6 @@ if ( ! function_exists( 'ajcore_write_shared_chat_settings' ) ) {
 	}
 }
 
-if ( ! function_exists( 'ajcore_get_rentec_setting_keys' ) ) {
-	function ajcore_get_rentec_setting_keys() {
-		return array(
-			'rentec_enabled',
-			'rentec_api_key',
-			'rentec_account_label_1',
-			'rentec_api_key_2',
-			'rentec_account_label_2',
-		);
-	}
-}
-
-if ( ! function_exists( 'ajcore_read_shared_rentec_settings' ) ) {
-	function ajcore_read_shared_rentec_settings() {
-		$shared_db = ajcore_get_shared_db();
-		if ( ! $shared_db ) {
-			return array();
-		}
-		$table = $shared_db->prefix . 'aj_shared_settings';
-		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-			return array();
-		}
-		$value = $shared_db->get_var(
-			$shared_db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_rentec_settings' )
-		);
-		$decoded = json_decode( (string) $value, true );
-		return is_array( $decoded ) ? $decoded : array();
-	}
-}
-
-if ( ! function_exists( 'ajcore_write_shared_rentec_settings' ) ) {
-	function ajcore_write_shared_rentec_settings( $settings ) {
-		if ( ! ajcore_is_shared_db_enabled() ) {
-			return false;
-		}
-		$shared_db = ajcore_get_shared_db();
-		if ( ! $shared_db ) {
-			return false;
-		}
-		$table = $shared_db->prefix . 'aj_shared_settings';
-		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-			return false;
-		}
-		$data = array();
-		foreach ( ajcore_get_rentec_setting_keys() as $key ) {
-			if ( array_key_exists( $key, $settings ) ) {
-				$value = $settings[ $key ];
-				if ( in_array( $key, array( 'rentec_api_key', 'rentec_api_key_2' ), true ) && function_exists( 'ajcore_decrypt_setting_value' ) ) {
-					$value = ajcore_decrypt_setting_value( $value );
-				}
-				$data[ $key ] = $value;
-			}
-		}
-		$encoded = wp_json_encode( $data );
-		if ( false === $encoded ) {
-			return false;
-		}
-		$existing = $shared_db->get_var(
-			$shared_db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_rentec_settings' )
-		);
-		if ( $existing ) {
-			return false !== $shared_db->update(
-				$table,
-				array( 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
-				array( 'setting_name' => 'ajcore_rentec_settings' ),
-				array( '%s', '%s' ),
-				array( '%s' )
-			);
-		}
-		return false !== $shared_db->insert(
-			$table,
-			array( 'setting_name' => 'ajcore_rentec_settings', 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
-			array( '%s', '%s', '%s' )
-		);
-	}
-}
-
 if ( ! function_exists( 'ajcore_get_gmail_intake_setting_keys' ) ) {
 	function ajcore_get_gmail_intake_setting_keys() {
 		return array(
@@ -2169,8 +2077,7 @@ if ( ! function_exists( 'ajcore_write_shared_gmail_intake_settings' ) ) {
 			if ( array_key_exists( $key, $settings ) ) {
 				// None of these fields are on ajcore_get_secret_setting_keys() today (Client
 				// Secret and the OAuth tokens are stored plaintext locally), so no decrypt step
-				// is needed here — unlike ajcore_write_shared_rentec_settings(). If that ever
-				// changes, mirror the ajcore_decrypt_setting_value() call used there.
+				// is needed here. If that ever changes, decrypt with ajcore_decrypt_setting_value().
 				$data[ $key ] = $settings[ $key ];
 			}
 		}
@@ -2216,33 +2123,12 @@ add_action(
 		if ( function_exists( 'ajcore_write_shared_chat_settings' ) ) {
 			ajcore_write_shared_chat_settings( $value );
 		}
-		if ( function_exists( 'ajcore_write_shared_rentec_settings' ) ) {
-			ajcore_write_shared_rentec_settings( $value );
-		}
 		if ( function_exists( 'ajcore_write_shared_gmail_intake_settings' ) ) {
 			ajcore_write_shared_gmail_intake_settings( $value );
 		}
 	},
 	10,
 	2
-);
-
-// Existing installations already have Rentec keys in the master's local option. Publish that
-// configuration once when the shared row does not yet exist, so secondary sites inherit it
-// immediately after upgrading without requiring the administrator to re-save any secrets.
-add_action(
-	'admin_init',
-	function () {
-		if ( ! ajcore_is_shared_db_enabled()
-			|| ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() )
-			|| ! function_exists( 'ajcore_read_shared_rentec_settings' )
-			|| ! function_exists( 'ajcore_write_shared_rentec_settings' )
-			|| ! empty( ajcore_read_shared_rentec_settings() ) ) {
-			return;
-		}
-		ajcore_write_shared_rentec_settings( ajforms_get_settings() );
-	},
-	20
 );
 
 // The passive-engagement toggles (chat_engage_popup_enabled, visitor_identify_enabled,

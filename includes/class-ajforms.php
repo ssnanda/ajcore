@@ -69,7 +69,6 @@ class AJForms {
 		add_action( 'wp_ajax_ajf_save_form', array( $plugin_admin, 'ajax_save_form' ) );
 		add_action( 'wp_ajax_ajf_import_form', array( $plugin_admin, 'ajax_import_form' ) );
 		add_action( 'wp_ajax_ajf_sync_asana_reference_data', array( $plugin_admin, 'ajax_sync_asana_reference_data' ) );
-		add_action( 'wp_ajax_ajcore_test_rentec_connection', array( $plugin_admin, 'ajax_test_rentec_connection' ) );
 		add_action( 'wp_ajax_ajcore_test_cloudflare_connection', array( $plugin_admin, 'ajax_test_cloudflare_connection' ) );
 		add_action( 'wp_ajax_ajcore_deploy_cloudflare_rule_all_zones', array( $plugin_admin, 'ajax_deploy_cloudflare_rule_all_zones' ) );
 		add_action( 'wp_ajax_ajcore_test_shared_db', array( $plugin_admin, 'ajax_test_shared_db_connection' ) );

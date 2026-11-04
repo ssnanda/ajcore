@@ -11016,115 +11016,6 @@ class AJForms_Admin {
 	}
 
 	/**
-	 * Test Rentec Direct API v3 access and return aggregate availability only.
-	 *
-	 * Response bodies are never returned to the browser or persisted. Each resource
-	 * response is reduced to the count supplied by Rentec's summary envelope.
-	 */
-	public function ajax_test_rentec_connection() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( __( 'Insufficient permissions.', 'ajforms' ), 403 );
-		}
-
-		check_ajax_referer( 'ajcore_test_rentec_connection', 'nonce' );
-
-		$settings      = $this->get_plugin_settings();
-		$account_index = isset( $_POST['account'] ) && '2' === sanitize_text_field( wp_unslash( $_POST['account'] ) ) ? '2' : '1';
-		$setting_key   = '2' === $account_index ? 'rentec_api_key_2' : 'rentec_api_key';
-		$api_key       = isset( $_POST['api_key'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['api_key'] ) ) ) : '';
-		if ( '' === $api_key ) {
-			$api_key = isset( $settings[ $setting_key ] ) ? trim( (string) $settings[ $setting_key ] ) : '';
-		}
-
-		if ( '' === $api_key ) {
-			wp_send_json_error( __( 'Enter a Rentec Direct API key or save one first.', 'ajforms' ), 400 );
-		}
-
-		$base_url = 'https://secure.rentecdirect.com/api/v3/';
-		$headers  = array(
-			'Accept'    => 'application/json',
-			'X-API-Key' => $api_key,
-		);
-		$ping     = wp_remote_get(
-			$base_url . 'ping',
-			array(
-				'headers'     => $headers,
-				'timeout'     => 12,
-				'redirection' => 0,
-			)
-		);
-
-		if ( is_wp_error( $ping ) ) {
-			wp_send_json_error( $ping->get_error_message(), 502 );
-		}
-
-		$ping_status = (int) wp_remote_retrieve_response_code( $ping );
-		if ( 200 !== $ping_status ) {
-			$message = 401 === $ping_status
-				? __( 'Rentec rejected the API key.', 'ajforms' )
-				: sprintf( __( 'Rentec connection failed with HTTP status %d.', 'ajforms' ), $ping_status );
-			wp_send_json_error( $message, $ping_status >= 400 && $ping_status < 600 ? $ping_status : 502 );
-		}
-
-		$resources = array(
-			'properties'   => __( 'Properties', 'ajforms' ),
-			'tenants'      => __( 'Tenants', 'ajforms' ),
-			'leases'       => __( 'Leases', 'ajforms' ),
-			'owners'       => __( 'Owners', 'ajforms' ),
-			'vendors'      => __( 'Vendors', 'ajforms' ),
-			'work_orders'  => __( 'Work Orders', 'ajforms' ),
-			'transactions' => __( 'Transactions', 'ajforms' ),
-			'leads'        => __( 'Leads', 'ajforms' ),
-			'messages'     => __( 'Messages', 'ajforms' ),
-			'files'        => __( 'Files', 'ajforms' ),
-		);
-		$metrics   = array();
-
-		foreach ( $resources as $endpoint => $label ) {
-			$url = $base_url . $endpoint;
-			if ( 'work_orders' === $endpoint ) {
-				$url = add_query_arg( 'age', '3650d', $url );
-			} elseif ( 'transactions' === $endpoint ) {
-				$url = add_query_arg( 'page', 1, $url );
-			}
-
-			$response = wp_remote_get(
-				$url,
-				array(
-					'headers'     => $headers,
-					'timeout'     => 12,
-					'redirection' => 0,
-				)
-			);
-
-			if ( is_wp_error( $response ) ) {
-				$metrics[] = array( 'label' => $label, 'available' => false, 'count' => null );
-				continue;
-			}
-
-			$status = (int) wp_remote_retrieve_response_code( $response );
-			$body   = json_decode( wp_remote_retrieve_body( $response ), true );
-			$count  = is_array( $body ) && isset( $body['summary']['records'] )
-				? absint( $body['summary']['records'] )
-				: null;
-
-			$metrics[] = array(
-				'label'     => $label,
-				'available' => 200 === $status,
-				'count'     => 200 === $status ? $count : null,
-			);
-		}
-
-		wp_send_json_success(
-			array(
-				'connected' => true,
-				'metrics'   => $metrics,
-				'note'      => __( 'Counts reflect records returned by each Rentec endpoint and may be limited by that endpoint. No record details were stored or displayed.', 'ajforms' ),
-			)
-		);
-	}
-
-	/**
 	 * Spam Protection's single Cloudflare "Test Connection" button. Runs the full bootstrap —
 	 * confirm the saved token/account/zone work, create the AJCore-Spam-List list and its WAF rule
 	 * if this is the first run (reporting "already set up" on every run after), then prove write
@@ -11206,11 +11097,6 @@ class AJForms_Admin {
 			'asana_personal_access_token'    => '',
 			'asana_workspace_gid'            => '',
 			'asana_project_gid'              => '',
-			'rentec_enabled'                 => '0',
-			'rentec_api_key'                 => '',
-			'rentec_account_label_1'         => 'Rentec Account 1',
-			'rentec_api_key_2'               => '',
-			'rentec_account_label_2'         => 'Rentec Account 2',
 			'stripe_mode'                    => 'test',
 			'stripe_sandbox_publishable_key'  => '',
 			'stripe_sandbox_secret_key'       => '',
@@ -12004,8 +11890,6 @@ class AJForms_Admin {
 				// generic handle_settings_save() the final else below would otherwise run (that one
 				// has no idea what chat_* fields even are).
 				$this->handle_chat_settings_save();
-			} elseif ( 'rentec' === $section ) {
-				$this->handle_rentec_settings_save();
 			} elseif ( 'email' === $section ) {
 				// Test email has its own nonce; the Outgoing Mail form itself uses the shared
 				// ajforms_settings_nonce, so fall through to the generic handler too.
@@ -12083,8 +11967,6 @@ class AJForms_Admin {
 					$this->handle_gmail_intake_actions();
 				} elseif ( 'chat' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 					$this->handle_chat_settings_save();
-				} elseif ( 'rentec' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
-					$this->handle_rentec_settings_save();
 				}
 			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
@@ -12134,8 +12016,6 @@ class AJForms_Admin {
 				$this->handle_gmail_intake_actions();
 			} elseif ( 'chat' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 				$this->handle_chat_settings_save();
-			} elseif ( 'rentec' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
-				$this->handle_rentec_settings_save();
 			}
 		} elseif ( 'ajforms-role-manager' === $page ) {
 			$this->handle_role_manager_actions();
@@ -14386,11 +14266,6 @@ class AJForms_Admin {
 			'asana_personal_access_token'    => isset( $_POST['asana_personal_access_token'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_personal_access_token'] ) ) : '',
 			'asana_workspace_gid'            => isset( $_POST['asana_workspace_gid'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_workspace_gid'] ) ) : '',
 			'asana_project_gid'              => isset( $_POST['asana_project_gid'] ) ? sanitize_text_field( wp_unslash( $_POST['asana_project_gid'] ) ) : '',
-			'rentec_enabled'                 => isset( $_POST['rentec_enabled'] ) ? '1' : '0',
-			'rentec_api_key'                 => isset( $_POST['rentec_api_key'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_api_key'] ) ) : '',
-			'rentec_account_label_1'         => isset( $_POST['rentec_account_label_1'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_account_label_1'] ) ) : 'Rentec Account 1',
-			'rentec_api_key_2'               => isset( $_POST['rentec_api_key_2'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_api_key_2'] ) ) : '',
-			'rentec_account_label_2'         => isset( $_POST['rentec_account_label_2'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_account_label_2'] ) ) : 'Rentec Account 2',
 			'stripe_mode'                    => isset( $_POST['stripe_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ), array( 'test', 'live' ), true ) ? sanitize_key( wp_unslash( $_POST['stripe_mode'] ) ) : 'test',
 			'stripe_sandbox_publishable_key'  => isset( $_POST['stripe_sandbox_publishable_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_sandbox_publishable_key'] ) ) : '',
 			'stripe_sandbox_secret_key'       => isset( $_POST['stripe_sandbox_secret_key'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_sandbox_secret_key'] ) ) : '',
@@ -14410,7 +14285,7 @@ class AJForms_Admin {
 		// Secret-key inputs are masked (type="password", value="" on every render) and post empty
 		// when the admin leaves them untouched — keep the previously-stored key in that case rather
 		// than overwriting it with blank.
-		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'rentec_api_key', 'rentec_api_key_2', 'recaptcha_secret_key', 'hcaptcha_secret_key', 'turnstile_secret_key', 'cloudflare_api_token' ) as $secret_field ) {
+		foreach ( array( 'stripe_sandbox_secret_key', 'stripe_live_secret_key', 'zoho_mail_client_secret', 'gmail_intake_client_secret', 'recaptcha_secret_key', 'hcaptcha_secret_key', 'turnstile_secret_key', 'cloudflare_api_token' ) as $secret_field ) {
 			if ( '' === $settings[ $secret_field ] && ! empty( $current_settings[ $secret_field ] ) ) {
 				$settings[ $secret_field ] = sanitize_text_field( (string) $current_settings[ $secret_field ] );
 			}
@@ -14512,7 +14387,6 @@ class AJForms_Admin {
 			'spam'         => array( 'honeypot_enabled', 'content_filter_block_non_latin', 'content_filter_block_links', 'content_filter_blocked_email_domains', 'spam_challenge_provider', 'recaptcha_site_key', 'recaptcha_secret_key', 'hcaptcha_site_key', 'hcaptcha_secret_key', 'turnstile_site_key', 'turnstile_secret_key', 'cloudflare_api_token', 'cloudflare_account_id', 'cloudflare_zone_id' ),
 			'email'        => array( 'mail_mode', 'smtp_host', 'smtp_port', 'smtp_encryption', 'smtp_auth', 'smtp_username', 'smtp_password', 'smtp_envelope_from_username', 'smtp_label', 'smtp2_label', 'smtp2_host', 'smtp2_port', 'smtp2_encryption', 'smtp2_auth', 'smtp2_username', 'smtp2_password', 'smtp2_envelope_from_username', 'smtp_from_email', 'smtp_from_name', 'smtp2_from_email', 'smtp2_from_name', 'mail_default_profile' ),
 			'integrations' => array( 'webhook_url', 'asana_enabled', 'asana_personal_access_token', 'asana_workspace_gid', 'asana_project_gid' ),
-			'rentec'       => array( 'rentec_enabled', 'rentec_api_key', 'rentec_account_label_1', 'rentec_api_key_2', 'rentec_account_label_2' ),
 			'payments'     => array( 'stripe_mode', 'stripe_sandbox_publishable_key', 'stripe_sandbox_secret_key', 'stripe_live_publishable_key', 'stripe_live_secret_key', 'stripe_publishable_key', 'stripe_secret_key', 'stripe_products_mode', 'stripe_selected_prices', 'stripe_late_fees_enabled', 'stripe_late_fee_type', 'stripe_late_fee_amount', 'stripe_late_fee_grace_days', 'stripe_late_fee_due_days' ),
 			'inbox'        => array( 'zoho_mail_client_id', 'zoho_mail_client_secret', 'zoho_mail_account_email', 'zoho_mail_org_id', 'zoho_mail_group_id', 'zoho_mail_data_center' ),
 			'gmail-intake' => array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_address' ),
@@ -14542,21 +14416,7 @@ class AJForms_Admin {
 			);
 		}
 
-		if ( 'rentec' === $section ) {
-			// Rentec actually saves through its own dedicated handle_rentec_settings_save() (see
-			// handle_admin_actions()'s dispatch) — this branch is unreachable in practice and kept
-			// only because removing it isn't this change's job. Email Templates/Inbox/Gmail Intake/
-			// E-Signatures used to redirect back to the old CP Settings tab strip here too; now that
-			// they're embedded directly in the unified Settings page (see display_settings_page()'s
-			// $sections), they just fall through to the same default redirect general/spam/
-			// integrations/payments already use below.
-			$redirect_args = array(
-				'page'             => 'ajforms-client-portal',
-				'tab'              => 'cp-settings',
-				'cp_section'       => $section,
-				'settings-updated' => 'true',
-			);
-		} elseif ( isset( $_GET['page'] ) && 'ajcore-mail' === sanitize_text_field( wp_unslash( $_GET['page'] ) ) ) {
+		if ( isset( $_GET['page'] ) && 'ajcore-mail' === sanitize_text_field( wp_unslash( $_GET['page'] ) ) ) {
 			// AJ Core Mail posts with section=email (for the key scoping above) but is its own page.
 			$redirect_args = array(
 				'page'             => 'ajcore-mail',
@@ -14582,48 +14442,6 @@ class AJForms_Admin {
 
 		wp_safe_redirect(
 			add_query_arg( $redirect_args, admin_url( 'admin.php' ) )
-		);
-		exit;
-	}
-
-	private function handle_rentec_settings_save() {
-		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajforms_settings_nonce'] ) ) {
-			return;
-		}
-
-		check_admin_referer( 'ajforms_save_settings', 'ajforms_settings_nonce' );
-		$is_shared_db = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
-		$is_master    = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
-		if ( $is_shared_db && ! $is_master ) {
-			wp_die( esc_html__( 'Rentec settings are managed by the AJCore master site.', 'ajforms' ) );
-		}
-
-		$settings                           = $this->get_plugin_settings();
-		$settings['rentec_enabled']         = isset( $_POST['rentec_enabled'] ) ? '1' : '0';
-		$settings['rentec_account_label_1'] = isset( $_POST['rentec_account_label_1'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_account_label_1'] ) ) : 'Rentec Account 1';
-		$settings['rentec_account_label_2'] = isset( $_POST['rentec_account_label_2'] ) ? sanitize_text_field( wp_unslash( $_POST['rentec_account_label_2'] ) ) : 'Rentec Account 2';
-
-		foreach ( array( 'rentec_api_key', 'rentec_api_key_2' ) as $api_key_field ) {
-			$new_api_key = isset( $_POST[ $api_key_field ] ) ? trim( sanitize_text_field( wp_unslash( $_POST[ $api_key_field ] ) ) ) : '';
-			if ( '' !== $new_api_key ) {
-				$settings[ $api_key_field ] = $new_api_key;
-			}
-		}
-
-		update_option( 'ajforms_settings', $settings );
-		if ( function_exists( 'ajforms_write_synced_settings_file' ) ) {
-			ajforms_write_synced_settings_file( $settings );
-		}
-
-		wp_safe_redirect(
-			add_query_arg(
-				array(
-					'page'             => 'ajforms-settings',
-					'section'          => 'rentec',
-					'settings-updated' => 'true',
-				),
-				admin_url( 'admin.php' )
-			)
 		);
 		exit;
 	}
@@ -20474,7 +20292,7 @@ class AJForms_Admin {
 				$ext_portal_tabs[ sanitize_key( $ext_key ) ] = $ext_tab;
 			}
 		}
-		$tab      = in_array( $tab, array_merge( array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'chat', 'rentec' ), array_keys( $ext_portal_tabs ) ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array_merge( array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'mail', 'gmail-intake', 'chat' ), array_keys( $ext_portal_tabs ) ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -20500,7 +20318,6 @@ class AJForms_Admin {
 			'mail'               => __( 'Mail', 'ajforms' ),
 			'gmail-intake'       => __( 'Gmail Intake', 'ajforms' ),
 			'chat'               => __( 'Live Chat', 'ajforms' ),
-			'rentec'             => __( 'Rentec', 'ajforms' ),
 		);
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
 		$external_tab_urls = array(
@@ -20607,8 +20424,6 @@ class AJForms_Admin {
 				$this->display_portal_gmail_intake_tab();
 			} elseif ( 'chat' === $tab ) {
 				$this->display_portal_chat_tab();
-			} elseif ( 'rentec' === $tab ) {
-				$this->display_portal_rentec_tab();
 			} elseif ( 'cp-settings' === $tab ) {
 				$this->display_client_portal_cp_settings_tab();
 			} elseif ( isset( $ext_portal_tabs[ $tab ] ) ) {
@@ -20656,7 +20471,6 @@ class AJForms_Admin {
 				'email-templates' => __( 'Email Templates', 'ajforms' ),
 				'inbox'           => __( 'Zoho Shared Inbox', 'ajforms' ),
 				'gmail-intake'    => __( 'Email Intake (Gmail)', 'ajforms' ),
-				'rentec'          => __( 'Rentec Direct', 'ajforms' ),
 			);
 		}
 		if ( $live_chat_enabled ) {
@@ -20731,8 +20545,6 @@ class AJForms_Admin {
 			<?php $this->display_gmail_intake_settings_section(); ?>
 		<?php elseif ( 'chat' === $cp_section ) : ?>
 			<?php $this->display_chat_settings_section(); ?>
-		<?php elseif ( 'rentec' === $cp_section ) : ?>
-			<?php $this->display_rentec_settings_section(); ?>
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>
@@ -30356,880 +30168,6 @@ class AJForms_Admin {
 		<?php
 	}
 
-	/**
-	 * Rentec workspace inside the Client Portal admin.
-	 */
-	public function display_portal_rentec_tab() {
-		$settings  = $this->get_plugin_settings();
-		$resources = array(
-			'work_orders'  => array(
-				'label'   => __( 'Work Orders', 'ajforms' ),
-				'columns' => array(
-					'wo_number'     => __( 'Number', 'ajforms' ),
-					'status'        => __( 'Status', 'ajforms' ),
-					'priority'      => __( 'Priority', 'ajforms' ),
-					'short_desc'    => __( 'Description', 'ajforms' ),
-					'property_id'   => __( 'Property', 'ajforms' ),
-					'date_received' => __( 'Received', 'ajforms' ),
-				),
-			),
-			'leads'        => array(
-				'label'   => __( 'Leads', 'ajforms' ),
-				'columns' => array(
-					'prospect_id' => __( 'ID', 'ajforms' ),
-					'f_name'     => __( 'First Name', 'ajforms' ),
-					'l_name'     => __( 'Last Name', 'ajforms' ),
-					'email'      => __( 'Email', 'ajforms' ),
-					'phone'      => __( 'Phone', 'ajforms' ),
-					'move_in'    => __( 'Move In', 'ajforms' ),
-					'search_city' => __( 'Search City', 'ajforms' ),
-				),
-			),
-			'vendors'      => array(
-				'label'   => __( 'Vendors', 'ajforms' ),
-				'columns' => array(
-					'vendor_id' => __( 'ID', 'ajforms' ),
-					'name'      => __( 'Name', 'ajforms' ),
-					'industry'  => __( 'Industry', 'ajforms' ),
-					'contact'   => __( 'Contact', 'ajforms' ),
-					'email'     => __( 'Email', 'ajforms' ),
-					'phone'     => __( 'Phone', 'ajforms' ),
-				),
-			),
-			'transactions' => array(
-				'label'   => __( 'Transactions', 'ajforms' ),
-				'columns' => array(
-					'transaction_id'   => __( 'ID', 'ajforms' ),
-					'transaction_time' => __( 'Date', 'ajforms' ),
-					'category_name'    => __( 'Category', 'ajforms' ),
-					'description'      => __( 'Description', 'ajforms' ),
-					'amount'           => __( 'Amount', 'ajforms' ),
-					'property_id'      => __( 'Property', 'ajforms' ),
-				),
-			),
-			'files'        => array(
-				'label'   => __( 'Files', 'ajforms' ),
-				'columns' => array(
-					'file_id'      => __( 'ID', 'ajforms' ),
-					'filename'     => __( 'Filename', 'ajforms' ),
-					'upload_date'  => __( 'Uploaded', 'ajforms' ),
-					'bytes'        => __( 'Size', 'ajforms' ),
-					'property_id'  => __( 'Property', 'ajforms' ),
-					'workorder_id' => __( 'Work Order', 'ajforms' ),
-				),
-			),
-			'messages'     => array(
-				'label'   => __( 'Messages', 'ajforms' ),
-				'columns' => array(
-					'email_id'   => __( 'ID', 'ajforms' ),
-					'email_time' => __( 'Date', 'ajforms' ),
-					'direction'  => __( 'Direction', 'ajforms' ),
-					'subject'    => __( 'Subject', 'ajforms' ),
-					'status'     => __( 'Status', 'ajforms' ),
-					'renter_id'  => __( 'Tenant', 'ajforms' ),
-				),
-			),
-		);
-
-		$resource = isset( $_GET['rentec_resource'] ) ? sanitize_key( wp_unslash( $_GET['rentec_resource'] ) ) : 'work_orders';
-		if ( ! isset( $resources[ $resource ] ) ) {
-			$resource = 'work_orders';
-		}
-		$accounts = array(
-			'1' => array(
-				'label' => $settings['rentec_account_label_1'] ?? 'Rentec Account 1',
-				'key'   => $settings['rentec_api_key'] ?? '',
-			),
-			'2' => array(
-				'label' => $settings['rentec_account_label_2'] ?? 'Rentec Account 2',
-				'key'   => $settings['rentec_api_key_2'] ?? '',
-			),
-		);
-		$filters_set        = isset( $_GET['rentec_filters_set'] ) && '1' === sanitize_text_field( wp_unslash( $_GET['rentec_filters_set'] ) );
-		$requested_accounts = isset( $_GET['rentec_accounts'] )
-			? (array) wp_unslash( $_GET['rentec_accounts'] )
-			: ( $filters_set ? array() : array_map( 'strval', array_keys( $accounts ) ) );
-		$selected_accounts  = array_values(
-			array_filter(
-				array_map( 'sanitize_text_field', $requested_accounts ),
-				function ( $index ) use ( $accounts ) {
-					return isset( $accounts[ $index ] ) && ! empty( $accounts[ $index ]['key'] );
-				}
-			)
-		);
-		if ( empty( $selected_accounts ) && ! $filters_set ) {
-			$selected_accounts = array_map(
-				'strval',
-				array_keys(
-				array_filter(
-					$accounts,
-					function ( $configured_account ) {
-						return ! empty( $configured_account['key'] );
-					}
-				)
-				)
-			);
-		}
-		$work_order_statuses = array(
-			'OpenU'     => __( 'Unassigned', 'ajforms' ),
-			'OpenA'     => __( 'Assigned', 'ajforms' ),
-			'Parts'     => __( 'Parts on Order', 'ajforms' ),
-			'Work'      => __( 'Work in Progress', 'ajforms' ),
-			'Finalized' => __( 'Finalized', 'ajforms' ),
-			'Closed'    => __( 'Closed', 'ajforms' ),
-		);
-		$selected_statuses = isset( $_GET['rentec_statuses'] )
-			? array_map( 'sanitize_text_field', (array) wp_unslash( $_GET['rentec_statuses'] ) )
-			: ( $filters_set ? array() : array( 'OpenU', 'OpenA', 'Parts', 'Work', 'Finalized' ) );
-		$note_result = '';
-		if ( isset( $_POST['ajcore_rentec_note_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ajcore_rentec_note_nonce'] ) ), 'ajcore_add_rentec_work_order_note' ) ) {
-			$note_account = isset( $_POST['rentec_note_account'] ) && '2' === sanitize_text_field( wp_unslash( $_POST['rentec_note_account'] ) ) ? '2' : '1';
-			$note_id      = isset( $_POST['rentec_workorder_id'] ) ? absint( $_POST['rentec_workorder_id'] ) : 0;
-			$note_text    = isset( $_POST['rentec_note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['rentec_note'] ) ) : '';
-			if ( $note_id && '' !== trim( $note_text ) && ! empty( $accounts[ $note_account ]['key'] ) ) {
-				$note_response = wp_remote_post(
-					'https://secure.rentecdirect.com/api/v3/work_orders/' . $note_id . '/notes',
-					array(
-						'headers' => array( 'Accept' => 'application/json', 'Content-Type' => 'application/json', 'X-API-Key' => $accounts[ $note_account ]['key'] ),
-						'body'    => wp_json_encode( array( 'note' => $note_text, 'private' => ! empty( $_POST['rentec_note_private'] ) ) ),
-						'timeout' => 15,
-					)
-				);
-				$note_status = is_wp_error( $note_response ) ? 0 : (int) wp_remote_retrieve_response_code( $note_response );
-				$note_result = in_array( $note_status, array( 200, 201 ), true )
-					? __( 'Work-order note added.', 'ajforms' )
-					: ( is_wp_error( $note_response ) ? $note_response->get_error_message() : sprintf( __( 'Rentec returned HTTP status %d while adding the note.', 'ajforms' ), $note_status ) );
-			}
-		}
-		$base_url = add_query_arg(
-			array(
-				'page' => 'ajforms-client-portal',
-				'tab'  => 'rentec',
-			),
-			admin_url( 'admin.php' )
-		);
-		?>
-		<div class="ajforms-settings-card">
-			<div class="ajcore-section-head">
-				<div>
-					<h2><?php esc_html_e( 'Rentec Direct', 'ajforms' ); ?></h2>
-				</div>
-				<div class="ajforms-settings-inline-actions">
-					<?php if ( '1' === (string) ( $settings['rentec_enabled'] ?? '0' ) ) : ?>
-						<?php if ( 'work_orders' === $resource ) : ?><button type="button" id="ajcore-new-rentec-work-order" class="button button-primary"><?php esc_html_e( 'New Work Order', 'ajforms' ); ?></button><?php endif; ?>
-						<?php if ( 'leads' === $resource ) : ?><button type="button" id="ajcore-new-rentec-lead" class="button button-primary"><?php esc_html_e( 'New Lead', 'ajforms' ); ?></button><?php endif; ?>
-						<?php if ( 'vendors' === $resource ) : ?><button type="button" id="ajcore-new-rentec-vendor" class="button button-primary"><?php esc_html_e( 'New Vendor', 'ajforms' ); ?></button><?php endif; ?>
-					<?php endif; ?>
-					<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'rentec' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Rentec Settings', 'ajforms' ); ?></a>
-				</div>
-			</div>
-
-			<?php if ( '1' === (string) ( $settings['rentec_enabled'] ?? '0' ) ) : ?>
-				<dialog id="ajcore-rentec-work-order-dialog" style="width:min(680px,calc(100vw - 32px));border:0;border-radius:14px;padding:0;box-shadow:0 24px 70px rgba(15,23,42,.3);">
-					<form id="ajcore-rentec-work-order-create-form" style="padding:24px;">
-						<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
-							<div><h2 style="margin:0;"><?php esc_html_e( 'New Work Order', 'ajforms' ); ?></h2><p class="description"><?php esc_html_e( 'Create this work order directly in Rentec Direct.', 'ajforms' ); ?></p></div>
-							<button type="button" class="button" id="ajcore-close-rentec-work-order"><?php esc_html_e( 'Close', 'ajforms' ); ?></button>
-						</div>
-						<div id="ajcore-rentec-work-order-create-error" class="notice notice-error inline" style="display:none;margin:14px 0;"></div>
-						<table class="form-table" role="presentation">
-							<tr><th><label for="ajcore-create-rentec-account"><?php esc_html_e( 'Rentec Account', 'ajforms' ); ?></label></th><td>
-								<select id="ajcore-create-rentec-account" class="regular-text">
-									<?php foreach ( $accounts as $account_id => $account_config ) : ?>
-										<?php if ( ! empty( $account_config['key'] ) ) : ?><option value="<?php echo esc_attr( $account_id ); ?>"><?php echo esc_html( $account_config['label'] ); ?></option><?php endif; ?>
-									<?php endforeach; ?>
-								</select>
-							</td></tr>
-							<tr><th><label for="ajcore-create-rentec-property"><?php esc_html_e( 'Property', 'ajforms' ); ?></label></th><td><select id="ajcore-create-rentec-property" class="regular-text" required><option value=""><?php esc_html_e( 'Select a property', 'ajforms' ); ?></option></select></td></tr>
-							<tr><th><label for="ajcore-create-rentec-renter"><?php esc_html_e( 'Renter', 'ajforms' ); ?></label></th><td><select id="ajcore-create-rentec-renter" class="regular-text"><option value=""><?php esc_html_e( 'No renter', 'ajforms' ); ?></option></select></td></tr>
-							<tr><th><label for="ajcore-create-rentec-contact"><?php esc_html_e( 'Contact Renter', 'ajforms' ); ?></label></th><td><select id="ajcore-create-rentec-contact" class="regular-text"><option value=""><?php esc_html_e( 'Same/none', 'ajforms' ); ?></option></select></td></tr>
-							<tr><th><label for="ajcore-create-rentec-vendor"><?php esc_html_e( 'Vendor', 'ajforms' ); ?></label></th><td><select id="ajcore-create-rentec-vendor" class="regular-text"><option value=""><?php esc_html_e( 'Unassigned', 'ajforms' ); ?></option></select></td></tr>
-							<tr><th><label for="ajcore-create-rentec-priority"><?php esc_html_e( 'Priority', 'ajforms' ); ?></label></th><td><select id="ajcore-create-rentec-priority"><?php foreach ( range( 1, 5 ) as $priority_value ) : ?><option value="<?php echo esc_attr( $priority_value ); ?>"><?php echo esc_html( $priority_value ); ?></option><?php endforeach; ?></select></td></tr>
-							<tr><th><label for="ajcore-create-rentec-short-desc"><?php esc_html_e( 'Short Description', 'ajforms' ); ?></label></th><td><input id="ajcore-create-rentec-short-desc" type="text" class="large-text" maxlength="100" required></td></tr>
-							<tr><th><label for="ajcore-create-rentec-description"><?php esc_html_e( 'Full Description', 'ajforms' ); ?></label></th><td><textarea id="ajcore-create-rentec-description" class="large-text" rows="5"></textarea></td></tr>
-						</table>
-						<p class="submit" style="display:flex;justify-content:flex-end;gap:8px;">
-							<button type="button" class="button" id="ajcore-cancel-rentec-work-order"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button>
-							<button type="submit" class="button button-primary" id="ajcore-submit-rentec-work-order"><?php esc_html_e( 'Create Work Order', 'ajforms' ); ?></button>
-						</p>
-					</form>
-				</dialog>
-				<script>
-				(function() {
-					const openButton = document.getElementById('ajcore-new-rentec-work-order');
-					const dialog = document.getElementById('ajcore-rentec-work-order-dialog');
-					const form = document.getElementById('ajcore-rentec-work-order-create-form');
-					if (!openButton || !dialog || !form) return;
-					const account = document.getElementById('ajcore-create-rentec-account');
-					const property = document.getElementById('ajcore-create-rentec-property');
-					const renter = document.getElementById('ajcore-create-rentec-renter');
-					const contact = document.getElementById('ajcore-create-rentec-contact');
-					const vendor = document.getElementById('ajcore-create-rentec-vendor');
-					const error = document.getElementById('ajcore-rentec-work-order-create-error');
-					const submit = document.getElementById('ajcore-submit-rentec-work-order');
-					const restRoot = <?php echo wp_json_encode( untrailingslashit( rest_url( 'ajcore/v1/ops/rentec' ) ) ); ?>;
-					const nonce = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
-
-					function option(select, value, label) {
-						const item = document.createElement('option');
-						item.value = value;
-						item.textContent = label;
-						select.appendChild(item);
-					}
-					function resetSelect(select, label) {
-						select.textContent = '';
-						option(select, '', label);
-					}
-					function tenantLabel(item) {
-						return [item.f_name, item.l_name].filter(Boolean).join(' ') || item.company || ('Renter ' + item.renter_id);
-					}
-					function showError(message) {
-						error.textContent = message || '';
-						error.style.display = message ? 'block' : 'none';
-					}
-					function loadOptions() {
-						showError('');
-						[property, renter, contact, vendor].forEach(function(select) { select.disabled = true; });
-						resetSelect(property, '<?php echo esc_js( __( 'Loading properties…', 'ajforms' ) ); ?>');
-						resetSelect(renter, '<?php echo esc_js( __( 'No renter', 'ajforms' ) ); ?>');
-						resetSelect(contact, '<?php echo esc_js( __( 'Same/none', 'ajforms' ) ); ?>');
-						resetSelect(vendor, '<?php echo esc_js( __( 'Unassigned', 'ajforms' ) ); ?>');
-						fetch(restRoot + '/work-order-options?account=' + encodeURIComponent(account.value), { cache: 'no-store', headers: { 'X-WP-Nonce': nonce } })
-							.then(function(response) { return response.json().then(function(body) { if (!response.ok) throw new Error(body.message || '<?php echo esc_js( __( 'Failed to load Rentec options.', 'ajforms' ) ); ?>'); return body; }); })
-							.then(function(body) {
-								resetSelect(property, '<?php echo esc_js( __( 'Select a property', 'ajforms' ) ); ?>');
-								(body.properties || []).forEach(function(item) {
-									option(property, String(item.property_id), [item.nickname, item.address, item.city, item.state].filter(Boolean).join(' · ') || ('Property ' + item.property_id));
-								});
-								(body.tenants || []).forEach(function(item) {
-									option(renter, String(item.renter_id), tenantLabel(item));
-									option(contact, String(item.renter_id), tenantLabel(item));
-								});
-								(body.vendors || []).forEach(function(item) {
-									option(vendor, String(item.vendor_id), item.name || item.company || ('Vendor ' + item.vendor_id));
-								});
-							})
-							.catch(function(loadError) { showError(loadError.message); })
-							.finally(function() { [property, renter, contact, vendor].forEach(function(select) { select.disabled = false; }); });
-					}
-					openButton.addEventListener('click', function() { dialog.showModal(); loadOptions(); });
-					account.addEventListener('change', loadOptions);
-					renter.addEventListener('change', function() { if (!contact.value) contact.value = renter.value; });
-					['ajcore-close-rentec-work-order', 'ajcore-cancel-rentec-work-order'].forEach(function(id) {
-						document.getElementById(id).addEventListener('click', function() { dialog.close(); });
-					});
-					form.addEventListener('submit', function(event) {
-						event.preventDefault();
-						showError('');
-						submit.disabled = true;
-						submit.textContent = '<?php echo esc_js( __( 'Creating…', 'ajforms' ) ); ?>';
-						fetch(restRoot + '/work-orders', {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': nonce },
-							body: JSON.stringify({
-								account: account.value,
-								property_id: Number(property.value),
-								renter_id: renter.value ? Number(renter.value) : 0,
-								contact_renter_id: contact.value ? Number(contact.value) : 0,
-								vendor_id: vendor.value ? Number(vendor.value) : 0,
-								priority: Number(document.getElementById('ajcore-create-rentec-priority').value),
-								short_desc: document.getElementById('ajcore-create-rentec-short-desc').value.trim(),
-								description: document.getElementById('ajcore-create-rentec-description').value.trim()
-							})
-						})
-							.then(function(response) { return response.json().then(function(body) { if (!response.ok) throw new Error(body.message || '<?php echo esc_js( __( 'Failed to create the work order.', 'ajforms' ) ); ?>'); return body; }); })
-							.then(function() { location.reload(); })
-							.catch(function(saveError) { showError(saveError.message); submit.disabled = false; submit.textContent = '<?php echo esc_js( __( 'Create Work Order', 'ajforms' ) ); ?>'; });
-					});
-				}());
-				</script>
-				<?php if ( in_array( $resource, array( 'leads', 'vendors' ), true ) ) : ?>
-					<?php
-					$create_kind  = 'leads' === $resource ? 'lead' : 'vendor';
-					$create_title = 'lead' === $create_kind ? __( 'New Lead', 'ajforms' ) : __( 'New Vendor', 'ajforms' );
-					$create_fields = 'lead' === $create_kind
-						? array(
-							'f_name' => array( __( 'First Name', 'ajforms' ), 'text', true ),
-							'l_name' => array( __( 'Last Name', 'ajforms' ), 'text', true ),
-							'email' => array( __( 'Email', 'ajforms' ), 'email', false ),
-							'phone' => array( __( 'Phone', 'ajforms' ), 'tel', true ),
-							'monthly_rent_min' => array( __( 'Minimum Rent', 'ajforms' ), 'number', false ),
-							'monthly_rent_max' => array( __( 'Maximum Rent', 'ajforms' ), 'number', true ),
-							'search_city' => array( __( 'Search City', 'ajforms' ), 'text', true ),
-							'search_state' => array( __( 'Search State', 'ajforms' ), 'text', true ),
-							'move_in' => array( __( 'Move-in Date', 'ajforms' ), 'date', false ),
-							'occupants' => array( __( 'Occupants', 'ajforms' ), 'number', false ),
-						)
-						: array(
-							'name' => array( __( 'Vendor Name', 'ajforms' ), 'text', true ),
-							'industry' => array( __( 'Industry', 'ajforms' ), 'text', false ),
-							'contact' => array( __( 'Contact', 'ajforms' ), 'text', false ),
-							'email' => array( __( 'Email', 'ajforms' ), 'email', false ),
-							'phone' => array( __( 'Phone', 'ajforms' ), 'tel', false ),
-							'mphone' => array( __( 'Mobile', 'ajforms' ), 'tel', false ),
-							'address' => array( __( 'Address', 'ajforms' ), 'text', false ),
-							'address2' => array( __( 'Address 2', 'ajforms' ), 'text', false ),
-							'city' => array( __( 'City', 'ajforms' ), 'text', false ),
-							'state' => array( __( 'State', 'ajforms' ), 'text', false ),
-							'zip' => array( __( 'ZIP', 'ajforms' ), 'text', false ),
-							'rate' => array( __( 'Hourly Rate', 'ajforms' ), 'text', false ),
-						);
-					?>
-					<dialog id="ajcore-rentec-record-dialog" style="width:min(680px,calc(100vw - 32px));border:0;border-radius:14px;padding:0;box-shadow:0 24px 70px rgba(15,23,42,.3);">
-						<form id="ajcore-rentec-record-create-form" style="padding:24px;">
-							<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
-								<div><h2 style="margin:0;"><?php echo esc_html( $create_title ); ?></h2><p class="description"><?php printf( esc_html__( 'Create this %s directly in Rentec Direct.', 'ajforms' ), esc_html( $create_kind ) ); ?></p></div>
-								<button type="button" class="button ajcore-close-rentec-record"><?php esc_html_e( 'Close', 'ajforms' ); ?></button>
-							</div>
-							<div id="ajcore-rentec-record-create-error" class="notice notice-error inline" style="display:none;margin:14px 0;"></div>
-							<table class="form-table" role="presentation">
-								<tr><th><label for="ajcore-create-rentec-record-account"><?php esc_html_e( 'Rentec Account', 'ajforms' ); ?></label></th><td>
-									<select id="ajcore-create-rentec-record-account" class="regular-text">
-										<?php foreach ( $accounts as $account_id => $account_config ) : ?>
-											<?php if ( ! empty( $account_config['key'] ) ) : ?><option value="<?php echo esc_attr( $account_id ); ?>"><?php echo esc_html( $account_config['label'] ); ?></option><?php endif; ?>
-										<?php endforeach; ?>
-									</select>
-								</td></tr>
-								<?php foreach ( $create_fields as $field_name => $field_config ) : ?>
-									<tr><th><label for="ajcore-create-rentec-<?php echo esc_attr( $field_name ); ?>"><?php echo esc_html( $field_config[0] ); ?><?php echo $field_config[2] ? ' *' : ''; ?></label></th><td><input id="ajcore-create-rentec-<?php echo esc_attr( $field_name ); ?>" name="<?php echo esc_attr( $field_name ); ?>" type="<?php echo esc_attr( $field_config[1] ); ?>" class="regular-text" <?php echo $field_config[2] ? 'required' : ''; ?>></td></tr>
-								<?php endforeach; ?>
-								<tr><th><label for="ajcore-create-rentec-notes"><?php esc_html_e( 'Notes', 'ajforms' ); ?></label></th><td><textarea id="ajcore-create-rentec-notes" name="notes" class="large-text" rows="4"></textarea></td></tr>
-							</table>
-							<p class="submit" style="display:flex;justify-content:flex-end;gap:8px;">
-								<button type="button" class="button ajcore-close-rentec-record"><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button>
-								<button type="submit" class="button button-primary" id="ajcore-submit-rentec-record"><?php printf( esc_html__( 'Create %s', 'ajforms' ), esc_html( ucfirst( $create_kind ) ) ); ?></button>
-							</p>
-						</form>
-					</dialog>
-					<script>
-					(function() {
-						const kind = <?php echo wp_json_encode( $create_kind ); ?>;
-						const openButton = document.getElementById('ajcore-new-rentec-' + kind);
-						const dialog = document.getElementById('ajcore-rentec-record-dialog');
-						const form = document.getElementById('ajcore-rentec-record-create-form');
-						const error = document.getElementById('ajcore-rentec-record-create-error');
-						const submit = document.getElementById('ajcore-submit-rentec-record');
-						if (!openButton || !dialog || !form) return;
-						const restRoot = <?php echo wp_json_encode( untrailingslashit( rest_url( 'ajcore/v1/ops/rentec' ) ) ); ?>;
-						const nonce = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
-						openButton.addEventListener('click', function() { dialog.showModal(); });
-						dialog.querySelectorAll('.ajcore-close-rentec-record').forEach(function(button) {
-							button.addEventListener('click', function() { dialog.close(); });
-						});
-						form.addEventListener('submit', function(event) {
-							event.preventDefault();
-							error.style.display = 'none';
-							submit.disabled = true;
-							const payload = { account: document.getElementById('ajcore-create-rentec-record-account').value };
-							new FormData(form).forEach(function(value, key) { payload[key] = String(value).trim(); });
-							fetch(restRoot + '/' + (kind === 'lead' ? 'leads' : 'vendors'), {
-								method: 'POST',
-								headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': nonce },
-								body: JSON.stringify(payload)
-							})
-								.then(function(response) { return response.json().then(function(body) { if (!response.ok) throw new Error(body.message || '<?php echo esc_js( __( 'Rentec could not create this record.', 'ajforms' ) ); ?>'); return body; }); })
-								.then(function() { location.reload(); })
-								.catch(function(saveError) { error.textContent = saveError.message; error.style.display = 'block'; submit.disabled = false; });
-						});
-					}());
-					</script>
-				<?php endif; ?>
-			<?php endif; ?>
-
-			<?php if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) : ?>
-				<div class="notice notice-warning inline"><p><?php esc_html_e( 'The Rentec integration is disabled. Enable it in CP Settings before loading data.', 'ajforms' ); ?></p></div>
-			<?php else : ?>
-				<form method="get" id="ajcore-rentec-filters" class="ajforms-settings-inline-actions">
-					<input type="hidden" name="page" value="ajforms-client-portal">
-					<input type="hidden" name="tab" value="rentec">
-					<input type="hidden" name="rentec_resource" value="<?php echo esc_attr( $resource ); ?>">
-					<input type="hidden" name="rentec_filters_set" value="1">
-					<strong><?php esc_html_e( 'Accounts', 'ajforms' ); ?></strong>
-					<?php foreach ( $accounts as $index => $configured_account ) : ?>
-						<label><input type="checkbox" name="rentec_accounts[]" value="<?php echo esc_attr( $index ); ?>" <?php checked( in_array( (string) $index, $selected_accounts, true ) ); ?> <?php disabled( empty( $configured_account['key'] ) ); ?>> <?php echo esc_html( $configured_account['label'] . ( empty( $configured_account['key'] ) ? ' — not configured' : '' ) ); ?></label>
-					<?php endforeach; ?>
-					<?php if ( 'work_orders' === $resource ) : ?>
-						<strong><?php esc_html_e( 'Status', 'ajforms' ); ?></strong>
-						<?php foreach ( $work_order_statuses as $status_key => $status_label ) : ?>
-							<label><input type="checkbox" name="rentec_statuses[]" value="<?php echo esc_attr( $status_key ); ?>" <?php checked( in_array( $status_key, $selected_statuses, true ) ); ?>> <?php echo esc_html( $status_label ); ?></label>
-						<?php endforeach; ?>
-					<?php endif; ?>
-					<span id="ajcore-rentec-filter-status" class="description" aria-live="polite"></span>
-				</form>
-
-				<nav class="ajcore-tabs-shell" aria-label="<?php esc_attr_e( 'Rentec sections', 'ajforms' ); ?>">
-					<select class="ajcore-tab-select" onchange="if(this.value){window.location.href=this.value;}">
-						<?php foreach ( $resources as $resource_key => $resource_config ) : ?>
-							<option value="<?php echo esc_url( add_query_arg( array( 'rentec_accounts' => $selected_accounts, 'rentec_statuses' => $selected_statuses, 'rentec_filters_set' => '1', 'rentec_resource' => $resource_key ), $base_url ) ); ?>" <?php selected( $resource, $resource_key ); ?>><?php echo esc_html( $resource_config['label'] ); ?></option>
-						<?php endforeach; ?>
-					</select>
-					<?php foreach ( $resources as $resource_key => $resource_config ) : ?>
-						<a class="ajcore-tab-link <?php echo $resource === $resource_key ? 'is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'rentec_accounts' => $selected_accounts, 'rentec_statuses' => $selected_statuses, 'rentec_filters_set' => '1', 'rentec_resource' => $resource_key ), $base_url ) ); ?>"><?php echo esc_html( $resource_config['label'] ); ?></a>
-					<?php endforeach; ?>
-				</nav>
-				<script>
-				(function() {
-					const form = document.getElementById('ajcore-rentec-filters');
-					const status = document.getElementById('ajcore-rentec-filter-status');
-					if (!form) return;
-					form.querySelectorAll('input[type="checkbox"]').forEach(function(input) {
-						input.addEventListener('change', function() {
-							if (status) status.textContent = '<?php echo esc_js( __( 'Updating…', 'ajforms' ) ); ?>';
-							form.requestSubmit();
-						});
-					});
-				}());
-				</script>
-			<?php endif; ?>
-		</div>
-		<?php
-		if ( '1' !== (string) ( $settings['rentec_enabled'] ?? '0' ) ) {
-			return;
-		}
-		if ( empty( $selected_accounts ) ) {
-			echo '<div class="notice notice-error inline"><p>' . esc_html__( 'No configured Rentec accounts were selected.', 'ajforms' ) . '</p></div>';
-			return;
-		}
-		$rows  = array();
-		$total = 0;
-		foreach ( $selected_accounts as $account ) {
-			$endpoint_url = 'https://secure.rentecdirect.com/api/v3/' . $resource;
-			if ( 'work_orders' === $resource ) {
-				$endpoint_url = add_query_arg( 'age', '3650d', $endpoint_url );
-			} elseif ( 'transactions' === $resource ) {
-				$endpoint_url = add_query_arg( 'page', 1, $endpoint_url );
-			}
-			$response = wp_remote_get( $endpoint_url, array( 'headers' => array( 'Accept' => 'application/json', 'X-API-Key' => (string) $accounts[ $account ]['key'] ), 'timeout' => 15, 'redirection' => 0 ) );
-			$body     = is_wp_error( $response ) ? null : json_decode( wp_remote_retrieve_body( $response ), true );
-			if ( is_wp_error( $response ) || 200 !== (int) wp_remote_retrieve_response_code( $response ) || ! is_array( $body ) ) {
-				echo '<div class="notice notice-error inline"><p>' . esc_html( is_wp_error( $response ) ? $response->get_error_message() : sprintf( __( 'Rentec returned HTTP status %d for %s.', 'ajforms' ), (int) wp_remote_retrieve_response_code( $response ), $accounts[ $account ]['label'] ) ) . '</p></div>';
-				continue;
-			}
-			$account_rows = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : array();
-			if ( 'work_orders' === $resource ) {
-				$account_rows = array_values(
-					array_filter(
-						$account_rows,
-						function ( $row ) use ( $selected_statuses ) {
-							$status = (string) ( $row['status'] ?? '' );
-							if ( 'Unassigned' === $status ) {
-								$status = 'OpenU';
-							} elseif ( 'Assigned' === $status ) {
-								$status = 'OpenA';
-							}
-							return in_array( $status, $selected_statuses, true );
-						}
-					)
-				);
-			}
-			$total       += count( $account_rows );
-			$account_rows = array_slice( $account_rows, 0, 100 );
-			foreach ( $account_rows as &$account_row ) {
-				$account_row['_rentec_account']       = $account;
-				$account_row['_rentec_account_label'] = $accounts[ $account ]['label'];
-			}
-			unset( $account_row );
-			$rows   = array_merge( $rows, $account_rows );
-		}
-		$columns     = $resources[ $resource ]['columns'];
-		?>
-		<div class="ajforms-settings-card">
-			<div class="ajcore-section-head">
-				<div>
-					<h2><?php echo esc_html( $resources[ $resource ]['label'] ); ?></h2>
-					<p><?php echo esc_html( sprintf( _n( '%1$d account · %2$d records returned.', '%1$d accounts · %2$d records returned.', count( $selected_accounts ), 'ajforms' ), count( $selected_accounts ), $total ) ); ?></p>
-				</div>
-			</div>
-			<?php if ( '' !== $note_result ) : ?><div class="notice notice-info inline"><p><?php echo esc_html( $note_result ); ?></p></div><?php endif; ?>
-			<?php if ( empty( $rows ) ) : ?>
-				<p><?php esc_html_e( 'No records were returned.', 'ajforms' ); ?></p>
-			<?php else : ?>
-				<div style="overflow-x:auto;">
-					<table class="widefat striped">
-						<thead><tr><?php foreach ( $columns as $column_label ) : ?><th><?php echo esc_html( $column_label ); ?></th><?php endforeach; ?></tr></thead>
-						<tbody>
-							<?php foreach ( $rows as $row ) : ?>
-								<tr
-									<?php if ( 'work_orders' === $resource ) : ?>
-										class="ajcore-rentec-work-order-row"
-										data-workorder-id="<?php echo esc_attr( $row['workorder_id'] ?? 0 ); ?>"
-										data-rentec-account="<?php echo esc_attr( $row['_rentec_account'] ?? '1' ); ?>"
-										title="<?php esc_attr_e( 'Double-click to view full details', 'ajforms' ); ?>"
-										style="cursor:pointer;"
-									<?php endif; ?>
-								>
-									<?php foreach ( $columns as $field => $column_label ) : ?>
-										<?php
-										$value = isset( $row[ $field ] ) ? $row[ $field ] : '';
-										if ( 'bytes' === $field && is_numeric( $value ) ) {
-											$value = size_format( (int) $value );
-										} elseif ( 'amount' === $field && is_numeric( $value ) ) {
-											$value = number_format_i18n( (float) $value, 2 );
-										} elseif ( is_array( $value ) || is_object( $value ) ) {
-											$value = wp_json_encode( $value );
-										}
-										$value = wp_html_excerpt( (string) $value, 120, '…' );
-										?>
-										<td><?php echo esc_html( $value ); ?></td>
-									<?php endforeach; ?>
-								</tr>
-								<?php if ( 'work_orders' === $resource ) : ?>
-									<tr><td colspan="<?php echo esc_attr( count( $columns ) ); ?>">
-										<details class="ajcore-rentec-work-order-details">
-											<summary><strong><?php esc_html_e( 'View details and notes', 'ajforms' ); ?></strong></summary>
-											<p class="ajcore-rentec-detail-loading description" hidden><?php esc_html_e( 'Loading full work-order details…', 'ajforms' ); ?></p>
-											<div class="ajcore-rentec-detail-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:14px 0;">
-												<?php foreach ( $row as $detail_key => $detail_value ) : ?>
-													<?php if ( 0 === strpos( (string) $detail_key, '_' ) || 'notes' === $detail_key ) { continue; } ?>
-													<div><strong><?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $detail_key ) ) ); ?>:</strong> <?php echo esc_html( is_scalar( $detail_value ) ? (string) $detail_value : wp_json_encode( $detail_value ) ); ?></div>
-												<?php endforeach; ?>
-											</div>
-											<h4>
-												<?php esc_html_e( 'Attachments', 'ajforms' ); ?>
-												<label class="button button-small" style="margin-left:8px;">
-													<?php esc_html_e( 'Attach Image', 'ajforms' ); ?>
-													<input type="file" class="ajcore-rentec-image-upload" accept="image/jpeg,image/png,image/gif,image/webp" hidden>
-												</label>
-											</h4>
-											<div class="ajcore-rentec-attachments"><p class="description"><?php esc_html_e( 'Open the details to load attachments.', 'ajforms' ); ?></p></div>
-											<h4><?php esc_html_e( 'Notes & History', 'ajforms' ); ?></h4>
-											<p class="description"><?php esc_html_e( 'Rentec API V3 currently supports adding notes, but does not expose an endpoint for changing an existing work-order status.', 'ajforms' ); ?></p>
-											<?php foreach ( (array) ( $row['notes'] ?? array() ) as $work_order_note ) : ?>
-												<p><?php echo esc_html( (string) ( $work_order_note['note'] ?? '' ) ); ?> <small><?php echo esc_html( (string) ( $work_order_note['created'] ?? '' ) ); ?><?php echo ! empty( $work_order_note['private'] ) ? ' · ' . esc_html__( 'Private', 'ajforms' ) : ' · ' . esc_html__( 'Shared', 'ajforms' ); ?></small></p>
-											<?php endforeach; ?>
-											<form method="post">
-												<?php wp_nonce_field( 'ajcore_add_rentec_work_order_note', 'ajcore_rentec_note_nonce' ); ?>
-												<input type="hidden" name="rentec_note_account" value="<?php echo esc_attr( $row['_rentec_account'] ); ?>">
-												<input type="hidden" name="rentec_workorder_id" value="<?php echo esc_attr( $row['workorder_id'] ?? 0 ); ?>">
-												<textarea name="rentec_note" rows="3" class="large-text" placeholder="<?php esc_attr_e( 'Add a work-order note…', 'ajforms' ); ?>" required></textarea>
-												<p><label><input type="checkbox" name="rentec_note_private" value="1" checked> <?php esc_html_e( 'Private note', 'ajforms' ); ?></label> <button class="button button-primary"><?php esc_html_e( 'Add Note', 'ajforms' ); ?></button></p>
-											</form>
-										</details>
-									</td></tr>
-								<?php endif; ?>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
-				</div>
-				<?php if ( 'work_orders' === $resource ) : ?>
-					<script>
-					(function() {
-						const restBase = <?php echo wp_json_encode( untrailingslashit( rest_url( 'ajcore/v1/ops/rentec/work-orders' ) ) ); ?>;
-						const restNonce = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
-
-						function valueText(value) {
-							if (value === null || typeof value === 'undefined') return '—';
-							if (typeof value === 'object') {
-								try { return JSON.stringify(value); } catch (error) { return String(value); }
-							}
-							return String(value);
-						}
-
-						function renderDetail(details, body) {
-							const grid = details.querySelector('.ajcore-rentec-detail-grid');
-							const attachments = details.querySelector('.ajcore-rentec-attachments');
-							if (grid) {
-								grid.textContent = '';
-								Object.entries(body.work_order || {}).forEach(function(entry) {
-									const key = entry[0];
-									if (key.charAt(0) === '_' || key === 'notes') return;
-									const item = document.createElement('div');
-									const label = document.createElement('strong');
-									label.textContent = key.replaceAll('_', ' ').replace(/\b\w/g, function(letter) { return letter.toUpperCase(); }) + ': ';
-									item.appendChild(label);
-									item.appendChild(document.createTextNode(valueText(entry[1])));
-									grid.appendChild(item);
-								});
-							}
-							if (attachments) {
-								attachments.textContent = '';
-								if (body.files_error) {
-									const error = document.createElement('p');
-									error.className = 'notice notice-warning inline';
-									error.textContent = '<?php echo esc_js( __( 'Attachments could not be loaded: ', 'ajforms' ) ); ?>' + body.files_error;
-									attachments.appendChild(error);
-									return;
-								}
-								const files = Array.isArray(body.files) ? body.files : [];
-								if (!files.length) {
-									const empty = document.createElement('p');
-									empty.className = 'description';
-									empty.textContent = '<?php echo esc_js( __( 'No attachments are associated with this work order.', 'ajforms' ) ); ?>';
-									attachments.appendChild(empty);
-									return;
-								}
-								files.forEach(function(file, index) {
-									const card = document.createElement('div');
-									card.style.cssText = 'border:1px solid #dcdcde;border-radius:6px;padding:10px;margin:8px 0;';
-									const name = document.createElement('strong');
-									name.textContent = valueText(file.filename || file.name || ('<?php echo esc_js( __( 'Attachment', 'ajforms' ) ); ?> ' + (index + 1)));
-									card.appendChild(name);
-									const meta = document.createElement('div');
-									meta.className = 'description';
-									meta.textContent = [file.upload_date || '', file.bytes ? Number(file.bytes).toLocaleString() + ' bytes' : ''].filter(Boolean).join(' · ');
-									card.appendChild(meta);
-									const fileUrl = file.download_url || file.file_url || file.url || file.link || '';
-									if (fileUrl) {
-										const link = document.createElement('a');
-										link.href = String(fileUrl);
-										link.target = '_blank';
-										link.rel = 'noopener noreferrer';
-										link.className = 'button button-small';
-										link.style.marginTop = '8px';
-										link.textContent = '<?php echo esc_js( __( 'Open attachment', 'ajforms' ) ); ?>';
-										card.appendChild(link);
-									}
-									attachments.appendChild(card);
-								});
-							}
-						}
-
-						function loadDetail(row, details) {
-							if (!row || !details || details.dataset.loaded === '1' || details.dataset.loading === '1') return;
-							const id = row.dataset.workorderId;
-							const account = row.dataset.rentecAccount || '1';
-							if (!id || id === '0') return;
-							const loading = details.querySelector('.ajcore-rentec-detail-loading');
-							details.dataset.loading = '1';
-							if (loading) loading.hidden = false;
-							fetch(restBase + '/' + encodeURIComponent(id) + '?account=' + encodeURIComponent(account), {
-								cache: 'no-store',
-								headers: { 'X-WP-Nonce': restNonce }
-							})
-								.then(function(response) {
-									return response.json().then(function(body) {
-										if (!response.ok) throw new Error(body.message || '<?php echo esc_js( __( 'Failed to load the work order.', 'ajforms' ) ); ?>');
-										return body;
-									});
-								})
-								.then(function(body) {
-									renderDetail(details, body);
-									details.dataset.loaded = '1';
-								})
-								.catch(function(error) {
-									if (loading) {
-										loading.hidden = false;
-										loading.textContent = error.message;
-										loading.style.color = '#b32d2e';
-									}
-								})
-								.finally(function() {
-									details.dataset.loading = '0';
-									if (loading && details.dataset.loaded === '1') loading.hidden = true;
-								});
-						}
-
-						document.querySelectorAll('.ajcore-rentec-work-order-row').forEach(function(row) {
-							const detailRow = row.nextElementSibling;
-							const details = detailRow ? detailRow.querySelector('.ajcore-rentec-work-order-details') : null;
-							if (!details) return;
-							row.addEventListener('dblclick', function() {
-								details.open = true;
-								loadDetail(row, details);
-								details.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-							});
-							details.addEventListener('toggle', function() {
-								if (details.open) loadDetail(row, details);
-							});
-							const upload = details.querySelector('.ajcore-rentec-image-upload');
-							if (upload) {
-								upload.addEventListener('change', function() {
-									const file = upload.files && upload.files[0];
-									upload.value = '';
-									if (!file) return;
-									const formData = new FormData();
-									formData.append('account', row.dataset.rentecAccount || '1');
-									formData.append('file', file);
-									const loading = details.querySelector('.ajcore-rentec-detail-loading');
-									if (loading) {
-										loading.hidden = false;
-										loading.style.color = '';
-										loading.textContent = '<?php echo esc_js( __( 'Uploading image…', 'ajforms' ) ); ?>';
-									}
-									fetch(restBase + '/' + encodeURIComponent(row.dataset.workorderId) + '/attachments', {
-										method: 'POST',
-										headers: { 'X-WP-Nonce': restNonce },
-										body: formData
-									})
-										.then(function(response) {
-											return response.json().then(function(body) {
-												if (!response.ok) throw new Error(body.message || '<?php echo esc_js( __( 'Failed to upload the image.', 'ajforms' ) ); ?>');
-											});
-										})
-										.then(function() {
-											details.dataset.loaded = '0';
-											loadDetail(row, details);
-										})
-										.catch(function(error) {
-											if (loading) {
-												loading.hidden = false;
-												loading.style.color = '#b32d2e';
-												loading.textContent = error.message;
-											}
-										});
-								});
-							}
-						});
-					}());
-					</script>
-				<?php endif; ?>
-			<?php endif; ?>
-		</div>
-		<?php
-	}
-
-	/**
-	 * Rentec Direct configuration for the Client Portal/AJOps integration.
-	 */
-	public function display_rentec_settings_section() {
-		$settings           = $this->get_plugin_settings();
-		$rentec_key_1_saved = ! empty( $settings['rentec_api_key'] );
-		$rentec_key_2_saved = ! empty( $settings['rentec_api_key_2'] );
-		$is_shared_db       = function_exists( 'ajcore_is_shared_db_enabled' ) && ajcore_is_shared_db_enabled();
-		$is_master          = ! function_exists( 'ajcore_is_stripe_sync_owner' ) || ajcore_is_stripe_sync_owner();
-		$read_only          = $is_shared_db && ! $is_master;
-		$form_url            = add_query_arg(
-			array( 'page' => 'ajforms-settings', 'section' => 'rentec' ),
-			admin_url( 'admin.php' )
-		);
-		?>
-		<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
-			<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Rentec Direct settings saved.', 'ajforms' ); ?></p></div>
-		<?php endif; ?>
-		<div class="ajforms-settings-card" id="ajcore-rentec-settings">
-			<div class="ajcore-section-head">
-				<div>
-					<h2><?php esc_html_e( 'Rentec Direct API v3', 'ajforms' ); ?></h2>
-					<p><?php esc_html_e( 'Connect the Client Portal and AJOps to Rentec Direct. This first phase only checks which operational resources are readable and shows aggregate metrics.', 'ajforms' ); ?></p>
-				</div>
-			</div>
-			<?php if ( $read_only ) : ?>
-				<div class="notice notice-info inline"><p><?php esc_html_e( 'Rentec integration and API accounts are managed by the AJCore master site. This site automatically uses the shared master configuration.', 'ajforms' ); ?></p></div>
-			<?php endif; ?>
-			<form method="post" action="<?php echo esc_url( $form_url ); ?>">
-				<?php wp_nonce_field( 'ajforms_save_settings', 'ajforms_settings_nonce' ); ?>
-				<p>
-					<label>
-						<input name="rentec_enabled" type="checkbox" value="1" <?php checked( '1' === (string) ( $settings['rentec_enabled'] ?? '0' ) ); ?> <?php disabled( $read_only ); ?>>
-						<strong><?php esc_html_e( 'Enable Rentec Direct integration', 'ajforms' ); ?></strong>
-					</label>
-				</p>
-				<p class="description"><?php esc_html_e( 'No automatic synchronization is enabled yet. This saves the connection for future Client Portal and AJOps features.', 'ajforms' ); ?></p>
-				<div class="ajcore-kpi-grid" style="align-items:start;">
-					<?php
-					$rentec_accounts = array(
-						'1' => array(
-							'label'     => $settings['rentec_account_label_1'] ?? 'Rentec Account 1',
-							'key_field' => 'rentec_api_key',
-							'saved'     => $rentec_key_1_saved,
-						),
-						'2' => array(
-							'label'     => $settings['rentec_account_label_2'] ?? 'Rentec Account 2',
-							'key_field' => 'rentec_api_key_2',
-							'saved'     => $rentec_key_2_saved,
-						),
-					);
-					foreach ( $rentec_accounts as $account_index => $account ) :
-						$label_field = 'rentec_account_label_' . $account_index;
-						$key_id      = 'rentec_api_key_' . $account_index;
-						?>
-						<div class="ajforms-settings-card" style="margin:0;">
-							<h3><?php echo esc_html( sprintf( __( 'Account %s', 'ajforms' ), $account_index ) ); ?></h3>
-							<p>
-								<label for="<?php echo esc_attr( $label_field ); ?>"><strong><?php esc_html_e( 'Account Name', 'ajforms' ); ?></strong></label><br>
-								<input name="<?php echo esc_attr( $label_field ); ?>" id="<?php echo esc_attr( $label_field ); ?>" type="text" class="regular-text" value="<?php echo esc_attr( $account['label'] ); ?>" <?php disabled( $read_only ); ?>>
-							</p>
-							<p>
-								<label for="<?php echo esc_attr( $key_id ); ?>"><strong><?php esc_html_e( 'API v3 Key', 'ajforms' ); ?></strong></label><br>
-								<input name="<?php echo esc_attr( $account['key_field'] ); ?>" id="<?php echo esc_attr( $key_id ); ?>" type="password" class="regular-text" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $account['saved'] ? __( 'Saved — enter a new key to replace', 'ajforms' ) : __( 'Paste the API key from Rentec Direct', 'ajforms' ) ); ?>" <?php disabled( $read_only ); ?>>
-								<?php if ( $account['saved'] ) : ?>
-									<span class="description" style="display:block;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings[ $account['key_field'] ] ) ) ); ?></span>
-								<?php endif; ?>
-							</p>
-							<div class="ajforms-settings-inline-actions">
-								<button type="button" class="button ajcore-test-rentec" data-account="<?php echo esc_attr( $account_index ); ?>" <?php disabled( $read_only ); ?>><?php esc_html_e( 'Test This Account', 'ajforms' ); ?></button>
-								<span id="ajcore-rentec-test-status-<?php echo esc_attr( $account_index ); ?>"></span>
-							</div>
-							<div id="ajcore-rentec-metrics-<?php echo esc_attr( $account_index ); ?>" style="display:none;margin-top:18px;"></div>
-						</div>
-					<?php endforeach; ?>
-				</div>
-				<p class="description"><?php esc_html_e( 'Create API V3 keys under Settings → Utilities → API Keys in each Rentec account. Start with read-only permissions.', 'ajforms' ); ?></p>
-				<?php if ( ! $read_only ) : ?>
-					<div class="ajforms-settings-inline-actions">
-						<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Rentec Settings', 'ajforms' ); ?></button>
-					</div>
-				<?php endif; ?>
-			</form>
-		</div>
-		<script>
-		(function() {
-			const testNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_test_rentec_connection' ) ); ?>';
-			document.querySelectorAll('.ajcore-test-rentec').forEach(function(testButton) {
-				testButton.addEventListener('click', function() {
-					const account = testButton.dataset.account || '1';
-					const keyInput = document.getElementById('rentec_api_key_' + account);
-					const statusNode = document.getElementById('ajcore-rentec-test-status-' + account);
-					const metricsNode = document.getElementById('ajcore-rentec-metrics-' + account);
-					if (!keyInput || !statusNode || !metricsNode) return;
-
-					function setStatus(message, isError) {
-						statusNode.textContent = message;
-						statusNode.style.color = isError ? '#b32d2e' : '#166534';
-					}
-
-					testButton.disabled = true;
-					metricsNode.style.display = 'none';
-					setStatus('<?php echo esc_js( __( 'Testing Rentec connection and read access...', 'ajforms' ) ); ?>', false);
-				const formData = new FormData();
-				formData.append('action', 'ajcore_test_rentec_connection');
-				formData.append('nonce', testNonce);
-				formData.append('api_key', keyInput.value.trim());
-					formData.append('account', account);
-
-				fetch(ajaxurl, { method: 'POST', body: formData })
-					.then(function(response) { return response.json(); })
-					.then(function(response) {
-						if (!response.success) {
-							setStatus(typeof response.data === 'string' ? response.data : '<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>', true);
-							return;
-						}
-						setStatus('<?php echo esc_js( __( 'Connected to Rentec Direct.', 'ajforms' ) ); ?>', false);
-						metricsNode.innerHTML = '';
-						const grid = document.createElement('div');
-						grid.className = 'ajcore-kpi-grid';
-						(response.data.metrics || []).forEach(function(metric) {
-							const card = document.createElement('div');
-							card.className = 'ajcore-kpi-card';
-							const label = document.createElement('span');
-							label.textContent = metric.label || '';
-							const value = document.createElement('strong');
-							value.style.color = metric.available ? '#166534' : '#b32d2e';
-							value.textContent = metric.available
-								? (metric.count === null ? '<?php echo esc_js( __( 'Available', 'ajforms' ) ); ?>' : String(metric.count))
-								: '<?php echo esc_js( __( 'Unavailable', 'ajforms' ) ); ?>';
-							card.appendChild(label);
-							card.appendChild(value);
-							grid.appendChild(card);
-						});
-						const note = document.createElement('p');
-						note.className = 'description';
-						note.textContent = response.data.note || '';
-						metricsNode.appendChild(grid);
-						metricsNode.appendChild(note);
-						metricsNode.style.display = 'block';
-					})
-					.catch(function() {
-						setStatus('<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>', true);
-					})
-					.finally(function() { testButton.disabled = false; });
-				});
-			});
-		})();
-		</script>
-		<?php
-	}
-
 
 	public function display_role_manager_page( $embedded = false ) {
 		if ( ! $this->current_user_can_manage_ajcore_roles() ) {
@@ -32409,7 +31347,6 @@ class AJForms_Admin {
 				'accounting-catalog'     => array( __( 'Products & Services', 'ajforms' ), 'cart' ),
 				'recurring-transactions' => array( __( 'Recurring Transactions', 'ajforms' ), 'update-alt' ),
 				'storage'                => array( __( 'Storage', 'ajforms' ), 'cloud' ),
-				'rentec'                 => array( __( 'Rentec Direct', 'ajforms' ), 'admin-multisite' ),
 			) as $cp_key => $cp_meta ) {
 				$sections[ $cp_key ] = array(
 					'label' => $cp_meta[0],
@@ -32652,8 +31589,6 @@ class AJForms_Admin {
 							<?php $this->display_portal_sync_tab(); ?>
 						<?php elseif ( 'event-log' === $section ) : ?>
 							<?php $this->display_portal_event_log_tab(); ?>
-						<?php elseif ( 'rentec' === $section ) : ?>
-							<?php $this->display_rentec_settings_section(); ?>
 						<?php elseif ( 'email' === $section ) : ?>
 							<div class="ajforms-settings-head">
 								<h2><?php esc_html_e( 'Email Log', 'ajforms' ); ?></h2>
@@ -33202,123 +32137,6 @@ class AJForms_Admin {
 									})();
 									</script>
 								</div>
-
-								<?php if ( false ) : // Rentec settings moved to Client Portal → CP Settings → Rentec Direct. ?>
-								<div class="ajforms-settings-card">
-									<span class="ajforms-settings-pill"><?php esc_html_e( 'Property Operations', 'ajforms' ); ?></span>
-									<h3><?php esc_html_e( 'Rentec Direct API v3', 'ajforms' ); ?></h3>
-									<p><?php esc_html_e( 'Connect AJ Core to Rentec Direct. This first phase only checks which operational resources are readable and shows aggregate metrics.', 'ajforms' ); ?></p>
-									<div class="ajforms-settings-checkbox" style="margin-bottom:22px;">
-										<input name="rentec_enabled" id="rentec_enabled" type="checkbox" value="1" <?php checked( '1' === (string) ( $settings['rentec_enabled'] ?? '0' ) ); ?>>
-										<div>
-											<strong><?php esc_html_e( 'Enable Rentec Direct integration', 'ajforms' ); ?></strong>
-											<span><?php esc_html_e( 'This saves the connection for future AJOps features. No automatic synchronization is enabled yet.', 'ajforms' ); ?></span>
-										</div>
-									</div>
-									<div class="ajforms-settings-field">
-										<label for="rentec_api_key"><?php esc_html_e( 'Rentec API v3 Key', 'ajforms' ); ?></label>
-										<?php $rentec_key_saved = ! empty( $settings['rentec_api_key'] ); ?>
-										<input name="rentec_api_key" id="rentec_api_key" type="password" value="" autocomplete="new-password" placeholder="<?php echo esc_attr( $rentec_key_saved ? __( 'Saved — enter a new key to replace', 'ajforms' ) : __( 'Paste the API key from Rentec Direct', 'ajforms' ) ); ?>">
-										<?php if ( $rentec_key_saved ) : ?>
-											<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php echo esc_html( sprintf( __( 'Current: %s — leave blank to keep.', 'ajforms' ), ajcore_mask_secret_for_display( $settings['rentec_api_key'] ) ) ); ?></p>
-										<?php else : ?>
-											<p class="ajforms-settings-help" style="margin:6px 0 0;"><?php esc_html_e( 'Create a Rentec API V3 key under Settings → Utilities → API Keys. Start with read-only permissions.', 'ajforms' ); ?></p>
-										<?php endif; ?>
-									</div>
-									<div class="ajforms-settings-inline-actions" style="margin-top:18px;">
-										<button type="submit" class="button button-primary"><?php esc_html_e( 'Save Rentec Settings', 'ajforms' ); ?></button>
-										<button type="button" class="button" id="ajcore-test-rentec"><?php esc_html_e( 'Test Connection & Data', 'ajforms' ); ?></button>
-										<span id="ajcore-rentec-test-status" class="ajforms-settings-help"></span>
-									</div>
-									<div id="ajcore-rentec-metrics" style="display:none;margin-top:18px;"></div>
-									<script>
-									(function() {
-										const keyInput = document.getElementById('rentec_api_key');
-										const testButton = document.getElementById('ajcore-test-rentec');
-										const statusNode = document.getElementById('ajcore-rentec-test-status');
-										const metricsNode = document.getElementById('ajcore-rentec-metrics');
-										const testNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_test_rentec_connection' ) ); ?>';
-
-										if (!keyInput || !testButton || !statusNode || !metricsNode) {
-											return;
-										}
-
-										function setStatus(message, isError) {
-											statusNode.textContent = message;
-											statusNode.style.color = isError ? '#b32d2e' : '#166534';
-										}
-
-										function renderMetrics(data) {
-											const metrics = Array.isArray(data.metrics) ? data.metrics : [];
-											metricsNode.innerHTML = '';
-
-											const grid = document.createElement('div');
-											grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;';
-
-											metrics.forEach(function(metric) {
-												const card = document.createElement('div');
-												card.style.cssText = 'border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:#f9fafb;';
-
-												const label = document.createElement('strong');
-												label.style.cssText = 'display:block;color:#111827;margin-bottom:6px;';
-												label.textContent = metric.label || '';
-
-												const value = document.createElement('span');
-												value.style.color = metric.available ? '#166534' : '#b32d2e';
-												value.textContent = metric.available
-													? (metric.count === null ? '<?php echo esc_js( __( 'Available', 'ajforms' ) ); ?>' : String(metric.count) + ' <?php echo esc_js( __( 'records', 'ajforms' ) ); ?>')
-													: '<?php echo esc_js( __( 'Not available', 'ajforms' ) ); ?>';
-
-												card.appendChild(label);
-												card.appendChild(value);
-												grid.appendChild(card);
-											});
-
-											const note = document.createElement('p');
-											note.className = 'ajforms-settings-help';
-											note.style.marginTop = '12px';
-											note.textContent = data.note || '';
-
-											metricsNode.appendChild(grid);
-											metricsNode.appendChild(note);
-											metricsNode.style.display = 'block';
-										}
-
-										testButton.addEventListener('click', function() {
-											testButton.disabled = true;
-											metricsNode.style.display = 'none';
-											setStatus('<?php echo esc_js( __( 'Testing Rentec connection and read access...', 'ajforms' ) ); ?>', false);
-
-											const formData = new FormData();
-											formData.append('action', 'ajcore_test_rentec_connection');
-											formData.append('nonce', testNonce);
-											formData.append('api_key', keyInput.value.trim());
-
-											fetch(ajaxurl, { method: 'POST', body: formData })
-												.then(function(response) { return response.json(); })
-												.then(function(response) {
-													if (!response.success) {
-														const message = typeof response.data === 'string'
-															? response.data
-															: '<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>';
-														setStatus(message, true);
-														return;
-													}
-
-													setStatus('<?php echo esc_js( __( 'Connected to Rentec Direct.', 'ajforms' ) ); ?>', false);
-													renderMetrics(response.data || {});
-												})
-												.catch(function() {
-													setStatus('<?php echo esc_js( __( 'Unable to test Rentec Direct.', 'ajforms' ) ); ?>', true);
-												})
-												.finally(function() {
-													testButton.disabled = false;
-												});
-										});
-									})();
-									</script>
-								</div>
-								<?php endif; ?>
 
 								<div class="ajforms-settings-card">
 									<span class="ajforms-settings-pill"><?php esc_html_e( 'Integrations', 'ajforms' ); ?></span>
