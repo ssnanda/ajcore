@@ -5285,12 +5285,12 @@ class AJForms_Admin {
 	 * Every customer-facing email funnels through here, so it's also where the send is marked with
 	 * the SMTP profile customer mail should use (AJ Core Mail → Routing). $profile_key carries a
 	 * per-email-type override; empty means the customer category default. */
-	private function send_branded_wp_mail( $to, $subject, $message, $headers, $from_email, $from_name, $profile_key = '' ) {
+	private function send_branded_wp_mail( $to, $subject, $message, $headers, $from_email, $from_name, $profile_key = '', $attachments = array() ) {
 		$this->mark_customer_mail_profile( $profile_key );
 		$from_email = sanitize_email( (string) $from_email );
 		$from_name  = sanitize_text_field( (string) $from_name );
 		if ( ! is_email( $from_email ) ) {
-			return wp_mail( $to, $subject, $message, $headers );
+			return wp_mail( $to, $subject, $message, $headers, $attachments );
 		}
 
 		$email_filter = static function () use ( $from_email ) {
@@ -5306,7 +5306,7 @@ class AJForms_Admin {
 		add_filter( 'wp_mail_from', $email_filter, PHP_INT_MAX );
 		add_filter( 'wp_mail_from_name', $name_filter, PHP_INT_MAX );
 		add_action( 'phpmailer_init', $mailer_filter, PHP_INT_MAX );
-		$sent = wp_mail( $to, $subject, $message, $headers );
+		$sent = wp_mail( $to, $subject, $message, $headers, $attachments );
 		remove_action( 'phpmailer_init', $mailer_filter, PHP_INT_MAX );
 		remove_filter( 'wp_mail_from_name', $name_filter, PHP_INT_MAX );
 		remove_filter( 'wp_mail_from', $email_filter, PHP_INT_MAX );
@@ -6038,8 +6038,8 @@ class AJForms_Admin {
 			'footer_parts'  => function ( $brand, $reason ) {
 				return $this->get_branded_email_footer_parts( $brand, $reason );
 			},
-			'send'          => function ( $to, $subject, $message, $headers, $from_email, $from_name, $profile_key = '' ) {
-				return $this->send_branded_wp_mail( $to, $subject, $message, $headers, $from_email, $from_name, $profile_key );
+			'send'          => function ( $to, $subject, $message, $headers, $from_email, $from_name, $profile_key = '', $attachments = array() ) {
+				return $this->send_branded_wp_mail( $to, $subject, $message, $headers, $from_email, $from_name, $profile_key, $attachments );
 			},
 			'brand'         => function ( $stripe_customer_id, $customer_email ) {
 				return $this->get_customer_brand_context( $stripe_customer_id, 0, $customer_email );
