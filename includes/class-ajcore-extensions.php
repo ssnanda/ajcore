@@ -39,6 +39,10 @@
  * API 16: E-Signatures (BreezeDoc) is registered by AJCore-RA, not AJCore (routes /ops/esign/*, /esign/*, Client Portal tab).
  * API 17: Rentec Direct is registered by AJCore-RA (routes /ops/rentec/*, Client Portal tab, settings, connection test); the
  * 'ajcore_expense_invoice_options' filter supplies units/vendors to the expense-invoice options endpoint.
+ * API 18: Mail (physical mail / service-of-process log: /ops/mail*, /portal/mail, Client Portal tab, notification email and its
+ * mail_item / mail_item_sop templates) is registered by AJCore-RA, not AJCore.
+ * API 19: Gmail Intake (OAuth mailbox, filing rules, /ops/gmail-intake*, /gmail-intake/* incl. the OAuth callback, Client Portal tab,
+ * settings, the Documents Filed email and its gmail_intake template) is registered by AJCore-RA, not AJCore.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -52,7 +56,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 17 );
+	define( 'AJCORE_EXTENSION_API', 19 );
 }
 
 class AJCore_Extensions {

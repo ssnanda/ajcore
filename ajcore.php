@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.364
+ * Version: 0.7.365
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.364' );
+	define( 'AJCORE_VERSION', '0.7.365' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -332,18 +332,6 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'zoho_mail_account_id'          => '',
 			'zoho_mail_connected_email'     => '',
 			'zoho_mail_connected_at'        => '',
-			// Gmail Intake (Email settings). A dedicated Gmail inbox (not Zoho) that staff forward
-			// state-filing notification emails into; AJCore polls it, matches the sender's subject
-			// to a customer, and files PDF attachments into that customer's Files.
-			'gmail_intake_client_id'         => '',
-			'gmail_intake_client_secret'     => '',
-			'gmail_intake_address'           => 'universityplaceofficesuites@gmail.com',
-			'gmail_intake_access_token'      => '',
-			'gmail_intake_refresh_token'     => '',
-			'gmail_intake_token_expires_at'  => 0,
-			'gmail_intake_connected_email'   => '',
-			'gmail_intake_connected_at'      => '',
-			'gmail_intake_label_id'          => '',
 			// Self-hosted Live Chat. Most chat_* / visitor_* keys below are shared across all
 			// connected sites and master-controlled (see ajcore_get_chat_setting_keys() — that list
 			// rides the 'ajcore_chat_settings' shared row) — the master's Live Chat settings page is
@@ -581,12 +569,6 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 					unset( $shared_chat['chat_widget_enabled'] );
 					if ( ! empty( $shared_chat ) ) {
 						$settings = array_merge( $settings, $shared_chat );
-					}
-				}
-				if ( function_exists( 'ajcore_read_shared_gmail_intake_settings' ) ) {
-					$shared_gmail_intake = ajcore_read_shared_gmail_intake_settings();
-					if ( ! empty( $shared_gmail_intake ) ) {
-						$settings = array_merge( $settings, $shared_gmail_intake );
 					}
 				}
 			}
@@ -2025,86 +2007,6 @@ if ( ! function_exists( 'ajcore_write_shared_chat_settings' ) ) {
 	}
 }
 
-if ( ! function_exists( 'ajcore_get_gmail_intake_setting_keys' ) ) {
-	function ajcore_get_gmail_intake_setting_keys() {
-		return array(
-			'gmail_intake_client_id',
-			'gmail_intake_client_secret',
-			'gmail_intake_address',
-			'gmail_intake_access_token',
-			'gmail_intake_refresh_token',
-			'gmail_intake_token_expires_at',
-			'gmail_intake_connected_email',
-			'gmail_intake_connected_at',
-			'gmail_intake_label_id',
-		);
-	}
-}
-
-if ( ! function_exists( 'ajcore_read_shared_gmail_intake_settings' ) ) {
-	function ajcore_read_shared_gmail_intake_settings() {
-		$shared_db = ajcore_get_shared_db();
-		if ( ! $shared_db ) {
-			return array();
-		}
-		$table = $shared_db->prefix . 'aj_shared_settings';
-		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-			return array();
-		}
-		$value = $shared_db->get_var(
-			$shared_db->prepare( "SELECT setting_value FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_gmail_intake_settings' )
-		);
-		$decoded = json_decode( (string) $value, true );
-		return is_array( $decoded ) ? $decoded : array();
-	}
-}
-
-if ( ! function_exists( 'ajcore_write_shared_gmail_intake_settings' ) ) {
-	function ajcore_write_shared_gmail_intake_settings( $settings ) {
-		if ( ! ajcore_is_shared_db_enabled() ) {
-			return false;
-		}
-		$shared_db = ajcore_get_shared_db();
-		if ( ! $shared_db ) {
-			return false;
-		}
-		$table = $shared_db->prefix . 'aj_shared_settings';
-		if ( $shared_db->get_var( $shared_db->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-			return false;
-		}
-		$data = array();
-		foreach ( ajcore_get_gmail_intake_setting_keys() as $key ) {
-			if ( array_key_exists( $key, $settings ) ) {
-				// None of these fields are on ajcore_get_secret_setting_keys() today (Client
-				// Secret and the OAuth tokens are stored plaintext locally), so no decrypt step
-				// is needed here. If that ever changes, decrypt with ajcore_decrypt_setting_value().
-				$data[ $key ] = $settings[ $key ];
-			}
-		}
-		$encoded = wp_json_encode( $data );
-		if ( false === $encoded ) {
-			return false;
-		}
-		$existing = $shared_db->get_var(
-			$shared_db->prepare( "SELECT setting_name FROM `{$table}` WHERE setting_name = %s LIMIT 1", 'ajcore_gmail_intake_settings' )
-		);
-		if ( $existing ) {
-			return false !== $shared_db->update(
-				$table,
-				array( 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
-				array( 'setting_name' => 'ajcore_gmail_intake_settings' ),
-				array( '%s', '%s' ),
-				array( '%s' )
-			);
-		}
-		return false !== $shared_db->insert(
-			$table,
-			array( 'setting_name' => 'ajcore_gmail_intake_settings', 'setting_value' => $encoded, 'updated_at' => current_time( 'mysql' ) ),
-			array( '%s', '%s', '%s' )
-		);
-	}
-}
-
 /**
  * Master → shared DB sync: whenever the master site's settings option changes
  * (admin save, token refresh, migrations), push the calendar/reservation subset
@@ -2123,9 +2025,6 @@ add_action(
 		if ( function_exists( 'ajcore_write_shared_chat_settings' ) ) {
 			ajcore_write_shared_chat_settings( $value );
 		}
-		if ( function_exists( 'ajcore_write_shared_gmail_intake_settings' ) ) {
-			ajcore_write_shared_gmail_intake_settings( $value );
-		}
 	},
 	10,
 	2
@@ -2134,7 +2033,7 @@ add_action(
 // The passive-engagement toggles (chat_engage_popup_enabled, visitor_identify_enabled,
 // visitor_timer_enabled, and their delays) used to be local per-site; they are now
 // master-controlled network-wide. The shared 'ajcore_chat_settings' row already exists (server
-// URL/secrets have always been shared), so — unlike the Rentec/Gmail backfills — the "is it
+// URL/secrets have always been shared), so the "is it
 // published yet" check is whether that row has picked up the newly-shared keys. Publish the
 // master's current values once so existing secondary sites stop relying on their own local copies
 // without the admin re-saving the Live Chat settings page. (chat_widget_enabled is NOT part of
@@ -2153,24 +2052,6 @@ add_action(
 			return;
 		}
 		ajcore_write_shared_chat_settings( ajforms_get_settings() );
-	},
-	20
-);
-
-// Same one-time backfill for Gmail Intake: ncllc already has a live OAuth connection saved
-// locally — publish it to the shared DB once so upos (and any other secondary site) picks it
-// up immediately, without the admin needing to reconnect Gmail on every site separately.
-add_action(
-	'admin_init',
-	function () {
-		if ( ! ajcore_is_shared_db_enabled()
-			|| ( function_exists( 'ajcore_is_stripe_sync_owner' ) && ! ajcore_is_stripe_sync_owner() )
-			|| ! function_exists( 'ajcore_read_shared_gmail_intake_settings' )
-			|| ! function_exists( 'ajcore_write_shared_gmail_intake_settings' )
-			|| ! empty( ajcore_read_shared_gmail_intake_settings() ) ) {
-			return;
-		}
-		ajcore_write_shared_gmail_intake_settings( ajforms_get_settings() );
 	},
 	20
 );
