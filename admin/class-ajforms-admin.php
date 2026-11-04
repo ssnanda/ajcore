@@ -19915,6 +19915,7 @@ class AJForms_Admin {
 				<?php $this->render_portal_dashboard_metric( __( 'Paid Needs Fulfillment', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'paid' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Admin Review Required', 'ajforms' ), $admin_review_required, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'admin_review_required' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'failed' ) ) ); ?>
+				<?php do_action( 'ajcore_portal_dashboard_metrics' ); // Extensions (e.g. AJCore-RA) add their own metric cards here. ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Sync / Webhook Health', 'ajforms' ), $health_has_issue ? __( 'Review', 'ajforms' ) : __( 'OK', 'ajforms' ), $this->get_portal_dashboard_url( 'sync', $last_failed ? array( 'sync_log_id' => (int) $last_failed->id ) : array() ), $health_note ); ?>
 			</div>
 
