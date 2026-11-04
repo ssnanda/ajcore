@@ -46,7 +46,6 @@ class AJForms {
 		require_once AJFORMS_PLUGIN_DIR . 'admin/class-ajforms-admin.php';
 		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-jwt.php';
 		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-rest-api.php';
-		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-upos-temps.php';
 		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-zoho-calendar.php';
 		require_once AJFORMS_PLUGIN_DIR . 'includes/class-ajcore-reservations.php';
 	}
