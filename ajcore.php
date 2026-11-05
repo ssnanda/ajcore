@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.371
+ * Version: 0.7.372
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.371' );
+	define( 'AJCORE_VERSION', '0.7.372' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -2042,12 +2042,12 @@ add_action(
 if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
 	function ajcore_get_portal_file_settings() {
 		$defaults = array(
-			'categories'     => array( 'Articles of Organization', 'IRS EIN Letters', 'SOSNC Flyers', 'Change of RA', 'Others' ),
+			'categories'     => array( 'Others' ),
 			'tags'           => array( 'registered-agent' => 'RegisteredAgent', 'virtual-office' => 'VirtualOffice' ),
 			'migration_tags' => array( 'registered-agent', 'virtual-office' ),
 			// Customer-facing grouping (File Library + file emails). Unlisted categories fall under "Other".
-			'important_categories' => array( 'Articles of Organization', 'IRS EIN Letters' ),
-			'extra_categories'     => array( 'SOSNC Flyers' ),
+			'important_categories' => array(),
+			'extra_categories'     => array(),
 		);
 		$saved = array();
 		if ( ajcore_is_shared_db_enabled() ) {
@@ -2157,36 +2157,6 @@ if ( ! function_exists( 'ajcore_update_visitor_banner_templates' ) ) {
 		return update_option( 'ajcore_visitor_banner_templates', $templates, false );
 	}
 }
-
-// "Change of RA" was added to the default category list above, but an install that already has
-// a saved ajcore_portal_file_settings row (shared or local) never sees new defaults — wp_parse_args()
-// only fills in KEYS that are missing entirely, not new list entries inside an existing 'categories'
-// value. Backfill it once so the Gmail Intake filing dropdown (and its category validation in
-// handle_portal_gmail_intake_actions()) actually accepts it without every site needing a manual
-// re-save. Runs on every site (not gated to the shared-DB master) since local-only installs need
-// the same backfill against their own local option.
-add_action(
-	'admin_init',
-	function () {
-		if ( ! function_exists( 'ajcore_get_portal_file_settings' ) || ! function_exists( 'ajcore_update_portal_file_settings' ) ) {
-			return;
-		}
-		$settings = ajcore_get_portal_file_settings();
-		if ( in_array( 'Change of RA', (array) $settings['categories'], true ) ) {
-			return;
-		}
-		// Goes in ahead of the catch-all "Others" bucket it used to fall into, alongside the other
-		// per-document-type categories rather than at the very end.
-		$others_pos = array_search( 'Others', $settings['categories'], true );
-		if ( false === $others_pos ) {
-			$settings['categories'][] = 'Change of RA';
-		} else {
-			array_splice( $settings['categories'], $others_pos, 0, array( 'Change of RA' ) );
-		}
-		ajcore_update_portal_file_settings( $settings );
-	},
-	20
-);
 
 /**
  * The code that runs during plugin activation.
