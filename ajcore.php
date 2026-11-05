@@ -2076,7 +2076,7 @@ if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
 }
 
 if ( ! function_exists( 'ajcore_portal_file_category_group' ) ) {
-	/** Returns 'important', 'extra' or 'other' for a file category (case-insensitive). */
+	/** Returns 'important', 'extra', 'receipts' or 'other' for a file category (case-insensitive). */
 	function ajcore_portal_file_category_group( $category, $settings = null ) {
 		$settings = is_array( $settings ) ? $settings : ajcore_get_portal_file_settings();
 		$category = strtolower( trim( (string) $category ) );
@@ -2086,6 +2086,9 @@ if ( ! function_exists( 'ajcore_portal_file_category_group' ) ) {
 					return $group;
 				}
 			}
+		}
+		if ( 'receipts' === $category ) {
+			return 'receipts';
 		}
 		return 'other';
 	}

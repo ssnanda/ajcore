@@ -1688,14 +1688,15 @@ class AJForms {
 			<?php else : ?>
 				<?php
 				$file_settings = ajcore_get_portal_file_settings();
-				$file_groups   = array( 'important' => array(), 'extra' => array(), 'other' => array() );
+				$file_groups   = array( 'important' => array(), 'other' => array(), 'receipts' => array(), 'extra' => array() );
 				foreach ( $files as $grouped_file ) {
 					$file_groups[ ajcore_portal_file_category_group( $grouped_file->category, $file_settings ) ][] = $grouped_file;
 				}
 				$file_group_labels = array(
 					'important' => __( 'Important', 'ajforms' ),
-					'extra'     => __( 'Extra', 'ajforms' ),
 					'other'     => __( 'Other', 'ajforms' ),
+					'receipts'  => __( 'Receipts', 'ajforms' ),
+					'extra'     => __( 'Important Flyers from Secretary of State', 'ajforms' ),
 				);
 				$show_group_headings = count( array_filter( $file_groups ) ) > 1;
 				?>
