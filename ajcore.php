@@ -2042,7 +2042,7 @@ add_action(
 if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
 	function ajcore_get_portal_file_settings() {
 		$defaults = array(
-			'categories'     => array( 'Others' ),
+			'categories'     => array( 'Contracts', 'Invoices', 'Receipts', 'Tax Documents', 'ID Proof', 'Address Proof', 'Others' ),
 			'tags'           => array(),
 			'migration_tags' => array(),
 			// Customer-facing grouping (File Library + file emails). Unlisted categories fall under "Other".
