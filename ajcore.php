@@ -2042,7 +2042,7 @@ add_action(
 if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
 	function ajcore_get_portal_file_settings() {
 		$defaults = array(
-			'categories'     => array( 'Contracts', 'Invoices', 'Receipts', 'Tax Documents', 'ID Proof', 'Address Proof', 'Others' ),
+			'categories'     => array( 'Contracts', 'Invoices', 'Receipts', 'Tax Documents', 'Others' ),
 			'tags'           => array(),
 			'migration_tags' => array(),
 			// Customer-facing grouping (File Library + file emails). Unlisted categories fall under "Other".
@@ -2071,13 +2071,16 @@ if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
 		$settings['migration_tags'] = array_values( array_intersect( (array) $settings['migration_tags'], array_keys( $settings['tags'] ) ) );
 		// Categories that older AJCore versions seeded for Registered Agent work belong to AJCore-RA; hide any saved copies on sites without it.
 		if ( ! has_filter( 'ajcore_portal_file_settings', 'ajcore_ra_portal_file_settings' ) ) {
-			$ra_only = array( 'articles of organization', 'irs ein letters', 'sosnc flyers', 'change of ra', 'formation documents' );
+			$ra_only = array( 'articles of organization', 'irs ein letters', 'sosnc flyers', 'change of ra', 'formation documents', 'id proof', 'address proof', 'usps form 1583' );
 			foreach ( array( 'categories', 'important_categories', 'extra_categories' ) as $list_key ) {
 				$settings[ $list_key ] = array_values( array_filter( (array) $settings[ $list_key ], function ( $name ) use ( $ra_only ) {
 					return ! in_array( strtolower( $name ), $ra_only, true );
 				} ) );
 			}
-			if ( ! in_array( 'Others', $settings['categories'], true ) ) {
+			// Nothing generic left (only the catch-all): show the generic defaults.
+			if ( ! array_diff( $settings['categories'], array( 'Others' ) ) ) {
+				$settings['categories'] = $defaults['categories'];
+			} elseif ( ! in_array( 'Others', $settings['categories'], true ) ) {
 				$settings['categories'][] = 'Others';
 			}
 			foreach ( array( 'registered-agent', 'virtual-office' ) as $ra_tag ) {
