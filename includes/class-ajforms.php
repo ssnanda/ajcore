@@ -13774,7 +13774,8 @@ class AJForms {
 			<div class="aj-res-topbar">
 				<div class="aj-res-topbar-left">
 					<h2 class="aj-res-page-title"><?php echo esc_html( $resource_name ); ?></h2>
-					<p class="aj-res-page-sub">University Place Office Suites &mdash; 1914 J N Pease Pl, Charlotte, NC 28262</p>
+					<?php $res_loc = apply_filters( 'ajcore_reservation_location', array( 'name' => get_bloginfo( 'name' ), 'address' => '', 'url' => home_url( '/' ) ) ); ?>
+					<p class="aj-res-page-sub"><?php echo esc_html( trim( (string) $res_loc['name'] . ( '' !== (string) $res_loc['address'] ? ' — ' . $res_loc['address'] : '' ) ) ); ?></p>
 				</div>
 				<div class="aj-res-topbar-right">
 					<span class="aj-res-rate-pill"><?php echo esc_html( $business_hours_label ); ?> &mdash; $<?php echo esc_html( $settings['reservation_business_hours_rate'] ?? '40' ); ?>/hr<small><?php esc_html_e( 'Mon–Fri 9am–5pm', 'ajforms' ); ?></small></span>

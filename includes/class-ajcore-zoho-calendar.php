@@ -639,14 +639,18 @@ class AJCore_Zoho_Calendar {
 		$notes          = isset( $reservation['customer_notes'] ) ? sanitize_text_field( (string) $reservation['customer_notes'] ) : '';
 
 		$title       = sprintf( '%s - %s', $resource_name, $customer_name );
-		$description_parts = array(
-			'Conference Room — University Place Office Suites',
-			'1914 J N Pease Pl, Charlotte, NC 28262, United States',
-			'Web: https://universityofficesuites.com/',
+		// Where the reservation is held; an extension supplies the real name/address/url ('ajcore_reservation_location').
+		$res_loc = apply_filters( 'ajcore_reservation_location', array( 'name' => get_bloginfo( 'name' ), 'address' => '', 'url' => home_url( '/' ) ) );
+		$description_parts = array_values( array_filter( array(
+			'Conference Room — ' . $res_loc['name'],
+			(string) $res_loc['address'],
+			'Web: ' . $res_loc['url'],
+		), 'strlen' ) );
+		$description_parts = array_merge( $description_parts, array(
 			'',
 			'Customer: ' . $customer_name . ' <' . $customer_email . '>',
 			'Reservation UUID: ' . $uuid,
-		);
+		) );
 		if ( '' !== $notes ) {
 			$description_parts[] = '';
 			$description_parts[] = 'Notes: ' . $notes;
@@ -665,8 +669,8 @@ class AJCore_Zoho_Calendar {
 			),
 			'title'       => $title,
 			'description' => $description,
-			'location'    => 'University Place Office Suites 1914 J N Pease Pl, Charlotte, NC 28262, United States',
-			'url'         => 'https://universityofficesuites.com/',
+			'location'    => trim( $res_loc['name'] . ' ' . $res_loc['address'] ),
+			'url'         => $res_loc['url'],
 		);
 
 		$api_url = 'https://calendar.zoho.com/api/v1/calendars/' . rawurlencode( $res_calendar_uid ) . '/events';

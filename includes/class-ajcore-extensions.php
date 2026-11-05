@@ -44,6 +44,8 @@
  * API 19: Gmail Intake (OAuth mailbox, filing rules, /ops/gmail-intake*, /gmail-intake/* incl. the OAuth callback, Client Portal tab,
  * settings, the Documents Filed email and its gmail_intake template) is registered by AJCore-RA, not AJCore.
  * API 20: the email toolkit's 'send' accepts an optional $attachments array (file paths), e.g. AJCore-RA's signed-copy emails.
+ * API 21: 'ajcore_partner_site_domain' filter (pins a partner's customers to one site; AJCore has no site domain of
+ * its own) and 'ajcore_reservation_location' filter (name/address/url shown on the Reservations page and Zoho events).
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -57,7 +59,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 20 );
+	define( 'AJCORE_EXTENSION_API', 21 );
 }
 
 class AJCore_Extensions {

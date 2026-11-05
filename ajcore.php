@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.369
+ * Version: 0.7.370
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.369' );
+	define( 'AJCORE_VERSION', '0.7.370' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -233,13 +233,6 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'default_from_name'             => get_bloginfo( 'name' ),
 			'default_reply_to_mode'         => 'submitter',
 			'wp_email_templates_enabled'    => '1',
-			// Per-site opt-in for the University Place Office Suites brand variant in the Email
-			// Templates admin UI (see $brands in display_email_templates_settings_section() and the
-			// preserve-on-save loop in handle_settings_save(), both in class-ajforms-admin.php). Off
-			// by default so the other 10 sites this plugin ships to don't see a different business's
-			// branded fields; ncllc/upos turn it on locally since their lead/customer brand-switch
-			// (get_customer_brand_setting_key()) actually uses the university_* settings below.
-			'enable_university_brand_templates' => '0',
 			'wp_email_from_email'           => ajcore_default_system_from_email(),
 			'wp_email_from_name'            => get_bloginfo( 'name' ),
 			// Outgoing transport. 'smtp' = the settings below, applied in ajcore_configure_smtp_mailer();

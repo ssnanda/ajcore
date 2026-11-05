@@ -1368,10 +1368,13 @@ class AJCore_REST_API {
 			$cid              = isset( $c['stripe_customer_id'] ) ? (string) $c['stripe_customer_id'] : '';
 			$site_uuid        = isset( $site_by_customer[ $cid ] ) ? $site_by_customer[ $cid ] : '';
 			$partner_key      = isset( $c['partner_key'] ) ? sanitize_key( (string) $c['partner_key'] ) : '';
-			if ( in_array( $partner_key, array( 'opus', 'alliance_vo' ), true ) && 'ajops_edit' !== ( $site_source_by_customer[ $cid ] ?? '' ) && 'universityofficesuites.com' !== $this->get_site_label( $site_uuid ) ) {
-				if ( true === $this->update_customer_site_domain( $cid, 'universityofficesuites.com' ) ) {
+			// An extension may pin a partner's customers to one site ('ajcore_partner_site_domain'; AJCore-RA
+			// does this for its University Place partners). Empty = no pin.
+			$pinned_domain = (string) apply_filters( 'ajcore_partner_site_domain', '', $partner_key );
+			if ( '' !== $pinned_domain && 'ajops_edit' !== ( $site_source_by_customer[ $cid ] ?? '' ) && $pinned_domain !== $this->get_site_label( $site_uuid ) ) {
+				if ( true === $this->update_customer_site_domain( $cid, $pinned_domain ) ) {
 					$sites_table = $this->get_portal_db()->prefix . 'aj_shared_sites';
-					$site_uuid = (string) $this->get_portal_db()->get_var( "SELECT site_uuid FROM `{$sites_table}` WHERE domain LIKE '%universityofficesuites.com%' LIMIT 1" );
+					$site_uuid = (string) $this->get_portal_db()->get_var( $this->get_portal_db()->prepare( "SELECT site_uuid FROM `{$sites_table}` WHERE domain LIKE %s LIMIT 1", '%' . $this->get_portal_db()->esc_like( $pinned_domain ) . '%' ) );
 				}
 			}
 			$c['site_uuid']   = $site_uuid;

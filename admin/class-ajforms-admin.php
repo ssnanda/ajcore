@@ -1179,14 +1179,15 @@ class AJForms_Admin {
 			__( 'This customer\'s portal login belongs to a different site and cannot be enabled here.', 'ajforms' )
 		);
 
-		// Partner-billed customers (opus / alliance_vo) are pinned to universityofficesuites.com —
-		// same hard mapping AJCore's REST layer applies when stamping their assigned site. This
-		// holds even before an aj_portal_customer_states row exists for them.
-		$partner_key = isset( $customer->partner_key ) ? sanitize_key( (string) $customer->partner_key ) : '';
-		if ( in_array( $partner_key, array( 'opus', 'alliance_vo' ), true ) ) {
+		// Partner-billed customers can be pinned to one site by an extension ('ajcore_partner_site_domain',
+		// same mapping the REST layer applies when stamping their assigned site). This holds even
+		// before an aj_portal_customer_states row exists for them.
+		$partner_key   = isset( $customer->partner_key ) ? sanitize_key( (string) $customer->partner_key ) : '';
+		$pinned_domain = (string) apply_filters( 'ajcore_partner_site_domain', '', $partner_key );
+		if ( '' !== $pinned_domain ) {
 			$current_host = strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) );
 			$current_host = preg_replace( '/^www\./', '', $current_host );
-			return false !== strpos( $current_host, 'universityofficesuites.com' ) ? true : $wrong_site;
+			return false !== strpos( $current_host, $pinned_domain ) ? true : $wrong_site;
 		}
 
 		// Everyone else: a customer's portal login belongs to exactly one site
@@ -14032,9 +14033,6 @@ class AJForms_Admin {
 			'default_from_name'              => isset( $_POST['default_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['default_from_name'] ) ) : get_bloginfo( 'name' ),
 			'default_reply_to_mode'          => isset( $_POST['default_reply_to_mode'] ) && in_array( sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ), array( 'submitter', 'site' ), true ) ? sanitize_key( wp_unslash( $_POST['default_reply_to_mode'] ) ) : 'submitter',
 			'wp_email_templates_enabled'     => isset( $_POST['wp_email_templates_enabled'] ) ? '1' : '0',
-			// No longer a checkbox (both brands always render — see the $brands array in
-			// display_email_templates_settings_section()); keep whatever is stored.
-			'enable_university_brand_templates' => isset( $current_settings['enable_university_brand_templates'] ) ? (string) $current_settings['enable_university_brand_templates'] : '0',
 			'wp_email_from_email'            => isset( $_POST['wp_email_from_email'] ) ? sanitize_email( wp_unslash( $_POST['wp_email_from_email'] ) ) : ajcore_default_system_from_email(),
 			'wp_email_from_name'             => isset( $_POST['wp_email_from_name'] ) ? sanitize_text_field( wp_unslash( $_POST['wp_email_from_name'] ) ) : get_bloginfo( 'name' ),
 			'mail_mode'                      => isset( $_POST['mail_mode'] )
@@ -14189,7 +14187,7 @@ class AJForms_Admin {
 		}
 
 		// University Place Office Suites brand fields are hidden from the Email Templates form
-		// (as separate <input>s) unless enable_university_brand_templates is on, so on most sites/
+		// (as separate <input>s) on sites without an extension brand, so on most sites/
 		// most saves $_POST never carries them. Same "never let an absent field silently reset a
 		// real value" reasoning as the OAuth token loops above — preserve the existing saved value
 		// (or, for a site that's never saved one yet, keep the fallback default computed above)
