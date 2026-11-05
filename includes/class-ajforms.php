@@ -1528,6 +1528,16 @@ class AJForms {
 			$items = array();
 		}
 
+		// Menus saved before "Service Requests" became "Requests" still carry the old id/label.
+		foreach ( $items as $i => $item ) {
+			if ( is_array( $item ) && isset( $item['id'] ) && 'service-requests' === $item['id'] ) {
+				$items[ $i ]['id'] = 'requests';
+				if ( isset( $item['label'] ) && 'Service Requests' === $item['label'] ) {
+					$items[ $i ]['label'] = __( 'Requests', 'ajforms' );
+				}
+			}
+		}
+
 		$default_items = array(
 			array(
 				'id'      => 'overview',
@@ -1572,8 +1582,8 @@ class AJForms {
 				'enabled' => true,
 			),
 			array(
-				'id'      => 'service-requests',
-				'label'   => __( 'Service Requests', 'ajforms' ),
+				'id'      => 'requests',
+				'label'   => __( 'Requests', 'ajforms' ),
 				'type'    => 'built_in',
 				'url'     => '',
 				'enabled' => true,
@@ -1812,7 +1822,7 @@ class AJForms {
 		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
 
 		if ( '' === $stripe_customer_id ) {
-			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Service Requests', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked yet.', 'ajforms' ) . '</p></section>';
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Requests', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked yet.', 'ajforms' ) . '</p></section>';
 		}
 
 		$data     = $this->api_get_client_service_requests();
@@ -1823,12 +1833,12 @@ class AJForms {
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
-			<h2><?php esc_html_e( 'Service Requests', 'ajforms' ); ?></h2>
+			<h2><?php esc_html_e( 'Requests', 'ajforms' ); ?></h2>
 
 			<div id="aj-new-sr-wrap" style="margin-bottom:24px;">
 				<button id="aj-new-sr-toggle" class="button button-primary" onclick="document.getElementById('aj-new-sr-form-wrap').style.display=document.getElementById('aj-new-sr-form-wrap').style.display==='none'?'block':'none';return false;"><?php esc_html_e( '+ New Service Request', 'ajforms' ); ?></button>
 				<div id="aj-new-sr-form-wrap" style="display:none;margin-top:12px;padding:16px;border:1px solid #ddd;background:#f9f9f9;border-radius:6px;max-width:600px;">
-					<h3 style="margin-top:0;"><?php esc_html_e( 'Submit a New Service Request', 'ajforms' ); ?></h3>
+					<h3 style="margin-top:0;"><?php esc_html_e( 'Submit a New Request', 'ajforms' ); ?></h3>
 					<form id="aj-new-sr-form">
 						<p>
 							<label style="display:block;font-weight:600;margin-bottom:4px;"><?php esc_html_e( 'Subject', 'ajforms' ); ?></label>
@@ -1889,8 +1899,8 @@ class AJForms {
 			</style>
 			<?php if ( empty( $requests ) ) : ?>
 				<div class="aj-portal-empty-state">
-					<strong><?php esc_html_e( 'No service requests yet', 'ajforms' ); ?></strong>
-					<p><?php esc_html_e( 'New service requests and setup progress will appear here.', 'ajforms' ); ?></p>
+					<strong><?php esc_html_e( 'No requests yet', 'ajforms' ); ?></strong>
+					<p><?php esc_html_e( 'New requests and setup progress will appear here.', 'ajforms' ); ?></p>
 				</div>
 			<?php else : ?>
 				<div class="aj-client-sr-list">
@@ -1925,7 +1935,7 @@ class AJForms {
 							$service_name = $sr_product && ! empty( $sr_product->name ) ? sanitize_text_field( (string) $sr_product->name ) : '';
 						}
 						if ( '' === $service_name ) {
-							$service_name = __( 'Service Request', 'ajforms' );
+							$service_name = __( 'Request', 'ajforms' );
 						}
 						$client_notes = ! empty( $request->client_notes ) ? sanitize_text_field( (string) $request->client_notes ) : '';
 						$created = ! empty( $request->created_at ) ? $this->format_portal_date( $request->created_at ) : '-';
@@ -6966,7 +6976,7 @@ class AJForms {
 				echo $this->render_customer_portal_file_library_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'profile' === $active_tab ) {
 				echo $this->render_customer_portal_profile_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-			} elseif ( 'service-requests' === $active_tab ) {
+			} elseif ( 'requests' === $active_tab ) {
 				echo $this->render_customer_portal_service_requests_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			} elseif ( 'reservations' === $active_tab ) {
 				echo $this->render_customer_portal_reservations_tab(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped

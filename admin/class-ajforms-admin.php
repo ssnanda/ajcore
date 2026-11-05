@@ -11928,10 +11928,10 @@ class AJForms_Admin {
 			$this->handle_products_action();
 		} elseif ( 'ajforms-file-library' === $page ) {
 			$this->handle_file_library_actions();
-		} elseif ( 'ajforms-service-requests' === $page ) {
+		} elseif ( 'ajforms-requests' === $page ) {
 			$this->handle_service_requests_actions();
 		} elseif ( 'ajforms-client-portal' === $page ) {
-			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'service-requests';
+			$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'requests';
 			// Menu/Calendar/API/Settings were merged into the "CP Settings" tab; its
 			// sub-navigation (cp_section) now carries what used to be the top-level tab.
 			if ( 'cp-settings' === $tab ) {
@@ -11960,7 +11960,7 @@ class AJForms_Admin {
 				} elseif ( 'chat' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 					$this->handle_chat_settings_save();
 				}
-			} elseif ( 'service-requests' === $tab || isset( $_GET['service_request_action'] ) ) {
+			} elseif ( 'requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
 			} elseif ( 'billing' === $tab || 'payments' === $tab || isset( $_POST['ajcore_billing_action'] ) ) {
 				$this->handle_portal_billing_actions();
@@ -12013,6 +12013,16 @@ class AJForms_Admin {
 
 	private function get_customer_portal_menu_items() {
 		$items = get_option( 'ajcore_customer_portal_menu_items', array() );
+		$items = is_array( $items ) ? $items : array();
+		// Menus saved before "Service Requests" became "Requests" still carry the old id/label.
+		foreach ( $items as $i => $item ) {
+			if ( is_array( $item ) && isset( $item['id'] ) && 'service-requests' === $item['id'] ) {
+				$items[ $i ]['id'] = 'requests';
+				if ( isset( $item['label'] ) && 'Service Requests' === $item['label'] ) {
+					$items[ $i ]['label'] = __( 'Requests', 'ajforms' );
+				}
+			}
+		}
 		if ( ! is_array( $items ) ) {
 			$items = array();
 		}
@@ -12024,7 +12034,7 @@ class AJForms_Admin {
 			array( 'id' => 'billing', 'label' => __( 'Billing', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'file-library', 'label' => __( 'File Library', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'profile', 'label' => __( 'Profile', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
-			array( 'id' => 'service-requests', 'label' => __( 'Service Requests', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
+			array( 'id' => 'requests', 'label' => __( 'Requests', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			( function () {
 				$s = get_option( 'ajforms_settings', array() );
 				return array( 'id' => 'reservations', 'label' => ! empty( $s['reservation_menu_label'] ) ? $s['reservation_menu_label'] : __( 'Conference Room', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => ! empty( $s['zoho_reservations_enabled'] ) );
@@ -12236,7 +12246,7 @@ class AJForms_Admin {
 				// Matches the full tab whitelist in display_portal_dashboard() so "Full Sync Now" (now
 				// available from every tab, not just Sync/Menu/Customers/Product Catalog/Compliance)
 				// redirects back to wherever it was actually clicked from.
-				$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $current_tab : 'menu';
+				$current_tab = in_array( $current_tab, array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'menu', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'requests', 'tasks', 'customer', 'api', 'settings', 'calendar', 'reservations' ), true ) ? $current_tab : 'menu';
 				$args        = array( 'page' => 'ajforms-client-portal', 'tab' => $current_tab );
 			}
 
@@ -17181,7 +17191,7 @@ class AJForms_Admin {
 			return reset( $labels );
 		}
 
-		return __( 'Service Request', 'ajforms' );
+		return __( 'Request', 'ajforms' );
 	}
 
 	private function sync_portal_service_request_to_ledger( $request, $data = array() ) {
@@ -17309,7 +17319,7 @@ class AJForms_Admin {
 		$selected_price_id  = isset( $_POST['request_stripe_price_id'] ) ? sanitize_text_field( wp_unslash( $_POST['request_stripe_price_id'] ) ) : '';
 		$selected_product   = $this->get_portal_product_by_price_id( $selected_price_id );
 		if ( '' !== $selected_price_id && ! $selected_product ) {
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-error' => rawurlencode( __( 'Selected Stripe price was not found in the synced product cache.', 'ajforms' ) ) ), admin_url( 'admin.php' ) ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'requests', 'service-request-error' => rawurlencode( __( 'Selected Stripe price was not found in the synced product cache.', 'ajforms' ) ) ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -17491,7 +17501,7 @@ class AJForms_Admin {
 			);
 		}
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -17521,7 +17531,7 @@ class AJForms_Admin {
 			$this->bulk_update_service_requests_for_ops( $ids, $fields );
 		}
 
-		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'requests', 'service-request-updated' => 1 ), admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -18365,7 +18375,7 @@ class AJForms_Admin {
 		check_admin_referer( 'ajcore_service_request_' . $request_id );
 
 		$result = $this->apply_service_request_quick_action( $request_id, $action );
-		$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' );
+		$args   = array( 'page' => 'ajforms-client-portal', 'tab' => 'requests' );
 
 		if ( is_wp_error( $result ) ) {
 			$args['service-request-error'] = rawurlencode( $result->get_error_message() );
@@ -18496,7 +18506,7 @@ class AJForms_Admin {
 		}
 
 		$is_standalone = 'standalone' === $context;
-		$base_url = $is_standalone ? add_query_arg( array( 'page' => 'ajforms-service-requests' ), admin_url( 'admin.php' ) ) : add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests' ), admin_url( 'admin.php' ) );
+		$base_url = $is_standalone ? add_query_arg( array( 'page' => 'ajforms-requests' ), admin_url( 'admin.php' ) ) : add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'requests' ), admin_url( 'admin.php' ) );
 		?>
 		<style>
 			.aj-sr-shell{display:grid;gap:12px;margin-top:10px}
@@ -18582,7 +18592,7 @@ class AJForms_Admin {
 			.aj-sr-hidden{display:none!important}
 			@media(max-width:1100px){.aj-sr-stats{grid-template-columns:repeat(2,1fr)}.aj-sr-detail-grid{grid-template-columns:1fr}.aj-sr-td-note{display:none}}
 		</style>
-		<div class="<?php echo $is_standalone ? 'wrap ajforms-service-requests-admin' : 'ajcore-admin-panel'; ?>">
+		<div class="<?php echo $is_standalone ? 'wrap ajforms-requests-admin' : 'ajcore-admin-panel'; ?>">
 			<div class="aj-sr-shell" data-aj-sr-shell>
 				<?php if ( isset( $_GET['service-request-updated'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div><?php endif; ?>
 				<?php if ( isset( $_GET['service-request-deleted'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request deleted.', 'ajforms' ); ?></p></div><?php endif; ?>
@@ -18632,7 +18642,7 @@ class AJForms_Admin {
 					<span class="aj-sr-count-note"><span data-aj-sr-visible-count><?php echo esc_html( count( $requests ) ); ?></span> <?php esc_html_e( 'shown', 'ajforms' ); ?></span>
 				</div>
 				<?php if ( empty( $requests ) ) : ?>
-					<div class="aj-sr-empty"><strong><?php esc_html_e( 'No service requests found.', 'ajforms' ); ?></strong></div>
+					<div class="aj-sr-empty"><strong><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></strong></div>
 				<?php else : ?>
 					<div class="aj-sr-table-wrap">
 						<table class="aj-sr-table">
@@ -18780,11 +18790,11 @@ class AJForms_Admin {
 																	</form>
 																<?php endif; ?>
 																<?php if ( isset( $actions['apply_billing_change'] ) ) : ?>
-																	<?php $billing_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service_request_action' => 'apply_billing_change', 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ); ?>
+																	<?php $billing_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'requests', 'service_request_action' => 'apply_billing_change', 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ); ?>
 																	<a class="button" href="<?php echo esc_url( $billing_url ); ?>"><?php echo esc_html( $actions['apply_billing_change'] ); ?></a>
 																<?php endif; ?>
 																<?php if ( isset( $actions['delete'] ) ) : ?>
-																	<?php $delete_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'service-requests', 'service_request_action' => 'delete', 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ); ?>
+																	<?php $delete_url = wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'requests', 'service_request_action' => 'delete', 'request_id' => (int) $request->id ), admin_url( 'admin.php' ) ), 'ajcore_service_request_' . (int) $request->id ); ?>
 																	<a class="button button-link-delete" href="<?php echo esc_url( $delete_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this request? Safe linked non-Stripe ledger rows may also be removed.', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 																<?php endif; ?>
 															</div>
@@ -19796,8 +19806,8 @@ class AJForms_Admin {
 			array( __( 'Customers', 'ajforms' ), $customers, function ( $row ) {
 				return '<a href="' . esc_url( $this->get_portal_customer_360_url( $row->stripe_customer_id ) ) . '">' . esc_html( $row->name ? $row->name : $row->stripe_customer_id ) . '</a> <span class="description">' . esc_html( $row->email ) . '</span>';
 			} ),
-			array( __( 'Service Requests', 'ajforms' ), $requests, function ( $row ) {
-				return '<a href="' . esc_url( $this->get_portal_dashboard_url( 'service-requests' ) ) . '">' . esc_html( $row->service_name ? $row->service_name : sprintf( __( 'Request #%d', 'ajforms' ), $row->id ) ) . '</a> <span class="description">' . esc_html( trim( ( $row->customer_name ? $row->customer_name . ' · ' : '' ) . $row->status . ( $row->service_status ? ' / ' . $row->service_status : '' ) ) ) . '</span>';
+			array( __( 'Requests', 'ajforms' ), $requests, function ( $row ) {
+				return '<a href="' . esc_url( $this->get_portal_dashboard_url( 'requests' ) ) . '">' . esc_html( $row->service_name ? $row->service_name : sprintf( __( 'Request #%d', 'ajforms' ), $row->id ) ) . '</a> <span class="description">' . esc_html( trim( ( $row->customer_name ? $row->customer_name . ' · ' : '' ) . $row->status . ( $row->service_status ? ' / ' . $row->service_status : '' ) ) ) . '</span>';
 			} ),
 			array( __( 'Payments', 'ajforms' ), $txns, function ( $row ) {
 				return '<a href="' . esc_url( $this->get_portal_customer_360_url( $row->stripe_customer_id ) ) . '">' . esc_html( $row->description ? $row->description : $row->stripe_object_id ) . '</a> <span class="description">' . esc_html( strtoupper( (string) $row->currency ) . ' ' . number_format( (float) $row->amount, 2 ) . ' · ' . $row->status ) . '</span>';
@@ -19910,8 +19920,8 @@ class AJForms_Admin {
 				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'unpaid' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'unpaid' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Tasks', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_view' => 'overdue' ) ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Paid Needs Fulfillment', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'paid' ) ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Admin Review Required', 'ajforms' ), $admin_review_required, $this->get_portal_dashboard_url( 'service-requests', array( 'request_status' => 'admin_review_required' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Paid Needs Fulfillment', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'requests', array( 'request_status' => 'paid' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Admin Review Required', 'ajforms' ), $admin_review_required, $this->get_portal_dashboard_url( 'requests', array( 'request_status' => 'admin_review_required' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'failed' ) ) ); ?>
 				<?php do_action( 'ajcore_portal_dashboard_metrics' ); // Extensions (e.g. AJCore-RA) add their own metric cards here. ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Sync / Webhook Health', 'ajforms' ), $health_has_issue ? __( 'Review', 'ajforms' ) : __( 'OK', 'ajforms' ), $this->get_portal_dashboard_url( 'sync', $last_failed ? array( 'sync_log_id' => (int) $last_failed->id ) : array() ), $health_note ); ?>
@@ -19921,7 +19931,7 @@ class AJForms_Admin {
 				<strong><?php echo esc_html( sprintf( __( 'Stripe mode: %s', 'ajforms' ), $stripe_mode['label'] ) ); ?></strong>
 				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'sync' ) ); ?>"><?php esc_html_e( 'View Sync History', 'ajforms' ); ?></a>
 				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'payments' ) ); ?>"><?php esc_html_e( 'Open Payments', 'ajforms' ); ?></a>
-				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests' ) ); ?>"><?php esc_html_e( 'Review Service Requests', 'ajforms' ); ?></a>
+				<a href="<?php echo esc_url( $this->get_portal_dashboard_url( 'requests' ) ); ?>"><?php esc_html_e( 'Review Requests', 'ajforms' ); ?></a>
 			</div>
 		</div>
 		<?php
@@ -19975,7 +19985,7 @@ class AJForms_Admin {
 				$ext_portal_tabs[ sanitize_key( $ext_key ) ] = $ext_tab;
 			}
 		}
-		$tab      = in_array( $tab, array_merge( array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'service-requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'chat' ), array_keys( $ext_portal_tabs ) ), true ) ? $tab : 'dashboard';
+		$tab      = in_array( $tab, array_merge( array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'chat' ), array_keys( $ext_portal_tabs ) ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
 			$tab = 'payments';
@@ -19993,7 +20003,7 @@ class AJForms_Admin {
 			'leads'              => __( 'Leads', 'ajforms' ),
 			'portal-users'       => __( 'Customers', 'ajforms' ),
 			'partners'           => __( 'Partners', 'ajforms' ),
-			'service-requests'   => __( 'Service Requests', 'ajforms' ),
+			'requests'   => __( 'Requests', 'ajforms' ),
 			'payments'           => __( 'Payments', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
 			'tasks'              => __( 'Tasks', 'ajforms' ),
@@ -20094,7 +20104,7 @@ class AJForms_Admin {
 				$this->display_portal_products_services_tab();
 			} elseif ( 'payments' === $tab ) {
 				$this->display_portal_payments_tab();
-			} elseif ( 'service-requests' === $tab ) {
+			} elseif ( 'requests' === $tab ) {
 				$this->display_portal_service_requests_tab();
 			} elseif ( 'tasks' === $tab ) {
 				$this->display_portal_tasks_tab();
@@ -23082,7 +23092,7 @@ class AJForms_Admin {
 				</form>
 				<div class="ajcore-customer-quick-actions">
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'payments', array( 'pay_customer' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Payments', 'ajforms' ); ?></a>
-					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'file-library' ) ); ?>"><?php esc_html_e( 'Files', 'ajforms' ); ?></a>
 				</div>
@@ -23311,7 +23321,7 @@ class AJForms_Admin {
 				);
 				?>
 				<?php if ( ! empty( $detail['one_time_services'] ) ) : ?>
-					<p><a class="button button-primary" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'service-requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Convert to Auto-Pay Subscription', 'ajforms' ); ?></a></p>
+					<p><a class="button button-primary" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Convert to Auto-Pay Subscription', 'ajforms' ); ?></a></p>
 				<?php endif; ?>
 			</div>
 
