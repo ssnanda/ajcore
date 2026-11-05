@@ -2043,8 +2043,8 @@ if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
 	function ajcore_get_portal_file_settings() {
 		$defaults = array(
 			'categories'     => array( 'Others' ),
-			'tags'           => array( 'registered-agent' => 'RegisteredAgent', 'virtual-office' => 'VirtualOffice' ),
-			'migration_tags' => array( 'registered-agent', 'virtual-office' ),
+			'tags'           => array(),
+			'migration_tags' => array(),
 			// Customer-facing grouping (File Library + file emails). Unlisted categories fall under "Other".
 			'important_categories' => array(),
 			'extra_categories'     => array(),
@@ -2069,6 +2069,22 @@ if ( ! function_exists( 'ajcore_get_portal_file_settings' ) ) {
 			$settings[ $group_key ] = array_values( array_filter( array_map( 'sanitize_text_field', (array) $settings[ $group_key ] ) ) );
 		}
 		$settings['migration_tags'] = array_values( array_intersect( (array) $settings['migration_tags'], array_keys( $settings['tags'] ) ) );
+		// Categories that older AJCore versions seeded for Registered Agent work belong to AJCore-RA; hide any saved copies on sites without it.
+		if ( ! has_filter( 'ajcore_portal_file_settings', 'ajcore_ra_portal_file_settings' ) ) {
+			$ra_only = array( 'articles of organization', 'irs ein letters', 'sosnc flyers', 'change of ra', 'formation documents' );
+			foreach ( array( 'categories', 'important_categories', 'extra_categories' ) as $list_key ) {
+				$settings[ $list_key ] = array_values( array_filter( (array) $settings[ $list_key ], function ( $name ) use ( $ra_only ) {
+					return ! in_array( strtolower( $name ), $ra_only, true );
+				} ) );
+			}
+			if ( ! in_array( 'Others', $settings['categories'], true ) ) {
+				$settings['categories'][] = 'Others';
+			}
+			foreach ( array( 'registered-agent', 'virtual-office' ) as $ra_tag ) {
+				unset( $settings['tags'][ $ra_tag ] );
+			}
+			$settings['migration_tags'] = array_values( array_diff( (array) $settings['migration_tags'], array( 'registered-agent', 'virtual-office' ) ) );
+		}
 		// An extension can guarantee its own categories exist ('ajcore_portal_file_settings'; AJCore-RA adds its filing categories).
 		$filtered = apply_filters( 'ajcore_portal_file_settings', $settings );
 		return is_array( $filtered ) ? $filtered : $settings;
