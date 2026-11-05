@@ -48,6 +48,7 @@
  * its own) and 'ajcore_reservation_location' filter (name/address/url shown on the Reservations page and Zoho events).
  * API 22: 'ajcore_portal_file_settings' filter on the merged Files settings (categories, important/extra groups) so an
  * extension can guarantee its own document categories exist (AJCore-RA: Formation Documents).
+ * API 23: Expense invoices (/ops/expense-invoices*, incl. attachments and options) are registered by AJCore-RA, not AJCore.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -61,7 +62,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 22 );
+	define( 'AJCORE_EXTENSION_API', 23 );
 }
 
 class AJCore_Extensions {
