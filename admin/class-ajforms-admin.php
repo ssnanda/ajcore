@@ -12331,8 +12331,11 @@ class AJForms_Admin {
 			$secret_key = $this->get_stripe_secret_key_for_portal();
 			$args       = array( 'page' => 'ajforms-client-portal', 'tab' => 'portal-users' );
 			$customer_type = isset( $_POST['customer_type'] ) ? sanitize_key( wp_unslash( $_POST['customer_type'] ) ) : 'direct';
-			$customer_type = in_array( $customer_type, array( 'direct', 'opus', 'alliance_vo' ), true ) ? $customer_type : 'direct';
-			if ( 'alliance_vo' !== $customer_type && '' === $secret_key ) {
+			$billing_types = AJCore_Extensions::customer_billing_types();
+			$customer_type = isset( $billing_types[ $customer_type ] ) ? $customer_type : 'direct';
+			$is_local_type = ! empty( $billing_types[ $customer_type ]['local'] );
+			$type_partner  = (string) ( $billing_types[ $customer_type ]['partner'] ?? '' );
+			if ( ! $is_local_type && '' === $secret_key ) {
 				$args['portal-error'] = rawurlencode( __( 'Stripe secret key is required.', 'ajforms' ) );
 				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 				exit;
@@ -12356,16 +12359,16 @@ class AJForms_Admin {
 				exit;
 			}
 
-			if ( 'alliance_vo' === $customer_type ) {
+			if ( $is_local_type ) {
 				$local_id = 'local_' . str_replace( '-', '', wp_generate_uuid4() );
 				$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
 				$pdb = $this->get_pdb();
 				$created = $pdb->insert( $pdb->prefix . 'aj_portal_local_customers', array(
 					'local_customer_id' => $local_id, 'customer_number' => $this->generate_customer_number(), 'email' => $email, 'name' => $name, 'phone' => $phone, 'description' => $description,
-					'address' => wp_json_encode( array_filter( $address ) ), 'metadata' => wp_json_encode( $metadata ), 'partner_key' => 'alliance_vo',
+					'address' => wp_json_encode( array_filter( $address ) ), 'metadata' => wp_json_encode( $metadata ), 'partner_key' => $type_partner,
 					'status' => 'active', 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ),
 				), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ) );
-				if ( false !== $created ) $pdb->replace( $pdb->prefix . 'aj_portal_customer_partners', array( 'customer_id' => $local_id, 'partner_key' => 'alliance_vo', 'source' => 'ajcore' ), array( '%s', '%s', '%s' ) );
+				if ( false !== $created && '' !== $type_partner ) $pdb->replace( $pdb->prefix . 'aj_portal_customer_partners', array( 'customer_id' => $local_id, 'partner_key' => $type_partner, 'source' => 'ajcore' ), array( '%s', '%s', '%s' ) );
 				if ( false === $created ) { $args['portal-error'] = rawurlencode( __( 'Could not create the local AJCore customer.', 'ajforms' ) ); }
 				else { $args['portal-customer-created'] = $local_id; }
 				wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
@@ -24662,7 +24665,7 @@ class AJForms_Admin {
 						<div class="ajcore-customer-modal-body">
 							<div class="ajcore-customer-modal-grid">
 					<?php wp_nonce_field( 'ajcore_create_stripe_customer', 'ajcore_create_stripe_customer_nonce' ); ?>
-					<label class="ajcore-customer-modal-wide"><span><?php esc_html_e( 'Customer billing type', 'ajforms' ); ?></span><select name="customer_type"><option value="direct"><?php esc_html_e( 'Direct Billing — create in Stripe', 'ajforms' ); ?></option><option value="opus"><?php esc_html_e( 'OPUS — create in Stripe; OPUS pays fixed VO rate', 'ajforms' ); ?></option><option value="alliance_vo"><?php esc_html_e( 'Alliance VO — local AJCore customer only; do not create in Stripe', 'ajforms' ); ?></option></select></label>
+					<label class="ajcore-customer-modal-wide"><span><?php esc_html_e( 'Customer billing type', 'ajforms' ); ?></span><select name="customer_type"><?php foreach ( AJCore_Extensions::customer_billing_types() as $bt_key => $bt ) : ?><option value="<?php echo esc_attr( $bt_key ); ?>"><?php echo esc_html( $bt['label'] ); ?></option><?php endforeach; ?></select></label>
 					<label>
 						<span><?php esc_html_e( 'Full Name', 'ajforms' ); ?> <small>*</small></span>
 						<input type="text" name="stripe_customer_name" placeholder="<?php esc_attr_e( 'Jane Smith', 'ajforms' ); ?>" required>

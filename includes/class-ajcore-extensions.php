@@ -130,6 +130,20 @@ class AJCore_Extensions {
 		return ( new AJCore_REST_API() )->can_manage_site_ops_api();
 	}
 
+	/**
+	 * Customer billing types offered when adding a customer. Filter 'ajcore_customer_billing_types' lets an
+	 * extension add more. Each: key => array( 'label', 'local' (true = AJ Core customer only, not created in
+	 * Stripe), 'partner' (partner key to assign, optional), 'hint' ).
+	 */
+	public static function customer_billing_types() {
+		$types = array(
+			'direct' => array( 'label' => __( 'Direct Billing — create in Stripe', 'ajforms' ), 'local' => false, 'partner' => '', 'hint' => __( 'Creates the customer in Stripe and syncs it to AJ Core immediately.', 'ajforms' ) ),
+			'local'  => array( 'label' => __( 'Local customer — AJ Core only, not in Stripe', 'ajforms' ), 'local' => true, 'partner' => '', 'hint' => __( 'Creates only an AJ Core customer.', 'ajforms' ) ),
+		);
+		$types = apply_filters( 'ajcore_customer_billing_types', $types );
+		return is_array( $types ) && isset( $types['direct'] ) ? $types : array();
+	}
+
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'add_menu' ), 31 );
 	}

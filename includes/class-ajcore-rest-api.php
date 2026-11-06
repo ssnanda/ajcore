@@ -659,6 +659,7 @@ class AJCore_REST_API {
 			'/ops/visitors/(?P<uuid>[^/]+)'            => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_visitor', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners/save'                => array( 'methods' => 'POST', 'callback' => 'save_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
+			'/ops/customer-billing-types' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_customer_billing_types', 'permission' => 'can_manage_ops_api' ),
 			'/ops/request-types' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_request_types', 'permission' => 'can_manage_ops_api' ),
 			'/ops/requests/create' => array( 'methods' => 'POST', 'callback' => 'create_ops_request', 'permission' => 'can_manage_ops_api' ),
 			'/ops/request-workflows' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_request_workflows', 'permission' => 'can_manage_ops_api' ),
@@ -3283,6 +3284,14 @@ class AJCore_REST_API {
 	}
 
 	/** Request types staff can create (generic plus extension-added). */
+	public function get_ops_customer_billing_types( WP_REST_Request $request ) {
+		$out = array();
+		foreach ( AJCore_Extensions::customer_billing_types() as $key => $type ) {
+			$out[] = array( 'key' => (string) $key, 'label' => (string) ( $type['label'] ?? $key ), 'local' => ! empty( $type['local'] ), 'hint' => (string) ( $type['hint'] ?? '' ) );
+		}
+		return rest_ensure_response( array( 'types' => $out ) );
+	}
+
 	public function get_ops_request_types( WP_REST_Request $request ) {
 		if ( ! class_exists( 'AJForms_Admin' ) ) {
 			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
@@ -6523,8 +6532,10 @@ class AJCore_REST_API {
 		$addr_postal     = sanitize_text_field( (string) ( $request->get_param( 'addr_postal' ) ?? '' ) );
 		$addr_country    = sanitize_text_field( (string) ( $request->get_param( 'addr_country' ) ?? '' ) );
 		$customer_type   = sanitize_key( (string) ( $request->get_param( 'customer_type' ) ?? 'direct' ) );
-		$customer_type   = in_array( $customer_type, array( 'direct', 'opus', 'alliance_vo' ), true ) ? $customer_type : 'direct';
-		$partner_key     = 'opus' === $customer_type ? 'opus' : ( 'alliance_vo' === $customer_type ? 'alliance_vo' : '' );
+		$billing_types   = AJCore_Extensions::customer_billing_types();
+		$customer_type   = isset( $billing_types[ $customer_type ] ) ? $customer_type : 'direct';
+		$is_local_type   = ! empty( $billing_types[ $customer_type ]['local'] );
+		$partner_key     = (string) ( $billing_types[ $customer_type ]['partner'] ?? '' );
 
 		if ( empty( $name ) || empty( $email ) || empty( $phone ) ) {
 			return new WP_Error( 'ajcore_missing_fields', 'Name, email, and phone are required.', array( 'status' => 400 ) );
@@ -6548,7 +6559,7 @@ class AJCore_REST_API {
 			}
 		}
 
-		if ( 'alliance_vo' === $customer_type ) {
+		if ( $is_local_type ) {
 			$local_customer_id = 'local_' . str_replace( '-', '', wp_generate_uuid4() );
 			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
 			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
@@ -6558,7 +6569,7 @@ class AJCore_REST_API {
 				array(
 					'local_customer_id' => $local_customer_id, 'customer_number' => $customer_number, 'email' => $email, 'name' => $name, 'phone' => $phone,
 					'description' => $description, 'address' => wp_json_encode( $address_data ), 'metadata' => wp_json_encode( $metadata ),
-					'partner_key' => 'alliance_vo', 'status' => 'active', 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ),
+					'partner_key' => $partner_key, 'status' => 'active', 'created_at' => current_time( 'mysql' ), 'updated_at' => current_time( 'mysql' ),
 				),
 				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 			);
@@ -6566,13 +6577,13 @@ class AJCore_REST_API {
 				return new WP_Error( 'ajcore_local_customer_failed', 'Could not create the local AJCore customer.', array( 'status' => 500 ) );
 			}
 			$partner_assignments = $this->portal_table( 'aj_portal_customer_partners' );
-			if ( $this->table_exists( $check_pdb, $partner_assignments ) ) {
-				$check_pdb->replace( $partner_assignments, array( 'customer_id' => $local_customer_id, 'partner_key' => 'alliance_vo', 'source' => 'ajops' ), array( '%s', '%s', '%s' ) );
+			if ( '' !== $partner_key && $this->table_exists( $check_pdb, $partner_assignments ) ) {
+				$check_pdb->replace( $partner_assignments, array( 'customer_id' => $local_customer_id, 'partner_key' => $partner_key, 'source' => 'ajops' ), array( '%s', '%s', '%s' ) );
 			}
 			return rest_ensure_response( array( 'success' => true, 'customer' => array(
 				'stripe_customer_id' => $local_customer_id, 'customer_number' => $customer_number, 'email' => $email, 'name' => $name,
 				'phone' => $this->format_us_phone_for_display( $phone ), 'description' => $description,
-				'address' => $address_data, 'metadata' => $metadata, 'partner_key' => 'alliance_vo',
+				'address' => $address_data, 'metadata' => $metadata, 'partner_key' => $partner_key,
 				'portal_status' => 'active', 'livemode' => 0, 'synced_at' => current_time( 'mysql' ),
 			) ) );
 		}
