@@ -16215,27 +16215,24 @@ class AJForms_Admin {
 		);
 	}
 
+	/**
+	 * Request workflow ("service") status labels. AJCore ships the generic ones; an extension adds its own
+	 * through the 'ajcore_service_status_labels' filter (AJCore-RA: SOS/NC filing, CMRA signing, ID proof...).
+	 */
 	private function get_portal_sr_service_status_labels() {
-		return array(
-			'new'                    => __( 'New', 'ajforms' ),
-			'welcome'                => __( 'Welcome', 'ajforms' ),
-			'under_review'           => __( 'Under Review', 'ajforms' ),
-			'pending_customer'       => __( 'Pending Customer', 'ajforms' ),
-			'pending_agent'          => __( 'Pending Agent', 'ajforms' ),
-			'meeting_scheduled'      => __( 'Meeting Scheduled', 'ajforms' ),
-			'sosnc_filing'           => __( 'Filed with SOS/NC', 'ajforms' ),
-			'llc_documents_emailed'  => __( 'LLC Documents Emailed', 'ajforms' ),
-			'signing_cmra'           => __( 'Signing CMRA', 'ajforms' ),
-			'id_proof_needed'        => __( 'ID Proof Needed', 'ajforms' ),
-			'address_proof_needed'   => __( 'Address Proof Needed', 'ajforms' ),
-			'vo_setup_required'      => __( 'Virtual Office Setup Required', 'ajforms' ),
-			'sosnc_client'           => __( 'Customer Updating SOS/NC', 'ajforms' ),
-			'updating_sosn'          => __( 'RA Change Filed with SOS/NC', 'ajforms' ),
-			'included_with_llc_setup' => __( 'Included with LLC Setup', 'ajforms' ),
-			'active'                 => __( 'Active', 'ajforms' ),
-			'completed'              => __( 'Completed', 'ajforms' ),
-			'cancelled'              => __( 'Cancelled', 'ajforms' ),
+		$labels = array(
+			'new'               => __( 'New', 'ajforms' ),
+			'welcome'           => __( 'Welcome', 'ajforms' ),
+			'under_review'      => __( 'Under Review', 'ajforms' ),
+			'pending_customer'  => __( 'Pending Customer', 'ajforms' ),
+			'pending_agent'     => __( 'Pending Agent', 'ajforms' ),
+			'meeting_scheduled' => __( 'Meeting Scheduled', 'ajforms' ),
+			'active'            => __( 'Active', 'ajforms' ),
+			'completed'         => __( 'Completed', 'ajforms' ),
+			'cancelled'         => __( 'Cancelled', 'ajforms' ),
 		);
+		$filtered = apply_filters( 'ajcore_service_status_labels', $labels );
+		return is_array( $filtered ) ? $filtered : $labels;
 	}
 
 	/**
@@ -16250,47 +16247,9 @@ class AJForms_Admin {
 		$product_type = $this->get_portal_service_request_product_type( $request );
 		$labels       = $this->get_portal_sr_service_status_labels();
 
+		// Generic pipeline. Extensions add product-specific ones through 'ajcore_service_status_pipelines'
+		// (product type => ordered status keys) and teach 'ajcore_service_request_product_type' to detect them.
 		$sets = array(
-			// This bundle always includes a year of Registered Agent service alongside the one-time
-			// entity setup, so it never truly "completes" — it settles into "active" like a standalone
-			// Registered Agent Subscription would.
-			'llc_setup' => array(
-				'new',
-				'welcome',
-				'meeting_scheduled',
-				'sosnc_filing',
-				'llc_documents_emailed',
-				'active',
-				'cancelled',
-			),
-			// Also always bundled with a year of Virtual Office Subscription — settles into "active"
-			// once the one-time ID/address proof setup is done, same reasoning as llc_setup above.
-			'virtual_office_setup' => array(
-				'new',
-				'welcome',
-				'signing_cmra',
-				'id_proof_needed',
-				'address_proof_needed',
-				'active',
-				'cancelled',
-			),
-			// Buying this subscription means one thing: get the CMRA signed, then it's active — no other steps.
-			'virtual_office_subscription' => array(
-				'new',
-				'welcome',
-				'signing_cmra',
-				'active',
-				'cancelled',
-			),
-			// Buying this subscription means one thing: update the registered agent on SOS/NC (we do it, or the
-			// customer does it), then it's active — no other steps.
-			'registered_agent_subscription' => array(
-				'new',
-				'welcome',
-				'updating_sosn',
-				'active',
-				'cancelled',
-			),
 			'custom_request' => array(
 				'new',
 				'under_review',
@@ -16301,6 +16260,8 @@ class AJForms_Admin {
 				'cancelled',
 			),
 		);
+		$filtered_sets = apply_filters( 'ajcore_service_status_pipelines', $sets );
+		$sets          = is_array( $filtered_sets ) && isset( $filtered_sets['custom_request'] ) ? $filtered_sets : $sets;
 
 		$keys = isset( $sets[ $product_type ] ) ? $sets[ $product_type ] : $sets['custom_request'];
 		$options = array();
@@ -16471,6 +16432,11 @@ class AJForms_Admin {
 	}
 
 	/** Public entry point for the ops REST API — returns the workflow status options for a request. */
+	/** Every request workflow status label (generic plus extension-added), for the ops list. */
+	public function get_service_status_labels_for_ops() {
+		return $this->get_portal_sr_service_status_labels();
+	}
+
 	public function get_service_request_service_status_options_for_ops( $request ) {
 		return $this->get_portal_service_request_service_status_options( $request );
 	}
@@ -16650,17 +16616,10 @@ class AJForms_Admin {
 		$name = strtolower( implode( ' ', array_map( 'sanitize_text_field', $name_parts ) ) );
 		$name = str_replace( array( '_', '-' ), ' ', $name );
 
-		if ( false !== strpos( $name, 'llc setup' ) || false !== strpos( $name, 'entity setup' ) || false !== strpos( $name, 'new entity' ) ) {
-			return 'llc_setup';
-		}
-		if ( false !== strpos( $name, 'registered agent' ) ) {
-			return 'registered_agent_subscription';
-		}
-		if ( false !== strpos( $name, 'virtual office' ) ) {
-			if ( false !== strpos( $name, 'setup' ) || false !== strpos( $name, 'one time' ) || false !== strpos( $name, 'one-time' ) ) {
-				return 'virtual_office_setup';
-			}
-			return 'virtual_office_subscription';
+		// Extensions map the product name to their own type (AJCore-RA: LLC setup, registered agent, virtual office).
+		$type = apply_filters( 'ajcore_service_request_product_type', 'custom_request', $name, $request );
+		if ( is_string( $type ) && '' !== $type ) {
+			return $type;
 		}
 
 		return 'custom_request';

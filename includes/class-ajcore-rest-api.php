@@ -2692,6 +2692,7 @@ class AJCore_REST_API {
 
 		return rest_ensure_response( array(
 			'service_requests' => $service_requests,
+			'service_status_labels' => $admin ? $admin->get_service_status_labels_for_ops() : array(),
 			'stats'            => array_merge( $stats, array( 'shown' => count( $service_requests ) ) ),
 		) );
 	}
