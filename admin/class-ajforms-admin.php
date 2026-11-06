@@ -18207,6 +18207,36 @@ class AJForms_Admin {
 		return true;
 	}
 
+	/**
+	 * Work-queue order for the Requests list: New first, then Welcome, then everything else, and requests that are
+	 * only waiting on someone else (e.g. a licensing board; extensions add steps through
+	 * 'ajcore_service_request_waiting_statuses') last. Stable: ties keep the order they came in (latest first).
+	 *
+	 * @param object[] $rows Rows with a service_status property.
+	 * @return object[]
+	 */
+	public function sort_service_requests_for_queue( $rows ) {
+		$waiting = array_map( 'sanitize_key', (array) apply_filters( 'ajcore_service_request_waiting_statuses', array() ) );
+		$ranked  = array();
+		foreach ( array_values( (array) $rows ) as $i => $row ) {
+			$status = isset( $row->service_status ) ? sanitize_key( (string) $row->service_status ) : '';
+			if ( '' === $status || 'new' === $status ) {
+				$rank = 0;
+			} elseif ( 'welcome' === $status ) {
+				$rank = 1;
+			} elseif ( in_array( $status, $waiting, true ) ) {
+				$rank = 9;
+			} else {
+				$rank = 2;
+			}
+			$ranked[] = array( $rank, $i, $row );
+		}
+		usort( $ranked, function ( $a, $b ) {
+			return $a[0] <=> $b[0] ?: $a[1] <=> $b[1];
+		} );
+		return array_map( function ( $r ) { return $r[2]; }, $ranked );
+	}
+
 	public function reconcile_service_requests_for_ops() {
 		if ( ! $this->service_request_housekeeping_due( 'reconcile' ) ) {
 			return;
@@ -18616,6 +18646,7 @@ class AJForms_Admin {
 			ORDER BY r.updated_at DESC, r.created_at DESC, r.id DESC
 			LIMIT 500";
 		$requests_raw = ! empty( $params ) ? $pdb->get_results( $pdb->prepare( $sql, $params ) ) : $pdb->get_results( $sql );
+		$requests_raw = $this->sort_service_requests_for_queue( $requests_raw );
 		$user_ids     = array_values( array_unique( array_filter( array_map( function( $r ) { return (int) $r->wp_user_id; }, (array) $requests_raw ) ) ) );
 		$users_by_id  = array();
 		if ( ! empty( $user_ids ) ) {

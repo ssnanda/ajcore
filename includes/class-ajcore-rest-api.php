@@ -2640,6 +2640,9 @@ class AJCore_REST_API {
 		}
 
 		$admin = class_exists( 'AJForms_Admin' ) ? ( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() ) : null;
+		if ( $admin ) {
+			$rows = $admin->sort_service_requests_for_queue( $rows );
+		}
 
 		// Resolve assignee display info in one query rather than one per row.
 		global $wpdb;
