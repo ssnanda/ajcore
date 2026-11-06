@@ -20185,7 +20185,20 @@ class AJForms_Admin {
 		);
 		foreach ( $ext_portal_tabs as $ext_key => $ext_tab ) {
 			if ( ! isset( $tabs[ $ext_key ] ) ) {
-				$tabs[ $ext_key ] = (string) $ext_tab['label'];
+				$after = isset( $ext_tab['after'] ) ? sanitize_key( (string) $ext_tab['after'] ) : '';
+				if ( '' !== $after && isset( $tabs[ $after ] ) ) {
+					// Place it right after another tab (e.g. Homeowners after Customers).
+					$reordered = array();
+					foreach ( $tabs as $k => $l ) {
+						$reordered[ $k ] = $l;
+						if ( $k === $after ) {
+							$reordered[ $ext_key ] = (string) $ext_tab['label'];
+						}
+					}
+					$tabs = $reordered;
+				} else {
+					$tabs[ $ext_key ] = (string) $ext_tab['label'];
+				}
 				if ( ! empty( $ext_tab['url'] ) ) {
 					$external_tab_urls[ $ext_key ] = (string) $ext_tab['url'];
 				}
