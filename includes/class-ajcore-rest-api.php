@@ -3333,7 +3333,7 @@ class AJCore_REST_API {
 	}
 
 	public function get_ops_features( WP_REST_Request $request ) {
-		return rest_ensure_response( array( 'partners' => AJCore_Extensions::partners_enabled(), 'modules' => AJCore_Extensions::ops_modules() ) );
+		return rest_ensure_response( array( 'partners' => AJCore_Extensions::partners_enabled(), 'registered_agent' => (bool) apply_filters( 'ajcore_registered_agent_enabled', false ), 'modules' => AJCore_Extensions::ops_modules() ) );
 	}
 
 	public function get_ops_customer_billing_types( WP_REST_Request $request ) {
