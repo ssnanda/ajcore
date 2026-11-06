@@ -16470,6 +16470,52 @@ class AJForms_Admin {
 	}
 
 	/** Public entry point for the ops REST API — returns the workflow status options for a request. */
+	/** Request types staff can create (key => label). AJ Core ships one; extensions add theirs ('ajcore_service_request_types'). */
+	public function get_service_request_types_for_ops() {
+		$types    = array( 'custom_request' => __( 'General request', 'ajforms' ) );
+		$filtered = apply_filters( 'ajcore_service_request_types', $types );
+		return is_array( $filtered ) && ! empty( $filtered ) ? $filtered : $types;
+	}
+
+	/** Customers a request can be created for: id => "Name (email)". Stripe and local portal customers, up to 2,000. */
+	public function get_service_request_customer_options() {
+		$pdb     = $this->get_pdb();
+		$options = array();
+		$sources = array(
+			array( $this->get_portal_stripe_customers_table(), 'stripe_customer_id' ),
+			array( $pdb->prefix . 'aj_portal_local_customers', 'local_customer_id' ),
+		);
+		foreach ( $sources as $source ) {
+			list( $table, $id_col ) = $source;
+			if ( $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+				continue;
+			}
+			foreach ( (array) $pdb->get_results( "SELECT {$id_col} AS id_val, name, email FROM `{$table}` ORDER BY name ASC LIMIT 2000" ) as $row ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				if ( '' === (string) $row->id_val ) {
+					continue;
+				}
+				$label = trim( (string) $row->name );
+				$label = '' !== $label ? $label : (string) $row->email;
+				$options[ (string) $row->id_val ] = $label . ( $row->email && $row->name ? ' (' . $row->email . ')' : '' );
+			}
+		}
+		asort( $options, SORT_NATURAL | SORT_FLAG_CASE );
+		return $options;
+	}
+
+	/** Creates a request for a customer from staff input (WP admin form or ops API). */
+	public function create_service_request_from_ops( $stripe_customer_id, $title, $request_type, $notes = '' ) {
+		if ( ! AJForms::$instance ) {
+			return new WP_Error( 'ajcore_unavailable', __( 'Portal service unavailable.', 'ajforms' ), array( 'status' => 503 ) );
+		}
+		$types        = $this->get_service_request_types_for_ops();
+		$request_type = sanitize_key( (string) $request_type );
+		if ( ! isset( $types[ $request_type ] ) ) {
+			return new WP_Error( 'invalid_type', __( 'Unknown request type.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		return AJForms::$instance->api_create_staff_service_request( $stripe_customer_id, $title, $request_type, $notes );
+	}
+
 	/** Every request workflow status label (generic plus extension-added), for the ops list. */
 	public function get_service_status_labels_for_ops() {
 		return $this->get_portal_sr_service_status_labels();
@@ -17531,6 +17577,27 @@ class AJForms_Admin {
 		exit;
 	}
 
+	private function handle_service_request_create() {
+		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['service_request_action'] ) || 'create_request' !== sanitize_key( wp_unslash( $_POST['service_request_action'] ) ) ) {
+			return;
+		}
+		check_admin_referer( 'ajcore_service_request_create' );
+		$result = $this->create_service_request_from_ops(
+			isset( $_POST['new_request_customer'] ) ? sanitize_text_field( wp_unslash( $_POST['new_request_customer'] ) ) : '',
+			isset( $_POST['new_request_title'] ) ? sanitize_text_field( wp_unslash( $_POST['new_request_title'] ) ) : '',
+			isset( $_POST['new_request_type'] ) ? sanitize_key( wp_unslash( $_POST['new_request_type'] ) ) : '',
+			isset( $_POST['new_request_notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['new_request_notes'] ) ) : ''
+		);
+		$args = array( 'page' => 'ajforms-client-portal', 'tab' => 'requests' );
+		if ( is_wp_error( $result ) ) {
+			$args['service-request-error'] = rawurlencode( $result->get_error_message() );
+		} else {
+			$args['service-request-updated'] = 1;
+		}
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
 	private function handle_service_requests_bulk_save() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -18396,6 +18463,7 @@ class AJForms_Admin {
 		$this->cleanup_stale_pending_checkout_service_requests();
 		$this->handle_portal_service_request_details_save();
 		$this->handle_service_requests_bulk_save();
+		$this->handle_service_request_create();
 
 		if ( ! isset( $_GET['service_request_action'], $_GET['request_id'], $_GET['_wpnonce'] ) ) {
 			return;
@@ -18672,7 +18740,20 @@ class AJForms_Admin {
 					</select>
 					<span class="aj-sr-count-note"><span data-aj-sr-visible-count><?php echo esc_html( count( $requests ) ); ?></span> <?php esc_html_e( 'shown', 'ajforms' ); ?></span>
 					<button type="button" class="button" id="aj-sr-workflows-btn"><?php esc_html_e( 'Workflows', 'ajforms' ); ?></button>
+					<button type="button" class="button button-primary" id="aj-sr-new-btn"><?php esc_html_e( '+ New request', 'ajforms' ); ?></button>
 				</div>
+				<dialog class="aj-sr-wf" id="aj-sr-new">
+					<form method="post" class="aj-sr-wf-in">
+						<input type="hidden" name="service_request_action" value="create_request">
+						<?php wp_nonce_field( 'ajcore_service_request_create' ); ?>
+						<div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><h2><?php esc_html_e( 'New request', 'ajforms' ); ?></h2><button type="button" class="button" data-aj-sr-new-close><?php esc_html_e( 'Close', 'ajforms' ); ?></button></div>
+						<p><label><?php esc_html_e( 'Customer', 'ajforms' ); ?><br><select name="new_request_customer" required style="width:100%"><option value=""><?php esc_html_e( 'Choose a customer', 'ajforms' ); ?></option><?php foreach ( $this->get_service_request_customer_options() as $customer_id => $customer_label ) : ?><option value="<?php echo esc_attr( $customer_id ); ?>"><?php echo esc_html( $customer_label ); ?></option><?php endforeach; ?></select></label></p>
+						<p><label><?php esc_html_e( 'Type (sets the workflow)', 'ajforms' ); ?><br><select name="new_request_type" style="width:100%"><?php foreach ( $this->get_service_request_types_for_ops() as $type_key => $type_label ) : ?><option value="<?php echo esc_attr( $type_key ); ?>"><?php echo esc_html( $type_label ); ?></option><?php endforeach; ?></select></label></p>
+						<p><label><?php esc_html_e( 'Title', 'ajforms' ); ?><br><input type="text" name="new_request_title" required maxlength="255" style="width:100%"></label></p>
+						<p><label><?php esc_html_e( 'Internal notes', 'ajforms' ); ?><br><textarea name="new_request_notes" rows="3" style="width:100%"></textarea></label></p>
+						<p style="text-align:right"><button type="submit" class="button button-primary"><?php esc_html_e( 'Create request', 'ajforms' ); ?></button></p>
+					</form>
+				</dialog>
 				<dialog class="aj-sr-wf" id="aj-sr-workflows">
 					<div class="aj-sr-wf-in">
 						<div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><h2><?php esc_html_e( 'Request workflows', 'ajforms' ); ?></h2><button type="button" class="button" data-aj-sr-wf-close><?php esc_html_e( 'Close', 'ajforms' ); ?></button></div>
@@ -18920,6 +19001,11 @@ class AJForms_Admin {
 			if(wfBtn && wfDlg){
 				wfBtn.addEventListener('click', function(){ wfDlg.showModal(); });
 				wfDlg.addEventListener('click', function(e){ if(e.target === wfDlg || e.target.hasAttribute('data-aj-sr-wf-close')){ wfDlg.close(); } });
+			}
+			var newBtn = document.getElementById('aj-sr-new-btn'), newDlg = document.getElementById('aj-sr-new');
+			if(newBtn && newDlg){
+				newBtn.addEventListener('click', function(){ newDlg.showModal(); });
+				newDlg.addEventListener('click', function(e){ if(e.target === newDlg || e.target.hasAttribute('data-aj-sr-new-close')){ newDlg.close(); } });
 			}
 			var bulkForm    = document.getElementById('aj-sr-bulk-form');
 			var bulkSubmit  = document.querySelector('[data-aj-sr-bulk-submit]');

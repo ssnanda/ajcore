@@ -441,6 +441,39 @@ class AJForms {
 		);
 	}
 
+	/**
+	 * Creates a request on behalf of a customer (staff "New request" in WP admin and AJOps). Not tied to a
+	 * payment: it starts active so the workflow's next-step buttons apply. $request_type picks the workflow
+	 * (AJ Core's own 'custom_request', or one an extension registers through 'ajcore_service_request_types').
+	 */
+	public function api_create_staff_service_request( $stripe_customer_id, $title, $request_type = 'custom_request', $notes = '' ) {
+		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
+		$title              = sanitize_text_field( (string) $title );
+		if ( '' === $stripe_customer_id || '' === $title ) {
+			return new WP_Error( 'missing_fields', __( 'A customer and a title are required.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		$id = $this->upsert_portal_service_request( array(
+			'wp_user_id'         => 0,
+			'stripe_customer_id' => $stripe_customer_id,
+			'service_name'       => $title,
+			'admin_notes'        => sanitize_textarea_field( (string) $notes ),
+			'request_type'       => sanitize_key( (string) $request_type ),
+			'status'             => 'active',
+			'source'             => 'staff',
+			'created_by'         => get_current_user_id(),
+		) );
+		if ( ! $id ) {
+			return new WP_Error( 'insert_failed', __( 'Failed to create the request.', 'ajforms' ), array( 'status' => 500 ) );
+		}
+		return array(
+			'id'                     => $id,
+			'service_request_number' => (string) $this->get_pdb()->get_var( $this->get_pdb()->prepare( "SELECT service_request_number FROM {$this->get_portal_service_requests_table()} WHERE id = %d", $id ) ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			'title'                  => $title,
+			'request_type'           => sanitize_key( (string) $request_type ),
+			'service_status'         => 'new',
+		);
+	}
+
 	public function api_get_portal_store() {
 		$context = $this->get_current_user_portal_billing_context();
 		if ( '' === $context['stripe_customer_id'] || ! $context['customer'] ) {

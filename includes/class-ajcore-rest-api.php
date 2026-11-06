@@ -659,6 +659,8 @@ class AJCore_REST_API {
 			'/ops/visitors/(?P<uuid>[^/]+)'            => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_visitor', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners/save'                => array( 'methods' => 'POST', 'callback' => 'save_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
+			'/ops/request-types' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_request_types', 'permission' => 'can_manage_ops_api' ),
+			'/ops/requests/create' => array( 'methods' => 'POST', 'callback' => 'create_ops_request', 'permission' => 'can_manage_ops_api' ),
 			'/ops/request-workflows' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_request_workflows', 'permission' => 'can_manage_ops_api' ),
 			'/ops/portal-tabs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_portal_tabs', 'permission' => 'can_manage_ops_api' ),
 			'/ops/portal-tabs/update' => array( 'methods' => 'POST', 'callback' => 'update_ops_portal_tab', 'permission' => 'can_manage_ops_api' ),
@@ -3278,6 +3280,37 @@ class AJCore_REST_API {
 		// The smallest valid GIF possible: 1x1, transparent, no comment/extension blocks.
 		echo base64_decode( 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7' ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 		exit;
+	}
+
+	/** Request types staff can create (generic plus extension-added). */
+	public function get_ops_request_types( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$types = array();
+		foreach ( $admin->get_service_request_types_for_ops() as $key => $label ) {
+			$types[] = array( 'key' => (string) $key, 'label' => (string) $label );
+		}
+		return rest_ensure_response( array( 'types' => $types ) );
+	}
+
+	/** Staff "New request": customer, title, type, optional internal notes. */
+	public function create_ops_request( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		$result = $admin->create_service_request_from_ops(
+			sanitize_text_field( (string) $request->get_param( 'stripe_customer_id' ) ),
+			sanitize_text_field( (string) $request->get_param( 'title' ) ),
+			sanitize_key( (string) ( $request->get_param( 'request_type' ) ?: 'custom_request' ) ),
+			sanitize_textarea_field( (string) $request->get_param( 'notes' ) )
+		);
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
 	}
 
 	/** The request workflows (steps per product type), read-only; the generic one plus extension-added ones. */
