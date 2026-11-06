@@ -659,6 +659,7 @@ class AJCore_REST_API {
 			'/ops/visitors/(?P<uuid>[^/]+)'            => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_visitor', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners/save'                => array( 'methods' => 'POST', 'callback' => 'save_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
+			'/ops/counts' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_counts', 'permission' => 'can_manage_ops_api' ),
 			'/ops/features' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_features', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customer-billing-types' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_customer_billing_types', 'permission' => 'can_manage_ops_api' ),
 			'/ops/request-types' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_request_types', 'permission' => 'can_manage_ops_api' ),
@@ -3293,6 +3294,44 @@ class AJCore_REST_API {
 
 	/** Request types staff can create (generic plus extension-added). */
 	/** Optional feature flags (extension-provided) so AJOps can hide what this site does not use. */
+	/**
+	 * Number shown next to each AJOps menu item and on its dashboard tile.
+	 * Shape: route key => array( value, total (optional), label, alert (needs attention) ).
+	 * Extensions add their own through 'ajcore_ops_counts' (AJ Core RA: websites, profiles, e-sign, Gmail Intake).
+	 */
+	public function get_ops_counts( WP_REST_Request $request ) {
+		global $wpdb;
+		$pdb  = $this->get_portal_db();
+		$summ = $this->get_ops_summary();
+		$s    = is_object( $summ ) && method_exists( $summ, 'get_data' ) ? (array) $summ->get_data() : array();
+		$n    = static function ( $k ) use ( $s ) {
+			return (int) ( $s[ $k ] ?? 0 );
+		};
+		$c = static function ( $value, $label, $total = null, $alert = false ) {
+			$row = array( 'value' => (int) $value, 'label' => $label, 'alert' => (bool) $alert && (int) $value > 0 );
+			if ( null !== $total ) {
+				$row['total'] = (int) $total;
+			}
+			return $row;
+		};
+		$counts = array(
+			'leads'        => $c( $n( 'leads_active' ), 'Active / Total', $n( 'leads' ) ),
+			'customers'    => $c( $n( 'customers' ), 'Customers' ),
+			'requests'     => $c( $n( 'service_requests_needs_action' ), 'Needs action / Total', $n( 'service_requests' ), true ),
+			'payments'     => $c( $n( 'customers_with_active_subscription' ), 'Active subscribers' ),
+			'compliance'   => $c( $n( 'tasks_open' ), 'Open / Total', $n( 'tasks' ) ),
+			'reservations' => $c( $this->count_table( $pdb, $this->portal_table( 'aj_portal_reservations' ) ), 'Reservations' ),
+			'files'        => $c( $this->count_table( $wpdb, $wpdb->prefix . 'aj_portal_files' ), 'Files' ),
+			'emails'       => $c( $this->count_table( $wpdb, $wpdb->prefix . 'aj_portal_email_log' ), 'Emails logged' ),
+			'live-chat'    => $c( $n( 'chat_unread' ), 'Open conversations', null, true ),
+		);
+		if ( AJCore_Extensions::partners_enabled() ) {
+			$counts['partners'] = $c( $this->count_table( $pdb, $this->portal_table( 'aj_portal_partners' ) ), 'Partners' );
+		}
+		$counts = apply_filters( 'ajcore_ops_counts', $counts );
+		return rest_ensure_response( array( 'counts' => is_array( $counts ) ? $counts : array() ) );
+	}
+
 	public function get_ops_features( WP_REST_Request $request ) {
 		return rest_ensure_response( array( 'partners' => AJCore_Extensions::partners_enabled(), 'modules' => AJCore_Extensions::ops_modules() ) );
 	}
