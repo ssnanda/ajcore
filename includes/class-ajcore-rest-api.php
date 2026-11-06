@@ -659,6 +659,7 @@ class AJCore_REST_API {
 			'/ops/visitors/(?P<uuid>[^/]+)'            => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_visitor', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners/save'                => array( 'methods' => 'POST', 'callback' => 'save_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
+			'/ops/features' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_features', 'permission' => 'can_manage_ops_api' ),
 			'/ops/customer-billing-types' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_customer_billing_types', 'permission' => 'can_manage_ops_api' ),
 			'/ops/request-types' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_request_types', 'permission' => 'can_manage_ops_api' ),
 			'/ops/requests/create' => array( 'methods' => 'POST', 'callback' => 'create_ops_request', 'permission' => 'can_manage_ops_api' ),
@@ -3288,6 +3289,11 @@ class AJCore_REST_API {
 	}
 
 	/** Request types staff can create (generic plus extension-added). */
+	/** Optional feature flags (extension-provided) so AJOps can hide what this site does not use. */
+	public function get_ops_features( WP_REST_Request $request ) {
+		return rest_ensure_response( array( 'partners' => AJCore_Extensions::partners_enabled() ) );
+	}
+
 	public function get_ops_customer_billing_types( WP_REST_Request $request ) {
 		$out = array();
 		foreach ( AJCore_Extensions::customer_billing_types() as $key => $type ) {

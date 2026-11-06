@@ -20148,6 +20148,9 @@ class AJForms_Admin {
 				$ext_portal_tabs[ sanitize_key( $ext_key ) ] = $ext_tab;
 			}
 		}
+		if ( 'partners' === $tab && ! AJCore_Extensions::partners_enabled() ) {
+			$tab = 'dashboard';
+		}
 		$tab      = in_array( $tab, array_merge( array( 'dashboard', 'file-library', 'sync', 'event-log', 'partners', 'portal-users', 'sold-items', 'products-services', 'payments', 'billing', 'requests', 'tasks', 'customer', 'cp-settings', 'reservations', 'chat' ), array_keys( $ext_portal_tabs ) ), true ) ? $tab : 'dashboard';
 		// The old Billing and Transactions (sold-items) tabs were merged into Payments; keep old links working.
 		if ( 'billing' === $tab || 'sold-items' === $tab ) {
@@ -20173,6 +20176,9 @@ class AJForms_Admin {
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'chat'               => __( 'Live Chat', 'ajforms' ),
 		);
+		if ( ! AJCore_Extensions::partners_enabled() ) {
+			unset( $tabs['partners'] );
+		}
 		// "Leads" lives on its own admin page — the nav links out to it instead of a portal tab.
 		$external_tab_urls = array(
 			'leads' => add_query_arg( array( 'page' => 'ajforms-leads' ), admin_url( 'admin.php' ) ),
@@ -23134,6 +23140,7 @@ class AJForms_Admin {
 						<dt><?php esc_html_e( 'Last Login', 'ajforms' ); ?></dt>
 						<dd><?php echo $ajcore_last_login ? esc_html( $this->format_portal_date( $ajcore_last_login ) ) : esc_html__( 'No logins recorded yet', 'ajforms' ); ?></dd>
 					<?php endif; ?>
+<?php if ( AJCore_Extensions::partners_enabled() ) : ?>
 					<dt><?php esc_html_e( 'Partner / Payer', 'ajforms' ); ?></dt>
 					<dd>
 						<?php
@@ -23153,6 +23160,7 @@ class AJForms_Admin {
 						?>
 						<strong><?php echo esc_html( $current_partner_record ? $current_partner_record->name : __( 'Direct customer', 'ajforms' ) ); ?></strong>
 					</dd>
+<?php endif; ?>
 				</dl>
 				<hr>
 				<form method="post" class="ajcore-customer-actions">

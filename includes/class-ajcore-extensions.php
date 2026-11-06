@@ -144,6 +144,11 @@ class AJCore_Extensions {
 		return is_array( $types ) && isset( $types['direct'] ) ? $types : array();
 	}
 
+	/** Partner / payer accounts (Partners tab, customer Partner field). Off unless an extension turns it on: 'ajcore_partners_enabled'. */
+	public static function partners_enabled() {
+		return (bool) apply_filters( 'ajcore_partners_enabled', false );
+	}
+
 	/** Pre-selected billing type. Filter 'ajcore_default_customer_billing_type' lets an extension change it. */
 	public static function default_customer_billing_type() {
 		$types   = self::customer_billing_types();
