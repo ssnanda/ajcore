@@ -3294,7 +3294,7 @@ class AJCore_REST_API {
 	/** Request types staff can create (generic plus extension-added). */
 	/** Optional feature flags (extension-provided) so AJOps can hide what this site does not use. */
 	public function get_ops_features( WP_REST_Request $request ) {
-		return rest_ensure_response( array( 'partners' => AJCore_Extensions::partners_enabled() ) );
+		return rest_ensure_response( array( 'partners' => AJCore_Extensions::partners_enabled(), 'modules' => AJCore_Extensions::ops_modules() ) );
 	}
 
 	public function get_ops_customer_billing_types( WP_REST_Request $request ) {

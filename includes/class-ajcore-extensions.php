@@ -149,6 +149,16 @@ class AJCore_Extensions {
 		return (bool) apply_filters( 'ajcore_partners_enabled', false );
 	}
 
+	/**
+	 * AJOps menu items this site offers (route keys). AJ Core's own screens are always listed; an extension adds
+	 * the ones it provides through 'ajcore_ops_modules' (e.g. AJ Core RA adds compliance, websites, esign, rentec).
+	 */
+	public static function ops_modules() {
+		$core    = array( 'dashboard', 'leads', 'ajphone', 'customers', 'requests', 'payments', 'reservations', 'files', 'live-chat', 'emails', 'settings' );
+		$modules = apply_filters( 'ajcore_ops_modules', $core );
+		return array_values( array_unique( array_map( 'sanitize_key', is_array( $modules ) ? $modules : $core ) ) );
+	}
+
 	/** Pre-selected billing type. Filter 'ajcore_default_customer_billing_type' lets an extension change it. */
 	public static function default_customer_billing_type() {
 		$types   = self::customer_billing_types();
