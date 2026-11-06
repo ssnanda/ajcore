@@ -16673,6 +16673,18 @@ class AJForms_Admin {
 	 * bulk-action toolbar on the Service Requests list. Returns per-id results so the caller can
 	 * report partial failures.
 	 */
+	/** Permanently deletes requests (same path as the row Delete action). Returns the number deleted. */
+	public function bulk_delete_service_requests_for_ops( $ids ) {
+		$count = 0;
+		foreach ( array_values( array_filter( array_map( 'absint', (array) $ids ) ) ) as $id ) {
+			$result = $this->apply_service_request_quick_action( $id, 'delete' );
+			if ( ! is_wp_error( $result ) ) {
+				$count++;
+			}
+		}
+		return $count;
+	}
+
 	public function bulk_update_service_requests_for_ops( $ids, $fields ) {
 		$ids     = array_values( array_filter( array_map( 'absint', (array) $ids ) ) );
 		$fields  = is_array( $fields ) ? $fields : array();
@@ -17621,6 +17633,12 @@ class AJForms_Admin {
 		}
 		if ( isset( $_POST['bulk_assigned_user_id'] ) && '' !== $_POST['bulk_assigned_user_id'] ) {
 			$fields['assigned_user_id'] = absint( wp_unslash( $_POST['bulk_assigned_user_id'] ) );
+		}
+
+		if ( ! empty( $_POST['bulk_delete'] ) ) {
+			$deleted = $this->bulk_delete_service_requests_for_ops( $ids );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'requests', 'service-request-deleted' => max( 1, $deleted ) ), admin_url( 'admin.php' ) ) );
+			exit;
 		}
 
 		if ( ! empty( $ids ) && ! empty( $fields ) ) {
@@ -18719,6 +18737,7 @@ class AJForms_Admin {
 						<?php endforeach; ?>
 					</select>
 					<button type="submit" class="button button-primary" disabled data-aj-sr-bulk-submit><?php esc_html_e( 'Apply', 'ajforms' ); ?></button>
+					<button type="submit" name="bulk_delete" value="1" class="button" style="color:#b32d2e;border-color:#b32d2e;margin-left:auto" data-aj-sr-bulk-delete><?php esc_html_e( 'Delete selected', 'ajforms' ); ?></button>
 				</form>
 				<div class="aj-sr-toolbar">
 					<div class="aj-sr-stats">
@@ -18746,7 +18765,7 @@ class AJForms_Admin {
 					<button type="button" class="button button-primary" id="aj-sr-new-btn"><?php esc_html_e( '+ New request', 'ajforms' ); ?></button>
 				</div>
 				<dialog class="aj-sr-wf" id="aj-sr-new">
-					<form method="post" class="aj-sr-wf-in">
+					<form method="post" class="aj-sr-wf-in" onsubmit="var b=this.querySelector('button[type=submit]');if(this.dataset.sent){return false;}this.dataset.sent=1;setTimeout(function(){b.disabled=true;},0);">
 						<input type="hidden" name="service_request_action" value="create_request">
 						<?php wp_nonce_field( 'ajcore_service_request_create' ); ?>
 						<div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><h2><?php esc_html_e( 'New request', 'ajforms' ); ?></h2><button type="button" class="button" data-aj-sr-new-close><?php esc_html_e( 'Close', 'ajforms' ); ?></button></div>
@@ -19035,7 +19054,10 @@ class AJForms_Admin {
 			if(bulkForm){
 				bulkForm.addEventListener('submit', function(e){
 					var n = bulkCount ? bulkCount.textContent : '0';
-					if(!window.confirm('Apply to ' + n + ' selected request(s)?')){ e.preventDefault(); }
+					var del = e.submitter && e.submitter.hasAttribute('data-aj-sr-bulk-delete');
+					var msg = del ? 'Permanently delete ' + n + ' selected request(s)? This cannot be undone.' : 'Apply to ' + n + ' selected request(s)?';
+					if(!window.confirm(msg)){ e.preventDefault(); return; }
+					bulkForm.querySelectorAll('button[type=submit]').forEach(function(b){ setTimeout(function(){ b.disabled = true; }, 0); });
 				});
 			}
 			updateBulkState();

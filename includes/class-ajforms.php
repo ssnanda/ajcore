@@ -452,7 +452,16 @@ class AJForms {
 		if ( '' === $stripe_customer_id || '' === $title ) {
 			return new WP_Error( 'missing_fields', __( 'A customer and a title are required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
-		$id = $this->upsert_portal_service_request( array(
+		// Double-click / double-submit guard: the same staff request created in the last 2 minutes is returned, not created again.
+		$pdb      = $this->get_pdb();
+		$existing = (int) $pdb->get_var( $pdb->prepare(
+			"SELECT id FROM {$this->get_portal_service_requests_table()} WHERE stripe_customer_id = %s AND service_name = %s AND request_type = %s AND source = 'staff' AND created_at >= %s ORDER BY id DESC LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$stripe_customer_id,
+			$title,
+			sanitize_key( (string) $request_type ),
+			gmdate( 'Y-m-d H:i:s', time() - 120 )
+		) );
+		$id = $existing ? $existing : $this->upsert_portal_service_request( array(
 			'wp_user_id'         => 0,
 			'stripe_customer_id' => $stripe_customer_id,
 			'service_name'       => $title,

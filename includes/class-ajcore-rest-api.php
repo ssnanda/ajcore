@@ -2817,6 +2817,10 @@ class AJCore_REST_API {
 			return new WP_Error( 'bad_request', __( 'At least one request id is required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 		$admin   = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		if ( $request->get_param( 'delete' ) ) {
+			$deleted = $admin->bulk_delete_service_requests_for_ops( $ids );
+			return rest_ensure_response( array( 'success' => true, 'deleted' => $deleted, 'updated' => $deleted, 'failed' => count( $ids ) - $deleted ) );
+		}
 		$fields  = array(
 			'service_status'   => $request->get_param( 'service_status' ),
 			'assigned_user_id' => $request->get_param( 'assigned_user_id' ),
