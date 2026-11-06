@@ -52,6 +52,8 @@
  * API 24: Zoho Mail (OAuth connection, shared inbox, /zoho-mail/*, /ops/inbox, Client Portal tab) is registered by AJCore-RA, not AJCore.
  * Request workflow statuses (API 24): 'ajcore_service_status_labels', 'ajcore_service_status_pipelines' (product type => ordered status keys) and
  * 'ajcore_service_request_product_type' let an extension add its own statuses and per-product pipelines; AJCore ships only the generic ones.
+ * Workflow actions (API 24): 'ajcore_service_request_quick_actions' (actions array, request, product type, current service status) and
+ * 'ajcore_service_request_action_map' (action key => service status) let an extension offer its own next-step buttons.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore

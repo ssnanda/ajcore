@@ -16747,6 +16747,13 @@ class AJForms_Admin {
 			$actions['apply_billing_change'] = __( 'Apply Billing Change', 'ajforms' );
 		}
 
+		// Extensions that bring their own workflows (AJCore-HOA) add or replace the next-step actions here;
+		// each action key they add must also be in the 'ajcore_service_request_action_map' filter.
+		$filtered_actions = apply_filters( 'ajcore_service_request_quick_actions', $actions, $request, $product_type, $service_status );
+		if ( is_array( $filtered_actions ) ) {
+			$actions = $filtered_actions;
+		}
+
 		if ( ! $is_stripe_import && ! $is_terminal ) {
 			$actions['cancel'] = __( 'Cancel', 'ajforms' );
 		}
@@ -18263,6 +18270,11 @@ class AJForms_Admin {
 			'complete'              => 'completed',
 			'cancel'                => 'cancelled',
 		);
+
+		$filtered_map = apply_filters( 'ajcore_service_request_action_map', $service_action_map );
+		if ( is_array( $filtered_map ) ) {
+			$service_action_map = $filtered_map;
+		}
 
 		$is_payment_action = isset( $payment_action_map[ $action ] );
 		$is_service_action = isset( $service_action_map[ $action ] );
