@@ -659,6 +659,7 @@ class AJCore_REST_API {
 			'/ops/visitors/(?P<uuid>[^/]+)'            => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_visitor', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners/save'                => array( 'methods' => 'POST', 'callback' => 'save_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
+			'/ops/request-workflows' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_request_workflows', 'permission' => 'can_manage_ops_api' ),
 			'/ops/portal-tabs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_portal_tabs', 'permission' => 'can_manage_ops_api' ),
 			'/ops/portal-tabs/update' => array( 'methods' => 'POST', 'callback' => 'update_ops_portal_tab', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
@@ -3277,6 +3278,15 @@ class AJCore_REST_API {
 		// The smallest valid GIF possible: 1x1, transparent, no comment/extension blocks.
 		echo base64_decode( 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7' ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 		exit;
+	}
+
+	/** The request workflows (steps per product type), read-only; the generic one plus extension-added ones. */
+	public function get_ops_request_workflows( WP_REST_Request $request ) {
+		if ( ! class_exists( 'AJForms_Admin' ) ) {
+			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
+		}
+		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+		return rest_ensure_response( array( 'workflows' => $admin->get_service_workflows_for_ops() ) );
 	}
 
 	/** Customer-portal tabs and whether each is shown (the same list as Client Portal, Menu in WP admin). */

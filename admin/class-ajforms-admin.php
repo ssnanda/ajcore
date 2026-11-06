@@ -16236,19 +16236,11 @@ class AJForms_Admin {
 	}
 
 	/**
-	 * The product type's own forward-pipeline steps, with no injected fallback for the request's
-	 * current status — unlike get_portal_service_request_service_status_options() below, which
-	 * prepends the current status when it isn't naturally in this list (so the save dropdown always
-	 * has *something* selected for legacy/out-of-band data). Callers that need to distinguish "this
-	 * is a real pipeline step" from "this was only added so the UI has somewhere to show a stale
-	 * value" — see is_service_request_status_in_pipeline_for_ops() — should use this method instead.
+	 * Workflow pipelines: product type => ordered request workflow status keys. AJCore ships one generic
+	 * pipeline; extensions add theirs through 'ajcore_service_status_pipelines' (and detect their product
+	 * types through 'ajcore_service_request_product_type').
 	 */
-	private function get_portal_service_request_native_service_status_options( $request ) {
-		$product_type = $this->get_portal_service_request_product_type( $request );
-		$labels       = $this->get_portal_sr_service_status_labels();
-
-		// Generic pipeline. Extensions add product-specific ones through 'ajcore_service_status_pipelines'
-		// (product type => ordered status keys) and teach 'ajcore_service_request_product_type' to detect them.
+	private function get_portal_service_status_pipelines() {
 		$sets = array(
 			'custom_request' => array(
 				'new',
@@ -16262,6 +16254,52 @@ class AJForms_Admin {
 		);
 		$filtered_sets = apply_filters( 'ajcore_service_status_pipelines', $sets );
 		$sets          = is_array( $filtered_sets ) && isset( $filtered_sets['custom_request'] ) ? $filtered_sets : $sets;
+
+		return $sets;
+	}
+
+	/**
+	 * Every workflow with its steps, for the read-only Workflows view (WP admin and AJOps).
+	 * Names come from 'ajcore_service_workflow_labels'; the generic pipeline is always first.
+	 *
+	 * @return array<int,array{key:string,label:string,generic:bool,steps:array<int,array{key:string,label:string}>}>
+	 */
+	public function get_service_workflows_for_ops() {
+		$labels = $this->get_portal_sr_service_status_labels();
+		$names  = apply_filters( 'ajcore_service_workflow_labels', array( 'custom_request' => __( 'Generic request', 'ajforms' ) ) );
+		$sets   = $this->get_portal_service_status_pipelines();
+		$out    = array();
+		foreach ( $sets as $key => $steps ) {
+			$workflow = array(
+				'key'     => (string) $key,
+				'label'   => isset( $names[ $key ] ) ? (string) $names[ $key ] : ucwords( str_replace( '_', ' ', (string) $key ) ),
+				'generic' => 'custom_request' === $key,
+				'steps'   => array(),
+			);
+			foreach ( (array) $steps as $step ) {
+				$workflow['steps'][] = array( 'key' => (string) $step, 'label' => isset( $labels[ $step ] ) ? (string) $labels[ $step ] : ucwords( str_replace( '_', ' ', (string) $step ) ) );
+			}
+			$out[] = $workflow;
+		}
+		usort( $out, function ( $a, $b ) {
+			return (int) $b['generic'] <=> (int) $a['generic'];
+		} );
+		return $out;
+	}
+
+	/**
+	 * The product type's own forward-pipeline steps, with no injected fallback for the request's
+	 * current status — unlike get_portal_service_request_service_status_options() below, which
+	 * prepends the current status when it isn't naturally in this list (so the save dropdown always
+	 * has *something* selected for legacy/out-of-band data). Callers that need to distinguish "this
+	 * is a real pipeline step" from "this was only added so the UI has somewhere to show a stale
+	 * value" — see is_service_request_status_in_pipeline_for_ops() — should use this method instead.
+	 */
+	private function get_portal_service_request_native_service_status_options( $request ) {
+		$product_type = $this->get_portal_service_request_product_type( $request );
+		$labels       = $this->get_portal_sr_service_status_labels();
+
+		$sets = $this->get_portal_service_status_pipelines();
 
 		$keys = isset( $sets[ $product_type ] ) ? $sets[ $product_type ] : $sets['custom_request'];
 		$options = array();
@@ -18490,16 +18528,17 @@ class AJForms_Admin {
 		$base_url = $is_standalone ? add_query_arg( array( 'page' => 'ajforms-requests' ), admin_url( 'admin.php' ) ) : add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'requests' ), admin_url( 'admin.php' ) );
 		?>
 		<style>
-			.aj-sr-shell{display:grid;gap:12px;margin-top:10px}
+			.aj-sr-shell{display:grid;gap:8px;margin-top:6px}
 			.aj-sr-topline{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-			.aj-sr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;flex:1}
-			.aj-sr-stat{background:#fff;border:1px solid #e4ebf3;border-radius:14px;padding:12px 16px;box-shadow:0 2px 8px rgba(15,23,42,.05);text-decoration:none;color:inherit;display:block;transition:box-shadow .15s,border-color .15s}
+			.aj-sr-stats{display:flex;gap:6px;flex:0 0 auto;flex-wrap:wrap}
+			.aj-sr-stat{background:#f8fafc;border:1px solid #e4ebf3;border-radius:999px;padding:5px 12px;text-decoration:none;color:inherit;display:inline-flex;align-items:baseline;gap:6px;transition:box-shadow .15s}
 			.aj-sr-stat:hover{box-shadow:0 4px 14px rgba(15,23,42,.12)}
 			.aj-sr-stat.is-active{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.25)}
-			.aj-sr-stat strong{display:block;font-size:22px;line-height:1;color:#0f172a;font-weight:800}
-			.aj-sr-stat span{display:block;margin-top:4px;color:#64748b;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+			.aj-sr-stat strong{display:inline;font-size:15px;line-height:1;color:#0f172a;font-weight:800}
+			.aj-sr-stat span{display:inline;margin:0;color:#64748b;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
 			.aj-sr-toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid #e4ebf3;border-radius:14px;padding:10px 14px;box-shadow:0 2px 8px rgba(15,23,42,.05)}
-			.aj-sr-bulk-bar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:10px 14px}
+			.aj-sr-bulk-bar{display:none;gap:9px;align-items:center;flex-wrap:wrap;background:#eff6ff;border:1px solid #bfdbfe;border-radius:14px;padding:8px 14px}
+			.aj-sr-bulk-bar.is-on{display:flex}
 			.aj-sr-bulk-bar select{min-height:36px;border-radius:8px;border-color:#bfdbfe;font-size:13px}
 			.aj-sr-bulk-count{font-weight:700;color:#1d4ed8;font-size:13px;white-space:nowrap}
 			.aj-sr-td-assignee{min-width:76px;max-width:98px}
@@ -18524,6 +18563,7 @@ class AJForms_Admin {
 			.aj-sr-search{min-width:260px;flex:1}
 			.aj-sr-search input{width:100%;min-height:36px;border-radius:999px;border:1px solid #cbd5e1;padding:0 14px;font-size:13px}
 			.aj-sr-toolbar select{min-height:36px;border-radius:999px;border-color:#cbd5e1;font-weight:600;font-size:13px;padding:0 10px}
+			.aj-sr-wf{width:min(860px,calc(100vw - 32px));border:0;border-radius:14px;padding:0;box-shadow:0 24px 70px rgba(15,23,42,.3)}.aj-sr-wf::backdrop{background:rgba(0,0,0,.4)}.aj-sr-wf-in{padding:18px 22px;max-height:85vh;overflow:auto}.aj-sr-wf-in h2{margin:0}.aj-sr-wf-flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0 18px}.aj-sr-wf-step{background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:700}.aj-sr-wf-arrow{color:#94a3b8}.aj-sr-wf-tag{display:inline-block;margin-left:8px;background:#e2e8f0;color:#475569;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700}
 			.aj-sr-count-note{color:#64748b;font-weight:700;font-size:13px;white-space:nowrap}
 			.aj-sr-badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:700;background:#f1f5f9;color:#475569;white-space:nowrap}
 			.aj-sr-badge.is-paid,.aj-sr-badge.is-active,.aj-sr-badge.is-completed,.aj-sr-badge.is-llc_documents_emailed{background:#dcfce7;color:#166534}
@@ -18578,14 +18618,6 @@ class AJForms_Admin {
 				<?php if ( isset( $_GET['service-request-updated'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request updated.', 'ajforms' ); ?></p></div><?php endif; ?>
 				<?php if ( isset( $_GET['service-request-deleted'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Service request deleted.', 'ajforms' ); ?></p></div><?php endif; ?>
 				<?php if ( isset( $_GET['service-request-error'] ) ) : ?><div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['service-request-error'] ) ) ); ?></p></div><?php endif; ?>
-				<div class="aj-sr-topline">
-					<div class="aj-sr-stats">
-						<a class="aj-sr-stat<?php echo ( '' === $status_filter && '' === $service_view_filter ) ? ' is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'request_status', 'all', $base_url ) ); ?>"><strong><?php echo esc_html( $total_count ); ?></strong><span><?php esc_html_e( 'Total', 'ajforms' ); ?></span></a>
-						<a class="aj-sr-stat<?php echo ( '' === $status_filter && '' === $service_view_filter && '' === $search ) ? ' is-active' : ''; ?>" href="<?php echo esc_url( $base_url ); ?>"><strong><?php echo esc_html( $needs_action_count ); ?></strong><span><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></span></a>
-						<a class="aj-sr-stat<?php echo ( 'active' === $service_view_filter ) ? ' is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'request_status', 'service_active', $base_url ) ); ?>"><strong><?php echo esc_html( $active_count ); ?></strong><span><?php esc_html_e( 'Active', 'ajforms' ); ?></span></a>
-						<a class="aj-sr-stat<?php echo ( 'completed' === $service_view_filter ) ? ' is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'request_status', 'service_completed', $base_url ) ); ?>"><strong><?php echo esc_html( $completed_count ); ?></strong><span><?php esc_html_e( 'Completed', 'ajforms' ); ?></span></a>
-					</div>
-				</div>
 				<form id="aj-sr-bulk-form" method="post" class="aj-sr-bulk-bar">
 					<input type="hidden" name="service_request_action" value="bulk_update">
 					<?php wp_nonce_field( 'ajcore_service_request_bulk' ); ?>
@@ -18606,6 +18638,12 @@ class AJForms_Admin {
 					<button type="submit" class="button button-primary" disabled data-aj-sr-bulk-submit><?php esc_html_e( 'Apply', 'ajforms' ); ?></button>
 				</form>
 				<div class="aj-sr-toolbar">
+					<div class="aj-sr-stats">
+							<a class="aj-sr-stat<?php echo ( '' === $status_filter && '' === $service_view_filter ) ? ' is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'request_status', 'all', $base_url ) ); ?>"><strong><?php echo esc_html( $total_count ); ?></strong><span><?php esc_html_e( 'Total', 'ajforms' ); ?></span></a>
+							<a class="aj-sr-stat<?php echo ( '' === $status_filter && '' === $service_view_filter && '' === $search ) ? ' is-active' : ''; ?>" href="<?php echo esc_url( $base_url ); ?>"><strong><?php echo esc_html( $needs_action_count ); ?></strong><span><?php esc_html_e( 'Needs Action', 'ajforms' ); ?></span></a>
+							<a class="aj-sr-stat<?php echo ( 'active' === $service_view_filter ) ? ' is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'request_status', 'service_active', $base_url ) ); ?>"><strong><?php echo esc_html( $active_count ); ?></strong><span><?php esc_html_e( 'Active', 'ajforms' ); ?></span></a>
+							<a class="aj-sr-stat<?php echo ( 'completed' === $service_view_filter ) ? ' is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'request_status', 'service_completed', $base_url ) ); ?>"><strong><?php echo esc_html( $completed_count ); ?></strong><span><?php esc_html_e( 'Completed', 'ajforms' ); ?></span></a>
+						</div>
 					<div class="aj-sr-search"><input type="search" id="aj-sr-live-search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Search customer, service, email, source, note...', 'ajforms' ); ?>"></div>
 					<select id="aj-sr-source-filter" onchange="if(this.value){window.location.href=this.value;}">
 						<option value="<?php echo esc_url( remove_query_arg( 'sr_source', $base_url ) ); ?>" <?php selected( $source_filter, 'hide_checkout' ); ?>><?php esc_html_e( 'Hide unpaid checkout leads', 'ajforms' ); ?></option>
@@ -18621,7 +18659,22 @@ class AJForms_Admin {
 						<?php endforeach; ?>
 					</select>
 					<span class="aj-sr-count-note"><span data-aj-sr-visible-count><?php echo esc_html( count( $requests ) ); ?></span> <?php esc_html_e( 'shown', 'ajforms' ); ?></span>
+					<button type="button" class="button" id="aj-sr-workflows-btn"><?php esc_html_e( 'Workflows', 'ajforms' ); ?></button>
 				</div>
+				<dialog class="aj-sr-wf" id="aj-sr-workflows">
+					<div class="aj-sr-wf-in">
+						<div style="display:flex;justify-content:space-between;align-items:center;gap:12px"><h2><?php esc_html_e( 'Request workflows', 'ajforms' ); ?></h2><button type="button" class="button" data-aj-sr-wf-close><?php esc_html_e( 'Close', 'ajforms' ); ?></button></div>
+						<p class="description"><?php esc_html_e( 'The steps each kind of request moves through. View only: workflows are defined by AJ Core and its extensions.', 'ajforms' ); ?></p>
+						<?php foreach ( $this->get_service_workflows_for_ops() as $workflow ) : ?>
+							<h3 style="margin:14px 0 0"><?php echo esc_html( $workflow['label'] ); ?><?php echo $workflow['generic'] ? '<span class="aj-sr-wf-tag">' . esc_html__( 'built in', 'ajforms' ) . '</span>' : ''; ?></h3>
+							<div class="aj-sr-wf-flow">
+								<?php foreach ( $workflow['steps'] as $step_index => $step ) : ?>
+									<?php echo $step_index ? '<span class="aj-sr-wf-arrow">→</span>' : ''; ?><span class="aj-sr-wf-step"><?php echo esc_html( $step['label'] ); ?></span>
+								<?php endforeach; ?>
+							</div>
+						<?php endforeach; ?>
+					</div>
+				</dialog>
 				<?php if ( empty( $requests ) ) : ?>
 					<div class="aj-sr-empty"><strong><?php esc_html_e( 'No requests found.', 'ajforms' ); ?></strong></div>
 				<?php else : ?>
@@ -18851,6 +18904,11 @@ class AJForms_Admin {
 					toggleDetail(btn.getAttribute('data-aj-sr-target'), btn.closest('tr'));
 				});
 			});
+			var wfBtn = document.getElementById('aj-sr-workflows-btn'), wfDlg = document.getElementById('aj-sr-workflows');
+			if(wfBtn && wfDlg){
+				wfBtn.addEventListener('click', function(){ wfDlg.showModal(); });
+				wfDlg.addEventListener('click', function(e){ if(e.target === wfDlg || e.target.hasAttribute('data-aj-sr-wf-close')){ wfDlg.close(); } });
+			}
 			var bulkForm    = document.getElementById('aj-sr-bulk-form');
 			var bulkSubmit  = document.querySelector('[data-aj-sr-bulk-submit]');
 			var bulkCount   = document.querySelector('[data-aj-sr-selected-count]');
@@ -18859,6 +18917,7 @@ class AJForms_Admin {
 			function updateBulkState(){
 				var checked = rowChecks().filter(function(c){ return c.checked; });
 				if(bulkCount){ bulkCount.textContent = String(checked.length); }
+				if(bulkForm){ bulkForm.classList.toggle('is-on', checked.length > 0); }
 				var svcSel = bulkForm ? bulkForm.querySelector('[name="bulk_service_status"]') : null;
 				var asgSel = bulkForm ? bulkForm.querySelector('[name="bulk_assigned_user_id"]') : null;
 				var hasAction = (svcSel && svcSel.value) || (asgSel && asgSel.value !== '');
