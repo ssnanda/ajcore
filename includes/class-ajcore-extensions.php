@@ -49,6 +49,7 @@
  * API 22: 'ajcore_portal_file_settings' filter on the merged Files settings (categories, important/extra groups) so an
  * extension can guarantee its own document categories exist (AJCore-RA: Formation Documents).
  * API 23: the expense-invoices feature was retired (never used); invoices will return as a workflow on Requests.
+ * API 24: Zoho Mail (OAuth connection, shared inbox, /zoho-mail/*, /ops/inbox, Client Portal tab) is registered by AJCore-RA, not AJCore.
  * Catalog: extensions add their routes to /docs via the 'ajcore_endpoint_catalog' filter.
  *
  * Moving a route out of AJCore: register it in the extension, delete the AJCore
@@ -62,7 +63,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 23 );
+	define( 'AJCORE_EXTENSION_API', 24 );
 }
 
 class AJCore_Extensions {
