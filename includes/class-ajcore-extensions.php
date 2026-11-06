@@ -137,8 +137,8 @@ class AJCore_Extensions {
 	 */
 	public static function customer_billing_types() {
 		$types = array(
-			'direct' => array( 'label' => __( 'Direct Billing — create in Stripe', 'ajforms' ), 'local' => false, 'partner' => '', 'hint' => __( 'Creates the customer in Stripe and syncs it to AJ Core immediately.', 'ajforms' ) ),
-			'local'  => array( 'label' => __( 'Local customer — AJ Core only, not in Stripe', 'ajforms' ), 'local' => true, 'partner' => '', 'hint' => __( 'Creates only an AJ Core customer.', 'ajforms' ) ),
+			'direct' => array( 'label' => __( 'Stripe customer', 'ajforms' ), 'local' => false, 'partner' => '', 'hint' => __( 'Billed through Stripe. Created in Stripe and synced here.', 'ajforms' ) ),
+			'local'  => array( 'label' => __( 'Local customer', 'ajforms' ), 'local' => true, 'partner' => '', 'hint' => __( 'Kept in AJ Core only. Not created in Stripe.', 'ajforms' ) ),
 		);
 		$types = apply_filters( 'ajcore_customer_billing_types', $types );
 		return is_array( $types ) && isset( $types['direct'] ) ? $types : array();
