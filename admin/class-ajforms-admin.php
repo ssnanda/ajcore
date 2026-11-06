@@ -6195,6 +6195,36 @@ class AJForms_Admin {
 			return; // Already welcomed (or moved past it) — never re-send.
 		}
 
+		// Only a fresh purchase gets a welcome. The Requests backfill rebuilds any request that is missing for a paid
+		// order (a Full Sync can rebuild the ledger, so the request's own created_at is "now" and proves nothing), so
+		// freshness comes from Stripe's own created time on the order.
+		$source_key = ! empty( $request->source_object_id ) ? sanitize_text_field( (string) $request->source_object_id ) : '';
+		$stripe_created = 0;
+		if ( '' !== $source_key ) {
+			$raw_json = $pdb->get_var( $pdb->prepare( "SELECT raw_data FROM {$this->get_portal_stripe_transactions_table()} WHERE stripe_object_id = %s LIMIT 1", $source_key ) );
+			$raw      = $raw_json ? json_decode( (string) $raw_json, true ) : null;
+			$stripe_created = is_array( $raw ) && ! empty( $raw['created'] ) ? (int) $raw['created'] : 0;
+		}
+		if ( $stripe_created ) {
+			if ( time() - $stripe_created > 3 * HOUR_IN_SECONDS ) {
+				return;
+			}
+		} else {
+			$created = ! empty( $request->created_at ) ? strtotime( (string) $request->created_at . ' UTC' ) : 0;
+			if ( ! $created || time() - $created > 3 * HOUR_IN_SECONDS ) {
+				return;
+			}
+		}
+		// At most one welcome per order, even if its request is deleted and rebuilt.
+		if ( '' !== $source_key ) {
+			$welcomed = (array) get_option( 'ajcore_welcomed_orders', array() );
+			if ( in_array( $source_key, $welcomed, true ) ) {
+				return;
+			}
+			$welcomed[] = $source_key;
+			update_option( 'ajcore_welcomed_orders', array_slice( array_values( array_unique( $welcomed ) ), -3000 ), false );
+		}
+
 		$this->send_service_purchase_welcome_email( $request );
 	}
 
@@ -18161,11 +18191,26 @@ class AJForms_Admin {
 			}
 		}
 
-		$this->reconcile_invoice_sourced_service_requests();
+		if ( $this->service_request_housekeeping_due( 'reconcile' ) ) {
+			$this->reconcile_invoice_sourced_service_requests();
+		}
 	}
 
 	/** Public entry point for the ops REST API — same reconciliation the WP admin page triggers. */
+	/** True at most once per $seconds for $key (list views run this housekeeping on every load; once a minute is plenty). */
+	private function service_request_housekeeping_due( $key, $seconds = 60 ) {
+		$key = 'ajcore_sr_hk_' . sanitize_key( $key );
+		if ( get_transient( $key ) ) {
+			return false;
+		}
+		set_transient( $key, 1, (int) $seconds );
+		return true;
+	}
+
 	public function reconcile_service_requests_for_ops() {
+		if ( ! $this->service_request_housekeeping_due( 'reconcile' ) ) {
+			return;
+		}
 		$this->reconcile_invoice_sourced_service_requests();
 	}
 
@@ -18173,6 +18218,9 @@ class AJForms_Admin {
 	 *  stale-checkout cleanup) that render_service_requests_admin_interface() runs on every WP admin
 	 *  page load, so a purchase never silently goes un-actioned just because staff only use AJOps. */
 	public function run_ops_service_request_backfill() {
+		if ( ! $this->service_request_housekeeping_due( 'backfill' ) ) {
+			return;
+		}
 		$this->ensure_portal_schema();
 		$this->backfill_portal_service_requests_from_ledger();
 		$this->cleanup_stale_pending_checkout_service_requests();
@@ -18480,8 +18528,7 @@ class AJForms_Admin {
 		}
 
 		$this->ensure_portal_schema();
-		$this->backfill_portal_service_requests_from_ledger();
-		$this->cleanup_stale_pending_checkout_service_requests();
+		$this->run_ops_service_request_backfill();
 		$this->handle_portal_service_request_details_save();
 		$this->handle_service_requests_bulk_save();
 		$this->handle_service_request_create();
@@ -18517,9 +18564,7 @@ class AJForms_Admin {
 		global $wpdb;
 		$pdb = $this->get_pdb();
 
-		$this->ensure_portal_schema();
-		$this->backfill_portal_service_requests_from_ledger();
-		$this->cleanup_stale_pending_checkout_service_requests();
+		$this->run_ops_service_request_backfill();
 
 		$status_filter = isset( $_GET['request_status'] ) ? sanitize_key( wp_unslash( $_GET['request_status'] ) ) : '';
 		$search        = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
@@ -26183,7 +26228,7 @@ class AJForms_Admin {
 				'brand_variants' => true,
 				'to' => __( 'Email on the new service request’s Stripe customer record.', 'ajforms' ),
 				'fixed' => __( 'Sent once for a new add_service request. Fixed contact block and footer (when business contact details are set). This is separate from the portal-access welcome email.', 'ajforms' ),
-				'default_subject' => __( 'Welcome to {site_name} \xe2\x80\x93 Next steps for {service_name}', 'ajforms' ),
+				'default_subject' => __( 'Welcome to {site_name} – Next steps for {service_name}', 'ajforms' ),
 				'default_heading' => __( 'Thank you for your purchase', 'ajforms' ),
 				'default_body' => array(
 					sprintf( __( 'Hi %s,', 'ajforms' ), '{name}' ),
