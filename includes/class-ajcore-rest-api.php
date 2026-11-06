@@ -659,6 +659,8 @@ class AJCore_REST_API {
 			'/ops/visitors/(?P<uuid>[^/]+)'            => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_visitor', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners'                     => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
 			'/ops/visitor-banners/save'                => array( 'methods' => 'POST', 'callback' => 'save_ops_visitor_banner_templates', 'permission' => 'can_manage_ops_api' ),
+			'/ops/portal-tabs' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_portal_tabs', 'permission' => 'can_manage_ops_api' ),
+			'/ops/portal-tabs/update' => array( 'methods' => 'POST', 'callback' => 'update_ops_portal_tab', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)' => array( 'methods' => WP_REST_Server::READABLE, 'callback' => 'get_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			'/ops/email-log/(?P<id>\d+)/delete' => array( 'methods' => 'DELETE', 'callback' => 'delete_ops_email_log_entry', 'permission' => 'can_manage_ops_api' ),
 			// OPS staff auth (login validates ajcore_ops_access before issuing JWT)
@@ -2426,7 +2428,7 @@ class AJCore_REST_API {
 		), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d' ) );
 
 		if ( ! $inserted ) {
-			return new WP_Error( 'db_error', 'Failed to create task.', array( 'status' => 500 ) );
+			return new WP_Error( 'db_error', 'Failed to create compliance item.', array( 'status' => 500 ) );
 		}
 		return rest_ensure_response( array( 'success' => true, 'id' => $pdb->insert_id ) );
 	}
@@ -2436,7 +2438,7 @@ class AJCore_REST_API {
 		$t_tasks = $this->portal_table( 'aj_portal_tasks' );
 		$id      = absint( $request->get_param( 'id' ) );
 		if ( ! $id ) {
-			return new WP_Error( 'bad_request', 'Invalid task ID.', array( 'status' => 400 ) );
+			return new WP_Error( 'bad_request', 'Invalid compliance item ID.', array( 'status' => 400 ) );
 		}
 
 		$valid_scopes = array( 'global', 'client' );
@@ -2478,7 +2480,7 @@ class AJCore_REST_API {
 		}
 		$updated = $pdb->update( $t_tasks, $data, array( 'id' => $id ), $formats, array( '%d' ) );
 		if ( false === $updated ) {
-			return new WP_Error( 'db_error', 'Failed to update task.', array( 'status' => 500 ) );
+			return new WP_Error( 'db_error', 'Failed to update compliance item.', array( 'status' => 500 ) );
 		}
 		return rest_ensure_response( array( 'success' => true ) );
 	}
@@ -2487,7 +2489,7 @@ class AJCore_REST_API {
 		$pdb        = $this->get_portal_db();
 		$id         = absint( $request->get_param( 'id' ) );
 		if ( ! $id ) {
-			return new WP_Error( 'bad_request', 'Invalid task ID.', array( 'status' => 400 ) );
+			return new WP_Error( 'bad_request', 'Invalid compliance item ID.', array( 'status' => 400 ) );
 		}
 		$pdb->delete( $this->portal_table( 'aj_portal_task_comments' ), array( 'task_id' => $id ), array( '%d' ) );
 		$pdb->delete( $this->portal_table( 'aj_portal_task_statuses' ), array( 'task_id' => $id ), array( '%d' ) );
@@ -2502,7 +2504,7 @@ class AJCore_REST_API {
 		$ids_raw = $request->get_param( 'ids' );
 		$ids     = array_filter( array_map( 'absint', (array) $ids_raw ) );
 		if ( empty( $ids ) ) {
-			return new WP_Error( 'bad_request', 'No task IDs provided.', array( 'status' => 400 ) );
+			return new WP_Error( 'bad_request', 'No compliance item IDs provided.', array( 'status' => 400 ) );
 		}
 		$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
 
@@ -3274,6 +3276,24 @@ class AJCore_REST_API {
 		// The smallest valid GIF possible: 1x1, transparent, no comment/extension blocks.
 		echo base64_decode( 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7' ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
 		exit;
+	}
+
+	/** Customer-portal tabs and whether each is shown (the same list as Client Portal, Menu in WP admin). */
+	public function get_ops_portal_tabs( WP_REST_Request $request ) {
+		if ( ! AJForms::$instance ) {
+			return new WP_Error( 'unavailable', 'Portal not initialized.', array( 'status' => 503 ) );
+		}
+		return rest_ensure_response( array( 'tabs' => AJForms::$instance->api_get_portal_tabs() ) );
+	}
+
+	public function update_ops_portal_tab( WP_REST_Request $request ) {
+		if ( ! AJForms::$instance ) {
+			return new WP_Error( 'unavailable', 'Portal not initialized.', array( 'status' => 503 ) );
+		}
+		if ( ! AJForms::$instance->api_set_portal_tab_enabled( (string) $request->get_param( 'id' ), rest_sanitize_boolean( $request->get_param( 'enabled' ) ) ) ) {
+			return new WP_Error( 'not_found', 'Unknown portal tab.', array( 'status' => 404 ) );
+		}
+		return rest_ensure_response( array( 'tabs' => AJForms::$instance->api_get_portal_tabs() ) );
 	}
 
 	public function delete_ops_email_log_entry( WP_REST_Request $request ) {

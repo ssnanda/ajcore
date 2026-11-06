@@ -341,6 +341,33 @@ class AJForms {
 		);
 	}
 
+	/** Customer-portal tabs with their on/off state (what Client Portal, Menu edits); for the ops API. */
+	public function api_get_portal_tabs() {
+		$tabs = array();
+		foreach ( $this->get_customer_portal_menu_items() as $item ) {
+			$tabs[] = array( 'id' => $item['id'], 'label' => $item['label'], 'type' => $item['type'], 'enabled' => ! empty( $item['enabled'] ) );
+		}
+		return $tabs;
+	}
+
+	/** Turns one customer-portal tab on or off; returns false for an unknown tab. */
+	public function api_set_portal_tab_enabled( $id, $enabled ) {
+		$id    = sanitize_key( (string) $id );
+		$items = $this->get_customer_portal_menu_items();
+		$found = false;
+		foreach ( $items as $i => $item ) {
+			if ( $item['id'] === $id ) {
+				$items[ $i ]['enabled'] = (bool) $enabled;
+				$found                  = true;
+			}
+		}
+		if ( ! $found ) {
+			return false;
+		}
+		update_option( 'ajcore_customer_portal_menu_items', $items, false );
+		return true;
+	}
+
 	public function api_get_portal_tasks() {
 		$stripe_customer_id = $this->get_current_user_stripe_customer_id();
 		if ( '' === $stripe_customer_id ) {
@@ -1555,10 +1582,10 @@ class AJForms {
 			),
 			array(
 				'id'      => 'tasks',
-				'label'   => __( 'Tasks', 'ajforms' ),
+				'label'   => __( 'Compliance', 'ajforms' ),
 				'type'    => 'built_in',
 				'url'     => '',
-				'enabled' => true,
+				'enabled' => false,
 			),
 			array(
 				'id'      => 'billing',
@@ -5146,10 +5173,10 @@ class AJForms {
 		?>
 		<div class="aj-portal-table-wrap aj-portal-tasks-wrap">
 			<table class="aj-portal-table aj-portal-tasks-table">
-				<thead><tr><th><?php esc_html_e( 'Task', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Action Required', 'ajforms' ); ?></th><th><?php esc_html_e( 'Comments / Update', 'ajforms' ); ?></th></tr></thead>
+				<thead><tr><th><?php esc_html_e( 'Compliance item', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Action Required', 'ajforms' ); ?></th><th><?php esc_html_e( 'Comments / Update', 'ajforms' ); ?></th></tr></thead>
 				<tbody>
 					<?php if ( empty( $tasks ) ) : ?>
-						<tr><td colspan="5"><?php esc_html_e( 'No open tasks are available yet.', 'ajforms' ); ?></td></tr>
+						<tr><td colspan="5"><?php esc_html_e( 'No open compliance items are available yet.', 'ajforms' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $tasks as $task ) : ?>
 							<?php
@@ -5255,7 +5282,7 @@ class AJForms {
 		$customer = $context['customer'];
 
 		if ( '' === $context['stripe_customer_id'] || ! $customer ) {
-			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Tasks', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
+			return '<section class="aj-customer-portal-panel"><h2>' . esc_html__( 'Compliance', 'ajforms' ) . '</h2><p>' . esc_html__( 'Your portal account is not linked to Stripe customer data yet.', 'ajforms' ) . '</p></section>';
 		}
 
 		$tasks = $this->get_current_user_portal_tasks();
@@ -5263,10 +5290,10 @@ class AJForms {
 		ob_start();
 		?>
 		<section class="aj-customer-portal-panel">
-			<h2><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h2>
+			<h2><?php esc_html_e( 'Compliance', 'ajforms' ); ?></h2>
 			<p class="aj-portal-intro-text"><?php esc_html_e( 'Review your action items.', 'ajforms' ); ?></p>
 			<?php if ( isset( $_GET['task-updated'] ) ) : ?>
-				<div class="aj-portal-add-service-message is-success"><?php esc_html_e( 'Task updated.', 'ajforms' ); ?></div>
+				<div class="aj-portal-add-service-message is-success"><?php esc_html_e( 'Compliance item updated.', 'ajforms' ); ?></div>
 			<?php endif; ?>
 			<?php echo $this->render_customer_portal_tasks_table( $tasks, true ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 		</section>
@@ -5387,7 +5414,7 @@ class AJForms {
 					<span><?php echo esc_html( number_format_i18n( count( $upcoming ) ) ); ?></span>
 				</a>
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $tasks_url ); ?>">
-					<strong><?php esc_html_e( 'Open Tasks', 'ajforms' ); ?></strong>
+					<strong><?php esc_html_e( 'Open Compliance items', 'ajforms' ); ?></strong>
 					<span><?php echo esc_html( number_format_i18n( $this->get_open_portal_tasks_count( $tasks ) ) ); ?></span>
 				</a>
 				<a class="aj-portal-summary-card aj-portal-summary-link" href="<?php echo esc_url( $file_library_url ); ?>">

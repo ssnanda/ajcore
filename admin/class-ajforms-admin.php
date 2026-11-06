@@ -3576,9 +3576,9 @@ class AJForms_Admin {
 				array( 'table' => $this->get_portal_entity_mappings_table(), 'scope' => __( 'Entity mappings', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_files_table(), 'scope' => __( 'Client file records', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_file_users_table(), 'scope' => __( 'Client file assignments', 'ajforms' ) ),
-				array( 'table' => $this->get_portal_tasks_table(), 'scope' => __( 'Tasks', 'ajforms' ) ),
-				array( 'table' => $this->get_portal_task_statuses_table(), 'scope' => __( 'Task statuses', 'ajforms' ) ),
-				array( 'table' => $this->get_portal_task_comments_table(), 'scope' => __( 'Task comments', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_tasks_table(), 'scope' => __( 'Compliance', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_task_statuses_table(), 'scope' => __( 'Compliance item statuses', 'ajforms' ) ),
+				array( 'table' => $this->get_portal_task_comments_table(), 'scope' => __( 'Compliance item comments', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_service_requests_table(), 'scope' => __( 'Service requests', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_event_log_table(), 'scope' => __( 'Audit/event log', 'ajforms' ) ),
 				array( 'table' => $this->get_portal_stripe_events_table(), 'scope' => __( 'Stripe webhook idempotency log', 'ajforms' ) ),
@@ -5921,13 +5921,52 @@ class AJForms_Admin {
 	/**
 	 * Task templates supplied by extensions ('ajcore_task_templates'), keyed by slug:
 	 * label, title, action_required, task_frequency (one_time|recurring), task_scope
-	 * (client|global), client_visible (bool). AJCore ships none.
+	 * (client|global), client_visible (bool). AJCore ships a few generic ones (offered in the form, never
+	 * auto-created); extensions add business-specific ones.
 	 *
 	 * @return array<string,array>
 	 */
 	private function get_task_templates() {
-		$out = array();
-		foreach ( (array) apply_filters( 'ajcore_task_templates', array() ) as $key => $template ) {
+		$out      = array();
+		$generic  = array(
+			'generic_license_renewal' => array(
+				'label'           => __( 'Renew business license or permit', 'ajforms' ),
+				'title'           => __( 'Renew your business license or permit', 'ajforms' ),
+				'action_required' => __( 'Your license or permit is coming up for renewal. Confirm it is current or send us the renewal notice.', 'ajforms' ),
+				'task_frequency'  => 'recurring',
+			),
+			'generic_insurance_renewal' => array(
+				'label'           => __( 'Insurance renewal', 'ajforms' ),
+				'title'           => __( 'Renew your insurance coverage', 'ajforms' ),
+				'action_required' => __( 'Send us your current certificate of insurance or the renewal date.', 'ajforms' ),
+				'task_frequency'  => 'recurring',
+			),
+			'generic_tax_filing' => array(
+				'label'           => __( 'Tax filing deadline', 'ajforms' ),
+				'title'           => __( 'File your tax return', 'ajforms' ),
+				'action_required' => __( 'Your tax filing deadline is approaching. Confirm it has been filed or tell us if you need an extension.', 'ajforms' ),
+				'task_frequency'  => 'recurring',
+			),
+			'generic_upload_document' => array(
+				'label'           => __( 'Upload a required document', 'ajforms' ),
+				'title'           => __( 'Upload a required document', 'ajforms' ),
+				'action_required' => __( 'Please upload the requested document to your File Library.', 'ajforms' ),
+				'task_frequency'  => 'one_time',
+			),
+			'generic_review_sign' => array(
+				'label'           => __( 'Review and sign a document', 'ajforms' ),
+				'title'           => __( 'Review and sign the document we sent', 'ajforms' ),
+				'action_required' => __( 'A document is waiting for your review and signature.', 'ajforms' ),
+				'task_frequency'  => 'one_time',
+			),
+			'generic_annual_review' => array(
+				'label'           => __( 'Annual compliance review', 'ajforms' ),
+				'title'           => __( 'Annual compliance review', 'ajforms' ),
+				'action_required' => __( 'Review your records and tell us if anything has changed this year.', 'ajforms' ),
+				'task_frequency'  => 'recurring',
+			),
+		);
+		foreach ( (array) apply_filters( 'ajcore_task_templates', $generic ) as $key => $template ) {
 			if ( is_array( $template ) && ! empty( $template['title'] ) ) {
 				$out[ sanitize_key( (string) $key ) ] = array(
 					'label'           => isset( $template['label'] ) ? (string) $template['label'] : (string) $template['title'],
@@ -6610,7 +6649,7 @@ class AJForms_Admin {
 			$status = ! empty( $task->customer_status ) ? $task->customer_status : $task->status;
 			$activity[] = array(
 				'date'    => ! empty( $task->customer_status_updated_at ) ? $task->customer_status_updated_at : $task->updated_at,
-				'type'    => __( 'Task', 'ajforms' ),
+				'type'    => __( 'Compliance item', 'ajforms' ),
 				'summary' => trim( (string) $task->title ) . ' · ' . sanitize_key( (string) $status ),
 				'note'    => '',
 			);
@@ -6619,8 +6658,8 @@ class AJForms_Admin {
 		foreach ( (array) $task_comments as $comment ) {
 			$activity[] = array(
 				'date'    => $comment->created_at,
-				'type'    => __( 'Task Comment', 'ajforms' ),
-				'summary' => ! empty( $comment->task_title ) ? $comment->task_title : __( 'Task comment', 'ajforms' ),
+				'type'    => __( 'Compliance item Comment', 'ajforms' ),
+				'summary' => ! empty( $comment->task_title ) ? $comment->task_title : __( 'Compliance item comment', 'ajforms' ),
 				'note'    => (string) $comment->comment,
 			);
 		}
@@ -12013,7 +12052,7 @@ class AJForms_Admin {
 		$default_items = array(
 			array( 'id' => 'overview', 'label' => __( 'Overview', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'services', 'label' => __( 'My Services', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
-			array( 'id' => 'tasks', 'label' => __( 'Tasks', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
+			array( 'id' => 'tasks', 'label' => __( 'Compliance', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => false ),
 			array( 'id' => 'billing', 'label' => __( 'Billing', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'file-library', 'label' => __( 'File Library', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
 			array( 'id' => 'profile', 'label' => __( 'Profile', 'ajforms' ), 'type' => 'built_in', 'url' => '', 'enabled' => true ),
@@ -13118,7 +13157,7 @@ class AJForms_Admin {
 
 		$new_label       = isset( $_POST['new_portal_menu_label'] ) ? sanitize_text_field( wp_unslash( $_POST['new_portal_menu_label'] ) ) : '';
 		$new_url         = isset( $_POST['new_portal_menu_url'] ) ? esc_url_raw( wp_unslash( $_POST['new_portal_menu_url'] ) ) : '';
-		$built_in_labels = array( 'overview', 'my services', 'tasks', 'billing', 'file library', 'profile' );
+		$built_in_labels = array( 'overview', 'my services', 'tasks', 'compliance', 'billing', 'file library', 'profile' );
 		if ( '' !== $new_label && '' !== $new_url && ! in_array( strtolower( $new_label ), $built_in_labels, true ) ) {
 			$items[] = array(
 				'id'      => 'custom-' . wp_generate_uuid4(),
@@ -13520,7 +13559,7 @@ class AJForms_Admin {
 			$due_date = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $due_date ) ? $due_date : null;
 
 			if ( '' === $title ) {
-				$redirect_args['portal-error'] = rawurlencode( __( 'Task title is required.', 'ajforms' ) );
+				$redirect_args['portal-error'] = rawurlencode( __( 'Compliance item title is required.', 'ajforms' ) );
 			} else {
 				$inserted = $this->get_pdb()->insert(
 					$this->get_portal_tasks_table(),
@@ -13540,7 +13579,7 @@ class AJForms_Admin {
 				if ( $inserted ) {
 					$redirect_args['portal-updated'] = 1;
 				} else {
-					$redirect_args['portal-error'] = rawurlencode( __( 'Could not create the task.', 'ajforms' ) );
+					$redirect_args['portal-error'] = rawurlencode( __( 'Could not create the compliance item.', 'ajforms' ) );
 				}
 			}
 
@@ -19814,7 +19853,7 @@ class AJForms_Admin {
 		<div class="ajcore-admin-panel" style="margin-top:6px;">
 			<h3 style="margin-top:0;"><?php echo esc_html( sprintf( __( 'Search results for “%s”', 'ajforms' ), $q ) ); ?></h3>
 			<?php if ( ! $any ) : ?>
-				<p><?php esc_html_e( 'Nothing found across customers, requests, transactions, tasks, or files.', 'ajforms' ); ?></p>
+				<p><?php esc_html_e( 'Nothing found across customers, requests, transactions, compliance items, or files.', 'ajforms' ); ?></p>
 			<?php else : ?>
 				<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
 					<?php foreach ( $sections as $section ) : ?>
@@ -19886,12 +19925,12 @@ class AJForms_Admin {
 			<style>
 				.ajcore-dashboard .ajcore-dashboard-context{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px;color:#64748b}.ajcore-dashboard .ajcore-dashboard-context strong{margin-right:auto}.ajcore-dashboard .ajcore-dashboard-context a{display:inline-flex;align-items:center;border:1px solid #dbe7f3;background:#fff;border-radius:999px;padding:7px 11px;text-decoration:none;font-weight:800}.ajcore-dashboard .ajcore-dashboard-context a:hover{background:#f8fafc}
 			</style>
-			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Quick operating snapshot for billing, customers, fulfillment, tasks, and sync health.', 'ajforms' ); ?></p></div></div>
+			<div class="ajcore-section-head"><div><h2><?php esc_html_e( 'Dashboard', 'ajforms' ); ?></h2><p><?php esc_html_e( 'Quick operating snapshot for billing, customers, fulfillment, compliance items, and sync health.', 'ajforms' ); ?></p></div></div>
 
 			<form method="get" class="ajforms-settings-inline-actions" style="align-items:center;gap:10px;">
 				<input type="hidden" name="page" value="ajforms-client-portal">
 				<input type="hidden" name="tab" value="dashboard">
-				<input type="search" name="portal_q" value="<?php echo isset( $_GET['portal_q'] ) ? esc_attr( sanitize_text_field( wp_unslash( $_GET['portal_q'] ) ) ) : ''; ?>" placeholder="<?php esc_attr_e( 'Search customers, requests, transactions, files, tasks…', 'ajforms' ); ?>" style="min-width:380px;">
+				<input type="search" name="portal_q" value="<?php echo isset( $_GET['portal_q'] ) ? esc_attr( sanitize_text_field( wp_unslash( $_GET['portal_q'] ) ) ) : ''; ?>" placeholder="<?php esc_attr_e( 'Search customers, requests, transactions, files, compliance items…', 'ajforms' ); ?>" style="min-width:380px;">
 				<button class="button button-primary"><?php esc_html_e( 'Search Everything', 'ajforms' ); ?></button>
 			</form>
 			<?php $this->render_portal_global_search_results(); ?>
@@ -19902,7 +19941,7 @@ class AJForms_Admin {
 				<?php $this->render_portal_dashboard_metric( __( 'Auto-Pay Subscriptions', 'ajforms' ), $auto_pay_services, $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'paid' ) ), sprintf( __( '%d active Stripe subscription records.', 'ajforms' ), $active_subscription_objects ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Total Money Owed', 'ajforms' ), $this->format_portal_money( $billing_metrics['open_balance'], 'usd' ), $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'unpaid' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Overdue Amount', 'ajforms' ), $this->format_portal_money( $billing_metrics['overdue_amount'], 'usd' ), $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'unpaid' ) ), __( 'Uses due date, falling back to ledger date.', 'ajforms' ) ); ?>
-				<?php $this->render_portal_dashboard_metric( __( 'Overdue Tasks', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_view' => 'overdue' ) ) ); ?>
+				<?php $this->render_portal_dashboard_metric( __( 'Overdue Compliance items', 'ajforms' ), $task_metrics['overdue'], $this->get_portal_dashboard_url( 'tasks', array( 'task_view' => 'overdue' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Paid Needs Fulfillment', 'ajforms' ), $paid_not_completed, $this->get_portal_dashboard_url( 'requests', array( 'request_status' => 'paid' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Admin Review Required', 'ajforms' ), $admin_review_required, $this->get_portal_dashboard_url( 'requests', array( 'request_status' => 'admin_review_required' ) ) ); ?>
 				<?php $this->render_portal_dashboard_metric( __( 'Failed Payments', 'ajforms' ), $billing_metrics['failed_count'], $this->get_portal_dashboard_url( 'payments', array( 'pay_status' => 'failed' ) ) ); ?>
@@ -19989,7 +20028,7 @@ class AJForms_Admin {
 			'requests'   => __( 'Requests', 'ajforms' ),
 			'payments'           => __( 'Payments', 'ajforms' ),
 			'reservations'       => __( 'Reservations', 'ajforms' ),
-			'tasks'              => __( 'Tasks', 'ajforms' ),
+			'tasks'              => __( 'Compliance', 'ajforms' ),
 			'file-library'       => __( 'Files', 'ajforms' ),
 			'chat'               => __( 'Live Chat', 'ajforms' ),
 		);
@@ -20548,7 +20587,7 @@ class AJForms_Admin {
 			'customers'   => array( 'label' => 'Customers & Access', 'description' => 'Connects Stripe customers, portal state, WordPress users, and external entities.' ),
 			'billing'     => array( 'label' => 'Stripe & Billing', 'description' => 'Caches Stripe records and derives billing, purchase, and service history.' ),
 			'files'       => array( 'label' => 'Files & Storage', 'description' => 'Tracks documents, user assignments, tags, and object-storage locations.' ),
-			'compliance'  => array( 'label' => 'Tasks', 'description' => 'Tracks compliance entities, filings, tasks, statuses, and comments.' ),
+			'compliance'  => array( 'label' => 'Compliance', 'description' => 'Tracks compliance entities, filings, compliance items, statuses, and comments.' ),
 			'services'    => array( 'label' => 'Service Operations', 'description' => 'Handles service requests, status history, mail, and reservations.' ),
 			'logs'        => array( 'label' => 'Logs & Synchronization', 'description' => 'Records sync runs, webhooks, emails, and audit events.' ),
 			'shared'      => array( 'label' => 'Shared Multi-Site', 'description' => 'Coordinates AJCore settings and connected WordPress sites.' ),
@@ -20580,7 +20619,7 @@ class AJForms_Admin {
 			array( 'title' => 'Stripe billing', 'description' => 'Stripe activity is cached and converted into operational billing history.', 'steps' => array( 'Stripe', 'aj_portal_stripe_transactions', 'aj_portal_ledger', 'aj_portal_service_snapshots' ) ),
 			array( 'title' => 'Products and subscriptions', 'description' => 'Stripe products and subscriptions become services visible in AJCore.', 'steps' => array( 'aj_portal_stripe_products', 'aj_portal_product_catalog', 'aj_portal_stripe_subscriptions', 'aj_portal_service_states' ) ),
 			array( 'title' => 'Client documents', 'description' => 'Uploaded files are stored, assigned to users, and categorized.', 'steps' => array( 'aj_portal_files', 'aj_storage_objects', 'aj_portal_file_users', 'aj_portal_file_tags' ) ),
-			array( 'title' => 'Task work', 'description' => 'Entities generate filings and customer-specific compliance tasks.', 'steps' => array( 'aj_portal_compliance_entities', 'aj_portal_compliance_filings', 'aj_portal_tasks', 'aj_portal_task_statuses' ) ),
+			array( 'title' => 'Compliance item work', 'description' => 'Entities generate filings and customer-specific compliance items.', 'steps' => array( 'aj_portal_compliance_entities', 'aj_portal_compliance_filings', 'aj_portal_tasks', 'aj_portal_task_statuses' ) ),
 			array( 'title' => 'Service fulfillment', 'description' => 'A purchase or request becomes tracked operational work.', 'steps' => array( 'aj_portal_ledger', 'aj_portal_service_requests', 'aj_portal_service_request_history', 'Customer update' ) ),
 		);
 		?>
@@ -22984,7 +23023,7 @@ class AJForms_Admin {
 				<div class="ajcore-customer-quick-actions">
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'payments', array( 'pay_customer' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Payments', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'requests', array( 's' => $customer->stripe_customer_id, 'request_status' => 'all' ) ) ); ?>"><?php esc_html_e( 'Requests', 'ajforms' ); ?></a>
-					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Tasks', 'ajforms' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'tasks', array( 'task_client_filter' => $customer->stripe_customer_id ) ) ); ?>"><?php esc_html_e( 'Compliance', 'ajforms' ); ?></a>
 					<a class="button" href="<?php echo esc_url( $this->get_portal_dashboard_url( 'file-library' ) ); ?>"><?php esc_html_e( 'Files', 'ajforms' ); ?></a>
 				</div>
 			</div>
@@ -23304,15 +23343,15 @@ class AJForms_Admin {
 			</div>
 
 			<div class="ajcore-customer-card ajcore-customer-wide">
-				<div class="ajcore-customer-card-head"><h3><?php esc_html_e( 'Action Items', 'ajforms' ); ?></h3><button type="button" class="button button-primary" data-ajcore-open-local-modal="customer-task"><?php esc_html_e( 'Add Task', 'ajforms' ); ?></button></div>
-				<div class="ajcore-local-modal" data-ajcore-local-modal="customer-task" role="dialog" aria-modal="true" aria-labelledby="ajcore-customer-task-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-customer-task-title"><?php esc_html_e( 'Add Task', 'ajforms' ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body">
+				<div class="ajcore-customer-card-head"><h3><?php esc_html_e( 'Action Items', 'ajforms' ); ?></h3><button type="button" class="button button-primary" data-ajcore-open-local-modal="customer-task"><?php esc_html_e( 'Add Compliance item', 'ajforms' ); ?></button></div>
+				<div class="ajcore-local-modal" data-ajcore-local-modal="customer-task" role="dialog" aria-modal="true" aria-labelledby="ajcore-customer-task-title" hidden><div class="ajcore-local-modal-dialog"><div class="ajcore-local-modal-head"><h2 id="ajcore-customer-task-title"><?php esc_html_e( 'Add Compliance item', 'ajforms' ); ?></h2><button type="button" class="ajcore-local-modal-close" data-ajcore-close-local-modal aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></div><div class="ajcore-local-modal-body">
 				<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'customer', 'stripe_customer_id' => $customer->stripe_customer_id ), admin_url( 'admin.php' ) ) ); ?>">
 					<?php wp_nonce_field( 'ajcore_customer_task_' . $customer->stripe_customer_id, 'ajcore_customer_task_nonce' ); ?>
 					<input type="hidden" name="stripe_customer_id" value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>">
-					<label><?php esc_html_e( 'Task title', 'ajforms' ); ?><input type="text" name="customer_task_title" placeholder="<?php esc_attr_e( 'Task title…', 'ajforms' ); ?>" required></label>
+					<label><?php esc_html_e( 'Compliance item title', 'ajforms' ); ?><input type="text" name="customer_task_title" placeholder="<?php esc_attr_e( 'Compliance item title…', 'ajforms' ); ?>" required></label>
 					<label><?php esc_html_e( 'Due date', 'ajforms' ); ?><input type="date" name="customer_task_due_date"></label>
 					<label class="ajcore-modal-wide"><input type="checkbox" name="customer_task_client_visible" value="1"> <?php esc_html_e( 'Visible to customer', 'ajforms' ); ?></label>
-					<div class="ajcore-local-modal-foot"><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary"><?php esc_html_e( 'Add Task', 'ajforms' ); ?></button></div>
+					<div class="ajcore-local-modal-foot"><button type="button" class="button" data-ajcore-close-local-modal><?php esc_html_e( 'Cancel', 'ajforms' ); ?></button><button type="submit" class="button button-primary"><?php esc_html_e( 'Add Compliance item', 'ajforms' ); ?></button></div>
 				</form>
 				</div></div></div>
 				<?php
@@ -23321,7 +23360,7 @@ class AJForms_Admin {
 					__( 'Action Items', 'ajforms' ),
 					$detail['tasks'],
 					array( 'title', 'status', 'due_date', 'action_required', 'client_visible' ),
-					__( 'No tasks found for this customer.', 'ajforms' )
+					__( 'No compliance items found for this customer.', 'ajforms' )
 				);
 				?>
 			</div>
@@ -24020,7 +24059,7 @@ class AJForms_Admin {
 				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-reset'] ) ) : ?>
-				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Master reset complete. Deleted %d rebuildable Stripe sync/cache rows. Portal access, WordPress users, files, tasks, service requests, customer mappings, service usage states, and settings were kept.', 'ajforms' ), absint( wp_unslash( $_GET['portal-reset'] ) ) ) ); ?></p></div>
+				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Master reset complete. Deleted %d rebuildable Stripe sync/cache rows. Portal access, WordPress users, files, compliance items, service requests, customer mappings, service usage states, and settings were kept.', 'ajforms' ), absint( wp_unslash( $_GET['portal-reset'] ) ) ) ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( '' !== $backup_download_url ) : ?>
 				<div class="notice notice-success inline"><p><?php echo esc_html__( 'Portal table backup created:', 'ajforms' ); ?> <a href="<?php echo esc_url( $backup_download_url ); ?>"><?php echo esc_html( $backup_file ); ?></a></p></div>
@@ -24098,11 +24137,11 @@ class AJForms_Admin {
 			</table>
 		</div>
 
-		<form method="post" class="ajforms-settings-card" onsubmit="return window.confirm('<?php echo esc_js( __( 'Run AJ Core Client Portal master reset? This deletes rebuildable Stripe product/subscription/transaction cache, generated billing ledger rows, generated service snapshots, and sync history. It keeps WordPress users, portal mappings/access, files, tasks, service requests, service usage states, forms, leads, and plugin settings.', 'ajforms' ) ); ?>');">
+		<form method="post" class="ajforms-settings-card" onsubmit="return window.confirm('<?php echo esc_js( __( 'Run AJ Core Client Portal master reset? This deletes rebuildable Stripe product/subscription/transaction cache, generated billing ledger rows, generated service snapshots, and sync history. It keeps WordPress users, portal mappings/access, files, compliance items, service requests, service usage states, forms, leads, and plugin settings.', 'ajforms' ) ); ?>');">
 			<?php wp_nonce_field( 'ajcore_portal_master_reset', 'ajcore_portal_master_reset_nonce' ); ?>
 			<h3><?php esc_html_e( 'Master Reset', 'ajforms' ); ?></h3>
 			<p><?php esc_html_e( 'Use this when local portal sync/cache data is bad and you want to sync fresh from Stripe.', 'ajforms' ); ?></p>
-			<p class="description"><?php esc_html_e( 'Deletes rebuildable Stripe cache, generated ledger rows, generated service snapshots, and sync history. Keeps durable customer lifecycle state, portal access/mappings, service usage states such as Used, manual charges, forms, leads, files, tasks, service requests, WordPress users, and settings.', 'ajforms' ); ?></p>
+			<p class="description"><?php esc_html_e( 'Deletes rebuildable Stripe cache, generated ledger rows, generated service snapshots, and sync history. Keeps durable customer lifecycle state, portal access/mappings, service usage states such as Used, manual charges, forms, leads, files, compliance items, service requests, WordPress users, and settings.', 'ajforms' ); ?></p>
 			<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin:16px 0;">
 				<div>
 					<h4><?php esc_html_e( 'Master Reset Clears', 'ajforms' ); ?></h4>
@@ -24432,7 +24471,7 @@ class AJForms_Admin {
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer portal access disabled.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-user-archived'] ) ) : ?>
-				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer archived. Billing, requests, files, tasks, and history were kept.', 'ajforms' ); ?></p></div>
+				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Customer archived. Billing, requests, files, compliance items, and history were kept.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-customers-merged'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php echo esc_html( sprintf( _n( '%d customer identity merged into the primary customer.', '%d customer identities merged into the primary customer.', absint( wp_unslash( $_GET['portal-customers-merged'] ) ), 'ajforms' ), absint( wp_unslash( $_GET['portal-customers-merged'] ) ) ) ); ?></p></div>
@@ -24809,7 +24848,7 @@ class AJForms_Admin {
 							window.alert('<?php echo esc_js( __( 'Select at least one customer.', 'ajforms' ) ); ?>');
 							return;
 						}
-						if('delete_archived' === action && !window.confirm('<?php echo esc_js( __( 'Delete selected archived portal customer records from the local AJ Core cache? WordPress users, Stripe records, billing, requests, files, tasks, and history will not be deleted.', 'ajforms' ) ); ?>')){
+						if('delete_archived' === action && !window.confirm('<?php echo esc_js( __( 'Delete selected archived portal customer records from the local AJ Core cache? WordPress users, Stripe records, billing, requests, files, compliance items, and history will not be deleted.', 'ajforms' ) ); ?>')){
 							event.preventDefault();
 							return;
 						}
@@ -24934,7 +24973,7 @@ class AJForms_Admin {
 			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
-		<p class="description"><?php esc_html_e( 'Customer View opens from each customer link in Portal Users, Billing, Transactions, Requests, Tasks, and Files.', 'ajforms' ); ?></p>
+		<p class="description"><?php esc_html_e( 'Customer View opens from each customer link in Portal Users, Billing, Transactions, Requests, Compliance items, and Files.', 'ajforms' ); ?></p>
 
 			<form method="post">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
@@ -25248,12 +25287,12 @@ class AJForms_Admin {
 			</style>
 			<div class="ajcore-task-head">
 				<div>
-					<h2><?php esc_html_e( 'Tasks', 'ajforms' ); ?></h2>
-					<?php if ( $selected_customer ) : ?><p><?php echo esc_html( sprintf( __( 'Showing tasks for %s, including global tasks assigned to all portal users.', 'ajforms' ), $selected_customer->name ? $selected_customer->name : $selected_customer->email ) ); ?></p><?php endif; ?>
+					<h2><?php esc_html_e( 'Compliance', 'ajforms' ); ?></h2>
+					<?php if ( $selected_customer ) : ?><p><?php echo esc_html( sprintf( __( 'Showing compliance items for %s, including global compliance items assigned to all portal users.', 'ajforms' ), $selected_customer->name ? $selected_customer->name : $selected_customer->email ) ); ?></p><?php endif; ?>
 				</div>
-				<button type="button" class="button button-primary" id="ajcore-toggle-task-form"><?php echo esc_html( $editing_task ? __( 'Edit Task', 'ajforms' ) : __( 'New Task', 'ajforms' ) ); ?></button>
+				<button type="button" class="button button-primary" id="ajcore-toggle-task-form"><?php echo esc_html( $editing_task ? __( 'Edit Compliance item', 'ajforms' ) : __( 'New Compliance item', 'ajforms' ) ); ?></button>
 			</div>
-			<?php if ( isset( $_GET['portal-task'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Task updated.', 'ajforms' ); ?></p></div><?php endif; ?>
+			<?php if ( isset( $_GET['portal-task'] ) ) : ?><div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Compliance item updated.', 'ajforms' ); ?></p></div><?php endif; ?>
 
 			<div class="ajcore-task-metrics">
 				<div class="ajcore-task-metric"><span><?php esc_html_e( 'Shown', 'ajforms' ); ?></span><strong><?php echo esc_html( number_format_i18n( $task_metric_counts['total'] ) ); ?></strong></div>
@@ -25264,7 +25303,7 @@ class AJForms_Admin {
 			</div>
 
 			<div class="ajcore-task-toolbar">
-				<span class="ajcore-muted"><?php echo esc_html( sprintf( __( '%d tasks shown', 'ajforms' ), count( $tasks ) ) ); ?></span>
+				<span class="ajcore-muted"><?php echo esc_html( sprintf( __( '%d compliance items shown', 'ajforms' ), count( $tasks ) ) ); ?></span>
 			</div>
 
 			<div id="ajcore-task-form-wrap" style="<?php echo $show_task_form ? '' : 'display:none;'; ?>">
@@ -25278,7 +25317,7 @@ class AJForms_Admin {
 							<th><label for="ajcore-task-template"><?php esc_html_e( 'Start from template', 'ajforms' ); ?></label></th>
 							<td>
 								<select id="ajcore-task-template" data-templates="<?php echo esc_attr( wp_json_encode( $task_templates ) ); ?>">
-									<option value=""><?php esc_html_e( 'Blank task', 'ajforms' ); ?></option>
+									<option value=""><?php esc_html_e( 'Blank compliance item', 'ajforms' ); ?></option>
 									<?php foreach ( $task_templates as $tpl_key => $tpl ) : ?>
 										<option value="<?php echo esc_attr( $tpl_key ); ?>"><?php echo esc_html( $tpl['label'] ); ?></option>
 									<?php endforeach; ?>
@@ -25287,24 +25326,24 @@ class AJForms_Admin {
 						</tr>
 						<?php endif; ?>
 						<tr>
-							<th><label for="task_scope"><?php esc_html_e( 'Task Type', 'ajforms' ); ?></label></th>
-							<td><select id="task_scope" name="task_scope"><?php foreach ( $scopes as $scope_key => $scope_label ) : ?><option value="<?php echo esc_attr( $scope_key ); ?>" <?php selected( $current_scope, $scope_key ); ?>><?php echo esc_html( $scope_label ); ?></option><?php endforeach; ?></select><p class="description"><?php esc_html_e( 'Global tasks show to every portal user. Client-specific tasks show only to the selected customer.', 'ajforms' ); ?></p></td>
+							<th><label for="task_scope"><?php esc_html_e( 'Compliance item Type', 'ajforms' ); ?></label></th>
+							<td><select id="task_scope" name="task_scope"><?php foreach ( $scopes as $scope_key => $scope_label ) : ?><option value="<?php echo esc_attr( $scope_key ); ?>" <?php selected( $current_scope, $scope_key ); ?>><?php echo esc_html( $scope_label ); ?></option><?php endforeach; ?></select><p class="description"><?php esc_html_e( 'Global compliance items show to every portal user. Client-specific compliance items show only to the selected customer.', 'ajforms' ); ?></p></td>
 						</tr>
 						<tr>
-							<th><label for="task_frequency"><?php esc_html_e( 'Task Frequency', 'ajforms' ); ?></label></th>
-							<td><select id="task_frequency" name="task_frequency"><?php foreach ( $frequencies as $frequency_key => $frequency_label ) : ?><option value="<?php echo esc_attr( $frequency_key ); ?>" <?php selected( $current_frequency, $frequency_key ); ?>><?php echo esc_html( $frequency_label ); ?></option><?php endforeach; ?></select><p class="description"><?php esc_html_e( 'One-time for a single task, Recurring for one that repeats each year.', 'ajforms' ); ?></p></td>
+							<th><label for="task_frequency"><?php esc_html_e( 'Compliance item Frequency', 'ajforms' ); ?></label></th>
+							<td><select id="task_frequency" name="task_frequency"><?php foreach ( $frequencies as $frequency_key => $frequency_label ) : ?><option value="<?php echo esc_attr( $frequency_key ); ?>" <?php selected( $current_frequency, $frequency_key ); ?>><?php echo esc_html( $frequency_label ); ?></option><?php endforeach; ?></select><p class="description"><?php esc_html_e( 'One-time for a single compliance item, Recurring for one that repeats each year.', 'ajforms' ); ?></p></td>
 						</tr>
 						<tr>
 							<th><label for="task_stripe_customer_id"><?php esc_html_e( 'Client', 'ajforms' ); ?></label></th>
-							<td><select id="task_stripe_customer_id" name="task_stripe_customer_id"><option value=""><?php esc_html_e( 'Select client for client-specific tasks', 'ajforms' ); ?></option><?php foreach ( $customers as $customer ) : ?><option value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>" <?php selected( $editing_task ? $editing_task->stripe_customer_id : '', $customer->stripe_customer_id ); ?>><?php echo esc_html( ( $customer->name ? $customer->name : $customer->email ) . ' — ' . $customer->stripe_customer_id ); ?></option><?php endforeach; ?></select></td>
+							<td><select id="task_stripe_customer_id" name="task_stripe_customer_id"><option value=""><?php esc_html_e( 'Select client for client-specific compliance items', 'ajforms' ); ?></option><?php foreach ( $customers as $customer ) : ?><option value="<?php echo esc_attr( $customer->stripe_customer_id ); ?>" <?php selected( $editing_task ? $editing_task->stripe_customer_id : '', $customer->stripe_customer_id ); ?>><?php echo esc_html( ( $customer->name ? $customer->name : $customer->email ) . ' — ' . $customer->stripe_customer_id ); ?></option><?php endforeach; ?></select></td>
 						</tr>
-						<tr><th><label for="task_title"><?php esc_html_e( 'Task', 'ajforms' ); ?></label></th><td><input type="text" class="regular-text" id="task_title" name="task_title" value="<?php echo esc_attr( $editing_task ? $editing_task->title : '' ); ?>" required></td></tr>
+						<tr><th><label for="task_title"><?php esc_html_e( 'Compliance item', 'ajforms' ); ?></label></th><td><input type="text" class="regular-text" id="task_title" name="task_title" value="<?php echo esc_attr( $editing_task ? $editing_task->title : '' ); ?>" required></td></tr>
 						<tr><th><label for="task_status"><?php esc_html_e( 'Default Status', 'ajforms' ); ?></label></th><td><select id="task_status" name="task_status"><?php foreach ( $statuses as $status_key => $status_label ) : ?><option value="<?php echo esc_attr( $status_key ); ?>" <?php selected( $editing_task ? $editing_task->status : 'open', $status_key ); ?>><?php echo esc_html( $status_label ); ?></option><?php endforeach; ?></select></td></tr>
 						<tr><th><label for="task_due_date"><?php esc_html_e( 'Due Date', 'ajforms' ); ?></label></th><td><input type="date" id="task_due_date" name="task_due_date" value="<?php echo esc_attr( $editing_task && $editing_task->due_date ? $editing_task->due_date : '' ); ?>"></td></tr>
 						<tr><th><label for="task_action_required"><?php esc_html_e( 'Action Required', 'ajforms' ); ?></label></th><td><textarea class="large-text" rows="4" id="task_action_required" name="task_action_required"><?php echo esc_textarea( $editing_task ? $editing_task->action_required : '' ); ?></textarea></td></tr>
 						<tr><th><?php esc_html_e( 'Visibility', 'ajforms' ); ?></th><td><label><input type="checkbox" name="task_client_visible" value="1" <?php checked( ! $editing_task || ! empty( $editing_task->client_visible ) ); ?>> <?php esc_html_e( 'Show to client', 'ajforms' ); ?></label></td></tr>
 					</tbody></table>
-					<?php submit_button( $editing_task ? __( 'Update Task', 'ajforms' ) : __( 'Add Task', 'ajforms' ), 'primary', 'submit', false ); ?>
+					<?php submit_button( $editing_task ? __( 'Update Compliance item', 'ajforms' ) : __( 'Add Compliance item', 'ajforms' ), 'primary', 'submit', false ); ?>
 					<?php if ( $editing_task ) : ?><a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'tasks' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Cancel Edit', 'ajforms' ); ?></a><?php endif; ?>
 				</form>
 			</div>
@@ -25327,7 +25366,7 @@ class AJForms_Admin {
 				<?php wp_nonce_field( 'ajcore_bulk_portal_tasks', 'ajcore_portal_task_bulk_nonce' ); ?>
 				<input type="hidden" name="portal_task_bulk_action" id="portal_task_bulk_action" value="">
 				<div class="ajcore-task-bulkbar">
-					<button type="button" class="button" id="ajcore-select-all-tasks"><?php esc_html_e( 'Select All Tasks', 'ajforms' ); ?></button>
+					<button type="button" class="button" id="ajcore-select-all-tasks"><?php esc_html_e( 'Select All Compliance items', 'ajforms' ); ?></button>
 					<select name="bulk_task_status"><option value=""><?php esc_html_e( 'Bulk status...', 'ajforms' ); ?></option><?php foreach ( $statuses as $key => $label ) : ?><option value="<?php echo esc_attr( $key ); ?>"><?php echo esc_html( $label ); ?></option><?php endforeach; ?></select>
 					<input type="date" name="bulk_task_due_date" title="<?php esc_attr_e( 'Bulk due date', 'ajforms' ); ?>">
 					<select name="bulk_task_visibility"><option value=""><?php esc_html_e( 'Visibility...', 'ajforms' ); ?></option><option value="visible"><?php esc_html_e( 'Show to client', 'ajforms' ); ?></option><option value="hidden"><?php esc_html_e( 'Hide from client', 'ajforms' ); ?></option></select>
@@ -25338,10 +25377,10 @@ class AJForms_Admin {
 				</div>
 
 				<table class="widefat striped">
-					<thead><tr><th class="column-check"><input type="checkbox" id="ajcore-check-all-tasks"></th><th><?php esc_html_e( 'Type', 'ajforms' ); ?></th><th><?php esc_html_e( 'Client / Progress', 'ajforms' ); ?></th><th><?php esc_html_e( 'Task', 'ajforms' ); ?></th><th><?php esc_html_e( 'Frequency', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Comments', 'ajforms' ); ?></th><th><?php esc_html_e( 'Visible', 'ajforms' ); ?></th><th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th></tr></thead>
+					<thead><tr><th class="column-check"><input type="checkbox" id="ajcore-check-all-tasks"></th><th><?php esc_html_e( 'Type', 'ajforms' ); ?></th><th><?php esc_html_e( 'Client / Progress', 'ajforms' ); ?></th><th><?php esc_html_e( 'Compliance item', 'ajforms' ); ?></th><th><?php esc_html_e( 'Frequency', 'ajforms' ); ?></th><th><?php esc_html_e( 'Status', 'ajforms' ); ?></th><th><?php esc_html_e( 'Due Date', 'ajforms' ); ?></th><th><?php esc_html_e( 'Comments', 'ajforms' ); ?></th><th><?php esc_html_e( 'Visible', 'ajforms' ); ?></th><th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th></tr></thead>
 					<tbody>
 						<?php if ( empty( $tasks ) ) : ?>
-							<tr><td colspan="10"><?php esc_html_e( 'No tasks match the current filters.', 'ajforms' ); ?></td></tr>
+							<tr><td colspan="10"><?php esc_html_e( 'No compliance items match the current filters.', 'ajforms' ); ?></td></tr>
 						<?php else : ?>
 							<?php foreach ( $tasks as $task ) : ?>
 								<?php
@@ -29307,12 +29346,12 @@ class AJForms_Admin {
 						),
 					),
 					'asana_task_name'     => array(
-						'label' => __( 'Task Name', 'ajforms' ),
+						'label' => __( 'Compliance item Name', 'ajforms' ),
 						'type'  => 'text',
 						'help'  => __( 'Supports {form_title}.', 'ajforms' ),
 					),
 					'asana_task_notes'    => array(
-						'label' => __( 'Task Notes', 'ajforms' ),
+						'label' => __( 'Compliance item Notes', 'ajforms' ),
 						'type'  => 'textarea',
 					),
 				),
