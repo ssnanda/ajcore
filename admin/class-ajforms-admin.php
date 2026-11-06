@@ -24665,7 +24665,7 @@ class AJForms_Admin {
 						<div class="ajcore-customer-modal-body">
 							<div class="ajcore-customer-modal-grid">
 					<?php wp_nonce_field( 'ajcore_create_stripe_customer', 'ajcore_create_stripe_customer_nonce' ); ?>
-					<label class="ajcore-customer-modal-wide"><span><?php esc_html_e( 'Customer billing type', 'ajforms' ); ?></span><select name="customer_type"><?php foreach ( AJCore_Extensions::customer_billing_types() as $bt_key => $bt ) : ?><option value="<?php echo esc_attr( $bt_key ); ?>"><?php echo esc_html( $bt['label'] ); ?></option><?php endforeach; ?></select></label>
+					<label class="ajcore-customer-modal-wide"><span><?php esc_html_e( 'Customer billing type', 'ajforms' ); ?></span><select name="customer_type"><?php foreach ( AJCore_Extensions::customer_billing_types() as $bt_key => $bt ) : ?><option value="<?php echo esc_attr( $bt_key ); ?>"<?php selected( $bt_key, AJCore_Extensions::default_customer_billing_type() ); ?>><?php echo esc_html( $bt['label'] ); ?></option><?php endforeach; ?></select></label>
 					<label>
 						<span><?php esc_html_e( 'Full Name', 'ajforms' ); ?> <small>*</small></span>
 						<input type="text" name="stripe_customer_name" placeholder="<?php esc_attr_e( 'Jane Smith', 'ajforms' ); ?>" required>

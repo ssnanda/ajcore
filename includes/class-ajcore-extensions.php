@@ -137,11 +137,18 @@ class AJCore_Extensions {
 	 */
 	public static function customer_billing_types() {
 		$types = array(
-			'direct' => array( 'label' => __( 'Stripe customer', 'ajforms' ), 'local' => false, 'partner' => '', 'hint' => __( 'Billed through Stripe. Created in Stripe and synced here.', 'ajforms' ) ),
-			'local'  => array( 'label' => __( 'Local customer', 'ajforms' ), 'local' => true, 'partner' => '', 'hint' => __( 'Kept in AJ Core only. Not created in Stripe.', 'ajforms' ) ),
+			'direct' => array( 'label' => __( 'Stripe', 'ajforms' ), 'local' => false, 'partner' => '', 'hint' => __( 'Billed through Stripe. Created in Stripe and synced here.', 'ajforms' ) ),
+			'local'  => array( 'label' => __( 'Local', 'ajforms' ), 'local' => true, 'partner' => '', 'hint' => __( 'Kept in AJ Core only. Not created in Stripe.', 'ajforms' ) ),
 		);
 		$types = apply_filters( 'ajcore_customer_billing_types', $types );
 		return is_array( $types ) && isset( $types['direct'] ) ? $types : array();
+	}
+
+	/** Pre-selected billing type. Filter 'ajcore_default_customer_billing_type' lets an extension change it. */
+	public static function default_customer_billing_type() {
+		$types   = self::customer_billing_types();
+		$default = sanitize_key( (string) apply_filters( 'ajcore_default_customer_billing_type', 'direct' ) );
+		return isset( $types[ $default ] ) ? $default : 'direct';
 	}
 
 	public static function init() {

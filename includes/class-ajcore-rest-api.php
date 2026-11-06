@@ -3289,7 +3289,7 @@ class AJCore_REST_API {
 		foreach ( AJCore_Extensions::customer_billing_types() as $key => $type ) {
 			$out[] = array( 'key' => (string) $key, 'label' => (string) ( $type['label'] ?? $key ), 'local' => ! empty( $type['local'] ), 'hint' => (string) ( $type['hint'] ?? '' ) );
 		}
-		return rest_ensure_response( array( 'types' => $out ) );
+		return rest_ensure_response( array( 'types' => $out, 'default' => AJCore_Extensions::default_customer_billing_type() ) );
 	}
 
 	public function get_ops_request_types( WP_REST_Request $request ) {
