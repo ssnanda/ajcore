@@ -16423,7 +16423,7 @@ class AJForms_Admin {
 		// submitted the Change of Registered Agent form to SOS/NC naming us as the new agent — so it
 		// gets its own copy (and its own settings keys, left blank by default) instead of reusing the
 		// generic "status changed" template, which already has non-empty saved defaults of its own.
-		if ( 'updating_sosn' === $new_service_status && 'registered_agent_subscription' === $product_type ) {
+		if ( 'updating_sosn' === $new_service_status && in_array( $product_type, array( 'registered_agent_subscription', 'registered_agent_subscription_pllc' ), true ) ) {
 			$template = $this->get_additional_branded_email_templates()[ 'ra_change_filed' ];
 			$default_subject = $template['default_subject'];
 			$default_heading = $template['default_heading'];
