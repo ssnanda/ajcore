@@ -1080,6 +1080,18 @@ class AJCore_REST_API {
 		$local_table = $this->portal_table( 'aj_portal_local_customers' );
 		if ( $this->table_exists( $pdb, $local_table ) ) {
 			$local_rows = $pdb->get_results( "SELECT local_customer_id AS stripe_customer_id,customer_number,email,name,phone,description,address,metadata,status AS portal_status,0 AS enabled_portal,partner_key,0 AS livemode,updated_at AS synced_at FROM `{$local_table}` ORDER BY updated_at DESC,id DESC", ARRAY_A );
+			// Local rows hold metadata/address as JSON text; decode them like the Stripe rows so AJOps can read customer_kind etc.
+			foreach ( (array) $local_rows as &$lr ) {
+				foreach ( array( 'metadata', 'address' ) as $jf ) {
+					if ( isset( $lr[ $jf ] ) && is_string( $lr[ $jf ] ) ) {
+						$decoded = json_decode( $lr[ $jf ], true );
+						if ( is_array( $decoded ) ) {
+							$lr[ $jf ] = $decoded;
+						}
+					}
+				}
+			}
+			unset( $lr );
 			$customers = array_merge( $customers, (array) $local_rows );
 		}
 		$customers = $this->attach_customer_site_labels( array_map( array( $this, 'format_ops_customer_row' ), $customers ) );
