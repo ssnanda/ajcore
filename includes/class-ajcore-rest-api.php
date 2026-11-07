@@ -6613,7 +6613,8 @@ class AJCore_REST_API {
 
 		if ( $is_local_type ) {
 			$local_customer_id = 'local_' . str_replace( '-', '', wp_generate_uuid4() );
-			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local' ) );
+			// customer_kind remembers which billing type was chosen (e.g. suite_client) so lists can filter on it.
+			$metadata = array_filter( array( 'business_name' => $business_name, 'individual_name' => $individual_name, 'customer_type' => 'local', 'customer_kind' => in_array( $customer_type, array( 'local', 'direct' ), true ) ? '' : $customer_type ) );
 			$address_data = array_filter( array( 'line1' => $addr_line1, 'line2' => $addr_line2, 'city' => $addr_city, 'state' => $addr_state, 'postal_code' => $addr_postal, 'country' => $addr_country ) );
 			$customer_number = class_exists( 'AJForms_Admin' ) ? ( AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin() )->generate_customer_number() : '';
 			$inserted = $check_pdb->insert(
