@@ -1024,7 +1024,7 @@ class AJCore_REST_API {
 					"SELECT COUNT(*) FROM `{$leads_table}`
 					WHERE (lead_status IS NULL OR lead_status = '' OR lead_status NOT IN ('customer','lost'))
 					AND NOT (lead_status = 'future_follow_up' AND lead_follow_up_at IS NOT NULL AND lead_follow_up_at > %s)
-					AND status != 'duplicate'",
+					AND status NOT IN ('duplicate','spam')",
 					current_time( 'mysql', true )
 				)
 			);
