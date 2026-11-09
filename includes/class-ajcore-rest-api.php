@@ -5549,7 +5549,7 @@ class AJCore_REST_API {
 		// via toMysqlDatetime() (Date#toISOString, always UTC), so "now" has to be UTC too or this
 		// silently drifts by whatever this WP site's configured timezone offset is.
 		$agg = $pdb->get_row( $pdb->prepare(
-			"SELECT COUNT(*) AS visits, SUM(TIMESTAMPDIFF(SECOND, started_at, COALESCE(ended_at, %s))) AS total_seconds
+			"SELECT COUNT(*) AS visits, SUM(TIMESTAMPDIFF(SECOND, started_at, COALESCE(ended_at, IF(started_at >= %s, %s, started_at)))) AS total_seconds
 			FROM `{$table}` WHERE visitor_uuid = %s",
 			gmdate( 'Y-m-d H:i:s' ),
 			$visitor_uuid
@@ -5619,9 +5619,14 @@ class AJCore_REST_API {
 		// every running total by this site's configured timezone offset (this is the bug behind the
 		// "date/time shown is off by several hours" report from the iOS app).
 		$now_mysql = gmdate( 'Y-m-d H:i:s' );
+		// A visit row is opened when a visitor's live connection starts and closed when it ends. If AJOps restarts
+		// (a deploy, a crash) while someone is connected, their row is never closed and would look "online" forever,
+		// and add days of fake time to their total. Anything open longer than this is treated as a ghost: not
+		// online, and counted as zero time. A real visitor on the site that long is still in AJOps' live connection.
+		$stale_cutoff = gmdate( 'Y-m-d H:i:s', time() - 6 * HOUR_IN_SECONDS );
 
 		$where  = array( '1=1' );
-		$params = array( $now_mysql );
+		$params = array( $stale_cutoff, $now_mysql );
 		if ( '' !== $site_uuid ) {
 			$where[]  = 'l.site_uuid = %s';
 			$params[] = $site_uuid;
@@ -5636,7 +5641,8 @@ class AJCore_REST_API {
 		// recent visit hasn't been closed out yet", i.e. actually still on the site right now. The
 		// DB-backed equivalent of AJOps' in-memory presenceSockets (see log_visitor_history()).
 		if ( $online ) {
-			$where[] = 'l.ended_at IS NULL';
+			$where[]  = 'l.ended_at IS NULL AND l.started_at >= %s';
+			$params[] = $stale_cutoff;
 		}
 		$where_sql = implode( ' AND ', $where );
 
@@ -5735,7 +5741,7 @@ class AJCore_REST_API {
 				'visits'                => (int) $row['visits'],
 				'first_seen'            => (string) $row['first_started_at'],
 				'last_seen'             => (string) ( $row['ended_at'] ?: $row['started_at'] ),
-				'is_online'             => empty( $row['ended_at'] ),
+				'is_online'             => empty( $row['ended_at'] ) && (string) $row['started_at'] >= $stale_cutoff,
 				// Cumulative across every visit, including how long a still-online visit has run so
 				// far — keeps climbing on a repeat visit rather than resetting to 0 each time.
 				'total_seconds'         => (int) $row['total_seconds'],
