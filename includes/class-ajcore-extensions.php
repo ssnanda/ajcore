@@ -111,8 +111,8 @@ class AJCore_Extensions {
 	 * (same enabled/master-site/login/role checks). AJCore_REST_API has no state, so a
 	 * fresh instance is equivalent to the one that registers the core routes.
 	 */
-	public static function can_manage_ops() {
-		return ( new AJCore_REST_API() )->can_manage_ops_api();
+	public static function can_manage_ops( $request = null ) {
+		return ( new AJCore_REST_API() )->can_manage_ops_api( $request );
 	}
 
 	/** permission_callback matching AJCore's client-portal routes (can_use_portal_api). */
@@ -126,8 +126,8 @@ class AJCore_Extensions {
 	}
 
 	/** Same as can_manage_ops() but for site-local routes (matches can_manage_site_ops_api). */
-	public static function can_manage_site_ops() {
-		return ( new AJCore_REST_API() )->can_manage_site_ops_api();
+	public static function can_manage_site_ops( $request = null ) {
+		return ( new AJCore_REST_API() )->can_manage_site_ops_api( $request );
 	}
 
 	/**

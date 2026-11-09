@@ -529,6 +529,24 @@ class AJCore_REST_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/ops/staff/(?P<id>\d+)/permissions',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'update_ops_staff_permissions' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/staff/(?P<id>\d+)/impersonate',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'impersonate_ops_staff' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/ops/staff/(?P<id>\d+)/profile',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
@@ -856,7 +874,7 @@ class AJCore_REST_API {
 		);
 	}
 
-	public function can_manage_ops_api() {
+	public function can_manage_ops_api( $request = null ) {
 		$enabled = $this->protected_api_enabled( 'ops' );
 		if ( is_wp_error( $enabled ) ) {
 			return $enabled;
@@ -872,7 +890,7 @@ class AJCore_REST_API {
 			|| user_can( $user, 'ajcore_ops_access' )
 			|| in_array( 'aj_ops_user', (array) $user->roles, true )
 		) {
-			return true;
+			return AJCore_Ops_Access::check_request( $request ); // per-staff section access (view / edit)
 		}
 		return new WP_Error( 'ajcore_api_forbidden', __( 'This account does not have OPS API access.', 'ajforms' ), array( 'status' => 403 ) );
 	}
@@ -881,7 +899,7 @@ class AJCore_REST_API {
 	 * portal user (password keys, auth cookies and impersonation transients are local).
 	 * Keep aggregate/list/sync OPS routes master-only; only routes explicitly wired to
 	 * this callback may run on a non-master portal site. */
-	public function can_manage_site_ops_api() {
+	public function can_manage_site_ops_api( $request = null ) {
 		$enabled = $this->protected_api_enabled( 'ops' );
 		if ( is_wp_error( $enabled ) ) {
 			return $enabled;
@@ -894,7 +912,7 @@ class AJCore_REST_API {
 			|| user_can( $user, 'ajcore_ops_access' )
 			|| in_array( 'aj_ops_user', (array) $user->roles, true )
 		) {
-			return true;
+			return AJCore_Ops_Access::check_request( $request );
 		}
 		return new WP_Error( 'ajcore_api_forbidden', __( 'You do not have permission to use the AJ Core OPS API.', 'ajforms' ), array( 'status' => 403 ) );
 	}
@@ -2893,6 +2911,7 @@ class AJCore_REST_API {
 			'ops_access'    => $is_admin || user_can( $user, 'ajcore_ops_access' ) || in_array( 'aj_ops_user', (array) $user->roles, true ),
 			'last_login'    => (string) get_user_meta( $user->ID, 'ajcore_last_login', true ),
 			'recent_logins' => $recent_logins,
+			'permissions'   => AJCore_Ops_Access::user_permissions( $user ), // null = full access
 		);
 	}
 
@@ -2967,6 +2986,53 @@ class AJCore_REST_API {
 		}
 
 		return rest_ensure_response( array( 'success' => true, 'staff' => $this->format_ops_staff_user( get_userdata( $user->ID ) ) ) );
+	}
+
+	/** Save a staff member's per-section access: { permissions: { section: none|view|edit } } or { full: true } to clear. */
+	public function update_ops_staff_permissions( WP_REST_Request $request ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return new WP_Error( 'forbidden', __( 'Only administrators can manage staff access.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+		$user = get_userdata( absint( $request->get_param( 'id' ) ) );
+		if ( ! $user || ! array_intersect( array( 'administrator', 'aj_ops_user' ), (array) $user->roles ) ) {
+			return new WP_Error( 'not_found', __( 'Staff member not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		if ( user_can( $user, 'manage_options' ) ) {
+			return new WP_Error( 'cannot_modify_admin', __( 'Administrators always have full access.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( rest_sanitize_boolean( $request->get_param( 'full' ) ) ) {
+			AJCore_Ops_Access::save_user_permissions( $user->ID, null );
+		} else {
+			$map = $request->get_param( 'permissions' );
+			if ( ! is_array( $map ) ) {
+				return new WP_Error( 'invalid_permissions', __( 'Permissions are required.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+			AJCore_Ops_Access::save_user_permissions( $user->ID, $map );
+		}
+		return rest_ensure_response( array( 'success' => true, 'staff' => $this->format_ops_staff_user( get_userdata( $user->ID ) ) ) );
+	}
+
+	/** "Log in as": an administrator gets a token for a staff member to see AJOps exactly as they do. */
+	public function impersonate_ops_staff( WP_REST_Request $request ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return new WP_Error( 'forbidden', __( 'Only administrators can log in as staff.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+		$target = get_userdata( absint( $request->get_param( 'id' ) ) );
+		if ( ! $target || ! array_intersect( array( 'administrator', 'aj_ops_user' ), (array) $target->roles ) ) {
+			return new WP_Error( 'not_found', __( 'Staff member not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+		if ( (int) $target->ID === get_current_user_id() ) {
+			return new WP_Error( 'cannot_impersonate_self', __( 'That is you.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		if ( ! user_can( $target, 'manage_options' ) && ! user_can( $target, 'ajcore_ops_access' ) && ! in_array( 'aj_ops_user', (array) $target->roles, true ) ) {
+			return new WP_Error( 'no_ops_access', __( 'That account has no AJOps access.', 'ajforms' ), array( 'status' => 400 ) );
+		}
+		// Audit trail: who looked in as whom, and when.
+		update_user_meta( $target->ID, 'ajcore_last_impersonated', gmdate( 'Y-m-d H:i:s' ) . ' by user #' . get_current_user_id() );
+		return rest_ensure_response( array(
+			'token' => AJCore_JWT::generate( $target->ID ),
+			'user'  => $this->format_user( $target ),
+		) );
 	}
 
 	/** Staff Accounts > Edit: change a staff member's display name and/or email. Staff only (administrators + AJ Ops Users). */
@@ -6623,7 +6689,9 @@ class AJCore_REST_API {
 	public function get_ops_me( WP_REST_Request $request ) {
 		$user = wp_get_current_user();
 		return rest_ensure_response( array(
-			'user'      => $this->format_user( $user ),
+			'user'        => $this->format_user( $user ),
+			'permissions' => AJCore_Ops_Access::user_permissions( $user ), // null = full access
+			'sections'    => AJCore_Ops_Access::sections(),
 			'site_uuid' => get_option( 'ajcore_site_uuid', '' ),
 		) );
 	}
