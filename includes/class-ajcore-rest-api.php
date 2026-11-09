@@ -7905,6 +7905,7 @@ class AJCore_REST_API {
 			'customer_name'       => $customer ? (string) $customer->name : $non_stripe_customer_name,
 			'customer_email'      => $customer ? (string) $customer->email : '',
 			'non_stripe_customer_name' => $non_stripe_customer_name,
+			'rentec_tenant'       => '' === $stripe_customer_id && isset( $meta['rentec_tenant']['renter_id'] ) ? array( 'account' => (string) ( $meta['rentec_tenant']['account'] ?? '' ), 'renter_id' => (int) $meta['rentec_tenant']['renter_id'] ) : null,
 			'merged_into_lead_id' => isset( $row['merged_into_lead_id'] ) ? (int) $row['merged_into_lead_id'] : 0,
 			'site_uuid'           => $site_uuid,
 			'site_label'          => $this->get_site_label( $site_uuid ),
@@ -8632,7 +8633,9 @@ class AJCore_REST_API {
 			(string) ( $request->get_param( 'note' ) ?? '' ),
 			(string) ( $request->get_param( 'stripe_customer_id' ) ?? '' ),
 			(string) ( $request->get_param( 'follow_up_at' ) ?? '' ),
-			(string) ( $request->get_param( 'non_stripe_customer_name' ) ?? '' )
+			(string) ( $request->get_param( 'non_stripe_customer_name' ) ?? '' ),
+			(string) ( $request->get_param( 'rentec_account' ) ?? '' ),
+			absint( $request->get_param( 'rentec_renter_id' ) ?? 0 )
 		);
 		if ( is_wp_error( $result ) ) {
 			$error_status = 400;

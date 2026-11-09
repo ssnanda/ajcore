@@ -15332,7 +15332,7 @@ class AJForms_Admin {
 	 * atomically, whether the caller is the AJOps stepper UI or the auto-outreach cron's status
 	 * flip. Never update the `lead_status` column directly anywhere else.
 	 */
-	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '', $follow_up_at = '', $non_stripe_customer_name = '' ) {
+	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '', $follow_up_at = '', $non_stripe_customer_name = '', $rentec_account = '', $rentec_renter_id = 0 ) {
 		$pdb     = $this->get_leads_db();
 		$table   = $this->get_leads_table();
 		$lead_id = absint( $lead_id );
@@ -15405,6 +15405,13 @@ class AJForms_Admin {
 				$decoded_lead_data['_meta'] = array();
 			}
 			$decoded_lead_data['_meta']['non_stripe_customer_name'] = '' === $stripe_customer_id ? $non_stripe_customer_name : '';
+			// A Rentec tenant (not an AJCore customer) the lead was closed against: just a reference, nothing is created.
+			$rentec_renter_id = absint( $rentec_renter_id );
+			if ( '' === $stripe_customer_id && '' !== $non_stripe_customer_name && $rentec_renter_id > 0 ) {
+				$decoded_lead_data['_meta']['rentec_tenant'] = array( 'account' => sanitize_text_field( (string) $rentec_account ), 'renter_id' => $rentec_renter_id );
+			} else {
+				unset( $decoded_lead_data['_meta']['rentec_tenant'] );
+			}
 			$update_data['lead_data']                               = wp_json_encode( $decoded_lead_data );
 			$update_formats[]                                       = '%s';
 		} elseif ( 'lost' === $new ) {
