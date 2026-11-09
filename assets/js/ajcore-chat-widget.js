@@ -112,6 +112,35 @@
 		setTimeout(function () { dismissEngagementPopup(popup, false); }, 20000);
 	}
 
+	/** Staff asked to text this visitor: a card with a real sms: link. Tapping the link is the user gesture iOS needs. */
+	function showTextPrompt(smsHref) {
+		var existing = document.getElementById("ajcore-text-prompt");
+		if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+		if (!document.getElementById("ajcore-text-prompt-style")) {
+			var style = document.createElement("style");
+			style.id = "ajcore-text-prompt-style";
+			style.textContent =
+				"#ajcore-text-prompt{position:fixed;left:16px;right:16px;bottom:84px;max-width:420px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;box-shadow:0 14px 40px rgba(0,0,0,.28);padding:16px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}" +
+				"#ajcore-text-prompt p{font-size:15px;color:#111827;margin:0 0 12px;line-height:1.4;}" +
+				"#ajcore-text-prompt .aj-tp-actions{display:flex;gap:10px;}" +
+				"#ajcore-text-prompt a.aj-tp-go{flex:2;display:flex;align-items:center;justify-content:center;background:#3157ff;color:#fff;border-radius:10px;padding:12px;font-size:15px;font-weight:700;text-decoration:none;}" +
+				"#ajcore-text-prompt button.aj-tp-no{flex:1;background:#f1f5f9;color:#475569;border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;}";
+			document.head.appendChild(style);
+		}
+		var card = document.createElement("div");
+		card.id = "ajcore-text-prompt";
+		card.innerHTML =
+			'<p>💬 Our team would like to chat with you by text. Tap below to open Messages.</p>' +
+			'<div class="aj-tp-actions">' +
+				'<button type="button" class="aj-tp-no">Not now</button>' +
+				'<a class="aj-tp-go" href="' + escapeHtml(smsHref) + '">Text us</a>' +
+			'</div>';
+		document.body.appendChild(card);
+		function close() { if (card.parentNode) card.parentNode.removeChild(card); }
+		card.querySelector(".aj-tp-no").addEventListener("click", close);
+		card.querySelector(".aj-tp-go").addEventListener("click", function () { setTimeout(close, 400); });
+	}
+
 	// ── "Live Visitors" self-identify prompt ────────────────────────────────
 	// Same soft, one-time, dismissible-corner-card pattern as the engagement popup above, but asking
 	// to leave name/email/phone rather than "want to text us?" — gated server-side by AJCore's
@@ -436,6 +465,9 @@
 				try { payload = JSON.parse(event.data); } catch (e) { return; }
 				if (payload && payload.type === "open_chat" && handleOpenChat) {
 					handleOpenChat(payload.message || "");
+				} else if (payload && payload.type === "ask_info") {
+					// Staff asked for contact info (phone visitors have no chat panel): show the details card.
+					if (!document.getElementById("ajcore-identify-popup")) showIdentifyPopup();
 				} else if (payload && payload.type === "show_banner") {
 					showPushedBanner(payload.title || "", payload.body || "");
 				} else if (payload && payload.type === "identify_ack" && identifyAckHandler) {
@@ -490,9 +522,11 @@
 		document.body.appendChild(mobileBubble);
 		// A staff "prompt chat" push has no widget panel to open on mobile — send them straight to
 		// the same SMS handoff the TEXT bubble itself offers, with an optional staff-provided lead-in.
+		// iOS Safari refuses to open sms: from a script ("address is invalid") unless it comes from the visitor's own
+		// tap, so a staff push shows a prompt with a real link they tap instead of navigating on its own.
 		startPresence(function (message) {
 			var body = message || defaultTextUsMessage();
-			window.location.href = "sms:" + mobileTextNumber + "?body=" + encodeURIComponent(body);
+			showTextPrompt("sms:" + mobileTextNumber + "?body=" + encodeURIComponent(body));
 		});
 		maybeShowEngagementPopup(function () { return mobileBubble.href; });
 		maybeShowIdentifyPopup();
