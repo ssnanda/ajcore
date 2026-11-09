@@ -527,6 +527,15 @@ class AJCore_REST_API {
 				'permission_callback' => array( $this, 'can_manage_ops_api' ),
 			)
 		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/staff/(?P<id>\d+)/profile',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'update_ops_staff_profile' ),
+				'permission_callback' => array( $this, 'can_manage_ops_api' ),
+			)
+		);
 
 		// ── OPS Files (GET list + POST create + PATCH/DELETE by ID) ─────────────
 		register_rest_route(
@@ -2957,6 +2966,43 @@ class AJCore_REST_API {
 			$user->remove_cap( 'ajcore_ops_access' );
 		}
 
+		return rest_ensure_response( array( 'success' => true, 'staff' => $this->format_ops_staff_user( get_userdata( $user->ID ) ) ) );
+	}
+
+	/** Staff Accounts > Edit: change a staff member's display name and/or email. Staff only (administrators + AJ Ops Users). */
+	public function update_ops_staff_profile( WP_REST_Request $request ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return new WP_Error( 'forbidden', __( 'Only administrators can manage staff accounts.', 'ajforms' ), array( 'status' => 403 ) );
+		}
+		$user = get_userdata( absint( $request->get_param( 'id' ) ) );
+		if ( ! $user || ! array_intersect( array( 'administrator', 'aj_ops_user' ), (array) $user->roles ) ) {
+			return new WP_Error( 'not_found', __( 'Staff member not found.', 'ajforms' ), array( 'status' => 404 ) );
+		}
+
+		$args = array( 'ID' => (int) $user->ID );
+		if ( null !== $request->get_param( 'display_name' ) ) {
+			$name = trim( sanitize_text_field( (string) $request->get_param( 'display_name' ) ) );
+			if ( '' === $name ) {
+				return new WP_Error( 'invalid_name', __( 'Name cannot be empty.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+			$args['display_name'] = $name;
+		}
+		if ( null !== $request->get_param( 'email' ) ) {
+			$email = sanitize_email( (string) $request->get_param( 'email' ) );
+			if ( ! is_email( $email ) ) {
+				return new WP_Error( 'invalid_email', __( 'A valid email address is required.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+			$owner = email_exists( $email );
+			if ( $owner && (int) $owner !== (int) $user->ID ) {
+				return new WP_Error( 'email_exists', __( 'Another user already uses that email.', 'ajforms' ), array( 'status' => 409 ) );
+			}
+			$args['user_email'] = $email;
+		}
+
+		$result = wp_update_user( $args );
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( 'update_failed', $result->get_error_message(), array( 'status' => 400 ) );
+		}
 		return rest_ensure_response( array( 'success' => true, 'staff' => $this->format_ops_staff_user( get_userdata( $user->ID ) ) ) );
 	}
 
