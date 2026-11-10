@@ -101,6 +101,7 @@ $lead_pipeline_status = ! empty( $lead->lead_status ) ? sanitize_key( (string) $
 $pipeline_labels = array(
 	'new'              => __( 'New', 'ajforms' ),
 	'auto_reached'     => __( 'Auto Reached', 'ajforms' ),
+	'reached'          => __( 'Reached', 'ajforms' ),
 	'engaged'          => __( 'Engaged', 'ajforms' ),
 	'tour'             => __( 'Tour Scheduled', 'ajforms' ),
 	'customer'         => __( 'Customer', 'ajforms' ),

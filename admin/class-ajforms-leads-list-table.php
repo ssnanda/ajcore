@@ -327,6 +327,7 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 				$pipeline_labels = array(
 					'new'              => __( 'New', 'ajforms' ),
 					'auto_reached'     => __( 'Auto Reached', 'ajforms' ),
+					'reached'          => __( 'Reached', 'ajforms' ),
 					'engaged'          => __( 'Engaged', 'ajforms' ),
 					'tour'             => __( 'Tour Scheduled', 'ajforms' ),
 					'customer'         => __( 'Customer', 'ajforms' ),
@@ -338,6 +339,10 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 				$pipeline_order = array( 'new', 'auto_reached', 'engaged' );
 				$pipeline_idx   = array_search( $pipeline_current, $pipeline_order, true );
 				$next_stage     = ( false !== $pipeline_idx && isset( $pipeline_order[ $pipeline_idx + 1 ] ) ) ? $pipeline_order[ $pipeline_idx + 1 ] : '';
+				// 'reached' (manual) is the parallel alternative to 'auto_reached' — both go to Engaged.
+				if ( 'reached' === $pipeline_current ) {
+					$next_stage = 'engaged';
+				}
 
 				$out  = '<div class="ajforms-inline-actions">';
 				$out .= '<span class="ajforms-status-badge lead-pipeline-' . esc_attr( $pipeline_current ) . '">' . esc_html( isset( $pipeline_labels[ $pipeline_current ] ) ? $pipeline_labels[ $pipeline_current ] : ucfirst( $pipeline_current ) ) . '</span>';

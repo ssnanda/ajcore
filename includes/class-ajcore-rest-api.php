@@ -7917,7 +7917,7 @@ class AJCore_REST_API {
 	 *  extra "Tour" step) — see get_lead_pipeline_linear_stages() in AJForms_Admin. */
 	private function get_lead_pipeline_stages_for_row( $site_uuid ) {
 		if ( ! class_exists( 'AJForms_Admin' ) ) {
-			return array( 'new', 'auto_reached', 'engaged', 'customer' );
+			return array( 'new', 'auto_reached', 'reached', 'engaged', 'customer' );
 		}
 		$admin = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
 		return $admin->get_lead_pipeline_linear_stages( $site_uuid );

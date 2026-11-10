@@ -15206,6 +15206,7 @@ class AJForms_Admin {
 		return array(
 			'new'               => __( 'New', 'ajforms' ),
 			'auto_reached'      => __( 'Auto Reached', 'ajforms' ),
+			'reached'           => __( 'Reached', 'ajforms' ),
 			'engaged'           => __( 'Engaged', 'ajforms' ),
 			'tour'              => __( 'Tour Scheduled', 'ajforms' ),
 			'customer'          => __( 'Customer', 'ajforms' ),
@@ -15240,6 +15241,9 @@ class AJForms_Admin {
 	 * Up/Lost are branch endpoints reachable from Engaged onward, not a forward step in the
 	 * sequence. University Office Suites gets an extra "Tour" step (property tours are specific
 	 * to that business); every other site (including NC LLC Agents) skips straight to Customer.
+	 * 'auto_reached' (set by the outreach cron) and 'reached' (set by staff after contacting the
+	 * lead by hand) are PARALLEL alternatives that both lead to Engaged — clients render the two
+	 * adjacent keys as one forked step. No existing lead_status value is rewritten by this.
 	 */
 	public function get_lead_pipeline_linear_stages( $site_uuid = '' ) {
 		$used_fallback = false;
@@ -15259,9 +15263,9 @@ class AJForms_Admin {
 			);
 		}
 		if ( false !== strpos( $domain, 'universityofficesuites.com' ) ) {
-			return array( 'new', 'auto_reached', 'engaged', 'tour', 'customer' );
+			return array( 'new', 'auto_reached', 'reached', 'engaged', 'tour', 'customer' );
 		}
-		return array( 'new', 'auto_reached', 'engaged', 'customer' );
+		return array( 'new', 'auto_reached', 'reached', 'engaged', 'customer' );
 	}
 
 	private function add_lead_status_history( $lead_id, $event_type, $args = array() ) {
