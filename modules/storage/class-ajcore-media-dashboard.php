@@ -497,6 +497,11 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 		}
 
 		public static function flush_counts() {
+			// The caches only matter to wp-admin. Skip public page views: a plugin that writes post meta
+			// on every view would otherwise trigger two option deletes per hit.
+			if ( ! is_admin() && ! wp_doing_cron() && ! ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
+				return;
+			}
 			delete_transient( 'ajcore_media_tile_counts' );
 			delete_transient( 'ajcore_media_refs' );
 		}

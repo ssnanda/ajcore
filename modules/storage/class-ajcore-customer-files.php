@@ -225,6 +225,7 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 				return new WP_Error( 'ajcore_reattach_db', __( 'Could not update the records; nothing was changed.', 'ajforms' ) );
 			}
 			$wpdb->query( 'COMMIT' );
+			AJCore_Storage_Service::forget_record();
 			self::mark( $new_id );
 			clean_post_cache( $new_id );
 			return $new_id;
@@ -394,6 +395,7 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 				return new WP_Error( 'ajcore_attach_db', __( 'Could not update the records; nothing was changed.', 'ajforms' ) );
 			}
 			$wpdb->query( 'COMMIT' );
+			AJCore_Storage_Service::forget_record();
 			self::mark( $new_id );
 			clean_post_cache( $new_id );
 			return $new_id;

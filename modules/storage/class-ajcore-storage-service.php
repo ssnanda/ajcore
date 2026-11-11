@@ -479,6 +479,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				}
 			}
 			$wpdb->query( 'COMMIT' );
+			self::forget_record();
 			foreach ( $ids as $id ) {
 				clean_post_cache( $id );
 				clean_post_cache( $id + $offset );
@@ -496,12 +497,30 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			wp_send_json_success( self::renumber_customer_files( $dry_run ) );
 		}
 
+		/** Per-request cache of storage records by attachment ID (null = no record). Image-heavy pages ask once per image. */
+		private static $record_cache = array();
+
+		/** Drop cached storage records after a write. Pass an ID to drop one, or nothing to drop all. */
+		public static function forget_record( $attachment_id = null ) {
+			if ( null === $attachment_id ) {
+				self::$record_cache = array();
+			} else {
+				unset( self::$record_cache[ (int) $attachment_id ] );
+			}
+		}
+
 		public static function get_remote_record( $attachment_id ) {
 			global $wpdb;
+			$attachment_id = (int) $attachment_id;
+			if ( array_key_exists( $attachment_id, self::$record_cache ) ) {
+				return self::$record_cache[ $attachment_id ];
+			}
 			$table = self::table();
-			return $wpdb->get_row(
-				$wpdb->prepare( "SELECT * FROM `{$table}` WHERE attachment_id = %d LIMIT 1", (int) $attachment_id )
+			$row   = $wpdb->get_row(
+				$wpdb->prepare( "SELECT * FROM `{$table}` WHERE attachment_id = %d LIMIT 1", $attachment_id )
 			);
+			self::$record_cache[ $attachment_id ] = $row ? $row : null;
+			return self::$record_cache[ $attachment_id ];
 		}
 
 		/**
@@ -559,6 +578,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		}
 
 		private static function save_remote_record( $attachment_id, $bucket, $object_key, $size_bytes, $content_type ) {
+			self::forget_record( $attachment_id );
 			global $wpdb;
 			$table   = self::table();
 			$existing = self::get_remote_record( $attachment_id );
@@ -578,6 +598,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		}
 
 		private static function delete_remote_record( $attachment_id ) {
+			self::forget_record( $attachment_id );
 			global $wpdb;
 			return false !== $wpdb->delete( self::table(), array( 'attachment_id' => (int) $attachment_id ), array( '%d' ) );
 		}
@@ -618,6 +639,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		}
 
 		private static function update_remote_location( $attachment_id, $bucket, $object_key ) {
+			self::forget_record( $attachment_id );
 			global $wpdb;
 			return false !== $wpdb->update( self::table(), array( 'bucket' => $bucket, 'object_key' => $object_key ), array( 'attachment_id' => (int) $attachment_id ), array( '%s', '%s' ), array( '%d' ) );
 		}
