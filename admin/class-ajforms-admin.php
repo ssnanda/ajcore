@@ -26038,6 +26038,7 @@ class AJForms_Admin {
 							if (!t) { return; }
 							var f = t.getAttribute('data-ajc-filter');
 							wrap.querySelectorAll('.ajc-file-tile').forEach(function (b) { b.classList.toggle('is-active', b === t); });
+							document.querySelectorAll('.ajcore-find-row').forEach(function (r) { r.remove(); }); // Close open Find panels when the filter changes.
 							document.querySelectorAll('.ajforms-file-table tbody tr[data-state]').forEach(function (tr) {
 								var show = f === 'all' || (f === 'many' ? tr.getAttribute('data-many') === '1' : tr.getAttribute('data-state') === f);
 								tr.style.display = show ? '' : 'none';
@@ -26051,39 +26052,60 @@ class AJForms_Admin {
 						var ajaxEndpoint = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
 						var nonceReattach = <?php echo wp_json_encode( wp_create_nonce( 'ajcore_reattach_file' ) ); ?>;
 						var nonceAttach = <?php echo wp_json_encode( wp_create_nonce( 'ajcore_object_attach' ) ); ?>;
+						var T = {
+							none: <?php echo wp_json_encode( __( 'No matching file in the bucket. Type part of a file name to search.', 'ajforms' ) ); ?>,
+							attach: <?php echo wp_json_encode( __( 'Attach', 'ajforms' ) ); ?>,
+							confirmAttach: <?php echo wp_json_encode( __( 'Attach this file to the record?', 'ajforms' ) ); ?>,
+							confirmReattach: <?php echo wp_json_encode( __( 'Point this record at the file that is still in remote storage?', 'ajforms' ) ); ?>,
+							search: <?php echo wp_json_encode( __( 'Search the bucket by file name…', 'ajforms' ) ); ?>,
+							showMore: <?php echo wp_json_encode( __( 'Show %d other files in this customer\'s folder', 'ajforms' ) ); ?>,
+							nameMatch: <?php echo wp_json_encode( __( 'name matches', 'ajforms' ) ); ?>,
+							folder: <?php echo wp_json_encode( __( 'customer folder', 'ajforms' ) ); ?>
+						};
 						function post(params) {
 							return fetch(ajaxEndpoint, { method: 'POST', credentials: 'same-origin', body: new URLSearchParams(params) }).then(function (r) { return r.json(); });
 						}
-						function msgFor(btn) { return btn.parentNode.querySelector('.ajcore-reattach-msg'); }
-						function renderResults(btn, box, objects, fileId) {
-							box.innerHTML = '';
-							if (!objects.length) { box.appendChild(document.createTextNode(<?php echo wp_json_encode( __( 'No matching file in the bucket. Type part of a file name to search.', 'ajforms' ) ); ?>)); return; }
-							objects.forEach(function (o) {
-								var line = document.createElement('div');
-								line.style.cssText = 'margin:4px 0;padding:4px 6px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;';
-								var code = document.createElement('code');
-								code.textContent = o.key; code.style.cssText = 'display:block;overflow-wrap:anywhere;word-break:break-all;';
-								var meta = document.createElement('span');
-								meta.style.color = '#64748b';
-								meta.textContent = Math.round(o.size / 1024) + ' KiB · ' + (o.modified || '').slice(0, 10) + (o.name_match ? ' · name matches' : '') + (o.same_customer ? ' · customer folder' : '') + ' ';
-								var attach = document.createElement('button');
-								attach.type = 'button'; attach.className = 'button button-small'; attach.textContent = <?php echo wp_json_encode( __( 'Attach', 'ajforms' ) ); ?>;
-								attach.addEventListener('click', function () {
-									if (!window.confirm(<?php echo wp_json_encode( __( 'Attach this file to the record?', 'ajforms' ) ); ?>)) { return; }
-									attach.disabled = true;
-									post({ action: 'ajcore_attach_object', nonce: nonceAttach, file_id: fileId, key: o.key }).then(function (res) {
-										if (res.success) { window.location.reload(); } else { attach.disabled = false; meta.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
-									}).catch(function () { attach.disabled = false; meta.textContent = 'Request failed.'; });
-								});
-								line.appendChild(code); line.appendChild(meta); line.appendChild(attach); box.appendChild(line);
+						function addLine(box, o, fileId, muted) {
+							var line = document.createElement('div');
+							line.style.cssText = 'display:flex;gap:12px;align-items:center;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;margin:4px 0;background:' + (muted ? '#f8fafc' : '#fff') + ';';
+							var code = document.createElement('code');
+							code.textContent = o.key; code.style.cssText = 'flex:1;font-size:12px;overflow-wrap:anywhere;word-break:break-all;';
+							var meta = document.createElement('span');
+							meta.style.cssText = 'color:#64748b;font-size:11px;white-space:nowrap;';
+							meta.textContent = Math.round(o.size / 1024) + ' KiB · ' + (o.modified || '').slice(0, 10) + (o.name_match ? ' · ' + T.nameMatch : '') + (o.same_customer ? ' · ' + T.folder : '');
+							var attach = document.createElement('button');
+							attach.type = 'button'; attach.className = 'button button-small' + (o.name_match ? ' button-primary' : ''); attach.textContent = T.attach;
+							attach.addEventListener('click', function () {
+								if (!window.confirm(T.confirmAttach)) { return; }
+								attach.disabled = true;
+								post({ action: 'ajcore_attach_object', nonce: nonceAttach, file_id: fileId, key: o.key }).then(function (res) {
+									if (res.success) { window.location.reload(); } else { attach.disabled = false; meta.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
+								}).catch(function () { attach.disabled = false; meta.textContent = 'Request failed.'; });
 							});
+							line.appendChild(code); line.appendChild(meta); line.appendChild(attach); box.appendChild(line);
+						}
+						function renderResults(box, objects, fileId, searching) {
+							box.innerHTML = '';
+							var named = objects.filter(function (o) { return o.name_match; });
+							// When a file name matches, show only those; the rest of the customer's folder is one click away.
+							var primary = (!searching && named.length) ? named : objects;
+							var extra = (!searching && named.length) ? objects.filter(function (o) { return !o.name_match; }) : [];
+							if (!primary.length) { box.textContent = T.none; return; }
+							primary.forEach(function (o) { addLine(box, o, fileId, false); });
+							if (extra.length) {
+								var more = document.createElement('button');
+								more.type = 'button'; more.className = 'button-link'; more.style.cssText = 'margin-top:4px;';
+								more.textContent = T.showMore.replace('%d', extra.length);
+								more.addEventListener('click', function () { more.remove(); extra.forEach(function (o) { addLine(box, o, fileId, true); }); });
+								box.appendChild(more);
+							}
 						}
 						document.addEventListener('click', function (e) {
 							var t = e.target;
 							var re = t.closest ? t.closest('.ajcore-reattach') : null;
 							if (re) {
-								var m = msgFor(re);
-								if (!window.confirm(<?php echo wp_json_encode( __( 'Point this record at the file that is still in remote storage?', 'ajforms' ) ); ?>)) { return; }
+								var m = re.parentNode.querySelector('.ajcore-reattach-msg');
+								if (!window.confirm(T.confirmReattach)) { return; }
 								re.disabled = true; m.textContent = '…';
 								post({ action: 'ajcore_reattach_file', nonce: nonceReattach, file_id: re.getAttribute('data-file-id') }).then(function (res) {
 									if (res.success) { m.textContent = 'Reattached. Reloading…'; window.location.reload(); }
@@ -26092,29 +26114,36 @@ class AJForms_Admin {
 								return;
 							}
 							var fi = t.closest ? t.closest('.ajcore-find') : null;
-							if (fi) {
-								var id = fi.getAttribute('data-file-id');
-								var cell = fi.parentNode;
-								var box = cell.querySelector('.ajcore-find-box');
-								if (box) { box.remove(); return; }
-								box = document.createElement('div');
-								box.className = 'ajcore-find-box'; box.style.cssText = 'margin-top:6px;max-width:420px;';
-								var input = document.createElement('input');
-								input.type = 'search'; input.placeholder = <?php echo wp_json_encode( __( 'Search bucket by file name…', 'ajforms' ) ); ?>; input.style.cssText = 'width:100%;margin-bottom:4px;';
-								var results = document.createElement('div');
+							if (!fi) { return; }
+							var id = fi.getAttribute('data-file-id');
+							var row = fi.closest('tr');
+							var existing = row.nextElementSibling;
+							if (existing && existing.classList.contains('ajcore-find-row')) { existing.remove(); return; }
+							// Wide panel as its own table row, so the results never squeeze the File column.
+							var panelRow = document.createElement('tr');
+							panelRow.className = 'ajcore-find-row';
+							var cell = document.createElement('td');
+							cell.colSpan = row.cells.length;
+							cell.style.cssText = 'background:#f8fafc;padding:10px 16px;';
+							var inner = document.createElement('div');
+							inner.style.cssText = 'max-width:980px;';
+							var input = document.createElement('input');
+							input.type = 'search'; input.placeholder = T.search; input.style.cssText = 'width:100%;max-width:420px;margin-bottom:6px;';
+							var results = document.createElement('div');
+							results.textContent = '…';
+							inner.appendChild(input); inner.appendChild(results); cell.appendChild(inner); panelRow.appendChild(cell);
+							row.parentNode.insertBefore(panelRow, row.nextSibling);
+							var timer = null;
+							function run() {
+								var q = input.value.trim();
 								results.textContent = '…';
-								box.appendChild(input); box.appendChild(results); cell.appendChild(box);
-								var timer = null;
-								function run() {
-									results.textContent = '…';
-									post({ action: 'ajcore_find_objects', nonce: nonceAttach, file_id: id, search: input.value }).then(function (res) {
-										if (res.success) { renderResults(fi, results, res.data.objects, id); }
-										else { results.textContent = (res.data && res.data.message) ? res.data.message : 'Search failed.'; }
-									}).catch(function () { results.textContent = 'Request failed.'; });
-								}
-								input.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(run, 400); });
-								run();
+								post({ action: 'ajcore_find_objects', nonce: nonceAttach, file_id: id, search: q }).then(function (res) {
+									if (res.success) { renderResults(results, res.data.objects, id, q !== ''); }
+									else { results.textContent = (res.data && res.data.message) ? res.data.message : 'Search failed.'; }
+								}).catch(function () { results.textContent = 'Request failed.'; });
 							}
+							input.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(run, 400); });
+							run();
 						});
 					})();
 					</script>
