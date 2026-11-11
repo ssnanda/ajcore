@@ -26072,7 +26072,8 @@ class AJForms_Admin {
 							showMore: <?php echo wp_json_encode( __( 'Show %d other files in this customer\'s folder', 'ajforms' ) ); ?>,
 							nameMatch: <?php echo wp_json_encode( __( 'name matches', 'ajforms' ) ); ?>,
 							folder: <?php echo wp_json_encode( __( 'customer folder', 'ajforms' ) ); ?>,
-							attached: <?php echo wp_json_encode( __( 'Attached', 'ajforms' ) ); ?>
+							attached: <?php echo wp_json_encode( __( 'Attached', 'ajforms' ) ); ?>,
+							confirmMove: <?php echo wp_json_encode( __( 'Move this file to the shared folder in remote storage? It is copied first and the old copy is removed only after the record is updated.', 'ajforms' ) ); ?>
 						};
 						// Update the row and the tile counts in place, so you stay where you were in the list.
 						function bump(state, delta) {
@@ -26143,6 +26144,25 @@ class AJForms_Admin {
 									if (res.success) { markAttached(re.getAttribute('data-file-id')); }
 									else { re.disabled = false; m.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
 								}).catch(function () { re.disabled = false; m.textContent = 'Request failed.'; });
+								return;
+							}
+							var mv = t.closest ? t.closest('.ajcore-move-shared') : null;
+							if (mv) {
+								var mm = mv.parentNode.querySelector('.ajcore-reattach-msg');
+								if (!window.confirm(T.confirmMove)) { return; }
+								mv.disabled = true; mm.textContent = '…';
+								post({ action: 'ajcore_move_shared', nonce: nonceAttach, file_id: mv.getAttribute('data-file-id') }).then(function (res) {
+									if (res.success) {
+										var det = mv.parentNode.querySelector('details.ajc-path');
+										if (det && res.data.path) {
+											det.querySelector('code').textContent = res.data.path;
+											var parts = res.data.path.split('/');
+											det.querySelector('summary').textContent = '…/' + parts.slice(-2).join('/');
+											det.querySelector('summary').title = res.data.path;
+										}
+										mv.remove(); mm.textContent = '✓';
+									} else { mv.disabled = false; mm.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
+								}).catch(function () { mv.disabled = false; mm.textContent = 'Request failed.'; });
 								return;
 							}
 							var fi = t.closest ? t.closest('.ajcore-find') : null;
@@ -26274,6 +26294,10 @@ class AJForms_Admin {
 												$path_parts = explode( '/', $path_text );
 												$path_short = count( $path_parts ) > 2 ? '…/' . implode( '/', array_slice( $path_parts, -2 ) ) : $path_text;
 												echo '<details class="ajc-path"><summary title="' . esc_attr( $path_text ) . '">' . esc_html( $path_short ) . '</summary><code>' . esc_html( $path_text ) . '</code></details>';
+												// A file shared with many customers should sit in the shared folder, not in one customer's.
+												if ( $remote_record && 'ok' === $row_state && class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::expected_object_key( (int) $file->attachment_id ) !== $remote_record->object_key ) {
+													echo '<button type="button" class="button button-small ajcore-move-shared" data-file-id="' . esc_attr( (int) $file->id ) . '" style="margin-top:4px;">' . esc_html__( 'Move to shared folder', 'ajforms' ) . '</button> <span class="ajcore-reattach-msg"></span>';
+												}
 											} else {
 												echo '<span class="description">' . esc_html__( 'No stored path', 'ajforms' ) . '</span>';
 											}

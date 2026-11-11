@@ -403,6 +403,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		 */
 		const CUSTOMER_FILE_ID_START = 1000000000;
 
+		/** Files shared with at least this many customers are stored under <tag>/shared/. */
+		const SHARED_FOLDER_MIN_RECIPIENTS = 10;
+
 		public static function customer_file_id_start() {
 			// Local DDEV sites use a separate range from live so test uploads can never share an ID with a live customer file.
 			$host  = (string) wp_parse_url( home_url(), PHP_URL_HOST );
@@ -512,6 +515,34 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$table}` WHERE bucket = %s AND object_key = %s AND attachment_id <> %d", $bucket, $object_key, (int) $exclude_attachment_id ) ) > 0;
 		}
 
+		/** Where this attachment's object belongs now (tag/customer-or-shared path + its stored file name), or '' if it has no mapping. */
+		public static function expected_object_key( $attachment_id ) {
+			$record = self::get_remote_record( (int) $attachment_id );
+			return $record ? self::object_key_for_record( $record ) : '';
+		}
+
+		/**
+		 * Move an attachment's remote object to the folder it belongs in (see object_key_prefix()).
+		 * Copies first, repoints the mapping, then removes the old object only if no other record uses it.
+		 *
+		 * @return string|true|WP_Error New key, true if already in place.
+		 */
+		public static function relocate_to_expected( $attachment_id ) {
+			$attachment_id = (int) $attachment_id;
+			$record        = self::get_remote_record( $attachment_id );
+			if ( ! $record ) {
+				return new WP_Error( 'ajcore_storage_no_mapping', __( 'This file is not in remote storage.', 'ajforms' ) );
+			}
+			$new_key = self::object_key_for_record( $record );
+			if ( $new_key === $record->object_key ) {
+				return true;
+			}
+			$settings           = self::get_settings();
+			$settings['bucket'] = $record->bucket; // Stay in the same bucket.
+			$outcome            = self::instance()->relocate_remote_attachment( $attachment_id, $record, $settings, $new_key );
+			return is_wp_error( $outcome ) ? $outcome : $new_key;
+		}
+
 		/** Record an object that already exists in the bucket (used when attaching an existing object). */
 		public static function record_existing_object( $attachment_id, $bucket, $object_key, $size_bytes, $content_type ) {
 			return self::save_remote_record( $attachment_id, $bucket, $object_key, $size_bytes, $content_type );
@@ -606,6 +637,14 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			$file_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$files_table}` WHERE attachment_id = %d ORDER BY id ASC LIMIT 1", $attachment_id ) );
 			$tag = $file_id ? (string) $wpdb->get_var( $wpdb->prepare( "SELECT tag_slug FROM `{$tags_table}` WHERE file_id = %d ORDER BY tag_slug ASC LIMIT 1", $file_id ) ) : '';
 			$tag = $tag ? sanitize_title( $tag ) : 'documents';
+			// A file shared with many customers (a flyer) belongs to none of them: keep it in a shared folder
+			// instead of the first recipient's, so it never follows one customer (rename, removal).
+			if ( $file_id ) {
+				$recipients = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$users_table}` WHERE file_id = %d", $file_id ) );
+				if ( $recipients >= (int) apply_filters( 'ajcore_shared_folder_min_recipients', self::SHARED_FOLDER_MIN_RECIPIENTS ) ) {
+					return $tag . '/shared';
+				}
+			}
 			$assigned_email = '';
 			if ( ! $user_id && $file_id ) {
 				$assignment = $wpdb->get_row( $wpdb->prepare( "SELECT user_id, user_email FROM `{$users_table}` WHERE file_id = %d ORDER BY (user_id > 0) DESC, id ASC LIMIT 1", $file_id ) );

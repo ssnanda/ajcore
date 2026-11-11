@@ -377,6 +377,23 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 			return $new_id;
 		}
 
+		public static function ajax_move_shared() {
+			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'ajcore_object_attach', 'nonce', false ) ) {
+				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
+			}
+			global $wpdb;
+			$row = $wpdb->get_row( $wpdb->prepare( "SELECT attachment_id FROM `{$wpdb->prefix}aj_portal_files` WHERE id = %d", isset( $_POST['file_id'] ) ? absint( $_POST['file_id'] ) : 0 ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( ! $row || ! class_exists( 'AJCore_Storage_Service' ) ) {
+				wp_send_json_error( array( 'message' => __( 'File record not found.', 'ajforms' ) ) );
+			}
+			$result = AJCore_Storage_Service::relocate_to_expected( (int) $row->attachment_id );
+			if ( is_wp_error( $result ) ) {
+				wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+			}
+			$record = AJCore_Storage_Service::get_remote_record( (int) $row->attachment_id );
+			wp_send_json_success( array( 'path' => $record ? 's3://' . $record->bucket . '/' . ltrim( $record->object_key, '/' ) : '' ) );
+		}
+
 		public static function ajax_find_objects() {
 			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'ajcore_object_attach', 'nonce', false ) ) {
 				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
@@ -419,6 +436,7 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 	add_action( 'admin_init', array( 'AJCore_Customer_Files', 'maybe_backfill' ) );
 	add_action( 'wp_ajax_ajcore_reattach_file', array( 'AJCore_Customer_Files', 'ajax_reattach' ) );
 	add_action( 'wp_ajax_ajcore_find_objects', array( 'AJCore_Customer_Files', 'ajax_find_objects' ) );
+	add_action( 'wp_ajax_ajcore_move_shared', array( 'AJCore_Customer_Files', 'ajax_move_shared' ) );
 	add_action( 'wp_ajax_ajcore_attach_object', array( 'AJCore_Customer_Files', 'ajax_attach_object' ) );
 
 	// Upload folders AJCore owns on each site: a sync must never copy these between sites.
