@@ -19,6 +19,9 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 			add_action( 'admin_notices', array( __CLASS__, 'render' ) );
 			add_action( 'pre_get_posts', array( __CLASS__, 'filter_query' ) );
 			add_filter( 'posts_where', array( __CLASS__, 'filter_where' ), 10, 2 );
+			add_action( 'add_attachment', array( __CLASS__, 'flush_counts' ) );
+			add_action( 'delete_attachment', array( __CLASS__, 'flush_counts' ) );
+			add_action( 'save_post', array( __CLASS__, 'flush_counts' ) );
 			add_filter( 'manage_media_columns', array( __CLASS__, 'add_columns' ) );
 			add_action( 'manage_media_custom_column', array( __CLASS__, 'render_column' ), 10, 2 );
 		}
@@ -26,6 +29,10 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 		public static function add_columns( $columns ) {
 			$out = array();
 			foreach ( $columns as $key => $label ) {
+				if ( 'parent' === $key ) {
+					$out['ajcore_used'] = __( 'Used in', 'ajforms' ); // Replaces "Uploaded to": that only records the upload-time parent.
+					continue;
+				}
 				$out[ $key ] = $label;
 				if ( 'title' === $key ) {
 					$out['ajcore_id']      = __( 'ID', 'ajforms' );
@@ -59,11 +66,54 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 			return 'other';
 		}
 
+		/** Posts using this file: parent, featured image, or referenced in content. Capped for speed. */
+		private static function render_used_in( $post_id ) {
+			global $wpdb;
+			$ids  = array();
+			$parent = (int) wp_get_post_parent_id( $post_id );
+			if ( $parent ) {
+				$ids[] = $parent;
+			}
+			$featured = $wpdb->get_col( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_thumbnail_id' AND meta_value = %d LIMIT 10", $post_id ) );
+			$ids      = array_merge( $ids, array_map( 'intval', $featured ) );
+
+			$file = (string) get_post_meta( $post_id, '_wp_attached_file', true );
+			$stem = $file ? pathinfo( basename( $file ), PATHINFO_FILENAME ) : '';
+			$like = array( '%' . $wpdb->esc_like( 'wp-image-' . $post_id ) . '"%', '%' . $wpdb->esc_like( 'wp-image-' . $post_id ) . ' %' );
+			$sql  = "SELECT ID FROM {$wpdb->posts} WHERE post_type NOT IN ('attachment','revision','nav_menu_item') AND post_status NOT IN ('trash','auto-draft','inherit') AND (post_content LIKE %s OR post_content LIKE %s";
+			$args = $like;
+			if ( '' !== $stem && strlen( $stem ) > 5 ) {
+				$sql   .= ' OR post_content LIKE %s';
+				$args[] = '%' . $wpdb->esc_like( $stem ) . '%';
+			}
+			$sql .= ') LIMIT 10';
+			$in_content = $wpdb->get_col( $wpdb->prepare( $sql, $args ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			$ids        = array_values( array_unique( array_merge( $ids, array_map( 'intval', $in_content ) ) ) );
+
+			if ( ! $ids ) {
+				echo '<span style="color:#787c82">' . esc_html__( 'Not used', 'ajforms' ) . '</span>';
+				return;
+			}
+			$links = array();
+			foreach ( array_slice( $ids, 0, 3 ) as $id ) {
+				$title   = get_the_title( $id );
+				$links[] = '<a href="' . esc_url( get_edit_post_link( $id ) ) . '">' . esc_html( $title ? $title : '#' . $id ) . '</a>';
+			}
+			echo implode( '<br>', $links ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			if ( count( $ids ) > 3 ) {
+				echo '<br><span style="color:#787c82">' . esc_html( sprintf( __( '+%d more', 'ajforms' ), count( $ids ) - 3 ) ) . '</span>';
+			}
+		}
+
 		public static function render_column( $column, $post_id ) {
-			if ( ! in_array( $column, array( 'ajcore_id', 'ajcore_type', 'ajcore_storage' ), true ) ) {
+			if ( ! in_array( $column, array( 'ajcore_id', 'ajcore_type', 'ajcore_storage', 'ajcore_used' ), true ) ) {
 				return;
 			}
 			$post_id = (int) $post_id;
+			if ( 'ajcore_used' === $column ) {
+				self::render_used_in( $post_id );
+				return;
+			}
 			if ( 'ajcore_id' === $column ) {
 				echo esc_html( (string) $post_id );
 				return;
@@ -72,13 +122,14 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 			if ( 'ajcore_type' === $column ) {
 				$labels = self::labels();
 				$bucket = self::bucket_for( $post_id, $record );
-				echo esc_html( isset( $labels[ $bucket ] ) ? $labels[ $bucket ] : $bucket );
+				$colors = self::colors();
+				echo '<span class="ajcore-badge" style="--c:' . esc_attr( $colors[ $bucket ] ) . '">' . esc_html( isset( $labels[ $bucket ] ) ? $labels[ $bucket ] : $bucket ) . '</span>';
 				return;
 			}
 			if ( $record ) {
-				echo '<strong>RustFS</strong><br><code style="font-size:11px;overflow-wrap:anywhere">' . esc_html( $record->bucket . '/' . ltrim( $record->object_key, '/' ) ) . '</code>';
+				echo '<span class="ajcore-badge" style="--c:#4f46e5">RustFS</span><br><code class="ajcore-path" style="--c:#4f46e5">' . esc_html( $record->bucket . '/' . ltrim( $record->object_key, '/' ) ) . '</code>';
 			} else {
-				echo esc_html__( 'Local (Media)', 'ajforms' );
+				echo '<span class="ajcore-badge" style="--c:#0d9488">' . esc_html__( 'Local (Media)', 'ajforms' ) . '</span>';
 			}
 		}
 
@@ -113,8 +164,20 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 
 			$doc = "({$p}.post_mime_type = 'application/pdf' OR {$p}.post_mime_type LIKE 'application/msword%' OR {$p}.post_mime_type LIKE 'application/vnd.%' OR {$p}.post_mime_type LIKE 'text/%')";
 
+			// "In use" = has a parent, is a featured image, or is referenced in content (wp-image-<id> or file name).
+			$used = "({$p}.post_parent > 0"
+				. " OR EXISTS (SELECT 1 FROM {$wpdb->postmeta} m WHERE m.meta_key = '_thumbnail_id' AND m.meta_value = {$p}.ID)"
+				. " OR EXISTS (SELECT 1 FROM {$p} c WHERE c.post_type NOT IN ('attachment','revision','nav_menu_item') AND c.post_status NOT IN ('trash','auto-draft','inherit')"
+				. " AND (c.post_content LIKE CONCAT('%wp-image-', {$p}.ID, '\"%') OR c.post_content LIKE CONCAT('%wp-image-', {$p}.ID, ' %')"
+				. " OR EXISTS (SELECT 1 FROM {$wpdb->postmeta} af WHERE af.post_id = {$p}.ID AND af.meta_key = '_wp_attached_file'"
+				. " AND CHAR_LENGTH(SUBSTRING_INDEX(SUBSTRING_INDEX(af.meta_value, '/', -1), '.', 1)) > 5"
+				. " AND c.post_content LIKE CONCAT('%', SUBSTRING_INDEX(SUBSTRING_INDEX(af.meta_value, '/', -1), '.', 1), '%')))))";
+
 			return array(
 				'customer' => $customer,
+				'attached' => "NOT {$customer} AND {$p}.post_parent > 0",
+				'inuse'    => "NOT {$customer} AND {$used}",
+				'unused'   => "NOT {$customer} AND NOT {$used}",
 				'images'   => "NOT {$customer} AND {$p}.post_mime_type LIKE 'image/%'",
 				'docs'     => "NOT {$customer} AND {$doc}",
 				'av'       => "NOT {$customer} AND ({$p}.post_mime_type LIKE 'video/%' OR {$p}.post_mime_type LIKE 'audio/%')",
@@ -132,20 +195,49 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 				'docs'     => __( 'Documents', 'ajforms' ),
 				'av'       => __( 'Audio / video', 'ajforms' ),
 				'other'    => __( 'Other', 'ajforms' ),
+				'attached' => __( 'Attached', 'ajforms' ),
+				'inuse'    => __( 'In use', 'ajforms' ),
+				'unused'   => __( 'Unused', 'ajforms' ),
 				'rustfs'   => __( 'In RustFS', 'ajforms' ),
 				'mismatch' => __( 'Mapping mismatch', 'ajforms' ),
 			);
 		}
 
+		private static function colors() {
+			return array(
+				'all'      => '#2271b1',
+				'customer' => '#7c3aed',
+				'images'   => '#059669',
+				'docs'     => '#d97706',
+				'av'       => '#db2777',
+				'other'    => '#64748b',
+				'attached' => '#0891b2',
+				'inuse'    => '#16a34a',
+				'unused'   => '#ea580c',
+				'rustfs'   => '#4f46e5',
+				'mismatch' => '#dc2626',
+			);
+		}
+
 		private static function counts() {
 			global $wpdb;
+			$cached = get_transient( 'ajcore_media_tile_counts' );
+			if ( is_array( $cached ) ) {
+				return $cached;
+			}
 			$p    = $wpdb->posts;
 			$cols = array( "COUNT(*) AS `all`" );
 			foreach ( self::predicates() as $key => $sql ) {
 				$cols[] = "SUM({$sql}) AS `{$key}`";
 			}
 			$row = $wpdb->get_row( "SELECT " . implode( ', ', $cols ) . " FROM {$p} WHERE post_type = 'attachment' AND post_status IN ('inherit','private')", ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-			return is_array( $row ) ? array_map( 'intval', $row ) : array();
+			$row = is_array( $row ) ? array_map( 'intval', $row ) : array();
+			set_transient( 'ajcore_media_tile_counts', $row, 2 * MINUTE_IN_SECONDS );
+			return $row;
+		}
+
+		public static function flush_counts() {
+			delete_transient( 'ajcore_media_tile_counts' );
 		}
 
 		private static function is_media_list_screen() {
@@ -187,27 +279,60 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 			?>
 			<style>
 				.ajcore-media-tiles{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px}
-				.ajcore-media-tile{display:block;min-width:112px;padding:8px 12px;background:#fff;border:1px solid #c3c4c7;border-left:3px solid #2271b1;border-radius:3px;text-decoration:none;color:#1d2327}
-				.ajcore-media-tile:hover{border-color:#2271b1}
-				.ajcore-media-tile.is-active{background:#f0f6fc;border-color:#2271b1}
-				.ajcore-media-tile b{display:block;font-size:20px;line-height:1.2}
-				.ajcore-media-tile span{font-size:12px;color:#50575e}
-				.column-ajcore_id{width:90px}.column-ajcore_type{width:110px}.column-ajcore_storage{width:26%}
-				.ajcore-media-tile.is-warn{border-left-color:#d63638;background:#fcf0f1}
-				.ajcore-media-tile.is-overlay{border-left-color:#8c8f94;border-style:dashed}
+				.ajcore-media-tile{display:block;min-width:112px;padding:8px 14px;background:color-mix(in srgb,var(--c) 12%,#fff);border:1px solid color-mix(in srgb,var(--c) 35%,#fff);border-left:5px solid var(--c);border-radius:4px;text-decoration:none;color:#1d2327}
+				.ajcore-media-tile:hover{background:color-mix(in srgb,var(--c) 22%,#fff)}
+				.ajcore-media-tile.is-active{background:var(--c);border-color:var(--c)}
+				.ajcore-media-tile.is-active b,.ajcore-media-tile.is-active span{color:#fff}
+				.ajcore-media-tile b{display:block;font-size:22px;line-height:1.2;color:var(--c)}
+				.ajcore-media-tile span{font-size:12px;font-weight:600;color:#3c434a}
+				.ajcore-badge{display:inline-block;padding:2px 9px;border-radius:10px;font-size:12px;font-weight:600;color:#fff;background:var(--c)}
+				.ajcore-path{font-size:11px;overflow-wrap:anywhere;background:color-mix(in srgb,var(--c) 10%,#fff)}
+				.column-ajcore_id{width:90px}.column-ajcore_type{width:120px}.column-ajcore_storage{width:26%}.column-ajcore_used{width:16%}
 			</style>
 			<div class="ajcore-media-tiles">
 				<?php foreach ( $labels as $key => $label ) :
-					$url    = 'all' === $key ? $base : add_query_arg( self::QUERY_VAR, $key, $base );
+					$count  = isset( $counts[ $key ] ) ? (int) $counts[ $key ] : 0;
 					$active = ( 'all' === $key && '' === $current ) || $key === $current;
-					$class  = 'ajcore-media-tile' . ( $active ? ' is-active' : '' ) . ( in_array( $key, array( 'rustfs', 'mismatch' ), true ) ? ' is-overlay' : '' ) . ( 'mismatch' === $key && ! empty( $counts['mismatch'] ) ? ' is-warn' : '' );
+					if ( 0 === $count && ! $active && 'all' !== $key ) {
+						continue; // Hide empty tiles.
+					}
+					$url    = 'all' === $key ? $base : add_query_arg( self::QUERY_VAR, $key, $base );
+					$colors = self::colors();
 					?>
-					<a class="<?php echo esc_attr( $class ); ?>" href="<?php echo esc_url( $url ); ?>">
-						<b><?php echo esc_html( number_format_i18n( isset( $counts[ $key ] ) ? $counts[ $key ] : 0 ) ); ?></b>
+					<a class="ajcore-media-tile<?php echo $active ? ' is-active' : ''; ?>" style="--c:<?php echo esc_attr( $colors[ $key ] ); ?>" href="<?php echo esc_url( $url ); ?>">
+						<b><?php echo esc_html( number_format_i18n( $count ) ); ?></b>
 						<span><?php echo esc_html( $label ); ?></span>
 					</a>
 				<?php endforeach; ?>
 			</div>
+			<script>
+			(function () {
+				if (window.ajcoreMediaDynamic) { return; }
+				window.ajcoreMediaDynamic = true;
+				var busy = false;
+				function swap(url, push) {
+					if (busy) { return; }
+					busy = true;
+					var list = document.getElementById('posts-filter');
+					if (list) { list.style.opacity = '0.5'; }
+					fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.text(); }).then(function (html) {
+						var doc = new DOMParser().parseFromString(html, 'text/html');
+						['.ajcore-media-tiles', '#posts-filter'].forEach(function (sel) {
+							var cur = document.querySelector(sel), next = doc.querySelector(sel);
+							if (cur && next) { cur.replaceWith(next); }
+						});
+						if (push) { history.pushState({ ajcore: 1 }, '', url); }
+					}).catch(function () { window.location.href = url; }).finally(function () { busy = false; var l = document.getElementById('posts-filter'); if (l) { l.style.opacity = ''; } });
+				}
+				document.addEventListener('click', function (e) {
+					var a = e.target.closest ? e.target.closest('.ajcore-media-tile, .tablenav-pages a, .wp-list-table thead a, .wp-list-table tfoot a') : null;
+					if (!a || !a.href || e.metaKey || e.ctrlKey || e.shiftKey || a.target === '_blank') { return; }
+					e.preventDefault();
+					swap(a.href, true);
+				});
+				window.addEventListener('popstate', function () { swap(window.location.href, false); });
+			})();
+			</script>
 			<?php
 		}
 	}
