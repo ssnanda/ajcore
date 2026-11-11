@@ -596,6 +596,20 @@ class AJCore_REST_API {
 			)
 		);
 
+		// Recovery actions for a file whose stored object is missing or in the wrong folder.
+		register_rest_route(
+			self::NAMESPACE,
+			'/ops/files/(?P<id>\d+)/candidates',
+			array( 'methods' => WP_REST_Server::READABLE, 'callback' => array( $this, 'ops_file_candidates' ), 'permission_callback' => array( $this, 'can_manage_ops_api' ) )
+		);
+		foreach ( array( 'attach' => 'ops_file_attach', 'reattach' => 'ops_file_reattach', 'move-shared' => 'ops_file_move_shared' ) as $suffix => $callback ) {
+			register_rest_route(
+				self::NAMESPACE,
+				'/ops/files/(?P<id>\d+)/' . $suffix,
+				array( 'methods' => WP_REST_Server::CREATABLE, 'callback' => array( $this, $callback ), 'permission_callback' => array( $this, 'can_manage_ops_api' ) )
+			);
+		}
+
 		foreach ( $this->get_route_map() as $route => $args ) {
 			register_rest_route(
 				self::NAMESPACE,
@@ -776,7 +790,11 @@ class AJCore_REST_API {
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/ledger', 'auth' => 'Admin', 'purpose' => 'Billing ledger entries.', 'app' => 'OPS billing' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/tasks', 'auth' => 'Admin', 'purpose' => 'Task definitions and customer task statuses.', 'app' => 'OPS tasks' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/requests', 'auth' => 'Admin', 'purpose' => 'Request queue.', 'app' => 'OPS service desk' ),
-			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/files', 'auth' => 'Admin', 'purpose' => 'Shared files list with assignment labels.', 'app' => 'OPS files' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/files', 'auth' => 'Admin', 'purpose' => 'Shared files list with assignment labels, file_state (ok|recoverable|missing|wrong) and shared_folder_pending.', 'app' => 'OPS files' ),
+			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/files/{id}/candidates', 'auth' => 'Admin', 'purpose' => 'Objects in the storage bucket that could be this file (optional search). Used to re-attach a lost file.', 'app' => 'OPS files' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/files/{id}/attach', 'auth' => 'Admin', 'purpose' => 'Attach an existing bucket object (body: key) to a file record whose file is gone.', 'app' => 'OPS files' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/files/{id}/reattach', 'auth' => 'Admin', 'purpose' => 'Point a file record at the object its storage mapping still names.', 'app' => 'OPS files' ),
+			array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/files/{id}/move-shared', 'auth' => 'Admin', 'purpose' => 'Move a file shared with many customers into the shared storage folder.', 'app' => 'OPS files' ),
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Creates (or fetches, by session_uuid) a Live Chat session from a visitor widget message relayed by AJOps\' WS server.', 'app' => 'Live Chat' ),
 			array( 'surface' => 'System', 'method' => 'POST', 'path' => '/chat/sessions/{id}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Appends a visitor message to a Live Chat session.', 'app' => 'Live Chat' ),
 			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/chat/sessions/by-uuid/{uuid}/messages', 'auth' => 'Admin (AJOps service account)', 'purpose' => 'Message history for a returning visitor (restores the widget panel on a fresh tab/reload).', 'app' => 'Live Chat' ),
@@ -4407,6 +4425,8 @@ class AJCore_REST_API {
 				'file_url'      => $attachment_url ? (string) $attachment_url : '',
 				'filename'      => $filename,
 				'storage_path'  => $this->ops_file_storage_path( (int) $file->attachment_id ),
+				'file_state'    => $this->ops_file_state( (int) $file->attachment_id ),
+				'shared_folder_pending' => $this->ops_file_shared_folder_pending( (int) $file->attachment_id ),
 				'assignments'   => $assignments,
 				'tags'          => $this->ops_get_file_tags( (int) $file->id ),
 				'status'        => isset( $file->status ) && 'archived' === $file->status ? 'archived' : 'active',
@@ -4716,6 +4736,8 @@ class AJCore_REST_API {
 			'file_url'      => $attachment_url ?: '',
 			'filename'      => $filename,
 			'storage_path'  => $this->ops_file_storage_path( (int) $file->attachment_id ),
+			'file_state'    => $this->ops_file_state( (int) $file->attachment_id ),
+			'shared_folder_pending' => $this->ops_file_shared_folder_pending( (int) $file->attachment_id ),
 			'assignments'   => $assignments,
 			'tags'          => $this->ops_get_file_tags( (int) $file->id ),
 			'status'        => isset( $file->status ) && 'archived' === $file->status ? 'archived' : 'active',
@@ -4723,6 +4745,55 @@ class AJCore_REST_API {
 			'created_at'    => (string) $file->created_at,
 			'updated_at'    => (string) $file->updated_at,
 		);
+	}
+
+	// ── OPS Files: health + recovery actions ──────────────────────────────────────
+
+	private function ops_file_state( $attachment_id ) {
+		return class_exists( 'AJCore_Customer_Files' ) ? AJCore_Customer_Files::state_for( (int) $attachment_id ) : 'ok';
+	}
+
+	private function ops_file_shared_folder_pending( $attachment_id ) {
+		return class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::belongs_in_shared_folder( (int) $attachment_id );
+	}
+
+	/** Reply with the refreshed file row, or an error. */
+	private function ops_file_action_response( $file_id, $result ) {
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 400 ) );
+		}
+		return rest_ensure_response( $this->ops_get_file_row( (int) $file_id ) );
+	}
+
+	public function ops_file_candidates( WP_REST_Request $request ) {
+		$result = AJCore_Customer_Files::find_objects( absint( $request['id'] ), sanitize_text_field( (string) $request->get_param( 'search' ) ) );
+		if ( is_wp_error( $result ) ) {
+			return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 400 ) );
+		}
+		return rest_ensure_response( array( 'objects' => $result ) );
+	}
+
+	public function ops_file_attach( WP_REST_Request $request ) {
+		$body = $request->get_json_params();
+		$key  = is_array( $body ) && isset( $body['key'] ) ? sanitize_text_field( (string) $body['key'] ) : '';
+		return $this->ops_file_action_response( absint( $request['id'] ), AJCore_Customer_Files::attach_object( absint( $request['id'] ), $key ) );
+	}
+
+	public function ops_file_reattach( WP_REST_Request $request ) {
+		return $this->ops_file_action_response( absint( $request['id'] ), AJCore_Customer_Files::reattach( absint( $request['id'] ) ) );
+	}
+
+	public function ops_file_move_shared( WP_REST_Request $request ) {
+		global $wpdb;
+		$file_id = absint( $request['id'] );
+		$row     = $wpdb->get_row( $wpdb->prepare( "SELECT attachment_id FROM `{$wpdb->prefix}aj_portal_files` WHERE id = %d", $file_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		if ( ! $row ) {
+			return new WP_Error( 'not_found', 'File not found.', array( 'status' => 404 ) );
+		}
+		if ( ! AJCore_Storage_Service::belongs_in_shared_folder( (int) $row->attachment_id ) ) {
+			return new WP_Error( 'not_shared', 'This file does not belong in the shared folder.', array( 'status' => 400 ) );
+		}
+		return $this->ops_file_action_response( $file_id, AJCore_Storage_Service::relocate_to_expected( (int) $row->attachment_id ) );
 	}
 
 	// ── Mail intake endpoints ─────────────────────────────────────────────────

@@ -74,6 +74,28 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 		}
 
 		/**
+		 * Health of a Files record's file: 'ok', 'recoverable' (attachment gone but a storage mapping
+		 * names an object), 'missing' (attachment gone, nothing known) or 'wrong' (the ID is now a
+		 * site image that a post uses). Same rules as the Files list tiles in wp-admin.
+		 *
+		 * @param object|null $remote Storage record for the attachment, if already loaded.
+		 */
+		public static function state_for( $attachment_id, $remote = null ) {
+			$attachment_id = (int) $attachment_id;
+			if ( null === $remote && class_exists( 'AJCore_Storage_Service' ) ) {
+				$remote = AJCore_Storage_Service::get_remote_record( $attachment_id );
+			}
+			$post = get_post( $attachment_id );
+			if ( ! $post || 'attachment' !== $post->post_type ) {
+				return $remote ? 'recoverable' : 'missing';
+			}
+			if ( ! $remote && self::is_used_by_post( $attachment_id ) ) {
+				return 'wrong';
+			}
+			return 'ok';
+		}
+
+		/**
 		 * Whether deleting a Files record may also delete its attachment and remote object.
 		 * True only for a real attachment that no post uses. A record whose attachment is gone, was
 		 * replaced by another post, or is now a site image (an ID reused by a sync) must delete the
@@ -385,6 +407,10 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 			$row = $wpdb->get_row( $wpdb->prepare( "SELECT attachment_id FROM `{$wpdb->prefix}aj_portal_files` WHERE id = %d", isset( $_POST['file_id'] ) ? absint( $_POST['file_id'] ) : 0 ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			if ( ! $row || ! class_exists( 'AJCore_Storage_Service' ) ) {
 				wp_send_json_error( array( 'message' => __( 'File record not found.', 'ajforms' ) ) );
+			}
+			// Only the shared folder move is offered here; never relocate an ordinary customer's file.
+			if ( ! AJCore_Storage_Service::belongs_in_shared_folder( (int) $row->attachment_id ) ) {
+				wp_send_json_error( array( 'message' => __( 'This file does not belong in the shared folder.', 'ajforms' ) ) );
 			}
 			$result = AJCore_Storage_Service::relocate_to_expected( (int) $row->attachment_id );
 			if ( is_wp_error( $result ) ) {

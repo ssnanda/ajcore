@@ -521,6 +521,16 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return $record ? self::object_key_for_record( $record ) : '';
 		}
 
+		/** True when this file is shared widely enough to live under <tag>/shared/ but is stored somewhere else. */
+		public static function belongs_in_shared_folder( $attachment_id ) {
+			$record = self::get_remote_record( (int) $attachment_id );
+			if ( ! $record ) {
+				return false;
+			}
+			$expected = self::object_key_for_record( $record );
+			return false !== strpos( $expected, '/shared/' ) && $expected !== $record->object_key;
+		}
+
 		/**
 		 * Move an attachment's remote object to the folder it belongs in (see object_key_prefix()).
 		 * Copies first, repoints the mapping, then removes the old object only if no other record uses it.

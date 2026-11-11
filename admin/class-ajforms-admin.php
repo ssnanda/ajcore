@@ -26313,7 +26313,7 @@ class AJForms_Admin {
 												$path_short = count( $path_parts ) > 2 ? '…/' . implode( '/', array_slice( $path_parts, -2 ) ) : $path_text;
 												echo '<details class="ajc-path"><summary title="' . esc_attr( $path_text ) . '">' . esc_html( $path_short ) . '</summary><code>' . esc_html( $path_text ) . '</code></details>';
 												// A file shared with many customers should sit in the shared folder, not in one customer's.
-												if ( $remote_record && 'ok' === $row_state && class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::expected_object_key( (int) $file->attachment_id ) !== $remote_record->object_key ) {
+												if ( $remote_record && 'ok' === $row_state && class_exists( 'AJCore_Storage_Service' ) && AJCore_Storage_Service::belongs_in_shared_folder( (int) $file->attachment_id ) ) {
 													echo '<button type="button" class="button button-small ajcore-move-shared" data-file-id="' . esc_attr( (int) $file->id ) . '" style="margin-top:4px;">' . esc_html__( 'Move to shared folder', 'ajforms' ) . '</button> <span class="ajcore-reattach-msg"></span>';
 												}
 											} else {
