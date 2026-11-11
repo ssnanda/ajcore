@@ -26041,6 +26041,10 @@ class AJForms_Admin {
 										<td><?php
 											if ( $att_gone ) {
 												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html__( 'File missing', 'ajforms' ) . '</span>';
+												if ( $remote_record ) {
+													// The mapping still names a RustFS object; show where, so it can be found in the bucket.
+													echo '<br><code style="font-size:11px;overflow-wrap:anywhere;user-select:all;">' . esc_html( 's3://' . $remote_record->bucket . '/' . ltrim( $remote_record->object_key, '/' ) ) . '</code>';
+												}
 											} elseif ( $att_stale ) {
 												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html__( 'Wrong file (site image)', 'ajforms' ) . '</span>';
 											} else {
