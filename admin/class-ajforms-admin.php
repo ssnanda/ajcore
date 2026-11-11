@@ -25915,6 +25915,11 @@ class AJForms_Admin {
 					<div class="ajforms-file-field">
 						<label><?php esc_html_e( 'Share With Users', 'ajforms' ); ?></label>
 						<input type="search" id="ajforms-user-list-search" placeholder="<?php esc_attr_e( 'Search users by name or email…', 'ajforms' ); ?>" style="width:100%;max-width:420px;margin-bottom:8px;" autocomplete="off">
+						<p style="margin:0 0 6px;display:flex;gap:12px;align-items:center;">
+							<button type="button" class="button button-small" id="ajforms-user-select-shown"><?php esc_html_e( 'Select all shown', 'ajforms' ); ?></button>
+							<button type="button" class="button button-small" id="ajforms-user-clear"><?php esc_html_e( 'Clear', 'ajforms' ); ?></button>
+							<span class="description"><?php esc_html_e( 'To share with everyone, leave the search empty and click Select all shown.', 'ajforms' ); ?></span>
+						</p>
 						<div class="ajforms-user-list" id="ajforms-user-list" style="max-height:240px;overflow-y:auto;">
 							<?php foreach ( $users as $user ) : ?>
 								<label class="ajforms-user-list-item" data-search="<?php echo esc_attr( strtolower( $user->display_name . ' ' . $user->user_email ) ); ?>" style="display:block;">
@@ -25935,8 +25940,11 @@ class AJForms_Admin {
 							var summary = document.getElementById('ajforms-user-list-selected');
 							function updateSummary(){
 								var checked = items.filter(function(item){ return item.querySelector('input').checked; });
+								// Long lists collapse to a count; a handful are named.
 								summary.textContent = checked.length
-									? '<?php echo esc_js( __( 'Selected:', 'ajforms' ) ); ?> ' + checked.map(function(item){ return item.textContent.trim(); }).join(', ')
+									? (checked.length > 5
+										? checked.length + ' <?php echo esc_js( __( 'customers selected', 'ajforms' ) ); ?>'
+										: '<?php echo esc_js( __( 'Selected:', 'ajforms' ) ); ?> ' + checked.map(function(item){ return item.textContent.trim(); }).join(', '))
 									: '';
 							}
 							function filter(){
@@ -25952,6 +25960,16 @@ class AJForms_Admin {
 							}
 							search.addEventListener('input', filter);
 							list.addEventListener('change', function(){ updateSummary(); });
+							var selectShown = document.getElementById('ajforms-user-select-shown');
+							var clearAll = document.getElementById('ajforms-user-clear');
+							if(selectShown){ selectShown.addEventListener('click', function(){
+								items.forEach(function(item){ if(item.style.display !== 'none'){ item.querySelector('input').checked = true; } });
+								updateSummary();
+							}); }
+							if(clearAll){ clearAll.addEventListener('click', function(){
+								items.forEach(function(item){ item.querySelector('input').checked = false; });
+								updateSummary(); filter();
+							}); }
 							updateSummary();
 						})();
 						</script>
@@ -26217,7 +26235,7 @@ class AJForms_Admin {
 									<?php 'archived' === $file_status ? esc_html_e( 'Restore Selected', 'ajforms' ) : esc_html_e( 'Archive Selected', 'ajforms' ); ?>
 								</button>
 								<button type="submit" id="ajf-file-bulk-delete-btn" style="padding:6px 16px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;"
-									onclick="document.getElementById('ajf_file_bulk_action').value='delete';return confirm('<?php echo esc_js( __( 'Permanently delete the selected AJCore records and any Media/RustFS files not referenced by another AJCore record?', 'ajforms' ) ); ?>');">
+									onclick="document.getElementById('ajf_file_bulk_action').value='delete';return confirm('<?php echo esc_js( __( 'Permanently delete the selected AJCore records and any Media/RustFS files not referenced by another AJCore record? Files shared with several customers are removed for all of them.', 'ajforms' ) ); ?>');">
 									<?php esc_html_e( 'Delete Selected', 'ajforms' ); ?>
 								</button>
 							</div>
@@ -26331,7 +26349,7 @@ class AJForms_Admin {
 											<?php $status_action = 'archived' === $file_status ? 'restore' : 'archive'; ?>
 											<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => $status_action, 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_' . $status_action . '_portal_file_' . (int) $file->id ) ); ?>"><?php 'restore' === $status_action ? esc_html_e( 'Restore', 'ajforms' ) : esc_html_e( 'Archive', 'ajforms' ); ?></a>
 											&nbsp;
-											<a class="button button-small" style="color:#b91c1c;border-color:#fca5a5;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => 'delete', 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_delete_portal_file_' . (int) $file->id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Permanently delete this AJCore record and its Media/RustFS file if no other AJCore record references it?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
+											<a class="button button-small" style="color:#b91c1c;border-color:#fca5a5;" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'portal_file_action' => 'delete', 'file_id' => (int) $file->id ), admin_url( 'admin.php' ) ), 'ajf_delete_portal_file_' . (int) $file->id ) ); ?>" onclick="return confirm('<?php echo esc_js( count( (array) $labels ) > 1 ? sprintf( /* translators: %d: number of customers */ __( 'This file is shared with %d customers. Deleting it removes it for ALL of them and deletes the stored file. Use Archive to hide it instead. Delete anyway?', 'ajforms' ), count( (array) $labels ) ) : __( 'Permanently delete this AJCore record and its Media/RustFS file if no other AJCore record references it?', 'ajforms' ) ); ?>');"><?php esc_html_e( 'Delete', 'ajforms' ); ?></a>
 										</td>
 									</tr>
 								<?php endforeach; ?>
