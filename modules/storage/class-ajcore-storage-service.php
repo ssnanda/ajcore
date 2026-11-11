@@ -405,8 +405,8 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		}
 
 		/**
-		 * Moves existing customer-file attachments (rows in aj_portal_files below the reserved
-		 * range) to ID + range start, in one transaction. RustFS objects are not touched; only
+		 * Moves existing customer-file attachments (aj_portal_files rows, plus offloaded files under a
+		 * customer path, below the reserved range) to ID + range start, in one transaction. RustFS objects are not touched; only
 		 * the mapping row's attachment_id changes. Dry run by default.
 		 */
 		public static function renumber_customer_files( $dry_run = true ) {
@@ -414,7 +414,11 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			$offset = self::customer_file_id_start();
 			$files  = $wpdb->prefix . 'aj_portal_files';
 			$ids    = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
-				"SELECT DISTINCT f.attachment_id FROM `{$files}` f INNER JOIN {$wpdb->posts} p ON p.ID = f.attachment_id AND p.post_type = 'attachment' WHERE f.attachment_id > 0 AND f.attachment_id < %d ORDER BY f.attachment_id",
+				"SELECT DISTINCT x.attachment_id FROM (
+					SELECT attachment_id FROM `{$files}`
+					UNION
+					SELECT attachment_id FROM `" . self::table() . "` WHERE object_key LIKE '%/user-%' OR object_key LIKE '%/customer-%' OR object_key LIKE 'customer-%' OR object_key LIKE '%/unassigned/%'
+				) x INNER JOIN {$wpdb->posts} p ON p.ID = x.attachment_id AND p.post_type = 'attachment' WHERE x.attachment_id > 0 AND x.attachment_id < %d ORDER BY x.attachment_id",
 				$offset
 			) ) );
 			$result = array( 'total' => count( $ids ), 'moved' => 0, 'offset' => $offset, 'conflicts' => array(), 'min' => $ids ? min( $ids ) : 0, 'max' => $ids ? max( $ids ) : 0, 'error' => '' );
@@ -1293,6 +1297,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				$path = $record ? 's3://' . $record->bucket . '/' . ltrim( $record->object_key, '/' ) : $local_path;
 				$inventory[] = array(
 					'id'       => (int) $row->id,
+					'media_id' => (int) $row->attachment_id,
 					'title'    => (string) $row->title,
 					'filename' => $path ? basename( $path ) : '',
 					'storage'  => $record ? 'RustFS' : 'Media',
@@ -1439,8 +1444,9 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				<button type="button" class="button" id="ajcore_storage_preview_migration"><?php esc_html_e( 'Preview Migration', 'ajforms' ); ?></button>
 				<button type="button" class="button button-secondary" id="ajcore_storage_migrate_now" disabled><?php esc_html_e( 'Migrate Documents Now', 'ajforms' ); ?></button>
 				<div id="ajcore_storage_migrate_result" style="margin-top:12px"></div>
-			</div>
-			<div class="card" style="max-width:none">
+
+				<hr />
+
 				<h2><?php esc_html_e( 'Customer File IDs', 'ajforms' ); ?></h2>
 				<p>
 					<button type="button" class="button" id="ajcore_storage_renumber_preview"><?php esc_html_e( 'Preview', 'ajforms' ); ?></button>
@@ -1576,11 +1582,11 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 						var table = document.createElement('table');
 						table.className = 'widefat striped';
 						var head = table.createTHead().insertRow();
-						['Title', 'Filename', 'Storage', 'Path'].forEach(function (label) { var th = document.createElement('th'); th.textContent = label; head.appendChild(th); });
+						['Media ID', 'Title', 'Filename', 'Storage', 'Path'].forEach(function (label) { var th = document.createElement('th'); th.textContent = label; head.appendChild(th); });
 						var tbody = table.createTBody();
 						res.data.files.forEach(function (file) {
 							var row = tbody.insertRow();
-							[file.title, file.filename, file.storage].forEach(function (value) { var cell = row.insertCell(); cell.textContent = value; });
+							[file.media_id, file.title, file.filename, file.storage].forEach(function (value) { var cell = row.insertCell(); cell.textContent = value; });
 							var pathCell = row.insertCell();
 							var code = document.createElement('code');
 							code.textContent = file.path || <?php echo wp_json_encode( __( 'Path unavailable', 'ajforms' ) ); ?>;

@@ -19,6 +19,67 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 			add_action( 'admin_notices', array( __CLASS__, 'render' ) );
 			add_action( 'pre_get_posts', array( __CLASS__, 'filter_query' ) );
 			add_filter( 'posts_where', array( __CLASS__, 'filter_where' ), 10, 2 );
+			add_filter( 'manage_media_columns', array( __CLASS__, 'add_columns' ) );
+			add_action( 'manage_media_custom_column', array( __CLASS__, 'render_column' ), 10, 2 );
+		}
+
+		public static function add_columns( $columns ) {
+			$out = array();
+			foreach ( $columns as $key => $label ) {
+				$out[ $key ] = $label;
+				if ( 'title' === $key ) {
+					$out['ajcore_id']      = __( 'ID', 'ajforms' );
+					$out['ajcore_type']    = __( 'Type', 'ajforms' );
+					$out['ajcore_storage'] = __( 'Stored in', 'ajforms' );
+				}
+			}
+			return $out;
+		}
+
+		/** Bucket key for one attachment, using the same rules as the tiles. */
+		private static function bucket_for( $post_id, $record ) {
+			global $wpdb;
+			$files = $wpdb->prefix . 'aj_portal_files';
+			$in_portal = self::table_exists( $files ) && (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$files}` WHERE attachment_id = %d", $post_id ) ) > 0; // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$key       = $record ? (string) $record->object_key : '';
+			$by_path   = $key && ( false !== strpos( $key, '/user-' ) || false !== strpos( $key, '/customer-' ) || 0 === strpos( $key, 'customer-' ) || false !== strpos( $key, '/unassigned/' ) );
+			if ( $in_portal || $by_path ) {
+				return 'customer';
+			}
+			$mime = (string) get_post_mime_type( $post_id );
+			if ( 0 === strpos( $mime, 'image/' ) ) {
+				return 'images';
+			}
+			if ( 0 === strpos( $mime, 'video/' ) || 0 === strpos( $mime, 'audio/' ) ) {
+				return 'av';
+			}
+			if ( 'application/pdf' === $mime || 0 === strpos( $mime, 'application/msword' ) || 0 === strpos( $mime, 'application/vnd.' ) || 0 === strpos( $mime, 'text/' ) ) {
+				return 'docs';
+			}
+			return 'other';
+		}
+
+		public static function render_column( $column, $post_id ) {
+			if ( ! in_array( $column, array( 'ajcore_id', 'ajcore_type', 'ajcore_storage' ), true ) ) {
+				return;
+			}
+			$post_id = (int) $post_id;
+			if ( 'ajcore_id' === $column ) {
+				echo esc_html( (string) $post_id );
+				return;
+			}
+			$record = class_exists( 'AJCore_Storage_Service' ) ? AJCore_Storage_Service::get_remote_record( $post_id ) : null;
+			if ( 'ajcore_type' === $column ) {
+				$labels = self::labels();
+				$bucket = self::bucket_for( $post_id, $record );
+				echo esc_html( isset( $labels[ $bucket ] ) ? $labels[ $bucket ] : $bucket );
+				return;
+			}
+			if ( $record ) {
+				echo '<strong>RustFS</strong><br><code style="font-size:11px;overflow-wrap:anywhere">' . esc_html( $record->bucket . '/' . ltrim( $record->object_key, '/' ) ) . '</code>';
+			} else {
+				echo esc_html__( 'Local (Media)', 'ajforms' );
+			}
 		}
 
 		private static function table_exists( $table ) {
@@ -33,9 +94,15 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 			$objs  = $wpdb->prefix . 'aj_storage_objects';
 			$p     = $wpdb->posts;
 
-			$customer = self::table_exists( $files )
+			// Customer file = a portal-files row, or an offloaded file stored under a customer path
+			// (user-<id>-…, customer-…, unassigned) even when no portal-files row exists.
+			$by_portal = self::table_exists( $files )
 				? "EXISTS (SELECT 1 FROM `{$files}` f WHERE f.attachment_id = {$p}.ID)"
 				: '0=1';
+			$by_path   = self::table_exists( $objs )
+				? "EXISTS (SELECT 1 FROM `{$objs}` c WHERE c.attachment_id = {$p}.ID AND (c.object_key LIKE '%/user-%' OR c.object_key LIKE '%/customer-%' OR c.object_key LIKE 'customer-%' OR c.object_key LIKE '%/unassigned/%'))"
+				: '0=1';
+			$customer = "({$by_portal} OR {$by_path})";
 			$remote   = self::table_exists( $objs )
 				? "EXISTS (SELECT 1 FROM `{$objs}` o WHERE o.attachment_id = {$p}.ID)"
 				: '0=1';
@@ -125,6 +192,7 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 				.ajcore-media-tile.is-active{background:#f0f6fc;border-color:#2271b1}
 				.ajcore-media-tile b{display:block;font-size:20px;line-height:1.2}
 				.ajcore-media-tile span{font-size:12px;color:#50575e}
+				.column-ajcore_id{width:90px}.column-ajcore_type{width:110px}.column-ajcore_storage{width:26%}
 				.ajcore-media-tile.is-warn{border-left-color:#d63638;background:#fcf0f1}
 				.ajcore-media-tile.is-overlay{border-left-color:#8c8f94;border-style:dashed}
 			</style>
