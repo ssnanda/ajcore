@@ -236,7 +236,12 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 			if ( is_wp_error( $listing ) ) {
 				return $listing;
 			}
-			$taken = array_flip( (array) $wpdb->get_col( $wpdb->prepare( "SELECT object_key FROM `{$objs}` WHERE bucket = %s", $settings['bucket'] ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( ! $listing ) {
+				return new WP_Error( 'ajcore_find_empty_listing', sprintf( /* translators: %s: bucket name */ __( 'The bucket listing for "%s" came back empty. Check the storage endpoint, bucket and credentials.', 'ajforms' ), $settings['bucket'] ) );
+			}
+			// An object is "taken" only when a mapping with a real attachment behind it uses it. Orphan mappings
+			// (their attachment is gone) don't count: they are exactly the records being recovered.
+			$taken = array_flip( (array) $wpdb->get_col( $wpdb->prepare( "SELECT o.object_key FROM `{$objs}` o INNER JOIN {$wpdb->posts} p ON p.ID = o.attachment_id AND p.post_type = 'attachment' WHERE o.bucket = %s", $settings['bucket'] ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
 			// Folder fragments for this record's recipients, matching AJCore's key layout.
 			$fragments = array();
@@ -318,7 +323,7 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 			if ( ! $client ) {
 				return new WP_Error( 'ajcore_attach_no_client', __( 'Remote storage is not configured.', 'ajforms' ) );
 			}
-			if ( (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$objs}` WHERE bucket = %s AND object_key = %s", $settings['bucket'], $object_key ) ) > 0 ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$objs}` o INNER JOIN {$wpdb->posts} p ON p.ID = o.attachment_id AND p.post_type = 'attachment' WHERE o.bucket = %s AND o.object_key = %s", $settings['bucket'], $object_key ) ) > 0 ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				return new WP_Error( 'ajcore_attach_taken', __( 'Another record already uses this file.', 'ajforms' ) );
 			}
 			$head = $client->head_object( $object_key );
@@ -350,6 +355,8 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 			$new_id = (int) $new_id;
 
 			$wpdb->query( 'START TRANSACTION' );
+			// Drop any orphan mapping (its attachment is gone) that still names this object; the new record replaces it.
+			$wpdb->query( $wpdb->prepare( "DELETE o FROM `{$objs}` o LEFT JOIN {$wpdb->posts} p ON p.ID = o.attachment_id AND p.post_type = 'attachment' WHERE p.ID IS NULL AND o.bucket = %s AND o.object_key = %s", $settings['bucket'], $object_key ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			$ok = AJCore_Storage_Service::record_existing_object( $new_id, $settings['bucket'], $object_key, (int) $head['content_length'], $mime )
 				&& false !== $wpdb->update( $files, array( 'attachment_id' => $new_id ), array( 'id' => (int) $row->id ), array( '%d' ), array( '%d' ) );
 			if ( ! $ok ) {
