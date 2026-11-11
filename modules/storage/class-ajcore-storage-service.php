@@ -214,8 +214,17 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			} else {
 				$saved = get_option( self::OPTION_KEY, array() );
 			}
-			$saved = is_array( $saved ) ? $saved : array();
-			return wp_parse_args( $saved, self::get_default_settings() );
+			$saved    = is_array( $saved ) ? $saved : array();
+			$settings = wp_parse_args( $saved, self::get_default_settings() );
+			// Environment config belongs outside the database. Constants in wp-config.php win over the
+			// saved option, so endpoint/bucket/credentials can differ per site without ever syncing.
+			foreach ( array( 'enabled', 'provider', 'endpoint', 'console_url', 'region', 'bucket', 'access_key', 'secret_key', 'path_style' ) as $key ) {
+				$const = 'AJCORE_STORAGE_' . strtoupper( $key );
+				if ( defined( $const ) ) {
+					$settings[ $key ] = (string) constant( $const );
+				}
+			}
+			return $settings;
 		}
 
 		public static function update_settings( $settings ) {
@@ -430,18 +439,12 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			// references and report it instead.
 			$skipped = array();
 			foreach ( $ids as $candidate ) {
-				$featured = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_thumbnail_id' AND meta_value = %d", $candidate ) );
-				$in_body  = $featured ? 0 : (int) $wpdb->get_var( $wpdb->prepare(
-					"SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type NOT IN ('attachment','revision') AND post_status NOT IN ('trash','auto-draft') AND (post_content LIKE %s OR post_content LIKE %s)",
-					'%' . $wpdb->esc_like( 'wp-image-' . $candidate ) . '"%',
-					'%' . $wpdb->esc_like( 'wp-image-' . $candidate ) . ' %'
-				) );
-				if ( $featured || $in_body ) {
+				if ( AJCore_Customer_Files::is_used_by_post( $candidate ) ) {
 					$skipped[] = $candidate;
 				}
 			}
 			$ids    = array_values( array_diff( $ids, $skipped ) );
-			$result = array( 'total' => count( $ids ), 'moved' => 0, 'offset' => $offset, 'conflicts' => array(), 'skipped' => $skipped, 'min' => $ids ? min( $ids ) : 0, 'max' => $ids ? max( $ids ) : 0, 'error' => '' );
+			$result = array( 'total' => count( $ids ), 'moved' => 0, 'offset' => $offset, 'conflicts' => array(), 'skipped' => $skipped, 'orphans' => AJCore_Customer_Files::orphans(), 'min' => $ids ? min( $ids ) : 0, 'max' => $ids ? max( $ids ) : 0, 'error' => '' );
 			if ( ! $ids ) {
 				return $result;
 			}
@@ -573,7 +576,23 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return false !== $wpdb->update( self::table(), array( 'bucket' => $bucket, 'object_key' => $object_key ), array( 'attachment_id' => (int) $attachment_id ), array( '%s', '%s' ), array( '%d' ) );
 		}
 
+		/**
+		 * Key for an EXISTING mapping row: the current tag/customer path plus the stored file name,
+		 * untouched. Never re-derived from the attachment ID, so renumbering an attachment (or a key
+		 * created under an older naming scheme) can't make a stored key look wrong and trigger a copy.
+		 */
+		private static function object_key_for_record( $record, $user_id = 0, $user_login = '' ) {
+			return self::object_key_prefix( (int) $record->attachment_id, $user_id, $user_login ) . '/' . basename( (string) $record->object_key );
+		}
+
 		private static function object_key_for_attachment( $attachment_id, $filename, $user_id = 0, $user_login = '' ) {
+			// The attachment ID keeps same-named files (e.g. a flyer uploaded twice) from overwriting each other.
+			$base = preg_replace( '/^' . preg_quote( (string) (int) $attachment_id, '/' ) . '-/', '', sanitize_file_name( $filename ) );
+			return self::object_key_prefix( $attachment_id, $user_id, $user_login ) . '/' . (int) $attachment_id . '-' . $base;
+		}
+
+		/** tag/customer path part of a key. */
+		private static function object_key_prefix( $attachment_id, $user_id = 0, $user_login = '' ) {
 			global $wpdb;
 			$attachment_id = (int) $attachment_id;
 			$files_table = $wpdb->prefix . 'aj_portal_files';
@@ -599,9 +618,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				$user_login = $user ? $user->user_login : '';
 			}
 			$customer = $user_id ? 'user-' . $user_id . '-' . sanitize_title( $user_login ) : ( $assigned_email ? 'customer-' . sanitize_title( $assigned_email ) : 'unassigned' );
-			// The attachment ID keeps same-named files (e.g. a flyer uploaded twice) from overwriting each other.
-			$base = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', sanitize_file_name( $filename ) );
-			return $tag . '/' . $customer . '/' . $attachment_id . '-' . $base;
+			return $tag . '/' . $customer;
 		}
 
 		// -----------------------------------------------------------------
@@ -631,9 +648,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			$settings = self::get_settings();
 			$record = self::get_remote_record( $attachment_id );
 			if ( $record ) {
-				$filename = basename( $record->object_key );
-				$filename = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', $filename );
-				$new_key = self::object_key_for_attachment( $attachment_id, $filename );
+				$new_key = self::object_key_for_record( $record );
 				if ( $record->bucket === $settings['bucket'] && $record->object_key === $new_key ) {
 					return true;
 				}
@@ -793,10 +808,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			) );
 			foreach ( $records as $record ) {
 				$attachment_id = (int) $record->attachment_id;
-				$local_path = get_attached_file( $attachment_id );
-				$filename = $local_path ? basename( $local_path ) : basename( $record->object_key );
-				$filename = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', $filename );
-				$new_key = self::object_key_for_attachment( $attachment_id, $filename, $user_id, $new_login );
+				$new_key = self::object_key_for_record( $record, $user_id, $new_login );
 				if ( $new_key === $record->object_key ) {
 					continue;
 				}
@@ -1103,8 +1115,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				}
 				if ( $record ) {
 					$settings = self::get_settings();
-					$filename = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', basename( $record->object_key ) );
-					$expected_key = self::object_key_for_attachment( $attachment_id, $filename );
+					$expected_key = self::object_key_for_record( $record );
 					if ( $record->bucket === $settings['bucket'] && $record->object_key === $expected_key ) {
 						$preview['already_there']++;
 					} else {
@@ -1157,8 +1168,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				$record = self::get_remote_record( $attachment_id );
 				if ( $record ) {
 					$settings = self::get_settings();
-					$filename = preg_replace( '/^' . preg_quote( (string) $attachment_id, '/' ) . '-/', '', basename( $record->object_key ) );
-					$expected_key = self::object_key_for_attachment( $attachment_id, $filename );
+					$expected_key = self::object_key_for_record( $record );
 					if ( $record->bucket === $settings['bucket'] && $record->object_key === $expected_key ) {
 						$results['skipped'][] = $attachment_id;
 						continue;
@@ -1731,6 +1741,10 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 						if (!res.success) { out.textContent = (res.data && res.data.message) ? res.data.message : 'Request failed.'; return; }
 						var d = res.data;
 						var t = 'Files below range: ' + d.total + (d.total ? ' (IDs ' + d.min + '–' + d.max + ', +' + d.offset + ')' : '');
+						if (d.orphans && (d.orphans.mappings.length || d.orphans.portal_rows.length)) {
+							t += '\nOrphans (report only): ' + d.orphans.mappings.length + ' storage mappings without a file, ' + d.orphans.portal_rows.length + ' Files rows without an attachment';
+							if (d.orphans.portal_rows.length) { t += '\n  Files rows: ' + d.orphans.portal_rows.map(function (r) { return r.title + ' (#' + r.attachment_id + ')'; }).join(', '); }
+						}
 						if (d.skipped && d.skipped.length) { t += '\nSkipped, used by a post (not a customer file?): ' + d.skipped.join(', '); }
 						if (d.conflicts && d.conflicts.length) { t += '\nBlocked, target IDs already exist: ' + d.conflicts.join(', '); }
 						if (d.error) { t += '\nRolled back: ' + d.error; }

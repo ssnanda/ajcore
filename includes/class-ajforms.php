@@ -7952,6 +7952,8 @@ class AJForms {
 			exit;
 		}
 
+		AJCore_Customer_Files::mark( (int) $attachment_id );
+
 		$metadata = wp_generate_attachment_metadata( (int) $attachment_id, $file_path );
 		if ( is_array( $metadata ) ) {
 			wp_update_attachment_metadata( (int) $attachment_id, $metadata );

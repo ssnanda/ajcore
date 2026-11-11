@@ -454,6 +454,7 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 				'unused'   => __( 'Unused', 'ajforms' ),
 				'rustfs'   => __( 'In RustFS', 'ajforms' ),
 				'mismatch' => __( 'Mapping mismatch', 'ajforms' ),
+				'orphans'  => __( 'Orphan records', 'ajforms' ),
 			);
 		}
 
@@ -470,6 +471,7 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 				'unused'   => '#ea580c',
 				'rustfs'   => '#4f46e5',
 				'mismatch' => '#dc2626',
+				'orphans'  => '#b45309',
 			);
 		}
 
@@ -486,6 +488,10 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 			}
 			$row = $wpdb->get_row( "SELECT " . implode( ', ', $cols ) . " FROM {$p} WHERE post_type = 'attachment' AND post_status IN ('inherit','private')", ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 			$row = is_array( $row ) ? array_map( 'intval', $row ) : array();
+			if ( class_exists( 'AJCore_Customer_Files' ) ) {
+				$orphans        = AJCore_Customer_Files::orphans();
+				$row['orphans'] = count( $orphans['mappings'] ) + count( $orphans['portal_rows'] );
+			}
 			set_transient( 'ajcore_media_tile_counts', $row, 2 * MINUTE_IN_SECONDS );
 			return $row;
 		}
@@ -560,8 +566,12 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 					}
 					$url    = 'all' === $key ? $base : add_query_arg( self::QUERY_VAR, $key, $base );
 					$colors = self::colors();
+					$away   = 'orphans' === $key; // Not a media filter: orphans have no attachment. Opens the storage page.
+					if ( $away ) {
+						$url = admin_url( 'admin.php?page=ajforms-settings&section=storage' );
+					}
 					?>
-					<a class="ajcore-media-tile<?php echo $active ? ' is-active' : ''; ?>" style="--c:<?php echo esc_attr( $colors[ $key ] ); ?>" href="<?php echo esc_url( $url ); ?>">
+					<a<?php echo $away ? ' data-away="1"' : ''; ?> class="ajcore-media-tile<?php echo $active ? ' is-active' : ''; ?>" style="--c:<?php echo esc_attr( $colors[ $key ] ); ?>" href="<?php echo esc_url( $url ); ?>">
 						<b><?php echo esc_html( number_format_i18n( $count ) ); ?></b>
 						<span><?php echo esc_html( $label ); ?></span>
 					</a>
@@ -588,7 +598,7 @@ if ( ! class_exists( 'AJCore_Media_Dashboard' ) ) {
 				}
 				document.addEventListener('click', function (e) {
 					var a = e.target.closest ? e.target.closest('.ajcore-media-tile, .tablenav-pages a, .wp-list-table thead a, .wp-list-table tfoot a') : null;
-					if (!a || !a.href || e.metaKey || e.ctrlKey || e.shiftKey || a.target === '_blank') { return; }
+					if (!a || a.getAttribute('data-away') || !a.href || e.metaKey || e.ctrlKey || e.shiftKey || a.target === '_blank') { return; }
 					e.preventDefault();
 					swap(a.href, true);
 				});

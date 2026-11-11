@@ -4464,6 +4464,7 @@ class AJCore_REST_API {
 			if ( is_wp_error( $attachment_id ) ) {
 				return $attachment_id;
 			}
+			AJCore_Customer_Files::mark( $attachment_id );
 
 			$uploaded_file_path = $uploaded['file'];
 

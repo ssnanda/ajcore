@@ -13319,6 +13319,7 @@ class AJForms_Admin {
 				$last_error = $attachment_id->get_error_message();
 				continue;
 			}
+			AJCore_Customer_Files::mark( (int) $attachment_id );
 			wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $uploaded['file'] ) );
 
 			$wpdb->insert(
@@ -26032,7 +26033,20 @@ class AJForms_Admin {
 											$tag_slugs = $this->get_portal_file_tags( (int) $file->id );
 											echo esc_html( implode( ' ', array_map( function ( $slug ) use ( $file_settings ) { return '#' . ( $file_settings['tags'][ $slug ] ?? $slug ); }, $tag_slugs ) ) );
 										?></td>
-										<td><?php echo $file_url ? esc_html( basename( parse_url( $file_url, PHP_URL_PATH ) ) ) : esc_html__( 'Missing attachment', 'ajforms' ); ?></td>
+										<?php
+										$att_post   = get_post( (int) $file->attachment_id );
+										$att_gone   = ! $att_post || 'attachment' !== $att_post->post_type;
+										$att_stale  = ! $att_gone && ! $remote_record && class_exists( 'AJCore_Customer_Files' ) && AJCore_Customer_Files::is_used_by_post( (int) $file->attachment_id );
+										?>
+										<td><?php
+											if ( $att_gone ) {
+												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html__( 'File missing', 'ajforms' ) . '</span>';
+											} elseif ( $att_stale ) {
+												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html__( 'Wrong file (site image)', 'ajforms' ) . '</span>';
+											} else {
+												echo $file_url ? esc_html( basename( parse_url( $file_url, PHP_URL_PATH ) ) ) : esc_html__( 'Missing attachment', 'ajforms' );
+											}
+										?></td>
 										<td><span style="display:inline-block;padding:3px 9px;border-radius:999px;background:<?php echo $remote_record ? '#dcfce7' : '#e2e8f0'; ?>;color:<?php echo $remote_record ? '#166534' : '#334155'; ?>;font-weight:700;font-size:12px;"><?php echo esc_html( $storage_type ); ?></span></td>
 										<td>
 											<?php if ( empty( $labels ) ) : ?>
