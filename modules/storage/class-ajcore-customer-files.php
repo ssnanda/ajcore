@@ -74,6 +74,22 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 		}
 
 		/**
+		 * Whether deleting a Files record may also delete its attachment and remote object.
+		 * True only for a real attachment that no post uses. A record whose attachment is gone, was
+		 * replaced by another post, or is now a site image (an ID reused by a sync) must delete the
+		 * record only: removing the "attachment" would destroy an unrelated file, or the remote
+		 * object that a Reattach could still recover.
+		 */
+		public static function owns_attachment( $attachment_id ) {
+			$attachment_id = (int) $attachment_id;
+			$post          = get_post( $attachment_id );
+			if ( ! $post || 'attachment' !== $post->post_type ) {
+				return false;
+			}
+			return ! self::is_used_by_post( $attachment_id );
+		}
+
+		/**
 		 * One-time, per site: flag existing customer attachments (portal-file rows whose attachment
 		 * exists and is not a site image in use by a post). Idempotent. Not synced: ajcore_ options
 		 * are site-owned.

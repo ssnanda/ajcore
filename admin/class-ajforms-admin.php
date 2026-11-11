@@ -14562,13 +14562,15 @@ class AJForms_Admin {
 			(int) $file->attachment_id,
 			(int) $file_id
 		) );
-		if ( 0 === $other_references && class_exists( 'AJCore_Storage_Service' ) ) {
+		// Delete the Media file and remote object only when this record really owns them (see owns_attachment()).
+		$owns_attachment = 0 === $other_references && AJCore_Customer_Files::owns_attachment( (int) $file->attachment_id );
+		if ( $owns_attachment && class_exists( 'AJCore_Storage_Service' ) ) {
 			$result = AJCore_Storage_Service::delete_attachment_storage( (int) $file->attachment_id );
 			if ( is_wp_error( $result ) ) {
 				return $result;
 			}
 		}
-		if ( 0 === $other_references && ! wp_delete_attachment( (int) $file->attachment_id, true ) ) {
+		if ( $owns_attachment && ! wp_delete_attachment( (int) $file->attachment_id, true ) ) {
 			return new WP_Error( 'ajcore_attachment_delete', __( 'The storage object was handled, but WordPress could not delete the Media attachment.', 'ajforms' ) );
 		}
 		$wpdb->delete( $this->get_portal_file_users_table(), array( 'file_id' => $file_id ), array( '%d' ) );

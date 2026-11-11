@@ -4594,11 +4594,13 @@ class AJCore_REST_API {
 		}
 
 		$other_references = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$files_table}` WHERE attachment_id = %d AND id <> %d", (int) $file->attachment_id, $file_id ) );
-		if ( 0 === $other_references && class_exists( 'AJCore_Storage_Service' ) ) {
+		// Delete the Media file and remote object only when this record really owns them (see owns_attachment()).
+		$owns_attachment = 0 === $other_references && AJCore_Customer_Files::owns_attachment( (int) $file->attachment_id );
+		if ( $owns_attachment && class_exists( 'AJCore_Storage_Service' ) ) {
 			$storage_deleted = AJCore_Storage_Service::delete_attachment_storage( (int) $file->attachment_id );
 			if ( is_wp_error( $storage_deleted ) ) { return $storage_deleted; }
 		}
-		if ( 0 === $other_references && ! wp_delete_attachment( (int) $file->attachment_id, true ) ) {
+		if ( $owns_attachment && ! wp_delete_attachment( (int) $file->attachment_id, true ) ) {
 			return new WP_Error( 'attachment_delete_failed', 'The storage object was handled, but WordPress could not delete the Media attachment.', array( 'status' => 500 ) );
 		}
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
