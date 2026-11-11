@@ -66,6 +66,10 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			// gets a presigned remote URL once that attachment has been offloaded.
 			add_filter( 'wp_get_attachment_url', array( $this, 'filter_attachment_url' ), 10, 2 );
 
+			// Thumbnails/previews of offloaded files: WordPress would derive size URLs by swapping the
+			// filename inside the signed URL (breaking the signature), so sign the real size object instead.
+			add_filter( 'image_downsize', array( $this, 'filter_image_downsize' ), 10, 3 );
+
 			add_action( 'admin_post_ajcore_storage_settings_save', array( $this, 'handle_settings_save' ) );
 			add_action( 'wp_ajax_ajcore_storage_list_buckets', array( $this, 'ajax_list_buckets' ) );
 			add_action( 'wp_ajax_ajcore_storage_file_inventory', array( $this, 'ajax_file_inventory' ) );
@@ -970,6 +974,44 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				}
 			}
 			return false;
+		}
+
+		public function filter_image_downsize( $out, $attachment_id, $size ) {
+			$record = self::get_remote_record( $attachment_id );
+			if ( ! $record || ! self::mapping_matches_post( $attachment_id, $record ) ) {
+				return $out;
+			}
+			$client = self::get_client();
+			if ( ! $client ) {
+				return $out;
+			}
+			$meta  = wp_get_attachment_metadata( $attachment_id );
+			$sizes = is_array( $meta ) && ! empty( $meta['sizes'] ) && is_array( $meta['sizes'] ) ? $meta['sizes'] : array();
+			$pick  = null;
+			if ( is_string( $size ) && isset( $sizes[ $size ] ) ) {
+				$pick = $sizes[ $size ];
+			} elseif ( is_array( $size ) && $sizes ) {
+				$want_w = (int) $size[0];
+				$want_h = (int) $size[1];
+				uasort( $sizes, function ( $a, $b ) { return (int) $a['width'] <=> (int) $b['width']; } );
+				foreach ( $sizes as $candidate ) {
+					if ( (int) $candidate['width'] >= $want_w && (int) $candidate['height'] >= $want_h ) {
+						$pick = $candidate;
+						break;
+					}
+				}
+			}
+			if ( $pick && ! empty( $pick['file'] ) ) {
+				$key = dirname( $record->object_key ) . '/sizes/' . sanitize_file_name( $pick['file'] );
+				return array( $client->presigned_url( $key, 15 * MINUTE_IN_SECONDS ), (int) $pick['width'], (int) $pick['height'], true );
+			}
+			if ( 0 === strpos( (string) $record->content_type, 'image/' ) && ( 'full' === $size || ! $sizes || is_array( $size ) || is_string( $size ) ) ) {
+				// No matching generated size: show the full image (the browser scales it).
+				$w = is_array( $meta ) && ! empty( $meta['width'] ) ? (int) $meta['width'] : 0;
+				$h = is_array( $meta ) && ! empty( $meta['height'] ) ? (int) $meta['height'] : 0;
+				return array( $client->presigned_url( $record->object_key, 15 * MINUTE_IN_SECONDS ), $w, $h, false );
+			}
+			return false; // Non-image with no preview: WordPress falls back to the file-type icon.
 		}
 
 		public function filter_attachment_url( $url, $attachment_id ) {
