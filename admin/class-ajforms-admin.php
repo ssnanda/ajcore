@@ -26072,13 +26072,14 @@ class AJForms_Admin {
 								<th><?php esc_html_e( 'Tags', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'File', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Storage', 'ajforms' ); ?></th>
+								<th><?php esc_html_e( 'Path', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Shared With', 'ajforms' ); ?></th>
 								<th><?php esc_html_e( 'Actions', 'ajforms' ); ?></th>
 							</tr>
 						</thead>
 						<tbody>
 							<?php if ( empty( $files ) ) : ?>
-								<tr><td colspan="8"><?php esc_html_e( 'No files have been shared yet.', 'ajforms' ); ?></td></tr>
+								<tr><td colspan="9"><?php esc_html_e( 'No files have been shared yet.', 'ajforms' ); ?></td></tr>
 							<?php else : ?>
 								<?php foreach ( $files as $file ) : ?>
 									<?php
@@ -26110,8 +26111,6 @@ class AJForms_Admin {
 											if ( $att_gone ) {
 												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html__( 'File missing', 'ajforms' ) . '</span>';
 												if ( $remote_record ) {
-													// The mapping still names a RustFS object; show where, so it can be found in the bucket.
-													echo '<br><code style="font-size:11px;overflow-wrap:anywhere;user-select:all;">' . esc_html( 's3://' . $remote_record->bucket . '/' . ltrim( $remote_record->object_key, '/' ) ) . '</code>';
 													echo '<br><button type="button" class="button button-small ajcore-reattach" data-file-id="' . esc_attr( (int) $file->id ) . '">' . esc_html__( 'Reattach file', 'ajforms' ) . '</button> <span class="ajcore-reattach-msg"></span>';
 													static $reattach_script = false;
 													if ( ! $reattach_script ) {
@@ -26142,6 +26141,20 @@ class AJForms_Admin {
 											}
 										?></td>
 										<td><span style="display:inline-block;padding:3px 9px;border-radius:999px;background:<?php echo $remote_record ? '#dcfce7' : '#e2e8f0'; ?>;color:<?php echo $remote_record ? '#166534' : '#334155'; ?>;font-weight:700;font-size:12px;"><?php echo esc_html( $storage_type ); ?></span></td>
+										<td style="max-width:340px;"><?php
+											// Full path for every row, missing or not: the RustFS object path, or the Media Library file.
+											if ( $remote_record ) {
+												$path_text = 's3://' . $remote_record->bucket . '/' . ltrim( $remote_record->object_key, '/' );
+											} else {
+												$rel = $att_post && 'attachment' === $att_post->post_type ? (string) get_post_meta( (int) $file->attachment_id, '_wp_attached_file', true ) : '';
+												$path_text = '' !== $rel ? 'uploads/' . $rel : '';
+											}
+											if ( '' !== $path_text ) {
+												echo '<code style="font-size:11px;overflow-wrap:anywhere;word-break:break-all;user-select:all;">' . esc_html( $path_text ) . '</code>';
+											} else {
+												echo '<span class="description">' . esc_html__( 'No stored path', 'ajforms' ) . '</span>';
+											}
+										?></td>
 										<td>
 											<?php if ( empty( $labels ) ) : ?>
 												<span class="description"><?php esc_html_e( 'No users assigned.', 'ajforms' ); ?></span>
