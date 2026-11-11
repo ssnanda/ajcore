@@ -26033,17 +26033,28 @@ class AJForms_Admin {
 					(function () {
 						var wrap = document.getElementById('ajc-file-tiles');
 						if (!wrap) { return; }
-						wrap.addEventListener('click', function (e) {
-							var t = e.target.closest ? e.target.closest('.ajc-file-tile') : null;
-							if (!t) { return; }
-							var f = t.getAttribute('data-ajc-filter');
-							wrap.querySelectorAll('.ajc-file-tile').forEach(function (b) { b.classList.toggle('is-active', b === t); });
+						var KEY = 'ajcoreFilesFilter';
+						function apply(f, tile) {
+							wrap.querySelectorAll('.ajc-file-tile').forEach(function (b) { b.classList.toggle('is-active', b === tile); });
 							document.querySelectorAll('.ajcore-find-row').forEach(function (r) { r.remove(); }); // Close open Find panels when the filter changes.
 							document.querySelectorAll('.ajforms-file-table tbody tr[data-state]').forEach(function (tr) {
 								var show = f === 'all' || (f === 'many' ? tr.getAttribute('data-many') === '1' : tr.getAttribute('data-state') === f);
 								tr.style.display = show ? '' : 'none';
 							});
+						}
+						wrap.addEventListener('click', function (e) {
+							var t = e.target.closest ? e.target.closest('.ajc-file-tile') : null;
+							if (!t) { return; }
+							var f = t.getAttribute('data-ajc-filter');
+							apply(f, t);
+							try { sessionStorage.setItem(KEY, f); } catch (err) {}
 						});
+						// Keep the chosen filter across page reloads (Edit, Archive and so on).
+						try {
+							var saved = sessionStorage.getItem(KEY);
+							var tile = saved && saved !== 'all' ? wrap.querySelector('.ajc-file-tile[data-ajc-filter="' + saved + '"]') : null;
+							if (tile) { apply(saved, tile); }
+						} catch (err) {}
 					})();
 					</script>
 
@@ -26060,8 +26071,29 @@ class AJForms_Admin {
 							search: <?php echo wp_json_encode( __( 'Search the bucket by file name…', 'ajforms' ) ); ?>,
 							showMore: <?php echo wp_json_encode( __( 'Show %d other files in this customer\'s folder', 'ajforms' ) ); ?>,
 							nameMatch: <?php echo wp_json_encode( __( 'name matches', 'ajforms' ) ); ?>,
-							folder: <?php echo wp_json_encode( __( 'customer folder', 'ajforms' ) ); ?>
+							folder: <?php echo wp_json_encode( __( 'customer folder', 'ajforms' ) ); ?>,
+							attached: <?php echo wp_json_encode( __( 'Attached', 'ajforms' ) ); ?>
 						};
+						// Update the row and the tile counts in place, so you stay where you were in the list.
+						function bump(state, delta) {
+							var tile = document.querySelector('.ajc-file-tile[data-ajc-filter="' + state + '"]');
+							if (!tile) { return; }
+							var b = tile.querySelector('b');
+							var n = Math.max(0, (parseInt(b.textContent.replace(/[^0-9]/g, ''), 10) || 0) + delta);
+							b.textContent = n;
+							if (n === 0 && state !== 'all' && state !== 'ok') { tile.style.display = 'none'; }
+						}
+						function markAttached(fileId) {
+							var btn = document.querySelector('.ajcore-find[data-file-id="' + fileId + '"], .ajcore-reattach[data-file-id="' + fileId + '"]');
+							if (!btn) { return; }
+							var row = btn.closest('tr');
+							var panel = row.nextElementSibling;
+							if (panel && panel.classList.contains('ajcore-find-row')) { panel.remove(); }
+							btn.closest('td').innerHTML = '<span style="color:#15803d;font-weight:700;">✓ ' + T.attached + '</span>';
+							var prev = row.getAttribute('data-state');
+							row.setAttribute('data-state', 'ok');
+							if (prev && prev !== 'ok') { bump(prev, -1); bump('ok', 1); }
+						}
 						function post(params) {
 							return fetch(ajaxEndpoint, { method: 'POST', credentials: 'same-origin', body: new URLSearchParams(params) }).then(function (r) { return r.json(); });
 						}
@@ -26079,7 +26111,7 @@ class AJForms_Admin {
 								if (!window.confirm(T.confirmAttach)) { return; }
 								attach.disabled = true;
 								post({ action: 'ajcore_attach_object', nonce: nonceAttach, file_id: fileId, key: o.key }).then(function (res) {
-									if (res.success) { window.location.reload(); } else { attach.disabled = false; meta.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
+									if (res.success) { markAttached(fileId); } else { attach.disabled = false; meta.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
 								}).catch(function () { attach.disabled = false; meta.textContent = 'Request failed.'; });
 							});
 							line.appendChild(code); line.appendChild(meta); line.appendChild(attach); box.appendChild(line);
@@ -26108,7 +26140,7 @@ class AJForms_Admin {
 								if (!window.confirm(T.confirmReattach)) { return; }
 								re.disabled = true; m.textContent = '…';
 								post({ action: 'ajcore_reattach_file', nonce: nonceReattach, file_id: re.getAttribute('data-file-id') }).then(function (res) {
-									if (res.success) { m.textContent = 'Reattached. Reloading…'; window.location.reload(); }
+									if (res.success) { markAttached(re.getAttribute('data-file-id')); }
 									else { re.disabled = false; m.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
 								}).catch(function () { re.disabled = false; m.textContent = 'Request failed.'; });
 								return;
