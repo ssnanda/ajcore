@@ -25973,6 +25973,72 @@ class AJForms_Admin {
 					<h2><?php esc_html_e( 'Shared Files', 'ajforms' ); ?></h2>
 					<p><a class="button <?php echo 'active' === $file_status ? 'button-primary' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => 'active' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Active', 'ajforms' ); ?></a> <a class="button <?php echo 'archived' === $file_status ? 'button-primary' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => 'archived' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Archived', 'ajforms' ); ?></a></p>
 
+					<?php
+					// Health summary tiles for the Files list. Click a tile to filter the rows below (no reload).
+					$ajc_file_state = function ( $file, $remote ) {
+						$att = get_post( (int) $file->attachment_id );
+						if ( ! $att || 'attachment' !== $att->post_type ) {
+							return $remote ? 'recoverable' : 'missing';
+						}
+						if ( ! $remote && class_exists( 'AJCore_Customer_Files' ) && AJCore_Customer_Files::is_used_by_post( (int) $file->attachment_id ) ) {
+							return 'wrong';
+						}
+						return 'ok';
+					};
+					$ajc_many_threshold = 10;
+					$ajc_tiles = array( 'all' => 0, 'ok' => 0, 'recoverable' => 0, 'missing' => 0, 'wrong' => 0, 'many' => 0 );
+					foreach ( (array) $files as $ajc_f ) {
+						$ajc_tiles['all']++;
+						$ajc_remote = class_exists( 'AJCore_Storage_Service' ) ? AJCore_Storage_Service::get_remote_record( (int) $ajc_f->attachment_id ) : null;
+						$ajc_tiles[ $ajc_file_state( $ajc_f, $ajc_remote ) ]++;
+						if ( count( (array) $this->get_portal_file_assignment_labels( (int) $ajc_f->id ) ) >= $ajc_many_threshold ) {
+							$ajc_tiles['many']++;
+						}
+					}
+					$ajc_tile_defs = array(
+						'all'         => array( __( 'All files', 'ajforms' ), '#2563eb' ),
+						'ok'          => array( __( 'File OK', 'ajforms' ), '#16a34a' ),
+						'recoverable' => array( __( 'Missing, can reattach', 'ajforms' ), '#d97706' ),
+						'missing'     => array( __( 'Missing, no file known', 'ajforms' ), '#dc2626' ),
+						'wrong'       => array( __( 'Wrong file (site image)', 'ajforms' ), '#7c3aed' ),
+						'many'        => array( __( 'Shared with many', 'ajforms' ), '#4f46e5' ),
+					);
+					?>
+					<style>
+						.ajc-file-tiles{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+						.ajc-file-tile{cursor:pointer;min-width:120px;padding:8px 14px;text-align:left;background:color-mix(in srgb,var(--c) 12%,#fff);border:1px solid color-mix(in srgb,var(--c) 35%,#fff);border-left:5px solid var(--c);border-radius:6px;color:#1d2327;font:inherit}
+						.ajc-file-tile:hover{background:color-mix(in srgb,var(--c) 22%,#fff)}
+						.ajc-file-tile.is-active{background:var(--c);border-color:var(--c)}
+						.ajc-file-tile.is-active b,.ajc-file-tile.is-active span{color:#fff}
+						.ajc-file-tile b{display:block;font-size:22px;line-height:1.2;color:var(--c)}
+						.ajc-file-tile span{font-size:12px;font-weight:600}
+					</style>
+					<div class="ajc-file-tiles" id="ajc-file-tiles">
+						<?php foreach ( $ajc_tile_defs as $ajc_key => $ajc_def ) :
+							if ( 0 === $ajc_tiles[ $ajc_key ] && 'all' !== $ajc_key ) { continue; } ?>
+							<button type="button" class="ajc-file-tile<?php echo 'all' === $ajc_key ? ' is-active' : ''; ?>" data-ajc-filter="<?php echo esc_attr( $ajc_key ); ?>" style="--c:<?php echo esc_attr( $ajc_def[1] ); ?>">
+								<b><?php echo esc_html( number_format_i18n( $ajc_tiles[ $ajc_key ] ) ); ?></b>
+								<span><?php echo esc_html( $ajc_def[0] ); ?></span>
+							</button>
+						<?php endforeach; ?>
+					</div>
+					<script>
+					(function () {
+						var wrap = document.getElementById('ajc-file-tiles');
+						if (!wrap) { return; }
+						wrap.addEventListener('click', function (e) {
+							var t = e.target.closest ? e.target.closest('.ajc-file-tile') : null;
+							if (!t) { return; }
+							var f = t.getAttribute('data-ajc-filter');
+							wrap.querySelectorAll('.ajc-file-tile').forEach(function (b) { b.classList.toggle('is-active', b === t); });
+							document.querySelectorAll('.ajforms-file-table tbody tr[data-state]').forEach(function (tr) {
+								var show = f === 'all' || (f === 'many' ? tr.getAttribute('data-many') === '1' : tr.getAttribute('data-state') === f);
+								tr.style.display = show ? '' : 'none';
+							});
+						});
+					})();
+					</script>
+
 					<form method="post" id="ajf-file-bulk-form" action="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => $file_status ), admin_url( 'admin.php' ) ) ); ?>">
 						<?php wp_nonce_field( 'ajf_file_bulk_action', 'ajf_file_bulk_nonce' ); ?>
 						<input type="hidden" name="ajf_file_bulk_action" id="ajf_file_bulk_action" value="">
@@ -26024,8 +26090,10 @@ class AJForms_Admin {
 									$storage_path  = $remote_record
 										? 's3://' . $remote_record->bucket . '/' . ltrim( $remote_record->object_key, '/' )
 										: (string) get_attached_file( (int) $file->attachment_id );
+									$row_state = $ajc_file_state( $file, $remote_record );
+									$row_many  = count( (array) $labels ) >= $ajc_many_threshold ? '1' : '0';
 									?>
-									<tr>
+									<tr data-state="<?php echo esc_attr( $row_state ); ?>" data-many="<?php echo esc_attr( $row_many ); ?>">
 										<td style="width:36px;"><input type="checkbox" name="file_ids[]" value="<?php echo esc_attr( (int) $file->id ); ?>" class="ajf-file-row-checkbox" data-file-title="<?php echo esc_attr( $file->title ); ?>" data-storage-type="<?php echo esc_attr( $storage_type ); ?>" data-storage-path="<?php echo esc_attr( $storage_path ); ?>" style="cursor:pointer;"></td>
 										<td><strong><?php echo esc_html( $file->title ); ?></strong><br><span class="description"><?php echo esc_html( wp_trim_words( (string) $file->description, 16 ) ); ?></span></td>
 										<td><?php echo esc_html( $file->category ); ?></td>
@@ -26078,6 +26146,10 @@ class AJForms_Admin {
 											<?php if ( empty( $labels ) ) : ?>
 												<span class="description"><?php esc_html_e( 'No users assigned.', 'ajforms' ); ?></span>
 											<?php else : ?>
+												<?php $collapse_labels = count( $labels ) > 5; // Broadcast files (flyers) list every customer; keep the row compact. ?>
+												<?php if ( $collapse_labels ) : ?>
+													<details><summary style="cursor:pointer;font-weight:700;"><?php echo esc_html( sprintf( /* translators: %d: number of customers */ __( 'Shared with %d customers', 'ajforms' ), count( $labels ) ) ); ?></summary>
+												<?php endif; ?>
 												<ul class="ajforms-assignment-list">
 													<?php foreach ( $labels as $label ) : ?>
 														<li><?php echo esc_html( $label ); ?></li>
@@ -26090,6 +26162,7 @@ class AJForms_Admin {
 														<?php endforeach; ?>
 													</p>
 												<?php endif; ?>
+												<?php if ( $collapse_labels ) : ?></details><?php endif; ?>
 											<?php endif; ?>
 										</td>
 										<td style="white-space:nowrap;">
