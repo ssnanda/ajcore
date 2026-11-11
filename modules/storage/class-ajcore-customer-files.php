@@ -114,6 +114,95 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 			return $out;
 		}
 
+		/**
+		 * Point a Files row whose attachment is gone (or was replaced by something else) at the file
+		 * that still exists in remote storage. Creates a new customer attachment in the reserved ID
+		 * range, then moves the storage mapping and the Files row to it. The object is not copied or
+		 * renamed. Refuses unless the mapping exists and the object is really in the bucket.
+		 *
+		 * @return int|WP_Error New attachment ID.
+		 */
+		public static function reattach( $file_row_id ) {
+			global $wpdb;
+			if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
+				return new WP_Error( 'ajcore_reattach_unavailable', __( 'Remote storage is not available.', 'ajforms' ) );
+			}
+			$files = $wpdb->prefix . 'aj_portal_files';
+			$objs  = $wpdb->prefix . 'aj_storage_objects';
+			$row   = $wpdb->get_row( $wpdb->prepare( "SELECT id, attachment_id, title FROM `{$files}` WHERE id = %d", (int) $file_row_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( ! $row ) {
+				return new WP_Error( 'ajcore_reattach_no_row', __( 'File record not found.', 'ajforms' ) );
+			}
+			$old    = (int) $row->attachment_id;
+			$post   = get_post( $old );
+			$broken = ! $post || 'attachment' !== $post->post_type || self::is_used_by_post( $old );
+			if ( ! $broken ) {
+				return new WP_Error( 'ajcore_reattach_not_broken', __( 'This record already has its file.', 'ajforms' ) );
+			}
+			$record = AJCore_Storage_Service::get_remote_record( $old );
+			if ( ! $record ) {
+				return new WP_Error( 'ajcore_reattach_no_mapping', __( 'No remote storage mapping for this record, so there is nothing to reattach.', 'ajforms' ) );
+			}
+			$settings           = AJCore_Storage_Service::get_settings();
+			$settings['bucket'] = $record->bucket;
+			$client             = AJCore_Storage_Service::get_client( $settings );
+			if ( ! $client ) {
+				return new WP_Error( 'ajcore_reattach_no_client', __( 'Remote storage is not configured.', 'ajforms' ) );
+			}
+			$head = $client->head_object( $record->object_key );
+			if ( is_wp_error( $head ) ) {
+				return $head;
+			}
+			if ( ! $head ) {
+				return new WP_Error( 'ajcore_reattach_no_object', __( 'The file is not in the bucket at the stored path.', 'ajforms' ) );
+			}
+
+			$mime   = $record->content_type ? $record->content_type : ( ! empty( $head['content_type'] ) ? $head['content_type'] : 'application/octet-stream' );
+			$upload = wp_upload_dir();
+			$new_id = wp_insert_attachment(
+				array(
+					'post_title'     => $row->title,
+					'post_content'   => '',
+					'post_status'    => 'inherit',
+					'post_mime_type' => $mime,
+					'import_id'      => AJCore_Storage_Service::next_customer_file_id(),
+				),
+				trailingslashit( $upload['basedir'] ) . 'ajcore-remote/' . basename( (string) $record->object_key ), // Never exists locally; the file is served from remote storage.
+				0,
+				true
+			);
+			if ( is_wp_error( $new_id ) || ! $new_id ) {
+				return is_wp_error( $new_id ) ? $new_id : new WP_Error( 'ajcore_reattach_insert', __( 'Could not create the attachment.', 'ajforms' ) );
+			}
+			$new_id = (int) $new_id;
+
+			$wpdb->query( 'START TRANSACTION' );
+			$ok = false !== $wpdb->update( $objs, array( 'attachment_id' => $new_id ), array( 'attachment_id' => $old ), array( '%d' ), array( '%d' ) )
+				&& false !== $wpdb->update( $files, array( 'attachment_id' => $new_id ), array( 'id' => (int) $row->id ), array( '%d' ), array( '%d' ) );
+			if ( ! $ok ) {
+				$wpdb->query( 'ROLLBACK' );
+				// Direct delete: wp_delete_attachment() would also delete the remote object.
+				$wpdb->delete( $wpdb->postmeta, array( 'post_id' => $new_id ), array( '%d' ) );
+				$wpdb->delete( $wpdb->posts, array( 'ID' => $new_id ), array( '%d' ) );
+				return new WP_Error( 'ajcore_reattach_db', __( 'Could not update the records; nothing was changed.', 'ajforms' ) );
+			}
+			$wpdb->query( 'COMMIT' );
+			self::mark( $new_id );
+			clean_post_cache( $new_id );
+			return $new_id;
+		}
+
+		public static function ajax_reattach() {
+			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'ajcore_reattach_file', 'nonce', false ) ) {
+				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
+			}
+			$result = self::reattach( isset( $_POST['file_id'] ) ? absint( $_POST['file_id'] ) : 0 );
+			if ( is_wp_error( $result ) ) {
+				wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+			}
+			wp_send_json_success( array( 'attachment_id' => (int) $result ) );
+		}
+
 		private static function table_exists( $table ) {
 			global $wpdb;
 			return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
@@ -121,6 +210,7 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 	}
 
 	add_action( 'admin_init', array( 'AJCore_Customer_Files', 'maybe_backfill' ) );
+	add_action( 'wp_ajax_ajcore_reattach_file', array( 'AJCore_Customer_Files', 'ajax_reattach' ) );
 
 	// Upload folders AJCore owns on each site: a sync must never copy these between sites.
 	add_filter( 'synchy_live_owned_upload_dirs', function ( $dirs ) {

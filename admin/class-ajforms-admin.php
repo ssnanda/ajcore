@@ -26044,6 +26044,28 @@ class AJForms_Admin {
 												if ( $remote_record ) {
 													// The mapping still names a RustFS object; show where, so it can be found in the bucket.
 													echo '<br><code style="font-size:11px;overflow-wrap:anywhere;user-select:all;">' . esc_html( 's3://' . $remote_record->bucket . '/' . ltrim( $remote_record->object_key, '/' ) ) . '</code>';
+													echo '<br><button type="button" class="button button-small ajcore-reattach" data-file-id="' . esc_attr( (int) $file->id ) . '">' . esc_html__( 'Reattach file', 'ajforms' ) . '</button> <span class="ajcore-reattach-msg"></span>';
+													static $reattach_script = false;
+													if ( ! $reattach_script ) {
+														$reattach_script = true;
+														$reattach_nonce  = wp_create_nonce( 'ajcore_reattach_file' );
+														?>
+														<script>
+														document.addEventListener('click', function (e) {
+															var b = e.target.closest ? e.target.closest('.ajcore-reattach') : null;
+															if (!b) { return; }
+															var msg = b.parentNode.querySelector('.ajcore-reattach-msg');
+															if (!window.confirm(<?php echo wp_json_encode( __( 'Point this record at the file that is still in remote storage?', 'ajforms' ) ); ?>)) { return; }
+															b.disabled = true; msg.textContent = '…';
+															var body = new URLSearchParams({ action: 'ajcore_reattach_file', nonce: <?php echo wp_json_encode( $reattach_nonce ); ?>, file_id: b.getAttribute('data-file-id') });
+															fetch(ajaxurl, { method: 'POST', credentials: 'same-origin', body: body }).then(function (r) { return r.json(); }).then(function (res) {
+																if (res.success) { msg.textContent = 'Reattached. Reloading…'; window.location.reload(); }
+																else { b.disabled = false; msg.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
+															}).catch(function () { b.disabled = false; msg.textContent = 'Request failed.'; });
+														});
+														</script>
+														<?php
+													}
 												}
 											} elseif ( $att_stale ) {
 												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html__( 'Wrong file (site image)', 'ajforms' ) . '</span>';
