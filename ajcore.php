@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.404
+ * Version: 0.7.405
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.404' );
+	define( 'AJCORE_VERSION', '0.7.405' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -2980,6 +2980,9 @@ function run_ajforms() {
 	$plugin->run();
 
 	AJCore_Storage_Service::instance();
+
+	require_once AJCORE_PLUGIN_DIR . 'modules/storage/class-ajcore-media-dashboard.php';
+	AJCore_Media_Dashboard::init();
 }
 
 run_ajforms();

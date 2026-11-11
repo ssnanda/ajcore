@@ -71,6 +71,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			add_action( 'wp_ajax_ajcore_storage_file_inventory', array( $this, 'ajax_file_inventory' ) );
 			add_action( 'wp_ajax_ajcore_storage_preview_migration', array( $this, 'ajax_preview_migration' ) );
 			add_action( 'wp_ajax_ajcore_storage_migrate_now', array( $this, 'ajax_migrate_now' ) );
+			add_action( 'wp_ajax_ajcore_storage_renumber_files', array( $this, 'ajax_renumber_customer_files' ) );
 
 			// Media Library bulk action: lets an admin explicitly opt a specific file
 			// (of any mime type, including images) into remote storage, one selection
@@ -381,6 +382,90 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return $wpdb->prefix . 'aj_storage_objects';
 		}
 
+		/**
+		 * Customer-file attachments are created in a reserved high ID range so a local->live
+		 * sync of ordinary posts/media (low IDs) can never land on a customer file's post ID.
+		 * Passed to wp_insert_attachment() as `import_id`; WordPress ignores it (and falls back
+		 * to a normal ID) if that ID were ever taken.
+		 */
+		const CUSTOMER_FILE_ID_START = 1000000000;
+
+		public static function customer_file_id_start() {
+			// Local DDEV sites use a separate range from live so test uploads can never share an ID with a live customer file.
+			$host  = (string) wp_parse_url( home_url(), PHP_URL_HOST );
+			$start = '.ddev.site' === substr( $host, -10 ) ? self::CUSTOMER_FILE_ID_START + 500000000 : self::CUSTOMER_FILE_ID_START;
+			return (int) apply_filters( 'ajcore_customer_file_id_start', $start );
+		}
+
+		public static function next_customer_file_id() {
+			global $wpdb;
+			$start = self::customer_file_id_start();
+			$max   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT MAX(ID) FROM {$wpdb->posts} WHERE ID >= %d", $start ) );
+			return $max >= $start ? $max + 1 : $start;
+		}
+
+		/**
+		 * Moves existing customer-file attachments (rows in aj_portal_files below the reserved
+		 * range) to ID + range start, in one transaction. RustFS objects are not touched; only
+		 * the mapping row's attachment_id changes. Dry run by default.
+		 */
+		public static function renumber_customer_files( $dry_run = true ) {
+			global $wpdb;
+			$offset = self::customer_file_id_start();
+			$files  = $wpdb->prefix . 'aj_portal_files';
+			$ids    = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
+				"SELECT DISTINCT f.attachment_id FROM `{$files}` f INNER JOIN {$wpdb->posts} p ON p.ID = f.attachment_id AND p.post_type = 'attachment' WHERE f.attachment_id > 0 AND f.attachment_id < %d ORDER BY f.attachment_id",
+				$offset
+			) ) );
+			$result = array( 'total' => count( $ids ), 'moved' => 0, 'offset' => $offset, 'conflicts' => array(), 'min' => $ids ? min( $ids ) : 0, 'max' => $ids ? max( $ids ) : 0, 'error' => '' );
+			if ( ! $ids ) {
+				return $result;
+			}
+			$list = implode( ',', $ids );
+			$result['conflicts'] = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare( "SELECT ID FROM {$wpdb->posts} WHERE ID IN ({$list}) AND 0 < (SELECT COUNT(*) FROM {$wpdb->posts} x WHERE x.ID = {$wpdb->posts}.ID + %d)", $offset ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( $dry_run || $result['conflicts'] ) {
+				return $result;
+			}
+
+			$queries = array(
+				"UPDATE {$wpdb->postmeta} SET post_id = post_id + {$offset} WHERE post_id IN ({$list})",
+				"UPDATE {$wpdb->term_relationships} SET object_id = object_id + {$offset} WHERE object_id IN ({$list})",
+				"UPDATE {$wpdb->posts} SET post_parent = post_parent + {$offset} WHERE post_parent IN ({$list})",
+				"UPDATE `" . self::table() . "` SET attachment_id = attachment_id + {$offset} WHERE attachment_id IN ({$list})",
+				"UPDATE `{$files}` SET attachment_id = attachment_id + {$offset} WHERE attachment_id IN ({$list})",
+				"UPDATE {$wpdb->posts} SET ID = ID + {$offset} WHERE ID IN ({$list})",
+			);
+			$mail = $wpdb->prefix . 'aj_mail_items';
+			if ( $mail === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $mail ) ) ) {
+				array_splice( $queries, 4, 0, array( "UPDATE `{$mail}` SET scan_attachment_id = scan_attachment_id + {$offset} WHERE scan_attachment_id IN ({$list})" ) );
+			}
+
+			$wpdb->query( 'START TRANSACTION' );
+			foreach ( $queries as $sql ) {
+				if ( false === $wpdb->query( $sql ) ) { // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+					$result['error'] = (string) $wpdb->last_error;
+					$wpdb->query( 'ROLLBACK' );
+					return $result;
+				}
+			}
+			$wpdb->query( 'COMMIT' );
+			foreach ( $ids as $id ) {
+				clean_post_cache( $id );
+				clean_post_cache( $id + $offset );
+			}
+			wp_cache_flush();
+			$result['moved'] = count( $ids );
+			return $result;
+		}
+
+		public function ajax_renumber_customer_files() {
+			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( self::NONCE_ACTION, 'nonce', false ) ) {
+				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
+			}
+			$dry_run = empty( $_POST['run'] );
+			wp_send_json_success( self::renumber_customer_files( $dry_run ) );
+		}
+
 		public static function get_remote_record( $attachment_id ) {
 			global $wpdb;
 			$table = self::table();
@@ -543,7 +628,8 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 
 			$mime_type = get_post_mime_type( $attachment_id );
 			$mime_type = $mime_type ? $mime_type : 'application/octet-stream';
-			$object_key = self::object_key_for_attachment( $attachment_id, basename( $file_path ) );
+			// Random token makes the key unique across sites sharing a bucket even when attachment IDs collide.
+			$object_key = self::object_key_for_attachment( $attachment_id, bin2hex( random_bytes( 4 ) ) . '-' . basename( $file_path ) );
 
 			$body   = file_get_contents( $file_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 			$result = $client->put_object( $object_key, $body, $mime_type );
@@ -853,9 +939,38 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return true;
 		}
 
+		/**
+		 * Guards against a stale mapping row being served for a different file. A site sync can
+		 * overwrite the post at an attachment ID while the mapping row survives; without this
+		 * check the old object (e.g. a customer PDF) would be served in place of the new file.
+		 * Valid when the post's MIME type matches the stored content type AND its file name or
+		 * title matches the object key's file name (title covers remote renames).
+		 */
+		public static function mapping_matches_post( $attachment_id, $record ) {
+			$post = get_post( (int) $attachment_id );
+			if ( ! $post || 'attachment' !== $post->post_type ) {
+				return false;
+			}
+			if ( ! empty( $record->content_type ) && $post->post_mime_type !== $record->content_type ) {
+				return false;
+			}
+			$key_name = preg_replace( '/^' . preg_quote( (string) (int) $attachment_id, '/' ) . '-/', '', basename( $record->object_key ) );
+			$key_stem = sanitize_title( pathinfo( $key_name, PATHINFO_FILENAME ) );
+			$file     = get_post_meta( (int) $attachment_id, '_wp_attached_file', true );
+			$file_stem = $file ? sanitize_title( pathinfo( basename( $file ), PATHINFO_FILENAME ) ) : '';
+			$title_stem = sanitize_title( $post->post_title );
+			// Keys created with a random token prefix (<token>-name) still match on the trailing name.
+			foreach ( array( $file_stem, $title_stem ) as $stem ) {
+				if ( '' !== $stem && ( $stem === $key_stem || substr( $key_stem, -strlen( $stem ) ) === $stem ) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		public function filter_attachment_url( $url, $attachment_id ) {
 			$record = self::get_remote_record( $attachment_id );
-			if ( ! $record ) {
+			if ( ! $record || ! self::mapping_matches_post( $attachment_id, $record ) ) {
 				return $url;
 			}
 			$client = self::get_client();
@@ -871,7 +986,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 		 */
 		public static function get_presigned_download_url( $attachment_id, $expires_seconds = 300 ) {
 			$record = self::get_remote_record( $attachment_id );
-			if ( ! $record ) {
+			if ( ! $record || ! self::mapping_matches_post( $attachment_id, $record ) ) {
 				return false;
 			}
 			$client = self::get_client();
@@ -1325,6 +1440,17 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				<button type="button" class="button button-secondary" id="ajcore_storage_migrate_now" disabled><?php esc_html_e( 'Migrate Documents Now', 'ajforms' ); ?></button>
 				<div id="ajcore_storage_migrate_result" style="margin-top:12px"></div>
 			</div>
+			<div class="card" style="max-width:none">
+				<h2><?php esc_html_e( 'Customer File IDs', 'ajforms' ); ?></h2>
+				<p>
+					<button type="button" class="button" id="ajcore_storage_renumber_preview"><?php esc_html_e( 'Preview', 'ajforms' ); ?></button>
+					<button type="button" class="button button-secondary" id="ajcore_storage_renumber_run" disabled><?php esc_html_e( 'Move to high IDs', 'ajforms' ); ?></button>
+				</p>
+				<details><summary><?php esc_html_e( 'Details', 'ajforms' ); ?></summary>
+					<p><?php esc_html_e( 'Moves existing customer files to the reserved high ID range (live 1,000,000,000+, DDEV 1,500,000,000+). One transaction; RustFS objects are not touched. Back up the database first.', 'ajforms' ); ?></p>
+				</details>
+				<div id="ajcore_storage_renumber_result" style="margin-top:8px;white-space:pre-wrap"></div>
+			</div>
 			<script>
 			(function(){
 				var nonce = <?php echo wp_json_encode( $nonce ); ?>;
@@ -1526,6 +1652,34 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 							out.textContent = <?php echo wp_json_encode( __( 'Request failed.', 'ajforms' ) ); ?>;
 						});
 				});
+
+				(function () {
+					var prev = document.getElementById('ajcore_storage_renumber_preview');
+					var run = document.getElementById('ajcore_storage_renumber_run');
+					var out = document.getElementById('ajcore_storage_renumber_result');
+					if (!prev || !run || !out) { return; }
+					function call(doRun) {
+						var body = new URLSearchParams({ action: 'ajcore_storage_renumber_files', nonce: nonce });
+						if (doRun) { body.append('run', '1'); }
+						return fetch(ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body }).then(function (r) { return r.json(); });
+					}
+					function show(res, ran) {
+						if (!res.success) { out.textContent = (res.data && res.data.message) ? res.data.message : 'Request failed.'; return; }
+						var d = res.data;
+						var t = 'Files below range: ' + d.total + (d.total ? ' (IDs ' + d.min + '–' + d.max + ', +' + d.offset + ')' : '');
+						if (d.conflicts && d.conflicts.length) { t += '\nBlocked, target IDs already exist: ' + d.conflicts.join(', '); }
+						if (d.error) { t += '\nRolled back: ' + d.error; }
+						if (ran && !d.error) { t += '\nMoved: ' + d.moved; }
+						out.textContent = t;
+						run.disabled = ran || d.total < 1 || (d.conflicts && d.conflicts.length > 0);
+					}
+					prev.addEventListener('click', function () { run.disabled = true; out.textContent = '…'; call(false).then(function (r) { show(r, false); }).catch(function () { out.textContent = 'Request failed.'; }); });
+					run.addEventListener('click', function () {
+						if (!window.confirm(<?php echo wp_json_encode( __( 'Change the post IDs of the previewed customer files now? Back up the database first.', 'ajforms' ) ); ?>)) { return; }
+						run.disabled = true; out.textContent = '…';
+						call(true).then(function (r) { show(r, true); }).catch(function () { out.textContent = 'Request failed.'; });
+					});
+				})();
 			})();
 			</script>
 			<?php

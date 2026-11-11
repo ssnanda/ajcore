@@ -4457,6 +4457,7 @@ class AJCore_REST_API {
 				'post_content'   => '',
 				'post_status'    => 'inherit',
 				'post_mime_type' => $uploaded['type'],
+				'import_id'      => AJCore_Storage_Service::next_customer_file_id(),
 			);
 			$attachment_id = wp_insert_attachment( $attachment, $uploaded['file'], 0, true );
 

@@ -13309,6 +13309,7 @@ class AJForms_Admin {
 					'post_content'   => '',
 					'post_status'    => 'inherit',
 					'post_mime_type' => $uploaded['type'],
+					'import_id'      => AJCore_Storage_Service::next_customer_file_id(),
 				),
 				$uploaded['file'],
 				0,
