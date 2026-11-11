@@ -425,7 +425,23 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				) x INNER JOIN {$wpdb->posts} p ON p.ID = x.attachment_id AND p.post_type = 'attachment' WHERE x.attachment_id > 0 AND x.attachment_id < %d ORDER BY x.attachment_id",
 				$offset
 			) ) );
-			$result = array( 'total' => count( $ids ), 'moved' => 0, 'offset' => $offset, 'conflicts' => array(), 'min' => $ids ? min( $ids ) : 0, 'max' => $ids ? max( $ids ) : 0, 'error' => '' );
+			// A portal row can point at an ID that a sync later reused for a site image. Moving that post would
+			// break whatever references it (featured image, wp-image-N in content), so skip anything a post
+			// references and report it instead.
+			$skipped = array();
+			foreach ( $ids as $candidate ) {
+				$featured = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_thumbnail_id' AND meta_value = %d", $candidate ) );
+				$in_body  = $featured ? 0 : (int) $wpdb->get_var( $wpdb->prepare(
+					"SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type NOT IN ('attachment','revision') AND post_status NOT IN ('trash','auto-draft') AND (post_content LIKE %s OR post_content LIKE %s)",
+					'%' . $wpdb->esc_like( 'wp-image-' . $candidate ) . '"%',
+					'%' . $wpdb->esc_like( 'wp-image-' . $candidate ) . ' %'
+				) );
+				if ( $featured || $in_body ) {
+					$skipped[] = $candidate;
+				}
+			}
+			$ids    = array_values( array_diff( $ids, $skipped ) );
+			$result = array( 'total' => count( $ids ), 'moved' => 0, 'offset' => $offset, 'conflicts' => array(), 'skipped' => $skipped, 'min' => $ids ? min( $ids ) : 0, 'max' => $ids ? max( $ids ) : 0, 'error' => '' );
 			if ( ! $ids ) {
 				return $result;
 			}
@@ -1715,6 +1731,7 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 						if (!res.success) { out.textContent = (res.data && res.data.message) ? res.data.message : 'Request failed.'; return; }
 						var d = res.data;
 						var t = 'Files below range: ' + d.total + (d.total ? ' (IDs ' + d.min + '–' + d.max + ', +' + d.offset + ')' : '');
+						if (d.skipped && d.skipped.length) { t += '\nSkipped, used by a post (not a customer file?): ' + d.skipped.join(', '); }
 						if (d.conflicts && d.conflicts.length) { t += '\nBlocked, target IDs already exist: ' + d.conflicts.join(', '); }
 						if (d.error) { t += '\nRolled back: ' + d.error; }
 						if (ran && !d.error) { t += '\nMoved: ' + d.moved; }
