@@ -254,6 +254,11 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 					$fragments[] = '/customer-' . sanitize_title( $u->user_email ) . '/';
 				}
 			}
+			// A record shared with many customers (a flyer) has no single "customer folder": matching every
+			// recipient's folder would list unrelated files. Match those by file name only.
+			if ( count( array_unique( $fragments ) ) > 20 ) {
+				$fragments = array();
+			}
 			$stem = function ( $name ) {
 				$name = preg_replace( '/\.[A-Za-z0-9]{2,5}$/', '', (string) $name );
 				$name = preg_replace( '/^\d+-/', '', $name );
