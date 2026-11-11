@@ -26014,6 +26014,11 @@ class AJForms_Admin {
 						.ajc-file-tile.is-active b,.ajc-file-tile.is-active span{color:#fff}
 						.ajc-file-tile b{display:block;font-size:22px;line-height:1.2;color:var(--c)}
 						.ajc-file-tile span{font-size:12px;font-weight:600}
+						.ajc-path-cell{width:200px;max-width:200px}
+						.ajc-path summary{cursor:pointer;list-style:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:11px/1.5 ui-monospace,Menlo,monospace;color:#475569}
+						.ajc-path summary::-webkit-details-marker{display:none}
+						.ajc-path summary:hover{color:#2563eb}
+						.ajc-path code{display:block;margin-top:4px;font-size:11px;overflow-wrap:anywhere;word-break:break-all;user-select:all}
 					</style>
 					<div class="ajc-file-tiles" id="ajc-file-tiles">
 						<?php foreach ( $ajc_tile_defs as $ajc_key => $ajc_def ) :
@@ -26037,6 +26042,79 @@ class AJForms_Admin {
 								var show = f === 'all' || (f === 'many' ? tr.getAttribute('data-many') === '1' : tr.getAttribute('data-state') === f);
 								tr.style.display = show ? '' : 'none';
 							});
+						});
+					})();
+					</script>
+
+					<script>
+					(function () {
+						var ajaxEndpoint = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+						var nonceReattach = <?php echo wp_json_encode( wp_create_nonce( 'ajcore_reattach_file' ) ); ?>;
+						var nonceAttach = <?php echo wp_json_encode( wp_create_nonce( 'ajcore_object_attach' ) ); ?>;
+						function post(params) {
+							return fetch(ajaxEndpoint, { method: 'POST', credentials: 'same-origin', body: new URLSearchParams(params) }).then(function (r) { return r.json(); });
+						}
+						function msgFor(btn) { return btn.parentNode.querySelector('.ajcore-reattach-msg'); }
+						function renderResults(btn, box, objects, fileId) {
+							box.innerHTML = '';
+							if (!objects.length) { box.appendChild(document.createTextNode(<?php echo wp_json_encode( __( 'No matching file in the bucket. Type part of a file name to search.', 'ajforms' ) ); ?>)); return; }
+							objects.forEach(function (o) {
+								var line = document.createElement('div');
+								line.style.cssText = 'margin:4px 0;padding:4px 6px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;';
+								var code = document.createElement('code');
+								code.textContent = o.key; code.style.cssText = 'display:block;overflow-wrap:anywhere;word-break:break-all;';
+								var meta = document.createElement('span');
+								meta.style.color = '#64748b';
+								meta.textContent = Math.round(o.size / 1024) + ' KiB · ' + (o.modified || '').slice(0, 10) + (o.name_match ? ' · name matches' : '') + (o.same_customer ? ' · customer folder' : '') + ' ';
+								var attach = document.createElement('button');
+								attach.type = 'button'; attach.className = 'button button-small'; attach.textContent = <?php echo wp_json_encode( __( 'Attach', 'ajforms' ) ); ?>;
+								attach.addEventListener('click', function () {
+									if (!window.confirm(<?php echo wp_json_encode( __( 'Attach this file to the record?', 'ajforms' ) ); ?>)) { return; }
+									attach.disabled = true;
+									post({ action: 'ajcore_attach_object', nonce: nonceAttach, file_id: fileId, key: o.key }).then(function (res) {
+										if (res.success) { window.location.reload(); } else { attach.disabled = false; meta.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
+									}).catch(function () { attach.disabled = false; meta.textContent = 'Request failed.'; });
+								});
+								line.appendChild(code); line.appendChild(meta); line.appendChild(attach); box.appendChild(line);
+							});
+						}
+						document.addEventListener('click', function (e) {
+							var t = e.target;
+							var re = t.closest ? t.closest('.ajcore-reattach') : null;
+							if (re) {
+								var m = msgFor(re);
+								if (!window.confirm(<?php echo wp_json_encode( __( 'Point this record at the file that is still in remote storage?', 'ajforms' ) ); ?>)) { return; }
+								re.disabled = true; m.textContent = '…';
+								post({ action: 'ajcore_reattach_file', nonce: nonceReattach, file_id: re.getAttribute('data-file-id') }).then(function (res) {
+									if (res.success) { m.textContent = 'Reattached. Reloading…'; window.location.reload(); }
+									else { re.disabled = false; m.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
+								}).catch(function () { re.disabled = false; m.textContent = 'Request failed.'; });
+								return;
+							}
+							var fi = t.closest ? t.closest('.ajcore-find') : null;
+							if (fi) {
+								var id = fi.getAttribute('data-file-id');
+								var cell = fi.parentNode;
+								var box = cell.querySelector('.ajcore-find-box');
+								if (box) { box.remove(); return; }
+								box = document.createElement('div');
+								box.className = 'ajcore-find-box'; box.style.cssText = 'margin-top:6px;max-width:420px;';
+								var input = document.createElement('input');
+								input.type = 'search'; input.placeholder = <?php echo wp_json_encode( __( 'Search bucket by file name…', 'ajforms' ) ); ?>; input.style.cssText = 'width:100%;margin-bottom:4px;';
+								var results = document.createElement('div');
+								results.textContent = '…';
+								box.appendChild(input); box.appendChild(results); cell.appendChild(box);
+								var timer = null;
+								function run() {
+									results.textContent = '…';
+									post({ action: 'ajcore_find_objects', nonce: nonceAttach, file_id: id, search: input.value }).then(function (res) {
+										if (res.success) { renderResults(fi, results, res.data.objects, id); }
+										else { results.textContent = (res.data && res.data.message) ? res.data.message : 'Search failed.'; }
+									}).catch(function () { results.textContent = 'Request failed.'; });
+								}
+								input.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(run, 400); });
+								run();
+							}
 						});
 					})();
 					</script>
@@ -26110,40 +26188,19 @@ class AJForms_Admin {
 										$att_stale  = ! $att_gone && ! $remote_record && class_exists( 'AJCore_Customer_Files' ) && AJCore_Customer_Files::is_used_by_post( (int) $file->attachment_id );
 										?>
 										<td><?php
-											if ( $att_gone ) {
-												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html__( 'File missing', 'ajforms' ) . '</span>';
-												if ( $remote_record ) {
-													echo '<br><button type="button" class="button button-small ajcore-reattach" data-file-id="' . esc_attr( (int) $file->id ) . '">' . esc_html__( 'Reattach file', 'ajforms' ) . '</button> <span class="ajcore-reattach-msg"></span>';
-													static $reattach_script = false;
-													if ( ! $reattach_script ) {
-														$reattach_script = true;
-														$reattach_nonce  = wp_create_nonce( 'ajcore_reattach_file' );
-														?>
-														<script>
-														document.addEventListener('click', function (e) {
-															var b = e.target.closest ? e.target.closest('.ajcore-reattach') : null;
-															if (!b) { return; }
-															var msg = b.parentNode.querySelector('.ajcore-reattach-msg');
-															if (!window.confirm(<?php echo wp_json_encode( __( 'Point this record at the file that is still in remote storage?', 'ajforms' ) ); ?>)) { return; }
-															b.disabled = true; msg.textContent = '…';
-															var body = new URLSearchParams({ action: 'ajcore_reattach_file', nonce: <?php echo wp_json_encode( $reattach_nonce ); ?>, file_id: b.getAttribute('data-file-id') });
-															fetch(ajaxurl, { method: 'POST', credentials: 'same-origin', body: body }).then(function (r) { return r.json(); }).then(function (res) {
-																if (res.success) { msg.textContent = 'Reattached. Reloading…'; window.location.reload(); }
-																else { b.disabled = false; msg.textContent = (res.data && res.data.message) ? res.data.message : 'Failed.'; }
-															}).catch(function () { b.disabled = false; msg.textContent = 'Request failed.'; });
-														});
-														</script>
-														<?php
-													}
+											if ( $att_gone || $att_stale ) {
+												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html( $att_gone ? __( 'File missing', 'ajforms' ) : __( 'Wrong file (site image)', 'ajforms' ) ) . '</span><br>';
+												if ( $att_gone && $remote_record ) {
+													echo '<button type="button" class="button button-small ajcore-reattach" data-file-id="' . esc_attr( (int) $file->id ) . '">' . esc_html__( 'Reattach file', 'ajforms' ) . '</button> <span class="ajcore-reattach-msg"></span>';
+												} else {
+													echo '<button type="button" class="button button-small ajcore-find" data-file-id="' . esc_attr( (int) $file->id ) . '">' . esc_html__( 'Find in RustFS', 'ajforms' ) . '</button> <span class="ajcore-reattach-msg"></span>';
 												}
-											} elseif ( $att_stale ) {
-												echo '<span style="color:#b91c1c;font-weight:700;">' . esc_html__( 'Wrong file (site image)', 'ajforms' ) . '</span>';
 											} else {
 												echo $file_url ? esc_html( basename( parse_url( $file_url, PHP_URL_PATH ) ) ) : esc_html__( 'Missing attachment', 'ajforms' );
 											}
 										?></td>
 										<td><span style="display:inline-block;padding:3px 9px;border-radius:999px;background:<?php echo $remote_record ? '#dcfce7' : '#e2e8f0'; ?>;color:<?php echo $remote_record ? '#166534' : '#334155'; ?>;font-weight:700;font-size:12px;"><?php echo esc_html( $storage_type ); ?></span></td>
-										<td style="max-width:340px;"><?php
+										<td class="ajc-path-cell"><?php
 											// Full path for every row, missing or not: the RustFS object path, or the Media Library file.
 											if ( $remote_record ) {
 												$path_text = 's3://' . $remote_record->bucket . '/' . ltrim( $remote_record->object_key, '/' );
@@ -26152,7 +26209,10 @@ class AJForms_Admin {
 												$path_text = '' !== $rel ? 'uploads/' . $rel : '';
 											}
 											if ( '' !== $path_text ) {
-												echo '<code style="font-size:11px;overflow-wrap:anywhere;word-break:break-all;user-select:all;">' . esc_html( $path_text ) . '</code>';
+												// One line by default (shows the end of the path, where the customer folder and file name are); click to expand.
+												$path_parts = explode( '/', $path_text );
+												$path_short = count( $path_parts ) > 2 ? '…/' . implode( '/', array_slice( $path_parts, -2 ) ) : $path_text;
+												echo '<details class="ajc-path"><summary title="' . esc_attr( $path_text ) . '">' . esc_html( $path_short ) . '</summary><code>' . esc_html( $path_text ) . '</code></details>';
 											} else {
 												echo '<span class="description">' . esc_html__( 'No stored path', 'ajforms' ) . '</span>';
 											}

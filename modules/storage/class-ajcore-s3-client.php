@@ -125,6 +125,44 @@ if ( ! class_exists( 'AJCore_S3_Client' ) ) {
 			);
 		}
 
+		/**
+		 * ListObjectsV2 for the configured bucket. Returns array of array( key, size, modified ),
+		 * following continuation tokens up to $max_keys, or WP_Error.
+		 */
+		public function list_objects( $prefix = '', $max_keys = 5000 ) {
+			$objects = array();
+			$token   = '';
+			do {
+				$params = array( 'list-type' => '2', 'max-keys' => '1000' );
+				if ( '' !== (string) $prefix ) {
+					$params['prefix'] = (string) $prefix;
+				}
+				if ( '' !== $token ) {
+					$params['continuation-token'] = $token;
+				}
+				$path     = $this->path_style ? '/' . $this->bucket : '/';
+				$response = $this->request( 'GET', $path, $this->canonical_query_string( $params ), array(), '' );
+				if ( is_wp_error( $response ) ) {
+					return $response;
+				}
+				$xml = $this->parse_xml( wp_remote_retrieve_body( $response ) );
+				if ( is_wp_error( $xml ) ) {
+					return $xml;
+				}
+				if ( isset( $xml->Contents ) ) {
+					foreach ( $xml->Contents as $item ) {
+						$objects[] = array(
+							'key'      => (string) $item->Key,
+							'size'     => (int) $item->Size,
+							'modified' => (string) $item->LastModified,
+						);
+					}
+				}
+				$token = ( isset( $xml->IsTruncated ) && 'true' === strtolower( (string) $xml->IsTruncated ) && isset( $xml->NextContinuationToken ) ) ? (string) $xml->NextContinuationToken : '';
+			} while ( '' !== $token && count( $objects ) < (int) $max_keys );
+			return $objects;
+		}
+
 		public function delete_object( $key ) {
 			return $this->request( 'DELETE', $this->object_path( $key ), '', array(), '' );
 		}

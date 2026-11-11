@@ -208,6 +208,185 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 			return $new_id;
 		}
 
+		/**
+		 * Objects in the bucket that could be this record's file. Ranked: file name matches the
+		 * title and lives in a recipient's folder, then name match, then same-folder. Objects that
+		 * another record already uses are left out.
+		 *
+		 * @return array|WP_Error list of array( key, size, modified, name_match, same_customer )
+		 */
+		public static function find_objects( $file_row_id, $search = '' ) {
+			global $wpdb;
+			if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
+				return new WP_Error( 'ajcore_find_unavailable', __( 'Remote storage is not available.', 'ajforms' ) );
+			}
+			$files = $wpdb->prefix . 'aj_portal_files';
+			$users = $wpdb->prefix . 'aj_portal_file_users';
+			$objs  = $wpdb->prefix . 'aj_storage_objects';
+			$row   = $wpdb->get_row( $wpdb->prepare( "SELECT id, attachment_id, title FROM `{$files}` WHERE id = %d", (int) $file_row_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( ! $row ) {
+				return new WP_Error( 'ajcore_find_no_row', __( 'File record not found.', 'ajforms' ) );
+			}
+			$settings = AJCore_Storage_Service::get_settings();
+			$client   = AJCore_Storage_Service::get_client( $settings );
+			if ( ! $client ) {
+				return new WP_Error( 'ajcore_find_no_client', __( 'Remote storage is not configured.', 'ajforms' ) );
+			}
+			$listing = $client->list_objects( '', 5000 );
+			if ( is_wp_error( $listing ) ) {
+				return $listing;
+			}
+			$taken = array_flip( (array) $wpdb->get_col( $wpdb->prepare( "SELECT object_key FROM `{$objs}` WHERE bucket = %s", $settings['bucket'] ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+			// Folder fragments for this record's recipients, matching AJCore's key layout.
+			$fragments = array();
+			foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT user_id, user_email FROM `{$users}` WHERE file_id = %d LIMIT 200", (int) $row->id ) ) as $u ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$user = (int) $u->user_id ? get_userdata( (int) $u->user_id ) : ( $u->user_email ? get_user_by( 'email', $u->user_email ) : false );
+				if ( $user ) {
+					$fragments[] = '/user-' . (int) $user->ID . '-' . sanitize_title( $user->user_login ) . '/';
+				}
+				if ( $u->user_email ) {
+					$fragments[] = '/customer-' . sanitize_title( $u->user_email ) . '/';
+				}
+			}
+			$stem = function ( $name ) {
+				$name = preg_replace( '/\.[A-Za-z0-9]{2,5}$/', '', (string) $name );
+				$name = preg_replace( '/^\d+-/', '', $name );
+				return sanitize_title( $name );
+			};
+			$want   = $stem( $row->title );
+			$search = strtolower( trim( (string) $search ) );
+			$out    = array();
+			foreach ( $listing as $obj ) {
+				$key = $obj['key'];
+				if ( '/' === substr( $key, -1 ) || false !== strpos( $key, '/sizes/' ) || isset( $taken[ $key ] ) ) {
+					continue;
+				}
+				$name_match = '' !== $want && $stem( basename( $key ) ) === $want;
+				$same       = false;
+				foreach ( $fragments as $frag ) {
+					if ( false !== strpos( '/' . $key, $frag ) ) {
+						$same = true;
+						break;
+					}
+				}
+				if ( '' !== $search ) {
+					if ( false === strpos( strtolower( $key ), $search ) ) {
+						continue;
+					}
+				} elseif ( ! $name_match && ! $same ) {
+					continue;
+				}
+				$out[] = $obj + array( 'name_match' => $name_match, 'same_customer' => $same );
+			}
+			usort( $out, function ( $a, $b ) {
+				$sa = ( $a['name_match'] ? 2 : 0 ) + ( $a['same_customer'] ? 1 : 0 );
+				$sb = ( $b['name_match'] ? 2 : 0 ) + ( $b['same_customer'] ? 1 : 0 );
+				return $sb <=> $sa;
+			} );
+			return array_slice( $out, 0, 25 );
+		}
+
+		/**
+		 * Attach an object that already exists in the bucket to a Files record whose file is gone
+		 * (or is a stale pointer to a site image). Creates a new customer attachment in the
+		 * reserved range and records the mapping. The object is not copied or renamed.
+		 *
+		 * @return int|WP_Error New attachment ID.
+		 */
+		public static function attach_object( $file_row_id, $object_key ) {
+			global $wpdb;
+			if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
+				return new WP_Error( 'ajcore_attach_unavailable', __( 'Remote storage is not available.', 'ajforms' ) );
+			}
+			$object_key = ltrim( (string) $object_key, '/' );
+			if ( '' === $object_key || false !== strpos( $object_key, '..' ) ) {
+				return new WP_Error( 'ajcore_attach_bad_key', __( 'Invalid file path.', 'ajforms' ) );
+			}
+			$files = $wpdb->prefix . 'aj_portal_files';
+			$objs  = $wpdb->prefix . 'aj_storage_objects';
+			$row   = $wpdb->get_row( $wpdb->prepare( "SELECT id, attachment_id, title FROM `{$files}` WHERE id = %d", (int) $file_row_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( ! $row ) {
+				return new WP_Error( 'ajcore_attach_no_row', __( 'File record not found.', 'ajforms' ) );
+			}
+			$old = (int) $row->attachment_id;
+			if ( self::owns_attachment( $old ) ) {
+				return new WP_Error( 'ajcore_attach_not_broken', __( 'This record already has its file.', 'ajforms' ) );
+			}
+			$settings = AJCore_Storage_Service::get_settings();
+			$client   = AJCore_Storage_Service::get_client( $settings );
+			if ( ! $client ) {
+				return new WP_Error( 'ajcore_attach_no_client', __( 'Remote storage is not configured.', 'ajforms' ) );
+			}
+			if ( (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$objs}` WHERE bucket = %s AND object_key = %s", $settings['bucket'], $object_key ) ) > 0 ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				return new WP_Error( 'ajcore_attach_taken', __( 'Another record already uses this file.', 'ajforms' ) );
+			}
+			$head = $client->head_object( $object_key );
+			if ( is_wp_error( $head ) ) {
+				return $head;
+			}
+			if ( ! $head ) {
+				return new WP_Error( 'ajcore_attach_no_object', __( 'That file is not in the bucket.', 'ajforms' ) );
+			}
+
+			$type = wp_check_filetype( basename( $object_key ) );
+			$mime = ! empty( $type['type'] ) ? $type['type'] : ( ! empty( $head['content_type'] ) ? $head['content_type'] : 'application/octet-stream' );
+			$upload = wp_upload_dir();
+			$new_id = wp_insert_attachment(
+				array(
+					'post_title'     => $row->title,
+					'post_content'   => '',
+					'post_status'    => 'inherit',
+					'post_mime_type' => $mime,
+					'import_id'      => AJCore_Storage_Service::next_customer_file_id(),
+				),
+				trailingslashit( $upload['basedir'] ) . 'ajcore-remote/' . basename( $object_key ), // Never exists locally; served from remote storage.
+				0,
+				true
+			);
+			if ( is_wp_error( $new_id ) || ! $new_id ) {
+				return is_wp_error( $new_id ) ? $new_id : new WP_Error( 'ajcore_attach_insert', __( 'Could not create the attachment.', 'ajforms' ) );
+			}
+			$new_id = (int) $new_id;
+
+			$wpdb->query( 'START TRANSACTION' );
+			$ok = AJCore_Storage_Service::record_existing_object( $new_id, $settings['bucket'], $object_key, (int) $head['content_length'], $mime )
+				&& false !== $wpdb->update( $files, array( 'attachment_id' => $new_id ), array( 'id' => (int) $row->id ), array( '%d' ), array( '%d' ) );
+			if ( ! $ok ) {
+				$wpdb->query( 'ROLLBACK' );
+				// Direct delete: wp_delete_attachment() would also delete the remote object.
+				$wpdb->delete( $wpdb->postmeta, array( 'post_id' => $new_id ), array( '%d' ) );
+				$wpdb->delete( $wpdb->posts, array( 'ID' => $new_id ), array( '%d' ) );
+				return new WP_Error( 'ajcore_attach_db', __( 'Could not update the records; nothing was changed.', 'ajforms' ) );
+			}
+			$wpdb->query( 'COMMIT' );
+			self::mark( $new_id );
+			clean_post_cache( $new_id );
+			return $new_id;
+		}
+
+		public static function ajax_find_objects() {
+			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'ajcore_object_attach', 'nonce', false ) ) {
+				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
+			}
+			$result = self::find_objects( isset( $_POST['file_id'] ) ? absint( $_POST['file_id'] ) : 0, isset( $_POST['search'] ) ? sanitize_text_field( wp_unslash( $_POST['search'] ) ) : '' );
+			if ( is_wp_error( $result ) ) {
+				wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+			}
+			wp_send_json_success( array( 'objects' => $result ) );
+		}
+
+		public static function ajax_attach_object() {
+			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'ajcore_object_attach', 'nonce', false ) ) {
+				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
+			}
+			$result = self::attach_object( isset( $_POST['file_id'] ) ? absint( $_POST['file_id'] ) : 0, isset( $_POST['key'] ) ? sanitize_text_field( wp_unslash( $_POST['key'] ) ) : '' );
+			if ( is_wp_error( $result ) ) {
+				wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+			}
+			wp_send_json_success( array( 'attachment_id' => (int) $result ) );
+		}
+
 		public static function ajax_reattach() {
 			if ( ! current_user_can( 'manage_options' ) || ! check_ajax_referer( 'ajcore_reattach_file', 'nonce', false ) ) {
 				wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'ajforms' ) ), 403 );
@@ -227,6 +406,8 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 
 	add_action( 'admin_init', array( 'AJCore_Customer_Files', 'maybe_backfill' ) );
 	add_action( 'wp_ajax_ajcore_reattach_file', array( 'AJCore_Customer_Files', 'ajax_reattach' ) );
+	add_action( 'wp_ajax_ajcore_find_objects', array( 'AJCore_Customer_Files', 'ajax_find_objects' ) );
+	add_action( 'wp_ajax_ajcore_attach_object', array( 'AJCore_Customer_Files', 'ajax_attach_object' ) );
 
 	// Upload folders AJCore owns on each site: a sync must never copy these between sites.
 	add_filter( 'synchy_live_owned_upload_dirs', function ( $dirs ) {

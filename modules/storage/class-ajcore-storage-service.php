@@ -512,6 +512,11 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$table}` WHERE bucket = %s AND object_key = %s AND attachment_id <> %d", $bucket, $object_key, (int) $exclude_attachment_id ) ) > 0;
 		}
 
+		/** Record an object that already exists in the bucket (used when attaching an existing object). */
+		public static function record_existing_object( $attachment_id, $bucket, $object_key, $size_bytes, $content_type ) {
+			return self::save_remote_record( $attachment_id, $bucket, $object_key, $size_bytes, $content_type );
+		}
+
 		private static function save_remote_record( $attachment_id, $bucket, $object_key, $size_bytes, $content_type ) {
 			global $wpdb;
 			$table   = self::table();
