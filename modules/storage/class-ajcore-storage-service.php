@@ -497,11 +497,15 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			wp_send_json_success( self::renumber_customer_files( $dry_run ) );
 		}
 
-		/** Per-request cache of storage records by attachment ID (null = no record). Image-heavy pages ask once per image. */
+		/** Per-request cache of storage records by attachment ID (null = no record). */
 		private static $record_cache = array();
+
+		/** Per-request set of attachment IDs that have a record, or false when the table is too big to preload. */
+		private static $mapped_ids = null;
 
 		/** Drop cached storage records after a write. Pass an ID to drop one, or nothing to drop all. */
 		public static function forget_record( $attachment_id = null ) {
+			self::$mapped_ids = null;
 			if ( null === $attachment_id ) {
 				self::$record_cache = array();
 			} else {
@@ -509,6 +513,11 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 			}
 		}
 
+		/**
+		 * Storage record for an attachment, or null. Public pages ask this for every image they render,
+		 * so the first call loads the (small) set of mapped IDs in ONE query and every attachment that
+		 * is not in storage is answered from memory with no further query.
+		 */
 		public static function get_remote_record( $attachment_id ) {
 			global $wpdb;
 			$attachment_id = (int) $attachment_id;
@@ -516,7 +525,15 @@ if ( ! class_exists( 'AJCore_Storage_Service' ) ) {
 				return self::$record_cache[ $attachment_id ];
 			}
 			$table = self::table();
-			$row   = $wpdb->get_row(
+			if ( null === self::$mapped_ids ) {
+				$ids              = $wpdb->get_col( "SELECT attachment_id FROM `{$table}` LIMIT 50001" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				self::$mapped_ids = ( is_array( $ids ) && count( $ids ) <= 50000 ) ? array_flip( array_map( 'intval', $ids ) ) : false;
+			}
+			if ( is_array( self::$mapped_ids ) && ! isset( self::$mapped_ids[ $attachment_id ] ) ) {
+				self::$record_cache[ $attachment_id ] = null;
+				return null;
+			}
+			$row = $wpdb->get_row(
 				$wpdb->prepare( "SELECT * FROM `{$table}` WHERE attachment_id = %d LIMIT 1", $attachment_id )
 			);
 			self::$record_cache[ $attachment_id ] = $row ? $row : null;
