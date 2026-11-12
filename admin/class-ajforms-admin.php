@@ -469,10 +469,30 @@ class AJForms_Admin {
 		return array(
 			'selected_prices' => $selected_prices,
 			'order'           => $order,
+			'builder'         => $this->normalize_product_builder_options( isset( $settings['builder'] ) ? $settings['builder'] : array() ),
 		);
 	}
 
-	private function save_public_product_display_settings( $selected_prices, $order ) {
+	/** Shortcode-builder choices (mode, template, details, fields, shown statuses) saved with the selection,
+	 *  so the generated shortcode is the same after the page reloads. */
+	private function normalize_product_builder_options( $raw ) {
+		$raw       = is_array( $raw ) ? $raw : array();
+		$all_fields = array( 'title', 'description', 'summary', 'price', 'button' );
+		$fields    = isset( $raw['fields'] ) && is_array( $raw['fields'] ) ? array_values( array_intersect( $all_fields, array_map( 'sanitize_key', $raw['fields'] ) ) ) : array( 'title', 'description', 'price', 'button' );
+		$statuses  = isset( $raw['statuses'] ) && is_array( $raw['statuses'] ) ? array_values( array_intersect( array( 'active', 'archived' ), array_map( 'sanitize_key', $raw['statuses'] ) ) ) : array( 'active' );
+		if ( empty( $statuses ) ) {
+			$statuses = array( 'active' );
+		}
+		return array(
+			'mode'     => ( isset( $raw['mode'] ) && 'cart' === $raw['mode'] ) ? 'cart' : 'buy',
+			'template' => ( isset( $raw['template'] ) && 'compact' === $raw['template'] ) ? 'compact' : 'default',
+			'details'  => ( isset( $raw['details'] ) && 'expand' === $raw['details'] ) ? 'expand' : 'none',
+			'fields'   => $fields,
+			'statuses' => $statuses,
+		);
+	}
+
+	private function save_public_product_display_settings( $selected_prices, $order, $builder = null ) {
 		$selected_prices = is_array( $selected_prices ) ? array_values( array_unique( array_filter( array_map( 'sanitize_text_field', $selected_prices ) ) ) ) : array();
 		$clean_order = array();
 		if ( is_array( $order ) ) {
@@ -489,6 +509,7 @@ class AJForms_Admin {
 			array(
 				'selected_prices' => $selected_prices,
 				'order'           => $clean_order,
+				'builder'         => null === $builder ? $this->get_public_product_display_settings()['builder'] : $this->normalize_product_builder_options( $builder ),
 			),
 			false
 		);
@@ -14374,7 +14395,14 @@ class AJForms_Admin {
 			check_admin_referer( 'ajcore_save_public_product_display', 'ajcore_public_product_display_nonce' );
 			$selected = isset( $_POST['public_product_selected_prices'] ) && is_array( $_POST['public_product_selected_prices'] ) ? wp_unslash( $_POST['public_product_selected_prices'] ) : array();
 			$order    = isset( $_POST['public_product_order'] ) && is_array( $_POST['public_product_order'] ) ? wp_unslash( $_POST['public_product_order'] ) : array();
-			$this->save_public_product_display_settings( $selected, $order );
+			$builder  = array(
+				'mode'     => isset( $_POST['ajcore_shortcode_mode'] ) ? sanitize_key( wp_unslash( $_POST['ajcore_shortcode_mode'] ) ) : 'buy',
+				'template' => isset( $_POST['ajcore_shortcode_template'] ) ? sanitize_key( wp_unslash( $_POST['ajcore_shortcode_template'] ) ) : 'default',
+				'details'  => isset( $_POST['ajcore_shortcode_details'] ) ? sanitize_key( wp_unslash( $_POST['ajcore_shortcode_details'] ) ) : 'none',
+				'fields'   => isset( $_POST['ajcore_shortcode_fields'] ) && is_array( $_POST['ajcore_shortcode_fields'] ) ? wp_unslash( $_POST['ajcore_shortcode_fields'] ) : array(),
+				'statuses' => isset( $_POST['ajcore_shortcode_statuses'] ) && is_array( $_POST['ajcore_shortcode_statuses'] ) ? wp_unslash( $_POST['ajcore_shortcode_statuses'] ) : array(),
+			);
+			$this->save_public_product_display_settings( $selected, $order, $builder );
 
 			wp_safe_redirect(
 				add_query_arg(
@@ -27811,6 +27839,7 @@ class AJForms_Admin {
 		$display_settings = $this->get_public_product_display_settings();
 		$selected_display_prices = ! empty( $display_settings['selected_prices'] ) ? $display_settings['selected_prices'] : ( isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? array_map( 'sanitize_text_field', $settings['stripe_selected_prices'] ) : array() );
 		$product_order = isset( $display_settings['order'] ) && is_array( $display_settings['order'] ) ? $display_settings['order'] : array();
+		$builder_opts  = $display_settings['builder'];
 		if ( ! empty( $product_order ) ) {
 			usort(
 				$prices,
@@ -27932,7 +27961,7 @@ class AJForms_Admin {
 								<p><?php esc_html_e( 'Filter, select products, set their order, choose what to show, then generate a shortcode for any page.', 'ajforms' ); ?></p>
 							</div>
 							<div style="display:flex;gap:8px;align-items:center;">
-								<button type="button" class="button" id="ajcore-select-visible-products"><?php esc_html_e( 'Select Visible', 'ajforms' ); ?></button>
+								<button type="button" class="button" id="ajcore-select-visible-products"><?php esc_html_e( 'Select All Shown', 'ajforms' ); ?></button>
 								<?php submit_button( __( 'Save Selection & Order', 'ajforms' ), 'primary', 'submit', false ); ?>
 							</div>
 						</div>
@@ -27941,25 +27970,25 @@ class AJForms_Admin {
 							<div class="ajcore-builder-field">
 								<strong><?php esc_html_e( 'Filter products', 'ajforms' ); ?></strong>
 								<div class="ajcore-builder-checks">
-									<label><input type="checkbox" class="ajcore-status-filter" value="active" checked> <?php echo esc_html( sprintf( __( 'Active (%d)', 'ajforms' ), $active_count ) ); ?></label>
-									<label><input type="checkbox" class="ajcore-status-filter" value="archived"> <?php echo esc_html( sprintf( __( 'Archived / inactive (%d)', 'ajforms' ), $archived_count ) ); ?></label>
+									<label><input type="checkbox" class="ajcore-status-filter" name="ajcore_shortcode_statuses[]" value="active" <?php checked( in_array( 'active', $builder_opts['statuses'], true ) ); ?>> <?php echo esc_html( sprintf( __( 'Active (%d)', 'ajforms' ), $active_count ) ); ?></label>
+									<label><input type="checkbox" class="ajcore-status-filter" name="ajcore_shortcode_statuses[]" value="archived" <?php checked( in_array( 'archived', $builder_opts['statuses'], true ) ); ?>> <?php echo esc_html( sprintf( __( 'Archived / inactive (%d)', 'ajforms' ), $archived_count ) ); ?></label>
 								</div>
 							</div>
 							<div class="ajcore-builder-field">
 								<strong><?php esc_html_e( 'Display mode', 'ajforms' ); ?></strong>
 								<div class="ajcore-builder-checks">
-									<label><input type="radio" name="ajcore_shortcode_mode" value="buy" checked> <?php esc_html_e( 'Buy Now', 'ajforms' ); ?></label>
-									<label><input type="radio" name="ajcore_shortcode_mode" value="cart"> <?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_mode" value="buy" <?php checked( 'buy', $builder_opts['mode'] ); ?>> <?php esc_html_e( 'Buy Now', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_mode" value="cart" <?php checked( 'cart', $builder_opts['mode'] ); ?>> <?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></label>
 								</div>
 							</div>
 							<div class="ajcore-builder-field">
 								<strong><?php esc_html_e( 'Fields to show', 'ajforms' ); ?></strong>
 								<div class="ajcore-builder-checks">
-									<label><input type="checkbox" class="ajcore-display-field" value="title" checked> <?php esc_html_e( 'Product name', 'ajforms' ); ?></label>
-									<label><input type="checkbox" class="ajcore-display-field" value="description" checked> <?php esc_html_e( 'Description', 'ajforms' ); ?></label>
-									<label><input type="checkbox" class="ajcore-display-field" value="summary"> <?php esc_html_e( 'Short summary', 'ajforms' ); ?></label>
-									<label><input type="checkbox" class="ajcore-display-field" value="price" checked> <?php esc_html_e( 'Price', 'ajforms' ); ?></label>
-									<label><input type="checkbox" class="ajcore-display-field" value="button" checked> <?php esc_html_e( 'Button', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="title" <?php checked( in_array( 'title', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Product name', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="description" <?php checked( in_array( 'description', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Description', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="summary" <?php checked( in_array( 'summary', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Short summary', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="price" <?php checked( in_array( 'price', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Price', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="button" <?php checked( in_array( 'button', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Button', 'ajforms' ); ?></label>
 								</div>
 							</div>
 						</div>
@@ -27968,15 +27997,15 @@ class AJForms_Admin {
 							<div class="ajcore-builder-field">
 								<strong><?php esc_html_e( 'Template', 'ajforms' ); ?></strong>
 								<div class="ajcore-builder-checks">
-									<label><input type="radio" name="ajcore_shortcode_template" value="default" checked> <?php esc_html_e( 'Default', 'ajforms' ); ?></label>
-									<label><input type="radio" name="ajcore_shortcode_template" value="compact"> <?php esc_html_e( 'Compact', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_template" value="default" <?php checked( 'default', $builder_opts['template'] ); ?>> <?php esc_html_e( 'Default', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_template" value="compact" <?php checked( 'compact', $builder_opts['template'] ); ?>> <?php esc_html_e( 'Compact', 'ajforms' ); ?></label>
 								</div>
 							</div>
 							<div class="ajcore-builder-field">
 								<strong><?php esc_html_e( 'Details', 'ajforms' ); ?></strong>
 								<div class="ajcore-builder-checks">
-									<label><input type="radio" name="ajcore_shortcode_details" value="none" checked> <?php esc_html_e( 'No expandable details', 'ajforms' ); ?></label>
-									<label><input type="radio" name="ajcore_shortcode_details" value="expand"> <?php esc_html_e( 'Expandable details', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_details" value="none" <?php checked( 'none', $builder_opts['details'] ); ?>> <?php esc_html_e( 'No expandable details', 'ajforms' ); ?></label>
+									<label><input type="radio" name="ajcore_shortcode_details" value="expand" <?php checked( 'expand', $builder_opts['details'] ); ?>> <?php esc_html_e( 'Expandable details', 'ajforms' ); ?></label>
 								</div>
 							</div>
 						</div>
