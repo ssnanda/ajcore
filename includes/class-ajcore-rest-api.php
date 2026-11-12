@@ -8869,6 +8869,22 @@ class AJCore_REST_API {
 				}
 			}
 			return rest_ensure_response( array( 'success' => true, 'sent' => $sent, 'failed' => $failed ) );
+		} elseif ( 'send_custom_email' === $action ) {
+			if ( ! class_exists( 'AJForms_Admin' ) ) {
+				return new WP_Error( 'ajcore_admin_unavailable', __( 'Email sending is unavailable right now.', 'ajforms' ), array( 'status' => 500 ) );
+			}
+			if ( 1 !== count( $ids ) ) {
+				return new WP_Error( 'ajcore_one_lead_only', __( 'Send to one lead at a time.', 'ajforms' ), array( 'status' => 400 ) );
+			}
+			$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
+			$result = $admin->send_lead_custom_email( $ids[0], (string) $request->get_param( 'subject' ), (string) $request->get_param( 'body' ) );
+			if ( is_wp_error( $result ) ) {
+				return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 400 ) );
+			}
+			if ( ! $result ) {
+				return new WP_Error( 'ajcore_email_failed', __( 'The email could not be sent.', 'ajforms' ), array( 'status' => 502 ) );
+			}
+			return rest_ensure_response( array( 'success' => true, 'sent' => array( $ids[0] ) ) );
 		} else {
 			return new WP_Error( 'ajcore_unknown_lead_bulk_action', __( 'Unknown lead bulk action.', 'ajforms' ), array( 'status' => 400 ) );
 		}

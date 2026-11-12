@@ -6352,6 +6352,68 @@ class AJForms_Admin {
 		return $sent;
 	}
 
+	/** Sends a staff-written (or AI-drafted, staff-approved) email to one lead through the same branded
+	 *  template, sender settings and SMTP profile (Metered SMTP / ZeptoMail) as the follow-up email, and
+	 *  logs it as a lead note. No duplicate guard: a person reviewed and clicked Send. */
+	public function send_lead_custom_email( $lead_id, $subject, $body ) {
+		$wpdb        = $this->get_leads_db();
+		$leads_table = $this->get_leads_table();
+		$row         = $wpdb->get_row( $wpdb->prepare( "SELECT id, lead_data, site_uuid FROM `{$leads_table}` WHERE id = %d", absint( $lead_id ) ), ARRAY_A );
+		if ( ! $row ) {
+			return new WP_Error( 'ajcore_lead_not_found', __( 'Lead not found.', 'ajforms' ) );
+		}
+		$decoded = json_decode( isset( $row['lead_data'] ) ? (string) $row['lead_data'] : '{}', true );
+		$email   = $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) );
+		if ( ! is_email( $email ) ) {
+			return new WP_Error( 'ajcore_lead_no_email', __( 'This lead does not have a valid email address on file.', 'ajforms' ) );
+		}
+		$subject = trim( sanitize_text_field( (string) $subject ) );
+		$body    = trim( sanitize_textarea_field( (string) $body ) );
+		if ( '' === $subject || '' === $body ) {
+			return new WP_Error( 'ajcore_email_empty', __( 'Subject and message are required.', 'ajforms' ) );
+		}
+
+		$settings   = $this->get_plugin_settings();
+		$brand      = $this->get_lead_brand_context( isset( $row['site_uuid'] ) ? (string) $row['site_uuid'] : '' );
+		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'lead_followup_from_email', $brand ), $this->get_customer_brand_setting_key( 'lead_followup_from_name', $brand ) );
+		$from_email = $sender['from_email'];
+		$from_name  = $sender['from_name'];
+		$site_name  = $brand['site_name'];
+
+		$paragraphs = array_values( array_filter( array_map( 'trim', preg_split( '/\n\s*\n/', $body ) ) ) );
+		$message    = $this->render_branded_email_html( array_merge(
+			array(
+				'kicker'     => $site_name,
+				'heading'    => $subject,
+				'paragraphs' => $paragraphs,
+			),
+			$this->get_branded_email_footer_parts( $brand, sprintf( __( 'You received this because you contacted %s about our services.', 'ajforms' ), $site_name ) )
+		) );
+
+		$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+		if ( is_email( $from_email ) ) {
+			$headers[] = 'From: ' . $from_name . ' <' . $from_email . '>';
+			$headers[] = 'Reply-To: ' . $from_email;
+		}
+
+		$sent = $this->send_branded_wp_mail( $email, $subject, $message, $headers, $from_email, $from_name, isset( $sender['profile'] ) ? $sender['profile'] : '' );
+		if ( $sent ) {
+			$actor = wp_get_current_user();
+			$wpdb->insert(
+				$this->get_lead_notes_table(),
+				array(
+					'lead_id'     => absint( $lead_id ),
+					'note'        => '[Email] ' . $subject . "\n" . $body,
+					'created_by'  => get_current_user_id(),
+					'author_name' => $actor ? (string) $actor->display_name : '',
+					'created_at'  => current_time( 'mysql' ),
+				),
+				array( '%d', '%s', '%d', '%s', '%s' )
+			);
+		}
+		return $sent;
+	}
+
 	private function relink_stripe_customer_to_user_email( $stripe_customer_id, $email ) {
 		global $wpdb;
 
