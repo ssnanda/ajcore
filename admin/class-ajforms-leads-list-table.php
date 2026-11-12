@@ -380,6 +380,22 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 					$out .= '<a class="button button-small" href="' . esc_url( $next_url ) . '">' . esc_html( sprintf( __( 'Next: %s', 'ajforms' ), $pipeline_labels[ $next_stage ] ) ) . '</a>';
 				}
 
+				// Email / Text: opens the AJOps Leads page with the AI draft + preview window for this lead
+				// (AJOps owns AJMCP drafting and AJPhone sending). Shown only when the lead has the channel.
+				$ops_base = untrailingslashit( (string) apply_filters( 'ajcore_ops_url', get_option( 'ajcore_ops_url', 'https://ops.ncllcagents.com' ) ) );
+				if ( '' !== $ops_base ) {
+					$compose_link = function ( $channel, $label ) use ( $ops_base, $lead_id ) {
+						$url = add_query_arg( array( 'compose' => $channel, 'lead' => $lead_id ), $ops_base . '/leads' );
+						return '<a class="button button-small" target="_blank" rel="noopener" href="' . esc_url( $url ) . '">' . esc_html( $label ) . '</a>';
+					};
+					if ( ! empty( $item['_email'] ) ) {
+						$out .= $compose_link( 'email', __( 'Email', 'ajforms' ) );
+					}
+					if ( ! empty( $item['_phone'] ) ) {
+						$out .= $compose_link( 'text', __( 'Text', 'ajforms' ) );
+					}
+				}
+
 				$out .= '</div>';
 				return $out;
 		}

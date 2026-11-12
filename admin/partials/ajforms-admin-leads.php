@@ -369,6 +369,26 @@ foreach ( (array) $wpdb->get_col( "SHOW TABLES LIKE '%forms_leads%'" ) as $cand 
 			font-size: 13px;
 		}
 
+		/* Compact layout: readable on very wide screens, one row of stats, one row of filters, tighter table. */
+		.wrap:has(> .ajforms-admin-shell) { max-width: 1760px; }
+		.ajforms-admin-shell { margin-top: 10px; }
+		.ajforms-admin-hero { padding: 14px 20px; border-radius: 16px; align-items: center; }
+		.ajforms-admin-hero h1 { font-size: 22px; margin: 0 0 4px; }
+		.ajforms-admin-hero p { font-size: 13px; line-height: 1.5; max-width: 900px; }
+		.ajforms-stats-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 10px 0 12px; }
+		.ajforms-stat-card { padding: 10px 14px; border-radius: 12px; display: flex; align-items: baseline; gap: 10px; }
+		.ajforms-stat-card strong { font-size: 22px; margin: 0; }
+		.ajforms-filter-shell { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; }
+		.ajforms-filter-shell > .ajforms-filter-grid { margin: 0 !important; }
+		.ajforms-filter-shell > form { margin: 0; }
+		.ajforms-filter-grid label { flex-direction: row; align-items: center; gap: 8px; }
+		.ajforms-filter-grid select { min-width: 150px; }
+		.ajforms-list-shell { padding: 10px 12px; border-radius: 14px; }
+		.ajforms-list-shell .wp-list-table th,
+		.ajforms-list-shell .wp-list-table td { padding: 8px 10px; }
+		.ajforms-list-shell .wp-list-table td.email,
+		.ajforms-list-shell .wp-list-table td.company { overflow-wrap: anywhere; }
+
 		@media (max-width: 1000px) {
 			.ajforms-admin-hero {
 				flex-direction: column;
