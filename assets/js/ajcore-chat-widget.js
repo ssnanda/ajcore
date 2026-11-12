@@ -230,8 +230,8 @@
 			'<button type="button" class="aj-identify-close" aria-label="Dismiss">✕</button>' +
 			'<p class="aj-identify-text">Want us to follow up about your visit? Leave your info below — totally optional.</p>' +
 			'<input type="text" id="ajcore-identify-name" placeholder="Name" autocomplete="name">' +
-			'<input type="email" id="ajcore-identify-email" placeholder="Email" autocomplete="email">' +
-			'<input type="tel" id="ajcore-identify-phone" placeholder="Phone" autocomplete="tel">' +
+			'<input type="email" id="ajcore-identify-email" placeholder="you@example.com" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false">' +
+			'<input type="tel" id="ajcore-identify-phone" placeholder="(704) 555-0123" autocomplete="tel" inputmode="tel" maxlength="20">' +
 			'<div class="aj-identify-actions">' +
 				'<button type="button" class="aj-identify-btn" id="ajcore-identify-no">No thanks</button>' +
 				'<button type="button" class="aj-identify-btn" id="ajcore-identify-submit" disabled>Send</button>' +
@@ -250,6 +250,7 @@
 		}
 		emailInput.addEventListener("input", refreshSubmitState);
 		phoneInput.addEventListener("input", refreshSubmitState);
+		bindPhoneFormat(phoneInput);
 
 		function close() {
 			if (popup.parentNode) popup.parentNode.removeChild(popup);
@@ -284,10 +285,18 @@
 		}
 
 		submitBtn.addEventListener("click", function () {
-			var name = nameInput.value.trim();
-			var email = emailInput.value.trim();
-			var phone = phoneInput.value.trim();
+			var name = nameInput.value.trim() ? tidyName(nameInput.value) : "";
+			var email = normalizeEmail(emailInput.value);
+			var phone = formatPhone(phoneInput.value);
 			if (!email && !phone) return;
+			var problem = (name && !isValidName(name)) ? "Please enter your real name."
+				: (email && emailProblem(email)) ? emailProblem(email)
+				: (phone && !isValidPhone(phone)) ? "Please enter a valid phone number, like (704) 555-0123." : "";
+			if (problem) {
+				errorEl.textContent = problem;
+				errorEl.style.display = "block";
+				return;
+			}
 
 			errorEl.style.display = "none";
 			nameInput.disabled = true;
@@ -1000,8 +1009,79 @@
 	}
 
 	// ── Pre-chat form validation ─────────────────────────────────────────────
+	// Throwaway / placeholder domains and local parts that are never a real contact.
+	var JUNK_EMAIL_DOMAINS = /^(example\.(com|org|net)|test\.com|testing\.com|email\.com|mail\.com|domain\.com|none\.com|noemail\.com|fake\.com|asdf\.com|abc\.com|xyz\.com|a\.com|aa\.com|mailinator\.com|guerrillamail\.[a-z]+|10minutemail\.[a-z]+|tempmail\.[a-z]+|temp-mail\.org|yopmail\.com|trashmail\.com|sharklasers\.com|getnada\.com|throwawaymail\.com|dispostable\.com|maildrop\.cc)$/;
+	var JUNK_EMAIL_LOCALS = /^(test|testing|tester|asdf|asdfg|asdfgh|qwerty|qwe|abc|abcd|abc123|aaa|xxx|xyz|none|noemail|no|na|nope|fake|fakeemail|email|name|user|me|my|you|yes|null|nil|nobody|nothing|temp|junk|spam|sample|example|1234|12345|123456)$/;
+	var EMAIL_DOMAIN_TYPOS = {
+		"gmial.com": "gmail.com", "gmai.com": "gmail.com", "gmail.co": "gmail.com", "gamil.com": "gmail.com",
+		"gnail.com": "gmail.com", "gmail.con": "gmail.com", "gmail.cm": "gmail.com", "gmil.com": "gmail.com",
+		"yaho.com": "yahoo.com", "yahooo.com": "yahoo.com", "yahoo.co": "yahoo.com", "yahoo.con": "yahoo.com",
+		"hotmial.com": "hotmail.com", "hotmai.com": "hotmail.com", "hotmail.con": "hotmail.com",
+		"outlok.com": "outlook.com", "outlook.con": "outlook.com", "iclod.com": "icloud.com", "icloud.con": "icloud.com"
+	};
+	function normalizeEmail(value) {
+		return String(value || "").trim().toLowerCase().replace(/\s+/g, "");
+	}
+	// Returns "" when the address looks real, otherwise a short plain-language reason.
+	function emailProblem(value) {
+		var v = normalizeEmail(value);
+		if (!v) return "Please enter your email address.";
+		var m = /^([a-z0-9._%+\-]+)@([a-z0-9.\-]+)$/.exec(v);
+		var fallback = "Please enter a valid email address, like you@example.com.";
+		if (!m) return fallback;
+		var local = m[1], domain = m[2];
+		if (local.length < 2 || local.length > 64 || /^\.|\.$|\.\./.test(local)) return fallback;
+		var labels = domain.split(".");
+		if (labels.length < 2 || domain.length > 253) return fallback;
+		for (var i = 0; i < labels.length; i++) {
+			if (!/^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$/.test(labels[i])) return fallback;
+		}
+		if (!/^[a-z]{2,24}$/.test(labels[labels.length - 1])) return fallback;
+		if (EMAIL_DOMAIN_TYPOS[domain]) return "Did you mean " + local + "@" + EMAIL_DOMAIN_TYPOS[domain] + "?";
+		if (JUNK_EMAIL_DOMAINS.test(domain) || JUNK_EMAIL_LOCALS.test(local) || /^(.)\1+$/.test(local.replace(/[._%+\-]/g, ""))) {
+			return "Please use your real email address so we can reach you.";
+		}
+		return "";
+	}
 	function isValidEmail(value) {
-		return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value);
+		return emailProblem(value) === "";
+	}
+	// Live "(704) 555-0123" formatting for US/Canada numbers; "+" numbers (international) are kept
+	// as typed with only junk characters removed.
+	function formatPhone(value) {
+		var raw = String(value || "");
+		if (/^\s*\+(?!1\b)/.test(raw) && !/^\s*\+1[\s\-.(]?\d/.test(raw)) {
+			return "+" + raw.replace(/[^0-9]/g, "").slice(0, 15);
+		}
+		var d = raw.replace(/[^0-9]/g, "");
+		if (d.length > 10 && d.charAt(0) === "1") d = d.slice(1);
+		d = d.slice(0, 10);
+		if (d.length === 0) return "";
+		if (d.length < 4) return "(" + d;
+		if (d.length < 7) return "(" + d.slice(0, 3) + ") " + d.slice(3);
+		return "(" + d.slice(0, 3) + ") " + d.slice(3, 6) + "-" + d.slice(6);
+	}
+	function bindPhoneFormat(input) {
+		input.addEventListener("input", function () {
+			var f = formatPhone(input.value);
+			if (f !== input.value) input.value = f;
+		});
+	}
+	function isValidName(value) {
+		var v = String(value || "").trim();
+		if (v.length < 2 || v.length > 80) return false;
+		if (!/[A-Za-z\u00C0-\u024F]{2}/.test(v)) return false;
+		if (/\d{3,}|[<>@{}\[\]\\\/]/.test(v)) return false;
+		if (/^(.)\1+$/.test(v.replace(/\s/g, ""))) return false;
+		return !/^(test|testing|asdf|asdfg|qwerty|abc|none|fake|name|na|no|xxx)$/i.test(v);
+	}
+	// "sandip nanda" / "SANDIP NANDA" -> "Sandip Nanda"; mixed case (McDonald) is left alone.
+	function tidyName(value) {
+		var v = String(value || "").trim().replace(/\s+/g, " ");
+		if (v === v.toLowerCase() || v === v.toUpperCase()) {
+			v = v.toLowerCase().replace(/(^|[\s\-'])([a-z\u00e0-\u024f])/g, function (_, a, b) { return a + b.toUpperCase(); });
+		}
+		return v;
 	}
 	function isValidPhone(value) {
 		// Reject letters/symbols outright, then require a real dialable digit count — 10 (US local)
@@ -1084,6 +1164,7 @@
 
 		endEmailInput = endOverlay.querySelector("#aj-end-email");
 		endPhoneInput = endOverlay.querySelector("#aj-end-phone");
+		bindPhoneFormat(endPhoneInput);
 		endEmailError = endOverlay.querySelector("#aj-end-email-error");
 		endPhoneError = endOverlay.querySelector("#aj-end-phone-error");
 
@@ -1094,7 +1175,7 @@
 	function showEndOverlay() {
 		if (!endOverlay) buildEndOverlay();
 		endEmailInput.value = visitorEmail;
-		endPhoneInput.value = visitorPhone;
+		endPhoneInput.value = formatPhone(visitorPhone);
 		endEmailInput.classList.remove("aj-invalid");
 		endPhoneInput.classList.remove("aj-invalid");
 		endEmailError.classList.remove("show");
@@ -1118,7 +1199,7 @@
 		var emailOk = isValidEmail(email);
 		var phoneOk = isValidPhone(phone);
 		endEmailInput.classList.toggle("aj-invalid", !emailOk);
-		endEmailError.textContent = emailOk ? "" : "Please enter a valid email address, like you@example.com.";
+		endEmailError.textContent = emailOk ? "" : emailProblem(email);
 		endEmailError.classList.toggle("show", !emailOk);
 		endPhoneInput.classList.toggle("aj-invalid", !phoneOk);
 		endPhoneError.textContent = phoneOk ? "" : "Please enter a valid phone number, like (704) 555-0123.";
@@ -1217,11 +1298,11 @@
 		var form = document.createElement("div");
 		form.id = "ajcore-chat-form";
 		form.innerHTML =
-			'<input type="text" id="ajcore-chat-name" placeholder="Your name" required>' +
+			'<input type="text" id="ajcore-chat-name" placeholder="Your name" autocomplete="name" maxlength="80" required>' +
 			'<div class="aj-field-error" id="ajcore-chat-name-error"></div>' +
-			'<input type="email" id="ajcore-chat-email" placeholder="you@example.com" required>' +
+			'<input type="email" id="ajcore-chat-email" placeholder="you@example.com" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" maxlength="254" required>' +
 			'<div class="aj-field-error" id="ajcore-chat-email-error"></div>' +
-			'<input type="tel" id="ajcore-chat-phone" placeholder="(704) 555-0123" required>' +
+			'<input type="tel" id="ajcore-chat-phone" placeholder="(704) 555-0123" autocomplete="tel" inputmode="tel" maxlength="20" required>' +
 			'<div class="aj-field-error" id="ajcore-chat-phone-error"></div>' +
 			'<textarea id="ajcore-chat-first-message" rows="3" placeholder="How can we help?" required></textarea>' +
 			'<div class="aj-field-error" id="ajcore-chat-message-error"></div>' +
@@ -1237,7 +1318,7 @@
 			function run() {
 				var ok = validate(input.value.trim());
 				input.classList.toggle("aj-invalid", !ok);
-				errorEl.textContent = ok ? "" : message;
+				errorEl.textContent = ok ? "" : (typeof message === "function" ? message(input.value.trim()) : message);
 				errorEl.classList.toggle("show", !ok);
 				return ok;
 			}
@@ -1253,10 +1334,13 @@
 		var phoneInput = form.querySelector("#ajcore-chat-phone");
 		var messageInput = form.querySelector("#ajcore-chat-first-message");
 
+		bindPhoneFormat(phoneInput);
+		nameInput.addEventListener("blur", function () { nameInput.value = tidyName(nameInput.value); });
+		emailInput.addEventListener("blur", function () { emailInput.value = normalizeEmail(emailInput.value); });
 		var validateName = fieldValidator(nameInput, form.querySelector("#ajcore-chat-name-error"),
-			function (v) { return v.length > 0; }, "Please enter your name.");
+			isValidName, "Please enter your real name.");
 		var validateEmail = fieldValidator(emailInput, form.querySelector("#ajcore-chat-email-error"),
-			isValidEmail, "Please enter a valid email address, like you@example.com.");
+			isValidEmail, emailProblem);
 		var validatePhone = fieldValidator(phoneInput, form.querySelector("#ajcore-chat-phone-error"),
 			isValidPhone, "Please enter a valid phone number, like (704) 555-0123.");
 		var validateMessage = fieldValidator(messageInput, form.querySelector("#ajcore-chat-message-error"),
@@ -1274,9 +1358,9 @@
 				return;
 			}
 
-			var name = nameInput.value.trim();
-			var email = emailInput.value.trim();
-			var phone = phoneInput.value.trim();
+			var name = tidyName(nameInput.value);
+			var email = normalizeEmail(emailInput.value);
+			var phone = formatPhone(phoneInput.value);
 			var message = messageInput.value.trim();
 			visitorName = name;
 			visitorEmail = email;
