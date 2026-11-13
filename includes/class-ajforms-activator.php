@@ -1047,7 +1047,7 @@ class AJForms_Activator {
 				$pdb_charset = $pdb->get_charset_collate();
 				self::create_reservation_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_mail_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
-				self::create_gmail_intake_log_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
+				self::create_pipeline_log_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_esign_documents_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_customer_site_access_table_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
 				self::create_chat_tables_in_portal_db( $pdb->prefix, $pdb_charset, $pdb );
@@ -2014,7 +2014,7 @@ class AJForms_Activator {
 	 * run only creates it in the local WP DB, but in shared mode every read/write targets
 	 * the shared DB — without this, log inserts fail silently against a missing table.
 	 */
-	public static function create_gmail_intake_log_table_in_portal_db( $prefix, $charset_collate, $pdb ) {
+	public static function create_pipeline_log_table_in_portal_db( $prefix, $charset_collate, $pdb ) {
 		$table = $prefix . 'aj_gmail_intake_log';
 
 		$pdb->query( "CREATE TABLE IF NOT EXISTS {$table} (

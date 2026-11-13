@@ -1,19 +1,19 @@
 <?php
 /**
- * Mailroom: one Client Portal tab for the shared mailboxes AJCore reads.
+ * Pipeline: the Client Portal tab for the shared mailboxes AJCore reads (Gmail and Zoho).
  *
- * Replaces the separate "Pipeline" and "Zoho Mail" tabs. Two collapsed connection buttons (Gmail, Zoho; green =
- * connected, red = not) hold each mailbox's settings; below them a switch picks the Gmail intake queue (the automated
- * filing pipeline) or the live Zoho shared inbox. Old tab URLs (tab=gmail-intake / tab=zoho-mail) redirect here.
+ * One queue for both mailboxes: tiles (All mailboxes, Pending, Filed, and the two mailboxes with their connection state),
+ * search, and the list. Each mailbox's connection settings sit behind its gear. Earlier tab keys (mailroom, gmail-intake,
+ * zoho-mail) redirect here so old links keep working.
  */
 
 if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-class AJCore_Mailroom {
+class AJCore_Pipeline_Tab {
 
-	const TAB = 'mailroom';
+	const TAB = 'pipeline';
 
 	public static function init() {
 		add_filter( 'ajcore_admin_portal_tabs', array( __CLASS__, 'admin_tab' ), 9 );
@@ -36,7 +36,7 @@ class AJCore_Mailroom {
 			return;
 		}
 		$old = sanitize_key( wp_unslash( $_GET['tab'] ) );
-		if ( ! in_array( $old, array( 'gmail-intake', 'zoho-mail' ), true ) ) {
+		if ( ! in_array( $old, array( 'mailroom', 'gmail-intake', 'zoho-mail' ), true ) ) { // earlier tab keys, kept so old bookmarks still open the Pipeline
 			return;
 		}
 		$args = array_diff_key( wp_unslash( $_GET ), array( 'page' => 1, 'tab' => 1 ) );
@@ -65,9 +65,9 @@ class AJCore_Mailroom {
 		if ( self::TAB !== $tab || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
-		$gi = AJCore_Gmail_Intake::instance();
+		$gi = AJCore_Pipeline::instance();
 		$zm = AJCore_Zoho_Mail::instance();
-		$f  = AJCore_Gmail_Intake::queue_filters();
+		$f  = AJCore_Pipeline::queue_filters();
 		$n  = $gi->queue_counts();
 
 		// Connection state: green = connected and on, grey = connected but switched off (Gmail), red = not connected.
@@ -83,17 +83,17 @@ class AJCore_Mailroom {
 		// A tile link keeps the other filters; the search box is added on top by JS.
 		$link = static function ( array $over ) use ( $f ) {
 			$args = array();
-			$cur  = array_merge( array( 'gi_source' => $f['source'], 'gi_status' => $f['status'], 's' => $f['search'] ), $over );
-			if ( 'all' !== $cur['gi_source'] ) {
-				$args['gi_source'] = $cur['gi_source'];
+			$cur  = array_merge( array( 'pl_source' => $f['source'], 'pl_status' => $f['status'], 's' => $f['search'] ), $over );
+			if ( 'all' !== $cur['pl_source'] ) {
+				$args['pl_source'] = $cur['pl_source'];
 			}
-			if ( 'pending' !== $cur['gi_status'] ) {
-				$args['gi_status'] = $cur['gi_status'];
+			if ( 'pending' !== $cur['pl_status'] ) {
+				$args['pl_status'] = $cur['pl_status'];
 			}
 			if ( '' !== $cur['s'] ) {
 				$args['s'] = $cur['s'];
 			}
-			$args['gi_processed'] = 1; // browsing the queue must not trigger a mailbox pass + reload each time
+			$args['pl_processed'] = 1; // browsing the queue must not trigger a mailbox pass + reload each time
 			return self::url( 'gmail', $args );
 		};
 
@@ -108,7 +108,7 @@ class AJCore_Mailroom {
 		printf( '<div class="ajmr-tile is-all%s">', 'all' === $f['source'] ? ' is-on' : '' );
 		printf(
 			'<a class="ajmr-tile-main" href="%1$s"><span class="ajmr-tile-ico">%2$s</span><span class="ajmr-tile-txt"><small>%3$s</small><strong%4$s>%5$d</strong><em>%6$s</em></span></a></div>',
-			esc_url( $link( array( 'gi_source' => 'all' ) ) ),
+			esc_url( $link( array( 'pl_source' => 'all' ) ) ),
 			self::icon( 'mail', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			esc_html__( 'All mailboxes', 'ajcore' ),
 			$all_pending > 0 ? ' class="is-alert"' : '',
@@ -118,7 +118,7 @@ class AJCore_Mailroom {
 		printf(
 			'<a class="ajmr-tile ajmr-stat is-amber%1$s" href="%2$s"><span class="ajmr-tile-ico">%3$s</span><span class="ajmr-tile-txt"><small>%4$s</small><strong>%5$d</strong></span></a>',
 			'pending' === $f['status'] ? ' is-on' : '',
-			esc_url( $link( array( 'gi_status' => 'pending' ) ) ),
+			esc_url( $link( array( 'pl_status' => 'pending' ) ) ),
 			self::icon( 'alert', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			esc_html__( 'Pending', 'ajcore' ),
 			(int) $n[ $f['source'] ]['pending']
@@ -126,7 +126,7 @@ class AJCore_Mailroom {
 		printf(
 			'<a class="ajmr-tile ajmr-stat is-green%1$s" href="%2$s"><span class="ajmr-tile-ico">%3$s</span><span class="ajmr-tile-txt"><small>%4$s</small><strong>%5$d</strong></span></a>',
 			'filed' === $f['status'] ? ' is-on' : '',
-			esc_url( $link( array( 'gi_status' => 'filed' ) ) ),
+			esc_url( $link( array( 'pl_status' => 'filed' ) ) ),
 			self::icon( 'check', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			esc_html__( 'Filed', 'ajcore' ),
 			(int) $n[ $f['source'] ]['filed']
@@ -145,7 +145,7 @@ class AJCore_Mailroom {
 			if ( $connected ) {
 				printf(
 					'<a class="ajmr-tile-main" href="%1$s"><span class="ajmr-tile-ico">%2$s</span><span class="ajmr-tile-txt"><small>%3$s</small><strong%4$s>%5$d</strong><em>%6$s</em></span></a>',
-					esc_url( $link( array( 'gi_source' => $key ) ) ),
+					esc_url( $link( array( 'pl_source' => $key ) ) ),
 					self::icon( $box['icon'], 16 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 					esc_html( $box['label'] ),
 					$pending > 0 ? ' class="is-alert"' : '',
@@ -182,9 +182,9 @@ class AJCore_Mailroom {
 			esc_attr__( 'Search subject, sender, company, customer…', 'ajcore' ),
 			esc_url( $link( array( 's' => '' ) ) )
 		);
-		printf( '<a class="ajmr-tile ajmr-tool" href="%1$s">%2$s<span>%3$s</span></a>', esc_url( self::url( 'gmail', array( 'gi_processed' => 1 ) ) ), self::icon( 'x', 16 ), esc_html__( 'Clear', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-		printf( '<button type="button" id="ajcore-gmail-intake-refresh" class="ajmr-tile ajmr-tool">%1$s<span>%2$s</span></button>', self::icon( 'refresh', 16 ), esc_html__( 'Refresh', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-		printf( '<button type="button" id="ajcore-gmail-intake-reset-log" class="ajmr-tile ajmr-tool is-danger">%1$s<span>%2$s</span></button>', self::icon( 'trash', 16 ), esc_html__( 'Reset log', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		printf( '<a class="ajmr-tile ajmr-tool" href="%1$s">%2$s<span>%3$s</span></a>', esc_url( self::url( 'gmail', array( 'pl_processed' => 1 ) ) ), self::icon( 'x', 16 ), esc_html__( 'Clear', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		printf( '<button type="button" id="ajcore-pipeline-refresh" class="ajmr-tile ajmr-tool">%1$s<span>%2$s</span></button>', self::icon( 'refresh', 16 ), esc_html__( 'Refresh', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		printf( '<button type="button" id="ajcore-pipeline-reset-log" class="ajmr-tile ajmr-tool is-danger">%1$s<span>%2$s</span></button>', self::icon( 'trash', 16 ), esc_html__( 'Reset log', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo '</div>';
 
 		// Filtering to a mailbox that is not connected: say so and offer the connection settings, instead of an empty list.
@@ -217,7 +217,7 @@ class AJCore_Mailroom {
 					$fs['open'] ? ' <i>' . esc_html__( '(no filter saved: every message is read)', 'ajcore' ) . '</i>' : ''
 				);
 			}
-			$last = get_transient( 'ajcore_gmail_intake_last_pass' );
+			$last = get_transient( 'ajcore_pipeline_last_pass' );
 			if ( is_array( $last ) && ! empty( $last['at'] ) ) {
 				printf( '<span class="ajmr-fnote">%s</span>', esc_html( sprintf( __( 'Last pass %1$s · %2$d new', 'ajcore' ), get_date_from_gmt( get_gmt_from_date( $last['at'] ), 'M j, g:i a' ), (int) $last['checked'] ) ) );
 			}

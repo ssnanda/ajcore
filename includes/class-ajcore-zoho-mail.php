@@ -19,7 +19,7 @@ if ( ! defined( 'WPINC' ) ) {
 class AJCore_Zoho_Mail {
 
 	const OPTION = 'ajcore_ra_zoho_mail';
-	const TAB    = 'mailroom'; // AJCore_Mailroom owns the tab; this class draws its panels
+	const TAB    = 'pipeline'; // AJCore_Pipeline_Tab owns the tab; this class draws its panels
 
 	/** @var self|null */
 	private static $instance = null;
@@ -138,7 +138,7 @@ class AJCore_Zoho_Mail {
 		$settings['zoho_mail_account_email'] = isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : '';
 		$dc                                  = isset( $_POST['zoho_mail_data_center'] ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com';
 		$settings['zoho_mail_data_center']   = in_array( $dc, array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? $dc : 'com';
-		if ( ! AJCore_Gmail_Intake::instance()->filter_managed( 'zoho' ) ) { // when AJCore-RA defines the filter, the saved fields are left untouched
+		if ( ! AJCore_Pipeline::instance()->filter_managed( 'zoho' ) ) { // when AJCore-RA defines the filter, the saved fields are left untouched
 			$settings['zoho_mail_filter_match'] = ( isset( $_POST['zoho_mail_filter_match'] ) && 'any' === $_POST['zoho_mail_filter_match'] ) ? 'any' : 'all';
 			foreach ( array( 'zoho_mail_filter_text', 'zoho_mail_filter_subject', 'zoho_mail_filter_sender' ) as $filter_key ) {
 				$settings[ $filter_key ] = isset( $_POST[ $filter_key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $filter_key ] ) ) : '';
@@ -149,7 +149,7 @@ class AJCore_Zoho_Mail {
 			$settings['zoho_mail_client_secret'] = $secret;
 		}
 		$this->store( $settings );
-		AJCore_Gmail_Intake::instance()->purge_pending_for_source( 'zoho' ); // re-read the pending queue under the saved filters on the next pass
+		AJCore_Pipeline::instance()->purge_pending_for_source( 'zoho' ); // re-read the pending queue under the saved filters on the next pass
 		wp_safe_redirect( self::tab_url( array( 'saved' => 1 ) ) );
 		exit;
 	}
@@ -621,12 +621,12 @@ class AJCore_Zoho_Mail {
 
 	/** Lowercase comma-separated terms from a setting. */
 	private function terms( $text ) {
-		return array_map( 'strtolower', AJCore_Gmail_Intake::split_terms( $text ) );
+		return array_map( 'strtolower', AJCore_Pipeline::split_terms( $text ) );
 	}
 
 	/** The filter in use: [ subject, sender, any, match ] (from AJCore-RA when it defines one, else the saved settings). */
 	public function intake_filter_terms() {
-		$f = AJCore_Gmail_Intake::instance()->effective_filter( 'zoho' );
+		$f = AJCore_Pipeline::instance()->effective_filter( 'zoho' );
 		return array( 'subject' => $f['subject'], 'sender' => $f['sender'], 'any' => $f['any'], 'match' => $f['match'] );
 	}
 
@@ -823,7 +823,7 @@ class AJCore_Zoho_Mail {
 		$this->render_inbox( $settings, $this->is_connected() );
 	}
 
-	/** Connection settings (the Mailroom keeps them collapsed behind the Zoho button). */
+	/** Connection settings (the Pipeline tab keeps them collapsed behind the Zoho gear). */
 	public function render_connection_panel() {
 		$settings     = $this->get_settings();
 		$is_connected = ! empty( $settings['zoho_mail_refresh_token'] );
@@ -863,7 +863,7 @@ class AJCore_Zoho_Mail {
 					<tr><th><label for="zoho_mail_client_id"><?php esc_html_e( 'Client ID', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_id" id="zoho_mail_client_id" value="<?php echo esc_attr( $settings['zoho_mail_client_id'] ); ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_client_secret"><?php esc_html_e( 'Client Secret', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_secret" id="zoho_mail_client_secret" value="" placeholder="<?php echo ! empty( $settings['zoho_mail_client_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajcore' ) : ''; ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_account_email"><?php esc_html_e( 'Shared Mailbox Address', 'ajcore' ); ?></label></th><td><input type="email" class="regular-text" name="zoho_mail_account_email" id="zoho_mail_account_email" value="<?php echo esc_attr( $settings['zoho_mail_account_email'] ); ?>"></td></tr>
-					<?php $filter_managed = AJCore_Gmail_Intake::instance()->filter_managed( 'zoho' ); $filter_ro = $filter_managed ? ' readonly' : ''; ?>
+					<?php $filter_managed = AJCore_Pipeline::instance()->filter_managed( 'zoho' ); $filter_ro = $filter_managed ? ' readonly' : ''; ?>
 					<?php if ( $filter_managed ) : ?>
 						<tr><th><?php esc_html_e( 'Filter', 'ajcore' ); ?></th><td><strong><?php esc_html_e( 'Set by AJCore-RA', 'ajcore' ); ?></strong>: <code><?php echo esc_html( '' !== $this->intake_filter_summary() ? $this->intake_filter_summary() : __( 'every message', 'ajcore' ) ); ?></code><p class="description"><?php esc_html_e( 'The fields below are not in use while it is set.', 'ajcore' ); ?></p></td></tr>
 					<?php endif; ?>
