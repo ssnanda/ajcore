@@ -795,16 +795,38 @@ class AJCore_Zoho_Mail {
 		$body_text  = self::deep_string( $details, array( 'summary' ) );
 		$pdfs       = array();
 
+		$body_debug = array(); // how the full body was (or was not) obtained, so a preview-only result can be explained
+		if ( '' === $folder_id ) {
+			$body_debug[] = 'no folderId in the shared-mailbox message';
+		}
+		if ( '' === $account_id ) {
+			$body_debug[] = 'no Zoho account id saved (Test Connection once)';
+		}
 		if ( '' !== $folder_id && '' !== $account_id ) {
-			$base = '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id );
-			$body = $this->api_request( $base . '/content' );
-			if ( ! is_wp_error( $body ) && 200 === $body['status'] ) {
-				$html = self::deep_string( $body['data'], array( 'content' ) );
-				if ( '' !== $html ) {
-					$text = preg_replace( '/<(script|style)[^>]*>.*?<\/\1>/is', ' ', $html );
-					$text = preg_replace( '/<br\s*\/?>|<\/p>|<\/div>|<\/tr>|<\/li>/i', "\n", (string) $text );
-					$body_text = html_entity_decode( wp_strip_all_tags( (string) $text, false ), ENT_QUOTES, 'UTF-8' );
+			$base  = '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id );
+			// The login's own content endpoint first, then the shared-mailbox flavour of it.
+			$tries = array( 'content' => $base . '/content', 'shared content' => '/v2/sharedmailbox/' . $this->path_address( '' !== (string) $address ? strtolower( trim( (string) $address ) ) : $this->shared_address() ) . '/messages/' . rawurlencode( (string) $message_id ) . '/content' );
+			foreach ( $tries as $label => $path ) {
+				$body = $this->api_request( $path );
+				if ( is_wp_error( $body ) ) {
+					$body_debug[] = $label . ': ' . $body->get_error_message();
+					continue;
 				}
+				if ( 200 !== $body['status'] ) {
+					$body_debug[] = $label . ': HTTP ' . $body['status'] . ' ' . substr( (string) $body['raw'], 0, 120 );
+					continue;
+				}
+				$html = self::deep_string( $body['data'], array( 'content' ) );
+				if ( '' === $html ) {
+					$body_debug[] = $label . ': HTTP 200 but no content field';
+					continue;
+				}
+				$text = preg_replace( '/<(script|style)[^>]*>.*?<\/\1>/is', ' ', $html );
+				$text = preg_replace( '/<br\s*\/?>|<\/p>|<\/div>|<\/tr>|<\/li>|<\/td>|<\/h[1-6]>/i', "\n", (string) $text );
+				$body_text  = html_entity_decode( wp_strip_all_tags( (string) $text, false ), ENT_QUOTES, 'UTF-8' );
+				$body_text  = trim( preg_replace( "/[ \t\x{00a0}]+/u", ' ', preg_replace( "/\n\s*\n+/", "\n", $body_text ) ) );
+				$body_debug = array();
+				break;
 			}
 			$info = $this->api_request( $base . '/attachmentinfo' );
 			if ( ! is_wp_error( $info ) && 200 === $info['status'] ) {
@@ -824,6 +846,7 @@ class AJCore_Zoho_Mail {
 			'date_str'  => $date_ts ? gmdate( 'D, d M Y H:i:s', $date_ts ) . ' +0000' : '',
 			'snippet'   => $body_text !== '' ? mb_substr( preg_replace( '/\s+/', ' ', $body_text ), 0, 200 ) : '',
 			'body_text' => $body_text,
+			'body_debug' => implode( ' | ', $body_debug ),
 			'pdfs'      => $pdfs,
 		);
 	}
