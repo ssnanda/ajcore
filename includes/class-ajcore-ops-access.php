@@ -30,7 +30,7 @@ class AJCore_Ops_Access {
 			'files'             => 'Files',
 			'emails'            => 'Email Log',
 			'mail'              => 'Postal Mail',
-			'gmail-intake'      => 'Gmail Intake',
+			'gmail-intake'      => 'Pipeline',
 			'esign'             => 'E-Signatures',
 			'guest-log'         => 'Guest Log',
 			'leases'            => 'Leases',

@@ -294,7 +294,7 @@ class AJCore_Gmail_Intake {
 		}
 		check_admin_referer( 'ajcore_ra_save_gmail_intake' );
 		if ( $gi->read_only() ) {
-			wp_die( esc_html__( 'Gmail Intake is managed by the AJCore master site.', 'ajcore' ) );
+			wp_die( esc_html__( 'Gmail is managed by the AJCore master site.', 'ajcore' ) );
 		}
 		$settings                             = $gi->get_gmail_settings();
 		$settings['gmail_intake_client_id']   = isset( $_POST['gmail_intake_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_id'] ) ) : '';
@@ -317,7 +317,7 @@ class AJCore_Gmail_Intake {
 		}
 		check_admin_referer( 'ajcore_gmail_intake_disconnect' );
 		if ( $gi->read_only() ) {
-			wp_die( esc_html__( 'Gmail Intake is managed by the AJCore master site.', 'ajcore' ) );
+			wp_die( esc_html__( 'Gmail is managed by the AJCore master site.', 'ajcore' ) );
 		}
 		$settings = $gi->get_gmail_settings();
 		foreach ( array( 'gmail_intake_access_token', 'gmail_intake_refresh_token', 'gmail_intake_connected_email', 'gmail_intake_connected_at', 'gmail_intake_label_id' ) as $field ) {
@@ -334,7 +334,7 @@ class AJCore_Gmail_Intake {
 	/** Connection settings (the Mailroom keeps them collapsed behind the Gmail button). */
 	public function render_connection_panel() {
 		if ( $this->read_only() ) {
-			echo '<div class="notice notice-info inline"><p>' . esc_html__( 'Gmail Intake is managed by the AJCore master site; this site uses the shared connection.', 'ajcore' ) . '</p></div>';
+			echo '<div class="notice notice-info inline"><p>' . esc_html__( 'Gmail is managed by the AJCore master site; this site uses the shared connection.', 'ajcore' ) . '</p></div>';
 		}
 		$this->render_credential_check();
 		$this->render_settings();
@@ -485,15 +485,15 @@ class AJCore_Gmail_Intake {
 	}
 
 	public static function catalog( $catalog ) {
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/process', 'auth' => 'Admin', 'purpose' => 'Runs one pass of the Gmail Intake mailbox check now (same as the "Process Now" button in CP Settings).', 'app' => 'OPS gmail intake' );
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake', 'auth' => 'Admin', 'purpose' => 'Gmail Intake activity log with stats. Filters: search, status (filed|matched_pending_file|skipped_no_attachment|needs_review|resolved).', 'app' => 'OPS gmail intake' );
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}', 'auth' => 'Admin', 'purpose' => 'Single Gmail Intake log entry.', 'app' => 'OPS gmail intake' );
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/resolve', 'auth' => 'Admin', 'purpose' => 'Manually resolve a needs-review entry: re-fetches the email from Gmail, files its PDF attachments to the given stripe_customer_id.', 'app' => 'OPS gmail intake' );
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}/preview', 'auth' => 'Admin', 'purpose' => 'In-app email preview: subject/sender/date/body plus the list of PDF attachments (with suggested renamed filenames).', 'app' => 'OPS gmail intake' );
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}/attachment', 'auth' => 'Admin', 'purpose' => 'Fetches one PDF attachment\'s bytes on demand (query param attachment_id) for in-app preview.', 'app' => 'OPS gmail intake' );
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/file', 'auth' => 'Admin', 'purpose' => 'Files the given (possibly renamed) attachments to a customer with an explicit category + tag.', 'app' => 'OPS gmail intake' );
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/reset', 'auth' => 'Admin', 'purpose' => 'Clears the whole Gmail Intake activity log (local table only; does not touch the real mailbox).', 'app' => 'OPS gmail intake' );
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/bulk-delete', 'auth' => 'Admin', 'purpose' => 'Bulk-deletes selected Gmail Intake log entries (body: ids).', 'app' => 'OPS gmail intake' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/process', 'auth' => 'Admin', 'purpose' => 'Runs one pass of the Pipeline mailbox check now (same as the "Process Now" button in CP Settings).', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake', 'auth' => 'Admin', 'purpose' => 'Pipeline activity log with stats. Filters: search, status (filed|matched_pending_file|skipped_no_attachment|needs_review|resolved).', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}', 'auth' => 'Admin', 'purpose' => 'Single Pipeline log entry.', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/resolve', 'auth' => 'Admin', 'purpose' => 'Manually resolve a needs-review entry: re-fetches the email from Gmail, files its PDF attachments to the given stripe_customer_id.', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}/preview', 'auth' => 'Admin', 'purpose' => 'In-app email preview: subject/sender/date/body plus the list of PDF attachments (with suggested renamed filenames).', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}/attachment', 'auth' => 'Admin', 'purpose' => 'Fetches one PDF attachment\'s bytes on demand (query param attachment_id) for in-app preview.', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/file', 'auth' => 'Admin', 'purpose' => 'Files the given (possibly renamed) attachments to a customer with an explicit category + tag.', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/reset', 'auth' => 'Admin', 'purpose' => 'Clears the whole Pipeline activity log (local table only; does not touch the real mailbox).', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/bulk-delete', 'auth' => 'Admin', 'purpose' => 'Bulk-deletes selected Pipeline log entries (body: ids).', 'app' => 'OPS pipeline' );
 		return $catalog;
 	}
 
@@ -506,7 +506,7 @@ class AJCore_Gmail_Intake {
 	private static function templates() {
 		return array(
 			'gmail_intake' => array(
-				'label' => __( 'Documents Filed (Gmail Intake)', 'ajcore' ),
+				'label' => __( 'Documents Filed (Pipeline)', 'ajcore' ),
 				'key' => 'wp_gmail_intake',
 				'sender_key' => 'wp_gmail_intake',
 				'brand_variants' => false,
@@ -558,7 +558,7 @@ class AJCore_Gmail_Intake {
 		$client_id     = trim( (string) $settings['gmail_intake_client_id'] );
 		$client_secret = trim( (string) $settings['gmail_intake_client_secret'] );
 		if ( '' === $client_id || '' === $client_secret ) {
-			return new WP_Error( 'gmail_intake_not_configured', __( 'Gmail Intake Client ID/Secret are not saved.', 'ajcore' ) );
+			return new WP_Error( 'gmail_intake_not_configured', __( 'Gmail Client ID/Secret are not saved.', 'ajcore' ) );
 		}
 
 		$token_response = wp_remote_post(
@@ -629,7 +629,7 @@ class AJCore_Gmail_Intake {
 		$expires_at    = absint( $settings['gmail_intake_token_expires_at'] );
 
 		if ( '' === $refresh_token ) {
-			return new WP_Error( 'gmail_intake_not_connected', __( 'Gmail Intake is not connected.', 'ajcore' ) );
+			return new WP_Error( 'gmail_intake_not_connected', __( 'Gmail is not connected.', 'ajcore' ) );
 		}
 		if ( '' !== $access_token && $expires_at > time() + 60 ) {
 			return $access_token;
@@ -638,7 +638,7 @@ class AJCore_Gmail_Intake {
 		$client_id     = trim( (string) $settings['gmail_intake_client_id'] );
 		$client_secret = trim( (string) $settings['gmail_intake_client_secret'] );
 		if ( '' === $client_id || '' === $client_secret ) {
-			return new WP_Error( 'gmail_intake_not_configured', __( 'Gmail Intake Client ID/Secret are not saved.', 'ajcore' ) );
+			return new WP_Error( 'gmail_intake_not_configured', __( 'Gmail Client ID/Secret are not saved.', 'ajcore' ) );
 		}
 
 		$response = wp_remote_post(
@@ -1040,7 +1040,7 @@ class AJCore_Gmail_Intake {
 	 */
 	public function process_gmail_intake_inbox( $max_messages = 20, $show_all = false ) {
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
-			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajcore' ) );
+			return new WP_Error( 'no_table', __( 'Pipeline log table could not be created.', 'ajcore' ) );
 		}
 		$sources = $this->active_sources();
 		if ( empty( $sources ) ) {
@@ -1186,7 +1186,7 @@ class AJCore_Gmail_Intake {
 	 */
 	public function reset_gmail_intake_log() {
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
-			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajcore' ) );
+			return new WP_Error( 'no_table', __( 'Pipeline log table could not be created.', 'ajcore' ) );
 		}
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
@@ -1260,20 +1260,20 @@ class AJCore_Gmail_Intake {
 	}
 
 	/**
-	 * Manually resolves a "needs review" Gmail Intake log entry: re-fetches the original message
+	 * Manually resolves a "needs review" Pipeline log entry: re-fetches the original message
 	 * from Gmail (the raw PDF was never stored, only metadata), files any real filing-document PDF
 	 * attachments to the chosen customer, and marks the log row resolved. Called by the AJOps
 	 * "needs review" queue via AJCore_REST_API::resolve_ops_gmail_intake_item().
 	 */
 	public function resolve_gmail_intake_needs_review( $log_id, $stripe_customer_id ) {
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
-			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajcore' ), array( 'status' => 500 ) );
+			return new WP_Error( 'no_table', __( 'Pipeline log table could not be created.', 'ajcore' ), array( 'status' => 500 ) );
 		}
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
 		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", (int) $log_id ) );
 		if ( ! $row ) {
-			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ), array( 'status' => 404 ) );
+			return new WP_Error( 'not_found', __( 'Pipeline log entry not found.', 'ajcore' ), array( 'status' => 404 ) );
 		}
 
 		$customer = $this->find_portal_customer_by_stripe_id( $stripe_customer_id );
@@ -1354,7 +1354,7 @@ class AJCore_Gmail_Intake {
 	 */
 	public function mark_gmail_intake_item_filed( $log_id ) {
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
-			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajcore' ) );
+			return new WP_Error( 'no_table', __( 'Pipeline log table could not be created.', 'ajcore' ) );
 		}
 		$pdb    = $this->get_pdb();
 		$table  = $this->get_gmail_intake_log_table();
@@ -1362,7 +1362,7 @@ class AJCore_Gmail_Intake {
 
 		$row = $pdb->get_row( $pdb->prepare( "SELECT id FROM `{$table}` WHERE id = %d", $log_id ) );
 		if ( ! $row ) {
-			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ), array( 'status' => 404 ) );
+			return new WP_Error( 'not_found', __( 'Pipeline log entry not found.', 'ajcore' ), array( 'status' => 404 ) );
 		}
 
 		$pdb->update(
@@ -1387,7 +1387,7 @@ class AJCore_Gmail_Intake {
 		$table = $this->get_gmail_intake_log_table();
 		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", (int) $log_id ) );
 		if ( ! $row ) {
-			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ) );
+			return new WP_Error( 'not_found', __( 'Pipeline log entry not found.', 'ajcore' ) );
 		}
 
 		list( $source, $native ) = $this->split_id( $row->gmail_message_id );
@@ -1463,7 +1463,7 @@ class AJCore_Gmail_Intake {
 		$table = $this->get_gmail_intake_log_table();
 		$row   = $pdb->get_row( $pdb->prepare( "SELECT gmail_message_id FROM `{$table}` WHERE id = %d", (int) $log_id ) );
 		if ( ! $row ) {
-			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ) );
+			return new WP_Error( 'not_found', __( 'Pipeline log entry not found.', 'ajcore' ) );
 		}
 
 		list( $source, $native ) = $this->split_id( $row->gmail_message_id );
@@ -1490,7 +1490,7 @@ class AJCore_Gmail_Intake {
 		$table = $this->get_gmail_intake_log_table();
 		$row   = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", (int) $log_id ) );
 		if ( ! $row ) {
-			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ) );
+			return new WP_Error( 'not_found', __( 'Pipeline log entry not found.', 'ajcore' ) );
 		}
 		if ( empty( $attachments ) || ! is_array( $attachments ) ) {
 			return new WP_Error( 'no_attachments', __( 'Select at least one attachment to file.', 'ajcore' ) );
@@ -1850,7 +1850,7 @@ class AJCore_Gmail_Intake {
 	public function get_ops_gmail_intake_item( WP_REST_Request $request ) {
 		$row = $this->fetch_gmail_intake_log_row( $request['id'] );
 		if ( ! $row ) {
-			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ), array( 'status' => 404 ) );
+			return new WP_Error( 'not_found', __( 'Pipeline log entry not found.', 'ajcore' ), array( 'status' => 404 ) );
 		}
 		return rest_ensure_response( $this->format_gmail_intake_log_row( $row ) );
 	}
@@ -1872,7 +1872,7 @@ class AJCore_Gmail_Intake {
 	public function resolve_ops_gmail_intake_item( WP_REST_Request $request ) {
 		$row = $this->fetch_gmail_intake_log_row( $request['id'] );
 		if ( ! $row ) {
-			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ), array( 'status' => 404 ) );
+			return new WP_Error( 'not_found', __( 'Pipeline log entry not found.', 'ajcore' ), array( 'status' => 404 ) );
 		}
 		if ( 'needs_review' !== $row['status'] ) {
 			return new WP_Error( 'already_resolved', __( 'This entry is not awaiting review.', 'ajcore' ), array( 'status' => 400 ) );
@@ -1991,9 +1991,9 @@ class AJCore_Gmail_Intake {
 		$connect_disabled_reason = ! $can_connect ? __( 'Save a Client ID and Client Secret below first.', 'ajcore' ) : '';
 
 		if ( isset( $_GET['gmail-intake-connected'] ) ) {
-			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Gmail Intake connected.', 'ajcore' ) . '</p></div>';
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Gmail connected.', 'ajcore' ) . '</p></div>';
 		} elseif ( isset( $_GET['gmail-intake-disconnected'] ) ) {
-			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Gmail Intake disconnected.', 'ajcore' ) . '</p></div>';
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Gmail disconnected.', 'ajcore' ) . '</p></div>';
 		} elseif ( isset( $_GET['gmail-intake-error'] ) ) {
 			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['gmail-intake-error'] ) ) ) . '</p></div>';
 		}
@@ -2034,7 +2034,7 @@ class AJCore_Gmail_Intake {
 		<div class="ajforms-settings-card" id="ajforms-gmail-intake-section">
 			<div class="ajforms-settings-head" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
 				<div>
-					<span class="ajcore-modern-admin ajforms-settings-pill" style="display:inline-flex;"><?php esc_html_e( 'Gmail Intake', 'ajcore' ); ?></span>
+					<span class="ajcore-modern-admin ajforms-settings-pill" style="display:inline-flex;"><?php esc_html_e( 'Gmail', 'ajcore' ); ?></span>
 					<h3 style="display:inline-flex;align-items:center;gap:8px;margin:10px 0 4px;"><?php esc_html_e( 'Connect the intake mailbox', 'ajcore' ); ?>
 						<button type="button" class="ajforms-zoho-help-btn" id="ajforms-gmail-intake-help-toggle" title="<?php esc_attr_e( 'Setup instructions', 'ajcore' ); ?>">?</button>
 					</h3>
@@ -2127,7 +2127,7 @@ class AJCore_Gmail_Intake {
 						<input type="checkbox" id="ajforms-gmail-intake-show-all">
 						<?php esc_html_e( 'Show all mailbox messages (ignore filters)', 'ajcore' ); ?>
 					</label>
-					<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Gmail Intake? Scheduled processing stops until reconnected.', 'ajcore' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajcore' ); ?></a>
+					<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Gmail? Scheduled processing stops until reconnected.', 'ajcore' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajcore' ); ?></a>
 				<?php endif; ?>
 			</div>
 			<p class="ajforms-settings-help" style="margin:2px 0 0;"><?php esc_html_e( 'Process Now runs one pass over every connected mailbox (Gmail and Zoho), each with its own Intake filter (see Filters & rules). Check the box to ignore the filters and read everything.', 'ajcore' ); ?></p>
@@ -2334,7 +2334,7 @@ class AJCore_Gmail_Intake {
 		}
 
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
-			echo '<div class="notice notice-warning"><p>' . esc_html__( 'The Gmail Intake log table is not available yet.', 'ajcore' ) . '</p></div>';
+			echo '<div class="notice notice-warning"><p>' . esc_html__( 'The Pipeline log table is not available yet.', 'ajcore' ) . '</p></div>';
 			return;
 		}
 
@@ -2502,7 +2502,7 @@ class AJCore_Gmail_Intake {
 			var resetBtn = document.getElementById( 'ajcore-gmail-intake-reset-log' );
 			if ( resetBtn ) {
 				resetBtn.addEventListener( 'click', function () {
-					if ( ! window.confirm( <?php echo wp_json_encode( __( 'Clear pending Gmail Intake entries? Already-filed items are kept. This only clears our own tracking table — it does not touch the real mailbox.', 'ajcore' ) ); ?> ) ) { return; }
+					if ( ! window.confirm( <?php echo wp_json_encode( __( 'Clear pending Pipeline entries? Already-filed items are kept. This only clears our own tracking table — it does not touch the real mailbox.', 'ajcore' ) ); ?> ) ) { return; }
 					resetBtn.disabled = true;
 					apiFetch( '/gmail-intake/reset', { method: 'POST' } ).then( function () { window.location.reload(); } ).catch( function ( e ) { alert( e.message ); resetBtn.disabled = false; } );
 				} );

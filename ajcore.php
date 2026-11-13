@@ -3042,7 +3042,7 @@ function ajcore_boot_mail_features() {
 		AJCore_Gmail_Intake::init();
 	}
 	if ( ! class_exists( 'AJCore_RA_Zoho_Mail' ) && ! class_exists( 'AJCore_RA_Gmail_Intake' ) ) {
-		AJCore_Mailroom::init(); // one "Mailroom" tab replaces the Gmail Intake and Zoho Mail tabs
+		AJCore_Mailroom::init(); // one "Pipeline" tab replaces the Gmail Intake and Zoho Mail tabs
 	}
 }
 add_action( 'plugins_loaded', 'ajcore_boot_mail_features', 20 );
