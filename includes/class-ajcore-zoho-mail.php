@@ -145,6 +145,7 @@ class AJCore_Zoho_Mail {
 			$settings['zoho_mail_client_secret'] = $secret;
 		}
 		$this->store( $settings );
+		AJCore_Gmail_Intake::instance()->purge_pending_for_source( 'zoho' ); // re-read the pending queue under the saved filters on the next pass
 		wp_safe_redirect( self::tab_url( array( 'saved' => 1 ) ) );
 		exit;
 	}

@@ -311,6 +311,7 @@ class AJCore_Gmail_Intake {
 			$settings['gmail_intake_client_secret'] = $secret;
 		}
 		$gi->store_settings( $settings );
+		$gi->purge_pending_for_source( 'gmail' ); // re-read the pending queue under the saved filters on the next pass
 		wp_safe_redirect( self::tab_url( array( 'gmail-intake-saved' => 1 ) ) );
 		exit;
 	}
@@ -464,6 +465,22 @@ class AJCore_Gmail_Intake {
 		return array( implode( ' AND ', $conds ), $all );
 	}
 
+	/**
+	 * Removes one mailbox's still-pending entries ('gmail' or 'zoho') so the next pass re-reads that mailbox under its current
+	 * filters. Filed, resolved and duplicate entries stay. Needed because a filter (especially an advanced Gmail search) can't
+	 * be re-evaluated against rows that were logged earlier. Returns the number of rows removed.
+	 */
+	public function purge_pending_for_source( $source ) {
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return 0;
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		$op    = 'zoho' === $source ? 'LIKE' : 'NOT LIKE';
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		return (int) $pdb->query( $pdb->prepare( "DELETE FROM `{$table}` WHERE status IN ('needs_review','matched_pending_file','skipped_no_attachment') AND gmail_message_id {$op} %s", 'zoho:%' ) );
+	}
+
 	/** Connected and switched on (Gmail can be turned off in settings without disconnecting or removing the code). */
 	public function is_active() {
 		$s = $this->get_gmail_settings();
@@ -484,6 +501,7 @@ class AJCore_Gmail_Intake {
 		$sections[] = array( 'title' => __( 'Mailbox filter (which messages enter the queue)', 'ajcore' ), 'items' => $filters ? $filters : array( __( 'No mailbox is connected and enabled.', 'ajcore' ) ) );
 		$sections[] = array( 'title' => __( 'Pipeline', 'ajcore' ), 'items' => array(
 			__( 'The queue, counts and AJOps list only show messages that match each mailbox\'s Subject / Sender filters, including ones logged earlier.', 'ajcore' ),
+			__( 'Saving a mailbox\'s settings clears its pending entries and re-reads the mailbox under the saved filters (filed, resolved and duplicate entries are kept).', 'ajcore' ),
 			__( 'Each pass reads the newest 20 matching messages per mailbox; a message is only ever logged once (by its id), and nothing changes in the real mailbox.', 'ajcore' ),
 			__( 'Company name comes from the subject, then the body (rules supplied by AJCore-RA).', 'ajcore' ),
 			__( 'Customer match: exact name across Stripe and local customers; if not exactly one hit, a contains-match that must also be exactly one. Otherwise Needs review.', 'ajcore' ),
