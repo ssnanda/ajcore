@@ -155,6 +155,7 @@ class AJCore_Gmail_Intake {
 			'gmail_intake_filter'           => (string) apply_filters( 'ajcore_gmail_intake_default_filter', '' ),
 			'gmail_intake_filter_subject'   => '',
 			'gmail_intake_filter_sender'    => '',
+			'gmail_intake_filter_match'     => 'all',
 			'gmail_intake_access_token'     => '',
 			'gmail_intake_refresh_token'    => '',
 			'gmail_intake_token_expires_at' => 0,
@@ -303,6 +304,7 @@ class AJCore_Gmail_Intake {
 		$settings['gmail_intake_address']     = isset( $_POST['gmail_intake_address'] ) ? sanitize_email( wp_unslash( $_POST['gmail_intake_address'] ) ) : $settings['gmail_intake_address'];
 		$settings['gmail_intake_enabled']     = ! empty( $_POST['gmail_intake_enabled'] ) ? '1' : '0';
 		$settings['gmail_intake_filter']      = isset( $_POST['gmail_intake_filter'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_filter'] ) ) : $settings['gmail_intake_filter'];
+		$settings['gmail_intake_filter_match'] = ( isset( $_POST['gmail_intake_filter_match'] ) && 'any' === $_POST['gmail_intake_filter_match'] ) ? 'any' : 'all';
 		foreach ( array( 'gmail_intake_filter_subject', 'gmail_intake_filter_sender' ) as $filter_key ) {
 			$settings[ $filter_key ] = isset( $_POST[ $filter_key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $filter_key ] ) ) : '';
 		}
@@ -394,19 +396,31 @@ class AJCore_Gmail_Intake {
 	 * '' = no filter (every message). Terms are quoted, so odd characters can't break the query.
 	 */
 	public function gmail_filter_query() {
-		$s     = $this->get_gmail_settings();
-		$parts = array();
+		$s      = $this->get_gmail_settings();
+		$groups = array();
+		$subj   = array();
 		foreach ( self::split_terms( $s['gmail_intake_filter_subject'] ) as $term ) {
-			$parts[] = 'subject:"' . str_replace( '"', '', $term ) . '"';
+			$subj[] = 'subject:"' . str_replace( '"', '', $term ) . '"';
 		}
+		if ( $subj ) {
+			$groups[] = '(' . implode( ' OR ', $subj ) . ')';
+		}
+		$from = array();
 		foreach ( self::split_terms( $s['gmail_intake_filter_sender'] ) as $term ) {
-			$parts[] = 'from:"' . str_replace( '"', '', $term ) . '"';
+			$from[] = 'from:"' . str_replace( '"', '', $term ) . '"';
+		}
+		if ( $from ) {
+			$groups[] = '(' . implode( ' OR ', $from ) . ')';
 		}
 		$advanced = trim( (string) $s['gmail_intake_filter'] );
 		if ( '' !== $advanced ) {
-			$parts[] = '(' . $advanced . ')';
+			$groups[] = '(' . $advanced . ')';
 		}
-		return $parts ? '(' . implode( ' OR ', $parts ) . ')' : '';
+		if ( ! $groups ) {
+			return '';
+		}
+		// "all": every filled field must match (Gmail ANDs space-separated terms); "any": one is enough.
+		return 'any' === $s['gmail_intake_filter_match'] ? '(' . implode( ' OR ', $groups ) . ')' : implode( ' ', $groups );
 	}
 
 	/**
@@ -418,67 +432,68 @@ class AJCore_Gmail_Intake {
 		$like  = static function ( $term ) use ( $pdb ) {
 			return '%' . $pdb->esc_like( $term ) . '%';
 		};
+		// One field's terms (OR'd) across the given columns => array( sql, params ).
+		$group = static function ( array $columns, array $terms ) use ( $like ) {
+			$parts  = array();
+			$params = array();
+			foreach ( $terms as $term ) {
+				foreach ( $columns as $col ) {
+					$parts[]  = $col . ' LIKE %s';
+					$params[] = $like( $term );
+				}
+			}
+			return array( '( ' . implode( ' OR ', $parts ) . ' )', $params );
+		};
+		// Several fields joined by AND ("all") or OR ("any").
+		$combine = static function ( array $groups, $mode ) {
+			$sqls   = array();
+			$params = array();
+			foreach ( $groups as $g ) {
+				$sqls[]  = $g[0];
+				$params  = array_merge( $params, $g[1] );
+			}
+			return array( '( ' . implode( 'any' === $mode ? ' OR ' : ' AND ', $sqls ) . ' )', $params );
+		};
 		$conds = array();
 		$all   = array();
 
-		// Gmail rows (ids without the "zoho:" prefix).
-		$g     = $this->get_gmail_settings();
-		$g_sub = self::split_terms( $g['gmail_intake_filter_subject'] );
-		$g_snd = self::split_terms( $g['gmail_intake_filter_sender'] );
-		if ( '' === trim( (string) $g['gmail_intake_filter'] ) && ( $g_sub || $g_snd ) ) {
-			$parts  = array();
-			$params = array( 'zoho:%' );
-			foreach ( $g_sub as $term ) {
-				$parts[]  = 'subject LIKE %s';
-				$params[] = $like( $term );
-			}
-			foreach ( $g_snd as $term ) {
-				$parts[]  = 'sender LIKE %s';
-				$params[] = $like( $term );
-			}
-			$conds[] = '( gmail_message_id LIKE %s OR ( ' . implode( ' OR ', $parts ) . ' ) )';
-			$all     = array_merge( $all, $params );
+		// Gmail rows (ids without the "zoho:" prefix). With "all", subject/sender are necessary conditions even when an
+		// advanced search is also set; with "any" an advanced search can't be evaluated here, so nothing is hidden.
+		$g      = $this->get_gmail_settings();
+		$mode   = 'any' === $g['gmail_intake_filter_match'] ? 'any' : 'all';
+		$groups = array();
+		if ( self::split_terms( $g['gmail_intake_filter_subject'] ) ) {
+			$groups[] = $group( array( 'subject' ), self::split_terms( $g['gmail_intake_filter_subject'] ) );
+		}
+		if ( self::split_terms( $g['gmail_intake_filter_sender'] ) ) {
+			$groups[] = $group( array( 'sender' ), self::split_terms( $g['gmail_intake_filter_sender'] ) );
+		}
+		if ( $groups && ( 'all' === $mode || '' === trim( (string) $g['gmail_intake_filter'] ) ) ) {
+			list( $sql, $params ) = $combine( $groups, $mode );
+			$conds[] = '( gmail_message_id LIKE %s OR ' . $sql . ' )';
+			$all     = array_merge( $all, array( 'zoho:%' ), $params );
 		}
 
 		// Zoho rows.
 		if ( class_exists( 'AJCore_Zoho_Mail' ) ) {
-			$z = AJCore_Zoho_Mail::instance()->intake_filter_terms();
-			if ( $z['subject'] || $z['sender'] || $z['any'] ) {
-				$parts  = array();
-				$params = array( 'zoho:%' );
-				foreach ( $z['subject'] as $term ) {
-					$parts[]  = 'subject LIKE %s';
-					$params[] = $like( $term );
-				}
-				foreach ( $z['sender'] as $term ) {
-					$parts[]  = 'sender LIKE %s';
-					$params[] = $like( $term );
-				}
-				foreach ( $z['any'] as $term ) {
-					$parts[] = '( subject LIKE %s OR sender LIKE %s OR snippet LIKE %s )';
-					array_push( $params, $like( $term ), $like( $term ), $like( $term ) );
-				}
-				$conds[] = '( gmail_message_id NOT LIKE %s OR ( ' . implode( ' OR ', $parts ) . ' ) )';
-				$all     = array_merge( $all, $params );
+			$z      = AJCore_Zoho_Mail::instance()->intake_filter_terms();
+			$groups = array();
+			if ( $z['subject'] ) {
+				$groups[] = $group( array( 'subject' ), $z['subject'] );
+			}
+			if ( $z['sender'] ) {
+				$groups[] = $group( array( 'sender' ), $z['sender'] );
+			}
+			if ( $z['any'] ) {
+				$groups[] = $group( array( 'subject', 'sender', 'snippet' ), $z['any'] );
+			}
+			if ( $groups ) {
+				list( $sql, $params ) = $combine( $groups, $z['match'] );
+				$conds[] = '( gmail_message_id NOT LIKE %s OR ' . $sql . ' )';
+				$all     = array_merge( $all, array( 'zoho:%' ), $params );
 			}
 		}
 		return array( implode( ' AND ', $conds ), $all );
-	}
-
-	/**
-	 * Removes one mailbox's still-pending entries ('gmail' or 'zoho') so the next pass re-reads that mailbox under its current
-	 * filters. Filed, resolved and duplicate entries stay. Needed because a filter (especially an advanced Gmail search) can't
-	 * be re-evaluated against rows that were logged earlier. Returns the number of rows removed.
-	 */
-	public function purge_pending_for_source( $source ) {
-		if ( ! $this->ensure_gmail_intake_log_table() ) {
-			return 0;
-		}
-		$pdb   = $this->get_pdb();
-		$table = $this->get_gmail_intake_log_table();
-		$op    = 'zoho' === $source ? 'LIKE' : 'NOT LIKE';
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		return (int) $pdb->query( $pdb->prepare( "DELETE FROM `{$table}` WHERE status IN ('needs_review','matched_pending_file','skipped_no_attachment') AND gmail_message_id {$op} %s", 'zoho:%' ) );
 	}
 
 	/** Connected and switched on (Gmail can be turned off in settings without disconnecting or removing the code). */
@@ -2235,7 +2250,14 @@ class AJCore_Gmail_Intake {
 					<div class="ajforms-settings-field">
 						<label for="gmail_intake_filter"><?php esc_html_e( 'Advanced Gmail search', 'ajcore' ); ?></label>
 						<input type="text" name="gmail_intake_filter" id="gmail_intake_filter" value="<?php echo esc_attr( $settings['gmail_intake_filter'] ); ?>">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Optional Gmail search syntax. A message enters if it matches the subject, the sender or this. All blank = every message (spam and trash are always excluded).', 'ajcore' ); ?></div>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Optional Gmail search syntax. All filters blank = every message (spam and trash are always excluded).', 'ajcore' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="gmail_intake_filter_match"><?php esc_html_e( 'Match', 'ajcore' ); ?></label>
+						<select name="gmail_intake_filter_match" id="gmail_intake_filter_match">
+							<option value="all" <?php selected( 'any' === $settings['gmail_intake_filter_match'] ? 'any' : 'all', 'all' ); ?>><?php esc_html_e( 'All filled fields (narrow)', 'ajcore' ); ?></option>
+							<option value="any" <?php selected( $settings['gmail_intake_filter_match'], 'any' ); ?>><?php esc_html_e( 'Any filled field (broad)', 'ajcore' ); ?></option>
+						</select>
 					</div>
 					<div class="ajforms-settings-field">
 						<label><input type="checkbox" name="gmail_intake_enabled" value="1" <?php checked( '1', (string) $settings['gmail_intake_enabled'] ); ?>> <?php esc_html_e( 'Enabled (read this mailbox into the pipeline)', 'ajcore' ); ?></label>
