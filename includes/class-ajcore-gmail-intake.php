@@ -336,7 +336,41 @@ class AJCore_Gmail_Intake {
 		if ( $this->read_only() ) {
 			echo '<div class="notice notice-info inline"><p>' . esc_html__( 'Gmail Intake is managed by the AJCore master site; this site uses the shared connection.', 'ajcore' ) . '</p></div>';
 		}
+		$this->render_credential_check();
 		$this->render_settings();
+	}
+
+	/**
+	 * Read-only "what would be sent to Google" summary, with secrets masked (length and a short hash only). Shows which
+	 * site role and which source the values came from, so a mismatched client/token pair or a wrong redirect URI is visible.
+	 */
+	private function render_credential_check() {
+		$opt    = get_option( self::OPTION, array() );
+		$opt    = is_array( $opt ) ? $opt : array();
+		$local  = array();
+		foreach ( array( 'gmail_intake_client_id', 'gmail_intake_client_secret', 'gmail_intake_refresh_token' ) as $k ) {
+			$local[ $k ] = isset( $opt[ $k ] ) ? trim( self::decrypt( (string) $opt[ $k ] ) ) : '';
+		}
+		$shared      = self::is_shared() ? self::read_shared() : array();
+		$use         = $this->get_gmail_settings();
+		$mask        = static function ( $v ) {
+			$v = (string) $v;
+			return '' === $v ? '(empty)' : sprintf( '%d chars, sha1 %s', strlen( $v ), substr( sha1( $v ), 0, 8 ) );
+		};
+		$id_note = isset( $shared['gmail_intake_client_id'] ) && (string) $shared['gmail_intake_client_id'] !== $local['gmail_intake_client_id'] ? ' ' . __( '(the shared row differs from this site\'s saved value)', 'ajcore' ) : '';
+		$rows = array(
+			__( 'Site role', 'ajcore' )            => self::is_shared() ? ( self::is_master() ? __( 'shared database, MASTER (publishes settings)', 'ajcore' ) : __( 'shared database, SECONDARY (reads the master\'s settings)', 'ajcore' ) ) : __( 'standalone (no shared database)', 'ajcore' ),
+			__( 'Client ID used', 'ajcore' )       => (string) $use['gmail_intake_client_id'] . $id_note,
+			__( 'Client secret used', 'ajcore' )   => $mask( $use['gmail_intake_client_secret'] ) . ( isset( $shared['gmail_intake_client_secret'] ) ? ' [' . __( 'from shared row', 'ajcore' ) . ']' : ' [' . __( 'from this site', 'ajcore' ) . ']' ),
+			__( 'Refresh token used', 'ajcore' )   => $mask( $use['gmail_intake_refresh_token'] ) . ( '' !== (string) $use['gmail_intake_refresh_token'] ? ' ' . sprintf( __( '(starts "%s")', 'ajcore' ), substr( (string) $use['gmail_intake_refresh_token'], 0, 4 ) ) : '' ) . ( isset( $shared['gmail_intake_refresh_token'] ) ? ' [' . __( 'from shared row', 'ajcore' ) . ']' : ' [' . __( 'from this site', 'ajcore' ) . ']' ),
+			__( 'Access token expires', 'ajcore' ) => ! empty( $use['gmail_intake_token_expires_at'] ) ? gmdate( 'Y-m-d H:i:s', (int) $use['gmail_intake_token_expires_at'] ) . ' UTC' : '—',
+			__( 'Redirect URI sent', 'ajcore' )    => $this->get_gmail_intake_redirect_uri(),
+		);
+		echo '<details class="ajmr-cred"><summary>' . esc_html__( 'Credential check', 'ajcore' ) . '</summary><table class="widefat striped" style="max-width:900px"><tbody>';
+		foreach ( $rows as $label => $value ) {
+			echo '<tr><th style="width:190px">' . esc_html( $label ) . '</th><td><code style="word-break:break-all">' . esc_html( (string) $value ) . '</code></td></tr>';
+		}
+		echo '</tbody></table><p class="description">' . esc_html__( 'The redirect URI must be listed under Authorized redirect URIs for this Client ID in Google Cloud. A refresh token only works with the Client ID that issued it.', 'ajcore' ) . '</p></details>';
 	}
 
 	public function is_connected() {
