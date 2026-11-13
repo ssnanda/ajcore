@@ -600,11 +600,31 @@
 		".aj-end-actions button{flex:1;border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer;border:none;}" +
 		"#aj-end-cancel{background:#e5e7eb;color:#111827;}" +
 		"#aj-end-confirm{background:#dc2626;color:#fff;}" +
-		".ajcore-chat-msg{margin:0 0 8px;max-width:82%;padding:8px 11px;border-radius:10px;font-size:13px;line-height:1.4;word-wrap:break-word;}" +
+		".ajcore-chat-msg{margin:0 0 8px;max-width:82%;padding:8px 11px;border-radius:10px;font-size:13px;line-height:1.4;word-wrap:break-word;white-space:pre-wrap;}" +
+		".ajcore-chat-msg a{color:inherit;text-decoration:underline;word-break:break-all;}" +
+		".ajcore-chat-meta{font-size:10px;color:#9ca3af;margin:-4px 2px 8px;}" +
+		".ajcore-chat-meta.visitor{text-align:right;}" +
+		".ajcore-chat-msg.aj-dots{display:inline-flex;gap:4px;align-items:center;padding:11px 12px;}" +
+		".ajcore-chat-msg.aj-dots span{width:6px;height:6px;border-radius:50%;background:#9ca3af;animation:ajdots 1.2s infinite ease-in-out;}" +
+		".ajcore-chat-msg.aj-dots span:nth-child(2){animation-delay:.2s;}.ajcore-chat-msg.aj-dots span:nth-child(3){animation-delay:.4s;}" +
+		"@keyframes ajdots{0%,60%,100%{opacity:.25;transform:translateY(0);}30%{opacity:1;transform:translateY(-3px);}}" +
+		"#ajcore-chat-chips,.aj-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;}" +
+		".aj-chip{background:#fff;border:1px solid #3157ff;color:#3157ff;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;}" +
+		".aj-chip:hover{background:#3157ff;color:#fff;}" +
+		".aj-status{font-size:11px;color:#6b7280;text-align:center;margin:0 0 10px;}" +
+		".aj-status.online:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;margin-right:6px;vertical-align:1px;}" +
+		".aj-hp{position:absolute!important;left:-9999px!important;width:1px;height:1px;opacity:0;pointer-events:none;}" +
+		".aj-inwrap{flex:1;position:relative;display:flex;}" +
+		".aj-inwrap textarea{width:100%;box-sizing:border-box;}" +
+		"#ajcore-chat-count{position:absolute;right:8px;bottom:3px;font-size:10px;color:#9ca3af;display:none;pointer-events:none;}" +
+		"#ajcore-chat-send:disabled{opacity:.45;cursor:default;}" +
+		".aj-rate{display:flex;align-items:center;gap:8px;font-size:12px;color:#6b7280;}" +
+		".aj-rate button{background:#fff;border:1px solid #d1d5db;border-radius:8px;font-size:16px;padding:3px 9px;cursor:pointer;}" +
+		".aj-rate button.on{border-color:#3157ff;background:#eef2ff;}" +
 		".ajcore-chat-msg.visitor{background:#3157ff;color:#fff;margin-left:auto;}" +
 		".ajcore-chat-msg.staff{background:#e5e7eb;color:#0f172a;margin-right:auto;}" +
 		"#ajcore-chat-inputrow{border-top:1px solid #e5e7eb;padding:10px;display:flex;gap:8px;align-items:flex-end;}" +
-		"#ajcore-chat-input{flex:1;border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;resize:none;max-height:80px;}" +
+		"#ajcore-chat-input{flex:1;border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;resize:none;max-height:110px;overflow-y:auto;}" +
 		"#ajcore-chat-send{background:#3157ff;color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;}" +
 		"#ajcore-chat-badge{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#dc2626;color:#fff;font-size:11px;font-weight:700;display:none;align-items:center;justify-content:center;line-height:1;}" +
 		"#ajcore-chat-badge.show{display:flex;}" +
@@ -722,6 +742,7 @@
 		unreadCount = 0;
 		updateBadge();
 		hidePreview();
+		clearTitleAlert();
 		setStored(STORAGE_PANEL_OPEN, "1");
 	}
 	function closePanel() {
@@ -792,6 +813,7 @@
 			}
 			if (payload && payload.message) {
 				hideStaffTyping();
+				if (payload.message.senderType === "staff") hideReplyDots();
 				if (payload.message.senderType === "visitor" && pendingOwnMessages.length && pendingOwnMessages[0] === payload.message.body) {
 					// This is the server echo of a message we already rendered optimistically below
 					// — skip re-rendering it (would otherwise double-print), but still consume it
@@ -799,10 +821,16 @@
 					// is a genuine multi-tab case (same visitor, sent from a different tab) and
 					// should render normally — see the queue's other consumer in sendMessage().
 					pendingOwnMessages.shift();
+					if (pendingMetas.length) { var pm = pendingMetas.shift(); setMetaStatus(pm.meta, pm.time, "Delivered"); }
 				} else {
-					appendMessage(payload.message.senderType, payload.message.body);
+					var shown = appendMessage(payload.message.senderType, payload.message.body, { time: new Date() });
+					if (shown && payload.message.senderType === "staff") {
+						var chips = deriveChips(payload.message.body);
+						if (chips.length) showChips(chips, function (label) { clearChips(); sendMessage(label); });
+					}
 				}
 				if (payload.message.senderType === "staff") {
+					if (document.hidden || !panelOpen) { titleUnread += 1; refreshTitle(); }
 					playChime();
 					notifyDesktop("New message", payload.message.body);
 					if (!panelOpen) {
@@ -847,15 +875,20 @@
 		// for genuine multi-tab sync (a different tab sending), so it isn't removed — just deduped
 		// against this queue instead of always rendering, to avoid the double-print this used to
 		// cause when both the optimistic render and the echo showed the same message.
-		appendMessage("visitor", text);
+		var now = new Date();
+		var shown = appendMessage("visitor", text, { time: now, status: "Sending…" });
 		pendingOwnMessages.push(text);
+		if (shown && shown.meta) pendingMetas.push({ meta: shown.meta, time: now });
 		if (ws && ws.readyState === WebSocket.OPEN) {
 			ws.send(JSON.stringify(payload));
+			if (shown) setMetaStatus(shown.meta, now, "Sent");
 		} else {
 			pendingSend = payload;
 			connect();
 		}
+		showReplyDots();
 	}
+	var pendingMetas = [];
 
 	// ── Typing indicator ─────────────────────────────────────────────────────
 	// Purely ephemeral — relayed directly by server.js, never touches AJCore/the DB.
@@ -1113,12 +1146,144 @@
 		return d.innerHTML;
 	}
 
-	function appendMessage(senderType, text) {
+	var LEAD_LINE = "Your details have been shared with our team.";
+	var leadLineShown = false;
+	var lastGroup = null; // { sender, minute, metaEl }
+
+	// Escapes first, then turns **bold**, links, emails and phone numbers into markup — never
+	// inserts raw message text as HTML.
+	function formatBody(text) {
+		var safe = escapeHtml(text);
+		return safe.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])|([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})|((?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4})|\*\*([^*\n]+)\*\*/g, function (m, url, email, phone, bold) {
+			if (url) return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + "</a>";
+			if (email) return '<a href="mailto:' + email + '">' + email + "</a>";
+			if (phone) return '<a href="tel:' + phone.replace(/[^0-9+]/g, "") + '">' + phone + "</a>";
+			if (bold) return "<strong>" + bold + "</strong>";
+			return m;
+		});
+	}
+
+	function clearChips() {
+		var old = body.querySelectorAll(".aj-chips");
+		for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+	}
+
+	function fmtTime(d) {
+		var h = d.getHours(), m = d.getMinutes();
+		return (h % 12 || 12) + ":" + (m < 10 ? "0" : "") + m + " " + (h < 12 ? "AM" : "PM");
+	}
+
+	// opts.time (Date) shows a small time under the last message of a group; opts.status adds
+	// "Sending…/Sent" for the visitor's own messages. Returns { el, meta } (or null if skipped).
+	function appendMessage(senderType, text, opts) {
+		opts = opts || {};
+		var sender = senderType === "staff" ? "staff" : "visitor";
+		clearChips();
+		if (sender === "staff") {
+			// The system appends the "details shared" confirmation on every lead save; once is enough.
+			if (text.indexOf(LEAD_LINE) !== -1) {
+				if (leadLineShown) text = text.replace(LEAD_LINE, "").replace(/\s+$/, "");
+				else leadLineShown = true;
+				if (!text.trim()) return null;
+			}
+		}
 		var el = document.createElement("div");
-		el.className = "ajcore-chat-msg " + (senderType === "staff" ? "staff" : "visitor");
-		el.innerHTML = escapeHtml(text);
+		el.className = "ajcore-chat-msg " + sender;
+		el.innerHTML = formatBody(text);
 		body.appendChild(el);
+		var meta = null;
+		if (opts.time || opts.status) {
+			var minute = opts.time ? Math.floor(opts.time.getTime() / 60000) : null;
+			if (lastGroup && lastGroup.sender === sender && lastGroup.minute === minute && lastGroup.metaEl && lastGroup.metaEl.parentNode) {
+				lastGroup.metaEl.parentNode.removeChild(lastGroup.metaEl);
+			}
+			meta = document.createElement("div");
+			meta.className = "ajcore-chat-meta " + sender;
+			var t = opts.time ? fmtTime(opts.time) : "";
+			meta.textContent = opts.status ? (t ? t + " · " : "") + opts.status : t;
+			body.appendChild(meta);
+			lastGroup = { sender: sender, minute: minute, metaEl: meta };
+		} else {
+			lastGroup = null;
+		}
 		body.scrollTop = body.scrollHeight;
+		return { el: el, meta: meta };
+	}
+
+	function setMetaStatus(meta, time, status) {
+		if (meta) meta.textContent = fmtTime(time) + " · " + status;
+	}
+
+	// ── Quick-reply chips ────────────────────────────────────────────────────
+	// Derives tappable answers from the assistant's last question: "A, B, or C?" becomes chips for
+	// A/B/C, a plain yes/no question becomes Yes / No. Anything else shows no chips.
+	function deriveChips(text) {
+		var plain = String(text || "").replace(LEAD_LINE, "").trim();
+		var sentences = plain.match(/[^.!?\n]+\?/g);
+		if (!sentences) return [];
+		var q = sentences[sentences.length - 1].trim();
+		if (!/\sor\s/i.test(q)) {
+			return /^(do|does|did|would|are|is|can|could|will|have|should|may|want|shall)\b/i.test(q) && q.length < 160 ? ["Yes", "No"] : [];
+		}
+		var parts = q.replace(/\?$/, "").split(/,\s*(?:or\s+)?|\s+or\s+/i).map(function (x) { return x.trim(); }).filter(Boolean);
+		if (parts.length < 2 || parts.length > 4) return [];
+		parts[0] = parts[0].replace(/^.*\b(?:about|for|in|is it|are you|to|between|either|prefer|like|want|need|choose|a|an|the)\s+/i, "");
+		for (var i = 0; i < parts.length; i++) {
+			parts[i] = parts[i].replace(/^(a|an|the)\s+/i, "");
+			if (!parts[i] || parts[i].length > 30 || parts[i].split(/\s+/).length > 4) return [];
+			parts[i] = parts[i].charAt(0).toUpperCase() + parts[i].slice(1);
+		}
+		return parts;
+	}
+	function showChips(labels, onPick) {
+		clearChips();
+		if (!labels || !labels.length) return;
+		var wrap = document.createElement("div");
+		wrap.className = "aj-chips";
+		labels.forEach(function (label) {
+			var b = document.createElement("button");
+			b.type = "button";
+			b.className = "aj-chip";
+			b.textContent = label;
+			b.addEventListener("click", function () { onPick(label); });
+			wrap.appendChild(b);
+		});
+		body.appendChild(wrap);
+		body.scrollTop = body.scrollHeight;
+	}
+
+	// ── "Replying…" dots while waiting for the assistant/staff ───────────────
+	var dotsEl = null, dotsTimer = null;
+	function showReplyDots() {
+		hideReplyDots();
+		dotsEl = document.createElement("div");
+		dotsEl.className = "ajcore-chat-msg staff aj-dots";
+		dotsEl.innerHTML = "<span></span><span></span><span></span>";
+		body.appendChild(dotsEl);
+		body.scrollTop = body.scrollHeight;
+		dotsTimer = setTimeout(hideReplyDots, 30000);
+	}
+	function hideReplyDots() {
+		if (dotsEl && dotsEl.parentNode) dotsEl.parentNode.removeChild(dotsEl);
+		dotsEl = null;
+		if (dotsTimer) { clearTimeout(dotsTimer); dotsTimer = null; }
+	}
+
+	// ── Tab title alert while a reply is unread ──────────────────────────────
+	var baseTitle = document.title;
+	var titleUnread = 0;
+	function refreshTitle() {
+		document.title = titleUnread > 0 ? "(" + titleUnread + ") New message — " + baseTitle : baseTitle;
+	}
+	function clearTitleAlert() { titleUnread = 0; refreshTitle(); }
+	document.addEventListener("visibilitychange", function () {
+		if (!document.hidden && panelOpen) clearTitleAlert();
+	});
+	window.addEventListener("focus", function () { if (panelOpen) clearTitleAlert(); });
+
+	function updateHeaderTitle() {
+		var t = header && header.querySelector("span");
+		if (t) t.textContent = visitorName ? "Hi " + visitorName.split(" ")[0] + " — chat with us" : "Chat with us";
 	}
 
 	// Restores a returning visitor's prior messages on a fresh tab/reload — the widget already
@@ -1129,6 +1294,7 @@
 			.then(function (data) {
 				if (!data) return;
 				if (Array.isArray(data.messages)) {
+					leadLineShown = false;
 					data.messages.forEach(function (m) {
 						appendMessage(m.senderType, m.body);
 					});
@@ -1148,7 +1314,7 @@
 	// never end their chat this way (tab close/navigation is far more common) — no point paying for
 	// the extra DOM on every page load.
 	var endOverlay = null;
-	var endEmailInput, endPhoneInput, endEmailError, endPhoneError;
+	var endEmailInput, endPhoneInput, endEmailError, endPhoneError, endRating = "";
 
 	function buildEndOverlay() {
 		endOverlay = document.createElement("div");
@@ -1162,10 +1328,20 @@
 				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="email" checked><span>Email me a copy</span></label>' +
 				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="text"><span>Text me a copy</span></label>' +
 				'<label class="aj-end-option"><input type="radio" name="aj-transcript-channel" value="none"><span>No thanks, just end the chat</span></label>' +
+				'<div class="aj-rate"><span>How was this chat?</span><button type="button" data-rate="up" aria-label="Helpful">👍</button><button type="button" data-rate="down" aria-label="Not helpful">👎</button></div>' +
 				'<div class="aj-end-actions"><button type="button" id="aj-end-cancel">Cancel</button><button type="button" id="aj-end-confirm">End Chat</button></div>' +
 			'</div>';
 		panel.appendChild(endOverlay);
 
+		endRating = "";
+		Array.prototype.forEach.call(endOverlay.querySelectorAll(".aj-rate button"), function (b) {
+			b.addEventListener("click", function () {
+				endRating = endRating === b.getAttribute("data-rate") ? "" : b.getAttribute("data-rate");
+				Array.prototype.forEach.call(endOverlay.querySelectorAll(".aj-rate button"), function (x) {
+					x.classList.toggle("on", x.getAttribute("data-rate") === endRating);
+				});
+			});
+		});
 		endEmailInput = endOverlay.querySelector("#aj-end-email");
 		endPhoneInput = endOverlay.querySelector("#aj-end-phone");
 		bindPhoneFormat(endPhoneInput);
@@ -1220,6 +1396,7 @@
 			transcript_channel: transcriptChannel,
 			transcript_email: transcriptEmail,
 			transcript_phone: transcriptPhone,
+			rating: endRating || undefined,
 		};
 
 		fetch(config.serverUrl + "/api/chat/end", {
@@ -1251,6 +1428,7 @@
 				// appends rather than clearing (unlike renderChatUI()), so clear first.
 				setTimeout(function () {
 					body.innerHTML = "";
+					updateHeaderTitle();
 					renderPreChatForm();
 				}, 1200);
 			});
@@ -1261,13 +1439,21 @@
 		body.innerHTML = "";
 		sessionOpen = true; // optimistic default — loadHistory() below corrects it if stale
 		updateEndChatVisibility();
+		updateHeaderTitle();
+		if (config.businessHoursEnabled && config.businessHours) {
+			var st = document.createElement("div");
+			var online = isWithinBusinessHours();
+			st.className = "aj-status" + (online ? " online" : "");
+			st.textContent = online ? "We're online now" : "We're offline — leave a message and we'll reply as soon as we're back.";
+			body.appendChild(st);
+		}
 		loadHistory();
 		requestDesktopNotifyPermission();
 		var row = document.createElement("div");
 		row.id = "ajcore-chat-inputrow";
 		row.innerHTML =
-			'<textarea id="ajcore-chat-input" rows="1" placeholder="Type a message…"></textarea>' +
-			'<button id="ajcore-chat-send">Send</button>';
+			'<div class="aj-inwrap"><textarea id="ajcore-chat-input" rows="1" maxlength="1000" placeholder="Type a message…"></textarea><span id="ajcore-chat-count"></span></div>' +
+			'<button id="ajcore-chat-send" disabled>Send</button>';
 		row.appendChild(endChatBtn); // End Chat sits right of Send
 		panel.appendChild(row);
 		updateEndChatVisibility();
@@ -1275,11 +1461,25 @@
 		var input = row.querySelector("#ajcore-chat-input");
 		var sendBtn = row.querySelector("#ajcore-chat-send");
 
+		var countEl = row.querySelector("#ajcore-chat-count");
+		var lastSendAt = 0;
+		function syncInput() {
+			var len = input.value.length;
+			sendBtn.disabled = !input.value.trim();
+			input.style.height = "auto";
+			input.style.height = Math.min(input.scrollHeight, 110) + "px";
+			countEl.style.display = len >= 800 ? "block" : "none";
+			countEl.textContent = len + "/1000";
+		}
+		input.addEventListener("input", syncInput);
 		function doSend() {
 			var text = (input.value || "").trim();
 			if (!text) return;
+			if (Date.now() - lastSendAt < 600) return; // accidental double-tap / key repeat
+			lastSendAt = Date.now();
 			sendMessage(text);
 			input.value = "";
+			syncInput();
 		}
 		sendBtn.addEventListener("click", doSend);
 		input.addEventListener("keydown", function (e) {
@@ -1310,7 +1510,9 @@
 			'<div class="aj-field-error" id="ajcore-chat-email-error"></div>' +
 			'<input type="tel" id="ajcore-chat-phone" placeholder="(704) 555-0123" autocomplete="tel" inputmode="tel" maxlength="20" required>' +
 			'<div class="aj-field-error" id="ajcore-chat-phone-error"></div>' +
-			'<textarea id="ajcore-chat-first-message" rows="3" placeholder="How can we help?" required></textarea>' +
+			'<div class="aj-chips" id="ajcore-chat-starters" style="margin:0;"></div>' +
+			'<textarea id="ajcore-chat-first-message" rows="3" maxlength="1000" placeholder="How can we help?" required></textarea>' +
+			'<input type="text" name="website" class="aj-hp" id="ajcore-chat-hp" tabindex="-1" autocomplete="off" aria-hidden="true">' +
 			'<div class="aj-field-error" id="ajcore-chat-message-error"></div>' +
 			'<button type="button" id="ajcore-chat-start">Start Chat</button>';
 		body.appendChild(form);
@@ -1339,6 +1541,21 @@
 		var emailInput = form.querySelector("#ajcore-chat-email");
 		var phoneInput = form.querySelector("#ajcore-chat-phone");
 		var messageInput = form.querySelector("#ajcore-chat-first-message");
+		updateHeaderTitle();
+		var starters = Array.isArray(config.quickReplies) && config.quickReplies.length ? config.quickReplies : ["Pricing", "Book a tour", "Talk to a person"];
+		var starterWrap = form.querySelector("#ajcore-chat-starters");
+		starters.slice(0, 4).forEach(function (label) {
+			var b = document.createElement("button");
+			b.type = "button";
+			b.className = "aj-chip";
+			b.textContent = String(label);
+			b.addEventListener("click", function () {
+				messageInput.value = String(label);
+				messageInput.focus();
+				var e = document.createEvent("Event"); e.initEvent("input", true, true); messageInput.dispatchEvent(e);
+			});
+			starterWrap.appendChild(b);
+		});
 
 		bindPhoneFormat(phoneInput);
 		nameInput.addEventListener("blur", function () { nameInput.value = tidyName(nameInput.value); });
@@ -1363,6 +1580,20 @@
 				(nameOk ? (emailOk ? (phoneOk ? messageInput : phoneInput) : emailInput) : nameInput).focus();
 				return;
 			}
+
+			// Spam guard: a filled hidden field means a bot — look like it worked, send nothing. Also
+			// caps how often one browser can open new chats (5 per hour).
+			if (form.querySelector("#ajcore-chat-hp").value) { body.innerHTML = '<div class="aj-status">Thanks!</div>'; return; }
+			var startsKey = "ajcore_chat_starts", nowMs = Date.now(), starts = [];
+			try { starts = JSON.parse(getStored(startsKey) || "[]").filter(function (t) { return nowMs - t < 3600000; }); } catch (e) { starts = []; }
+			if (starts.length >= 5) {
+				var lim = form.querySelector("#ajcore-chat-message-error");
+				lim.textContent = "Too many chats started — please try again later or text us.";
+				lim.classList.add("show");
+				return;
+			}
+			starts.push(nowMs);
+			setStored(startsKey, JSON.stringify(starts));
 
 			var name = tidyName(nameInput.value);
 			var email = normalizeEmail(emailInput.value);
