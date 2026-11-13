@@ -619,6 +619,16 @@ class AJCore_Zoho_Mail {
 		return array_map( 'strtolower', AJCore_Gmail_Intake::split_terms( $text ) );
 	}
 
+	/** The saved filter terms: [ subject => [], sender => [], any => [] ]. */
+	public function intake_filter_terms() {
+		$s = $this->get_settings();
+		return array(
+			'subject' => AJCore_Gmail_Intake::split_terms( $s['zoho_mail_filter_subject'] ),
+			'sender'  => AJCore_Gmail_Intake::split_terms( $s['zoho_mail_filter_sender'] ),
+			'any'     => AJCore_Gmail_Intake::split_terms( $s['zoho_mail_filter_text'] ),
+		);
+	}
+
 	/** Human description of the mailbox filters, for the "Filters & rules" panel. */
 	public function intake_filter_description() {
 		$s     = $this->get_settings();

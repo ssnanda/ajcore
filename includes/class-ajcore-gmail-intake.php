@@ -408,6 +408,62 @@ class AJCore_Gmail_Intake {
 		return $parts ? '(' . implode( ' OR ', $parts ) . ')' : '';
 	}
 
+	/**
+	 * SQL (with %s placeholders) and its params that keep only log rows passing each mailbox's saved filters, so a message
+	 * that no longer matches (e.g. logged before the filter was set) is not listed or counted. A mailbox with no filter, or
+	 * Gmail with an advanced search (which can't be evaluated here), is not restricted. Returns array( sql, params ).
+	 */
+	private function display_filter( $pdb ) {
+		$like  = static function ( $term ) use ( $pdb ) {
+			return '%' . $pdb->esc_like( $term ) . '%';
+		};
+		$conds = array();
+		$all   = array();
+
+		// Gmail rows (ids without the "zoho:" prefix).
+		$g     = $this->get_gmail_settings();
+		$g_sub = self::split_terms( $g['gmail_intake_filter_subject'] );
+		$g_snd = self::split_terms( $g['gmail_intake_filter_sender'] );
+		if ( '' === trim( (string) $g['gmail_intake_filter'] ) && ( $g_sub || $g_snd ) ) {
+			$parts  = array();
+			$params = array( 'zoho:%' );
+			foreach ( $g_sub as $term ) {
+				$parts[]  = 'subject LIKE %s';
+				$params[] = $like( $term );
+			}
+			foreach ( $g_snd as $term ) {
+				$parts[]  = 'sender LIKE %s';
+				$params[] = $like( $term );
+			}
+			$conds[] = '( gmail_message_id LIKE %s OR ( ' . implode( ' OR ', $parts ) . ' ) )';
+			$all     = array_merge( $all, $params );
+		}
+
+		// Zoho rows.
+		if ( class_exists( 'AJCore_Zoho_Mail' ) ) {
+			$z = AJCore_Zoho_Mail::instance()->intake_filter_terms();
+			if ( $z['subject'] || $z['sender'] || $z['any'] ) {
+				$parts  = array();
+				$params = array( 'zoho:%' );
+				foreach ( $z['subject'] as $term ) {
+					$parts[]  = 'subject LIKE %s';
+					$params[] = $like( $term );
+				}
+				foreach ( $z['sender'] as $term ) {
+					$parts[]  = 'sender LIKE %s';
+					$params[] = $like( $term );
+				}
+				foreach ( $z['any'] as $term ) {
+					$parts[] = '( subject LIKE %s OR sender LIKE %s OR snippet LIKE %s )';
+					array_push( $params, $like( $term ), $like( $term ), $like( $term ) );
+				}
+				$conds[] = '( gmail_message_id NOT LIKE %s OR ( ' . implode( ' OR ', $parts ) . ' ) )';
+				$all     = array_merge( $all, $params );
+			}
+		}
+		return array( implode( ' AND ', $conds ), $all );
+	}
+
 	/** Connected and switched on (Gmail can be turned off in settings without disconnecting or removing the code). */
 	public function is_active() {
 		$s = $this->get_gmail_settings();
@@ -427,6 +483,7 @@ class AJCore_Gmail_Intake {
 		}
 		$sections[] = array( 'title' => __( 'Mailbox filter (which messages enter the queue)', 'ajcore' ), 'items' => $filters ? $filters : array( __( 'No mailbox is connected and enabled.', 'ajcore' ) ) );
 		$sections[] = array( 'title' => __( 'Pipeline', 'ajcore' ), 'items' => array(
+			__( 'The queue, counts and AJOps list only show messages that match each mailbox\'s Subject / Sender filters, including ones logged earlier.', 'ajcore' ),
 			__( 'Each pass reads the newest 20 matching messages per mailbox; a message is only ever logged once (by its id), and nothing changes in the real mailbox.', 'ajcore' ),
 			__( 'Company name comes from the subject, then the body (rules supplied by AJCore-RA).', 'ajcore' ),
 			__( 'Customer match: exact name across Stripe and local customers; if not exactly one hit, a contains-match that must also be exactly one. Otherwise Needs review.', 'ajcore' ),
@@ -455,7 +512,10 @@ class AJCore_Gmail_Intake {
 			return 0;
 		}
 		$pdb = $this->get_pdb();
-		return (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$this->get_gmail_intake_log_table()}` WHERE status IN ('needs_review','matched_pending_file','skipped_no_attachment')" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		list( $filter_sql, $filter_params ) = $this->display_filter( $pdb );
+		$sql = "SELECT COUNT(*) FROM `{$this->get_gmail_intake_log_table()}` WHERE status IN ('needs_review','matched_pending_file','skipped_no_attachment')" . ( '' !== $filter_sql ? ' AND ' . $filter_sql : '' );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		return (int) $pdb->get_var( $filter_params ? $pdb->prepare( $sql, $filter_params ) : $sql );
 	}
 
 	/** Resolve form posts from the Pipeline tab. */
@@ -1843,6 +1903,11 @@ class AJCore_Gmail_Intake {
 			$where[]  = 'status = %s';
 			$params[] = $status;
 		}
+		list( $filter_sql, $filter_params ) = $this->display_filter( $pdb );
+		if ( '' !== $filter_sql ) {
+			$where[] = $filter_sql;
+			$params  = array_merge( $params, $filter_params );
+		}
 
 		$per_page = min( 500, max( 1, absint( $request->get_param( 'per_page' ) ?: 200 ) ) );
 		$params[] = $per_page;
@@ -1852,16 +1917,15 @@ class AJCore_Gmail_Intake {
 		$rows = $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$table}` WHERE {$where_sql} ORDER BY (status = 'needs_review') DESC, created_at DESC, id DESC LIMIT %d", $params ), ARRAY_A );
 		$rows = is_array( $rows ) ? $rows : array();
 
-		$stats = $pdb->get_row(
-			"SELECT COUNT(*) AS total,
+		$stats_sql = "SELECT COUNT(*) AS total,
 				SUM(status = 'filed') AS filed,
 				SUM(status = 'matched_pending_file') AS matched_pending_file,
 				SUM(status = 'needs_review') AS needs_review,
 				SUM(status = 'resolved') AS resolved,
 				SUM(status = 'skipped_no_attachment') AS skipped_no_attachment
-			FROM `{$table}`",
-			ARRAY_A
-		);
+			FROM `{$table}`" . ( '' !== $filter_sql ? ' WHERE ' . $filter_sql : '' );
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$stats = $pdb->get_row( $filter_params ? $pdb->prepare( $stats_sql, $filter_params ) : $stats_sql, ARRAY_A );
 
 		return rest_ensure_response( array(
 			'sources' => $this->ops_source_states(),
@@ -2356,8 +2420,11 @@ class AJCore_Gmail_Intake {
 		}
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$rows = (array) $pdb->get_results( "SELECT (gmail_message_id LIKE 'zoho:%') AS is_zoho, (status IN ('filed','resolved')) AS is_filed, COUNT(*) AS n FROM `{$table}` GROUP BY is_zoho, is_filed" );
+		list( $filter_sql, $filter_params ) = $this->display_filter( $pdb );
+		$where = '' !== $filter_sql ? ' WHERE ' . $filter_sql : '';
+		$sql   = "SELECT (gmail_message_id LIKE 'zoho:%%') AS is_zoho, (status IN ('filed','resolved')) AS is_filed, COUNT(*) AS n FROM `{$table}`{$where} GROUP BY is_zoho, is_filed";
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$rows = (array) $pdb->get_results( $filter_params ? $pdb->prepare( $sql, $filter_params ) : str_replace( '%%', '%', $sql ) );
 		foreach ( $rows as $r ) {
 			$src   = (int) $r->is_zoho ? 'zoho' : 'gmail';
 			$group = (int) $r->is_filed ? 'filed' : 'pending';
@@ -2399,6 +2466,11 @@ class AJCore_Gmail_Intake {
 		if ( 'all' !== $source ) {
 			$where[]  = 'zoho' === $source ? 'gmail_message_id LIKE %s' : 'gmail_message_id NOT LIKE %s';
 			$params[] = 'zoho:%';
+		}
+		list( $filter_sql, $filter_params ) = $this->display_filter( $pdb );
+		if ( '' !== $filter_sql ) {
+			$where[] = $filter_sql;
+			$params  = array_merge( $params, $filter_params );
 		}
 		if ( '' !== $search ) {
 			$like    = '%' . $pdb->esc_like( $search ) . '%';
