@@ -62,6 +62,7 @@ class AJCore_Zoho_Mail {
 			'zoho_mail_client_id'        => '',
 			'zoho_mail_client_secret'    => '',
 			'zoho_mail_account_email'    => '',
+			'zoho_mail_filter_text'      => (string) apply_filters( 'ajcore_zoho_mail_default_filter', '' ),
 			'zoho_mail_data_center'      => 'com',
 			'zoho_mail_access_token'     => '',
 			'zoho_mail_refresh_token'    => '',
@@ -134,6 +135,7 @@ class AJCore_Zoho_Mail {
 		$settings['zoho_mail_account_email'] = isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : '';
 		$dc                                  = isset( $_POST['zoho_mail_data_center'] ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com';
 		$settings['zoho_mail_data_center']   = in_array( $dc, array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? $dc : 'com';
+		$settings['zoho_mail_filter_text']   = isset( $_POST['zoho_mail_filter_text'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_filter_text'] ) ) : '';
 		$secret                              = isset( $_POST['zoho_mail_client_secret'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_secret'] ) ) ) : '';
 		if ( '' !== $secret ) { // blank keeps the saved secret
 			$settings['zoho_mail_client_secret'] = $secret;
@@ -602,6 +604,137 @@ class AJCore_Zoho_Mail {
 		return '<pre style="white-space:pre-wrap;font-family:inherit">' . esc_html( $summary ) . '</pre>';
 	}
 
+	// ── Intake pipeline adapter (same contract as the Gmail source) ─────────────
+
+	public function intake_filter_text() {
+		return trim( (string) $this->get_settings()['zoho_mail_filter_text'] );
+	}
+
+	/** The filter as lowercase terms (comma-separated in settings; a message matches if it contains any of them). */
+	private function intake_terms() {
+		return array_values( array_filter( array_map( static function ( $t ) {
+			return strtolower( trim( $t ) );
+		}, explode( ',', $this->intake_filter_text() ) ), 'strlen' ) );
+	}
+
+	/** Human description of the mailbox filter, for the "Filters & rules" panel. */
+	public function intake_filter_description() {
+		$text = $this->intake_filter_text();
+		return '' !== $text
+			? sprintf( __( 'Shared mailbox %1$s: newest messages whose subject, sender or preview contains any of: %2$s', 'ajcore' ), $this->shared_address(), $text )
+			: sprintf( __( 'Shared mailbox %s: every message', 'ajcore' ), $this->shared_address() );
+	}
+
+	/**
+	 * Native ids of the newest messages that pass the filter (newest first, at most $max). Scans up to 200 recent
+	 * messages in pages of 50 because the Shared Mailbox API has no search; $show_all skips the text filter.
+	 * Returns array( 'ids' => string[], 'query' => string, 'estimate' => int ) or WP_Error.
+	 */
+	public function intake_ids( $max, $show_all = false ) {
+		$terms  = $show_all ? array() : $this->intake_terms();
+		$max    = max( 1, min( 50, (int) $max ) );
+		$ids    = array();
+		for ( $page = 0; $page < 4 && count( $ids ) < $max; $page++ ) {
+			$rows = $this->get_recent_messages( 50, 'all', $page * 50 );
+			if ( is_wp_error( $rows ) ) {
+				return $rows;
+			}
+			foreach ( $rows as $row ) {
+				$hay = strtolower( $row['subject'] . ' ' . $row['from_name'] . ' ' . $row['from_email'] . ' ' . $row['summary'] );
+				$hit = empty( $terms );
+				foreach ( $terms as $term ) {
+					if ( false !== strpos( $hay, $term ) ) {
+						$hit = true;
+						break;
+					}
+				}
+				if ( $hit ) {
+					$ids[] = $row['message_id'];
+					if ( count( $ids ) >= $max ) {
+						break;
+					}
+				}
+			}
+			if ( count( $rows ) < 50 ) {
+				break;
+			}
+		}
+		return array( 'ids' => $ids, 'query' => $this->intake_filter_description(), 'estimate' => count( $ids ) );
+	}
+
+	/**
+	 * One message in the pipeline's normalized shape: subject, sender, date, snippet, plain-text body and its PDF
+	 * attachments (filename, attachment_id, size). Body and attachments live behind the login's own account endpoints,
+	 * using the real folderId the Shared Mailbox API reports.
+	 */
+	public function intake_message( $message_id ) {
+		$details = $this->get_message( $message_id );
+		if ( is_wp_error( $details ) ) {
+			return $details;
+		}
+		$folder_id  = self::deep_string( $details, array( 'folderId' ) );
+		$account_id = trim( (string) $this->get_settings()['zoho_mail_account_id'] );
+		$created    = self::deep_find( $details, 'createdAt' );
+		$date_ts    = strtotime( $this->timestamp_to_mysql( $created ) . ' UTC' );
+		$from_name  = self::deep_string( $details, array( 'senderName' ) );
+		$from_email = self::deep_string( $details, array( 'fromAddress' ) );
+		$body_text  = self::deep_string( $details, array( 'summary' ) );
+		$pdfs       = array();
+
+		if ( '' !== $folder_id && '' !== $account_id ) {
+			$base = '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id );
+			$body = $this->api_request( $base . '/content' );
+			if ( ! is_wp_error( $body ) && 200 === $body['status'] ) {
+				$html = self::deep_string( $body['data'], array( 'content' ) );
+				if ( '' !== $html ) {
+					$text = preg_replace( '/<(script|style)[^>]*>.*?<\/\1>/is', ' ', $html );
+					$text = preg_replace( '/<br\s*\/?>|<\/p>|<\/div>|<\/tr>|<\/li>/i', "\n", (string) $text );
+					$body_text = html_entity_decode( wp_strip_all_tags( (string) $text, false ), ENT_QUOTES, 'UTF-8' );
+				}
+			}
+			$info = $this->api_request( $base . '/attachmentinfo' );
+			if ( ! is_wp_error( $info ) && 200 === $info['status'] ) {
+				foreach ( (array) ( isset( $info['data']['data']['attachments'] ) ? $info['data']['data']['attachments'] : array() ) as $a ) {
+					$name = isset( $a['attachmentName'] ) ? (string) $a['attachmentName'] : '';
+					if ( '' === $name || empty( $a['attachmentId'] ) || 0 !== strcasecmp( substr( $name, -4 ), '.pdf' ) ) {
+						continue;
+					}
+					$pdfs[] = array( 'filename' => $name, 'attachment_id' => (string) $a['attachmentId'], 'size' => isset( $a['attachmentSize'] ) ? (int) $a['attachmentSize'] : 0 );
+				}
+			}
+		}
+		return array(
+			'subject'   => self::deep_string( $details, array( 'title', 'subject' ) ),
+			'sender'    => '' !== $from_name && '' !== $from_email ? $from_name . ' <' . $from_email . '>' : ( '' !== $from_email ? $from_email : $from_name ),
+			'date_ts'   => $date_ts ? $date_ts : null,
+			'date_str'  => $date_ts ? gmdate( 'D, d M Y H:i:s', $date_ts ) . ' +0000' : '',
+			'snippet'   => $body_text !== '' ? mb_substr( preg_replace( '/\s+/', ' ', $body_text ), 0, 200 ) : '',
+			'body_text' => $body_text,
+			'pdfs'      => $pdfs,
+		);
+	}
+
+	/** Raw bytes of one attachment (Zoho returns the file itself, not JSON), or WP_Error. */
+	public function intake_attachment( $message_id, $attachment_id ) {
+		$details    = $this->get_message( $message_id );
+		if ( is_wp_error( $details ) ) {
+			return $details;
+		}
+		$folder_id  = self::deep_string( $details, array( 'folderId' ) );
+		$account_id = trim( (string) $this->get_settings()['zoho_mail_account_id'] );
+		if ( '' === $folder_id || '' === $account_id ) {
+			return new WP_Error( 'zoho_mail_no_folder', __( 'Zoho did not report this message\'s folder.', 'ajcore' ) );
+		}
+		$res = $this->api_request( '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id ) . '/attachments/' . rawurlencode( (string) $attachment_id ) );
+		if ( is_wp_error( $res ) ) {
+			return $res;
+		}
+		if ( 200 !== $res['status'] || '' === $res['raw'] ) {
+			return new WP_Error( 'zoho_mail_attachment_failed', sprintf( __( 'Zoho attachment download returned HTTP %d.', 'ajcore' ), $res['status'] ) );
+		}
+		return $res['raw'];
+	}
+
 	/** Zoho Mail timestamps: milliseconds since epoch (number or numeric string) or an ISO 8601 string. */
 	private function timestamp_to_mysql( $value ) {
 		if ( is_string( $value ) && ! is_numeric( $value ) ) {
@@ -680,6 +813,7 @@ class AJCore_Zoho_Mail {
 					<tr><th><label for="zoho_mail_client_id"><?php esc_html_e( 'Client ID', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_id" id="zoho_mail_client_id" value="<?php echo esc_attr( $settings['zoho_mail_client_id'] ); ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_client_secret"><?php esc_html_e( 'Client Secret', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_secret" id="zoho_mail_client_secret" value="" placeholder="<?php echo ! empty( $settings['zoho_mail_client_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajcore' ) : ''; ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_account_email"><?php esc_html_e( 'Shared Mailbox Address', 'ajcore' ); ?></label></th><td><input type="email" class="regular-text" name="zoho_mail_account_email" id="zoho_mail_account_email" value="<?php echo esc_attr( $settings['zoho_mail_account_email'] ); ?>"></td></tr>
+					<tr><th><label for="zoho_mail_filter_text"><?php esc_html_e( 'Intake filter', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_filter_text" id="zoho_mail_filter_text" value="<?php echo esc_attr( $settings['zoho_mail_filter_text'] ); ?>"><p class="description"><?php esc_html_e( 'Comma-separated. A message enters the pipeline if its subject, sender or preview contains any of these. Blank = every message.', 'ajcore' ); ?></p></td></tr>
 					<tr><th><label for="zoho_mail_data_center"><?php esc_html_e( 'Data center', 'ajcore' ); ?></label></th><td><select name="zoho_mail_data_center" id="zoho_mail_data_center"><?php foreach ( array( 'com' => 'zoho.com (US)', 'eu' => 'zoho.eu', 'in' => 'zoho.in', 'com.au' => 'zoho.com.au', 'jp' => 'zoho.jp' ) as $dc_key => $dc_label ) : ?><option value="<?php echo esc_attr( $dc_key ); ?>" <?php selected( $settings['zoho_mail_data_center'], $dc_key ); ?>><?php echo esc_html( $dc_label ); ?></option><?php endforeach; ?></select></td></tr>
 				</table>
 				<p><button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajcore' ); ?></button></p>

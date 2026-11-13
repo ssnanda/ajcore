@@ -61,29 +61,29 @@ class AJCore_Mailroom {
 		if ( self::TAB !== $tab || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
-		$gi  = AJCore_Gmail_Intake::instance();
-		$zm  = AJCore_Zoho_Mail::instance();
-		$src = isset( $_GET['src'] ) ? sanitize_key( wp_unslash( $_GET['src'] ) ) : 'gmail';
-		$src = in_array( $src, array( 'gmail', 'zoho' ), true ) ? $src : 'gmail';
+		$gi = AJCore_Gmail_Intake::instance();
+		$zm = AJCore_Zoho_Mail::instance();
 
-		$sources = array(
-			'gmail' => array( 'label' => 'Gmail', 'ok' => $gi->is_connected() ),
-			'zoho'  => array( 'label' => 'Zoho', 'ok' => $zm->is_connected() ),
+		// Gmail: green = connected and on, grey = connected but switched off, red = not connected.
+		$gmail_state = $gi->is_active() ? 'is-ok' : ( $gi->is_connected() ? 'is-off' : 'is-bad' );
+		$gmail_tip   = $gi->is_active() ? __( 'Connected. Click for settings.', 'ajcore' ) : ( $gi->is_connected() ? __( 'Connected but switched off. Click for settings.', 'ajcore' ) : __( 'Not connected. Click for settings.', 'ajcore' ) );
+		$sources     = array(
+			'gmail' => array( 'label' => 'Gmail', 'state' => $gmail_state, 'tip' => $gmail_tip ),
+			'zoho'  => array( 'label' => 'Zoho', 'state' => $zm->is_connected() ? 'is-ok' : 'is-bad', 'tip' => $zm->is_connected() ? __( 'Connected. Click for settings.', 'ajcore' ) : __( 'Not connected. Click for settings.', 'ajcore' ) ),
 		);
-		$pending = $gi->is_connected() ? $gi->pending_count() : 0;
 
 		self::styles();
 		echo '<div class="ajmr">';
 		$zm->render_notices();
 
 		// Header: title + the two connection buttons.
-		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Email Pipeline', 'ajcore' ) . '</h2></div><div class="ajmr-chips">';
+		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Email Pipeline', 'ajcore' ) . '</h2></div><div class="ajmr-chips">'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		foreach ( $sources as $key => $s ) {
 			printf(
 				'<button type="button" class="ajmr-chip %1$s" data-target="ajmr-panel-%2$s" aria-expanded="false" title="%3$s"><i class="ajmr-dot"></i>%4$s<span class="ajmr-chev">%5$s</span></button>',
-				$s['ok'] ? 'is-ok' : 'is-bad',
+				esc_attr( $s['state'] ),
 				esc_attr( $key ),
-				esc_attr( $s['ok'] ? __( 'Connected. Click for settings.', 'ajcore' ) : __( 'Not connected. Click for settings.', 'ajcore' ) ),
+				esc_attr( $s['tip'] ),
 				esc_html( $s['label'] ),
 				self::icon( 'chevron', 14 ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			);
@@ -97,33 +97,11 @@ class AJCore_Mailroom {
 		$zm->render_connection_panel();
 		echo '</section>';
 
-		// Source switch.
-		echo '<nav class="ajmr-switch">';
-		printf(
-			'<a class="%1$s" href="%2$s">%3$s %4$s%5$s</a>',
-			'gmail' === $src ? 'is-on' : '',
-			esc_url( self::url( 'gmail' ) ),
-			self::icon( 'queue' ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-			esc_html__( 'Gmail intake queue', 'ajcore' ),
-			$pending > 0 ? ' <b class="ajmr-badge">' . (int) $pending . '</b>' : ''
-		);
-		printf(
-			'<a class="%1$s" href="%2$s">%3$s %4$s</a>',
-			'zoho' === $src ? 'is-on' : '',
-			esc_url( self::url( 'zoho' ) ),
-			self::icon( 'inbox' ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-			esc_html__( 'Zoho shared inbox', 'ajcore' )
-		);
-		echo '</nav>';
-
-		if ( 'gmail' === $src ) {
-			if ( $gi->is_connected() ) {
-				$gi->render_queue();
-			} else {
-				self::empty_state( __( 'Gmail is not connected.', 'ajcore' ) );
-			}
+		if ( $gi->is_active() || $zm->is_connected() ) {
+			$gi->render_rules_panel();
+			$gi->render_queue();
 		} else {
-			$zm->render_inbox_panel();
+			self::empty_state( __( 'No mailbox is connected.', 'ajcore' ) );
 		}
 		echo '</div>';
 
@@ -168,6 +146,8 @@ class AJCore_Mailroom {
 		.ajmr-chip { display:inline-flex; align-items:center; gap:8px; padding:7px 12px; border-radius:999px; border:1px solid; font-size:13px; font-weight:600; cursor:pointer; line-height:1; }
 		.ajmr-chip.is-ok { background:#ecfdf5; border-color:#86efac; color:#166534; }
 		.ajmr-chip.is-bad { background:#fef2f2; border-color:#fca5a5; color:#991b1b; }
+		.ajmr-chip.is-off { background:#f1f5f9; border-color:#cbd5e1; color:#475569; }
+		.ajmr-chip.is-off .ajmr-dot { background:#94a3b8; }
 		.ajmr-dot { width:9px; height:9px; border-radius:50%; background:currentColor; display:inline-block; }
 		.ajmr-chip.is-ok .ajmr-dot { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.2); }
 		.ajmr-chip.is-bad .ajmr-dot { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.2); }
@@ -205,6 +185,14 @@ class AJCore_Mailroom {
 		.ajmr .ajcore-status-pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:700; background:#fef3c7; color:#92400e; }
 		.ajmr .ajcore-status-pill.active { background:#dcfce7; color:#166534; }
 		.ajmr .ajcore-status-pill.disabled { background:#fee2e2; color:#991b1b; }
+		.ajmr-src { display:inline-block; padding:1px 8px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; vertical-align:1px; }
+		.ajmr-src.is-gmail { background:#fee2e2; color:#b91c1c; }
+		.ajmr-src.is-zoho { background:#dbeafe; color:#1d4ed8; }
+		.ajmr-rules { background:#fff; border:1px solid var(--ajmr-line); border-radius:14px; padding:8px 16px; margin:0 0 14px; }
+		.ajmr-rules-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:4px 28px; padding:6px 0 10px; }
+		.ajmr-rules h4 { margin:10px 0 4px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ajmr-mute); }
+		.ajmr-rules ul { margin:0; padding-left:16px; list-style:disc; font-size:12px; color:#334155; }
+		.ajmr-rules li { margin:0 0 3px; }
 		.ajmr .ajmr-filter { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
 		</style>
 		<?php

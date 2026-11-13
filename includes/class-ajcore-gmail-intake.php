@@ -15,6 +15,10 @@
  *   ajcore_gmail_intake_skip_category   ( bool $skip, string $category )                never import from mail
  *   ajcore_gmail_intake_group_labels    ( array group => label )                        Documents Filed email
  *   ajcore_gmail_intake_default_address ( string )                                      default mailbox
+ *   ajcore_gmail_intake_default_filter  ( string )                                      default Gmail search filter (blank = every message)
+ *   ajcore_zoho_mail_default_filter     ( string )                                      default Zoho filter terms, comma-separated (blank = every message)
+ *   ajcore_gmail_intake_company_name    ( string, string $subject, string $body )       company the message is about
+ *   ajcore_gmail_intake_rules_summary   ( array sections )                              lines for the "Filters & rules" panel
  *
  * Settings (`gmail_intake_*`: OAuth client, address, tokens): secrets encrypted at rest. With the shared
  * database on, the master publishes them to the shared row and other sites read it.
@@ -147,6 +151,8 @@ class AJCore_Gmail_Intake {
 			'gmail_intake_client_id'        => '',
 			'gmail_intake_client_secret'    => '',
 			'gmail_intake_address'          => (string) apply_filters( 'ajcore_gmail_intake_default_address', '' ),
+			'gmail_intake_enabled'          => '1',
+			'gmail_intake_filter'           => (string) apply_filters( 'ajcore_gmail_intake_default_filter', '' ),
 			'gmail_intake_access_token'     => '',
 			'gmail_intake_refresh_token'    => '',
 			'gmail_intake_token_expires_at' => 0,
@@ -293,6 +299,8 @@ class AJCore_Gmail_Intake {
 		$settings                             = $gi->get_gmail_settings();
 		$settings['gmail_intake_client_id']   = isset( $_POST['gmail_intake_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_id'] ) ) : '';
 		$settings['gmail_intake_address']     = isset( $_POST['gmail_intake_address'] ) ? sanitize_email( wp_unslash( $_POST['gmail_intake_address'] ) ) : $settings['gmail_intake_address'];
+		$settings['gmail_intake_enabled']     = ! empty( $_POST['gmail_intake_enabled'] ) ? '1' : '0';
+		$settings['gmail_intake_filter']      = isset( $_POST['gmail_intake_filter'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_filter'] ) ) : $settings['gmail_intake_filter'];
 		$secret                               = isset( $_POST['gmail_intake_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_secret'] ) ) : '';
 		if ( '' !== $secret ) { // blank keeps the saved secret
 			$settings['gmail_intake_client_secret'] = $secret;
@@ -334,6 +342,47 @@ class AJCore_Gmail_Intake {
 	public function is_connected() {
 		$s = $this->get_gmail_settings();
 		return '' !== (string) $s['gmail_intake_access_token'] || '' !== (string) $s['gmail_intake_refresh_token'];
+	}
+
+	/** Connected and switched on (Gmail can be turned off in settings without disconnecting or removing the code). */
+	public function is_active() {
+		$s = $this->get_gmail_settings();
+		return $this->is_connected() && '0' !== (string) $s['gmail_intake_enabled'];
+	}
+
+	/** Sections for the "Filters & rules" panel: [ title, items[] ]. Extensions append their own through the filter. */
+	public function rules_summary() {
+		$sections = array();
+		$filters  = array();
+		if ( $this->is_active() ) {
+			$f         = trim( (string) $this->get_gmail_settings()['gmail_intake_filter'] );
+			$filters[] = 'Gmail: ' . ( '' !== $f ? $f : __( 'every message', 'ajcore' ) ) . ' -in:spam -in:trash';
+		}
+		if ( class_exists( 'AJCore_Zoho_Mail' ) && AJCore_Zoho_Mail::instance()->is_connected() ) {
+			$filters[] = 'Zoho: ' . AJCore_Zoho_Mail::instance()->intake_filter_description();
+		}
+		$sections[] = array( 'title' => __( 'Mailbox filter (which messages enter the queue)', 'ajcore' ), 'items' => $filters ? $filters : array( __( 'No mailbox is connected and enabled.', 'ajcore' ) ) );
+		$sections[] = array( 'title' => __( 'Pipeline', 'ajcore' ), 'items' => array(
+			__( 'Each pass reads the newest 20 matching messages per mailbox; a message is only ever logged once (by its id), and nothing changes in the real mailbox.', 'ajcore' ),
+			__( 'Company name comes from the subject, then the body (rules supplied by AJCore-RA).', 'ajcore' ),
+			__( 'Customer match: exact name across Stripe and local customers; if not exactly one hit, a contains-match that must also be exactly one. Otherwise Needs review.', 'ajcore' ),
+			__( 'Matched = Pending file. Filing to a customer\'s Files is a staff action (preview, rename, category, tag), optionally with the Documents Filed email.', 'ajcore' ),
+		) );
+		$sections = apply_filters( 'ajcore_gmail_intake_rules_summary', $sections );
+		return is_array( $sections ) ? $sections : array();
+	}
+
+	/** Collapsed "Filters & rules" panel (read-only). */
+	public function render_rules_panel() {
+		echo '<details class="ajmr-rules"><summary>' . esc_html__( 'Filters & rules', 'ajcore' ) . '</summary><div class="ajmr-rules-grid">';
+		foreach ( $this->rules_summary() as $section ) {
+			echo '<div><h4>' . esc_html( (string) ( $section['title'] ?? '' ) ) . '</h4><ul>';
+			foreach ( (array) ( $section['items'] ?? array() ) as $item ) {
+				echo '<li>' . esc_html( (string) $item ) . '</li>';
+			}
+			echo '</ul></div>';
+		}
+		echo '</div></details>';
 	}
 
 	/** Entries waiting on staff (needs review, matched but not filed, no attachment). */
@@ -588,7 +637,8 @@ class AJCore_Gmail_Intake {
 		}
 		$url = 'https://gmail.googleapis.com/gmail/v1/users/me' . $path;
 		if ( ! empty( $args['query'] ) ) {
-			$url = add_query_arg( $args['query'], $url );
+			// add_query_arg() does not encode values; an editable filter with "+", "&" or "#" would corrupt the request.
+			$url .= '?' . http_build_query( $args['query'], '', '&', PHP_QUERY_RFC3986 );
 		}
 		$request_args = array(
 			'timeout' => 20,
@@ -619,12 +669,9 @@ class AJCore_Gmail_Intake {
 		);
 
 		if ( $status_code >= 400 ) {
-			$message = ! empty( $data['error']['message'] ) ? (string) $data['error']['message'] : sprintf(
-				/* translators: %d: HTTP status code */
-				__( 'Gmail API returned an error (%d).', 'ajcore' ),
-				$status_code
-			);
-			return new WP_Error( 'gmail_intake_api_error', $message );
+			$reason  = ! empty( $data['error']['errors'][0]['reason'] ) ? ' / ' . (string) $data['error']['errors'][0]['reason'] : '';
+			$message = ! empty( $data['error']['message'] ) ? (string) $data['error']['message'] : __( 'Gmail API returned an error.', 'ajcore' );
+			return new WP_Error( 'gmail_intake_api_error', sprintf( 'HTTP %1$d%2$s on %3$s %4$s: %5$s', $status_code, $reason, $method, $path, $message ) );
 		}
 		return is_array( $data ) ? $data : array();
 	}
@@ -663,62 +710,12 @@ class AJCore_Gmail_Intake {
 	}
 
 	/**
-	 * Best-effort company name extraction from these state-filing notification subjects. Tries,
-	 * in order: "Filing: {name} (", "Filing: {name}" to end, "... for {name}" ending at a
-	 * business-entity suffix, and finally the whole subject if it itself ends with a suffix
-	 * (covers e.g. an EIN letter's subject being just "PAINT MY CASTLE LLC"). Returns '' if none
-	 * match — callers must treat that as "needs manual review", not guess further.
+	 * The company a message is about, from its subject and body. AJCore has no rule for this: an extension answers
+	 * 'ajcore_gmail_intake_company_name' (AJCore-RA: NC Secretary of State filing notices). '' = no company found, which
+	 * sends the message to "needs review".
 	 */
-	private function extract_company_name_from_subject( $subject ) {
-		$subject = trim( (string) $subject );
-		$suffix  = '(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|LLP|L\.L\.P\.|LP|PLLC|PLC|Co\.)';
-
-		if ( preg_match( '/Filing:\s*(.+?)\s*\(/i', $subject, $m ) ) {
-			return trim( $m[1] );
-		}
-		if ( preg_match( '/Filing:\s*(.+)$/i', $subject, $m ) ) {
-			return trim( $m[1] );
-		}
-		if ( preg_match( '/\bfor\s+([A-Z0-9][A-Za-z0-9&,.\'\-\s]*?\s*' . $suffix . ')\b/i', $subject, $m ) ) {
-			return trim( $m[1] );
-		}
-		if ( preg_match( '/^([A-Z0-9][A-Za-z0-9&,.\'\-\s]*?\s*' . $suffix . ')$/i', $subject, $m ) ) {
-			return trim( $m[1] );
-		}
-		return '';
-	}
-
-	/** Subject first, then body — the real NC SOS approval template's subject is a generic "Congratulations..." with no company name in it at all; the name only appears in the body. */
 	private function extract_company_name_from_gmail_message( $subject, $body_text ) {
-		$from_subject = $this->extract_company_name_from_subject( $subject );
-		if ( '' !== $from_subject ) {
-			return $from_subject;
-		}
-		return $this->extract_company_name_from_body( $body_text );
-	}
-
-	/**
-	 * Body-text fallback for extraction. The NC Secretary of State's actual filing-approval
-	 * template reads "Document Filed: ARTICLES OF ORGANIZATIONfor LUX VENTUREZ LLC" — note there
-	 * is NO space between the document-type name and "for" in their template, so (unlike the
-	 * subject-line patterns above) this deliberately does not require a word boundary before
-	 * "for"; the required business-entity suffix on the captured name is what keeps this from
-	 * over-matching random body text.
-	 */
-	private function extract_company_name_from_body( $body_text ) {
-		$body_text = (string) $body_text;
-		if ( '' === trim( $body_text ) ) {
-			return '';
-		}
-		$suffix = '(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|LLP|L\.L\.P\.|LP|PLLC|PLC|Co\.)';
-
-		if ( preg_match( '/Document Filed:\s*.*?for\s+([A-Z0-9][A-Za-z0-9&,.\'\-\s]*?\s*' . $suffix . ')\b/is', $body_text, $m ) ) {
-			return trim( preg_replace( '/\s+/', ' ', $m[1] ) );
-		}
-		if ( preg_match( '/for\s+([A-Z0-9][A-Za-z0-9&,.\'\-\s]*?\s*' . $suffix . ')\b/i', $body_text, $m ) ) {
-			return trim( preg_replace( '/\s+/', ' ', $m[1] ) );
-		}
-		return '';
+		return trim( (string) apply_filters( 'ajcore_gmail_intake_company_name', '', (string) $subject, (string) $body_text ) );
 	}
 
 	/** Recursively walks a Gmail message payload's MIME parts, collecting the first text/plain and text/html body parts found (by reference, first-found-wins per type). */
@@ -903,56 +900,110 @@ class AJCore_Gmail_Intake {
 		return preg_replace( '/[\\\\\/:*?"<>|]/', '', $filename );
 	}
 
+	// ── Mailbox sources (Gmail and Zoho feed the same pipeline) ────────────────
+
+	/** Log ids: Gmail's own id as-is, Zoho's prefixed "zoho:" (one table, no collision, no schema change). */
+	private function split_id( $stored ) {
+		$stored = (string) $stored;
+		return 0 === strpos( $stored, 'zoho:' ) ? array( 'zoho', substr( $stored, 5 ) ) : array( 'gmail', $stored );
+	}
+
+	private function make_id( $source, $native ) {
+		return 'zoho' === $source ? 'zoho:' . $native : (string) $native;
+	}
+
+	public static function source_label( $source ) {
+		return 'zoho' === $source ? 'Zoho' : 'Gmail';
+	}
+
+	/** Sources currently feeding the pipeline (connected and enabled). */
+	public function active_sources() {
+		$out = array();
+		if ( $this->is_active() ) {
+			$out[] = 'gmail';
+		}
+		if ( class_exists( 'AJCore_Zoho_Mail' ) && AJCore_Zoho_Mail::instance()->is_connected() ) {
+			$out[] = 'zoho';
+		}
+		return $out;
+	}
+
+	/** Native ids to look at this pass, newest first: array( 'ids', 'query', 'estimate' ) or WP_Error. */
+	private function src_ids( $source, $max, $show_all ) {
+		if ( 'zoho' === $source ) {
+			return AJCore_Zoho_Mail::instance()->intake_ids( $max, $show_all );
+		}
+		$filter = trim( (string) $this->get_gmail_settings()['gmail_intake_filter'] );
+		$query  = ( $show_all || '' === $filter ? '' : $filter . ' ' ) . '-in:spam -in:trash';
+		$list   = $this->gmail_intake_api_request( 'GET', '/messages', array( 'query' => array( 'q' => $query, 'maxResults' => max( 1, min( 50, (int) $max ) ) ) ) );
+		if ( is_wp_error( $list ) ) {
+			return $list;
+		}
+		$ids = array();
+		foreach ( (array) ( isset( $list['messages'] ) ? $list['messages'] : array() ) as $item ) {
+			if ( ! empty( $item['id'] ) ) {
+				$ids[] = (string) $item['id'];
+			}
+		}
+		return array( 'ids' => $ids, 'query' => $query, 'estimate' => isset( $list['resultSizeEstimate'] ) ? (int) $list['resultSizeEstimate'] : count( $ids ) );
+	}
+
+	/** One message in the shared shape: subject, sender, date_ts, date_str, snippet, body_text, pdfs[ filename, attachment_id, size ]. */
+	private function src_message( $source, $native ) {
+		if ( 'zoho' === $source ) {
+			return AJCore_Zoho_Mail::instance()->intake_message( $native );
+		}
+		$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $native ), array( 'query' => array( 'format' => 'full' ) ) );
+		if ( is_wp_error( $message ) ) {
+			return $message;
+		}
+		$payload  = isset( $message['payload'] ) ? $message['payload'] : array();
+		$headers  = isset( $payload['headers'] ) ? $payload['headers'] : array();
+		$date_str = $this->gmail_intake_header_value( $headers, 'Date' );
+		$date_ts  = strtotime( (string) $date_str );
+		$pdfs     = array();
+		$this->gmail_intake_collect_pdf_parts( $payload, $pdfs );
+		return array(
+			'subject'   => $this->gmail_intake_header_value( $headers, 'Subject' ),
+			'sender'    => $this->gmail_intake_header_value( $headers, 'From' ),
+			'date_ts'   => false !== $date_ts ? $date_ts : null,
+			'date_str'  => $date_str,
+			'snippet'   => isset( $message['snippet'] ) ? (string) $message['snippet'] : '',
+			'body_text' => $this->gmail_intake_get_text_body( $payload ),
+			'pdfs'      => $pdfs,
+		);
+	}
+
+	/** Raw attachment bytes, or WP_Error. */
+	private function src_attachment( $source, $native, $attachment_id ) {
+		if ( 'zoho' === $source ) {
+			return AJCore_Zoho_Mail::instance()->intake_attachment( $native, $attachment_id );
+		}
+		$fetched = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $native ) . '/attachments/' . rawurlencode( $attachment_id ) );
+		if ( is_wp_error( $fetched ) ) {
+			return $fetched;
+		}
+		if ( empty( $fetched['data'] ) ) {
+			return new WP_Error( 'no_data', __( 'Attachment had no data.', 'ajcore' ) );
+		}
+		$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+		return false === $binary ? new WP_Error( 'decode_failed', __( 'Could not decode attachment data.', 'ajcore' ) ) : $binary;
+	}
+
 	/**
-	 * Polls the connected Gmail Intake inbox for messages not yet in our own log table, matches
-	 * each to a customer via the company name in its subject or body, and logs the result
-	 * (matched_pending_file or needs_review — see log_gmail_intake_item()). Dedup is entirely
-	 * local (by gmail_message_id in aj_gmail_intake_log), NOT via Gmail labels — a Gmail label is
-	 * permanent and lives in the real shared mailbox, so a bug here used to be very hard to undo.
-	 * Returns a summary array for the Test/Process-Now UI.
+	 * One pipeline pass over every active mailbox (Gmail and/or Zoho): list the newest messages that pass the source's
+	 * filter, skip ones already in the log, match each to a customer by the company name in its subject or body, and log
+	 * the result (matched_pending_file or needs_review). Dedup is local (message id in the log table), never a label or
+	 * flag on the real mailbox. Returns a summary array for the Test/Process-Now UI.
 	 */
 	public function process_gmail_intake_inbox( $max_messages = 20, $show_all = false ) {
 		if ( ! $this->ensure_gmail_intake_log_table() ) {
 			return new WP_Error( 'no_table', __( 'Gmail Intake log table could not be created.', 'ajcore' ) );
 		}
-
-		// Was 'in:inbox -from:...' — but a mailbox whose forwarding filter also archives
-		// (skips the inbox, a common setup for a dedicated intake box) never carries the
-		// INBOX label at all, so that query silently matched nothing even though messages
-		// were sitting right there in All Mail (root cause of "Test Connection: 100 total
-		// messages" vs "Process Now: checked 0"). -in:spam -in:trash keeps out the junk
-		// in:inbox used to exclude as a side effect (messages.list already excludes spam/trash
-		// by default, but this makes it explicit rather than relying on that default).
-		//
-		// Filter by subject content, NOT sender: a "Show all mailbox messages" pass on 2026-08-07
-		// showed every real filing forward (e.g. "NC Secretary of State Document Filed: ... for
-		// TherapyQuest, PLLC") comes FROM sandip@intlord.com — this staff mailbox forwards its own
-		// filings there. The old '-from:sandip@intlord.com' exclusion (added to quiet unrelated
-		// dev/test noise from that same address) was silently blocking every real match; '-from:
-		// google.com' is left off entirely now for the same reason — automated Google Voice/
-		// Payments mail already can't match this subject filter, so excluding by sender added risk
-		// for no benefit. "sosnc.gov" never actually appeared in the matched messages' indexed text
-		// (0 results even though real filings were present) — the reliable signal that's actually in
-		// the data is the subject line itself, so that's what's matched on now.
-		$query = '-in:spam -in:trash';
-		if ( ! $show_all ) {
-			$query = '(subject:"Secretary of State" OR sosnc.gov) ' . $query;
+		$sources = $this->active_sources();
+		if ( empty( $sources ) ) {
+			return new WP_Error( 'not_connected', __( 'No mailbox is connected and enabled.', 'ajcore' ) );
 		}
-
-		$list = $this->gmail_intake_api_request(
-			'GET',
-			'/messages',
-			array(
-				'query' => array(
-					'q'          => $query,
-					'maxResults' => max( 1, min( 50, (int) $max_messages ) ),
-				),
-			)
-		);
-		if ( is_wp_error( $list ) ) {
-			return $list;
-		}
-
 		$summary = array(
 			'checked'               => 0,
 			'filed'                 => 0,
@@ -960,102 +1011,94 @@ class AJCore_Gmail_Intake {
 			'needs_review'          => 0,
 			'skipped_no_attachment' => 0,
 			'errors'                => array(),
-			'query'                 => $query,
-			'result_size_estimate'  => isset( $list['resultSizeEstimate'] ) ? (int) $list['resultSizeEstimate'] : count( (array) ( isset( $list['messages'] ) ? $list['messages'] : array() ) ),
-			// Every message the query matched, whether newly processed this run or already
-			// logged from a previous run — this is the actual list a staff member asked to see,
-			// not just a count, so a zero-match query is visibly a zero-match query rather than
-			// silence.
+			'query'                 => '',
+			'result_size_estimate'  => 0,
 			'messages'              => array(),
 		);
-
-		foreach ( (array) ( isset( $list['messages'] ) ? $list['messages'] : array() ) as $item ) {
-			if ( empty( $item['id'] ) ) {
+		$queries     = array();
+		$ok          = 0;
+		$first_error = null;
+		foreach ( $sources as $source ) {
+			$list = $this->src_ids( $source, $max_messages, $show_all );
+			if ( is_wp_error( $list ) ) {
+				$summary['errors'][] = self::source_label( $source ) . ': ' . $list->get_error_message();
+				$first_error         = $first_error ? $first_error : $list;
 				continue;
 			}
-			$message_id = (string) $item['id'];
-
-			// Already logged (any status) — never re-fetch or reprocess. Dedup lives entirely in
-			// our own table now, not as a Gmail label on the message (a Gmail label is permanent
-			// and shared with the real mailbox, so a bug here used to be very hard to undo). Still
-			// shown in the returned list (from the local log row, no extra Gmail API call) so a
-			// re-run doesn't look like it found nothing.
-			$existing_log = $this->fetch_gmail_intake_log_row_by_message_id( $message_id );
-			if ( $existing_log ) {
-				$summary['messages'][] = array(
-					'id'      => $message_id,
-					'subject' => (string) $existing_log['subject'],
-					'sender'  => (string) $existing_log['sender'],
-					'status'  => (string) $existing_log['status'] . ' (already logged)',
-				);
-				continue;
+			$ok++;
+			$queries[]                         = self::source_label( $source ) . ': ' . $list['query'];
+			$summary['result_size_estimate']  += (int) $list['estimate'];
+			foreach ( $list['ids'] as $native ) {
+				$this->process_one( $source, (string) $native, $summary );
 			}
+		}
+		$summary['query'] = implode( ' | ', $queries );
+		// Remembered for the queue header: the page-load pass is silent, so errors (e.g. a Gmail 400) would otherwise never show.
+		set_transient( 'ajcore_gmail_intake_last_pass', array( 'at' => current_time( 'mysql' ), 'checked' => $summary['checked'], 'errors' => $summary['errors'], 'query' => $summary['query'] ), DAY_IN_SECONDS );
+		if ( ! $ok && $first_error ) {
+			return $first_error;
+		}
+		return $summary;
+	}
 
-			$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $message_id ), array( 'query' => array( 'format' => 'full' ) ) );
-			if ( is_wp_error( $message ) ) {
-				$summary['errors'][] = $message->get_error_message();
-				continue;
-			}
+	private function process_one( $source, $native, array &$summary ) {
+		$message_id = $this->make_id( $source, $native );
+		$label      = self::source_label( $source );
 
-			$summary['checked']++;
-			$headers = isset( $message['payload']['headers'] ) ? $message['payload']['headers'] : array();
-			$subject = $this->gmail_intake_header_value( $headers, 'Subject' );
-			$sender  = $this->gmail_intake_header_value( $headers, 'From' );
-			$date_ts = strtotime( (string) $this->gmail_intake_header_value( $headers, 'Date' ) );
-
-			$body_text    = $this->gmail_intake_get_text_body( isset( $message['payload'] ) ? $message['payload'] : array() );
-			$company_name = $this->extract_company_name_from_gmail_message( $subject, $body_text );
-			$customer     = '' !== $company_name ? $this->find_portal_customer_by_company_name( $company_name ) : null;
-
-			if ( ! $customer ) {
-				$summary['needs_review']++;
-				$summary['messages'][] = array( 'id' => $message_id, 'subject' => $subject, 'sender' => $sender, 'status' => 'needs_review' );
-				$this->log_gmail_intake_item( array(
-					'gmail_message_id'       => $message_id,
-					'subject'                => $subject,
-					'sender'                 => $sender,
-					'snippet'                => isset( $message['snippet'] ) ? $message['snippet'] : '',
-					'company_name_extracted' => $company_name,
-					'status'                 => 'needs_review',
-					'received_at'            => false !== $date_ts ? $date_ts : null,
-				) );
-				continue;
-			}
-
-			// Matched to a customer — for now, only identify which real filing-document PDFs
-			// would be filed and log the match. Actual upload/renaming is intentionally paused
-			// pending a confirmed attachment-naming convention; nothing is written to the
-			// customer's Files yet. (Re-enable by restoring the download+upload_files_for_portal_
-			// customer() loop that used to sit here — see git history — once that's ready.)
-			$pdf_parts = array();
-			$this->gmail_intake_collect_pdf_parts( isset( $message['payload'] ) ? $message['payload'] : array(), $pdf_parts );
-
-			$pending_filenames = array();
-			foreach ( $pdf_parts as $pdf ) {
-				if ( ! $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ) ) {
-					continue; // Not a real filing document (e.g. a bundled flyer) — skip it.
-				}
-				$pending_filenames[] = $pdf['filename'];
-			}
-
-			$summary['matched_pending_file']++;
-			$summary['messages'][] = array( 'id' => $message_id, 'subject' => $subject, 'sender' => $sender, 'status' => 'matched_pending_file' );
-
-			$this->log_gmail_intake_item( array(
-				'gmail_message_id'       => $message_id,
-				'subject'                => $subject,
-				'sender'                 => $sender,
-				'snippet'                => isset( $message['snippet'] ) ? $message['snippet'] : '',
-				'company_name_extracted' => $company_name,
-				'status'                 => 'matched_pending_file',
-				'stripe_customer_id'     => $customer->stripe_customer_id,
-				'customer_name'          => $customer->name,
-				'filed_filenames'        => $pending_filenames,
-				'received_at'            => false !== $date_ts ? $date_ts : null,
-			) );
+		// Already logged (any status): never re-fetch or reprocess; still listed so a re-run doesn't look empty.
+		$existing_log = $this->fetch_gmail_intake_log_row_by_message_id( $message_id );
+		if ( $existing_log ) {
+			$summary['messages'][] = array( 'id' => $message_id, 'source' => $label, 'subject' => (string) $existing_log['subject'], 'sender' => (string) $existing_log['sender'], 'status' => (string) $existing_log['status'] . ' (already logged)' );
+			return;
 		}
 
-		return $summary;
+		$m = $this->src_message( $source, $native );
+		if ( is_wp_error( $m ) ) {
+			$summary['errors'][] = $label . ': ' . $m->get_error_message();
+			return;
+		}
+		$summary['checked']++;
+
+		$company_name = $this->extract_company_name_from_gmail_message( $m['subject'], $m['body_text'] );
+		$customer     = '' !== $company_name ? $this->find_portal_customer_by_company_name( $company_name ) : null;
+
+		if ( ! $customer ) {
+			$summary['needs_review']++;
+			$summary['messages'][] = array( 'id' => $message_id, 'source' => $label, 'subject' => $m['subject'], 'sender' => $m['sender'], 'status' => 'needs_review' );
+			$this->log_gmail_intake_item( array(
+				'gmail_message_id'       => $message_id,
+				'subject'                => $m['subject'],
+				'sender'                 => $m['sender'],
+				'snippet'                => $m['snippet'],
+				'company_name_extracted' => $company_name,
+				'status'                 => 'needs_review',
+				'received_at'            => $m['date_ts'],
+			) );
+			return;
+		}
+
+		// Matched to a customer. Filing to the customer's Files stays a staff action (preview, rename, category), so
+		// only the real filing-document PDFs are listed here.
+		$pending_filenames = array();
+		foreach ( $m['pdfs'] as $pdf ) {
+			if ( $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ) ) {
+				$pending_filenames[] = $pdf['filename'];
+			}
+		}
+		$summary['matched_pending_file']++;
+		$summary['messages'][] = array( 'id' => $message_id, 'source' => $label, 'subject' => $m['subject'], 'sender' => $m['sender'], 'status' => 'matched_pending_file' );
+		$this->log_gmail_intake_item( array(
+			'gmail_message_id'       => $message_id,
+			'subject'                => $m['subject'],
+			'sender'                 => $m['sender'],
+			'snippet'                => $m['snippet'],
+			'company_name_extracted' => $company_name,
+			'status'                 => 'matched_pending_file',
+			'stripe_customer_id'     => $customer->stripe_customer_id,
+			'customer_name'          => $customer->name,
+			'filed_filenames'        => $pending_filenames,
+			'received_at'            => $m['date_ts'],
+		) );
 	}
 
 	private function get_gmail_intake_log_table() {
@@ -1196,13 +1239,12 @@ class AJCore_Gmail_Intake {
 			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajcore' ), array( 'status' => 404 ) );
 		}
 
-		$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ), array( 'query' => array( 'format' => 'full' ) ) );
+		list( $source, $native ) = $this->split_id( $row->gmail_message_id );
+		$message                 = $this->src_message( $source, $native );
 		if ( is_wp_error( $message ) ) {
 			return $message;
 		}
-
-		$pdf_parts = array();
-		$this->gmail_intake_collect_pdf_parts( isset( $message['payload'] ) ? $message['payload'] : array(), $pdf_parts );
+		$pdf_parts = $message['pdfs'];
 
 		$filed_filenames = array();
 		$errors          = array();
@@ -1210,13 +1252,9 @@ class AJCore_Gmail_Intake {
 			if ( ! $this->gmail_intake_pdf_looks_like_real_document( $pdf['filename'] ) ) {
 				continue;
 			}
-			$attachment = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ) . '/attachments/' . rawurlencode( $pdf['attachment_id'] ) );
-			if ( is_wp_error( $attachment ) || empty( $attachment['data'] ) ) {
-				$errors[] = is_wp_error( $attachment ) ? $attachment->get_error_message() : __( 'Attachment had no data.', 'ajcore' );
-				continue;
-			}
-			$binary = base64_decode( strtr( $attachment['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
-			if ( false === $binary ) {
+			$binary = $this->src_attachment( $source, $native, $pdf['attachment_id'] );
+			if ( is_wp_error( $binary ) ) {
+				$errors[] = $binary->get_error_message();
 				continue;
 			}
 
@@ -1310,15 +1348,14 @@ class AJCore_Gmail_Intake {
 			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ) );
 		}
 
-		$message = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ), array( 'query' => array( 'format' => 'full' ) ) );
+		list( $source, $native ) = $this->split_id( $row->gmail_message_id );
+		$message                 = $this->src_message( $source, $native );
 		if ( is_wp_error( $message ) ) {
 			return $message;
 		}
 
-		$headers   = isset( $message['payload']['headers'] ) ? $message['payload']['headers'] : array();
-		$payload   = isset( $message['payload'] ) ? $message['payload'] : array();
-		$subject   = $this->gmail_intake_header_value( $headers, 'Subject' );
-		$body_text = $this->gmail_intake_get_text_body( $payload );
+		$subject   = $message['subject'];
+		$body_text = $message['body_text'];
 
 		// needs_review rows (no matched customer, e.g. a brand-new company formation with no
 		// portal customer yet) have an empty customer_name — company_name_extracted is what was
@@ -1328,8 +1365,7 @@ class AJCore_Gmail_Intake {
 		// case: a freshly filed Articles of Organization for a company not onboarded yet.
 		$company_name = '' !== trim( (string) $row->customer_name ) ? (string) $row->customer_name : (string) $row->company_name_extracted;
 
-		$pdf_parts = array();
-		$this->gmail_intake_collect_pdf_parts( $payload, $pdf_parts );
+		$pdf_parts = $message['pdfs'];
 
 		$attachments = array();
 		foreach ( $pdf_parts as $pdf ) {
@@ -1341,10 +1377,9 @@ class AJCore_Gmail_Intake {
 
 			// Real attachment filenames from this mailbox are opaque hashes, not descriptive —
 			// the only reliable signal is the PDF's actual text content.
-			$fetched = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ) . '/attachments/' . rawurlencode( $pdf['attachment_id'] ) );
-			if ( ! is_wp_error( $fetched ) && ! empty( $fetched['data'] ) ) {
-				$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
-				if ( false !== $binary ) {
+			$binary = $this->src_attachment( $source, $native, $pdf['attachment_id'] );
+			if ( ! is_wp_error( $binary ) ) {
+				{
 					$pdf_text   = $this->gmail_intake_extract_pdf_text( $binary );
 					$classified = $this->gmail_intake_classify_pdf_content( $pdf_text, $company_name, $subject, $body_text );
 					if ( null !== $classified ) {
@@ -1372,8 +1407,9 @@ class AJCore_Gmail_Intake {
 		return array(
 			'id'          => (int) $row->id,
 			'subject'     => $subject,
-			'sender'      => $this->gmail_intake_header_value( $headers, 'From' ),
-			'date'        => $this->gmail_intake_header_value( $headers, 'Date' ),
+			'source'      => self::source_label( $source ),
+			'sender'      => $message['sender'],
+			'date'        => $message['date_str'],
 			'body_text'   => $body_text,
 			'attachments' => $attachments,
 		);
@@ -1388,16 +1424,10 @@ class AJCore_Gmail_Intake {
 			return new WP_Error( 'not_found', __( 'Gmail Intake log entry not found.', 'ajcore' ) );
 		}
 
-		$attachment = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
-		if ( is_wp_error( $attachment ) ) {
-			return $attachment;
-		}
-		if ( empty( $attachment['data'] ) ) {
-			return new WP_Error( 'no_data', __( 'Attachment had no data.', 'ajcore' ) );
-		}
-		$binary = base64_decode( strtr( $attachment['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
-		if ( false === $binary ) {
-			return new WP_Error( 'decode_failed', __( 'Could not decode attachment data.', 'ajcore' ) );
+		list( $source, $native ) = $this->split_id( $row->gmail_message_id );
+		$binary                  = $this->src_attachment( $source, $native, $attachment_id );
+		if ( is_wp_error( $binary ) ) {
+			return $binary;
 		}
 
 		return array(
@@ -1429,9 +1459,10 @@ class AJCore_Gmail_Intake {
 			return new WP_Error( 'customer_not_found', __( 'Customer not found.', 'ajcore' ) );
 		}
 
-		$filed_filenames  = array();
-		$filed_categories = array();
-		$errors           = array();
+		list( $source, $native ) = $this->split_id( $row->gmail_message_id );
+		$filed_filenames         = array();
+		$filed_categories        = array();
+		$errors                  = array();
 		foreach ( $attachments as $attachment ) {
 			$attachment_id = isset( $attachment['attachment_id'] ) ? (string) $attachment['attachment_id'] : '';
 			$filename      = isset( $attachment['filename'] ) ? sanitize_file_name( (string) $attachment['filename'] ) : '';
@@ -1448,13 +1479,9 @@ class AJCore_Gmail_Intake {
 				continue;
 			}
 
-			$fetched = $this->gmail_intake_api_request( 'GET', '/messages/' . rawurlencode( $row->gmail_message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
-			if ( is_wp_error( $fetched ) || empty( $fetched['data'] ) ) {
-				$errors[] = is_wp_error( $fetched ) ? $fetched->get_error_message() : __( 'Attachment had no data.', 'ajcore' );
-				continue;
-			}
-			$binary = base64_decode( strtr( $fetched['data'], '-_', '+/' ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
-			if ( false === $binary ) {
+			$binary = $this->src_attachment( $source, $native, $attachment_id );
+			if ( is_wp_error( $binary ) ) {
+				$errors[] = $binary->get_error_message();
 				continue;
 			}
 
@@ -1689,6 +1716,7 @@ class AJCore_Gmail_Intake {
 		return array(
 			'id'                     => (int) $row['id'],
 			'gmail_message_id'       => (string) $row['gmail_message_id'],
+			'source'                 => 0 === strpos( (string) $row['gmail_message_id'], 'zoho:' ) ? 'zoho' : 'gmail',
 			'subject'                => (string) $row['subject'],
 			'sender'                 => (string) $row['sender'],
 			'snippet'                => (string) $row['snippet'],
@@ -2000,6 +2028,14 @@ class AJCore_Gmail_Intake {
 						<input type="email" name="gmail_intake_address" id="gmail_intake_address" value="<?php echo esc_attr( $settings['gmail_intake_address'] ); ?>">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only — the actual account read is whichever Google login completes Connect below.', 'ajcore' ); ?></div>
 					</div>
+					<div class="ajforms-settings-field">
+						<label for="gmail_intake_filter"><?php esc_html_e( 'Intake filter', 'ajcore' ); ?></label>
+						<input type="text" name="gmail_intake_filter" id="gmail_intake_filter" value="<?php echo esc_attr( $settings['gmail_intake_filter'] ); ?>">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Gmail search syntax. Blank = every message (spam and trash are always excluded).', 'ajcore' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label><input type="checkbox" name="gmail_intake_enabled" value="1" <?php checked( '1', (string) $settings['gmail_intake_enabled'] ); ?>> <?php esc_html_e( 'Enabled (read this mailbox into the pipeline)', 'ajcore' ); ?></label>
+					</div>
 				</div>
 				<p class="submit" style="margin:14px 0 0;"><button type="submit" class="button button-primary"><?php esc_html_e( 'Save Settings', 'ajcore' ); ?></button></p>
 			</form>
@@ -2227,6 +2263,8 @@ class AJCore_Gmail_Intake {
 		$status = isset( $_GET['gi_status'] ) ? sanitize_key( wp_unslash( $_GET['gi_status'] ) ) : 'pending';
 		$status = in_array( $status, array( 'pending', 'filed' ), true ) ? $status : 'pending';
 		$search = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
+		$source = isset( $_GET['gi_source'] ) ? sanitize_key( wp_unslash( $_GET['gi_source'] ) ) : 'all';
+		$source = in_array( $source, array( 'all', 'gmail', 'zoho' ), true ) ? $source : 'all';
 
 		$status_groups = array(
 			'pending' => array( 'needs_review', 'matched_pending_file', 'skipped_no_attachment' ),
@@ -2238,6 +2276,10 @@ class AJCore_Gmail_Intake {
 		$placeholders = implode( ', ', array_fill( 0, count( $status_groups[ $status ] ), '%s' ) );
 		$where[]  = "status IN ({$placeholders})";
 		$params   = array_merge( $params, $status_groups[ $status ] );
+		if ( 'all' !== $source ) {
+			$where[]  = 'zoho' === $source ? 'gmail_message_id LIKE %s' : 'gmail_message_id NOT LIKE %s';
+			$params[] = 'zoho:%';
+		}
 		if ( '' !== $search ) {
 			$like    = '%' . $pdb->esc_like( $search ) . '%';
 			$where[] = '(subject LIKE %s OR sender LIKE %s OR company_name_extracted LIKE %s OR customer_name LIKE %s)';
@@ -2268,6 +2310,10 @@ class AJCore_Gmail_Intake {
 		$file_settings = function_exists( 'ajcore_get_portal_file_settings' ) ? ajcore_get_portal_file_settings() : array( 'categories' => array(), 'tags' => array() );
 
 		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB, 'src' => 'gmail' ), admin_url( 'admin.php' ) );
+		$last     = get_transient( 'ajcore_gmail_intake_last_pass' );
+		if ( is_array( $last ) && ! empty( $last['errors'] ) ) {
+			echo '<div class="notice notice-error inline"><p><strong>' . esc_html__( 'Last mailbox pass had errors:', 'ajcore' ) . '</strong> ' . esc_html( implode( ' | ', array_map( 'strval', $last['errors'] ) ) ) . '</p></div>';
+		}
 		?>
 		<div id="ajcore-gi-list-section" class="ajmr-card">
 
@@ -2293,6 +2339,11 @@ class AJCore_Gmail_Intake {
 			<form method="get" class="ajmr-filter">
 				<input type="hidden" name="page" value="ajforms-client-portal">
 				<input type="hidden" name="tab" value="mailroom"><input type="hidden" name="src" value="gmail">
+				<select name="gi_source">
+					<option value="all" <?php selected( $source, 'all' ); ?>><?php esc_html_e( 'All mailboxes', 'ajcore' ); ?></option>
+					<option value="gmail" <?php selected( $source, 'gmail' ); ?>>Gmail</option>
+					<option value="zoho" <?php selected( $source, 'zoho' ); ?>>Zoho</option>
+				</select>
 				<select name="gi_status">
 					<option value="pending" <?php selected( $status, 'pending' ); ?>><?php esc_html_e( 'Pending File', 'ajcore' ); ?></option>
 					<option value="filed" <?php selected( $status, 'filed' ); ?>><?php esc_html_e( 'Filed', 'ajcore' ); ?></option>
@@ -2323,7 +2374,8 @@ class AJCore_Gmail_Intake {
 							<tr class="ajcore-gi-row" style="cursor:pointer;" data-log-id="<?php echo esc_attr( $row->id ); ?>" data-customer-id="<?php echo esc_attr( $row->stripe_customer_id ); ?>" data-status="<?php echo esc_attr( $row->status ); ?>">
 								<td><?php echo esc_html( $row->received_at ); ?></td>
 								<td>
-									<strong><?php echo esc_html( $row->subject ); ?></strong><br>
+									<?php $row_src = 0 === strpos( (string) $row->gmail_message_id, 'zoho:' ) ? 'zoho' : 'gmail'; ?>
+									<span class="ajmr-src is-<?php echo esc_attr( $row_src ); ?>"><?php echo esc_html( self::source_label( $row_src ) ); ?></span> <strong><?php echo esc_html( $row->subject ); ?></strong><br>
 									<span class="description"><?php echo esc_html( sprintf( __( 'From %s', 'ajcore' ), $row->sender ) ); ?></span>
 									<?php if ( ! empty( $filed_filenames ) && 'matched_pending_file' === $row->status ) : ?>
 										<br><span class="description"><?php echo esc_html( sprintf( __( 'Would file: %s', 'ajcore' ), implode( ', ', $filed_filenames ) ) ); ?></span>
