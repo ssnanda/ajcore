@@ -302,6 +302,9 @@ class AJCore_Mailroom {
 		.ajmr table.widefat tbody tr:hover td { background:#f8fafc; }
 		.ajmr .ajcore-status-pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:700; background:#fef3c7; color:#92400e; }
 		.ajmr .ajcore-status-pill.active { background:#dcfce7; color:#166534; }
+		.ajmr .ajcore-status-pill.dup { background:#e2e8f0; color:#475569; }
+		.ajmr-bulk { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 10px; padding:8px 12px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:10px; font-size:13px; }
+		.ajmr-bulk[hidden] { display:none; }
 		.ajmr .ajcore-status-pill.disabled { background:#fee2e2; color:#991b1b; }
 		.ajmr-src { display:inline-block; padding:1px 8px; border-radius:6px; font-size:10px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; vertical-align:1px; }
 		.ajmr-src.is-gmail { background:#fee2e2; color:#b91c1c; }

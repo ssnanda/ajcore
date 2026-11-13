@@ -551,6 +551,8 @@ class AJCore_Gmail_Intake {
 		register_rest_route( $ns, '/gmail-intake/(?P<id>\d+)/file', array( 'methods' => 'POST', 'callback' => array( $this, 'file_ops_gmail_intake_item' ), 'permission_callback' => $admin ) );
 		register_rest_route( $ns, '/gmail-intake/(?P<id>\d+)/mark-filed', array( 'methods' => 'POST', 'callback' => array( $this, 'mark_ops_gmail_intake_item_filed' ), 'permission_callback' => $admin ) );
 		register_rest_route( $ns, '/gmail-intake/reset', array( 'methods' => 'POST', 'callback' => array( $this, 'reset_ops_gmail_intake_log' ), 'permission_callback' => $admin ) );
+		register_rest_route( $ns, '/gmail-intake/bulk-status', array( 'methods' => 'POST', 'callback' => array( $this, 'bulk_status_gmail_intake_items' ), 'permission_callback' => $admin ) );
+		register_rest_route( $ns, '/ops/gmail-intake/bulk-status', array( 'methods' => 'POST', 'callback' => array( $this, 'bulk_status_gmail_intake_items' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, '/gmail-intake/bulk-delete', array( 'methods' => 'POST', 'callback' => array( $this, 'bulk_delete_ops_gmail_intake_items' ), 'permission_callback' => $admin ) );
 
 		// AJOps / iOS (ops auth).
@@ -583,6 +585,7 @@ class AJCore_Gmail_Intake {
 		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/gmail-intake/{id}/attachment', 'auth' => 'Admin', 'purpose' => 'Fetches one PDF attachment\'s bytes on demand (query param attachment_id) for in-app preview.', 'app' => 'OPS pipeline' );
 		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/{id}/file', 'auth' => 'Admin', 'purpose' => 'Files the given (possibly renamed) attachments to a customer with an explicit category + tag.', 'app' => 'OPS pipeline' );
 		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/reset', 'auth' => 'Admin', 'purpose' => 'Clears the whole Pipeline activity log (local table only; does not touch the real mailbox).', 'app' => 'OPS pipeline' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/bulk-status', 'auth' => 'Admin', 'purpose' => 'Marks selected pending Pipeline entries as already filed or as duplicates (body: ids, status = filed|duplicate).', 'app' => 'OPS pipeline' );
 		$catalog[] = array( 'surface' => 'OPS', 'method' => 'POST', 'path' => '/ops/gmail-intake/bulk-delete', 'auth' => 'Admin', 'purpose' => 'Bulk-deletes selected Pipeline log entries (body: ids).', 'app' => 'OPS pipeline' );
 		return $catalog;
 	}
@@ -1280,7 +1283,7 @@ class AJCore_Gmail_Intake {
 		}
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
-		$pdb->query( "DELETE FROM `{$table}` WHERE status NOT IN ( 'filed', 'resolved' )" );
+		$pdb->query( "DELETE FROM `{$table}` WHERE status NOT IN ( 'filed', 'resolved', 'duplicate' )" );
 		return true;
 	}
 
@@ -1899,7 +1902,7 @@ class AJCore_Gmail_Intake {
 		}
 
 		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?: '' ) );
-		if ( in_array( $status, array( 'filed', 'matched_pending_file', 'skipped_no_attachment', 'needs_review', 'resolved' ), true ) ) {
+		if ( in_array( $status, array( 'filed', 'matched_pending_file', 'skipped_no_attachment', 'needs_review', 'resolved', 'duplicate' ), true ) ) {
 			$where[]  = 'status = %s';
 			$params[] = $status;
 		}
@@ -1922,6 +1925,7 @@ class AJCore_Gmail_Intake {
 				SUM(status = 'matched_pending_file') AS matched_pending_file,
 				SUM(status = 'needs_review') AS needs_review,
 				SUM(status = 'resolved') AS resolved,
+				SUM(status = 'duplicate') AS duplicate,
 				SUM(status = 'skipped_no_attachment') AS skipped_no_attachment
 			FROM `{$table}`" . ( '' !== $filter_sql ? ' WHERE ' . $filter_sql : '' );
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
@@ -1936,6 +1940,7 @@ class AJCore_Gmail_Intake {
 				'matched_pending_file'  => (int) ( $stats['matched_pending_file'] ?? 0 ),
 				'needs_review'          => (int) ( $stats['needs_review'] ?? 0 ),
 				'resolved'              => (int) ( $stats['resolved'] ?? 0 ),
+				'duplicate'             => (int) ( $stats['duplicate'] ?? 0 ),
 				'skipped_no_attachment' => (int) ( $stats['skipped_no_attachment'] ?? 0 ),
 			),
 		) );
@@ -2063,6 +2068,32 @@ class AJCore_Gmail_Intake {
 	}
 
 	/** Bulk-selection "Delete" action for the Pipeline queue. */
+	/**
+	 * Marks several pending entries as already filed or as duplicates (body: ids[], status = filed|duplicate). Only entries
+	 * still pending are changed; nothing is uploaded or attached. Returns how many were updated.
+	 */
+	public function bulk_status_gmail_intake_items( WP_REST_Request $request ) {
+		$ids    = array_values( array_filter( array_map( 'absint', (array) $request->get_param( 'ids' ) ) ) );
+		$status = sanitize_key( (string) $request->get_param( 'status' ) );
+		if ( empty( $ids ) ) {
+			return new WP_Error( 'no_ids', __( 'No items selected.', 'ajcore' ), array( 'status' => 400 ) );
+		}
+		if ( ! in_array( $status, array( 'filed', 'duplicate' ), true ) ) {
+			return new WP_Error( 'bad_status', __( 'Status must be filed or duplicate.', 'ajcore' ), array( 'status' => 400 ) );
+		}
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return new WP_Error( 'no_table', __( 'Pipeline log table could not be created.', 'ajcore' ), array( 'status' => 500 ) );
+		}
+		$pdb          = $this->get_pdb();
+		$table        = $this->get_gmail_intake_log_table();
+		$placeholders = implode( ', ', array_fill( 0, count( $ids ), '%d' ) );
+		$now          = current_time( 'mysql' );
+		$sql          = "UPDATE `{$table}` SET status = %s, resolved_at = %s, resolved_by = %d, updated_at = %s WHERE id IN ({$placeholders}) AND status IN ('needs_review','matched_pending_file','skipped_no_attachment')";
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		$updated = $pdb->query( $pdb->prepare( $sql, array_merge( array( $status, $now, get_current_user_id(), $now ), $ids ) ) );
+		return rest_ensure_response( array( 'updated' => (int) $updated, 'status' => $status ) );
+	}
+
 	public function bulk_delete_ops_gmail_intake_items( WP_REST_Request $request ) {
 		$admin = $this->get_gmail_intake_admin();
 		if ( is_wp_error( $admin ) ) {
@@ -2422,7 +2453,7 @@ class AJCore_Gmail_Intake {
 		$table = $this->get_gmail_intake_log_table();
 		list( $filter_sql, $filter_params ) = $this->display_filter( $pdb );
 		$where = '' !== $filter_sql ? ' WHERE ' . $filter_sql : '';
-		$sql   = "SELECT (gmail_message_id LIKE 'zoho:%%') AS is_zoho, (status IN ('filed','resolved')) AS is_filed, COUNT(*) AS n FROM `{$table}`{$where} GROUP BY is_zoho, is_filed";
+		$sql   = "SELECT (gmail_message_id LIKE 'zoho:%%') AS is_zoho, (status IN ('filed','resolved','duplicate')) AS is_filed, COUNT(*) AS n FROM `{$table}`{$where} GROUP BY is_zoho, is_filed";
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		$rows = (array) $pdb->get_results( $filter_params ? $pdb->prepare( $sql, $filter_params ) : str_replace( '%%', '%', $sql ) );
 		foreach ( $rows as $r ) {
@@ -2455,7 +2486,7 @@ class AJCore_Gmail_Intake {
 
 		$status_groups = array(
 			'pending' => array( 'needs_review', 'matched_pending_file', 'skipped_no_attachment' ),
-			'filed'   => array( 'filed', 'resolved' ),
+			'filed'   => array( 'filed', 'resolved', 'duplicate' ),
 		);
 
 		$where  = array( '1=1' );
@@ -2513,9 +2544,17 @@ class AJCore_Gmail_Intake {
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Filed to the selected customer.', 'ajcore' ); ?></p></div>
 			<?php endif; ?>
 
+			<div class="ajmr-bulk" id="ajmr-bulk" hidden>
+				<strong id="ajmr-bulk-count">0</strong> <?php esc_html_e( 'selected', 'ajcore' ); ?>
+				<button type="button" class="button" id="ajmr-bulk-filed"><?php esc_html_e( 'Mark as already filed', 'ajcore' ); ?></button>
+				<button type="button" class="button" id="ajmr-bulk-duplicate"><?php esc_html_e( 'Mark as duplicate', 'ajcore' ); ?></button>
+				<button type="button" class="button-link" id="ajmr-bulk-clear"><?php esc_html_e( 'Clear selection', 'ajcore' ); ?></button>
+			</div>
+
 			<table class="widefat striped">
 				<thead>
 					<tr>
+						<th style="width:28px;"><?php if ( 'pending' === $status ) : ?><input type="checkbox" id="ajmr-check-all" aria-label="<?php esc_attr_e( 'Select all', 'ajcore' ); ?>"><?php endif; ?></th>
 						<th><?php esc_html_e( 'Received', 'ajcore' ); ?></th>
 						<th><?php esc_html_e( 'Email', 'ajcore' ); ?></th>
 						<th><?php esc_html_e( 'Customer', 'ajcore' ); ?></th>
@@ -2525,11 +2564,12 @@ class AJCore_Gmail_Intake {
 				</thead>
 				<tbody>
 					<?php if ( empty( $rows ) ) : ?>
-						<tr><td colspan="5"><?php esc_html_e( 'Nothing here.', 'ajcore' ); ?></td></tr>
+						<tr><td colspan="6"><?php esc_html_e( 'Nothing here.', 'ajcore' ); ?></td></tr>
 					<?php else : ?>
 						<?php foreach ( $rows as $row ) : ?>
 							<?php $filed_filenames = ! empty( $row->filed_filenames ) ? (array) json_decode( (string) $row->filed_filenames, true ) : array(); ?>
 							<tr class="ajcore-gi-row" style="cursor:pointer;" data-log-id="<?php echo esc_attr( $row->id ); ?>" data-customer-id="<?php echo esc_attr( $row->stripe_customer_id ); ?>" data-status="<?php echo esc_attr( $row->status ); ?>">
+								<td class="ajmr-check" onclick="event.stopPropagation();"><?php if ( 'pending' === $status ) : ?><input type="checkbox" class="ajmr-row-check" value="<?php echo esc_attr( $row->id ); ?>" aria-label="<?php esc_attr_e( 'Select', 'ajcore' ); ?>"><?php endif; ?></td>
 								<td><?php echo esc_html( $row->received_at ); ?></td>
 								<td>
 									<?php $row_src = 0 === strpos( (string) $row->gmail_message_id, 'zoho:' ) ? 'zoho' : 'gmail'; ?>
@@ -2554,7 +2594,7 @@ class AJCore_Gmail_Intake {
 									<?php endif; ?>
 								</td>
 								<td>
-									<span class="ajcore-status-pill <?php echo esc_attr( 'needs_review' === $row->status ? 'disabled' : ( in_array( $row->status, array( 'filed', 'resolved' ), true ) ? 'active' : '' ) ); ?>">
+									<span class="ajcore-status-pill <?php echo esc_attr( 'needs_review' === $row->status ? 'disabled' : ( in_array( $row->status, array( 'filed', 'resolved' ), true ) ? 'active' : ( 'duplicate' === $row->status ? 'dup' : '' ) ) ); ?>">
 										<?php echo esc_html( ucwords( str_replace( '_', ' ', (string) $row->status ) ) ); ?>
 									</span>
 								</td>
@@ -2637,6 +2677,32 @@ class AJCore_Gmail_Intake {
 				return String( s || '' ).replace( /[&<>"']/g, function ( c ) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[ c ]; } );
 			}
 			function stripPdfExt( s ) { return String( s || '' ).replace( /\.pdf$/i, '' ); }
+
+			// ── Bulk select: mark several pending entries as already filed / duplicate ──────────────────────
+			( function () {
+				var bar = document.getElementById( 'ajmr-bulk' ), count = document.getElementById( 'ajmr-bulk-count' ), all = document.getElementById( 'ajmr-check-all' );
+				var boxes = function () { return Array.prototype.slice.call( document.querySelectorAll( '.ajmr-row-check' ) ); };
+				var selected = function () { return boxes().filter( function ( b ) { return b.checked; } ).map( function ( b ) { return parseInt( b.value, 10 ); } ); };
+				function sync() {
+					var n = selected().length;
+					if ( bar ) { bar.hidden = 0 === n; }
+					if ( count ) { count.textContent = n; }
+					if ( all ) { all.checked = n > 0 && n === boxes().length; all.indeterminate = n > 0 && n < boxes().length; }
+				}
+				boxes().forEach( function ( b ) { b.addEventListener( 'change', sync ); } );
+				if ( all ) { all.addEventListener( 'change', function () { boxes().forEach( function ( b ) { b.checked = all.checked; } ); sync(); } ); }
+				function apply( status, label ) {
+					var ids = selected();
+					if ( ! ids.length || ! window.confirm( label + ' (' + ids.length + ')? ' + <?php echo wp_json_encode( __( 'This only clears them from Pending; nothing is uploaded or attached.', 'ajcore' ) ); ?> ) ) { return; }
+					apiFetch( '/gmail-intake/bulk-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify( { ids: ids, status: status } ) } )
+						.then( function () { window.location.reload(); } )
+						.catch( function ( e ) { alert( e.message ); } );
+				}
+				var f = document.getElementById( 'ajmr-bulk-filed' ), d = document.getElementById( 'ajmr-bulk-duplicate' ), c = document.getElementById( 'ajmr-bulk-clear' );
+				if ( f ) { f.addEventListener( 'click', function () { apply( 'filed', <?php echo wp_json_encode( __( 'Mark as already filed', 'ajcore' ) ); ?> ); } ); }
+				if ( d ) { d.addEventListener( 'click', function () { apply( 'duplicate', <?php echo wp_json_encode( __( 'Mark as duplicate', 'ajcore' ) ); ?> ); } ); }
+				if ( c ) { c.addEventListener( 'click', function () { boxes().forEach( function ( b ) { b.checked = false; } ); sync(); } ); }
+			} )();
 
 			document.querySelectorAll( '.ajcore-gi-row' ).forEach( function ( row ) {
 				row.addEventListener( 'click', function () {
