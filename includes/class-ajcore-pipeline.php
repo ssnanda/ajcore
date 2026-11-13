@@ -1952,6 +1952,47 @@ class AJCore_Pipeline {
 		return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
 	}
 
+	/** stripe_customer_id => email for the matched customers in a page of log rows (one query per customer table). */
+	private function customer_emails_for( array $rows ) {
+		$ids = array();
+		foreach ( $rows as $r ) {
+			$id = (string) ( $r['stripe_customer_id'] ?? '' );
+			if ( '' !== $id ) {
+				$ids[ $id ] = true;
+			}
+		}
+		if ( ! $ids ) {
+			return array();
+		}
+		$pdb   = $this->get_portal_db();
+		$out   = array();
+		$local = array();
+		$remote = array();
+		foreach ( array_keys( $ids ) as $id ) {
+			if ( 0 === strpos( (string) $id, 'local_' ) ) {
+				$local[] = (string) $id;
+			} else {
+				$remote[] = (string) $id;
+			}
+		}
+		if ( $remote ) {
+			$ph  = implode( ', ', array_fill( 0, count( $remote ), '%s' ) );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			foreach ( (array) $pdb->get_results( $pdb->prepare( "SELECT stripe_customer_id AS id, email FROM {$this->get_portal_stripe_customers_table()} WHERE stripe_customer_id IN ({$ph})", $remote ) ) as $c ) {
+				$out[ (string) $c->id ] = (string) $c->email;
+			}
+		}
+		if ( $local ) {
+			$ph    = implode( ', ', array_fill( 0, count( $local ), '%s' ) );
+			$table = $pdb->prefix . 'aj_portal_local_customers';
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			foreach ( (array) $pdb->get_results( $pdb->prepare( "SELECT local_customer_id AS id, email FROM `{$table}` WHERE local_customer_id IN ({$ph})", $local ) ) as $c ) {
+				$out[ (string) $c->id ] = (string) $c->email;
+			}
+		}
+		return $out;
+	}
+
 	private function format_pipeline_log_row( $row ) {
 		$row = (array) $row;
 		return array(
@@ -2037,9 +2078,15 @@ class AJCore_Pipeline {
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		$stats = $pdb->get_row( $filter_params ? $pdb->prepare( $stats_sql, $filter_params ) : $stats_sql, ARRAY_A );
 
+		$emails = $this->customer_emails_for( $rows );
+
 		return rest_ensure_response( array(
 			'sources' => $this->ops_source_states(),
-			'items' => array_map( array( $this, 'format_pipeline_log_row' ), $rows ),
+			'items' => array_map( function ( $r ) use ( $emails ) {
+				$item                   = $this->format_pipeline_log_row( $r );
+				$item['customer_email'] = isset( $emails[ (string) $r['stripe_customer_id'] ] ) ? $emails[ (string) $r['stripe_customer_id'] ] : '';
+				return $item;
+			}, $rows ),
 			'stats' => array(
 				'total'                 => (int) ( $stats['total'] ?? 0 ),
 				'filed'                 => (int) ( $stats['filed'] ?? 0 ),
@@ -2553,16 +2600,20 @@ class AJCore_Pipeline {
 	public static function queue_filters() {
 		$status = isset( $_GET['pl_status'] ) ? sanitize_key( wp_unslash( $_GET['pl_status'] ) ) : 'pending';
 		$source = isset( $_GET['pl_source'] ) ? sanitize_key( wp_unslash( $_GET['pl_source'] ) ) : 'all';
+		$sub    = isset( $_GET['pl_sub'] ) ? sanitize_key( wp_unslash( $_GET['pl_sub'] ) ) : '';
 		return array(
 			'status' => in_array( $status, array( 'pending', 'filed' ), true ) ? $status : 'pending',
 			'source' => in_array( $source, array( 'all', 'gmail', 'zoho' ), true ) ? $source : 'all',
+			// Pending narrowed to one of its two states: needs_review | matched_pending_file ('' = all pending).
+			'sub'    => 'pending' === ( in_array( $status, array( 'pending', 'filed' ), true ) ? $status : 'pending' ) && in_array( $sub, array( 'needs_review', 'matched_pending_file' ), true ) ? $sub : '',
 			'search' => isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '',
 		);
 	}
 
-	/** Log counts for the tiles: [ source => [ pending, filed ] ] including an 'all' total. */
+	/** Log counts for the tiles: [ source => [ pending, filed, needs_review, matched ] ] including an 'all' total. */
 	public function queue_counts() {
-		$out = array( 'all' => array( 'pending' => 0, 'filed' => 0 ), 'gmail' => array( 'pending' => 0, 'filed' => 0 ), 'zoho' => array( 'pending' => 0, 'filed' => 0 ) );
+		$zero = array( 'pending' => 0, 'filed' => 0, 'needs_review' => 0, 'matched' => 0 );
+		$out  = array( 'all' => $zero, 'gmail' => $zero, 'zoho' => $zero );
 		if ( ! $this->ensure_pipeline_log_table() ) {
 			return $out;
 		}
@@ -2570,19 +2621,27 @@ class AJCore_Pipeline {
 		$table = $this->get_pipeline_log_table();
 		list( $filter_sql, $filter_params ) = $this->display_filter( $pdb );
 		$where = '' !== $filter_sql ? ' WHERE ' . $filter_sql : '';
-		$sql   = "SELECT (gmail_message_id LIKE 'zoho:%%') AS is_zoho, (status IN ('filed','resolved','duplicate')) AS is_filed, COUNT(*) AS n FROM `{$table}`{$where} GROUP BY is_zoho, is_filed";
+		$sql   = "SELECT (gmail_message_id LIKE 'zoho:%%') AS is_zoho, status, COUNT(*) AS n FROM `{$table}`{$where} GROUP BY is_zoho, status";
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		$rows = (array) $pdb->get_results( $filter_params ? $pdb->prepare( $sql, $filter_params ) : str_replace( '%%', '%', $sql ) );
 		foreach ( $rows as $r ) {
-			$src   = (int) $r->is_zoho ? 'zoho' : 'gmail';
-			$group = (int) $r->is_filed ? 'filed' : 'pending';
-			$out[ $src ][ $group ] += (int) $r->n;
-			$out['all'][ $group ]  += (int) $r->n;
+			$src    = (int) $r->is_zoho ? 'zoho' : 'gmail';
+			$status = (string) $r->status;
+			$n      = (int) $r->n;
+			$group  = in_array( $status, array( 'filed', 'resolved', 'duplicate' ), true ) ? 'filed' : 'pending';
+			foreach ( array( $src, 'all' ) as $key ) {
+				$out[ $key ][ $group ] += $n;
+				if ( 'needs_review' === $status ) {
+					$out[ $key ]['needs_review'] += $n;
+				} elseif ( 'matched_pending_file' === $status ) {
+					$out[ $key ]['matched'] += $n;
+				}
+			}
 		}
 		return $out;
 	}
 
-	/** The intake queue table and the preview/file panel (the Email Pipeline tab draws the tiles above it). */
+	/** The intake queue table and the preview/file panel (the Pipeline tab draws the tiles above it). */
 	public function render_queue() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajcore' ) );
@@ -2608,9 +2667,10 @@ class AJCore_Pipeline {
 
 		$where  = array( '1=1' );
 		$params = array();
-		$placeholders = implode( ', ', array_fill( 0, count( $status_groups[ $status ] ), '%s' ) );
-		$where[]  = "status IN ({$placeholders})";
-		$params   = array_merge( $params, $status_groups[ $status ] );
+		$states       = '' !== $filters['sub'] ? array( $filters['sub'] ) : $status_groups[ $status ];
+		$placeholders = implode( ', ', array_fill( 0, count( $states ), '%s' ) );
+		$where[]      = "status IN ({$placeholders})";
+		$params       = array_merge( $params, $states );
 		if ( 'all' !== $source ) {
 			$where[]  = 'zoho' === $source ? 'gmail_message_id LIKE %s' : 'gmail_message_id NOT LIKE %s';
 			$params[] = 'zoho:%';

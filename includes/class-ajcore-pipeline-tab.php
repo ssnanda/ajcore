@@ -83,12 +83,18 @@ class AJCore_Pipeline_Tab {
 		// A tile link keeps the other filters; the search box is added on top by JS.
 		$link = static function ( array $over ) use ( $f ) {
 			$args = array();
-			$cur  = array_merge( array( 'pl_source' => $f['source'], 'pl_status' => $f['status'], 's' => $f['search'] ), $over );
+			$cur  = array_merge( array( 'pl_source' => $f['source'], 'pl_status' => $f['status'], 'pl_sub' => $f['sub'], 's' => $f['search'] ), $over );
+			if ( 'pending' !== $cur['pl_status'] ) {
+				$cur['pl_sub'] = ''; // the two sub-states only exist under Pending
+			}
 			if ( 'all' !== $cur['pl_source'] ) {
 				$args['pl_source'] = $cur['pl_source'];
 			}
 			if ( 'pending' !== $cur['pl_status'] ) {
 				$args['pl_status'] = $cur['pl_status'];
+			}
+			if ( '' !== $cur['pl_sub'] ) {
+				$args['pl_sub'] = $cur['pl_sub'];
 			}
 			if ( '' !== $cur['s'] ) {
 				$args['s'] = $cur['s'];
@@ -117,12 +123,32 @@ class AJCore_Pipeline_Tab {
 		);
 		printf(
 			'<a class="ajmr-tile ajmr-stat is-amber%1$s" href="%2$s"><span class="ajmr-tile-ico">%3$s</span><span class="ajmr-tile-txt"><small>%4$s</small><strong>%5$d</strong></span></a>',
-			'pending' === $f['status'] ? ' is-on' : '',
-			esc_url( $link( array( 'pl_status' => 'pending' ) ) ),
+			'pending' === $f['status'] && '' === $f['sub'] ? ' is-on' : '',
+			esc_url( $link( array( 'pl_status' => 'pending', 'pl_sub' => '' ) ) ),
 			self::icon( 'alert', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			esc_html__( 'Pending', 'ajcore' ),
 			(int) $n[ $f['source'] ]['pending']
 		);
+		// Pending's two states as tiny tiles: Needs review / Matched (pending file). Click one to narrow the list; click again to undo.
+		if ( 'pending' === $f['status'] ) {
+			echo '<div class="ajmr-subtiles">';
+			$subs = array(
+				'needs_review'         => array( 'label' => __( 'Needs review', 'ajcore' ), 'cls' => 'is-review', 'count' => (int) $n[ $f['source'] ]['needs_review'], 'tip' => __( 'No customer matched: needs a person', 'ajcore' ) ),
+				'matched_pending_file' => array( 'label' => __( 'Matched', 'ajcore' ), 'cls' => 'is-matched', 'count' => (int) $n[ $f['source'] ]['matched'], 'tip' => __( 'Matched to a customer, pending file', 'ajcore' ) ),
+			);
+			foreach ( $subs as $key => $sub ) {
+				printf(
+					'<a class="ajmr-sub %1$s%2$s" href="%3$s" title="%4$s"><span>%5$s</span><b>%6$d</b></a>',
+					esc_attr( $sub['cls'] ),
+					$f['sub'] === $key ? ' is-on' : '',
+					esc_url( $link( array( 'pl_sub' => $f['sub'] === $key ? '' : $key ) ) ),
+					esc_attr( $sub['tip'] ),
+					esc_html( $sub['label'] ),
+					$sub['count']
+				);
+			}
+			echo '</div>';
+		}
 		printf(
 			'<a class="ajmr-tile ajmr-stat is-green%1$s" href="%2$s"><span class="ajmr-tile-ico">%3$s</span><span class="ajmr-tile-txt"><small>%4$s</small><strong>%5$d</strong></span></a>',
 			'filed' === $f['status'] ? ' is-on' : '',
@@ -302,6 +328,12 @@ class AJCore_Pipeline_Tab {
 		.ajmr-tile-txt strong.is-alert { color:#b45309; }
 		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
 		.ajmr-row-main { align-items:stretch; }
+		.ajmr-subtiles { display:flex; flex-direction:column; justify-content:center; gap:6px; }
+		.ajmr-sub { display:inline-flex; align-items:center; justify-content:space-between; gap:10px; padding:3px 10px; border-radius:999px; border:1px solid var(--ajmr-line); background:#fff; color:#334155; font-size:11px; font-weight:600; line-height:1.4; text-decoration:none; white-space:nowrap; }
+		.ajmr-sub:hover { border-color:#c7d2fe; }
+		.ajmr-sub.is-on { border-color:var(--ajmr-brand); box-shadow:0 0 0 2px rgba(79,70,229,.14); }
+		.ajmr-sub.is-review b { color:#b91c1c; }
+		.ajmr-sub.is-matched b { color:#0369a1; }
 		.ajmr-mailboxes { margin-left:auto; display:flex; gap:8px; align-items:stretch; }
 		.ajmr-tile-sm { min-width:0; padding:6px 8px; gap:8px; }
 		.ajmr-tile-sm .ajmr-tile-main { padding-right:34px; gap:8px; }
