@@ -1783,11 +1783,19 @@ class AJCore_Gmail_Intake {
 		return $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE id = %d", absint( $id ) ), ARRAY_A );
 	}
 
+	/** Mailbox connection states for the AJOps Pipeline tiles. */
+	private function ops_source_states() {
+		return array(
+			'gmail' => array( 'connected' => $this->is_connected(), 'enabled' => $this->is_active() ),
+			'zoho'  => array( 'connected' => class_exists( 'AJCore_Zoho_Mail' ) && AJCore_Zoho_Mail::instance()->is_connected(), 'enabled' => true ),
+		);
+	}
+
 	public function get_ops_gmail_intake_items( WP_REST_Request $request ) {
 		$pdb   = $this->get_portal_db();
 		$table = $this->get_gmail_intake_log_table();
 		if ( ! $this->table_exists( $pdb, $table ) ) {
-			return rest_ensure_response( array( 'items' => array(), 'stats' => array( 'total' => 0, 'filed' => 0, 'matched_pending_file' => 0, 'needs_review' => 0, 'resolved' => 0, 'skipped_no_attachment' => 0 ) ) );
+			return rest_ensure_response( array( 'items' => array(), 'stats' => array( 'total' => 0, 'filed' => 0, 'matched_pending_file' => 0, 'needs_review' => 0, 'resolved' => 0, 'skipped_no_attachment' => 0 ) , 'sources' => $this->ops_source_states() ) );
 		}
 
 		$where  = array( '1=1' );
@@ -1826,6 +1834,7 @@ class AJCore_Gmail_Intake {
 		);
 
 		return rest_ensure_response( array(
+			'sources' => $this->ops_source_states(),
 			'items' => array_map( array( $this, 'format_gmail_intake_log_row' ), $rows ),
 			'stats' => array(
 				'total'                 => (int) ( $stats['total'] ?? 0 ),
