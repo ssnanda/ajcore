@@ -102,41 +102,19 @@ class AJCore_Mailroom {
 		$zm->render_notices();
 		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 
-		// Row 1: mailbox tiles (click = filter the queue to that mailbox; gear = its settings).
-		echo '<div class="ajmr-row">';
-		$tiles = array(
-			'all'   => array( 'label' => __( 'All mailboxes', 'ajcore' ), 'icon' => 'mail', 'cls' => 'is-all' ),
-			'gmail' => array( 'label' => 'Gmail', 'icon' => 'mail', 'cls' => 'is-gmail' ),
-			'zoho'  => array( 'label' => 'Zoho', 'icon' => 'inbox', 'cls' => 'is-zoho' ),
+		// Row 1: the focus (All mailboxes, Pending, Filed) on the left; the two mailbox tiles small, on the far right.
+		echo '<div class="ajmr-row ajmr-row-main">';
+		$all_pending = (int) $n['all']['pending'];
+		printf( '<div class="ajmr-tile is-all%s">', 'all' === $f['source'] ? ' is-on' : '' );
+		printf(
+			'<a class="ajmr-tile-main" href="%1$s"><span class="ajmr-tile-ico">%2$s</span><span class="ajmr-tile-txt"><small>%3$s</small><strong%4$s>%5$d</strong><em>%6$s</em></span></a></div>',
+			esc_url( $link( array( 'gi_source' => 'all' ) ) ),
+			self::icon( 'mail', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			esc_html__( 'All mailboxes', 'ajcore' ),
+			$all_pending > 0 ? ' class="is-alert"' : '',
+			$all_pending,
+			esc_html__( 'pending', 'ajcore' )
 		);
-		foreach ( $tiles as $key => $tile ) {
-			$pending = (int) $n[ $key ]['pending'];
-			printf( '<div class="ajmr-tile %1$s%2$s">', esc_attr( $tile['cls'] ), $f['source'] === $key ? ' is-on' : '' );
-			printf(
-				'<a class="ajmr-tile-main" href="%1$s"><span class="ajmr-tile-ico">%2$s</span><span class="ajmr-tile-txt"><small>%3$s</small><strong%4$s>%5$d</strong><em>%6$s</em></span></a>',
-				esc_url( $link( array( 'gi_source' => $key ) ) ),
-				self::icon( $tile['icon'], 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-				esc_html( $tile['label'] ),
-				$pending > 0 ? ' class="is-alert"' : '',
-				$pending,
-				esc_html__( 'pending', 'ajcore' )
-			);
-			if ( 'all' !== $key ) {
-				printf(
-					'<span class="ajmr-tile-conn"><i class="ajmr-dot %1$s" title="%2$s"></i><button type="button" class="ajmr-gear" data-target="ajmr-panel-%3$s" aria-expanded="false" title="%4$s">%5$s</button></span>',
-					esc_attr( $state[ $key ] ),
-					esc_attr( $tips[ $state[ $key ] ] ),
-					esc_attr( $key ),
-					esc_attr__( 'Connection settings', 'ajcore' ),
-					self::icon( 'cog', 14 ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-				);
-			}
-			echo '</div>';
-		}
-		echo '</div>';
-
-		// Row 2: status tiles, then search / clear / refresh / reset as tiles. Everything filters as soon as it is picked.
-		echo '<div class="ajmr-row ajmr-row-tools">';
 		printf(
 			'<a class="ajmr-tile ajmr-stat is-amber%1$s" href="%2$s"><span class="ajmr-tile-ico">%3$s</span><span class="ajmr-tile-txt"><small>%4$s</small><strong>%5$d</strong></span></a>',
 			'pending' === $f['status'] ? ' is-on' : '',
@@ -153,6 +131,50 @@ class AJCore_Mailroom {
 			esc_html__( 'Filed', 'ajcore' ),
 			(int) $n[ $f['source'] ]['filed']
 		);
+
+		// The two mailboxes: small, far right. A disconnected one shows "Disconnected" and opens its connection settings.
+		echo '<div class="ajmr-mailboxes">';
+		$boxes = array(
+			'gmail' => array( 'label' => 'Gmail', 'icon' => 'mail', 'cls' => 'is-gmail' ),
+			'zoho'  => array( 'label' => 'Zoho', 'icon' => 'inbox', 'cls' => 'is-zoho' ),
+		);
+		foreach ( $boxes as $key => $box ) {
+			$connected = 'is-bad' !== $state[ $key ];
+			$pending   = (int) $n[ $key ]['pending'];
+			printf( '<div class="ajmr-tile ajmr-tile-sm %1$s%2$s%3$s">', esc_attr( $box['cls'] ), $f['source'] === $key ? ' is-on' : '', $connected ? '' : ' is-disconnected' );
+			if ( $connected ) {
+				printf(
+					'<a class="ajmr-tile-main" href="%1$s"><span class="ajmr-tile-ico">%2$s</span><span class="ajmr-tile-txt"><small>%3$s</small><strong%4$s>%5$d</strong><em>%6$s</em></span></a>',
+					esc_url( $link( array( 'gi_source' => $key ) ) ),
+					self::icon( $box['icon'], 16 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+					esc_html( $box['label'] ),
+					$pending > 0 ? ' class="is-alert"' : '',
+					$pending,
+					esc_html__( 'pending', 'ajcore' )
+				);
+			} else {
+				printf(
+					'<button type="button" class="ajmr-tile-main ajmr-open-panel" data-target="ajmr-panel-%1$s"><span class="ajmr-tile-ico">%2$s</span><span class="ajmr-tile-txt"><small>%3$s</small><strong class="is-off">%4$s</strong><em>%5$s</em></span></button>',
+					esc_attr( $key ),
+					self::icon( $box['icon'], 16 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+					esc_html( $box['label'] ),
+					esc_html__( 'Disconnected', 'ajcore' ),
+					esc_html__( 'click to connect', 'ajcore' )
+				);
+			}
+			printf(
+				'<span class="ajmr-tile-conn"><i class="ajmr-dot %1$s" title="%2$s"></i><button type="button" class="ajmr-gear" data-target="ajmr-panel-%3$s" aria-expanded="false" title="%4$s">%5$s</button></span></div>',
+				esc_attr( $state[ $key ] ),
+				esc_attr( $tips[ $state[ $key ] ] ),
+				esc_attr( $key ),
+				esc_attr__( 'Connection settings', 'ajcore' ),
+				self::icon( 'cog', 14 ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			);
+		}
+		echo '</div></div>';
+
+		// Row 2: search, then Clear / Refresh / Reset log. Everything filters as soon as it is picked.
+		echo '<div class="ajmr-row ajmr-row-tools">';
 		printf(
 			'<label class="ajmr-tile ajmr-search"><span class="ajmr-tile-ico">%1$s</span><input type="search" id="ajmr-search" value="%2$s" placeholder="%3$s" data-url="%4$s" autocomplete="off"></label>',
 			self::icon( 'search', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
@@ -164,6 +186,17 @@ class AJCore_Mailroom {
 		printf( '<button type="button" id="ajcore-gmail-intake-refresh" class="ajmr-tile ajmr-tool">%1$s<span>%2$s</span></button>', self::icon( 'refresh', 16 ), esc_html__( 'Refresh', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		printf( '<button type="button" id="ajcore-gmail-intake-reset-log" class="ajmr-tile ajmr-tool is-danger">%1$s<span>%2$s</span></button>', self::icon( 'trash', 16 ), esc_html__( 'Reset log', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo '</div>';
+
+		// Filtering to a mailbox that is not connected: say so and offer the connection settings, instead of an empty list.
+		if ( in_array( $f['source'], array( 'gmail', 'zoho' ), true ) && 'is-bad' === $state[ $f['source'] ] ) {
+			printf(
+				'<div class="ajmr-note"><strong>%1$s</strong> %2$s <button type="button" class="button ajmr-open-panel" data-target="ajmr-panel-%3$s">%4$s</button></div>',
+				esc_html( 'zoho' === $f['source'] ? 'Zoho' : 'Gmail' ),
+				esc_html__( 'is disconnected. Rows already read are listed below.', 'ajcore' ),
+				esc_attr( $f['source'] ),
+				esc_html__( 'Open connection settings', 'ajcore' )
+			);
+		}
 
 		// Collapsed connection panels (opened by the tile gears).
 		echo '<section id="ajmr-panel-gmail" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Gmail', 'ajcore' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
@@ -209,6 +242,13 @@ class AJCore_Mailroom {
 					document.querySelectorAll( '.ajmr-panel' ).forEach( function ( p ) { p.setAttribute( 'hidden', '' ); } );
 					gears.forEach( function ( g ) { g.setAttribute( 'aria-expanded', 'false' ); g.classList.remove( 'is-open' ); } );
 					if ( open ) { target.removeAttribute( 'hidden' ); gear.setAttribute( 'aria-expanded', 'true' ); gear.classList.add( 'is-open' ); target.scrollIntoView( { behavior: 'smooth', block: 'nearest' } ); }
+				} );
+			} );
+			// A disconnected mailbox tile (or its banner button) opens that mailbox's connection settings.
+			document.querySelectorAll( '.ajmr-open-panel' ).forEach( function ( b ) {
+				b.addEventListener( 'click', function () {
+					var g = document.querySelector( '.ajmr-gear[data-target="' + b.getAttribute( 'data-target' ) + '"]' );
+					if ( g ) { g.click(); }
 				} );
 			} );
 			// After a save / connect / disconnect / error, open the panel that action belongs to so its message is visible.
@@ -261,6 +301,17 @@ class AJCore_Mailroom {
 		.ajmr-tile-txt strong { font-size:22px; }
 		.ajmr-tile-txt strong.is-alert { color:#b45309; }
 		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
+		.ajmr-row-main { align-items:stretch; }
+		.ajmr-mailboxes { margin-left:auto; display:flex; gap:8px; align-items:stretch; }
+		.ajmr-tile-sm { min-width:0; padding:6px 8px; gap:8px; }
+		.ajmr-tile-sm .ajmr-tile-main { padding-right:34px; gap:8px; }
+		.ajmr-tile-sm .ajmr-tile-ico { width:28px; height:28px; border-radius:9px; }
+		.ajmr-tile-sm .ajmr-tile-txt strong { font-size:16px; }
+		.ajmr-tile-sm .ajmr-tile-conn { top:5px; right:5px; }
+		button.ajmr-tile-main { background:none; border:0; cursor:pointer; font:inherit; text-align:left; color:inherit; }
+		.ajmr-tile-txt strong.is-off { font-size:13px; color:#b91c1c; }
+		.ajmr-tile.is-disconnected { border-style:dashed; background:#fffafa; }
+		.ajmr-note { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px; padding:10px 14px; background:#fef2f2; border:1px solid #fecaca; border-radius:10px; color:#991b1b; font-size:13px; }
 		.ajmr-tile-conn { position:absolute; top:8px; right:8px; display:flex; align-items:center; gap:6px; }
 		.ajmr-dot.is-ok { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.2); }
 		.ajmr-dot.is-bad { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.2); }
