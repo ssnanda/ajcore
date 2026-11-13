@@ -62,6 +62,7 @@ class AJCore_Zoho_Mail {
 			'zoho_mail_client_id'        => '',
 			'zoho_mail_client_secret'    => '',
 			'zoho_mail_account_email'    => '',
+			'zoho_mail_mailboxes'        => '',
 			'zoho_mail_filter_text'      => (string) apply_filters( 'ajcore_zoho_mail_default_filter', '' ),
 			'zoho_mail_filter_subject'   => '',
 			'zoho_mail_filter_sender'    => '',
@@ -135,6 +136,7 @@ class AJCore_Zoho_Mail {
 		foreach ( array( 'zoho_mail_client_id' ) as $field ) {
 			$settings[ $field ] = isset( $_POST[ $field ] ) ? sanitize_text_field( wp_unslash( $_POST[ $field ] ) ) : '';
 		}
+		$settings['zoho_mail_mailboxes']     = isset( $_POST['zoho_mail_mailboxes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['zoho_mail_mailboxes'] ) ) : '';
 		$settings['zoho_mail_account_email'] = isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : '';
 		$dc                                  = isset( $_POST['zoho_mail_data_center'] ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com';
 		$settings['zoho_mail_data_center']   = in_array( $dc, array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? $dc : 'com';
@@ -431,8 +433,8 @@ class AJCore_Zoho_Mail {
 	}
 
 	/** GET against the configured shared mailbox; WP_Error unless HTTP 200. */
-	private function shared_get( $path, $query = array() ) {
-		$address = $this->shared_address();
+	private function shared_get( $path, $query = array(), $address = '' ) {
+		$address = '' !== (string) $address ? strtolower( trim( (string) $address ) ) : $this->shared_address();
 		if ( '' === $address || empty( $this->get_settings()['zoho_mail_refresh_token'] ) ) {
 			return new WP_Error( 'zoho_mail_not_connected', __( 'Zoho Mail is not connected.', 'ajcore' ) );
 		}
@@ -553,14 +555,19 @@ class AJCore_Zoho_Mail {
 		return '';
 	}
 
-	/** Messages in a view (all, unread, unassigned, assigned, archived, spam, trash), newest first, paged by $start. */
-	public function get_recent_messages( $limit = 10, $view = 'all', $start = 0 ) {
+	/** Messages in a view (all, unread, unassigned, assigned, archived, spam, trash), newest first, paged by $start. $address = another shared mailbox (default: the configured one). */
+	public function get_recent_messages( $limit = 10, $view = 'all', $start = 0, $address = '' ) {
 		$view = in_array( $view, array( 'all', 'unread', 'unassigned', 'assigned', 'archived', 'spam', 'trash' ), true ) ? $view : 'all';
-		$data = $this->shared_get( '/messages/' . $view, array( 'start' => absint( $start ), 'limit' => max( 1, absint( $limit ) ) ) );
+		$data = $this->shared_get( '/messages/' . $view, array( 'start' => absint( $start ), 'limit' => max( 1, absint( $limit ) ) ), $address );
 		if ( is_wp_error( $data ) ) {
 			return $data;
 		}
-		$rows     = isset( $data['data']['messages'] ) && is_array( $data['data']['messages'] ) ? $data['data']['messages'] : array();
+		$rows = isset( $data['data']['messages'] ) && is_array( $data['data']['messages'] ) ? $data['data']['messages'] : array();
+		return $this->normalize_message_rows( $rows, $view );
+	}
+
+	/** Shared Mailbox list rows => the plain message shape used everywhere (message_id, subject, from_*, summary, received_at...). */
+	private function normalize_message_rows( array $rows, $folder ) {
 		$messages = array();
 		foreach ( $rows as $row ) {
 			$id = self::deep_string( $row, array( 'messageId' ) );
@@ -570,7 +577,7 @@ class AJCore_Zoho_Mail {
 			$unread     = self::deep_find( $row, 'unread' );
 			$messages[] = array(
 				'message_id'     => $id,
-				'folder_id'      => $view,
+				'folder_id'      => $folder,
 				'subject'        => self::deep_string( $row, array( 'title', 'subject' ) ) ?: __( '(no subject)', 'ajcore' ),
 				'from_name'      => self::deep_string( $row, array( 'senderName' ) ),
 				'from_email'     => self::deep_string( $row, array( 'fromAddress' ) ),
@@ -583,9 +590,57 @@ class AJCore_Zoho_Mail {
 		return $messages;
 	}
 
+	/**
+	 * Labels (Zoho calls them tags) of a shared mailbox: array of [ id, name ]. The response layout isn't pinned down by the docs, so
+	 * both data[] and data.tags[] are accepted.
+	 */
+	public function list_labels( $address = '' ) {
+		$data = $this->shared_get( '/tags', array(), $address );
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$rows = isset( $data['data']['tags'] ) && is_array( $data['data']['tags'] ) ? $data['data']['tags'] : ( isset( $data['data'] ) && is_array( $data['data'] ) ? $data['data'] : array() );
+		$out  = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$id   = self::deep_string( $row, array( 'tagId', 'id' ) );
+			$name = self::deep_string( $row, array( 'tagName', 'name', 'displayName' ) );
+			if ( '' !== $id ) {
+				$out[] = array( 'id' => $id, 'name' => '' !== $name ? $name : $id );
+			}
+		}
+		return $out;
+	}
+
+	/** Messages that carry a label, newest first as returned, paged by $start. Same row shape as get_recent_messages(). */
+	public function get_messages_by_label( $tag_id, $address = '', $start = 0, $limit = 50 ) {
+		$data = $this->shared_get( '/tags/' . rawurlencode( (string) $tag_id ) . '/messages', array( 'start' => absint( $start ), 'limit' => max( 1, absint( $limit ) ) ), $address );
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$rows = isset( $data['data']['messages'] ) && is_array( $data['data']['messages'] ) ? $data['data']['messages'] : ( isset( $data['data'] ) && is_array( $data['data'] ) ? $data['data'] : array() );
+		return $this->normalize_message_rows( array_values( array_filter( $rows, 'is_array' ) ), 'label:' . $tag_id );
+	}
+
+	/** The named shared mailboxes configured in settings (one per line: "address | purpose"), as [ address, purpose ] rows. */
+	public function mailboxes() {
+		$s   = $this->get_settings();
+		$out = array();
+		foreach ( preg_split( '/\r\n|\r|\n/', (string) $s['zoho_mail_mailboxes'] ) as $line ) {
+			$parts   = array_map( 'trim', explode( '|', $line, 2 ) );
+			$address = strtolower( sanitize_email( $parts[0] ) );
+			if ( '' !== $address ) {
+				$out[ $address ] = array( 'address' => $address, 'purpose' => isset( $parts[1] ) ? $parts[1] : '' );
+			}
+		}
+		return array_values( $out );
+	}
+
 	/** One message's details from the Shared Mailbox API (a summary plus the real folderId; no body). */
-	public function get_message( $message_id ) {
-		$data = $this->shared_get( '/messages/' . rawurlencode( (string) $message_id ) );
+	public function get_message( $message_id, $address = '' ) {
+		$data = $this->shared_get( '/messages/' . rawurlencode( (string) $message_id ), array(), $address );
 		return is_wp_error( $data ) ? $data : ( isset( $data['data'] ) && is_array( $data['data'] ) ? $data['data'] : array() );
 	}
 
@@ -593,8 +648,8 @@ class AJCore_Zoho_Mail {
 	 * The message body (HTML). The Shared Mailbox API returns only a summary, so the body comes from the login's regular
 	 * content endpoint using the real folderId that response reports; the summary is the fallback.
 	 */
-	public function get_message_body( $message_id ) {
-		$details = $this->get_message( $message_id );
+	public function get_message_body( $message_id, $address = '' ) {
+		$details = $this->get_message( $message_id, $address );
 		if ( is_wp_error( $details ) ) {
 			return $details;
 		}
@@ -717,8 +772,8 @@ class AJCore_Zoho_Mail {
 	 * attachments (filename, attachment_id, size). Body and attachments live behind the login's own account endpoints,
 	 * using the real folderId the Shared Mailbox API reports.
 	 */
-	public function intake_message( $message_id ) {
-		$details = $this->get_message( $message_id );
+	public function intake_message( $message_id, $address = '' ) {
+		$details = $this->get_message( $message_id, $address );
 		if ( is_wp_error( $details ) ) {
 			return $details;
 		}
@@ -765,8 +820,8 @@ class AJCore_Zoho_Mail {
 	}
 
 	/** Raw bytes of one attachment (Zoho returns the file itself, not JSON), or WP_Error. */
-	public function intake_attachment( $message_id, $attachment_id ) {
-		$details    = $this->get_message( $message_id );
+	public function intake_attachment( $message_id, $attachment_id, $address = '' ) {
+		$details    = $this->get_message( $message_id, $address );
 		if ( is_wp_error( $details ) ) {
 			return $details;
 		}
@@ -863,6 +918,7 @@ class AJCore_Zoho_Mail {
 					<tr><th><label for="zoho_mail_client_id"><?php esc_html_e( 'Client ID', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_id" id="zoho_mail_client_id" value="<?php echo esc_attr( $settings['zoho_mail_client_id'] ); ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_client_secret"><?php esc_html_e( 'Client Secret', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_secret" id="zoho_mail_client_secret" value="" placeholder="<?php echo ! empty( $settings['zoho_mail_client_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajcore' ) : ''; ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_account_email"><?php esc_html_e( 'Shared Mailbox Address', 'ajcore' ); ?></label></th><td><input type="email" class="regular-text" name="zoho_mail_account_email" id="zoho_mail_account_email" value="<?php echo esc_attr( $settings['zoho_mail_account_email'] ); ?>"></td></tr>
+					<tr><th><label for="zoho_mail_mailboxes"><?php esc_html_e( 'Other shared mailboxes', 'ajcore' ); ?></label></th><td><textarea name="zoho_mail_mailboxes" id="zoho_mail_mailboxes" rows="3" class="large-text" placeholder="shop@example.com | purchases"><?php echo esc_textarea( $settings['zoho_mail_mailboxes'] ); ?></textarea><p class="description"><?php esc_html_e( 'One per line: address | what it is for. Sub-pipelines (e.g. Purchases) read these with the same Zoho login. "Find shared mailboxes" below lists what this login can read.', 'ajcore' ); ?></p></td></tr>
 					<?php $filter_managed = AJCore_Pipeline::instance()->filter_managed( 'zoho' ); $filter_ro = $filter_managed ? ' readonly' : ''; ?>
 					<?php if ( $filter_managed ) : ?>
 						<tr><th><?php esc_html_e( 'Filter', 'ajcore' ); ?></th><td><strong><?php esc_html_e( 'Set by AJCore-RA', 'ajcore' ); ?></strong>: <code><?php echo esc_html( '' !== $this->intake_filter_summary() ? $this->intake_filter_summary() : __( 'every message', 'ajcore' ) ); ?></code><p class="description"><?php esc_html_e( 'The fields below are not in use while it is set.', 'ajcore' ); ?></p></td></tr>

@@ -55,6 +55,9 @@
  * 'ajcore_pipeline_classify_text', 'ajcore_pipeline_filename_labels', 'ajcore_pipeline_skip_category',
  * 'ajcore_pipeline_group_labels', 'ajcore_pipeline_default_address'. The 'ajcore_file_library_before_list' action lets an extension add a card above the
  * Files list (AJCore-RA: shared flyers). Pipeline and Zoho Mail share one "Pipeline" Client Portal tab.
+ * API 26: Pipeline is a parent tab with sub-pipelines. 'ajcore_pipeline_views' (key => label, badge int|callable, render callable) lets an
+ * extension add a sub-pipeline next to AJCore's own "Filings" (AJCore-RA adds "Purchases"). AJCore_Zoho_Mail reads any shared mailbox by
+ * address (optional $address argument) and Zoho labels (list_labels, get_messages_by_label); named mailboxes live in the Zoho settings.
  * Request workflow statuses (API 24): 'ajcore_service_status_labels', 'ajcore_service_status_pipelines' (product type => ordered status keys) and
  * 'ajcore_service_request_product_type' let an extension add its own statuses and per-product pipelines; AJCore ships only the generic ones.
  * Workflow actions (API 24): 'ajcore_service_request_quick_actions' (actions array, request, product type, current service status) and
@@ -72,7 +75,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_EXTENSION_API' ) ) {
-	define( 'AJCORE_EXTENSION_API', 25 );
+	define( 'AJCORE_EXTENSION_API', 26 );
 }
 
 class AJCore_Extensions {

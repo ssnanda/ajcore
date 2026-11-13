@@ -30,6 +30,59 @@ class AJCore_Pipeline_Tab {
 		return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB, 'src' => $src ), $args ), admin_url( 'admin.php' ) );
 	}
 
+	/**
+	 * The sub-pipelines under the Pipeline tab: key => [ label, badge (int|callable), render (callable|null) ]. "filings" (Gmail +
+	 * Zoho business formation document filings) is AJCore's own; extensions add more through 'ajcore_pipeline_views' (AJCore-RA adds
+	 * "purchases"). A view's render callable prints its page inside the Pipeline tab.
+	 */
+	public static function views() {
+		$views = array(
+			'filings' => array(
+				'label'  => __( 'Filings', 'ajcore' ),
+				'badge'  => static function () {
+					return AJCore_Pipeline::instance()->pending_count();
+				},
+				'render' => null,
+			),
+		);
+		foreach ( (array) apply_filters( 'ajcore_pipeline_views', array() ) as $key => $view ) {
+			$key = sanitize_key( (string) $key );
+			if ( '' === $key || isset( $views[ $key ] ) || ! is_array( $view ) || empty( $view['label'] ) || ! isset( $view['render'] ) || ! is_callable( $view['render'] ) ) {
+				continue;
+			}
+			$views[ $key ] = array( 'label' => (string) $view['label'], 'badge' => isset( $view['badge'] ) ? $view['badge'] : 0, 'render' => $view['render'] );
+		}
+		return $views;
+	}
+
+	/** URL of one sub-pipeline's page ('filings' is the default). */
+	public static function view_url( $view, array $args = array() ) {
+		if ( 'filings' !== $view ) {
+			$args['view'] = $view;
+		}
+		return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB ), $args ), admin_url( 'admin.php' ) );
+	}
+
+	/** Title plus the sub-pipeline switch (shown only when there is more than one). */
+	private static function render_header( array $views, $current ) {
+		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		if ( count( $views ) > 1 ) {
+			echo '<nav class="ajmr-views">';
+			foreach ( $views as $key => $view ) {
+				$badge = is_callable( $view['badge'] ) ? (int) call_user_func( $view['badge'] ) : (int) $view['badge'];
+				printf(
+					'<a class="%1$s" href="%2$s">%3$s%4$s</a>',
+					$key === $current ? 'is-on' : '',
+					esc_url( self::view_url( $key ) ),
+					esc_html( $view['label'] ),
+					$badge > 0 ? ' <b class="ajmr-badge">' . (int) $badge . '</b>' : ''
+				);
+			}
+			echo '</nav>';
+		}
+		echo '</div>';
+	}
+
 	/** Bookmarks, emails and OAuth return links that still point at the two old tabs. */
 	public static function redirect_old_tabs() {
 		if ( 'GET' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) || ! isset( $_GET['page'], $_GET['tab'] ) || 'ajforms-client-portal' !== sanitize_key( wp_unslash( $_GET['page'] ) ) ) {
@@ -65,6 +118,18 @@ class AJCore_Pipeline_Tab {
 		if ( self::TAB !== $tab || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
+		$views = self::views();
+		$view  = isset( $_GET['view'] ) ? sanitize_key( wp_unslash( $_GET['view'] ) ) : 'filings';
+		$view  = isset( $views[ $view ] ) ? $view : 'filings';
+		if ( 'filings' !== $view ) { // another sub-pipeline draws its own page
+			self::styles();
+			echo '<div class="ajmr">';
+			self::render_header( $views, $view );
+			call_user_func( $views[ $view ]['render'] );
+			echo '</div>';
+			return;
+		}
+
 		$gi = AJCore_Pipeline::instance();
 		$zm = AJCore_Zoho_Mail::instance();
 		$f  = AJCore_Pipeline::queue_filters();
@@ -106,7 +171,7 @@ class AJCore_Pipeline_Tab {
 		self::styles();
 		echo '<div class="ajmr">';
 		$zm->render_notices();
-		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		self::render_header( $views, 'filings' );
 
 		// Row 1: the focus (All mailboxes, Pending, Filed) on the left; the two mailbox tiles small, on the far right.
 		echo '<div class="ajmr-row ajmr-row-main">';
@@ -327,6 +392,14 @@ class AJCore_Pipeline_Tab {
 		.ajmr-tile-txt strong { font-size:22px; }
 		.ajmr-tile-txt strong.is-alert { color:#b45309; }
 		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
+		.ajmr-views { display:inline-flex; gap:4px; padding:4px; background:#eef2ff; border-radius:12px; }
+		.ajmr-views a { display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border-radius:9px; font-size:13px; font-weight:600; color:#4338ca; text-decoration:none; }
+		.ajmr-views a:hover { background:rgba(255,255,255,.6); }
+		.ajmr-views a.is-on { background:#fff; color:var(--ajmr-ink); box-shadow:0 1px 3px rgba(15,23,42,.12); }
+		.ajmr-select { padding:8px 12px; min-width:150px; font-size:13px; font-weight:600; color:#334155; height:auto; }
+		.ajmr-modal { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100000; display:flex; align-items:center; justify-content:center; padding:20px; }
+		.ajmr-modal[hidden] { display:none; }
+		.ajmr-modal-box { background:#fff; border-radius:14px; padding:20px 24px; width:min(640px,100%); max-height:88vh; overflow:auto; box-shadow:0 20px 50px rgba(15,23,42,.3); }
 		.ajmr-row-main { align-items:stretch; }
 		.ajmr-subtiles { display:flex; flex-direction:column; justify-content:center; gap:6px; }
 		.ajmr-sub { display:inline-flex; align-items:center; justify-content:space-between; gap:10px; padding:3px 10px; border-radius:999px; border:1px solid var(--ajmr-line); background:#fff; color:#334155; font-size:11px; font-weight:600; line-height:1.4; text-decoration:none; white-space:nowrap; }
