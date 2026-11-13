@@ -18,6 +18,7 @@
  *   ajcore_gmail_intake_default_filter  ( string )                                      default Gmail search filter (blank = every message)
  *   ajcore_zoho_mail_default_filter     ( string )                                      default Zoho filter terms, comma-separated (blank = every message)
  *   ajcore_gmail_intake_company_name    ( string, string $subject, string $body )       company the message is about
+ *   ajcore_gmail_intake_filters         ( ?array, 'gmail'|'zoho' )                          the mailbox filter: [ subject[], sender[], any[], advanced, match all|any ]
  *   ajcore_gmail_intake_rules_summary   ( array sections )                              lines for the "Filters & rules" panel
  *
  * Settings (`gmail_intake_*`: OAuth client, address, tokens): secrets encrypted at rest. With the shared
@@ -303,10 +304,12 @@ class AJCore_Gmail_Intake {
 		$settings['gmail_intake_client_id']   = isset( $_POST['gmail_intake_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_id'] ) ) : '';
 		$settings['gmail_intake_address']     = isset( $_POST['gmail_intake_address'] ) ? sanitize_email( wp_unslash( $_POST['gmail_intake_address'] ) ) : $settings['gmail_intake_address'];
 		$settings['gmail_intake_enabled']     = ! empty( $_POST['gmail_intake_enabled'] ) ? '1' : '0';
-		$settings['gmail_intake_filter']      = isset( $_POST['gmail_intake_filter'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_filter'] ) ) : $settings['gmail_intake_filter'];
-		$settings['gmail_intake_filter_match'] = ( isset( $_POST['gmail_intake_filter_match'] ) && 'any' === $_POST['gmail_intake_filter_match'] ) ? 'any' : 'all';
-		foreach ( array( 'gmail_intake_filter_subject', 'gmail_intake_filter_sender' ) as $filter_key ) {
-			$settings[ $filter_key ] = isset( $_POST[ $filter_key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $filter_key ] ) ) : '';
+		if ( ! $gi->filter_managed( 'gmail' ) ) { // when AJCore-RA defines the filter, the saved fields are left untouched
+			$settings['gmail_intake_filter']      = isset( $_POST['gmail_intake_filter'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_filter'] ) ) : $settings['gmail_intake_filter'];
+			$settings['gmail_intake_filter_match'] = ( isset( $_POST['gmail_intake_filter_match'] ) && 'any' === $_POST['gmail_intake_filter_match'] ) ? 'any' : 'all';
+			foreach ( array( 'gmail_intake_filter_subject', 'gmail_intake_filter_sender' ) as $filter_key ) {
+				$settings[ $filter_key ] = isset( $_POST[ $filter_key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $filter_key ] ) ) : '';
+			}
 		}
 		$secret                               = isset( $_POST['gmail_intake_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_secret'] ) ) : '';
 		if ( '' !== $secret ) { // blank keeps the saved secret
@@ -386,6 +389,55 @@ class AJCore_Gmail_Intake {
 		return '' !== (string) $s['gmail_intake_access_token'] || '' !== (string) $s['gmail_intake_refresh_token'];
 	}
 
+	/**
+	 * The filter a mailbox actually uses: [ subject[], sender[], any[], advanced, match, managed ]. An extension (AJCore-RA)
+	 * can define it through 'ajcore_gmail_intake_filters' ( null, 'gmail'|'zoho' ), returning the same keys; that wins over
+	 * the values saved in settings, and `managed` is true. Without an extension the saved settings apply; blank = every message.
+	 */
+	public function effective_filter( $source ) {
+		if ( 'zoho' === $source && class_exists( 'AJCore_Zoho_Mail' ) ) {
+			$s    = AJCore_Zoho_Mail::instance()->get_settings();
+			$base = array(
+				'subject'  => self::split_terms( $s['zoho_mail_filter_subject'] ),
+				'sender'   => self::split_terms( $s['zoho_mail_filter_sender'] ),
+				'any'      => self::split_terms( $s['zoho_mail_filter_text'] ),
+				'advanced' => '',
+				'match'    => 'any' === $s['zoho_mail_filter_match'] ? 'any' : 'all',
+			);
+		} else {
+			$s    = $this->get_gmail_settings();
+			$base = array(
+				'subject'  => self::split_terms( $s['gmail_intake_filter_subject'] ),
+				'sender'   => self::split_terms( $s['gmail_intake_filter_sender'] ),
+				'any'      => array(),
+				'advanced' => trim( (string) $s['gmail_intake_filter'] ),
+				'match'    => 'any' === $s['gmail_intake_filter_match'] ? 'any' : 'all',
+			);
+		}
+		$ext = apply_filters( 'ajcore_gmail_intake_filters', null, $source );
+		if ( ! is_array( $ext ) ) {
+			$base['managed'] = false;
+			return $base;
+		}
+		$list = static function ( $v ) {
+			return is_array( $v ) ? array_values( array_filter( array_map( 'trim', array_map( 'strval', $v ) ), 'strlen' ) ) : self::split_terms( $v );
+		};
+		return array(
+			'subject'  => $list( isset( $ext['subject'] ) ? $ext['subject'] : array() ),
+			'sender'   => $list( isset( $ext['sender'] ) ? $ext['sender'] : array() ),
+			'any'      => $list( isset( $ext['any'] ) ? $ext['any'] : array() ),
+			'advanced' => isset( $ext['advanced'] ) ? trim( (string) $ext['advanced'] ) : '',
+			'match'    => isset( $ext['match'] ) && 'any' === $ext['match'] ? 'any' : 'all',
+			'managed'  => true,
+		);
+	}
+
+	/** True when an extension (AJCore-RA) defines this mailbox's filter, so the saved filter fields are not in use. */
+	public function filter_managed( $source ) {
+		$f = $this->effective_filter( $source );
+		return ! empty( $f['managed'] );
+	}
+
 	/** "a, b ,c" => [ 'a', 'b', 'c' ] (empty pieces dropped). */
 	public static function split_terms( $text ) {
 		return array_values( array_filter( array_map( 'trim', explode( ',', (string) $text ) ), 'strlen' ) );
@@ -396,31 +448,37 @@ class AJCore_Gmail_Intake {
 	 * '' = no filter (every message). Terms are quoted, so odd characters can't break the query.
 	 */
 	public function gmail_filter_query() {
-		$s      = $this->get_gmail_settings();
+		$f      = $this->effective_filter( 'gmail' );
 		$groups = array();
 		$subj   = array();
-		foreach ( self::split_terms( $s['gmail_intake_filter_subject'] ) as $term ) {
+		foreach ( $f['subject'] as $term ) {
 			$subj[] = 'subject:"' . str_replace( '"', '', $term ) . '"';
 		}
 		if ( $subj ) {
 			$groups[] = '(' . implode( ' OR ', $subj ) . ')';
 		}
 		$from = array();
-		foreach ( self::split_terms( $s['gmail_intake_filter_sender'] ) as $term ) {
+		foreach ( $f['sender'] as $term ) {
 			$from[] = 'from:"' . str_replace( '"', '', $term ) . '"';
 		}
 		if ( $from ) {
 			$groups[] = '(' . implode( ' OR ', $from ) . ')';
 		}
-		$advanced = trim( (string) $s['gmail_intake_filter'] );
-		if ( '' !== $advanced ) {
-			$groups[] = '(' . $advanced . ')';
+		$any = array();
+		foreach ( $f['any'] as $term ) {
+			$any[] = '"' . str_replace( '"', '', $term ) . '"'; // bare quoted term: Gmail searches the whole message
+		}
+		if ( $any ) {
+			$groups[] = '(' . implode( ' OR ', $any ) . ')';
+		}
+		if ( '' !== $f['advanced'] ) {
+			$groups[] = '(' . $f['advanced'] . ')';
 		}
 		if ( ! $groups ) {
 			return '';
 		}
 		// "all": every filled field must match (Gmail ANDs space-separated terms); "any": one is enough.
-		return 'any' === $s['gmail_intake_filter_match'] ? '(' . implode( ' OR ', $groups ) . ')' : implode( ' ', $groups );
+		return 'any' === $f['match'] ? '(' . implode( ' OR ', $groups ) . ')' : implode( ' ', $groups );
 	}
 
 	/**
@@ -457,18 +515,19 @@ class AJCore_Gmail_Intake {
 		$conds = array();
 		$all   = array();
 
-		// Gmail rows (ids without the "zoho:" prefix). With "all", subject/sender are necessary conditions even when an
-		// advanced search is also set; with "any" an advanced search can't be evaluated here, so nothing is hidden.
-		$g      = $this->get_gmail_settings();
-		$mode   = 'any' === $g['gmail_intake_filter_match'] ? 'any' : 'all';
+		// Gmail rows (ids without the "zoho:" prefix). With "all", subject/sender are necessary conditions even when a whole-message
+		// term or advanced search is also set; with "any" those can't be evaluated here, so nothing is hidden.
+		$gf     = $this->effective_filter( 'gmail' );
+		$mode   = $gf['match'];
 		$groups = array();
-		if ( self::split_terms( $g['gmail_intake_filter_subject'] ) ) {
-			$groups[] = $group( array( 'subject' ), self::split_terms( $g['gmail_intake_filter_subject'] ) );
+		if ( $gf['subject'] ) {
+			$groups[] = $group( array( 'subject' ), $gf['subject'] );
 		}
-		if ( self::split_terms( $g['gmail_intake_filter_sender'] ) ) {
-			$groups[] = $group( array( 'sender' ), self::split_terms( $g['gmail_intake_filter_sender'] ) );
+		if ( $gf['sender'] ) {
+			$groups[] = $group( array( 'sender' ), $gf['sender'] );
 		}
-		if ( $groups && ( 'all' === $mode || '' === trim( (string) $g['gmail_intake_filter'] ) ) ) {
+		$opaque = '' !== $gf['advanced'] || ! empty( $gf['any'] );
+		if ( $groups && ( 'all' === $mode || ! $opaque ) ) {
 			list( $sql, $params ) = $combine( $groups, $mode );
 			$conds[] = '( gmail_message_id LIKE %s OR ' . $sql . ' )';
 			$all     = array_merge( $all, array( 'zoho:%' ), $params );
@@ -524,6 +583,20 @@ class AJCore_Gmail_Intake {
 		) );
 		$sections = apply_filters( 'ajcore_gmail_intake_rules_summary', $sections );
 		return is_array( $sections ) ? $sections : array();
+	}
+
+	/** What each active mailbox is filtering on right now: [ source, label, text, open ], open = no filter (every message). */
+	public function filter_status() {
+		$out = array();
+		if ( $this->is_active() ) {
+			$f     = $this->gmail_filter_query();
+			$out[] = array( 'source' => 'gmail', 'label' => 'Gmail', 'text' => '' !== $f ? $f : __( 'every message', 'ajcore' ), 'open' => '' === $f );
+		}
+		if ( class_exists( 'AJCore_Zoho_Mail' ) && AJCore_Zoho_Mail::instance()->is_connected() ) {
+			$f     = AJCore_Zoho_Mail::instance()->intake_filter_summary();
+			$out[] = array( 'source' => 'zoho', 'label' => 'Zoho', 'text' => '' !== $f ? $f : __( 'every message', 'ajcore' ), 'open' => '' === $f );
+		}
+		return $out;
 	}
 
 	/** Collapsed "Filters & rules" panel (read-only). */
@@ -2237,24 +2310,28 @@ class AJCore_Gmail_Intake {
 						<input type="email" name="gmail_intake_address" id="gmail_intake_address" value="<?php echo esc_attr( $settings['gmail_intake_address'] ); ?>">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only — the actual account read is whichever Google login completes Connect below.', 'ajcore' ); ?></div>
 					</div>
+					<?php $filter_managed = $this->filter_managed( 'gmail' ); $filter_ro = $filter_managed ? ' readonly' : ''; ?>
+					<?php if ( $filter_managed ) : ?>
+						<div class="ajforms-settings-field"><div class="ajforms-settings-help"><strong><?php esc_html_e( 'Filter set by AJCore-RA', 'ajcore' ); ?></strong>: <code><?php echo esc_html( '' !== $this->gmail_filter_query() ? $this->gmail_filter_query() : __( 'every message', 'ajcore' ) ); ?></code> — <?php esc_html_e( 'the fields below are not in use while it is set.', 'ajcore' ); ?></div></div>
+					<?php endif; ?>
 					<div class="ajforms-settings-field">
 						<label for="gmail_intake_filter_subject"><?php esc_html_e( 'Subject contains', 'ajcore' ); ?></label>
-						<input type="text" name="gmail_intake_filter_subject" id="gmail_intake_filter_subject" value="<?php echo esc_attr( $settings['gmail_intake_filter_subject'] ); ?>" placeholder="<?php echo esc_attr__( 'Secretary of State, Filing', 'ajcore' ); ?>">
+						<input type="text" name="gmail_intake_filter_subject" id="gmail_intake_filter_subject"<?php echo $filter_ro; ?> value="<?php echo esc_attr( $settings['gmail_intake_filter_subject'] ); ?>" placeholder="<?php echo esc_attr__( 'Secretary of State, Filing', 'ajcore' ); ?>">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Comma-separated; any one matches.', 'ajcore' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="gmail_intake_filter_sender"><?php esc_html_e( 'Sender contains', 'ajcore' ); ?></label>
-						<input type="text" name="gmail_intake_filter_sender" id="gmail_intake_filter_sender" value="<?php echo esc_attr( $settings['gmail_intake_filter_sender'] ); ?>" placeholder="<?php echo esc_attr__( 'sosnc.gov', 'ajcore' ); ?>">
+						<input type="text" name="gmail_intake_filter_sender" id="gmail_intake_filter_sender"<?php echo $filter_ro; ?> value="<?php echo esc_attr( $settings['gmail_intake_filter_sender'] ); ?>" placeholder="<?php echo esc_attr__( 'sosnc.gov', 'ajcore' ); ?>">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Name or address, comma-separated; any one matches.', 'ajcore' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="gmail_intake_filter"><?php esc_html_e( 'Advanced Gmail search', 'ajcore' ); ?></label>
-						<input type="text" name="gmail_intake_filter" id="gmail_intake_filter" value="<?php echo esc_attr( $settings['gmail_intake_filter'] ); ?>">
+						<input type="text" name="gmail_intake_filter" id="gmail_intake_filter"<?php echo $filter_ro; ?> value="<?php echo esc_attr( $settings['gmail_intake_filter'] ); ?>">
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Optional Gmail search syntax. All filters blank = every message (spam and trash are always excluded).', 'ajcore' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label for="gmail_intake_filter_match"><?php esc_html_e( 'Match', 'ajcore' ); ?></label>
-						<select name="gmail_intake_filter_match" id="gmail_intake_filter_match">
+						<select name="gmail_intake_filter_match" id="gmail_intake_filter_match"<?php echo $filter_managed ? ' disabled' : ''; ?>>
 							<option value="all" <?php selected( 'any' === $settings['gmail_intake_filter_match'] ? 'any' : 'all', 'all' ); ?>><?php esc_html_e( 'All filled fields (narrow)', 'ajcore' ); ?></option>
 							<option value="any" <?php selected( $settings['gmail_intake_filter_match'], 'any' ); ?>><?php esc_html_e( 'Any filled field (broad)', 'ajcore' ); ?></option>
 						</select>

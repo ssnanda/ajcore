@@ -173,6 +173,22 @@ class AJCore_Mailroom {
 		echo '</section>';
 
 		if ( $gi->is_active() || $zm->is_connected() ) {
+			// What each mailbox is filtering on right now, and how the last pass went (so nobody has to guess).
+			echo '<div class="ajmr-filters">';
+			foreach ( $gi->filter_status() as $fs ) {
+				printf(
+					'<span class="ajmr-fchip %1$s"><b>%2$s</b> %3$s%4$s</span>',
+					$fs['open'] ? 'is-open' : '',
+					esc_html( $fs['label'] ),
+					esc_html( $fs['text'] ),
+					$fs['open'] ? ' <i>' . esc_html__( '(no filter saved: every message is read)', 'ajcore' ) . '</i>' : ''
+				);
+			}
+			$last = get_transient( 'ajcore_gmail_intake_last_pass' );
+			if ( is_array( $last ) && ! empty( $last['at'] ) ) {
+				printf( '<span class="ajmr-fnote">%s</span>', esc_html( sprintf( __( 'Last pass %1$s · %2$d new', 'ajcore' ), get_date_from_gmt( get_gmt_from_date( $last['at'] ), 'M j, g:i a' ), (int) $last['checked'] ) ) );
+			}
+			echo '</div>';
 			$gi->render_rules_panel();
 			echo '<div class="ajmr-list">';
 			$gi->render_queue();
@@ -303,6 +319,11 @@ class AJCore_Mailroom {
 		.ajmr .ajcore-status-pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:700; background:#fef3c7; color:#92400e; }
 		.ajmr .ajcore-status-pill.active { background:#dcfce7; color:#166534; }
 		.ajmr .ajcore-status-pill.dup { background:#e2e8f0; color:#475569; }
+		.ajmr-filters { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 12px; font-size:12px; }
+		.ajmr-fchip { background:#fff; border:1px solid var(--ajmr-line); border-radius:999px; padding:5px 12px; color:#334155; word-break:break-word; }
+		.ajmr-fchip b { margin-right:4px; }
+		.ajmr-fchip.is-open { background:#fffbeb; border-color:#fcd34d; color:#92400e; }
+		.ajmr-fnote { color:var(--ajmr-mute); }
 		.ajmr-bulk { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 10px; padding:8px 12px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:10px; font-size:13px; }
 		.ajmr-bulk[hidden] { display:none; }
 		.ajmr .ajcore-status-pill.disabled { background:#fee2e2; color:#991b1b; }
