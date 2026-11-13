@@ -1550,6 +1550,9 @@
 		updateHeaderTitle();
 		// Per-site starter chips (config.quickReplies overrides); unknown sites show none.
 		var host = siteHost().replace(/^www\./, "");
+		// DDEV test sites use the same lists as their live domains.
+		if (host === "ncllc.ddev.site") host = "ncllcagents.com";
+		else if (host === "upos.ddev.site") host = "universityofficesuites.com";
 		var starters = Array.isArray(config.quickReplies) ? config.quickReplies
 			: host === "ncllcagents.com" ? ["Registered agent service", "Start a new LLC", "Get an EIN", "Virtual office address"]
 			: host === "universityofficesuites.com" ? ["Office space pricing", "Schedule a tour", "Availability"]
