@@ -613,14 +613,9 @@
 		"#ajcore-chat-panel .aj-chip:hover,#ajcore-chat-form button.aj-chip:hover{background:#3157ff;color:#fff;}" +
 		".aj-status{font-size:11px;color:#6b7280;text-align:center;margin:0 0 10px;}" +
 		".aj-status.online:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;margin-right:6px;vertical-align:1px;}" +
-		".aj-multi{position:relative;}" +
-		"#ajcore-chat-form .aj-multi-btn{width:100%;text-align:left;background:#fff;color:#111827;border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:13px;font-weight:400;display:flex;justify-content:space-between;align-items:center;}" +
-		"#ajcore-chat-form .aj-multi-btn.has{color:#111827;font-weight:600;border-color:#3157ff;}" +
-		".aj-multi-list{display:none;border:1px solid #d1d5db;border-radius:8px;background:#fff;margin-top:4px;max-height:190px;overflow-y:auto;padding:4px 0;}" +
-		".aj-multi.open .aj-multi-list{display:block;}" +
-		".aj-multi-list label{display:flex;align-items:center;gap:8px;padding:7px 11px;font-size:13px;color:#111827;cursor:pointer;}" +
-		".aj-multi-list label:hover{background:#f3f4f6;}" +
-		".aj-multi-list input{width:auto;margin:0;}" +
+		".aj-pick-hint{font-size:12px;color:#6b7280;margin:2px 0 -2px;}" +
+		"#ajcore-chat-panel .aj-chip.on,#ajcore-chat-form button.aj-chip.on{background:#3157ff;color:#fff;}" +
+		"#ajcore-chat-form #ajcore-chat-start{position:sticky;bottom:0;box-shadow:0 -8px 10px -4px #f8fafc;z-index:2;}" +
 		".aj-hp{position:absolute!important;left:-9999px!important;width:1px;height:1px;opacity:0;pointer-events:none;}" +
 		".aj-inwrap{flex:1;position:relative;display:flex;}" +
 		".aj-inwrap textarea{width:100%;box-sizing:border-box;}" +
@@ -1520,7 +1515,7 @@
 			'<div class="aj-field-error" id="ajcore-chat-phone-error"></div>' +
 			'<div class="aj-multi" id="ajcore-chat-services" style="display:none;"></div>' +
 			'<div class="aj-chips" id="ajcore-chat-starters" style="margin:0;"></div>' +
-			'<textarea id="ajcore-chat-first-message" rows="3" maxlength="1000" placeholder="How can we help?" required></textarea>' +
+			'<textarea id="ajcore-chat-first-message" rows="2" maxlength="1000" placeholder="How can we help?" required></textarea>' +
 			'<input type="text" name="website" class="aj-hp" id="ajcore-chat-hp" tabindex="-1" autocomplete="off" aria-hidden="true">' +
 			'<div class="aj-field-error" id="ajcore-chat-message-error"></div>' +
 			'<button type="button" id="ajcore-chat-start">Start Chat</button>';
@@ -1572,42 +1567,37 @@
 			starters = []; // the dropdown replaces the single-tap chips on this site
 			var multi = form.querySelector("#ajcore-chat-services");
 			multi.style.display = "";
-			var mBtn = document.createElement("button");
-			mBtn.type = "button";
-			mBtn.className = "aj-multi-btn";
-			var mList = document.createElement("div");
-			mList.className = "aj-multi-list";
+			multi.className = "aj-chips aj-pick";
+			var picked = [];
 			var autoText = "";
-			function refreshMulti() {
-				var picked = [];
-				Array.prototype.forEach.call(mList.querySelectorAll("input:checked"), function (i) { picked.push(i.value); });
-				mBtn.className = "aj-multi-btn" + (picked.length ? " has" : "");
-				mBtn.innerHTML = "";
-				var t = document.createElement("span");
-				t.textContent = picked.length ? picked.length + " selected: " + picked.join(", ") : "What do you need? (pick one or more)";
-				t.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-				var ar = document.createElement("span");
-				ar.textContent = multi.classList.contains("open") ? "▴" : "▾";
-				mBtn.appendChild(t); mBtn.appendChild(ar);
+			function refreshPicks() {
 				var next = picked.length ? "I'm interested in: " + picked.join(", ") + "." : "";
 				if (!messageInput.value.trim() || messageInput.value === autoText) {
 					messageInput.value = next;
 					autoText = next;
 				}
 			}
+			var hint = document.createElement("div");
+			hint.className = "aj-pick-hint";
+			hint.textContent = "What do you need? Tap all that apply:";
+			multi.parentNode.insertBefore(hint, multi);
 			services.forEach(function (label) {
-				var l = document.createElement("label");
-				var c = document.createElement("input");
-				c.type = "checkbox"; c.value = String(label);
-				c.addEventListener("change", refreshMulti);
-				l.appendChild(c);
-				var sp = document.createElement("span"); sp.textContent = String(label);
-				l.appendChild(sp);
-				mList.appendChild(l);
+				var b = document.createElement("button");
+				b.type = "button";
+				b.className = "aj-chip";
+				b.setAttribute("aria-pressed", "false");
+				b.textContent = String(label);
+				b.addEventListener("click", function () {
+					var i = picked.indexOf(String(label));
+					if (i === -1) picked.push(String(label)); else picked.splice(i, 1);
+					var on = i === -1;
+					b.classList.toggle("on", on);
+					b.setAttribute("aria-pressed", on ? "true" : "false");
+					b.textContent = (on ? "✓ " : "") + String(label);
+					refreshPicks();
+				});
+				multi.appendChild(b);
 			});
-			mBtn.addEventListener("click", function () { multi.classList.toggle("open"); refreshMulti(); });
-			multi.appendChild(mBtn); multi.appendChild(mList);
-			refreshMulti();
 		}
 		if (!starters.length) starterWrap0.style.display = "none";
 		starters.slice(0, 4).forEach(function (label) {
