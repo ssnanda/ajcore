@@ -578,7 +578,8 @@
 		"#ajcore-chat-textus{color:#fff;font-size:11px;font-weight:600;text-decoration:underline;white-space:nowrap;cursor:pointer;}" +
 		"#ajcore-chat-notify{background:none;border:none;color:rgba(255,255,255,.9);font-size:15px;cursor:pointer;padding:0;line-height:1;}" +
 		"#ajcore-chat-notify.enabled{color:#bbf7d0;}" +
-		"#ajcore-chat-end{background:none;border:none;color:rgba(255,255,255,.85);font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline;padding:0;display:none;}" +
+		"#ajcore-chat-end{background:#fff;border:1px solid #d1d5db;border-radius:8px;color:#6b7280;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;padding:9px 12px;white-space:nowrap;display:none;}" +
+		"#ajcore-chat-end:hover{background:#fef2f2;border-color:#fca5a5;color:#b91c1c;}" +
 		"#ajcore-chat-close{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;line-height:1;}" +
 		"#ajcore-chat-body{flex:1;overflow-y:auto;padding:14px;background:#f8fafc;}" +
 		"#ajcore-chat-form{padding:14px;display:flex;flex-direction:column;gap:8px;}" +
@@ -645,14 +646,17 @@
 	var panel = document.createElement("div");
 	panel.id = "ajcore-chat-panel";
 	panel.innerHTML =
-		'<div id="ajcore-chat-header"><span>Chat with us</span><div id="ajcore-chat-header-actions"><a id="ajcore-chat-textus" href="#" aria-label="Text us instead of chatting">Text Us</a><button id="ajcore-chat-notify" type="button" aria-label="Enable desktop notifications" title="Enable desktop notifications">🔔</button><button id="ajcore-chat-end">End Chat</button><button id="ajcore-chat-close" aria-label="Close chat">✕</button></div></div>' +
+		'<div id="ajcore-chat-header"><span>Chat with us</span><div id="ajcore-chat-header-actions"><a id="ajcore-chat-textus" href="#" aria-label="Text us instead of chatting">Text Us</a><button id="ajcore-chat-notify" type="button" aria-label="Enable desktop notifications" title="Enable desktop notifications">🔔</button><button id="ajcore-chat-close" aria-label="Close chat">✕</button></div></div>' +
 		'<div id="ajcore-chat-body"></div>';
 	document.body.appendChild(panel);
 
 	var header = panel.querySelector("#ajcore-chat-header");
 	var body = panel.querySelector("#ajcore-chat-body");
 	var closeBtn = panel.querySelector("#ajcore-chat-close");
-	var endChatBtn = panel.querySelector("#ajcore-chat-end");
+	var endChatBtn = document.createElement("button"); // lives in the input row, right of Send
+	endChatBtn.id = "ajcore-chat-end";
+	endChatBtn.type = "button";
+	endChatBtn.textContent = "End Chat";
 	var notifyBtn = panel.querySelector("#ajcore-chat-notify");
 	var textUsBtn = panel.querySelector("#ajcore-chat-textus");
 
@@ -681,7 +685,7 @@
 	var sessionOpen = false;
 
 	function updateEndChatVisibility() {
-		endChatBtn.style.display = (hasVisitorInfo && sessionOpen) ? "inline" : "none";
+		endChatBtn.style.display = (hasVisitorInfo && sessionOpen) ? "inline-block" : "none";
 	}
 	var previewDismissTimer = null;
 
@@ -1264,7 +1268,9 @@
 		row.innerHTML =
 			'<textarea id="ajcore-chat-input" rows="1" placeholder="Type a message…"></textarea>' +
 			'<button id="ajcore-chat-send">Send</button>';
+		row.appendChild(endChatBtn); // End Chat sits right of Send
 		panel.appendChild(row);
+		updateEndChatVisibility();
 
 		var input = row.querySelector("#ajcore-chat-input");
 		var sendBtn = row.querySelector("#ajcore-chat-send");
