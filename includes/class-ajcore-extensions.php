@@ -41,7 +41,7 @@
  * (The 'ajcore_expense_invoice_options' filter was removed with the expense-invoices feature.)
  * API 18: Mail (physical mail / service-of-process log: /ops/mail*, /portal/mail, Client Portal tab, notification email and its
  * mail_item / mail_item_sop templates) is registered by AJCore-RA, not AJCore.
- * API 19: Gmail Intake (OAuth mailbox, /ops/gmail-intake*, /gmail-intake/* incl. the OAuth callback, Client Portal tab,
+ * API 19: Pipeline (OAuth mailbox, /ops/gmail-intake*, /gmail-intake/* incl. the OAuth callback, Client Portal tab,
  * settings, the Documents Filed email and its gmail_intake template). Moved to AJCore-RA in API 19, back in AJCore in API 25.
  * API 20: the email toolkit's 'send' accepts an optional $attachments array (file paths), e.g. AJCore-RA's signed-copy emails.
  * API 21: 'ajcore_partner_site_domain' filter (pins a partner's customers to one site; AJCore has no site domain of
@@ -50,11 +50,11 @@
  * extension can guarantee its own document categories exist (AJCore-RA: Formation Documents).
  * API 23: the expense-invoices feature was retired (never used); invoices will return as a workflow on Requests.
  * API 24: Zoho Mail (OAuth connection, shared inbox, /zoho-mail/*, /ops/inbox, Client Portal tab) moved to AJCore-RA; back in AJCore in API 25.
- * API 25: Zoho Mail and Gmail Intake are AJCore features again (class-ajcore-zoho-mail.php, class-ajcore-gmail-intake.php). Gmail Intake's
+ * API 25: Zoho Mail and Pipeline are AJCore features again (class-ajcore-zoho-mail.php, class-ajcore-gmail-intake.php). Pipeline's
  * business rules stay in extensions via 'ajcore_gmail_intake_pdf_is_document', 'ajcore_gmail_intake_suggest_filename',
  * 'ajcore_gmail_intake_classify_text', 'ajcore_gmail_intake_filename_labels', 'ajcore_gmail_intake_skip_category',
  * 'ajcore_gmail_intake_group_labels', 'ajcore_gmail_intake_default_address'. The 'ajcore_file_library_before_list' action lets an extension add a card above the
- * Files list (AJCore-RA: shared flyers). Gmail Intake and Zoho Mail share one "Pipeline" Client Portal tab.
+ * Files list (AJCore-RA: shared flyers). Pipeline and Zoho Mail share one "Pipeline" Client Portal tab.
  * Request workflow statuses (API 24): 'ajcore_service_status_labels', 'ajcore_service_status_pipelines' (product type => ordered status keys) and
  * 'ajcore_service_request_product_type' let an extension add its own statuses and per-product pipelines; AJCore ships only the generic ones.
  * Workflow actions (API 24): 'ajcore_service_request_quick_actions' (actions array, request, product type, current service status) and

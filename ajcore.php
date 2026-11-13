@@ -3031,7 +3031,7 @@ function ajcore_remove_seeded_default_tasks() {
 add_action( 'plugins_loaded', 'ajcore_remove_seeded_default_tasks', 30 );
 
 /**
- * Zoho Mail and Gmail Intake live in AJCore. The guards skip them while an older AJCore-RA still ships its own copy
+ * Zoho Mail and Pipeline live in AJCore. The guards skip them while an older AJCore-RA still ships its own copy
  * (it defines these classes when its files load, before this runs), so a half-deployed pair never doubles up.
  */
 function ajcore_boot_mail_features() {
@@ -3042,7 +3042,7 @@ function ajcore_boot_mail_features() {
 		AJCore_Gmail_Intake::init();
 	}
 	if ( ! class_exists( 'AJCore_RA_Zoho_Mail' ) && ! class_exists( 'AJCore_RA_Gmail_Intake' ) ) {
-		AJCore_Mailroom::init(); // one "Pipeline" tab replaces the Gmail Intake and Zoho Mail tabs
+		AJCore_Mailroom::init(); // one "Pipeline" tab replaces the Pipeline and Zoho Mail tabs
 	}
 }
 add_action( 'plugins_loaded', 'ajcore_boot_mail_features', 20 );

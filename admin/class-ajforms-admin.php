@@ -13372,7 +13372,7 @@ class AJForms_Admin {
 				'size'     => (int) $get( 'size', $i ),
 			);
 
-			// wp_handle_sideload(), not wp_handle_upload(): callers like Gmail Intake build this
+			// wp_handle_sideload(), not wp_handle_upload(): callers like Pipeline build this
 			// array from a file we downloaded and wrote ourselves (wp_tempnam() +
 			// file_put_contents()), not a genuine $_FILES entry. wp_handle_upload() hard-requires
 			// is_uploaded_file() (no override exists for it), which always fails for a
@@ -14329,7 +14329,7 @@ class AJForms_Admin {
 		}
 
 		// OAuth tokens are never edited through this form — only the "Connect Zoho Mail"/"Connect
-		// Gmail Intake" callbacks write them directly. Without this, they'd silently reset to ''
+		// Pipeline" callbacks write them directly. Without this, they'd silently reset to ''
 		// on every unrelated settings save anywhere in the plugin, since they belong to no
 		// $section_keys entry below.
 		foreach ( array( 'zoho_mail_access_token', 'zoho_mail_refresh_token', 'zoho_mail_token_expires_at', 'zoho_mail_account_id', 'zoho_mail_connected_email', 'zoho_mail_connected_at' ) as $zoho_token_field ) {
@@ -15191,7 +15191,7 @@ class AJForms_Admin {
 		// true on the main Client Portal tabs nav, but the CP Settings and Rentec sub-navs never got
 		// one, so their tabs just vanished under 1100px with nothing in their place (now fixed at the
 		// markup level, this is a belt-and-suspenders backstop for any other instance of the same
-		// pattern); (2) wide .widefat data tables (Leads, Customers, Tasks, Mail, Gmail Intake, …)
+		// pattern); (2) wide .widefat data tables (Leads, Customers, Tasks, Mail, Pipeline, …)
 		// have no horizontal-scroll fallback, so they either overflow the viewport or force it wider
 		// than the phone screen — same display:block+overflow-x:auto trick already used for
 		// .ajcore-schema-table elsewhere in this file.

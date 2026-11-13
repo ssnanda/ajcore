@@ -1,6 +1,6 @@
 <?php
 /**
- * Gmail Intake (state-filing notification mailbox → customer Files), back in AJCore.
+ * Pipeline (state-filing notification mailbox → customer Files), back in AJCore.
  *
  * Routes (/ops/gmail-intake*, /gmail-intake/* incl. the OAuth callback), the log table (aj_gmail_intake_log),
  * the option `ajcore_ra_gmail_intake` (name kept so existing connections survive), the shared row
@@ -153,6 +153,8 @@ class AJCore_Gmail_Intake {
 			'gmail_intake_address'          => (string) apply_filters( 'ajcore_gmail_intake_default_address', '' ),
 			'gmail_intake_enabled'          => '1',
 			'gmail_intake_filter'           => (string) apply_filters( 'ajcore_gmail_intake_default_filter', '' ),
+			'gmail_intake_filter_subject'   => '',
+			'gmail_intake_filter_sender'    => '',
 			'gmail_intake_access_token'     => '',
 			'gmail_intake_refresh_token'    => '',
 			'gmail_intake_token_expires_at' => 0,
@@ -208,7 +210,7 @@ class AJCore_Gmail_Intake {
 		return is_array( $decoded ) ? $decoded : array();
 	}
 
-	/** Master only: publishes the (plain) settings, as AJCore's shared Gmail Intake row always held them. */
+	/** Master only: publishes the (plain) settings, as AJCore's shared Pipeline row always held them. */
 	private static function write_shared( array $settings ) {
 		if ( ! self::is_shared() || ! self::is_master() ) {
 			return false;
@@ -301,6 +303,9 @@ class AJCore_Gmail_Intake {
 		$settings['gmail_intake_address']     = isset( $_POST['gmail_intake_address'] ) ? sanitize_email( wp_unslash( $_POST['gmail_intake_address'] ) ) : $settings['gmail_intake_address'];
 		$settings['gmail_intake_enabled']     = ! empty( $_POST['gmail_intake_enabled'] ) ? '1' : '0';
 		$settings['gmail_intake_filter']      = isset( $_POST['gmail_intake_filter'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_filter'] ) ) : $settings['gmail_intake_filter'];
+		foreach ( array( 'gmail_intake_filter_subject', 'gmail_intake_filter_sender' ) as $filter_key ) {
+			$settings[ $filter_key ] = isset( $_POST[ $filter_key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $filter_key ] ) ) : '';
+		}
 		$secret                               = isset( $_POST['gmail_intake_client_secret'] ) ? sanitize_text_field( wp_unslash( $_POST['gmail_intake_client_secret'] ) ) : '';
 		if ( '' !== $secret ) { // blank keeps the saved secret
 			$settings['gmail_intake_client_secret'] = $secret;
@@ -378,6 +383,31 @@ class AJCore_Gmail_Intake {
 		return '' !== (string) $s['gmail_intake_access_token'] || '' !== (string) $s['gmail_intake_refresh_token'];
 	}
 
+	/** "a, b ,c" => [ 'a', 'b', 'c' ] (empty pieces dropped). */
+	public static function split_terms( $text ) {
+		return array_values( array_filter( array_map( 'trim', explode( ',', (string) $text ) ), 'strlen' ) );
+	}
+
+	/**
+	 * The Gmail search for this mailbox's filters: subject terms, sender terms and the advanced query, OR'd together.
+	 * '' = no filter (every message). Terms are quoted, so odd characters can't break the query.
+	 */
+	public function gmail_filter_query() {
+		$s     = $this->get_gmail_settings();
+		$parts = array();
+		foreach ( self::split_terms( $s['gmail_intake_filter_subject'] ) as $term ) {
+			$parts[] = 'subject:"' . str_replace( '"', '', $term ) . '"';
+		}
+		foreach ( self::split_terms( $s['gmail_intake_filter_sender'] ) as $term ) {
+			$parts[] = 'from:"' . str_replace( '"', '', $term ) . '"';
+		}
+		$advanced = trim( (string) $s['gmail_intake_filter'] );
+		if ( '' !== $advanced ) {
+			$parts[] = '(' . $advanced . ')';
+		}
+		return $parts ? '(' . implode( ' OR ', $parts ) . ')' : '';
+	}
+
 	/** Connected and switched on (Gmail can be turned off in settings without disconnecting or removing the code). */
 	public function is_active() {
 		$s = $this->get_gmail_settings();
@@ -389,7 +419,7 @@ class AJCore_Gmail_Intake {
 		$sections = array();
 		$filters  = array();
 		if ( $this->is_active() ) {
-			$f         = trim( (string) $this->get_gmail_settings()['gmail_intake_filter'] );
+			$f         = $this->gmail_filter_query();
 			$filters[] = 'Gmail: ' . ( '' !== $f ? $f : __( 'every message', 'ajcore' ) ) . ' -in:spam -in:trash';
 		}
 		if ( class_exists( 'AJCore_Zoho_Mail' ) && AJCore_Zoho_Mail::instance()->is_connected() ) {
@@ -428,7 +458,7 @@ class AJCore_Gmail_Intake {
 		return (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$this->get_gmail_intake_log_table()}` WHERE status IN ('needs_review','matched_pending_file','skipped_no_attachment')" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 	}
 
-	/** Resolve form posts from the Gmail Intake tab. */
+	/** Resolve form posts from the Pipeline tab. */
 	public static function maybe_handle_actions() {
 		if ( ! is_admin() || 'POST' !== ( $_SERVER['REQUEST_METHOD'] ?? '' ) || ! isset( $_GET['page'], $_GET['tab'] ) ) {
 			return;
@@ -522,7 +552,7 @@ class AJCore_Gmail_Intake {
 		);
 	}
 
-	// ── Gmail Intake handlers (moved unchanged from AJCore) ────────────────────
+	// ── Pipeline handlers (moved unchanged from AJCore) ────────────────────
 
 	private function handle_portal_gmail_intake_actions() {
 		if ( ! current_user_can( 'manage_options' ) || ! isset( $_POST['ajcore_gmail_intake_resolve_nonce'] ) ) {
@@ -882,7 +912,7 @@ class AJCore_Gmail_Intake {
 	}
 
 	/**
-	 * Content-based rules for suggesting a filename + category from a Gmail Intake attachment's
+	 * Content-based rules for suggesting a filename + category from a Pipeline attachment's
 	 * actual PDF text. The keyword rules themselves are supplied by extensions (see the filters in the file header).
 	 * Returns null (no rule matched) if the caller should fall back to the filename-only guess.
 	 */
@@ -975,7 +1005,7 @@ class AJCore_Gmail_Intake {
 		if ( 'zoho' === $source ) {
 			return AJCore_Zoho_Mail::instance()->intake_ids( $max, $show_all );
 		}
-		$filter = trim( (string) $this->get_gmail_settings()['gmail_intake_filter'] );
+		$filter = $this->gmail_filter_query();
 		$query  = ( $show_all || '' === $filter ? '' : $filter . ' ' ) . '-in:spam -in:trash';
 		$list   = $this->gmail_intake_api_request( 'GET', '/messages', array( 'query' => array( 'q' => $query, 'maxResults' => max( 1, min( 50, (int) $max ) ) ) ) );
 		if ( is_wp_error( $list ) ) {
@@ -1194,7 +1224,7 @@ class AJCore_Gmail_Intake {
 		return true;
 	}
 
-	/** Deletes specific Gmail Intake log rows by id (bulk-selection "Delete" action). */
+	/** Deletes specific Pipeline log rows by id (bulk-selection "Delete" action). */
 	public function bulk_delete_gmail_intake_log_rows( $ids ) {
 		$ids = array_values( array_filter( array_map( 'absint', (array) $ids ) ) );
 		if ( empty( $ids ) ) {
@@ -1310,7 +1340,7 @@ class AJCore_Gmail_Intake {
 				'error'    => UPLOAD_ERR_OK,
 				'size'     => filesize( $tmp_path ),
 			);
-			$result = self::admin()->upload_files_for_portal_customer( $customer->stripe_customer_id, $files, 'Gmail Intake', '' );
+			$result = self::admin()->upload_files_for_portal_customer( $customer->stripe_customer_id, $files, 'Pipeline', '' );
 			if ( is_wp_error( $result ) ) {
 				$errors[] = $result->get_error_message();
 			} else {
@@ -1428,7 +1458,7 @@ class AJCore_Gmail_Intake {
 						$suggested_filename  = $classified['filename'];
 						$suggested_category  = $classified['category'];
 						$related_link        = isset( $classified['link'] ) ? $classified['link'] : '';
-						$looks_like_document = empty( $classified['managed_elsewhere'] ); // e.g. flyers managed outside Gmail Intake
+						$looks_like_document = empty( $classified['managed_elsewhere'] ); // e.g. flyers managed outside Pipeline
 						$managed_note        = isset( $classified['managed_note'] ) ? (string) $classified['managed_note'] : '';
 					}
 				}
@@ -1479,7 +1509,7 @@ class AJCore_Gmail_Intake {
 	}
 
 	/**
-	 * Files the given (possibly staff-renamed) attachments from a Gmail Intake email to a
+	 * Files the given (possibly staff-renamed) attachments from a Pipeline email to a
 	 * customer's Files, and marks the log row filed. Each attachment carries its own category
 	 * (they can be different document types on the same email); $tag is shared across the whole
 	 * batch. This is the explicit "attach to customer with labels/tags" action — separate from the
@@ -1574,7 +1604,7 @@ class AJCore_Gmail_Intake {
 	}
 
 	/**
-	 * Notifies a customer that document(s) from the Gmail Intake mailbox were just filed to
+	 * Notifies a customer that document(s) from the Pipeline mailbox were just filed to
 	 * their portal Files — short and to the point (modeled after, but much shorter than, the real
 	 * NC SOS approval email): what was filed and a
 	 * getting-started checklist. Subject/heading/body are settings-overridable like every other
@@ -1704,7 +1734,7 @@ class AJCore_Gmail_Intake {
 		exit;
 	}
 
-	/** "Test Connection" button on the Gmail Intake settings page. */
+	/** "Test Connection" button on the Pipeline settings page. */
 	public function gmail_intake_test_connection( WP_REST_Request $request ) {
 		if ( ! class_exists( 'AJForms_Admin' ) ) {
 			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
@@ -1958,7 +1988,7 @@ class AJCore_Gmail_Intake {
 		return rest_ensure_response( $response );
 	}
 
-	/** "Reset" — clears the whole Gmail Intake activity log (local-only; doesn't touch the real mailbox). */
+	/** "Reset" — clears the whole Pipeline activity log (local-only; doesn't touch the real mailbox). */
 	public function reset_ops_gmail_intake_log( WP_REST_Request $request ) {
 		$admin = $this->get_gmail_intake_admin();
 		if ( is_wp_error( $admin ) ) {
@@ -1968,7 +1998,7 @@ class AJCore_Gmail_Intake {
 		return is_wp_error( $result ) ? $result : rest_ensure_response( array( 'success' => true ) );
 	}
 
-	/** Bulk-selection "Delete" action for the Gmail Intake queue. */
+	/** Bulk-selection "Delete" action for the Pipeline queue. */
 	public function bulk_delete_ops_gmail_intake_items( WP_REST_Request $request ) {
 		$admin = $this->get_gmail_intake_admin();
 		if ( is_wp_error( $admin ) ) {
@@ -2080,9 +2110,19 @@ class AJCore_Gmail_Intake {
 						<div class="ajforms-settings-help"><?php esc_html_e( 'Reference only — the actual account read is whichever Google login completes Connect below.', 'ajcore' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
-						<label for="gmail_intake_filter"><?php esc_html_e( 'Intake filter', 'ajcore' ); ?></label>
+						<label for="gmail_intake_filter_subject"><?php esc_html_e( 'Subject contains', 'ajcore' ); ?></label>
+						<input type="text" name="gmail_intake_filter_subject" id="gmail_intake_filter_subject" value="<?php echo esc_attr( $settings['gmail_intake_filter_subject'] ); ?>" placeholder="<?php echo esc_attr__( 'Secretary of State, Filing', 'ajcore' ); ?>">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Comma-separated; any one matches.', 'ajcore' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="gmail_intake_filter_sender"><?php esc_html_e( 'Sender contains', 'ajcore' ); ?></label>
+						<input type="text" name="gmail_intake_filter_sender" id="gmail_intake_filter_sender" value="<?php echo esc_attr( $settings['gmail_intake_filter_sender'] ); ?>" placeholder="<?php echo esc_attr__( 'sosnc.gov', 'ajcore' ); ?>">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Name or address, comma-separated; any one matches.', 'ajcore' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="gmail_intake_filter"><?php esc_html_e( 'Advanced Gmail search', 'ajcore' ); ?></label>
 						<input type="text" name="gmail_intake_filter" id="gmail_intake_filter" value="<?php echo esc_attr( $settings['gmail_intake_filter'] ); ?>">
-						<div class="ajforms-settings-help"><?php esc_html_e( 'Gmail search syntax. Blank = every message (spam and trash are always excluded).', 'ajcore' ); ?></div>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'Optional Gmail search syntax. A message enters if it matches the subject, the sender or this. All blank = every message (spam and trash are always excluded).', 'ajcore' ); ?></div>
 					</div>
 					<div class="ajforms-settings-field">
 						<label><input type="checkbox" name="gmail_intake_enabled" value="1" <?php checked( '1', (string) $settings['gmail_intake_enabled'] ); ?>> <?php esc_html_e( 'Enabled (read this mailbox into the pipeline)', 'ajcore' ); ?></label>
@@ -2293,9 +2333,9 @@ class AJCore_Gmail_Intake {
 	// ── Activity tab ──────────────────────────────────────────────────────────
 
 	/**
-	 * WP-admin fallback for the Gmail Intake activity log/needs-review queue, so staff can
+	 * WP-admin fallback for the Pipeline activity log/needs-review queue, so staff can
 	 * resolve unmatched emails even if AJOps is down — same data and same resolve action
-	 * (resolve_gmail_intake_needs_review()) as the AJOps "Gmail Intake" screen.
+	 * (resolve_gmail_intake_needs_review()) as the AJOps "Pipeline" screen.
 	 */
 	/** Current queue filters from the URL: status (pending|filed), source (all|gmail|zoho), search text. */
 	public static function queue_filters() {

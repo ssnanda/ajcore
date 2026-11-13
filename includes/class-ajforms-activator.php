@@ -2010,7 +2010,7 @@ class AJForms_Activator {
 	}
 
 	/**
-	 * Creates the Gmail Intake activity log table in the portal/shared DB. The main dbDelta
+	 * Creates the Pipeline activity log table in the portal/shared DB. The main dbDelta
 	 * run only creates it in the local WP DB, but in shared mode every read/write targets
 	 * the shared DB — without this, log inserts fail silently against a missing table.
 	 */

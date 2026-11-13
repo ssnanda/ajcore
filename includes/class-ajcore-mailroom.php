@@ -2,7 +2,7 @@
 /**
  * Mailroom: one Client Portal tab for the shared mailboxes AJCore reads.
  *
- * Replaces the separate "Gmail Intake" and "Zoho Mail" tabs. Two collapsed connection buttons (Gmail, Zoho; green =
+ * Replaces the separate "Pipeline" and "Zoho Mail" tabs. Two collapsed connection buttons (Gmail, Zoho; green =
  * connected, red = not) hold each mailbox's settings; below them a switch picks the Gmail intake queue (the automated
  * filing pipeline) or the live Zoho shared inbox. Old tab URLs (tab=gmail-intake / tab=zoho-mail) redirect here.
  */
@@ -93,6 +93,7 @@ class AJCore_Mailroom {
 			if ( '' !== $cur['s'] ) {
 				$args['s'] = $cur['s'];
 			}
+			$args['gi_processed'] = 1; // browsing the queue must not trigger a mailbox pass + reload each time
 			return self::url( 'gmail', $args );
 		};
 
@@ -159,7 +160,7 @@ class AJCore_Mailroom {
 			esc_attr__( 'Search subject, sender, company, customer…', 'ajcore' ),
 			esc_url( $link( array( 's' => '' ) ) )
 		);
-		printf( '<a class="ajmr-tile ajmr-tool" href="%1$s">%2$s<span>%3$s</span></a>', esc_url( self::url( 'gmail' ) ), self::icon( 'x', 16 ), esc_html__( 'Clear', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		printf( '<a class="ajmr-tile ajmr-tool" href="%1$s">%2$s<span>%3$s</span></a>', esc_url( self::url( 'gmail', array( 'gi_processed' => 1 ) ) ), self::icon( 'x', 16 ), esc_html__( 'Clear', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		printf( '<button type="button" id="ajcore-gmail-intake-refresh" class="ajmr-tile ajmr-tool">%1$s<span>%2$s</span></button>', self::icon( 'refresh', 16 ), esc_html__( 'Refresh', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		printf( '<button type="button" id="ajcore-gmail-intake-reset-log" class="ajmr-tile ajmr-tool is-danger">%1$s<span>%2$s</span></button>', self::icon( 'trash', 16 ), esc_html__( 'Reset log', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo '</div>';

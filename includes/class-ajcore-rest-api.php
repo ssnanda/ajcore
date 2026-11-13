@@ -3439,7 +3439,7 @@ class AJCore_REST_API {
 	/**
 	 * Number shown next to each AJOps menu item and on its dashboard tile.
 	 * Shape: route key => array( value, total (optional), label, alert (needs attention) ).
-	 * Extensions add their own through 'ajcore_ops_counts' (AJ Core RA: websites, profiles, e-sign, Gmail Intake).
+	 * Extensions add their own through 'ajcore_ops_counts' (AJ Core RA: websites, profiles, e-sign, Pipeline).
 	 */
 	public function get_ops_counts( WP_REST_Request $request ) {
 		global $wpdb;

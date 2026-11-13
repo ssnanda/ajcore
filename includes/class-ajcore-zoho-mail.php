@@ -63,6 +63,8 @@ class AJCore_Zoho_Mail {
 			'zoho_mail_client_secret'    => '',
 			'zoho_mail_account_email'    => '',
 			'zoho_mail_filter_text'      => (string) apply_filters( 'ajcore_zoho_mail_default_filter', '' ),
+			'zoho_mail_filter_subject'   => '',
+			'zoho_mail_filter_sender'    => '',
 			'zoho_mail_data_center'      => 'com',
 			'zoho_mail_access_token'     => '',
 			'zoho_mail_refresh_token'    => '',
@@ -135,7 +137,9 @@ class AJCore_Zoho_Mail {
 		$settings['zoho_mail_account_email'] = isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : '';
 		$dc                                  = isset( $_POST['zoho_mail_data_center'] ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com';
 		$settings['zoho_mail_data_center']   = in_array( $dc, array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? $dc : 'com';
-		$settings['zoho_mail_filter_text']   = isset( $_POST['zoho_mail_filter_text'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_filter_text'] ) ) : '';
+		foreach ( array( 'zoho_mail_filter_text', 'zoho_mail_filter_subject', 'zoho_mail_filter_sender' ) as $filter_key ) {
+			$settings[ $filter_key ] = isset( $_POST[ $filter_key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $filter_key ] ) ) : '';
+		}
 		$secret                              = isset( $_POST['zoho_mail_client_secret'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_secret'] ) ) ) : '';
 		if ( '' !== $secret ) { // blank keeps the saved secret
 			$settings['zoho_mail_client_secret'] = $secret;
@@ -610,19 +614,53 @@ class AJCore_Zoho_Mail {
 		return trim( (string) $this->get_settings()['zoho_mail_filter_text'] );
 	}
 
-	/** The filter as lowercase terms (comma-separated in settings; a message matches if it contains any of them). */
-	private function intake_terms() {
-		return array_values( array_filter( array_map( static function ( $t ) {
-			return strtolower( trim( $t ) );
-		}, explode( ',', $this->intake_filter_text() ) ), 'strlen' ) );
+	/** Lowercase comma-separated terms from a setting. */
+	private function terms( $text ) {
+		return array_map( 'strtolower', AJCore_Gmail_Intake::split_terms( $text ) );
 	}
 
-	/** Human description of the mailbox filter, for the "Filters & rules" panel. */
+	/** Human description of the mailbox filters, for the "Filters & rules" panel. */
 	public function intake_filter_description() {
-		$text = $this->intake_filter_text();
-		return '' !== $text
-			? sprintf( __( 'Shared mailbox %1$s: newest messages whose subject, sender or preview contains any of: %2$s', 'ajcore' ), $this->shared_address(), $text )
+		$s     = $this->get_settings();
+		$parts = array();
+		if ( '' !== trim( (string) $s['zoho_mail_filter_subject'] ) ) {
+			$parts[] = sprintf( __( 'subject contains any of: %s', 'ajcore' ), $s['zoho_mail_filter_subject'] );
+		}
+		if ( '' !== trim( (string) $s['zoho_mail_filter_sender'] ) ) {
+			$parts[] = sprintf( __( 'sender contains any of: %s', 'ajcore' ), $s['zoho_mail_filter_sender'] );
+		}
+		if ( '' !== trim( (string) $s['zoho_mail_filter_text'] ) ) {
+			$parts[] = sprintf( __( 'subject, sender or preview contains any of: %s', 'ajcore' ), $s['zoho_mail_filter_text'] );
+		}
+		return $parts
+			? sprintf( __( 'Shared mailbox %1$s: newest messages where %2$s', 'ajcore' ), $this->shared_address(), implode( ' OR ', $parts ) )
 			: sprintf( __( 'Shared mailbox %s: every message', 'ajcore' ), $this->shared_address() );
+	}
+
+	/** Whether a listed message passes the filters (subject OR sender OR anywhere; no filters = everything). */
+	private function passes_filters( array $row, array $subject_terms, array $sender_terms, array $any_terms ) {
+		if ( ! $subject_terms && ! $sender_terms && ! $any_terms ) {
+			return true;
+		}
+		$subject = strtolower( $row['subject'] );
+		$sender  = strtolower( $row['from_name'] . ' ' . $row['from_email'] );
+		foreach ( $subject_terms as $term ) {
+			if ( false !== strpos( $subject, $term ) ) {
+				return true;
+			}
+		}
+		foreach ( $sender_terms as $term ) {
+			if ( false !== strpos( $sender, $term ) ) {
+				return true;
+			}
+		}
+		$all = $subject . ' ' . $sender . ' ' . strtolower( $row['summary'] );
+		foreach ( $any_terms as $term ) {
+			if ( false !== strpos( $all, $term ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -631,7 +669,10 @@ class AJCore_Zoho_Mail {
 	 * Returns array( 'ids' => string[], 'query' => string, 'estimate' => int ) or WP_Error.
 	 */
 	public function intake_ids( $max, $show_all = false ) {
-		$terms  = $show_all ? array() : $this->intake_terms();
+		$s             = $this->get_settings();
+		$subject_terms = $show_all ? array() : $this->terms( $s['zoho_mail_filter_subject'] );
+		$sender_terms  = $show_all ? array() : $this->terms( $s['zoho_mail_filter_sender'] );
+		$any_terms     = $show_all ? array() : $this->terms( $s['zoho_mail_filter_text'] );
 		$max    = max( 1, min( 50, (int) $max ) );
 		// The Shared Mailbox API does not return messages in date order, so read up to 200, then sort newest first.
 		$hits = array();
@@ -641,14 +682,7 @@ class AJCore_Zoho_Mail {
 				return $rows;
 			}
 			foreach ( $rows as $row ) {
-				$hay = strtolower( $row['subject'] . ' ' . $row['from_name'] . ' ' . $row['from_email'] . ' ' . $row['summary'] );
-				$hit = empty( $terms );
-				foreach ( $terms as $term ) {
-					if ( false !== strpos( $hay, $term ) ) {
-						$hit = true;
-						break;
-					}
-				}
+				$hit = $this->passes_filters( $row, $subject_terms, $sender_terms, $any_terms );
 				if ( $hit ) {
 					$hits[ $row['message_id'] ] = $row['received_at'];
 				}
@@ -813,7 +847,9 @@ class AJCore_Zoho_Mail {
 					<tr><th><label for="zoho_mail_client_id"><?php esc_html_e( 'Client ID', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_id" id="zoho_mail_client_id" value="<?php echo esc_attr( $settings['zoho_mail_client_id'] ); ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_client_secret"><?php esc_html_e( 'Client Secret', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_secret" id="zoho_mail_client_secret" value="" placeholder="<?php echo ! empty( $settings['zoho_mail_client_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajcore' ) : ''; ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_account_email"><?php esc_html_e( 'Shared Mailbox Address', 'ajcore' ); ?></label></th><td><input type="email" class="regular-text" name="zoho_mail_account_email" id="zoho_mail_account_email" value="<?php echo esc_attr( $settings['zoho_mail_account_email'] ); ?>"></td></tr>
-					<tr><th><label for="zoho_mail_filter_text"><?php esc_html_e( 'Intake filter', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_filter_text" id="zoho_mail_filter_text" value="<?php echo esc_attr( $settings['zoho_mail_filter_text'] ); ?>"><p class="description"><?php esc_html_e( 'Comma-separated. A message enters the pipeline if its subject, sender or preview contains any of these. Blank = every message.', 'ajcore' ); ?></p></td></tr>
+					<tr><th><label for="zoho_mail_filter_subject"><?php esc_html_e( 'Subject contains', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_filter_subject" id="zoho_mail_filter_subject" value="<?php echo esc_attr( $settings['zoho_mail_filter_subject'] ); ?>" placeholder="<?php echo esc_attr__( 'Secretary of State, Filing', 'ajcore' ); ?>"><p class="description"><?php esc_html_e( 'Comma-separated; any one matches.', 'ajcore' ); ?></p></td></tr>
+					<tr><th><label for="zoho_mail_filter_sender"><?php esc_html_e( 'Sender contains', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_filter_sender" id="zoho_mail_filter_sender" value="<?php echo esc_attr( $settings['zoho_mail_filter_sender'] ); ?>" placeholder="<?php echo esc_attr__( 'sosnc.gov', 'ajcore' ); ?>"><p class="description"><?php esc_html_e( 'Name or address, comma-separated; any one matches.', 'ajcore' ); ?></p></td></tr>
+					<tr><th><label for="zoho_mail_filter_text"><?php esc_html_e( 'Anywhere', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_filter_text" id="zoho_mail_filter_text" value="<?php echo esc_attr( $settings['zoho_mail_filter_text'] ); ?>"><p class="description"><?php esc_html_e( 'Optional: matches the subject, sender or preview. A message enters if it matches the subject, the sender or this. All blank = every message.', 'ajcore' ); ?></p></td></tr>
 					<tr><th><label for="zoho_mail_data_center"><?php esc_html_e( 'Data center', 'ajcore' ); ?></label></th><td><select name="zoho_mail_data_center" id="zoho_mail_data_center"><?php foreach ( array( 'com' => 'zoho.com (US)', 'eu' => 'zoho.eu', 'in' => 'zoho.in', 'com.au' => 'zoho.com.au', 'jp' => 'zoho.jp' ) as $dc_key => $dc_label ) : ?><option value="<?php echo esc_attr( $dc_key ); ?>" <?php selected( $settings['zoho_mail_data_center'], $dc_key ); ?>><?php echo esc_html( $dc_label ); ?></option><?php endforeach; ?></select></td></tr>
 				</table>
 				<p><button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajcore' ); ?></button></p>
