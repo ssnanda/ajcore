@@ -2087,7 +2087,7 @@ class AJCore_Gmail_Intake {
 					<a class="button" href="<?php echo esc_url( $disconnect_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Disconnect Gmail Intake? Scheduled processing stops until reconnected.', 'ajcore' ) ); ?>');"><?php esc_html_e( 'Disconnect', 'ajcore' ); ?></a>
 				<?php endif; ?>
 			</div>
-			<p class="ajforms-settings-help" style="margin:2px 0 0;"><?php esc_html_e( 'By default, Process Now only matches messages with "Secretary of State" in the subject (a real NC Secretary of State filing notification) or "sosnc.gov" anywhere in the message. No sender is excluded — real filing forwards come from the same address as other mail in this box. Check the box to process and log every message in the mailbox instead, with a table below showing exactly what was found.', 'ajcore' ); ?></p>
+			<p class="ajforms-settings-help" style="margin:2px 0 0;"><?php esc_html_e( 'Process Now runs one pass over every connected mailbox (Gmail and Zoho), each with its own Intake filter (see Filters & rules). Check the box to ignore the filters and read everything.', 'ajcore' ); ?></p>
 
 			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-test-result"></div>
 			<div class="ajforms-zoho-test-result" id="ajforms-gmail-intake-process-result"></div>
@@ -2200,7 +2200,7 @@ class AJCore_Gmail_Intake {
 							if ( data && data.success ) {
 								html += '<h4 style="color:#166534;">✓ <?php echo esc_js( __( 'Processed', 'ajcore' ) ); ?>' + ( showAll ? ' <span style="font-weight:400;color:#6b7280;">(<?php echo esc_js( __( 'all mailbox messages, filters ignored', 'ajcore' ) ); ?>)</span>' : '' ) + '</h4>';
 								html += '<p style="margin:0;"><?php echo esc_js( __( 'Checked:', 'ajcore' ) ); ?> ' + data.checked + ' — <?php echo esc_js( __( 'Matched (pending file):', 'ajcore' ) ); ?> ' + data.matched_pending_file + ' — <?php echo esc_js( __( 'Needs review:', 'ajcore' ) ); ?> ' + data.needs_review + '</p>';
-								html += '<p style="margin:6px 0 0;color:#6b7280;font-size:12px;"><?php echo esc_js( __( 'Gmail query used:', 'ajcore' ) ); ?> <code>' + ( data.query || '' ) + '</code> — <?php echo esc_js( __( 'result size estimate:', 'ajcore' ) ); ?> ' + ( data.result_size_estimate != null ? data.result_size_estimate : '?' ) + '</p>';
+								html += '<p style="margin:6px 0 0;color:#6b7280;font-size:12px;"><?php echo esc_js( __( 'Filters used:', 'ajcore' ) ); ?> <code>' + ( data.query || '' ) + '</code> — <?php echo esc_js( __( 'result size estimate:', 'ajcore' ) ); ?> ' + ( data.result_size_estimate != null ? data.result_size_estimate : '?' ) + '</p>';
 								if ( data.errors && data.errors.length ) {
 									html += '<p style="margin:8px 0 0;color:#b91c1c;">' + data.errors.join( '<br>' ) + '</p>';
 								}
@@ -2223,7 +2223,7 @@ class AJCore_Gmail_Intake {
 									} );
 									html += '</tbody></table>';
 								} else {
-									html += '<p style="margin:8px 0 0;color:#6b7280;">' + '<?php echo esc_js( __( 'No messages matched this query — try the "Show all mailbox messages" checkbox to rule out the content filter.', 'ajcore' ) ); ?>' + '</p>';
+									html += '<p style="margin:8px 0 0;color:#6b7280;">' + '<?php echo esc_js( __( 'No messages matched the filters — try the "Show all mailbox messages" checkbox to rule out the filter.', 'ajcore' ) ); ?>' + '</p>';
 								}
 							} else {
 								html += '<h4 style="color:#b91c1c;">✗ <?php echo esc_js( __( 'Processing failed', 'ajcore' ) ); ?></h4>';
