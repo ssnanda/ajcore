@@ -22,7 +22,7 @@ class AJCore_Mailroom {
 	}
 
 	public static function admin_tab( $tabs ) {
-		$tabs[ self::TAB ] = array( 'label' => __( 'Mailroom', 'ajcore' ) );
+		$tabs[ self::TAB ] = array( 'label' => __( 'Email Pipeline', 'ajcore' ) );
 		return $tabs;
 	}
 
@@ -77,7 +77,7 @@ class AJCore_Mailroom {
 		$zm->render_notices();
 
 		// Header: title + the two connection buttons.
-		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Mailroom', 'ajcore' ) . '</h2></div><div class="ajmr-chips">';
+		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Email Pipeline', 'ajcore' ) . '</h2></div><div class="ajmr-chips">';
 		foreach ( $sources as $key => $s ) {
 			printf(
 				'<button type="button" class="ajmr-chip %1$s" data-target="ajmr-panel-%2$s" aria-expanded="false" title="%3$s"><i class="ajmr-dot"></i>%4$s<span class="ajmr-chev">%5$s</span></button>',

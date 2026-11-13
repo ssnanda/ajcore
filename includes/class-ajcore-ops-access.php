@@ -29,7 +29,7 @@ class AJCore_Ops_Access {
 			'live-chat'         => 'Live Chat',
 			'files'             => 'Files',
 			'emails'            => 'Email Log',
-			'mail'              => 'Physical Mail',
+			'mail'              => 'Postal Mail',
 			'gmail-intake'      => 'Gmail Intake',
 			'esign'             => 'E-Signatures',
 			'guest-log'         => 'Guest Log',
