@@ -8877,7 +8877,7 @@ class AJCore_REST_API {
 				return new WP_Error( 'ajcore_one_lead_only', __( 'Send to one lead at a time.', 'ajforms' ), array( 'status' => 400 ) );
 			}
 			$admin  = AJForms_Admin::$instance ? AJForms_Admin::$instance : new AJForms_Admin();
-			$result = $admin->send_lead_custom_email( $ids[0], (string) $request->get_param( 'subject' ), (string) $request->get_param( 'body' ) );
+			$result = $admin->send_lead_custom_email( $ids[0], (string) $request->get_param( 'subject' ), (string) $request->get_param( 'body' ), sanitize_key( (string) $request->get_param( 'profile' ) ) );
 			if ( is_wp_error( $result ) ) {
 				return new WP_Error( $result->get_error_code(), $result->get_error_message(), array( 'status' => 400 ) );
 			}

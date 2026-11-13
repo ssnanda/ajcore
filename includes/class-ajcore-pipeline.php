@@ -612,6 +612,22 @@ class AJCore_Pipeline {
 		echo '</div></details>';
 	}
 
+	/** SQL that hides log rows of mailboxes that are disconnected (a disconnected mailbox counts as empty). '' when both are connected. */
+	private function disconnected_sql() {
+		$parts = array();
+		if ( ! $this->is_connected() ) {
+			$parts[] = "gmail_message_id LIKE 'zoho:%%'";
+		}
+		if ( ! ( class_exists( 'AJCore_Zoho_Mail' ) && AJCore_Zoho_Mail::instance()->is_connected() ) ) {
+			$parts[] = "gmail_message_id NOT LIKE 'zoho:%%'";
+		}
+		// Both disconnected: nothing qualifies; one disconnected: keep only the other source.
+		if ( 2 === count( $parts ) ) {
+			return '1=0';
+		}
+		return $parts ? '( ' . $parts[0] . ' )' : '';
+	}
+
 	/** Entries waiting on staff (needs review, matched but not filed, no attachment). */
 	public function pending_count() {
 		if ( ! $this->ensure_pipeline_log_table() ) {
@@ -619,9 +635,10 @@ class AJCore_Pipeline {
 		}
 		$pdb = $this->get_pdb();
 		list( $filter_sql, $filter_params ) = $this->display_filter( $pdb );
-		$sql = "SELECT COUNT(*) FROM `{$this->get_pipeline_log_table()}` WHERE status IN ('needs_review','matched_pending_file','skipped_no_attachment')" . ( '' !== $filter_sql ? ' AND ' . $filter_sql : '' );
+		$conn_sql = $this->disconnected_sql();
+		$sql = "SELECT COUNT(*) FROM `{$this->get_pipeline_log_table()}` WHERE status IN ('needs_review','matched_pending_file','skipped_no_attachment')" . ( '' !== $filter_sql ? ' AND ' . $filter_sql : '' ) . ( '' !== $conn_sql ? ' AND ' . $conn_sql : '' );
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
-		return (int) $pdb->get_var( $filter_params ? $pdb->prepare( $sql, $filter_params ) : $sql );
+		return (int) $pdb->get_var( $filter_params ? $pdb->prepare( $sql, $filter_params ) : str_replace( '%%', '%', $sql ) );
 	}
 
 	/** Resolve form posts from the Pipeline tab. */
@@ -2620,7 +2637,9 @@ class AJCore_Pipeline {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_pipeline_log_table();
 		list( $filter_sql, $filter_params ) = $this->display_filter( $pdb );
-		$where = '' !== $filter_sql ? ' WHERE ' . $filter_sql : '';
+		$conn_sql = $this->disconnected_sql();
+		$conds    = array_filter( array( $filter_sql, $conn_sql ) );
+		$where    = $conds ? ' WHERE ' . implode( ' AND ', $conds ) : '';
 		$sql   = "SELECT (gmail_message_id LIKE 'zoho:%%') AS is_zoho, status, COUNT(*) AS n FROM `{$table}`{$where} GROUP BY is_zoho, status";
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		$rows = (array) $pdb->get_results( $filter_params ? $pdb->prepare( $sql, $filter_params ) : str_replace( '%%', '%', $sql ) );

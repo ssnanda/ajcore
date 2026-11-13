@@ -6355,7 +6355,7 @@ class AJForms_Admin {
 	/** Sends a staff-written (or AI-drafted, staff-approved) email to one lead through the same branded
 	 *  template, sender settings and SMTP profile (Metered SMTP / ZeptoMail) as the follow-up email, and
 	 *  logs it as a lead note. No duplicate guard: a person reviewed and clicked Send. */
-	public function send_lead_custom_email( $lead_id, $subject, $body ) {
+	public function send_lead_custom_email( $lead_id, $subject, $body, $profile = '' ) {
 		$wpdb        = $this->get_leads_db();
 		$leads_table = $this->get_leads_table();
 		$row         = $wpdb->get_row( $wpdb->prepare( "SELECT id, lead_data, site_uuid FROM `{$leads_table}` WHERE id = %d", absint( $lead_id ) ), ARRAY_A );
@@ -6376,6 +6376,17 @@ class AJForms_Admin {
 		$settings   = $this->get_plugin_settings();
 		$brand      = $this->get_lead_brand_context( isset( $row['site_uuid'] ) ? (string) $row['site_uuid'] : '' );
 		$sender     = $this->resolve_email_sender( $settings, $this->get_customer_brand_setting_key( 'lead_followup_from_email', $brand ), $this->get_customer_brand_setting_key( 'lead_followup_from_name', $brand ) );
+		// Staff can pick the SMTP profile for this send: smtp = non-metered, smtp2 = metered. Its From goes with it.
+		if ( in_array( $profile, array( 'smtp', 'smtp2' ), true ) && function_exists( 'ajcore_get_mail_profile_from' ) ) {
+			$pf = ajcore_get_mail_profile_from( $settings, $profile );
+			$sender['profile'] = $profile;
+			if ( ! empty( $pf['from_email'] ) && is_email( $pf['from_email'] ) ) {
+				$sender['from_email'] = $pf['from_email'];
+				if ( ! empty( $pf['from_name'] ) ) {
+					$sender['from_name'] = $pf['from_name'];
+				}
+			}
+		}
 		$from_email = $sender['from_email'];
 		$from_name  = $sender['from_name'];
 		$site_name  = $brand['site_name'];

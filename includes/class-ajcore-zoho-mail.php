@@ -594,11 +594,12 @@ class AJCore_Zoho_Mail {
 	 * Labels (Zoho calls them tags) of a shared mailbox: array of [ id, name ]. The response layout isn't pinned down by the docs, so
 	 * both data[] and data.tags[] are accepted.
 	 */
-	public function list_labels( $address = '' ) {
+	public function list_labels( $address = '', &$raw = null ) {
 		$data = $this->shared_get( '/tags', array(), $address );
 		if ( is_wp_error( $data ) ) {
 			return $data;
 		}
+		$raw = $data; // for diagnosing an unexpected response shape
 		$rows = isset( $data['data']['tags'] ) && is_array( $data['data']['tags'] ) ? $data['data']['tags'] : ( isset( $data['data'] ) && is_array( $data['data'] ) ? $data['data'] : array() );
 		$out  = array();
 		foreach ( $rows as $row ) {

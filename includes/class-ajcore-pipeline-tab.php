@@ -65,7 +65,7 @@ class AJCore_Pipeline_Tab {
 
 	/** Title plus the sub-pipeline switch (shown only when there is more than one). */
 	private static function render_header( array $views, $current ) {
-		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		if ( count( $views ) > 1 ) {
 			echo '<nav class="ajmr-views">';
 			foreach ( $views as $key => $view ) {
@@ -80,7 +80,6 @@ class AJCore_Pipeline_Tab {
 			}
 			echo '</nav>';
 		}
-		echo '</div>';
 	}
 
 	/** Bookmarks, emails and OAuth return links that still point at the two old tabs. */
@@ -392,10 +391,12 @@ class AJCore_Pipeline_Tab {
 		.ajmr-tile-txt strong { font-size:22px; }
 		.ajmr-tile-txt strong.is-alert { color:#b45309; }
 		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
-		.ajmr-views { display:inline-flex; gap:4px; padding:4px; background:#eef2ff; border-radius:12px; }
-		.ajmr-views a { display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border-radius:9px; font-size:13px; font-weight:600; color:#4338ca; text-decoration:none; }
+		.ajra-pu-day td { background:#f1f5f9; font-weight:700; font-size:12px; letter-spacing:.03em; color:#334155; padding:7px 10px; }
+		.ajra-pu-mail td { font-size:12px; color:#64748b; padding:3px 10px 3px 14px; border-top:0; }
+		.ajmr-views { display:flex; gap:8px; margin:0 0 14px; }
+		.ajmr-views a { display:inline-flex; align-items:center; gap:9px; padding:11px 22px; border-radius:12px; font-size:15px; font-weight:700; color:#4338ca; text-decoration:none; background:#eef2ff; border:1px solid #e0e7ff; }
 		.ajmr-views a:hover { background:rgba(255,255,255,.6); }
-		.ajmr-views a.is-on { background:#fff; color:var(--ajmr-ink); box-shadow:0 1px 3px rgba(15,23,42,.12); }
+		.ajmr-views a.is-on { background:#4f46e5; border-color:#4f46e5; color:#fff; box-shadow:0 2px 6px rgba(79,70,229,.3); }
 		.ajmr-select { padding:8px 12px; min-width:150px; font-size:13px; font-weight:600; color:#334155; height:auto; }
 		.ajmr-modal { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100000; display:flex; align-items:center; justify-content:center; padding:20px; }
 		.ajmr-modal[hidden] { display:none; }
