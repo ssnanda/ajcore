@@ -633,8 +633,9 @@ class AJCore_Zoho_Mail {
 	public function intake_ids( $max, $show_all = false ) {
 		$terms  = $show_all ? array() : $this->intake_terms();
 		$max    = max( 1, min( 50, (int) $max ) );
-		$ids    = array();
-		for ( $page = 0; $page < 4 && count( $ids ) < $max; $page++ ) {
+		// The Shared Mailbox API does not return messages in date order, so read up to 200, then sort newest first.
+		$hits = array();
+		for ( $page = 0; $page < 4; $page++ ) {
 			$rows = $this->get_recent_messages( 50, 'all', $page * 50 );
 			if ( is_wp_error( $rows ) ) {
 				return $rows;
@@ -649,16 +650,15 @@ class AJCore_Zoho_Mail {
 					}
 				}
 				if ( $hit ) {
-					$ids[] = $row['message_id'];
-					if ( count( $ids ) >= $max ) {
-						break;
-					}
+					$hits[ $row['message_id'] ] = $row['received_at'];
 				}
 			}
 			if ( count( $rows ) < 50 ) {
 				break;
 			}
 		}
+		arsort( $hits ); // received_at is "Y-m-d H:i:s", so string order is date order
+		$ids = array_slice( array_map( 'strval', array_keys( $hits ) ), 0, $max );
 		return array( 'ids' => $ids, 'query' => $this->intake_filter_description(), 'estimate' => count( $ids ) );
 	}
 

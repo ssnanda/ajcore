@@ -545,8 +545,7 @@ class AJCore_Gmail_Intake {
 		}
 		$token_data = json_decode( wp_remote_retrieve_body( $token_response ), true );
 		if ( empty( $token_data['access_token'] ) ) {
-			$message = ! empty( $token_data['error_description'] ) ? (string) $token_data['error_description'] : ( ! empty( $token_data['error'] ) ? (string) $token_data['error'] : __( 'Google did not return an access token.', 'ajcore' ) );
-			return new WP_Error( 'gmail_intake_token_exchange_failed', $message );
+			return new WP_Error( 'gmail_intake_token_exchange_failed', $this->gmail_intake_token_error( 'exchange', $token_response, (array) $token_data ) );
 		}
 
 		$access_token = sanitize_text_field( (string) $token_data['access_token'] );
@@ -577,6 +576,16 @@ class AJCore_Gmail_Intake {
 		$this->store_settings( $settings );
 
 		return true;
+	}
+
+	/** Readable token-endpoint failure: HTTP status, Google's error code and description, plus the raw reply for the debug panel. */
+	private function gmail_intake_token_error( $step, $response, $data ) {
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		$code   = ! empty( $data['error'] ) ? (string) $data['error'] : '';
+		$desc   = ! empty( $data['error_description'] ) ? (string) $data['error_description'] : '';
+		set_transient( 'ajcore_gmail_intake_api_debug', array( 'url' => 'https://oauth2.googleapis.com/token (' . $step . ')', 'status' => $status, 'body' => wp_remote_retrieve_body( $response ), 'at' => current_time( 'mysql' ) ), 15 * MINUTE_IN_SECONDS );
+		$hint = in_array( $status, array( 400, 401 ), true ) ? ' ' . __( 'If this persists, Disconnect and Connect Gmail again (the saved refresh token or client secret may be invalid).', 'ajcore' ) : '';
+		return sprintf( 'Google token %1$s failed (HTTP %2$d%3$s%4$s).%5$s', $step, $status, '' !== $code ? ', ' . $code : '', '' !== $desc ? ': ' . $desc : '', $hint );
 	}
 
 	public function get_valid_gmail_intake_access_token() {
@@ -615,8 +624,7 @@ class AJCore_Gmail_Intake {
 		}
 		$data = json_decode( wp_remote_retrieve_body( $response ), true );
 		if ( empty( $data['access_token'] ) ) {
-			$message = ! empty( $data['error_description'] ) ? (string) $data['error_description'] : ( ! empty( $data['error'] ) ? (string) $data['error'] : __( 'Google did not return a refreshed access token.', 'ajcore' ) );
-			return new WP_Error( 'gmail_intake_refresh_failed', $message );
+			return new WP_Error( 'gmail_intake_refresh_failed', $this->gmail_intake_token_error( 'refresh', $response, (array) $data ) );
 		}
 
 		$access_token = sanitize_text_field( (string) $data['access_token'] );
