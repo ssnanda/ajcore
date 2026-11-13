@@ -22,7 +22,7 @@ class AJCore_Mailroom {
 	}
 
 	public static function admin_tab( $tabs ) {
-		$tabs[ self::TAB ] = array( 'label' => __( 'Email Pipeline', 'ajcore' ) );
+		$tabs[ self::TAB ] = array( 'label' => __( 'Pipeline', 'ajcore' ) );
 		return $tabs;
 	}
 
@@ -52,6 +52,10 @@ class AJCore_Mailroom {
 			'alert'   => '<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>',
 			'check'   => '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
 			'chevron' => '<path d="m6 9 6 6 6-6"/>',
+			'search'  => '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+			'x'       => '<path d="M18 6 6 18M6 6l12 12"/>',
+			'refresh' => '<path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/>',
+			'trash'   => '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>',
 			'cog'     => '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
 		);
 		return '<svg width="' . (int) $size . '" height="' . (int) $size . '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . ( $paths[ $name ] ?? '' ) . '</svg>';
@@ -63,34 +67,104 @@ class AJCore_Mailroom {
 		}
 		$gi = AJCore_Gmail_Intake::instance();
 		$zm = AJCore_Zoho_Mail::instance();
+		$f  = AJCore_Gmail_Intake::queue_filters();
+		$n  = $gi->queue_counts();
 
-		// Gmail: green = connected and on, grey = connected but switched off, red = not connected.
-		$gmail_state = $gi->is_active() ? 'is-ok' : ( $gi->is_connected() ? 'is-off' : 'is-bad' );
-		$gmail_tip   = $gi->is_active() ? __( 'Connected. Click for settings.', 'ajcore' ) : ( $gi->is_connected() ? __( 'Connected but switched off. Click for settings.', 'ajcore' ) : __( 'Not connected. Click for settings.', 'ajcore' ) );
-		$sources     = array(
-			'gmail' => array( 'label' => 'Gmail', 'state' => $gmail_state, 'tip' => $gmail_tip ),
-			'zoho'  => array( 'label' => 'Zoho', 'state' => $zm->is_connected() ? 'is-ok' : 'is-bad', 'tip' => $zm->is_connected() ? __( 'Connected. Click for settings.', 'ajcore' ) : __( 'Not connected. Click for settings.', 'ajcore' ) ),
+		// Connection state: green = connected and on, grey = connected but switched off (Gmail), red = not connected.
+		$state = array(
+			'gmail' => $gi->is_active() ? 'is-ok' : ( $gi->is_connected() ? 'is-off' : 'is-bad' ),
+			'zoho'  => $zm->is_connected() ? 'is-ok' : 'is-bad',
 		);
+		$tips = array(
+			'is-ok'  => __( 'Connected', 'ajcore' ),
+			'is-off' => __( 'Connected but switched off', 'ajcore' ),
+			'is-bad' => __( 'Not connected', 'ajcore' ),
+		);
+		// A tile link keeps the other filters; the search box is added on top by JS.
+		$link = static function ( array $over ) use ( $f ) {
+			$args = array();
+			$cur  = array_merge( array( 'gi_source' => $f['source'], 'gi_status' => $f['status'], 's' => $f['search'] ), $over );
+			if ( 'all' !== $cur['gi_source'] ) {
+				$args['gi_source'] = $cur['gi_source'];
+			}
+			if ( 'pending' !== $cur['gi_status'] ) {
+				$args['gi_status'] = $cur['gi_status'];
+			}
+			if ( '' !== $cur['s'] ) {
+				$args['s'] = $cur['s'];
+			}
+			return self::url( 'gmail', $args );
+		};
 
 		self::styles();
 		echo '<div class="ajmr">';
 		$zm->render_notices();
+		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 
-		// Header: title + the two connection buttons.
-		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Email Pipeline', 'ajcore' ) . '</h2></div><div class="ajmr-chips">'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-		foreach ( $sources as $key => $s ) {
+		// Row 1: mailbox tiles (click = filter the queue to that mailbox; gear = its settings).
+		echo '<div class="ajmr-row">';
+		$tiles = array(
+			'all'   => array( 'label' => __( 'All mailboxes', 'ajcore' ), 'icon' => 'mail', 'cls' => 'is-all' ),
+			'gmail' => array( 'label' => 'Gmail', 'icon' => 'mail', 'cls' => 'is-gmail' ),
+			'zoho'  => array( 'label' => 'Zoho', 'icon' => 'inbox', 'cls' => 'is-zoho' ),
+		);
+		foreach ( $tiles as $key => $tile ) {
+			$pending = (int) $n[ $key ]['pending'];
+			printf( '<div class="ajmr-tile %1$s%2$s">', esc_attr( $tile['cls'] ), $f['source'] === $key ? ' is-on' : '' );
 			printf(
-				'<button type="button" class="ajmr-chip %1$s" data-target="ajmr-panel-%2$s" aria-expanded="false" title="%3$s"><i class="ajmr-dot"></i>%4$s<span class="ajmr-chev">%5$s</span></button>',
-				esc_attr( $s['state'] ),
-				esc_attr( $key ),
-				esc_attr( $s['tip'] ),
-				esc_html( $s['label'] ),
-				self::icon( 'chevron', 14 ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				'<a class="ajmr-tile-main" href="%1$s"><span class="ajmr-tile-ico">%2$s</span><span class="ajmr-tile-txt"><small>%3$s</small><strong%4$s>%5$d</strong><em>%6$s</em></span></a>',
+				esc_url( $link( array( 'gi_source' => $key ) ) ),
+				self::icon( $tile['icon'], 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				esc_html( $tile['label'] ),
+				$pending > 0 ? ' class="is-alert"' : '',
+				$pending,
+				esc_html__( 'pending', 'ajcore' )
 			);
+			if ( 'all' !== $key ) {
+				printf(
+					'<span class="ajmr-tile-conn"><i class="ajmr-dot %1$s" title="%2$s"></i><button type="button" class="ajmr-gear" data-target="ajmr-panel-%3$s" aria-expanded="false" title="%4$s">%5$s</button></span>',
+					esc_attr( $state[ $key ] ),
+					esc_attr( $tips[ $state[ $key ] ] ),
+					esc_attr( $key ),
+					esc_attr__( 'Connection settings', 'ajcore' ),
+					self::icon( 'cog', 14 ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				);
+			}
+			echo '</div>';
 		}
-		echo '</div></div>';
+		echo '</div>';
 
-		// Collapsed connection panels.
+		// Row 2: status tiles, then search / clear / refresh / reset as tiles. Everything filters as soon as it is picked.
+		echo '<div class="ajmr-row ajmr-row-tools">';
+		printf(
+			'<a class="ajmr-tile ajmr-stat is-amber%1$s" href="%2$s"><span class="ajmr-tile-ico">%3$s</span><span class="ajmr-tile-txt"><small>%4$s</small><strong>%5$d</strong></span></a>',
+			'pending' === $f['status'] ? ' is-on' : '',
+			esc_url( $link( array( 'gi_status' => 'pending' ) ) ),
+			self::icon( 'alert', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			esc_html__( 'Pending', 'ajcore' ),
+			(int) $n[ $f['source'] ]['pending']
+		);
+		printf(
+			'<a class="ajmr-tile ajmr-stat is-green%1$s" href="%2$s"><span class="ajmr-tile-ico">%3$s</span><span class="ajmr-tile-txt"><small>%4$s</small><strong>%5$d</strong></span></a>',
+			'filed' === $f['status'] ? ' is-on' : '',
+			esc_url( $link( array( 'gi_status' => 'filed' ) ) ),
+			self::icon( 'check', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			esc_html__( 'Filed', 'ajcore' ),
+			(int) $n[ $f['source'] ]['filed']
+		);
+		printf(
+			'<label class="ajmr-tile ajmr-search"><span class="ajmr-tile-ico">%1$s</span><input type="search" id="ajmr-search" value="%2$s" placeholder="%3$s" data-url="%4$s" autocomplete="off"></label>',
+			self::icon( 'search', 18 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			esc_attr( $f['search'] ),
+			esc_attr__( 'Search subject, sender, company, customer…', 'ajcore' ),
+			esc_url( $link( array( 's' => '' ) ) )
+		);
+		printf( '<a class="ajmr-tile ajmr-tool" href="%1$s">%2$s<span>%3$s</span></a>', esc_url( self::url( 'gmail' ) ), self::icon( 'x', 16 ), esc_html__( 'Clear', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		printf( '<button type="button" id="ajcore-gmail-intake-refresh" class="ajmr-tile ajmr-tool">%1$s<span>%2$s</span></button>', self::icon( 'refresh', 16 ), esc_html__( 'Refresh', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		printf( '<button type="button" id="ajcore-gmail-intake-reset-log" class="ajmr-tile ajmr-tool is-danger">%1$s<span>%2$s</span></button>', self::icon( 'trash', 16 ), esc_html__( 'Reset log', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		echo '</div>';
+
+		// Collapsed connection panels (opened by the tile gears).
 		echo '<section id="ajmr-panel-gmail" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Gmail', 'ajcore' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		$gi->render_connection_panel();
 		echo '</section><section id="ajmr-panel-zoho" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Zoho', 'ajcore' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
@@ -99,7 +173,9 @@ class AJCore_Mailroom {
 
 		if ( $gi->is_active() || $zm->is_connected() ) {
 			$gi->render_rules_panel();
+			echo '<div class="ajmr-list">';
 			$gi->render_queue();
+			echo '</div>';
 		} else {
 			self::empty_state( __( 'No mailbox is connected.', 'ajcore' ) );
 		}
@@ -108,20 +184,33 @@ class AJCore_Mailroom {
 		?>
 		<script>
 		( function () {
-			var chips = document.querySelectorAll( '.ajmr-chip' );
-			chips.forEach( function ( chip ) {
-				chip.addEventListener( 'click', function () {
-					var target = document.getElementById( chip.getAttribute( 'data-target' ) );
+			var gears = document.querySelectorAll( '.ajmr-gear' );
+			gears.forEach( function ( gear ) {
+				gear.addEventListener( 'click', function () {
+					var target = document.getElementById( gear.getAttribute( 'data-target' ) );
 					var open = target && target.hasAttribute( 'hidden' );
 					document.querySelectorAll( '.ajmr-panel' ).forEach( function ( p ) { p.setAttribute( 'hidden', '' ); } );
-					chips.forEach( function ( c ) { c.setAttribute( 'aria-expanded', 'false' ); c.classList.remove( 'is-open' ); } );
-					if ( open ) { target.removeAttribute( 'hidden' ); chip.setAttribute( 'aria-expanded', 'true' ); chip.classList.add( 'is-open' ); }
+					gears.forEach( function ( g ) { g.setAttribute( 'aria-expanded', 'false' ); g.classList.remove( 'is-open' ); } );
+					if ( open ) { target.removeAttribute( 'hidden' ); gear.setAttribute( 'aria-expanded', 'true' ); gear.classList.add( 'is-open' ); target.scrollIntoView( { behavior: 'smooth', block: 'nearest' } ); }
 				} );
 			} );
 			// After a save / connect / disconnect / error, open the panel that action belongs to so its message is visible.
-			var qs = window.location.search;
-			var want = /gmail-intake-(saved|connected|disconnected|error)/.test( qs ) ? 'ajmr-panel-gmail' : '';
-			if ( want ) { var c = document.querySelector( '.ajmr-chip[data-target="' + want + '"]' ); if ( c ) { c.click(); } }
+			if ( /gmail-intake-(saved|connected|disconnected|error)/.test( window.location.search ) ) {
+				var g = document.querySelector( '.ajmr-gear[data-target="ajmr-panel-gmail"]' ); if ( g ) { g.click(); }
+			}
+			// Search filters as you type (short pause), no Filter button.
+			var box = document.getElementById( 'ajmr-search' );
+			if ( box ) {
+				var timer = null;
+				var go = function () {
+					var url = new URL( box.getAttribute( 'data-url' ), window.location.href );
+					if ( box.value.trim() !== '' ) { url.searchParams.set( 's', box.value.trim() ); }
+					window.location.assign( url.toString() );
+				};
+				box.addEventListener( 'input', function () { clearTimeout( timer ); timer = setTimeout( go, 450 ); } );
+				box.addEventListener( 'keydown', function ( e ) { if ( 'Enter' === e.key ) { e.preventDefault(); clearTimeout( timer ); go(); } } );
+				if ( box.value ) { box.focus(); box.setSelectionRange( box.value.length, box.value.length ); }
+			}
 		} )();
 		</script>
 		<?php
@@ -142,6 +231,34 @@ class AJCore_Mailroom {
 		.ajmr-title { display:flex; align-items:center; gap:10px; }
 		.ajmr-title h2 { margin:0; font-size:20px; line-height:1.2; }
 		.ajmr-title-ico { display:inline-grid; place-items:center; width:32px; height:32px; border-radius:10px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; }
+		.ajmr-row { display:flex; flex-wrap:wrap; gap:10px; margin:0 0 12px; }
+		.ajmr-tile { position:relative; display:flex; align-items:center; gap:12px; padding:12px 14px; min-width:150px; background:#fff; border:1px solid var(--ajmr-line); border-radius:14px; box-shadow:0 1px 2px rgba(15,23,42,.04); color:var(--ajmr-ink); text-decoration:none; font:inherit; cursor:pointer; }
+		.ajmr-tile:hover { border-color:#c7d2fe; }
+		.ajmr-tile.is-on { border-color:var(--ajmr-brand); box-shadow:0 0 0 3px rgba(79,70,229,.14); }
+		.ajmr-tile-main { display:flex; align-items:center; gap:12px; color:inherit; text-decoration:none; padding-right:44px; }
+		.ajmr-tile-ico { display:grid; place-items:center; width:36px; height:36px; border-radius:11px; flex:none; background:#eef2ff; color:#4338ca; }
+		.ajmr-tile.is-gmail .ajmr-tile-ico { background:#fee2e2; color:#b91c1c; }
+		.ajmr-tile.is-zoho .ajmr-tile-ico { background:#dbeafe; color:#1d4ed8; }
+		.ajmr-tile-txt { display:flex; flex-direction:column; line-height:1.15; }
+		.ajmr-tile-txt small { color:var(--ajmr-mute); font-size:11px; text-transform:uppercase; letter-spacing:.05em; font-weight:700; }
+		.ajmr-tile-txt strong { font-size:22px; }
+		.ajmr-tile-txt strong.is-alert { color:#b45309; }
+		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
+		.ajmr-tile-conn { position:absolute; top:8px; right:8px; display:flex; align-items:center; gap:6px; }
+		.ajmr-dot.is-ok { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.2); }
+		.ajmr-dot.is-bad { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.2); }
+		.ajmr-dot.is-off { background:#94a3b8; }
+		.ajmr-gear { display:inline-grid; place-items:center; width:24px; height:24px; border:0; border-radius:8px; background:transparent; color:#64748b; cursor:pointer; padding:0; }
+		.ajmr-gear:hover, .ajmr-gear.is-open { background:#eef2ff; color:#4338ca; }
+		.ajmr-row-tools .ajmr-stat { min-width:140px; }
+		.ajmr-stat.is-amber .ajmr-tile-ico { background:#fef3c7; color:#b45309; }
+		.ajmr-stat.is-green .ajmr-tile-ico { background:#dcfce7; color:#15803d; }
+		.ajmr-search { flex:1 1 280px; min-width:240px; cursor:text; }
+		.ajmr-search .ajmr-tile-ico { background:#f1f5f9; color:#64748b; }
+		.ajmr-search input { flex:1; border:0; box-shadow:none; background:transparent; font-size:14px; padding:6px 0; outline:0; min-height:0; }
+		.ajmr-tool { gap:8px; padding:12px 16px; min-width:0; font-size:13px; font-weight:600; color:#334155; }
+		.ajmr-tool.is-danger { color:#b91c1c; }
+		.ajmr-list { margin-top:0; }
 		.ajmr-chips { display:flex; gap:8px; }
 		.ajmr-chip { display:inline-flex; align-items:center; gap:8px; padding:7px 12px; border-radius:999px; border:1px solid; font-size:13px; font-weight:600; cursor:pointer; line-height:1; }
 		.ajmr-chip.is-ok { background:#ecfdf5; border-color:#86efac; color:#166534; }
@@ -164,7 +281,7 @@ class AJCore_Mailroom {
 		.ajmr-card { background:#fff; border:1px solid var(--ajmr-line); border-radius:14px; padding:16px 18px; box-shadow:0 1px 2px rgba(15,23,42,.04); }
 		.ajmr-empty { color:var(--ajmr-mute); text-align:center; padding:28px; }
 		.ajmr-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,220px)); gap:10px; margin:0 0 14px; }
-		.ajmr-stat { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:12px; border:1px solid var(--ajmr-line); background:#fff; text-decoration:none; color:var(--ajmr-ink); }
+		.ajmr-stat-old { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:12px; border:1px solid var(--ajmr-line); background:#fff; text-decoration:none; color:var(--ajmr-ink); }
 		.ajmr-stat:hover { border-color:#c7d2fe; }
 		.ajmr-stat.is-on { border-color:var(--ajmr-brand); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
 		.ajmr-stat-ico { display:grid; place-items:center; width:34px; height:34px; border-radius:10px; flex:none; }

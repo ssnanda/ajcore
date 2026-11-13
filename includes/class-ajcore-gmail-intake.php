@@ -2246,7 +2246,37 @@ class AJCore_Gmail_Intake {
 	 * resolve unmatched emails even if AJOps is down — same data and same resolve action
 	 * (resolve_gmail_intake_needs_review()) as the AJOps "Gmail Intake" screen.
 	 */
-	/** The intake queue: stat cards, filter bar, activity list and the preview/file panel. */
+	/** Current queue filters from the URL: status (pending|filed), source (all|gmail|zoho), search text. */
+	public static function queue_filters() {
+		$status = isset( $_GET['gi_status'] ) ? sanitize_key( wp_unslash( $_GET['gi_status'] ) ) : 'pending';
+		$source = isset( $_GET['gi_source'] ) ? sanitize_key( wp_unslash( $_GET['gi_source'] ) ) : 'all';
+		return array(
+			'status' => in_array( $status, array( 'pending', 'filed' ), true ) ? $status : 'pending',
+			'source' => in_array( $source, array( 'all', 'gmail', 'zoho' ), true ) ? $source : 'all',
+			'search' => isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '',
+		);
+	}
+
+	/** Log counts for the tiles: [ source => [ pending, filed ] ] including an 'all' total. */
+	public function queue_counts() {
+		$out = array( 'all' => array( 'pending' => 0, 'filed' => 0 ), 'gmail' => array( 'pending' => 0, 'filed' => 0 ), 'zoho' => array( 'pending' => 0, 'filed' => 0 ) );
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return $out;
+		}
+		$pdb   = $this->get_pdb();
+		$table = $this->get_gmail_intake_log_table();
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = (array) $pdb->get_results( "SELECT (gmail_message_id LIKE 'zoho:%') AS is_zoho, (status IN ('filed','resolved')) AS is_filed, COUNT(*) AS n FROM `{$table}` GROUP BY is_zoho, is_filed" );
+		foreach ( $rows as $r ) {
+			$src   = (int) $r->is_zoho ? 'zoho' : 'gmail';
+			$group = (int) $r->is_filed ? 'filed' : 'pending';
+			$out[ $src ][ $group ] += (int) $r->n;
+			$out['all'][ $group ]  += (int) $r->n;
+		}
+		return $out;
+	}
+
+	/** The intake queue table and the preview/file panel (the Email Pipeline tab draws the tiles above it). */
 	public function render_queue() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajcore' ) );
@@ -2260,11 +2290,10 @@ class AJCore_Gmail_Intake {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_gmail_intake_log_table();
 
-		$status = isset( $_GET['gi_status'] ) ? sanitize_key( wp_unslash( $_GET['gi_status'] ) ) : 'pending';
-		$status = in_array( $status, array( 'pending', 'filed' ), true ) ? $status : 'pending';
-		$search = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
-		$source = isset( $_GET['gi_source'] ) ? sanitize_key( wp_unslash( $_GET['gi_source'] ) ) : 'all';
-		$source = in_array( $source, array( 'all', 'gmail', 'zoho' ), true ) ? $source : 'all';
+		$filters = self::queue_filters();
+		$status  = $filters['status'];
+		$source  = $filters['source'];
+		$search  = $filters['search'];
 
 		$status_groups = array(
 			'pending' => array( 'needs_review', 'matched_pending_file', 'skipped_no_attachment' ),
@@ -2320,40 +2349,6 @@ class AJCore_Gmail_Intake {
 			<?php if ( isset( $_GET['gmail-intake-resolved'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Filed to the selected customer.', 'ajcore' ); ?></p></div>
 			<?php endif; ?>
-
-			<?php
-			$pending_count = (int) $stats->needs_review + (int) $stats->matched_pending_file + (int) $stats->skipped_no_attachment;
-			$filed_count   = (int) $stats->filed + (int) $stats->resolved;
-			?>
-			<div class="ajmr-stats">
-				<a class="ajmr-stat is-amber<?php echo 'pending' === $status ? ' is-on' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'gi_status', 'pending', $base_url ) ); ?>">
-					<span class="ajmr-stat-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
-					<span><small><?php esc_html_e( 'Pending file', 'ajcore' ); ?></small><strong style="<?php echo $pending_count > 0 ? 'color:#b45309;' : ''; ?>"><?php echo esc_html( $pending_count ); ?></strong></span>
-				</a>
-				<a class="ajmr-stat is-green<?php echo 'filed' === $status ? ' is-on' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'gi_status', 'filed', $base_url ) ); ?>">
-					<span class="ajmr-stat-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></span>
-					<span><small><?php esc_html_e( 'Filed', 'ajcore' ); ?></small><strong><?php echo esc_html( $filed_count ); ?></strong></span>
-				</a>
-			</div>
-
-			<form method="get" class="ajmr-filter">
-				<input type="hidden" name="page" value="ajforms-client-portal">
-				<input type="hidden" name="tab" value="mailroom"><input type="hidden" name="src" value="gmail">
-				<select name="gi_source">
-					<option value="all" <?php selected( $source, 'all' ); ?>><?php esc_html_e( 'All mailboxes', 'ajcore' ); ?></option>
-					<option value="gmail" <?php selected( $source, 'gmail' ); ?>>Gmail</option>
-					<option value="zoho" <?php selected( $source, 'zoho' ); ?>>Zoho</option>
-				</select>
-				<select name="gi_status">
-					<option value="pending" <?php selected( $status, 'pending' ); ?>><?php esc_html_e( 'Pending File', 'ajcore' ); ?></option>
-					<option value="filed" <?php selected( $status, 'filed' ); ?>><?php esc_html_e( 'Filed', 'ajcore' ); ?></option>
-				</select>
-				<input type="search" name="s" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php echo esc_attr__( 'Search subject, sender, company, customer…', 'ajcore' ); ?>">
-				<button type="submit" class="button"><?php esc_html_e( 'Filter', 'ajcore' ); ?></button>
-				<a class="button" href="<?php echo esc_url( $base_url ); ?>"><?php esc_html_e( 'Clear Filters', 'ajcore' ); ?></a>
-				<button type="button" id="ajcore-gmail-intake-reset-log" class="button" style="color:#dc2626;"><?php esc_html_e( 'Reset Log', 'ajcore' ); ?></button>
-				<button type="button" id="ajcore-gmail-intake-refresh" class="button" style="margin-left:auto;"><?php esc_html_e( 'Refresh', 'ajcore' ); ?></button>
-			</form>
 
 			<table class="widefat striped">
 				<thead>
