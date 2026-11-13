@@ -133,25 +133,33 @@ class AJCore_Zoho_Mail {
 		}
 		check_admin_referer( 'ajcore_ra_save_zoho_mail' );
 		$settings = $this->get_settings();
-		foreach ( array( 'zoho_mail_client_id' ) as $field ) {
-			$settings[ $field ] = isset( $_POST[ $field ] ) ? sanitize_text_field( wp_unslash( $_POST[ $field ] ) ) : '';
+		// Two forms post here: 'connection' (Pipeline > Connections: Client ID/Secret, data center) and 'mailbox' (Filings: mailbox + filter).
+		$section = isset( $_POST['section'] ) ? sanitize_key( wp_unslash( $_POST['section'] ) ) : 'all';
+		$do_conn = 'mailbox' !== $section;
+		$do_box  = 'connection' !== $section;
+		if ( $do_conn ) {
+			$settings['zoho_mail_client_id'] = isset( $_POST['zoho_mail_client_id'] ) ? sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_id'] ) ) : '';
+			$dc                              = isset( $_POST['zoho_mail_data_center'] ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com';
+			$settings['zoho_mail_data_center'] = in_array( $dc, array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? $dc : 'com';
 		}
-		$settings['zoho_mail_mailboxes']     = isset( $_POST['zoho_mail_mailboxes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['zoho_mail_mailboxes'] ) ) : '';
-		$settings['zoho_mail_account_email'] = isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : '';
-		$dc                                  = isset( $_POST['zoho_mail_data_center'] ) ? sanitize_key( wp_unslash( $_POST['zoho_mail_data_center'] ) ) : 'com';
-		$settings['zoho_mail_data_center']   = in_array( $dc, array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? $dc : 'com';
-		if ( ! AJCore_Pipeline::instance()->filter_managed( 'zoho' ) ) { // when AJCore-RA defines the filter, the saved fields are left untouched
+		if ( $do_box ) {
+			$settings['zoho_mail_mailboxes']     = isset( $_POST['zoho_mail_mailboxes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['zoho_mail_mailboxes'] ) ) : '';
+			$settings['zoho_mail_account_email'] = isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : '';
+		}
+		if ( $do_box && ! AJCore_Pipeline::instance()->filter_managed( 'zoho' ) ) { // when AJCore-RA defines the filter, the saved fields are left untouched
 			$settings['zoho_mail_filter_match'] = ( isset( $_POST['zoho_mail_filter_match'] ) && 'any' === $_POST['zoho_mail_filter_match'] ) ? 'any' : 'all';
 			foreach ( array( 'zoho_mail_filter_text', 'zoho_mail_filter_subject', 'zoho_mail_filter_sender' ) as $filter_key ) {
 				$settings[ $filter_key ] = isset( $_POST[ $filter_key ] ) ? sanitize_text_field( wp_unslash( $_POST[ $filter_key ] ) ) : '';
 			}
 		}
-		$secret                              = isset( $_POST['zoho_mail_client_secret'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_secret'] ) ) ) : '';
+		$secret = $do_conn && isset( $_POST['zoho_mail_client_secret'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['zoho_mail_client_secret'] ) ) ) : '';
 		if ( '' !== $secret ) { // blank keeps the saved secret
 			$settings['zoho_mail_client_secret'] = $secret;
 		}
 		$this->store( $settings );
-		AJCore_Pipeline::instance()->purge_pending_for_source( 'zoho' ); // re-read the pending queue under the saved filters on the next pass
+		if ( $do_box ) {
+			AJCore_Pipeline::instance()->purge_pending_for_source( 'zoho' ); // re-read the pending queue under the saved filters on the next pass
+		}
 		wp_safe_redirect( self::tab_url( array( 'saved' => 1 ) ) );
 		exit;
 	}
@@ -880,7 +888,9 @@ class AJCore_Zoho_Mail {
 	}
 
 	/** Connection settings (the Pipeline tab keeps them collapsed behind the Zoho gear). */
-	public function render_connection_panel() {
+	public function render_connection_panel( $section = 'all' ) {
+		$show_conn    = 'mailbox' !== $section;
+		$show_box     = 'connection' !== $section;
 		$settings     = $this->get_settings();
 		$is_connected = ! empty( $settings['zoho_mail_refresh_token'] );
 		$can_connect  = ! empty( $settings['zoho_mail_client_id'] ) && ! empty( $settings['zoho_mail_client_secret'] );
@@ -902,6 +912,7 @@ class AJCore_Zoho_Mail {
 		$disconnect_url = wp_nonce_url( admin_url( 'admin-post.php?action=ajcore_ra_zoho_mail_disconnect' ), 'ajcore_zoho_mail_disconnect' );
 		?>
 		<div class="ajmr-conn">
+			<?php if ( $show_conn ) : ?>
 			<details style="margin:10px 0">
 				<summary style="cursor:pointer"><?php esc_html_e( 'Setup steps', 'ajcore' ); ?></summary>
 				<ol style="line-height:1.7">
@@ -912,12 +923,17 @@ class AJCore_Zoho_Mail {
 					<li><?php esc_html_e( 'Copy the Client ID and Client Secret below, enter the shared mailbox address, Save, then Connect and sign in as that same user. No Organization ID is needed.', 'ajcore' ); ?></li>
 				</ol>
 			</details>
+			<?php endif; ?>
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="max-width:720px">
 				<input type="hidden" name="action" value="ajcore_ra_save_zoho_mail">
+				<input type="hidden" name="section" value="<?php echo esc_attr( $section ); ?>">
 				<?php wp_nonce_field( 'ajcore_ra_save_zoho_mail' ); ?>
 				<table class="form-table" role="presentation">
+					<?php if ( $show_conn ) : ?>
 					<tr><th><label for="zoho_mail_client_id"><?php esc_html_e( 'Client ID', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_id" id="zoho_mail_client_id" value="<?php echo esc_attr( $settings['zoho_mail_client_id'] ); ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_client_secret"><?php esc_html_e( 'Client Secret', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_secret" id="zoho_mail_client_secret" value="" placeholder="<?php echo ! empty( $settings['zoho_mail_client_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajcore' ) : ''; ?>" autocomplete="off"></td></tr>
+					<?php endif; ?>
+					<?php if ( $show_box ) : ?>
 					<tr><th><label for="zoho_mail_account_email"><?php esc_html_e( 'Shared Mailbox Address', 'ajcore' ); ?></label></th><td><input type="email" class="regular-text" name="zoho_mail_account_email" id="zoho_mail_account_email" value="<?php echo esc_attr( $settings['zoho_mail_account_email'] ); ?>"></td></tr>
 					<tr><th><label for="zoho_mail_mailboxes"><?php esc_html_e( 'Other shared mailboxes', 'ajcore' ); ?></label></th><td><textarea name="zoho_mail_mailboxes" id="zoho_mail_mailboxes" rows="3" class="large-text" placeholder="shop@example.com | purchases"><?php echo esc_textarea( $settings['zoho_mail_mailboxes'] ); ?></textarea><p class="description"><?php esc_html_e( 'One per line: address | what it is for. Sub-pipelines (e.g. Purchases) read these with the same Zoho login. "Find shared mailboxes" below lists what this login can read.', 'ajcore' ); ?></p></td></tr>
 					<?php $filter_managed = AJCore_Pipeline::instance()->filter_managed( 'zoho' ); $filter_ro = $filter_managed ? ' readonly' : ''; ?>
@@ -928,10 +944,14 @@ class AJCore_Zoho_Mail {
 					<tr><th><label for="zoho_mail_filter_sender"><?php esc_html_e( 'Sender contains', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_filter_sender" id="zoho_mail_filter_sender"<?php echo $filter_ro; ?> value="<?php echo esc_attr( $settings['zoho_mail_filter_sender'] ); ?>" placeholder="<?php echo esc_attr__( 'sosnc.gov', 'ajcore' ); ?>"><p class="description"><?php esc_html_e( 'Name or address, comma-separated; any one matches.', 'ajcore' ); ?></p></td></tr>
 					<tr><th><label for="zoho_mail_filter_text"><?php esc_html_e( 'Anywhere', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_filter_text" id="zoho_mail_filter_text"<?php echo $filter_ro; ?> value="<?php echo esc_attr( $settings['zoho_mail_filter_text'] ); ?>"><p class="description"><?php esc_html_e( 'Optional: matches the subject, sender or preview. All filters blank = every message.', 'ajcore' ); ?></p></td></tr>
 					<tr><th><label for="zoho_mail_filter_match"><?php esc_html_e( 'Match', 'ajcore' ); ?></label></th><td><select name="zoho_mail_filter_match" id="zoho_mail_filter_match"<?php echo $filter_managed ? ' disabled' : ''; ?>><option value="all" <?php selected( 'any' === $settings['zoho_mail_filter_match'] ? 'any' : 'all', 'all' ); ?>><?php esc_html_e( 'All filled fields (narrow)', 'ajcore' ); ?></option><option value="any" <?php selected( $settings['zoho_mail_filter_match'], 'any' ); ?>><?php esc_html_e( 'Any filled field (broad)', 'ajcore' ); ?></option></select></td></tr>
+					<?php endif; ?>
+					<?php if ( $show_conn ) : ?>
 					<tr><th><label for="zoho_mail_data_center"><?php esc_html_e( 'Data center', 'ajcore' ); ?></label></th><td><select name="zoho_mail_data_center" id="zoho_mail_data_center"><?php foreach ( array( 'com' => 'zoho.com (US)', 'eu' => 'zoho.eu', 'in' => 'zoho.in', 'com.au' => 'zoho.com.au', 'jp' => 'zoho.jp' ) as $dc_key => $dc_label ) : ?><option value="<?php echo esc_attr( $dc_key ); ?>" <?php selected( $settings['zoho_mail_data_center'], $dc_key ); ?>><?php echo esc_html( $dc_label ); ?></option><?php endforeach; ?></select></td></tr>
+					<?php endif; ?>
 				</table>
 				<p><button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajcore' ); ?></button></p>
 			</form>
+			<?php if ( $show_conn ) : ?>
 			<p>
 				<?php if ( $can_connect ) : ?>
 					<a class="button button-primary" href="<?php echo esc_url( $authorize_url ); ?>"><?php echo esc_html( $is_connected ? __( 'Reconnect Zoho Mail', 'ajcore' ) : __( 'Connect Zoho Mail', 'ajcore' ) ); ?></a>
@@ -949,6 +969,7 @@ class AJCore_Zoho_Mail {
 				<p><button type="button" class="button" id="ajra-zm-diag"><?php esc_html_e( 'Find shared mailboxes', 'ajcore' ); ?></button></p>
 				<div id="ajra-zm-diag-result" style="display:none;margin:10px 0;padding:10px 14px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:6px"></div>
 			<?php endif; ?>
+			<?php endif; // $show_conn ?>
 			<?php
 			foreach ( array( 'ajcore_zoho_mail_api_debug' => __( 'Last raw Zoho Mail API response', 'ajcore' ) ) as $debug_key => $debug_label ) {
 				$debug = get_transient( $debug_key );

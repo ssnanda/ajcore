@@ -66,8 +66,8 @@ class AJCore_Pipeline_Tab {
 	/** Title plus the sub-pipeline switch (shown only when there is more than one). */
 	private static function render_header( array $views, $current ) {
 		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		echo '<nav class="ajmr-views">';
 		if ( count( $views ) > 1 ) {
-			echo '<nav class="ajmr-views">';
 			foreach ( $views as $key => $view ) {
 				$badge = is_callable( $view['badge'] ) ? (int) call_user_func( $view['badge'] ) : (int) $view['badge'];
 				printf(
@@ -78,8 +78,28 @@ class AJCore_Pipeline_Tab {
 					$badge > 0 ? ' <b class="ajmr-badge">' . (int) $badge . '</b>' : ''
 				);
 			}
-			echo '</nav>';
 		}
+		// Shared by every sub-pipeline: the Zoho login (Client ID / Secret / data center). Mailboxes are set per sub-pipeline.
+		printf( '<button type="button" id="ajmr-conn-toggle" class="ajmr-conn-btn" aria-expanded="false">%1$s %2$s</button>', self::icon( 'cog', 14 ), esc_html__( 'Connections', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		echo '</nav>';
+		echo '<section id="ajmr-panel-conn" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Zoho login (shared by all pipelines)', 'ajcore' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		AJCore_Zoho_Mail::instance()->render_connection_panel( 'connection' );
+		echo '</section>';
+		?>
+		<script>
+		( function () {
+			var b = document.getElementById( 'ajmr-conn-toggle' ), p = document.getElementById( 'ajmr-panel-conn' );
+			if ( ! b || ! p ) { return; }
+			b.addEventListener( 'click', function () {
+				var open = p.hasAttribute( 'hidden' );
+				document.querySelectorAll( '.ajmr-panel' ).forEach( function ( x ) { x.setAttribute( 'hidden', '' ); } );
+				b.setAttribute( 'aria-expanded', 'false' );
+				if ( open ) { p.removeAttribute( 'hidden' ); b.setAttribute( 'aria-expanded', 'true' ); p.scrollIntoView( { behavior: 'smooth', block: 'nearest' } ); }
+			} );
+			if ( /zoho-mail-(connected|disconnected|error)|saved=1/.test( window.location.search ) && /zoho/.test( window.location.search ) ) { b.click(); }
+		} )();
+		</script>
+		<?php
 	}
 
 	/** Bookmarks, emails and OAuth return links that still point at the two old tabs. */
@@ -245,7 +265,7 @@ class AJCore_Pipeline_Tab {
 			} else {
 				printf(
 					'<button type="button" class="ajmr-tile-main ajmr-open-panel" data-target="ajmr-panel-%1$s"><span class="ajmr-tile-ico">%2$s</span><span class="ajmr-tile-txt"><small>%3$s</small><strong class="is-off">%4$s</strong><em>%5$s</em></span></button>',
-					esc_attr( $key ),
+					esc_attr( 'zoho' === $key ? 'conn' : $key ),
 					self::icon( $box['icon'], 16 ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 					esc_html( $box['label'] ),
 					esc_html__( 'Disconnected', 'ajcore' ),
@@ -283,7 +303,7 @@ class AJCore_Pipeline_Tab {
 				'<div class="ajmr-note"><strong>%1$s</strong> %2$s <button type="button" class="button ajmr-open-panel" data-target="ajmr-panel-%3$s">%4$s</button></div>',
 				esc_html( 'zoho' === $f['source'] ? 'Zoho' : 'Gmail' ),
 				esc_html__( 'is disconnected. Rows already read are listed below.', 'ajcore' ),
-				esc_attr( $f['source'] ),
+				esc_attr( 'zoho' === $f['source'] ? 'conn' : $f['source'] ),
 				esc_html__( 'Open connection settings', 'ajcore' )
 			);
 		}
@@ -292,7 +312,7 @@ class AJCore_Pipeline_Tab {
 		echo '<section id="ajmr-panel-gmail" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Gmail', 'ajcore' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		$gi->render_connection_panel();
 		echo '</section><section id="ajmr-panel-zoho" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Zoho', 'ajcore' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-		$zm->render_connection_panel();
+		$zm->render_connection_panel( 'mailbox' );
 		echo '</section>';
 
 		if ( $gi->is_active() || $zm->is_connected() ) {
@@ -338,7 +358,7 @@ class AJCore_Pipeline_Tab {
 			document.querySelectorAll( '.ajmr-open-panel' ).forEach( function ( b ) {
 				b.addEventListener( 'click', function () {
 					var g = document.querySelector( '.ajmr-gear[data-target="' + b.getAttribute( 'data-target' ) + '"]' );
-					if ( g ) { g.click(); }
+					if ( g ) { g.click(); } else if ( 'ajmr-panel-conn' === b.getAttribute( 'data-target' ) ) { var c = document.getElementById( 'ajmr-conn-toggle' ); if ( c ) { c.click(); } }
 				} );
 			} );
 			// After a save / connect / disconnect / error, open the panel that action belongs to so its message is visible.
@@ -393,7 +413,9 @@ class AJCore_Pipeline_Tab {
 		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
 		.ajra-pu-day td { background:#f1f5f9; font-weight:700; font-size:12px; letter-spacing:.03em; color:#334155; padding:7px 10px; }
 		.ajra-pu-mail td { font-size:12px; color:#64748b; padding:3px 10px 3px 14px; border-top:0; }
-		.ajmr-views { display:flex; gap:8px; margin:0 0 14px; }
+		.ajmr-views { display:flex; align-items:center; gap:8px; margin:0 0 14px; }
+		.ajmr-conn-btn { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:9px 14px; border-radius:10px; border:1px solid #e2e8f0; background:#fff; color:#334155; font-size:13px; font-weight:600; cursor:pointer; }
+		.ajmr-conn-btn:hover { border-color:#c7d2fe; }
 		.ajmr-views a { display:inline-flex; align-items:center; gap:9px; padding:11px 22px; border-radius:12px; font-size:15px; font-weight:700; color:#4338ca; text-decoration:none; background:#eef2ff; border:1px solid #e0e7ff; }
 		.ajmr-views a:hover { background:rgba(255,255,255,.6); }
 		.ajmr-views a.is-on { background:#4f46e5; border-color:#4f46e5; color:#fff; box-shadow:0 2px 6px rgba(79,70,229,.3); }
