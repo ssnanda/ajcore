@@ -26079,6 +26079,8 @@ class AJForms_Admin {
 					</form>
 				</details>
 
+				<?php do_action( 'ajcore_file_library_before_list' ); // extensions add file-management cards here (AJCore-RA: shared flyers) ?>
+
 				<div class="ajforms-file-card">
 					<h2><?php esc_html_e( 'Shared Files', 'ajforms' ); ?></h2>
 					<p><a class="button <?php echo 'active' === $file_status ? 'button-primary' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => 'active' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Active', 'ajforms' ); ?></a> <a class="button <?php echo 'archived' === $file_status ? 'button-primary' : ''; ?>" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'file-library', 'file_status' => 'archived' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Archived', 'ajforms' ); ?></a></p>

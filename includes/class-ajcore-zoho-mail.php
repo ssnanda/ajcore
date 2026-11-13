@@ -19,7 +19,7 @@ if ( ! defined( 'WPINC' ) ) {
 class AJCore_Zoho_Mail {
 
 	const OPTION = 'ajcore_ra_zoho_mail';
-	const TAB    = 'zoho-mail';
+	const TAB    = 'mailroom'; // AJCore_Mailroom owns the tab; this class draws its panels
 
 	/** @var self|null */
 	private static $instance = null;
@@ -35,8 +35,6 @@ class AJCore_Zoho_Mail {
 		self::seed_settings();
 		add_action( 'rest_api_init', array( __CLASS__, 'boot_routes' ) );
 		add_filter( 'ajcore_endpoint_catalog', array( __CLASS__, 'catalog' ) );
-		add_filter( 'ajcore_admin_portal_tabs', array( __CLASS__, 'admin_tab' ), 9 );
-		add_action( 'ajcore_admin_portal_tab_render', array( __CLASS__, 'render_admin_tab' ) );
 		add_action( 'admin_post_ajcore_ra_save_zoho_mail', array( __CLASS__, 'handle_save' ) );
 		add_action( 'admin_post_ajcore_ra_zoho_mail_disconnect', array( __CLASS__, 'handle_disconnect' ) );
 	}
@@ -54,7 +52,7 @@ class AJCore_Zoho_Mail {
 	}
 
 	public static function tab_url( array $args = array() ) {
-		return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB ), $args ), admin_url( 'admin.php' ) );
+		return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB, 'src' => 'zoho' ), $args ), admin_url( 'admin.php' ) );
 	}
 
 	// ── settings ────────────────────────────────────────────────────────────────
@@ -619,35 +617,35 @@ class AJCore_Zoho_Mail {
 
 	// ── Admin tab ───────────────────────────────────────────────────────────────
 
-	public static function admin_tab( $tabs ) {
-		$tabs[ self::TAB ] = array( 'label' => __( 'Zoho Mail', 'ajcore' ) );
-		return $tabs;
+	public function is_connected() {
+		$settings = $this->get_settings();
+		return ! empty( $settings['zoho_mail_refresh_token'] );
 	}
 
-	public static function render_admin_tab( $tab ) {
-		if ( self::TAB !== $tab || ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-		self::instance()->render_tab();
-	}
-
-	private function render_tab() {
-		$settings     = $this->get_settings();
-		$is_connected = ! empty( $settings['zoho_mail_refresh_token'] );
-		$can_connect  = ! empty( $settings['zoho_mail_client_id'] ) && ! empty( $settings['zoho_mail_client_secret'] );
-		$redirect_uri = rest_url( 'ajcore/v1/zoho-mail/oauth/callback' );
-
+	public function render_notices() {
 		if ( isset( $_GET['zoho-mail-connected'] ) ) {
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Zoho Mail connected.', 'ajcore' ) . '</p></div>';
 		} elseif ( isset( $_GET['zoho-mail-disconnected'] ) ) {
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Zoho Mail disconnected.', 'ajcore' ) . '</p></div>';
-		} elseif ( isset( $_GET['saved'] ) ) {
-			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Saved.', 'ajcore' ) . '</p></div>';
 		} elseif ( isset( $_GET['zoho-mail-error'] ) ) {
 			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['zoho-mail-error'] ) ) ) . '</p></div>';
+		} elseif ( isset( $_GET['saved'] ) && 'zoho' === ( isset( $_GET['src'] ) ? sanitize_key( wp_unslash( $_GET['src'] ) ) : '' ) ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Saved.', 'ajcore' ) . '</p></div>';
 		}
+	}
 
-		$this->render_inbox( $settings, $is_connected );
+	/** The live shared inbox. */
+	public function render_inbox_panel() {
+		$settings = $this->get_settings();
+		$this->render_inbox( $settings, $this->is_connected() );
+	}
+
+	/** Connection settings (the Mailroom keeps them collapsed behind the Zoho button). */
+	public function render_connection_panel() {
+		$settings     = $this->get_settings();
+		$is_connected = ! empty( $settings['zoho_mail_refresh_token'] );
+		$can_connect  = ! empty( $settings['zoho_mail_client_id'] ) && ! empty( $settings['zoho_mail_client_secret'] );
+		$redirect_uri = rest_url( 'ajcore/v1/zoho-mail/oauth/callback' );
 
 		// A random token in a transient (not a user-tied nonce) survives Zoho's redirect back, which carries no WP auth.
 		$state = wp_generate_password( 32, false );
@@ -664,8 +662,7 @@ class AJCore_Zoho_Mail {
 		), 'https://' . $this->accounts_host( $settings['zoho_mail_data_center'] ) . '/oauth/v2/auth' );
 		$disconnect_url = wp_nonce_url( admin_url( 'admin-post.php?action=ajcore_ra_zoho_mail_disconnect' ), 'ajcore_zoho_mail_disconnect' );
 		?>
-		<details class="ajforms-settings-card" style="margin:14px 0"<?php echo ! $is_connected || isset( $_GET['saved'] ) || isset( $_GET['zoho-mail-error'] ) ? ' open' : ''; ?>>
-			<summary style="cursor:pointer;font-weight:600"><?php esc_html_e( 'Connection', 'ajcore' ); ?> — <?php echo $is_connected ? esc_html( sprintf( __( 'connected as %s', 'ajcore' ), $settings['zoho_mail_connected_email'] ?: __( '(mailbox address not confirmed)', 'ajcore' ) ) ) : esc_html__( 'not connected', 'ajcore' ); ?></summary>
+		<div class="ajmr-conn">
 			<details style="margin:10px 0">
 				<summary style="cursor:pointer"><?php esc_html_e( 'Setup steps', 'ajcore' ); ?></summary>
 				<ol style="line-height:1.7">
@@ -715,7 +712,7 @@ class AJCore_Zoho_Mail {
 				echo '<details style="margin-top:10px"><summary>' . esc_html( $debug_label ) . ' — ' . esc_html( $debug['url'] ) . ' — HTTP ' . esc_html( $debug['status'] ) . ' — ' . esc_html( $debug['at'] ) . '</summary><pre style="max-height:320px;overflow:auto;background:#1d2327;color:#f0f0f1;padding:12px;font-size:12px;white-space:pre-wrap">' . esc_html( $pretty ) . '</pre></details>';
 			}
 			?>
-		</details>
+		</div>
 		<script>
 		(function () {
 			var nonce = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
@@ -751,9 +748,9 @@ class AJCore_Zoho_Mail {
 	}
 
 	private function render_inbox( array $settings, $is_connected ) {
-		echo '<div class="ajforms-settings-card" style="margin-bottom:14px"><h2 style="margin-top:0">' . esc_html__( 'Inbox', 'ajcore' ) . '</h2>';
+		echo '<div class="ajmr-card">';
 		if ( ! $is_connected ) {
-			echo '<p>' . esc_html__( 'Not connected yet. Open Connection below.', 'ajcore' ) . '</p></div>';
+			echo '<p>' . esc_html__( 'Zoho is not connected. Open its button above to connect.', 'ajcore' ) . '</p></div>';
 			return;
 		}
 		$views = $this->get_views();
@@ -771,19 +768,16 @@ class AJCore_Zoho_Mail {
 			return;
 		}
 		$mailbox = $settings['zoho_mail_connected_email'] ? $settings['zoho_mail_connected_email'] : $settings['zoho_mail_account_email'];
-		echo '<p class="description">' . esc_html( sprintf( __( 'Shared mailbox: %s. Read-only view; reply, assign and archive still happen in Zoho Mail.', 'ajcore' ), $mailbox ) ) . '</p>';
+		echo '<p class="ajmr-meta">' . esc_html( sprintf( __( '%s · read-only: reply, assign and archive in Zoho Mail', 'ajcore' ), $mailbox ) ) . '</p>';
 		$page_url = static function ( $args ) {
-			return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB ), $args ), admin_url( 'admin.php' ) );
+			return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB, 'src' => 'zoho' ), $args ), admin_url( 'admin.php' ) );
 		};
 		?>
-		<form method="get" style="margin:8px 0">
-			<input type="hidden" name="page" value="ajforms-client-portal"><input type="hidden" name="tab" value="<?php echo esc_attr( self::TAB ); ?>">
-			<select name="zoho_view" onchange="this.form.submit();">
-				<?php foreach ( $views as $v ) : ?>
-					<option value="<?php echo esc_attr( $v['folder_id'] ); ?>" <?php selected( $view, $v['folder_id'] ); ?>><?php echo esc_html( $v['name'] . ( $v['unread_count'] > 0 ? ' (' . $v['unread_count'] . ')' : '' ) ); ?></option>
-				<?php endforeach; ?>
-			</select>
-		</form>
+		<div class="ajmr-pills">
+			<?php foreach ( $views as $v ) : ?>
+				<a class="<?php echo $view === $v['folder_id'] ? 'is-on' : ''; ?>" href="<?php echo esc_url( $page_url( array( 'zoho_view' => $v['folder_id'] ) ) ); ?>"><?php echo esc_html( $v['name'] ); ?><?php echo $v['unread_count'] > 0 ? '<b>' . (int) $v['unread_count'] . '</b>' : ''; ?></a>
+			<?php endforeach; ?>
+		</div>
 		<table class="widefat striped">
 			<thead><tr><th style="width:170px"><?php esc_html_e( 'Date', 'ajcore' ); ?></th><th style="width:220px"><?php esc_html_e( 'From', 'ajcore' ); ?></th><th><?php esc_html_e( 'Subject', 'ajcore' ); ?></th></tr></thead>
 			<tbody>

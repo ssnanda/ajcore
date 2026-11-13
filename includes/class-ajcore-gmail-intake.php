@@ -15,7 +15,6 @@
  *   ajcore_gmail_intake_skip_category   ( bool $skip, string $category )                never import from mail
  *   ajcore_gmail_intake_group_labels    ( array group => label )                        Documents Filed email
  *   ajcore_gmail_intake_default_address ( string )                                      default mailbox
- *   do_action ajcore_gmail_intake_tab_after_connection( AJCore_Gmail_Intake $gi )       extra cards on the tab
  *
  * Settings (`gmail_intake_*`: OAuth client, address, tokens): secrets encrypted at rest. With the shared
  * database on, the master publishes them to the shared row and other sites read it.
@@ -29,7 +28,7 @@ class AJCore_Gmail_Intake {
 
 	const OPTION     = 'ajcore_ra_gmail_intake';
 	const SHARED_ROW = 'ajcore_gmail_intake_settings';
-	const TAB        = 'gmail-intake';
+	const TAB        = 'mailroom'; // AJCore_Mailroom owns the tab; this class draws its panels
 
 	/** @var array<string,callable> */
 	private $kit;
@@ -48,8 +47,6 @@ class AJCore_Gmail_Intake {
 		self::seed_settings();
 		add_action( 'rest_api_init', array( __CLASS__, 'boot_routes' ) );
 		add_filter( 'ajcore_endpoint_catalog', array( __CLASS__, 'catalog' ) );
-		add_filter( 'ajcore_admin_portal_tabs', array( __CLASS__, 'admin_tab' ), 9 );
-		add_action( 'ajcore_admin_portal_tab_render', array( __CLASS__, 'render_admin_tab' ) );
 		add_action( 'admin_init', array( __CLASS__, 'maybe_handle_actions' ) );
 		add_action( 'admin_post_ajcore_ra_save_gmail_intake', array( __CLASS__, 'handle_save' ) );
 		add_action( 'admin_post_ajcore_ra_gmail_disconnect', array( __CLASS__, 'handle_disconnect' ) );
@@ -98,7 +95,7 @@ class AJCore_Gmail_Intake {
 	}
 
 	public static function tab_url( array $args = array() ) {
-		return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB ), $args ), admin_url( 'admin.php' ) );
+		return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB, 'src' => 'gmail' ), $args ), admin_url( 'admin.php' ) );
 	}
 
 	// ── AJCore helpers (forwarded) ──────────────────────────────────────────────
@@ -324,32 +321,28 @@ class AJCore_Gmail_Intake {
 		exit;
 	}
 
-	// ── Client Portal admin tab ─────────────────────────────────────────────────
+	// ── Mailroom panels (AJCore_Mailroom draws the tab) ─────────────────────────
 
-	public static function admin_tab( $tabs ) {
-		$tabs[ self::TAB ] = array( 'label' => __( 'Gmail Intake', 'ajcore' ) );
-		return $tabs;
-	}
-
-	public static function render_admin_tab( $tab ) {
-		if ( self::TAB !== $tab || ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-		$gi   = self::instance();
-		$open = isset( $_GET['gmail-intake-connected'] ) || isset( $_GET['gmail-intake-disconnected'] ) || isset( $_GET['gmail-intake-error'] ) || isset( $_GET['gmail-intake-saved'] );
-		echo '<details class="ajforms-settings-card" style="margin-bottom:14px"' . ( $open || ! $gi->is_connected() ? ' open' : '' ) . '><summary style="cursor:pointer;font-weight:600">' . esc_html__( 'Connection', 'ajcore' ) . ' — ' . esc_html( $gi->is_connected() ? __( 'connected', 'ajcore' ) : __( 'not connected', 'ajcore' ) ) . '</summary>';
-		if ( $gi->read_only() ) {
+	/** Connection settings (the Mailroom keeps them collapsed behind the Gmail button). */
+	public function render_connection_panel() {
+		if ( $this->read_only() ) {
 			echo '<div class="notice notice-info inline"><p>' . esc_html__( 'Gmail Intake is managed by the AJCore master site; this site uses the shared connection.', 'ajcore' ) . '</p></div>';
 		}
-		$gi->render_settings();
-		echo '</details>';
-		do_action( 'ajcore_gmail_intake_tab_after_connection', $gi );
-		$gi->render_tab();
+		$this->render_settings();
 	}
 
-	private function is_connected() {
+	public function is_connected() {
 		$s = $this->get_gmail_settings();
 		return '' !== (string) $s['gmail_intake_access_token'] || '' !== (string) $s['gmail_intake_refresh_token'];
+	}
+
+	/** Entries waiting on staff (needs review, matched but not filed, no attachment). */
+	public function pending_count() {
+		if ( ! $this->ensure_gmail_intake_log_table() ) {
+			return 0;
+		}
+		$pdb = $this->get_pdb();
+		return (int) $pdb->get_var( "SELECT COUNT(*) FROM `{$this->get_gmail_intake_log_table()}` WHERE status IN ('needs_review','matched_pending_file','skipped_no_attachment')" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 	}
 
 	/** Resolve form posts from the Gmail Intake tab. */
@@ -456,7 +449,7 @@ class AJCore_Gmail_Intake {
 
 		$log_id             = isset( $_POST['gmail_intake_log_id'] ) ? absint( $_POST['gmail_intake_log_id'] ) : 0;
 		$stripe_customer_id = isset( $_POST['stripe_customer_id'] ) ? sanitize_text_field( wp_unslash( $_POST['stripe_customer_id'] ) ) : '';
-		$args               = array( 'page' => 'ajforms-client-portal', 'tab' => 'gmail-intake' );
+		$args               = array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB, 'src' => 'gmail' );
 
 		if ( ! $log_id || '' === $stripe_customer_id ) {
 			$args['portal-error'] = rawurlencode( __( 'Pick a customer before filing.', 'ajcore' ) );
@@ -2217,7 +2210,8 @@ class AJCore_Gmail_Intake {
 	 * resolve unmatched emails even if AJOps is down — same data and same resolve action
 	 * (resolve_gmail_intake_needs_review()) as the AJOps "Gmail Intake" screen.
 	 */
-	private function render_tab() {
+	/** The intake queue: stat cards, filter bar, activity list and the preview/file panel. */
+	public function render_queue() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajcore' ) );
 		}
@@ -2273,36 +2267,32 @@ class AJCore_Gmail_Intake {
 
 		$file_settings = function_exists( 'ajcore_get_portal_file_settings' ) ? ajcore_get_portal_file_settings() : array( 'categories' => array(), 'tags' => array() );
 
-		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'gmail-intake' ), admin_url( 'admin.php' ) );
+		$base_url = add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB, 'src' => 'gmail' ), admin_url( 'admin.php' ) );
 		?>
-		<div id="ajcore-gi-list-section" class="ajforms-settings-card">
-			<div class="ajcore-section-head">
-				<div>
-					<h2><?php esc_html_e( 'Gmail Intake', 'ajcore' ); ?></h2>
-					<p><?php esc_html_e( "State-filing notification emails read from the intake mailbox, matched to a customer by company name. Filing to a customer's Files is paused for now — matched emails just show which documents would be filed.", 'ajcore' ); ?></p>
-				</div>
-			</div>
+		<div id="ajcore-gi-list-section" class="ajmr-card">
 
 			<?php if ( isset( $_GET['gmail-intake-resolved'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Filed to the selected customer.', 'ajcore' ); ?></p></div>
 			<?php endif; ?>
 
-			<div class="ajcore-kpi-grid" style="grid-template-columns:repeat(2,minmax(160px,220px));">
-				<?php
-				$pending_count = (int) $stats->needs_review + (int) $stats->matched_pending_file + (int) $stats->skipped_no_attachment;
-				$filed_count   = (int) $stats->filed + (int) $stats->resolved;
-				?>
-				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'gi_status', 'pending', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'pending' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
-					<span><?php esc_html_e( 'Pending File', 'ajcore' ); ?></span><strong<?php echo $pending_count > 0 ? ' style="color:#dc2626;"' : ''; ?>><?php echo esc_html( $pending_count ); ?></strong>
+			<?php
+			$pending_count = (int) $stats->needs_review + (int) $stats->matched_pending_file + (int) $stats->skipped_no_attachment;
+			$filed_count   = (int) $stats->filed + (int) $stats->resolved;
+			?>
+			<div class="ajmr-stats">
+				<a class="ajmr-stat is-amber<?php echo 'pending' === $status ? ' is-on' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'gi_status', 'pending', $base_url ) ); ?>">
+					<span class="ajmr-stat-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></span>
+					<span><small><?php esc_html_e( 'Pending file', 'ajcore' ); ?></small><strong style="<?php echo $pending_count > 0 ? 'color:#b45309;' : ''; ?>"><?php echo esc_html( $pending_count ); ?></strong></span>
 				</a>
-				<a class="ajcore-kpi-card" href="<?php echo esc_url( add_query_arg( 'gi_status', 'filed', $base_url ) ); ?>" style="text-decoration:none;<?php echo 'filed' === $status ? 'border-color:#3157ff;box-shadow:0 0 0 2px rgba(49,87,255,.15);' : ''; ?>">
-					<span><?php esc_html_e( 'Filed', 'ajcore' ); ?></span><strong><?php echo esc_html( $filed_count ); ?></strong>
+				<a class="ajmr-stat is-green<?php echo 'filed' === $status ? ' is-on' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'gi_status', 'filed', $base_url ) ); ?>">
+					<span class="ajmr-stat-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></span>
+					<span><small><?php esc_html_e( 'Filed', 'ajcore' ); ?></small><strong><?php echo esc_html( $filed_count ); ?></strong></span>
 				</a>
 			</div>
 
-			<form method="get" class="ajcore-filter-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px;">
+			<form method="get" class="ajmr-filter">
 				<input type="hidden" name="page" value="ajforms-client-portal">
-				<input type="hidden" name="tab" value="gmail-intake">
+				<input type="hidden" name="tab" value="mailroom"><input type="hidden" name="src" value="gmail">
 				<select name="gi_status">
 					<option value="pending" <?php selected( $status, 'pending' ); ?>><?php esc_html_e( 'Pending File', 'ajcore' ); ?></option>
 					<option value="filed" <?php selected( $status, 'filed' ); ?>><?php esc_html_e( 'Filed', 'ajcore' ); ?></option>
