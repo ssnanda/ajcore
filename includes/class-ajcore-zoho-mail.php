@@ -1,12 +1,15 @@
 <?php
 /**
- * Zoho Mail shared inbox (OAuth connection, live read-only inbox), back in AJCore.
+ * Zoho Mail shared mailbox (OAuth connection, live read-only view) in AJCore.
  *
- * Routes (/zoho-mail/oauth/callback, /zoho-mail/test, /zoho-mail/diagnose, /ops/inbox), transients and API calls are
- * unchanged, so the Zoho API Console client and its redirect URI keep working. Client Portal admin tab "Zoho Mail".
+ * Uses Zoho's Shared Mailbox API, /api/v2/sharedmailbox/{address}/..., which is addressed by the mailbox's email
+ * address: no organization id or group id, and no Groups scope. Only the Shared Mailbox Address and a Zoho login that is a
+ * member of that mailbox are needed. Message bodies come from the login's own account (the real folderId the shared API
+ * reports). Same REST URLs as before (/zoho-mail/oauth/callback, /zoho-mail/test, /zoho-mail/diagnose, /ops/inbox);
+ * /ops/inbox "folders" are now the mailbox views (all, unread, unassigned, assigned, archived).
  *
- * Settings: option `ajcore_ra_zoho_mail` (name kept so existing connections survive; client secret and tokens
- * encrypted). Values left in `ajforms_settings` (zoho_mail_*) are copied into this option once if it was never seeded.
+ * Settings: option `ajcore_ra_zoho_mail` (name kept; client secret and tokens encrypted). Scopes changed, so an existing
+ * connection must be reconnected once.
  */
 
 if ( ! defined( 'WPINC' ) ) {
@@ -61,8 +64,6 @@ class AJCore_Zoho_Mail {
 			'zoho_mail_client_id'        => '',
 			'zoho_mail_client_secret'    => '',
 			'zoho_mail_account_email'    => '',
-			'zoho_mail_org_id'           => '',
-			'zoho_mail_group_id'         => '',
 			'zoho_mail_data_center'      => 'com',
 			'zoho_mail_access_token'     => '',
 			'zoho_mail_refresh_token'    => '',
@@ -129,7 +130,7 @@ class AJCore_Zoho_Mail {
 		}
 		check_admin_referer( 'ajcore_ra_save_zoho_mail' );
 		$settings = $this->get_settings();
-		foreach ( array( 'zoho_mail_client_id', 'zoho_mail_org_id', 'zoho_mail_group_id' ) as $field ) {
+		foreach ( array( 'zoho_mail_client_id' ) as $field ) {
 			$settings[ $field ] = isset( $_POST[ $field ] ) ? sanitize_text_field( wp_unslash( $_POST[ $field ] ) ) : '';
 		}
 		$settings['zoho_mail_account_email'] = isset( $_POST['zoho_mail_account_email'] ) ? sanitize_email( wp_unslash( $_POST['zoho_mail_account_email'] ) ) : '';
@@ -173,10 +174,10 @@ class AJCore_Zoho_Mail {
 	}
 
 	public static function catalog( $catalog ) {
-		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/inbox', 'auth' => 'Admin', 'purpose' => 'Shared Zoho Mail inbox, read live (folder_id, limit). Not connected returns empty lists.', 'app' => 'OPS inbox' );
+		$catalog[] = array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/inbox', 'auth' => 'Admin', 'purpose' => 'Shared Zoho Mailbox, read live through the Shared Mailbox API (folder_id = view: all|unread|unassigned|assigned|archived; start, limit). Not connected returns empty lists.', 'app' => 'OPS inbox' );
 		$catalog[] = array( 'surface' => 'System', 'method' => 'GET', 'path' => '/zoho-mail/oauth/callback', 'auth' => 'State token', 'purpose' => 'Browser redirect target after the Zoho Mail consent screen.', 'app' => 'WP admin' );
 		$catalog[] = array( 'surface' => 'System', 'method' => 'GET', 'path' => '/zoho-mail/test', 'auth' => 'Admin', 'purpose' => 'Connection test for the Zoho Mail tab.', 'app' => 'WP admin' );
-		$catalog[] = array( 'surface' => 'System', 'method' => 'GET', 'path' => '/zoho-mail/diagnose', 'auth' => 'Admin', 'purpose' => 'Diagnostic search across the mailboxes the connected login can see.', 'app' => 'WP admin' );
+		$catalog[] = array( 'surface' => 'System', 'method' => 'GET', 'path' => '/zoho-mail/diagnose', 'auth' => 'Admin', 'purpose' => 'Lists the shared mailboxes the connected login can read, with counts.', 'app' => 'WP admin' );
 		return $catalog;
 	}
 
@@ -185,17 +186,19 @@ class AJCore_Zoho_Mail {
 		if ( empty( $settings['zoho_mail_refresh_token'] ) ) {
 			return rest_ensure_response( array( 'connected' => false, 'folders' => array(), 'messages' => array() ) );
 		}
-		$folders = $this->get_folders();
-		if ( is_wp_error( $folders ) ) {
-			return new WP_Error( $folders->get_error_code(), $folders->get_error_message(), array( 'status' => 502 ) );
+		// "folders" are the shared mailbox's views (all, unread, unassigned, ...): same shape AJOps already reads.
+		$views = $this->get_views();
+		if ( is_wp_error( $views ) ) {
+			return new WP_Error( $views->get_error_code(), $views->get_error_message(), array( 'status' => 502 ) );
 		}
-		$folder_id = sanitize_text_field( (string) $request->get_param( 'folder_id' ) );
-		$limit     = min( 100, max( 1, absint( $request->get_param( 'limit' ) ?: 50 ) ) );
-		$messages  = $this->get_recent_messages( $limit, $folder_id );
+		$view     = sanitize_key( (string) $request->get_param( 'folder_id' ) );
+		$view     = in_array( $view, array_column( $views, 'folder_id' ), true ) ? $view : 'all';
+		$limit    = min( 200, max( 1, absint( $request->get_param( 'limit' ) ?: 50 ) ) );
+		$messages = $this->get_recent_messages( $limit, $view, absint( $request->get_param( 'start' ) ) );
 		if ( is_wp_error( $messages ) ) {
 			return new WP_Error( $messages->get_error_code(), $messages->get_error_message(), array( 'status' => 502 ) );
 		}
-		return rest_ensure_response( array( 'connected' => true, 'connected_email' => (string) $settings['zoho_mail_connected_email'], 'folders' => $folders, 'messages' => $messages ) );
+		return rest_ensure_response( array( 'connected' => true, 'connected_email' => (string) $settings['zoho_mail_connected_email'], 'folders' => $views, 'messages' => $messages ) );
 	}
 
 	/** Browser redirect from Zoho after the admin approves (or denies) the consent screen. */
@@ -227,9 +230,9 @@ class AJCore_Zoho_Mail {
 	}
 
 	public function test_connection( WP_REST_Request $request ) {
-		$folders = $this->get_folders();
-		if ( is_wp_error( $folders ) ) {
-			return rest_ensure_response( array( 'success' => false, 'message' => $folders->get_error_message() ) );
+		$views = $this->get_views();
+		if ( is_wp_error( $views ) ) {
+			return rest_ensure_response( array( 'success' => false, 'message' => $views->get_error_message() ) );
 		}
 		$messages = $this->get_recent_messages( 5 );
 		if ( is_wp_error( $messages ) ) {
@@ -237,7 +240,7 @@ class AJCore_Zoho_Mail {
 		}
 		return rest_ensure_response( array(
 			'success'         => true,
-			'folders'         => wp_list_pluck( $folders, 'name' ),
+			'folders'         => wp_list_pluck( $views, 'name' ),
 			'recent_messages' => array_map( function ( $m ) {
 				$from = '' !== $m['from_name'] ? $m['from_name'] : $m['from_email'];
 				return trim( $m['subject'] . ( '' !== $from ? ' — ' . $from : '' ) );
@@ -245,19 +248,16 @@ class AJCore_Zoho_Mail {
 		) );
 	}
 
+	/** Lists the shared mailboxes this Zoho login can read (with counts), so the right address can be copied into settings. */
 	public function diagnose_route( WP_REST_Request $request ) {
-		$search_text = sanitize_text_field( (string) $request->get_param( 'q' ) );
-		if ( '' === $search_text ) {
-			$search_text = 'E-Notification Filing';
+		$boxes = $this->list_shared_mailboxes();
+		if ( is_wp_error( $boxes ) ) {
+			return rest_ensure_response( array( 'success' => false, 'message' => $boxes->get_error_message() ) );
 		}
-		$result = $this->diagnose_shared_access( $search_text );
-		if ( is_wp_error( $result ) ) {
-			return rest_ensure_response( array( 'success' => false, 'message' => $result->get_error_message() ) );
-		}
-		return rest_ensure_response( array_merge( array( 'success' => true ), $result ) );
+		return rest_ensure_response( array( 'success' => true, 'mailboxes' => $boxes ) );
 	}
 
-	// ── Zoho API (moved unchanged from AJCore, reading this class's settings) ───
+	// ── Zoho OAuth ──────────────────────────────────────────────────────────────
 
 	/** The data-center-specific accounts host Zoho token/authorize endpoints live on. */
 	private function accounts_host( $data_center ) {
@@ -272,8 +272,9 @@ class AJCore_Zoho_Mail {
 	}
 
 	/**
-	 * Exchanges an authorization code for access + refresh tokens, finds the Shared Mailbox (a Zoho organization
-	 * group with its own mailboxId, not a personal account) and stores everything.
+	 * Exchanges an authorization code for tokens, then proves the shared mailbox is readable: Zoho's Shared Mailbox API
+	 * (/api/v2/sharedmailbox/{address}/...) is addressed by the mailbox's email address, so no organization or group id is
+	 * needed. The login's own accountId is kept for fetching message bodies (they live behind the regular folder endpoints).
 	 */
 	private function complete_oauth_connection( $code ) {
 		$settings      = $this->get_settings();
@@ -281,6 +282,10 @@ class AJCore_Zoho_Mail {
 		$client_secret = trim( (string) $settings['zoho_mail_client_secret'] );
 		if ( '' === $client_id || '' === $client_secret ) {
 			return new WP_Error( 'zoho_mail_not_configured', __( 'Zoho Mail Client ID/Secret are not saved.', 'ajcore' ) );
+		}
+		$wanted = $this->shared_address( $settings );
+		if ( '' === $wanted ) {
+			return new WP_Error( 'zoho_mail_no_address', __( 'Save the Shared Mailbox Address first, then connect.', 'ajcore' ) );
 		}
 		$token_response = wp_remote_post( 'https://' . $this->accounts_host( $settings['zoho_mail_data_center'] ) . '/oauth/v2/token', array(
 			'timeout' => 20,
@@ -303,82 +308,41 @@ class AJCore_Zoho_Mail {
 		$refresh_token = ! empty( $token_data['refresh_token'] ) ? sanitize_text_field( (string) $token_data['refresh_token'] ) : trim( (string) $settings['zoho_mail_refresh_token'] );
 		$expires_in    = ! empty( $token_data['expires_in'] ) ? absint( $token_data['expires_in'] ) : 3600;
 
-		$api_host     = $this->api_host( $settings['zoho_mail_data_center'] );
-		$auth_headers = array( 'Authorization' => 'Zoho-oauthtoken ' . $access_token );
-		$wanted_email = strtolower( trim( (string) $settings['zoho_mail_account_email'] ) );
-		$wanted_local = false !== strpos( $wanted_email, '@' ) ? strtolower( substr( $wanted_email, 0, strpos( $wanted_email, '@' ) ) ) : $wanted_email;
-
-		// zoid has no reliable non-partner discovery API, so it is entered in settings (Admin Console: Organization > Profile).
-		$zoid = sanitize_text_field( trim( (string) $settings['zoho_mail_org_id'] ) );
-		if ( '' === $zoid ) {
-			return new WP_Error( 'zoho_mail_no_org_id', __( 'Zoho Organization ID is not saved — copy it from the Zoho Mail Admin Console (Organization → Profile) into the settings, then reconnect.', 'ajcore' ) );
-		}
-
-		$mailbox_id       = '';
-		$connected_email  = '';
-		$available_groups = array();
-		$zgid_override    = sanitize_text_field( trim( (string) $settings['zoho_mail_group_id'] ) );
-
-		if ( '' !== $zgid_override ) {
-			// Manual override: fetch this one group directly (the org-wide list has been seen returning an empty list).
-			$group_url      = "https://{$api_host}/api/organization/{$zoid}/groups/{$zgid_override}";
-			$group_response = wp_remote_get( $group_url, array( 'timeout' => 20, 'headers' => $auth_headers ) );
-			if ( is_wp_error( $group_response ) ) {
-				return $group_response;
-			}
-			$group_status = (int) wp_remote_retrieve_response_code( $group_response );
-			$group_body   = wp_remote_retrieve_body( $group_response );
-			$group_data   = json_decode( $group_body, true );
-			set_transient( 'ajcore_zoho_mail_groups_debug', array( 'url' => $group_url, 'status' => $group_status, 'body' => $group_body, 'at' => current_time( 'mysql' ) ), 15 * MINUTE_IN_SECONDS );
-			$group = isset( $group_data['data'] ) && is_array( $group_data['data'] ) ? $group_data['data'] : array();
-			if ( $group_status >= 300 || empty( $group['mailboxId'] ) ) {
-				return new WP_Error( 'zoho_mail_group_lookup_failed', sprintf( __( 'Could not fetch Zoho Group ID %1$s directly — GET /api/organization/{zoid}/groups/{zgid} returned HTTP %2$d: %3$s', 'ajcore' ), $zgid_override, $group_status, $group_body ) );
-			}
-			$mailbox_id      = sanitize_text_field( (string) $group['mailboxId'] );
-			$group_email     = isset( $group['emailId'] ) ? (string) $group['emailId'] : ( isset( $group['email'] ) ? (string) $group['email'] : '' );
-			$connected_email = '' !== $group_email ? sanitize_email( $group_email ) : trim( (string) $settings['zoho_mail_account_email'] );
-		} else {
-			$groups_url      = "https://{$api_host}/api/organization/{$zoid}/groups";
-			$groups_response = wp_remote_get( $groups_url, array( 'timeout' => 20, 'headers' => $auth_headers ) );
-			if ( is_wp_error( $groups_response ) ) {
-				return $groups_response;
-			}
-			$groups_status = (int) wp_remote_retrieve_response_code( $groups_response );
-			$groups_body   = wp_remote_retrieve_body( $groups_response );
-			$groups_data   = json_decode( $groups_body, true );
-			set_transient( 'ajcore_zoho_mail_groups_debug', array( 'url' => $groups_url, 'status' => $groups_status, 'body' => $groups_body, 'at' => current_time( 'mysql' ) ), 15 * MINUTE_IN_SECONDS );
-			if ( $groups_status >= 300 || ! isset( $groups_data['data']['groups'] ) ) {
-				return new WP_Error( 'zoho_mail_groups_lookup_failed', sprintf( __( 'Could not list Shared Mailbox groups for this organization — GET /api/organization/{zoid}/groups returned HTTP %1$d: %2$s', 'ajcore' ), $groups_status, $groups_body ) );
-			}
-			foreach ( (array) $groups_data['data']['groups'] as $group ) {
-				if ( ! is_array( $group ) || empty( $group['mailboxId'] ) ) {
-					continue; // Plain distribution lists have no mailboxId; only Shared Mailbox groups do.
-				}
-				$group_name         = isset( $group['name'] ) ? (string) $group['name'] : '';
-				$group_email        = isset( $group['emailId'] ) ? (string) $group['emailId'] : ( isset( $group['email'] ) ? (string) $group['email'] : '' );
-				$available_groups[] = '' !== $group_email ? $group_email : $group_name;
-				if ( strtolower( trim( $group_email ) ) === $wanted_email || strtolower( trim( $group_name ) ) === $wanted_local ) {
-					$mailbox_id      = sanitize_text_field( (string) $group['mailboxId'] );
-					$connected_email = '' !== $group_email ? sanitize_email( $group_email ) : trim( (string) $settings['zoho_mail_account_email'] );
-					break;
-				}
-			}
-		}
-
-		if ( '' === $mailbox_id ) {
-			return new WP_Error( 'zoho_mail_shared_mailbox_not_found', sprintf(
-				__( 'No Shared Mailbox group matching %1$s was found for this Zoho organization. Shared Mailbox groups visible: %2$s. Confirm the signed-in Zoho user is a member/moderator of it, or fix the Shared Mailbox Address in settings.', 'ajcore' ),
-				$wanted_email,
-				! empty( $available_groups ) ? implode( ', ', array_unique( $available_groups ) ) : __( 'none — this login may not be an org admin, which the Groups API requires', 'ajcore' )
-			) );
-		}
-
 		$settings['zoho_mail_access_token']     = $access_token;
 		$settings['zoho_mail_refresh_token']    = $refresh_token;
 		$settings['zoho_mail_token_expires_at'] = time() + $expires_in;
-		$settings['zoho_mail_account_id']       = $mailbox_id;
-		$settings['zoho_mail_connected_email']  = $connected_email;
-		$settings['zoho_mail_connected_at']     = current_time( 'mysql' );
+
+		// The login's own account (id for message bodies) and the group send-as addresses it can see.
+		$accounts = $this->api_request( '/accounts', array(), 'GET', $access_token, $settings );
+		if ( is_wp_error( $accounts ) ) {
+			return $accounts;
+		}
+		$first = isset( $accounts['data']['data'][0] ) && is_array( $accounts['data']['data'][0] ) ? $accounts['data']['data'][0] : array();
+		if ( 200 !== $accounts['status'] || empty( $first['accountId'] ) ) {
+			return new WP_Error( 'zoho_mail_accounts_failed', sprintf( __( 'Could not read this Zoho login\'s account — GET /api/accounts returned HTTP %1$d: %2$s', 'ajcore' ), $accounts['status'], substr( $accounts['raw'], 0, 600 ) ) );
+		}
+
+		$probe = $this->api_request( '/v2/sharedmailbox/' . $this->path_address( $wanted ) . '/counts', array(), 'GET', $access_token, $settings );
+		if ( is_wp_error( $probe ) ) {
+			return $probe;
+		}
+		if ( 200 !== $probe['status'] ) {
+			$seen = array();
+			foreach ( $this->group_addresses( $first ) as $address => $name ) {
+				$seen[] = $address;
+			}
+			return new WP_Error( 'zoho_mail_shared_mailbox_unreadable', sprintf(
+				__( 'This Zoho login cannot read the shared mailbox %1$s (Shared Mailbox API returned HTTP %2$d: %3$s). Shared-mailbox addresses this login has: %4$s. Sign in with a Zoho user that is a member of the shared mailbox, or fix the Shared Mailbox Address.', 'ajcore' ),
+				$wanted,
+				$probe['status'],
+				substr( $probe['raw'], 0, 300 ),
+				$seen ? implode( ', ', $seen ) : __( 'none', 'ajcore' )
+			) );
+		}
+
+		$settings['zoho_mail_account_id']      = sanitize_text_field( (string) $first['accountId'] );
+		$settings['zoho_mail_connected_email'] = $wanted;
+		$settings['zoho_mail_connected_at']    = current_time( 'mysql' );
 		$this->store( $settings );
 		return true;
 	}
@@ -417,126 +381,240 @@ class AJCore_Zoho_Mail {
 		return $settings['zoho_mail_access_token'];
 	}
 
-	/** Diagnostic: searches every mailbox the authorized login can personally see for a known piece of text. */
-	private function diagnose_shared_access( $search_text ) {
-		$access_token = $this->get_valid_access_token();
-		if ( is_wp_error( $access_token ) ) {
-			return $access_token;
-		}
-		$settings     = $this->get_settings();
-		$api_host     = $this->api_host( $settings['zoho_mail_data_center'] );
-		$auth_headers = array( 'Authorization' => 'Zoho-oauthtoken ' . $access_token );
+	// ── Shared Mailbox API ──────────────────────────────────────────────────────
 
-		$accounts_response = wp_remote_get( "https://{$api_host}/api/accounts", array( 'timeout' => 20, 'headers' => $auth_headers ) );
-		if ( is_wp_error( $accounts_response ) ) {
-			return $accounts_response;
-		}
-		$accounts_data  = json_decode( wp_remote_retrieve_body( $accounts_response ), true );
-		$accounts_tried = array();
-		$matches        = array();
-		foreach ( (array) ( isset( $accounts_data['data'] ) ? $accounts_data['data'] : array() ) as $account ) {
-			if ( ! is_array( $account ) || empty( $account['accountId'] ) ) {
-				continue;
-			}
-			$account_id       = (string) $account['accountId'];
-			$account_email    = isset( $account['primaryEmailAddress'] ) ? (string) $account['primaryEmailAddress'] : '';
-			$accounts_tried[] = array( 'account_id' => $account_id, 'email' => $account_email );
-			$search_response  = wp_remote_get( add_query_arg( array( 'searchKey' => $search_text, 'limit' => 5 ), "https://{$api_host}/api/accounts/{$account_id}/messages/search" ), array( 'timeout' => 20, 'headers' => $auth_headers ) );
-			if ( is_wp_error( $search_response ) ) {
-				continue;
-			}
-			$search_data = json_decode( wp_remote_retrieve_body( $search_response ), true );
-			foreach ( (array) ( isset( $search_data['data'] ) ? $search_data['data'] : array() ) as $row ) {
-				if ( empty( $row['messageId'] ) ) {
-					continue;
-				}
-				$matches[] = array( 'account_id' => $account_id, 'account_email' => $account_email, 'folder_id' => isset( $row['folderId'] ) ? (string) $row['folderId'] : '', 'subject' => isset( $row['subject'] ) ? (string) $row['subject'] : '' );
-			}
-		}
-		return array( 'search_text' => $search_text, 'accounts_tried' => $accounts_tried, 'found' => ! empty( $matches ), 'matches' => $matches );
+	private function shared_address( $settings = null ) {
+		$settings = is_array( $settings ) ? $settings : $this->get_settings();
+		return strtolower( trim( (string) $settings['zoho_mail_account_email'] ) );
 	}
 
-	/** Authenticated GET against the connected mailbox; the last response is kept 15 minutes for the debug panel. */
-	private function api_get( $path, $query = array() ) {
-		$settings   = $this->get_settings();
-		$account_id = trim( (string) $settings['zoho_mail_account_id'] );
-		if ( '' === $account_id ) {
-			return new WP_Error( 'zoho_mail_not_connected', __( 'Zoho Mail is not connected.', 'ajcore' ) );
+	/** An email address as a URL path segment (Zoho takes the literal "@"). */
+	private function path_address( $address ) {
+		return str_replace( '%40', '@', rawurlencode( (string) $address ) );
+	}
+
+	/**
+	 * Authenticated request to Zoho Mail. $token / $settings are passed only while connecting (the token is not stored yet);
+	 * otherwise the stored, auto-refreshed token is used. Returns array( status, data (decoded JSON), raw ), or WP_Error on
+	 * transport failure. The last response is kept 15 minutes for the debug panel.
+	 */
+	private function api_request( $path, $query = array(), $method = 'GET', $token = null, $settings = null ) {
+		$settings = is_array( $settings ) ? $settings : $this->get_settings();
+		if ( null === $token ) {
+			$token = $this->get_valid_access_token();
+			if ( is_wp_error( $token ) ) {
+				return $token;
+			}
 		}
-		$access_token = $this->get_valid_access_token();
-		if ( is_wp_error( $access_token ) ) {
-			return $access_token;
-		}
-		$url = 'https://' . $this->api_host( $settings['zoho_mail_data_center'] ) . '/api/accounts/' . rawurlencode( $account_id ) . $path;
+		$url = 'https://' . $this->api_host( $settings['zoho_mail_data_center'] ) . '/api' . $path;
 		if ( ! empty( $query ) ) {
 			$url = add_query_arg( $query, $url );
 		}
-		$response = wp_remote_get( $url, array( 'timeout' => 20, 'headers' => array( 'Authorization' => 'Zoho-oauthtoken ' . $access_token ) ) );
+		$response = wp_remote_request( $url, array( 'method' => $method, 'timeout' => 20, 'headers' => array( 'Authorization' => 'Zoho-oauthtoken ' . $token ) ) );
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
-		$status_code = (int) wp_remote_retrieve_response_code( $response );
-		$raw_body    = wp_remote_retrieve_body( $response );
-		$data        = json_decode( $raw_body, true );
-		set_transient( 'ajcore_zoho_mail_api_debug', array( 'url' => $url, 'status' => $status_code, 'body' => $raw_body, 'at' => current_time( 'mysql' ) ), 15 * MINUTE_IN_SECONDS );
-		if ( $status_code >= 400 ) {
-			return new WP_Error( 'zoho_mail_api_error', ! empty( $data['status']['description'] ) ? (string) $data['status']['description'] : sprintf( __( 'Zoho Mail API returned an error (%d).', 'ajcore' ), $status_code ) );
-		}
-		return is_array( $data ) ? $data : array();
+		$status = (int) wp_remote_retrieve_response_code( $response );
+		$raw    = wp_remote_retrieve_body( $response );
+		$data   = json_decode( $raw, true );
+		set_transient( 'ajcore_zoho_mail_api_debug', array( 'url' => $url, 'status' => $status, 'body' => $raw, 'at' => current_time( 'mysql' ) ), 15 * MINUTE_IN_SECONDS );
+		return array( 'status' => $status, 'data' => is_array( $data ) ? $data : array(), 'raw' => $raw );
 	}
 
-	public function get_folders() {
-		$data = $this->api_get( '/folders' );
-		if ( is_wp_error( $data ) ) {
-			return $data;
+	/** GET against the configured shared mailbox; WP_Error unless HTTP 200. */
+	private function shared_get( $path, $query = array() ) {
+		$address = $this->shared_address();
+		if ( '' === $address || empty( $this->get_settings()['zoho_mail_refresh_token'] ) ) {
+			return new WP_Error( 'zoho_mail_not_connected', __( 'Zoho Mail is not connected.', 'ajcore' ) );
 		}
-		$folders = array();
-		foreach ( (array) ( isset( $data['data'] ) ? $data['data'] : array() ) as $row ) {
-			if ( empty( $row['folderId'] ) ) {
+		$res = $this->api_request( '/v2/sharedmailbox/' . $this->path_address( $address ) . $path, $query );
+		if ( is_wp_error( $res ) ) {
+			return $res;
+		}
+		if ( 200 !== $res['status'] ) {
+			return new WP_Error( 'zoho_mail_api_error', sprintf( __( 'Zoho Shared Mailbox API returned HTTP %1$d: %2$s', 'ajcore' ), $res['status'], substr( $res['raw'], 0, 300 ) ) );
+		}
+		return $res['data'];
+	}
+
+	/** The group ("mode":"group") send-as addresses in a /api/accounts entry, address => display name. */
+	private function group_addresses( array $account ) {
+		$out = array();
+		foreach ( (array) ( isset( $account['sendMailDetails'] ) ? $account['sendMailDetails'] : array() ) as $entry ) {
+			if ( ! is_array( $entry ) || 'group' !== ( isset( $entry['mode'] ) ? $entry['mode'] : '' ) || empty( $entry['fromAddress'] ) ) {
 				continue;
 			}
-			$folders[] = array(
-				'folder_id'    => (string) $row['folderId'],
-				'name'         => isset( $row['folderName'] ) ? (string) $row['folderName'] : ( isset( $row['path'] ) ? (string) $row['path'] : __( '(unnamed folder)', 'ajcore' ) ),
-				'unread_count' => isset( $row['unreadCount'] ) ? absint( $row['unreadCount'] ) : 0,
-			);
+			$address = strtolower( (string) $entry['fromAddress'] );
+			if ( ! isset( $out[ $address ] ) ) {
+				$out[ $address ] = isset( $entry['displayName'] ) ? (string) $entry['displayName'] : $address;
+			}
 		}
-		return $folders;
+		return $out;
 	}
 
-	public function get_recent_messages( $limit = 10, $folder_id = '' ) {
-		$query = array( 'limit' => max( 1, absint( $limit ) ) );
-		if ( '' !== $folder_id ) {
-			$query['folderId'] = $folder_id;
+	/**
+	 * Shared mailboxes this login can read. There is no list endpoint: the candidates are the login's group send-as
+	 * addresses, each probed with /counts (only HTTP 200 ones are real, readable shared mailboxes). Aliases of one
+	 * mailbox share a display name, so only the first address that answers is kept per name.
+	 */
+	public function list_shared_mailboxes() {
+		$accounts = $this->api_request( '/accounts' );
+		if ( is_wp_error( $accounts ) ) {
+			return $accounts;
 		}
-		$data = $this->api_get( '/messages/view', $query );
+		$first = isset( $accounts['data']['data'][0] ) && is_array( $accounts['data']['data'][0] ) ? $accounts['data']['data'][0] : array();
+		if ( 200 !== $accounts['status'] || empty( $first ) ) {
+			return new WP_Error( 'zoho_mail_accounts_failed', sprintf( __( 'GET /api/accounts returned HTTP %1$d: %2$s', 'ajcore' ), $accounts['status'], substr( $accounts['raw'], 0, 300 ) ) );
+		}
+		$by_name = array();
+		foreach ( $this->group_addresses( $first ) as $address => $name ) {
+			$by_name[ $name ][] = $address;
+		}
+		$boxes = array();
+		foreach ( $by_name as $name => $addresses ) {
+			foreach ( $addresses as $address ) {
+				$res = $this->api_request( '/v2/sharedmailbox/' . $this->path_address( $address ) . '/counts' );
+				if ( is_wp_error( $res ) || 200 !== $res['status'] ) {
+					continue;
+				}
+				$c       = isset( $res['data']['data'] ) && is_array( $res['data']['data'] ) ? $res['data']['data'] : array();
+				$boxes[] = array(
+					'address'    => $address,
+					'name'       => $name,
+					'total'      => absint( isset( $c['total'] ) ? $c['total'] : 0 ),
+					'unread'     => absint( isset( $c['unread'] ) ? $c['unread'] : 0 ),
+					'assigned'   => absint( isset( $c['assigned'] ) ? $c['assigned'] : 0 ),
+					'unassigned' => absint( isset( $c['unassigned'] ) ? $c['unassigned'] : 0 ),
+				);
+				break;
+			}
+		}
+		return $boxes;
+	}
+
+	/** The mailbox's views as "folders" (all, unread, unassigned, assigned, archived); unread_count carries the useful number. */
+	public function get_views() {
+		$data = $this->shared_get( '/counts' );
 		if ( is_wp_error( $data ) ) {
 			return $data;
 		}
+		$c = isset( $data['data'] ) && is_array( $data['data'] ) ? $data['data'] : array();
+		$n = static function ( $key ) use ( $c ) {
+			return absint( isset( $c[ $key ] ) ? $c[ $key ] : 0 );
+		};
+		return array(
+			array( 'folder_id' => 'all', 'name' => __( 'All', 'ajcore' ), 'unread_count' => 0 ),
+			array( 'folder_id' => 'unread', 'name' => __( 'Unread', 'ajcore' ), 'unread_count' => $n( 'unread' ) ),
+			array( 'folder_id' => 'unassigned', 'name' => __( 'Unassigned', 'ajcore' ), 'unread_count' => $n( 'unassigned' ) ),
+			array( 'folder_id' => 'assigned', 'name' => __( 'Assigned', 'ajcore' ), 'unread_count' => $n( 'assigned' ) ),
+			array( 'folder_id' => 'archived', 'name' => __( 'Archived', 'ajcore' ), 'unread_count' => 0 ),
+		);
+	}
+
+	/** Breadth-first lookup of a key in nested arrays: the shared API's responses nest fields in sub-objects. */
+	private static function deep_find( $node, $key ) {
+		$queue = array( $node );
+		while ( $queue ) {
+			$cur = array_shift( $queue );
+			if ( ! is_array( $cur ) ) {
+				continue;
+			}
+			if ( array_key_exists( $key, $cur ) && null !== $cur[ $key ] ) {
+				return $cur[ $key ];
+			}
+			foreach ( $cur as $v ) {
+				if ( is_array( $v ) ) {
+					$queue[] = $v;
+				}
+			}
+		}
+		return null;
+	}
+
+	private static function deep_string( $node, array $keys ) {
+		foreach ( $keys as $key ) {
+			$v = self::deep_find( $node, $key );
+			if ( is_string( $v ) && '' !== $v ) {
+				return html_entity_decode( $v, ENT_QUOTES, 'UTF-8' );
+			}
+			if ( is_int( $v ) || is_float( $v ) ) {
+				return (string) $v;
+			}
+		}
+		return '';
+	}
+
+	/** Messages in a view (all, unread, unassigned, assigned, archived, spam, trash), newest first, paged by $start. */
+	public function get_recent_messages( $limit = 10, $view = 'all', $start = 0 ) {
+		$view = in_array( $view, array( 'all', 'unread', 'unassigned', 'assigned', 'archived', 'spam', 'trash' ), true ) ? $view : 'all';
+		$data = $this->shared_get( '/messages/' . $view, array( 'start' => absint( $start ), 'limit' => max( 1, absint( $limit ) ) ) );
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$rows     = isset( $data['data']['messages'] ) && is_array( $data['data']['messages'] ) ? $data['data']['messages'] : array();
 		$messages = array();
-		foreach ( (array) ( isset( $data['data'] ) ? $data['data'] : array() ) as $row ) {
-			if ( empty( $row['messageId'] ) ) {
+		foreach ( $rows as $row ) {
+			$id = self::deep_string( $row, array( 'messageId' ) );
+			if ( '' === $id ) {
 				continue;
 			}
+			$unread     = self::deep_find( $row, 'unread' );
 			$messages[] = array(
-				'message_id'     => (string) $row['messageId'],
-				'folder_id'      => isset( $row['folderId'] ) ? (string) $row['folderId'] : $folder_id,
-				'subject'        => isset( $row['subject'] ) && '' !== $row['subject'] ? (string) $row['subject'] : __( '(no subject)', 'ajcore' ),
-				'from_name'      => isset( $row['sender'] ) ? (string) $row['sender'] : '',
-				'from_email'     => isset( $row['fromAddress'] ) ? (string) $row['fromAddress'] : '',
-				'summary'        => isset( $row['summary'] ) ? (string) $row['summary'] : '',
-				'received_at'    => isset( $row['receivedTime'] ) ? $this->timestamp_to_mysql( $row['receivedTime'] ) : '',
-				'is_unread'      => isset( $row['status'] ) && '0' === (string) $row['status'],
-				'has_attachment' => ! empty( $row['hasAttachment'] ) && '1' === (string) $row['hasAttachment'],
+				'message_id'     => $id,
+				'folder_id'      => $view,
+				'subject'        => self::deep_string( $row, array( 'title', 'subject' ) ) ?: __( '(no subject)', 'ajcore' ),
+				'from_name'      => self::deep_string( $row, array( 'senderName' ) ),
+				'from_email'     => self::deep_string( $row, array( 'fromAddress' ) ),
+				'summary'        => self::deep_string( $row, array( 'summary' ) ),
+				'received_at'    => $this->timestamp_to_mysql( self::deep_find( $row, 'createdAt' ) ),
+				'is_unread'      => true === $unread || 'true' === $unread || 1 === $unread || '1' === $unread,
+				'has_attachment' => true === self::deep_find( $row, 'hasAttachments' ) || '1' === (string) self::deep_find( $row, 'hasAttachments' ),
 			);
 		}
 		return $messages;
 	}
 
-	/** Zoho Mail timestamps are milliseconds since epoch. */
-	private function timestamp_to_mysql( $ms_timestamp ) {
-		$ms = (float) $ms_timestamp;
-		return $ms <= 0 ? '' : gmdate( 'Y-m-d H:i:s', (int) round( $ms / 1000 ) );
+	/** One message's details from the Shared Mailbox API (a summary plus the real folderId; no body). */
+	public function get_message( $message_id ) {
+		$data = $this->shared_get( '/messages/' . rawurlencode( (string) $message_id ) );
+		return is_wp_error( $data ) ? $data : ( isset( $data['data'] ) && is_array( $data['data'] ) ? $data['data'] : array() );
+	}
+
+	/**
+	 * The message body (HTML). The Shared Mailbox API returns only a summary, so the body comes from the login's regular
+	 * content endpoint using the real folderId that response reports; the summary is the fallback.
+	 */
+	public function get_message_body( $message_id ) {
+		$details = $this->get_message( $message_id );
+		if ( is_wp_error( $details ) ) {
+			return $details;
+		}
+		$summary    = self::deep_string( $details, array( 'summary', 'title' ) );
+		$folder_id  = self::deep_string( $details, array( 'folderId' ) );
+		$account_id = trim( (string) $this->get_settings()['zoho_mail_account_id'] );
+		if ( '' !== $folder_id && '' !== $account_id ) {
+			$res = $this->api_request( '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id ) . '/content' );
+			if ( ! is_wp_error( $res ) && 200 === $res['status'] ) {
+				$content = self::deep_string( $res['data'], array( 'content' ) );
+				if ( '' !== $content ) {
+					return $content;
+				}
+			}
+		}
+		return '<pre style="white-space:pre-wrap;font-family:inherit">' . esc_html( $summary ) . '</pre>';
+	}
+
+	/** Zoho Mail timestamps: milliseconds since epoch (number or numeric string) or an ISO 8601 string. */
+	private function timestamp_to_mysql( $value ) {
+		if ( is_string( $value ) && ! is_numeric( $value ) ) {
+			$t = strtotime( $value );
+			return $t ? gmdate( 'Y-m-d H:i:s', $t ) : '';
+		}
+		$n = (float) $value;
+		if ( $n <= 0 ) {
+			return '';
+		}
+		return gmdate( 'Y-m-d H:i:s', (int) ( $n > 1e11 ? round( $n / 1000 ) : $n ) );
 	}
 
 	// ── Admin tab ───────────────────────────────────────────────────────────────
@@ -575,8 +653,8 @@ class AJCore_Zoho_Mail {
 		$state = wp_generate_password( 32, false );
 		set_transient( 'ajcore_zoho_mail_oauth_state', $state, 10 * MINUTE_IN_SECONDS );
 		$authorize_url = add_query_arg( array(
-			// organization.groups.READ is what finds the Shared Mailbox itself (it is an org Group with its own mailboxId).
-			'scope'         => 'ZohoMail.accounts.READ,ZohoMail.messages.READ,ZohoMail.folders.READ,ZohoMail.organization.groups.READ',
+			// accounts: find the login's own account; messages.ALL: the Shared Mailbox API; folders: message bodies.
+			'scope'         => 'ZohoMail.accounts.READ,ZohoMail.messages.ALL,ZohoMail.folders.READ',
 			'client_id'     => (string) $settings['zoho_mail_client_id'],
 			'response_type' => 'code',
 			'access_type'   => 'offline',
@@ -591,12 +669,11 @@ class AJCore_Zoho_Mail {
 			<details style="margin:10px 0">
 				<summary style="cursor:pointer"><?php esc_html_e( 'Setup steps', 'ajcore' ); ?></summary>
 				<ol style="line-height:1.7">
-					<li><?php esc_html_e( 'Open api-console.zoho.com (the Zoho API Console, not the Mail Admin Console) and sign in with the admin who can see the shared mailbox.', 'ajcore' ); ?></li>
+					<li><?php esc_html_e( 'Open api-console.zoho.com (the Zoho API Console, not the Mail Admin Console) and sign in with a Zoho user that is a member of the shared mailbox.', 'ajcore' ); ?></li>
 					<li><?php esc_html_e( 'Add Client, choose Server-based Applications.', 'ajcore' ); ?></li>
 					<li><?php echo esc_html( sprintf( __( 'Client Name: AJCore Zoho Mail. Homepage URL: %s', 'ajcore' ), home_url( '/' ) ) ); ?></li>
 					<li><?php esc_html_e( 'Authorized Redirect URI (must match exactly):', 'ajcore' ); ?> <code><?php echo esc_html( $redirect_uri ); ?></code></li>
-					<li><?php esc_html_e( 'Copy the Client ID and Client Secret below, plus the Organization ID (Mail Admin Console: Organization, Profile).', 'ajcore' ); ?></li>
-					<li><?php esc_html_e( 'In the Mail Admin Console, Groups, Shared Mailbox, Members: the Zoho user you sign in with must be a member or moderator and an org admin (Zoho treats a Shared Mailbox as an organization group).', 'ajcore' ); ?></li>
+					<li><?php esc_html_e( 'Copy the Client ID and Client Secret below, enter the shared mailbox address, Save, then Connect and sign in as that same user. No Organization ID is needed.', 'ajcore' ); ?></li>
 				</ol>
 			</details>
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="max-width:720px">
@@ -606,8 +683,6 @@ class AJCore_Zoho_Mail {
 					<tr><th><label for="zoho_mail_client_id"><?php esc_html_e( 'Client ID', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_id" id="zoho_mail_client_id" value="<?php echo esc_attr( $settings['zoho_mail_client_id'] ); ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_client_secret"><?php esc_html_e( 'Client Secret', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_client_secret" id="zoho_mail_client_secret" value="" placeholder="<?php echo ! empty( $settings['zoho_mail_client_secret'] ) ? esc_attr__( '•••••••• (saved — leave blank to keep)', 'ajcore' ) : ''; ?>" autocomplete="off"></td></tr>
 					<tr><th><label for="zoho_mail_account_email"><?php esc_html_e( 'Shared Mailbox Address', 'ajcore' ); ?></label></th><td><input type="email" class="regular-text" name="zoho_mail_account_email" id="zoho_mail_account_email" value="<?php echo esc_attr( $settings['zoho_mail_account_email'] ); ?>"></td></tr>
-					<tr><th><label for="zoho_mail_org_id"><?php esc_html_e( 'Organization ID', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_org_id" id="zoho_mail_org_id" value="<?php echo esc_attr( $settings['zoho_mail_org_id'] ); ?>" autocomplete="off"></td></tr>
-					<tr><th><label for="zoho_mail_group_id"><?php esc_html_e( 'Group ID (zgid), optional', 'ajcore' ); ?></label></th><td><input type="text" class="regular-text" name="zoho_mail_group_id" id="zoho_mail_group_id" value="<?php echo esc_attr( $settings['zoho_mail_group_id'] ); ?>" autocomplete="off"><p class="description"><?php esc_html_e( 'Only if the groups list comes back empty. Copy it from the group URL in the Admin Console (after "grouplist/" or "/groups/").', 'ajcore' ); ?></p></td></tr>
 					<tr><th><label for="zoho_mail_data_center"><?php esc_html_e( 'Data center', 'ajcore' ); ?></label></th><td><select name="zoho_mail_data_center" id="zoho_mail_data_center"><?php foreach ( array( 'com' => 'zoho.com (US)', 'eu' => 'zoho.eu', 'in' => 'zoho.in', 'com.au' => 'zoho.com.au', 'jp' => 'zoho.jp' ) as $dc_key => $dc_label ) : ?><option value="<?php echo esc_attr( $dc_key ); ?>" <?php selected( $settings['zoho_mail_data_center'], $dc_key ); ?>><?php echo esc_html( $dc_label ); ?></option><?php endforeach; ?></select></td></tr>
 				</table>
 				<p><button type="submit" class="button button-primary"><?php esc_html_e( 'Save', 'ajcore' ); ?></button></p>
@@ -625,13 +700,12 @@ class AJCore_Zoho_Mail {
 			</p>
 			<div id="ajra-zm-result" style="display:none;margin:10px 0;padding:10px 14px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:6px"></div>
 			<?php if ( $is_connected ) : ?>
-				<h4 style="margin-bottom:4px"><?php esc_html_e( 'Diagnose Shared Mailbox access', 'ajcore' ); ?></h4>
-				<p class="description"><?php esc_html_e( 'Searches every mailbox this Zoho login can personally see for a known piece of text.', 'ajcore' ); ?></p>
-				<p><input type="text" id="ajra-zm-q" value="E-Notification Filing" style="min-width:260px"> <button type="button" class="button" id="ajra-zm-diag"><?php esc_html_e( 'Run diagnostic', 'ajcore' ); ?></button></p>
+				<h4 style="margin-bottom:4px"><?php esc_html_e( 'Shared mailboxes this login can read', 'ajcore' ); ?></h4>
+				<p><button type="button" class="button" id="ajra-zm-diag"><?php esc_html_e( 'Find shared mailboxes', 'ajcore' ); ?></button></p>
 				<div id="ajra-zm-diag-result" style="display:none;margin:10px 0;padding:10px 14px;background:#f6f7f7;border:1px solid #dcdcde;border-radius:6px"></div>
 			<?php endif; ?>
 			<?php
-			foreach ( array( 'ajcore_zoho_mail_groups_debug' => __( 'Last raw Shared Mailbox groups response', 'ajcore' ), 'ajcore_zoho_mail_api_debug' => __( 'Last raw Zoho Mail API response', 'ajcore' ) ) as $debug_key => $debug_label ) {
+			foreach ( array( 'ajcore_zoho_mail_api_debug' => __( 'Last raw Zoho Mail API response', 'ajcore' ) ) as $debug_key => $debug_label ) {
 				$debug = get_transient( $debug_key );
 				if ( empty( $debug ) || ! is_array( $debug ) ) {
 					continue;
@@ -665,12 +739,10 @@ class AJCore_Zoho_Mail {
 			}); }
 			var g = document.getElementById('ajra-zm-diag');
 			if (g) { g.addEventListener('click', function () {
-				call(diagUrl + (diagUrl.indexOf('?') > -1 ? '&' : '?') + 'q=' + encodeURIComponent(document.getElementById('ajra-zm-q').value), g, document.getElementById('ajra-zm-diag-result'), function (d) {
-					if (!d.success) { return '<strong style="color:#b32d2e">Diagnostic failed</strong><br>' + esc(d.message || 'Unknown error.'); }
-					var mailboxes = (d.accounts_tried || []).map(function (a) { return a.email || a.account_id; }).join(', ') || '(none)';
-					var head = 'Searched for "' + esc(d.search_text) + '" in: ' + esc(mailboxes) + '<br>';
-					if (d.found) { return head + '<strong style="color:#007017">Found it</strong> — the personal Message API can reach this content.<ul>' + d.matches.map(function (m) { return '<li>' + esc(m.account_email || m.account_id) + ' — folder ' + esc(m.folder_id) + ' — "' + esc(m.subject) + '"</li>'; }).join('') + '</ul>'; }
-					return head + '<strong style="color:#b32d2e">Not found</strong> in any personally visible mailbox; the Groups and Organization ID setup is required.';
+				call(diagUrl, g, document.getElementById('ajra-zm-diag-result'), function (d) {
+					if (!d.success) { return '<strong style="color:#b32d2e">Lookup failed</strong><br>' + esc(d.message || 'Unknown error.'); }
+					if (!(d.mailboxes || []).length) { return '<strong style="color:#b32d2e">None found</strong> — this login is not a member of any shared mailbox it can read.'; }
+					return '<ul>' + d.mailboxes.map(function (m) { return '<li><strong>' + esc(m.address) + '</strong> (' + esc(m.name) + ') — ' + esc(m.total) + ' messages, ' + esc(m.unread) + ' unread</li>'; }).join('') + '</ul>Copy the address you want into Shared Mailbox Address.';
 				});
 			}); }
 		})();
@@ -678,33 +750,37 @@ class AJCore_Zoho_Mail {
 		<?php
 	}
 
-	/** The shared inbox, read live from Zoho on every load (no local copy of message content). */
 	private function render_inbox( array $settings, $is_connected ) {
 		echo '<div class="ajforms-settings-card" style="margin-bottom:14px"><h2 style="margin-top:0">' . esc_html__( 'Inbox', 'ajcore' ) . '</h2>';
 		if ( ! $is_connected ) {
 			echo '<p>' . esc_html__( 'Not connected yet. Open Connection below.', 'ajcore' ) . '</p></div>';
 			return;
 		}
-		$folders = $this->get_folders();
-		if ( is_wp_error( $folders ) ) {
-			echo '<div class="notice notice-error inline"><p>' . esc_html( $folders->get_error_message() ) . '</p></div></div>';
+		$views = $this->get_views();
+		if ( is_wp_error( $views ) ) {
+			echo '<div class="notice notice-error inline"><p>' . esc_html( $views->get_error_message() ) . '</p></div></div>';
 			return;
 		}
-		$folder_id = isset( $_GET['zoho_folder'] ) ? sanitize_text_field( wp_unslash( $_GET['zoho_folder'] ) ) : '';
-		$messages  = $this->get_recent_messages( 50, $folder_id );
+		$view  = isset( $_GET['zoho_view'] ) ? sanitize_key( wp_unslash( $_GET['zoho_view'] ) ) : 'all';
+		$view  = in_array( $view, array_column( $views, 'folder_id' ), true ) ? $view : 'all';
+		$limit = 50;
+		$start = isset( $_GET['zoho_start'] ) ? absint( $_GET['zoho_start'] ) : 0;
+		$messages = $this->get_recent_messages( $limit, $view, $start );
 		if ( is_wp_error( $messages ) ) {
 			echo '<div class="notice notice-error inline"><p>' . esc_html( $messages->get_error_message() ) . '</p></div></div>';
 			return;
 		}
 		$mailbox = $settings['zoho_mail_connected_email'] ? $settings['zoho_mail_connected_email'] : $settings['zoho_mail_account_email'];
-		echo '<p class="description">' . esc_html( sprintf( __( 'Shared mailbox: %s. Read-only view; reply, assign and archive still happen in Zoho Mail.', 'ajcore' ), $mailbox ) ) . ' <a href="' . esc_url( 'https://' . $this->api_host( $settings['zoho_mail_data_center'] ) ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Open in Zoho Mail ↗', 'ajcore' ) . '</a></p>';
+		echo '<p class="description">' . esc_html( sprintf( __( 'Shared mailbox: %s. Read-only view; reply, assign and archive still happen in Zoho Mail.', 'ajcore' ), $mailbox ) ) . '</p>';
+		$page_url = static function ( $args ) {
+			return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB ), $args ), admin_url( 'admin.php' ) );
+		};
 		?>
 		<form method="get" style="margin:8px 0">
 			<input type="hidden" name="page" value="ajforms-client-portal"><input type="hidden" name="tab" value="<?php echo esc_attr( self::TAB ); ?>">
-			<select name="zoho_folder" onchange="this.form.submit();">
-				<option value=""><?php esc_html_e( 'All folders', 'ajcore' ); ?></option>
-				<?php foreach ( $folders as $folder ) : ?>
-					<option value="<?php echo esc_attr( $folder['folder_id'] ); ?>" <?php selected( $folder_id, $folder['folder_id'] ); ?>><?php echo esc_html( $folder['name'] . ( $folder['unread_count'] > 0 ? ' (' . $folder['unread_count'] . ')' : '' ) ); ?></option>
+			<select name="zoho_view" onchange="this.form.submit();">
+				<?php foreach ( $views as $v ) : ?>
+					<option value="<?php echo esc_attr( $v['folder_id'] ); ?>" <?php selected( $view, $v['folder_id'] ); ?>><?php echo esc_html( $v['name'] . ( $v['unread_count'] > 0 ? ' (' . $v['unread_count'] . ')' : '' ) ); ?></option>
 				<?php endforeach; ?>
 			</select>
 		</form>
@@ -718,12 +794,16 @@ class AJCore_Zoho_Mail {
 					<tr style="<?php echo $message['is_unread'] ? 'font-weight:700;' : ''; ?>">
 						<td><?php echo esc_html( $message['received_at'] ? get_date_from_gmt( $message['received_at'], get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) ) : '—' ); ?></td>
 						<td><?php echo esc_html( $message['from_name'] ? $message['from_name'] : $message['from_email'] ); ?></td>
-						<td><?php echo esc_html( $message['subject'] ); ?><?php echo $message['has_attachment'] ? ' <span title="' . esc_attr__( 'Has attachment', 'ajcore' ) . '">📎</span>' : ''; ?><?php if ( ! empty( $message['summary'] ) ) : ?><br><span class="description"><?php echo esc_html( wp_trim_words( $message['summary'], 20 ) ); ?></span><?php endif; ?></td>
+						<td><?php echo esc_html( $message['subject'] ); ?><?php echo $message['has_attachment'] ? ' <span title="' . esc_attr__( 'Has attachment', 'ajcore' ) . '">📎</span>' : ''; ?><?php if ( '' !== $message['summary'] ) : ?><div style="color:#646970;font-weight:400"><?php echo esc_html( wp_trim_words( $message['summary'], 24 ) ); ?></div><?php endif; ?></td>
 					</tr>
 				<?php endforeach; ?>
 			<?php endif; ?>
 			</tbody>
 		</table>
+		<p>
+			<?php if ( $start > 0 ) : ?><a class="button" href="<?php echo esc_url( $page_url( array( 'zoho_view' => $view, 'zoho_start' => max( 0, $start - $limit ) ) ) ); ?>">&larr; <?php esc_html_e( 'Newer', 'ajcore' ); ?></a><?php endif; ?>
+			<?php if ( count( $messages ) >= $limit ) : ?><a class="button" href="<?php echo esc_url( $page_url( array( 'zoho_view' => $view, 'zoho_start' => $start + $limit ) ) ); ?>"><?php esc_html_e( 'Older', 'ajcore' ); ?> &rarr;</a><?php endif; ?>
+		</p>
 		</div>
 		<?php
 	}
