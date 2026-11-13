@@ -609,10 +609,18 @@
 		".ajcore-chat-msg.aj-dots span:nth-child(2){animation-delay:.2s;}.ajcore-chat-msg.aj-dots span:nth-child(3){animation-delay:.4s;}" +
 		"@keyframes ajdots{0%,60%,100%{opacity:.25;transform:translateY(0);}30%{opacity:1;transform:translateY(-3px);}}" +
 		"#ajcore-chat-chips,.aj-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;}" +
-		".aj-chip{background:#fff;border:1px solid #3157ff;color:#3157ff;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;}" +
-		".aj-chip:hover{background:#3157ff;color:#fff;}" +
+		"#ajcore-chat-panel .aj-chip,#ajcore-chat-form button.aj-chip{background:#fff;border:1px solid #3157ff;color:#3157ff;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;}" +
+		"#ajcore-chat-panel .aj-chip:hover,#ajcore-chat-form button.aj-chip:hover{background:#3157ff;color:#fff;}" +
 		".aj-status{font-size:11px;color:#6b7280;text-align:center;margin:0 0 10px;}" +
 		".aj-status.online:before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;margin-right:6px;vertical-align:1px;}" +
+		".aj-multi{position:relative;}" +
+		"#ajcore-chat-form .aj-multi-btn{width:100%;text-align:left;background:#fff;color:#111827;border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:13px;font-weight:400;display:flex;justify-content:space-between;align-items:center;}" +
+		"#ajcore-chat-form .aj-multi-btn.has{color:#111827;font-weight:600;border-color:#3157ff;}" +
+		".aj-multi-list{display:none;border:1px solid #d1d5db;border-radius:8px;background:#fff;margin-top:4px;max-height:190px;overflow-y:auto;padding:4px 0;}" +
+		".aj-multi.open .aj-multi-list{display:block;}" +
+		".aj-multi-list label{display:flex;align-items:center;gap:8px;padding:7px 11px;font-size:13px;color:#111827;cursor:pointer;}" +
+		".aj-multi-list label:hover{background:#f3f4f6;}" +
+		".aj-multi-list input{width:auto;margin:0;}" +
 		".aj-hp{position:absolute!important;left:-9999px!important;width:1px;height:1px;opacity:0;pointer-events:none;}" +
 		".aj-inwrap{flex:1;position:relative;display:flex;}" +
 		".aj-inwrap textarea{width:100%;box-sizing:border-box;}" +
@@ -1510,6 +1518,7 @@
 			'<div class="aj-field-error" id="ajcore-chat-email-error"></div>' +
 			'<input type="tel" id="ajcore-chat-phone" placeholder="(704) 555-0123" autocomplete="tel" inputmode="tel" maxlength="20" required>' +
 			'<div class="aj-field-error" id="ajcore-chat-phone-error"></div>' +
+			'<div class="aj-multi" id="ajcore-chat-services" style="display:none;"></div>' +
 			'<div class="aj-chips" id="ajcore-chat-starters" style="margin:0;"></div>' +
 			'<textarea id="ajcore-chat-first-message" rows="3" maxlength="1000" placeholder="How can we help?" required></textarea>' +
 			'<input type="text" name="website" class="aj-hp" id="ajcore-chat-hp" tabindex="-1" autocomplete="off" aria-hidden="true">' +
@@ -1541,9 +1550,66 @@
 		var emailInput = form.querySelector("#ajcore-chat-email");
 		var phoneInput = form.querySelector("#ajcore-chat-phone");
 		var messageInput = form.querySelector("#ajcore-chat-first-message");
-		updateHeaderTitle();
-		var starters = Array.isArray(config.quickReplies) && config.quickReplies.length ? config.quickReplies : ["Pricing", "Book a tour", "Talk to a person"];
 		var starterWrap = form.querySelector("#ajcore-chat-starters");
+		var starterWrap0 = starterWrap;
+		updateHeaderTitle();
+		// Per-site starter chips (config.quickReplies overrides); unknown sites show none.
+		var host = siteHost().replace(/^www\./, "");
+		var starters = Array.isArray(config.quickReplies) ? config.quickReplies
+			: host === "ncllcagents.com" ? ["Registered agent service", "Start a new LLC", "Get an EIN", "Virtual office address"]
+			: host === "universityofficesuites.com" ? ["Office space pricing", "Schedule a tour", "Availability"]
+			: [];
+		// Multi-select "What do you need?" — picks one or more services and writes them into the
+		// message box (replaced on each change, left alone once the visitor edits it).
+		var services = Array.isArray(config.services) ? config.services
+			: host === "ncllcagents.com" ? [
+				"Registered agent service", "Start a new LLC", "Nonprofit incorporator & formation",
+				"Get an EIN", "Foreign qualification in NC", "Reinstatement",
+				"Virtual office address", "Corporate records custody & inspection access",
+				"Other / custom service"
+			] : [];
+		if (services.length) {
+			starters = []; // the dropdown replaces the single-tap chips on this site
+			var multi = form.querySelector("#ajcore-chat-services");
+			multi.style.display = "";
+			var mBtn = document.createElement("button");
+			mBtn.type = "button";
+			mBtn.className = "aj-multi-btn";
+			var mList = document.createElement("div");
+			mList.className = "aj-multi-list";
+			var autoText = "";
+			function refreshMulti() {
+				var picked = [];
+				Array.prototype.forEach.call(mList.querySelectorAll("input:checked"), function (i) { picked.push(i.value); });
+				mBtn.className = "aj-multi-btn" + (picked.length ? " has" : "");
+				mBtn.innerHTML = "";
+				var t = document.createElement("span");
+				t.textContent = picked.length ? picked.length + " selected: " + picked.join(", ") : "What do you need? (pick one or more)";
+				t.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+				var ar = document.createElement("span");
+				ar.textContent = multi.classList.contains("open") ? "▴" : "▾";
+				mBtn.appendChild(t); mBtn.appendChild(ar);
+				var next = picked.length ? "I'm interested in: " + picked.join(", ") + "." : "";
+				if (!messageInput.value.trim() || messageInput.value === autoText) {
+					messageInput.value = next;
+					autoText = next;
+				}
+			}
+			services.forEach(function (label) {
+				var l = document.createElement("label");
+				var c = document.createElement("input");
+				c.type = "checkbox"; c.value = String(label);
+				c.addEventListener("change", refreshMulti);
+				l.appendChild(c);
+				var sp = document.createElement("span"); sp.textContent = String(label);
+				l.appendChild(sp);
+				mList.appendChild(l);
+			});
+			mBtn.addEventListener("click", function () { multi.classList.toggle("open"); refreshMulti(); });
+			multi.appendChild(mBtn); multi.appendChild(mList);
+			refreshMulti();
+		}
+		if (!starters.length) starterWrap0.style.display = "none";
 		starters.slice(0, 4).forEach(function (label) {
 			var b = document.createElement("button");
 			b.type = "button";
