@@ -455,6 +455,7 @@ class AJCore_Pipeline_Tab {
 		.ajra-pu-bar .ajmr-search { flex:1; min-width:180px; }
 		.ajra-pu-bar .ajmr-select { flex:0 0 130px; min-width:0; padding:8px 10px; }
 		.ajra-pu-bar .ajmr-tile { padding:8px 12px; }
+		.ajra-pu-warn { margin:0 2px 10px; font-size:13px; color:#b91c1c; } .ajra-pu-warn:empty { display:none; }
 		.ajra-pu-status { margin:0 2px 10px; font-size:13px; color:#475569; } .ajra-pu-status:empty { display:none; }
 		#ajra-pu-table th, #ajra-pu-table td { padding:7px 10px; vertical-align:middle; font-size:13px; }
 		#ajra-pu-table td strong { font-weight:700; }
