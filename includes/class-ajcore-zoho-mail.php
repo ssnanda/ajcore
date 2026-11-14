@@ -982,11 +982,62 @@ class AJCore_Zoho_Mail {
 		return $loc;
 	}
 
-	/** The full message text from the located copy: content endpoint, then the raw message (decoded). $debug collects why it failed. */
+	/** All non-empty string values of a response by path, for finding (and explaining) which field holds the body. */
+	private static function string_leaves( $node, $prefix = '', array &$out = array() ) {
+		if ( is_array( $node ) ) {
+			foreach ( $node as $k => $v ) {
+				self::string_leaves( $v, '' === $prefix ? (string) $k : $prefix . '.' . $k, $out );
+			}
+		} elseif ( is_string( $node ) && '' !== $node ) {
+			$out[ $prefix ] = $node;
+		}
+		return $out;
+	}
+
+	/**
+	 * Ask the Shared Mailbox API itself for the body fields (its documented `fields` option lists content and htmlSummary). Returns
+	 * array( text, html ) when a field holds more than the short preview, else null; $notes gets what came back.
+	 */
+	private function shared_body_fields( $message_id, array $details, $address, &$notes ) {
+		$data = $this->shared_get( '/messages/' . rawurlencode( (string) $message_id ), array( 'fields' => 'content,htmlSummary,summary,title,folderDetails,groupId,mailSpaceId', 'includeAttachments' => 'true' ), $address );
+		if ( is_wp_error( $data ) ) {
+			$notes[] = 'shared body fields: ' . $data->get_error_message();
+			return null;
+		}
+		$summary = self::deep_string( $details, array( 'summary' ) );
+		$leaves  = self::string_leaves( isset( $data['data'] ) ? $data['data'] : $data );
+		$best_html = '';
+		foreach ( $leaves as $val ) {
+			$val = html_entity_decode( $val, ENT_QUOTES, 'UTF-8' );
+			if ( strlen( $val ) > max( 600, strlen( $summary ) * 2 ) && false !== stripos( $val, '<' ) && strlen( $val ) > strlen( $best_html ) ) {
+				$best_html = $val;
+			}
+		}
+		if ( '' !== $best_html ) {
+			$text = self::html_to_text( $best_html );
+			if ( strlen( $text ) > strlen( $summary ) + 40 ) {
+				return array( $text, self::clean_email_html( $best_html ) );
+			}
+		}
+		$lens = array_map( 'strlen', $leaves );
+		arsort( $lens );
+		$notes[] = 'shared body fields returned: ' . implode( ', ', array_slice( array_map( static function ( $k, $v ) {
+			return $k . '=' . $v;
+		}, array_keys( $lens ), $lens ), 0, 8 ) );
+		return null;
+	}
+
+	/** The full message text: first from the shared API's own body fields, else from the copy in the login's own mailbox (content, then raw message). $debug collects why it failed. */
 	private function full_body_text( $message_id, array $details, $address, &$debug, &$html_out = '' ) {
 		$debug    = array();
 		$html_out = '';
-		$loc   = $this->locate_message( $message_id, $details, $debug );
+		$got      = $this->shared_body_fields( $message_id, $details, $address, $debug );
+		if ( $got ) {
+			$debug    = array();
+			$html_out = $got[1];
+			return $got[0];
+		}
+		$loc = $this->locate_message( $message_id, $details, $debug );
 		if ( ! $loc ) {
 			return '';
 		}
