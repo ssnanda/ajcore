@@ -790,6 +790,7 @@ class AJCore_Zoho_Mail {
 		$text = preg_replace( '/<(script|style|head)[^>]*>.*?<\/\1>/is', ' ', (string) $html );
 		$text = preg_replace( '/<br\s*\/?>|<\/p>|<\/div>|<\/tr>|<\/li>|<\/td>|<\/h[1-6]>/i', "\n", (string) $text );
 		$text = html_entity_decode( wp_strip_all_tags( (string) $text, false ), ENT_QUOTES, 'UTF-8' );
+		$text = preg_replace( '/[\x{034F}\x{200B}-\x{200F}\x{2060}\x{FEFF}\x{00AD}]/u', '', (string) $text ); // zero-width padding marketing mails use
 		$text = preg_replace( "/[ \t\x{00a0}]+/u", ' ', (string) $text );
 		return trim( (string) preg_replace( "/\n\s*\n+/", "\n", (string) $text ) );
 	}
@@ -873,6 +874,19 @@ class AJCore_Zoho_Mail {
 			$body = false !== $conv ? $conv : $body;
 		}
 		return array( array( 'type' => $type, 'body' => $body ) );
+	}
+
+	/** Moves a shared-mailbox message to that mailbox's Zoho Trash (recoverable there). Returns true or WP_Error. */
+	public function trash_message( $message_id, $address = '' ) {
+		$addr = '' !== (string) $address ? strtolower( trim( (string) $address ) ) : $this->shared_address();
+		$res  = $this->api_request( '/v2/sharedmailbox/' . $this->path_address( $addr ) . '/messages/' . rawurlencode( (string) $message_id ) . '/trash', array(), 'PUT' );
+		if ( is_wp_error( $res ) ) {
+			return $res;
+		}
+		if ( 200 !== $res['status'] ) {
+			return new WP_Error( 'zoho_trash_failed', sprintf( 'Zoho trash returned HTTP %d: %s', $res['status'], substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 120 ) ) );
+		}
+		return true;
 	}
 
 	/**

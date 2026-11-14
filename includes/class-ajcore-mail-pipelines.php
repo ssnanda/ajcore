@@ -231,10 +231,16 @@ class AJCore_Mail_Pipelines {
 			if ( $ids ) {
 				$ph    = implode( ', ', array_fill( 0, count( $ids ), '%s' ) );
 				$known = array_flip( (array) $pdb->get_col( $pdb->prepare( "SELECT message_id FROM `{$tbl}` WHERE pipeline = %s AND message_id IN ({$ph})", array_merge( array( $id ), $ids ) ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$known = $known + AJCore_Marketing::known( $s['mailbox'], $ids ); // already labelled marketing (or deleted): never read back in
 			}
 			$all_known = true;
 			foreach ( $rows as $row ) {
 				if ( isset( $known[ $row['message_id'] ] ) ) {
+					continue;
+				}
+				$sender_txt = trim( $row['from_name'] . ' <' . $row['from_email'] . '>' );
+				if ( AJCore_Marketing::is_marketing_sender( $sender_txt ) ) { // a marked sender: straight to the Marketing tab
+					AJCore_Marketing::label( array( 'pipeline' => $id, 'mailbox' => $s['mailbox'], 'message_id' => $row['message_id'], 'subject' => $row['subject'], 'sender' => $sender_txt, 'summary' => $row['summary'], 'received_at' => $row['received_at'] ) );
 					continue;
 				}
 				$all_known = false;
@@ -295,6 +301,7 @@ class AJCore_Mail_Pipelines {
 		register_rest_route( $ns, $base, array( 'methods' => 'GET', 'callback' => array( $this, 'rest_list' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/process', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_process' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/stage', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_stage' ), 'permission_callback' => $ops ) );
+		register_rest_route( $ns, $base . '/marketing', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_marketing' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/settings', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_settings' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/items/(?P<id>\d+)', array( 'methods' => 'GET', 'callback' => array( $this, 'rest_item' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/items/(?P<id>\d+)', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_item_update' ), 'permission_callback' => $ops ) );
@@ -386,6 +393,30 @@ class AJCore_Mail_Pipelines {
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$n = $pdb->query( $pdb->prepare( "UPDATE `{$this->table()}` SET stage = %s, updated_at = %s WHERE pipeline = %s AND id IN ({$ph})", array_merge( array( $stage, current_time( 'mysql' ), $id ), $ids ) ) );
 		return rest_ensure_response( array( 'updated' => (int) $n, 'stage' => $stage ) );
+	}
+
+	/** Label emails as marketing: they leave this pipeline and appear in the Marketing tab. sender_rule: '' | 'address' | 'domain' also marks the sender for the future. */
+	public function rest_marketing( WP_REST_Request $request ) {
+		$id  = $this->pipe( $request );
+		$ids = array_values( array_filter( array_map( 'absint', (array) $request->get_param( 'ids' ) ) ) );
+		if ( ! $id || ! $ids || ! $this->ensure_table() ) {
+			return new WP_Error( 'bad_request', __( 'Select emails first.', 'ajcore' ), array( 'status' => 400 ) );
+		}
+		$rule    = sanitize_key( (string) $request->get_param( 'sender_rule' ) );
+		$mailbox = $this->settings( $id )['mailbox'];
+		$pdb     = $this->pdb();
+		$ph      = implode( ', ', array_fill( 0, count( $ids ), '%d' ) );
+		$rows    = (array) $pdb->get_results( $pdb->prepare( "SELECT * FROM `{$this->table()}` WHERE pipeline = %s AND id IN ({$ph})", array_merge( array( $id ), $ids ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$moved   = 0;
+		foreach ( $rows as $r ) {
+			AJCore_Marketing::label( array( 'pipeline' => $id, 'mailbox' => $mailbox, 'message_id' => $r->message_id, 'subject' => $r->subject, 'sender' => $r->sender, 'summary' => $r->summary, 'received_at' => $r->received_at ) );
+			$pdb->delete( $this->table(), array( 'id' => (int) $r->id ) );
+			if ( in_array( $rule, array( 'address', 'domain' ), true ) ) {
+				AJCore_Marketing::add_sender( (string) $r->sender, 'domain' === $rule );
+			}
+			$moved++;
+		}
+		return rest_ensure_response( array( 'moved' => $moved ) );
 	}
 
 	public function rest_settings( WP_REST_Request $request ) {
@@ -529,6 +560,7 @@ class AJCore_Mail_Pipelines {
 			function syncBulk() {
 				var ids = Object.keys( selected ), box = $( 'ajmp-bulk' ); box.innerHTML = ''; box.hidden = ! ids.length; if ( ! ids.length ) { return; }
 				box.appendChild( el( 'strong', null, ids.length + ' selected ' ) );
+				var mk = el( 'button', 'button', 'Marketing' ); mk.type = 'button'; mk.title = 'Move to the Marketing tab'; mk.addEventListener( 'click', function () { var rule = confirm( 'Also label future mail from these senders as marketing automatically?\n\nOK = yes (by sender address)   Cancel = only these emails' ) ? 'address' : ''; post( '/marketing', { ids: ids.map( Number ), sender_rule: rule } ).then( function () { selected = {}; load(); } ).catch( function ( e ) { alert( e.message ); } ); } ); box.appendChild( mk ); box.appendChild( document.createTextNode( ' ' ) );
 				Object.keys( data.stages ).forEach( function ( k ) { var b = el( 'button', 'button', 'Mark ' + data.stages[ k ].toLowerCase() ); b.type = 'button'; b.addEventListener( 'click', function () { post( '/stage', { ids: ids.map( Number ), stage: k } ).then( function () { selected = {}; load(); } ).catch( function ( e ) { alert( e.message ); } ); } ); box.appendChild( b ); box.appendChild( document.createTextNode( ' ' ) ); } );
 			}
 			function openDetail( id ) {
@@ -539,7 +571,8 @@ class AJCore_Mail_Pipelines {
 					if ( i.body_html ) { box.appendChild( emailFrame( i.body_html ) ); } var pre = el( 'pre', null, i.body || i.summary ); if ( i.body_html ) { pre.hidden = true; var tg = el( 'a', null, 'Show plain text' ); tg.href = '#'; tg.addEventListener( 'click', function ( ev ) { ev.preventDefault(); pre.hidden = ! pre.hidden; } ); box.appendChild( tg ); } pre.style.cssText = 'max-height:380px;overflow:auto;white-space:pre-wrap;font-size:12px;background:#f8fafc;padding:10px;border-radius:8px;'; box.appendChild( pre );
 					var notes = el( 'textarea' ); notes.rows = 2; notes.className = 'large-text'; notes.value = i.notes; notes.placeholder = 'Note'; box.appendChild( notes );
 					var bar = el( 'p' ); function act( label, stage, primary ) { var b = el( 'button', 'button' + ( primary ? ' button-primary' : '' ), label ); b.type = 'button'; b.addEventListener( 'click', function () { var body = { notes: notes.value }; if ( stage ) { body.stage = stage; } post( '/items/' + id, body ).then( function () { wrap.hidden = true; load(); } ).catch( function ( e ) { alert( e.message ); } ); } ); bar.appendChild( b ); bar.appendChild( document.createTextNode( ' ' ) ); }
-					act( 'Save note', '', true ); Object.keys( data.stages ).forEach( function ( k ) { if ( k !== i.stage ) { act( 'Mark ' + data.stages[ k ].toLowerCase(), k, false ); } } );
+					var mkb = el( 'button', 'button', 'Marketing' ); mkb.type = 'button'; mkb.addEventListener( 'click', function () { var rule = confirm( 'Also label future mail from this sender as marketing automatically?\n\nOK = yes   Cancel = only this email' ) ? 'address' : ''; post( '/marketing', { ids: [ id ], sender_rule: rule } ).then( function () { wrap.hidden = true; load(); } ).catch( function ( e ) { alert( e.message ); } ); } );
+					act( 'Save note', '', true ); bar.appendChild( mkb ); bar.appendChild( document.createTextNode( ' ' ) ); Object.keys( data.stages ).forEach( function ( k ) { if ( k !== i.stage ) { act( 'Mark ' + data.stages[ k ].toLowerCase(), k, false ); } } );
 					var close = el( 'a', null, 'Close' ); close.href = '#'; close.addEventListener( 'click', function ( e ) { e.preventDefault(); wrap.hidden = true; } ); bar.appendChild( close ); box.appendChild( bar );
 				} ).catch( function ( e ) { box.innerHTML = ''; box.appendChild( el( 'p', null, e.message ) ); } );
 			}

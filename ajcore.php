@@ -40,6 +40,7 @@ require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-zoho-mail.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-pipeline.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-pipeline-tab.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-mail-pipelines.php';
+require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-marketing.php';
 
 // Reports this install (site, versions) to freeSIEM Core. Must load at the top level
 // of this file so its activation hook registers.
@@ -3045,6 +3046,7 @@ function ajcore_boot_mail_features() {
 	if ( ! class_exists( 'AJCore_RA_Zoho_Mail' ) && ! class_exists( 'AJCore_RA_Gmail_Intake' ) ) {
 		AJCore_Pipeline_Tab::init(); // one "Pipeline" tab replaces the Pipeline and Zoho Mail tabs
 		AJCore_Mail_Pipelines::init(); // mailbox sub-pipelines that extensions register (invoices, insurance, ...)
+		AJCore_Marketing::init(); // the Marketing tab: emails labelled marketing from any pipeline
 	}
 }
 add_action( 'plugins_loaded', 'ajcore_boot_mail_features', 20 );
