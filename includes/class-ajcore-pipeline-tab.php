@@ -428,6 +428,7 @@ class AJCore_Pipeline_Tab {
 		.ajra-pu-num.k-receipt, .ajra-pu-num.k-payment { background:#dcfce7; border-color:#86efac; color:#166534; }
 		.ajra-pu-num.k-confirmation, .ajra-pu-num.k-statement { background:#dbeafe; border-color:#93c5fd; color:#1e40af; }
 		.ajra-pu-num.k-status, .ajra-pu-num.k-other, .ajra-pu-num.k-reminder { background:#f1f5f9; border-color:#cbd5e1; color:#475569; }
+		.ajra-pu-when { white-space:nowrap; font-variant-numeric:tabular-nums; color:#334155; }
 		.ajra-pu-unnamed { color:#b45309; font-style:italic; }
 		.ajra-pu-none { color:#94a3b8; }
 		.ajra-pu-tot { font-variant-numeric:tabular-nums; font-weight:600; }
