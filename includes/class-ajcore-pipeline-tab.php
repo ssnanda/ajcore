@@ -452,6 +452,7 @@ class AJCore_Pipeline_Tab {
 		button.ajmr-tile-main { background:none; border:0; cursor:pointer; font:inherit; text-align:left; color:inherit; }
 		.ajmr-tile-txt strong.is-off { font-size:13px; color:#b91c1c; }
 		.ajmr-tile.is-disconnected { border-style:dashed; background:#fffafa; }
+		.ajmr-note[hidden], .ajmr-panel[hidden], .ajmr-guide[hidden] { display:none !important; }
 		.ajmr-note { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px; padding:10px 14px; background:#fef2f2; border:1px solid #fecaca; border-radius:10px; color:#991b1b; font-size:13px; }
 		.ajmr-tile-conn { position:absolute; top:8px; right:8px; display:flex; align-items:center; gap:6px; }
 		.ajmr-dot.is-ok { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.2); }

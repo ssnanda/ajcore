@@ -470,12 +470,12 @@ class AJCore_Mail_Pipelines {
 				<button type="button" class="ajmr-tile ajmr-tool" id="ajmp-run"><span><?php esc_html_e( 'Read mailbox', 'ajcore' ); ?></span></button>
 			</div>
 			<div class="ajmr-filters"><span class="ajmr-fnote" id="ajmp-status"></span></div>
-			<div id="ajmp-bulk" class="ajmr-note" hidden></div>
-			<div class="ajmr-card"><table class="widefat striped" id="ajmp-table"><thead><tr><th style="width:28px"><input type="checkbox" id="ajmp-all"></th><th><?php esc_html_e( 'Time', 'ajcore' ); ?></th><th><?php esc_html_e( 'Email', 'ajcore' ); ?></th><th><?php esc_html_e( 'Stage', 'ajcore' ); ?></th></tr></thead><tbody></tbody></table></div>
 			<div class="ajmr-panel" id="ajmp-settings" hidden>
 				<h3><?php esc_html_e( 'Mailbox', 'ajcore' ); ?></h3>
 				<p><input type="email" id="ajmp-mailbox" class="regular-text" placeholder="name@yourdomain.com"> <label><input type="checkbox" id="ajmp-enabled"> <?php esc_html_e( 'Read every hour', 'ajcore' ); ?></label> <button type="button" class="button button-primary" id="ajmp-save"><?php esc_html_e( 'Save', 'ajcore' ); ?></button></p>
 			</div>
+			<div id="ajmp-bulk" class="ajmr-note" hidden></div>
+			<div class="ajmr-card"><table class="widefat striped" id="ajmp-table"><thead><tr><th style="width:28px"><input type="checkbox" id="ajmp-all"></th><th><?php esc_html_e( 'Time', 'ajcore' ); ?></th><th><?php esc_html_e( 'Email', 'ajcore' ); ?></th><th><?php esc_html_e( 'Stage', 'ajcore' ); ?></th></tr></thead><tbody></tbody></table></div>
 			<div class="ajmr-modal" id="ajmp-detail" hidden><div class="ajmr-modal-box"><div id="ajmp-detail-body"></div></div></div>
 		</div>
 		<script>
