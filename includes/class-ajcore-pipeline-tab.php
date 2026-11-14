@@ -65,7 +65,7 @@ class AJCore_Pipeline_Tab {
 
 	/** Title plus the sub-pipeline switch (shown only when there is more than one). */
 	private static function render_header( array $views, $current ) {
-		echo '<div class="ajmr-head"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		echo '<div class="ajmr-head ajmr-head-one"><div class="ajmr-title"><span class="ajmr-title-ico">' . self::icon( 'mail', 18 ) . '</span><h2>' . esc_html__( 'Pipeline', 'ajcore' ) . '</h2></div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo '<nav class="ajmr-views">';
 		if ( count( $views ) > 1 ) {
 			foreach ( $views as $key => $view ) {
@@ -81,7 +81,7 @@ class AJCore_Pipeline_Tab {
 		}
 		// Shared by every sub-pipeline: the Zoho login (Client ID / Secret / data center). Mailboxes are set per sub-pipeline.
 		printf( '<button type="button" id="ajmr-conn-toggle" class="ajmr-conn-btn" aria-expanded="false">%1$s %2$s</button>', self::icon( 'cog', 14 ), esc_html__( 'Connections', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-		echo '</nav>';
+		echo '</nav></div>';
 		echo '<section id="ajmr-panel-conn" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Zoho login (shared by all pipelines)', 'ajcore' ) . ' <button type="button" id="ajmr-zoho-help-btn" class="ajmr-help" title="' . esc_attr__( 'Setup help: opens the Zoho API Console and shows the values to use', 'ajcore' ) . '" data-console="' . esc_url( AJCore_Zoho_Mail::instance()->console_url() ) . '">?</button></h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		AJCore_Zoho_Mail::instance()->render_connection_panel( 'connection' );
 		echo '</section>';
@@ -418,7 +418,9 @@ class AJCore_Pipeline_Tab {
 		.ajmr-tile-txt strong { font-size:22px; }
 		.ajmr-tile-txt strong.is-alert { color:#b45309; }
 		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
-		.ajra-pu-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:0 0 10px; }
+		.ajra-pu-head { display:flex; align-items:center; gap:8px 10px; flex-wrap:wrap; margin:0 0 10px; }
+		.ajra-pu-head .ajra-menu { margin-left:auto; }
+		.ajra-pu-issues { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; padding-left:10px; border-left:1px solid #e2e8f0; }
 		.ajra-seg { display:inline-flex; gap:6px; flex-wrap:wrap; }
 		.ajra-seg-btn { display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:999px; border:1px solid #e2e8f0; background:#fff; color:#334155; font-size:13px; font-weight:600; text-decoration:none; }
 		.ajra-seg-btn b { color:#4338ca; font-variant-numeric:tabular-nums; }
@@ -447,7 +449,8 @@ class AJCore_Pipeline_Tab {
 		.ajra-pu-note { margin-left:auto; color:#94a3b8; font-size:12px; }
 		.ajra-pu-bar { display:flex; gap:10px; margin:0 0 12px; }
 		.ajra-pu-bar .ajmr-search { flex:1; min-width:180px; }
-		.ajra-pu-bar .ajmr-select { flex:0 0 190px; }
+		.ajra-pu-bar .ajmr-select { flex:0 0 130px; min-width:0; padding:8px 10px; }
+		.ajra-pu-bar .ajmr-tile { padding:8px 12px; }
 		.ajra-pu-status { margin:0 2px 10px; font-size:13px; color:#475569; } .ajra-pu-status:empty { display:none; }
 		#ajra-pu-table th, #ajra-pu-table td { padding:7px 10px; vertical-align:middle; font-size:13px; }
 		#ajra-pu-table td strong { font-weight:700; }
@@ -465,7 +468,9 @@ class AJCore_Pipeline_Tab {
 		.ajra-pu-tot { font-variant-numeric:tabular-nums; font-weight:600; }
 		.ajra-pu-day td { background:#f1f5f9; font-weight:700; font-size:12px; letter-spacing:.03em; color:#334155; padding:7px 10px; }
 		.ajra-pu-mail td { font-size:12px; color:#64748b; padding:3px 10px 3px 14px; border-top:0; }
-		.ajmr-views { display:flex; align-items:center; gap:8px; margin:0 0 14px; }
+		.ajmr-views { display:flex; align-items:center; gap:8px; margin:0; flex:1; min-width:0; flex-wrap:wrap; }
+		.ajmr-head-one { justify-content:flex-start; gap:18px; margin:0 0 12px; flex-wrap:nowrap; }
+		.ajmr-head-one .ajmr-views a { padding:7px 14px; font-size:14px; border-radius:10px; }
 		.ajmr-help { display:inline-grid; place-items:center; width:22px; height:22px; margin-left:6px; border-radius:50%; border:1px solid #6366f1; background:#eef2ff; color:#4338ca; font-weight:800; font-size:13px; cursor:pointer; vertical-align:middle; }
 		.ajmr-guide { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 18px; margin:10px 0 14px; max-width:860px; }
 		.ajmr-guide ol { margin:0; padding-left:20px; line-height:1.9; }
