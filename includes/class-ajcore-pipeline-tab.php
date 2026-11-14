@@ -422,7 +422,7 @@ class AJCore_Pipeline_Tab {
 		.ajmr-select { padding:8px 12px; min-width:150px; font-size:13px; font-weight:600; color:#334155; height:auto; }
 		.ajmr-modal { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100000; display:flex; align-items:center; justify-content:center; padding:20px; }
 		.ajmr-modal[hidden] { display:none; }
-		.ajmr-modal-box { background:#fff; border-radius:14px; padding:20px 24px; width:min(640px,100%); max-height:88vh; overflow:auto; box-shadow:0 20px 50px rgba(15,23,42,.3); }
+		.ajmr-modal-box { background:#fff; border-radius:14px; padding:20px 24px; width:min(1240px,100%); max-height:88vh; overflow:auto; box-shadow:0 20px 50px rgba(15,23,42,.3); }
 		.ajmr-row-main { align-items:stretch; }
 		.ajmr-subtiles { display:flex; flex-direction:column; justify-content:center; gap:6px; }
 		.ajmr-sub { display:inline-flex; align-items:center; justify-content:space-between; gap:10px; padding:3px 10px; border-radius:999px; border:1px solid var(--ajmr-line); background:#fff; color:#334155; font-size:11px; font-weight:600; line-height:1.4; text-decoration:none; white-space:nowrap; }

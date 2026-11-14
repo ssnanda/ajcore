@@ -886,6 +886,31 @@ class AJCore_Zoho_Mail {
 			$debug[] = 'no Zoho account id (use Test Connection once)';
 			return null;
 		}
+		$when_ts = strtotime( $this->timestamp_to_mysql( self::deep_find( $details, 'createdAt' ) ) . ' UTC' );
+		// Quickest and most exact: a long number in the preview (an order or invoice number) finds the copy directly.
+		if ( preg_match( '/\b\d{8,}\b/', self::deep_string( $details, array( 'summary' ) ), $nm ) ) {
+			$nres = $this->api_request( '/accounts/' . rawurlencode( $acct ) . '/messages/search', array( 'searchKey' => 'entire:' . $nm[0], 'limit' => 50, 'includeto' => 'true' ) );
+			if ( ! is_wp_error( $nres ) && 200 === $nres['status'] && isset( $nres['data']['data'] ) && is_array( $nres['data']['data'] ) ) {
+				$nbest = null;
+				$ngap  = null;
+				foreach ( $nres['data']['data'] as $r ) {
+					if ( ! is_array( $r ) || empty( $r['messageId'] ) || empty( $r['folderId'] ) ) {
+						continue;
+					}
+					$ms = isset( $r['receivedTime'] ) ? (float) $r['receivedTime'] : 0;
+					$d  = ( $when_ts && $ms ) ? abs( ( $ms > 1e11 ? $ms / 1000 : $ms ) - $when_ts ) : PHP_INT_MAX;
+					if ( null === $ngap || $d < $ngap ) {
+						$ngap  = $d;
+						$nbest = $r;
+					}
+				}
+				if ( $nbest && $ngap <= 6 * HOUR_IN_SECONDS ) {
+					$loc = array( 'account' => $acct, 'folder' => (string) $nbest['folderId'], 'id' => (string) $nbest['messageId'] );
+					set_transient( $ckey, $loc, 30 * DAY_IN_SECONDS );
+					return $loc;
+				}
+			}
+		}
 		$subject = self::deep_string( $details, array( 'title', 'subject' ) );
 		if ( '' === $subject ) {
 			$debug[] = 'the message has no subject to look it up by';
@@ -902,41 +927,54 @@ class AJCore_Zoho_Mail {
 		$key = implode( '::', array_map( static function ( $w ) {
 			return 'subject:' . $w;
 		}, $words ) );
-		$res = $this->api_request( '/accounts/' . rawurlencode( $acct ) . '/messages/search', array( 'searchKey' => $key, 'limit' => 50, 'includeto' => 'true' ) );
-		if ( is_wp_error( $res ) ) {
-			$debug[] = 'search in your own mailbox: ' . $res->get_error_message();
-			return null;
-		}
-		if ( 200 !== $res['status'] ) {
-			$debug[] = 'search in your own mailbox: HTTP ' . $res['status'] . ' ' . substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 100 );
-			return null;
-		}
-		$rows = isset( $res['data']['data'] ) && is_array( $res['data']['data'] ) ? $res['data']['data'] : array();
 		$want = strtolower( trim( html_entity_decode( $bare, ENT_QUOTES, 'UTF-8' ) ) );
 		$when = strtotime( $this->timestamp_to_mysql( self::deep_find( $details, 'createdAt' ) ) . ' UTC' );
 		$best = null;
 		$gap  = null;
-		foreach ( $rows as $r ) {
-			if ( ! is_array( $r ) || empty( $r['messageId'] ) || empty( $r['folderId'] ) ) {
-				continue;
+		$seen = 0;
+		$same = 0;
+		// Many mails share one subject (every Lowe's receipt), so page through the results (200 each, up to 1000) until a copy at the right time turns up.
+		for ( $start = 0; $start < 1000; $start += 200 ) {
+			$res = $this->api_request( '/accounts/' . rawurlencode( $acct ) . '/messages/search', array( 'searchKey' => $key, 'limit' => 200, 'start' => $start, 'includeto' => 'true' ) );
+			if ( is_wp_error( $res ) ) {
+				$debug[] = 'search in your own mailbox: ' . $res->get_error_message();
+				return null;
 			}
-			$sub = strtolower( trim( (string) preg_replace( '/^(?:\s*(?:re|fwd?)\s*:\s*)+/i', '', html_entity_decode( isset( $r['subject'] ) ? (string) $r['subject'] : '', ENT_QUOTES, 'UTF-8' ) ) ) );
-			if ( '' === $sub || ( $sub !== $want && false === strpos( $sub, $want ) && false === strpos( $want, $sub ) ) ) {
-				continue;
+			if ( 200 !== $res['status'] ) {
+				$debug[] = 'search in your own mailbox: HTTP ' . $res['status'] . ' ' . substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 100 );
+				return null;
 			}
-			$ms = isset( $r['receivedTime'] ) ? (float) $r['receivedTime'] : 0;
-			$d  = ( $when && $ms ) ? abs( ( $ms > 1e11 ? $ms / 1000 : $ms ) - $when ) : 0;
-			if ( null === $gap || $d < $gap ) {
-				$gap  = $d;
-				$best = $r;
+			$rows  = isset( $res['data']['data'] ) && is_array( $res['data']['data'] ) ? $res['data']['data'] : array();
+			$seen += count( $rows );
+			foreach ( $rows as $r ) {
+				if ( ! is_array( $r ) || empty( $r['messageId'] ) || empty( $r['folderId'] ) ) {
+					continue;
+				}
+				$sub = strtolower( trim( (string) preg_replace( '/^(?:\s*(?:re|fwd?)\s*:\s*)+/i', '', html_entity_decode( isset( $r['subject'] ) ? (string) $r['subject'] : '', ENT_QUOTES, 'UTF-8' ) ) ) );
+				if ( '' === $sub || ( $sub !== $want && false === strpos( $sub, $want ) && false === strpos( $want, $sub ) ) ) {
+					continue;
+				}
+				$same++;
+				$ms = isset( $r['receivedTime'] ) ? (float) $r['receivedTime'] : 0;
+				$d  = ( $when && $ms ) ? abs( ( $ms > 1e11 ? $ms / 1000 : $ms ) - $when ) : PHP_INT_MAX;
+				if ( null === $gap || $d < $gap ) {
+					$gap  = $d;
+					$best = $r;
+				}
+			}
+			if ( null !== $gap && $gap <= 2 * HOUR_IN_SECONDS ) {
+				break; // close enough: stop paging
+			}
+			if ( count( $rows ) < 200 ) {
+				break;
 			}
 		}
 		if ( ! $best ) {
-			$debug[] = 'your own mailbox search returned ' . count( $rows ) . ' message(s), none with this subject (is this login a member of the mailbox so mail is also delivered to it?)';
+			$debug[] = 'your own mailbox search returned ' . $seen . ' message(s), none with this subject (is this login a member of the mailbox so mail is also delivered to it?)';
 			return null;
 		}
 		if ( $gap > 6 * HOUR_IN_SECONDS ) {
-			$debug[] = 'closest copy in your mailbox is ' . (int) ( $gap / 60 ) . ' min away';
+			$debug[] = 'looked through ' . $seen . ' search results (' . $same . ' with this subject): the closest is ' . ( PHP_INT_MAX === $gap ? 'undated' : (int) ( $gap / 3600 ) . ' h away' ) . ', so this message was probably not delivered to your own mailbox';
 			return null;
 		}
 		$loc = array( 'account' => $acct, 'folder' => (string) $best['folderId'], 'id' => (string) $best['messageId'] );
