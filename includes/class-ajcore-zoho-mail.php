@@ -228,9 +228,18 @@ class AJCore_Zoho_Mail {
 			exit;
 		}
 		$state          = sanitize_text_field( (string) $request->get_param( 'state' ) );
-		$expected_state = get_transient( 'ajcore_zoho_mail_oauth_state' );
-		delete_transient( 'ajcore_zoho_mail_oauth_state' );
-		if ( '' === $state || ! $expected_state || ! hash_equals( (string) $expected_state, $state ) ) {
+		// Several recent codes are kept (a page reload or a second tab makes a new one), each usable once.
+		$valid = (array) get_transient( 'ajcore_zoho_mail_oauth_state' );
+		$match = false;
+		foreach ( $valid as $k => $s ) {
+			if ( '' !== $state && is_string( $s ) && hash_equals( $s, $state ) ) {
+				$match = true;
+				unset( $valid[ $k ] );
+				break;
+			}
+		}
+		set_transient( 'ajcore_zoho_mail_oauth_state', array_values( $valid ), 10 * MINUTE_IN_SECONDS );
+		if ( ! $match ) {
 			wp_safe_redirect( self::tab_url( array( 'zoho-mail-error' => __( 'Could not verify this request (expired link) — click Connect Zoho Mail again.', 'ajcore' ) ) ) );
 			exit;
 		}
@@ -1193,8 +1202,14 @@ class AJCore_Zoho_Mail {
 		$redirect_uri = rest_url( 'ajcore/v1/zoho-mail/oauth/callback' );
 
 		// A random token in a transient (not a user-tied nonce) survives Zoho's redirect back, which carries no WP auth.
-		$state = wp_generate_password( 32, false );
-		set_transient( 'ajcore_zoho_mail_oauth_state', $state, 10 * MINUTE_IN_SECONDS );
+		// One code per page load, and only the panel that shows the Connect button makes it (a second panel used to overwrite it).
+		static $state = '';
+		if ( $show_conn && '' === $state ) {
+			$state = wp_generate_password( 32, false );
+			$valid = array_filter( (array) get_transient( 'ajcore_zoho_mail_oauth_state' ), 'is_string' );
+			$valid[] = $state;
+			set_transient( 'ajcore_zoho_mail_oauth_state', array_slice( array_values( $valid ), -5 ), 10 * MINUTE_IN_SECONDS );
+		}
 		$authorize_url = add_query_arg( array(
 			// accounts: find the login's own account; messages.ALL: the Shared Mailbox API; folders: message bodies.
 			'scope'         => 'ZohoMail.accounts.READ,ZohoMail.messages.ALL,ZohoMail.folders.READ',
@@ -1212,11 +1227,13 @@ class AJCore_Zoho_Mail {
 			<?php
 			$console = $this->console_url( $settings['zoho_mail_data_center'] );
 			$home    = untrailingslashit( home_url( '/' ) );
-			// ajcore-<site>-<environment>: the host without its last part (ncllc.ddev.site -> ajcore-ncllc-ddev, ncllcagents.com -> ajcore-ncllcagents).
-			$host_parts  = array_values( array_filter( explode( '.', preg_replace( '/^www\./', '', (string) wp_parse_url( home_url(), PHP_URL_HOST ) ) ) ) );
-			$client_name = 'ajcore-' . trim( preg_replace( '/[^a-z0-9]+/', '-', strtolower( implode( '.', count( $host_parts ) > 1 ? array_slice( $host_parts, 0, -1 ) : $host_parts ) ) ), '-' );
+			// Letters and digits only (Zoho allows no spaces or hyphens): AJCore + site + environment, e.g. ncllc.ddev.site -> AJCoreNcllcDdev, ncllcagents.com -> AJCoreNcllcagents.
+			$host_parts  = array_values( array_filter( explode( '.', preg_replace( '/^www\\./', '', (string) wp_parse_url( home_url(), PHP_URL_HOST ) ) ) ) );
+			$client_name = 'AJCore' . implode( '', array_map( static function ( $w ) {
+				return ucfirst( preg_replace( '/[^a-z0-9]/', '', strtolower( $w ) ) );
+			}, count( $host_parts ) > 1 ? array_slice( $host_parts, 0, -1 ) : $host_parts ) );
 			$rows    = array(
-				array( __( 'Client Name', 'ajcore' ), $client_name ), // no spaces allowed; one per site, e.g. ajcore-ncllc-ddev
+				array( __( 'Client Name', 'ajcore' ), $client_name ), // letters and digits only; one per site, e.g. AJCoreNcllcDdev
 				array( __( 'Homepage URL', 'ajcore' ), $home ),
 				array( __( 'Authorized Redirect URI', 'ajcore' ), $redirect_uri ),
 			);
