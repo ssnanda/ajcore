@@ -3046,7 +3046,6 @@ function ajcore_boot_mail_features() {
 	if ( ! class_exists( 'AJCore_RA_Zoho_Mail' ) && ! class_exists( 'AJCore_RA_Gmail_Intake' ) ) {
 		AJCore_Pipeline_Tab::init(); // one "Pipeline" tab replaces the Pipeline and Zoho Mail tabs
 		AJCore_Mail_Pipelines::init(); // mailbox sub-pipelines that extensions register (invoices, insurance, ...)
-		AJCore_Marketing::init(); // the Marketing tab: emails labelled marketing from any pipeline
 	}
 }
 add_action( 'plugins_loaded', 'ajcore_boot_mail_features', 20 );

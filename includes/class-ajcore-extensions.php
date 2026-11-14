@@ -60,9 +60,8 @@
  * address (optional $address argument) and Zoho labels (list_labels, get_messages_by_label); named mailboxes live in the Zoho settings.
  * API 27: 'ajcore_mail_pipelines' (id => label, module, stages) lets an extension add a mailbox sub-pipeline (Zoho shared mailbox, no filters, emails
  * by date with stages and notes; engine in AJCore_Mail_Pipelines). AJCore-RA registers Invoices, Insurance, HOA; AJCore-HOA registers Invoice, Legal, Closing, Insurance.
- * Marketing (API 27): AJCore_Marketing collects emails labelled marketing from any mailbox pipeline in one "Marketing" Pipeline tab (preview, delete to the Zoho Trash,
- * marketing senders that auto-label future mail). An extension's pipeline calls AJCore_Marketing::label() / ::known() / ::is_marketing_sender() and may add names with
- * the 'ajcore_marketing_pipeline_labels' filter.
+ * Marketing (API 27): "Marketing" is a label on a pipeline's emails (they stay in their pipeline; filter to the label, preview, delete to the Zoho Trash). AJCore_Marketing
+ * keeps the marketing senders whose future mail is labelled automatically: an extension's pipeline calls AJCore_Marketing::is_marketing_sender() when it reads mail.
  * Request workflow statuses (API 24): 'ajcore_service_status_labels', 'ajcore_service_status_pipelines' (product type => ordered status keys) and
  * 'ajcore_service_request_product_type' let an extension add its own statuses and per-product pipelines; AJCore ships only the generic ones.
  * Workflow actions (API 24): 'ajcore_service_request_quick_actions' (actions array, request, product type, current service status) and
@@ -115,6 +114,19 @@ class AJCore_Extensions {
 	}
 
 	/** AJCore's REST namespace; extension routes register here so URLs stay unchanged. */
+	/**
+	 * The standard name for this site's API clients/keys in other services (Zoho API Console, Rentec API Keys, ...): letters and digits only,
+	 * AJCore + site + environment. ncllc.ddev.site -> AJCoreNcllcDdev, ncllcagents.com -> AJCoreNcllcagents.
+	 */
+	public static function site_client_name() {
+		$host  = preg_replace( '/^www\./', '', (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$parts = array_values( array_filter( explode( '.', $host ) ) );
+		$parts = count( $parts ) > 1 ? array_slice( $parts, 0, -1 ) : $parts;
+		return 'AJCore' . implode( '', array_map( static function ( $w ) {
+			return ucfirst( preg_replace( '/[^a-z0-9]/', '', strtolower( $w ) ) );
+		}, $parts ) );
+	}
+
 	public static function rest_namespace() {
 		return AJCore_REST_API::NAMESPACE;
 	}

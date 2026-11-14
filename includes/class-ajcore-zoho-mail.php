@@ -1241,11 +1241,7 @@ class AJCore_Zoho_Mail {
 			<?php
 			$console = $this->console_url( $settings['zoho_mail_data_center'] );
 			$home    = untrailingslashit( home_url( '/' ) );
-			// Letters and digits only (Zoho allows no spaces or hyphens): AJCore + site + environment, e.g. ncllc.ddev.site -> AJCoreNcllcDdev, ncllcagents.com -> AJCoreNcllcagents.
-			$host_parts  = array_values( array_filter( explode( '.', preg_replace( '/^www\\./', '', (string) wp_parse_url( home_url(), PHP_URL_HOST ) ) ) ) );
-			$client_name = 'AJCore' . implode( '', array_map( static function ( $w ) {
-				return ucfirst( preg_replace( '/[^a-z0-9]/', '', strtolower( $w ) ) );
-			}, count( $host_parts ) > 1 ? array_slice( $host_parts, 0, -1 ) : $host_parts ) );
+			$client_name = AJCore_Extensions::site_client_name(); // letters and digits only (Zoho allows no spaces or hyphens), e.g. AJCoreNcllcDdev
 			$rows    = array(
 				array( __( 'Client Name', 'ajcore' ), $client_name ), // letters and digits only; one per site, e.g. AJCoreNcllcDdev
 				array( __( 'Homepage URL', 'ajcore' ), $home ),
