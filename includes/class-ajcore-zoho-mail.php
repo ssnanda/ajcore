@@ -1212,8 +1212,11 @@ class AJCore_Zoho_Mail {
 			<?php
 			$console = $this->console_url( $settings['zoho_mail_data_center'] );
 			$home    = untrailingslashit( home_url( '/' ) );
+			// ajcore-<site>-<environment>: the host without its last part (ncllc.ddev.site -> ajcore-ncllc-ddev, ncllcagents.com -> ajcore-ncllcagents).
+			$host_parts  = array_values( array_filter( explode( '.', preg_replace( '/^www\./', '', (string) wp_parse_url( home_url(), PHP_URL_HOST ) ) ) ) );
+			$client_name = 'ajcore-' . trim( preg_replace( '/[^a-z0-9]+/', '-', strtolower( implode( '.', count( $host_parts ) > 1 ? array_slice( $host_parts, 0, -1 ) : $host_parts ) ) ), '-' );
 			$rows    = array(
-				array( __( 'Client Name', 'ajcore' ), 'AJCore Zoho Mail' ),
+				array( __( 'Client Name', 'ajcore' ), $client_name ), // no spaces allowed; one per site, e.g. ajcore-ncllc-ddev
 				array( __( 'Homepage URL', 'ajcore' ), $home ),
 				array( __( 'Authorized Redirect URI', 'ajcore' ), $redirect_uri ),
 			);
