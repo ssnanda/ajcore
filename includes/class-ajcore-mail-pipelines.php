@@ -547,6 +547,7 @@ class AJCore_Mail_Pipelines {
 			$( 'ajmp-clear' ).addEventListener( 'click', function () { st = { stage: '', q: '' }; $( 'ajmp-q' ).value = ''; selected = {}; load(); } );
 			$( 'ajmp-all' ).addEventListener( 'change', function ( e ) { selected = {}; if ( e.target.checked && data ) { data.items.forEach( function ( i ) { selected[ i.id ] = true; } ); } render(); } );
 			$( 'ajmp-detail' ).addEventListener( 'click', function ( e ) { if ( e.target === this ) { this.hidden = true; } } );
+			document.addEventListener( 'keydown', function ( e ) { if ( e.key === 'Escape' ) { $( 'ajmp-detail' ).hidden = true; } } );
 			$( 'ajmp-save' ).addEventListener( 'click', function () { post( '/settings', { mailbox: $( 'ajmp-mailbox' ).value.trim(), enabled: $( 'ajmp-enabled' ).checked ? 1 : 0 } ).then( function () { $( 'ajmp-status' ).textContent = 'Saved. Reading…'; load(); setTimeout( function () { $( 'ajmp-run' ).click(); }, 300 ); } ).catch( function ( e ) { $( 'ajmp-status' ).textContent = e.message; } ); } );
 			$( 'ajmp-run' ).addEventListener( 'click', function () {
 				if ( ! data || ! data.mailbox ) { $( 'ajmp-status' ).textContent = 'Set the mailbox first (gear tile), then Save.'; $( 'ajmp-settings' ).hidden = false; return; }
