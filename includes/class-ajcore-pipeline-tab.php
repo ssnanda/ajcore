@@ -82,7 +82,7 @@ class AJCore_Pipeline_Tab {
 		// Shared by every sub-pipeline: the Zoho login (Client ID / Secret / data center). Mailboxes are set per sub-pipeline.
 		printf( '<button type="button" id="ajmr-conn-toggle" class="ajmr-conn-btn" aria-expanded="false">%1$s %2$s</button>', self::icon( 'cog', 14 ), esc_html__( 'Connections', 'ajcore' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		echo '</nav>';
-		echo '<section id="ajmr-panel-conn" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Zoho login (shared by all pipelines)', 'ajcore' ) . '</h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		echo '<section id="ajmr-panel-conn" class="ajmr-panel" hidden><h3>' . self::icon( 'cog', 14 ) . ' ' . esc_html__( 'Zoho login (shared by all pipelines)', 'ajcore' ) . ' <button type="button" id="ajmr-zoho-help-btn" class="ajmr-help" title="' . esc_attr__( 'Setup help: opens the Zoho API Console and shows the values to use', 'ajcore' ) . '" data-console="' . esc_url( AJCore_Zoho_Mail::instance()->console_url() ) . '">?</button></h3>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		AJCore_Zoho_Mail::instance()->render_connection_panel( 'connection' );
 		echo '</section>';
 		?>
@@ -96,6 +96,13 @@ class AJCore_Pipeline_Tab {
 				b.setAttribute( 'aria-expanded', 'false' );
 				if ( open ) { p.removeAttribute( 'hidden' ); b.setAttribute( 'aria-expanded', 'true' ); p.scrollIntoView( { behavior: 'smooth', block: 'nearest' } ); }
 			} );
+			var hb = document.getElementById( 'ajmr-zoho-help-btn' ), hg = document.getElementById( 'ajmr-zoho-help' );
+			if ( hb && hg ) {
+				hb.addEventListener( 'click', function () {
+					var show = hg.hasAttribute( 'hidden' );
+					if ( show ) { hg.removeAttribute( 'hidden' ); window.open( hb.getAttribute( 'data-console' ), '_blank', 'noopener' ); } else { hg.setAttribute( 'hidden', '' ); }
+				} );
+			}
 			if ( /zoho-mail-(connected|disconnected|error)|saved=1/.test( window.location.search ) && /zoho/.test( window.location.search ) ) { b.click(); }
 		} )();
 		</script>
@@ -414,6 +421,12 @@ class AJCore_Pipeline_Tab {
 		.ajra-pu-day td { background:#f1f5f9; font-weight:700; font-size:12px; letter-spacing:.03em; color:#334155; padding:7px 10px; }
 		.ajra-pu-mail td { font-size:12px; color:#64748b; padding:3px 10px 3px 14px; border-top:0; }
 		.ajmr-views { display:flex; align-items:center; gap:8px; margin:0 0 14px; }
+		.ajmr-help { display:inline-grid; place-items:center; width:22px; height:22px; margin-left:6px; border-radius:50%; border:1px solid #6366f1; background:#eef2ff; color:#4338ca; font-weight:800; font-size:13px; cursor:pointer; vertical-align:middle; }
+		.ajmr-guide { background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 18px; margin:10px 0 14px; max-width:860px; }
+		.ajmr-guide ol { margin:0; padding-left:20px; line-height:1.9; }
+		.ajmr-guide-vals { margin:6px 0 4px; border-collapse:collapse; }
+		.ajmr-guide-vals th { text-align:left; padding:4px 14px 4px 0; font-weight:600; white-space:nowrap; }
+		.ajmr-guide-vals td { padding:4px 10px 4px 0; word-break:break-all; }
 		.ajmr-conn-btn { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:9px 14px; border-radius:10px; border:1px solid #e2e8f0; background:#fff; color:#334155; font-size:13px; font-weight:600; cursor:pointer; }
 		.ajmr-conn-btn:hover { border-color:#c7d2fe; }
 		.ajmr-views a { display:inline-flex; align-items:center; gap:9px; padding:11px 22px; border-radius:12px; font-size:15px; font-weight:700; color:#4338ca; text-decoration:none; background:#eef2ff; border:1px solid #e0e7ff; }

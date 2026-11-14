@@ -1178,6 +1178,12 @@ class AJCore_Zoho_Mail {
 	}
 
 	/** Connection settings (the Pipeline tab keeps them collapsed behind the Zoho gear). */
+	/** The Zoho API Console for the saved data center. */
+	public function console_url( $data_center = '' ) {
+		$dc = '' !== (string) $data_center ? (string) $data_center : (string) $this->get_settings()['zoho_mail_data_center'];
+		return 'https://api-console.zoho.' . ( in_array( $dc, array( 'com', 'eu', 'in', 'com.au', 'jp' ), true ) ? $dc : 'com' ) . '/';
+	}
+
 	public function render_connection_panel( $section = 'all' ) {
 		$show_conn    = 'mailbox' !== $section;
 		$show_box     = 'connection' !== $section;
@@ -1203,16 +1209,41 @@ class AJCore_Zoho_Mail {
 		?>
 		<div class="ajmr-conn">
 			<?php if ( $show_conn ) : ?>
-			<details style="margin:10px 0">
-				<summary style="cursor:pointer"><?php esc_html_e( 'Setup steps', 'ajcore' ); ?></summary>
-				<ol style="line-height:1.7">
-					<li><?php esc_html_e( 'Open api-console.zoho.com (the Zoho API Console, not the Mail Admin Console) and sign in with a Zoho user that is a member of the shared mailbox.', 'ajcore' ); ?></li>
-					<li><?php esc_html_e( 'Add Client, choose Server-based Applications.', 'ajcore' ); ?></li>
-					<li><?php echo esc_html( sprintf( __( 'Client Name: AJCore Zoho Mail. Homepage URL: %s', 'ajcore' ), home_url( '/' ) ) ); ?></li>
-					<li><?php esc_html_e( 'Authorized Redirect URI (must match exactly):', 'ajcore' ); ?> <code><?php echo esc_html( $redirect_uri ); ?></code></li>
-					<li><?php esc_html_e( 'Copy the Client ID and Client Secret below, enter the shared mailbox address, Save, then Connect and sign in as that same user. No Organization ID is needed.', 'ajcore' ); ?></li>
+			<?php
+			$console = $this->console_url( $settings['zoho_mail_data_center'] );
+			$home    = untrailingslashit( home_url( '/' ) );
+			$rows    = array(
+				array( __( 'Client Name', 'ajcore' ), 'AJCore Zoho Mail' ),
+				array( __( 'Homepage URL', 'ajcore' ), $home ),
+				array( __( 'Authorized Redirect URI', 'ajcore' ), $redirect_uri ),
+			);
+			?>
+			<div id="ajmr-zoho-help" class="ajmr-guide" hidden>
+				<ol>
+					<li><?php esc_html_e( 'Open the Zoho API Console (not the Mail Admin Console) and sign in as a Zoho user who is a member of the shared mailboxes.', 'ajcore' ); ?> <a class="button" href="<?php echo esc_url( $console ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'Open API Console', 'ajcore' ); ?> &#8599;</a></li>
+					<li><?php esc_html_e( 'Click Add Client and choose Server-based Applications.', 'ajcore' ); ?></li>
+					<li><?php esc_html_e( 'Enter these values (use the copy buttons):', 'ajcore' ); ?>
+						<table class="ajmr-guide-vals">
+							<?php foreach ( $rows as $r ) : ?>
+								<tr><th><?php echo esc_html( $r[0] ); ?></th><td><code><?php echo esc_html( $r[1] ); ?></code></td><td><button type="button" class="button button-small ajmr-copy" data-copy="<?php echo esc_attr( $r[1] ); ?>"><?php esc_html_e( 'Copy', 'ajcore' ); ?></button></td></tr>
+							<?php endforeach; ?>
+						</table>
+					</li>
+					<li><?php esc_html_e( 'Click Create. Copy the Client ID and Client Secret from the Client Secret tab into the fields below, set the Data center to match your Zoho domain, and Save.', 'ajcore' ); ?></li>
+					<li><?php esc_html_e( 'Click Connect Zoho Mail and sign in as that same user. Access requested: accounts (read), messages, folders (read). No Organization ID is needed.', 'ajcore' ); ?></li>
+					<li><?php esc_html_e( 'Each pipeline then gets its own shared mailbox address on its own screen (the gear tile). The login here is shared by all of them.', 'ajcore' ); ?></li>
 				</ol>
-			</details>
+				<script>
+				( function () {
+					document.querySelectorAll( '.ajmr-copy' ).forEach( function ( b ) {
+						b.addEventListener( 'click', function () {
+							var v = b.getAttribute( 'data-copy' ), done = function () { var o = b.textContent; b.textContent = 'Copied'; setTimeout( function () { b.textContent = o; }, 1200 ); };
+							if ( navigator.clipboard ) { navigator.clipboard.writeText( v ).then( done ); } else { var a = document.createElement( 'textarea' ); a.value = v; document.body.appendChild( a ); a.select(); document.execCommand( 'copy' ); a.remove(); done(); }
+						} );
+					} );
+				} )();
+				</script>
+			</div>
 			<?php endif; ?>
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="max-width:720px">
 				<input type="hidden" name="action" value="ajcore_ra_save_zoho_mail">
