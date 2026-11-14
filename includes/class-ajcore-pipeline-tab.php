@@ -418,6 +418,19 @@ class AJCore_Pipeline_Tab {
 		.ajmr-tile-txt strong { font-size:22px; }
 		.ajmr-tile-txt strong.is-alert { color:#b45309; }
 		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
+		#ajra-pu-table th, #ajra-pu-table td { padding:7px 10px; vertical-align:middle; font-size:13px; }
+		#ajra-pu-table td strong { font-weight:700; }
+		.ajra-pu-day td { position:sticky; top:32px; z-index:2; }
+		.ajra-pu-ord { white-space:nowrap; }
+		.ajra-pu-nums { display:inline-flex; gap:3px; margin-left:8px; vertical-align:middle; flex-wrap:wrap; }
+		.ajra-pu-num { min-width:24px; height:22px; padding:0 6px; border-radius:7px; border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; font-size:12px; font-weight:700; cursor:pointer; line-height:1; }
+		.ajra-pu-num:hover { background:#4f46e5; color:#fff; }
+		.ajra-pu-num.k-receipt, .ajra-pu-num.k-payment { background:#dcfce7; border-color:#86efac; color:#166534; }
+		.ajra-pu-num.k-confirmation, .ajra-pu-num.k-statement { background:#dbeafe; border-color:#93c5fd; color:#1e40af; }
+		.ajra-pu-num.k-status, .ajra-pu-num.k-other, .ajra-pu-num.k-reminder { background:#f1f5f9; border-color:#cbd5e1; color:#475569; }
+		.ajra-pu-unnamed { color:#b45309; font-style:italic; }
+		.ajra-pu-none { color:#94a3b8; }
+		.ajra-pu-tot { font-variant-numeric:tabular-nums; font-weight:600; }
 		.ajra-pu-day td { background:#f1f5f9; font-weight:700; font-size:12px; letter-spacing:.03em; color:#334155; padding:7px 10px; }
 		.ajra-pu-mail td { font-size:12px; color:#64748b; padding:3px 10px 3px 14px; border-top:0; }
 		.ajmr-views { display:flex; align-items:center; gap:8px; margin:0 0 14px; }
