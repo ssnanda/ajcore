@@ -438,6 +438,7 @@ class AJCore_Pipeline_Tab {
 		.ajra-menu-list button:hover { background:#eef2ff; }
 		.ajra-menu-list hr { margin:4px 0; border:0; border-top:1px solid #e2e8f0; }
 		.ajra-pu-summary { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 22px; margin:0 2px 12px; font-size:13px; color:#475569; }
+		.ajra-notice { display:inline-block; padding:2px 10px; border-radius:999px; background:#f1f5f9; color:#475569; font-size:12px; font-weight:700; }
 		.ajra-quote, .ajra-paid { display:inline-block; margin-left:8px; padding:1px 8px; border-radius:999px; font-size:10px; font-weight:800; letter-spacing:.04em; vertical-align:middle; }
 		.ajra-quote { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; } .ajra-paid { background:#dcfce7; color:#166534; border:1px solid #86efac; }
 		.ajra-pu-fix { color:#64748b; margin-left:4px; }
@@ -458,8 +459,8 @@ class AJCore_Pipeline_Tab {
 		#ajra-pu-table th, #ajra-pu-table td { padding:7px 10px; vertical-align:middle; font-size:13px; }
 		#ajra-pu-table td strong { font-weight:700; }
 		.ajra-pu-day td { position:sticky; top:32px; z-index:2; }
-		.ajra-pu-ord { white-space:nowrap; }
-		.ajra-pu-nums { display:inline-flex; gap:3px; margin-left:8px; vertical-align:middle; flex-wrap:wrap; }
+		.ajra-pu-ord { min-width:230px; max-width:340px; }
+		.ajra-pu-nums { display:flex; gap:4px; margin:6px 0 0; flex-wrap:wrap; max-width:300px; }
 		.ajra-pu-num { min-width:24px; height:22px; padding:0 6px; border-radius:7px; border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; font-size:12px; font-weight:700; cursor:pointer; line-height:1; }
 		.ajra-pu-num:hover { background:#4f46e5; color:#fff; }
 		.ajra-pu-num.k-receipt, .ajra-pu-num.k-payment { background:#dcfce7; border-color:#86efac; color:#166534; }

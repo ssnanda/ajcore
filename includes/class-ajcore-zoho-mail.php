@@ -623,8 +623,8 @@ class AJCore_Zoho_Mail {
 			if ( ! is_array( $row ) ) {
 				continue;
 			}
-			$id   = self::deep_string( $row, array( 'tagId', 'id' ) );
-			$name = self::deep_string( $row, array( 'tagName', 'name', 'displayName' ) );
+			$id   = self::deep_string( $row, array( 'labelId', 'tagId', 'id' ) );
+			$name = self::deep_string( $row, array( 'labelName', 'tagName', 'name', 'displayName' ) );
 			if ( '' !== $id ) {
 				$out[] = array( 'id' => $id, 'name' => '' !== $name ? $name : $id );
 			}
