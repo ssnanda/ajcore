@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.7.438
+ * Version: 0.7.439
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.7.438' );
+	define( 'AJCORE_VERSION', '0.7.439' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -39,6 +39,7 @@ require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-ops-access.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-zoho-mail.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-pipeline.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-pipeline-tab.php';
+require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-mail-pipelines.php';
 
 // Reports this install (site, versions) to freeSIEM Core. Must load at the top level
 // of this file so its activation hook registers.
@@ -3043,6 +3044,7 @@ function ajcore_boot_mail_features() {
 	}
 	if ( ! class_exists( 'AJCore_RA_Zoho_Mail' ) && ! class_exists( 'AJCore_RA_Gmail_Intake' ) ) {
 		AJCore_Pipeline_Tab::init(); // one "Pipeline" tab replaces the Pipeline and Zoho Mail tabs
+		AJCore_Mail_Pipelines::init(); // mailbox sub-pipelines that extensions register (invoices, insurance, ...)
 	}
 }
 add_action( 'plugins_loaded', 'ajcore_boot_mail_features', 20 );
