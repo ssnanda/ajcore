@@ -150,6 +150,9 @@ class AJCore_Mail_Pipelines {
 		$kit = $this->kit();
 		$tbl = $this->table();
 		if ( $kit['table_exists']( $pdb, $tbl ) ) {
+			if ( ! $pdb->get_var( "SHOW COLUMNS FROM `{$tbl}` LIKE 'body_html'" ) ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$pdb->query( "ALTER TABLE `{$tbl}` ADD COLUMN body_html mediumtext NULL AFTER body" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			}
 			return $done = true;
 		}
 		$charset = $pdb->get_charset_collate();
@@ -161,6 +164,7 @@ class AJCore_Mail_Pipelines {
 			sender varchar(255) NOT NULL DEFAULT '',
 			summary text NULL,
 			body mediumtext NULL,
+			body_html mediumtext NULL,
 			body_debug text NULL,
 			received_at datetime NULL,
 			stage varchar(20) NOT NULL DEFAULT 'new',
@@ -309,6 +313,7 @@ class AJCore_Mail_Pipelines {
 		$out = array( 'id' => (int) $r->id, 'subject' => (string) $r->subject, 'sender' => (string) $r->sender, 'summary' => (string) $r->summary, 'received_at' => (string) $r->received_at, 'stage' => (string) $r->stage, 'notes' => (string) $r->notes );
 		if ( $with_body ) {
 			$out['body']       = (string) $r->body;
+			$out['body_html']  = (string) $r->body_html;
 			$out['body_debug'] = (string) $r->body_debug;
 		}
 		return $out;
@@ -413,12 +418,13 @@ class AJCore_Mail_Pipelines {
 		}
 		$zoho    = $this->zoho();
 		$mailbox = $this->settings( $id )['mailbox'];
-		if ( ( null === $row->body_debug || '' !== (string) $row->body_debug ) && $zoho && '' !== $mailbox ) { // never fetched, or the last try only got the preview
+		if ( ( null === $row->body_debug || null === $row->body_html || '' !== (string) $row->body_debug ) && $zoho && '' !== $mailbox ) { // never fetched, no rich HTML yet, or the last try only got the preview
 			$m = $zoho->intake_message( (string) $row->message_id, $mailbox );
 			if ( ! is_wp_error( $m ) ) {
 				$row->body       = mb_substr( (string) $m['body_text'], 0, 20000 );
 				$row->body_debug = (string) ( $m['body_debug'] ?? '' );
-				$this->pdb()->update( $this->table(), array( 'body' => $row->body, 'body_debug' => $row->body_debug ), array( 'id' => (int) $row->id ) );
+				$row->body_html  = (string) ( $m['body_html'] ?? '' );
+				$this->pdb()->update( $this->table(), array( 'body' => $row->body, 'body_debug' => $row->body_debug, 'body_html' => $row->body_html ), array( 'id' => (int) $row->id ) );
 			}
 		}
 		return rest_ensure_response( array( 'item' => $this->item_out( $row, true ) ) );
@@ -480,6 +486,7 @@ class AJCore_Mail_Pipelines {
 			function el( t, c, x ) { var e = document.createElement( t ); if ( c ) { e.className = c; } if ( x != null ) { e.textContent = x; } return e; }
 			function api( path, opts ) { opts = opts || {}; opts.headers = Object.assign( { 'X-WP-Nonce': nonce }, opts.headers || {} ); return fetch( rest + path, opts ).then( function ( r ) { return r.json().then( function ( d ) { if ( ! r.ok ) { throw new Error( d.message || 'Request failed' ); } return d; } ); } ); }
 			function post( path, body ) { return api( path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify( body ) } ); }
+			function emailFrame( html ) { var f = document.createElement( 'iframe' ); f.setAttribute( 'sandbox', 'allow-popups' ); f.setAttribute( 'referrerpolicy', 'no-referrer' ); f.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\'; font-src https: data:"><base target="_blank"><style>body{margin:10px;font:14px/1.45 -apple-system,Segoe UI,Arial,sans-serif;color:#111;word-wrap:break-word}img{max-width:100%;height:auto}</style>' + html; f.style.cssText = 'width:100%;height:520px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;resize:vertical;'; return f; }
 			function dayKey( s ) { return ( s || '' ).slice( 0, 10 ) || '—'; }
 			function dayLabel( k ) { var d = new Date( k + 'T12:00:00' ); return isNaN( d ) ? k : d.toLocaleDateString( undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' } ); }
 			function load() {
@@ -529,7 +536,7 @@ class AJCore_Mail_Pipelines {
 				api( '/items/' + id ).then( function ( d ) {
 					var i = d.item; box.innerHTML = ''; box.appendChild( el( 'h2', null, i.subject ) ); box.appendChild( el( 'p', 'description', i.sender + ' · ' + i.received_at ) );
 					if ( i.body_debug ) { var w = el( 'div', null, 'Only the preview could be read: ' + i.body_debug ); w.style.cssText = 'color:#b45309;font-size:12px;margin:4px 0;'; box.appendChild( w ); }
-					var pre = el( 'pre', null, i.body || i.summary ); pre.style.cssText = 'max-height:380px;overflow:auto;white-space:pre-wrap;font-size:12px;background:#f8fafc;padding:10px;border-radius:8px;'; box.appendChild( pre );
+					if ( i.body_html ) { box.appendChild( emailFrame( i.body_html ) ); } var pre = el( 'pre', null, i.body || i.summary ); if ( i.body_html ) { pre.hidden = true; var tg = el( 'a', null, 'Show plain text' ); tg.href = '#'; tg.addEventListener( 'click', function ( ev ) { ev.preventDefault(); pre.hidden = ! pre.hidden; } ); box.appendChild( tg ); } pre.style.cssText = 'max-height:380px;overflow:auto;white-space:pre-wrap;font-size:12px;background:#f8fafc;padding:10px;border-radius:8px;'; box.appendChild( pre );
 					var notes = el( 'textarea' ); notes.rows = 2; notes.className = 'large-text'; notes.value = i.notes; notes.placeholder = 'Note'; box.appendChild( notes );
 					var bar = el( 'p' ); function act( label, stage, primary ) { var b = el( 'button', 'button' + ( primary ? ' button-primary' : '' ), label ); b.type = 'button'; b.addEventListener( 'click', function () { var body = { notes: notes.value }; if ( stage ) { body.stage = stage; } post( '/items/' + id, body ).then( function () { wrap.hidden = true; load(); } ).catch( function ( e ) { alert( e.message ); } ); } ); bar.appendChild( b ); bar.appendChild( document.createTextNode( ' ' ) ); }
 					act( 'Save note', '', true ); Object.keys( data.stages ).forEach( function ( k ) { if ( k !== i.stage ) { act( 'Mark ' + data.stages[ k ].toLowerCase(), k, false ); } } );

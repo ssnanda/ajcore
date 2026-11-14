@@ -785,6 +785,29 @@ class AJCore_Zoho_Mail {
 		return trim( (string) preg_replace( "/\n\s*\n+/", "\n", (string) $text ) );
 	}
 
+	/** The text/html part of a raw MIME message, or ''. */
+	private static function mime_html( $raw ) {
+		foreach ( self::mime_parts( (string) $raw ) as $p ) {
+			if ( 'text/html' === $p['type'] ) {
+				return $p['body'];
+			}
+		}
+		return '';
+	}
+
+	/**
+	 * Email HTML made safe to show: scripts, frames, forms, embeds, meta refresh and inline event handlers are removed. Viewers also render it
+	 * in a sandboxed iframe with a content-security policy, so this is a second layer, not the only one. Styles and images are kept.
+	 */
+	public static function clean_email_html( $html ) {
+		$html = (string) $html;
+		$html = preg_replace( '/<(script|iframe|object|embed|form|applet|base|frame|frameset)\b[^>]*>.*?<\/\1>/is', '', $html );
+		$html = preg_replace( '/<(script|iframe|object|embed|form|applet|base|frame|frameset|link|meta)\b[^>]*\/?>/is', '', $html );
+		$html = preg_replace( '/\son[a-z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $html );
+		$html = preg_replace( '/(href|src|action)\s*=\s*(["\'])\s*javascript:[^"\']*\2/i', '$1=$2#$2', $html );
+		return mb_substr( trim( $html ), 0, 200000 );
+	}
+
 	/** Text of a raw MIME message (the /originalmessage response): picks text/plain, else text/html, decoding the transfer encoding and charset. */
 	private static function mime_to_text( $raw ) {
 		$parts = self::mime_parts( (string) $raw );
@@ -844,30 +867,93 @@ class AJCore_Zoho_Mail {
 	}
 
 	/**
-	 * The full message text. Shared-mailbox messages only carry a short summary, so the body is fetched from the content endpoints
-	 * (each tried in turn, with the account id Zoho reports for the message first, then the saved one), then the raw message
-	 * (/originalmessage, decoded). $debug collects why a route failed; it is emptied once one works.
+	 * Where the full copy of a shared-mailbox message lives. The Shared Mailbox API returns no folder id, body or attachments, but
+	 * group mail is also delivered into each member's own mailbox, so the copy is found there by subject and time (same approach as
+	 * the Toolbox app) and read through the regular account endpoints. Returns [ account, folder, id ] or null ($debug says why).
 	 */
-	private function full_body_text( $message_id, array $details, $address, &$debug ) {
-		$debug     = array();
-		$folder_id = self::deep_string( $details, array( 'folderId' ) );
-		$accounts  = array_values( array_unique( array_filter( array( self::deep_string( $details, array( 'accountId' ) ), trim( (string) $this->get_settings()['zoho_mail_account_id'] ) ) ) ) );
-		$mid       = rawurlencode( $message_id );
-		$addr      = $this->path_address( '' !== (string) $address ? strtolower( trim( (string) $address ) ) : $this->shared_address() );
-		$routes    = array();
-		if ( '' === $folder_id ) {
-			$debug[] = 'no folderId in the shared-mailbox message';
-		} elseif ( ! $accounts ) {
+	private function locate_message( $message_id, array $details, &$debug ) {
+		$acct   = trim( (string) $this->get_settings()['zoho_mail_account_id'] );
+		$folder = self::deep_string( $details, array( 'folderId' ) );
+		if ( '' !== $folder && '' !== $acct ) {
+			return array( 'account' => $acct, 'folder' => $folder, 'id' => (string) $message_id );
+		}
+		$ckey  = 'ajcore_zm_loc_' . md5( (string) $message_id );
+		$cache = get_transient( $ckey );
+		if ( is_array( $cache ) && ! empty( $cache['folder'] ) ) {
+			return $cache;
+		}
+		if ( '' === $acct ) {
 			$debug[] = 'no Zoho account id (use Test Connection once)';
-		} else {
-			foreach ( $accounts as $acct ) {
-				$b                                  = '/accounts/' . rawurlencode( $acct ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . $mid;
-				$routes[ 'content[' . $acct . ']' ]  = array( $b . '/content', 'html' );
-				$routes[ 'original[' . $acct . ']' ] = array( $b . '/originalmessage', 'mime' );
+			return null;
+		}
+		$subject = self::deep_string( $details, array( 'title', 'subject' ) );
+		if ( '' === $subject ) {
+			$debug[] = 'the message has no subject to look it up by';
+			return null;
+		}
+		$bare  = trim( (string) preg_replace( '/^(?:\s*(?:re|fwd?)\s*:\s*)+/i', '', $subject ) );
+		$words = array_slice( array_values( array_filter( array_map( static function ( $w ) {
+			return str_replace( '"', '', $w );
+		}, preg_split( '/\s+/', $bare ) ) ) ), 0, 8 );
+		if ( ! $words ) {
+			$debug[] = 'empty subject after cleanup';
+			return null;
+		}
+		$key = implode( '::', array_map( static function ( $w ) {
+			return 'subject:' . $w;
+		}, $words ) );
+		$res = $this->api_request( '/accounts/' . rawurlencode( $acct ) . '/messages/search', array( 'searchKey' => $key, 'limit' => 50, 'includeto' => 'true' ) );
+		if ( is_wp_error( $res ) ) {
+			$debug[] = 'search in your own mailbox: ' . $res->get_error_message();
+			return null;
+		}
+		if ( 200 !== $res['status'] ) {
+			$debug[] = 'search in your own mailbox: HTTP ' . $res['status'] . ' ' . substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 100 );
+			return null;
+		}
+		$rows = isset( $res['data']['data'] ) && is_array( $res['data']['data'] ) ? $res['data']['data'] : array();
+		$want = strtolower( trim( html_entity_decode( $bare, ENT_QUOTES, 'UTF-8' ) ) );
+		$when = strtotime( $this->timestamp_to_mysql( self::deep_find( $details, 'createdAt' ) ) . ' UTC' );
+		$best = null;
+		$gap  = null;
+		foreach ( $rows as $r ) {
+			if ( ! is_array( $r ) || empty( $r['messageId'] ) || empty( $r['folderId'] ) ) {
+				continue;
+			}
+			$sub = strtolower( trim( (string) preg_replace( '/^(?:\s*(?:re|fwd?)\s*:\s*)+/i', '', html_entity_decode( isset( $r['subject'] ) ? (string) $r['subject'] : '', ENT_QUOTES, 'UTF-8' ) ) ) );
+			if ( '' === $sub || ( $sub !== $want && false === strpos( $sub, $want ) && false === strpos( $want, $sub ) ) ) {
+				continue;
+			}
+			$ms = isset( $r['receivedTime'] ) ? (float) $r['receivedTime'] : 0;
+			$d  = ( $when && $ms ) ? abs( ( $ms > 1e11 ? $ms / 1000 : $ms ) - $when ) : 0;
+			if ( null === $gap || $d < $gap ) {
+				$gap  = $d;
+				$best = $r;
 			}
 		}
-		$routes['shared content']  = array( '/v2/sharedmailbox/' . $addr . '/messages/' . $mid . '/content', 'html' );
-		$routes['shared original'] = array( '/v2/sharedmailbox/' . $addr . '/messages/' . $mid . '/originalmessage', 'mime' );
+		if ( ! $best ) {
+			$debug[] = 'your own mailbox search returned ' . count( $rows ) . ' message(s), none with this subject (is this login a member of the mailbox so mail is also delivered to it?)';
+			return null;
+		}
+		if ( $gap > 6 * HOUR_IN_SECONDS ) {
+			$debug[] = 'closest copy in your mailbox is ' . (int) ( $gap / 60 ) . ' min away';
+			return null;
+		}
+		$loc = array( 'account' => $acct, 'folder' => (string) $best['folderId'], 'id' => (string) $best['messageId'] );
+		set_transient( $ckey, $loc, 30 * DAY_IN_SECONDS );
+		return $loc;
+	}
+
+	/** The full message text from the located copy: content endpoint, then the raw message (decoded). $debug collects why it failed. */
+	private function full_body_text( $message_id, array $details, $address, &$debug, &$html_out = '' ) {
+		$debug    = array();
+		$html_out = '';
+		$loc   = $this->locate_message( $message_id, $details, $debug );
+		if ( ! $loc ) {
+			return '';
+		}
+		$b      = '/accounts/' . rawurlencode( $loc['account'] ) . '/folders/' . rawurlencode( $loc['folder'] ) . '/messages/' . rawurlencode( $loc['id'] );
+		$routes = array( 'content' => array( $b . '/content', 'html' ), 'original' => array( $b . '/originalmessage', 'mime' ) );
 		foreach ( $routes as $label => $route ) {
 			$res = $this->api_request( $route[0] );
 			if ( is_wp_error( $res ) ) {
@@ -884,7 +970,9 @@ class AJCore_Zoho_Mail {
 				$debug[] = $label . ': HTTP 200 but no usable text';
 				continue;
 			}
-			$debug = array();
+			$html     = 'mime' === $route[1] ? self::mime_html( $content ) : $content;
+			$html_out = ( false !== stripos( $html, '<' ) ) ? self::clean_email_html( $html ) : '';
+			$debug    = array();
 			return $text;
 		}
 		return '';
@@ -910,12 +998,14 @@ class AJCore_Zoho_Mail {
 		$pdfs       = array();
 
 		$body_debug = array(); // how the full body was (or was not) obtained, so a preview-only result can be explained
-		$full       = $this->full_body_text( (string) $message_id, $details, $address, $body_debug );
+		$body_html  = '';
+		$full       = $this->full_body_text( (string) $message_id, $details, $address, $body_debug, $body_html );
 		if ( '' !== $full ) {
 			$body_text = $full;
 		}
-		if ( '' !== $folder_id && '' !== $account_id ) {
-			$base = '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id );
+		$loc = $this->locate_message( (string) $message_id, $details, $unused_debug );
+		if ( $loc ) {
+			$base = '/accounts/' . rawurlencode( $loc['account'] ) . '/folders/' . rawurlencode( $loc['folder'] ) . '/messages/' . rawurlencode( $loc['id'] );
 			$info = $this->api_request( $base . '/attachmentinfo' );
 			if ( ! is_wp_error( $info ) && 200 === $info['status'] ) {
 				foreach ( (array) ( isset( $info['data']['data']['attachments'] ) ? $info['data']['data']['attachments'] : array() ) as $a ) {
@@ -935,6 +1025,7 @@ class AJCore_Zoho_Mail {
 			'snippet'   => $body_text !== '' ? mb_substr( preg_replace( '/\s+/', ' ', $body_text ), 0, 200 ) : '',
 			'body_text' => $body_text,
 			'body_debug' => implode( ' | ', $body_debug ),
+			'body_html'  => $body_html,
 			'pdfs'      => $pdfs,
 		);
 	}
@@ -945,12 +1036,11 @@ class AJCore_Zoho_Mail {
 		if ( is_wp_error( $details ) ) {
 			return $details;
 		}
-		$folder_id  = self::deep_string( $details, array( 'folderId' ) );
-		$account_id = trim( (string) $this->get_settings()['zoho_mail_account_id'] );
-		if ( '' === $folder_id || '' === $account_id ) {
-			return new WP_Error( 'zoho_mail_no_folder', __( 'Zoho did not report this message\'s folder.', 'ajcore' ) );
+		$loc = $this->locate_message( (string) $message_id, $details, $unused_debug );
+		if ( ! $loc ) {
+			return new WP_Error( 'zoho_mail_no_folder', __( 'Could not find this message\'s copy in your own mailbox (Zoho gives no folder for shared-mailbox messages).', 'ajcore' ) );
 		}
-		$res = $this->api_request( '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id ) . '/attachments/' . rawurlencode( (string) $attachment_id ) );
+		$res = $this->api_request( '/accounts/' . rawurlencode( $loc['account'] ) . '/folders/' . rawurlencode( $loc['folder'] ) . '/messages/' . rawurlencode( $loc['id'] ) . '/attachments/' . rawurlencode( (string) $attachment_id ) );
 		if ( is_wp_error( $res ) ) {
 			return $res;
 		}
