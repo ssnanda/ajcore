@@ -419,7 +419,8 @@ class AJCore_Pipeline_Tab {
 		.ajmr-tile-txt strong.is-alert { color:#b45309; }
 		.ajmr-tile-txt em { font-style:normal; font-size:11px; color:var(--ajmr-mute); }
 		.ajra-pu-head { display:flex; align-items:center; gap:8px 10px; flex-wrap:wrap; margin:0 0 10px; }
-		.ajra-pu-head .ajra-menu { margin-left:auto; }
+		.ajra-pu-head .ajra-sync { margin-left:auto; padding:7px 14px; border-radius:10px; border:1px solid #4f46e5; background:#4f46e5; color:#fff; font-weight:600; cursor:pointer; }
+		.ajra-pu-head .ajra-sync:disabled { opacity:.6; cursor:default; }
 		.ajra-pu-issues { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; padding-left:10px; border-left:1px solid #e2e8f0; }
 		.ajra-seg { display:inline-flex; gap:6px; flex-wrap:wrap; }
 		.ajra-seg-btn { display:inline-flex; align-items:center; gap:8px; padding:7px 14px; border-radius:999px; border:1px solid #e2e8f0; background:#fff; color:#334155; font-size:13px; font-weight:600; text-decoration:none; }
