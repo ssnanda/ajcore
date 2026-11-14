@@ -438,6 +438,8 @@ class AJCore_Pipeline_Tab {
 		.ajra-menu-list button:hover { background:#eef2ff; }
 		.ajra-menu-list hr { margin:4px 0; border:0; border-top:1px solid #e2e8f0; }
 		.ajra-pu-summary { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px 22px; margin:0 2px 12px; font-size:13px; color:#475569; }
+		.ajra-quote, .ajra-paid { display:inline-block; margin-left:8px; padding:1px 8px; border-radius:999px; font-size:10px; font-weight:800; letter-spacing:.04em; vertical-align:middle; }
+		.ajra-quote { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; } .ajra-paid { background:#dcfce7; color:#166534; border:1px solid #86efac; }
 		.ajra-pu-fix { color:#64748b; margin-left:4px; }
 		.ajra-issue { display:inline-flex; align-items:center; gap:7px; padding:4px 11px; border-radius:999px; border:1px solid #fcd34d; background:#fffbeb; color:#92400e; font-size:12.5px; font-weight:600; text-decoration:none; }
 		.ajra-issue b { font-variant-numeric:tabular-nums; }
