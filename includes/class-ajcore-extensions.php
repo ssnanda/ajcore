@@ -60,6 +60,9 @@
  * address (optional $address argument) and Zoho labels (list_labels, get_messages_by_label); named mailboxes live in the Zoho settings.
  * API 27: 'ajcore_mail_pipelines' (id => label, module, stages) lets an extension add a mailbox sub-pipeline (Zoho shared mailbox, no filters, emails
  * by date with stages and notes; engine in AJCore_Mail_Pipelines). AJCore-RA registers Invoices, Insurance, HOA; AJCore-HOA registers Invoice, Legal, Closing, Insurance.
+ * Marketing (API 27): AJCore_Marketing collects emails labelled marketing from any mailbox pipeline in one "Marketing" Pipeline tab (preview, delete to the Zoho Trash,
+ * marketing senders that auto-label future mail). An extension's pipeline calls AJCore_Marketing::label() / ::known() / ::is_marketing_sender() and may add names with
+ * the 'ajcore_marketing_pipeline_labels' filter.
  * Request workflow statuses (API 24): 'ajcore_service_status_labels', 'ajcore_service_status_pipelines' (product type => ordered status keys) and
  * 'ajcore_service_request_product_type' let an extension add its own statuses and per-product pipelines; AJCore ships only the generic ones.
  * Workflow actions (API 24): 'ajcore_service_request_quick_actions' (actions array, request, product type, current service status) and
