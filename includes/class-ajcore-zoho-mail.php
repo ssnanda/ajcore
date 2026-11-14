@@ -439,6 +439,11 @@ class AJCore_Zoho_Mail {
 			$url = add_query_arg( $query, $url );
 		}
 		$response = wp_remote_request( $url, array( 'method' => $method, 'timeout' => 20, 'headers' => array( 'Authorization' => 'Zoho-oauthtoken ' . $token ) ) );
+		// Reads are safe to repeat: a slow or dropped connection to Zoho gets two more tries before it counts as an error.
+		for ( $try = 0; 'GET' === $method && is_wp_error( $response ) && $try < 2; $try++ ) {
+			sleep( 1 );
+			$response = wp_remote_request( $url, array( 'method' => $method, 'timeout' => 20, 'headers' => array( 'Authorization' => 'Zoho-oauthtoken ' . $token ) ) );
+		}
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
