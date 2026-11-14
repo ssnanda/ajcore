@@ -413,7 +413,7 @@ class AJCore_Mail_Pipelines {
 		}
 		$zoho    = $this->zoho();
 		$mailbox = $this->settings( $id )['mailbox'];
-		if ( null === $row->body_debug && $zoho && '' !== $mailbox ) {
+		if ( ( null === $row->body_debug || '' !== (string) $row->body_debug ) && $zoho && '' !== $mailbox ) { // never fetched, or the last try only got the preview
 			$m = $zoho->intake_message( (string) $row->message_id, $mailbox );
 			if ( ! is_wp_error( $m ) ) {
 				$row->body       = mb_substr( (string) $m['body_text'], 0, 20000 );

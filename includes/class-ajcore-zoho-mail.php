@@ -776,6 +776,120 @@ class AJCore_Zoho_Mail {
 		return array( 'ids' => $ids, 'query' => $this->intake_filter_description(), 'estimate' => count( $ids ) );
 	}
 
+	/** Readable text from message HTML. */
+	private static function html_to_text( $html ) {
+		$text = preg_replace( '/<(script|style|head)[^>]*>.*?<\/\1>/is', ' ', (string) $html );
+		$text = preg_replace( '/<br\s*\/?>|<\/p>|<\/div>|<\/tr>|<\/li>|<\/td>|<\/h[1-6]>/i', "\n", (string) $text );
+		$text = html_entity_decode( wp_strip_all_tags( (string) $text, false ), ENT_QUOTES, 'UTF-8' );
+		$text = preg_replace( "/[ \t\x{00a0}]+/u", ' ', (string) $text );
+		return trim( (string) preg_replace( "/\n\s*\n+/", "\n", (string) $text ) );
+	}
+
+	/** Text of a raw MIME message (the /originalmessage response): picks text/plain, else text/html, decoding the transfer encoding and charset. */
+	private static function mime_to_text( $raw ) {
+		$parts = self::mime_parts( (string) $raw );
+		$plain = '';
+		$html  = '';
+		foreach ( $parts as $p ) {
+			if ( 'text/plain' === $p['type'] && '' === $plain ) {
+				$plain = $p['body'];
+			} elseif ( 'text/html' === $p['type'] && '' === $html ) {
+				$html = $p['body'];
+			}
+		}
+		$from_html = '' !== $html ? self::html_to_text( $html ) : '';
+		// A plain part that is just a stub ("view this email in a browser") loses to a fuller HTML part.
+		return strlen( $from_html ) > strlen( $plain ) * 2 && strlen( $from_html ) > 200 ? $from_html : ( '' !== trim( $plain ) ? trim( $plain ) : $from_html );
+	}
+
+	private static function mime_parts( $raw ) {
+		$split = preg_split( "/\r?\n\r?\n/", $raw, 2 );
+		$head  = isset( $split[0] ) ? $split[0] : '';
+		$body  = isset( $split[1] ) ? $split[1] : '';
+		$head  = preg_replace( "/\r?\n[ \t]+/", ' ', $head ); // unfold
+		$h     = array();
+		foreach ( preg_split( "/\r?\n/", $head ) as $line ) {
+			if ( false !== strpos( $line, ':' ) ) {
+				list( $k, $v ) = explode( ':', $line, 2 );
+				$h[ strtolower( trim( $k ) ) ] = trim( $v );
+			}
+		}
+		$ctype = isset( $h['content-type'] ) ? $h['content-type'] : 'text/plain';
+		$type  = strtolower( trim( explode( ';', $ctype )[0] ) );
+		if ( 0 === strpos( $type, 'multipart/' ) && preg_match( '/boundary="?([^";\s]+)"?/i', $ctype, $m ) ) {
+			$out = array();
+			foreach ( explode( '--' . $m[1], $body ) as $chunk ) {
+				$chunk = ltrim( $chunk, "\r\n" );
+				if ( '' === trim( $chunk ) || 0 === strpos( $chunk, '--' ) ) {
+					continue;
+				}
+				$out = array_merge( $out, self::mime_parts( $chunk ) );
+			}
+			return $out;
+		}
+		if ( 0 !== strpos( $type, 'text/' ) ) {
+			return array();
+		}
+		$enc = strtolower( isset( $h['content-transfer-encoding'] ) ? $h['content-transfer-encoding'] : '' );
+		if ( 'base64' === $enc ) {
+			$body = (string) base64_decode( $body ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+		} elseif ( 'quoted-printable' === $enc ) {
+			$body = quoted_printable_decode( $body );
+		}
+		if ( preg_match( '/charset="?([\w\-]+)"?/i', $ctype, $cm ) && 'utf-8' !== strtolower( $cm[1] ) && function_exists( 'mb_convert_encoding' ) ) {
+			$conv = @mb_convert_encoding( $body, 'UTF-8', $cm[1] ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			$body = false !== $conv ? $conv : $body;
+		}
+		return array( array( 'type' => $type, 'body' => $body ) );
+	}
+
+	/**
+	 * The full message text. Shared-mailbox messages only carry a short summary, so the body is fetched from the content endpoints
+	 * (each tried in turn, with the account id Zoho reports for the message first, then the saved one), then the raw message
+	 * (/originalmessage, decoded). $debug collects why a route failed; it is emptied once one works.
+	 */
+	private function full_body_text( $message_id, array $details, $address, &$debug ) {
+		$debug     = array();
+		$folder_id = self::deep_string( $details, array( 'folderId' ) );
+		$accounts  = array_values( array_unique( array_filter( array( self::deep_string( $details, array( 'accountId' ) ), trim( (string) $this->get_settings()['zoho_mail_account_id'] ) ) ) ) );
+		$mid       = rawurlencode( $message_id );
+		$addr      = $this->path_address( '' !== (string) $address ? strtolower( trim( (string) $address ) ) : $this->shared_address() );
+		$routes    = array();
+		if ( '' === $folder_id ) {
+			$debug[] = 'no folderId in the shared-mailbox message';
+		} elseif ( ! $accounts ) {
+			$debug[] = 'no Zoho account id (use Test Connection once)';
+		} else {
+			foreach ( $accounts as $acct ) {
+				$b                                  = '/accounts/' . rawurlencode( $acct ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . $mid;
+				$routes[ 'content[' . $acct . ']' ]  = array( $b . '/content', 'html' );
+				$routes[ 'original[' . $acct . ']' ] = array( $b . '/originalmessage', 'mime' );
+			}
+		}
+		$routes['shared content']  = array( '/v2/sharedmailbox/' . $addr . '/messages/' . $mid . '/content', 'html' );
+		$routes['shared original'] = array( '/v2/sharedmailbox/' . $addr . '/messages/' . $mid . '/originalmessage', 'mime' );
+		foreach ( $routes as $label => $route ) {
+			$res = $this->api_request( $route[0] );
+			if ( is_wp_error( $res ) ) {
+				$debug[] = $label . ': ' . $res->get_error_message();
+				continue;
+			}
+			if ( 200 !== $res['status'] ) {
+				$debug[] = $label . ': HTTP ' . $res['status'] . ' ' . substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 100 );
+				continue;
+			}
+			$content = self::deep_string( $res['data'], array( 'content' ) );
+			$text    = '' === $content ? '' : ( 'mime' === $route[1] ? self::mime_to_text( $content ) : self::html_to_text( $content ) );
+			if ( strlen( $text ) < 40 ) {
+				$debug[] = $label . ': HTTP 200 but no usable text';
+				continue;
+			}
+			$debug = array();
+			return $text;
+		}
+		return '';
+	}
+
 	/**
 	 * One message in the pipeline's normalized shape: subject, sender, date, snippet, plain-text body and its PDF
 	 * attachments (filename, attachment_id, size). Body and attachments live behind the login's own account endpoints,
@@ -796,38 +910,12 @@ class AJCore_Zoho_Mail {
 		$pdfs       = array();
 
 		$body_debug = array(); // how the full body was (or was not) obtained, so a preview-only result can be explained
-		if ( '' === $folder_id ) {
-			$body_debug[] = 'no folderId in the shared-mailbox message';
-		}
-		if ( '' === $account_id ) {
-			$body_debug[] = 'no Zoho account id saved (Test Connection once)';
+		$full       = $this->full_body_text( (string) $message_id, $details, $address, $body_debug );
+		if ( '' !== $full ) {
+			$body_text = $full;
 		}
 		if ( '' !== $folder_id && '' !== $account_id ) {
-			$base  = '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id );
-			// The login's own content endpoint first, then the shared-mailbox flavour of it.
-			$tries = array( 'content' => $base . '/content', 'shared content' => '/v2/sharedmailbox/' . $this->path_address( '' !== (string) $address ? strtolower( trim( (string) $address ) ) : $this->shared_address() ) . '/messages/' . rawurlencode( (string) $message_id ) . '/content' );
-			foreach ( $tries as $label => $path ) {
-				$body = $this->api_request( $path );
-				if ( is_wp_error( $body ) ) {
-					$body_debug[] = $label . ': ' . $body->get_error_message();
-					continue;
-				}
-				if ( 200 !== $body['status'] ) {
-					$body_debug[] = $label . ': HTTP ' . $body['status'] . ' ' . substr( (string) $body['raw'], 0, 120 );
-					continue;
-				}
-				$html = self::deep_string( $body['data'], array( 'content' ) );
-				if ( '' === $html ) {
-					$body_debug[] = $label . ': HTTP 200 but no content field';
-					continue;
-				}
-				$text = preg_replace( '/<(script|style)[^>]*>.*?<\/\1>/is', ' ', $html );
-				$text = preg_replace( '/<br\s*\/?>|<\/p>|<\/div>|<\/tr>|<\/li>|<\/td>|<\/h[1-6]>/i', "\n", (string) $text );
-				$body_text  = html_entity_decode( wp_strip_all_tags( (string) $text, false ), ENT_QUOTES, 'UTF-8' );
-				$body_text  = trim( preg_replace( "/[ \t\x{00a0}]+/u", ' ', preg_replace( "/\n\s*\n+/", "\n", $body_text ) ) );
-				$body_debug = array();
-				break;
-			}
+			$base = '/accounts/' . rawurlencode( $account_id ) . '/folders/' . rawurlencode( $folder_id ) . '/messages/' . rawurlencode( (string) $message_id );
 			$info = $this->api_request( $base . '/attachmentinfo' );
 			if ( ! is_wp_error( $info ) && 200 === $info['status'] ) {
 				foreach ( (array) ( isset( $info['data']['data']['attachments'] ) ? $info['data']['data']['attachments'] : array() ) as $a ) {
