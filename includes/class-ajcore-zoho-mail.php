@@ -258,6 +258,18 @@ class AJCore_Zoho_Mail {
 	}
 
 	public function test_connection( WP_REST_Request $request ) {
+		// The login is generic (not tied to Filings): with no Filings mailbox saved, prove the login and list the shared mailboxes it can read.
+		if ( '' === $this->shared_address() ) {
+			$boxes = $this->list_shared_mailboxes();
+			if ( is_wp_error( $boxes ) ) {
+				return rest_ensure_response( array( 'success' => false, 'message' => $boxes->get_error_message() ) );
+			}
+			$names = array();
+			foreach ( (array) $boxes as $b ) {
+				$names[] = is_array( $b ) ? ( isset( $b['address'] ) ? $b['address'] : ( isset( $b['name'] ) ? $b['name'] : '' ) ) : (string) $b;
+			}
+			return rest_ensure_response( array( 'success' => true, 'folders' => array_values( array_filter( $names ) ), 'recent_messages' => array( __( 'Login works. Set a mailbox on each pipeline (its gear tile).', 'ajcore' ) ) ) );
+		}
 		$views = $this->get_views();
 		if ( is_wp_error( $views ) ) {
 			return rest_ensure_response( array( 'success' => false, 'message' => $views->get_error_message() ) );
@@ -311,10 +323,10 @@ class AJCore_Zoho_Mail {
 		if ( '' === $client_id || '' === $client_secret ) {
 			return new WP_Error( 'zoho_mail_not_configured', __( 'Zoho Mail Client ID/Secret are not saved.', 'ajcore' ) );
 		}
-		$wanted = $this->shared_address( $settings );
-		if ( '' === $wanted ) {
-			return new WP_Error( 'zoho_mail_no_address', __( 'Save the Shared Mailbox Address first, then connect.', 'ajcore' ) );
-		}
+		// The login is shared by every pipeline; each pipeline sets its own mailbox. The single Filings mailbox is only proved when this site
+		// has Filings and has saved that address (sites without Filings, e.g. HOA sites, connect with just the Client ID / Secret).
+		$wanted     = $this->shared_address( $settings );
+		$with_probe = '' !== $wanted && class_exists( 'AJCore_Pipeline_Tab' ) && AJCore_Pipeline_Tab::filings_enabled();
 		$token_response = wp_remote_post( 'https://' . $this->accounts_host( $settings['zoho_mail_data_center'] ) . '/oauth/v2/token', array(
 			'timeout' => 20,
 			'body'    => array(
@@ -350,7 +362,7 @@ class AJCore_Zoho_Mail {
 			return new WP_Error( 'zoho_mail_accounts_failed', sprintf( __( 'Could not read this Zoho login\'s account — GET /api/accounts returned HTTP %1$d: %2$s', 'ajcore' ), $accounts['status'], substr( $accounts['raw'], 0, 600 ) ) );
 		}
 
-		$probe = $this->api_request( '/v2/sharedmailbox/' . $this->path_address( $wanted ) . '/counts', array(), 'GET', $access_token, $settings );
+		$probe = $with_probe ? $this->api_request( '/v2/sharedmailbox/' . $this->path_address( $wanted ) . '/counts', array(), 'GET', $access_token, $settings ) : array( 'status' => 200, 'raw' => '' );
 		if ( is_wp_error( $probe ) ) {
 			return $probe;
 		}
@@ -369,7 +381,8 @@ class AJCore_Zoho_Mail {
 		}
 
 		$settings['zoho_mail_account_id']      = sanitize_text_field( (string) $first['accountId'] );
-		$settings['zoho_mail_connected_email'] = $wanted;
+		$own                                   = isset( $first['primaryEmailAddress'] ) ? (string) $first['primaryEmailAddress'] : ( isset( $first['mailId'] ) ? (string) $first['mailId'] : '' );
+		$settings['zoho_mail_connected_email'] = '' !== $wanted ? $wanted : strtolower( sanitize_email( $own ) );
 		$settings['zoho_mail_connected_at']    = current_time( 'mysql' );
 		$this->store( $settings );
 		return true;
