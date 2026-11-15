@@ -428,7 +428,7 @@ class AJCore_Mail_Pipelines {
 			return 0;
 		}
 		$pdb = $this->pdb();
-		if ( 'assoc' === $type ) {
+		if ( in_array( $type, array( 'assoc', 'vendor' ), true ) ) {
 			// An association key is only usable while every email names the same property; a second property makes it ambiguous (empty).
 			$pdb->query( $pdb->prepare( "INSERT INTO `{$this->links_table()}` (pipeline, link_type, link_key, property_tag, property_name, tenant, created_at) VALUES (%s, %s, %s, %s, %s, '', %s) ON DUPLICATE KEY UPDATE property_name = IF(property_tag = VALUES(property_tag), property_name, ''), property_tag = IF(property_tag = VALUES(property_tag), property_tag, '')", $pipeline, $type, $key, $tag, $name, current_time( 'mysql' ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			return 0;
@@ -456,7 +456,7 @@ class AJCore_Mail_Pipelines {
 		$pdb  = $this->pdb();
 		$tbl  = $this->table();
 		$t0   = microtime( true );
-		$rows = (array) $pdb->get_results( $pdb->prepare( "SELECT id, message_id, subject, sender, summary, received_at, body, body_html, body_debug, label FROM `{$tbl}` WHERE pipeline = %s AND facts_v < %d AND received_at >= %s AND ( facts IS NULL OR facts NOT LIKE '%%\"manual\"%%' ) ORDER BY received_at DESC LIMIT 600", $id, $v, $s['since'] . ' 00:00:00' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$rows = (array) $pdb->get_results( $pdb->prepare( "SELECT id, message_id, subject, sender, summary, received_at, body, body_html, body_debug, label, stage FROM `{$tbl}` WHERE pipeline = %s AND facts_v < %d AND received_at >= %s AND ( facts IS NULL OR facts NOT LIKE '%%\"manual\"%%' ) ORDER BY received_at DESC LIMIT 600", $id, $v, $s['since'] . ' 00:00:00' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		foreach ( $rows as $r ) {
 			if ( microtime( true ) - $t0 > $budget ) {
 				$out['left']++;
@@ -500,6 +500,9 @@ class AJCore_Mail_Pipelines {
 			);
 			if ( 'notice' === ( $f['label'] ?? '' ) && '' === (string) $r->label ) {
 				$set['label'] = 'notice';
+			}
+			if ( ! empty( $f['stage'] ) && 'new' === (string) $r->stage && isset( $p['stages'][ $f['stage'] ] ) ) { // e.g. "Paid via ACH" moves a New invoice to Paid; later stages are never overridden
+				$set['stage'] = (string) $f['stage'];
 			}
 			$pdb->update( $tbl, $set, array( 'id' => (int) $r->id ) );
 			$out['parsed']++;
@@ -903,7 +906,7 @@ class AJCore_Mail_Pipelines {
 			function api( path, opts ) { opts = opts || {}; opts.headers = Object.assign( { 'X-WP-Nonce': nonce }, opts.headers || {} ); return fetch( rest + path, opts ).then( function ( r ) { return r.json().then( function ( d ) { if ( ! r.ok ) { throw new Error( d.message || 'Request failed' ); } return d; } ); } ); }
 			function post( path, body ) { return api( path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify( body ) } ); }
 			function emailFrame( html ) { var f = document.createElement( 'iframe' ); f.setAttribute( 'sandbox', 'allow-popups' ); f.setAttribute( 'referrerpolicy', 'no-referrer' ); f.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\'; font-src https: data:"><base target="_blank"><style>body{margin:10px;font:14px/1.45 -apple-system,Segoe UI,Arial,sans-serif;color:#111;word-wrap:break-word}img{max-width:100%;height:auto}</style>' + html; f.style.cssText = 'width:100%;height:680px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;resize:vertical;'; return f; }
-			var KIND = { bill: 'Bill', past_due: 'Past due', cancel_notice: 'Cancellation', reinstatement: 'Reinstated', renewal: 'Renewal', payment: 'Payment', application: 'Application', policy_change: 'Policy change', interested_party: 'Interested party', renters_proof: 'Renters proof', renters_required: 'Renters required', audit: 'Audit', agency: 'Agency', scan: 'Scan', policy_notice: 'Policy notice', charge: 'Charge', statement: 'Statement', upcoming_payment: 'Upcoming payment', recurring_payment: 'Recurring payment', violation: 'Violation', arc: 'ARC', work_order: 'Work order', board_task: 'Board task', request: 'Request', board_thread: 'Board / management', account: 'Account', info: 'Info', promo: 'Promo', other: 'Other' };
+			var KIND = { bill: 'Bill', past_due: 'Past due', cancel_notice: 'Cancellation', reinstatement: 'Reinstated', renewal: 'Renewal', payment: 'Payment', application: 'Application', policy_change: 'Policy change', interested_party: 'Interested party', renters_proof: 'Renters proof', renters_required: 'Renters required', audit: 'Audit', agency: 'Agency', scan: 'Scan', policy_notice: 'Policy notice', charge: 'Charge', statement: 'Statement', upcoming_payment: 'Upcoming payment', recurring_payment: 'Recurring payment', violation: 'Violation', arc: 'ARC', work_order: 'Work order', board_task: 'Board task', request: 'Request', board_thread: 'Board / management', account: 'Account', info: 'Info', promo: 'Promo', other: 'Other', ledger_request: 'Ledger request', counsel: 'Counsel', litigation: 'Litigation', bankruptcy: 'Bankruptcy', lien: 'Lien', foreclosure: 'Foreclosure', legal_bill: 'Legal bill', enforcement: 'Enforcement', vendor: 'Vendor', status_check: 'Status check', docs_sent: 'Documents sent', reply: 'Our reply', approval: 'Approved', question: 'Question', ack: 'Acknowledged', lender_request: 'Lender request', terminated: 'Terminated', transfer: 'Ownership transfer', fee: 'Fee', resale_request: 'Resale request', payoff: 'Payoff', certificate: 'Certificate', premium: 'Premium', claim: 'Claim', nonrenewal: 'Non-renewal', binder: 'Binder', collection: 'Collection', utility: 'Utility', paid: 'Paid', receipt: 'Receipt', vendor_thread: 'Vendor thread', quote: 'Quote' };
 			function dayKey( s ) { return ( s || '' ).slice( 0, 10 ) || '—'; }
 			function dayLabel( k ) { var d = new Date( k + 'T12:00:00' ); return isNaN( d ) ? k : d.toLocaleDateString( undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' } ); }
 			function load() {
@@ -961,10 +964,10 @@ class AJCore_Mail_Pipelines {
 						tr.appendChild( el( 'td', null, ( i.received_at || '' ).slice( 11, 16 ) ) );
 						var m = el( 'td' ); m.appendChild( el( 'strong', null, i.subject ) ); m.appendChild( el( 'div', 'description', ( i.sender || '' ) + ( i.notes ? ' · ' + i.notes : '' ) ) ); tr.appendChild( m );
 						if ( data.parsable ) {
-							var kd = el( 'td' ); if ( i.kind ) { kd.appendChild( el( 'span', 'ajmp-kind' + ( /^(past_due|cancel_notice|violation)$/.test( i.kind ) ? ' is-hot' : '' ), KIND[ i.kind ] || i.kind ) ); } else { kd.textContent = '—'; } tr.appendChild( kd );
+							var kd = el( 'td' ); if ( i.kind ) { kd.appendChild( el( 'span', 'ajmp-kind' + ( /^(past_due|cancel_notice|violation|bankruptcy|foreclosure|lien|litigation|collection|nonrenewal)$/.test( i.kind ) ? ' is-hot' : '' ), KIND[ i.kind ] || i.kind ) ); } else { kd.textContent = '—'; } tr.appendChild( kd );
 							var rf = el( 'td', null, i.ref_no || '—' ); rf.style.whiteSpace = 'nowrap'; tr.appendChild( rf );
 							var am = el( 'td' ); am.style.cssText = 'text-align:right;white-space:nowrap;'; am.appendChild( document.createTextNode( i.amount == null ? '—' : '$' + Number( i.amount ).toLocaleString( undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 } ) ) ); if ( i.due_date ) { am.appendChild( el( 'div', 'description', ( i.kind === 'cancel_notice' ? 'effective ' : 'due ' ) + i.due_date ) ); } tr.appendChild( am );
-							var pr = el( 'td' ); if ( i.property_name || i.property_tag ) { pr.appendChild( el( 'strong', null, i.property_tag || i.property_name ) ); if ( i.property_name && i.property_tag && i.property_name.toLowerCase().indexOf( i.property_tag.toLowerCase() ) !== 0 ) { pr.appendChild( el( 'div', 'description', i.property_name ) ); } } else if ( i.facts && i.facts.role === 'board' ) { pr.appendChild( el( 'span', 'description', 'board' ) ); } else if ( i.kind && ! /^(info|account|promo|agency|scan|board_thread|other)$/.test( i.kind ) ) { pr.appendChild( el( 'span', 'ajmp-none', 'no property' ) ); } else { pr.textContent = '—'; } if ( i.tenant ) { pr.appendChild( el( 'div', 'description', i.tenant ) ); } else if ( i.facts && i.facts.association ) { pr.appendChild( el( 'div', 'description', i.facts.association ) ); } tr.appendChild( pr );
+							var pr = el( 'td' ); if ( i.property_name || i.property_tag ) { pr.appendChild( el( 'strong', null, i.property_tag || i.property_name ) ); if ( i.property_name && i.property_tag && i.property_name.toLowerCase().indexOf( i.property_tag.toLowerCase() ) !== 0 ) { pr.appendChild( el( 'div', 'description', i.property_name ) ); } } else if ( i.facts && i.facts.role === 'board' ) { pr.appendChild( el( 'span', 'description', 'board' ) ); } else if ( i.kind && ! /^(info|account|promo|agency|scan|board_thread|other|vendor|ack|reply|paid|receipt|counsel|vendor_thread|certificate|claim)$/.test( i.kind ) ) { pr.appendChild( el( 'span', 'ajmp-none', 'no property' ) ); } else { pr.textContent = '—'; } if ( i.tenant ) { pr.appendChild( el( 'div', 'description', i.tenant ) ); } else if ( i.facts && i.facts.association ) { pr.appendChild( el( 'div', 'description', i.facts.association ) ); } tr.appendChild( pr );
 						}
 						var s = el( 'td' ); s.appendChild( el( 'span', 'ajcore-status-pill ' + ( i.stage === 'new' ? '' : ( i.stage === 'ignored' ? 'dup' : 'active' ) ), data.stages[ i.stage ] || i.stage ) ); tr.appendChild( s );
 						tr.addEventListener( 'click', function () { openDetail( i.id ); } ); tb.appendChild( tr );

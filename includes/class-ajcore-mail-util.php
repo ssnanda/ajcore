@@ -60,7 +60,7 @@ class AJCore_Mail_Util {
 	/** The first date that follows one of the labels ("Due Date: Sep 10, 2026"). Labels are regex fragments. */
 	public static function date_after( $text, array $labels ) {
 		foreach ( $labels as $label ) {
-			if ( preg_match( '/' . $label . '\s*[:\-]?\s*((?:[A-Z][a-z]{2,8}\.? \d{1,2},? \d{4})|(?:\d{1,2}\/\d{1,2}\/\d{2,4})|(?:\d{4}-\d{2}-\d{2}))/', (string) $text, $m ) ) {
+			if ( preg_match( '/(?i:' . $label . ')\s*[:\-]?\s*((?:[A-Z][a-z]{2,8}\.? \d{1,2},? \d{4})|(?:\d{1,2}\/\d{1,2}\/\d{2,4})|(?:\d{4}-\d{2}-\d{2}))/', (string) $text, $m ) ) {
 				$d = self::date( str_replace( ',', ',', $m[1] ) );
 				if ( '' !== $d ) {
 					return $d;
@@ -82,6 +82,41 @@ class AJCore_Mail_Util {
 	public static function domain_of( $sender ) {
 		$e = self::email_of( $sender );
 		return false !== strpos( $e, '@' ) ? substr( $e, strrpos( $e, '@' ) + 1 ) : '';
+	}
+
+	/** The newest message of a thread: the text before the first quoted header ("From: ... Sent:", "On ... wrote:", "Original Message", a forward line). */
+	public static function top_text( $text ) {
+		$t = self::clean( $text );
+		if ( preg_match( '/\bFrom:\s*[^:]{1,140}?\s(?:Sent|Date|To):|\bOn\s[^:]{5,90}?\swrote:|-{2,}\s*Original Message|={3,}\s*Forwarded message|_{8,}|\bBegin forwarded message/i', $t, $m, PREG_OFFSET_CAPTURE ) && $m[0][1] >= 25 ) {
+			return rtrim( substr( $t, 0, $m[0][1] ) );
+		}
+		return $t;
+	}
+
+	/** The HOA / association name written in a subject or text ("Fountaingrove Homeowners Association of Mecklenburg, Inc.", "Mallard Forest HOA"); '' when none. */
+	public static function association_name( $subject, $text ) {
+		$s    = self::clean( $subject );
+		$t    = self::clean( $text );
+		$kind = '(?:Homeowners?|Home Owners?|Townehome Homeowners?|Townhomes? Homeowners?|Condominium(?:s)?(?: Owners?)?|Neighborhood|Residential|Property Owners?|Community)\s*(?:Association|Assoc\.?)';
+		$pats = array(
+			array( '/\b((?:The\s+)?[A-Z][A-Za-z0-9&\.\']*(?:\s+[A-Z0-9][A-Za-z0-9&\.\']*){0,4}?\s+' . $kind . '(?:\s+of\s+[A-Z][A-Za-z]+)?(?:,?\s+Inc\.?)?)/', $s ),
+			array( '/\b((?:The\s+)?[A-Z][A-Za-z0-9&\.\']*(?:\s+[A-Z0-9][A-Za-z0-9&\.\']*){0,3}?\s+(?:HOA|POA|HOA\s+of\s+[A-Z][a-z]+))\b/', $s ),
+			array( '/\b((?:The\s+)?[A-Z][A-Za-z0-9&\.\']*(?:\s+[A-Z0-9][A-Za-z0-9&\.\']*){0,4}?\s+' . $kind . '(?:\s+of\s+[A-Z][A-Za-z]+)?(?:,?\s+Inc\.?)?)/', $t ),
+			array( '/\b((?:The\s+)?[A-Z][A-Za-z0-9&\.\']*(?:\s+[A-Z0-9][A-Za-z0-9&\.\']*){0,3}?\s+(?:HOA|POA))\b/', $t ),
+		);
+		foreach ( $pats as $p ) {
+			if ( preg_match( $p[0], $p[1], $m ) ) {
+				$n = trim( preg_replace( '/^(?:The\s+)+/i', 'The ', $m[1] ), " .,-" );
+				$n = preg_replace( '/^(?:RE|Re|FW|Fw|Fwd)\b:?\s*/', '', $n );
+				while ( preg_match( '/^(?:Hi|Hello|Dear|Notice|Rescission|Cancellation|Policy|Important|Invoice|Welcome|Receipt|Your|For|To|Of|At|From|Payment|Statement|Customer Name|Customer|Bill to)\b[:,]?\s+(.+)$/i', $n, $mm ) ) {
+					$n = $mm[1]; // leading words that are not part of the name
+				}
+				if ( strlen( $n ) > 6 && ! preg_match( '/^(?:Your|The Association|Association|The HOA|HOA)\b|^[A-Z]{2}\s+\d{5}|^\d/', $n ) && ! preg_match( '/^(?:The\s+)?(?:Re|RE|Fw|FW|Fwd)\b/', $n ) ) {
+					return $n;
+				}
+			}
+		}
+		return '';
 	}
 
 	/** "SANDIP NANDA" / "mansa singh llc" -> "Sandip Nanda" / "Mansa Singh LLC". */
