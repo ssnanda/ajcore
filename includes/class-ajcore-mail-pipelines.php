@@ -35,7 +35,7 @@ class AJCore_Mail_Pipelines {
 			if ( '' === $id || empty( $p['label'] ) || empty( $p['stages'] ) || ! is_array( $p['stages'] ) ) {
 				continue;
 			}
-			$out[ $id ] = array( 'label' => (string) $p['label'], 'module' => ! empty( $p['module'] ) ? (string) $p['module'] : $id, 'stages' => $p['stages'] );
+			$out[ $id ] = array( 'label' => (string) $p['label'], 'module' => ! empty( $p['module'] ) ? (string) $p['module'] : $id, 'stages' => $p['stages'], 'label_stages' => isset( $p['label_stages'] ) && is_array( $p['label_stages'] ) ? $p['label_stages'] : array(), 'parser' => isset( $p['parser'] ) && is_callable( $p['parser'] ) ? $p['parser'] : null, 'parser_v' => isset( $p['parser_v'] ) ? (int) $p['parser_v'] : 0 );
 		}
 		return $out;
 	}
@@ -156,6 +156,26 @@ class AJCore_Mail_Pipelines {
 			if ( ! $pdb->get_var( "SHOW COLUMNS FROM `{$tbl}` LIKE 'body_html'" ) ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				$pdb->query( "ALTER TABLE `{$tbl}` ADD COLUMN body_html mediumtext NULL AFTER body" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			}
+			// Parsed fields (filled by a pipeline's parser): what the email is, its policy / account / reference number, amount, due date, property and tenant.
+			foreach ( array(
+				'kind'          => "varchar(40) NOT NULL DEFAULT ''",
+				'ref_no'        => "varchar(100) NOT NULL DEFAULT ''",
+				'amount'        => 'decimal(12,2) NULL',
+				'due_date'      => 'date NULL',
+				'property_tag'  => "varchar(190) NOT NULL DEFAULT ''",
+				'property_name' => "varchar(190) NOT NULL DEFAULT ''",
+				'tenant'        => "varchar(190) NOT NULL DEFAULT ''",
+				'facts'         => 'longtext NULL',
+				'facts_v'       => 'smallint(5) unsigned NOT NULL DEFAULT 0',
+			) as $col => $def ) {
+				if ( ! $pdb->get_var( "SHOW COLUMNS FROM `{$tbl}` LIKE '{$col}'" ) ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					$pdb->query( "ALTER TABLE `{$tbl}` ADD COLUMN {$col} {$def}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				}
+			}
+			if ( ! get_option( 'ajcore_mp_invoice_stages_v2' ) ) { // Invoices: New > Verified > Paid (was Approved)
+				$pdb->query( "UPDATE `{$tbl}` SET stage = 'verified' WHERE pipeline = 'invoices' AND stage = 'approved'" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				update_option( 'ajcore_mp_invoice_stages_v2', '1', false );
+			}
 			return $done = true;
 		}
 		$charset = $pdb->get_charset_collate();
@@ -173,6 +193,15 @@ class AJCore_Mail_Pipelines {
 			stage varchar(20) NOT NULL DEFAULT 'new',
 			label varchar(16) NOT NULL DEFAULT '',
 			notes text NULL,
+			kind varchar(40) NOT NULL DEFAULT '',
+			ref_no varchar(100) NOT NULL DEFAULT '',
+			amount decimal(12,2) NULL,
+			due_date date NULL,
+			property_tag varchar(190) NOT NULL DEFAULT '',
+			property_name varchar(190) NOT NULL DEFAULT '',
+			tenant varchar(190) NOT NULL DEFAULT '',
+			facts longtext NULL,
+			facts_v smallint(5) unsigned NOT NULL DEFAULT 0,
 			created_at datetime NULL,
 			updated_at datetime NULL,
 			PRIMARY KEY  (id),
@@ -187,7 +216,7 @@ class AJCore_Mail_Pipelines {
 
 	public function settings( $id ) {
 		$opt = get_option( 'ajcore_mp_' . $id, array() );
-		return array_merge( array( 'mailbox' => '', 'enabled' => '1', 'cursor' => 0, 'last_run' => array() ), is_array( $opt ) ? $opt : array() );
+		return array_merge( array( 'mailbox' => '', 'enabled' => '1', 'since' => '2026-01-01', 'cursor' => 0, 'last_run' => array() ), is_array( $opt ) ? $opt : array() );
 	}
 
 	private function save_settings( $id, array $s ) {
@@ -222,7 +251,9 @@ class AJCore_Mail_Pipelines {
 		$cursor  = max( 0, (int) $s['cursor'] );
 		$pages   = array_unique( array( 0, $cursor ) );
 		$guard   = 0;
-		while ( $pages && $summary['new'] < $max_new && $guard++ < 40 ) {
+		$t0      = microtime( true );
+		$stopped = false;
+		while ( $pages && $summary['new'] < $max_new && $guard++ < 40 && microtime( true ) - $t0 <= 25 ) {
 			$start = (int) array_shift( $pages );
 			$rows  = $zoho->get_recent_messages( 50, 'all', $start, $s['mailbox'] );
 			if ( is_wp_error( $rows ) ) {
@@ -237,14 +268,20 @@ class AJCore_Mail_Pipelines {
 				$known = array_flip( (array) $pdb->get_col( $pdb->prepare( "SELECT message_id FROM `{$tbl}` WHERE pipeline = %s AND message_id IN ({$ph})", array_merge( array( $id ), $ids ) ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			}
 			$all_known = true;
+			$older     = 0;
 			foreach ( $rows as $row ) {
+				if ( '' !== (string) $row['received_at'] && (string) $row['received_at'] < $s['since'] . ' 00:00:00' ) {
+					$older++;
+					continue; // before the window (2026 by default)
+				}
 				if ( isset( $known[ $row['message_id'] ] ) ) {
 					continue;
 				}
 				$sender_txt = trim( $row['from_name'] . ' <' . $row['from_email'] . '>' );
 				$label      = AJCore_Marketing::is_marketing_sender( $sender_txt ) ? 'marketing' : ''; // a marked sender is labelled as it comes in
 				$all_known = false;
-				if ( $summary['new'] >= $max_new ) {
+				if ( $summary['new'] >= $max_new || microtime( true ) - $t0 > 25 ) { // each request stays short: the browser asks again
+					$stopped = true;
 					break;
 				}
 				$pdb->insert( $tbl, array(
@@ -261,7 +298,12 @@ class AJCore_Mail_Pipelines {
 				) );
 				$summary['new']++;
 			}
-			if ( count( $rows ) < 50 ) {
+			if ( $rows && $older === count( $rows ) && ! $stopped ) { // a whole page older than the window: nothing newer is left to read
+				$summary['complete'] = true;
+				$cursor              = 0;
+				break;
+			}
+			if ( count( $rows ) < 50 && ! $stopped ) {
 				$summary['complete'] = $start >= $cursor;
 				if ( $start >= $cursor ) {
 					$cursor = 0;
@@ -276,7 +318,233 @@ class AJCore_Mail_Pipelines {
 		$s['cursor']   = $cursor;
 		$s['last_run'] = array( 'at' => current_time( 'mysql' ), 'new' => $summary['new'], 'scanned' => $summary['scanned'], 'errors' => $summary['errors'] );
 		$this->save_settings( $id, $s );
+		$summary['staged'] = $this->apply_label_stages( $id );
 		return $summary;
+	}
+
+	/**
+	 * Zoho labels set the stage: a pipeline's label_stages (e.g. PAID => paid) moves every email carrying that Zoho label to that stage
+	 * (from New / Verified only; Ignored and later stages are left alone). Reads the label's message list, writes nothing to Zoho.
+	 */
+	public function apply_label_stages( $id ) {
+		$p = self::pipelines();
+		$p = isset( $p[ $id ] ) ? $p[ $id ] : array();
+		$map = isset( $p['label_stages'] ) ? $p['label_stages'] : array();
+		$zoho = $this->zoho();
+		$s    = $this->settings( $id );
+		if ( ! $map || ! $zoho || '' === $s['mailbox'] ) {
+			return 0;
+		}
+		$ck = 'ajcore_mp_lbl_' . md5( $s['mailbox'] );
+		$labels = get_transient( $ck );
+		if ( ! is_array( $labels ) ) {
+			$labels = $zoho->list_labels( $s['mailbox'] );
+			if ( is_wp_error( $labels ) ) {
+				return 0;
+			}
+			set_transient( $ck, $labels, 10 * MINUTE_IN_SECONDS );
+		}
+		$pdb   = $this->pdb();
+		$tbl   = $this->table();
+		$moved = 0;
+		foreach ( $map as $name => $stage ) {
+			if ( ! isset( $p['stages'][ $stage ] ) ) {
+				continue;
+			}
+			foreach ( $labels as $l ) {
+				if ( 0 !== strcasecmp( (string) $l['name'], (string) $name ) ) {
+					continue;
+				}
+				$mids = array();
+				for ( $start = 0, $pg = 0; $pg < 10; $pg++, $start += 200 ) {
+					$rows = $zoho->get_messages_by_label( $l['id'], $s['mailbox'], $start, 200 );
+					if ( is_wp_error( $rows ) || ! $rows ) {
+						break;
+					}
+					foreach ( $rows as $r ) {
+						$mids[] = (string) $r['message_id'];
+					}
+					if ( count( $rows ) < 200 ) {
+						break;
+					}
+				}
+				foreach ( array_chunk( $mids, 100 ) as $chunk ) {
+					$ph = implode( ', ', array_fill( 0, count( $chunk ), '%s' ) );
+					$moved += (int) $pdb->query( $pdb->prepare( "UPDATE `{$tbl}` SET stage = %s, updated_at = %s WHERE pipeline = %s AND stage IN ('new', 'verified', 'approved') AND stage <> %s AND message_id IN ({$ph})", array_merge( array( $stage, current_time( 'mysql' ), $id, $stage ), $chunk ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+				}
+			}
+		}
+		return $moved;
+	}
+
+	// ── links: a policy / account number remembered against a property ───────────
+
+	private function links_table() {
+		return $this->pdb()->prefix . 'aj_mail_links';
+	}
+
+	private function ensure_links() {
+		static $done = null;
+		if ( null !== $done ) {
+			return $done;
+		}
+		$pdb = $this->pdb();
+		$kit = $this->kit();
+		$tbl = $this->links_table();
+		if ( ! $kit['table_exists']( $pdb, $tbl ) ) {
+			$charset = $pdb->get_charset_collate();
+			$pdb->query( "CREATE TABLE IF NOT EXISTS `{$tbl}` (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				pipeline varchar(40) NOT NULL,
+				link_type varchar(20) NOT NULL,
+				link_key varchar(120) NOT NULL,
+				property_tag varchar(190) NOT NULL DEFAULT '',
+				property_name varchar(190) NOT NULL DEFAULT '',
+				tenant varchar(190) NOT NULL DEFAULT '',
+				created_at datetime NULL,
+				PRIMARY KEY  (id),
+				UNIQUE KEY pipe_key (pipeline, link_type, link_key)
+			) {$charset}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
+		return $done = $kit['table_exists']( $pdb, $tbl );
+	}
+
+	/** The property remembered for a reference number (type "ref": a policy, account or association account number), or null. */
+	public static function link_lookup( $pipeline, $type, $key ) {
+		$self = self::instance();
+		$key  = strtolower( trim( (string) $key ) );
+		if ( '' === $key || ! $self->ensure_links() ) {
+			return null;
+		}
+		$pdb = $self->pdb();
+		$row = $pdb->get_row( $pdb->prepare( "SELECT property_tag, property_name, tenant FROM `{$self->links_table()}` WHERE pipeline = %s AND link_type = %s AND link_key = %s", $pipeline, $type, $key ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		return $row ? $row : null;
+	}
+
+	/** Remembers a property for a key; later emails with the same key take it. Returns the number of already stored emails updated. */
+	public function link_set( $pipeline, $type, $key, $tag, $name, $tenant = '' ) {
+		$key = strtolower( trim( (string) $key ) );
+		if ( '' === $key || ! $this->ensure_links() ) {
+			return 0;
+		}
+		$pdb = $this->pdb();
+		if ( 'assoc' === $type ) {
+			// An association key is only usable while every email names the same property; a second property makes it ambiguous (empty).
+			$pdb->query( $pdb->prepare( "INSERT INTO `{$this->links_table()}` (pipeline, link_type, link_key, property_tag, property_name, tenant, created_at) VALUES (%s, %s, %s, %s, %s, '', %s) ON DUPLICATE KEY UPDATE property_name = IF(property_tag = VALUES(property_tag), property_name, ''), property_tag = IF(property_tag = VALUES(property_tag), property_tag, '')", $pipeline, $type, $key, $tag, $name, current_time( 'mysql' ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			return 0;
+		}
+		$pdb->query( $pdb->prepare( "INSERT INTO `{$this->links_table()}` (pipeline, link_type, link_key, property_tag, property_name, tenant, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE property_tag = VALUES(property_tag), property_name = VALUES(property_name), tenant = IF(VALUES(tenant) <> '', VALUES(tenant), tenant)", $pipeline, $type, $key, $tag, $name, $tenant, current_time( 'mysql' ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		return (int) $pdb->query( $pdb->prepare( "UPDATE `{$this->table()}` SET property_tag = %s, property_name = %s WHERE pipeline = %s AND LOWER(ref_no) = %s AND property_tag = ''", $tag, $name, $pipeline, $key ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	}
+
+	/**
+	 * Runs a pipeline's parser over stored mail that has not been parsed by the current parser version (facts_v < parser_v). Fetches the
+	 * email text from Zoho when it is not stored yet (up to $max_fetch per call), stays within $budget seconds. The parser gets
+	 * ( item, text, html ) and returns kind / ref_no / amount / due_date / property_tag / property_name / tenant / facts / label.
+	 */
+	public function parse_items( $id, $max_fetch = 20, $budget = 25 ) {
+		$p      = self::pipelines();
+		$p      = isset( $p[ $id ] ) ? $p[ $id ] : array();
+		$parser = isset( $p['parser'] ) ? $p['parser'] : null;
+		$v      = isset( $p['parser_v'] ) ? (int) $p['parser_v'] : 0;
+		$out    = array( 'parsed' => 0, 'fetched' => 0, 'left' => 0, 'errors' => array() );
+		if ( ! $parser || $v < 1 || ! $this->ensure_table() ) {
+			return $out;
+		}
+		$s    = $this->settings( $id );
+		$zoho = $this->zoho();
+		$pdb  = $this->pdb();
+		$tbl  = $this->table();
+		$t0   = microtime( true );
+		$rows = (array) $pdb->get_results( $pdb->prepare( "SELECT id, message_id, subject, sender, summary, received_at, body, body_html, body_debug, label FROM `{$tbl}` WHERE pipeline = %s AND facts_v < %d AND received_at >= %s AND ( facts IS NULL OR facts NOT LIKE '%%\"manual\"%%' ) ORDER BY received_at DESC LIMIT 600", $id, $v, $s['since'] . ' 00:00:00' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		foreach ( $rows as $r ) {
+			if ( microtime( true ) - $t0 > $budget ) {
+				$out['left']++;
+				continue;
+			}
+			$body = (string) $r->body;
+			$html = (string) $r->body_html;
+			if ( '' === trim( $body ) || null === $r->body_debug ) {
+				if ( $out['fetched'] >= $max_fetch || ! $zoho || '' === $s['mailbox'] ) {
+					$out['left']++;
+					continue;
+				}
+				$m = $zoho->intake_message( (string) $r->message_id, $s['mailbox'] );
+				$out['fetched']++;
+				if ( is_wp_error( $m ) ) {
+					$out['errors'][] = $m->get_error_message();
+					$out['left']++;
+					continue;
+				}
+				$body = mb_substr( (string) $m['body_text'], 0, 20000 );
+				$html = (string) ( $m['body_html'] ?? '' );
+				$pdb->update( $tbl, array( 'body' => $body, 'body_debug' => (string) ( $m['body_debug'] ?? '' ), 'body_html' => $html ), array( 'id' => (int) $r->id ) );
+			}
+			try {
+				$f = call_user_func( $parser, array( 'subject' => (string) $r->subject, 'sender' => (string) $r->sender, 'summary' => (string) $r->summary, 'received_at' => (string) $r->received_at, 'pipeline' => $id ), '' !== trim( $body ) ? $body : (string) $r->summary, $html );
+			} catch ( \Throwable $e ) {
+				$out['errors'][] = $e->getMessage();
+				$f               = array();
+			}
+			$f   = is_array( $f ) ? $f : array();
+			$set = array(
+				'kind'          => mb_substr( (string) ( $f['kind'] ?? '' ), 0, 40 ),
+				'ref_no'        => mb_substr( (string) ( $f['ref_no'] ?? '' ), 0, 100 ),
+				'amount'        => isset( $f['amount'] ) && is_numeric( $f['amount'] ) ? round( (float) $f['amount'], 2 ) : null,
+				'due_date'      => ! empty( $f['due_date'] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', (string) $f['due_date'] ) ? (string) $f['due_date'] : null,
+				'property_tag'  => mb_substr( (string) ( $f['property_tag'] ?? '' ), 0, 190 ),
+				'property_name' => mb_substr( (string) ( $f['property_name'] ?? '' ), 0, 190 ),
+				'tenant'        => mb_substr( (string) ( $f['tenant'] ?? '' ), 0, 190 ),
+				'facts'         => ! empty( $f['facts'] ) && is_array( $f['facts'] ) ? wp_json_encode( $f['facts'] ) : '',
+				'facts_v'       => $v,
+			);
+			if ( 'notice' === ( $f['label'] ?? '' ) && '' === (string) $r->label ) {
+				$set['label'] = 'notice';
+			}
+			$pdb->update( $tbl, $set, array( 'id' => (int) $r->id ) );
+			$out['parsed']++;
+			foreach ( ( isset( $f['learn'] ) && is_array( $f['learn'] ) ) ? $f['learn'] : array() as $lk ) { // a property learned for a policy / account / association: its other emails take it
+				if ( ! empty( $lk['key'] ) && ! empty( $lk['property_tag'] ) ) {
+					$this->link_set( $id, (string) ( $lk['type'] ?? 'ref' ), (string) $lk['key'], (string) $lk['property_tag'], (string) ( $lk['property_name'] ?? '' ), (string) ( $lk['tenant'] ?? '' ) );
+					$out['learned'] = ( isset( $out['learned'] ) ? $out['learned'] : 0 ) + 1;
+				}
+			}
+		}
+		if ( ! empty( $out['learned'] ) ) { // earlier emails that were waiting for a property are parsed again
+			$out['left'] += (int) $pdb->query( $pdb->prepare( "UPDATE `{$tbl}` SET facts_v = 0 WHERE pipeline = %s AND property_tag = '' AND facts LIKE %s", $id, '%"no_property"%' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
+		$out['errors'] = array_values( array_unique( $out['errors'] ) );
+		return $out;
+	}
+
+	public function rest_parse( WP_REST_Request $request ) {
+		$id = $this->pipe( $request );
+		if ( ! $id ) {
+			return $this->bad_pipe();
+		}
+		return rest_ensure_response( $this->parse_items( $id ) );
+	}
+
+	/** Removes stored mail older than the window (2026 by default). The mailbox itself is not touched. */
+	public function purge_old( $id ) {
+		if ( ! $this->ensure_table() ) {
+			return new WP_Error( 'no_table', __( 'The table could not be created.', 'ajcore' ) );
+		}
+		$s   = $this->settings( $id );
+		$pdb = $this->pdb();
+		$n   = (int) $pdb->query( $pdb->prepare( "DELETE FROM `{$this->table()}` WHERE pipeline = %s AND received_at < %s", $id, $s['since'] . ' 00:00:00' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$s['cursor'] = 0;
+		$this->save_settings( $id, $s );
+		return array( 'since' => $s['since'], 'removed' => $n );
+	}
+
+	public function rest_purge( WP_REST_Request $request ) {
+		$id = $this->pipe( $request );
+		if ( ! $id ) {
+			return $this->bad_pipe();
+		}
+		$r = $this->purge_old( $id );
+		return is_wp_error( $r ) ? $r : rest_ensure_response( $r );
 	}
 
 	public static function cron_pass() {
@@ -285,6 +553,12 @@ class AJCore_Mail_Pipelines {
 			$s = $self->settings( $id );
 			if ( '1' === $s['enabled'] && '' !== $s['mailbox'] ) {
 				$self->run_pass( $id, 60 );
+				for ( $i = 0; $i < 6; $i++ ) { // read new emails' details (type, policy / account #, amount, property), a few batches per hour
+					$r = $self->parse_items( $id, 20, 25 );
+					if ( empty( $r['left'] ) || ( empty( $r['parsed'] ) && empty( $r['fetched'] ) ) ) {
+						break;
+					}
+				}
 			}
 		}
 	}
@@ -301,6 +575,8 @@ class AJCore_Mail_Pipelines {
 		$base = '/ops/mail-pipelines/(?P<pipe>[a-z0-9_-]+)';
 		register_rest_route( $ns, $base, array( 'methods' => 'GET', 'callback' => array( $this, 'rest_list' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/process', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_process' ), 'permission_callback' => $ops ) );
+		register_rest_route( $ns, $base . '/parse', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_parse' ), 'permission_callback' => $ops ) );
+		register_rest_route( $ns, $base . '/purge', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_purge' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/stage', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_stage' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/marketing', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_marketing' ), 'permission_callback' => $ops ) );
 		register_rest_route( $ns, $base . '/marketing/delete', array( 'methods' => 'POST', 'callback' => array( $this, 'rest_delete_marketing' ), 'permission_callback' => $ops ) );
@@ -321,6 +597,17 @@ class AJCore_Mail_Pipelines {
 
 	private function item_out( $r, $with_body = false ) {
 		$out = array( 'id' => (int) $r->id, 'subject' => (string) $r->subject, 'sender' => (string) $r->sender, 'summary' => (string) $r->summary, 'received_at' => (string) $r->received_at, 'stage' => (string) $r->stage, 'label' => (string) $r->label, 'notes' => (string) $r->notes );
+		$out['kind']          = isset( $r->kind ) ? (string) $r->kind : '';
+		$out['ref_no']        = isset( $r->ref_no ) ? (string) $r->ref_no : '';
+		$out['amount']        = isset( $r->amount ) && null !== $r->amount ? (float) $r->amount : null;
+		$out['due_date']      = isset( $r->due_date ) ? (string) $r->due_date : '';
+		$out['property_tag']  = isset( $r->property_tag ) ? (string) $r->property_tag : '';
+		$out['property_name'] = isset( $r->property_name ) ? (string) $r->property_name : '';
+		$out['tenant']        = isset( $r->tenant ) ? (string) $r->tenant : '';
+		if ( isset( $r->facts ) && '' !== (string) $r->facts ) {
+			$f = json_decode( (string) $r->facts, true );
+			$out['facts'] = is_array( $f ) ? $f : array();
+		}
 		if ( $with_body ) {
 			$out['body']       = (string) $r->body;
 			$out['body_html']  = (string) $r->body_html;
@@ -341,8 +628,18 @@ class AJCore_Mail_Pipelines {
 		$tbl    = $this->table();
 		$where  = array( 'pipeline = %s' );
 		$params = array( $id );
-		$view   = 'marketing' === sanitize_key( (string) $request->get_param( 'label' ) ) ? 'marketing' : '';
-		$where[] = '' === $view ? "label = ''" : "label = 'marketing'"; // the normal list hides marketing; the Marketing label shows only those
+		$lab    = sanitize_key( (string) $request->get_param( 'label' ) );
+		$view   = in_array( $lab, array( 'marketing', 'notice' ), true ) ? $lab : '';
+		$where[] = '' === $view ? "label = ''" : "label = '{$view}'"; // the normal list hides labelled mail; a label shows only its own
+		$kind   = sanitize_key( (string) $request->get_param( 'kind' ) );
+		if ( '' !== $kind ) {
+			$where[]  = 'kind = %s';
+			$params[] = $kind;
+		}
+		$issue = sanitize_key( (string) $request->get_param( 'issue' ) );
+		if ( in_array( $issue, array( 'no_property', 'no_ref', 'no_amount', 'unparsed' ), true ) ) {
+			$where[] = 'unparsed' === $issue ? 'facts_v = 0' : "facts LIKE '%%\"{$issue}\"%%'";
+		}
 		$stage  = sanitize_key( (string) $request->get_param( 'stage' ) );
 		if ( '' === $view && isset( self::pipelines()[ $id ]['stages'][ $stage ] ) ) {
 			$where[]  = 'stage = %s';
@@ -356,13 +653,23 @@ class AJCore_Mail_Pipelines {
 		}
 		$limit = min( 500, max( 1, (int) ( $request->get_param( 'limit' ) ?: 300 ) ) );
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		$rows   = (array) $pdb->get_results( $pdb->prepare( "SELECT id, subject, sender, summary, received_at, stage, label, notes FROM `{$tbl}` WHERE " . implode( ' AND ', $where ) . " ORDER BY received_at DESC, id DESC LIMIT {$limit}", $params ) );
+		$rows   = (array) $pdb->get_results( $pdb->prepare( "SELECT id, subject, sender, summary, received_at, stage, label, notes, kind, ref_no, amount, due_date, property_tag, property_name, tenant, facts FROM `{$tbl}` WHERE " . implode( ' AND ', $where ) . " ORDER BY received_at DESC, id DESC LIMIT {$limit}", $params ) );
 		$counts = array_fill_keys( array_keys( self::pipelines()[ $id ]['stages'] ), 0 );
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		foreach ( (array) $pdb->get_results( $pdb->prepare( "SELECT stage, COUNT(*) AS n FROM `{$tbl}` WHERE pipeline = %s AND label = '' GROUP BY stage", $id ) ) as $c ) {
 			$counts[ (string) $c->stage ] = (int) $c->n;
 		}
 		$marketing = (int) $pdb->get_var( $pdb->prepare( "SELECT COUNT(*) FROM `{$tbl}` WHERE pipeline = %s AND label = 'marketing'", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$notices   = (int) $pdb->get_var( $pdb->prepare( "SELECT COUNT(*) FROM `{$tbl}` WHERE pipeline = %s AND label = 'notice'", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$kinds     = array();
+		foreach ( (array) $pdb->get_results( $pdb->prepare( "SELECT kind, COUNT(*) AS n FROM `{$tbl}` WHERE pipeline = %s AND label = '' AND kind <> '' GROUP BY kind ORDER BY n DESC", $id ) ) as $k ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$kinds[ (string) $k->kind ] = (int) $k->n;
+		}
+		$issues = array();
+		foreach ( array( 'no_property', 'no_ref', 'no_amount' ) as $iss ) {
+			$issues[ $iss ] = (int) $pdb->get_var( $pdb->prepare( "SELECT COUNT(*) FROM `{$tbl}` WHERE pipeline = %s AND label = '' AND facts LIKE %s", $id, '%"' . $iss . '"%' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
+		$unparsed = (int) $pdb->get_var( $pdb->prepare( "SELECT COUNT(*) FROM `{$tbl}` WHERE pipeline = %s AND label = '' AND facts_v < %d AND received_at >= %s", $id, (int) self::pipelines()[ $id ]['parser_v'], $this->settings( $id )['since'] . ' 00:00:00' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$s = $this->settings( $id );
 		return rest_ensure_response( array(
 			'label'    => self::pipelines()[ $id ]['label'],
@@ -370,6 +677,11 @@ class AJCore_Mail_Pipelines {
 			'items'    => array_map( array( $this, 'item_out' ), $rows ),
 			'counts'   => $counts,
 			'marketing' => $marketing,
+			'notices'  => $notices,
+			'kinds'    => $kinds,
+			'issues'   => $issues,
+			'parsable' => null !== self::pipelines()[ $id ]['parser'],
+			'unparsed' => $unparsed,
 			'senders'  => AJCore_Marketing::senders(),
 			'mailbox'  => $s['mailbox'],
 			'enabled'  => '1' === (string) $s['enabled'],
@@ -523,8 +835,33 @@ class AJCore_Mail_Pipelines {
 		if ( '' !== $stage && isset( self::pipelines()[ $id ]['stages'][ $stage ] ) ) {
 			$new['stage'] = $stage;
 		}
+		foreach ( array( 'property_tag', 'property_name', 'tenant', 'ref_no' ) as $f ) {
+			if ( null !== $request->get_param( $f ) ) {
+				$new[ $f ] = mb_substr( sanitize_text_field( (string) $request->get_param( $f ) ), 0, 190 );
+			}
+		}
+		if ( null !== $request->get_param( 'amount' ) ) {
+			$amt           = trim( (string) $request->get_param( 'amount' ) );
+			$new['amount'] = '' === $amt ? null : round( (float) preg_replace( '/[^0-9.\-]/', '', $amt ), 2 );
+		}
+		if ( isset( $new['property_tag'] ) || isset( $new['tenant'] ) || isset( $new['ref_no'] ) || array_key_exists( 'amount', $new ) ) { // set by hand: kept when the parser runs again
+			$fx           = json_decode( (string) $row->facts, true );
+			$fx           = is_array( $fx ) ? $fx : array();
+			$fx['manual'] = true;
+			unset( $fx['issues'] );
+			$new['facts']   = wp_json_encode( $fx );
+			$new['facts_v'] = max( (int) $row->facts_v, (int) ( self::pipelines()[ $id ]['parser_v'] ?? 0 ) );
+		}
 		$this->pdb()->update( $this->table(), $new, array( 'id' => (int) $row->id ) );
-		return rest_ensure_response( array( 'success' => true ) );
+		$linked = 0;
+		if ( ! empty( $request->get_param( 'link' ) ) ) { // "use this property for every email with the same policy / account number"
+			$ref = isset( $new['ref_no'] ) ? $new['ref_no'] : (string) $row->ref_no;
+			$tag = isset( $new['property_tag'] ) ? $new['property_tag'] : (string) $row->property_tag;
+			if ( '' !== $ref && '' !== $tag ) {
+				$linked = $this->link_set( $id, 'ref', $ref, $tag, isset( $new['property_name'] ) ? $new['property_name'] : (string) $row->property_name, isset( $new['tenant'] ) ? $new['tenant'] : (string) $row->tenant );
+			}
+		}
+		return rest_ensure_response( array( 'success' => true, 'linked' => $linked ) );
 	}
 
 	// ── WP admin view (inside the Pipeline tab) ─────────────────────────────────
@@ -543,31 +880,34 @@ class AJCore_Mail_Pipelines {
 			<div class="ajmr-row ajmr-row-tools">
 				<label class="ajmr-tile ajmr-search"><input type="search" id="ajmp-q" placeholder="<?php echo esc_attr__( 'Search subject, sender, note…', 'ajcore' ); ?>" autocomplete="off"></label>
 				<button type="button" class="ajmr-tile ajmr-tool" id="ajmp-clear"><span><?php esc_html_e( 'Clear', 'ajcore' ); ?></span></button>
-				<button type="button" class="ajmr-tile ajmr-tool" id="ajmp-run"><span><?php esc_html_e( 'Read mailbox', 'ajcore' ); ?></span></button>
+				<button type="button" class="ajmr-tile ajmr-tool" id="ajmp-run"><span><?php esc_html_e( 'Sync', 'ajcore' ); ?></span></button>
+				<button type="button" class="ajmr-tile ajmr-tool" id="ajmp-purge"><span><?php esc_html_e( 'Purge old data', 'ajcore' ); ?></span></button>
 			</div>
 			<div class="ajmr-filters"><span class="ajmr-fnote" id="ajmp-status"></span></div>
+			<div class="ajmp-issues" id="ajmp-issues" hidden></div>
 			<div class="ajmr-panel" id="ajmp-settings" hidden>
 				<h3><?php esc_html_e( 'Mailbox', 'ajcore' ); ?></h3>
 				<p><input type="email" id="ajmp-mailbox" class="regular-text" placeholder="name@yourdomain.com"> <label><input type="checkbox" id="ajmp-enabled"> <?php esc_html_e( 'Read every hour', 'ajcore' ); ?></label> <button type="button" class="button button-primary" id="ajmp-save"><?php esc_html_e( 'Save', 'ajcore' ); ?></button></p>
 			</div>
 			<div class="ajmr-panel" id="ajmp-senders-box" hidden><h3><?php esc_html_e( 'Marketing senders (their future mail is labelled automatically)', 'ajcore' ); ?></h3><div id="ajmp-senders"></div><p><input type="text" id="ajmp-sender-in" class="regular-text" placeholder="sender@domain.com or domain.com"> <button type="button" class="button" id="ajmp-sender-add"><?php esc_html_e( 'Add', 'ajcore' ); ?></button></p></div>
 			<div id="ajmp-bulk" class="ajmr-note" hidden></div>
-			<div class="ajmr-card"><table class="widefat striped" id="ajmp-table"><thead><tr><th style="width:28px"><input type="checkbox" id="ajmp-all"></th><th><?php esc_html_e( 'Time', 'ajcore' ); ?></th><th><?php esc_html_e( 'Email', 'ajcore' ); ?></th><th><?php esc_html_e( 'Stage', 'ajcore' ); ?></th></tr></thead><tbody></tbody></table></div>
+			<div class="ajmr-card"><table class="widefat striped" id="ajmp-table"><thead><tr><th style="width:28px"><input type="checkbox" id="ajmp-all"></th><th><?php esc_html_e( 'Time', 'ajcore' ); ?></th><th><?php esc_html_e( 'Email', 'ajcore' ); ?></th><th class="ajmp-pc"><?php esc_html_e( 'Type', 'ajcore' ); ?></th><th class="ajmp-pc"><?php esc_html_e( 'Policy / account #', 'ajcore' ); ?></th><th class="ajmp-pc" style="text-align:right"><?php esc_html_e( 'Amount', 'ajcore' ); ?></th><th class="ajmp-pc"><?php esc_html_e( 'Property / tenant', 'ajcore' ); ?></th><th><?php esc_html_e( 'Stage', 'ajcore' ); ?></th></tr></thead><tbody></tbody></table></div>
 			<div class="ajmr-modal" id="ajmp-detail" hidden><div class="ajmr-modal-box"><div id="ajmp-detail-body"></div></div></div>
 		</div>
 		<script>
 		( function () {
 			var PIPE = <?php echo wp_json_encode( $id ); ?>, rest = <?php echo wp_json_encode( rest_url( 'ajcore/v1/ops/mail-pipelines/' ) ); ?> + PIPE, nonce = <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
-			var st = { stage: '', q: '', label: '' }, data = null, selected = {};
+			var st = { stage: '', q: '', label: '', kind: '', issue: '' }, data = null, selected = {};
 			function $( i ) { return document.getElementById( i ); }
 			function el( t, c, x ) { var e = document.createElement( t ); if ( c ) { e.className = c; } if ( x != null ) { e.textContent = x; } return e; }
 			function api( path, opts ) { opts = opts || {}; opts.headers = Object.assign( { 'X-WP-Nonce': nonce }, opts.headers || {} ); return fetch( rest + path, opts ).then( function ( r ) { return r.json().then( function ( d ) { if ( ! r.ok ) { throw new Error( d.message || 'Request failed' ); } return d; } ); } ); }
 			function post( path, body ) { return api( path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify( body ) } ); }
 			function emailFrame( html ) { var f = document.createElement( 'iframe' ); f.setAttribute( 'sandbox', 'allow-popups' ); f.setAttribute( 'referrerpolicy', 'no-referrer' ); f.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https: data:; style-src \'unsafe-inline\'; font-src https: data:"><base target="_blank"><style>body{margin:10px;font:14px/1.45 -apple-system,Segoe UI,Arial,sans-serif;color:#111;word-wrap:break-word}img{max-width:100%;height:auto}</style>' + html; f.style.cssText = 'width:100%;height:680px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;resize:vertical;'; return f; }
+			var KIND = { bill: 'Bill', past_due: 'Past due', cancel_notice: 'Cancellation', reinstatement: 'Reinstated', renewal: 'Renewal', payment: 'Payment', application: 'Application', policy_change: 'Policy change', interested_party: 'Interested party', renters_proof: 'Renters proof', renters_required: 'Renters required', audit: 'Audit', agency: 'Agency', scan: 'Scan', policy_notice: 'Policy notice', charge: 'Charge', statement: 'Statement', upcoming_payment: 'Upcoming payment', recurring_payment: 'Recurring payment', violation: 'Violation', arc: 'ARC', work_order: 'Work order', board_task: 'Board task', request: 'Request', board_thread: 'Board / management', account: 'Account', info: 'Info', promo: 'Promo', other: 'Other' };
 			function dayKey( s ) { return ( s || '' ).slice( 0, 10 ) || '—'; }
 			function dayLabel( k ) { var d = new Date( k + 'T12:00:00' ); return isNaN( d ) ? k : d.toLocaleDateString( undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' } ); }
 			function load() {
-				var q = new URLSearchParams(); if ( st.stage ) { q.set( 'stage', st.stage ); } if ( st.q ) { q.set( 'q', st.q ); } if ( st.label ) { q.set( 'label', st.label ); }
+				var q = new URLSearchParams(); if ( st.stage ) { q.set( 'stage', st.stage ); } if ( st.q ) { q.set( 'q', st.q ); } if ( st.label ) { q.set( 'label', st.label ); } if ( st.kind ) { q.set( 'kind', st.kind ); } if ( st.issue ) { q.set( 'issue', st.issue ); }
 				api( '?' + q.toString() ).then( function ( d ) { var first = ! data; data = d; render(); if ( first && d.mailbox && ! ( d.last_run && typeof d.last_run.at === 'string' ) ) { $( 'ajmp-run' ).click(); } if ( ! d.mailbox ) { $( 'ajmp-settings' ).hidden = false; } } ).catch( function ( e ) { $( 'ajmp-status' ).textContent = e.message; } );
 			}
 			function render() {
@@ -582,6 +922,22 @@ class AJCore_Mail_Pipelines {
 				var mt = el( 'a', 'ajmr-tile ajmr-stat' + ( st.label === 'marketing' ? ' is-on' : '' ) ); mt.href = '#'; mt.title = 'Emails labelled Marketing: see, preview and delete them';
 				var mtx = el( 'span', 'ajmr-tile-txt' ); mtx.appendChild( el( 'small', null, 'Marketing' ) ); mtx.appendChild( el( 'strong', null, String( data.marketing || 0 ) ) ); mt.appendChild( mtx );
 				mt.addEventListener( 'click', function ( e ) { e.preventDefault(); st.label = st.label === 'marketing' ? '' : 'marketing'; st.stage = ''; selected = {}; load(); } ); tiles.appendChild( mt );
+				var nt = el( 'a', 'ajmr-tile ajmr-stat' + ( st.label === 'notice' ? ' is-on' : '' ) ); nt.href = '#'; nt.title = 'Newsletters, announcements, account and login mail';
+				var ntx = el( 'span', 'ajmr-tile-txt' ); ntx.appendChild( el( 'small', null, 'Notices' ) ); ntx.appendChild( el( 'strong', null, String( data.notices || 0 ) ) ); nt.appendChild( ntx );
+				nt.addEventListener( 'click', function ( e ) { e.preventDefault(); st.label = st.label === 'notice' ? '' : 'notice'; st.stage = ''; st.issue = ''; st.kind = ''; selected = {}; load(); } ); tiles.appendChild( nt );
+				// Parsed pipelines (Insurance, HOA): type + needs-attention filters and the extra columns.
+				var iss = $( 'ajmp-issues' ); iss.innerHTML = ''; iss.hidden = ! data.parsable;
+				document.querySelectorAll( '.ajmp-pc' ).forEach( function ( c ) { c.style.display = data.parsable ? '' : 'none'; } );
+				if ( data.parsable ) {
+					var ks = Object.keys( data.kinds || {} ), ksel = el( 'select' ); ksel.appendChild( new Option( 'All types', '' ) );
+					ks.forEach( function ( k ) { ksel.appendChild( new Option( ( KIND[ k ] || k ) + ' (' + data.kinds[ k ] + ')', k ) ); } ); ksel.value = st.kind || ''; ksel.addEventListener( 'change', function () { st.kind = ksel.value; selected = {}; load(); } ); iss.appendChild( ksel );
+					iss.appendChild( el( 'span', 'ajmp-fix', 'Needs attention:' ) );
+					[ [ 'no_property', 'No property' ], [ 'no_ref', 'No policy / account #' ], [ 'no_amount', 'No amount' ] ].forEach( function ( x ) {
+						var n = ( data.issues || {} )[ x[ 0 ] ] || 0, on = st.issue === x[ 0 ]; var b = el( 'a', 'ajmp-chip' + ( on ? ' is-on' : '' ) + ( n ? '' : ' is-zero' ) ); b.href = '#'; b.appendChild( document.createTextNode( x[ 1 ] ) ); b.appendChild( el( 'b', null, String( n ) ) );
+						b.addEventListener( 'click', function ( e ) { e.preventDefault(); if ( ! n && ! on ) { return; } st.issue = on ? '' : x[ 0 ]; st.label = ''; selected = {}; load(); } ); iss.appendChild( b );
+					} );
+					if ( data.unparsed ) { iss.appendChild( el( 'span', 'ajmp-fix', data.unparsed + ' not read yet: click Sync' ) ); }
+				}
 				var sp = $( 'ajmp-senders-box' ); sp.hidden = st.label !== 'marketing'; var sl = $( 'ajmp-senders' ); sl.innerHTML = '';
 				if ( ! ( data.senders || [] ).length ) { sl.appendChild( el( 'span', 'description', 'None yet.' ) ); }
 				( data.senders || [] ).forEach( function ( s ) { var b = el( 'button', 'button button-small', s + '  ×' ); b.type = 'button'; b.style.marginRight = '6px'; b.title = 'Remove'; b.addEventListener( 'click', function () { post( '/senders', { remove: s } ).then( load ); } ); sl.appendChild( b ); } );
@@ -593,17 +949,23 @@ class AJCore_Mail_Pipelines {
 				if ( lr && typeof lr.at === 'string' ) { note = 'Last pass ' + lr.at + ' · ' + lr.scanned + ' scanned · ' + lr[ 'new' ] + ' new' + ( lr.errors && lr.errors.length ? ' · ERROR: ' + lr.errors.join( ' | ' ) : '' ); }
 				if ( note && ! $( 'ajmp-status' ).textContent ) { $( 'ajmp-status' ).textContent = note; }
 				var tb = $( 'ajmp-table' ).querySelector( 'tbody' ); tb.innerHTML = '';
-				if ( ! data.items.length ) { var r0 = el( 'tr' ), c0 = el( 'td', null, 'No emails.' ); c0.colSpan = 4; r0.appendChild( c0 ); tb.appendChild( r0 ); }
+				if ( ! data.items.length ) { var r0 = el( 'tr' ), c0 = el( 'td', null, 'No emails.' ); c0.colSpan = 8; r0.appendChild( c0 ); tb.appendChild( r0 ); }
 				var days = [], by = {};
 				data.items.forEach( function ( i ) { var k = dayKey( i.received_at ); if ( ! by[ k ] ) { by[ k ] = []; days.push( k ); } by[ k ].push( i ); } );
 				days.sort().reverse().forEach( function ( k ) {
-					var hr = el( 'tr', 'ajra-pu-day' ), hc = el( 'td', null, dayLabel( k ) + '  ·  ' + by[ k ].length + ( by[ k ].length === 1 ? ' email' : ' emails' ) ); hc.colSpan = 4; hr.appendChild( hc ); tb.appendChild( hr );
+					var hr = el( 'tr', 'ajra-pu-day' ), hc = el( 'td', null, dayLabel( k ) + '  ·  ' + by[ k ].length + ( by[ k ].length === 1 ? ' email' : ' emails' ) ); hc.colSpan = 8; hr.appendChild( hc ); tb.appendChild( hr );
 					by[ k ].forEach( function ( i ) {
 						var tr = el( 'tr' ); tr.style.cursor = 'pointer';
 						var td = el( 'td' ); td.addEventListener( 'click', function ( e ) { e.stopPropagation(); } );
 						var cb = el( 'input' ); cb.type = 'checkbox'; cb.checked = !! selected[ i.id ]; cb.addEventListener( 'change', function () { if ( cb.checked ) { selected[ i.id ] = true; } else { delete selected[ i.id ]; } syncBulk(); } ); td.appendChild( cb ); tr.appendChild( td );
 						tr.appendChild( el( 'td', null, ( i.received_at || '' ).slice( 11, 16 ) ) );
 						var m = el( 'td' ); m.appendChild( el( 'strong', null, i.subject ) ); m.appendChild( el( 'div', 'description', ( i.sender || '' ) + ( i.notes ? ' · ' + i.notes : '' ) ) ); tr.appendChild( m );
+						if ( data.parsable ) {
+							var kd = el( 'td' ); if ( i.kind ) { kd.appendChild( el( 'span', 'ajmp-kind' + ( /^(past_due|cancel_notice|violation)$/.test( i.kind ) ? ' is-hot' : '' ), KIND[ i.kind ] || i.kind ) ); } else { kd.textContent = '—'; } tr.appendChild( kd );
+							var rf = el( 'td', null, i.ref_no || '—' ); rf.style.whiteSpace = 'nowrap'; tr.appendChild( rf );
+							var am = el( 'td' ); am.style.cssText = 'text-align:right;white-space:nowrap;'; am.appendChild( document.createTextNode( i.amount == null ? '—' : '$' + Number( i.amount ).toLocaleString( undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 } ) ) ); if ( i.due_date ) { am.appendChild( el( 'div', 'description', ( i.kind === 'cancel_notice' ? 'effective ' : 'due ' ) + i.due_date ) ); } tr.appendChild( am );
+							var pr = el( 'td' ); if ( i.property_name || i.property_tag ) { pr.appendChild( el( 'strong', null, i.property_tag || i.property_name ) ); if ( i.property_name && i.property_tag && i.property_name.toLowerCase().indexOf( i.property_tag.toLowerCase() ) !== 0 ) { pr.appendChild( el( 'div', 'description', i.property_name ) ); } } else if ( i.facts && i.facts.role === 'board' ) { pr.appendChild( el( 'span', 'description', 'board' ) ); } else if ( i.kind && ! /^(info|account|promo|agency|scan|board_thread|other)$/.test( i.kind ) ) { pr.appendChild( el( 'span', 'ajmp-none', 'no property' ) ); } else { pr.textContent = '—'; } if ( i.tenant ) { pr.appendChild( el( 'div', 'description', i.tenant ) ); } else if ( i.facts && i.facts.association ) { pr.appendChild( el( 'div', 'description', i.facts.association ) ); } tr.appendChild( pr );
+						}
 						var s = el( 'td' ); s.appendChild( el( 'span', 'ajcore-status-pill ' + ( i.stage === 'new' ? '' : ( i.stage === 'ignored' ? 'dup' : 'active' ) ), data.stages[ i.stage ] || i.stage ) ); tr.appendChild( s );
 						tr.addEventListener( 'click', function () { openDetail( i.id ); } ); tb.appendChild( tr );
 					} );
@@ -627,8 +989,16 @@ class AJCore_Mail_Pipelines {
 					var i = d.item; box.innerHTML = ''; box.appendChild( el( 'h2', null, i.subject ) ); box.appendChild( el( 'p', 'description', i.sender + ' · ' + i.received_at ) );
 					if ( i.body_debug ) { var w = el( 'div', null, 'Only the preview could be read: ' + i.body_debug ); w.style.cssText = 'color:#b45309;font-size:12px;margin:4px 0;'; box.appendChild( w ); }
 					if ( i.body_html ) { box.appendChild( emailFrame( i.body_html ) ); } var pre = el( 'pre', null, i.body || i.summary ); if ( i.body_html ) { pre.hidden = true; var tg = el( 'a', null, 'Show plain text' ); tg.href = '#'; tg.addEventListener( 'click', function ( ev ) { ev.preventDefault(); pre.hidden = ! pre.hidden; } ); box.appendChild( tg ); } pre.style.cssText = 'max-height:380px;overflow:auto;white-space:pre-wrap;font-size:12px;background:#f8fafc;padding:10px;border-radius:8px;'; box.appendChild( pre );
+					var pf = null;
+					if ( data.parsable ) {
+						pf = {}; var fb = el( 'div', 'ajmp-facts' );
+						[ [ 'property_tag', 'Property (address)' ], [ 'tenant', 'Tenant / insured' ], [ 'ref_no', 'Policy / account #' ], [ 'amount', 'Amount' ] ].forEach( function ( f ) { var lb = el( 'label' ); lb.appendChild( el( 'span', null, f[ 1 ] ) ); var inp = el( 'input' ); inp.type = 'text'; inp.value = i[ f[ 0 ] ] == null ? '' : i[ f[ 0 ] ]; pf[ f[ 0 ] ] = inp; lb.appendChild( inp ); fb.appendChild( lb ); } );
+						var lk = el( 'label', 'ajmp-link' ); var lkc = el( 'input' ); lkc.type = 'checkbox'; lkc.checked = ! i.property_tag; lk.appendChild( lkc ); lk.appendChild( document.createTextNode( ' Use this property for every email with the same policy / account #' ) ); pf.link = lkc; fb.appendChild( lk );
+						if ( i.facts ) { var fx = []; [ 'carrier', 'category', 'policy_type', 'effective', 'association', 'role', 'late_fee', 'decision', 'request_type' ].forEach( function ( k ) { if ( i.facts[ k ] ) { fx.push( k.replace( '_', ' ' ) + ': ' + i.facts[ k ] ); } } ); if ( i.facts.policy_nos && i.facts.policy_nos.length ) { fx.push( 'policies: ' + i.facts.policy_nos.join( ', ' ) ); } if ( i.facts.note ) { fx.push( i.facts.note ); } if ( fx.length ) { fb.appendChild( el( 'div', 'description', fx.join( '  ·  ' ) ) ); } }
+						box.appendChild( fb );
+					}
 					var notes = el( 'textarea' ); notes.rows = 2; notes.className = 'large-text'; notes.value = i.notes; notes.placeholder = 'Note'; box.appendChild( notes );
-					var bar = el( 'p' ); function act( label, stage, primary ) { var b = el( 'button', 'button' + ( primary ? ' button-primary' : '' ), label ); b.type = 'button'; b.addEventListener( 'click', function () { var body = { notes: notes.value }; if ( stage ) { body.stage = stage; } post( '/items/' + id, body ).then( function () { wrap.hidden = true; load(); } ).catch( function ( e ) { alert( e.message ); } ); } ); bar.appendChild( b ); bar.appendChild( document.createTextNode( ' ' ) ); }
+					var bar = el( 'p' ); function act( label, stage, primary ) { var b = el( 'button', 'button' + ( primary ? ' button-primary' : '' ), label ); b.type = 'button'; b.addEventListener( 'click', function () { var body = { notes: notes.value }; if ( stage ) { body.stage = stage; } if ( pf ) { [ 'property_tag', 'tenant', 'ref_no', 'amount' ].forEach( function ( k ) { body[ k ] = pf[ k ].value; } ); if ( pf.property_tag.value !== ( i.property_tag || '' ) ) { body.property_name = ''; } if ( pf.link.checked ) { body.link = 1; } } post( '/items/' + id, body ).then( function () { wrap.hidden = true; load(); } ).catch( function ( e ) { alert( e.message ); } ); } ); bar.appendChild( b ); bar.appendChild( document.createTextNode( ' ' ) ); }
 					var mkb = el( 'button', 'button', st.label === 'marketing' ? 'Not marketing' : 'Marketing' ); mkb.type = 'button'; mkb.addEventListener( 'click', function () { var on = st.label !== 'marketing'; var rule = on && confirm( 'Label as Marketing.\n\nAlso label future mail from this sender automatically?\nOK = yes   Cancel = only this email' ) ? 'address' : ''; post( '/marketing', { ids: [ id ], label: on ? 'marketing' : '', sender_rule: rule } ).then( function () { wrap.hidden = true; load(); } ).catch( function ( e ) { alert( e.message ); } ); } );
 					act( 'Save note', '', true ); bar.appendChild( mkb ); bar.appendChild( document.createTextNode( ' ' ) );
 					if ( st.label === 'marketing' ) { var dl = el( 'button', 'button', 'Delete (to Zoho Trash)' ); dl.type = 'button'; dl.addEventListener( 'click', function () { post( '/marketing/delete', { ids: [ id ] } ).then( function () { wrap.hidden = true; load(); } ).catch( function ( e ) { alert( e.message ); } ); } ); bar.appendChild( dl ); bar.appendChild( document.createTextNode( ' ' ) ); }
@@ -638,15 +1008,37 @@ class AJCore_Mail_Pipelines {
 			}
 			var qt = null; $( 'ajmp-q' ).addEventListener( 'input', function ( e ) { clearTimeout( qt ); qt = setTimeout( function () { st.q = e.target.value.trim(); load(); }, 350 ); } );
 			$( 'ajmp-sender-add' ).addEventListener( 'click', function () { var v = $( 'ajmp-sender-in' ).value.trim(); if ( v ) { post( '/senders', { add: v } ).then( function () { $( 'ajmp-sender-in' ).value = ''; load(); } ); } } );
-			$( 'ajmp-clear' ).addEventListener( 'click', function () { st = { stage: '', q: '', label: '' }; $( 'ajmp-q' ).value = ''; selected = {}; load(); } );
+			$( 'ajmp-clear' ).addEventListener( 'click', function () { st = { stage: '', q: '', label: '', kind: '', issue: '' }; $( 'ajmp-q' ).value = ''; selected = {}; load(); } );
 			$( 'ajmp-all' ).addEventListener( 'change', function ( e ) { selected = {}; if ( e.target.checked && data ) { data.items.forEach( function ( i ) { selected[ i.id ] = true; } ); } render(); } );
 			$( 'ajmp-detail' ).addEventListener( 'click', function ( e ) { if ( e.target === this ) { this.hidden = true; } } );
 			document.addEventListener( 'keydown', function ( e ) { if ( e.key === 'Escape' ) { $( 'ajmp-detail' ).hidden = true; } } );
 			$( 'ajmp-save' ).addEventListener( 'click', function () { post( '/settings', { mailbox: $( 'ajmp-mailbox' ).value.trim(), enabled: $( 'ajmp-enabled' ).checked ? 1 : 0 } ).then( function () { $( 'ajmp-status' ).textContent = 'Saved. Reading…'; load(); setTimeout( function () { $( 'ajmp-run' ).click(); }, 300 ); } ).catch( function ( e ) { $( 'ajmp-status' ).textContent = e.message; } ); } );
+			$( 'ajmp-purge' ).addEventListener( 'click', function () {
+				if ( ! confirm( 'Remove every stored email received before 2026?\n\n(The mailbox itself is not touched.)' ) ) { return; }
+				$( 'ajmp-status' ).textContent = 'Purging…';
+				post( '/purge', {} ).then( function ( d ) { $( 'ajmp-status' ).textContent = 'Purged before ' + d.since + ': ' + d.removed + ' emails removed'; selected = {}; load(); } ).catch( function ( e ) { $( 'ajmp-status' ).textContent = e.message; } );
+			} );
 			$( 'ajmp-run' ).addEventListener( 'click', function () {
 				if ( ! data || ! data.mailbox ) { $( 'ajmp-status' ).textContent = 'Set the mailbox first (gear tile), then Save.'; $( 'ajmp-settings' ).hidden = false; return; }
-				var b = this; b.disabled = true; $( 'ajmp-status' ).textContent = 'Reading the mailbox…';
-				post( '/process', {} ).then( function ( d ) { $( 'ajmp-status' ).textContent = d.new + ' new, ' + d.scanned + ' scanned' + ( d.complete ? ' (whole mailbox read)' : ' (more to read: click Read mailbox again)' ) + ( d.errors && d.errors.length ? ' · ' + d.errors.join( ' | ' ) : '' ); b.disabled = false; load(); } ).catch( function ( e ) { $( 'ajmp-status' ).textContent = e.message; b.disabled = false; } );
+				// Sync = read the mailbox to the end, then read each email and fill in its details (type, policy / account #, amount, property).
+				var b = this, stx = $( 'ajmp-status' ), nNew = 0, nScan = 0, errs = [], rd = 0, bad = 0; b.disabled = true; stx.textContent = 'Syncing: reading the mailbox…';
+				function readAll() {
+					return post( '/process', {} ).then( function ( d ) {
+						nNew += d.new || 0; nScan += d.scanned || 0; stx.textContent = 'Syncing: reading the mailbox… ' + nNew + ' new';
+						if ( d.errors && d.errors.length ) { bad++; errs = d.errors; } else { bad = 0; errs = []; }
+						if ( ! d.complete && bad < 3 && ++rd < 25 ) { return readAll(); }
+						return d.complete;
+					} );
+				}
+				readAll().then( function ( complete ) {
+					var msg = nNew + ' new, ' + nScan + ' scanned' + ( complete ? '' : ' (more to read: Sync again)' ) + ( errs.length ? ' · ' + errs.join( ' | ' ) : '' );
+					if ( ! data || ! data.parsable ) { stx.textContent = msg; return; }
+					var n = 0, done = 0, perr = [];
+					function again() {
+						return post( '/parse', {} ).then( function ( r ) { done += r.parsed || 0; if ( r.errors && r.errors.length ) { perr = r.errors; } stx.textContent = 'Syncing: reading emails… ' + done + ' done' + ( r.left ? ', ' + r.left + ' to go' : '' ); if ( r.left && r.parsed + r.fetched > 0 && ++n < 120 ) { return again(); } return r.left || 0; } );
+					}
+					return again().then( function ( left ) { stx.textContent = msg + ' · ' + done + ' emails read' + ( left ? ', ' + left + ' left: Sync again' : ': all done' ) + ( perr.length ? ' · ' + perr.join( ' | ' ) : '' ); } );
+				} ).catch( function ( e ) { stx.textContent = e.message; } ).then( function () { b.disabled = false; load(); } );
 			} );
 			load();
 		} )();

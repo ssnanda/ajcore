@@ -484,6 +484,13 @@ class AJCore_Pipeline_Tab {
 		.ajmr-guide-vals td { padding:4px 10px 4px 0; word-break:break-all; }
 		.ajmr-conn-btn { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:9px 14px; border-radius:10px; border:1px solid #e2e8f0; background:#fff; color:#334155; font-size:13px; font-weight:600; cursor:pointer; }
 		.ajmr-conn-btn:hover { border-color:#c7d2fe; }
+		.ajmp-issues { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; margin:0 0 10px; } .ajmp-issues select { max-width:200px; }
+		.ajmp-fix { color:#64748b; font-size:12px; margin:0 4px 0 6px; }
+		.ajmp-chip { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; border:1px solid #fcd34d; background:#fffbeb; color:#92400e; font-size:12px; font-weight:600; text-decoration:none; } .ajmp-chip b { font-variant-numeric:tabular-nums; }
+		.ajmp-chip.is-on { background:#d97706; border-color:#d97706; color:#fff; } .ajmp-chip.is-zero { background:#f8fafc; border-color:#e2e8f0; color:#94a3b8; cursor:default; }
+		.ajmp-kind { display:inline-block; padding:2px 9px; border-radius:999px; background:#f1f5f9; color:#334155; font-size:12px; font-weight:700; white-space:nowrap; } .ajmp-kind.is-hot { background:#fee2e2; color:#b91c1c; }
+		.ajmp-none { color:#b45309; font-style:italic; }
+		.ajmp-facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 12px; margin:10px 0; } .ajmp-facts label span { display:block; font-size:11px; color:#64748b; font-weight:600; margin-bottom:2px; } .ajmp-facts input[type=text] { width:100%; } .ajmp-facts .ajmp-link, .ajmp-facts .description { grid-column:1 / -1; }
 		.ajmr-views a { display:inline-flex; align-items:center; gap:9px; padding:11px 22px; border-radius:12px; font-size:15px; font-weight:700; color:#4338ca; text-decoration:none; background:#eef2ff; border:1px solid #e0e7ff; }
 		.ajmr-views a:hover { background:rgba(255,255,255,.6); }
 		.ajmr-views a.is-on { background:#4f46e5; border-color:#4f46e5; color:#fff; box-shadow:0 2px 6px rgba(79,70,229,.3); }
