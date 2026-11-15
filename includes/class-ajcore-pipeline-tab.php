@@ -19,9 +19,37 @@ class AJCore_Pipeline_Tab {
 		add_filter( 'ajcore_admin_portal_tabs', array( __CLASS__, 'admin_tab' ), 9 );
 		add_action( 'ajcore_admin_portal_tab_render', array( __CLASS__, 'render_tab' ) );
 		add_action( 'admin_init', array( __CLASS__, 'redirect_old_tabs' ) );
+		add_filter( 'ajcore_ops_modules', static function ( $modules ) { // AJOps / the phone app show Filings only where the site offers it
+			$modules = (array) $modules;
+			if ( self::filings_enabled() ) {
+				$modules[] = 'filings';
+			}
+			return $modules;
+		} );
+	}
+
+	/**
+	 * Filings (customer business-formation documents from Gmail + Zoho) belongs to AJCore-RA: it exists only on sites running RA
+	 * (filterable), never on e.g. an HOA site that only has the HOA mailbox sub-pipelines.
+	 */
+	public static function filings_enabled() {
+		return (bool) apply_filters( 'ajcore_pipeline_filings_enabled', class_exists( 'AJCore_RA_Compliance_Schema' ) );
+	}
+
+	/** The view shown when none is asked for: Filings where it exists, else the first sub-pipeline. */
+	public static function default_view( array $views = array() ) {
+		$views = $views ? $views : self::views();
+		if ( isset( $views['filings'] ) ) {
+			return 'filings';
+		}
+		$keys = array_keys( $views );
+		return $keys ? (string) $keys[0] : 'filings';
 	}
 
 	public static function admin_tab( $tabs ) {
+		if ( ! self::views() ) { // nothing to show: no Filings (no RA) and no mailbox sub-pipelines
+			return $tabs;
+		}
 		$tabs[ self::TAB ] = array( 'label' => __( 'Pipeline', 'ajcore' ) );
 		return $tabs;
 	}
@@ -36,15 +64,16 @@ class AJCore_Pipeline_Tab {
 	 * "purchases"). A view's render callable prints its page inside the Pipeline tab.
 	 */
 	public static function views() {
-		$views = array(
-			'filings' => array(
+		$views = array();
+		if ( self::filings_enabled() ) {
+			$views['filings'] = array(
 				'label'  => __( 'Filings', 'ajcore' ),
 				'badge'  => static function () {
 					return AJCore_Pipeline::instance()->pending_count();
 				},
 				'render' => null,
-			),
-		);
+			);
+		}
 		foreach ( (array) apply_filters( 'ajcore_pipeline_views', array() ) as $key => $view ) {
 			$key = sanitize_key( (string) $key );
 			if ( '' === $key || isset( $views[ $key ] ) || ! is_array( $view ) || empty( $view['label'] ) || ! isset( $view['render'] ) || ! is_callable( $view['render'] ) ) {
@@ -55,9 +84,9 @@ class AJCore_Pipeline_Tab {
 		return $views;
 	}
 
-	/** URL of one sub-pipeline's page ('filings' is the default). */
+	/** URL of one sub-pipeline's page (the default view needs no view argument). */
 	public static function view_url( $view, array $args = array() ) {
-		if ( 'filings' !== $view ) {
+		if ( self::default_view() !== $view ) {
 			$args['view'] = $view;
 		}
 		return add_query_arg( array_merge( array( 'page' => 'ajforms-client-portal', 'tab' => self::TAB ), $args ), admin_url( 'admin.php' ) );
@@ -145,11 +174,16 @@ class AJCore_Pipeline_Tab {
 			return;
 		}
 		$views = self::views();
-		$view  = isset( $_GET['view'] ) ? sanitize_key( wp_unslash( $_GET['view'] ) ) : 'filings';
-		$view  = isset( $views[ $view ] ) ? $view : 'filings';
+		if ( ! $views ) {
+			return;
+		}
+		$def  = self::default_view( $views );
+		$view = isset( $_GET['view'] ) ? sanitize_key( wp_unslash( $_GET['view'] ) ) : $def;
+		$view = isset( $views[ $view ] ) ? $view : $def;
 		if ( 'filings' !== $view ) { // another sub-pipeline draws its own page
 			self::styles();
 			echo '<div class="ajmr">';
+			AJCore_Zoho_Mail::instance()->render_notices();
 			self::render_header( $views, $view );
 			call_user_func( $views[ $view ]['render'] );
 			echo '</div>';
