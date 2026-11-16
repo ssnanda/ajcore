@@ -380,6 +380,20 @@ class AJForms_Leads_List_Table extends WP_List_Table {
 					$out .= '<a class="button button-small" href="' . esc_url( $next_url ) . '">' . esc_html( sprintf( __( 'Next: %s', 'ajforms' ), $pipeline_labels[ $next_stage ] ) ) . '</a>';
 				}
 
+				// Future Follow-Up quick action: parks the lead out of the active queue until a date.
+				// Offered at every open stage (not only Engaged) — prompts for the date, same as the detail page.
+				if ( ! in_array( $pipeline_current, array( 'customer', 'future_follow_up', 'lost' ), true ) ) {
+					$fu_url = wp_nonce_url(
+						add_query_arg(
+							array( 'page' => 'ajforms-leads', 'lead_action' => 'set_pipeline_status', 'pipeline_status' => 'future_follow_up', 'lead_id' => $lead_id ),
+							admin_url( 'admin.php' )
+						),
+						'ajf_lead_action_' . $lead_id
+					);
+					$fu_js = "var d=prompt('" . esc_js( __( 'Follow up on which date? (YYYY-MM-DD)', 'ajforms' ) ) . "');if(!d){return false;}this.href+='&follow_up_at='+encodeURIComponent(d);return true;";
+					$out  .= '<a class="button button-small" href="' . esc_url( $fu_url ) . '" onclick="' . esc_attr( $fu_js ) . '">' . esc_html__( 'Follow-Up', 'ajforms' ) . '</a>';
+				}
+
 				// Email / Text: opens the AJOps Leads page with the AI draft + preview window for this lead
 				// (AJOps owns AJMCP drafting and AJPhone sending). Shown only when the lead has the channel.
 				$ops_base = untrailingslashit( (string) apply_filters( 'ajcore_ops_url', get_option( 'ajcore_ops_url', 'https://ops.ncllcagents.com' ) ) );
