@@ -104,6 +104,7 @@ $pipeline_labels = array(
 	'reached'          => __( 'Reached', 'ajforms' ),
 	'engaged'          => __( 'Engaged', 'ajforms' ),
 	'tour'             => __( 'Tour Scheduled', 'ajforms' ),
+	'tour_complete'    => __( 'Tour Complete', 'ajforms' ),
 	'customer'         => __( 'Customer', 'ajforms' ),
 	'future_follow_up' => __( 'Future Follow-Up', 'ajforms' ),
 	'lost'             => __( 'Lost', 'ajforms' ),

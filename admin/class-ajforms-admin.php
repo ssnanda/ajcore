@@ -15314,6 +15314,7 @@ class AJForms_Admin {
 			'reached'           => __( 'Reached', 'ajforms' ),
 			'engaged'           => __( 'Engaged', 'ajforms' ),
 			'tour'              => __( 'Tour Scheduled', 'ajforms' ),
+			'tour_complete'     => __( 'Tour Complete', 'ajforms' ),
 			'customer'          => __( 'Customer', 'ajforms' ),
 			'future_follow_up'  => __( 'Future Follow-Up', 'ajforms' ),
 			'lost'              => __( 'Lost', 'ajforms' ),
@@ -15368,7 +15369,10 @@ class AJForms_Admin {
 			);
 		}
 		if ( false !== strpos( $domain, 'universityofficesuites.com' ) ) {
-			return array( 'new', 'auto_reached', 'reached', 'engaged', 'tour', 'customer' );
+			// 'tour_complete' is a forward step after 'tour' (previously "Tour Complete" bounced
+			// the lead back to 'engaged', losing its place). Additive only — existing 'tour' /
+			// 'engaged' rows keep their value.
+			return array( 'new', 'auto_reached', 'reached', 'engaged', 'tour', 'tour_complete', 'customer' );
 		}
 		return array( 'new', 'auto_reached', 'reached', 'engaged', 'customer' );
 	}
@@ -15431,7 +15435,10 @@ class AJForms_Admin {
 		$type   = isset( $item->event_type ) ? sanitize_key( (string) $item->event_type ) : 'note';
 		$titles = array(
 			'note'           => __( 'Note added', 'ajforms' ),
-			'status_changed' => __( 'Lead status changed', 'ajforms' ),
+			'status_changed'   => __( 'Lead status changed', 'ajforms' ),
+			'tour_scheduled'   => __( 'Tour scheduled', 'ajforms' ),
+			'tour_rescheduled' => __( 'Tour rescheduled', 'ajforms' ),
+			'tour_cancelled'   => __( 'Tour cancelled', 'ajforms' ),
 		);
 		return isset( $titles[ $type ] ) ? $titles[ $type ] : ucfirst( str_replace( '_', ' ', $type ) );
 	}
@@ -15441,7 +15448,7 @@ class AJForms_Admin {
 	 * atomically, whether the caller is the AJOps stepper UI or the auto-outreach cron's status
 	 * flip. Never update the `lead_status` column directly anywhere else.
 	 */
-	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '', $follow_up_at = '', $non_stripe_customer_name = '', $rentec_account = '', $rentec_renter_id = 0 ) {
+	public function update_lead_pipeline_status_from_ops( $lead_id, $lead_status, $note = '', $stripe_customer_id = '', $follow_up_at = '', $non_stripe_customer_name = '', $rentec_account = '', $rentec_renter_id = 0, $tour_at = '' ) {
 		$pdb     = $this->get_leads_db();
 		$table   = $this->get_leads_table();
 		$lead_id = absint( $lead_id );
@@ -15488,7 +15495,58 @@ class AJForms_Admin {
 		$old  = '' !== (string) $lead->lead_status ? sanitize_key( (string) $lead->lead_status ) : 'new';
 		$note = sanitize_textarea_field( (string) $note );
 
-		if ( $old === $new && '' === $note && '' === $follow_up_mysql ) {
+		// TOUR DATE — stored in lead_data._meta (tour_at = current, true UTC "Y-m-d H:i:s";
+		// tour_last_at = the most recent date that was cancelled), no schema change. Picker value is
+		// "Y-m-d" or "Y-m-dTH:i" in the SITE's timezone, same convention as follow_up_at above.
+		$lead_meta_all = json_decode( isset( $lead->lead_data ) ? (string) $lead->lead_data : '{}', true );
+		if ( ! is_array( $lead_meta_all ) ) {
+			$lead_meta_all = array();
+		}
+		$lead_meta    = isset( $lead_meta_all['_meta'] ) && is_array( $lead_meta_all['_meta'] ) ? $lead_meta_all['_meta'] : array();
+		$old_tour_at  = isset( $lead_meta['tour_at'] ) ? (string) $lead_meta['tour_at'] : '';
+		$last_tour_at = isset( $lead_meta['tour_last_at'] ) ? (string) $lead_meta['tour_last_at'] : '';
+		$tour_mysql   = '';
+		$tour_at      = trim( str_replace( 'T', ' ', sanitize_text_field( (string) $tour_at ) ) );
+		if ( '' !== $tour_at ) {
+			$tour_local = date_create_immutable( 10 === strlen( $tour_at ) ? $tour_at . ' 00:00:00' : $tour_at, wp_timezone() );
+			if ( false === $tour_local ) {
+				return new WP_Error( 'invalid_tour_date', __( 'Invalid tour date.', 'ajforms' ) );
+			}
+			$tour_mysql = $tour_local->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
+		}
+		$fmt_tour = function ( $utc ) {
+			$d = '' !== $utc ? date_create_immutable( $utc, new DateTimeZone( 'UTC' ) ) : false;
+			return $d ? wp_date( 'M j, Y g:i A', $d->getTimestamp() ) : '';
+		};
+		// Which tour event (if any) this change represents.
+		$tour_event = '';
+		$tour_note  = '';
+		$new_tour_at = $old_tour_at;
+		if ( 'tour' === $new && '' !== $tour_mysql && $tour_mysql !== $old_tour_at ) {
+			$prior = '' !== $old_tour_at ? $old_tour_at : $last_tour_at;
+			if ( '' !== $prior ) {
+				$tour_event = 'tour_rescheduled';
+				$tour_note  = sprintf( 'Tour rescheduled from %s to %s.', $fmt_tour( $prior ), $fmt_tour( $tour_mysql ) );
+			} else {
+				$tour_event = 'tour_scheduled';
+				$tour_note  = sprintf( 'Tour scheduled for %s.', $fmt_tour( $tour_mysql ) );
+			}
+			$new_tour_at = $tour_mysql;
+		} elseif ( 'tour' === $new && 'tour' !== $old && '' === $tour_mysql ) {
+			$tour_event = 'tour_scheduled';
+			$tour_note  = 'Tour scheduled (no date set).';
+		} elseif ( 'tour' === $old && in_array( $new, array( 'new', 'auto_reached', 'reached', 'engaged' ), true ) ) {
+			// Stepping back from Tour Scheduled = the tour didn't happen. The date moves to
+			// tour_last_at so a later re-booking is logged as "rescheduled".
+			$tour_event  = 'tour_cancelled';
+			$tour_note   = '' !== $old_tour_at ? sprintf( 'Tour cancelled (was %s).', $fmt_tour( $old_tour_at ) ) : 'Tour cancelled.';
+			$new_tour_at = '';
+		}
+		if ( '' !== $tour_note && '' !== $note ) {
+			$tour_note .= ' ' . $note;
+		}
+
+		if ( $old === $new && '' === $note && '' === $follow_up_mysql && '' === $tour_event ) {
 			return $lead;
 		}
 
@@ -15527,6 +15585,24 @@ class AJForms_Admin {
 			$update_data['status'] = 'lost';
 			$update_formats[]      = '%s';
 		}
+		if ( '' !== $tour_event ) {
+			// Re-read lead_data from the customer branch above if it already rewrote it.
+			$tour_data = isset( $update_data['lead_data'] ) ? json_decode( $update_data['lead_data'], true ) : $lead_meta_all;
+			if ( ! is_array( $tour_data ) ) {
+				$tour_data = array();
+			}
+			if ( ! isset( $tour_data['_meta'] ) || ! is_array( $tour_data['_meta'] ) ) {
+				$tour_data['_meta'] = array();
+			}
+			if ( 'tour_cancelled' === $tour_event && '' !== $old_tour_at ) {
+				$tour_data['_meta']['tour_last_at'] = $old_tour_at;
+			}
+			$tour_data['_meta']['tour_at'] = $new_tour_at;
+			if ( ! isset( $update_data['lead_data'] ) ) {
+				$update_formats[] = '%s';
+			}
+			$update_data['lead_data'] = wp_json_encode( $tour_data );
+		}
 		if ( 'future_follow_up' === $new ) {
 			$update_data['lead_follow_up_at'] = $follow_up_mysql;
 			$update_formats[]                 = '%s';
@@ -15545,7 +15621,19 @@ class AJForms_Admin {
 			array( '%d' )
 		);
 
-		if ( $old !== $new ) {
+		if ( '' !== $tour_event ) {
+			// One row for the tour event (it carries the status change too, if any).
+			$this->add_lead_status_history(
+				$lead_id,
+				$tour_event,
+				array(
+					'status_before' => $old,
+					'status_after'  => $new,
+					'note'          => $tour_note,
+					'details'       => array( 'source' => 'ops_api', 'tour_at' => $new_tour_at, 'previous_tour_at' => $old_tour_at ),
+				)
+			);
+		} elseif ( $old !== $new ) {
 			$details = array( 'source' => 'ops_api' );
 			if ( '' !== $follow_up_mysql ) {
 				$details['follow_up_at'] = $follow_up_mysql;
@@ -15565,6 +15653,7 @@ class AJForms_Admin {
 		}
 
 		$lead->lead_status = $new;
+		$lead->lead_tour_at = $new_tour_at;
 		$lead->lead_follow_up_at = isset( $update_data['lead_follow_up_at'] ) ? $update_data['lead_follow_up_at'] : ( isset( $lead->lead_follow_up_at ) ? $lead->lead_follow_up_at : '' );
 		return $lead;
 	}

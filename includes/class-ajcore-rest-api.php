@@ -7965,6 +7965,7 @@ class AJCore_REST_API {
 			'status'              => isset( $row['status'] ) ? (string) $row['status'] : 'new',
 			'lead_status'         => isset( $row['lead_status'] ) && '' !== $row['lead_status'] ? (string) $row['lead_status'] : 'new',
 			'lead_follow_up_at'   => $this->mysql_utc_to_iso( $row['lead_follow_up_at'] ?? '' ),
+			'lead_tour_at'        => $this->mysql_utc_to_iso( isset( $meta['tour_at'] ) ? (string) $meta['tour_at'] : '' ),
 			'name'                => $this->extract_lead_field( $decoded, array( 'name', 'full name', 'your name' ) ),
 			'email'               => $this->extract_lead_field( $decoded, array( 'email', 'e-mail' ) ),
 			'phone'               => $this->format_us_phone_for_display( $this->extract_lead_field( $decoded, array( 'phone', 'mobile', 'tel', 'cell' ) ) ),
@@ -8710,7 +8711,8 @@ class AJCore_REST_API {
 			(string) ( $request->get_param( 'follow_up_at' ) ?? '' ),
 			(string) ( $request->get_param( 'non_stripe_customer_name' ) ?? '' ),
 			(string) ( $request->get_param( 'rentec_account' ) ?? '' ),
-			absint( $request->get_param( 'rentec_renter_id' ) ?? 0 )
+			absint( $request->get_param( 'rentec_renter_id' ) ?? 0 ),
+			(string) ( $request->get_param( 'tour_at' ) ?? '' )
 		);
 		if ( is_wp_error( $result ) ) {
 			$error_status = 400;
@@ -8725,6 +8727,7 @@ class AJCore_REST_API {
 				'id'              => (int) $result->id,
 				'lead_status'     => (string) $result->lead_status,
 				'lead_follow_up_at' => $this->mysql_utc_to_iso( $result->lead_follow_up_at ?? '' ),
+				'lead_tour_at'      => $this->mysql_utc_to_iso( $result->lead_tour_at ?? '' ),
 			)
 		);
 	}
