@@ -15439,6 +15439,7 @@ class AJForms_Admin {
 			'tour_scheduled'   => __( 'Tour scheduled', 'ajforms' ),
 			'tour_rescheduled' => __( 'Tour rescheduled', 'ajforms' ),
 			'tour_cancelled'   => __( 'Tour cancelled', 'ajforms' ),
+			'tour_completed'   => __( 'Tour completed', 'ajforms' ),
 		);
 		return isset( $titles[ $type ] ) ? $titles[ $type ] : ucfirst( str_replace( '_', ' ', $type ) );
 	}
@@ -15541,6 +15542,12 @@ class AJForms_Admin {
 			$tour_event  = 'tour_cancelled';
 			$tour_note   = '' !== $old_tour_at ? sprintf( 'Tour cancelled (was %s).', $fmt_tour( $old_tour_at ) ) : 'Tour cancelled.';
 			$new_tour_at = '';
+		} elseif ( 'tour_complete' === $new && 'tour_complete' !== $old ) {
+			$tour_event = 'tour_completed';
+			$tour_note  = sprintf( 'Tour completed %s.', wp_date( 'M j, Y g:i A' ) );
+			if ( '' !== $old_tour_at ) {
+				$tour_note .= sprintf( ' Scheduled for %s.', $fmt_tour( $old_tour_at ) );
+			}
 		}
 		if ( '' !== $tour_note && '' !== $note ) {
 			$tour_note .= ' ' . $note;
@@ -15622,6 +15629,20 @@ class AJForms_Admin {
 		);
 
 		if ( '' !== $tour_event ) {
+			// Tour events are also written to the lead's Notes so they show in the Notes panel,
+			// not only in the History modal.
+			$tour_actor = wp_get_current_user();
+			$pdb->insert(
+				$this->get_lead_notes_table(),
+				array(
+					'lead_id'     => $lead_id,
+					'note'        => $tour_note,
+					'created_by'  => get_current_user_id(),
+					'author_name' => $tour_actor ? (string) $tour_actor->display_name : '',
+					'created_at'  => current_time( 'mysql' ),
+				),
+				array( '%d', '%s', '%d', '%s', '%s' )
+			);
 			// One row for the tour event (it carries the status change too, if any).
 			$this->add_lead_status_history(
 				$lead_id,
