@@ -9379,7 +9379,7 @@ class AJForms_Admin {
 				continue; // started schedules already have a real (synced) subscription
 			}
 			$phase = is_array( $schedule['phases'][0] ?? null ) ? $schedule['phases'][0] : array();
-			$start = ! empty( $phase['start_date'] ) ? gmdate( 'Y-m-d H:i:s', (int) $phase['start_date'] ) : '';
+			$start = ! empty( $phase['start_date'] ) ? gmdate( 'Y-m-d', (int) $phase['start_date'] ) : ''; // calendar date, as Stripe shows it
 			foreach ( (array) ( $phase['items'] ?? array() ) as $item ) {
 				$price_id = is_array( $item['price'] ?? null ) ? (string) ( $item['price']['id'] ?? '' ) : (string) ( $item['price'] ?? '' );
 				if ( '' === $price_id ) {
