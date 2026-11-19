@@ -6811,6 +6811,11 @@ class AJForms_Admin {
 		return isset( $subscription->status ) && in_array( $subscription->status, array( 'active', 'trialing' ), true );
 	}
 
+	/** Created but not paid yet: first invoice open (incomplete) or payment overdue. Not canceled/ended. */
+	private function is_unpaid_portal_subscription( $subscription ) {
+		return isset( $subscription->status ) && in_array( $subscription->status, array( 'incomplete', 'past_due', 'unpaid' ), true );
+	}
+
 	private function get_portal_customer_upcoming_payments( $subscriptions ) {
 		$upcoming = array();
 		$now      = current_time( 'timestamp' );
@@ -8821,12 +8826,12 @@ class AJForms_Admin {
 		return $record;
 	}
 
-	private function get_portal_service_records_from_subscriptions( $subscriptions ) {
+	private function get_portal_service_records_from_subscriptions( $subscriptions, $include_unpaid = false ) {
 		$records = array();
 		$seen    = array();
 
 		foreach ( (array) $subscriptions as $subscription ) {
-			if ( ! $this->is_active_portal_subscription( $subscription ) ) {
+			if ( ! $this->is_active_portal_subscription( $subscription ) && ! ( $include_unpaid && $this->is_unpaid_portal_subscription( $subscription ) ) ) {
 				continue;
 			}
 
@@ -9292,7 +9297,12 @@ class AJForms_Admin {
 		return $result;
 	}
 
-	public function api_get_ops_customer_services( $stripe_customer_id ) {
+	/**
+	 * @param bool $include_unpaid Also list subscriptions that are not paid yet (incomplete / past_due /
+	 *                             unpaid), e.g. so a contract can be sent at the same time as the first
+	 *                             invoice. Default false keeps the customer page and AJ Ops unchanged.
+	 */
+	public function api_get_ops_customer_services( $stripe_customer_id, $include_unpaid = false ) {
 		$stripe_customer_id = sanitize_text_field( (string) $stripe_customer_id );
 		if ( empty( $stripe_customer_id ) ) {
 			return array( 'subscriptions' => array(), 'one_time_services' => array() );
@@ -9305,14 +9315,16 @@ class AJForms_Admin {
 				$stripe_customer_id
 			)
 		);
-		$active_subscriptions = array_values( array_filter( (array) $raw_subscriptions, array( $this, 'is_active_portal_subscription' ) ) );
+		$active_subscriptions = array_values( array_filter( (array) $raw_subscriptions, function ( $subscription ) use ( $include_unpaid ) {
+			return $this->is_active_portal_subscription( $subscription ) || ( $include_unpaid && $this->is_unpaid_portal_subscription( $subscription ) );
+		} ) );
 		foreach ( $active_subscriptions as $subscription ) {
 			$subscription->billing_type = $this->get_portal_billing_type_label( 'subscription' );
 		}
 
 		$merged_subscriptions = $this->dedupe_portal_service_records( array_merge(
 			$this->get_portal_service_records_from_snapshots( 'recurring', $stripe_customer_id, 50 ),
-			$this->get_portal_service_records_from_subscriptions( $active_subscriptions ),
+			$this->get_portal_service_records_from_subscriptions( $active_subscriptions, $include_unpaid ),
 			$this->get_portal_recurring_service_records_from_ledger( $stripe_customer_id, 50 )
 		) );
 
