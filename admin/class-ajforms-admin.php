@@ -14557,6 +14557,41 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_product_catalog_nonce'] ) ) {
+			check_admin_referer( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' );
+			$this->save_product_catalog_tab( wp_unslash( $_POST ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'catalog-saved' => 1 ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_POST['ajcore_product_ui_nonce'] ) ) {
+			check_admin_referer( 'ajcore_save_product_ui', 'ajcore_product_ui_nonce' );
+			$catalog       = ajcore_product_catalog_get( true );
+			$raw_ui        = isset( $_POST['catalog_ui'] ) && is_array( $_POST['catalog_ui'] ) ? wp_unslash( $_POST['catalog_ui'] ) : array();
+			// Unchecked checkboxes are absent from the post; record them as "no".
+			foreach ( array( 'search', 'counts', 'link' ) as $flag ) {
+				$raw_ui[ $flag ] = empty( $raw_ui[ $flag ] ) ? 'no' : 'yes';
+			}
+			$catalog['ui'] = $raw_ui;
+			ajcore_product_catalog_save( $catalog );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'ui', 'ui-saved' => 1 ), admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
+		if ( isset( $_GET['ajf_products_action'], $_GET['price_id'] ) && 'create_page' === sanitize_key( wp_unslash( $_GET['ajf_products_action'] ) ) ) {
+			$price_id = sanitize_text_field( wp_unslash( $_GET['price_id'] ) );
+			check_admin_referer( 'ajcore_create_product_page_' . $price_id );
+			$result = $this->create_product_page_for_price( $price_id );
+			$args   = array( 'page' => 'ajforms-products', 'tab' => 'catalog' );
+			if ( is_wp_error( $result ) ) {
+				$args['catalog-error'] = rawurlencode( $result->get_error_message() );
+			} else {
+				$args['page-created'] = (int) $result;
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_product_dependencies_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_product_dependencies', 'ajcore_product_dependencies_nonce' );
 			$raw_dependencies = isset( $_POST['product_dependencies'] ) && is_array( $_POST['product_dependencies'] ) ? wp_unslash( $_POST['product_dependencies'] ) : array();
@@ -28196,6 +28231,16 @@ class AJForms_Admin {
 				<?php if ( isset( $_GET['products-display'] ) ) : ?>
 					<div class="ajcore-products-notice ok"><?php esc_html_e( 'Product selection and order saved.', 'ajforms' ); ?></div>
 				<?php endif; ?>
+				<?php
+				$products_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'products';
+				$products_tab = in_array( $products_tab, array( 'products', 'catalog', 'ui' ), true ) ? $products_tab : 'products';
+				$this->render_products_tabs_nav( $products_tab );
+				?>
+				<?php if ( 'catalog' === $products_tab ) : ?>
+					<?php $this->render_products_catalog_tab( $prices ); ?>
+				<?php elseif ( 'ui' === $products_tab ) : ?>
+					<?php $this->render_products_ui_tab(); ?>
+				<?php else : ?>
 
 				<p>
 					<strong><?php esc_html_e( 'Page shortcodes:', 'ajforms' ); ?></strong>
@@ -28443,8 +28488,416 @@ class AJForms_Admin {
 					})();
 					</script>
 				<?php endif; ?>
+				<?php endif; ?>
 			</div>
 		</div>
+		<?php
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Products > Catalog / UI tabs. Data lives in the ajcore_product_catalog
+	 * option (see includes/product-catalog.php); products stay Stripe prices.
+	 * ------------------------------------------------------------------ */
+
+	private function render_products_tabs_nav( $current ) {
+		$tabs = array(
+			'products' => __( 'Products', 'ajforms' ),
+			'catalog'  => __( 'Catalog', 'ajforms' ),
+			'ui'       => __( 'UI', 'ajforms' ),
+		);
+		echo '<nav class="nav-tab-wrapper" style="margin:0 0 16px;">';
+		foreach ( $tabs as $slug => $label ) {
+			$url = add_query_arg( array( 'page' => 'ajforms-products', 'tab' => $slug ), admin_url( 'admin.php' ) );
+			printf(
+				'<a href="%1$s" class="nav-tab%2$s">%3$s</a>',
+				esc_url( $url ),
+				$slug === $current ? ' nav-tab-active' : '',
+				esc_html( $label )
+			);
+		}
+		echo '</nav>';
+	}
+
+	/** Page choices for the Catalog tab, indented by depth; drafts included so a new page shows up. */
+	private function get_product_catalog_page_choices() {
+		$pages = get_pages(
+			array(
+				'post_status' => 'publish,draft,private,pending',
+				'sort_column' => 'menu_order,post_title',
+			)
+		);
+		$choices = array();
+		foreach ( (array) $pages as $page ) {
+			$depth  = count( get_post_ancestors( $page ) );
+			$label  = str_repeat( '— ', $depth ) . ( '' !== $page->post_title ? $page->post_title : '#' . $page->ID );
+			$status = 'publish' === $page->post_status ? '' : ' (' . $page->post_status . ')';
+			$choices[ (int) $page->ID ] = $label . $status;
+		}
+		return $choices;
+	}
+
+	private function render_products_catalog_tab( $prices ) {
+		$catalog      = ajcore_product_catalog_get( true );
+		$categories   = $catalog['categories'];
+		$page_choices = $this->get_product_catalog_page_choices();
+		$listing_id   = ajcore_product_catalog_listing_page_id( $catalog );
+		$counts       = array();
+		foreach ( $prices as $price ) {
+			foreach ( ajcore_product_catalog_price_categories( $price, $catalog ) as $slug ) {
+				$counts[ $slug ] = isset( $counts[ $slug ] ) ? $counts[ $slug ] + 1 : 1;
+			}
+		}
+		?>
+		<style>
+			.ajcore-catalog-top{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;margin-bottom:14px}
+			.ajcore-catalog-cats td,.ajcore-catalog-cats th{padding:4px 6px}
+			.ajcore-catalog-cats input[type=text]{width:100%}
+			.ajcore-catalog-table td{vertical-align:top}
+			.ajcore-catalog-table .is-archived td:first-child{opacity:.6}
+			.ajcore-catalog-checks{display:flex;flex-wrap:wrap;gap:4px 12px}
+			.ajcore-catalog-checks label{white-space:nowrap}
+			.ajcore-catalog-tag{display:inline-block;margin-left:4px;padding:0 5px;border-radius:4px;background:#eef2ff;color:#3730a3;font-size:11px}
+			.ajcore-catalog-page{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+			.ajcore-catalog-page select{max-width:260px}
+			.ajcore-catalog-muted{color:#64748b;font-size:12px}
+			@media (max-width:960px){.ajcore-catalog-top{grid-template-columns:1fr}}
+		</style>
+		<?php if ( isset( $_GET['catalog-saved'] ) ) : ?>
+			<div class="ajcore-products-notice ok"><?php esc_html_e( 'Catalog saved.', 'ajforms' ); ?></div>
+		<?php endif; ?>
+		<?php if ( isset( $_GET['catalog-error'] ) ) : ?>
+			<div class="ajcore-products-notice error"><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['catalog-error'] ) ) ); ?></div>
+		<?php endif; ?>
+		<?php if ( ! empty( $_GET['page-created'] ) ) : ?>
+			<?php $created = absint( $_GET['page-created'] ); ?>
+			<div class="ajcore-products-notice ok">
+				<?php esc_html_e( 'Draft page created.', 'ajforms' ); ?>
+				<a href="<?php echo esc_url( (string) get_edit_post_link( $created ) ); ?>"><?php esc_html_e( 'Edit & publish', 'ajforms' ); ?></a>
+			</div>
+		<?php endif; ?>
+
+		<?php if ( empty( $prices ) ) : ?>
+			<div class="ajcore-products-empty"><?php esc_html_e( 'No synced Stripe prices yet.', 'ajforms' ); ?></div>
+			<?php return; ?>
+		<?php endif; ?>
+
+		<form method="post">
+			<?php wp_nonce_field( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' ); ?>
+			<div class="ajcore-catalog-top">
+				<div class="ajcore-builder-field">
+					<strong><?php esc_html_e( 'Categories', 'ajforms' ); ?></strong>
+					<table class="ajcore-catalog-cats" style="width:100%;border-collapse:collapse;">
+						<thead><tr><th style="text-align:left;"><?php esc_html_e( 'Name', 'ajforms' ); ?></th><th style="text-align:left;"><?php esc_html_e( 'Slug', 'ajforms' ); ?></th><th style="width:40px;"><?php esc_html_e( 'Items', 'ajforms' ); ?></th></tr></thead>
+						<tbody>
+						<?php
+						$rows = $categories;
+						for ( $blank = 0; $blank < 3; $blank++ ) {
+							$rows[] = array( 'slug' => '', 'name' => '' );
+						}
+						foreach ( $rows as $index => $category ) :
+							?>
+							<tr>
+								<td>
+									<input type="text" name="catalog_categories[<?php echo (int) $index; ?>][name]" value="<?php echo esc_attr( $category['name'] ); ?>" placeholder="<?php echo '' === $category['slug'] ? esc_attr__( 'New category', 'ajforms' ) : ''; ?>">
+									<input type="hidden" name="catalog_categories[<?php echo (int) $index; ?>][orig]" value="<?php echo esc_attr( $category['slug'] ); ?>">
+								</td>
+								<td><input type="text" name="catalog_categories[<?php echo (int) $index; ?>][slug]" value="<?php echo esc_attr( $category['slug'] ); ?>" placeholder="<?php esc_attr_e( 'auto', 'ajforms' ); ?>"></td>
+								<td style="text-align:center;" class="ajcore-catalog-muted"><?php echo '' === $category['slug'] ? '' : (int) ( isset( $counts[ $category['slug'] ] ) ? $counts[ $category['slug'] ] : 0 ); ?></td>
+							</tr>
+						<?php endforeach; ?>
+						</tbody>
+					</table>
+					<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Row order = filter order. Clear a name to remove it.', 'ajforms' ); ?></p>
+				</div>
+				<div class="ajcore-builder-field">
+					<strong><?php esc_html_e( 'Listing page', 'ajforms' ); ?></strong>
+					<select name="catalog_page" style="width:100%;">
+						<option value="0">
+							<?php
+							echo esc_html(
+								$listing_id && ! $catalog['catalog_page']
+									? sprintf( __( 'Auto: %s', 'ajforms' ), get_the_title( $listing_id ) )
+									: __( 'Auto-detect', 'ajforms' )
+							);
+							?>
+						</option>
+						<?php foreach ( $page_choices as $page_id => $label ) : ?>
+							<option value="<?php echo (int) $page_id; ?>" <?php selected( $catalog['catalog_page'], $page_id ); ?>><?php echo esc_html( $label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Parent of new product pages; product-page "Add to Cart" returns here.', 'ajforms' ); ?></p>
+					<details style="margin-top:10px;">
+						<summary class="ajcore-catalog-muted" style="cursor:pointer;"><?php esc_html_e( 'Shortcodes', 'ajforms' ); ?></summary>
+						<p class="ajcore-catalog-muted">
+							<code>[ajcore_products category="slug"]</code> <?php esc_html_e( 'only that category (comma-separate several).', 'ajforms' ); ?><br>
+							<code>[ajcore_product]</code> <?php esc_html_e( 'buy box on a linked product page (price detected from the page).', 'ajforms' ); ?><br>
+							<code>[ajcore_product price_id="price_…"]</code> <?php esc_html_e( 'buy box for a specific price anywhere.', 'ajforms' ); ?><br>
+							<?php esc_html_e( 'Stripe product metadata "category" (names or slugs) is used when a product has no categories checked here.', 'ajforms' ); ?>
+						</p>
+					</details>
+				</div>
+			</div>
+
+			<table class="widefat striped ajcore-catalog-table">
+				<thead>
+					<tr>
+						<th style="width:32%;"><?php esc_html_e( 'Product', 'ajforms' ); ?></th>
+						<th><?php esc_html_e( 'Categories', 'ajforms' ); ?></th>
+						<th style="width:34%;"><?php esc_html_e( 'Product page', 'ajforms' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+				<?php foreach ( $prices as $price ) : ?>
+					<?php
+					if ( ! is_array( $price ) || empty( $price['id'] ) ) {
+						continue;
+					}
+					$price_id    = sanitize_text_field( (string) $price['id'] );
+					$is_active   = ! empty( $price['product_active'] ) && ! empty( $price['price_active'] );
+					$assigned    = ajcore_product_catalog_price_categories( $price, $catalog );
+					$from_stripe = empty( $catalog['assign'][ $price_id ] ) && ! empty( $assigned );
+					$page_id     = ajcore_product_catalog_page_for_price( $price_id, $catalog, false );
+					$interval    = ! empty( $price['recurring_interval'] ) ? '/' . sanitize_key( (string) $price['recurring_interval'] ) : '';
+					$create_url  = wp_nonce_url(
+						add_query_arg(
+							array(
+								'page'                => 'ajforms-products',
+								'tab'                 => 'catalog',
+								'ajf_products_action' => 'create_page',
+								'price_id'            => $price_id,
+							),
+							admin_url( 'admin.php' )
+						),
+						'ajcore_create_product_page_' . $price_id
+					);
+					?>
+					<tr class="<?php echo $is_active ? '' : 'is-archived'; ?>">
+						<td>
+							<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : $price_id ); ?></strong>
+							<div class="ajcore-catalog-muted">
+								<?php echo esc_html( strtoupper( (string) $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $interval ); ?>
+								<?php echo $is_active ? '' : ' · ' . esc_html__( 'archived', 'ajforms' ); ?>
+							</div>
+						</td>
+						<td>
+							<?php if ( empty( $categories ) ) : ?>
+								<span class="ajcore-catalog-muted"><?php esc_html_e( 'Add categories above.', 'ajforms' ); ?></span>
+							<?php else : ?>
+								<div class="ajcore-catalog-checks">
+									<?php foreach ( $categories as $category ) : ?>
+										<label><input type="checkbox" name="catalog_assign[<?php echo esc_attr( $price_id ); ?>][]" value="<?php echo esc_attr( $category['slug'] ); ?>" <?php checked( in_array( $category['slug'], $assigned, true ) ); ?>> <?php echo esc_html( $category['name'] ); ?></label>
+									<?php endforeach; ?>
+									<?php if ( $from_stripe ) : ?>
+										<span class="ajcore-catalog-tag" title="<?php esc_attr_e( 'From Stripe metadata; saving stores it here.', 'ajforms' ); ?>">Stripe</span>
+									<?php endif; ?>
+								</div>
+							<?php endif; ?>
+						</td>
+						<td>
+							<div class="ajcore-catalog-page">
+								<select name="catalog_pages[<?php echo esc_attr( $price_id ); ?>]">
+									<option value="0"><?php esc_html_e( '— None —', 'ajforms' ); ?></option>
+									<?php foreach ( $page_choices as $choice_id => $label ) : ?>
+										<option value="<?php echo (int) $choice_id; ?>" <?php selected( $page_id, $choice_id ); ?>><?php echo esc_html( $label ); ?></option>
+									<?php endforeach; ?>
+								</select>
+								<?php if ( $page_id ) : ?>
+									<a href="<?php echo esc_url( (string) get_permalink( $page_id ) ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'View', 'ajforms' ); ?></a>
+									<a href="<?php echo esc_url( (string) get_edit_post_link( $page_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+								<?php else : ?>
+									<a href="<?php echo esc_url( $create_url ); ?>"><?php esc_html_e( 'Create page', 'ajforms' ); ?></a>
+								<?php endif; ?>
+							</div>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+			<p><?php submit_button( __( 'Save Catalog', 'ajforms' ), 'primary', 'submit', false ); ?></p>
+		</form>
+		<?php
+	}
+
+	private function save_product_catalog_tab( $post ) {
+		$catalog = ajcore_product_catalog_get( true );
+
+		// Categories, remembering renamed slugs so this same post's checkboxes (which carry
+		// the old slug) still land on the renamed category.
+		$categories = array();
+		$renamed    = array();
+		foreach ( isset( $post['catalog_categories'] ) && is_array( $post['catalog_categories'] ) ? $post['catalog_categories'] : array() as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$name = isset( $row['name'] ) ? trim( sanitize_text_field( (string) $row['name'] ) ) : '';
+			if ( '' === $name ) {
+				continue;
+			}
+			$slug = isset( $row['slug'] ) ? sanitize_title( (string) $row['slug'] ) : '';
+			$slug = '' !== $slug ? $slug : sanitize_title( $name );
+			$orig = isset( $row['orig'] ) ? sanitize_title( (string) $row['orig'] ) : '';
+			if ( '' !== $orig && $orig !== $slug ) {
+				$renamed[ $orig ] = $slug;
+			}
+			$categories[] = array( 'slug' => $slug, 'name' => $name );
+		}
+
+		$assign = array();
+		foreach ( isset( $post['catalog_assign'] ) && is_array( $post['catalog_assign'] ) ? $post['catalog_assign'] : array() as $price_id => $slugs ) {
+			$mapped = array();
+			foreach ( (array) $slugs as $slug ) {
+				$slug     = sanitize_title( (string) $slug );
+				$mapped[] = isset( $renamed[ $slug ] ) ? $renamed[ $slug ] : $slug;
+			}
+			$assign[ sanitize_text_field( (string) $price_id ) ] = $mapped;
+		}
+
+		$pages = array();
+		foreach ( isset( $post['catalog_pages'] ) && is_array( $post['catalog_pages'] ) ? $post['catalog_pages'] : array() as $price_id => $page_id ) {
+			$pages[ sanitize_text_field( (string) $price_id ) ] = absint( $page_id );
+		}
+
+		$catalog['categories']   = $categories;
+		$catalog['assign']       = $assign;
+		$catalog['pages']        = $pages;
+		$catalog['catalog_page'] = isset( $post['catalog_page'] ) ? absint( $post['catalog_page'] ) : 0;
+
+		return ajcore_product_catalog_save( $catalog );
+	}
+
+	/** Creates a draft page for one price under the listing page, pre-filled from Stripe, and links it. */
+	private function create_product_page_for_price( $price_id ) {
+		if ( ! current_user_can( 'publish_pages' ) ) {
+			return new WP_Error( 'ajcore_product_page_cap', __( 'You cannot create pages.', 'ajforms' ) );
+		}
+		$cache = $this->get_stripe_products_cache();
+		$price = null;
+		foreach ( isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array() as $candidate ) {
+			if ( is_array( $candidate ) && isset( $candidate['id'] ) && $candidate['id'] === $price_id ) {
+				$price = $candidate;
+				break;
+			}
+		}
+		if ( null === $price ) {
+			return new WP_Error( 'ajcore_product_page_price', __( 'That price is not in the synced products. Sync Stripe Products and try again.', 'ajforms' ) );
+		}
+
+		$catalog = ajcore_product_catalog_get( true );
+		if ( ajcore_product_catalog_page_for_price( $price_id, $catalog, false ) ) {
+			return new WP_Error( 'ajcore_product_page_exists', __( 'This product already has a page.', 'ajforms' ) );
+		}
+
+		$summary = ! empty( $price['product_summary'] ) ? (string) $price['product_summary'] : ( isset( $price['product_description'] ) ? (string) $price['product_description'] : '' );
+		$rich    = ! empty( $price['product_rich_description'] ) ? (string) $price['product_rich_description'] : '';
+		$blocks  = array();
+		if ( '' !== trim( $summary ) ) {
+			$blocks[] = "<!-- wp:paragraph -->\n<p>" . esc_html( $summary ) . "</p>\n<!-- /wp:paragraph -->";
+		}
+		$blocks[] = "<!-- wp:shortcode -->\n[ajcore_product price_id=\"" . esc_attr( $price_id ) . "\"]\n<!-- /wp:shortcode -->";
+		if ( '' !== trim( $rich ) ) {
+			$blocks[] = "<!-- wp:html -->\n" . wp_kses_post( $rich ) . "\n<!-- /wp:html -->";
+		}
+
+		$page_id = wp_insert_post(
+			array(
+				'post_type'    => 'page',
+				'post_status'  => 'draft',
+				'post_title'   => isset( $price['product_name'] ) ? sanitize_text_field( (string) $price['product_name'] ) : $price_id,
+				'post_content' => implode( "\n\n", $blocks ),
+				'post_parent'  => ajcore_product_catalog_listing_page_id( $catalog ),
+			),
+			true
+		);
+		if ( is_wp_error( $page_id ) ) {
+			return $page_id;
+		}
+
+		// AJNanda reads this to emit Service schema for the page; harmless on other themes.
+		update_post_meta( $page_id, '_ajnanda_primary_entity_type', 'service' );
+
+		$catalog['pages'][ $price_id ] = (int) $page_id;
+		ajcore_product_catalog_save( $catalog );
+		return (int) $page_id;
+	}
+
+	private function render_products_ui_tab() {
+		$ui = ajcore_product_catalog_get( true )['ui'];
+		?>
+		<?php if ( isset( $_GET['ui-saved'] ) ) : ?>
+			<div class="ajcore-products-notice ok"><?php esc_html_e( 'Listing UI saved.', 'ajforms' ); ?></div>
+		<?php endif; ?>
+		<form method="post" class="ajcore-shortcode-builder" style="padding:16px 18px;">
+			<?php wp_nonce_field( 'ajcore_save_product_ui', 'ajcore_product_ui_nonce' ); ?>
+			<div class="ajcore-builder-controls" style="margin-bottom:12px;">
+				<div class="ajcore-builder-field">
+					<strong><?php esc_html_e( 'Pagination', 'ajforms' ); ?></strong>
+					<label><?php esc_html_e( 'Per page', 'ajforms' ); ?> <input type="number" min="0" max="60" name="catalog_ui[per_page]" value="<?php echo (int) $ui['per_page']; ?>" style="width:70px;"></label>
+					<span class="ajcore-catalog-muted" style="color:#64748b;font-size:12px;"> <?php esc_html_e( '0 = all', 'ajforms' ); ?></span>
+				</div>
+				<div class="ajcore-builder-field">
+					<strong><?php esc_html_e( 'Search', 'ajforms' ); ?></strong>
+					<div class="ajcore-builder-checks">
+						<label><input type="checkbox" name="catalog_ui[search]" value="yes" <?php checked( 'yes', $ui['search'] ); ?>> <?php esc_html_e( 'Show search box', 'ajforms' ); ?></label>
+						<input type="text" name="catalog_ui[search_placeholder]" value="<?php echo esc_attr( $ui['search_placeholder'] ); ?>" aria-label="<?php esc_attr_e( 'Placeholder', 'ajforms' ); ?>" style="width:100%;">
+					</div>
+				</div>
+				<div class="ajcore-builder-field">
+					<strong><?php esc_html_e( 'Product pages', 'ajforms' ); ?></strong>
+					<div class="ajcore-builder-checks">
+						<label><input type="checkbox" name="catalog_ui[link]" value="yes" <?php checked( 'yes', $ui['link'] ); ?>> <?php esc_html_e( 'Link cards to their page', 'ajforms' ); ?></label>
+						<input type="text" name="catalog_ui[link_label]" value="<?php echo esc_attr( $ui['link_label'] ); ?>" aria-label="<?php esc_attr_e( 'Link label', 'ajforms' ); ?>" style="width:100%;">
+					</div>
+				</div>
+			</div>
+			<div class="ajcore-builder-controls" style="margin-bottom:12px;">
+				<div class="ajcore-builder-field">
+					<strong><?php esc_html_e( 'Category filter', 'ajforms' ); ?></strong>
+					<div class="ajcore-builder-checks">
+						<label><input type="radio" name="catalog_ui[filter]" value="chips" <?php checked( 'chips', $ui['filter'] ); ?>> <?php esc_html_e( 'Chips', 'ajforms' ); ?></label>
+						<label><input type="radio" name="catalog_ui[filter]" value="dropdown" <?php checked( 'dropdown', $ui['filter'] ); ?>> <?php esc_html_e( 'Dropdown', 'ajforms' ); ?></label>
+						<label><input type="radio" name="catalog_ui[filter]" value="none" <?php checked( 'none', $ui['filter'] ); ?>> <?php esc_html_e( 'Off', 'ajforms' ); ?></label>
+						<label><input type="checkbox" name="catalog_ui[counts]" value="yes" <?php checked( 'yes', $ui['counts'] ); ?>> <?php esc_html_e( 'Show counts', 'ajforms' ); ?></label>
+						<label><?php esc_html_e( '"All" label', 'ajforms' ); ?> <input type="text" name="catalog_ui[all_label]" value="<?php echo esc_attr( $ui['all_label'] ); ?>" style="width:120px;"></label>
+					</div>
+				</div>
+				<div class="ajcore-builder-field">
+					<strong><?php esc_html_e( 'Phone (≤ 800px)', 'ajforms' ); ?></strong>
+					<div class="ajcore-builder-checks">
+						<label><?php esc_html_e( 'Columns', 'ajforms' ); ?>
+							<select name="catalog_ui[cols_phone]">
+								<option value="1" <?php selected( 1, $ui['cols_phone'] ); ?>>1</option>
+								<option value="2" <?php selected( 2, $ui['cols_phone'] ); ?>>2</option>
+							</select>
+						</label>
+						<label><?php esc_html_e( 'Filter', 'ajforms' ); ?>
+							<select name="catalog_ui[phone_filter]">
+								<option value="chips" <?php selected( 'chips', $ui['phone_filter'] ); ?>><?php esc_html_e( 'Scrolling chips', 'ajforms' ); ?></option>
+								<option value="dropdown" <?php selected( 'dropdown', $ui['phone_filter'] ); ?>><?php esc_html_e( 'Dropdown', 'ajforms' ); ?></option>
+							</select>
+						</label>
+					</div>
+				</div>
+				<div class="ajcore-builder-field">
+					<strong><?php esc_html_e( 'Tablet (≤ 980px)', 'ajforms' ); ?></strong>
+					<label><?php esc_html_e( 'Columns', 'ajforms' ); ?>
+						<select name="catalog_ui[cols_tablet]">
+							<option value="1" <?php selected( 1, $ui['cols_tablet'] ); ?>>1</option>
+							<option value="2" <?php selected( 2, $ui['cols_tablet'] ); ?>>2</option>
+							<option value="3" <?php selected( 3, $ui['cols_tablet'] ); ?>>3</option>
+						</select>
+					</label>
+				</div>
+			</div>
+			<details style="margin-bottom:12px;color:#64748b;">
+				<summary style="cursor:pointer;"><?php esc_html_e( 'Per-page overrides', 'ajforms' ); ?></summary>
+				<p style="margin:8px 0 0;">
+					<?php esc_html_e( 'These are the defaults for every listing. A shortcode can override them:', 'ajforms' ); ?>
+					<code>per_page="9"</code> <code>search="no"</code> <code>filter="dropdown|chips|none"</code> <code>link="no"</code> <code>category="slug"</code>.
+					<?php esc_html_e( 'Search, category and page are kept in the URL (ajp_q, ajp_cat, ajp_pg), so a filtered view can be linked.', 'ajforms' ); ?>
+				</p>
+			</details>
+			<?php submit_button( __( 'Save UI', 'ajforms' ), 'primary', 'submit', false ); ?>
+		</form>
 		<?php
 	}
 

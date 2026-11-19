@@ -1030,6 +1030,7 @@ class AJForms {
 	private function define_public_hooks() {
 		add_shortcode( 'ajforms', array( $this, 'render_form_shortcode' ) );
 		add_shortcode( 'ajcore_products', array( $this, 'render_products_shortcode' ) );
+		add_shortcode( 'ajcore_product', array( $this, 'render_single_product_shortcode' ) );
 		add_shortcode( 'aj_customer_portal', array( $this, 'render_customer_portal_shortcode' ) );
 		add_filter( 'login_redirect', array( $this, 'filter_login_redirect' ), 999999, 3 );
 		add_filter( 'show_admin_bar', array( $this, 'filter_show_admin_bar' ) );
@@ -9932,6 +9933,52 @@ class AJForms {
 		return $html;
 	}
 
+	/**
+	 * [ajcore_product price_id="price_…"] — one buy box for a product's own page. With no
+	 * price_id it uses the price linked to the current page (Products > Catalog). Mode follows
+	 * the saved shortcode builder; in cart mode the button returns to the listing's cart.
+	 */
+	public function render_single_product_shortcode( $atts ) {
+		$atts     = shortcode_atts(
+			array(
+				'price_id' => '',
+				'mode'     => '',
+				'show'     => 'price,button',
+				'details'  => 'none',
+				'button'   => __( 'Buy Now', 'ajforms' ),
+				'back'     => 'yes',
+			),
+			$atts,
+			'ajcore_product'
+		);
+		$price_id = sanitize_text_field( (string) $atts['price_id'] );
+		if ( '' === $price_id && function_exists( 'ajcore_product_catalog_price_for_page' ) ) {
+			$price_id = ajcore_product_catalog_price_for_page( get_the_ID() );
+		}
+		if ( '' === $price_id ) {
+			return current_user_can( 'edit_pages' ) ? '<p><em>' . esc_html__( '[ajcore_product]: link this page to a product in Products > Catalog, or add price_id="…".', 'ajforms' ) . '</em></p>' : '';
+		}
+
+		$mode = sanitize_key( (string) $atts['mode'] );
+		if ( ! in_array( $mode, array( 'buy', 'cart' ), true ) ) {
+			$saved = get_option( 'ajcore_public_product_display_settings', array() );
+			$mode  = is_array( $saved ) && isset( $saved['builder']['mode'] ) && 'cart' === $saved['builder']['mode'] ? 'cart' : 'buy';
+		}
+
+		return $this->render_products_shortcode(
+			array(
+				'price_ids' => $price_id,
+				'columns'   => '1',
+				'mode'      => $mode,
+				'show'      => (string) $atts['show'],
+				'details'   => (string) $atts['details'],
+				'button'    => (string) $atts['button'],
+				'single'    => 'yes',
+				'back'      => (string) $atts['back'],
+			)
+		);
+	}
+
 	public function render_products_shortcode( $atts ) {
 		$atts = shortcode_atts(
 			array(
@@ -9945,6 +9992,15 @@ class AJForms {
 				'template'  => 'default',
 				'details'   => 'none',
 				'include_archived' => 'no',
+				// Catalog UI; empty = Products > UI default. See includes/product-catalog.php.
+				'category'  => '',
+				'per_page'  => '',
+				'search'    => '',
+				'filter'    => '',
+				'link'      => '',
+				// Set by [ajcore_product]: one buy box on a product page.
+				'single'    => '',
+				'back'      => 'yes',
 			),
 			$atts,
 			'ajcore_products'
@@ -9983,14 +10039,127 @@ class AJForms {
 			}
 		}
 
+		$catalog   = function_exists( 'ajcore_product_catalog_get' ) ? ajcore_product_catalog_get() : null;
+		$catalog_ui = $catalog ? $catalog['ui'] : array();
+		$is_single = in_array( strtolower( (string) $atts['single'] ), array( '1', 'yes', 'true' ), true );
+		$att_flag  = static function ( $value, $fallback ) {
+			$value = strtolower( trim( (string) $value ) );
+			if ( '' === $value ) {
+				return 'yes' === $fallback;
+			}
+			return in_array( $value, array( '1', 'yes', 'true', 'on' ), true );
+		};
+		$per_page      = '' !== trim( (string) $atts['per_page'] ) ? min( 60, absint( $atts['per_page'] ) ) : ( isset( $catalog_ui['per_page'] ) ? (int) $catalog_ui['per_page'] : 0 );
+		$show_search   = $att_flag( $atts['search'], isset( $catalog_ui['search'] ) ? $catalog_ui['search'] : 'no' );
+		$filter_style  = in_array( sanitize_key( $atts['filter'] ), array( 'chips', 'dropdown', 'none' ), true ) ? sanitize_key( $atts['filter'] ) : ( isset( $catalog_ui['filter'] ) ? $catalog_ui['filter'] : 'none' );
+		$link_cards    = $att_flag( $atts['link'], isset( $catalog_ui['link'] ) ? $catalog_ui['link'] : 'no' );
+		$cols_tablet   = min( $columns, isset( $catalog_ui['cols_tablet'] ) ? (int) $catalog_ui['cols_tablet'] : 2 );
+		$cols_phone    = isset( $catalog_ui['cols_phone'] ) ? (int) $catalog_ui['cols_phone'] : 1;
+		$listing_page_id = $catalog ? (int) ajcore_product_catalog_listing_page_id( $catalog ) : 0;
+		$listing_url     = $listing_page_id ? (string) get_permalink( $listing_page_id ) : '';
+		// A product page has no cart UI of its own: in cart mode its button hands the price to the
+		// listing (?ajp_add=price_…), which adds it to the one shared cart. Without a listing
+		// page it falls back to Buy Now.
+		$single_handoff_url = '';
+		if ( $is_single && $is_cart_mode ) {
+			$is_cart_mode = false;
+			$mode         = 'buy';
+			if ( '' !== $listing_url ) {
+				$single_handoff_url = $listing_url;
+			}
+		}
+		if ( $is_single ) {
+			$per_page     = 0;
+			$show_search  = false;
+			$filter_style = 'none';
+			$link_cards   = false;
+			$columns      = 1;
+			$cols_tablet  = 1;
+			$cols_phone   = 1;
+		}
+
+		// Per-card catalog data: categories, search text, product page link.
+		$card_categories = array();
+		$card_links      = array();
+		$card_search     = array();
+		foreach ( $prices as $catalog_price ) {
+			$catalog_price_id                     = (string) $catalog_price['id'];
+			$card_categories[ $catalog_price_id ] = $catalog ? ajcore_product_catalog_price_categories( $catalog_price, $catalog ) : array();
+			$linked_page                          = $catalog && $link_cards ? ajcore_product_catalog_page_for_price( $catalog_price_id, $catalog ) : 0;
+			$card_links[ $catalog_price_id ]      = $linked_page ? (string) get_permalink( $linked_page ) : '';
+			$haystack                             = implode(
+				' ',
+				array(
+					isset( $catalog_price['product_name'] ) ? $catalog_price['product_name'] : '',
+					isset( $catalog_price['product_summary'] ) ? $catalog_price['product_summary'] : '',
+					isset( $catalog_price['product_description'] ) ? $catalog_price['product_description'] : '',
+					isset( $catalog_price['product_rich_description'] ) ? wp_strip_all_tags( (string) $catalog_price['product_rich_description'] ) : '',
+					isset( $catalog_price['nickname'] ) ? $catalog_price['nickname'] : '',
+				)
+			);
+			$card_search[ $catalog_price_id ] = function_exists( 'mb_strtolower' ) ? mb_strtolower( remove_accents( $haystack ) ) : strtolower( remove_accents( $haystack ) );
+		}
+
+		// category="a,b" limits the listing. Required add-ons of the shown products stay in the
+		// markup (hidden) so the cart can still auto-add them.
+		$support_prices     = array();
+		$restrict_categories = array_filter( array_map( 'sanitize_title', array_map( 'trim', explode( ',', (string) $atts['category'] ) ) ) );
+		if ( ! empty( $restrict_categories ) ) {
+			$kept = array();
+			foreach ( $prices as $catalog_price ) {
+				if ( array_intersect( $restrict_categories, $card_categories[ (string) $catalog_price['id'] ] ) ) {
+					$kept[ (string) $catalog_price['id'] ] = $catalog_price;
+				}
+			}
+			foreach ( $kept as $kept_price ) {
+				$required = $this->get_public_price_required_price_id( $kept_price, $public_price_map );
+				if ( '' !== $required && ! isset( $kept[ $required ] ) && isset( $public_price_map[ $required ] ) ) {
+					$support_prices[ $required ] = true;
+					$kept[ $required ]           = $public_price_map[ $required ];
+				}
+			}
+			$prices = array_values( $kept );
+			if ( empty( $prices ) ) {
+				return '';
+			}
+		}
+
+		// Categories present in this listing, in configured order, with counts.
+		$listing_categories = array();
+		if ( $catalog && 'none' !== $filter_style ) {
+			foreach ( $catalog['categories'] as $category ) {
+				$count = 0;
+				foreach ( $prices as $catalog_price ) {
+					if ( ! isset( $support_prices[ (string) $catalog_price['id'] ] ) && in_array( $category['slug'], $card_categories[ (string) $catalog_price['id'] ], true ) ) {
+						$count++;
+					}
+				}
+				if ( $count > 0 ) {
+					$listing_categories[] = array( 'slug' => $category['slug'], 'name' => $category['name'], 'count' => $count );
+				}
+			}
+			// A filter with only one category (restricted listing) adds nothing.
+			if ( count( $listing_categories ) < 2 && ! empty( $restrict_categories ) ) {
+				$listing_categories = array();
+			}
+		}
+		$visible_total = count( $prices ) - count( $support_prices );
+		$has_paging    = $per_page > 0 && $visible_total > $per_page;
+		$has_toolbar   = $show_search || ! empty( $listing_categories );
+		$has_catalog_ui = $has_toolbar || $has_paging;
+		$root_id       = function_exists( 'wp_unique_id' ) ? wp_unique_id( 'ajcore-products-' ) : 'ajcore-products-' . wp_rand( 1000, 999999 );
+
 		ob_start();
 		?>
 		<?php if ( $is_cart_mode ) : ?>
 			<script src="https://js.stripe.com/v3/"></script>
 		<?php endif; ?>
 		<div
-			class="ajcore-products-wrap <?php echo $is_cart_mode ? 'ajcore-products-wrap-cart' : 'ajcore-products-wrap-buy'; ?> ajcore-products-template-<?php echo esc_attr( $template ); ?>"
+			id="<?php echo esc_attr( $root_id ); ?>"
+			class="ajcore-products-wrap <?php echo $is_cart_mode ? 'ajcore-products-wrap-cart' : 'ajcore-products-wrap-buy'; ?> ajcore-products-template-<?php echo esc_attr( $template ); ?><?php echo $is_single ? ' ajcore-products-single' : ''; ?><?php echo 'dropdown' === ( isset( $catalog_ui['phone_filter'] ) ? $catalog_ui['phone_filter'] : '' ) ? ' ajcore-products-phone-dropdown' : ''; ?>"
 			data-mode="<?php echo esc_attr( $mode ); ?>"
+			data-per-page="<?php echo (int) $per_page; ?>"
+			data-phone-cols="<?php echo (int) $cols_phone; ?>"
 			data-cart-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_cart_checkout' ) ); ?>"
 			data-include-archived="<?php echo $include_archived ? 'yes' : 'no'; ?>"
 		>
@@ -10007,7 +10176,43 @@ class AJForms {
 					<button type="button" class="ajcore-cart-mini-checkout" disabled><?php esc_html_e( 'Checkout', 'ajforms' ); ?></button>
 				</div>
 			<?php endif; ?>
-			<div class="ajcore-products-list" style="display:grid;grid-template-columns:repeat(<?php echo esc_attr( $columns ); ?>,minmax(0,1fr));gap:18px;">
+			<?php if ( $is_single && $listing_page_id && 'no' !== strtolower( (string) $atts['back'] ) && (int) get_queried_object_id() !== $listing_page_id ) : ?>
+				<a class="ajcore-products-back" href="<?php echo esc_url( $listing_url ); ?>">&larr; <?php echo esc_html( get_the_title( $listing_page_id ) ?: __( 'All products', 'ajforms' ) ); ?></a>
+			<?php endif; ?>
+			<?php if ( $has_toolbar ) : ?>
+				<div class="ajcore-products-toolbar<?php echo 'dropdown' === $filter_style ? ' is-dropdown' : ''; ?>">
+					<?php if ( $show_search ) : ?>
+						<div class="ajcore-products-search" role="search">
+							<svg aria-hidden="true" viewBox="0 0 20 20" width="18" height="18"><path fill="currentColor" d="M8.5 3a5.5 5.5 0 0 1 4.38 8.83l3.65 3.64-1.06 1.06-3.64-3.65A5.5 5.5 0 1 1 8.5 3Zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></svg>
+							<input type="search" class="ajcore-products-search-input" placeholder="<?php echo esc_attr( isset( $catalog_ui['search_placeholder'] ) ? $catalog_ui['search_placeholder'] : __( 'Search', 'ajforms' ) ); ?>" aria-label="<?php echo esc_attr( isset( $catalog_ui['search_placeholder'] ) ? $catalog_ui['search_placeholder'] : __( 'Search', 'ajforms' ) ); ?>" autocomplete="off" enterkeyhint="search">
+							<button type="button" class="ajcore-products-search-clear" aria-label="<?php esc_attr_e( 'Clear search', 'ajforms' ); ?>" hidden>&times;</button>
+						</div>
+					<?php endif; ?>
+					<?php if ( ! empty( $listing_categories ) ) : ?>
+						<?php $show_counts = ! isset( $catalog_ui['counts'] ) || 'yes' === $catalog_ui['counts']; ?>
+						<div class="ajcore-products-cats" role="group" aria-label="<?php esc_attr_e( 'Categories', 'ajforms' ); ?>">
+							<button type="button" class="ajcore-products-cat is-active" data-cat="" aria-pressed="true"><?php echo esc_html( isset( $catalog_ui['all_label'] ) ? $catalog_ui['all_label'] : __( 'All', 'ajforms' ) ); ?><?php if ( $show_counts ) : ?> <span><?php echo (int) $visible_total; ?></span><?php endif; ?></button>
+							<?php foreach ( $listing_categories as $listing_category ) : ?>
+								<button type="button" class="ajcore-products-cat" data-cat="<?php echo esc_attr( $listing_category['slug'] ); ?>" aria-pressed="false"><?php echo esc_html( $listing_category['name'] ); ?><?php if ( $show_counts ) : ?> <span><?php echo (int) $listing_category['count']; ?></span><?php endif; ?></button>
+							<?php endforeach; ?>
+						</div>
+						<select class="ajcore-products-cat-select" aria-label="<?php esc_attr_e( 'Category', 'ajforms' ); ?>">
+							<option value=""><?php echo esc_html( isset( $catalog_ui['all_label'] ) ? $catalog_ui['all_label'] : __( 'All', 'ajforms' ) ); ?><?php echo $show_counts ? ' (' . (int) $visible_total . ')' : ''; ?></option>
+							<?php foreach ( $listing_categories as $listing_category ) : ?>
+								<option value="<?php echo esc_attr( $listing_category['slug'] ); ?>"><?php echo esc_html( $listing_category['name'] ); ?><?php echo $show_counts ? ' (' . (int) $listing_category['count'] . ')' : ''; ?></option>
+							<?php endforeach; ?>
+						</select>
+					<?php endif; ?>
+					<div class="ajcore-products-count" aria-live="polite"></div>
+				</div>
+			<?php endif; ?>
+			<?php if ( $has_catalog_ui ) : ?>
+				<div class="ajcore-products-no-results" hidden>
+					<?php esc_html_e( 'No matching products.', 'ajforms' ); ?>
+					<button type="button" class="ajcore-products-reset"><?php esc_html_e( 'Clear filters', 'ajforms' ); ?></button>
+				</div>
+			<?php endif; ?>
+			<div class="ajcore-products-list" style="display:grid;grid-template-columns:repeat(<?php echo esc_attr( $columns ); ?>,minmax(0,1fr));gap:18px;--ajp-cols-tablet:<?php echo (int) $cols_tablet; ?>;--ajp-cols-phone:<?php echo (int) $cols_phone; ?>;">
 				<?php foreach ( $prices as $price ) : ?>
 					<?php
 					$price_amount   = (float) $price['amount'];
@@ -10031,8 +10236,16 @@ class AJForms {
 						$dependency_note = sprintf( __( 'This product requires %s. It will be added to your cart automatically.', 'ajforms' ), $required_product_name );
 					}
 					?>
+					<?php
+					$card_id       = (string) $price['id'];
+					$card_link     = isset( $card_links[ $card_id ] ) ? $card_links[ $card_id ] : '';
+					$is_support    = isset( $support_prices[ $card_id ] );
+					?>
 					<div
-						class="ajcore-product"
+						class="ajcore-product<?php echo $is_support ? ' ajcore-product-support' : ''; ?><?php echo '' !== $card_link ? ' has-page' : ''; ?>"
+						<?php echo $is_support ? 'hidden' : ''; ?>
+						data-categories="<?php echo esc_attr( implode( ' ', isset( $card_categories[ $card_id ] ) ? $card_categories[ $card_id ] : array() ) ); ?>"
+						data-search="<?php echo esc_attr( isset( $card_search[ $card_id ] ) ? $card_search[ $card_id ] : '' ); ?>"
 						data-price-id="<?php echo esc_attr( $price['id'] ); ?>"
 						data-product-name="<?php echo esc_attr( $price['product_name'] ); ?>"
 						data-amount="<?php echo esc_attr( $price_amount ); ?>"
@@ -10045,7 +10258,7 @@ class AJForms {
 						style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);"
 					>
 						<?php if ( $show_title ) : ?>
-							<h3 class="ajcore-product-title" style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php echo esc_html( $price['product_name'] ); ?></h3>
+							<h3 class="ajcore-product-title" style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php if ( '' !== $card_link ) : ?><a href="<?php echo esc_url( $card_link ); ?>"><?php echo esc_html( $price['product_name'] ); ?></a><?php else : ?><?php echo esc_html( $price['product_name'] ); ?><?php endif; ?></h3>
 						<?php endif; ?>
 						<?php if ( $show_summary && '' !== $summary ) : ?>
 							<div class="ajcore-product-summary" style="margin-bottom:12px;color:#64748b;line-height:1.45;"><?php echo esc_html( $summary ); ?></div>
@@ -10079,7 +10292,13 @@ class AJForms {
 								<?php echo esc_html( $price_label ); ?>
 							</div>
 						<?php endif; ?>
-						<?php if ( $show_button && $is_cart_mode ) : ?>
+						<?php if ( $show_button && '' !== $single_handoff_url ) : ?>
+							<a
+								class="ajcore-product-handoff"
+								href="<?php echo esc_url( add_query_arg( 'ajp_add', rawurlencode( $card_id ), $single_handoff_url ) ); ?>"
+								style="display:inline-block;background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:800;text-decoration:none;"
+							><?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></a>
+						<?php elseif ( $show_button && $is_cart_mode ) : ?>
 							<div class="ajcore-product-cart-controls" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
 								<span class="ajcore-product-single-qty" style="display:inline-flex;align-items:center;min-height:40px;color:#475569;font-weight:800;"><?php esc_html_e( 'Qty 1', 'ajforms' ); ?></span>
 								<input class="ajcore-product-quantity" type="hidden" value="1">
@@ -10100,9 +10319,15 @@ class AJForms {
 								style="background:#0f7ac6;color:#fff;border:0;border-radius:10px;padding:12px 18px;font-weight:800;cursor:pointer;"
 							><?php echo esc_html( $atts['button'] ); ?></button>
 						<?php endif; ?>
+						<?php if ( '' !== $card_link ) : ?>
+							<a class="ajcore-product-more" href="<?php echo esc_url( $card_link ); ?>"><?php echo esc_html( isset( $catalog_ui['link_label'] ) ? $catalog_ui['link_label'] : __( 'Details', 'ajforms' ) ); ?> <span aria-hidden="true">&rarr;</span><span class="screen-reader-text"> <?php echo esc_html( $price['product_name'] ); ?></span></a>
+						<?php endif; ?>
 					</div>
 				<?php endforeach; ?>
 			</div>
+			<?php if ( $has_catalog_ui ) : ?>
+				<nav class="ajcore-products-pager" aria-label="<?php esc_attr_e( 'Product pages', 'ajforms' ); ?>" hidden></nav>
+			<?php endif; ?>
 			<?php if ( $is_cart_mode ) : ?>
 				<button type="button" class="ajcore-floating-cart" aria-label="<?php echo esc_attr__( 'View cart', 'ajforms' ); ?>">
 					<span class="ajcore-floating-cart-icon" aria-hidden="true">🛒</span>
@@ -11086,14 +11311,314 @@ class AJForms {
 			.ajcore-floating-cart-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
 			.ajcore-floating-cart.has-items{animation:ajcoreCartPulse .28s ease}
 			@keyframes ajcoreCartPulse{0%{transform:scale(1)}50%{transform:scale(1.06)}100%{transform:scale(1)}}
-			@media (max-width: 800px){.ajcore-cart-modal-panel{top:calc(env(safe-area-inset-top,0px) + 110px);transform:translateX(-50%);max-height:calc(100vh - 140px);width:calc(100vw - 24px);padding:18px}.ajcore-cart-modal-row{grid-template-columns:1fr;align-items:start}.ajcore-cart-modal-footer{align-items:flex-start;flex-direction:column}.ajcore-cart-embedded-checkout{grid-template-columns:1fr}.ajcore-products-list{grid-template-columns:1fr!important}.ajcore-products-wrap-cart{padding-top:118px;padding-bottom:42px}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{left:12px;right:12px;margin:0;padding:10px 12px;border-radius:16px;gap:8px}.ajcore-cart-mini.ajcore-mobile-fixed-cart{position:fixed!important;top:var(--ajcore-cart-mobile-top,calc(env(safe-area-inset-top,0px) + 190px))!important;bottom:auto!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;z-index:2147483000!important;box-sizing:border-box!important;transform:translateZ(0);}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-clear{padding:9px 10px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
+			@media (max-width: 800px){.ajcore-cart-modal-panel{top:calc(env(safe-area-inset-top,0px) + 110px);transform:translateX(-50%);max-height:calc(100vh - 140px);width:calc(100vw - 24px);padding:18px}.ajcore-cart-modal-row{grid-template-columns:1fr;align-items:start}.ajcore-cart-modal-footer{align-items:flex-start;flex-direction:column}.ajcore-cart-embedded-checkout{grid-template-columns:1fr}.ajcore-products-list{grid-template-columns:repeat(var(--ajp-cols-phone,1),minmax(0,1fr))!important}.ajcore-products-wrap-cart{padding-top:118px;padding-bottom:42px}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{left:12px;right:12px;margin:0;padding:10px 12px;border-radius:16px;gap:8px}.ajcore-cart-mini.ajcore-mobile-fixed-cart{position:fixed!important;top:var(--ajcore-cart-mobile-top,calc(env(safe-area-inset-top,0px) + 190px))!important;bottom:auto!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;z-index:2147483000!important;box-sizing:border-box!important;transform:translateZ(0);}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-clear{padding:9px 10px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
 			@media (max-width: 980px){.ajcore-products-wrap-cart{grid-template-columns:1fr}.ajcore-products-wrap-cart .ajcore-cart{grid-column:auto;grid-row:auto;position:static}}
 			/* While the site's mobile menu is expanded, keep the fixed carts behind it. */
 			body.menu-open .ajcore-cart-mini.ajcore-mobile-fixed-cart,
 			html.has-modal-open .ajcore-cart-mini.ajcore-mobile-fixed-cart{z-index:1!important}
 			body.menu-open .ajcore-floating-cart,
 			html.has-modal-open .ajcore-floating-cart{z-index:1!important}
+			/* Catalog: toolbar, pager, product-page links. Theme hooks: --ajp-accent, --ajp-radius, --ajp-scroll-offset. */
+			.ajcore-products-wrap .ajcore-product[hidden]{display:none!important}
+			.ajcore-products-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 18px;scroll-margin-top:var(--ajp-scroll-offset,96px)}
+			.ajcore-products-search{position:relative;flex:1 1 260px;max-width:420px;display:flex;align-items:center}
+			.ajcore-products-search svg{position:absolute;left:12px;color:#64748b;pointer-events:none}
+			.ajcore-products-search-input{width:100%;min-height:44px;box-sizing:border-box;padding:10px 38px 10px 38px!important;border:1px solid #cbd5e1;border-radius:var(--ajp-radius,10px);background:#fff;color:#111827;font-size:16px;line-height:1.3;-webkit-appearance:none;appearance:none}
+			.ajcore-products-search-input::-webkit-search-cancel-button{display:none}
+			.ajcore-products-search-input:focus{outline:2px solid var(--ajp-accent,#0f7ac6);outline-offset:1px;border-color:transparent}
+			.ajcore-products-search-clear{position:absolute;right:6px;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:#64748b;font-size:20px;line-height:1;cursor:pointer}
+			.ajcore-products-cats{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 100%;min-width:0}
+			.ajcore-products-cat{min-height:38px;padding:7px 14px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;font-size:14px;font-weight:700;line-height:1.2;cursor:pointer;white-space:nowrap}
+			.ajcore-products-cat span{margin-left:4px;color:#94a3b8;font-weight:600}
+			.ajcore-products-cat:hover{border-color:var(--ajp-accent,#0f7ac6);color:var(--ajp-accent,#0f7ac6)}
+			.ajcore-products-cat.is-active{border-color:var(--ajp-accent,#0f7ac6);background:var(--ajp-accent,#0f7ac6);color:#fff}
+			.ajcore-products-cat.is-active span{color:rgba(255,255,255,.8)}
+			.ajcore-products-cat:focus-visible,.ajcore-products-pager button:focus-visible{outline:2px solid var(--ajp-accent,#0f7ac6);outline-offset:2px}
+			.ajcore-products-cat-select{display:none;min-height:44px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:var(--ajp-radius,10px);background:#fff;font-size:16px;max-width:100%}
+			.ajcore-products-toolbar.is-dropdown .ajcore-products-cats{display:none}
+			.ajcore-products-toolbar.is-dropdown .ajcore-products-cat-select{display:block}
+			.ajcore-products-count{margin-left:auto;color:#64748b;font-size:14px;white-space:nowrap}
+			.ajcore-products-no-results{margin:0 0 18px;padding:22px;border:1px dashed #cbd5e1;border-radius:14px;color:#475569;text-align:center}
+			.ajcore-products-reset{margin-left:8px;border:0;background:none;color:var(--ajp-accent,#0f7ac6);font-weight:700;cursor:pointer;text-decoration:underline}
+			.ajcore-products-pager{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;margin:22px 0 0}
+			.ajcore-products-pager button{min-width:44px;min-height:44px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:var(--ajp-radius,10px);background:#fff;color:#334155;font-size:15px;font-weight:700;cursor:pointer}
+			.ajcore-products-pager button[aria-current="page"]{border-color:var(--ajp-accent,#0f7ac6);background:var(--ajp-accent,#0f7ac6);color:#fff}
+			.ajcore-products-pager button:disabled{opacity:.45;cursor:default}
+			.ajcore-products-pager .ajcore-pager-gap{padding:0 4px;color:#94a3b8}
+			.ajcore-products-pager .ajcore-pager-status{display:none;padding:0 10px;color:#475569;font-weight:700}
+			.ajcore-product-title a{color:inherit;text-decoration:none}
+			.ajcore-product-title a:hover{color:var(--ajp-accent,#0f7ac6)}
+			.ajcore-product-more{display:inline-block;margin-top:12px;color:var(--ajp-accent,#0f7ac6);font-weight:700;text-decoration:none}
+			.ajcore-product-more:hover{text-decoration:underline}
+			.ajcore-products-back{display:inline-block;margin:0 0 14px;color:var(--ajp-accent,#0f7ac6);font-weight:700;text-decoration:none}
+			.ajcore-products-single{max-width:460px}
+			.ajcore-products-single .ajcore-product{min-height:0!important}
+			.ajcore-products-single .ajcore-product-title,.ajcore-products-single .ajcore-product-summary,.ajcore-products-single .ajcore-product-description{min-height:0!important;-webkit-line-clamp:unset!important}
+			@media (max-width: 980px){.ajcore-products-wrap .ajcore-products-list{grid-template-columns:repeat(var(--ajp-cols-tablet,2),minmax(0,1fr))!important}}
+			@media (max-width: 800px){
+				.ajcore-products-wrap .ajcore-products-list{grid-template-columns:repeat(var(--ajp-cols-phone,1),minmax(0,1fr))!important;gap:12px!important}
+				.ajcore-products-toolbar{gap:10px}
+				.ajcore-products-search{flex:1 1 100%;max-width:none}
+				.ajcore-products-count{margin-left:0;flex:1 1 100%;font-size:13px}
+				/* Chips scroll sideways instead of wrapping into several rows. */
+				.ajcore-products-cats{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity;scrollbar-width:none;max-width:100%;padding:2px 0;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent 100%);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent 100%)}
+				.ajcore-products-cats::-webkit-scrollbar{display:none}
+				.ajcore-products-cat{scroll-snap-align:start;min-height:40px}
+				.ajcore-products-phone-dropdown .ajcore-products-cats{display:none}
+				.ajcore-products-phone-dropdown .ajcore-products-cat-select{display:block;width:100%}
+				.ajcore-products-pager [data-page-num],.ajcore-products-pager .ajcore-pager-gap{display:none}
+				.ajcore-products-pager .ajcore-pager-status{display:inline-block}
+				.ajcore-products-pager{gap:10px}
+				.ajcore-products-pager [data-page-step]{flex:1 1 0;max-width:160px}
+				.ajcore-products-single{max-width:none}
+				.ajcore-products-wrap[data-phone-cols="2"] .ajcore-product{padding:14px!important;border-radius:12px!important}
+				.ajcore-products-wrap[data-phone-cols="2"] .ajcore-product-title{font-size:17px!important;-webkit-line-clamp:3}
+				.ajcore-products-wrap[data-phone-cols="2"] .ajcore-product-summary,.ajcore-products-wrap[data-phone-cols="2"] .ajcore-product-description{font-size:14px;-webkit-line-clamp:3}
+				.ajcore-products-wrap[data-phone-cols="2"] .ajcore-product-price{font-size:20px!important;margin:8px 0 10px!important}
+				.ajcore-products-wrap[data-phone-cols="2"] .ajcore-product-single-qty{display:none!important}
+				.ajcore-products-wrap[data-phone-cols="2"] :is(.ajcore-product-add,.ajcore-product-buy,.ajcore-product-handoff){width:100%;padding:11px 10px!important;text-align:center}
+			}
+			@media (prefers-reduced-motion: reduce){.ajcore-products-cats{scroll-behavior:auto}}
 		</style>
+		<?php if ( $has_catalog_ui || $is_cart_mode ) : ?>
+		<script>
+		(function() {
+			// Catalog UI: search, category filter, paging (client-side; every card is in the markup,
+			// so the cart and dependency auto-add keep working on hidden cards). State lives in
+			// ?ajp_q / ?ajp_cat / ?ajp_pg so a filtered view can be shared. ?ajp_add=price_…
+			// (sent from a product page) adds that price to this listing's cart.
+			const root = document.getElementById(<?php echo wp_json_encode( $root_id ); ?>);
+			if (!root || root.dataset.ajpReady) {
+				return;
+			}
+			root.dataset.ajpReady = '1';
+			const params = new URLSearchParams(window.location.search);
+
+			const addPrice = params.get('ajp_add');
+			if (addPrice && root.dataset.mode === 'cart') {
+				const target = Array.from(root.querySelectorAll('.ajcore-product')).find(function(card) { return card.dataset.priceId === addPrice; });
+				const addButton = target ? target.querySelector('.ajcore-product-add') : null;
+				if (addButton && !addButton.disabled) {
+					window.setTimeout(function() { addButton.click(); }, 0);
+				}
+				params.delete('ajp_add');
+				try {
+					const query = params.toString();
+					window.history.replaceState(window.history.state, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
+				} catch (error) {}
+			}
+
+			const list = root.querySelector('.ajcore-products-list');
+			const pager = root.querySelector('.ajcore-products-pager');
+			if (!list || !pager) {
+				return;
+			}
+			const toolbar = root.querySelector('.ajcore-products-toolbar');
+			const cards = Array.from(list.querySelectorAll('.ajcore-product')).filter(function(card) { return !card.classList.contains('ajcore-product-support'); });
+			const perPage = parseInt(root.dataset.perPage || '0', 10) || 0;
+			const searchInput = root.querySelector('.ajcore-products-search-input');
+			const searchClear = root.querySelector('.ajcore-products-search-clear');
+			const chips = Array.from(root.querySelectorAll('.ajcore-products-cat'));
+			const select = root.querySelector('.ajcore-products-cat-select');
+			const countEl = root.querySelector('.ajcore-products-count');
+			const noResults = root.querySelector('.ajcore-products-no-results');
+			const knownCats = chips.map(function(chip) { return chip.dataset.cat; });
+
+			function norm(value) {
+				value = String(value || '').toLowerCase();
+				return value.normalize ? value.normalize('NFD').replace(/[̀-ͯ]/g, '') : value;
+			}
+
+			const state = {
+				q: params.get('ajp_q') || '',
+				cat: params.get('ajp_cat') || '',
+				page: Math.max(1, parseInt(params.get('ajp_pg') || '1', 10) || 1)
+			};
+			if (knownCats.indexOf(state.cat) === -1) {
+				state.cat = '';
+			}
+			if (searchInput) {
+				searchInput.value = state.q;
+			}
+
+			function matches(card) {
+				if (state.cat && (' ' + (card.dataset.categories || '') + ' ').indexOf(' ' + state.cat + ' ') === -1) {
+					return false;
+				}
+				const terms = norm(state.q).split(/\s+/).filter(Boolean);
+				const haystack = card.dataset.search || '';
+				return terms.every(function(term) { return haystack.indexOf(term) !== -1; });
+			}
+
+			function syncUrl() {
+				try {
+					const url = new URL(window.location.href);
+					['ajp_q', 'ajp_cat', 'ajp_pg'].forEach(function(key) { url.searchParams.delete(key); });
+					if (state.q.trim()) { url.searchParams.set('ajp_q', state.q.trim()); }
+					if (state.cat) { url.searchParams.set('ajp_cat', state.cat); }
+					if (state.page > 1) { url.searchParams.set('ajp_pg', String(state.page)); }
+					window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+				} catch (error) {}
+			}
+
+			// Scroll so the toolbar (or grid) sits just under any fixed/sticky header or fixed mobile cart.
+			function scrollToTop() {
+				const anchor = toolbar || list;
+				let offset = 12;
+				document.querySelectorAll('header, .site-header, #masthead, .ajcore-cart-mini.ajcore-mobile-fixed-cart').forEach(function(el) {
+					const style = window.getComputedStyle(el);
+					if (style.position !== 'fixed' && style.position !== 'sticky') {
+						return;
+					}
+					const rect = el.getBoundingClientRect();
+					if (rect.height > 0 && rect.top < 200) {
+						offset = Math.max(offset, rect.bottom + 12);
+					}
+				});
+				const top = anchor.getBoundingClientRect().top + window.pageYOffset - offset;
+				const smooth = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+				window.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
+			}
+
+			function pageButton(label, page, opts) {
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.textContent = label;
+				button.dataset.goto = String(page);
+				if (opts && opts.current) { button.setAttribute('aria-current', 'page'); }
+				if (opts && opts.disabled) { button.disabled = true; }
+				if (opts && opts.step) { button.dataset.pageStep = opts.step; }
+				if (opts && opts.num) { button.dataset.pageNum = '1'; button.setAttribute('aria-label', 'Page ' + page); }
+				return button;
+			}
+
+			function renderPager(pages) {
+				pager.innerHTML = '';
+				pager.hidden = pages <= 1;
+				if (pages <= 1) {
+					return;
+				}
+				pager.appendChild(pageButton('‹ Prev', state.page - 1, { disabled: state.page <= 1, step: 'prev' }));
+				const shown = [];
+				for (let page = 1; page <= pages; page += 1) {
+					if (page === 1 || page === pages || Math.abs(page - state.page) <= 1) {
+						shown.push(page);
+					}
+				}
+				let last = 0;
+				shown.forEach(function(page) {
+					if (page - last > 1) {
+						const gap = document.createElement('span');
+						gap.className = 'ajcore-pager-gap';
+						gap.textContent = '…';
+						pager.appendChild(gap);
+					}
+					pager.appendChild(pageButton(String(page), page, { current: page === state.page, num: true }));
+					last = page;
+				});
+				const status = document.createElement('span');
+				status.className = 'ajcore-pager-status';
+				status.textContent = state.page + ' / ' + pages;
+				pager.appendChild(status);
+				pager.appendChild(pageButton('Next ›', state.page + 1, { disabled: state.page >= pages, step: 'next' }));
+			}
+
+			function render(scroll) {
+				const hits = cards.filter(matches);
+				const pages = perPage > 0 ? Math.max(1, Math.ceil(hits.length / perPage)) : 1;
+				state.page = Math.min(Math.max(1, state.page), pages);
+				const start = perPage > 0 ? (state.page - 1) * perPage : 0;
+				const end = perPage > 0 ? start + perPage : hits.length;
+				const visible = hits.slice(start, end);
+				cards.forEach(function(card) { card.hidden = visible.indexOf(card) === -1; });
+				if (noResults) { noResults.hidden = hits.length > 0; }
+				if (countEl) {
+					countEl.textContent = hits.length === cards.length && pages <= 1
+						? ''
+						: (perPage > 0 && hits.length > perPage ? (start + 1) + '–' + Math.min(end, hits.length) + ' of ' + hits.length : hits.length + ' of ' + cards.length);
+				}
+				chips.forEach(function(chip) {
+					const active = chip.dataset.cat === state.cat;
+					chip.classList.toggle('is-active', active);
+					chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+				});
+				if (select) { select.value = state.cat; }
+				if (searchClear) { searchClear.hidden = !state.q; }
+				renderPager(pages);
+				syncUrl();
+				if (scroll) { scrollToTop(); }
+			}
+
+			let searchTimer = null;
+			if (searchInput) {
+				searchInput.addEventListener('input', function() {
+					window.clearTimeout(searchTimer);
+					searchTimer = window.setTimeout(function() {
+						state.q = searchInput.value;
+						state.page = 1;
+						render(false);
+					}, 120);
+				});
+				searchInput.addEventListener('keydown', function(event) {
+					if (event.key === 'Enter') {
+						event.preventDefault();
+						searchInput.blur(); // closes the phone keyboard so results are visible
+					} else if (event.key === 'Escape' && searchInput.value) {
+						event.stopPropagation();
+						searchInput.value = '';
+						state.q = '';
+						state.page = 1;
+						render(false);
+					}
+				});
+			}
+			if (searchClear) {
+				searchClear.addEventListener('click', function() {
+					searchInput.value = '';
+					state.q = '';
+					state.page = 1;
+					render(false);
+					searchInput.focus();
+				});
+			}
+			chips.forEach(function(chip) {
+				chip.addEventListener('click', function() {
+					state.cat = chip.dataset.cat || '';
+					state.page = 1;
+					render(false);
+					if (chip.scrollIntoView) { chip.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+				});
+			});
+			if (select) {
+				select.addEventListener('change', function() {
+					state.cat = select.value;
+					state.page = 1;
+					render(false);
+				});
+			}
+			const reset = root.querySelector('.ajcore-products-reset');
+			if (reset) {
+				reset.addEventListener('click', function() {
+					state.q = '';
+					state.cat = '';
+					state.page = 1;
+					if (searchInput) { searchInput.value = ''; }
+					render(true);
+				});
+			}
+			pager.addEventListener('click', function(event) {
+				const button = event.target.closest('button[data-goto]');
+				if (!button || button.disabled) {
+					return;
+				}
+				state.page = parseInt(button.dataset.goto, 10) || 1;
+				render(true);
+			});
+
+			render(false);
+		})();
+		</script>
+		<?php endif; ?>
 		<?php
 		return ob_get_clean();
 	}
