@@ -9342,10 +9342,66 @@ class AJForms_Admin {
 		}
 
 		$to_array = function( $record ) { return (array) $record; };
+		$subscriptions_out = array_values( array_map( $to_array, $merged_subscriptions ) );
+		if ( $include_unpaid ) {
+			$subscriptions_out = array_merge( $subscriptions_out, $this->get_portal_scheduled_subscription_records( $stripe_customer_id ) );
+		}
 		return array(
-			'subscriptions'     => array_values( array_map( $to_array, $merged_subscriptions ) ),
+			'subscriptions'     => $subscriptions_out,
 			'one_time_services' => array_values( array_map( $to_array, $this->get_portal_one_time_paid_services( $stripe_customer_id, 50 ) ) ),
 		);
+	}
+
+	/**
+	 * Future-dated subscriptions ("Starts Nov 23" in Stripe) are subscription schedules that have not
+	 * started: Stripe's subscription list leaves them out, so the sync never stores them. Read live
+	 * (one request) for callers that ask for not-yet-paid services, e.g. sending a contract.
+	 *
+	 * @return array<int,array> Service records in the same shape as the others.
+	 */
+	private function get_portal_scheduled_subscription_records( $stripe_customer_id ) {
+		if ( 0 !== strpos( (string) $stripe_customer_id, 'cus_' ) ) {
+			return array();
+		}
+		$secret_key = $this->get_stripe_secret_key_for_portal();
+		if ( empty( $secret_key ) ) {
+			return array();
+		}
+		$response = $this->stripe_api_get( 'subscription_schedules', $secret_key, array( 'customer' => $stripe_customer_id, 'limit' => 20 ) );
+		if ( is_wp_error( $response ) || empty( $response['data'] ) || ! is_array( $response['data'] ) ) {
+			return array();
+		}
+		$pdb      = $this->get_pdb();
+		$products = $this->get_portal_stripe_products_table();
+		$records  = array();
+		foreach ( $response['data'] as $schedule ) {
+			if ( ! is_array( $schedule ) || 'not_started' !== ( $schedule['status'] ?? '' ) ) {
+				continue; // started schedules already have a real (synced) subscription
+			}
+			$phase = is_array( $schedule['phases'][0] ?? null ) ? $schedule['phases'][0] : array();
+			$start = ! empty( $phase['start_date'] ) ? gmdate( 'Y-m-d H:i:s', (int) $phase['start_date'] ) : '';
+			foreach ( (array) ( $phase['items'] ?? array() ) as $item ) {
+				$price_id = is_array( $item['price'] ?? null ) ? (string) ( $item['price']['id'] ?? '' ) : (string) ( $item['price'] ?? '' );
+				if ( '' === $price_id ) {
+					continue;
+				}
+				$product  = $pdb->get_row( $pdb->prepare( "SELECT name, price_amount, recurring_interval FROM {$products} WHERE stripe_price_id = %s LIMIT 1", $price_id ) );
+				$quantity = max( 1, (int) ( $item['quantity'] ?? 1 ) );
+				$records[] = array(
+					'service_name'           => $product ? (string) $product->name : $price_id,
+					'amount'                 => $product ? number_format( (float) $product->price_amount * $quantity, 2, '.', '' ) : '',
+					'recurring_interval'     => $product ? (string) $product->recurring_interval : '',
+					'billing_type_key'       => 'subscription',
+					'stripe_price_id'        => $price_id,
+					'stripe_subscription_id' => (string) ( $schedule['id'] ?? '' ) . ( count( (array) $phase['items'] ) > 1 ? ':' . $price_id : '' ),
+					'service_period_start'   => $start,
+					'service_period_end'     => '',
+					'next_billing_date'      => $start,
+					'status'                 => 'scheduled',
+				);
+			}
+		}
+		return $records;
 	}
 
 	public function api_get_ops_subscription_products() {
