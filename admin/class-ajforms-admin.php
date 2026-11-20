@@ -11514,6 +11514,10 @@ class AJForms_Admin {
 		if ( 'ajforms-client-portal' === $page ) {
 			return;
 		}
+		// Settings shows Stripe mode as a compact badge in its own top bar (see display_settings_page()).
+		if ( 'ajforms-settings' === $page ) {
+			return;
+		}
 
 		$data = $this->get_stripe_mode_badge_data();
 		$settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
@@ -25681,8 +25685,6 @@ class AJForms_Admin {
 		}
 		?>
 		<div class="ajforms-settings-card">
-			<h2><?php esc_html_e( 'Product Catalog', 'ajforms' ); ?></h2>
-			<p><?php esc_html_e( 'Synced Stripe products and prices. These are the services/products you sell; portal fields only control how catalog items appear in Add Services.', 'ajforms' ); ?></p>
 
 			<?php if ( isset( $_GET['portal-products'] ) ) : ?>
 				<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Portal product display settings saved.', 'ajforms' ); ?></p></div>
@@ -25731,22 +25733,18 @@ class AJForms_Admin {
 					'addon'           => array( __( 'Auto-adds', 'ajforms' ), '#0d9488' ),
 				);
 				?>
-				<div class="ajcp-tiles" id="ajcp-tiles" role="toolbar" aria-label="<?php esc_attr_e( 'Filter products', 'ajforms' ); ?>">
+				<?php $default_tile = $tile_counts['shop'] > 0 ? 'shop' : 'all'; // Key products first: what is in the shop. ?>
+				<div class="ajcp-tiles" id="ajcp-tiles" role="toolbar" aria-label="<?php esc_attr_e( 'Filter products', 'ajforms' ); ?>" data-default="<?php echo esc_attr( $default_tile ); ?>">
 					<?php foreach ( $tiles as $tile_key => $tile ) : ?>
 						<?php if ( 'all' !== $tile_key && 0 === $tile_counts[ $tile_key ] ) { continue; } ?>
 						<?php if ( ! $portal_on && ! in_array( $tile_key, array( 'all', 'shop', 'not_shop', 'addon' ), true ) ) { continue; } ?>
-						<button type="button" class="ajcp-tile<?php echo 'all' === $tile_key ? ' is-active' : ''; ?>" data-filter="<?php echo esc_attr( $tile_key ); ?>" style="--c:<?php echo esc_attr( $tile[1] ); ?>" aria-pressed="<?php echo 'all' === $tile_key ? 'true' : 'false'; ?>"><b><?php echo (int) $tile_counts[ $tile_key ]; ?></b><span><?php echo esc_html( $tile[0] ); ?></span></button>
+						<button type="button" class="ajcp-tile<?php echo $default_tile === $tile_key ? ' is-active' : ''; ?>" data-filter="<?php echo esc_attr( $tile_key ); ?>" style="--c:<?php echo esc_attr( $tile[1] ); ?>" aria-pressed="<?php echo $default_tile === $tile_key ? 'true' : 'false'; ?>"><b><?php echo (int) $tile_counts[ $tile_key ]; ?></b><span><?php echo esc_html( $tile[0] ); ?></span></button>
 					<?php endforeach; ?>
+					<a class="button button-primary ajcp-new" href="<?php echo esc_url( $this->product_editor_url( 'new' ) ); ?>" title="<?php esc_attr_e( 'New product', 'ajforms' ); ?>"><?php esc_html_e( 'New', 'ajforms' ); ?></a>
 				</div>
-				<a class="button button-primary" href="<?php echo esc_url( $this->product_editor_url( 'new' ) ); ?>"><?php esc_html_e( 'New product', 'ajforms' ); ?></a>
-			<?php if ( $portal_on ) : ?>
-			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
-				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
-				<?php else : ?>
-				<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-products', 'ajf_products_action' => 'sync' ), admin_url( 'admin.php' ) ), 'ajf_sync_stripe_products' ) ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
-				<?php endif; ?>
+
 			</div>
-		<?php if ( $portal_on ) : ?><p class="description"><?php esc_html_e( 'Customer View opens from each customer link in Portal Users, Billing, Transactions, Requests, Compliance items, and Files.', 'ajforms' ); ?></p><?php endif; ?>
+
 
 			<form method="post" id="ajcp-catalog-form">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
@@ -25988,7 +25986,8 @@ class AJForms_Admin {
 				.ajcp-choice input{margin:0}
 				.ajcp-choice input:checked + span{font-weight:600;color:#0f172a}
 				/* Tiles: same look as Files / Media Library / AJNanda list tiles. */
-				.ajcp-tiles{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 100%;margin:0 0 4px}
+				.ajcp-tiles{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;flex:1 1 100%;margin:0 0 4px}
+				.ajcp-new{margin-left:auto!important;align-self:flex-start}
 				.ajcp-tile{cursor:pointer;min-width:110px;padding:8px 14px;text-align:left;background:color-mix(in srgb,var(--c) 12%,#fff);border:1px solid color-mix(in srgb,var(--c) 35%,#fff);border-left:5px solid var(--c);border-radius:6px;color:#1d2327;font:inherit}
 				.ajcp-tile:hover{background:color-mix(in srgb,var(--c) 22%,#fff)}
 				.ajcp-tile.is-active{background:var(--c);border-color:var(--c)}
@@ -26066,15 +26065,18 @@ class AJForms_Admin {
 						default: return row.dataset.owned === filter;
 					}
 				}
-				tiles.forEach(function(tile) {
-					tile.addEventListener('click', function() {
-						tiles.forEach(function(other) {
-							other.classList.toggle('is-active', other === tile);
-							other.setAttribute('aria-pressed', other === tile ? 'true' : 'false');
-						});
-						rows.forEach(function(row) { row.hidden = !matchesTile(row, tile.dataset.filter); });
+				function applyTile(tile) {
+					tiles.forEach(function(other) {
+						other.classList.toggle('is-active', other === tile);
+						other.setAttribute('aria-pressed', other === tile ? 'true' : 'false');
 					});
+					rows.forEach(function(row) { row.hidden = !matchesTile(row, tile.dataset.filter); });
+				}
+				tiles.forEach(function(tile) {
+					tile.addEventListener('click', function() { applyTile(tile); });
 				});
+				const startTile = tiles.find(function(tile) { return tile.classList.contains('is-active'); });
+				if (startTile) { applyTile(startTile); }
 
 				function fieldsOf(row) {
 					return Array.from(row.querySelectorAll('input, select, textarea')).filter(function(el) { return el.name; });
@@ -30396,6 +30398,16 @@ class AJForms_Admin {
 				.ajforms-settings-brand-badge{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:13px;letter-spacing:.04em}
 				.ajforms-settings-brand-title{font-size:18px;font-weight:700;color:#1f2937}
 				.ajforms-settings-topbar-section{font-size:14px;font-weight:600;color:#6b7280;border-left:1px solid #e5e7eb;padding-left:18px}
+				.ajforms-settings-stripe{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;text-decoration:none}
+				.ajforms-settings-stripe-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+				.ajforms-settings-stripe.is-live{background:#fff7ed;color:#c2410c}
+				.ajforms-settings-stripe.is-test{background:#eff6ff;color:#1d4ed8}
+				.ajforms-settings-stripe.is-error{background:#fef2f2;color:#b91c1c}
+				/* The top bar names the section: no repeated section title or intro line in the content. */
+				.ajforms-settings-content .ajforms-settings-head > p,
+				.ajforms-settings-content .ajcore-section-head > div > p{display:none}
+				.ajforms-settings-content h2.is-dup-title{display:none}
+				.ajforms-settings-content .ajforms-settings-head:not(:has(> :not(h2):not(p))){display:none}
 				.ajforms-settings-topbar-update{margin-left:auto;font-size:12.5px;font-weight:600;color:#c2410c;background:#fff7ed;border-radius:999px;padding:4px 12px;text-decoration:none}
 				.ajforms-settings-layout{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:auto}
 				.ajforms-settings-sidebar{background:#fff;border-right:1px solid #eceef2;padding:12px 0}
@@ -30498,6 +30510,20 @@ class AJForms_Admin {
 						<div class="ajforms-settings-brand-title"><?php esc_html_e( 'Settings', 'ajforms' ); ?></div>
 					</div>
 					<span class="ajforms-settings-topbar-section"><?php echo esc_html( $sections[ $section ]['label'] ); ?></span>
+					<?php
+					$stripe_badge = $this->get_stripe_mode_badge_data();
+					$stripe_tone  = ! empty( $stripe_badge['has_issues'] ) ? 'is-error' : ( ! empty( $stripe_badge['is_live'] ) ? 'is-live' : 'is-test' );
+					?>
+					<a class="ajforms-settings-stripe <?php echo esc_attr( $stripe_tone ); ?>" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) ) ); ?>" title="<?php echo esc_attr( ! empty( $stripe_badge['issues'] ) ? implode( ' ', (array) $stripe_badge['issues'] ) : ( ! empty( $stripe_badge['is_live'] ) ? __( 'Real payments enabled.', 'ajforms' ) : __( 'Test card 4242 4242 4242 4242', 'ajforms' ) ) ); ?>">
+						<span class="ajforms-settings-stripe-dot" aria-hidden="true"></span>
+						<?php
+						echo esc_html(
+							! empty( $stripe_badge['has_issues'] )
+								? sprintf( __( 'Stripe %s · key problem', 'ajforms' ), $stripe_badge['label'] )
+								: ( ! empty( $stripe_badge['is_live'] ) ? __( 'Stripe Live · real payments', 'ajforms' ) : sprintf( __( 'Stripe %s · test mode', 'ajforms' ), $stripe_badge['label'] ) )
+						);
+						?>
+					</a>
 					<?php if ( is_array( $update_status ) && ! empty( $update_status['has_update'] ) ) : ?>
 						<a class="ajforms-settings-topbar-update" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'update' ), admin_url( 'admin.php' ) ) ); ?>">
 							<?php echo ! empty( $update_status['developer'] ) ? esc_html__( 'Developer update available', 'ajforms' ) : esc_html__( 'Update available', 'ajforms' ); ?>
@@ -30542,6 +30568,16 @@ class AJForms_Admin {
 					</aside>
 
 					<div class="ajforms-settings-content">
+						<script>
+						document.addEventListener('DOMContentLoaded', function() {
+							var label = document.querySelector('.ajforms-settings-topbar-section');
+							if (!label) { return; }
+							var want = label.textContent.trim().toLowerCase();
+							document.querySelectorAll('.ajforms-settings-content h2').forEach(function(h) {
+								if (h.textContent.trim().toLowerCase() === want) { h.classList.add('is-dup-title'); }
+							});
+						});
+						</script>
 						<?php if ( 'auth' === $section ) : ?>
 							<div class="ajforms-settings-head">
 								<h2><?php esc_html_e( 'Auth', 'ajforms' ); ?></h2>
