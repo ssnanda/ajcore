@@ -25647,6 +25647,13 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d visible in Add Services', 'ajforms' ), $visible_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
 				<a class="button button-primary" href="<?php echo esc_url( $this->product_editor_url( 'new' ) ); ?>"><?php esc_html_e( 'New product', 'ajforms' ); ?></a>
+				<label class="ajcp-show-archived"><input type="checkbox" id="ajcp-show-archived"> <?php
+				$archived_groups = 0;
+				foreach ( $product_groups as $archived_group ) {
+					$archived_groups += empty( array_filter( wp_list_pluck( $archived_group['rows'], 'active' ) ) ) ? 1 : 0;
+				}
+				echo esc_html( sprintf( __( 'Show archived (%d)', 'ajforms' ), $archived_groups ) );
+				?></label>
 			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
@@ -25654,12 +25661,12 @@ class AJForms_Admin {
 
 			<form method="post" id="ajcp-catalog-form">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
-				<table class="widefat striped ajcp-catalog-table">
+				<table class="widefat striped ajcp-catalog-table hide-archived">
 					<thead>
 						<tr>
 							<th style="width:34%"><?php esc_html_e( 'On the website', 'ajforms' ); ?> <span class="ajcp-th-note"><?php esc_html_e( 'saved to Stripe', 'ajforms' ); ?></span></th>
 							<th style="width:24%"><?php esc_html_e( 'Prices & add-ons', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'If they already have it', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'If owned', 'ajforms' ); ?></th>
 							<th style="width:150px"></th>
 						</tr>
 					</thead>
@@ -25704,8 +25711,8 @@ class AJForms_Admin {
 								$behavior    = ! empty( $product->duplicate_behavior ) && isset( $duplicate_behavior_options[ $product->duplicate_behavior ] ) ? $product->duplicate_behavior : 'no_duplicates';
 								$behaviors   = array(
 									'no_duplicates'   => array( '⛔', __( 'Block', 'ajforms' ), __( 'Can only own it once', 'ajforms' ) ),
-									'allow_duplicate' => array( '➕', __( 'Allow again', 'ajforms' ), __( 'Buy as many as needed', 'ajforms' ) ),
-									'custom_request'  => array( '💬', __( 'Ask us', 'ajforms' ), __( 'Show a request form instead', 'ajforms' ) ),
+									'allow_duplicate' => array( '➕', __( 'Allow', 'ajforms' ), __( 'Can buy it again', 'ajforms' ) ),
+									'custom_request'  => array( '💬', __( 'Ask', 'ajforms' ), __( 'Shows a request form instead', 'ajforms' ) ),
 									'upgrade'         => array( '⬆️', __( 'Upgrade', 'ajforms' ), __( 'Replaces another service', 'ajforms' ) ),
 								);
 								$has_override = '' !== trim( (string) $product->custom_label ) || '' !== trim( (string) $product->description_override );
@@ -25764,12 +25771,12 @@ class AJForms_Admin {
 										<?php endforeach; ?>
 									</td>
 									<td class="ajcp-owned">
-										<div class="ajcp-choices" role="radiogroup" aria-label="<?php esc_attr_e( 'If the client already has it', 'ajforms' ); ?>">
+										<div class="ajcp-choices" role="radiogroup" aria-label="<?php esc_attr_e( 'If owned', 'ajforms' ); ?>">
 											<?php foreach ( $behaviors as $behavior_key => $behavior_ui ) : ?>
 												<?php if ( ! isset( $duplicate_behavior_options[ $behavior_key ] ) ) { continue; } ?>
-												<label class="ajcp-choice">
+												<label class="ajcp-choice" title="<?php echo esc_attr( $behavior_ui[2] ); ?>">
 													<input type="radio" name="portal_product_groups[<?php echo $fk; ?>][duplicate_behavior]" value="<?php echo esc_attr( $behavior_key ); ?>" <?php checked( $behavior, $behavior_key ); ?>>
-													<span class="ajcp-choice-box"><span class="ajcp-choice-icon" aria-hidden="true"><?php echo esc_html( $behavior_ui[0] ); ?></span><strong><?php echo esc_html( $behavior_ui[1] ); ?></strong><small><?php echo esc_html( $behavior_ui[2] ); ?></small></span>
+													<span class="ajcp-choice-box"><span class="ajcp-choice-icon" aria-hidden="true"><?php echo esc_html( $behavior_ui[0] ); ?></span><strong><?php echo esc_html( $behavior_ui[1] ); ?></strong></span>
 												</label>
 											<?php endforeach; ?>
 										</div>
@@ -25820,6 +25827,8 @@ class AJForms_Admin {
 				.ajcp-catalog-table td{vertical-align:top;padding:14px 12px}
 				.ajcp-th-note{font-weight:400;color:#94a3b8;font-size:11px}
 				.ajcp-catalog-table tr.is-archived td{opacity:.6}
+				.ajcp-catalog-table.hide-archived tr.is-archived{display:none}
+				.ajcp-show-archived{display:inline-flex;align-items:center;gap:6px;margin-left:6px;font-weight:600;cursor:pointer}
 				/* Website card fields: look like text until hovered/focused. */
 				.ajcp-name,.ajcp-desc,.ajcp-features{width:100%;box-sizing:border-box;border:1px solid transparent!important;background:transparent!important;box-shadow:none!important;border-radius:6px;padding:4px 6px!important;resize:vertical;field-sizing:content}
 				.ajcp-name{font-size:15px;font-weight:700;color:#0f172a}
@@ -25851,13 +25860,12 @@ class AJForms_Admin {
 				.ajcp-dep-note{display:none;width:100%;margin-top:4px;font-size:12px}
 				.ajcp-dep.has-dep .ajcp-dep-note,.ajcp-dep.has-note .ajcp-dep-note{display:block}
 				/* "If they already have it" choice cards */
-				.ajcp-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+				.ajcp-choices{display:flex;flex-wrap:wrap;gap:6px}
 				.ajcp-choice{position:relative;margin:0}
 				.ajcp-choice input{position:absolute;opacity:0;pointer-events:none}
-				.ajcp-choice-box{display:grid;grid-template-columns:22px 1fr;column-gap:6px;align-items:center;height:100%;box-sizing:border-box;padding:7px 9px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;cursor:pointer}
-				.ajcp-choice-icon{grid-row:span 2;font-size:16px;text-align:center}
-				.ajcp-choice-box strong{font-size:13px;color:#0f172a}
-				.ajcp-choice-box small{color:#64748b;font-size:11px;line-height:1.3}
+				.ajcp-choice-box{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;cursor:pointer;white-space:nowrap}
+				.ajcp-choice-icon{font-size:13px}
+				.ajcp-choice-box strong{font-size:13px;font-weight:600;color:#0f172a}
 				.ajcp-choice-box:hover{border-color:#94a3b8}
 				.ajcp-choice input:checked + .ajcp-choice-box{border-color:#2271b1;background:#f0f6fc;box-shadow:inset 0 0 0 1px #2271b1}
 				.ajcp-choice input:focus-visible + .ajcp-choice-box{outline:2px solid #2271b1;outline-offset:2px}
@@ -25875,13 +25883,11 @@ class AJForms_Admin {
 				.ajcp-switch input:disabled + .ajcp-switch-track{opacity:.4}
 				.ajcp-order{display:flex;align-items:center;gap:6px;margin-top:10px;color:#64748b;font-size:12px}
 				.ajcp-order input{width:64px}
-				@media (max-width:1280px){.ajcp-choices{grid-template-columns:1fr}}
 				@media (max-width:960px){
 					.ajcp-catalog-table thead{display:none}
 					.ajcp-catalog-table,.ajcp-catalog-table tbody,.ajcp-catalog-table tr,.ajcp-catalog-table td{display:block;width:auto!important}
 					.ajcp-catalog-table tr{border-bottom:6px solid #f0f0f1}
 					.ajcp-catalog-table td{padding:10px 12px}
-					.ajcp-choices{grid-template-columns:repeat(2,minmax(0,1fr))}
 				}
 				.ajcp-catalog-table tr.is-dirty > td{background:#fffbeb!important}
 				.ajcp-catalog-table tr.is-dirty > td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
@@ -25916,6 +25922,15 @@ class AJForms_Admin {
 					});
 				}
 				rows.forEach(syncReveal);
+
+				// Archived rows are hidden by default; the checkbox shows them without a reload.
+				const showArchived = document.getElementById('ajcp-show-archived');
+				const table = form.querySelector('.ajcp-catalog-table');
+				if (showArchived && table) {
+					showArchived.addEventListener('change', function() {
+						table.classList.toggle('hide-archived', !showArchived.checked);
+					});
+				}
 
 				function fieldsOf(row) {
 					return Array.from(row.querySelectorAll('input, select, textarea')).filter(function(el) { return el.name; });
