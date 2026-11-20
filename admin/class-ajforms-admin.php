@@ -25701,8 +25701,7 @@ class AJForms_Admin {
 				foreach ( $product_groups as $tile_group ) {
 					$tile_active = ! empty( array_filter( wp_list_pluck( $tile_group['rows'], 'active' ) ) );
 					if ( ! $tile_active ) {
-						$tile_counts['archived']++;
-						continue;
+						continue; // Archived products are not listed.
 					}
 					$tile_counts['all']++;
 					$tile_visible = false;
@@ -25730,13 +25729,12 @@ class AJForms_Admin {
 					'custom_request'  => array( __( 'Ask first', 'ajforms' ), '#d97706' ),
 					'upgrade'         => array( __( 'Upgrade', 'ajforms' ), '#4f46e5' ),
 					'addon'           => array( __( 'Auto-adds', 'ajforms' ), '#0d9488' ),
-					'archived'        => array( __( 'Archived', 'ajforms' ), '#dc2626' ),
 				);
 				?>
 				<div class="ajcp-tiles" id="ajcp-tiles" role="toolbar" aria-label="<?php esc_attr_e( 'Filter products', 'ajforms' ); ?>">
 					<?php foreach ( $tiles as $tile_key => $tile ) : ?>
 						<?php if ( 'all' !== $tile_key && 0 === $tile_counts[ $tile_key ] ) { continue; } ?>
-						<?php if ( ! $portal_on && ! in_array( $tile_key, array( 'all', 'shop', 'not_shop', 'addon', 'archived' ), true ) ) { continue; } ?>
+						<?php if ( ! $portal_on && ! in_array( $tile_key, array( 'all', 'shop', 'not_shop', 'addon' ), true ) ) { continue; } ?>
 						<button type="button" class="ajcp-tile<?php echo 'all' === $tile_key ? ' is-active' : ''; ?>" data-filter="<?php echo esc_attr( $tile_key ); ?>" style="--c:<?php echo esc_attr( $tile[1] ); ?>" aria-pressed="<?php echo 'all' === $tile_key ? 'true' : 'false'; ?>"><b><?php echo (int) $tile_counts[ $tile_key ]; ?></b><span><?php echo esc_html( $tile[0] ); ?></span></button>
 					<?php endforeach; ?>
 				</div>
@@ -25789,6 +25787,9 @@ class AJForms_Admin {
 								$group_active  = ! empty( $active_rows );
 								$group_visible = ! empty( $visible_rows );
 								$field_key     = sanitize_key( $group_key );
+								if ( ! $group_active ) {
+									continue; // Archived in Stripe: not listed.
+								}
 								?>
 								<?php
 								$fk          = esc_attr( $field_key );
@@ -25847,6 +25848,9 @@ class AJForms_Admin {
 									<td class="ajcp-prices-cell">
 										<?php foreach ( $rows as $price_row ) : ?>
 											<?php
+											if ( empty( $price_row->active ) ) {
+												continue; // Archived price: not listed.
+											}
 											$price_dependency        = ! empty( $dependency_settings[ $price_row->stripe_price_id ] ) ? $dependency_settings[ $price_row->stripe_price_id ] : array();
 											$selected_required_price = ! empty( $price_dependency['requires_price_id'] ) ? sanitize_text_field( (string) $price_dependency['requires_price_id'] ) : '';
 											$dependency_note         = ! empty( $price_dependency['dependency_note'] ) ? sanitize_textarea_field( (string) $price_dependency['dependency_note'] ) : '';
@@ -28747,8 +28751,9 @@ class AJForms_Admin {
 							<div class="ajcore-builder-field">
 								<strong><?php esc_html_e( 'Filter products', 'ajforms' ); ?></strong>
 								<div class="ajcore-builder-checks">
-									<label><input type="checkbox" class="ajcore-status-filter" name="ajcore_shortcode_statuses[]" value="active" <?php checked( in_array( 'active', $builder_opts['statuses'], true ) ); ?>> <?php echo esc_html( sprintf( __( 'Active (%d)', 'ajforms' ), $active_count ) ); ?></label>
-									<label><input type="checkbox" class="ajcore-status-filter" name="ajcore_shortcode_statuses[]" value="archived" <?php checked( in_array( 'archived', $builder_opts['statuses'], true ) ); ?>> <?php echo esc_html( sprintf( __( 'Archived / inactive (%d)', 'ajforms' ), $archived_count ) ); ?></label>
+									<?php // Archived prices are never listed (shop or catalog); the filter stays as a fixed "active". ?>
+									<input type="checkbox" class="ajcore-status-filter" name="ajcore_shortcode_statuses[]" value="active" checked hidden>
+									<span><?php echo esc_html( sprintf( __( 'Active products (%d)', 'ajforms' ), $active_count ) ); ?></span>
 								</div>
 							</div>
 							<div class="ajcore-builder-field">
@@ -28796,6 +28801,9 @@ class AJForms_Admin {
 							$picker_groups = array();
 							foreach ( $prices as $group_price ) {
 								$group_price_id = isset( $group_price['id'] ) ? (string) $group_price['id'] : '';
+								if ( empty( $group_price['product_active'] ) || empty( $group_price['price_active'] ) ) {
+									continue;
+								}
 								if ( ! empty( $selected_display_prices ) && ! in_array( $group_price_id, $selected_display_prices, true ) ) {
 									continue;
 								}
@@ -28814,6 +28822,9 @@ class AJForms_Admin {
 								// Here: only those prices, for order and layout. Empty selection = whole catalog.
 								$in_shop = in_array( $price_id, $selected_display_prices, true );
 								if ( ! empty( $selected_display_prices ) && ! $in_shop ) {
+									continue;
+								}
+								if ( ! $is_active ) {
 									continue;
 								}
 								$picker_key      = ! empty( $price['product_id'] ) ? (string) $price['product_id'] : $price_id;
