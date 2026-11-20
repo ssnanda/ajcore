@@ -28789,7 +28789,20 @@ class AJForms_Admin {
 						</div>
 
 						<div class="ajcore-product-picker">
-							<?php $default_sort = 10; ?>
+							<?php
+							$default_sort = 10;
+							// One card per product: its in-shop prices are listed on the first one's card
+							// and share its Order (siblings carry hidden checkbox + order inputs).
+							$picker_groups = array();
+							foreach ( $prices as $group_price ) {
+								$group_price_id = isset( $group_price['id'] ) ? (string) $group_price['id'] : '';
+								if ( ! empty( $selected_display_prices ) && ! in_array( $group_price_id, $selected_display_prices, true ) ) {
+									continue;
+								}
+								$group_key = ! empty( $group_price['product_id'] ) ? (string) $group_price['product_id'] : $group_price_id;
+								$picker_groups[ $group_key ][] = $group_price;
+							}
+							?>
 							<?php foreach ( $prices as $price ) : ?>
 								<?php
 								$is_active = ! empty( $price['product_active'] ) && ! empty( $price['price_active'] );
@@ -28803,6 +28816,11 @@ class AJForms_Admin {
 								if ( ! empty( $selected_display_prices ) && ! $in_shop ) {
 									continue;
 								}
+								$picker_key      = ! empty( $price['product_id'] ) ? (string) $price['product_id'] : $price_id;
+								$picker_siblings = isset( $picker_groups[ $picker_key ] ) ? $picker_groups[ $picker_key ] : array( $price );
+								if ( (string) $picker_siblings[0]['id'] !== $price_id ) {
+									continue; // Listed on its product's card.
+								}
 								?>
 								<label class="ajcore-product-choice <?php echo $is_active ? 'is-active' : 'is-archived'; ?>" data-status="<?php echo esc_attr( $state ); ?>">
 									<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $price_id ); ?>" <?php checked( $in_shop ); ?> hidden>
@@ -28811,14 +28829,24 @@ class AJForms_Admin {
 										<?php
 										$price_interval = ! empty( $price['recurring_interval'] ) ? '/' . sanitize_key( (string) $price['recurring_interval'] ) : '';
 										?>
-										<span><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $price_interval . ' - ' . $price['id'] ); ?></span>
+										<?php foreach ( $picker_siblings as $sibling ) : ?>
+											<?php $sibling_interval = ! empty( $sibling['recurring_interval'] ) ? '/' . sanitize_key( (string) $sibling['recurring_interval'] ) : ''; ?>
+											<span><?php echo esc_html( strtoupper( $sibling['currency'] ) . ' ' . number_format_i18n( (float) $sibling['amount'], 2 ) . $sibling_interval . ( ! empty( $sibling['nickname'] ) ? ' · ' . $sibling['nickname'] : '' ) ); ?></span>
+										<?php endforeach; ?>
+										<?php if ( count( $picker_siblings ) > 1 ) : ?>
+											<span style="color:#2563eb;"><?php esc_html_e( 'One card on the website with a price choice', 'ajforms' ); ?></span>
+										<?php endif; ?>
 										<?php if ( ! empty( $price['product_description'] ) ) : ?>
 											<span><?php echo esc_html( wp_trim_words( $price['product_description'], 16 ) ); ?></span>
 										<?php endif; ?>
 										<span style="display:flex;align-items:center;gap:8px;margin-top:8px;">
 											<?php esc_html_e( 'Order', 'ajforms' ); ?>
-											<input type="number" class="ajcore-product-order" name="public_product_order[<?php echo esc_attr( $price_id ); ?>]" value="<?php echo esc_attr( $sort_value ); ?>" style="width:76px;min-height:30px;">
+											<input type="number" class="ajcore-product-order" name="public_product_order[<?php echo esc_attr( $price_id ); ?>]" value="<?php echo esc_attr( $sort_value ); ?>" style="width:76px;min-height:30px;" oninput="this.closest('.ajcore-product-choice').querySelectorAll('.ajcore-product-order-sibling').forEach(function(el){el.value=this.value;},this)">
 										</span>
+										<?php foreach ( array_slice( $picker_siblings, 1 ) as $sibling ) : ?>
+											<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $sibling['id'] ); ?>" <?php checked( in_array( (string) $sibling['id'], $selected_display_prices, true ) ); ?> hidden>
+											<input type="hidden" class="ajcore-product-order-sibling" name="public_product_order[<?php echo esc_attr( $sibling['id'] ); ?>]" value="<?php echo esc_attr( $sort_value ); ?>">
+										<?php endforeach; ?>
 									</span>
 								</label>
 							<?php endforeach; ?>

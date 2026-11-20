@@ -10213,8 +10213,36 @@ class AJForms {
 					<button type="button" class="ajcore-products-reset"><?php esc_html_e( 'Clear filters', 'ajforms' ); ?></button>
 				</div>
 			<?php endif; ?>
+			<?php
+			// One card per product: a product's other listed prices become options on its card
+			// (first price in shop order is the default). Prices that another listed price
+			// requires keep their own card, so dependency auto-add can still find them.
+			$required_targets = array();
+			foreach ( $prices as $group_price ) {
+				$group_required = $this->get_public_price_required_price_id( $group_price, $public_price_map );
+				if ( '' !== $group_required ) {
+					$required_targets[ $group_required ] = true;
+				}
+			}
+			$card_groups   = array();
+			$card_group_of = array();
+			foreach ( $prices as $group_price ) {
+				$group_price_id = (string) $group_price['id'];
+				$group_key      = ( isset( $support_prices[ $group_price_id ] ) || isset( $required_targets[ $group_price_id ] ) || empty( $group_price['product_id'] ) || $is_single )
+					? 'price:' . $group_price_id
+					: 'product:' . $group_price['product_id'];
+				$card_groups[ $group_key ][]      = $group_price;
+				$card_group_of[ $group_price_id ] = $group_key;
+			}
+			?>
 			<div class="ajcore-products-list" style="display:grid;grid-template-columns:repeat(<?php echo esc_attr( $columns ); ?>,minmax(0,1fr));gap:18px;--ajp-cols-tablet:<?php echo (int) $cols_tablet; ?>;--ajp-cols-phone:<?php echo (int) $cols_phone; ?>;">
 				<?php foreach ( $prices as $price ) : ?>
+					<?php
+					$price_options = $card_groups[ $card_group_of[ (string) $price['id'] ] ];
+					if ( (string) $price_options[0]['id'] !== (string) $price['id'] ) {
+						continue; // Rendered as an option on its product's card.
+					}
+					?>
 					<?php
 					$price_amount   = (float) $price['amount'];
 					$price_currency = strtoupper( $price['currency'] );
@@ -10248,6 +10276,7 @@ class AJForms {
 						data-categories="<?php echo esc_attr( implode( ' ', isset( $card_categories[ $card_id ] ) ? $card_categories[ $card_id ] : array() ) ); ?>"
 						data-search="<?php echo esc_attr( isset( $card_search[ $card_id ] ) ? $card_search[ $card_id ] : '' ); ?>"
 						data-price-id="<?php echo esc_attr( $price['id'] ); ?>"
+						data-price-ids="<?php echo esc_attr( implode( ' ', wp_list_pluck( $price_options, 'id' ) ) ); ?>"
 						data-product-name="<?php echo esc_attr( $price['product_name'] ); ?>"
 						data-amount="<?php echo esc_attr( $price_amount ); ?>"
 						data-currency="<?php echo esc_attr( strtolower( $price['currency'] ) ); ?>"
@@ -10295,6 +10324,40 @@ class AJForms {
 							<div class="ajcore-product-dependency-note" style="margin:12px 0 14px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#1e40af;font-size:13px;font-weight:700;line-height:1.4;"><?php echo esc_html( $dependency_note ); ?></div>
 						<?php endif; ?>
 
+						<?php if ( count( $price_options ) > 1 ) : ?>
+							<div class="ajcore-product-options" role="radiogroup" aria-label="<?php echo esc_attr( sprintf( __( '%s options', 'ajforms' ), $price['product_name'] ) ); ?>">
+								<?php foreach ( $price_options as $option_index => $option ) : ?>
+									<?php
+									$option_amount   = (float) $option['amount'];
+									$option_currency = strtoupper( (string) $option['currency'] );
+									$option_interval = ! empty( $option['recurring_interval'] ) ? sanitize_key( (string) $option['recurring_interval'] ) : '';
+									$option_required = $this->get_public_price_required_price_id( $option, $public_price_map );
+									$option_req_name = '' !== $option_required && ! empty( $public_price_map[ $option_required ]['product_name'] ) ? sanitize_text_field( (string) $public_price_map[ $option_required ]['product_name'] ) : ( ! empty( $option['requires_product_name'] ) ? sanitize_text_field( (string) $option['requires_product_name'] ) : '' );
+									$option_note     = ! empty( $option['dependency_note'] ) ? sanitize_textarea_field( (string) $option['dependency_note'] ) : ( '' !== $option_req_name ? sprintf( __( 'This product requires %s. It will be added to your cart automatically.', 'ajforms' ), $option_req_name ) : '' );
+									$option_name     = ! empty( $option['nickname'] ) ? (string) $option['nickname'] : ( '' !== $option_interval ? ucfirst( $option_interval ) . 'ly' : sprintf( __( 'Option %d', 'ajforms' ), $option_index + 1 ) );
+									?>
+									<label class="ajcore-product-option">
+										<input
+											type="radio"
+											name="<?php echo esc_attr( $root_id . '-' . $price['id'] ); ?>"
+											value="<?php echo esc_attr( $option['id'] ); ?>"
+											<?php checked( 0, $option_index ); ?>
+											data-amount="<?php echo esc_attr( $option_amount ); ?>"
+											data-currency="<?php echo esc_attr( strtolower( $option_currency ) ); ?>"
+											data-recurring-interval="<?php echo esc_attr( $option_interval ); ?>"
+											data-price-text="<?php echo esc_attr( $option_currency . ' ' . number_format_i18n( $option_amount, 2 ) . ( '' !== $option_interval ? '/' . $option_interval : '' ) ); ?>"
+											data-price-label="<?php echo esc_attr( $option_currency . ' ' . number_format_i18n( $option_amount, 2 ) . ( '' !== $option_interval ? ' ' . sprintf( __( 'Per %s', 'ajforms' ), $option_interval ) : '' ) ); ?>"
+											data-required-price-id="<?php echo esc_attr( $option_required ); ?>"
+											data-required-product-name="<?php echo esc_attr( $option_req_name ); ?>"
+											data-dependency-note="<?php echo esc_attr( $option_note ); ?>"
+											data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_buy_product_' . $option['id'] ) ); ?>"
+										>
+										<span class="ajcore-product-option-name"><?php echo esc_html( $option_name ); ?></span>
+										<span class="ajcore-product-option-price"><?php echo esc_html( $option_currency . ' ' . number_format_i18n( $option_amount, 2 ) . ( '' !== $option_interval ? '/' . $option_interval : '' ) ); ?></span>
+									</label>
+								<?php endforeach; ?>
+							</div>
+						<?php endif; ?>
 						<?php if ( $show_price ) : ?>
 							<div class="ajcore-product-price" style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
 								<?php echo esc_html( $price_label ); ?>
@@ -10629,7 +10692,7 @@ class AJForms {
 				}
 				const products = root.querySelectorAll('.ajcore-product');
 				for (let index = 0; index < products.length; index += 1) {
-					if (products[index].dataset.priceId === priceId) {
+					if (products[index].dataset.priceId === priceId || (' ' + (products[index].dataset.priceIds || '') + ' ').indexOf(' ' + priceId + ' ') !== -1) {
 						return products[index];
 					}
 				}
@@ -11328,6 +11391,12 @@ class AJForms {
 			html.has-modal-open .ajcore-floating-cart{z-index:1!important}
 			/* Catalog: toolbar, pager, product-page links. Theme hooks: --ajp-accent, --ajp-radius, --ajp-scroll-offset. */
 			.ajcore-products-wrap .ajcore-product[hidden]{display:none!important}
+			.ajcore-product-options{display:grid;gap:6px;margin:4px 0 12px}
+			.ajcore-product-option{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #dfe6ee;border-radius:10px;cursor:pointer;font-size:15px;line-height:1.3}
+			.ajcore-product-option:has(input:checked){border-color:var(--ajp-accent,#0f7ac6);background:color-mix(in srgb,var(--ajp-accent,#0f7ac6) 8%,#fff)}
+			.ajcore-product-option input{margin:0;accent-color:var(--ajp-accent,#0f7ac6)}
+			.ajcore-product-option-name{flex:1;color:#1f2937;font-weight:600}
+			.ajcore-product-option-price{color:#475569;font-weight:700;white-space:nowrap}
 			.ajcore-product-features{list-style:none;margin:2px 0 14px!important;padding:0!important;display:grid;gap:6px}
 			.ajcore-product-features li{position:relative;margin:0!important;padding-left:24px;color:#334155;font-size:15px;line-height:1.4}
 			.ajcore-product-features li::before{content:"";position:absolute;left:0;top:.2em;width:16px;height:16px;border-radius:50%;background:var(--ajp-accent,#0f7ac6) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4.5 8.3l2.2 2.2 4.8-4.9'/%3E%3C/svg%3E") center/12px no-repeat}
@@ -11391,6 +11460,43 @@ class AJForms {
 			}
 			@media (prefers-reduced-motion: reduce){.ajcore-products-cats{scroll-behavior:auto}}
 		</style>
+		<script>
+		(function() {
+			// Price options on one product card: picking an option makes the card behave as that
+			// price (cart, Buy Now, dependency auto-add all read the card's data-* / button).
+			const root = document.getElementById(<?php echo wp_json_encode( $root_id ); ?>);
+			if (!root) { return; }
+			root.addEventListener('change', function(event) {
+				const input = event.target.closest('.ajcore-product-option input');
+				if (!input) { return; }
+				const card = input.closest('.ajcore-product');
+				if (!card) { return; }
+				card.dataset.priceId = input.value;
+				card.dataset.amount = input.dataset.amount || '0';
+				card.dataset.currency = input.dataset.currency || 'usd';
+				card.dataset.recurringInterval = input.dataset.recurringInterval || '';
+				card.dataset.priceLabel = input.dataset.priceLabel || '';
+				card.dataset.requiredPriceId = input.dataset.requiredPriceId || '';
+				card.dataset.requiredProductName = input.dataset.requiredProductName || '';
+				card.dataset.dependencyNote = input.dataset.dependencyNote || '';
+				const price = card.querySelector('.ajcore-product-price');
+				if (price) { price.textContent = input.dataset.priceText || ''; }
+				const buy = card.querySelector('.ajcore-product-buy');
+				if (buy) {
+					buy.dataset.priceId = input.value;
+					buy.dataset.nonce = input.dataset.nonce || '';
+				}
+				const handoff = card.querySelector('.ajcore-product-handoff');
+				if (handoff) {
+					try {
+						const url = new URL(handoff.href);
+						url.searchParams.set('ajp_add', input.value);
+						handoff.href = url.toString();
+					} catch (error) {}
+				}
+			});
+		})();
+		</script>
 		<?php if ( $has_catalog_ui || $is_cart_mode ) : ?>
 		<script>
 		(function() {
@@ -11407,7 +11513,14 @@ class AJForms {
 
 			const addPrice = params.get('ajp_add');
 			if (addPrice && root.dataset.mode === 'cart') {
-				const target = Array.from(root.querySelectorAll('.ajcore-product')).find(function(card) { return card.dataset.priceId === addPrice; });
+				const target = Array.from(root.querySelectorAll('.ajcore-product')).find(function(card) {
+					return card.dataset.priceId === addPrice || (' ' + (card.dataset.priceIds || '') + ' ').indexOf(' ' + addPrice + ' ') !== -1;
+				});
+				const option = target ? Array.from(target.querySelectorAll('.ajcore-product-option input')).find(function(input) { return input.value === addPrice; }) : null;
+				if (option && !option.checked) {
+					option.checked = true;
+					option.dispatchEvent(new Event('change', { bubbles: true }));
+				}
 				const addButton = target ? target.querySelector('.ajcore-product-add') : null;
 				if (addButton && !addButton.disabled) {
 					window.setTimeout(function() { addButton.click(); }, 0);
