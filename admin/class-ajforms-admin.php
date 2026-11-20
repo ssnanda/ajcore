@@ -14557,6 +14557,12 @@ class AJForms_Admin {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_edit_stripe_product_nonce'] ) ) {
+			check_admin_referer( 'ajcore_edit_stripe_product', 'ajcore_edit_stripe_product_nonce' );
+			wp_safe_redirect( $this->handle_product_editor_save( wp_unslash( $_POST ) ) );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_product_catalog_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' );
 			$this->save_product_catalog_tab( wp_unslash( $_POST ) );
@@ -28233,13 +28239,15 @@ class AJForms_Admin {
 				<?php endif; ?>
 				<?php
 				$products_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'products';
-				$products_tab = in_array( $products_tab, array( 'products', 'catalog', 'ui' ), true ) ? $products_tab : 'products';
+				$products_tab = in_array( $products_tab, array( 'products', 'catalog', 'ui', 'edit' ), true ) ? $products_tab : 'products';
 				$this->render_products_tabs_nav( $products_tab );
 				?>
 				<?php if ( 'catalog' === $products_tab ) : ?>
 					<?php $this->render_products_catalog_tab( $prices ); ?>
 				<?php elseif ( 'ui' === $products_tab ) : ?>
 					<?php $this->render_products_ui_tab(); ?>
+				<?php elseif ( 'edit' === $products_tab ) : ?>
+					<?php $this->render_product_editor_tab(); ?>
 				<?php else : ?>
 
 				<p>
@@ -28362,6 +28370,7 @@ class AJForms_Admin {
 									<span><?php echo esc_html( 'Price: ' . $price['id'] ); ?></span>
 									<span><?php echo esc_html( 'Product: ' . $price['product_id'] ); ?></span>
 								</div>
+								<p style="margin:8px 0 0;"><a class="button button-small" href="<?php echo esc_url( $this->product_editor_url( (string) $price['product_id'] ) ); ?>"><?php esc_html_e( 'Edit in Stripe', 'ajforms' ); ?></a></p>
 								<?php
 								$dependency = isset( $dependency_settings[ $price['id'] ] ) ? $dependency_settings[ $price['id'] ] : array();
 								$selected_required_price = ! empty( $dependency['requires_price_id'] ) ? $dependency['requires_price_id'] : ( ! empty( $price['requires_price_id'] ) ? $price['requires_price_id'] : '' );
@@ -28499,6 +28508,561 @@ class AJForms_Admin {
 	 * option (see includes/product-catalog.php); products stay Stripe prices.
 	 * ------------------------------------------------------------------ */
 
+	/* ---------------------------------------------------------------------
+	 * Products > Edit: edits a Stripe product and its prices in place.
+	 * Every field Stripe returns is shown; editable where Stripe allows it,
+	 * read-only where Stripe makes it immutable (price amount/interval/currency).
+	 * Each field row carries data-field="<stripe field>" so rows can be hidden
+	 * later without touching the save logic. Saves only send fields that differ
+	 * from a fresh read of the product, then re-sync the products cache.
+	 * ------------------------------------------------------------------ */
+
+	private function product_editor_url( $product_id = '' ) {
+		return add_query_arg(
+			array_filter(
+				array(
+					'page'    => 'ajforms-products',
+					'tab'     => 'edit',
+					'product' => $product_id,
+				)
+			),
+			admin_url( 'admin.php' )
+		);
+	}
+
+	private function product_editor_flash( $messages = null ) {
+		$key = 'ajcore_product_edit_flash_' . get_current_user_id();
+		if ( null !== $messages ) {
+			set_transient( $key, $messages, 5 * MINUTE_IN_SECONDS );
+			return array();
+		}
+		$stored = get_transient( $key );
+		delete_transient( $key );
+		return is_array( $stored ) ? $stored : array();
+	}
+
+	private function product_editor_minor_units( $amount, $currency ) {
+		$amount = (float) str_replace( array( ',', '$' ), '', (string) $amount );
+		return in_array( strtolower( $currency ), array( 'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf', 'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf' ), true )
+			? (int) round( $amount )
+			: (int) round( $amount * 100 );
+	}
+
+	private function product_editor_format_amount( $price ) {
+		if ( ! isset( $price['unit_amount'] ) || null === $price['unit_amount'] ) {
+			return isset( $price['billing_scheme'] ) && 'tiered' === $price['billing_scheme'] ? __( 'Tiered', 'ajforms' ) : __( 'Customer chooses', 'ajforms' );
+		}
+		$currency = isset( $price['currency'] ) ? strtolower( (string) $price['currency'] ) : 'usd';
+		$amount   = 'jpy' === $currency || 'krw' === $currency || 'vnd' === $currency ? (int) $price['unit_amount'] : $price['unit_amount'] / 100;
+		$label    = strtoupper( $currency ) . ' ' . number_format_i18n( $amount, 2 );
+		if ( ! empty( $price['recurring']['interval'] ) ) {
+			$count  = ! empty( $price['recurring']['interval_count'] ) ? (int) $price['recurring']['interval_count'] : 1;
+			$label .= ' / ' . ( $count > 1 ? $count . ' ' : '' ) . $price['recurring']['interval'] . ( $count > 1 ? 's' : '' );
+		}
+		return $label;
+	}
+
+	/** Metadata rows posted as rows[i][key|value] -> map. Values are kept verbatim (HTML allowed; Stripe stores text). */
+	private function product_editor_posted_metadata( $rows ) {
+		$map = array();
+		foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$key = isset( $row['key'] ) ? substr( trim( sanitize_text_field( (string) $row['key'] ) ), 0, 40 ) : '';
+			if ( '' === $key ) {
+				continue;
+			}
+			$map[ $key ] = isset( $row['value'] ) ? substr( trim( (string) $row['value'] ), 0, 500 ) : '';
+		}
+		return $map;
+	}
+
+	/** Stripe metadata update merges, so removed keys are sent as ''. */
+	private function product_editor_metadata_diff( $current, $posted ) {
+		$current = is_array( $current ) ? $current : array();
+		$diff    = array();
+		foreach ( $posted as $key => $value ) {
+			if ( '' === $value ) {
+				if ( array_key_exists( $key, $current ) ) {
+					$diff[ $key ] = '';
+				}
+				continue;
+			}
+			if ( ! array_key_exists( $key, $current ) || (string) $current[ $key ] !== $value ) {
+				$diff[ $key ] = $value;
+			}
+		}
+		foreach ( array_keys( $current ) as $key ) {
+			if ( ! array_key_exists( $key, $posted ) ) {
+				$diff[ $key ] = '';
+			}
+		}
+		return $diff;
+	}
+
+	private function product_editor_lines( $text ) {
+		return array_values( array_filter( array_map( 'trim', preg_split( '/\r\n|\r|\n/', (string) $text ) ), 'strlen' ) );
+	}
+
+	private function handle_product_editor_save( $post ) {
+		$settings   = $this->get_plugin_settings();
+		$secret_key = isset( $settings['stripe_secret_key'] ) ? (string) $settings['stripe_secret_key'] : '';
+		$product_id = isset( $post['product_id'] ) ? sanitize_text_field( (string) $post['product_id'] ) : '';
+		$ok         = array();
+		$errors     = array();
+
+		if ( '' === $secret_key ) {
+			$this->product_editor_flash( array( 'errors' => array( __( 'No Stripe secret key for the current mode.', 'ajforms' ) ) ) );
+			return $this->product_editor_url( $product_id );
+		}
+
+		// New product: create with its first price, then continue in the editor.
+		if ( 'new' === $product_id ) {
+			$name     = isset( $post['p']['name'] ) ? trim( sanitize_text_field( (string) $post['p']['name'] ) ) : '';
+			$np       = isset( $post['np'] ) && is_array( $post['np'] ) ? $post['np'] : array();
+			$currency = ! empty( $np['currency'] ) ? strtolower( sanitize_key( (string) $np['currency'] ) ) : 'usd';
+			if ( '' === $name || ! isset( $np['amount'] ) || '' === trim( (string) $np['amount'] ) ) {
+				$this->product_editor_flash( array( 'errors' => array( __( 'Name and first price amount are required.', 'ajforms' ) ) ) );
+				return $this->product_editor_url( 'new' );
+			}
+			$body = array(
+				'name'               => $name,
+				'default_price_data' => array(
+					'currency'    => $currency,
+					'unit_amount' => $this->product_editor_minor_units( $np['amount'], $currency ),
+				),
+			);
+			if ( ! empty( $post['p']['description'] ) ) {
+				$body['description'] = sanitize_textarea_field( (string) $post['p']['description'] );
+			}
+			if ( isset( $np['type'] ) && 'recurring' === $np['type'] ) {
+				$body['default_price_data']['recurring'] = array(
+					'interval'       => in_array( $np['interval'] ?? '', array( 'day', 'week', 'month', 'year' ), true ) ? $np['interval'] : 'month',
+					'interval_count' => max( 1, absint( $np['interval_count'] ?? 1 ) ),
+				);
+			}
+			$created = $this->stripe_api_request( 'products', $secret_key, $body );
+			if ( is_wp_error( $created ) ) {
+				$this->product_editor_flash( array( 'errors' => array( $created->get_error_message() ) ) );
+				return $this->product_editor_url( 'new' );
+			}
+			$this->fetch_stripe_product_prices( $secret_key );
+			$this->product_editor_flash( array( 'ok' => array( __( 'Product created in Stripe.', 'ajforms' ) ) ) );
+			return $this->product_editor_url( (string) $created['id'] );
+		}
+
+		$product = $this->stripe_api_get( 'products/' . rawurlencode( $product_id ), $secret_key );
+		if ( is_wp_error( $product ) ) {
+			$this->product_editor_flash( array( 'errors' => array( $product->get_error_message() ) ) );
+			return $this->product_editor_url( $product_id );
+		}
+		$prices = $this->stripe_api_get_all( 'prices', $secret_key, array( 'product' => $product_id ), 2 );
+		$prices = is_wp_error( $prices ) ? array() : $prices;
+		$by_id  = array();
+		foreach ( $prices as $price ) {
+			$by_id[ $price['id'] ] = $price;
+		}
+
+		// 1) New price first, so it can become the default in the product update.
+		$new_price_id = '';
+		$np           = isset( $post['np'] ) && is_array( $post['np'] ) ? $post['np'] : array();
+		if ( isset( $np['amount'] ) && '' !== trim( (string) $np['amount'] ) ) {
+			$currency = ! empty( $np['currency'] ) ? strtolower( sanitize_key( (string) $np['currency'] ) ) : 'usd';
+			$body     = array(
+				'product'     => $product_id,
+				'currency'    => $currency,
+				'unit_amount' => $this->product_editor_minor_units( $np['amount'], $currency ),
+			);
+			if ( isset( $np['type'] ) && 'recurring' === $np['type'] ) {
+				$body['recurring'] = array(
+					'interval'       => in_array( $np['interval'] ?? '', array( 'day', 'week', 'month', 'year' ), true ) ? $np['interval'] : 'month',
+					'interval_count' => max( 1, absint( $np['interval_count'] ?? 1 ) ),
+				);
+			}
+			foreach ( array( 'nickname', 'lookup_key' ) as $field ) {
+				if ( ! empty( $np[ $field ] ) ) {
+					$body[ $field ] = sanitize_text_field( (string) $np[ $field ] );
+				}
+			}
+			if ( ! empty( $np['tax_behavior'] ) && in_array( $np['tax_behavior'], array( 'inclusive', 'exclusive', 'unspecified' ), true ) ) {
+				$body['tax_behavior'] = $np['tax_behavior'];
+			}
+			$created = $this->stripe_api_request( 'prices', $secret_key, $body );
+			if ( is_wp_error( $created ) ) {
+				$errors[] = __( 'New price:', 'ajforms' ) . ' ' . $created->get_error_message();
+			} else {
+				$new_price_id = (string) $created['id'];
+				$ok[]         = sprintf( __( 'Price %s created.', 'ajforms' ), $new_price_id );
+			}
+		}
+
+		// 2) Product fields: send only what changed.
+		$p    = isset( $post['p'] ) && is_array( $post['p'] ) ? $post['p'] : array();
+		$body = array();
+		foreach ( array( 'name', 'statement_descriptor', 'unit_label', 'url', 'tax_code' ) as $field ) {
+			if ( ! array_key_exists( $field, $p ) ) {
+				continue;
+			}
+			$value = trim( sanitize_text_field( (string) $p[ $field ] ) );
+			if ( 'name' === $field && '' === $value ) {
+				continue;
+			}
+			$current = isset( $product[ $field ] ) ? (string) ( is_array( $product[ $field ] ) ? ( $product[ $field ]['id'] ?? '' ) : $product[ $field ] ) : '';
+			if ( $value !== $current ) {
+				$body[ $field ] = $value;
+			}
+		}
+		if ( array_key_exists( 'description', $p ) ) {
+			$value = trim( sanitize_textarea_field( (string) $p['description'] ) );
+			if ( $value !== (string) ( $product['description'] ?? '' ) ) {
+				$body['description'] = $value;
+			}
+		}
+		foreach ( array( 'active', 'shippable' ) as $flag ) {
+			if ( ! array_key_exists( $flag . '_present', $p ) ) {
+				continue;
+			}
+			$value   = ! empty( $p[ $flag ] );
+			$current = ! empty( $product[ $flag ] );
+			if ( $value !== $current ) {
+				$body[ $flag ] = $value ? 'true' : 'false';
+			}
+		}
+		if ( array_key_exists( 'images', $p ) ) {
+			$images = array_slice( array_map( 'esc_url_raw', $this->product_editor_lines( $p['images'] ) ), 0, 8 );
+			if ( $images !== array_values( (array) ( $product['images'] ?? array() ) ) ) {
+				$body['images'] = empty( $images ) ? '' : $images;
+			}
+		}
+		if ( array_key_exists( 'features', $p ) ) {
+			$features = array_map( 'sanitize_text_field', $this->product_editor_lines( $p['features'] ) );
+			$current  = array_values( array_map( static function ( $f ) { return (string) ( $f['name'] ?? '' ); }, (array) ( $product['marketing_features'] ?? array() ) ) );
+			if ( $features !== $current ) {
+				$body['marketing_features'] = empty( $features ) ? '' : array_map( static function ( $name ) { return array( 'name' => $name ); }, $features );
+			}
+		}
+		if ( isset( $p['pkg'] ) && is_array( $p['pkg'] ) ) {
+			$dims   = array();
+			foreach ( array( 'height', 'length', 'weight', 'width' ) as $dim ) {
+				$dims[ $dim ] = isset( $p['pkg'][ $dim ] ) ? trim( (string) $p['pkg'][ $dim ] ) : '';
+			}
+			$filled  = count( array_filter( $dims, 'strlen' ) );
+			$current = is_array( $product['package_dimensions'] ?? null ) ? $product['package_dimensions'] : null;
+			if ( 0 === $filled && null !== $current ) {
+				$body['package_dimensions'] = '';
+			} elseif ( 4 === $filled ) {
+				$changed = null === $current;
+				foreach ( $dims as $dim => $value ) {
+					$changed = $changed || (float) $value !== (float) ( $current[ $dim ] ?? 0 );
+				}
+				if ( $changed ) {
+					$body['package_dimensions'] = array_map( 'floatval', $dims );
+				}
+			} elseif ( $filled > 0 ) {
+				$errors[] = __( 'Package dimensions need all four values (or none).', 'ajforms' );
+			}
+		}
+		$default = isset( $p['default_price'] ) ? sanitize_text_field( (string) $p['default_price'] ) : '';
+		if ( '__new' === $default ) {
+			$default = $new_price_id;
+		}
+		$current_default = is_array( $product['default_price'] ?? null ) ? (string) $product['default_price']['id'] : (string) ( $product['default_price'] ?? '' );
+		if ( '' !== $default && $default !== $current_default ) {
+			$body['default_price'] = $default;
+		}
+		$meta_diff = $this->product_editor_metadata_diff( $product['metadata'] ?? array(), $this->product_editor_posted_metadata( $post['meta'] ?? array() ) );
+		if ( ! empty( $meta_diff ) ) {
+			$body['metadata'] = $meta_diff;
+		}
+		if ( ! empty( $body ) ) {
+			$result = $this->stripe_api_request( 'products/' . rawurlencode( $product_id ), $secret_key, $body );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = __( 'Product:', 'ajforms' ) . ' ' . $result->get_error_message();
+			} else {
+				$ok[] = sprintf( __( 'Product updated (%s).', 'ajforms' ), implode( ', ', array_keys( $body ) ) );
+			}
+		}
+
+		// 3) Existing prices: only Stripe's mutable fields.
+		foreach ( isset( $post['pr'] ) && is_array( $post['pr'] ) ? $post['pr'] : array() as $price_id => $fields ) {
+			$price_id = sanitize_text_field( (string) $price_id );
+			if ( ! isset( $by_id[ $price_id ] ) || ! is_array( $fields ) ) {
+				continue;
+			}
+			$current = $by_id[ $price_id ];
+			$body    = array();
+			$active  = ! empty( $fields['active'] );
+			if ( $active !== ! empty( $current['active'] ) ) {
+				$body['active'] = $active ? 'true' : 'false';
+			}
+			foreach ( array( 'nickname', 'lookup_key' ) as $field ) {
+				$value = isset( $fields[ $field ] ) ? trim( sanitize_text_field( (string) $fields[ $field ] ) ) : '';
+				if ( $value !== (string) ( $current[ $field ] ?? '' ) ) {
+					$body[ $field ] = $value;
+					if ( 'lookup_key' === $field && '' !== $value ) {
+						$body['transfer_lookup_key'] = 'true';
+					}
+				}
+			}
+			$tax = isset( $fields['tax_behavior'] ) ? sanitize_key( (string) $fields['tax_behavior'] ) : '';
+			if ( in_array( $tax, array( 'inclusive', 'exclusive' ), true ) && $tax !== (string) ( $current['tax_behavior'] ?? '' ) ) {
+				$body['tax_behavior'] = $tax;
+			}
+			$meta_diff = $this->product_editor_metadata_diff( $current['metadata'] ?? array(), $this->product_editor_posted_metadata( $post['pmeta'][ $price_id ] ?? array() ) );
+			if ( ! empty( $meta_diff ) ) {
+				$body['metadata'] = $meta_diff;
+			}
+			if ( empty( $body ) ) {
+				continue;
+			}
+			$result = $this->stripe_api_request( 'prices/' . rawurlencode( $price_id ), $secret_key, $body );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $price_id . ': ' . $result->get_error_message();
+			} else {
+				$ok[] = sprintf( __( 'Price %1$s updated (%2$s).', 'ajforms' ), $price_id, implode( ', ', array_keys( $body ) ) );
+			}
+		}
+
+		if ( empty( $ok ) && empty( $errors ) ) {
+			$ok[] = __( 'No changes.', 'ajforms' );
+		} else {
+			$sync = $this->fetch_stripe_product_prices( $secret_key );
+			if ( is_wp_error( $sync ) ) {
+				$errors[] = __( 'Saved, but re-sync failed:', 'ajforms' ) . ' ' . $sync->get_error_message();
+			}
+		}
+		$this->product_editor_flash( array( 'ok' => $ok, 'errors' => $errors ) );
+		return $this->product_editor_url( $product_id );
+	}
+
+	private function product_editor_meta_rows( $name_prefix, $metadata, $blank = 2 ) {
+		$rows = array();
+		foreach ( (array) $metadata as $key => $value ) {
+			$rows[] = array( (string) $key, (string) $value );
+		}
+		for ( $i = 0; $i < $blank; $i++ ) {
+			$rows[] = array( '', '' );
+		}
+		echo '<div class="ajpe-meta">';
+		foreach ( $rows as $index => $row ) {
+			printf(
+				'<div class="ajpe-meta-row"><input type="text" name="%1$s[%2$d][key]" value="%3$s" placeholder="%5$s" maxlength="40"><textarea name="%1$s[%2$d][value]" rows="1" placeholder="%6$s" maxlength="500">%4$s</textarea></div>',
+				esc_attr( $name_prefix ),
+				(int) $index,
+				esc_attr( $row[0] ),
+				esc_textarea( $row[1] ),
+				esc_attr__( 'key', 'ajforms' ),
+				esc_attr__( 'value (empty = remove)', 'ajforms' )
+			);
+		}
+		echo '</div>';
+	}
+
+	private function render_product_editor_tab() {
+		$settings   = $this->get_plugin_settings();
+		$secret_key = isset( $settings['stripe_secret_key'] ) ? (string) $settings['stripe_secret_key'] : '';
+		$product_id = isset( $_GET['product'] ) ? sanitize_text_field( wp_unslash( $_GET['product'] ) ) : '';
+		$is_new     = 'new' === $product_id;
+		$flash      = $this->product_editor_flash();
+		$is_live    = isset( $settings['stripe_mode'] ) && 'live' === $settings['stripe_mode'];
+		$product    = array();
+		$prices     = array();
+		$load_error = '';
+
+		if ( '' === $secret_key ) {
+			$load_error = __( 'No Stripe secret key for the current mode.', 'ajforms' );
+		} elseif ( '' === $product_id ) {
+			$load_error = __( 'Pick a product to edit from the Products tab.', 'ajforms' );
+		} elseif ( ! $is_new ) {
+			$product = $this->stripe_api_get( 'products/' . rawurlencode( $product_id ), $secret_key );
+			if ( is_wp_error( $product ) ) {
+				$load_error = $product->get_error_message();
+				$product    = array();
+			} else {
+				$prices = $this->stripe_api_get_all( 'prices', $secret_key, array( 'product' => $product_id ), 2 );
+				$prices = is_wp_error( $prices ) ? array() : $prices;
+			}
+		}
+		$default_id = is_array( $product['default_price'] ?? null ) ? (string) $product['default_price']['id'] : (string) ( $product['default_price'] ?? '' );
+		$pkg        = is_array( $product['package_dimensions'] ?? null ) ? $product['package_dimensions'] : array();
+		?>
+		<style>
+			.ajpe{max-width:1180px}
+			.ajpe-banner{margin:0 0 12px;padding:8px 12px;border-radius:8px;font-weight:700}
+			.ajpe-banner.live{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+			.ajpe-banner.test{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
+			.ajpe-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 14px}
+			.ajpe-box{margin:0 0 14px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:12px;background:#fff}
+			.ajpe-box h2{margin:0 0 10px;font-size:15px}
+			.ajpe-f label{display:block;margin:0 0 3px;font-weight:600;font-size:12px;color:#334155}
+			.ajpe-f input[type=text],.ajpe-f input[type=url],.ajpe-f input[type=number],.ajpe-f select,.ajpe-f textarea{width:100%;box-sizing:border-box}
+			.ajpe-f.span2{grid-column:span 2}.ajpe-f.span3{grid-column:1 / -1}
+			.ajpe-ro{color:#64748b;font-size:12px;font-family:monospace;word-break:break-all}
+			.ajpe-meta-row{display:grid;grid-template-columns:minmax(120px,220px) 1fr;gap:6px;margin-bottom:4px}
+			.ajpe-meta-row textarea{min-height:30px;resize:vertical}
+			.ajpe-price{border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:10px}
+			.ajpe-price.is-inactive{background:#f8fafc}
+			.ajpe-price-head{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-bottom:8px}
+			.ajpe-price-head strong{font-size:15px}
+			.ajpe-pill{padding:1px 7px;border-radius:999px;background:#e0f2fe;color:#075985;font-size:11px;font-weight:700}
+			.ajpe-pill.off{background:#f1f5f9;color:#64748b}
+			.ajpe-actions{position:sticky;bottom:0;z-index:5;display:flex;gap:10px;align-items:center;padding:10px 0;background:linear-gradient(180deg,rgba(240,240,241,0),#f0f0f1 30%)}
+			@media (max-width:960px){.ajpe-grid{grid-template-columns:1fr}.ajpe-f.span2{grid-column:auto}}
+		</style>
+		<div class="ajpe">
+			<p><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-products' ), admin_url( 'admin.php' ) ) ); ?>">&larr; <?php esc_html_e( 'Products', 'ajforms' ); ?></a></p>
+			<div class="ajpe-banner <?php echo $is_live ? 'live' : 'test'; ?>">
+				<?php echo $is_live ? esc_html__( 'LIVE mode — saving changes your live Stripe catalog immediately.', 'ajforms' ) : esc_html__( 'Sandbox mode.', 'ajforms' ); ?>
+			</div>
+			<?php foreach ( (array) ( $flash['ok'] ?? array() ) as $message ) : ?>
+				<div class="ajcore-products-notice ok"><?php echo esc_html( $message ); ?></div>
+			<?php endforeach; ?>
+			<?php foreach ( (array) ( $flash['errors'] ?? array() ) as $message ) : ?>
+				<div class="ajcore-products-notice error"><?php echo esc_html( $message ); ?></div>
+			<?php endforeach; ?>
+			<?php if ( '' !== $load_error ) : ?>
+				<div class="ajcore-products-notice error"><?php echo esc_html( $load_error ); ?></div>
+				</div>
+				<?php return; ?>
+			<?php endif; ?>
+
+			<form method="post">
+				<?php wp_nonce_field( 'ajcore_edit_stripe_product', 'ajcore_edit_stripe_product_nonce' ); ?>
+				<input type="hidden" name="product_id" value="<?php echo esc_attr( $is_new ? 'new' : $product_id ); ?>">
+
+				<div class="ajpe-box">
+					<h2><?php echo $is_new ? esc_html__( 'New product', 'ajforms' ) : esc_html__( 'Product', 'ajforms' ); ?></h2>
+					<div class="ajpe-grid">
+						<div class="ajpe-f span2" data-field="name"><label><?php esc_html_e( 'Name', 'ajforms' ); ?></label><input type="text" name="p[name]" value="<?php echo esc_attr( $product['name'] ?? '' ); ?>" required></div>
+						<?php if ( ! $is_new ) : ?>
+							<div class="ajpe-f" data-field="active"><label><?php esc_html_e( 'Status', 'ajforms' ); ?></label><input type="hidden" name="p[active_present]" value="1"><label style="font-weight:400;"><input type="checkbox" name="p[active]" value="1" <?php checked( ! empty( $product['active'] ) ); ?>> <?php esc_html_e( 'Active (unchecked = archived)', 'ajforms' ); ?></label></div>
+						<?php endif; ?>
+						<div class="ajpe-f span3" data-field="description"><label><?php esc_html_e( 'Description', 'ajforms' ); ?></label><textarea name="p[description]" rows="3"><?php echo esc_textarea( $product['description'] ?? '' ); ?></textarea></div>
+						<?php if ( ! $is_new ) : ?>
+							<div class="ajpe-f" data-field="statement_descriptor"><label><?php esc_html_e( 'Statement descriptor', 'ajforms' ); ?></label><input type="text" name="p[statement_descriptor]" maxlength="22" value="<?php echo esc_attr( $product['statement_descriptor'] ?? '' ); ?>"></div>
+							<div class="ajpe-f" data-field="unit_label"><label><?php esc_html_e( 'Unit label', 'ajforms' ); ?></label><input type="text" name="p[unit_label]" maxlength="12" value="<?php echo esc_attr( $product['unit_label'] ?? '' ); ?>"></div>
+							<div class="ajpe-f" data-field="tax_code"><label><?php esc_html_e( 'Tax code', 'ajforms' ); ?></label><input type="text" name="p[tax_code]" placeholder="txcd_…" value="<?php echo esc_attr( is_array( $product['tax_code'] ?? null ) ? ( $product['tax_code']['id'] ?? '' ) : ( $product['tax_code'] ?? '' ) ); ?>"></div>
+							<div class="ajpe-f span2" data-field="url"><label><?php esc_html_e( 'URL', 'ajforms' ); ?></label><input type="url" name="p[url]" value="<?php echo esc_attr( $product['url'] ?? '' ); ?>"></div>
+							<div class="ajpe-f" data-field="default_price"><label><?php esc_html_e( 'Default price', 'ajforms' ); ?></label>
+								<select name="p[default_price]">
+									<option value=""><?php esc_html_e( '— unchanged —', 'ajforms' ); ?></option>
+									<?php foreach ( $prices as $price ) : ?>
+										<?php if ( empty( $price['active'] ) ) { continue; } ?>
+										<option value="<?php echo esc_attr( $price['id'] ); ?>" <?php selected( $default_id, $price['id'] ); ?>><?php echo esc_html( $this->product_editor_format_amount( $price ) . ( ! empty( $price['nickname'] ) ? ' · ' . $price['nickname'] : '' ) ); ?></option>
+									<?php endforeach; ?>
+									<option value="__new"><?php esc_html_e( 'The new price below', 'ajforms' ); ?></option>
+								</select>
+							</div>
+							<div class="ajpe-f" data-field="images"><label><?php esc_html_e( 'Images (URL per line, max 8)', 'ajforms' ); ?></label><textarea name="p[images]" rows="2"><?php echo esc_textarea( implode( "\n", (array) ( $product['images'] ?? array() ) ) ); ?></textarea></div>
+							<div class="ajpe-f" data-field="marketing_features"><label><?php esc_html_e( 'Marketing features (one per line)', 'ajforms' ); ?></label><textarea name="p[features]" rows="2"><?php echo esc_textarea( implode( "\n", array_map( static function ( $f ) { return (string) ( $f['name'] ?? '' ); }, (array) ( $product['marketing_features'] ?? array() ) ) ) ); ?></textarea></div>
+							<div class="ajpe-f" data-field="shippable"><label><?php esc_html_e( 'Shippable', 'ajforms' ); ?></label><input type="hidden" name="p[shippable_present]" value="1"><label style="font-weight:400;"><input type="checkbox" name="p[shippable]" value="1" <?php checked( ! empty( $product['shippable'] ) ); ?>> <?php esc_html_e( 'Physical goods', 'ajforms' ); ?></label></div>
+							<div class="ajpe-f span3" data-field="package_dimensions"><label><?php esc_html_e( 'Package dimensions (in / oz; all four or none)', 'ajforms' ); ?></label>
+								<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">
+									<?php foreach ( array( 'height', 'length', 'width', 'weight' ) as $dim ) : ?>
+										<input type="number" step="0.01" min="0" name="p[pkg][<?php echo esc_attr( $dim ); ?>]" placeholder="<?php echo esc_attr( $dim ); ?>" value="<?php echo isset( $pkg[ $dim ] ) ? esc_attr( (string) $pkg[ $dim ] ) : ''; ?>">
+									<?php endforeach; ?>
+								</div>
+							</div>
+						<?php endif; ?>
+					</div>
+				</div>
+
+				<?php if ( ! $is_new ) : ?>
+					<div class="ajpe-box" data-field="metadata">
+						<h2><?php esc_html_e( 'Metadata', 'ajforms' ); ?></h2>
+						<?php $this->product_editor_meta_rows( 'meta', $product['metadata'] ?? array(), 3 ); ?>
+						<p class="ajpe-ro" style="font-family:inherit;margin:6px 0 0;"><?php esc_html_e( 'Used by AJCore: category, summary, rich_description, ajcore_requires_price_id, dependency_note.', 'ajforms' ); ?></p>
+					</div>
+
+					<div class="ajpe-box" data-field="prices">
+						<h2><?php esc_html_e( 'Prices', 'ajforms' ); ?></h2>
+						<?php foreach ( $prices as $price ) : ?>
+							<?php $pid = (string) $price['id']; ?>
+							<div class="ajpe-price <?php echo empty( $price['active'] ) ? 'is-inactive' : ''; ?>" data-field="price">
+								<div class="ajpe-price-head">
+									<strong><?php echo esc_html( $this->product_editor_format_amount( $price ) ); ?></strong>
+									<?php if ( $pid === $default_id ) : ?><span class="ajpe-pill"><?php esc_html_e( 'Default', 'ajforms' ); ?></span><?php endif; ?>
+									<span class="ajpe-pill <?php echo empty( $price['active'] ) ? 'off' : ''; ?>"><?php echo empty( $price['active'] ) ? esc_html__( 'Archived', 'ajforms' ) : esc_html__( 'Active', 'ajforms' ); ?></span>
+									<span class="ajpe-ro"><?php echo esc_html( $pid . ' · ' . ( $price['type'] ?? '' ) . ' · ' . ( $price['billing_scheme'] ?? '' ) . ' · ' . gmdate( 'Y-m-d', (int) ( $price['created'] ?? 0 ) ) ); ?></span>
+								</div>
+								<div class="ajpe-grid">
+									<div class="ajpe-f" data-field="price.active"><label><?php esc_html_e( 'Status', 'ajforms' ); ?></label><label style="font-weight:400;"><input type="checkbox" name="pr[<?php echo esc_attr( $pid ); ?>][active]" value="1" <?php checked( ! empty( $price['active'] ) ); ?>> <?php esc_html_e( 'Active', 'ajforms' ); ?></label></div>
+									<div class="ajpe-f" data-field="price.nickname"><label><?php esc_html_e( 'Nickname', 'ajforms' ); ?></label><input type="text" name="pr[<?php echo esc_attr( $pid ); ?>][nickname]" value="<?php echo esc_attr( $price['nickname'] ?? '' ); ?>"></div>
+									<div class="ajpe-f" data-field="price.lookup_key"><label><?php esc_html_e( 'Lookup key', 'ajforms' ); ?></label><input type="text" name="pr[<?php echo esc_attr( $pid ); ?>][lookup_key]" value="<?php echo esc_attr( $price['lookup_key'] ?? '' ); ?>"></div>
+									<div class="ajpe-f" data-field="price.tax_behavior"><label><?php esc_html_e( 'Tax behavior', 'ajforms' ); ?></label>
+										<?php $tax = (string) ( $price['tax_behavior'] ?? 'unspecified' ); ?>
+										<?php if ( 'unspecified' === $tax || '' === $tax ) : ?>
+											<select name="pr[<?php echo esc_attr( $pid ); ?>][tax_behavior]">
+												<option value=""><?php esc_html_e( 'Unspecified', 'ajforms' ); ?></option>
+												<option value="exclusive"><?php esc_html_e( 'Exclusive', 'ajforms' ); ?></option>
+												<option value="inclusive"><?php esc_html_e( 'Inclusive', 'ajforms' ); ?></option>
+											</select>
+										<?php else : ?>
+											<div class="ajpe-ro"><?php echo esc_html( $tax ); ?> <?php esc_html_e( '(locked by Stripe once set)', 'ajforms' ); ?></div>
+										<?php endif; ?>
+									</div>
+									<div class="ajpe-f span2" data-field="price.immutable"><label><?php esc_html_e( 'Fixed by Stripe (create a new price to change)', 'ajforms' ); ?></label>
+										<div class="ajpe-ro">
+											<?php
+											$fixed = array(
+												'unit_amount'      => $price['unit_amount'] ?? null,
+												'currency'         => $price['currency'] ?? null,
+												'recurring'        => $price['recurring'] ?? null,
+												'tiers_mode'       => $price['tiers_mode'] ?? null,
+												'transform_quantity' => $price['transform_quantity'] ?? null,
+												'custom_unit_amount' => $price['custom_unit_amount'] ?? null,
+												'livemode'         => $price['livemode'] ?? null,
+											);
+											echo esc_html( wp_json_encode( array_filter( $fixed, static function ( $v ) { return null !== $v; } ) ) );
+											?>
+										</div>
+									</div>
+									<div class="ajpe-f span3" data-field="price.metadata"><label><?php esc_html_e( 'Price metadata', 'ajforms' ); ?></label><?php $this->product_editor_meta_rows( 'pmeta[' . $pid . ']', $price['metadata'] ?? array(), 1 ); ?></div>
+								</div>
+							</div>
+						<?php endforeach; ?>
+					</div>
+				<?php endif; ?>
+
+				<div class="ajpe-box" data-field="new_price">
+					<h2><?php echo $is_new ? esc_html__( 'First price', 'ajforms' ) : esc_html__( 'Add a price', 'ajforms' ); ?></h2>
+					<div class="ajpe-grid">
+						<div class="ajpe-f" data-field="new_price.amount"><label><?php esc_html_e( 'Amount', 'ajforms' ); ?></label><input type="text" inputmode="decimal" name="np[amount]" placeholder="100.00" <?php echo $is_new ? 'required' : ''; ?>></div>
+						<div class="ajpe-f" data-field="new_price.currency"><label><?php esc_html_e( 'Currency', 'ajforms' ); ?></label><input type="text" name="np[currency]" value="usd" maxlength="3"></div>
+						<div class="ajpe-f" data-field="new_price.type"><label><?php esc_html_e( 'Billing', 'ajforms' ); ?></label>
+							<select name="np[type]"><option value="one_time"><?php esc_html_e( 'One-time', 'ajforms' ); ?></option><option value="recurring"><?php esc_html_e( 'Recurring', 'ajforms' ); ?></option></select>
+						</div>
+						<div class="ajpe-f" data-field="new_price.interval"><label><?php esc_html_e( 'Every', 'ajforms' ); ?></label>
+							<div style="display:flex;gap:6px;"><input type="number" min="1" name="np[interval_count]" value="1" style="width:70px;"><select name="np[interval]"><option value="month"><?php esc_html_e( 'month', 'ajforms' ); ?></option><option value="year"><?php esc_html_e( 'year', 'ajforms' ); ?></option><option value="week"><?php esc_html_e( 'week', 'ajforms' ); ?></option><option value="day"><?php esc_html_e( 'day', 'ajforms' ); ?></option></select></div>
+						</div>
+						<?php if ( ! $is_new ) : ?>
+							<div class="ajpe-f" data-field="new_price.nickname"><label><?php esc_html_e( 'Nickname', 'ajforms' ); ?></label><input type="text" name="np[nickname]"></div>
+							<div class="ajpe-f" data-field="new_price.lookup_key"><label><?php esc_html_e( 'Lookup key', 'ajforms' ); ?></label><input type="text" name="np[lookup_key]"></div>
+							<div class="ajpe-f" data-field="new_price.tax_behavior"><label><?php esc_html_e( 'Tax behavior', 'ajforms' ); ?></label>
+								<select name="np[tax_behavior]"><option value=""><?php esc_html_e( 'Unspecified', 'ajforms' ); ?></option><option value="exclusive"><?php esc_html_e( 'Exclusive', 'ajforms' ); ?></option><option value="inclusive"><?php esc_html_e( 'Inclusive', 'ajforms' ); ?></option></select>
+							</div>
+						<?php endif; ?>
+					</div>
+				</div>
+
+				<?php if ( ! $is_new ) : ?>
+					<details class="ajpe-box" data-field="raw">
+						<summary style="cursor:pointer;font-weight:600;"><?php esc_html_e( 'Read-only fields / raw Stripe data', 'ajforms' ); ?></summary>
+						<p class="ajpe-ro"><?php echo esc_html( 'id ' . $product_id . ' · type ' . ( $product['type'] ?? '' ) . ' · livemode ' . ( ! empty( $product['livemode'] ) ? 'true' : 'false' ) . ' · created ' . gmdate( 'Y-m-d H:i', (int) ( $product['created'] ?? 0 ) ) . ' UTC · updated ' . gmdate( 'Y-m-d H:i', (int) ( $product['updated'] ?? 0 ) ) . ' UTC' ); ?></p>
+						<pre class="ajpe-ro" style="max-height:360px;overflow:auto;white-space:pre-wrap;"><?php echo esc_html( wp_json_encode( array( 'product' => $product, 'prices' => $prices ), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ); ?></pre>
+					</details>
+				<?php endif; ?>
+
+				<div class="ajpe-actions">
+					<?php submit_button( $is_new ? __( 'Create in Stripe', 'ajforms' ) : __( 'Save to Stripe', 'ajforms' ), 'primary', 'submit', false ); ?>
+					<span class="ajpe-ro" style="font-family:inherit;"><?php esc_html_e( 'Only changed fields are sent. Products re-sync after saving.', 'ajforms' ); ?></span>
+				</div>
+			</form>
+		</div>
+		<?php
+	}
+
 	private function render_products_tabs_nav( $current ) {
 		$tabs = array(
 			'products' => __( 'Products', 'ajforms' ),
@@ -28506,6 +29070,7 @@ class AJForms_Admin {
 			'ui'       => __( 'UI', 'ajforms' ),
 		);
 		echo '<nav class="nav-tab-wrapper" style="margin:0 0 16px;">';
+		printf( '<a href="%s" class="page-title-action" style="float:right;top:6px;">%s</a>', esc_url( $this->product_editor_url( 'new' ) ), esc_html__( 'New product', 'ajforms' ) );
 		foreach ( $tabs as $slug => $label ) {
 			$url = add_query_arg( array( 'page' => 'ajforms-products', 'tab' => $slug ), admin_url( 'admin.php' ) );
 			printf(
@@ -28538,7 +29103,7 @@ class AJForms_Admin {
 
 	private function render_products_catalog_tab( $prices ) {
 		$catalog      = ajcore_product_catalog_get( true );
-		$categories   = $catalog['categories'];
+		$categories   = ajcore_product_catalog_categories( $prices, $catalog );
 		$page_choices = $this->get_product_catalog_page_choices();
 		$listing_id   = ajcore_product_catalog_listing_page_id( $catalog );
 		$counts       = array();
@@ -28607,7 +29172,7 @@ class AJForms_Admin {
 						<?php endforeach; ?>
 						</tbody>
 					</table>
-					<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Row order = filter order. Clear a name to remove it.', 'ajforms' ); ?></p>
+					<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Filled from Stripe metadata "category". Here: display name and order only.', 'ajforms' ); ?></p>
 				</div>
 				<div class="ajcore-builder-field">
 					<strong><?php esc_html_e( 'Listing page', 'ajforms' ); ?></strong>
@@ -28632,7 +29197,7 @@ class AJForms_Admin {
 							<code>[ajcore_products category="slug"]</code> <?php esc_html_e( 'only that category (comma-separate several).', 'ajforms' ); ?><br>
 							<code>[ajcore_product]</code> <?php esc_html_e( 'buy box on a linked product page (price detected from the page).', 'ajforms' ); ?><br>
 							<code>[ajcore_product price_id="price_…"]</code> <?php esc_html_e( 'buy box for a specific price anywhere.', 'ajforms' ); ?><br>
-							<?php esc_html_e( 'Stripe product metadata "category" (names or slugs) is used when a product has no categories checked here.', 'ajforms' ); ?>
+							<?php esc_html_e( 'Categories come from Stripe product metadata "category" (comma-separate several). Checkboxes appear only for products without it.', 'ajforms' ); ?>
 						</p>
 					</details>
 				</div>
@@ -28655,7 +29220,7 @@ class AJForms_Admin {
 					$price_id    = sanitize_text_field( (string) $price['id'] );
 					$is_active   = ! empty( $price['product_active'] ) && ! empty( $price['price_active'] );
 					$assigned    = ajcore_product_catalog_price_categories( $price, $catalog );
-					$from_stripe = empty( $catalog['assign'][ $price_id ] ) && ! empty( $assigned );
+					$from_stripe = ! empty( ajcore_product_catalog_metadata_names( $price ) );
 					$page_id     = ajcore_product_catalog_page_for_price( $price_id, $catalog, false );
 					$interval    = ! empty( $price['recurring_interval'] ) ? '/' . sanitize_key( (string) $price['recurring_interval'] ) : '';
 					$create_url  = wp_nonce_url(
@@ -28674,22 +29239,30 @@ class AJForms_Admin {
 					<tr class="<?php echo $is_active ? '' : 'is-archived'; ?>">
 						<td>
 							<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : $price_id ); ?></strong>
+							<?php if ( ! empty( $price['product_id'] ) ) : ?>
+								<a href="<?php echo esc_url( $this->product_editor_url( (string) $price['product_id'] ) ); ?>" style="margin-left:6px;font-size:12px;"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+							<?php endif; ?>
 							<div class="ajcore-catalog-muted">
 								<?php echo esc_html( strtoupper( (string) $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $interval ); ?>
 								<?php echo $is_active ? '' : ' · ' . esc_html__( 'archived', 'ajforms' ); ?>
 							</div>
 						</td>
 						<td>
-							<?php if ( empty( $categories ) ) : ?>
-								<span class="ajcore-catalog-muted"><?php esc_html_e( 'Add categories above.', 'ajforms' ); ?></span>
+							<?php if ( $from_stripe ) : ?>
+								<?php
+								$names_by_slug = wp_list_pluck( $categories, 'name', 'slug' );
+								foreach ( $assigned as $slug ) {
+									echo '<span class="ajcore-catalog-tag" style="margin:0 4px 4px 0;">' . esc_html( isset( $names_by_slug[ $slug ] ) ? $names_by_slug[ $slug ] : $slug ) . '</span>';
+								}
+								?>
+								<span class="ajcore-catalog-muted"><?php esc_html_e( 'from Stripe', 'ajforms' ); ?></span>
+							<?php elseif ( empty( $categories ) ) : ?>
+								<span class="ajcore-catalog-muted"><?php esc_html_e( 'Set metadata "category" on the Stripe product, then sync.', 'ajforms' ); ?></span>
 							<?php else : ?>
 								<div class="ajcore-catalog-checks">
 									<?php foreach ( $categories as $category ) : ?>
 										<label><input type="checkbox" name="catalog_assign[<?php echo esc_attr( $price_id ); ?>][]" value="<?php echo esc_attr( $category['slug'] ); ?>" <?php checked( in_array( $category['slug'], $assigned, true ) ); ?>> <?php echo esc_html( $category['name'] ); ?></label>
 									<?php endforeach; ?>
-									<?php if ( $from_stripe ) : ?>
-										<span class="ajcore-catalog-tag" title="<?php esc_attr_e( 'From Stripe metadata; saving stores it here.', 'ajforms' ); ?>">Stripe</span>
-									<?php endif; ?>
 								</div>
 							<?php endif; ?>
 						</td>

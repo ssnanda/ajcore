@@ -5,10 +5,10 @@
  *
  * Products themselves stay Stripe prices (the synced cache). This option adds the
  * site-side layer Stripe does not hold well:
- *   - categories      ordered list of { slug, name }
- *   - assign          price_id => [ category slugs ]; when a price has no local
- *                     assignment, Stripe product metadata `category` / `categories`
- *                     (comma-separated names or slugs) is used instead
+ *   - categories      saved display names + order; names found in Stripe metadata
+ *                     are added automatically (see ajcore_product_catalog_categories)
+ *   - assign          price_id => [ category slugs ]; only used for products with no
+ *                     Stripe metadata `category` (comma-separated names)
  *   - pages           price_id => WP page ID (the product's own page)
  *   - catalog_page    page that holds the listing; 0 = first published page that
  *                     contains [ajcore_products
@@ -143,38 +143,66 @@ function ajcore_product_catalog_save( $catalog ) {
 	return ajcore_product_catalog_get( true );
 }
 
-/** Category slugs for one synced price: local assignment first, else Stripe metadata. */
-function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
-	$catalog  = null === $catalog ? ajcore_product_catalog_get() : $catalog;
-	$price_id = is_array( $price ) && ! empty( $price['id'] ) ? (string) $price['id'] : '';
-	if ( '' !== $price_id && ! empty( $catalog['assign'][ $price_id ] ) ) {
-		return $catalog['assign'][ $price_id ];
-	}
-
+/** Raw category names from Stripe product metadata (`category`, `categories` or `ajcore_category`, comma-separated). */
+function ajcore_product_catalog_metadata_names( $price ) {
 	$meta = is_array( $price ) && ! empty( $price['product_metadata'] ) && is_array( $price['product_metadata'] ) ? $price['product_metadata'] : array();
-	$raw  = '';
-	foreach ( array( 'ajcore_category', 'category', 'categories' ) as $key ) {
-		if ( '' === $raw && ! empty( $meta[ $key ] ) ) {
-			$raw = (string) $meta[ $key ];
+	foreach ( array( 'category', 'categories', 'ajcore_category' ) as $key ) {
+		if ( ! empty( $meta[ $key ] ) ) {
+			$names = array_filter( array_map( 'trim', explode( ',', sanitize_text_field( (string) $meta[ $key ] ) ) ), 'strlen' );
+			return array_values( array_unique( $names ) );
 		}
 	}
-	if ( '' === $raw || empty( $catalog['categories'] ) ) {
-		return array();
+	return array();
+}
+
+/**
+ * Categories in use: the ones saved in Products > Catalog (display name + order), then any
+ * new names found in Stripe metadata, in first-seen order. Stripe is the source of truth for
+ * which product is in which category; nothing has to be created on the site first.
+ */
+function ajcore_product_catalog_categories( $prices, $catalog = null ) {
+	$catalog    = null === $catalog ? ajcore_product_catalog_get() : $catalog;
+	$categories = array();
+	foreach ( $catalog['categories'] as $category ) {
+		$categories[ $category['slug'] ] = $category;
+	}
+	foreach ( (array) $prices as $price ) {
+		foreach ( ajcore_product_catalog_metadata_names( $price ) as $name ) {
+			$slug = sanitize_title( $name );
+			if ( '' !== $slug && ! isset( $categories[ $slug ] ) && ! ajcore_product_catalog_match_slug( $name, $categories ) ) {
+				$categories[ $slug ] = array( 'slug' => $slug, 'name' => $name );
+			}
+		}
+	}
+	return array_values( $categories );
+}
+
+/** Slug of the category whose slug or name matches $name, or ''. */
+function ajcore_product_catalog_match_slug( $name, $categories ) {
+	$key = sanitize_title( $name );
+	foreach ( $categories as $category ) {
+		if ( $category['slug'] === $key || sanitize_title( $category['name'] ) === $key ) {
+			return $category['slug'];
+		}
+	}
+	return '';
+}
+
+/** Category slugs for one synced price: Stripe metadata first, else boxes ticked in Products > Catalog. */
+function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
+	$catalog = null === $catalog ? ajcore_product_catalog_get() : $catalog;
+	$names   = ajcore_product_catalog_metadata_names( $price );
+	if ( ! empty( $names ) ) {
+		$slugs = array();
+		foreach ( $names as $name ) {
+			$slug    = ajcore_product_catalog_match_slug( $name, $catalog['categories'] );
+			$slugs[] = '' !== $slug ? $slug : sanitize_title( $name );
+		}
+		return array_values( array_unique( array_filter( $slugs ) ) );
 	}
 
-	$by_key = array();
-	foreach ( $catalog['categories'] as $category ) {
-		$by_key[ $category['slug'] ]                   = $category['slug'];
-		$by_key[ sanitize_title( $category['name'] ) ] = $category['slug'];
-	}
-	$slugs = array();
-	foreach ( explode( ',', $raw ) as $part ) {
-		$key = sanitize_title( trim( $part ) );
-		if ( isset( $by_key[ $key ] ) ) {
-			$slugs[] = $by_key[ $key ];
-		}
-	}
-	return array_values( array_unique( $slugs ) );
+	$price_id = is_array( $price ) && ! empty( $price['id'] ) ? (string) $price['id'] : '';
+	return '' !== $price_id && ! empty( $catalog['assign'][ $price_id ] ) ? $catalog['assign'][ $price_id ] : array();
 }
 
 /** Published page ID linked to a price, or 0. */

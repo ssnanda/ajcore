@@ -10127,7 +10127,7 @@ class AJForms {
 		// Categories present in this listing, in configured order, with counts.
 		$listing_categories = array();
 		if ( $catalog && 'none' !== $filter_style ) {
-			foreach ( $catalog['categories'] as $category ) {
+			foreach ( ajcore_product_catalog_categories( $prices, $catalog ) as $category ) {
 				$count = 0;
 				foreach ( $prices as $catalog_price ) {
 					if ( ! isset( $support_prices[ (string) $catalog_price['id'] ] ) && in_array( $category['slug'], $card_categories[ (string) $catalog_price['id'] ], true ) ) {

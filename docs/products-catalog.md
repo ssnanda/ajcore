@@ -11,9 +11,11 @@ Products are still synced Stripe prices. The site-side catalog layer lives in th
 | Catalog | Categories (name, slug, order), categories per product, linked product page, listing page |
 | UI | Per page, search box and placeholder, category filter (chips, dropdown or off), counts, "All" label, card links and label, tablet columns (≤980px), phone columns and filter (≤800px) |
 
-- **Category source.** Checkboxes on the Catalog tab are used first. A product with none
-  checked falls back to Stripe product metadata `category`, `categories` or `ajcore_category`
-  (comma-separated names or slugs that match a defined category).
+- **Category source: Stripe.** Set product metadata `category` in Stripe (comma-separate
+  several, e.g. `Formation, Compliance`), then sync. New names become categories
+  automatically. The Catalog tab only sets display name and order. Checkboxes appear only
+  for products with no metadata. Stripe's own "Product category" column is its tax
+  classification (`tax_code`), which the API exposes only as a tax code, so it isn't used.
 - **Create page.** Makes a **draft** page under the listing page, filled with:
   - the Stripe summary
   - `[ajcore_product price_id="…"]`
@@ -52,3 +54,28 @@ Products are still synced Stripe prices. The site-side catalog layer lives in th
   `.ajcore-products-wrap`. AJNanda maps them in `style.css`.
 - **Defaults leave an existing listing unchanged:** per page 0 (all) and search off. The
   category filter only appears once categories are assigned.
+
+## Editing products in Stripe (Products › Edit)
+
+- **Opening the editor:** use **Edit in Stripe** on a product card, **Edit** on a Catalog row,
+  or **New product** in the tab bar.
+- **Loading:** the editor reads the product and its prices live from Stripe. It never uses the
+  cache.
+- **Product fields you can edit:**
+  - name, active, description, statement descriptor, unit label, tax code, URL
+  - default price, images, marketing features, shippable, package dimensions
+  - metadata (free key/value; an empty value removes the key)
+- **Price fields you can edit:**
+  - active, nickname, lookup key, metadata
+  - tax behavior, only while it's still unspecified, because Stripe locks it once set
+- **Price fields Stripe won't change:** amount, currency and interval are shown read-only.
+  To change them, add a new price, optionally make it the default, and archive the old one.
+- **Saving:**
+  1. Any new price is created first.
+  2. Only the product fields that differ from a fresh read are sent.
+  3. Then the price changes are sent.
+  4. Then the products cache is re-synced.
+- **Live mode:** a red banner warns that saves change the live catalog.
+- **Hiding fields later:** every field row has `data-field="<stripe field>"`, e.g.
+  `price.lookup_key`. Hiding is CSS or a setting; the save logic skips fields that aren't
+  posted.
