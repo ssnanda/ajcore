@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.11.29
+ * Version: 0.11.30
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.11.29' );
+	define( 'AJCORE_VERSION', '0.11.30' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -353,6 +353,10 @@ if ( ! function_exists( 'ajforms_get_settings_defaults' ) ) {
 			'chat_internal_secret'          => '',
 			// LOCAL per-site — see the note above the Live Chat block. Not shared, not overlaid.
 			'chat_widget_enabled'           => '0',
+			// LOCAL per-site: what phones get (text = SMS button only, chat = the chat widget, both),
+			// and this site's SMS number ('' = the widget's built-in default).
+			'chat_phone_mode'               => 'text',
+			'chat_text_number'              => '',
 			// Passive "want to text us?" nudge — on by default (matches the widget's original
 			// always-on behavior, before this toggle existed) so existing sites see no change.
 			'chat_engage_popup_enabled'     => '1',
@@ -559,7 +563,7 @@ if ( ! function_exists( 'ajforms_get_settings' ) ) {
 					// chat_widget_enabled is a local per-site switch. Older builds (0.7.285–0.7.289)
 					// published it into the shared row; drop it here so a stale value there can never
 					// override this site's own local choice.
-					unset( $shared_chat['chat_widget_enabled'] );
+					unset( $shared_chat['chat_widget_enabled'], $shared_chat['chat_phone_mode'], $shared_chat['chat_text_number'] );
 					if ( ! empty( $shared_chat ) ) {
 						$settings = array_merge( $settings, $shared_chat );
 					}
@@ -2943,7 +2947,9 @@ function ajcore_render_chat_widget() {
 			timerEnabled: <?php echo wp_json_encode( '1' === (string) ( $settings['visitor_timer_enabled'] ?? '' ) ); ?>,
 			knownName: <?php echo wp_json_encode( $known_name ); ?>,
 			knownEmail: <?php echo wp_json_encode( $known_email ); ?>,
-			knownPhone: <?php echo wp_json_encode( $known_phone ); ?>
+			knownPhone: <?php echo wp_json_encode( $known_phone ); ?>,
+			phoneMode: <?php echo wp_json_encode( in_array( (string) ( $settings['chat_phone_mode'] ?? 'text' ), array( 'text', 'chat', 'both' ), true ) ? (string) $settings['chat_phone_mode'] : 'text' ); ?>,
+			textNumber: <?php echo wp_json_encode( (string) ( $settings['chat_text_number'] ?? '' ) ); ?>
 		};
 	</script>
 	<script src="<?php echo esc_url( AJFORMS_PLUGIN_URL . 'assets/js/ajcore-chat-widget.js' ); ?>?v=<?php echo esc_attr( AJFORMS_VERSION ); ?>" defer></script>

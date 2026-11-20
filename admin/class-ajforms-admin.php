@@ -27998,6 +27998,15 @@ class AJForms_Admin {
 		// site (master or secondary) saves its own value from this form. Everything else in the Live
 		// Chat section is the shared, master-only network config handled in the block below.
 		$settings['chat_widget_enabled'] = isset( $_POST['chat_widget_enabled'] ) ? '1' : '0';
+		// Also local per-site: what phones get, and this site's SMS number (+ and digits, 10-15 digits).
+		$phone_mode = isset( $_POST['chat_phone_mode'] ) ? sanitize_key( wp_unslash( $_POST['chat_phone_mode'] ) ) : 'text';
+		$settings['chat_phone_mode'] = in_array( $phone_mode, array( 'text', 'chat', 'both' ), true ) ? $phone_mode : 'text';
+		$text_number = isset( $_POST['chat_text_number'] ) ? preg_replace( '/[^0-9+]/', '', (string) wp_unslash( $_POST['chat_text_number'] ) ) : '';
+		$digits      = preg_replace( '/\D/', '', $text_number );
+		if ( '' !== $text_number && 10 === strlen( $digits ) && '+' !== $text_number[0] ) {
+			$text_number = '+1' . $digits;   // a plain US number
+		}
+		$settings['chat_text_number'] = ( strlen( $digits ) >= 10 && strlen( $digits ) <= 15 ) ? $text_number : '';
 
 		if ( ! $is_shared_db || $is_master ) {
 			$settings['chat_engage_popup_enabled']      = isset( $_POST['chat_engage_popup_enabled'] ) ? '1' : '0';
@@ -28109,6 +28118,22 @@ class AJForms_Admin {
 						<?php esc_html_e( 'Show the chat widget to visitors on this site', 'ajforms' ); ?>
 					</label>
 					<div class="ajforms-settings-help"><?php esc_html_e( 'Local to this site — shows or hides the floating chat bubble here only, and does not affect any other connected site. The shared configuration below still has to be in place for the widget to connect.', 'ajforms' ); ?></div>
+				</div>
+
+				<?php $phone_mode = in_array( (string) ( $settings['chat_phone_mode'] ?? 'text' ), array( 'text', 'chat', 'both' ), true ) ? (string) $settings['chat_phone_mode'] : 'text'; ?>
+				<div class="ajforms-settings-grid" style="margin-bottom:16px;">
+					<div class="ajforms-settings-field">
+						<label><?php esc_html_e( 'On phones', 'ajforms' ); ?></label>
+						<label style="display:flex;align-items:center;gap:8px;font-weight:400;"><input type="radio" name="chat_phone_mode" value="text" <?php checked( 'text', $phone_mode ); ?>> <?php esc_html_e( 'TEXT button (opens Messages)', 'ajforms' ); ?></label>
+						<label style="display:flex;align-items:center;gap:8px;font-weight:400;"><input type="radio" name="chat_phone_mode" value="chat" <?php checked( 'chat', $phone_mode ); ?>> <?php esc_html_e( 'CHAT widget', 'ajforms' ); ?></label>
+						<label style="display:flex;align-items:center;gap:8px;font-weight:400;"><input type="radio" name="chat_phone_mode" value="both" <?php checked( 'both', $phone_mode ); ?>> <?php esc_html_e( 'Both', 'ajforms' ); ?></label>
+						<div class="ajforms-settings-help"><?php esc_html_e( 'This site only. Desktops and tablets always get the CHAT widget.', 'ajforms' ); ?></div>
+					</div>
+					<div class="ajforms-settings-field">
+						<label for="chat_text_number"><?php esc_html_e( 'Text number', 'ajforms' ); ?></label>
+						<input type="text" name="chat_text_number" id="chat_text_number" value="<?php echo esc_attr( (string) ( $settings['chat_text_number'] ?? '' ) ); ?>" placeholder="+17043072135" autocomplete="off" inputmode="tel">
+						<div class="ajforms-settings-help"><?php esc_html_e( 'This site\'s SMS number for TEXT and "Text Us". Blank = +1 704-307-2135.', 'ajforms' ); ?></div>
+					</div>
 				</div>
 
 				<div class="ajforms-settings-grid">

@@ -507,7 +507,7 @@
 		});
 	}
 
-	// Desktop/tablet only past this point — the "Mobile" token is what actually distinguishes
+	// Past this point: desktops/tablets, plus phones when the site's "On phones" setting is chat or both. The "Mobile" token is what actually distinguishes
 	// phones from tablets here: iPadOS Safari's UA reports as a plain desktop Mac (no match), and
 	// Android tablets omit "Mobile" the way Android phones include it, so this doesn't
 	// accidentally affect larger touch devices, only phones.
@@ -516,8 +516,29 @@
 	// DOM/WebSocket for the chat panel/session machinery below at all, just a floating button in
 	// the same spot that hands off straight to SMS. This is a plugin-level default (every site
 	// embedding this widget gets it automatically), not something themes need to add per-site.
-	if (/iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini|IEMobile/i.test(navigator.userAgent || "")) {
-		var mobileTextNumber = "+17043072135";
+	// What phones get is a per-site setting (AJ Core › Settings › Live Chat › On phones): "text" = the TEXT
+	// button only (the original behavior, and the default), "chat" = the full CHAT widget, "both" = a TEXT button
+	// next to the CHAT widget. The SMS number is per site too (config.textNumber), falling back to the original one.
+	var isPhone = /iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini|IEMobile/i.test(navigator.userAgent || "");
+	var phoneMode = config.phoneMode === "chat" || config.phoneMode === "both" ? config.phoneMode : "text";
+	var SMS_NUMBER = /^\+?[0-9]{10,15}$/.test(config.textNumber || "") ? config.textNumber : "+17043072135";
+
+	if (isPhone && phoneMode === "both") {
+		var bothStyle = document.createElement("style");
+		bothStyle.textContent =
+			"#ajcore-text-bubble{position:fixed;bottom:20px;right:104px;min-width:64px;height:44px;padding:0 18px;border-radius:22px;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:999998;font-size:13px;font-weight:700;letter-spacing:.06em;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-decoration:none;}";
+		document.head.appendChild(bothStyle);
+		var textBubble = document.createElement("a");
+		textBubble.id = "ajcore-text-bubble";
+		textBubble.setAttribute("aria-label", "Text us");
+		textBubble.textContent = "TEXT";
+		textBubble.href = "sms:" + SMS_NUMBER + "?body=" + encodeURIComponent(defaultTextUsMessage());
+		document.body.appendChild(textBubble);
+		// ...then continue below to the full CHAT widget.
+	}
+
+	if (isPhone && phoneMode === "text") {
+		var mobileTextNumber = SMS_NUMBER;
 		var mobileStyle = document.createElement("style");
 		mobileStyle.textContent =
 			"#ajcore-chat-bubble{position:fixed;bottom:20px;right:20px;min-width:64px;height:44px;padding:0 18px;border-radius:22px;background:#3157ff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.2);z-index:999998;font-size:13px;font-weight:700;letter-spacing:.06em;border:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-decoration:none;}";
@@ -687,7 +708,7 @@
 	// visitor bail out of the web widget and text the business directly instead, from right where
 	// they already are. href is computed fresh on click (not just once at init) since visitorName
 	// isn't known yet until the pre-chat form is submitted.
-	var TEXT_US_NUMBER = "+17043072135";
+	var TEXT_US_NUMBER = SMS_NUMBER;   // per-site (config.textNumber), see the phone branch above
 	function textUsHref(msg) {
 		return "sms:" + TEXT_US_NUMBER + "?body=" + encodeURIComponent(msg);
 	}
