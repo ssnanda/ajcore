@@ -12137,6 +12137,10 @@ class AJForms_Admin {
 				$this->handle_portal_calendar_settings_save();
 			} elseif ( 'shared-db' === $section ) {
 				$this->handle_portal_shared_db_settings_save();
+			} elseif ( 'product-catalog' === $section && isset( $_POST['ajcore_edit_stripe_product_nonce'] ) ) {
+				check_admin_referer( 'ajcore_edit_stripe_product', 'ajcore_edit_stripe_product_nonce' );
+				wp_safe_redirect( $this->handle_product_editor_save( wp_unslash( $_POST ) ) );
+				exit;
 			} elseif ( 'sync' === $section || 'menu' === $section || 'product-catalog' === $section ) {
 				// Sync, Menu, and Product Catalog all save through the same giant handler Tasks/
 				// Portal-Users/Sold-items still use on the old Client Portal page — safe to call here
@@ -14554,12 +14558,6 @@ class AJForms_Admin {
 					admin_url( 'admin.php' )
 				)
 			);
-			exit;
-		}
-
-		if ( isset( $_POST['ajcore_edit_stripe_product_nonce'] ) ) {
-			check_admin_referer( 'ajcore_edit_stripe_product', 'ajcore_edit_stripe_product_nonce' );
-			wp_safe_redirect( $this->handle_product_editor_save( wp_unslash( $_POST ) ) );
 			exit;
 		}
 
@@ -25453,6 +25451,13 @@ class AJForms_Admin {
 			wp_die( esc_html__( 'Insufficient permissions.', 'ajforms' ) );
 		}
 
+		if ( isset( $_GET['edit_product'] ) ) {
+			echo '<div class="ajforms-settings-card">';
+			$this->render_product_editor_tab();
+			echo '</div>';
+			return;
+		}
+
 		global $wpdb;
 		$pdb = $this->get_pdb();
 
@@ -25543,6 +25548,7 @@ class AJForms_Admin {
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d active', 'ajforms' ), $active_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d visible in Add Services', 'ajforms' ), $visible_count ) ); ?></span>
 				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
+				<a class="button button-primary" href="<?php echo esc_url( $this->product_editor_url( 'new' ) ); ?>"><?php esc_html_e( 'New product', 'ajforms' ); ?></a>
 			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
@@ -25657,7 +25663,12 @@ class AJForms_Admin {
 										<?php endforeach; ?>
 									</td>
 									<td><input type="number" style="width:80px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></td>
-									<td><code><?php echo esc_html( $product->stripe_product_id ); ?></code></td>
+									<td>
+										<code><?php echo esc_html( $product->stripe_product_id ); ?></code>
+										<?php if ( ! empty( $product->stripe_product_id ) ) : ?>
+											<br><a class="button button-small" style="margin-top:4px;" href="<?php echo esc_url( $this->product_editor_url( (string) $product->stripe_product_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+										<?php endif; ?>
+									</td>
 								</tr>
 							<?php endforeach; ?>
 						<?php endif; ?>
@@ -28239,15 +28250,13 @@ class AJForms_Admin {
 				<?php endif; ?>
 				<?php
 				$products_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'products';
-				$products_tab = in_array( $products_tab, array( 'products', 'catalog', 'ui', 'edit' ), true ) ? $products_tab : 'products';
+				$products_tab = in_array( $products_tab, array( 'products', 'catalog', 'ui' ), true ) ? $products_tab : 'products';
 				$this->render_products_tabs_nav( $products_tab );
 				?>
 				<?php if ( 'catalog' === $products_tab ) : ?>
 					<?php $this->render_products_catalog_tab( $prices ); ?>
 				<?php elseif ( 'ui' === $products_tab ) : ?>
 					<?php $this->render_products_ui_tab(); ?>
-				<?php elseif ( 'edit' === $products_tab ) : ?>
-					<?php $this->render_product_editor_tab(); ?>
 				<?php else : ?>
 
 				<p>
@@ -28370,7 +28379,6 @@ class AJForms_Admin {
 									<span><?php echo esc_html( 'Price: ' . $price['id'] ); ?></span>
 									<span><?php echo esc_html( 'Product: ' . $price['product_id'] ); ?></span>
 								</div>
-								<p style="margin:8px 0 0;"><a class="button button-small" href="<?php echo esc_url( $this->product_editor_url( (string) $price['product_id'] ) ); ?>"><?php esc_html_e( 'Edit in Stripe', 'ajforms' ); ?></a></p>
 								<?php
 								$dependency = isset( $dependency_settings[ $price['id'] ] ) ? $dependency_settings[ $price['id'] ] : array();
 								$selected_required_price = ! empty( $dependency['requires_price_id'] ) ? $dependency['requires_price_id'] : ( ! empty( $price['requires_price_id'] ) ? $price['requires_price_id'] : '' );
@@ -28509,7 +28517,8 @@ class AJForms_Admin {
 	 * ------------------------------------------------------------------ */
 
 	/* ---------------------------------------------------------------------
-	 * Products > Edit: edits a Stripe product and its prices in place.
+	 * Settings > Product Catalog > Edit: edits a Stripe product and its prices in place
+	 * (the only place products are edited; AJ Core > Products is the website listing).
 	 * Every field Stripe returns is shown; editable where Stripe allows it,
 	 * read-only where Stripe makes it immutable (price amount/interval/currency).
 	 * Each field row carries data-field="<stripe field>" so rows can be hidden
@@ -28518,12 +28527,13 @@ class AJForms_Admin {
 	 * ------------------------------------------------------------------ */
 
 	private function product_editor_url( $product_id = '' ) {
+		// Settings > Product Catalog is the only place products are edited.
 		return add_query_arg(
 			array_filter(
 				array(
-					'page'    => 'ajforms-products',
-					'tab'     => 'edit',
-					'product' => $product_id,
+					'page'         => 'ajforms-settings',
+					'section'      => 'product-catalog',
+					'edit_product' => $product_id,
 				)
 			),
 			admin_url( 'admin.php' )
@@ -28862,7 +28872,7 @@ class AJForms_Admin {
 	private function render_product_editor_tab() {
 		$settings   = $this->get_plugin_settings();
 		$secret_key = isset( $settings['stripe_secret_key'] ) ? (string) $settings['stripe_secret_key'] : '';
-		$product_id = isset( $_GET['product'] ) ? sanitize_text_field( wp_unslash( $_GET['product'] ) ) : '';
+		$product_id = isset( $_GET['edit_product'] ) ? sanitize_text_field( wp_unslash( $_GET['edit_product'] ) ) : '';
 		$is_new     = 'new' === $product_id;
 		$flash      = $this->product_editor_flash();
 		$is_live    = isset( $settings['stripe_mode'] ) && 'live' === $settings['stripe_mode'];
@@ -28873,7 +28883,7 @@ class AJForms_Admin {
 		if ( '' === $secret_key ) {
 			$load_error = __( 'No Stripe secret key for the current mode.', 'ajforms' );
 		} elseif ( '' === $product_id ) {
-			$load_error = __( 'Pick a product to edit from the Products tab.', 'ajforms' );
+			$load_error = __( 'Pick a product to edit from the Product Catalog.', 'ajforms' );
 		} elseif ( ! $is_new ) {
 			$product = $this->stripe_api_get( 'products/' . rawurlencode( $product_id ), $secret_key );
 			if ( is_wp_error( $product ) ) {
@@ -28889,6 +28899,9 @@ class AJForms_Admin {
 		?>
 		<style>
 			.ajpe{max-width:1180px}
+			.ajpe .ajcore-products-notice{margin:0 0 10px;padding:10px 12px;border-radius:8px}
+			.ajpe .ajcore-products-notice.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+			.ajpe .ajcore-products-notice.error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
 			.ajpe-banner{margin:0 0 12px;padding:8px 12px;border-radius:8px;font-weight:700}
 			.ajpe-banner.live{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
 			.ajpe-banner.test{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
@@ -28911,7 +28924,7 @@ class AJForms_Admin {
 			@media (max-width:960px){.ajpe-grid{grid-template-columns:1fr}.ajpe-f.span2{grid-column:auto}}
 		</style>
 		<div class="ajpe">
-			<p><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-products' ), admin_url( 'admin.php' ) ) ); ?>">&larr; <?php esc_html_e( 'Products', 'ajforms' ); ?></a></p>
+			<p><a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'product-catalog' ), admin_url( 'admin.php' ) ) ); ?>">&larr; <?php esc_html_e( 'Product Catalog', 'ajforms' ); ?></a></p>
 			<div class="ajpe-banner <?php echo $is_live ? 'live' : 'test'; ?>">
 				<?php echo $is_live ? esc_html__( 'LIVE mode — saving changes your live Stripe catalog immediately.', 'ajforms' ) : esc_html__( 'Sandbox mode.', 'ajforms' ); ?>
 			</div>
@@ -29070,7 +29083,6 @@ class AJForms_Admin {
 			'ui'       => __( 'UI', 'ajforms' ),
 		);
 		echo '<nav class="nav-tab-wrapper" style="margin:0 0 16px;">';
-		printf( '<a href="%s" class="page-title-action" style="float:right;top:6px;">%s</a>', esc_url( $this->product_editor_url( 'new' ) ), esc_html__( 'New product', 'ajforms' ) );
 		foreach ( $tabs as $slug => $label ) {
 			$url = add_query_arg( array( 'page' => 'ajforms-products', 'tab' => $slug ), admin_url( 'admin.php' ) );
 			printf(
@@ -29239,9 +29251,6 @@ class AJForms_Admin {
 					<tr class="<?php echo $is_active ? '' : 'is-archived'; ?>">
 						<td>
 							<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : $price_id ); ?></strong>
-							<?php if ( ! empty( $price['product_id'] ) ) : ?>
-								<a href="<?php echo esc_url( $this->product_editor_url( (string) $price['product_id'] ) ); ?>" style="margin-left:6px;font-size:12px;"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
-							<?php endif; ?>
 							<div class="ajcore-catalog-muted">
 								<?php echo esc_html( strtoupper( (string) $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $interval ); ?>
 								<?php echo $is_active ? '' : ' · ' . esc_html__( 'archived', 'ajforms' ); ?>

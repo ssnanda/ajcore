@@ -55,10 +55,11 @@ Products are still synced Stripe prices. The site-side catalog layer lives in th
 - **Defaults leave an existing listing unchanged:** per page 0 (all) and search off. The
   category filter only appears once categories are assigned.
 
-## Editing products in Stripe (Products › Edit)
+## Editing products in Stripe (Settings › Product Catalog)
 
-- **Opening the editor:** use **Edit in Stripe** on a product card, **Edit** on a Catalog row,
-  or **New product** in the tab bar.
+- **Opening the editor:** go to **Settings › Product Catalog** and use **Edit** in a product's
+  Stripe IDs column, or **New product**. Products are edited only here; **AJ Core › Products**
+  controls the website listing.
 - **Loading:** the editor reads the product and its prices live from Stripe. It never uses the
   cache.
 - **Product fields you can edit:**
