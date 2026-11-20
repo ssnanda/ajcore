@@ -2681,6 +2681,34 @@ class AJForms_Admin {
 		return $this->portal_db_error ? new WP_Error( 'portal_db_error', $this->portal_db_error ) : $count;
 	}
 
+	/**
+	 * Refreshes both local copies of the Stripe catalog in one go:
+	 *   - the website listing cache (ajforms_stripe_products_cache), read by AJ Core > Products
+	 *     and [ajcore_products]
+	 *   - the portal product table, read by Settings > Product Catalog and portal Add Services
+	 * Before this, the Products/Stripe Payments buttons and the product editor refreshed only the
+	 * listing cache, so Product Catalog kept old names until Settings > Sync ran.
+	 * Returns the listing-cache result (callers report its price count).
+	 */
+	private function sync_all_product_copies( $secret_key ) {
+		$secret_key = (string) $secret_key;
+		$pdb        = $this->get_pdb();
+		$table      = $this->get_portal_stripe_products_table();
+		$has_portal = $pdb && $table && $table === $pdb->get_var( $pdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+
+		if ( $has_portal ) {
+			// Also rebuilds the listing cache at its end.
+			$portal = $this->sync_portal_stripe_products( $secret_key );
+			if ( is_wp_error( $portal ) ) {
+				return $portal;
+			}
+			$cache = $this->get_stripe_products_cache();
+			return array( 'prices' => isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array() );
+		}
+
+		return $this->fetch_stripe_product_prices( $secret_key );
+	}
+
 	private function sync_portal_stripe_customers( $secret_key ) {
 		$customers = $this->stripe_api_get_all( 'customers', $secret_key );
 		if ( is_wp_error( $customers ) ) {
@@ -14517,7 +14545,7 @@ class AJForms_Admin {
 		}
 
 		if ( 'payments' === $section && ! empty( $settings['stripe_secret_key'] ) && isset( $_POST['ajf_sync_stripe_products'] ) ) {
-			$stripe_sync = $this->fetch_stripe_product_prices( $settings['stripe_secret_key'] );
+			$stripe_sync = $this->sync_all_product_copies( $settings['stripe_secret_key'] );
 			if ( is_wp_error( $stripe_sync ) ) {
 				$redirect_args['stripe-sync-error'] = rawurlencode( $stripe_sync->get_error_message() );
 			} else {
@@ -14618,7 +14646,7 @@ class AJForms_Admin {
 		$settings = $this->get_plugin_settings();
 		$args     = array( 'page' => 'ajforms-products' );
 
-		$result = $this->fetch_stripe_product_prices( isset( $settings['stripe_secret_key'] ) ? $settings['stripe_secret_key'] : '' );
+		$result = $this->sync_all_product_copies( isset( $settings['stripe_secret_key'] ) ? $settings['stripe_secret_key'] : '' );
 		if ( is_wp_error( $result ) ) {
 			$args['stripe-sync-error'] = rawurlencode( $result->get_error_message() );
 		} else {
@@ -28657,7 +28685,7 @@ class AJForms_Admin {
 				$this->product_editor_flash( array( 'errors' => array( $created->get_error_message() ) ) );
 				return $this->product_editor_url( 'new' );
 			}
-			$this->fetch_stripe_product_prices( $secret_key );
+			$this->sync_all_product_copies( $secret_key );
 			$this->product_editor_flash( array( 'ok' => array( __( 'Product created in Stripe.', 'ajforms' ) ) ) );
 			return $this->product_editor_url( (string) $created['id'] );
 		}
@@ -28837,7 +28865,7 @@ class AJForms_Admin {
 		if ( empty( $ok ) && empty( $errors ) ) {
 			$ok[] = __( 'No changes.', 'ajforms' );
 		} else {
-			$sync = $this->fetch_stripe_product_prices( $secret_key );
+			$sync = $this->sync_all_product_copies( $secret_key );
 			if ( is_wp_error( $sync ) ) {
 				$errors[] = __( 'Saved, but re-sync failed:', 'ajforms' ) . ' ' . $sync->get_error_message();
 			}
