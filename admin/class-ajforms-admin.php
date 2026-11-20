@@ -25670,9 +25670,16 @@ class AJForms_Admin {
 			$upgrade_product_options[ $option_product_id ] = ! empty( $option_product->custom_label ) ? sanitize_text_field( (string) $option_product->custom_label ) : sanitize_text_field( (string) $option_product->name );
 		}
 		$dependency_price_options = array();
+		$dependency_all_labels    = array();
 		foreach ( (array) $products as $dependency_product ) {
 			$dependency_price_id = ! empty( $dependency_product->stripe_price_id ) ? sanitize_text_field( (string) $dependency_product->stripe_price_id ) : '';
 			if ( '' === $dependency_price_id ) {
+				continue;
+			}
+			$dependency_all_labels[ $dependency_price_id ] = ( ! empty( $dependency_product->custom_label ) ? sanitize_text_field( (string) $dependency_product->custom_label ) : sanitize_text_field( (string) $dependency_product->name ) )
+				. ' - ' . $this->format_portal_money( $dependency_product->price_amount, $dependency_product->currency );
+			// Auto-add choices: only active prices that are in the shop (the cart can only add those).
+			if ( empty( $dependency_product->active ) || ( ! $shop_all && ! in_array( $dependency_price_id, $shop_selection, true ) ) ) {
 				continue;
 			}
 			$dependency_label = ! empty( $dependency_product->custom_label ) ? sanitize_text_field( (string) $dependency_product->custom_label ) : sanitize_text_field( (string) $dependency_product->name );
@@ -25751,7 +25758,8 @@ class AJForms_Admin {
 				<table class="widefat striped ajcp-catalog-table">
 					<thead>
 						<tr>
-							<th style="width:34%"><?php esc_html_e( 'On the website', 'ajforms' ); ?> <span class="ajcp-th-note"><?php esc_html_e( 'saved to Stripe', 'ajforms' ); ?></span></th>
+							<th style="width:72px"></th>
+							<th style="width:26%"><?php esc_html_e( 'Product', 'ajforms' ); ?></th>
 							<th style="width:24%"><?php esc_html_e( 'Prices & add-ons', 'ajforms' ); ?></th>
 							<?php if ( $portal_on ) : ?><th style="width:150px"><?php esc_html_e( 'Repeat purchase', 'ajforms' ); ?></th><?php endif; ?>
 							<th style="width:150px"></th>
@@ -25759,7 +25767,7 @@ class AJForms_Admin {
 					</thead>
 					<tbody>
 						<?php if ( empty( $product_groups ) ) : ?>
-							<tr><td colspan="4"><?php esc_html_e( 'No synced Stripe products yet.', 'ajforms' ); ?></td></tr>
+							<tr><td colspan="5"><?php esc_html_e( 'No synced Stripe products yet.', 'ajforms' ); ?></td></tr>
 						<?php else : ?>
 							<?php foreach ( $product_groups as $group_key => $group ) : ?>
 								<?php
@@ -25814,14 +25822,19 @@ class AJForms_Admin {
 								}
 								?>
 								<tr class="ajcp-row<?php echo $group_active ? '' : ' is-archived'; ?>" data-archived="<?php echo $group_active ? '0' : '1'; ?>" data-portal="<?php echo $group_visible ? '1' : '0'; ?>" data-owned="<?php echo esc_attr( $behavior ); ?>" data-addon="<?php echo $row_addon ? '1' : '0'; ?>" data-shop="<?php echo $row_shop ? '1' : '0'; ?>"<?php echo $group_active ? '' : ' hidden'; ?>>
+									<td class="ajcp-actions-cell">
+											<div class="ajcp-row-actions">
+												<button type="button" class="button button-primary ajcp-row-save" hidden><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
+												<?php if ( $has_stripe ) : ?>
+													<a class="button" href="<?php echo esc_url( $this->product_editor_url( (string) $product->stripe_product_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+												<?php endif; ?>
+											</div>
+									</td>
 									<td class="ajcp-card">
 										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][row_ids]" value="<?php echo esc_attr( implode( ',', array_map( 'absint', $row_ids ) ) ); ?>">
 										<?php if ( $has_stripe ) : ?>
 											<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][stripe_product_id]" value="<?php echo esc_attr( $product->stripe_product_id ); ?>">
 											<input type="text" class="ajcp-name" name="portal_product_groups[<?php echo $fk; ?>][stripe_name]" value="<?php echo esc_attr( $product->name ); ?>" aria-label="<?php esc_attr_e( 'Name (Stripe)', 'ajforms' ); ?>" <?php disabled( ! $group_active ); ?>>
-											<textarea class="ajcp-desc" rows="3" name="portal_product_groups[<?php echo $fk; ?>][stripe_description]" placeholder="<?php esc_attr_e( 'Description shown on the website card', 'ajforms' ); ?>" aria-label="<?php esc_attr_e( 'Description (Stripe)', 'ajforms' ); ?>" <?php disabled( ! $group_active ); ?>><?php echo esc_textarea( $stripe_desc ); ?></textarea>
-											<label class="ajcp-mini-label"><?php esc_html_e( "What's included · one per line", 'ajforms' ); ?></label>
-											<textarea class="ajcp-features" rows="<?php echo max( 2, min( 6, count( $features ) + 1 ) ); ?>" name="portal_product_groups[<?php echo $fk; ?>][stripe_features]" placeholder="<?php esc_attr_e( "e.g. Filed in 1–2 business days\nRegistered agent included", 'ajforms' ); ?>" <?php disabled( ! $group_active ); ?>><?php echo esc_textarea( implode( "\n", $features ) ); ?></textarea>
 										<?php else : ?>
 											<strong><?php echo esc_html( $product->name ); ?></strong>
 										<?php endif; ?>
@@ -25829,10 +25842,9 @@ class AJForms_Admin {
 											<?php foreach ( $cat_names as $cat_name ) : ?>
 												<span class="ajcp-chip is-cat"><?php echo esc_html( $cat_name ); ?></span>
 											<?php endforeach; ?>
-											<?php if ( ! $group_active ) : ?><span class="ajcp-chip is-off"><?php esc_html_e( 'Archived in Stripe', 'ajforms' ); ?></span><?php endif; ?>
-											<code class="ajcp-id"><?php echo esc_html( $product->stripe_product_id ); ?></code>
 										</div>
-										<?php if ( ! $portal_on ) : ?>
+										<?php // Portal-only label/description: shown only while in use (it changes what the portal shows). ?>
+										<?php if ( ! $portal_on || ! $has_override ) : ?>
 											<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][custom_label]" value="<?php echo esc_attr( $product->custom_label ); ?>">
 											<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][description_override]" value="<?php echo esc_attr( $product->description_override ); ?>">
 										<?php else : ?>
@@ -25868,6 +25880,9 @@ class AJForms_Admin {
 													<label class="ajcp-dep-label" for="ajcp-dep-<?php echo $pid; ?>"><span aria-hidden="true">🔗</span> <?php esc_html_e( 'Auto-adds to cart', 'ajforms' ); ?></label>
 													<select id="ajcp-dep-<?php echo $pid; ?>" class="ajcp-dep-select" name="portal_product_dependencies[<?php echo $pid; ?>][requires_price_id]">
 														<option value=""><?php esc_html_e( 'Nothing — sold on its own', 'ajforms' ); ?></option>
+														<?php if ( '' !== $selected_required_price && ! isset( $dependency_price_options[ $selected_required_price ] ) ) : ?>
+															<option value="<?php echo esc_attr( $selected_required_price ); ?>" selected><?php echo esc_html( ( isset( $dependency_all_labels[ $selected_required_price ] ) ? $dependency_all_labels[ $selected_required_price ] : $selected_required_price ) . ' ' . __( '(not in shop)', 'ajforms' ) ); ?></option>
+														<?php endif; ?>
 														<?php foreach ( $dependency_price_options as $dependency_price_id => $dependency_label ) : ?>
 															<?php if ( $dependency_price_id === (string) $price_row->stripe_price_id ) { continue; } ?>
 															<option value="<?php echo esc_attr( $dependency_price_id ); ?>" <?php selected( $selected_required_price, $dependency_price_id ); ?>><?php echo esc_html( $dependency_label ); ?></option>
@@ -25924,12 +25939,6 @@ class AJForms_Admin {
 										</label>
 										<?php endif; ?>
 										<label class="ajcp-order"><?php esc_html_e( 'Order', 'ajforms' ); ?> <input type="number" name="portal_product_groups[<?php echo $fk; ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></label>
-										<div class="ajcp-row-actions">
-											<button type="button" class="button button-primary ajcp-row-save" hidden><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
-											<?php if ( $has_stripe ) : ?>
-												<a class="button" href="<?php echo esc_url( $this->product_editor_url( (string) $product->stripe_product_id ) ); ?>"><?php esc_html_e( 'All fields', 'ajforms' ); ?></a>
-											<?php endif; ?>
-										</div>
 									</td>
 								</tr>
 							<?php endforeach; ?>
@@ -25943,7 +25952,16 @@ class AJForms_Admin {
 				</div>
 			</form>
 			<style>
-				.ajcp-row-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+				.ajcp-row-actions{display:flex;flex-direction:column;gap:6px}
+				.ajcp-row-actions .button{text-align:center}
+				/* Each product reads as its own bordered block; visible rows alternate (class set in JS so filtering keeps the stripes). */
+				.ajcp-catalog-table{border-collapse:separate!important;border-spacing:0 8px;border:0!important;background:transparent!important;box-shadow:none!important}
+				.ajcp-catalog-table thead th{border:0;padding-bottom:0}
+				.ajcp-catalog-table tbody tr.ajcp-row > td{background:#fff!important;border-top:1px solid #d5dbe3;border-bottom:1px solid #d5dbe3}
+				.ajcp-catalog-table tbody tr.ajcp-row > td:first-child{border-left:1px solid #d5dbe3;border-radius:10px 0 0 10px}
+				.ajcp-catalog-table tbody tr.ajcp-row > td:last-child{border-right:1px solid #d5dbe3;border-radius:0 10px 10px 0}
+				.ajcp-catalog-table tbody tr.ajcp-row.is-alt > td{background:#f5f8fc!important}
+				.ajcp-catalog-table tbody tr.ajcp-row.is-dirty > td{background:#fffbeb!important;border-color:#f59e0b}
 				.ajcp-catalog-table td{vertical-align:top;padding:14px 12px}
 				.ajcp-th-note{font-weight:400;color:#94a3b8;font-size:11px}
 				.ajcp-catalog-table tr.is-archived td{opacity:.6}
@@ -26015,8 +26033,7 @@ class AJForms_Admin {
 					.ajcp-catalog-table tr{border-bottom:6px solid #f0f0f1}
 					.ajcp-catalog-table td{padding:10px 12px}
 				}
-				.ajcp-catalog-table tr.is-dirty > td{background:#fffbeb!important}
-				.ajcp-catalog-table tr.is-dirty > td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
+
 				.ajcp-savebar{position:sticky;bottom:0;z-index:20;display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px;padding:10px 12px;border:1px solid #fcd34d;border-radius:8px;background:#fffbeb;box-shadow:0 -6px 18px rgba(15,23,42,.08)}
 				.ajcp-savebar[hidden]{display:none}
 				.ajcp-savebar-count{margin-right:auto;font-weight:600;color:#92400e}
@@ -26070,7 +26087,11 @@ class AJForms_Admin {
 						other.classList.toggle('is-active', other === tile);
 						other.setAttribute('aria-pressed', other === tile ? 'true' : 'false');
 					});
-					rows.forEach(function(row) { row.hidden = !matchesTile(row, tile.dataset.filter); });
+					let shown = 0;
+					rows.forEach(function(row) {
+						row.hidden = !matchesTile(row, tile.dataset.filter);
+						row.classList.toggle('is-alt', !row.hidden && (shown++ % 2 === 1));
+					});
 				}
 				tiles.forEach(function(tile) {
 					tile.addEventListener('click', function() { applyTile(tile); });
