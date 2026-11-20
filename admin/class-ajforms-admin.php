@@ -2682,6 +2682,31 @@ class AJForms_Admin {
 	}
 
 	/**
+	 * Product Catalog "Shop sequence": one number per product, written to every in-shop price of
+	 * that product in the shop order (the same order AJ Core > Products edits). Blank = unchanged.
+	 */
+	private function apply_inline_shop_sequence( $sequences, $price_lists ) {
+		$display = $this->get_public_product_display_settings();
+		$order   = $display['order'];
+		$changed = false;
+		foreach ( (array) $sequences as $group_key => $value ) {
+			if ( '' === trim( (string) $value ) || empty( $price_lists[ $group_key ] ) ) {
+				continue;
+			}
+			$sequence = intval( $value );
+			foreach ( array_filter( array_map( 'sanitize_text_field', explode( ',', (string) $price_lists[ $group_key ] ) ) ) as $price_id ) {
+				if ( ! isset( $order[ $price_id ] ) || (int) $order[ $price_id ] !== $sequence ) {
+					$order[ $price_id ] = $sequence;
+					$changed            = true;
+				}
+			}
+		}
+		if ( $changed ) {
+			$this->save_public_product_display_settings( $display['selected_prices'], $order, null );
+		}
+	}
+
+	/**
 	 * Applies Product Catalog "In shop" checkboxes to the public shop selection
 	 * (ajcore_public_product_display_settings.selected_prices). Only prices posted with the
 	 * changed rows are touched. An empty selection means "whole catalog", so the first edit
@@ -13333,6 +13358,10 @@ class AJForms_Admin {
 			if ( '' !== $shop_error ) {
 				$stripe_errors[] = $shop_error;
 			}
+			$this->apply_inline_shop_sequence(
+				isset( $_POST['portal_shop_seq'] ) && is_array( $_POST['portal_shop_seq'] ) ? wp_unslash( $_POST['portal_shop_seq'] ) : array(),
+				isset( $_POST['portal_shop_seq_prices'] ) && is_array( $_POST['portal_shop_seq_prices'] ) ? wp_unslash( $_POST['portal_shop_seq_prices'] ) : array()
+			);
 			if ( ! empty( $stripe_errors ) ) {
 				$redirect_args['portal-error'] = rawurlencode( implode( ' | ', $stripe_errors ) );
 			}
@@ -25609,8 +25638,10 @@ class AJForms_Admin {
 		$portal_on = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'client_portal' );
 		// "In shop" = the public [ajcore_products] selection (AJ Core > Products shows only these).
 		// An empty selection means the whole active catalog is in the shop.
-		$shop_selection = $this->get_public_product_display_settings()['selected_prices'];
+		$shop_display   = $this->get_public_product_display_settings();
+		$shop_selection = $shop_display['selected_prices'];
 		$shop_all       = empty( $shop_selection );
+		$shop_order     = $shop_display['order'];
 
 		global $wpdb;
 		$pdb = $this->get_pdb();
@@ -25660,6 +25691,36 @@ class AJForms_Admin {
 			}
 			$product_groups[ $group_key ]['rows'][] = $product;
 		}
+		// List in shop sequence (same order as the public shop and AJ Core > Products); products
+		// not in the shop follow, in their portal order then by name.
+		$group_shop_seq = static function ( $group ) use ( $shop_all, $shop_selection, $shop_order ) {
+			$seq = null;
+			foreach ( $group['rows'] as $seq_row ) {
+				$seq_price = (string) $seq_row->stripe_price_id;
+				if ( empty( $seq_row->active ) || ( ! $shop_all && ! in_array( $seq_price, $shop_selection, true ) ) ) {
+					continue;
+				}
+				$value = isset( $shop_order[ $seq_price ] ) ? (int) $shop_order[ $seq_price ] : 9999;
+				$seq   = null === $seq ? $value : min( $seq, $value );
+			}
+			return $seq;
+		};
+		uasort(
+			$product_groups,
+			static function ( $a, $b ) use ( $group_shop_seq ) {
+				$sa = $group_shop_seq( $a );
+				$sb = $group_shop_seq( $b );
+				if ( ( null === $sa ) !== ( null === $sb ) ) {
+					return null === $sa ? 1 : -1;
+				}
+				if ( null !== $sa && $sa !== $sb ) {
+					return $sa <=> $sb;
+				}
+				$pa = (int) $a['product']->sort_order;
+				$pb = (int) $b['product']->sort_order;
+				return $pa !== $pb ? $pa <=> $pb : strcasecmp( (string) $a['product']->name, (string) $b['product']->name );
+			}
+		);
 		$upgrade_product_options = array();
 		foreach ( $product_groups as $option_group_key => $option_group ) {
 			$option_product = $option_group['product'];
@@ -25938,7 +25999,28 @@ class AJForms_Admin {
 											<span><?php esc_html_e( 'In portal', 'ajforms' ); ?></span>
 										</label>
 										<?php endif; ?>
-										<label class="ajcp-order"><?php esc_html_e( 'Order', 'ajforms' ); ?> <input type="number" name="portal_product_groups[<?php echo $fk; ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></label>
+										<?php
+										$seq_prices = array();
+										$seq_value  = '';
+										foreach ( $rows as $seq_row ) {
+											if ( empty( $seq_row->active ) || ( ! $shop_all && ! in_array( (string) $seq_row->stripe_price_id, $shop_selection, true ) ) ) {
+												continue;
+											}
+											$seq_prices[] = (string) $seq_row->stripe_price_id;
+											if ( isset( $shop_order[ (string) $seq_row->stripe_price_id ] ) ) {
+												$seq_value = '' === $seq_value ? (int) $shop_order[ (string) $seq_row->stripe_price_id ] : min( (int) $seq_value, (int) $shop_order[ (string) $seq_row->stripe_price_id ] );
+											}
+										}
+										?>
+										<?php if ( ! empty( $seq_prices ) ) : ?>
+											<input type="hidden" name="portal_shop_seq_prices[<?php echo $fk; ?>]" value="<?php echo esc_attr( implode( ',', $seq_prices ) ); ?>">
+											<label class="ajcp-order" title="<?php esc_attr_e( 'Position of this product on the public shop', 'ajforms' ); ?>"><?php esc_html_e( 'Shop sequence', 'ajforms' ); ?> <input type="number" min="0" name="portal_shop_seq[<?php echo $fk; ?>]" value="<?php echo esc_attr( (string) $seq_value ); ?>"></label>
+										<?php endif; ?>
+										<?php if ( $portal_on ) : ?>
+											<label class="ajcp-order" title="<?php esc_attr_e( 'Position in the portal’s Add Services', 'ajforms' ); ?>"><?php esc_html_e( 'Portal order', 'ajforms' ); ?> <input type="number" name="portal_product_groups[<?php echo $fk; ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></label>
+										<?php else : ?>
+											<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>">
+										<?php endif; ?>
 									</td>
 								</tr>
 							<?php endforeach; ?>
@@ -26025,7 +26107,7 @@ class AJForms_Admin {
 				.ajcp-switch input:checked + .ajcp-switch-track::after{transform:translateX(14px)}
 				.ajcp-switch input:focus-visible + .ajcp-switch-track{outline:2px solid #2271b1;outline-offset:2px}
 				.ajcp-switch input:disabled + .ajcp-switch-track{opacity:.4}
-				.ajcp-order{display:flex;align-items:center;gap:6px;margin-top:10px;color:#64748b;font-size:12px}
+				.ajcp-order{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:8px;color:#64748b;font-size:12px;white-space:nowrap}
 				.ajcp-order input{width:64px}
 				@media (max-width:960px){
 					.ajcp-catalog-table thead{display:none}
