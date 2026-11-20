@@ -10181,7 +10181,7 @@ class AJForms {
 		>
 			<?php if ( $is_cart_mode ) : ?>
 				<div class="ajcore-checkout-notice <?php echo '' !== $checkout_notice_html ? 'is-success' : ''; ?>" <?php echo '' === $checkout_notice_html ? 'hidden' : ''; ?>><?php echo wp_kses_post( $checkout_notice_html ); ?></div>
-				<div class="ajcore-cart-mini" aria-live="polite">
+				<div class="ajcore-cart-mini is-empty" aria-live="polite">
 					<button type="button" class="ajcore-cart-mini-button" aria-label="<?php echo esc_attr__( 'View selected products in cart', 'ajforms' ); ?>">
 						<span class="ajcore-cart-mini-icon" aria-hidden="true">🛒</span>
 						<span class="ajcore-cart-mini-label"><?php esc_html_e( 'Cart', 'ajforms' ); ?></span>
@@ -10285,6 +10285,12 @@ class AJForms {
 						$required_price_text = wp_strip_all_tags( $this->format_shop_price_html( $required_price['amount'], $required_price['currency'], ! empty( $required_price['recurring_interval'] ) ? $required_price['recurring_interval'] : '', ! empty( $required_price['recurring_interval_count'] ) ? $required_price['recurring_interval_count'] : 1 ) );
 					}
 					$card_image = ! empty( $price['product_images'][0] ) ? esc_url( (string) $price['product_images'][0] ) : '';
+					$card_badge = '';
+					foreach ( array( 'badge', 'ajcore_badge' ) as $badge_key ) {
+						if ( '' === $card_badge && ! empty( $price['product_metadata'][ $badge_key ] ) && is_scalar( $price['product_metadata'][ $badge_key ] ) ) {
+							$card_badge = sanitize_text_field( (string) $price['product_metadata'][ $badge_key ] );
+						}
+					}
 					?>
 					<?php
 					$card_id       = (string) $price['id'];
@@ -10292,7 +10298,7 @@ class AJForms {
 					$is_support    = isset( $support_prices[ $card_id ] );
 					?>
 					<div
-						class="ajcore-product<?php echo $is_support ? ' ajcore-product-support' : ''; ?><?php echo '' !== $card_link ? ' has-page' : ''; ?>"
+						class="ajcore-product<?php echo $is_support ? ' ajcore-product-support' : ''; ?><?php echo '' !== $card_link ? ' has-page' : ''; ?><?php echo '' !== $card_badge ? ' has-badge' : ''; ?>"
 						<?php echo $is_support ? 'hidden' : ''; ?>
 						data-categories="<?php echo esc_attr( implode( ' ', isset( $card_categories[ $card_id ] ) ? $card_categories[ $card_id ] : array() ) ); ?>"
 						data-search="<?php echo esc_attr( isset( $card_search[ $card_id ] ) ? $card_search[ $card_id ] : '' ); ?>"
@@ -10308,6 +10314,9 @@ class AJForms {
 						data-dependency-note="<?php echo esc_attr( $dependency_note ); ?>"
 						style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);"
 					>
+						<?php if ( '' !== $card_badge ) : ?>
+							<span class="ajcore-product-badge"><?php echo esc_html( $card_badge ); ?></span>
+						<?php endif; ?>
 						<?php if ( '' !== $card_image ) : ?>
 							<img class="ajcore-product-image" src="<?php echo esc_url( $card_image ); ?>" alt="" loading="lazy" decoding="async">
 						<?php endif; ?>
@@ -10907,6 +10916,12 @@ class AJForms {
 				if (miniCartCount) {
 					miniCartCount.textContent = String(itemCount);
 				}
+				if (miniCart) {
+					const wasEmpty = miniCart.classList.contains('is-empty');
+					miniCart.classList.toggle('is-empty', itemCount === 0);
+					miniCart.classList.toggle('is-arriving', wasEmpty && itemCount > 0);
+				}
+				root.classList.toggle('ajcore-cart-is-empty', itemCount === 0);
 				if (miniCartStatus) {
 					miniCartStatus.textContent = itemCount ? (itemCount + ' selected') : 'No products selected';
 				}
@@ -11350,7 +11365,7 @@ class AJForms {
 			.ajcore-products-wrap-cart .ajcore-cart{display:none!important}
 			.ajcore-products-wrap-cart.ajcore-cart-highlight .ajcore-cart-mini{box-shadow:0 0 0 4px rgba(15,122,198,.16),0 18px 44px rgba(15,23,42,.12)!important;transform:translateY(-2px)}
 			.ajcore-products-wrap .ajcore-product{display:flex;flex-direction:column;min-height:360px;box-sizing:border-box}
-			.ajcore-products-wrap .ajcore-product-title{font-size:clamp(18px,1.6vw,22px)!important;line-height:1.18!important;letter-spacing:-.015em;min-height:2.36em;display:block;overflow-wrap:break-word;hyphens:manual}
+			.ajcore-products-wrap .ajcore-product-title{font-size:clamp(18px,1.6vw,22px)!important;line-height:1.18!important;letter-spacing:-.015em;display:block;overflow-wrap:break-word;hyphens:manual;margin-bottom:8px!important}
 			.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{font-size:16px;line-height:1.45;color:#64748b;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;min-height:7.25em}
 			.ajcore-products-wrap .ajcore-product-description :is(h3,h4){margin:8px 0 6px;color:#111827;line-height:1.2;font-size:16px}
 			.ajcore-products-wrap .ajcore-product-description p{margin:0 0 10px}
@@ -11423,7 +11438,15 @@ class AJForms {
 			html.has-modal-open .ajcore-floating-cart{z-index:1!important}
 			/* Catalog: toolbar, pager, product-page links. Theme hooks: --ajp-accent, --ajp-radius, --ajp-scroll-offset. */
 			.ajcore-products-wrap .ajcore-product[hidden]{display:none!important}
-			.ajcore-products-wrap .ajcore-product-price{display:flex;align-items:baseline;gap:4px;margin:14px 0 14px!important;font-weight:800;color:#111827}
+			.ajcore-products-wrap .ajcore-product{position:relative}
+			.ajcore-products-wrap .ajcore-product.has-badge{border-color:color-mix(in srgb,var(--ajp-accent,#0f7ac6) 45%,#dfe6ee)!important;box-shadow:0 16px 36px color-mix(in srgb,var(--ajp-accent,#0f7ac6) 14%,transparent)!important}
+			.ajcore-product-badge{position:absolute;top:-11px;left:20px;padding:3px 11px;border-radius:999px;background:var(--ajp-accent,#0f7ac6);color:#fff;font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase;box-shadow:0 6px 14px rgba(15,23,42,.15)}
+			.ajcore-cart-mini.is-empty{display:none!important}
+			.ajcore-cart-mini.is-arriving{animation:ajcoreCartArrive .35s ease-out}
+			@keyframes ajcoreCartArrive{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+			@media (prefers-reduced-motion: reduce){.ajcore-cart-mini.is-arriving{animation:none}}
+			@media (max-width: 800px){.ajcore-products-wrap-cart.ajcore-cart-is-empty{padding-top:0!important}}
+			.ajcore-products-wrap .ajcore-product-price{display:flex;align-items:baseline;gap:4px;min-height:0!important;margin:auto 0 12px!important;padding-top:10px;font-weight:800;color:#111827}
 			.ajcore-price-amount{font-size:clamp(28px,2.6vw,34px);line-height:1;letter-spacing:-.03em}
 			.ajcore-price-interval{font-size:15px;font-weight:600;color:#64748b;letter-spacing:0}
 			.ajcore-product-option-price .ajcore-price-amount{font-size:15px;letter-spacing:0}
@@ -11436,7 +11459,7 @@ class AJForms {
 			.ajcore-product-detail-open{align-self:flex-start;margin:0 0 10px;padding:0;border:0;background:none;color:var(--ajp-accent,#0f7ac6);font-weight:700;font-size:15px;cursor:pointer}
 			.ajcore-product-detail-open::after{content:" →"}
 			.ajcore-product-detail-open:hover{text-decoration:underline}
-			.ajcore-product-dialog{width:min(640px,calc(100vw - 32px));max-height:min(80vh,720px);padding:24px 26px;border:0;border-radius:16px;box-shadow:0 30px 80px rgba(15,23,42,.3);color:#334155;line-height:1.55}
+			.ajcore-product-dialog{position:fixed;inset:0;margin:auto!important;height:fit-content;width:min(640px,calc(100vw - 32px));box-sizing:border-box;overflow:auto;max-height:min(80vh,720px);padding:24px 26px;border:0;border-radius:16px;box-shadow:0 30px 80px rgba(15,23,42,.3);color:#334155;line-height:1.55}
 			.ajcore-product-dialog::backdrop{background:rgba(15,23,42,.5)}
 			.ajcore-product-dialog form{position:absolute;top:10px;right:12px;margin:0}
 			.ajcore-product-dialog-close{width:36px;height:36px;border:0;border-radius:50%;background:#f1f5f9;font-size:22px;line-height:1;cursor:pointer}
@@ -11454,13 +11477,13 @@ class AJForms {
 			.ajcore-product-features li{position:relative;margin:0!important;padding-left:24px;color:#334155;font-size:15px;line-height:1.4}
 			.ajcore-product-features li::before{content:"";position:absolute;left:0;top:.2em;width:16px;height:16px;border-radius:50%;background:var(--ajp-accent,#0f7ac6) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4.5 8.3l2.2 2.2 4.8-4.9'/%3E%3C/svg%3E") center/12px no-repeat}
 			.ajcore-products-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 18px;scroll-margin-top:var(--ajp-scroll-offset,96px)}
-			.ajcore-products-search{position:relative;flex:1 1 260px;max-width:420px;display:flex;align-items:center}
+			.ajcore-products-search{position:relative;flex:0 1 320px;min-width:220px;display:flex;align-items:center}
 			.ajcore-products-search svg{position:absolute;left:12px;color:#64748b;pointer-events:none}
 			.ajcore-products-search-input{width:100%;min-height:44px;box-sizing:border-box;padding:10px 38px 10px 38px!important;border:1px solid #cbd5e1;border-radius:var(--ajp-radius,10px);background:#fff;color:#111827;font-size:16px;line-height:1.3;-webkit-appearance:none;appearance:none}
 			.ajcore-products-search-input::-webkit-search-cancel-button{display:none}
 			.ajcore-products-search-input:focus{outline:2px solid var(--ajp-accent,#0f7ac6);outline-offset:1px;border-color:transparent}
 			.ajcore-products-search-clear{position:absolute;right:6px;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:#64748b;font-size:20px;line-height:1;cursor:pointer}
-			.ajcore-products-cats{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 100%;min-width:0}
+			.ajcore-products-cats{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 360px;min-width:0}
 			.ajcore-products-cat{min-height:38px;padding:7px 14px;border:1px solid #cbd5e1;border-radius:999px;background:#fff;color:#334155;font-size:14px;font-weight:700;line-height:1.2;cursor:pointer;white-space:nowrap}
 			.ajcore-products-cat span{margin-left:4px;color:#94a3b8;font-weight:600}
 			.ajcore-products-cat:hover{border-color:var(--ajp-accent,#0f7ac6);color:var(--ajp-accent,#0f7ac6)}
