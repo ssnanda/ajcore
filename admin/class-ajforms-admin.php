@@ -25582,9 +25582,9 @@ class AJForms_Admin {
 			</div>
 		<p class="description"><?php esc_html_e( 'Customer View opens from each customer link in Portal Users, Billing, Transactions, Requests, Compliance items, and Files.', 'ajforms' ); ?></p>
 
-			<form method="post">
+			<form method="post" id="ajcp-catalog-form">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
-				<table class="widefat striped">
+				<table class="widefat striped ajcp-catalog-table">
 					<thead>
 						<tr>
 							<th><?php esc_html_e( 'Show in Add Services', 'ajforms' ); ?></th>
@@ -25625,7 +25625,7 @@ class AJForms_Admin {
 								$group_visible = ! empty( $visible_rows );
 								$field_key     = sanitize_key( $group_key );
 								?>
-								<tr>
+								<tr class="ajcp-row">
 									<td>
 										<input type="hidden" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][row_ids]" value="<?php echo esc_attr( implode( ',', array_map( 'absint', $row_ids ) ) ); ?>">
 										<input type="hidden" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][visibility]" value="hidden">
@@ -25693,17 +25693,106 @@ class AJForms_Admin {
 									<td><input type="number" style="width:80px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></td>
 									<td>
 										<code><?php echo esc_html( $product->stripe_product_id ); ?></code>
-										<?php if ( ! empty( $product->stripe_product_id ) ) : ?>
-											<br><a class="button button-small" style="margin-top:4px;" href="<?php echo esc_url( $this->product_editor_url( (string) $product->stripe_product_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
-										<?php endif; ?>
+										<div class="ajcp-row-actions">
+											<button type="button" class="button button-primary button-small ajcp-row-save" hidden><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
+											<?php if ( ! empty( $product->stripe_product_id ) ) : ?>
+												<a class="button button-small" href="<?php echo esc_url( $this->product_editor_url( (string) $product->stripe_product_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+											<?php endif; ?>
+										</div>
 									</td>
 								</tr>
 							<?php endforeach; ?>
 						<?php endif; ?>
 					</tbody>
 				</table>
-				<p><?php submit_button( __( 'Save Product Display Settings', 'ajforms' ), 'primary', 'submit', false ); ?></p>
+				<div class="ajcp-savebar" hidden>
+					<span class="ajcp-savebar-count"></span>
+					<button type="button" class="button ajcp-discard"><?php esc_html_e( 'Discard', 'ajforms' ); ?></button>
+					<button type="button" class="button button-primary ajcp-save-all"><?php esc_html_e( 'Save changes', 'ajforms' ); ?></button>
+				</div>
 			</form>
+			<style>
+				.ajcp-row-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+				.ajcp-catalog-table tr.is-dirty > td{background:#fffbeb!important}
+				.ajcp-catalog-table tr.is-dirty > td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
+				.ajcp-savebar{position:sticky;bottom:0;z-index:20;display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px;padding:10px 12px;border:1px solid #fcd34d;border-radius:8px;background:#fffbeb;box-shadow:0 -6px 18px rgba(15,23,42,.08)}
+				.ajcp-savebar[hidden]{display:none}
+				.ajcp-savebar-count{margin-right:auto;font-weight:600;color:#92400e}
+			</style>
+			<script>
+			(function() {
+				// Inline editing: a row that changes is marked, gets its own Save, and the sticky bar
+				// offers Save changes / Discard. Only changed rows are posted (the handler updates just
+				// the groups it receives), so one row's save never rewrites the others.
+				const form = document.getElementById('ajcp-catalog-form');
+				if (!form) { return; }
+				const rows = Array.from(form.querySelectorAll('tr.ajcp-row'));
+				const bar = form.querySelector('.ajcp-savebar');
+				const count = form.querySelector('.ajcp-savebar-count');
+				let submitting = false;
+
+				function fieldsOf(row) {
+					return Array.from(row.querySelectorAll('input, select, textarea')).filter(function(el) { return el.name; });
+				}
+				function valueOf(el) {
+					return (el.type === 'checkbox' || el.type === 'radio') ? (el.checked ? '1' : '0') : el.value;
+				}
+				rows.forEach(function(row) {
+					row.ajcpInitial = fieldsOf(row).map(valueOf).join('\u0001');
+				});
+				function isDirty(row) {
+					return fieldsOf(row).map(valueOf).join('\u0001') !== row.ajcpInitial;
+				}
+				function dirtyRows() {
+					return rows.filter(function(row) { return row.classList.contains('is-dirty'); });
+				}
+				function refresh(row) {
+					if (row) {
+						const dirty = isDirty(row);
+						row.classList.toggle('is-dirty', dirty);
+						const save = row.querySelector('.ajcp-row-save');
+						if (save) { save.hidden = !dirty; }
+					}
+					const n = dirtyRows().length;
+					bar.hidden = n === 0;
+					count.textContent = n === 1 ? '1 product changed' : n + ' products changed';
+				}
+				function submitRows(selected) {
+					if (!selected.length) { return; }
+					submitting = true;
+					rows.forEach(function(row) {
+						if (selected.indexOf(row) === -1) {
+							fieldsOf(row).forEach(function(el) { el.disabled = true; });
+						}
+					});
+					form.submit();
+				}
+
+				form.addEventListener('input', function(event) { refresh(event.target.closest('tr.ajcp-row')); });
+				form.addEventListener('change', function(event) { refresh(event.target.closest('tr.ajcp-row')); });
+				form.addEventListener('click', function(event) {
+					const rowSave = event.target.closest('.ajcp-row-save');
+					if (rowSave) { submitRows([rowSave.closest('tr.ajcp-row')]); }
+				});
+				form.querySelector('.ajcp-save-all').addEventListener('click', function() { submitRows(dirtyRows()); });
+				form.querySelector('.ajcp-discard').addEventListener('click', function() {
+					form.reset();
+					rows.forEach(refresh);
+				});
+				// Enter in a text field saves the changed rows instead of posting every row.
+				form.addEventListener('submit', function(event) {
+					if (submitting) { return; }
+					event.preventDefault();
+					submitRows(dirtyRows());
+				});
+				window.addEventListener('beforeunload', function(event) {
+					if (!submitting && dirtyRows().length) {
+						event.preventDefault();
+						event.returnValue = '';
+					}
+				});
+			})();
+			</script>
 		</div>
 		<?php
 	}
