@@ -25643,17 +25643,46 @@ class AJForms_Admin {
 			<?php endif; ?>
 
 			<div class="ajforms-settings-inline-actions">
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d active', 'ajforms' ), $active_count ) ); ?></span>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d visible in Add Services', 'ajforms' ), $visible_count ) ); ?></span>
-				<span class="ajforms-settings-pill"><?php echo esc_html( sprintf( __( '%d total', 'ajforms' ), $total_count ) ); ?></span>
-				<a class="button button-primary" href="<?php echo esc_url( $this->product_editor_url( 'new' ) ); ?>"><?php esc_html_e( 'New product', 'ajforms' ); ?></a>
-				<label class="ajcp-show-archived"><input type="checkbox" id="ajcp-show-archived"> <?php
-				$archived_groups = 0;
-				foreach ( $product_groups as $archived_group ) {
-					$archived_groups += empty( array_filter( wp_list_pluck( $archived_group['rows'], 'active' ) ) ) ? 1 : 0;
+				<?php
+				// Tile counts are per product (a product = all its prices). Filters run client-side.
+				$tile_counts = array( 'all' => 0, 'portal' => 0, 'not_portal' => 0, 'no_duplicates' => 0, 'allow_duplicate' => 0, 'custom_request' => 0, 'upgrade' => 0, 'addon' => 0, 'archived' => 0 );
+				foreach ( $product_groups as $tile_group ) {
+					$tile_active = ! empty( array_filter( wp_list_pluck( $tile_group['rows'], 'active' ) ) );
+					if ( ! $tile_active ) {
+						$tile_counts['archived']++;
+						continue;
+					}
+					$tile_counts['all']++;
+					$tile_visible = false;
+					$tile_addon   = false;
+					foreach ( $tile_group['rows'] as $tile_row ) {
+						$tile_visible = $tile_visible || ( ! empty( $tile_row->active ) && 'hidden' !== (string) $tile_row->visibility );
+						$tile_addon   = $tile_addon || ! empty( $dependency_settings[ $tile_row->stripe_price_id ]['requires_price_id'] );
+					}
+					$tile_counts[ $tile_visible ? 'portal' : 'not_portal' ]++;
+					$tile_behavior = ! empty( $tile_group['product']->duplicate_behavior ) && isset( $tile_counts[ $tile_group['product']->duplicate_behavior ] ) ? $tile_group['product']->duplicate_behavior : 'no_duplicates';
+					$tile_counts[ $tile_behavior ]++;
+					$tile_counts['addon'] += $tile_addon ? 1 : 0;
 				}
-				echo esc_html( sprintf( __( 'Show archived (%d)', 'ajforms' ), $archived_groups ) );
-				?></label>
+				$tiles = array(
+					'all'             => array( __( 'Active', 'ajforms' ), '#2563eb' ),
+					'portal'          => array( __( 'In portal', 'ajforms' ), '#16a34a' ),
+					'not_portal'      => array( __( 'Not in portal', 'ajforms' ), '#64748b' ),
+					'no_duplicates'   => array( __( 'Once per client', 'ajforms' ), '#7c3aed' ),
+					'allow_duplicate' => array( __( 'Can buy again', 'ajforms' ), '#0891b2' ),
+					'custom_request'  => array( __( 'Ask first', 'ajforms' ), '#d97706' ),
+					'upgrade'         => array( __( 'Upgrade', 'ajforms' ), '#4f46e5' ),
+					'addon'           => array( __( 'Auto-adds', 'ajforms' ), '#0d9488' ),
+					'archived'        => array( __( 'Archived', 'ajforms' ), '#dc2626' ),
+				);
+				?>
+				<div class="ajcp-tiles" id="ajcp-tiles" role="toolbar" aria-label="<?php esc_attr_e( 'Filter products', 'ajforms' ); ?>">
+					<?php foreach ( $tiles as $tile_key => $tile ) : ?>
+						<?php if ( 'all' !== $tile_key && 0 === $tile_counts[ $tile_key ] ) { continue; } ?>
+						<button type="button" class="ajcp-tile<?php echo 'all' === $tile_key ? ' is-active' : ''; ?>" data-filter="<?php echo esc_attr( $tile_key ); ?>" style="--c:<?php echo esc_attr( $tile[1] ); ?>" aria-pressed="<?php echo 'all' === $tile_key ? 'true' : 'false'; ?>"><b><?php echo (int) $tile_counts[ $tile_key ]; ?></b><span><?php echo esc_html( $tile[0] ); ?></span></button>
+					<?php endforeach; ?>
+				</div>
+				<a class="button button-primary" href="<?php echo esc_url( $this->product_editor_url( 'new' ) ); ?>"><?php esc_html_e( 'New product', 'ajforms' ); ?></a>
 			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
 			</div>
@@ -25661,12 +25690,12 @@ class AJForms_Admin {
 
 			<form method="post" id="ajcp-catalog-form">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
-				<table class="widefat striped ajcp-catalog-table hide-archived">
+				<table class="widefat striped ajcp-catalog-table">
 					<thead>
 						<tr>
 							<th style="width:34%"><?php esc_html_e( 'On the website', 'ajforms' ); ?> <span class="ajcp-th-note"><?php esc_html_e( 'saved to Stripe', 'ajforms' ); ?></span></th>
 							<th style="width:24%"><?php esc_html_e( 'Prices & add-ons', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'If owned', 'ajforms' ); ?></th>
+							<th style="width:150px"><?php esc_html_e( 'Repeat purchase', 'ajforms' ); ?></th>
 							<th style="width:150px"></th>
 						</tr>
 					</thead>
@@ -25710,14 +25739,18 @@ class AJForms_Admin {
 								$has_stripe  = 0 === strpos( (string) $product->stripe_product_id, 'prod_' );
 								$behavior    = ! empty( $product->duplicate_behavior ) && isset( $duplicate_behavior_options[ $product->duplicate_behavior ] ) ? $product->duplicate_behavior : 'no_duplicates';
 								$behaviors   = array(
-									'no_duplicates'   => array( '⛔', __( 'Block', 'ajforms' ), __( 'Can only own it once', 'ajforms' ) ),
-									'allow_duplicate' => array( '➕', __( 'Allow', 'ajforms' ), __( 'Can buy it again', 'ajforms' ) ),
-									'custom_request'  => array( '💬', __( 'Ask', 'ajforms' ), __( 'Shows a request form instead', 'ajforms' ) ),
-									'upgrade'         => array( '⬆️', __( 'Upgrade', 'ajforms' ), __( 'Replaces another service', 'ajforms' ) ),
+									'no_duplicates'   => array( '', __( 'Once per client', 'ajforms' ), __( 'A second purchase is blocked', 'ajforms' ) ),
+									'allow_duplicate' => array( '', __( 'Can buy again', 'ajforms' ), __( 'No limit per client', 'ajforms' ) ),
+									'custom_request'  => array( '', __( 'Ask first', 'ajforms' ), __( 'Already owned: shows a request form', 'ajforms' ) ),
+									'upgrade'         => array( '', __( 'Upgrade', 'ajforms' ), __( 'Replaces the service picked below', 'ajforms' ) ),
 								);
 								$has_override = '' !== trim( (string) $product->custom_label ) || '' !== trim( (string) $product->description_override );
+								$row_addon    = false;
+								foreach ( $rows as $addon_row ) {
+									$row_addon = $row_addon || ! empty( $dependency_settings[ $addon_row->stripe_price_id ]['requires_price_id'] );
+								}
 								?>
-								<tr class="ajcp-row<?php echo $group_active ? '' : ' is-archived'; ?>">
+								<tr class="ajcp-row<?php echo $group_active ? '' : ' is-archived'; ?>" data-archived="<?php echo $group_active ? '0' : '1'; ?>" data-portal="<?php echo $group_visible ? '1' : '0'; ?>" data-owned="<?php echo esc_attr( $behavior ); ?>" data-addon="<?php echo $row_addon ? '1' : '0'; ?>"<?php echo $group_active ? '' : ' hidden'; ?>>
 									<td class="ajcp-card">
 										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][row_ids]" value="<?php echo esc_attr( implode( ',', array_map( 'absint', $row_ids ) ) ); ?>">
 										<?php if ( $has_stripe ) : ?>
@@ -25771,12 +25804,12 @@ class AJForms_Admin {
 										<?php endforeach; ?>
 									</td>
 									<td class="ajcp-owned">
-										<div class="ajcp-choices" role="radiogroup" aria-label="<?php esc_attr_e( 'If owned', 'ajforms' ); ?>">
+										<div class="ajcp-choices" role="radiogroup" aria-label="<?php esc_attr_e( 'Repeat purchase', 'ajforms' ); ?>">
 											<?php foreach ( $behaviors as $behavior_key => $behavior_ui ) : ?>
 												<?php if ( ! isset( $duplicate_behavior_options[ $behavior_key ] ) ) { continue; } ?>
 												<label class="ajcp-choice" title="<?php echo esc_attr( $behavior_ui[2] ); ?>">
 													<input type="radio" name="portal_product_groups[<?php echo $fk; ?>][duplicate_behavior]" value="<?php echo esc_attr( $behavior_key ); ?>" <?php checked( $behavior, $behavior_key ); ?>>
-													<span class="ajcp-choice-box"><span class="ajcp-choice-icon" aria-hidden="true"><?php echo esc_html( $behavior_ui[0] ); ?></span><strong><?php echo esc_html( $behavior_ui[1] ); ?></strong></span>
+													<span><?php echo esc_html( $behavior_ui[1] ); ?></span>
 												</label>
 											<?php endforeach; ?>
 										</div>
@@ -25827,8 +25860,7 @@ class AJForms_Admin {
 				.ajcp-catalog-table td{vertical-align:top;padding:14px 12px}
 				.ajcp-th-note{font-weight:400;color:#94a3b8;font-size:11px}
 				.ajcp-catalog-table tr.is-archived td{opacity:.6}
-				.ajcp-catalog-table.hide-archived tr.is-archived{display:none}
-				.ajcp-show-archived{display:inline-flex;align-items:center;gap:6px;margin-left:6px;font-weight:600;cursor:pointer}
+				.ajcp-catalog-table tr[hidden]{display:none}
 				/* Website card fields: look like text until hovered/focused. */
 				.ajcp-name,.ajcp-desc,.ajcp-features{width:100%;box-sizing:border-box;border:1px solid transparent!important;background:transparent!important;box-shadow:none!important;border-radius:6px;padding:4px 6px!important;resize:vertical;field-sizing:content}
 				.ajcp-name{font-size:15px;font-weight:700;color:#0f172a}
@@ -25860,15 +25892,19 @@ class AJForms_Admin {
 				.ajcp-dep-note{display:none;width:100%;margin-top:4px;font-size:12px}
 				.ajcp-dep.has-dep .ajcp-dep-note,.ajcp-dep.has-note .ajcp-dep-note{display:block}
 				/* "If they already have it" choice cards */
-				.ajcp-choices{display:flex;flex-wrap:wrap;gap:6px}
-				.ajcp-choice{position:relative;margin:0}
-				.ajcp-choice input{position:absolute;opacity:0;pointer-events:none}
-				.ajcp-choice-box{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;cursor:pointer;white-space:nowrap}
-				.ajcp-choice-icon{font-size:13px}
-				.ajcp-choice-box strong{font-size:13px;font-weight:600;color:#0f172a}
-				.ajcp-choice-box:hover{border-color:#94a3b8}
-				.ajcp-choice input:checked + .ajcp-choice-box{border-color:#2271b1;background:#f0f6fc;box-shadow:inset 0 0 0 1px #2271b1}
-				.ajcp-choice input:focus-visible + .ajcp-choice-box{outline:2px solid #2271b1;outline-offset:2px}
+				.ajcp-choices{display:grid;gap:4px}
+				.ajcp-choice{display:flex;align-items:center;gap:6px;margin:0;font-size:13px;white-space:nowrap;cursor:pointer}
+				.ajcp-choice input{margin:0}
+				.ajcp-choice input:checked + span{font-weight:600;color:#0f172a}
+				/* Tiles: same look as Files / Media Library / AJNanda list tiles. */
+				.ajcp-tiles{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 100%;margin:0 0 4px}
+				.ajcp-tile{cursor:pointer;min-width:110px;padding:8px 14px;text-align:left;background:color-mix(in srgb,var(--c) 12%,#fff);border:1px solid color-mix(in srgb,var(--c) 35%,#fff);border-left:5px solid var(--c);border-radius:6px;color:#1d2327;font:inherit}
+				.ajcp-tile:hover{background:color-mix(in srgb,var(--c) 22%,#fff)}
+				.ajcp-tile.is-active{background:var(--c);border-color:var(--c)}
+				.ajcp-tile.is-active b,.ajcp-tile.is-active span{color:#fff}
+				.ajcp-tile b{display:block;font-size:22px;line-height:1.2;color:var(--c)}
+				.ajcp-tile span{font-size:12px;font-weight:600}
+				.ajcp-tile:focus-visible{outline:2px solid var(--c);outline-offset:2px}
 				.ajcp-reveal{display:none;margin-top:8px}
 				.ajcp-reveal.is-on{display:grid;gap:4px}
 				.ajcp-reveal select,.ajcp-reveal input,.ajcp-reveal textarea{width:100%}
@@ -25923,14 +25959,29 @@ class AJForms_Admin {
 				}
 				rows.forEach(syncReveal);
 
-				// Archived rows are hidden by default; the checkbox shows them without a reload.
-				const showArchived = document.getElementById('ajcp-show-archived');
-				const table = form.querySelector('.ajcp-catalog-table');
-				if (showArchived && table) {
-					showArchived.addEventListener('change', function() {
-						table.classList.toggle('hide-archived', !showArchived.checked);
-					});
+				// Tiles filter rows live. "Active" = everything not archived; Archived shows only those.
+				const tiles = Array.from(document.querySelectorAll('#ajcp-tiles .ajcp-tile'));
+				function matchesTile(row, filter) {
+					const archived = row.dataset.archived === '1';
+					if (filter === 'archived') { return archived; }
+					if (archived) { return false; }
+					switch (filter) {
+						case 'portal': return row.dataset.portal === '1';
+						case 'not_portal': return row.dataset.portal !== '1';
+						case 'addon': return row.dataset.addon === '1';
+						case 'all': return true;
+						default: return row.dataset.owned === filter;
+					}
 				}
+				tiles.forEach(function(tile) {
+					tile.addEventListener('click', function() {
+						tiles.forEach(function(other) {
+							other.classList.toggle('is-active', other === tile);
+							other.setAttribute('aria-pressed', other === tile ? 'true' : 'false');
+						});
+						rows.forEach(function(row) { row.hidden = !matchesTile(row, tile.dataset.filter); });
+					});
+				});
 
 				function fieldsOf(row) {
 					return Array.from(row.querySelectorAll('input, select, textarea')).filter(function(el) { return el.name; });
