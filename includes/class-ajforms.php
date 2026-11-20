@@ -9979,6 +9979,21 @@ class AJForms {
 		);
 	}
 
+	/** Compact shop price: "$98" + muted "/year" (".00" dropped, symbol for common currencies). */
+	private function format_shop_price_html( $amount, $currency, $interval = '', $interval_count = 1 ) {
+		$currency = strtolower( (string) $currency );
+		$symbols  = array( 'usd' => '$', 'cad' => 'CA$', 'aud' => 'A$', 'eur' => '€', 'gbp' => '£', 'inr' => '₹' );
+		$amount   = (float) $amount;
+		$number   = abs( $amount - round( $amount ) ) < 0.005 ? number_format_i18n( $amount, 0 ) : number_format_i18n( $amount, 2 );
+		$money    = isset( $symbols[ $currency ] ) ? $symbols[ $currency ] . $number : strtoupper( $currency ) . ' ' . $number;
+		$html     = '<span class="ajcore-price-amount">' . esc_html( $money ) . '</span>';
+		if ( '' !== (string) $interval ) {
+			$every = (int) $interval_count > 1 ? '/' . (int) $interval_count . ' ' . $interval . 's' : '/' . $interval;
+			$html .= '<span class="ajcore-price-interval">' . esc_html( $every ) . '</span>';
+		}
+		return $html;
+	}
+
 	public function render_products_shortcode( $atts ) {
 		$atts = shortcode_atts(
 			array(
@@ -10264,6 +10279,12 @@ class AJForms {
 					if ( '' === $dependency_note && '' !== $required_product_name ) {
 						$dependency_note = sprintf( __( 'This product requires %s. It will be added to your cart automatically.', 'ajforms' ), $required_product_name );
 					}
+					$required_price_text = '';
+					if ( '' !== $required_price_id && ! empty( $public_price_map[ $required_price_id ] ) ) {
+						$required_price      = $public_price_map[ $required_price_id ];
+						$required_price_text = wp_strip_all_tags( $this->format_shop_price_html( $required_price['amount'], $required_price['currency'], ! empty( $required_price['recurring_interval'] ) ? $required_price['recurring_interval'] : '', ! empty( $required_price['recurring_interval_count'] ) ? $required_price['recurring_interval_count'] : 1 ) );
+					}
+					$card_image = ! empty( $price['product_images'][0] ) ? esc_url( (string) $price['product_images'][0] ) : '';
 					?>
 					<?php
 					$card_id       = (string) $price['id'];
@@ -10287,6 +10308,9 @@ class AJForms {
 						data-dependency-note="<?php echo esc_attr( $dependency_note ); ?>"
 						style="border:1px solid #dfe6ee;border-radius:14px;background:#fff;padding:20px;box-shadow:0 14px 30px rgba(15,23,42,.06);"
 					>
+						<?php if ( '' !== $card_image ) : ?>
+							<img class="ajcore-product-image" src="<?php echo esc_url( $card_image ); ?>" alt="" loading="lazy" decoding="async">
+						<?php endif; ?>
 						<?php if ( $show_title ) : ?>
 							<h3 class="ajcore-product-title" style="margin:0 0 10px;font-size:22px;line-height:1.2;"><?php if ( '' !== $card_link ) : ?><a href="<?php echo esc_url( $card_link ); ?>"><?php echo esc_html( $price['product_name'] ); ?></a><?php else : ?><?php echo esc_html( $price['product_name'] ); ?><?php endif; ?></h3>
 						<?php endif; ?>
@@ -10300,13 +10324,15 @@ class AJForms {
 						<?php elseif ( $show_description && ! empty( $price['nickname'] ) ) : ?>
 							<div class="ajcore-product-description" style="margin-bottom:10px;color:#64748b;"><?php echo esc_html( $price['nickname'] ); ?></div>
 						<?php endif; ?>
-						<?php if ( 'expand' === $details_mode && '' !== $rich_description ) : ?>
-							<details class="ajcore-product-details" style="margin:0 0 14px;color:#64748b;">
-								<summary style="cursor:pointer;color:#0f7ac6;font-weight:700;"><?php esc_html_e( 'View full details', 'ajforms' ); ?></summary>
-								<div style="margin-top:8px;line-height:1.45;">
-									<?php echo $this->render_product_rich_text( $rich_description ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-								</div>
-							</details>
+						<?php if ( 'expand' === $details_mode && '' !== $rich_description && '' === $card_link ) : ?>
+							<?php // Full details open in a pop-up so cards in a row keep the same height. ?>
+							<button type="button" class="ajcore-product-detail-open"><?php esc_html_e( 'View full details', 'ajforms' ); ?></button>
+							<template class="ajcore-product-detail-content">
+								<?php echo $this->render_product_rich_text( $rich_description ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<?php if ( $dependency_note ) : ?>
+									<p class="ajcore-product-detail-note"><?php echo esc_html( $dependency_note ); ?></p>
+								<?php endif; ?>
+							</template>
 						<?php endif; ?>
 						<?php if ( $show_features && ! empty( $price['product_features'] ) && is_array( $price['product_features'] ) ) : ?>
 							<ul class="ajcore-product-features">
@@ -10316,12 +10342,16 @@ class AJForms {
 							</ul>
 						<?php endif; ?>
 						<?php if ( $required_product_name ) : ?>
-							<div class="ajcore-product-requires" style="margin:0 0 12px;color:#475569;font-size:13px;line-height:1.35;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:9px 10px;">
-								<?php echo esc_html( sprintf( __( 'Includes required setup: %s', 'ajforms' ), $required_product_name ) ); ?>
+							<?php // One line instead of two boxes; the full note is in the details pop-up / tooltip. ?>
+							<div class="ajcore-product-requires" title="<?php echo esc_attr( $dependency_note ); ?>">
+								<?php
+								echo esc_html(
+									'' !== $required_price_text
+										? sprintf( __( '+ %1$s %2$s, added automatically', 'ajforms' ), $required_price_text, $required_product_name )
+										: sprintf( __( '+ %s, added automatically', 'ajforms' ), $required_product_name )
+								);
+								?>
 							</div>
-						<?php endif; ?>
-						<?php if ( $dependency_note ) : ?>
-							<div class="ajcore-product-dependency-note" style="margin:12px 0 14px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#1e40af;font-size:13px;font-weight:700;line-height:1.4;"><?php echo esc_html( $dependency_note ); ?></div>
 						<?php endif; ?>
 
 						<?php if ( count( $price_options ) > 1 ) : ?>
@@ -10345,7 +10375,7 @@ class AJForms {
 											data-amount="<?php echo esc_attr( $option_amount ); ?>"
 											data-currency="<?php echo esc_attr( strtolower( $option_currency ) ); ?>"
 											data-recurring-interval="<?php echo esc_attr( $option_interval ); ?>"
-											data-price-text="<?php echo esc_attr( $option_currency . ' ' . number_format_i18n( $option_amount, 2 ) . ( '' !== $option_interval ? '/' . $option_interval : '' ) ); ?>"
+											data-price-html="<?php echo esc_attr( $this->format_shop_price_html( $option_amount, $option_currency, $option_interval, ! empty( $option['recurring_interval_count'] ) ? $option['recurring_interval_count'] : 1 ) ); ?>"
 											data-price-label="<?php echo esc_attr( $option_currency . ' ' . number_format_i18n( $option_amount, 2 ) . ( '' !== $option_interval ? ' ' . sprintf( __( 'Per %s', 'ajforms' ), $option_interval ) : '' ) ); ?>"
 											data-required-price-id="<?php echo esc_attr( $option_required ); ?>"
 											data-required-product-name="<?php echo esc_attr( $option_req_name ); ?>"
@@ -10353,15 +10383,13 @@ class AJForms {
 											data-nonce="<?php echo esc_attr( wp_create_nonce( 'ajcore_buy_product_' . $option['id'] ) ); ?>"
 										>
 										<span class="ajcore-product-option-name"><?php echo esc_html( $option_name ); ?></span>
-										<span class="ajcore-product-option-price"><?php echo esc_html( $option_currency . ' ' . number_format_i18n( $option_amount, 2 ) . ( '' !== $option_interval ? '/' . $option_interval : '' ) ); ?></span>
+										<span class="ajcore-product-option-price"><?php echo wp_kses_post( $this->format_shop_price_html( $option_amount, $option_currency, $option_interval, ! empty( $option['recurring_interval_count'] ) ? $option['recurring_interval_count'] : 1 ) ); ?></span>
 									</label>
 								<?php endforeach; ?>
 							</div>
 						<?php endif; ?>
 						<?php if ( $show_price ) : ?>
-							<div class="ajcore-product-price" style="margin:12px 0 18px;font-size:28px;font-weight:800;color:#111827;">
-								<?php echo esc_html( $price_label ); ?>
-							</div>
+							<div class="ajcore-product-price" aria-label="<?php echo esc_attr( $price_label ); ?>"><?php echo wp_kses_post( $this->format_shop_price_html( $price['amount'], $price['currency'], ! empty( $price['recurring_interval'] ) ? $price['recurring_interval'] : '', ! empty( $price['recurring_interval_count'] ) ? $price['recurring_interval_count'] : 1 ) ); ?></div>
 						<?php endif; ?>
 						<?php if ( $show_button && '' !== $single_handoff_url ) : ?>
 							<a
@@ -10371,7 +10399,6 @@ class AJForms {
 							><?php esc_html_e( 'Add to Cart', 'ajforms' ); ?></a>
 						<?php elseif ( $show_button && $is_cart_mode ) : ?>
 							<div class="ajcore-product-cart-controls" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-								<span class="ajcore-product-single-qty" style="display:inline-flex;align-items:center;min-height:40px;color:#475569;font-weight:800;"><?php esc_html_e( 'Qty 1', 'ajforms' ); ?></span>
 								<input class="ajcore-product-quantity" type="hidden" value="1">
 								<button
 									type="button"
@@ -10399,6 +10426,11 @@ class AJForms {
 			<?php if ( $has_catalog_ui ) : ?>
 				<nav class="ajcore-products-pager" aria-label="<?php esc_attr_e( 'Product pages', 'ajforms' ); ?>" hidden></nav>
 			<?php endif; ?>
+			<dialog class="ajcore-product-dialog" aria-labelledby="<?php echo esc_attr( $root_id ); ?>-dialog-title">
+				<form method="dialog"><button class="ajcore-product-dialog-close" aria-label="<?php esc_attr_e( 'Close', 'ajforms' ); ?>">&times;</button></form>
+				<h3 id="<?php echo esc_attr( $root_id ); ?>-dialog-title" class="ajcore-product-dialog-title"></h3>
+				<div class="ajcore-product-dialog-body"></div>
+			</dialog>
 			<?php if ( $is_cart_mode ) : ?>
 				<button type="button" class="ajcore-floating-cart" aria-label="<?php echo esc_attr__( 'View cart', 'ajforms' ); ?>">
 					<span class="ajcore-floating-cart-icon" aria-hidden="true">🛒</span>
@@ -11318,7 +11350,7 @@ class AJForms {
 			.ajcore-products-wrap-cart .ajcore-cart{display:none!important}
 			.ajcore-products-wrap-cart.ajcore-cart-highlight .ajcore-cart-mini{box-shadow:0 0 0 4px rgba(15,122,198,.16),0 18px 44px rgba(15,23,42,.12)!important;transform:translateY(-2px)}
 			.ajcore-products-wrap .ajcore-product{display:flex;flex-direction:column;min-height:360px;box-sizing:border-box}
-			.ajcore-products-wrap .ajcore-product-title{font-size:clamp(20px,2vw,24px)!important;line-height:1.12!important;letter-spacing:-.02em;min-height:2.28em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+			.ajcore-products-wrap .ajcore-product-title{font-size:clamp(18px,1.6vw,22px)!important;line-height:1.18!important;letter-spacing:-.015em;min-height:2.36em;display:block;overflow-wrap:break-word;hyphens:manual}
 			.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{font-size:16px;line-height:1.45;color:#64748b;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;min-height:7.25em}
 			.ajcore-products-wrap .ajcore-product-description :is(h3,h4){margin:8px 0 6px;color:#111827;line-height:1.2;font-size:16px}
 			.ajcore-products-wrap .ajcore-product-description p{margin:0 0 10px}
@@ -11329,7 +11361,7 @@ class AJForms {
 			.ajcore-product-details :is(h3,h4){margin:10px 0 6px;color:#111827;line-height:1.2}
 			.ajcore-product-details p{margin:0 0 10px}
 			.ajcore-product-details ul{margin:8px 0 12px 20px;padding:0}
-			.ajcore-cart-mini{grid-column:1 / -1;position:sticky;top:0;z-index:9998;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;padding:12px 14px;border:1px solid #dbeafe;border-radius:16px;background:rgba(255,255,255,.96);box-shadow:0 12px 32px rgba(15,23,42,.10);backdrop-filter:blur(10px)}
+			.ajcore-cart-mini{grid-column:1 / -1;position:sticky;top:var(--ajcore-sticky-top,12px);z-index:999;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;padding:12px 14px;border:1px solid #dbeafe;border-radius:16px;background:rgba(255,255,255,.96);box-shadow:0 12px 32px rgba(15,23,42,.10);backdrop-filter:blur(10px)}
 			.ajcore-cart-mini-button{display:inline-flex;align-items:center;gap:9px;border:0;border-radius:999px;background:#0f7ac6;color:#fff;padding:10px 14px;font-weight:900;cursor:pointer}
 			.ajcore-cart-mini-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
 			.ajcore-cart-mini-status{flex:1;color:#475569;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -11382,7 +11414,7 @@ class AJForms {
 			.ajcore-floating-cart-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:#fff;color:#0f7ac6;font-size:13px;font-weight:900}
 			.ajcore-floating-cart.has-items{animation:ajcoreCartPulse .28s ease}
 			@keyframes ajcoreCartPulse{0%{transform:scale(1)}50%{transform:scale(1.06)}100%{transform:scale(1)}}
-			@media (max-width: 800px){.ajcore-cart-modal-panel{top:calc(env(safe-area-inset-top,0px) + 110px);transform:translateX(-50%);max-height:calc(100vh - 140px);width:calc(100vw - 24px);padding:18px}.ajcore-cart-modal-row{grid-template-columns:1fr;align-items:start}.ajcore-cart-modal-footer{align-items:flex-start;flex-direction:column}.ajcore-cart-embedded-checkout{grid-template-columns:1fr}.ajcore-products-list{grid-template-columns:repeat(var(--ajp-cols-phone,1),minmax(0,1fr))!important}.ajcore-products-wrap-cart{padding-top:118px;padding-bottom:42px}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto;-webkit-line-clamp:3}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{left:12px;right:12px;margin:0;padding:10px 12px;border-radius:16px;gap:8px}.ajcore-cart-mini.ajcore-mobile-fixed-cart{position:fixed!important;top:var(--ajcore-cart-mobile-top,calc(env(safe-area-inset-top,0px) + 190px))!important;bottom:auto!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;z-index:2147483000!important;box-sizing:border-box!important;transform:translateZ(0);}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-clear{padding:9px 10px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
+			@media (max-width: 800px){.ajcore-cart-modal-panel{top:calc(env(safe-area-inset-top,0px) + 110px);transform:translateX(-50%);max-height:calc(100vh - 140px);width:calc(100vw - 24px);padding:18px}.ajcore-cart-modal-row{grid-template-columns:1fr;align-items:start}.ajcore-cart-modal-footer{align-items:flex-start;flex-direction:column}.ajcore-cart-embedded-checkout{grid-template-columns:1fr}.ajcore-products-list{grid-template-columns:repeat(var(--ajp-cols-phone,1),minmax(0,1fr))!important}.ajcore-products-wrap-cart{padding-top:118px;padding-bottom:42px}.ajcore-products-wrap .ajcore-product{min-height:auto}.ajcore-products-wrap .ajcore-product-title{min-height:auto}.ajcore-products-wrap .ajcore-product-summary,.ajcore-products-wrap .ajcore-product-description{min-height:auto;-webkit-line-clamp:4}.ajcore-cart-mini{left:12px;right:12px;margin:0;padding:10px 12px;border-radius:16px;gap:8px}.ajcore-cart-mini.ajcore-mobile-fixed-cart{position:fixed!important;top:var(--ajcore-cart-mobile-top,calc(env(safe-area-inset-top,0px) + 190px))!important;bottom:auto!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;z-index:2147483000!important;box-sizing:border-box!important;transform:translateZ(0);}.ajcore-cart-mini-label{display:none}.ajcore-cart-mini-status{font-size:13px}.ajcore-cart-mini-clear{padding:9px 10px}.ajcore-cart-mini-checkout{padding:10px 12px}.ajcore-floating-cart{right:16px;bottom:16px;padding:13px 15px}.ajcore-floating-cart-text{display:none}}
 			@media (max-width: 980px){.ajcore-products-wrap-cart{grid-template-columns:1fr}.ajcore-products-wrap-cart .ajcore-cart{grid-column:auto;grid-row:auto;position:static}}
 			/* While the site's mobile menu is expanded, keep the fixed carts behind it. */
 			body.menu-open .ajcore-cart-mini.ajcore-mobile-fixed-cart,
@@ -11391,6 +11423,27 @@ class AJForms {
 			html.has-modal-open .ajcore-floating-cart{z-index:1!important}
 			/* Catalog: toolbar, pager, product-page links. Theme hooks: --ajp-accent, --ajp-radius, --ajp-scroll-offset. */
 			.ajcore-products-wrap .ajcore-product[hidden]{display:none!important}
+			.ajcore-products-wrap .ajcore-product-price{display:flex;align-items:baseline;gap:4px;margin:14px 0 14px!important;font-weight:800;color:#111827}
+			.ajcore-price-amount{font-size:clamp(28px,2.6vw,34px);line-height:1;letter-spacing:-.03em}
+			.ajcore-price-interval{font-size:15px;font-weight:600;color:#64748b;letter-spacing:0}
+			.ajcore-product-option-price .ajcore-price-amount{font-size:15px;letter-spacing:0}
+			.ajcore-product-option-price .ajcore-price-interval{font-size:12px}
+			.ajcore-products-wrap .ajcore-product-cart-controls{display:block!important}
+			.ajcore-products-wrap :is(.ajcore-product-add,.ajcore-product-buy,.ajcore-product-handoff){display:block!important;width:100%;box-sizing:border-box;text-align:center;padding:13px 18px!important;border-radius:10px!important;font-size:15px}
+			.ajcore-products-wrap :is(.ajcore-product-add,.ajcore-product-buy,.ajcore-product-handoff):hover{filter:brightness(1.07)}
+			.ajcore-product-requires{margin:0 0 4px;color:#475569;font-size:13px;font-weight:600;line-height:1.35}
+			.ajcore-product-image{display:block;width:100%;height:150px;object-fit:cover;border-radius:10px;margin:-4px 0 14px;background:#f1f5f9}
+			.ajcore-product-detail-open{align-self:flex-start;margin:0 0 10px;padding:0;border:0;background:none;color:var(--ajp-accent,#0f7ac6);font-weight:700;font-size:15px;cursor:pointer}
+			.ajcore-product-detail-open::after{content:" →"}
+			.ajcore-product-detail-open:hover{text-decoration:underline}
+			.ajcore-product-dialog{width:min(640px,calc(100vw - 32px));max-height:min(80vh,720px);padding:24px 26px;border:0;border-radius:16px;box-shadow:0 30px 80px rgba(15,23,42,.3);color:#334155;line-height:1.55}
+			.ajcore-product-dialog::backdrop{background:rgba(15,23,42,.5)}
+			.ajcore-product-dialog form{position:absolute;top:10px;right:12px;margin:0}
+			.ajcore-product-dialog-close{width:36px;height:36px;border:0;border-radius:50%;background:#f1f5f9;font-size:22px;line-height:1;cursor:pointer}
+			.ajcore-product-dialog-title{margin:0 40px 12px 0;font-size:22px;line-height:1.25;color:#0f172a}
+			.ajcore-product-dialog-body :is(h3,h4){margin:14px 0 6px;color:#0f172a}
+			.ajcore-product-dialog-body ul{margin:8px 0 12px 20px}
+			.ajcore-product-detail-note{margin-top:14px;padding:10px 12px;border-radius:10px;background:#eff6ff;color:#1e40af;font-size:14px}
 			.ajcore-product-options{display:grid;gap:6px;margin:4px 0 12px}
 			.ajcore-product-option{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #dfe6ee;border-radius:10px;cursor:pointer;font-size:15px;line-height:1.3}
 			.ajcore-product-option:has(input:checked){border-color:var(--ajp-accent,#0f7ac6);background:color-mix(in srgb,var(--ajp-accent,#0f7ac6) 8%,#fff)}
@@ -11466,6 +11519,23 @@ class AJForms {
 			// price (cart, Buy Now, dependency auto-add all read the card's data-* / button).
 			const root = document.getElementById(<?php echo wp_json_encode( $root_id ); ?>);
 			if (!root) { return; }
+			// "View full details": open the card's full text in one shared dialog.
+			const dialog = root.querySelector('.ajcore-product-dialog');
+			root.addEventListener('click', function(event) {
+				const opener = event.target.closest('.ajcore-product-detail-open');
+				if (!opener || !dialog) { return; }
+				const card = opener.closest('.ajcore-product');
+				const content = card ? card.querySelector('.ajcore-product-detail-content') : null;
+				const title = card ? card.querySelector('.ajcore-product-title') : null;
+				dialog.querySelector('.ajcore-product-dialog-title').textContent = title ? title.textContent.trim() : '';
+				const body = dialog.querySelector('.ajcore-product-dialog-body');
+				body.innerHTML = '';
+				if (content) { body.appendChild(content.content.cloneNode(true)); }
+				if (dialog.showModal) { dialog.showModal(); } else { dialog.setAttribute('open', ''); }
+			});
+			if (dialog) {
+				dialog.addEventListener('click', function(event) { if (event.target === dialog) { dialog.close(); } });
+			}
 			root.addEventListener('change', function(event) {
 				const input = event.target.closest('.ajcore-product-option input');
 				if (!input) { return; }
@@ -11480,7 +11550,7 @@ class AJForms {
 				card.dataset.requiredProductName = input.dataset.requiredProductName || '';
 				card.dataset.dependencyNote = input.dataset.dependencyNote || '';
 				const price = card.querySelector('.ajcore-product-price');
-				if (price) { price.textContent = input.dataset.priceText || ''; }
+				if (price) { price.innerHTML = input.dataset.priceHtml || ''; } // server-built, escaped markup
 				const buy = card.querySelector('.ajcore-product-buy');
 				if (buy) {
 					buy.dataset.priceId = input.value;
@@ -11530,6 +11600,28 @@ class AJForms {
 					const query = params.toString();
 					window.history.replaceState(window.history.state, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
 				} catch (error) {}
+			}
+
+			// Desktop cart bar sticks just below the site's fixed/sticky header (and admin bar), not over it.
+			const miniBar = root.querySelector('.ajcore-cart-mini');
+			if (miniBar) {
+				let ticking = false;
+				const placeMiniBar = function() {
+					ticking = false;
+					if (miniBar.classList.contains('ajcore-mobile-fixed-cart')) { return; }
+					let bottom = 0;
+					document.querySelectorAll('#wpadminbar, header, .site-header, #masthead').forEach(function(el) {
+						const pos = window.getComputedStyle(el).position;
+						if (pos !== 'fixed' && pos !== 'sticky') { return; }
+						const rect = el.getBoundingClientRect();
+						if (rect.height > 0 && rect.top < 120 && rect.bottom > 0) { bottom = Math.max(bottom, rect.bottom); }
+					});
+					root.style.setProperty('--ajcore-sticky-top', Math.round(bottom + 10) + 'px');
+				};
+				const queue = function() { if (!ticking) { ticking = true; window.requestAnimationFrame(placeMiniBar); } };
+				placeMiniBar();
+				window.addEventListener('scroll', queue, { passive: true });
+				window.addEventListener('resize', queue);
 			}
 
 			const list = root.querySelector('.ajcore-products-list');

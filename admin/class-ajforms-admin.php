@@ -11193,6 +11193,7 @@ class AJForms_Admin {
 				'product_description' => $product_description,
 				'product_rich_description' => $product_rich_description,
 				'product_summary' => $product_summary,
+				'product_images' => array_values( array_filter( array_map( 'esc_url_raw', isset( $product['images'] ) ? (array) $product['images'] : array() ) ) ),
 				'product_features' => array_values( array_filter( array_map( static function ( $feature ) { return is_array( $feature ) && isset( $feature['name'] ) ? sanitize_text_field( (string) $feature['name'] ) : ''; }, isset( $product['marketing_features'] ) ? (array) $product['marketing_features'] : array() ) ) ),
 				'product_metadata' => $product_metadata,
 				'price_metadata' => $price_metadata,
@@ -29035,9 +29036,9 @@ class AJForms_Admin {
 							if (details !== 'none') {
 								attrs.push('details="' + details + '"');
 							}
-							if (priceIds.length) {
-								attrs.push('price_ids="' + priceIds.join(',') + '"');
-							}
+							// No price_ids: the shop follows Settings > Product Catalog (In shop, Shop sequence),
+							// so the page never needs re-pasting. (price_ids still works for a hand-picked block.)
+							void priceIds;
 							if (fields.length && fields.join(',') !== 'title,description,price,button') {
 								attrs.push('show="' + fields.join(',') + '"');
 							}
