@@ -203,7 +203,6 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 					'post_content'   => '',
 					'post_status'    => 'inherit',
 					'post_mime_type' => $mime,
-					'import_id'      => AJCore_Storage_Service::next_customer_file_id(),
 				),
 				trailingslashit( $upload['basedir'] ) . 'ajcore-remote/' . basename( (string) $record->object_key ), // Never exists locally; the file is served from remote storage.
 				0,
@@ -371,7 +370,6 @@ if ( ! class_exists( 'AJCore_Customer_Files' ) ) {
 					'post_content'   => '',
 					'post_status'    => 'inherit',
 					'post_mime_type' => $mime,
-					'import_id'      => AJCore_Storage_Service::next_customer_file_id(),
 				),
 				trailingslashit( $upload['basedir'] ) . 'ajcore-remote/' . basename( $object_key ), // Never exists locally; served from remote storage.
 				0,

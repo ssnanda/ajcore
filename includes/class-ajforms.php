@@ -7942,7 +7942,6 @@ class AJForms {
 				'post_title'     => $title,
 				'post_content'   => '',
 				'post_status'    => 'inherit',
-				'import_id'      => AJCore_Storage_Service::next_customer_file_id(),
 			),
 			$file_path
 		);
