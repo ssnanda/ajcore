@@ -2682,6 +2682,48 @@ class AJForms_Admin {
 	}
 
 	/**
+	 * Applies Product Catalog "In shop" checkboxes to the public shop selection
+	 * (ajcore_public_product_display_settings.selected_prices). Only prices posted with the
+	 * changed rows are touched. An empty selection means "whole catalog", so the first edit
+	 * turns that into an explicit list of every active price before applying the change.
+	 */
+	private function apply_inline_shop_selection( $present_ids, $checked_ids ) {
+		$present_ids = array_filter( array_map( 'sanitize_text_field', (array) $present_ids ) );
+		if ( empty( $present_ids ) ) {
+			return '';
+		}
+		$checked_ids = array_map( 'sanitize_text_field', (array) $checked_ids );
+		$display     = $this->get_public_product_display_settings();
+		$selected    = $display['selected_prices'];
+		if ( empty( $selected ) ) {
+			$cache = $this->get_stripe_products_cache();
+			foreach ( isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array() as $price ) {
+				if ( ! empty( $price['id'] ) && ! empty( $price['product_active'] ) && ! empty( $price['price_active'] ) ) {
+					$selected[] = (string) $price['id'];
+				}
+			}
+		}
+		$before = $selected;
+		foreach ( $present_ids as $price_id ) {
+			$selected = array_values( array_diff( $selected, array( $price_id ) ) );
+			if ( in_array( $price_id, $checked_ids, true ) ) {
+				$selected[] = $price_id;
+			}
+		}
+		if ( empty( $selected ) ) {
+			return __( 'At least one product must stay in the shop.', 'ajforms' );
+		}
+		sort( $before );
+		$compare = $selected;
+		sort( $compare );
+		// Only write when the shop actually changed (keeps "whole catalog" mode on unrelated edits).
+		if ( $compare !== $before ) {
+			$this->save_public_product_display_settings( array_values( array_unique( $selected ) ), $display['order'], null );
+		}
+		return '';
+	}
+
+	/**
 	 * Sends inline Product Catalog edits (name, description, included features) to Stripe,
 	 * only for values that differ from a fresh read, then refreshes both local product copies.
 	 * Returns error strings for the notice.
@@ -13280,6 +13322,13 @@ class AJForms_Admin {
 				'portal-products' => 'saved',
 			);
 			$stripe_errors = $this->push_inline_product_edits_to_stripe( $stripe_product_edits );
+			$shop_error    = $this->apply_inline_shop_selection(
+				isset( $_POST['portal_shop_present'] ) && is_array( $_POST['portal_shop_present'] ) ? array_keys( wp_unslash( $_POST['portal_shop_present'] ) ) : array(),
+				isset( $_POST['portal_shop'] ) && is_array( $_POST['portal_shop'] ) ? array_keys( wp_unslash( $_POST['portal_shop'] ) ) : array()
+			);
+			if ( '' !== $shop_error ) {
+				$stripe_errors[] = $shop_error;
+			}
 			if ( ! empty( $stripe_errors ) ) {
 				$redirect_args['portal-error'] = rawurlencode( implode( ' | ', $stripe_errors ) );
 			}
@@ -14694,13 +14743,6 @@ class AJForms_Admin {
 			exit;
 		}
 
-		if ( isset( $_POST['ajcore_product_dependencies_nonce'] ) ) {
-			check_admin_referer( 'ajcore_save_product_dependencies', 'ajcore_product_dependencies_nonce' );
-			$raw_dependencies = isset( $_POST['product_dependencies'] ) && is_array( $_POST['product_dependencies'] ) ? wp_unslash( $_POST['product_dependencies'] ) : array();
-			$this->save_public_product_dependency_settings( $raw_dependencies );
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-products', 'dependencies-saved' => 1 ), admin_url( 'admin.php' ) ) );
-			exit;
-		}
 
 		if ( ! isset( $_GET['ajf_products_action'], $_GET['_wpnonce'] ) ) {
 			return;
@@ -25556,6 +25598,16 @@ class AJForms_Admin {
 			return;
 		}
 
+		// Shop-only sites (Client Portal off) use this screen too: make sure the product tables
+		// exist, and show only what affects the shop (portal visibility / repeat-purchase rules are
+		// carried through as hidden values so saving never resets them).
+		$this->ensure_portal_schema();
+		$portal_on = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'client_portal' );
+		// "In shop" = the public [ajcore_products] selection (AJ Core > Products shows only these).
+		// An empty selection means the whole active catalog is in the shop.
+		$shop_selection = $this->get_public_product_display_settings()['selected_prices'];
+		$shop_all       = empty( $shop_selection );
+
 		global $wpdb;
 		$pdb = $this->get_pdb();
 
@@ -25645,7 +25697,7 @@ class AJForms_Admin {
 			<div class="ajforms-settings-inline-actions">
 				<?php
 				// Tile counts are per product (a product = all its prices). Filters run client-side.
-				$tile_counts = array( 'all' => 0, 'portal' => 0, 'not_portal' => 0, 'no_duplicates' => 0, 'allow_duplicate' => 0, 'custom_request' => 0, 'upgrade' => 0, 'addon' => 0, 'archived' => 0 );
+				$tile_counts = array( 'all' => 0, 'shop' => 0, 'not_shop' => 0, 'portal' => 0, 'not_portal' => 0, 'no_duplicates' => 0, 'allow_duplicate' => 0, 'custom_request' => 0, 'upgrade' => 0, 'addon' => 0, 'archived' => 0 );
 				foreach ( $product_groups as $tile_group ) {
 					$tile_active = ! empty( array_filter( wp_list_pluck( $tile_group['rows'], 'active' ) ) );
 					if ( ! $tile_active ) {
@@ -25655,17 +25707,22 @@ class AJForms_Admin {
 					$tile_counts['all']++;
 					$tile_visible = false;
 					$tile_addon   = false;
+					$tile_shop    = false;
 					foreach ( $tile_group['rows'] as $tile_row ) {
+						$tile_shop    = $tile_shop || ( ! empty( $tile_row->active ) && ( $shop_all || in_array( (string) $tile_row->stripe_price_id, $shop_selection, true ) ) );
 						$tile_visible = $tile_visible || ( ! empty( $tile_row->active ) && 'hidden' !== (string) $tile_row->visibility );
 						$tile_addon   = $tile_addon || ! empty( $dependency_settings[ $tile_row->stripe_price_id ]['requires_price_id'] );
 					}
 					$tile_counts[ $tile_visible ? 'portal' : 'not_portal' ]++;
+					$tile_counts[ $tile_shop ? 'shop' : 'not_shop' ]++;
 					$tile_behavior = ! empty( $tile_group['product']->duplicate_behavior ) && isset( $tile_counts[ $tile_group['product']->duplicate_behavior ] ) ? $tile_group['product']->duplicate_behavior : 'no_duplicates';
 					$tile_counts[ $tile_behavior ]++;
 					$tile_counts['addon'] += $tile_addon ? 1 : 0;
 				}
 				$tiles = array(
 					'all'             => array( __( 'Active', 'ajforms' ), '#2563eb' ),
+					'shop'            => array( __( 'In shop', 'ajforms' ), '#db2777' ),
+					'not_shop'        => array( __( 'Not in shop', 'ajforms' ), '#94a3b8' ),
 					'portal'          => array( __( 'In portal', 'ajforms' ), '#16a34a' ),
 					'not_portal'      => array( __( 'Not in portal', 'ajforms' ), '#64748b' ),
 					'no_duplicates'   => array( __( 'Once per client', 'ajforms' ), '#7c3aed' ),
@@ -25679,14 +25736,19 @@ class AJForms_Admin {
 				<div class="ajcp-tiles" id="ajcp-tiles" role="toolbar" aria-label="<?php esc_attr_e( 'Filter products', 'ajforms' ); ?>">
 					<?php foreach ( $tiles as $tile_key => $tile ) : ?>
 						<?php if ( 'all' !== $tile_key && 0 === $tile_counts[ $tile_key ] ) { continue; } ?>
+						<?php if ( ! $portal_on && ! in_array( $tile_key, array( 'all', 'shop', 'not_shop', 'addon', 'archived' ), true ) ) { continue; } ?>
 						<button type="button" class="ajcp-tile<?php echo 'all' === $tile_key ? ' is-active' : ''; ?>" data-filter="<?php echo esc_attr( $tile_key ); ?>" style="--c:<?php echo esc_attr( $tile[1] ); ?>" aria-pressed="<?php echo 'all' === $tile_key ? 'true' : 'false'; ?>"><b><?php echo (int) $tile_counts[ $tile_key ]; ?></b><span><?php echo esc_html( $tile[0] ); ?></span></button>
 					<?php endforeach; ?>
 				</div>
 				<a class="button button-primary" href="<?php echo esc_url( $this->product_editor_url( 'new' ) ); ?>"><?php esc_html_e( 'New product', 'ajforms' ); ?></a>
+			<?php if ( $portal_on ) : ?>
 			<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-client-portal', 'tab' => 'sold-items' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Transactions', 'ajforms' ); ?></a>
 				<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'sync' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Sync Center', 'ajforms' ); ?></a>
+				<?php else : ?>
+				<a class="button" href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-products', 'ajf_products_action' => 'sync' ), admin_url( 'admin.php' ) ), 'ajf_sync_stripe_products' ) ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
+				<?php endif; ?>
 			</div>
-		<p class="description"><?php esc_html_e( 'Customer View opens from each customer link in Portal Users, Billing, Transactions, Requests, Compliance items, and Files.', 'ajforms' ); ?></p>
+		<?php if ( $portal_on ) : ?><p class="description"><?php esc_html_e( 'Customer View opens from each customer link in Portal Users, Billing, Transactions, Requests, Compliance items, and Files.', 'ajforms' ); ?></p><?php endif; ?>
 
 			<form method="post" id="ajcp-catalog-form">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
@@ -25695,7 +25757,7 @@ class AJForms_Admin {
 						<tr>
 							<th style="width:34%"><?php esc_html_e( 'On the website', 'ajforms' ); ?> <span class="ajcp-th-note"><?php esc_html_e( 'saved to Stripe', 'ajforms' ); ?></span></th>
 							<th style="width:24%"><?php esc_html_e( 'Prices & add-ons', 'ajforms' ); ?></th>
-							<th style="width:150px"><?php esc_html_e( 'Repeat purchase', 'ajforms' ); ?></th>
+							<?php if ( $portal_on ) : ?><th style="width:150px"><?php esc_html_e( 'Repeat purchase', 'ajforms' ); ?></th><?php endif; ?>
 							<th style="width:150px"></th>
 						</tr>
 					</thead>
@@ -25746,11 +25808,13 @@ class AJForms_Admin {
 								);
 								$has_override = '' !== trim( (string) $product->custom_label ) || '' !== trim( (string) $product->description_override );
 								$row_addon    = false;
+								$row_shop     = false;
 								foreach ( $rows as $addon_row ) {
 									$row_addon = $row_addon || ! empty( $dependency_settings[ $addon_row->stripe_price_id ]['requires_price_id'] );
+									$row_shop  = $row_shop || ( ! empty( $addon_row->active ) && ( $shop_all || in_array( (string) $addon_row->stripe_price_id, $shop_selection, true ) ) );
 								}
 								?>
-								<tr class="ajcp-row<?php echo $group_active ? '' : ' is-archived'; ?>" data-archived="<?php echo $group_active ? '0' : '1'; ?>" data-portal="<?php echo $group_visible ? '1' : '0'; ?>" data-owned="<?php echo esc_attr( $behavior ); ?>" data-addon="<?php echo $row_addon ? '1' : '0'; ?>"<?php echo $group_active ? '' : ' hidden'; ?>>
+								<tr class="ajcp-row<?php echo $group_active ? '' : ' is-archived'; ?>" data-archived="<?php echo $group_active ? '0' : '1'; ?>" data-portal="<?php echo $group_visible ? '1' : '0'; ?>" data-owned="<?php echo esc_attr( $behavior ); ?>" data-addon="<?php echo $row_addon ? '1' : '0'; ?>" data-shop="<?php echo $row_shop ? '1' : '0'; ?>"<?php echo $group_active ? '' : ' hidden'; ?>>
 									<td class="ajcp-card">
 										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][row_ids]" value="<?php echo esc_attr( implode( ',', array_map( 'absint', $row_ids ) ) ); ?>">
 										<?php if ( $has_stripe ) : ?>
@@ -25769,11 +25833,16 @@ class AJForms_Admin {
 											<?php if ( ! $group_active ) : ?><span class="ajcp-chip is-off"><?php esc_html_e( 'Archived in Stripe', 'ajforms' ); ?></span><?php endif; ?>
 											<code class="ajcp-id"><?php echo esc_html( $product->stripe_product_id ); ?></code>
 										</div>
+										<?php if ( ! $portal_on ) : ?>
+											<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][custom_label]" value="<?php echo esc_attr( $product->custom_label ); ?>">
+											<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][description_override]" value="<?php echo esc_attr( $product->description_override ); ?>">
+										<?php else : ?>
 										<details class="ajcp-override"<?php echo $has_override ? ' open' : ''; ?>>
 											<summary><?php esc_html_e( 'Portal-only label & description', 'ajforms' ); ?><?php echo $has_override ? ' <span class="ajcp-chip is-warn">' . esc_html__( 'in use', 'ajforms' ) . '</span>' : ''; ?></summary>
 											<input type="text" name="portal_product_groups[<?php echo $fk; ?>][custom_label]" value="<?php echo esc_attr( $product->custom_label ); ?>" placeholder="<?php esc_attr_e( 'Portal label (overrides name)', 'ajforms' ); ?>">
 											<textarea rows="2" name="portal_product_groups[<?php echo $fk; ?>][description_override]" placeholder="<?php esc_attr_e( 'Portal description (overrides Stripe)', 'ajforms' ); ?>"><?php echo esc_textarea( $product->description_override ); ?></textarea>
 										</details>
+										<?php endif; ?>
 									</td>
 									<td class="ajcp-prices-cell">
 										<?php foreach ( $rows as $price_row ) : ?>
@@ -25788,6 +25857,10 @@ class AJForms_Admin {
 													<span class="ajcp-amount"><?php echo esc_html( $this->format_portal_money( $price_row->price_amount, $price_row->currency ) ); ?></span>
 													<span class="ajcp-chip <?php echo ! empty( $price_row->recurring_interval ) ? 'is-sub' : 'is-once'; ?>"><?php echo ! empty( $price_row->recurring_interval ) ? esc_html( sprintf( __( 'every %s', 'ajforms' ), $price_row->recurring_interval ) ) : esc_html__( 'one-time', 'ajforms' ); ?></span>
 													<?php if ( empty( $price_row->active ) ) : ?><span class="ajcp-chip is-off"><?php esc_html_e( 'archived', 'ajforms' ); ?></span><?php endif; ?>
+													<?php if ( ! empty( $price_row->active ) ) : ?>
+														<input type="hidden" name="portal_shop_present[<?php echo $pid; ?>]" value="1">
+														<label class="ajcp-shop" title="<?php esc_attr_e( 'Listed in the public shop (AJ Core > Products)', 'ajforms' ); ?>"><input type="checkbox" name="portal_shop[<?php echo $pid; ?>]" value="1" <?php checked( $shop_all || in_array( (string) $price_row->stripe_price_id, $shop_selection, true ) ); ?>> <?php esc_html_e( 'In shop', 'ajforms' ); ?></label>
+													<?php endif; ?>
 												</div>
 												<div class="ajcp-dep<?php echo '' !== $selected_required_price ? ' has-dep' : ''; ?>">
 													<label class="ajcp-dep-label" for="ajcp-dep-<?php echo $pid; ?>"><span aria-hidden="true">🔗</span> <?php esc_html_e( 'Auto-adds to cart', 'ajforms' ); ?></label>
@@ -25803,6 +25876,13 @@ class AJForms_Admin {
 											</div>
 										<?php endforeach; ?>
 									</td>
+									<?php if ( ! $portal_on ) : ?>
+										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][duplicate_behavior]" value="<?php echo esc_attr( $behavior ); ?>">
+										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][upgrade_from_product_id]" value="<?php echo esc_attr( isset( $product->upgrade_from_product_id ) ? $product->upgrade_from_product_id : '' ); ?>">
+										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][custom_request_title]" value="<?php echo esc_attr( isset( $product->custom_request_title ) ? $product->custom_request_title : '' ); ?>">
+										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][custom_request_message]" value="<?php echo esc_attr( isset( $product->custom_request_message ) ? $product->custom_request_message : '' ); ?>">
+										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][custom_request_button_label]" value="<?php echo esc_attr( isset( $product->custom_request_button_label ) ? $product->custom_request_button_label : '' ); ?>">
+									<?php else : ?>
 									<td class="ajcp-owned">
 										<div class="ajcp-choices" role="radiogroup" aria-label="<?php esc_attr_e( 'Repeat purchase', 'ajforms' ); ?>">
 											<?php foreach ( $behaviors as $behavior_key => $behavior_ui ) : ?>
@@ -25829,13 +25909,18 @@ class AJForms_Admin {
 											<input type="text" name="portal_product_groups[<?php echo $fk; ?>][custom_request_button_label]" value="<?php echo esc_attr( isset( $product->custom_request_button_label ) ? $product->custom_request_button_label : '' ); ?>" placeholder="<?php esc_attr_e( 'Button label', 'ajforms' ); ?>">
 										</div>
 									</td>
+									<?php endif; ?>
 									<td class="ajcp-side">
+										<?php if ( ! $portal_on ) : ?>
+											<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][visibility]" value="<?php echo $group_visible ? 'visible' : 'hidden'; ?>">
+										<?php else : ?>
 										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][visibility]" value="hidden">
 										<label class="ajcp-switch" title="<?php esc_attr_e( 'Show in the client portal’s Add Services', 'ajforms' ); ?>">
 											<input type="checkbox" name="portal_product_groups[<?php echo $fk; ?>][visibility]" value="visible" <?php checked( $group_visible ); ?> <?php disabled( ! $group_active ); ?>>
 											<span class="ajcp-switch-track" aria-hidden="true"></span>
 											<span><?php esc_html_e( 'In portal', 'ajforms' ); ?></span>
 										</label>
+										<?php endif; ?>
 										<label class="ajcp-order"><?php esc_html_e( 'Order', 'ajforms' ); ?> <input type="number" name="portal_product_groups[<?php echo $fk; ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></label>
 										<div class="ajcp-row-actions">
 											<button type="button" class="button button-primary ajcp-row-save" hidden><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
@@ -25885,6 +25970,8 @@ class AJForms_Admin {
 				.ajcp-price.is-off{background:#f8fafc}
 				.ajcp-price-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 				.ajcp-amount{font-size:16px;font-weight:800;color:#0f172a}
+				.ajcp-shop{display:inline-flex;align-items:center;gap:4px;margin-left:auto;padding:1px 8px;border-radius:999px;background:#fdf2f8;color:#9d174d;font-size:12px;font-weight:600;cursor:pointer}
+				.ajcp-shop input{margin:0}
 				.ajcp-dep{margin-top:6px}
 				.ajcp-dep-label{display:block;font-size:11px;color:#64748b;margin-bottom:2px}
 				.ajcp-dep-select{width:100%;max-width:100%}
@@ -25969,6 +26056,8 @@ class AJForms_Admin {
 						case 'portal': return row.dataset.portal === '1';
 						case 'not_portal': return row.dataset.portal !== '1';
 						case 'addon': return row.dataset.addon === '1';
+						case 'shop': return row.dataset.shop === '1';
+						case 'not_shop': return row.dataset.shop !== '1';
 						case 'all': return true;
 						default: return row.dataset.owned === filter;
 					}
@@ -28619,7 +28708,7 @@ class AJForms_Admin {
 					<div class="ajcore-products-notice ok"><?php esc_html_e( 'Product dependency settings saved.', 'ajforms' ); ?></div>
 				<?php endif; ?>
 				<?php if ( isset( $_GET['products-display'] ) ) : ?>
-					<div class="ajcore-products-notice ok"><?php esc_html_e( 'Product selection and order saved.', 'ajforms' ); ?></div>
+					<div class="ajcore-products-notice ok"><?php esc_html_e( 'Shop order saved.', 'ajforms' ); ?></div>
 				<?php endif; ?>
 				<?php
 				$products_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'products';
@@ -28649,8 +28738,8 @@ class AJForms_Admin {
 								<p><?php esc_html_e( 'Filter, select products, set their order, choose what to show, then generate a shortcode for any page.', 'ajforms' ); ?></p>
 							</div>
 							<div style="display:flex;gap:8px;align-items:center;">
-								<button type="button" class="button" id="ajcore-select-visible-products"><?php esc_html_e( 'Select All Shown', 'ajforms' ); ?></button>
-								<?php submit_button( __( 'Save Selection & Order', 'ajforms' ), 'primary', 'submit', false ); ?>
+								<a class="button" href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'product-catalog' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Choose shop products', 'ajforms' ); ?></a>
+								<?php submit_button( __( 'Save Order', 'ajforms' ), 'primary', 'submit', false ); ?>
 							</div>
 						</div>
 
@@ -28708,9 +28797,15 @@ class AJForms_Admin {
 								$price_id  = isset( $price['id'] ) ? sanitize_text_field( (string) $price['id'] ) : '';
 								$sort_value = isset( $product_order[ $price_id ] ) ? intval( $product_order[ $price_id ] ) : $default_sort;
 								$default_sort += 10;
+								// What is in the shop is chosen in Settings > Product Catalog ("In shop").
+								// Here: only those prices, for order and layout. Empty selection = whole catalog.
+								$in_shop = in_array( $price_id, $selected_display_prices, true );
+								if ( ! empty( $selected_display_prices ) && ! $in_shop ) {
+									continue;
+								}
 								?>
 								<label class="ajcore-product-choice <?php echo $is_active ? 'is-active' : 'is-archived'; ?>" data-status="<?php echo esc_attr( $state ); ?>">
-									<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $price_id ); ?>" <?php checked( in_array( $price_id, $selected_display_prices, true ) ); ?>>
+									<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $price_id ); ?>" <?php checked( $in_shop ); ?> hidden>
 									<span>
 										<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ) ); ?></strong>
 										<?php
@@ -28735,52 +28830,7 @@ class AJForms_Admin {
 						</div>
 					</form>
 
-					<form method="post" class="ajcore-product-dependencies-form">
-						<?php wp_nonce_field( 'ajcore_save_product_dependencies', 'ajcore_product_dependencies_nonce' ); ?>
-						<div class="ajcore-products-grid">
-						<?php foreach ( $prices as $price ) : ?>
-							<div class="ajcore-product-card">
-								<h2><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : __( 'Stripe product', 'ajforms' ) ); ?></h2>
-								<?php if ( empty( $price['product_active'] ) || empty( $price['price_active'] ) ) : ?>
-									<p style="margin:0 0 8px;color:#b45309;font-weight:700;"><?php esc_html_e( 'Archived / inactive', 'ajforms' ); ?></p>
-								<?php endif; ?>
-								<?php if ( ! empty( $price['product_description'] ) ) : ?>
-									<p style="margin:0 0 10px;color:#64748b;"><?php echo esc_html( $price['product_description'] ); ?></p>
-								<?php endif; ?>
-								<?php $price_interval = ! empty( $price['recurring_interval'] ) ? '/' . sanitize_key( (string) $price['recurring_interval'] ) : ''; ?>
-								<div class="ajcore-product-price"><?php echo esc_html( strtoupper( $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $price_interval ); ?></div>
-								<div class="ajcore-product-meta">
-									<span><?php echo esc_html( 'Price: ' . $price['id'] ); ?></span>
-									<span><?php echo esc_html( 'Product: ' . $price['product_id'] ); ?></span>
-								</div>
-								<?php
-								$dependency = isset( $dependency_settings[ $price['id'] ] ) ? $dependency_settings[ $price['id'] ] : array();
-								$selected_required_price = ! empty( $dependency['requires_price_id'] ) ? $dependency['requires_price_id'] : ( ! empty( $price['requires_price_id'] ) ? $price['requires_price_id'] : '' );
-								$dependency_note = ! empty( $dependency['dependency_note'] ) ? $dependency['dependency_note'] : ( ! empty( $price['dependency_note'] ) ? $price['dependency_note'] : '' );
-								?>
-								<div class="ajcore-product-dependency-box">
-									<label>
-										<?php esc_html_e( 'Requires another product', 'ajforms' ); ?>
-										<select name="product_dependencies[<?php echo esc_attr( $price['id'] ); ?>][requires_price_id]">
-											<option value=""><?php esc_html_e( 'No dependency', 'ajforms' ); ?></option>
-											<?php foreach ( $prices as $dependency_price ) : ?>
-												<?php if ( empty( $dependency_price['id'] ) || $dependency_price['id'] === $price['id'] ) { continue; } ?>
-												<option value="<?php echo esc_attr( $dependency_price['id'] ); ?>" <?php selected( $selected_required_price, $dependency_price['id'] ); ?>><?php echo esc_html( $dependency_price['product_name'] . ' — ' . strtoupper( $dependency_price['currency'] ) . ' ' . number_format_i18n( (float) $dependency_price['amount'], 2 ) . ( ! empty( $dependency_price['recurring_interval'] ) ? '/' . sanitize_key( (string) $dependency_price['recurring_interval'] ) : '' ) ); ?></option>
-											<?php endforeach; ?>
-										</select>
-									</label>
-									<label>
-										<?php esc_html_e( 'Dependency note shown to customer', 'ajforms' ); ?>
-										<textarea rows="3" name="product_dependencies[<?php echo esc_attr( $price['id'] ); ?>][dependency_note]" placeholder="<?php esc_attr_e( 'Example: This subscription requires Virtual Office Setup. We added it to your cart automatically.', 'ajforms' ); ?>"><?php echo esc_textarea( $dependency_note ); ?></textarea>
-									</label>
-									<p class="ajcore-product-dependency-note"><?php esc_html_e( 'When this product is added to cart, the required product will be added automatically with quantity 1.', 'ajforms' ); ?></p>
-								</div>
-								<code class="ajcore-shortcode">[ajcore_products price_ids="<?php echo esc_attr( $price['id'] ); ?>"]</code>
-							</div>
-						<?php endforeach; ?>
-						</div>
-						<p style="margin-top:16px;"><?php submit_button( __( 'Save Product Dependencies', 'ajforms' ), 'primary', 'submit', false ); ?></p>
-					</form>
+					<?php // Product dependencies are edited in Settings > Product Catalog ("Auto-adds to cart"). ?>
 					<script>
 					(function() {
 						const builder = document.getElementById('ajcore-shortcode-builder');
@@ -28794,7 +28844,7 @@ class AJForms_Admin {
 						const displayInputs = Array.from(builder.querySelectorAll('.ajcore-display-field'));
 						const output = document.getElementById('ajcore-generated-shortcode');
 						const copyButton = document.getElementById('ajcore-copy-shortcode');
-						const selectVisibleButton = document.getElementById('ajcore-select-visible-products');
+						const selectVisibleButton = null;
 
 						function selectedStatuses() {
 							return statusFilters.filter((input) => input.checked).map((input) => input.value);
@@ -28860,7 +28910,7 @@ class AJForms_Admin {
 						builder.querySelectorAll('input[name="ajcore_shortcode_mode"]').forEach((input) => input.addEventListener('change', updateShortcode));
 						builder.querySelectorAll('input[name="ajcore_shortcode_template"]').forEach((input) => input.addEventListener('change', updateShortcode));
 						builder.querySelectorAll('input[name="ajcore_shortcode_details"]').forEach((input) => input.addEventListener('change', updateShortcode));
-						selectVisibleButton.addEventListener('click', function() {
+						if (selectVisibleButton) selectVisibleButton.addEventListener('click', function() {
 							productChoices.forEach((choice) => {
 								if (choice.style.display !== 'none') {
 									const input = choice.querySelector('.ajcore-product-select');
@@ -30203,6 +30253,12 @@ class AJForms_Admin {
 				'icon'  => 'cart',
 				'group' => __( 'General', 'ajforms' ),
 			),
+			// Every site, portal or not: a shop-only site edits its Stripe products here too.
+			'product-catalog' => array(
+				'label' => __( 'Product Catalog', 'ajforms' ),
+				'icon'  => 'archive',
+				'group' => __( 'General', 'ajforms' ),
+			),
 		);
 		if ( $client_portal_enabled ) {
 			$sections['auth'] = array(
@@ -30228,7 +30284,6 @@ class AJForms_Admin {
 			foreach ( array(
 				'menu'                   => array( __( 'Menu', 'ajforms' ), 'menu' ),
 				'overview'               => array( __( 'Overview', 'ajforms' ), 'welcome-widgets-menus' ),
-				'product-catalog'        => array( __( 'Product Catalog', 'ajforms' ), 'archive' ),
 				'sync'                   => array( __( 'Sync', 'ajforms' ), 'update' ),
 				'event-log'              => array( __( 'Event Log', 'ajforms' ), 'list-view' ),
 				'db-schema'              => array( __( 'AJCore DB Schema', 'ajforms' ), 'database' ),

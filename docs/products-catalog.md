@@ -97,3 +97,19 @@ Each product row has four parts:
 - **What's included on the website:** tick **What's included** in AJ Core › Products › Fields
   to show, so the generated shortcode has `show="…,features,…"`. `[ajcore_product]` shows it
   by default.
+
+## Shop vs catalog
+
+- **Settings › Product Catalog** is on every site, with or without the Client Portal. It holds:
+  - Stripe fields
+  - **In shop**, per price
+  - Auto-adds (dependencies)
+  - the portal rules, shown only when the portal is on
+- **In shop** writes the public shop selection (`ajcore_public_product_display_settings.selected_prices`):
+  - An empty selection means the whole active catalog.
+  - The first In shop change turns "whole catalog" into an explicit list of every active price.
+  - Unrelated edits never write the selection.
+- **AJ Core › Products** shows only In shop prices, for order and layout. **Save Order** keeps
+  the selection.
+- The dependency cards on the Products page have been removed. Settings › Product Catalog is
+  the only editor.
