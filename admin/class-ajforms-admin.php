@@ -477,7 +477,7 @@ class AJForms_Admin {
 	 *  so the generated shortcode is the same after the page reloads. */
 	private function normalize_product_builder_options( $raw ) {
 		$raw       = is_array( $raw ) ? $raw : array();
-		$all_fields = array( 'title', 'description', 'summary', 'price', 'button' );
+		$all_fields = array( 'title', 'description', 'summary', 'features', 'price', 'button' );
 		$fields    = isset( $raw['fields'] ) && is_array( $raw['fields'] ) ? array_values( array_intersect( $all_fields, array_map( 'sanitize_key', $raw['fields'] ) ) ) : array( 'title', 'description', 'price', 'button' );
 		$statuses  = isset( $raw['statuses'] ) && is_array( $raw['statuses'] ) ? array_values( array_intersect( array( 'active', 'archived' ), array_map( 'sanitize_key', $raw['statuses'] ) ) ) : array( 'active' );
 		if ( empty( $statuses ) ) {
@@ -2679,6 +2679,62 @@ class AJForms_Admin {
 		}
 
 		return $this->portal_db_error ? new WP_Error( 'portal_db_error', $this->portal_db_error ) : $count;
+	}
+
+	/**
+	 * Sends inline Product Catalog edits (name, description, included features) to Stripe,
+	 * only for values that differ from a fresh read, then refreshes both local product copies.
+	 * Returns error strings for the notice.
+	 */
+	private function push_inline_product_edits_to_stripe( $edits ) {
+		if ( empty( $edits ) ) {
+			return array();
+		}
+		$settings   = $this->get_plugin_settings();
+		$secret_key = isset( $settings['stripe_secret_key'] ) ? (string) $settings['stripe_secret_key'] : '';
+		if ( '' === $secret_key ) {
+			return array( __( 'Stripe fields not saved: no secret key for the current mode.', 'ajforms' ) );
+		}
+
+		$errors  = array();
+		$changed = false;
+		foreach ( $edits as $product_id => $edit ) {
+			$product = $this->stripe_api_get( 'products/' . rawurlencode( $product_id ), $secret_key );
+			if ( is_wp_error( $product ) ) {
+				$errors[] = $product_id . ': ' . $product->get_error_message();
+				continue;
+			}
+			$body = array();
+			if ( '' !== $edit['name'] && $edit['name'] !== (string) ( $product['name'] ?? '' ) ) {
+				$body['name'] = $edit['name'];
+			}
+			if ( null !== $edit['description'] && $edit['description'] !== (string) ( $product['description'] ?? '' ) ) {
+				$body['description'] = $edit['description'];
+			}
+			if ( null !== $edit['features'] ) {
+				$current = array_values( array_map( static function ( $f ) { return (string) ( $f['name'] ?? '' ); }, (array) ( $product['marketing_features'] ?? array() ) ) );
+				if ( $edit['features'] !== $current ) {
+					$body['marketing_features'] = empty( $edit['features'] ) ? '' : array_map( static function ( $name ) { return array( 'name' => $name ); }, $edit['features'] );
+				}
+			}
+			if ( empty( $body ) ) {
+				continue;
+			}
+			$result = $this->stripe_api_request( 'products/' . rawurlencode( $product_id ), $secret_key, $body );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = ( $edit['name'] ? $edit['name'] : $product_id ) . ': ' . $result->get_error_message();
+			} else {
+				$changed = true;
+			}
+		}
+
+		if ( $changed ) {
+			$sync = $this->sync_all_product_copies( $secret_key );
+			if ( is_wp_error( $sync ) ) {
+				$errors[] = __( 'Saved to Stripe, but re-sync failed:', 'ajforms' ) . ' ' . $sync->get_error_message();
+			}
+		}
+		return $errors;
 	}
 
 	/**
@@ -11070,6 +11126,7 @@ class AJForms_Admin {
 				'product_description' => $product_description,
 				'product_rich_description' => $product_rich_description,
 				'product_summary' => $product_summary,
+				'product_features' => array_values( array_filter( array_map( static function ( $feature ) { return is_array( $feature ) && isset( $feature['name'] ) ? sanitize_text_field( (string) $feature['name'] ) : ''; }, isset( $product['marketing_features'] ) ? (array) $product['marketing_features'] : array() ) ) ),
 				'product_metadata' => $product_metadata,
 				'price_metadata' => $price_metadata,
 				'requires_price_id' => $required_price_id,
@@ -13002,10 +13059,22 @@ class AJForms_Admin {
 			global $wpdb;
 			$pdb                = $this->get_pdb();
 			$product_group_rows = isset( $_POST['portal_product_groups'] ) && is_array( $_POST['portal_product_groups'] ) ? wp_unslash( $_POST['portal_product_groups'] ) : array();
+			$stripe_product_edits = array();
 			if ( ! empty( $product_group_rows ) ) {
 				foreach ( $product_group_rows as $group_key => $row ) {
 					if ( ! is_array( $row ) ) {
 						continue;
+					}
+
+					// Website-facing fields edited inline (name / description / included features) live
+					// in Stripe; collected here and sent after the local settings are saved.
+					$edit_product_id = isset( $row['stripe_product_id'] ) ? sanitize_text_field( (string) $row['stripe_product_id'] ) : '';
+					if ( 0 === strpos( $edit_product_id, 'prod_' ) && isset( $row['stripe_name'] ) ) {
+						$stripe_product_edits[ $edit_product_id ] = array(
+							'name'        => trim( sanitize_text_field( (string) $row['stripe_name'] ) ),
+							'description' => isset( $row['stripe_description'] ) ? trim( sanitize_textarea_field( (string) $row['stripe_description'] ) ) : null,
+							'features'    => isset( $row['stripe_features'] ) ? array_slice( array_map( 'sanitize_text_field', $this->product_editor_lines( $row['stripe_features'] ) ), 0, 15 ) : null,
+						);
 					}
 
 					$row_ids = isset( $row['row_ids'] ) ? array_filter( array_map( 'absint', explode( ',', sanitize_text_field( $row['row_ids'] ) ) ) ) : array();
@@ -13205,16 +13274,17 @@ class AJForms_Admin {
 				}
 			}
 
-			wp_safe_redirect(
-				add_query_arg(
-					array(
-						'page'            => 'ajforms-settings',
-						'section'         => 'product-catalog',
-						'portal-products' => 'saved',
-					),
-					admin_url( 'admin.php' )
-				)
+			$redirect_args = array(
+				'page'            => 'ajforms-settings',
+				'section'         => 'product-catalog',
+				'portal-products' => 'saved',
 			);
+			$stripe_errors = $this->push_inline_product_edits_to_stripe( $stripe_product_edits );
+			if ( ! empty( $stripe_errors ) ) {
+				$redirect_args['portal-error'] = rawurlencode( implode( ' | ', $stripe_errors ) );
+			}
+
+			wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -25587,18 +25657,15 @@ class AJForms_Admin {
 				<table class="widefat striped ajcp-catalog-table">
 					<thead>
 						<tr>
-							<th><?php esc_html_e( 'Show in Add Services', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Product / Service', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Portal Label / Description', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Duplicate / Upgrade Logic', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Prices', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Sort', 'ajforms' ); ?></th>
-							<th><?php esc_html_e( 'Stripe IDs', 'ajforms' ); ?></th>
+							<th style="width:34%"><?php esc_html_e( 'On the website', 'ajforms' ); ?> <span class="ajcp-th-note"><?php esc_html_e( 'saved to Stripe', 'ajforms' ); ?></span></th>
+							<th style="width:24%"><?php esc_html_e( 'Prices & add-ons', 'ajforms' ); ?></th>
+							<th><?php esc_html_e( 'If they already have it', 'ajforms' ); ?></th>
+							<th style="width:150px"></th>
 						</tr>
 					</thead>
 					<tbody>
 						<?php if ( empty( $product_groups ) ) : ?>
-							<tr><td colspan="7"><?php esc_html_e( 'No synced Stripe products yet.', 'ajforms' ); ?></td></tr>
+							<tr><td colspan="4"><?php esc_html_e( 'No synced Stripe products yet.', 'ajforms' ); ?></td></tr>
 						<?php else : ?>
 							<?php foreach ( $product_groups as $group_key => $group ) : ?>
 								<?php
@@ -25625,78 +25692,115 @@ class AJForms_Admin {
 								$group_visible = ! empty( $visible_rows );
 								$field_key     = sanitize_key( $group_key );
 								?>
-								<tr class="ajcp-row">
-									<td>
-										<input type="hidden" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][row_ids]" value="<?php echo esc_attr( implode( ',', array_map( 'absint', $row_ids ) ) ); ?>">
-										<input type="hidden" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][visibility]" value="hidden">
-										<label><input type="checkbox" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][visibility]" value="visible" <?php checked( $group_visible ); ?> <?php disabled( ! $group_active ); ?>> <?php esc_html_e( 'Visible', 'ajforms' ); ?></label>
-										<?php if ( ! $group_active ) : ?><br><span class="description"><?php esc_html_e( 'Archived in Stripe', 'ajforms' ); ?></span><?php endif; ?>
-									</td>
-									<td>
-										<strong><?php echo esc_html( $product->name ); ?></strong>
-										<?php if ( count( $rows ) > 1 ) : ?><br><span class="description"><?php echo esc_html( sprintf( __( '%d prices', 'ajforms' ), count( $rows ) ) ); ?></span><?php endif; ?>
-										<?php if ( ! empty( $product->description ) ) : ?><br><span class="description"><?php echo esc_html( wp_trim_words( wp_strip_all_tags( $product->description ), 18 ) ); ?></span><?php endif; ?>
-									</td>
-									<td>
-										<input type="text" style="width:100%;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_label]" value="<?php echo esc_attr( $product->custom_label ); ?>" placeholder="<?php esc_attr_e( 'Optional portal label', 'ajforms' ); ?>">
-										<textarea style="width:100%;min-height:70px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][description_override]" placeholder="<?php esc_attr_e( 'Optional portal description override', 'ajforms' ); ?>"><?php echo esc_textarea( $product->description_override ); ?></textarea>
-									</td>
-									<td>
-										<?php $selected_duplicate_behavior = ! empty( $product->duplicate_behavior ) && isset( $duplicate_behavior_options[ $product->duplicate_behavior ] ) ? $product->duplicate_behavior : 'no_duplicates'; ?>
-										<select style="width:100%;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][duplicate_behavior]">
-											<?php foreach ( $duplicate_behavior_options as $behavior_key => $behavior_label ) : ?>
-												<option value="<?php echo esc_attr( $behavior_key ); ?>" <?php selected( $selected_duplicate_behavior, $behavior_key ); ?>><?php echo esc_html( $behavior_label ); ?></option>
+								<?php
+								$fk          = esc_attr( $field_key );
+								$raw_price   = json_decode( (string) $product->raw_data, true );
+								$raw_product = is_array( $raw_price ) && isset( $raw_price['product'] ) && is_array( $raw_price['product'] ) ? $raw_price['product'] : array();
+								$features    = array_values( array_filter( array_map( static function ( $f ) { return is_array( $f ) && isset( $f['name'] ) ? (string) $f['name'] : ''; }, isset( $raw_product['marketing_features'] ) ? (array) $raw_product['marketing_features'] : array() ) ) );
+								$stripe_desc = isset( $raw_product['description'] ) ? (string) $raw_product['description'] : (string) $product->description;
+								$meta        = isset( $raw_product['metadata'] ) && is_array( $raw_product['metadata'] ) ? $raw_product['metadata'] : array();
+								$cat_names   = ! empty( $meta['category'] ) ? array_filter( array_map( 'trim', explode( ',', (string) $meta['category'] ) ) ) : array();
+								$has_stripe  = 0 === strpos( (string) $product->stripe_product_id, 'prod_' );
+								$behavior    = ! empty( $product->duplicate_behavior ) && isset( $duplicate_behavior_options[ $product->duplicate_behavior ] ) ? $product->duplicate_behavior : 'no_duplicates';
+								$behaviors   = array(
+									'no_duplicates'   => array( '⛔', __( 'Block', 'ajforms' ), __( 'Can only own it once', 'ajforms' ) ),
+									'allow_duplicate' => array( '➕', __( 'Allow again', 'ajforms' ), __( 'Buy as many as needed', 'ajforms' ) ),
+									'custom_request'  => array( '💬', __( 'Ask us', 'ajforms' ), __( 'Show a request form instead', 'ajforms' ) ),
+									'upgrade'         => array( '⬆️', __( 'Upgrade', 'ajforms' ), __( 'Replaces another service', 'ajforms' ) ),
+								);
+								$has_override = '' !== trim( (string) $product->custom_label ) || '' !== trim( (string) $product->description_override );
+								?>
+								<tr class="ajcp-row<?php echo $group_active ? '' : ' is-archived'; ?>">
+									<td class="ajcp-card">
+										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][row_ids]" value="<?php echo esc_attr( implode( ',', array_map( 'absint', $row_ids ) ) ); ?>">
+										<?php if ( $has_stripe ) : ?>
+											<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][stripe_product_id]" value="<?php echo esc_attr( $product->stripe_product_id ); ?>">
+											<input type="text" class="ajcp-name" name="portal_product_groups[<?php echo $fk; ?>][stripe_name]" value="<?php echo esc_attr( $product->name ); ?>" aria-label="<?php esc_attr_e( 'Name (Stripe)', 'ajforms' ); ?>" <?php disabled( ! $group_active ); ?>>
+											<textarea class="ajcp-desc" rows="3" name="portal_product_groups[<?php echo $fk; ?>][stripe_description]" placeholder="<?php esc_attr_e( 'Description shown on the website card', 'ajforms' ); ?>" aria-label="<?php esc_attr_e( 'Description (Stripe)', 'ajforms' ); ?>" <?php disabled( ! $group_active ); ?>><?php echo esc_textarea( $stripe_desc ); ?></textarea>
+											<label class="ajcp-mini-label"><?php esc_html_e( "What's included · one per line", 'ajforms' ); ?></label>
+											<textarea class="ajcp-features" rows="<?php echo max( 2, min( 6, count( $features ) + 1 ) ); ?>" name="portal_product_groups[<?php echo $fk; ?>][stripe_features]" placeholder="<?php esc_attr_e( "e.g. Filed in 1–2 business days\nRegistered agent included", 'ajforms' ); ?>" <?php disabled( ! $group_active ); ?>><?php echo esc_textarea( implode( "\n", $features ) ); ?></textarea>
+										<?php else : ?>
+											<strong><?php echo esc_html( $product->name ); ?></strong>
+										<?php endif; ?>
+										<div class="ajcp-chips">
+											<?php foreach ( $cat_names as $cat_name ) : ?>
+												<span class="ajcp-chip is-cat"><?php echo esc_html( $cat_name ); ?></span>
 											<?php endforeach; ?>
-										</select>
-										<label class="description" for="ajcore-upgrade-from-<?php echo esc_attr( $field_key ); ?>"><?php esc_html_e( 'Upgrade from', 'ajforms' ); ?></label>
-										<select id="ajcore-upgrade-from-<?php echo esc_attr( $field_key ); ?>" style="width:100%;margin:2px 0 10px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][upgrade_from_product_id]">
-											<option value=""><?php esc_html_e( 'None', 'ajforms' ); ?></option>
-											<?php foreach ( $upgrade_product_options as $upgrade_product_id => $upgrade_product_label ) : ?>
-												<?php if ( $upgrade_product_id === (string) $product->stripe_product_id ) : ?>
-													<?php continue; ?>
-												<?php endif; ?>
-												<option value="<?php echo esc_attr( $upgrade_product_id ); ?>" <?php selected( isset( $product->upgrade_from_product_id ) ? (string) $product->upgrade_from_product_id : '', $upgrade_product_id ); ?>><?php echo esc_html( $upgrade_product_label ); ?></option>
-											<?php endforeach; ?>
-										</select>
-										<input type="text" style="width:100%;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_request_title]" value="<?php echo esc_attr( isset( $product->custom_request_title ) ? $product->custom_request_title : '' ); ?>" placeholder="<?php esc_attr_e( 'Custom request title', 'ajforms' ); ?>">
-										<textarea style="width:100%;min-height:60px;margin-bottom:6px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_request_message]" placeholder="<?php esc_attr_e( 'Custom request message shown after client already owns this service', 'ajforms' ); ?>"><?php echo esc_textarea( isset( $product->custom_request_message ) ? $product->custom_request_message : '' ); ?></textarea>
-										<input type="text" style="width:100%" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][custom_request_button_label]" value="<?php echo esc_attr( isset( $product->custom_request_button_label ) ? $product->custom_request_button_label : '' ); ?>" placeholder="<?php esc_attr_e( 'Button label', 'ajforms' ); ?>">
+											<?php if ( ! $group_active ) : ?><span class="ajcp-chip is-off"><?php esc_html_e( 'Archived in Stripe', 'ajforms' ); ?></span><?php endif; ?>
+											<code class="ajcp-id"><?php echo esc_html( $product->stripe_product_id ); ?></code>
+										</div>
+										<details class="ajcp-override"<?php echo $has_override ? ' open' : ''; ?>>
+											<summary><?php esc_html_e( 'Portal-only label & description', 'ajforms' ); ?><?php echo $has_override ? ' <span class="ajcp-chip is-warn">' . esc_html__( 'in use', 'ajforms' ) . '</span>' : ''; ?></summary>
+											<input type="text" name="portal_product_groups[<?php echo $fk; ?>][custom_label]" value="<?php echo esc_attr( $product->custom_label ); ?>" placeholder="<?php esc_attr_e( 'Portal label (overrides name)', 'ajforms' ); ?>">
+											<textarea rows="2" name="portal_product_groups[<?php echo $fk; ?>][description_override]" placeholder="<?php esc_attr_e( 'Portal description (overrides Stripe)', 'ajforms' ); ?>"><?php echo esc_textarea( $product->description_override ); ?></textarea>
+										</details>
 									</td>
-									<td>
+									<td class="ajcp-prices-cell">
 										<?php foreach ( $rows as $price_row ) : ?>
 											<?php
-											$price_dependency = ! empty( $dependency_settings[ $price_row->stripe_price_id ] ) ? $dependency_settings[ $price_row->stripe_price_id ] : array();
+											$price_dependency        = ! empty( $dependency_settings[ $price_row->stripe_price_id ] ) ? $dependency_settings[ $price_row->stripe_price_id ] : array();
 											$selected_required_price = ! empty( $price_dependency['requires_price_id'] ) ? sanitize_text_field( (string) $price_dependency['requires_price_id'] ) : '';
-											$dependency_note = ! empty( $price_dependency['dependency_note'] ) ? sanitize_textarea_field( (string) $price_dependency['dependency_note'] ) : '';
+											$dependency_note         = ! empty( $price_dependency['dependency_note'] ) ? sanitize_textarea_field( (string) $price_dependency['dependency_note'] ) : '';
+											$pid                     = esc_attr( $price_row->stripe_price_id );
 											?>
-											<div style="margin:0 0 8px;">
-												<strong><?php echo esc_html( $this->format_portal_money( $price_row->price_amount, $price_row->currency ) . ( ! empty( $price_row->recurring_interval ) ? '/' . $price_row->recurring_interval : '' ) ); ?></strong>
-												<br><span class="description"><?php echo ! empty( $price_row->recurring_interval ) ? esc_html( $this->get_portal_billing_type_label( 'subscription' ) ) : esc_html( $this->get_portal_billing_type_label( 'one_time' ) ); ?></span>
-												<br><code><?php echo esc_html( $price_row->stripe_price_id ); ?></code>
-												<?php if ( empty( $price_row->active ) ) : ?><br><span class="description"><?php esc_html_e( 'Archived', 'ajforms' ); ?></span><?php endif; ?>
-												<div style="margin-top:8px;padding:8px;border:1px solid #dbeafe;border-radius:8px;background:#eff6ff;">
-													<label class="description" for="ajcore-dependency-<?php echo esc_attr( $price_row->stripe_price_id ); ?>"><?php esc_html_e( 'Requires another product', 'ajforms' ); ?></label>
-													<select id="ajcore-dependency-<?php echo esc_attr( $price_row->stripe_price_id ); ?>" style="width:100%;margin:2px 0 6px;" name="portal_product_dependencies[<?php echo esc_attr( $price_row->stripe_price_id ); ?>][requires_price_id]">
-														<option value=""><?php esc_html_e( 'No dependency', 'ajforms' ); ?></option>
+											<div class="ajcp-price<?php echo empty( $price_row->active ) ? ' is-off' : ''; ?>">
+												<div class="ajcp-price-head">
+													<span class="ajcp-amount"><?php echo esc_html( $this->format_portal_money( $price_row->price_amount, $price_row->currency ) ); ?></span>
+													<span class="ajcp-chip <?php echo ! empty( $price_row->recurring_interval ) ? 'is-sub' : 'is-once'; ?>"><?php echo ! empty( $price_row->recurring_interval ) ? esc_html( sprintf( __( 'every %s', 'ajforms' ), $price_row->recurring_interval ) ) : esc_html__( 'one-time', 'ajforms' ); ?></span>
+													<?php if ( empty( $price_row->active ) ) : ?><span class="ajcp-chip is-off"><?php esc_html_e( 'archived', 'ajforms' ); ?></span><?php endif; ?>
+												</div>
+												<div class="ajcp-dep<?php echo '' !== $selected_required_price ? ' has-dep' : ''; ?>">
+													<label class="ajcp-dep-label" for="ajcp-dep-<?php echo $pid; ?>"><span aria-hidden="true">🔗</span> <?php esc_html_e( 'Auto-adds to cart', 'ajforms' ); ?></label>
+													<select id="ajcp-dep-<?php echo $pid; ?>" class="ajcp-dep-select" name="portal_product_dependencies[<?php echo $pid; ?>][requires_price_id]">
+														<option value=""><?php esc_html_e( 'Nothing — sold on its own', 'ajforms' ); ?></option>
 														<?php foreach ( $dependency_price_options as $dependency_price_id => $dependency_label ) : ?>
-															<?php if ( $dependency_price_id === (string) $price_row->stripe_price_id ) : ?>
-																<?php continue; ?>
-															<?php endif; ?>
+															<?php if ( $dependency_price_id === (string) $price_row->stripe_price_id ) { continue; } ?>
 															<option value="<?php echo esc_attr( $dependency_price_id ); ?>" <?php selected( $selected_required_price, $dependency_price_id ); ?>><?php echo esc_html( $dependency_label ); ?></option>
 														<?php endforeach; ?>
 													</select>
-													<textarea style="width:100%;min-height:52px;" name="portal_product_dependencies[<?php echo esc_attr( $price_row->stripe_price_id ); ?>][dependency_note]" placeholder="<?php esc_attr_e( 'Dependency note shown to logged-in customers', 'ajforms' ); ?>"><?php echo esc_textarea( $dependency_note ); ?></textarea>
+													<textarea class="ajcp-dep-note" rows="2" name="portal_product_dependencies[<?php echo $pid; ?>][dependency_note]" placeholder="<?php esc_attr_e( 'Why it’s added (shown to the customer)', 'ajforms' ); ?>"><?php echo esc_textarea( $dependency_note ); ?></textarea>
 												</div>
 											</div>
 										<?php endforeach; ?>
 									</td>
-									<td><input type="number" style="width:80px" name="portal_product_groups[<?php echo esc_attr( $field_key ); ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></td>
-									<td>
-										<code><?php echo esc_html( $product->stripe_product_id ); ?></code>
+									<td class="ajcp-owned">
+										<div class="ajcp-choices" role="radiogroup" aria-label="<?php esc_attr_e( 'If the client already has it', 'ajforms' ); ?>">
+											<?php foreach ( $behaviors as $behavior_key => $behavior_ui ) : ?>
+												<?php if ( ! isset( $duplicate_behavior_options[ $behavior_key ] ) ) { continue; } ?>
+												<label class="ajcp-choice">
+													<input type="radio" name="portal_product_groups[<?php echo $fk; ?>][duplicate_behavior]" value="<?php echo esc_attr( $behavior_key ); ?>" <?php checked( $behavior, $behavior_key ); ?>>
+													<span class="ajcp-choice-box"><span class="ajcp-choice-icon" aria-hidden="true"><?php echo esc_html( $behavior_ui[0] ); ?></span><strong><?php echo esc_html( $behavior_ui[1] ); ?></strong><small><?php echo esc_html( $behavior_ui[2] ); ?></small></span>
+												</label>
+											<?php endforeach; ?>
+										</div>
+										<div class="ajcp-reveal" data-show-when="upgrade">
+											<label class="ajcp-mini-label" for="ajcp-up-<?php echo $fk; ?>"><?php esc_html_e( 'Upgrades from', 'ajforms' ); ?></label>
+											<select id="ajcp-up-<?php echo $fk; ?>" name="portal_product_groups[<?php echo $fk; ?>][upgrade_from_product_id]">
+												<option value=""><?php esc_html_e( 'Choose a service…', 'ajforms' ); ?></option>
+												<?php foreach ( $upgrade_product_options as $upgrade_product_id => $upgrade_product_label ) : ?>
+													<?php if ( $upgrade_product_id === (string) $product->stripe_product_id ) { continue; } ?>
+													<option value="<?php echo esc_attr( $upgrade_product_id ); ?>" <?php selected( isset( $product->upgrade_from_product_id ) ? (string) $product->upgrade_from_product_id : '', $upgrade_product_id ); ?>><?php echo esc_html( $upgrade_product_label ); ?></option>
+												<?php endforeach; ?>
+											</select>
+										</div>
+										<div class="ajcp-reveal" data-show-when="custom_request">
+											<input type="text" name="portal_product_groups[<?php echo $fk; ?>][custom_request_title]" value="<?php echo esc_attr( isset( $product->custom_request_title ) ? $product->custom_request_title : '' ); ?>" placeholder="<?php esc_attr_e( 'Request title', 'ajforms' ); ?>">
+											<textarea rows="2" name="portal_product_groups[<?php echo $fk; ?>][custom_request_message]" placeholder="<?php esc_attr_e( 'Message shown when they already own it', 'ajforms' ); ?>"><?php echo esc_textarea( isset( $product->custom_request_message ) ? $product->custom_request_message : '' ); ?></textarea>
+											<input type="text" name="portal_product_groups[<?php echo $fk; ?>][custom_request_button_label]" value="<?php echo esc_attr( isset( $product->custom_request_button_label ) ? $product->custom_request_button_label : '' ); ?>" placeholder="<?php esc_attr_e( 'Button label', 'ajforms' ); ?>">
+										</div>
+									</td>
+									<td class="ajcp-side">
+										<input type="hidden" name="portal_product_groups[<?php echo $fk; ?>][visibility]" value="hidden">
+										<label class="ajcp-switch" title="<?php esc_attr_e( 'Show in the client portal’s Add Services', 'ajforms' ); ?>">
+											<input type="checkbox" name="portal_product_groups[<?php echo $fk; ?>][visibility]" value="visible" <?php checked( $group_visible ); ?> <?php disabled( ! $group_active ); ?>>
+											<span class="ajcp-switch-track" aria-hidden="true"></span>
+											<span><?php esc_html_e( 'In portal', 'ajforms' ); ?></span>
+										</label>
+										<label class="ajcp-order"><?php esc_html_e( 'Order', 'ajforms' ); ?> <input type="number" name="portal_product_groups[<?php echo $fk; ?>][sort_order]" value="<?php echo esc_attr( (int) $product->sort_order ); ?>"></label>
 										<div class="ajcp-row-actions">
-											<button type="button" class="button button-primary button-small ajcp-row-save" hidden><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
-											<?php if ( ! empty( $product->stripe_product_id ) ) : ?>
-												<a class="button button-small" href="<?php echo esc_url( $this->product_editor_url( (string) $product->stripe_product_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+											<button type="button" class="button button-primary ajcp-row-save" hidden><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
+											<?php if ( $has_stripe ) : ?>
+												<a class="button" href="<?php echo esc_url( $this->product_editor_url( (string) $product->stripe_product_id ) ); ?>"><?php esc_html_e( 'All fields', 'ajforms' ); ?></a>
 											<?php endif; ?>
 										</div>
 									</td>
@@ -25712,7 +25816,73 @@ class AJForms_Admin {
 				</div>
 			</form>
 			<style>
-				.ajcp-row-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+				.ajcp-row-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+				.ajcp-catalog-table td{vertical-align:top;padding:14px 12px}
+				.ajcp-th-note{font-weight:400;color:#94a3b8;font-size:11px}
+				.ajcp-catalog-table tr.is-archived td{opacity:.6}
+				/* Website card fields: look like text until hovered/focused. */
+				.ajcp-name,.ajcp-desc,.ajcp-features{width:100%;box-sizing:border-box;border:1px solid transparent!important;background:transparent!important;box-shadow:none!important;border-radius:6px;padding:4px 6px!important;resize:vertical;field-sizing:content}
+				.ajcp-name{font-size:15px;font-weight:700;color:#0f172a}
+				.ajcp-desc{color:#475569;line-height:1.45;min-height:3.2em;max-height:12em}
+				.ajcp-features{line-height:1.6;min-height:2.6em;padding-left:22px!important;background-image:radial-gradient(circle at 9px 13px,#16a34a 3px,transparent 3.5px)!important;background-size:100% 1.6em!important;background-repeat:repeat-y!important}
+				.ajcp-name:hover,.ajcp-desc:hover,.ajcp-features:hover{border-color:#e2e8f0!important}
+				.ajcp-name:focus,.ajcp-desc:focus,.ajcp-features:focus{border-color:#2271b1!important;background-color:#fff!important}
+				.ajcp-mini-label{display:block;margin:8px 0 2px;color:#64748b;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+				.ajcp-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:8px}
+				.ajcp-chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;line-height:18px;background:#f1f5f9;color:#475569}
+				.ajcp-chip.is-cat{background:#eef2ff;color:#3730a3}
+				.ajcp-chip.is-sub{background:#ecfdf5;color:#047857}
+				.ajcp-chip.is-once{background:#f1f5f9;color:#334155}
+				.ajcp-chip.is-off{background:#fef2f2;color:#b91c1c}
+				.ajcp-chip.is-warn{background:#fef3c7;color:#92400e}
+				.ajcp-id{font-size:11px;color:#94a3b8;background:none}
+				.ajcp-override{margin-top:8px;font-size:12px;color:#64748b}
+				.ajcp-override summary{cursor:pointer}
+				.ajcp-override input,.ajcp-override textarea{width:100%;margin-top:4px}
+				/* Prices + auto-add */
+				.ajcp-price{padding:8px 10px;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:8px;background:#fff}
+				.ajcp-price.is-off{background:#f8fafc}
+				.ajcp-price-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+				.ajcp-amount{font-size:16px;font-weight:800;color:#0f172a}
+				.ajcp-dep{margin-top:6px}
+				.ajcp-dep-label{display:block;font-size:11px;color:#64748b;margin-bottom:2px}
+				.ajcp-dep-select{width:100%;max-width:100%}
+				.ajcp-dep.has-dep .ajcp-dep-select{border-color:#60a5fa;background:#eff6ff}
+				.ajcp-dep-note{display:none;width:100%;margin-top:4px;font-size:12px}
+				.ajcp-dep.has-dep .ajcp-dep-note,.ajcp-dep.has-note .ajcp-dep-note{display:block}
+				/* "If they already have it" choice cards */
+				.ajcp-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+				.ajcp-choice{position:relative;margin:0}
+				.ajcp-choice input{position:absolute;opacity:0;pointer-events:none}
+				.ajcp-choice-box{display:grid;grid-template-columns:22px 1fr;column-gap:6px;align-items:center;height:100%;box-sizing:border-box;padding:7px 9px;border:1px solid #e2e8f0;border-radius:10px;background:#fff;cursor:pointer}
+				.ajcp-choice-icon{grid-row:span 2;font-size:16px;text-align:center}
+				.ajcp-choice-box strong{font-size:13px;color:#0f172a}
+				.ajcp-choice-box small{color:#64748b;font-size:11px;line-height:1.3}
+				.ajcp-choice-box:hover{border-color:#94a3b8}
+				.ajcp-choice input:checked + .ajcp-choice-box{border-color:#2271b1;background:#f0f6fc;box-shadow:inset 0 0 0 1px #2271b1}
+				.ajcp-choice input:focus-visible + .ajcp-choice-box{outline:2px solid #2271b1;outline-offset:2px}
+				.ajcp-reveal{display:none;margin-top:8px}
+				.ajcp-reveal.is-on{display:grid;gap:4px}
+				.ajcp-reveal select,.ajcp-reveal input,.ajcp-reveal textarea{width:100%}
+				/* Side: portal switch, order, actions */
+				.ajcp-switch{display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600}
+				.ajcp-switch input{position:absolute;opacity:0}
+				.ajcp-switch-track{position:relative;width:34px;height:20px;border-radius:999px;background:#cbd5e1;transition:background .15s}
+				.ajcp-switch-track::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s}
+				.ajcp-switch input:checked + .ajcp-switch-track{background:#16a34a}
+				.ajcp-switch input:checked + .ajcp-switch-track::after{transform:translateX(14px)}
+				.ajcp-switch input:focus-visible + .ajcp-switch-track{outline:2px solid #2271b1;outline-offset:2px}
+				.ajcp-switch input:disabled + .ajcp-switch-track{opacity:.4}
+				.ajcp-order{display:flex;align-items:center;gap:6px;margin-top:10px;color:#64748b;font-size:12px}
+				.ajcp-order input{width:64px}
+				@media (max-width:1280px){.ajcp-choices{grid-template-columns:1fr}}
+				@media (max-width:960px){
+					.ajcp-catalog-table thead{display:none}
+					.ajcp-catalog-table,.ajcp-catalog-table tbody,.ajcp-catalog-table tr,.ajcp-catalog-table td{display:block;width:auto!important}
+					.ajcp-catalog-table tr{border-bottom:6px solid #f0f0f1}
+					.ajcp-catalog-table td{padding:10px 12px}
+					.ajcp-choices{grid-template-columns:repeat(2,minmax(0,1fr))}
+				}
 				.ajcp-catalog-table tr.is-dirty > td{background:#fffbeb!important}
 				.ajcp-catalog-table tr.is-dirty > td:first-child{box-shadow:inset 3px 0 0 #f59e0b}
 				.ajcp-savebar{position:sticky;bottom:0;z-index:20;display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:10px;padding:10px 12px;border:1px solid #fcd34d;border-radius:8px;background:#fffbeb;box-shadow:0 -6px 18px rgba(15,23,42,.08)}
@@ -25730,6 +25900,22 @@ class AJForms_Admin {
 				const bar = form.querySelector('.ajcp-savebar');
 				const count = form.querySelector('.ajcp-savebar-count');
 				let submitting = false;
+
+				// Progressive disclosure: extra fields only for the behavior that uses them;
+				// the "why" note only once an auto-add product is chosen (or already has text).
+				function syncReveal(row) {
+					const picked = row.querySelector('.ajcp-choice input:checked');
+					row.querySelectorAll('.ajcp-reveal').forEach(function(box) {
+						box.classList.toggle('is-on', !!picked && box.dataset.showWhen === picked.value);
+					});
+					row.querySelectorAll('.ajcp-dep').forEach(function(dep) {
+						const select = dep.querySelector('.ajcp-dep-select');
+						const note = dep.querySelector('.ajcp-dep-note');
+						dep.classList.toggle('has-dep', !!(select && select.value));
+						dep.classList.toggle('has-note', !!(note && note.value.trim()));
+					});
+				}
+				rows.forEach(syncReveal);
 
 				function fieldsOf(row) {
 					return Array.from(row.querySelectorAll('input, select, textarea')).filter(function(el) { return el.name; });
@@ -25769,7 +25955,11 @@ class AJForms_Admin {
 				}
 
 				form.addEventListener('input', function(event) { refresh(event.target.closest('tr.ajcp-row')); });
-				form.addEventListener('change', function(event) { refresh(event.target.closest('tr.ajcp-row')); });
+				form.addEventListener('change', function(event) {
+					const row = event.target.closest('tr.ajcp-row');
+					if (row) { syncReveal(row); }
+					refresh(row);
+				});
 				form.addEventListener('click', function(event) {
 					const rowSave = event.target.closest('.ajcp-row-save');
 					if (rowSave) { submitRows([rowSave.closest('tr.ajcp-row')]); }
@@ -25777,7 +25967,7 @@ class AJForms_Admin {
 				form.querySelector('.ajcp-save-all').addEventListener('click', function() { submitRows(dirtyRows()); });
 				form.querySelector('.ajcp-discard').addEventListener('click', function() {
 					form.reset();
-					rows.forEach(refresh);
+					rows.forEach(function(row) { syncReveal(row); refresh(row); });
 				});
 				// Enter in a text field saves the changed rows instead of posting every row.
 				form.addEventListener('submit', function(event) {
@@ -28419,6 +28609,7 @@ class AJForms_Admin {
 									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="title" <?php checked( in_array( 'title', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Product name', 'ajforms' ); ?></label>
 									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="description" <?php checked( in_array( 'description', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Description', 'ajforms' ); ?></label>
 									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="summary" <?php checked( in_array( 'summary', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Short summary', 'ajforms' ); ?></label>
+									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="features" <?php checked( in_array( 'features', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( "What's included (Stripe features)", 'ajforms' ); ?></label>
 									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="price" <?php checked( in_array( 'price', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Price', 'ajforms' ); ?></label>
 									<label><input type="checkbox" class="ajcore-display-field" name="ajcore_shortcode_fields[]" value="button" <?php checked( in_array( 'button', $builder_opts['fields'], true ) ); ?>> <?php esc_html_e( 'Button', 'ajforms' ); ?></label>
 								</div>

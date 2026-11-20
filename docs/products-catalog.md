@@ -80,3 +80,20 @@ Products are still synced Stripe prices. The site-side catalog layer lives in th
 - **Hiding fields later:** every field row has `data-field="<stripe field>"`, e.g.
   `price.lookup_key`. Hiding is CSS or a setting; the save logic skips fields that aren't
   posted.
+
+## Settings › Product Catalog list (inline)
+
+Each product row has four parts:
+
+| Column | What's in it |
+|---|---|
+| On the website | Name, description, and what's included. These save to Stripe. Included items are Stripe `marketing_features`. Also shows category chips and a collapsed "Portal-only label & description" (opens if it's in use). |
+| Prices & add-ons | A chip for each price, and "Auto-adds to cart" (the dependency). The "why" note only appears once an add-on is picked. |
+| If they already have it | Choice cards: Block, Allow again, Ask us, Upgrade. "Upgrades from" and the request fields only appear for their option. |
+| Right column | "In portal" switch (Add Services), order, Save (appears on change), and All fields (the editor). |
+
+- **Saving:** only changed rows are sent. Stripe fields are compared with a fresh read
+  first, and both product copies re-sync afterwards.
+- **What's included on the website:** tick **What's included** in AJ Core › Products › Fields
+  to show, so the generated shortcode has `show="…,features,…"`. `[ajcore_product]` shows it
+  by default.

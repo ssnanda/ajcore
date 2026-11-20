@@ -9943,7 +9943,7 @@ class AJForms {
 			array(
 				'price_id' => '',
 				'mode'     => '',
-				'show'     => 'price,button',
+				'show'     => 'features,price,button',
 				'details'  => 'none',
 				'button'   => __( 'Buy Now', 'ajforms' ),
 				'back'     => 'yes',
@@ -10025,6 +10025,7 @@ class AJForms {
 		$show_description    = in_array( 'description', $show_fields, true );
 		$show_summary        = in_array( 'summary', $show_fields, true );
 		$show_price          = in_array( 'price', $show_fields, true );
+		$show_features       = in_array( 'features', $show_fields, true );
 		$show_button         = in_array( 'button', $show_fields, true );
 		$checkout_notice_html = $this->get_checkout_success_notice_html();
 
@@ -10277,6 +10278,13 @@ class AJForms {
 									<?php echo $this->render_product_rich_text( $rich_description ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 								</div>
 							</details>
+						<?php endif; ?>
+						<?php if ( $show_features && ! empty( $price['product_features'] ) && is_array( $price['product_features'] ) ) : ?>
+							<ul class="ajcore-product-features">
+								<?php foreach ( array_slice( $price['product_features'], 0, 8 ) as $feature ) : ?>
+									<li><?php echo esc_html( $feature ); ?></li>
+								<?php endforeach; ?>
+							</ul>
 						<?php endif; ?>
 						<?php if ( $required_product_name ) : ?>
 							<div class="ajcore-product-requires" style="margin:0 0 12px;color:#475569;font-size:13px;line-height:1.35;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:9px 10px;">
@@ -11320,6 +11328,9 @@ class AJForms {
 			html.has-modal-open .ajcore-floating-cart{z-index:1!important}
 			/* Catalog: toolbar, pager, product-page links. Theme hooks: --ajp-accent, --ajp-radius, --ajp-scroll-offset. */
 			.ajcore-products-wrap .ajcore-product[hidden]{display:none!important}
+			.ajcore-product-features{list-style:none;margin:2px 0 14px!important;padding:0!important;display:grid;gap:6px}
+			.ajcore-product-features li{position:relative;margin:0!important;padding-left:24px;color:#334155;font-size:15px;line-height:1.4}
+			.ajcore-product-features li::before{content:"";position:absolute;left:0;top:.2em;width:16px;height:16px;border-radius:50%;background:var(--ajp-accent,#0f7ac6) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M4.5 8.3l2.2 2.2 4.8-4.9'/%3E%3C/svg%3E") center/12px no-repeat}
 			.ajcore-products-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 18px;scroll-margin-top:var(--ajp-scroll-offset,96px)}
 			.ajcore-products-search{position:relative;flex:1 1 260px;max-width:420px;display:flex;align-items:center}
 			.ajcore-products-search svg{position:absolute;left:12px;color:#64748b;pointer-events:none}
