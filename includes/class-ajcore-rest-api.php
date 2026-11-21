@@ -3366,21 +3366,29 @@ class AJCore_REST_API {
 		return rest_ensure_response( array( 'partners' => $partners ) );
 	}
 
-	/** Read-only mirror of the AJCore admin's "Connected Sites" panel (Settings > Portal), so
-	 *  AJOps — a single staff portal instance serving a multisite Stripe/leads/customers pool —
-	 *  can show staff which sites actually share that pool instead of presenting as single-site. */
+	/** Sites AJOps may map to external assistants. Shared installs return the registered shared
+	 *  sites; standalone installs return their one local site with the same durable site UUID. */
 	public function get_ops_sites( WP_REST_Request $request ) {
 		$pdb   = $this->get_portal_db();
 		$table = $pdb->prefix . 'aj_shared_sites';
-		if ( ! $this->table_exists( $pdb, $table ) ) {
-			return rest_ensure_response( array( 'sites' => array() ) );
+		$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
+		if ( '' === $site_uuid ) {
+			$site_uuid = wp_generate_uuid4();
+			update_option( 'ajcore_site_uuid', $site_uuid, false );
 		}
 
-		$has_participation = (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'participation'" );
-		$has_version       = (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'ajcore_version'" );
+		// Keep the shared control row current before reading it. Standalone installs have no
+		// shared table, so they fall through to the current-site row below instead.
+		if ( function_exists( 'ajcore_register_site_in_shared_db' ) ) {
+			ajcore_register_site_in_shared_db();
+		}
+
+		$has_table         = $this->table_exists( $pdb, $table );
+		$has_participation = $has_table && (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'participation'" );
+		$has_version       = $has_table && (bool) $pdb->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'ajcore_version'" );
 		$participation_sql = $has_participation ? ', participation' : '';
 		$version_sql       = $has_version ? ', ajcore_version' : '';
-		$rows  = $pdb->get_results( "SELECT site_uuid, domain, is_master, last_seen{$participation_sql}{$version_sql} FROM `{$table}` ORDER BY is_master DESC, domain ASC" );
+		$rows              = $has_table ? $pdb->get_results( "SELECT site_uuid, domain, is_master, last_seen{$participation_sql}{$version_sql} FROM `{$table}` ORDER BY is_master DESC, domain ASC" ) : array();
 		$sites = array();
 		foreach ( (array) $rows as $row ) {
 			$participation = $has_participation ? json_decode( (string) $row->participation, true ) : array();
@@ -3391,6 +3399,24 @@ class AJCore_REST_API {
 				'participation' => is_array( $participation ) ? $participation : array(),
 				'ajcore_version' => $has_version ? (string) $row->ajcore_version : '',
 				'last_seen'    => (string) $row->last_seen,
+			);
+		}
+
+		// /ops/sites is also the authoritative identity endpoint for a standalone AJCore site.
+		// Never make AJOps invent a UUID merely because shared-DB multisite mode is disabled.
+		if ( ! in_array( $site_uuid, wp_list_pluck( $sites, 'site_uuid' ), true ) ) {
+			$features = function_exists( 'ajcore_get_site_features' ) ? ajcore_get_site_features() : array();
+			$sites[]  = array(
+				'site_uuid'     => $site_uuid,
+				'domain'        => (string) home_url( '/' ),
+				'is_master'     => function_exists( 'ajcore_is_stripe_sync_owner' ) ? (bool) ajcore_is_stripe_sync_owner() : true,
+				'participation' => array(
+					'client_portal' => ! empty( $features['client_portal'] ),
+					'forms_leads'   => ! empty( $features['forms'] ),
+					'live_chat'     => ! empty( $features['live_chat'] ),
+				),
+				'ajcore_version' => defined( 'AJCORE_VERSION' ) ? AJCORE_VERSION : '',
+				'last_seen'     => current_time( 'mysql' ),
 			);
 		}
 		return rest_ensure_response( array( 'sites' => $sites ) );
