@@ -12208,6 +12208,17 @@ class AJForms_Admin {
 	public function handle_admin_actions() {
 		$page = isset( $_GET['page'] ) ? sanitize_text_field( wp_unslash( $_GET['page'] ) ) : '';
 
+		// Live Chat settings now have one canonical home under AJ Core -> Settings. Keep old CP
+		// Settings bookmarks working, but do not leave a second navigation/render path that makes
+		// the same ajforms_settings values look like a separate configuration.
+		$legacy_cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : '';
+		$legacy_cp_tab     = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : '';
+		if ( 'chat' === $legacy_cp_section
+			&& ( 'ajforms-cp-settings' === $page || ( 'ajforms-client-portal' === $page && 'cp-settings' === $legacy_cp_tab ) ) ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=ajforms-settings&section=chat' ) );
+			exit;
+		}
+
 		// Heartbeat: keep this site's aj_shared_sites control row (version, domain, participation,
 		// last_seen) current so the Master's Connected Sites list is accurate. Registration
 		// otherwise only runs on a handful of portal-specific save paths, so a Forms-&-Leads-only
@@ -12337,8 +12348,6 @@ class AJForms_Admin {
 					$this->handle_role_manager_actions();
 				} elseif ( 'email-templates' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 					$this->handle_settings_save();
-				} elseif ( 'chat' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
-					$this->handle_chat_settings_save();
 				}
 			} elseif ( 'requests' === $tab || isset( $_GET['service_request_action'] ) ) {
 				$this->handle_service_requests_actions();
@@ -12372,8 +12381,6 @@ class AJForms_Admin {
 				$this->handle_portal_shared_db_settings_save();
 			} elseif ( 'email-templates' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
 				$this->handle_settings_save();
-			} elseif ( 'chat' === $cp_section && isset( $_POST['ajforms_settings_nonce'] ) ) {
-				$this->handle_chat_settings_save();
 			}
 		} elseif ( 'ajforms-role-manager' === $page ) {
 			$this->handle_role_manager_actions();
@@ -20903,7 +20910,6 @@ class AJForms_Admin {
 
 		$cp_section = isset( $_GET['cp_section'] ) ? sanitize_key( wp_unslash( $_GET['cp_section'] ) ) : 'menu';
 		$client_portal_enabled = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'client_portal' );
-		$live_chat_enabled     = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'live_chat' );
 		$sub_tabs              = array();
 		if ( $client_portal_enabled ) {
 			$sub_tabs = array(
@@ -20922,9 +20928,6 @@ class AJForms_Admin {
 				'roles'           => __( 'Role Manager', 'ajforms' ),
 				'email-templates' => __( 'Email Templates', 'ajforms' ),
 			);
-		}
-		if ( $live_chat_enabled ) {
-			$sub_tabs['chat'] = __( 'Live Chat', 'ajforms' );
 		}
 		$sub_tabs['shared-db'] = __( 'Site Features / Shared DB', 'ajforms' );
 		if ( ! isset( $sub_tabs[ $cp_section ] ) ) {
@@ -20989,8 +20992,6 @@ class AJForms_Admin {
 			<?php $this->display_role_manager_page( true ); ?>
 		<?php elseif ( 'email-templates' === $cp_section ) : ?>
 			<?php $this->display_email_templates_settings_section(); ?>
-		<?php elseif ( 'chat' === $cp_section ) : ?>
-			<?php $this->display_chat_settings_section(); ?>
 		<?php elseif ( 'shared-db' === $cp_section ) : ?>
 			<?php $this->display_portal_shared_db_settings_tab(); ?>
 		<?php endif; ?>

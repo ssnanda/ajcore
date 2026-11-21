@@ -5256,7 +5256,10 @@ class AJCore_REST_API {
 		}
 
 		$user        = wp_get_current_user();
-		$sender_name = ( $user && $user->exists() ) ? $user->display_name : __( 'Staff', 'ajforms' );
+		$sender_name = sanitize_text_field( (string) $request->get_param( 'senderName' ) );
+		if ( '' === $sender_name ) {
+			$sender_name = ( $user && $user->exists() ) ? $user->display_name : __( 'Staff', 'ajforms' );
+		}
 
 		$message_row = $this->insert_chat_message( $session_id, 'staff', $sender_name, $body );
 		if ( is_wp_error( $message_row ) ) {
@@ -5472,8 +5475,12 @@ class AJCore_REST_API {
 		}
 
 		$user       = wp_get_current_user();
-		$staff_id   = ( $user && $user->exists() ) ? (int) $user->ID : 0;
-		$staff_name = ( $user && $user->exists() ) ? $user->display_name : '';
+		$staff_id   = absint( $request->get_param( 'staffId' ) );
+		$staff_name = sanitize_text_field( (string) $request->get_param( 'staffName' ) );
+		if ( '' === $staff_name ) {
+			$staff_id   = ( $user && $user->exists() ) ? (int) $user->ID : 0;
+			$staff_name = ( $user && $user->exists() ) ? $user->display_name : '';
+		}
 		if ( '' === $staff_name ) {
 			return new WP_Error( 'chat_claim_no_identity', __( 'Could not determine the staff member claiming this chat.', 'ajforms' ), array( 'status' => 400 ) );
 		}
