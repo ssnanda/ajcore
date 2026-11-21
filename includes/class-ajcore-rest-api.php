@@ -5129,13 +5129,27 @@ class AJCore_REST_API {
 			return new WP_Error( 'chat_invalid_session', __( 'A session_uuid is required.', 'ajforms' ), array( 'status' => 400 ) );
 		}
 
+		// This AJCore endpoint is authoritative for its website. Standalone sites may not put a
+		// site_uuid on the browser socket, but their chat still needs the durable local UUID so
+		// AJOps can select the website's saved AJMCP token.
+		$site_uuid = (string) get_option( 'ajcore_site_uuid', '' );
+		if ( '' === $site_uuid ) {
+			$site_uuid = wp_generate_uuid4();
+			update_option( 'ajcore_site_uuid', $site_uuid, false );
+		}
+
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$existing = $pdb->get_row( $pdb->prepare( "SELECT * FROM `{$table}` WHERE session_uuid = %s", $session_uuid ), ARRAY_A );
 		if ( $existing ) {
+			// Repair sessions created before standalone chat identity was assigned. This happens on
+			// the next visitor message and avoids a one-off database edit.
+			if ( '' === (string) $existing['site_uuid'] ) {
+				$pdb->update( $table, array( 'site_uuid' => $site_uuid ), array( 'id' => (int) $existing['id'] ), array( '%s' ), array( '%d' ) );
+				$existing['site_uuid'] = $site_uuid;
+			}
 			return rest_ensure_response( array( 'session' => $this->format_chat_session_row( $existing ) ) );
 		}
 
-		$site_uuid     = sanitize_text_field( (string) $request->get_param( 'site_uuid' ) );
 		$visitor_name  = sanitize_text_field( (string) $request->get_param( 'visitor_name' ) );
 		$visitor_email = sanitize_email( (string) $request->get_param( 'visitor_email' ) );
 		$visitor_phone = sanitize_text_field( (string) $request->get_param( 'visitor_phone' ) );
