@@ -32588,6 +32588,9 @@ class AJForms_Admin {
 						$participation_labels = array();
 						$site_version = isset( $site->ajcore_version ) ? (string) $site->ajcore_version : '';
 						$site_is_outdated = ( '' !== $site_version && '' !== $latest_known_version && version_compare( $latest_known_version, $site_version, '>' ) );
+						$site_addons      = isset( $site->addon_versions ) ? json_decode( (string) $site->addon_versions, true ) : array();
+						$site_addons      = is_array( $site_addons ) ? $site_addons : array();
+						$addon_labels     = array( 'ajcore-ra' => 'AJCore-RA', 'ajcore-hoa' => 'AJCore-HOA' );
 						if ( ! empty( $site->is_master ) ) {
 							$participation_labels[] = __( 'Master Operations', 'ajforms' );
 						}
@@ -32632,6 +32635,9 @@ class AJForms_Admin {
 							<?php else : ?>
 								<span class="description"><?php esc_html_e( 'Not reported yet', 'ajforms' ); ?></span>
 							<?php endif; ?>
+							<?php foreach ( $site_addons as $addon_slug => $addon_version ) : ?>
+								<div style="margin-top:3px;font-size:11px;color:#50575e;white-space:nowrap;"><?php echo esc_html( $addon_labels[ $addon_slug ] ?? $addon_slug ); ?> <code style="font-size:11px;"><?php echo esc_html( $addon_version ); ?></code></div>
+							<?php endforeach; ?>
 						</td>
 						<td><?php echo esc_html( $site->last_seen ); ?></td>
 						<td>
@@ -33169,7 +33175,7 @@ class AJForms_Admin {
 		}
 
 		$table = $shared_db->prefix . 'aj_shared_sites';
-		$sites = $shared_db->get_results( "SELECT site_uuid, domain, ajcore_version FROM `{$table}`" );
+		$sites = $shared_db->get_results( "SELECT * FROM `{$table}`" );
 		$own   = (string) get_option( 'ajcore_site_uuid', '' );
 		$ok    = 0;
 		$moved = 0;
@@ -33198,8 +33204,28 @@ class AJForms_Admin {
 				continue;
 			}
 			$ok++;
+			$changes = array();
 			if ( $version !== (string) $site->ajcore_version ) {
-				$shared_db->update( $table, array( 'ajcore_version' => $version ), array( 'site_uuid' => $site->site_uuid ), array( '%s' ), array( '%s' ) );
+				$changes['ajcore_version'] = $version;
+			}
+			// Add-on versions (AJCore-RA, AJCore-HOA). Sites on an AJCore build that predates the
+			// 'addons' field keep whatever their own heartbeat last wrote.
+			if ( isset( $body['addons'] ) && is_array( $body['addons'] ) && property_exists( $site, 'addon_versions' ) ) {
+				$addons = array();
+				foreach ( $body['addons'] as $slug => $addon_version ) {
+					$slug          = sanitize_key( (string) $slug );
+					$addon_version = sanitize_text_field( (string) $addon_version );
+					if ( '' !== $slug && preg_match( '/^\d+\.\d+\.\d+/', $addon_version ) ) {
+						$addons[ $slug ] = $addon_version;
+					}
+				}
+				$addons_json = wp_json_encode( $addons );
+				if ( $addons_json !== (string) $site->addon_versions ) {
+					$changes['addon_versions'] = $addons_json;
+				}
+			}
+			if ( $changes ) {
+				$shared_db->update( $table, $changes, array( 'site_uuid' => $site->site_uuid ), array_fill( 0, count( $changes ), '%s' ), array( '%s' ) );
 				$moved++;
 			}
 		}

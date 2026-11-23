@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.11.33
+ * Version: 0.11.34
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.11.33' );
+	define( 'AJCORE_VERSION', '0.11.34' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -1633,6 +1633,26 @@ if ( ! function_exists( 'ajcore_is_stripe_sync_owner' ) ) {
 	}
 }
 
+if ( ! function_exists( 'ajcore_get_addon_versions' ) ) {
+	/**
+	 * Versions of the AJCore add-on plugins active on this site, keyed by slug. Reported in
+	 * the aj_shared_sites control row and /status so the Master's Connected Sites list can
+	 * show them beside the AJCore version.
+	 *
+	 * @return array<string,string>
+	 */
+	function ajcore_get_addon_versions() {
+		$addons = array();
+		if ( defined( 'AJCORE_RA_VERSION' ) ) {
+			$addons['ajcore-ra'] = (string) AJCORE_RA_VERSION;
+		}
+		if ( defined( 'AJCORE_HOA_VERSION' ) ) {
+			$addons['ajcore-hoa'] = (string) AJCORE_HOA_VERSION;
+		}
+		return $addons;
+	}
+}
+
 if ( ! function_exists( 'ajcore_register_site_in_shared_db' ) ) {
 	/**
 	 * Upserts this site's record in the shared aj_shared_sites control table.
@@ -1663,6 +1683,10 @@ if ( ! function_exists( 'ajcore_register_site_in_shared_db' ) ) {
 		if ( ! $shared_db->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'update_secret'" ) ) {
 			$shared_db->query( "ALTER TABLE `{$table}` ADD COLUMN update_secret varchar(64) NULL AFTER ajcore_version" );
 		}
+		if ( ! $shared_db->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'addon_versions'" ) ) {
+			$shared_db->query( "ALTER TABLE `{$table}` ADD COLUMN addon_versions varchar(255) NULL AFTER ajcore_version" );
+		}
+		$addon_versions = wp_json_encode( ajcore_get_addon_versions() );
 
 		$features      = function_exists( 'ajcore_get_site_features' ) ? ajcore_get_site_features() : array();
 		$participation = wp_json_encode(
@@ -1691,11 +1715,12 @@ if ( ! function_exists( 'ajcore_register_site_in_shared_db' ) ) {
 					'domain'         => $domain,
 					'participation'  => $participation,
 					'ajcore_version' => AJCORE_VERSION,
+					'addon_versions' => $addon_versions,
 					'update_secret'  => $update_secret,
 					'last_seen'      => current_time( 'mysql' ),
 				),
 				array( 'site_uuid' => $uuid ),
-				array( '%s', '%s', '%s', '%s', '%s' ),
+				array( '%s', '%s', '%s', '%s', '%s', '%s' ),
 				array( '%s' )
 			);
 		} else {
@@ -1707,11 +1732,12 @@ if ( ! function_exists( 'ajcore_register_site_in_shared_db' ) ) {
 					'is_master'      => 0,
 					'participation'  => $participation,
 					'ajcore_version' => AJCORE_VERSION,
+					'addon_versions' => $addon_versions,
 					'update_secret'  => $update_secret,
 					'last_seen'      => current_time( 'mysql' ),
 					'registered_at'  => current_time( 'mysql' ),
 				),
-				array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s' )
+				array( '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' )
 			);
 		}
 	}

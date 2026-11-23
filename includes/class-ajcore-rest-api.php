@@ -987,6 +987,8 @@ class AJCore_REST_API {
 			array(
 				'plugin'                          => 'ajcore',
 				'version'                         => defined( 'AJCORE_VERSION' ) ? AJCORE_VERSION : '',
+				// Active add-on plugins (slug => version), e.g. {"ajcore-ra":"0.5.29"}; {} when none.
+				'addons'                          => (object) ( function_exists( 'ajcore_get_addon_versions' ) ? ajcore_get_addon_versions() : array() ),
 				'site_url'                        => home_url( '/' ),
 				'site_uuid'                       => get_option( 'ajcore_site_uuid', '' ),
 				'shared_db_enabled'               => (bool) $shared_enabled,
