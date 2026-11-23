@@ -25885,7 +25885,7 @@ class AJForms_Admin {
 					'allow_duplicate' => array( __( 'Can buy again', 'ajforms' ), '#0891b2' ),
 					'custom_request'  => array( __( 'Ask first', 'ajforms' ), '#d97706' ),
 					'upgrade'         => array( __( 'Upgrade', 'ajforms' ), '#4f46e5' ),
-					'addon'           => array( __( 'Auto-adds', 'ajforms' ), '#0d9488' ),
+					'addon'           => array( __( 'Requires', 'ajforms' ), '#0d9488' ),
 				);
 				?>
 				<?php $default_tile = $tile_counts['shop'] > 0 ? 'shop' : 'all'; // Key products first: what is in the shop. ?>
@@ -25908,7 +25908,7 @@ class AJForms_Admin {
 						<tr>
 							<th style="width:72px"></th>
 							<th style="width:26%"><?php esc_html_e( 'Product', 'ajforms' ); ?></th>
-							<th style="width:24%"><?php esc_html_e( 'Prices & add-ons', 'ajforms' ); ?></th>
+							<th style="width:24%"><?php esc_html_e( 'Price & requirement', 'ajforms' ); ?></th>
 							<?php if ( $portal_on ) : ?><th style="width:150px"><?php esc_html_e( 'Repeat purchase', 'ajforms' ); ?></th><?php endif; ?>
 							<th style="width:150px"></th>
 						</tr>
@@ -26025,7 +26025,7 @@ class AJForms_Admin {
 													<?php endif; ?>
 												</div>
 												<div class="ajcp-dep<?php echo '' !== $selected_required_price ? ' has-dep' : ''; ?>">
-													<label class="ajcp-dep-label" for="ajcp-dep-<?php echo $pid; ?>"><span aria-hidden="true">🔗</span> <?php esc_html_e( 'Auto-adds to cart', 'ajforms' ); ?></label>
+													<label class="ajcp-dep-label" for="ajcp-dep-<?php echo $pid; ?>"><span aria-hidden="true">🔗</span> <?php esc_html_e( 'Requires (added to cart with it)', 'ajforms' ); ?></label>
 													<select id="ajcp-dep-<?php echo $pid; ?>" class="ajcp-dep-select" name="portal_product_dependencies[<?php echo $pid; ?>][requires_price_id]">
 														<option value=""><?php esc_html_e( 'Nothing — sold on its own', 'ajforms' ); ?></option>
 														<?php if ( '' !== $selected_required_price && ! isset( $dependency_price_options[ $selected_required_price ] ) ) : ?>
@@ -26036,7 +26036,7 @@ class AJForms_Admin {
 															<option value="<?php echo esc_attr( $dependency_price_id ); ?>" <?php selected( $selected_required_price, $dependency_price_id ); ?>><?php echo esc_html( $dependency_label ); ?></option>
 														<?php endforeach; ?>
 													</select>
-													<textarea class="ajcp-dep-note" rows="2" name="portal_product_dependencies[<?php echo $pid; ?>][dependency_note]" placeholder="<?php esc_attr_e( 'Why it’s added (shown to the customer)', 'ajforms' ); ?>"><?php echo esc_textarea( $dependency_note ); ?></textarea>
+													<textarea class="ajcp-dep-note" rows="2" name="portal_product_dependencies[<?php echo $pid; ?>][dependency_note]" placeholder="<?php esc_attr_e( 'Why it’s required (shown to the customer)', 'ajforms' ); ?>"><?php echo esc_textarea( $dependency_note ); ?></textarea>
 												</div>
 											</div>
 										<?php endforeach; ?>
@@ -29027,6 +29027,32 @@ class AJForms_Admin {
 								$group_key = ! empty( $group_price['product_id'] ) ? (string) $group_price['product_id'] : $group_price_id;
 								$picker_groups[ $group_key ][] = $group_price;
 							}
+							// Pairs from "Requires" (e.g. Virtual Office Subscription requires
+							// Virtual Office Setup): the required price is shown on its parent's card. When
+							// it is in the shop too, its own card is folded in and it shares the parent's
+							// Order (hidden checkbox + order inputs, same as price siblings above).
+							$pair_prices_by_id = array();
+							foreach ( $prices as $pair_price ) {
+								if ( ! empty( $pair_price['id'] ) ) {
+									$pair_prices_by_id[ (string) $pair_price['id'] ] = $pair_price;
+								}
+							}
+							$pair_child_of = array(); // parent price id => required price row
+							$pair_folded   = array(); // required price id => true when its card is folded in
+							foreach ( $picker_groups as $group_rows ) {
+								$parent_id = (string) $group_rows[0]['id'];
+								$required  = isset( $dependency_settings[ $parent_id ]['requires_price_id'] ) ? (string) $dependency_settings[ $parent_id ]['requires_price_id'] : '';
+								if ( '' === $required || $required === $parent_id || ! isset( $pair_prices_by_id[ $required ] ) || isset( $pair_folded[ $required ] ) ) {
+									continue;
+								}
+								$pair_child_of[ $parent_id ] = $pair_prices_by_id[ $required ];
+								$required_row                = $pair_prices_by_id[ $required ];
+								$required_shown              = ! empty( $required_row['product_active'] ) && ! empty( $required_row['price_active'] )
+									&& ( empty( $selected_display_prices ) || in_array( $required, $selected_display_prices, true ) );
+								if ( $required_shown && ! isset( $pair_child_of[ $required ] ) ) {
+									$pair_folded[ $required ] = true;
+								}
+							}
 							?>
 							<?php foreach ( $prices as $price ) : ?>
 								<?php
@@ -29048,6 +29074,9 @@ class AJForms_Admin {
 								$picker_siblings = isset( $picker_groups[ $picker_key ] ) ? $picker_groups[ $picker_key ] : array( $price );
 								if ( (string) $picker_siblings[0]['id'] !== $price_id ) {
 									continue; // Listed on its product's card.
+								}
+								if ( isset( $pair_folded[ $price_id ] ) ) {
+									continue; // Shown on the card of the product that requires it.
 								}
 								?>
 								<label class="ajcore-product-choice <?php echo $is_active ? 'is-active' : 'is-archived'; ?>" data-status="<?php echo esc_attr( $state ); ?>">
@@ -29075,6 +29104,22 @@ class AJForms_Admin {
 											<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $sibling['id'] ); ?>" <?php checked( in_array( (string) $sibling['id'], $selected_display_prices, true ) ); ?> hidden>
 											<input type="hidden" class="ajcore-product-order-sibling" name="public_product_order[<?php echo esc_attr( $sibling['id'] ); ?>]" value="<?php echo esc_attr( $sort_value ); ?>">
 										<?php endforeach; ?>
+										<?php if ( isset( $pair_child_of[ $price_id ] ) ) : ?>
+											<?php
+											$pair_row      = $pair_child_of[ $price_id ];
+											$pair_id       = (string) $pair_row['id'];
+											$pair_interval = ! empty( $pair_row['recurring_interval'] ) ? '/' . sanitize_key( (string) $pair_row['recurring_interval'] ) : ' ' . __( 'one-time', 'ajforms' );
+											?>
+											<span style="display:block;margin-top:8px;padding:6px 8px;border-left:3px solid #2563eb;background:#eff6ff;border-radius:4px;">
+												<strong>+ <?php echo esc_html( isset( $pair_row['product_name'] ) ? $pair_row['product_name'] : $pair_id ); ?></strong><br>
+												<?php echo esc_html( strtoupper( (string) $pair_row['currency'] ) . ' ' . number_format_i18n( (float) $pair_row['amount'], 2 ) . $pair_interval ); ?>
+												· <span style="color:#2563eb;"><?php esc_html_e( 'required · added to cart with it', 'ajforms' ); ?></span>
+											</span>
+											<?php if ( isset( $pair_folded[ $pair_id ] ) ) : ?>
+												<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $pair_id ); ?>" <?php checked( in_array( $pair_id, $selected_display_prices, true ) ); ?> hidden>
+												<input type="hidden" class="ajcore-product-order-sibling" name="public_product_order[<?php echo esc_attr( $pair_id ); ?>]" value="<?php echo esc_attr( $sort_value ); ?>">
+											<?php endif; ?>
+										<?php endif; ?>
 									</span>
 								</label>
 							<?php endforeach; ?>
@@ -29086,7 +29131,7 @@ class AJForms_Admin {
 						</div>
 					</form>
 
-					<?php // Product dependencies are edited in Settings > Product Catalog ("Auto-adds to cart"). ?>
+					<?php // Product dependencies are edited in Settings > Product Catalog ("Requires"). ?>
 					<script>
 					(function() {
 						const builder = document.getElementById('ajcore-shortcode-builder');
@@ -29816,7 +29861,36 @@ class AJForms_Admin {
 		}
 		$show_all     = ! empty( $_GET['catalog_all'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$all_count    = count( $prices );
+		$all_by_id    = array();
+		foreach ( $prices as $price ) {
+			if ( is_array( $price ) && ! empty( $price['id'] ) ) {
+				$all_by_id[ (string) $price['id'] ] = $price;
+			}
+		}
 		$prices       = $show_all ? $prices : $shop_prices;
+
+		// Pairs from "Requires": the required product (e.g. Virtual Office Setup) is
+		// folded into its parent's row and shares the parent's single product page (see
+		// ajcore_product_catalog_page_for_price()). Its own saved settings are left untouched.
+		$pair_child_of = array(); // listed parent price id => required price row
+		$pair_folded   = array(); // required price id => parent price id
+		foreach ( $this->get_public_product_dependency_settings() as $parent_id => $dependency ) {
+			$required = (string) $dependency['requires_price_id'];
+			if ( '' === $required || $required === (string) $parent_id || ! isset( $all_by_id[ $required ] ) || isset( $pair_folded[ $required ] ) ) {
+				continue;
+			}
+			$parent_listed = false;
+			foreach ( $prices as $listed ) {
+				if ( (string) $listed['id'] === (string) $parent_id ) {
+					$parent_listed = true;
+					break;
+				}
+			}
+			if ( $parent_listed ) {
+				$pair_child_of[ (string) $parent_id ] = $all_by_id[ $required ];
+				$pair_folded[ $required ]             = (string) $parent_id;
+			}
+		}
 		$counts       = array();
 		foreach ( $shop_prices as $price ) {
 			foreach ( ajcore_product_catalog_price_categories( $price, $catalog ) as $slug ) {
@@ -29940,6 +30014,9 @@ class AJForms_Admin {
 						continue;
 					}
 					$price_id    = sanitize_text_field( (string) $price['id'] );
+					if ( isset( $pair_folded[ $price_id ] ) && ! isset( $pair_child_of[ $price_id ] ) ) {
+						continue; // Shown in the row of the product that requires it.
+					}
 					$is_active   = ! empty( $price['product_active'] ) && ! empty( $price['price_active'] );
 					$assigned    = ajcore_product_catalog_price_categories( $price, $catalog );
 					$from_stripe = ! empty( ajcore_product_catalog_metadata_names( $price ) );
@@ -29966,6 +30043,16 @@ class AJForms_Admin {
 								<?php echo esc_html( strtoupper( (string) $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $interval ); ?>
 								<?php echo $is_active ? '' : ' · ' . esc_html__( 'archived', 'ajforms' ); ?>
 							</div>
+							<?php if ( isset( $pair_child_of[ $price_id ] ) ) : ?>
+								<?php
+								$pair_row      = $pair_child_of[ $price_id ];
+								$pair_interval = ! empty( $pair_row['recurring_interval'] ) ? '/' . sanitize_key( (string) $pair_row['recurring_interval'] ) : ' ' . __( 'one-time', 'ajforms' );
+								?>
+								<div style="margin-top:6px;padding:4px 8px;border-left:3px solid #2563eb;background:#eff6ff;border-radius:4px;">
+									<strong>+ <?php echo esc_html( isset( $pair_row['product_name'] ) ? $pair_row['product_name'] : (string) $pair_row['id'] ); ?></strong>
+									<div class="ajcore-catalog-muted"><?php echo esc_html( strtoupper( (string) $pair_row['currency'] ) . ' ' . number_format_i18n( (float) $pair_row['amount'], 2 ) . $pair_interval . ' · ' . __( 'required · same page', 'ajforms' ) ); ?></div>
+								</div>
+							<?php endif; ?>
 						</td>
 						<td>
 							<?php if ( $from_stripe ) : ?>
@@ -30100,6 +30187,9 @@ class AJForms_Admin {
 		$catalog = ajcore_product_catalog_get( true );
 		if ( ajcore_product_catalog_page_for_price( $price_id, $catalog, false ) ) {
 			return new WP_Error( 'ajcore_product_page_exists', __( 'This product already has a page.', 'ajforms' ) );
+		}
+		if ( '' !== ajcore_product_catalog_pair_parent( $price_id ) ) {
+			return new WP_Error( 'ajcore_product_page_paired', __( 'This product is sold as a pair; it uses the page of the product that requires it.', 'ajforms' ) );
 		}
 
 		$summary = ! empty( $price['product_summary'] ) ? (string) $price['product_summary'] : ( isset( $price['product_description'] ) ? (string) $price['product_description'] : '' );

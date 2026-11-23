@@ -205,10 +205,32 @@ function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
 	return '' !== $price_id && ! empty( $catalog['assign'][ $price_id ] ) ? $catalog['assign'][ $price_id ] : array();
 }
 
-/** Published page ID linked to a price, or 0. */
+/**
+ * The price that requires this one ("Requires" in Settings > Product Catalog), or ''. E.g. for
+ * Virtual Office Setup this returns Virtual Office Subscription's price ID.
+ */
+function ajcore_product_catalog_pair_parent( $price_id ) {
+	$price_id     = (string) $price_id;
+	$dependencies = get_option( 'ajcore_public_product_dependencies', array() );
+	foreach ( is_array( $dependencies ) ? $dependencies : array() as $parent_id => $dependency ) {
+		if ( is_array( $dependency ) && isset( $dependency['requires_price_id'] ) && (string) $dependency['requires_price_id'] === $price_id && (string) $parent_id !== $price_id ) {
+			return (string) $parent_id;
+		}
+	}
+	return '';
+}
+
+/**
+ * Published page ID linked to a price, or 0. A paired product without its own page uses its
+ * parent's page: the pair is sold, and shown, on one page.
+ */
 function ajcore_product_catalog_page_for_price( $price_id, $catalog = null, $require_published = true ) {
 	$catalog = null === $catalog ? ajcore_product_catalog_get() : $catalog;
 	$page_id = isset( $catalog['pages'][ (string) $price_id ] ) ? absint( $catalog['pages'][ (string) $price_id ] ) : 0;
+	if ( ! $page_id ) {
+		$parent_id = ajcore_product_catalog_pair_parent( $price_id );
+		$page_id   = '' !== $parent_id && isset( $catalog['pages'][ $parent_id ] ) ? absint( $catalog['pages'][ $parent_id ] ) : 0;
+	}
 	if ( ! $page_id ) {
 		return 0;
 	}
