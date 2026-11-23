@@ -777,7 +777,7 @@ class AJCore_REST_API {
 
 	public static function get_endpoint_catalog() {
 		$catalog = array(
-			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/status', 'auth' => 'Public or Admin, based on API settings', 'purpose' => 'Health check, version, site UUID, shared DB and master-site status.', 'app' => 'OPS / diagnostics' ),
+			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/status', 'auth' => 'Public or Admin, based on API settings', 'purpose' => 'Health check, version, active add-on versions (addons), site UUID, shared DB and master-site status.', 'app' => 'OPS / diagnostics' ),
 			array( 'surface' => 'System', 'method' => 'GET', 'path' => '/docs', 'auth' => 'Admin', 'purpose' => 'Machine-readable API catalog.', 'app' => 'OPS / developer tools' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/summary', 'auth' => 'Admin', 'purpose' => 'Counts for customers, products, subscriptions, ledger, tasks, service requests and sync logs.', 'app' => 'OPS dashboard' ),
 			array( 'surface' => 'OPS', 'method' => 'GET', 'path' => '/ops/customers', 'auth' => 'Admin', 'purpose' => 'Customer list with portal status and Stripe customer references.', 'app' => 'OPS customers' ),
@@ -4883,6 +4883,20 @@ class AJCore_REST_API {
 	/** Triggered remotely (see can_trigger_remote_update()) — installs the latest AJCore release
 	 *  from GitHub using the same Plugin_Upgrader path as the "Update AJ Core" button in wp-admin. */
 	public function handle_ops_self_update( WP_REST_Request $request ) {
+		// 'plugin' picks an add-on (ajcore-ra, ajcore-hoa); absent or 'ajcore' updates AJCore itself.
+		$plugin = sanitize_key( (string) $request->get_param( 'plugin' ) );
+		if ( '' !== $plugin && 'ajcore' !== $plugin ) {
+			if ( ! class_exists( 'AJCore_Addon_Updates' ) || ! AJCore_Addon_Updates::is_addon( $plugin ) ) {
+				return new WP_Error( 'unknown_plugin', 'Unknown plugin.', array( 'status' => 400 ) );
+			}
+			$result = AJCore_Addon_Updates::install_latest( $plugin );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
+			$this->report_addon_version_to_shared_db( $plugin, $result['version'] );
+			return rest_ensure_response( $result );
+		}
+
 		if ( ! class_exists( 'AJForms_Admin' ) ) {
 			return new WP_Error( 'admin_unavailable', 'Admin handler not initialized.', array( 'status' => 503 ) );
 		}
@@ -4918,6 +4932,31 @@ class AJCore_REST_API {
 		$this->report_ajcore_version_to_shared_db( $new_version );
 
 		return rest_ensure_response( array( 'updated' => true, 'version' => $new_version ) );
+	}
+
+	/** Same as report_ajcore_version_to_shared_db() for one add-on: the running process still holds
+	 *  the add-on's pre-update version constant, so write the version just installed. */
+	private function report_addon_version_to_shared_db( $slug, $version ) {
+		$version = trim( (string) $version );
+		$shared  = function_exists( 'ajcore_get_shared_db' ) ? ajcore_get_shared_db() : null;
+		$uuid    = (string) get_option( 'ajcore_site_uuid', '' );
+		if ( '' === $version || ! $shared || '' === $uuid ) {
+			return;
+		}
+		$table = $shared->prefix . 'aj_shared_sites';
+		if ( ! $this->table_exists( $shared, $table ) || ! $shared->get_var( "SHOW COLUMNS FROM `{$table}` LIKE 'addon_versions'" ) ) {
+			return;
+		}
+		$current = json_decode( (string) $shared->get_var( $shared->prepare( "SELECT addon_versions FROM `{$table}` WHERE site_uuid = %s LIMIT 1", $uuid ) ), true );
+		$current = is_array( $current ) ? $current : array();
+		$current[ $slug ] = $version;
+		$shared->update(
+			$table,
+			array( 'addon_versions' => wp_json_encode( $current ), 'last_seen' => current_time( 'mysql' ) ),
+			array( 'site_uuid' => $uuid ),
+			array( '%s', '%s' ),
+			array( '%s' )
+		);
 	}
 
 	/** Write a known AJCore version straight into this site's aj_shared_sites control row, so the

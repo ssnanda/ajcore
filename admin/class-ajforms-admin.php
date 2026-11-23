@@ -32506,6 +32506,34 @@ class AJForms_Admin {
 				}
 			}
 		}
+		// Same "newest we know of" rule for each add-on: its latest GitHub release (6h-cached),
+		// this site, or any connected site that reports it.
+		$latest_addon_versions = array();
+		if ( ! empty( $connected_sites ) ) {
+			$addon_candidates = array();
+			foreach ( array_keys( AJCore_Addon_Updates::ADDONS ) as $addon_slug ) {
+				$addon_release = AJCore_Addon_Updates::latest_release( $addon_slug );
+				$addon_candidates[ $addon_slug ] = is_wp_error( $addon_release ) ? array() : array( $addon_release['version'] );
+			}
+			foreach ( AJCore_Addon_Updates::installed_versions() as $addon_slug => $addon_version ) {
+				$addon_candidates[ $addon_slug ][] = $addon_version;
+			}
+			foreach ( $connected_sites as $known_site ) {
+				$known_addons = isset( $known_site->addon_versions ) ? json_decode( (string) $known_site->addon_versions, true ) : array();
+				foreach ( is_array( $known_addons ) ? $known_addons : array() as $addon_slug => $addon_version ) {
+					if ( isset( $addon_candidates[ $addon_slug ] ) ) {
+						$addon_candidates[ $addon_slug ][] = (string) $addon_version;
+					}
+				}
+			}
+			foreach ( $addon_candidates as $addon_slug => $versions ) {
+				foreach ( $versions as $addon_version ) {
+					if ( preg_match( '/^\d+\.\d+\.\d+/', $addon_version ) && ( empty( $latest_addon_versions[ $addon_slug ] ) || version_compare( $addon_version, $latest_addon_versions[ $addon_slug ], '>' ) ) ) {
+						$latest_addon_versions[ $addon_slug ] = $addon_version;
+					}
+				}
+			}
+		}
 		?>
 
 		<?php if ( $is_enabled && ! $shared_db ) : ?>
@@ -32590,7 +32618,18 @@ class AJForms_Admin {
 						$site_is_outdated = ( '' !== $site_version && '' !== $latest_known_version && version_compare( $latest_known_version, $site_version, '>' ) );
 						$site_addons      = isset( $site->addon_versions ) ? json_decode( (string) $site->addon_versions, true ) : array();
 						$site_addons      = is_array( $site_addons ) ? $site_addons : array();
-						$addon_labels     = array( 'ajcore-ra' => 'AJCore-RA', 'ajcore-hoa' => 'AJCore-HOA' );
+						// Plugins behind the newest known version on this site; add-ons first, AJCore last
+						// (an AJCore self-update reloads the page).
+						$outdated_plugins = array();
+						foreach ( $site_addons as $addon_slug => $addon_version ) {
+							if ( ! empty( $latest_addon_versions[ $addon_slug ] ) && version_compare( $latest_addon_versions[ $addon_slug ], (string) $addon_version, '>' ) ) {
+								$outdated_plugins[] = $addon_slug;
+							}
+						}
+						if ( $site_is_outdated ) {
+							$outdated_plugins[] = 'ajcore';
+						}
+						$can_push_updates = ! $sites_from_cache && $is_current_master;
 						if ( ! empty( $site->is_master ) ) {
 							$participation_labels[] = __( 'Master Operations', 'ajforms' );
 						}
@@ -32612,7 +32651,8 @@ class AJForms_Admin {
 						<td><input type="checkbox" class="ajcore-site-check" value="<?php echo esc_attr( $site->site_uuid ); ?>"
 							data-domain="<?php echo esc_attr( $site->domain ); ?>"
 							data-self="<?php echo $is_this_site ? '1' : '0'; ?>"
-							data-outdated="<?php echo $site_is_outdated ? '1' : '0'; ?>"></td>
+							data-outdated="<?php echo $outdated_plugins ? '1' : '0'; ?>"
+							data-plugins="<?php echo esc_attr( implode( ',', $outdated_plugins ) ); ?>"></td>
 						<?php endif; ?>
 						<td><?php echo esc_html( $site->domain ); ?><?php echo $is_this_site ? ' <strong>(' . esc_html__( 'this site', 'ajforms' ) . ')</strong>' : ''; ?></td>
 						<td><code><?php echo esc_html( $site->site_uuid ); ?></code></td>
@@ -32635,8 +32675,23 @@ class AJForms_Admin {
 							<?php else : ?>
 								<span class="description"><?php esc_html_e( 'Not reported yet', 'ajforms' ); ?></span>
 							<?php endif; ?>
-							<?php foreach ( $site_addons as $addon_slug => $addon_version ) : ?>
-								<div style="margin-top:3px;font-size:11px;color:#50575e;white-space:nowrap;"><?php echo esc_html( $addon_labels[ $addon_slug ] ?? $addon_slug ); ?> <code style="font-size:11px;"><?php echo esc_html( $addon_version ); ?></code></div>
+							<?php foreach ( $site_addons as $addon_slug => $addon_version ) :
+								$addon_outdated = in_array( $addon_slug, $outdated_plugins, true );
+								?>
+								<div style="margin-top:3px;font-size:11px;color:#50575e;white-space:nowrap;">
+									<?php echo esc_html( AJCore_Addon_Updates::label( $addon_slug ) ); ?> <code style="font-size:11px;"><?php echo esc_html( $addon_version ); ?></code>
+									<?php if ( $addon_outdated ) : ?>
+										<span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;"><?php echo esc_html( sprintf( __( '%s available', 'ajforms' ), $latest_addon_versions[ $addon_slug ] ) ); ?></span>
+										<?php if ( $can_push_updates && AJCore_Addon_Updates::is_addon( $addon_slug ) ) : ?>
+										<button type="button" class="button-link ajcore-remote-update-btn" style="font-size:11px;margin-left:4px;"
+											data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>"
+											data-domain="<?php echo esc_attr( $site->domain ); ?>"
+											data-self="<?php echo $is_this_site ? '1' : '0'; ?>"
+											data-plugin="<?php echo esc_attr( $addon_slug ); ?>"
+											data-label="<?php echo esc_attr( AJCore_Addon_Updates::label( $addon_slug ) ); ?>"><?php esc_html_e( 'Update', 'ajforms' ); ?></button>
+										<?php endif; ?>
+									<?php endif; ?>
+								</div>
 							<?php endforeach; ?>
 						</td>
 						<td><?php echo esc_html( $site->last_seen ); ?></td>
@@ -32651,7 +32706,8 @@ class AJForms_Admin {
 							<?php if ( ! $sites_from_cache && $is_current_master && ! $is_this_site && $site_is_outdated ) : ?>
 							<button type="button" class="button button-small button-primary ajcore-remote-update-btn"
 								data-uuid="<?php echo esc_attr( $site->site_uuid ); ?>"
-								data-domain="<?php echo esc_attr( $site->domain ); ?>">
+								data-domain="<?php echo esc_attr( $site->domain ); ?>"
+								data-self="0" data-plugin="ajcore" data-label="AJCore">
 								<?php esc_html_e( 'Update', 'ajforms' ); ?>
 							</button>
 							<?php endif; ?>
@@ -32888,17 +32944,34 @@ class AJForms_Admin {
 			Object.keys(extra || {}).forEach(function(k) { d.append(k, extra[k]); });
 			return fetch(ajaxurl, { method: 'POST', body: d }).then(function(r) { return r.json(); });
 		}
+		var pluginLabels = <?php echo wp_json_encode( array_merge( array( 'ajcore' => 'AJCore' ), array_map( static function ( $a ) { return $a['label']; }, AJCore_Addon_Updates::ADDONS ) ) ); ?>;
+		var remoteNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_remote_update_site' ) ); ?>';
+		var selfNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_update_this_site' ) ); ?>';
+		// One plugin on one site. This site goes through the local handler; others through the
+		// site-to-site /ops/self-update endpoint (AJCore when plugin is 'ajcore').
+		function updatePlugin(uuid, isSelf, plugin) {
+			return isSelf
+				? postAjax('ajcore_update_this_site', selfNonce, { plugin: plugin })
+				: postAjax('ajcore_remote_update_site', remoteNonce, { site_uuid: uuid, plugin: plugin });
+		}
+		function sitePlugins(c) {
+			var list = (c.getAttribute('data-plugins') || '').split(',').filter(Boolean);
+			return list.length ? list : ['ajcore']; // ticked by hand with nothing flagged: re-check AJCore
+		}
 		if (bulkBtn) {
 			bulkBtn.addEventListener('click', function() {
 				var picked = checks.filter(function(c) { return c.checked; });
 				if (!picked.length) { return; }
-				var names = picked.map(function(c) { return c.getAttribute('data-domain'); }).join('\n');
-				if (!confirm('<?php echo esc_js( __( 'Update AJ Core now on:', 'ajforms' ) ); ?>\n\n' + names + '\n\n<?php echo esc_js( __( 'Each site installs the latest release immediately.', 'ajforms' ) ); ?>')) { return; }
+				var names = picked.map(function(c) {
+					return c.getAttribute('data-domain') + ' (' + sitePlugins(c).map(function(p) { return pluginLabels[p] || p; }).join(', ') + ')';
+				}).join('\n');
+				if (!confirm('<?php echo esc_js( __( 'Update now on:', 'ajforms' ) ); ?>\n\n' + names + '\n\n<?php echo esc_js( __( 'Each site installs the latest releases immediately.', 'ajforms' ) ); ?>')) { return; }
 
+				// Other sites first, one at a time (each call can take ~90s); this site last
+				// because its AJCore update reloads the page.
 				var others = picked.filter(function(c) { return c.getAttribute('data-self') !== '1'; });
 				var self = picked.filter(function(c) { return c.getAttribute('data-self') === '1'; })[0];
-				var remoteNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_remote_update_site' ) ); ?>';
-				var selfNonce = '<?php echo esc_js( wp_create_nonce( 'ajcore_update_this_site' ) ); ?>';
+				var queue = others.concat(self ? [self] : []);
 				var out = document.getElementById('ajcore-refresh-versions-result');
 				bulkBtn.disabled = true;
 				checks.forEach(function(c) { c.disabled = true; });
@@ -32908,46 +32981,44 @@ class AJForms_Admin {
 					if (out) { out.textContent = done + ' <?php echo esc_js( __( 'updated', 'ajforms' ) ); ?>' + (failed ? ', ' + failed + ' <?php echo esc_js( __( 'failed', 'ajforms' ) ); ?>' : ''); }
 					setTimeout(function() { location.reload(); }, failed ? 4000 : 1500);
 				}
-				function runSelf() {
-					if (!self) { return finish(); }
-					siteStatus(self.value, '<?php echo esc_js( __( 'Updating…', 'ajforms' ) ); ?>', '#646970');
-					postAjax('ajcore_update_this_site', selfNonce, {}).then(function(res) {
-						if (res.success) { done++; siteStatus(self.value, '✓ ' + ((res.data && res.data.message) || ''), '#166534'); }
-						else { failed++; siteStatus(self.value, '✗ ' + (res.data || ''), '#b32d2e'); }
-						finish();
-					}).catch(function() { failed++; siteStatus(self.value, '✗', '#b32d2e'); finish(); });
-				}
-				(function next(i) {
-					if (i >= others.length) { return runSelf(); }
-					var c = others[i];
-					siteStatus(c.value, '<?php echo esc_js( __( 'Updating…', 'ajforms' ) ); ?>', '#646970');
-					postAjax('ajcore_remote_update_site', remoteNonce, { site_uuid: c.value }).then(function(res) {
-						if (res.success) { done++; siteStatus(c.value, '✓ ' + ((res.data && res.data.message) || ''), '#166534'); }
-						else { failed++; siteStatus(c.value, '✗ ' + (typeof res.data === 'string' ? res.data : '<?php echo esc_js( __( 'failed', 'ajforms' ) ); ?>'), '#b32d2e'); }
-						next(i + 1);
-					}).catch(function() { failed++; siteStatus(c.value, '✗ <?php echo esc_js( __( 'no answer', 'ajforms' ) ); ?>', '#b32d2e'); next(i + 1); });
+				(function nextSite(i) {
+					if (i >= queue.length) { return finish(); }
+					var c = queue[i];
+					var isSelf = c.getAttribute('data-self') === '1';
+					var plugins = sitePlugins(c);
+					var notes = [];
+					(function nextPlugin(j) {
+						if (j >= plugins.length) { return nextSite(i + 1); }
+						var p = plugins[j], label = pluginLabels[p] || p;
+						siteStatus(c.value, label + ' <?php echo esc_js( __( 'updating…', 'ajforms' ) ); ?>', '#646970');
+						updatePlugin(c.value, isSelf, p).then(function(res) {
+							if (res.success) { done++; notes.push('✓ ' + ((res.data && res.data.message) || label)); }
+							else { failed++; notes.push('✗ ' + label + ': ' + (typeof res.data === 'string' ? res.data : '<?php echo esc_js( __( 'failed', 'ajforms' ) ); ?>')); }
+						}).catch(function() {
+							failed++; notes.push('✗ ' + label + ': <?php echo esc_js( __( 'no answer', 'ajforms' ) ); ?>');
+						}).then(function() {
+							siteStatus(c.value, notes.join(' · '), notes.join('').indexOf('✗') === -1 ? '#166534' : '#b32d2e');
+							nextPlugin(j + 1);
+						});
+					})(0);
 				})(0);
 			});
 		}
 
-		// Remote update buttons.
+		// Per-plugin update buttons (AJCore in the last column, add-ons beside their version).
 		document.querySelectorAll('.ajcore-remote-update-btn').forEach(function(updateBtn) {
 			updateBtn.addEventListener('click', function() {
 				var uuid   = updateBtn.dataset.uuid;
 				var domain = updateBtn.dataset.domain;
-				if ( ! confirm( '<?php echo esc_js( __( 'Update AJ Core on', 'ajforms' ) ); ?> ' + domain + '<?php echo esc_js( __( '? This installs the latest release immediately.', 'ajforms' ) ); ?>' ) ) return;
+				var plugin = updateBtn.dataset.plugin || 'ajcore';
+				var label  = updateBtn.dataset.label || 'AJCore';
+				if ( ! confirm( '<?php echo esc_js( __( 'Update', 'ajforms' ) ); ?> ' + label + ' <?php echo esc_js( __( 'on', 'ajforms' ) ); ?> ' + domain + '<?php echo esc_js( __( '? This installs the latest release immediately.', 'ajforms' ) ); ?>' ) ) return;
 
 				var originalText = updateBtn.textContent;
 				updateBtn.disabled = true;
 				updateBtn.textContent = '<?php echo esc_js( __( 'Updating…', 'ajforms' ) ); ?>';
 
-				var data = new FormData();
-				data.append('action',    'ajcore_remote_update_site');
-				data.append('nonce',     '<?php echo esc_js( wp_create_nonce( 'ajcore_remote_update_site' ) ); ?>');
-				data.append('site_uuid', uuid);
-
-				fetch(ajaxurl, { method: 'POST', body: data })
-					.then(function(r) { return r.json(); })
+				updatePlugin(uuid, updateBtn.dataset.self === '1', plugin)
 					.then(function(res) {
 						if (res.success) {
 							alert((res.data && res.data.message) || '<?php echo esc_js( __( 'Done.', 'ajforms' ) ); ?>');
@@ -33233,6 +33304,7 @@ class AJForms_Admin {
 		// Also re-check the latest release, so the "available" badges are current.
 		delete_transient( 'ajforms_latest_release_info' );
 		delete_transient( 'ajforms_latest_developer_release_info' );
+		AJCore_Addon_Updates::clear_cache();
 
 		$summary = sprintf( __( 'Checked %1$d site(s), %2$d version(s) updated.', 'ajforms' ), $ok, $moved );
 		if ( $fail ) {
@@ -33246,6 +33318,21 @@ class AJForms_Admin {
 		check_ajax_referer( 'ajcore_update_this_site', 'nonce' );
 		if ( ! current_user_can( 'update_plugins' ) ) {
 			wp_send_json_error( __( 'You do not have permission to update plugins.', 'ajforms' ) );
+			return;
+		}
+		$plugin = isset( $_POST['plugin'] ) ? sanitize_key( wp_unslash( $_POST['plugin'] ) ) : 'ajcore';
+		if ( 'ajcore' !== $plugin && '' !== $plugin ) {
+			if ( ! AJCore_Addon_Updates::is_addon( $plugin ) ) {
+				wp_send_json_error( __( 'Unknown plugin.', 'ajforms' ) );
+				return;
+			}
+			$result = AJCore_Addon_Updates::install_latest( $plugin );
+			if ( is_wp_error( $result ) ) {
+				wp_send_json_error( $result->get_error_message() );
+				return;
+			}
+			// The page reloads afterwards and re-registers this site with the new version.
+			wp_send_json_success( array( 'message' => empty( $result['updated'] ) ? $result['message'] : sprintf( __( '%1$s updated to %2$s.', 'ajforms' ), AJCore_Addon_Updates::label( $plugin ), $result['version'] ) ) );
 			return;
 		}
 		$result = $this->install_plugin_update();
@@ -33286,12 +33373,19 @@ class AJForms_Admin {
 			return;
 		}
 
+		$plugin = isset( $_POST['plugin'] ) ? sanitize_key( wp_unslash( $_POST['plugin'] ) ) : 'ajcore';
+		if ( 'ajcore' !== $plugin && ! AJCore_Addon_Updates::is_addon( $plugin ) ) {
+			wp_send_json_error( __( 'Unknown plugin.', 'ajforms' ) );
+			return;
+		}
+
 		$url      = rtrim( $site->domain, '/' ) . '/wp-json/ajcore/v1/ops/self-update';
 		$response = wp_remote_post(
 			$url,
 			array(
 				'timeout' => 90,
 				'headers' => array( 'X-AJCore-Update-Secret' => $site->update_secret ),
+				'body'    => array( 'plugin' => $plugin ),
 			)
 		);
 
@@ -33309,7 +33403,7 @@ class AJForms_Admin {
 		}
 
 		if ( ! empty( $body['updated'] ) ) {
-			wp_send_json_success( array( 'message' => sprintf( __( 'Updated to %s.', 'ajforms' ), isset( $body['version'] ) ? $body['version'] : '' ) ) );
+			wp_send_json_success( array( 'message' => sprintf( __( '%1$s updated to %2$s.', 'ajforms' ), 'ajcore' === $plugin ? 'AJCore' : AJCore_Addon_Updates::label( $plugin ), isset( $body['version'] ) ? $body['version'] : '' ) ) );
 		} else {
 			wp_send_json_success( array( 'message' => isset( $body['message'] ) ? $body['message'] : __( 'Already up to date.', 'ajforms' ) ) );
 		}

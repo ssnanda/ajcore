@@ -3,7 +3,7 @@
  * Plugin Name:       AJ Core
  * Plugin URI:        https://github.com/ssnanda/ajcore
  * Description:       A modular WordPress business toolkit for forms, payments, portals, auth, CRM, and automations.
- * Version: 0.11.34
+ * Version: 0.11.35
  * Author:            IT Spector LLC
  * Author URI:        https://itspector.com
  * Update URI:        false
@@ -18,7 +18,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 if ( ! defined( 'AJCORE_VERSION' ) ) {
-	define( 'AJCORE_VERSION', '0.11.34' );
+	define( 'AJCORE_VERSION', '0.11.35' );
 }
 
 if ( ! defined( 'AJCORE_PLUGIN_DIR' ) ) {
@@ -36,6 +36,7 @@ if ( ! defined( 'AJCORE_PLUGIN_BASENAME' ) ) {
 // Registry companion plugins (AJCore-RA, ...) register into; harmless when empty.
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-extensions.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-ops-access.php';
+require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-addon-updates.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-zoho-mail.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-pipeline.php';
 require_once AJCORE_PLUGIN_DIR . 'includes/class-ajcore-pipeline-tab.php';
@@ -1642,14 +1643,7 @@ if ( ! function_exists( 'ajcore_get_addon_versions' ) ) {
 	 * @return array<string,string>
 	 */
 	function ajcore_get_addon_versions() {
-		$addons = array();
-		if ( defined( 'AJCORE_RA_VERSION' ) ) {
-			$addons['ajcore-ra'] = (string) AJCORE_RA_VERSION;
-		}
-		if ( defined( 'AJCORE_HOA_VERSION' ) ) {
-			$addons['ajcore-hoa'] = (string) AJCORE_HOA_VERSION;
-		}
-		return $addons;
+		return AJCore_Addon_Updates::installed_versions();
 	}
 }
 
