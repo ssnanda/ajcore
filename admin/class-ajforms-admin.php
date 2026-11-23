@@ -4,6 +4,9 @@ class AJForms_Admin {
 
 	public static $instance = null;
 
+	/** A sync job row still 'started' after this long is treated as killed (see get_sync_run_status_for_ops()). */
+	const PORTAL_SYNC_STALE_SECONDS = 1800;
+
 	private $portal_db_error = '';
 	private $portal_sync_current_log_id = 0;
 	private $portal_sync_current_run_key = '';
@@ -4726,6 +4729,24 @@ class AJForms_Admin {
 		$total   = 0;
 		$errors  = array();
 
+		// How many jobs this run has, so a status poll between jobs (job 1 finished, job 2's log row
+		// not written yet) is not mistaken for the whole run being done.
+		set_transient( 'ajcore_sync_run_jobs_' . md5( $run_key ), count( $jobs ), DAY_IN_SECONDS );
+
+		// The transactions job pages through the whole invoice/charge history and on a live account
+		// outlives a default 30-120s max_execution_time. When PHP killed it, its log row stayed
+		// 'started' forever and every status poll waited on it. Lift the limit where the host allows
+		// it, and if the process still dies, close the open row as failed on the way out.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+		ignore_user_abort( true );
+		static $shutdown_guard = false;
+		if ( ! $shutdown_guard ) {
+			$shutdown_guard = true;
+			register_shutdown_function( array( $this, 'close_interrupted_portal_sync_log' ) );
+		}
+
 		foreach ( $jobs as $job ) {
 			$label  = isset( $available_jobs[ $job ] ) ? $available_jobs[ $job ] : $job;
 			$log_id = $this->write_portal_sync_log( $run_key, $source, $job, 'started', 0, sprintf( __( '%s sync started.', 'ajforms' ), $label ) );
@@ -4778,6 +4799,34 @@ class AJForms_Admin {
 		delete_option( 'ajforms_last_portal_db_error' );
 
 		return $total;
+	}
+
+	/**
+	 * Shutdown handler for run_portal_sync_job(): a job still marked in progress when PHP exits
+	 * was cut off (time limit, memory, fatal error), so record it as failed with the reason
+	 * instead of leaving it 'started' forever.
+	 */
+	public function close_interrupted_portal_sync_log() {
+		if ( ! $this->portal_sync_current_log_id ) {
+			return;
+		}
+		$error  = error_get_last();
+		$reason = ( $error && in_array( $error['type'], array( E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR ), true ) )
+			? $error['message']
+			: __( 'the PHP process ended before the job finished', 'ajforms' );
+		$this->get_pdb()->update(
+			$this->get_portal_sync_logs_table(),
+			array(
+				'status'      => 'failed',
+				/* translators: %s: reason */
+				'message'     => sanitize_textarea_field( sprintf( __( 'Sync stopped before finishing: %s.', 'ajforms' ), $reason ) ),
+				'finished_at' => current_time( 'mysql' ),
+			),
+			array( 'id' => absint( $this->portal_sync_current_log_id ), 'status' => 'started' ),
+			array( '%s', '%s', '%s' ),
+			array( '%d', '%s' )
+		);
+		$this->portal_sync_current_log_id = 0;
 	}
 
 	public function run_scheduled_portal_sync_job() {
@@ -4887,7 +4936,7 @@ class AJForms_Admin {
 		$pdb   = $this->get_pdb();
 		$table = $this->get_portal_sync_logs_table();
 		$rows  = $pdb->get_results( $pdb->prepare(
-			"SELECT job_name, status, records_synced, message FROM {$table} WHERE run_key = %s",
+			"SELECT id, job_name, status, records_synced, message, started_at FROM {$table} WHERE run_key = %s",
 			sanitize_text_field( (string) $run_key )
 		) );
 
@@ -4902,7 +4951,17 @@ class AJForms_Admin {
 		$pending = 0;
 		$records = 0;
 		$errors  = array();
+		// A row still 'started' long after it began belongs to a process that was killed too hard
+		// for its shutdown handler to run (e.g. SIGKILL / OOM). Close it as failed so the run can
+		// finish and Sync History stops showing it as in progress.
+		// started_at is written with current_time('mysql') (site-local), so compare in the same clock.
+		$stale_before = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - self::PORTAL_SYNC_STALE_SECONDS );
 		foreach ( $rows as $row ) {
+			if ( 'started' === $row->status && ! empty( $row->started_at ) && (string) $row->started_at < $stale_before ) {
+				$row->status  = 'failed';
+				$row->message = __( 'Sync stopped before finishing (no progress for 30 minutes).', 'ajforms' );
+				$pdb->update( $table, array( 'status' => 'failed', 'message' => $row->message, 'finished_at' => current_time( 'mysql' ) ), array( 'id' => (int) $row->id, 'status' => 'started' ), array( '%s', '%s', '%s' ), array( '%d', '%s' ) );
+			}
 			if ( 'started' === $row->status ) {
 				$pending++;
 			} elseif ( 'failed' === $row->status ) {
@@ -4912,8 +4971,12 @@ class AJForms_Admin {
 			}
 		}
 
+		// Jobs run one after another and each writes its row only when it starts, so "nothing
+		// pending" is only the end of the run once every job in it has a row.
+		$expected = (int) get_transient( 'ajcore_sync_run_jobs_' . md5( (string) $run_key ) );
+
 		return array(
-			'done'           => 0 === $pending,
+			'done'           => 0 === $pending && count( $rows ) >= $expected,
 			'started'        => true,
 			'records_synced' => $records,
 			'errors'         => $errors,
@@ -24798,7 +24861,7 @@ class AJForms_Admin {
 				<div class="notice notice-success inline"><p><?php esc_html_e( 'Sync schedule saved.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-sync-queued'] ) ) : ?>
-				<div class="notice notice-success inline"><p><?php esc_html_e( 'Sync started — it runs in the background. Refresh this page in a moment to see the result in the sync history below.', 'ajforms' ); ?></p></div>
+				<div class="notice notice-success inline"><p><?php esc_html_e( 'Sync started — it runs in the background; the sync history below updates on its own.', 'ajforms' ); ?></p></div>
 			<?php endif; ?>
 			<?php if ( isset( $_GET['portal-synced'] ) ) : ?>
 				<div class="notice notice-success inline"><p><?php echo esc_html( sprintf( __( 'Synced %d Stripe records.', 'ajforms' ), absint( wp_unslash( $_GET['portal-synced'] ) ) ) ); ?></p></div>
@@ -24954,8 +25017,31 @@ class AJForms_Admin {
 			<?php submit_button( __( 'Save Sync Schedule', 'ajforms' ) ); ?>
 		</form>
 
+		<?php
+		// Live-ish history: while a job from the last 30 minutes is still 'started', reload every
+		// 10s so the table reaches its final state on its own. Right after "Sync now" the cron
+		// event may not have written a row yet, so reload once more (dropping the flag so it stops).
+		$sync_running = false;
+		$stale_cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - self::PORTAL_SYNC_STALE_SECONDS );
+		foreach ( (array) $logs as $running_log ) {
+			if ( 'started' === $running_log->status && (string) $running_log->started_at >= $stale_cutoff ) {
+				$sync_running = true;
+				break;
+			}
+		}
+		$sync_just_queued = isset( $_GET['portal-sync-queued'] );
+		?>
+		<?php if ( $sync_running || $sync_just_queued ) : ?>
+		<script>
+		setTimeout(function () {
+			var u = new URL(window.location.href);
+			u.searchParams.delete('portal-sync-queued');
+			window.location.replace(u.toString());
+		}, <?php echo $sync_running ? 10000 : 5000; ?>);
+		</script>
+		<?php endif; ?>
 		<div class="ajforms-settings-card">
-			<h3><?php esc_html_e( 'Sync History', 'ajforms' ); ?></h3>
+			<h3><?php esc_html_e( 'Sync History', 'ajforms' ); ?><?php if ( $sync_running ) : ?> <span class="description" style="font-weight:400;"><?php esc_html_e( '— running, refreshes every 10s', 'ajforms' ); ?></span><?php endif; ?></h3>
 			<table class="widefat striped">
 				<thead>
 					<tr>
