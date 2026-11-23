@@ -14814,7 +14814,7 @@ class AJForms_Admin {
 		if ( isset( $_POST['ajcore_product_catalog_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' );
 			$this->save_product_catalog_tab( wp_unslash( $_POST ) );
-			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'catalog-saved' => 1 ), admin_url( 'admin.php' ) ) );
+			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'catalog-saved' => 1, 'catalog_all' => empty( $_POST['catalog_all'] ) ? false : 1 ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
 
@@ -28937,7 +28937,7 @@ class AJForms_Admin {
 				$this->render_products_tabs_nav( $products_tab );
 				?>
 				<?php if ( 'catalog' === $products_tab ) : ?>
-					<?php $this->render_products_catalog_tab( $prices ); ?>
+					<?php $this->render_products_catalog_tab( $prices, $selected_display_prices ); ?>
 				<?php elseif ( 'ui' === $products_tab ) : ?>
 					<?php $this->render_products_ui_tab(); ?>
 				<?php else : ?>
@@ -29793,13 +29793,32 @@ class AJForms_Admin {
 		return $choices;
 	}
 
-	private function render_products_catalog_tab( $prices ) {
+	private function render_products_catalog_tab( $prices, $shop_selection = array() ) {
 		$catalog      = ajcore_product_catalog_get( true );
+		// Categories come from every synced price, so one used only by a product that is out of
+		// the shop is not dropped when this form is saved.
 		$categories   = ajcore_product_catalog_categories( $prices, $catalog );
 		$page_choices = $this->get_product_catalog_page_choices();
 		$listing_id   = ajcore_product_catalog_listing_page_id( $catalog );
-		$counts       = array();
+
+		// Same "in shop" rule as AJ Core > Products: active product + price, and in the shop
+		// selection (an empty selection means the whole active catalog). ?catalog_all=1 lists all.
+		$shop_selection = array_map( 'strval', (array) $shop_selection );
+		$shop_prices    = array();
 		foreach ( $prices as $price ) {
+			if ( ! is_array( $price ) || empty( $price['id'] ) || empty( $price['product_active'] ) || empty( $price['price_active'] ) ) {
+				continue;
+			}
+			if ( ! empty( $shop_selection ) && ! in_array( (string) $price['id'], $shop_selection, true ) ) {
+				continue;
+			}
+			$shop_prices[] = $price;
+		}
+		$show_all     = ! empty( $_GET['catalog_all'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$all_count    = count( $prices );
+		$prices       = $show_all ? $prices : $shop_prices;
+		$counts       = array();
+		foreach ( $shop_prices as $price ) {
 			foreach ( ajcore_product_catalog_price_categories( $price, $catalog ) as $slug ) {
 				$counts[ $slug ] = isset( $counts[ $slug ] ) ? $counts[ $slug ] + 1 : 1;
 			}
@@ -29833,13 +29852,14 @@ class AJForms_Admin {
 			</div>
 		<?php endif; ?>
 
-		<?php if ( empty( $prices ) ) : ?>
+		<?php if ( 0 === $all_count ) : ?>
 			<div class="ajcore-products-empty"><?php esc_html_e( 'No synced Stripe prices yet.', 'ajforms' ); ?></div>
 			<?php return; ?>
 		<?php endif; ?>
 
 		<form method="post">
 			<?php wp_nonce_field( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' ); ?>
+			<?php if ( $show_all ) : ?><input type="hidden" name="catalog_all" value="1"><?php endif; ?>
 			<div class="ajcore-catalog-top">
 				<div class="ajcore-builder-field">
 					<strong><?php esc_html_e( 'Categories', 'ajforms' ); ?></strong>
@@ -29895,6 +29915,16 @@ class AJForms_Admin {
 				</div>
 			</div>
 
+			<p class="ajcore-catalog-muted" style="margin:0 0 6px;">
+				<?php
+				echo esc_html(
+					$show_all
+						? sprintf( __( 'Showing all %d synced prices.', 'ajforms' ), $all_count )
+						: sprintf( __( 'Showing %1$d in-shop products (of %2$d synced).', 'ajforms' ), count( $shop_prices ), $all_count )
+				);
+				?>
+				<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'catalog_all' => $show_all ? false : 1 ), admin_url( 'admin.php' ) ) ); ?>"><?php echo $show_all ? esc_html__( 'In shop only', 'ajforms' ) : esc_html__( 'Show all', 'ajforms' ); ?></a>
+			</p>
 			<table class="widefat striped ajcore-catalog-table">
 				<thead>
 					<tr>
@@ -29930,6 +29960,7 @@ class AJForms_Admin {
 					?>
 					<tr class="<?php echo $is_active ? '' : 'is-archived'; ?>">
 						<td>
+							<input type="hidden" name="catalog_shown[]" value="<?php echo esc_attr( $price_id ); ?>">
 							<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : $price_id ); ?></strong>
 							<div class="ajcore-catalog-muted">
 								<?php echo esc_html( strtoupper( (string) $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $interval ); ?>
@@ -30017,6 +30048,28 @@ class AJForms_Admin {
 		$pages = array();
 		foreach ( isset( $post['catalog_pages'] ) && is_array( $post['catalog_pages'] ) ? $post['catalog_pages'] : array() as $price_id => $page_id ) {
 			$pages[ sanitize_text_field( (string) $price_id ) ] = absint( $page_id );
+		}
+
+		// The tab lists only in-shop products by default, so the post holds just those rows. Keep
+		// the saved category and page links of every product that was not on screen (renamed
+		// category slugs still applied) instead of wiping them.
+		if ( isset( $post['catalog_shown'] ) && is_array( $post['catalog_shown'] ) ) {
+			$shown = array_flip( array_map( 'sanitize_text_field', array_map( 'strval', $post['catalog_shown'] ) ) );
+			foreach ( (array) $catalog['assign'] as $price_id => $slugs ) {
+				if ( ! isset( $shown[ (string) $price_id ] ) && ! isset( $assign[ (string) $price_id ] ) ) {
+					$assign[ (string) $price_id ] = array_map(
+						static function ( $slug ) use ( $renamed ) {
+							return isset( $renamed[ $slug ] ) ? $renamed[ $slug ] : $slug;
+						},
+						(array) $slugs
+					);
+				}
+			}
+			foreach ( (array) $catalog['pages'] as $price_id => $page_id ) {
+				if ( ! isset( $shown[ (string) $price_id ] ) && ! isset( $pages[ (string) $price_id ] ) ) {
+					$pages[ (string) $price_id ] = absint( $page_id );
+				}
+			}
 		}
 
 		$catalog['categories']   = $categories;
