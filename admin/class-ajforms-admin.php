@@ -25808,6 +25808,43 @@ class AJForms_Admin {
 				return $pa !== $pb ? $pa <=> $pb : strcasecmp( (string) $a['product']->name, (string) $b['product']->name );
 			}
 		);
+		// Pairs ("Requires", e.g. Virtual Office Subscription requires Virtual Office Setup): list
+		// the required product directly under the one that requires it, marked as one pair, the
+		// same way AJ Core > Products and Catalog show it.
+		$price_group = array();
+		foreach ( $product_groups as $pg_key => $pg ) {
+			foreach ( $pg['rows'] as $pg_row ) {
+				$price_group[ (string) $pg_row->stripe_price_id ] = $pg_key;
+			}
+		}
+		$pair_child_groups  = array(); // required group key => name of the product requiring it
+		$pair_parent_groups = array(); // requiring group key => name of the required product
+		$pair_after         = array(); // requiring group key => required group key
+		foreach ( $product_groups as $pg_key => $pg ) {
+			foreach ( $pg['rows'] as $pg_row ) {
+				$required  = ! empty( $dependency_settings[ $pg_row->stripe_price_id ]['requires_price_id'] ) ? (string) $dependency_settings[ $pg_row->stripe_price_id ]['requires_price_id'] : '';
+				$child_key = '' !== $required && isset( $price_group[ $required ] ) ? $price_group[ $required ] : '';
+				if ( '' === $child_key || $child_key === $pg_key || isset( $pair_child_groups[ $child_key ] ) || isset( $pair_after[ $pg_key ] ) || isset( $pair_child_groups[ $pg_key ] ) ) {
+					continue;
+				}
+				$pair_after[ $pg_key ]            = $child_key;
+				$pair_child_groups[ $child_key ]  = (string) $pg['product']->name;
+				$pair_parent_groups[ $pg_key ]    = (string) $product_groups[ $child_key ]['product']->name;
+			}
+		}
+		if ( $pair_after ) {
+			$paired_order = array();
+			foreach ( $product_groups as $pg_key => $pg ) {
+				if ( isset( $pair_child_groups[ $pg_key ] ) ) {
+					continue; // placed after the product that requires it
+				}
+				$paired_order[ $pg_key ] = $pg;
+				if ( isset( $pair_after[ $pg_key ] ) ) {
+					$paired_order[ $pair_after[ $pg_key ] ] = $product_groups[ $pair_after[ $pg_key ] ];
+				}
+			}
+			$product_groups = $paired_order;
+		}
 		$upgrade_product_options = array();
 		foreach ( $product_groups as $option_group_key => $option_group ) {
 			$option_product = $option_group['product'];
@@ -25969,7 +26006,7 @@ class AJForms_Admin {
 									$row_shop  = $row_shop || ( ! empty( $addon_row->active ) && ( $shop_all || in_array( (string) $addon_row->stripe_price_id, $shop_selection, true ) ) );
 								}
 								?>
-								<tr class="ajcp-row<?php echo $group_active ? '' : ' is-archived'; ?>" data-archived="<?php echo $group_active ? '0' : '1'; ?>" data-portal="<?php echo $group_visible ? '1' : '0'; ?>" data-owned="<?php echo esc_attr( $behavior ); ?>" data-addon="<?php echo $row_addon ? '1' : '0'; ?>" data-shop="<?php echo $row_shop ? '1' : '0'; ?>"<?php echo $group_active ? '' : ' hidden'; ?>>
+								<tr class="ajcp-row<?php echo $group_active ? '' : ' is-archived'; ?><?php echo isset( $pair_parent_groups[ $group_key ] ) ? ' is-pair-parent' : ''; ?><?php echo isset( $pair_child_groups[ $group_key ] ) ? ' is-pair-child' : ''; ?>" data-archived="<?php echo $group_active ? '0' : '1'; ?>" data-portal="<?php echo $group_visible ? '1' : '0'; ?>" data-owned="<?php echo esc_attr( $behavior ); ?>" data-addon="<?php echo $row_addon ? '1' : '0'; ?>" data-shop="<?php echo $row_shop ? '1' : '0'; ?>"<?php echo $group_active ? '' : ' hidden'; ?>>
 									<td class="ajcp-actions-cell">
 											<div class="ajcp-row-actions">
 												<button type="button" class="button button-primary ajcp-row-save" hidden><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
@@ -25987,6 +26024,11 @@ class AJForms_Admin {
 											<strong><?php echo esc_html( $product->name ); ?></strong>
 										<?php endif; ?>
 										<div class="ajcp-chips">
+											<?php if ( isset( $pair_parent_groups[ $group_key ] ) ) : ?>
+												<span class="ajcp-chip is-pair"><?php echo esc_html( sprintf( __( 'Pair: + %s · one product page', 'ajforms' ), $pair_parent_groups[ $group_key ] ) ); ?></span>
+											<?php elseif ( isset( $pair_child_groups[ $group_key ] ) ) : ?>
+												<span class="ajcp-chip is-pair"><?php echo esc_html( sprintf( __( '↳ Required by %s · uses its page', 'ajforms' ), $pair_child_groups[ $group_key ] ) ); ?></span>
+											<?php endif; ?>
 											<?php foreach ( $cat_names as $cat_name ) : ?>
 												<span class="ajcp-chip is-cat"><?php echo esc_html( $cat_name ); ?></span>
 											<?php endforeach; ?>
@@ -26130,7 +26172,10 @@ class AJForms_Admin {
 				.ajcp-catalog-table tbody tr.ajcp-row > td:first-child{border-left:1px solid #d5dbe3;border-radius:10px 0 0 10px}
 				.ajcp-catalog-table tbody tr.ajcp-row > td:last-child{border-right:1px solid #d5dbe3;border-radius:0 10px 10px 0}
 				.ajcp-catalog-table tbody tr.ajcp-row.is-alt > td{background:#f5f8fc!important}
+				.ajcp-catalog-table tbody tr.ajcp-row.is-pair-child > td{background:#eff6ff!important}
 				.ajcp-catalog-table tbody tr.ajcp-row.is-dirty > td{background:#fffbeb!important;border-color:#f59e0b}
+				.ajcp-catalog-table tbody tr.ajcp-row.is-pair-parent > td:first-child,.ajcp-catalog-table tbody tr.ajcp-row.is-pair-child > td:first-child{border-left:4px solid #2563eb}
+				.ajcp-chip.is-pair{background:#dbeafe;color:#1e40af}
 				.ajcp-catalog-table td{vertical-align:top;padding:14px 12px}
 				.ajcp-th-note{font-weight:400;color:#94a3b8;font-size:11px}
 				.ajcp-catalog-table tr.is-archived td{opacity:.6}
@@ -29116,7 +29161,7 @@ class AJForms_Admin {
 												· <span style="color:#2563eb;"><?php esc_html_e( 'required · added to cart with it', 'ajforms' ); ?></span>
 											</span>
 											<?php if ( isset( $pair_folded[ $pair_id ] ) ) : ?>
-												<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $pair_id ); ?>" <?php checked( in_array( $pair_id, $selected_display_prices, true ) ); ?> hidden>
+												<input type="checkbox" class="ajcore-product-select" name="public_product_selected_prices[]" value="<?php echo esc_attr( $pair_id ); ?>" <?php checked( in_array( $pair_id, $selected_display_prices, true ) ); ?> hidden style="display:none">
 												<input type="hidden" class="ajcore-product-order-sibling" name="public_product_order[<?php echo esc_attr( $pair_id ); ?>]" value="<?php echo esc_attr( $sort_value ); ?>">
 											<?php endif; ?>
 										<?php endif; ?>
