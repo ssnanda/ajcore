@@ -10070,7 +10070,7 @@ class AJForms {
 				.ajp-page *,.ajp-page *:before,.ajp-page *:after{box-sizing:border-box}
 				.ajp-back{display:inline-block;margin:0 0 14px;color:var(--ajp-muted);text-decoration:none;font-size:14px}
 				.ajp-back:hover{color:var(--ajp-accent)}
-				.ajp-layout{display:grid;grid-template-columns:minmax(0,1fr) clamp(300px,28vw,380px);grid-template-areas:"head side" "main side";column-gap:clamp(28px,4vw,56px);row-gap:0;align-items:start}
+				.ajp-layout{display:grid;grid-template-columns:minmax(0,1fr) clamp(300px,28vw,380px);grid-template-areas:"head side" "main side";grid-template-rows:auto 1fr;column-gap:clamp(28px,4vw,56px);row-gap:0;align-items:start}
 				.ajp-head{grid-area:head;margin:0 0 20px}
 				.ajp-main{grid-area:main;min-width:0}
 				.ajp-side{grid-area:side;position:sticky;top:96px;display:grid;gap:16px;align-self:start}
@@ -10096,6 +10096,8 @@ class AJForms {
 				.ajp-buy .ajcore-product{height:auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;gap:12px!important;justify-content:flex-start!important}
 				.ajp-buy .ajcore-product > *:empty{display:none!important}
 				.ajp-buy .ajcore-product > *{margin-top:0!important;margin-bottom:0!important}
+				.ajp-buy .ajcore-product-price{min-height:0!important;margin:0!important;padding-top:0!important}
+				.ajp-buy .ajcore-product *{min-height:0!important}
 				.ajp-billing{margin:10px 0 0;font-size:13px;color:var(--ajp-muted);text-align:center}
 				.ajp-about p{margin:0 0 14px}
 				.ajp-about p:last-child{margin-bottom:0}
@@ -10122,7 +10124,8 @@ class AJForms {
 				.ajp-other-name{font-size:14px;font-weight:600;color:var(--ajp-ink);text-decoration:none;line-height:1.3}
 				a.ajp-other-name:hover{color:var(--ajp-accent);text-decoration:underline}
 				.ajp-other-price{font-size:13px;color:var(--ajp-muted)}
-				.ajp-other-price .ajcore-price-amount{font-weight:700;color:var(--ajp-ink)}
+				.ajp-other-price .ajcore-price-amount{font-size:15px!important;line-height:1.3!important;letter-spacing:0!important;font-weight:700;color:var(--ajp-ink)}
+				.ajp-other-price .ajcore-price-interval{font-size:12px!important}
 				.ajp-other-add{flex:0 0 auto;padding:6px 14px;border-radius:8px;border:1.5px solid var(--ajp-accent);color:var(--ajp-accent);font-size:13px;font-weight:700;text-decoration:none;background:#fff}
 				.ajp-other-add:hover{background:var(--ajp-accent);color:#fff}
 				.ajp-related{display:grid;gap:8px}
