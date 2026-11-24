@@ -61,6 +61,7 @@ class AJForms {
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_styles' ) );
 		add_action( 'admin_enqueue_scripts', array( $plugin_admin, 'enqueue_scripts' ) );
 		add_action( 'admin_notices', array( $plugin_admin, 'display_stripe_mode_admin_notice' ) );
+		add_action( 'admin_bar_menu', array( $plugin_admin, 'add_stripe_mode_admin_bar_node' ), 90 );
 		add_action( 'admin_notices', array( $plugin_admin, 'display_lead_action_error_notice' ) );
 		add_filter( 'plugin_action_links_' . AJFORMS_PLUGIN_BASENAME, array( $plugin_admin, 'add_plugin_action_links' ) );
 		add_filter( 'plugin_row_meta', array( $plugin_admin, 'add_plugin_row_meta_links' ), 10, 2 );
@@ -83,6 +84,12 @@ class AJForms {
 		add_action( 'ajcore_local_recurring_transactions', array( $plugin_admin, 'run_local_recurring_transactions_job' ) );
 		add_action( 'ajcore_chat_auto_close_stale', array( $plugin_admin, 'run_chat_auto_close_job' ) );
 		add_action( 'ajcore_manual_sync_run', array( $plugin_admin, 'run_manual_sync_job_from_transient' ) );
+		// Auto-create product pages (Products > Catalog setting): after the synced product list or
+		// the "In shop" selection changes, from wp-admin or the cron sync alike.
+		foreach ( array( 'ajforms_stripe_products_cache', 'ajcore_public_product_display_settings' ) as $auto_pages_option ) {
+			add_action( 'update_option_' . $auto_pages_option, array( $plugin_admin, 'queue_auto_create_product_pages' ) );
+			add_action( 'add_option_' . $auto_pages_option, array( $plugin_admin, 'queue_auto_create_product_pages' ) );
+		}
 
 		add_action( 'admin_enqueue_scripts',   array( $this, 'enqueue_username_edit_script' ) );
 		add_filter( 'user_profile_update_errors', array( $this, 'validate_username_change' ), 10, 3 );

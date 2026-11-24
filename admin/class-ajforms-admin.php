@@ -11583,6 +11583,33 @@ class AJForms_Admin {
 		);
 	}
 
+	/**
+	 * Stripe mode as a compact item in the WP admin bar on the AJ Core Stripe screens (AJ Core,
+	 * Products), instead of a full-width notice: red "Stripe Live", or "Stripe Sandbox". Links to
+	 * Settings > Payments. Settings shows its own badge, the Client Portal none (as before).
+	 */
+	public function add_stripe_mode_admin_bar_node( $wp_admin_bar ) {
+		if ( ! is_admin() || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( ! in_array( $page, array( 'ajforms', 'ajforms-products' ), true ) ) {
+			return;
+		}
+		$data  = $this->get_stripe_mode_badge_data();
+		$live  = ! empty( $data['is_live'] );
+		$bg    = ! empty( $data['has_issues'] ) ? '#b91c1c' : ( $live ? '#dc2626' : '#2563eb' );
+		$title = $live ? __( 'Stripe Live · real payments', 'ajforms' ) : __( 'Stripe Sandbox · card 4242 4242 4242 4242', 'ajforms' );
+		$wp_admin_bar->add_node(
+			array(
+				'id'    => 'ajcore-stripe-mode',
+				'title' => '<span style="display:inline-block;padding:0 8px;border-radius:3px;background:' . esc_attr( $bg ) . ';color:#fff;font-weight:600;line-height:22px;">' . esc_html( $title ) . '</span>',
+				'href'  => add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) ),
+				'meta'  => array( 'title' => __( 'Stripe settings', 'ajforms' ) ),
+			)
+		);
+	}
+
 	public function display_stripe_mode_admin_notice() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
@@ -11609,6 +11636,11 @@ class AJForms_Admin {
 		}
 
 		$data = $this->get_stripe_mode_badge_data();
+		// Normal state lives in the admin bar (add_stripe_mode_admin_bar_node()); this full-width
+		// notice is only for problems that need their explanation spelled out.
+		if ( empty( $data['has_issues'] ) ) {
+			return;
+		}
 		$settings_url = add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'payments' ), admin_url( 'admin.php' ) );
 		$notice_class = ! empty( $data['has_issues'] ) ? 'notice-error' : ( ! empty( $data['is_live'] ) ? 'notice-warning' : 'notice-info' );
 		?>
@@ -14853,6 +14885,8 @@ class AJForms_Admin {
 		if ( isset( $_POST['ajcore_product_catalog_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' );
 			$this->save_product_catalog_tab( wp_unslash( $_POST ) );
+			// Picks up products that became eligible while auto-create was off.
+			$this->maybe_auto_create_product_pages();
 			wp_safe_redirect( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'catalog-saved' => 1, 'catalog_all' => empty( $_POST['catalog_all'] ) ? false : 1 ), admin_url( 'admin.php' ) ) );
 			exit;
 		}
@@ -28950,8 +28984,12 @@ class AJForms_Admin {
 		<div class="wrap">
 			<style>
 				.ajcore-products-shell{max-width:1180px;margin-top:20px}
-				.ajcore-products-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px;padding:22px 24px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}
-				.ajcore-products-hero h1{margin:0 0 8px;font-size:28px;line-height:1.2}
+				.ajcore-products-hero{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:18px;padding:14px 20px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}
+				.ajcore-products-hero-title{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+				.ajcore-products-hero h1{margin:0;padding:0;font-size:24px;line-height:1.2}
+				.ajcore-products-hero .nav-tab-wrapper{margin:0!important;padding:0;border:0;display:flex;gap:4px}
+				.ajcore-products-hero .nav-tab{margin:0;border:1px solid #dcdcde;border-radius:6px;background:#f6f7f7;padding:5px 14px;font-size:13px;line-height:1.4}
+				.ajcore-products-hero .nav-tab-active{background:#2271b1;border-color:#2271b1;color:#fff}
 				.ajcore-products-hero p{margin:0;color:#64748b;max-width:760px}
 				.ajcore-products-notice{margin:0 0 18px;padding:12px 14px;border-radius:10px}
 				.ajcore-products-notice.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
@@ -28987,10 +29025,14 @@ class AJForms_Admin {
 			</style>
 
 			<div class="ajcore-products-shell">
+				<?php
+				$products_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'products';
+				$products_tab = in_array( $products_tab, array( 'products', 'catalog', 'ui' ), true ) ? $products_tab : 'products';
+				?>
 				<div class="ajcore-products-hero">
-					<div>
+					<div class="ajcore-products-hero-title">
 						<h1><?php esc_html_e( 'Products', 'ajforms' ); ?></h1>
-						<p><?php esc_html_e( 'Sync Stripe Prices here, then place products on any page with the shortcode. One-time and recurring prices can use Stripe Checkout.', 'ajforms' ); ?></p>
+						<?php $this->render_products_tabs_nav( $products_tab ); ?>
 					</div>
 					<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
 				</div>
@@ -29016,9 +29058,6 @@ class AJForms_Admin {
 					<div class="ajcore-products-notice ok"><?php esc_html_e( 'Shop order saved.', 'ajforms' ); ?></div>
 				<?php endif; ?>
 				<?php
-				$products_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'products';
-				$products_tab = in_array( $products_tab, array( 'products', 'catalog', 'ui' ), true ) ? $products_tab : 'products';
-				$this->render_products_tabs_nav( $products_tab );
 				?>
 				<?php if ( 'catalog' === $products_tab ) : ?>
 					<?php $this->render_products_catalog_tab( $prices, $selected_display_prices ); ?>
@@ -30106,6 +30145,31 @@ class AJForms_Admin {
 			// active, not the required half of a pair, no page yet). The handler re-checks.
 			$bulk_eligible = $this->get_product_page_bulk_eligible();
 			?>
+			<?php $auto_mode = self::product_pages_auto_mode(); ?>
+			<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;">
+				<strong><?php esc_html_e( 'New in-shop products:', 'ajforms' ); ?></strong>
+				<select name="catalog_auto_pages">
+					<option value="off" <?php selected( 'off', $auto_mode ); ?>><?php esc_html_e( 'No page (create manually)', 'ajforms' ); ?></option>
+					<option value="draft" <?php selected( 'draft', $auto_mode ); ?>><?php esc_html_e( 'Auto-create page as draft', 'ajforms' ); ?></option>
+					<option value="publish" <?php selected( 'publish', $auto_mode ); ?>><?php esc_html_e( 'Auto-create and publish page', 'ajforms' ); ?></option>
+				</select>
+				<?php
+				$auto_log = get_option( self::PRODUCT_PAGES_LOG_OPTION, array() );
+				if ( 'off' !== $auto_mode && is_array( $auto_log ) && ! empty( $auto_log['at'] ) ) :
+					?>
+					<span class="ajcore-catalog-muted">
+						<?php
+						echo esc_html( sprintf( __( 'Last auto-create %1$s: %2$d created.', 'ajforms' ), $this->format_site_datetime( $auto_log['at'] ), count( (array) $auto_log['created'] ) ) );
+						if ( ! empty( $auto_log['errors'] ) ) {
+							echo ' <span style="color:#b32d2e;">' . esc_html( implode( ' | ', (array) $auto_log['errors'] ) ) . '</span>';
+						}
+						?>
+					</span>
+				<?php endif; ?>
+				<details><summary class="ajcore-catalog-muted" style="cursor:pointer;"><?php esc_html_e( 'How it works', 'ajforms' ); ?></summary>
+					<p class="ajcore-catalog-muted" style="max-width:640px;"><?php esc_html_e( 'After every Stripe product sync and every "In shop" change, each product that is ticked In shop, active, not the required half of a pair and without a page gets one, at its standard address. Products not ticked In shop never get a page. A product is handled once: if you trash or unlink its page, it is not recreated.', 'ajforms' ); ?></p>
+				</details>
+			</div>
 			<?php if ( ! empty( $bulk_eligible ) && current_user_can( 'publish_pages' ) ) : ?>
 				<div class="ajcore-catalog-bulk" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;">
 					<button type="submit" name="ajcore_catalog_bulk_pages" value="1" class="button" id="ajcore-catalog-bulk-btn" disabled><?php esc_html_e( 'Create pages for selected', 'ajforms' ); ?></button>
@@ -30312,6 +30376,17 @@ class AJForms_Admin {
 			}
 		}
 
+		if ( isset( $post['catalog_auto_pages'] ) ) {
+			$mode = sanitize_key( (string) $post['catalog_auto_pages'] );
+			$mode = in_array( $mode, array( 'draft', 'publish' ), true ) ? $mode : 'off';
+			update_option( self::PRODUCT_PAGES_AUTO_OPTION, $mode, false );
+		}
+
+		// Every product that has or had a page (incl. ones linked by hand, and ones being unlinked
+		// in this save) counts as handled, so auto-create never gives it a second page.
+		$this->mark_product_pages_handled( (array) $catalog['pages'] );
+		$this->mark_product_pages_handled( $pages );
+
 		$catalog['categories']   = $categories;
 		$catalog['assign']       = $assign;
 		$catalog['pages']        = $pages;
@@ -30321,6 +30396,77 @@ class AJForms_Admin {
 	}
 
 	/** Creates a draft page for one price under the listing page, pre-filled from Stripe, and links it. */
+	const PRODUCT_PAGES_AUTO_OPTION = 'ajcore_product_pages_auto';      // off | draft | publish
+	const PRODUCT_PAGES_DONE_OPTION = 'ajcore_product_pages_auto_done'; // price id => page id it was given
+	const PRODUCT_PAGES_LOG_OPTION  = 'ajcore_product_pages_auto_log';  // last run: time, created, errors
+
+	/** Records prices that have (had) a page, so auto-create never makes them a second one. */
+	private function mark_product_pages_handled( array $pages ) {
+		$done    = get_option( self::PRODUCT_PAGES_DONE_OPTION, array() );
+		$done    = is_array( $done ) ? $done : array();
+		$changed = false;
+		foreach ( $pages as $price_id => $page_id ) {
+			if ( (int) $page_id > 0 && ! isset( $done[ (string) $price_id ] ) ) {
+				$done[ (string) $price_id ] = (int) $page_id;
+				$changed                    = true;
+			}
+		}
+		if ( $changed ) {
+			update_option( self::PRODUCT_PAGES_DONE_OPTION, $done, false );
+		}
+	}
+
+	public static function product_pages_auto_mode() {
+		$mode = (string) get_option( self::PRODUCT_PAGES_AUTO_OPTION, 'off' );
+		return in_array( $mode, array( 'draft', 'publish' ), true ) ? $mode : 'off';
+	}
+
+	/**
+	 * Hooked to changes of the synced product list and of the "In shop" selection: when
+	 * auto-create is on, schedule one pass at the end of the request (after every option write
+	 * of a sync or save has landed) instead of running mid-write.
+	 */
+	public function queue_auto_create_product_pages() {
+		static $queued = false;
+		if ( $queued || 'off' === self::product_pages_auto_mode() ) {
+			return;
+		}
+		$queued = true;
+		add_action( 'shutdown', array( $this, 'maybe_auto_create_product_pages' ) );
+	}
+
+	/**
+	 * Creates a page for each newly eligible product (same rule as the bulk action: explicitly
+	 * "In shop", active, not the required half of a pair, no page yet). Each price is handled
+	 * once: if its page is later trashed or unlinked on purpose, it is not created again.
+	 */
+	public function maybe_auto_create_product_pages() {
+		$mode = self::product_pages_auto_mode();
+		if ( 'off' === $mode || ! function_exists( 'ajcore_product_catalog_get' ) ) {
+			return;
+		}
+		$done = get_option( self::PRODUCT_PAGES_DONE_OPTION, array() );
+		$done = is_array( $done ) ? $done : array();
+		$created = array();
+		$errors  = array();
+		foreach ( $this->get_product_page_bulk_eligible() as $price_id => $name ) {
+			if ( isset( $done[ $price_id ] ) ) {
+				continue;
+			}
+			$result = $this->create_product_page_for_price( $price_id, $mode, false );
+			if ( is_wp_error( $result ) ) {
+				$errors[] = $name . ': ' . $result->get_error_message();
+				continue; // retried next time (e.g. after page_slug is set in Stripe)
+			}
+			$done[ $price_id ] = (int) $result;
+			$created[]         = $name;
+		}
+		if ( $created || $errors ) {
+			update_option( self::PRODUCT_PAGES_DONE_OPTION, $done, false );
+			update_option( self::PRODUCT_PAGES_LOG_OPTION, array( 'at' => current_time( 'mysql' ), 'created' => $created, 'errors' => $errors ), false );
+		}
+	}
+
 	/**
 	 * Prices that may get a product page from the bulk "Create pages" action, keyed by price ID
 	 * (value: product name). Computed fresh on the server for every request, never taken from
@@ -30358,9 +30504,11 @@ class AJForms_Admin {
 		return $eligible;
 	}
 
-	private function create_product_page_for_price( $price_id, $status = 'draft' ) {
+	private function create_product_page_for_price( $price_id, $status = 'draft', $require_capability = true ) {
 		$status = 'publish' === $status ? 'publish' : 'draft';
-		if ( ! current_user_can( 'publish_pages' ) ) {
+		// $require_capability is false only for auto-create (maybe_auto_create_product_pages()),
+		// which runs after a sync, possibly from cron with no logged-in user.
+		if ( $require_capability && ! current_user_can( 'publish_pages' ) ) {
 			return new WP_Error( 'ajcore_product_page_cap', __( 'You cannot create pages.', 'ajforms' ) );
 		}
 		$cache = $this->get_stripe_products_cache();
@@ -30437,6 +30585,7 @@ class AJForms_Admin {
 
 		$catalog['pages'][ $price_id ] = (int) $page_id;
 		ajcore_product_catalog_save( $catalog );
+		$this->mark_product_pages_handled( array( $price_id => (int) $page_id ) );
 		return (int) $page_id;
 	}
 
