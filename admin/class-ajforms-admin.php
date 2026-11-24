@@ -29632,7 +29632,14 @@ class AJForms_Admin {
 		if ( '' !== $default && $default !== $current_default ) {
 			$body['default_price'] = $default;
 		}
-		$meta_diff = $this->product_editor_metadata_diff( $product['metadata'] ?? array(), $this->product_editor_posted_metadata( $post['meta'] ?? array() ) );
+		$posted_meta = $this->product_editor_posted_metadata( $post['meta'] ?? array() );
+		if ( ! empty( $post['page_present'] ) ) {
+			$page_in = isset( $post['page'] ) && is_array( $post['page'] ) ? $post['page'] : array();
+			foreach ( $this->product_editor_page_meta_keys() as $page_key ) {
+				$posted_meta[ $page_key ] = isset( $page_in[ $page_key ] ) ? substr( trim( sanitize_textarea_field( (string) $page_in[ $page_key ] ) ), 0, 500 ) : '';
+			}
+		}
+		$meta_diff = $this->product_editor_metadata_diff( $product['metadata'] ?? array(), $posted_meta );
 		if ( ! empty( $meta_diff ) ) {
 			$body['metadata'] = $meta_diff;
 		}
@@ -29695,6 +29702,16 @@ class AJForms_Admin {
 		}
 		$this->product_editor_flash( array( 'ok' => $ok, 'errors' => $errors ) );
 		return $this->product_editor_url( $product_id );
+	}
+
+	/** Stripe metadata keys edited in the "Product page" box (kept out of the raw Metadata rows). */
+	private function product_editor_page_meta_keys() {
+		$keys = array_keys( ajcore_product_page_meta_fields() );
+		for ( $i = 1; $i <= ajcore_product_page_faq_slots(); $i++ ) {
+			$keys[] = 'faq_' . $i . '_q';
+			$keys[] = 'faq_' . $i . '_a';
+		}
+		return $keys;
 	}
 
 	private function product_editor_meta_rows( $name_prefix, $metadata, $blank = 2 ) {
@@ -29818,7 +29835,27 @@ class AJForms_Admin {
 									<option value="__new"><?php esc_html_e( 'The new price below', 'ajforms' ); ?></option>
 								</select>
 							</div>
-							<div class="ajpe-f" data-field="images"><label><?php esc_html_e( 'Images (URL per line, max 8)', 'ajforms' ); ?></label><textarea name="p[images]" rows="2"><?php echo esc_textarea( implode( "\n", (array) ( $product['images'] ?? array() ) ) ); ?></textarea></div>
+							<div class="ajpe-f" data-field="images"><label><?php esc_html_e( 'Images (URL per line, max 8)', 'ajforms' ); ?></label><textarea id="ajpe-images" name="p[images]" rows="2"><?php echo esc_textarea( implode( "\n", (array) ( $product['images'] ?? array() ) ) ); ?></textarea><button type="button" class="button button-small" id="ajpe-images-pick" style="margin-top:4px;"><?php esc_html_e( 'Choose from Media Library', 'ajforms' ); ?></button><?php wp_enqueue_media(); ?></div>
+							<script>
+							(function () {
+								// Stripe needs public image URLs: pick (or upload) in the Media Library and its URL is added.
+								var btn = document.getElementById('ajpe-images-pick'), box = document.getElementById('ajpe-images');
+								if (!btn || !box || !window.wp || !wp.media) { return; }
+								var frame;
+								btn.addEventListener('click', function () {
+									if (!frame) {
+										frame = wp.media({ title: '<?php echo esc_js( __( 'Product images', 'ajforms' ) ); ?>', library: { type: 'image' }, multiple: true, button: { text: '<?php echo esc_js( __( 'Add to product', 'ajforms' ) ); ?>' } });
+										frame.on('select', function () {
+											var urls = box.value.split(/\r?\n/).map(function (u) { return u.trim(); }).filter(Boolean);
+											frame.state().get('selection').each(function (a) { var u = a.toJSON().url; if (u && urls.indexOf(u) === -1) { urls.push(u); } });
+											box.value = urls.slice(0, 8).join('\n');
+											box.dispatchEvent(new Event('input', { bubbles: true }));
+										});
+									}
+									frame.open();
+								});
+							})();
+							</script>
 							<div class="ajpe-f" data-field="marketing_features"><label><?php esc_html_e( 'Marketing features (one per line)', 'ajforms' ); ?></label><textarea name="p[features]" rows="2"><?php echo esc_textarea( implode( "\n", array_map( static function ( $f ) { return (string) ( $f['name'] ?? '' ); }, (array) ( $product['marketing_features'] ?? array() ) ) ) ); ?></textarea></div>
 							<div class="ajpe-f" data-field="shippable"><label><?php esc_html_e( 'Shippable', 'ajforms' ); ?></label><input type="hidden" name="p[shippable_present]" value="1"><label style="font-weight:400;"><input type="checkbox" name="p[shippable]" value="1" <?php checked( ! empty( $product['shippable'] ) ); ?>> <?php esc_html_e( 'Physical goods', 'ajforms' ); ?></label></div>
 							<div class="ajpe-f span3" data-field="package_dimensions"><label><?php esc_html_e( 'Package dimensions (in / oz; all four or none)', 'ajforms' ); ?></label>
@@ -29833,9 +29870,49 @@ class AJForms_Admin {
 				</div>
 
 				<?php if ( ! $is_new ) : ?>
+					<?php
+					// Product page content: stored as Stripe metadata (see ajcore_product_page_content()),
+					// edited here as labelled fields instead of raw key/value rows.
+					$page_meta = (array) ( $product['metadata'] ?? array() );
+					$page_keys = $this->product_editor_page_meta_keys();
+					?>
+					<div class="ajpe-box" data-field="page_content">
+						<h2><?php esc_html_e( 'Product page', 'ajforms' ); ?></h2>
+						<input type="hidden" name="page_present" value="1">
+						<div class="ajpe-grid">
+							<?php foreach ( ajcore_product_page_meta_fields() as $meta_key => $meta_field ) : ?>
+								<div class="ajpe-f<?php echo 'list' === $meta_field[1] || 'summary' === $meta_key || 'seo_description' === $meta_key ? ' span3' : ''; ?>">
+									<label><?php echo esc_html( $meta_field[0] ); ?></label>
+									<?php if ( 'list' === $meta_field[1] || 'summary' === $meta_key || 'seo_description' === $meta_key ) : ?>
+										<textarea name="page[<?php echo esc_attr( $meta_key ); ?>]" rows="<?php echo 'list' === $meta_field[1] ? 3 : 2; ?>" maxlength="500"><?php echo esc_textarea( (string) ( $page_meta[ $meta_key ] ?? '' ) ); ?></textarea>
+									<?php else : ?>
+										<input type="text" name="page[<?php echo esc_attr( $meta_key ); ?>]" maxlength="500" value="<?php echo esc_attr( (string) ( $page_meta[ $meta_key ] ?? '' ) ); ?>">
+									<?php endif; ?>
+								</div>
+							<?php endforeach; ?>
+						</div>
+						<h3 style="margin:14px 0 6px;font-size:13px;"><?php esc_html_e( 'FAQ', 'ajforms' ); ?></h3>
+						<?php
+						$faq_rows = 0;
+						for ( $i = 1; $i <= ajcore_product_page_faq_slots(); $i++ ) {
+							if ( '' !== (string) ( $page_meta[ 'faq_' . $i . '_q' ] ?? '' ) ) {
+								$faq_rows = $i;
+							}
+						}
+						$faq_rows = min( ajcore_product_page_faq_slots(), max( 6, $faq_rows + 2 ) );
+						?>
+						<?php for ( $i = 1; $i <= $faq_rows; $i++ ) : ?>
+							<div class="ajpe-grid" style="grid-template-columns:minmax(0,1fr) minmax(0,2fr);margin-bottom:6px;">
+								<input type="text" name="page[faq_<?php echo (int) $i; ?>_q]" maxlength="500" placeholder="<?php echo esc_attr( sprintf( __( 'Question %d', 'ajforms' ), $i ) ); ?>" value="<?php echo esc_attr( (string) ( $page_meta[ 'faq_' . $i . '_q' ] ?? '' ) ); ?>">
+								<textarea name="page[faq_<?php echo (int) $i; ?>_a]" rows="1" maxlength="500" placeholder="<?php esc_attr_e( 'Answer', 'ajforms' ); ?>"><?php echo esc_textarea( (string) ( $page_meta[ 'faq_' . $i . '_a' ] ?? '' ) ); ?></textarea>
+							</div>
+						<?php endfor; ?>
+						<p class="ajpe-ro" style="font-family:inherit;margin:6px 0 0;"><?php esc_html_e( 'Saved to Stripe product metadata (max 500 characters each) and shown on the product page. "What\'s included" comes from Marketing features, the photo from Images.', 'ajforms' ); ?></p>
+					</div>
+
 					<div class="ajpe-box" data-field="metadata">
 						<h2><?php esc_html_e( 'Metadata', 'ajforms' ); ?></h2>
-						<?php $this->product_editor_meta_rows( 'meta', $product['metadata'] ?? array(), 3 ); ?>
+						<?php $this->product_editor_meta_rows( 'meta', array_diff_key( (array) ( $product['metadata'] ?? array() ), array_flip( $page_keys ) ), 3 ); ?>
 						<p class="ajpe-ro" style="font-family:inherit;margin:6px 0 0;"><?php esc_html_e( 'Used by AJCore: category, summary, rich_description, ajcore_requires_price_id, dependency_note.', 'ajforms' ); ?></p>
 					</div>
 
@@ -30501,6 +30578,28 @@ class AJForms_Admin {
 	const PRODUCT_PAGES_DONE_OPTION = 'ajcore_product_pages_auto_done'; // price id => page id it was given
 	const PRODUCT_PAGES_LOG_OPTION  = 'ajcore_product_pages_auto_log';  // last run: time, created, errors
 
+	/**
+	 * One-time cleanup (product page template v1): pages made by "Create page" before the live
+	 * template held a copied summary paragraph (and rich HTML) around the shortcode, which the
+	 * template now renders itself. Rewrites only pages whose content is still exactly that
+	 * generated form, so anything edited by hand is left alone.
+	 */
+	public function maybe_upgrade_product_page_content() {
+		if ( (int) get_option( 'ajcore_product_pages_content_v', 0 ) >= 1 || ! function_exists( 'ajcore_product_catalog_get' ) || ! current_user_can( 'edit_pages' ) ) {
+			return;
+		}
+		$catalog = ajcore_product_catalog_get( true );
+		foreach ( (array) $catalog['pages'] as $price_id => $page_id ) {
+			$content = (string) get_post_field( 'post_content', (int) $page_id );
+			$pattern = '~^(?:<!-- wp:paragraph -->\s*<p>[^<]*</p>\s*<!-- /wp:paragraph -->\s*)?(<!-- wp:shortcode -->\s*\[ajcore_product price_id="' . preg_quote( (string) $price_id, '~' ) . '"\]\s*<!-- /wp:shortcode -->)(?:\s*<!-- wp:html -->.*<!-- /wp:html -->)?\s*$~s';
+			if ( '' === $content || ! preg_match( $pattern, trim( $content ), $m ) || trim( $content ) === $m[1] ) {
+				continue;
+			}
+			wp_update_post( array( 'ID' => (int) $page_id, 'post_content' => $m[1] ) );
+		}
+		update_option( 'ajcore_product_pages_content_v', 1, false );
+	}
+
 	/** Records prices that have (had) a page, so auto-create never makes them a second one. */
 	private function mark_product_pages_handled( array $pages ) {
 		$done    = get_option( self::PRODUCT_PAGES_DONE_OPTION, array() );
@@ -30632,16 +30731,10 @@ class AJForms_Admin {
 			return new WP_Error( 'ajcore_product_page_paired', __( 'This product is sold as a pair; it uses the page of the product that requires it.', 'ajforms' ) );
 		}
 
-		$summary = ! empty( $price['product_summary'] ) ? (string) $price['product_summary'] : ( isset( $price['product_description'] ) ? (string) $price['product_description'] : '' );
-		$rich    = ! empty( $price['product_rich_description'] ) ? (string) $price['product_rich_description'] : '';
-		$blocks  = array();
-		if ( '' !== trim( $summary ) ) {
-			$blocks[] = "<!-- wp:paragraph -->\n<p>" . esc_html( $summary ) . "</p>\n<!-- /wp:paragraph -->";
-		}
-		$blocks[] = "<!-- wp:shortcode -->\n[ajcore_product price_id=\"" . esc_attr( $price_id ) . "\"]\n<!-- /wp:shortcode -->";
-		if ( '' !== trim( $rich ) ) {
-			$blocks[] = "<!-- wp:html -->\n" . wp_kses_post( $rich ) . "\n<!-- /wp:html -->";
-		}
+		// Only the shortcode: the page renders live from Stripe (render_product_page_template()),
+		// so text copied in here would go stale and show twice. Anything typed in the editor
+		// around the shortcode still shows as extra content.
+		$blocks = array( "<!-- wp:shortcode -->\n[ajcore_product price_id=\"" . esc_attr( $price_id ) . "\"]\n<!-- /wp:shortcode -->" );
 
 		// Standard address (see ajcore_product_catalog_page_slug()). If another page under the
 		// listing already uses it, stop instead of letting WordPress append "-2": a numbered

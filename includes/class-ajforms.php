@@ -84,6 +84,7 @@ class AJForms {
 		add_action( 'ajcore_local_recurring_transactions', array( $plugin_admin, 'run_local_recurring_transactions_job' ) );
 		add_action( 'ajcore_chat_auto_close_stale', array( $plugin_admin, 'run_chat_auto_close_job' ) );
 		add_action( 'ajcore_manual_sync_run', array( $plugin_admin, 'run_manual_sync_job_from_transient' ) );
+		add_action( 'admin_init', array( $plugin_admin, 'maybe_upgrade_product_page_content' ) );
 		// Auto-create product pages (Products > Catalog setting): after the synced product list or
 		// the "In shop" selection changes, from wp-admin or the cron sync alike.
 		foreach ( array( 'ajforms_stripe_products_cache', 'ajcore_public_product_display_settings' ) as $auto_pages_option ) {
@@ -9953,14 +9954,19 @@ class AJForms {
 				'details'  => 'none',
 				'button'   => __( 'Buy Now', 'ajforms' ),
 				'back'     => 'yes',
+				// auto = full product page on the product's own page, plain buy box elsewhere.
+				'layout'   => 'auto',
 			),
 			$atts,
 			'ajcore_product'
 		);
-		$price_id = sanitize_text_field( (string) $atts['price_id'] );
-		if ( '' === $price_id && function_exists( 'ajcore_product_catalog_price_for_page' ) ) {
-			$price_id = ajcore_product_catalog_price_for_page( get_the_ID() );
+		$price_id  = sanitize_text_field( (string) $atts['price_id'] );
+		$page_link = function_exists( 'ajcore_product_catalog_price_for_page' ) ? ajcore_product_catalog_price_for_page( get_the_ID() ) : '';
+		if ( '' === $price_id ) {
+			$price_id = $page_link;
 		}
+		$layout = sanitize_key( (string) $atts['layout'] );
+		$full   = 'page' === $layout || ( 'auto' === $layout && '' !== $price_id && $price_id === $page_link );
 		if ( '' === $price_id ) {
 			return current_user_can( 'edit_pages' ) ? '<p><em>' . esc_html__( '[ajcore_product]: link this page to a product in Products > Catalog, or add price_id="…".', 'ajforms' ) . '</em></p>' : '';
 		}
@@ -9969,6 +9975,24 @@ class AJForms {
 		if ( ! in_array( $mode, array( 'buy', 'cart' ), true ) ) {
 			$saved = get_option( 'ajcore_public_product_display_settings', array() );
 			$mode  = is_array( $saved ) && isset( $saved['builder']['mode'] ) && 'cart' === $saved['builder']['mode'] ? 'cart' : 'buy';
+		}
+
+		if ( $full && function_exists( 'ajcore_product_page_content' ) ) {
+			$buy_box = $this->render_products_shortcode(
+				array(
+					'price_ids' => $price_id,
+					'columns'   => '1',
+					'mode'      => $mode,
+					'show'      => 'price,button',
+					'details'   => 'none',
+					'button'    => (string) $atts['button'],
+					'single'    => 'yes',
+					'back'      => 'no',
+				)
+			);
+			if ( '' !== $buy_box ) {
+				return $this->render_product_page_template( $price_id, $buy_box );
+			}
 		}
 
 		return $this->render_products_shortcode(
@@ -9983,6 +10007,242 @@ class AJForms {
 				'back'      => (string) $atts['back'],
 			)
 		);
+	}
+
+	/**
+	 * Full product page, rendered live from the synced Stripe product (see
+	 * ajcore_product_page_content() for which Stripe fields feed which section). Sections without
+	 * data are left out, so a product with only a name and price still looks complete.
+	 */
+	private function render_product_page_template( $price_id, $buy_box ) {
+		$price = function_exists( 'ajcore_product_catalog_price_row' ) ? ajcore_product_catalog_price_row( $price_id ) : null;
+		if ( ! $price ) {
+			return $buy_box;
+		}
+		$c          = ajcore_product_page_content( $price );
+		$catalog    = ajcore_product_catalog_get();
+		$listing_id = ajcore_product_catalog_listing_for_price( $price_id, $catalog );
+		$cats       = ajcore_product_catalog_price_categories( $price, $catalog );
+		$cat_names  = array();
+		foreach ( ajcore_product_catalog_categories( array( $price ), $catalog ) as $category ) {
+			if ( in_array( $category['slug'], $cats, true ) ) {
+				$cat_names[] = $category['name'];
+			}
+		}
+		$about = '' !== $c['description'] && $c['description'] !== $c['summary'] ? $c['description'] : '';
+
+		// Related: other in-shop products in the same category that have a published page.
+		$related = array();
+		if ( $cats ) {
+			foreach ( $this->get_public_stripe_prices() as $other ) {
+				$other_id = (string) $other['id'];
+				if ( $other_id === $price_id || '' !== ajcore_product_catalog_pair_parent( $other_id ) ) {
+					continue;
+				}
+				$other_page = ajcore_product_catalog_page_for_price( $other_id, $catalog );
+				if ( ! $other_page || ! array_intersect( $cats, ajcore_product_catalog_price_categories( $other, $catalog ) ) ) {
+					continue;
+				}
+				$related[] = array( 'row' => $other, 'url' => (string) get_permalink( $other_page ) );
+				if ( count( $related ) >= 3 ) {
+					break;
+				}
+			}
+		}
+
+		static $styled = false;
+		ob_start();
+		if ( ! $styled ) {
+			$styled = true;
+			?>
+			<style>
+				.ajp-page{--ajp-accent:#2563eb;--ajp-ink:#0f172a;--ajp-muted:#475569;--ajp-line:#e2e8f0;color:var(--ajp-ink);max-width:1120px;margin:0 auto}
+				.ajp-back{display:inline-block;margin:0 0 14px;color:var(--ajp-muted);text-decoration:none;font-size:14px}
+				.ajp-back:hover{color:var(--ajp-accent)}
+				.ajp-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:40px;align-items:start}
+				.ajp-side{position:sticky;top:96px;display:grid;gap:16px}
+				.ajp-box{padding:18px 20px;border:1px solid var(--ajp-line);border-radius:16px;background:#fff}
+				.ajp-box h3{margin:0 0 12px;font-size:16px}
+				.ajp-box h4{margin:14px 0 6px;font-size:14px}
+				.ajp-facts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:0;font-size:14px}
+				.ajp-facts dt{color:var(--ajp-muted)}
+				.ajp-facts dd{margin:0;font-weight:600}
+				.ajp-needs{margin:0;padding-left:18px;font-size:14px;color:#334155;line-height:1.6}
+				.ajp-reviews{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+				.ajp-review{margin:0;padding:18px;border:1px solid var(--ajp-line);border-radius:14px;background:#fff}
+				.ajp-review blockquote{margin:6px 0 10px;color:#334155;line-height:1.6}
+				.ajp-review figcaption{font-weight:600;font-size:14px}
+				.ajp-stars{color:#f59e0b;letter-spacing:2px}
+				.ajp-lede{font-size:clamp(18px,2.2vw,22px);line-height:1.5;color:var(--ajp-ink);margin:0 0 14px}
+				.ajp-hero-img{display:block;width:100%;max-height:360px;object-fit:cover;border-radius:16px;margin:8px 0 0}
+				.ajp-buy{padding:22px;border:1px solid var(--ajp-line);border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(15,23,42,.08)}
+				.ajp-buy .ajcore-product{border:0!important;box-shadow:none!important;padding:0!important}
+				.ajp-section{margin:44px 0 0}
+				.ajp-section h2{font-size:clamp(22px,2.6vw,28px);margin:0 0 16px}
+				.ajp-features{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+				.ajp-features li{display:flex;gap:10px;align-items:flex-start;padding:14px 16px;border:1px solid var(--ajp-line);border-radius:12px;background:#f8fafc;font-weight:500}
+				.ajp-features li:before{content:"✓";flex:0 0 22px;height:22px;border-radius:50%;background:#dcfce7;color:#15803d;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
+				.ajp-about{font-size:17px;line-height:1.7;color:#334155;max-width:760px}
+				.ajp-steps{list-style:none;margin:0;padding:0;counter-reset:ajp;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+				.ajp-steps li{counter-increment:ajp;position:relative;padding:44px 16px 16px;border:1px solid var(--ajp-line);border-radius:14px;background:#fff}
+				.ajp-steps li:before{content:counter(ajp);position:absolute;top:12px;left:16px;width:26px;height:26px;border-radius:50%;background:var(--ajp-accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:14px}
+				.ajp-faq details{border:1px solid var(--ajp-line);border-radius:12px;background:#fff;margin:0 0 10px}
+				.ajp-faq summary{cursor:pointer;padding:14px 18px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:12px}
+				.ajp-faq summary::-webkit-details-marker{display:none}
+				.ajp-faq summary:after{content:"+";font-size:20px;line-height:1;color:var(--ajp-accent)}
+				.ajp-faq details[open] summary:after{content:"–"}
+				.ajp-faq details p{margin:0;padding:0 18px 16px;color:#334155;line-height:1.6}
+				.ajp-related{display:grid;gap:8px}
+				.ajp-related a{display:block;padding:12px 14px;border:1px solid var(--ajp-line);border-radius:14px;text-decoration:none;color:var(--ajp-ink);background:#fff;transition:box-shadow .15s,border-color .15s}
+				.ajp-related a:hover{border-color:var(--ajp-accent);box-shadow:0 10px 24px rgba(37,99,235,.12)}
+				.ajp-related strong{display:block;margin:0 0 4px}
+				.ajp-related span{color:var(--ajp-muted);font-size:14px}
+				.ajp-cta{margin:48px 0 8px;padding:32px;border-radius:20px;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
+				.ajp-cta h2{margin:0;color:#fff;font-size:clamp(20px,2.4vw,26px)}
+				.ajp-cta a{display:inline-block;padding:12px 26px;border-radius:12px;background:#fff;color:#1e3a8a;font-weight:700;text-decoration:none}
+				.ajp-section:first-child{margin-top:0}
+				@media (max-width:900px){.ajp-layout{grid-template-columns:1fr}.ajp-side{position:static}}
+			</style>
+			<?php
+		}
+		?>
+		<?php
+		// Social proof: featured testimonials, then featured Google reviews (both curated in AJ Core > Reviews).
+		$reviews = array();
+		if ( function_exists( 'ajcore_get_featured_testimonials' ) ) {
+			$reviews = array_merge( (array) ajcore_get_featured_testimonials( 3 ), function_exists( 'ajcore_get_featured_google_reviews' ) ? (array) ajcore_get_featured_google_reviews( 3 ) : array() );
+			$reviews = array_slice( array_values( array_filter( $reviews, static function ( $r ) { return ! empty( $r['text'] ); } ) ), 0, 3 );
+		}
+		$has_details = '' !== $c['turnaround'] || '' !== $c['audience'] || $c['requirements'] || $cat_names;
+		?>
+		<div class="ajp-page">
+			<?php if ( $listing_id && (int) get_queried_object_id() !== (int) $listing_id ) : ?>
+				<a class="ajp-back" href="<?php echo esc_url( (string) get_permalink( $listing_id ) ); ?>">&larr; <?php echo esc_html( get_the_title( $listing_id ) ); ?></a>
+			<?php endif; ?>
+			<div class="ajp-layout">
+				<div class="ajp-main">
+					<?php if ( '' !== $c['summary'] ) : ?>
+						<p class="ajp-lede"><?php echo esc_html( $c['summary'] ); ?></p>
+					<?php endif; ?>
+					<?php if ( ! empty( $c['images'][0] ) ) : ?>
+						<img class="ajp-hero-img" src="<?php echo esc_url( function_exists( 'ajcore_product_image_url' ) ? ajcore_product_image_url( $c['images'][0] ) : $c['images'][0] ); ?>" alt="<?php echo esc_attr( $c['name'] ); ?>" loading="eager" decoding="async">
+					<?php endif; ?>
+
+					<?php if ( $c['features'] ) : ?>
+						<section class="ajp-section">
+							<h2><?php esc_html_e( "What's included", 'ajforms' ); ?></h2>
+							<ul class="ajp-features">
+								<?php foreach ( $c['features'] as $feature ) : ?>
+									<li><?php echo esc_html( $feature ); ?></li>
+								<?php endforeach; ?>
+							</ul>
+						</section>
+					<?php endif; ?>
+
+					<?php if ( '' !== $about || '' !== trim( wp_strip_all_tags( $c['rich'] ) ) ) : ?>
+						<section class="ajp-section">
+							<h2><?php esc_html_e( 'Details', 'ajforms' ); ?></h2>
+							<div class="ajp-about">
+								<?php if ( '' !== $about ) : ?>
+									<?php echo wp_kses_post( wpautop( esc_html( $about ) ) ); ?>
+								<?php endif; ?>
+								<?php echo wp_kses_post( $c['rich'] ); ?>
+							</div>
+						</section>
+					<?php endif; ?>
+
+					<?php if ( $c['steps'] ) : ?>
+						<section class="ajp-section">
+							<h2><?php esc_html_e( 'How it works', 'ajforms' ); ?></h2>
+							<ol class="ajp-steps">
+								<?php foreach ( $c['steps'] as $step ) : ?>
+									<li><?php echo esc_html( $step ); ?></li>
+								<?php endforeach; ?>
+							</ol>
+						</section>
+					<?php endif; ?>
+
+					<?php if ( $c['faqs'] ) : ?>
+						<section class="ajp-section ajp-faq">
+							<h2><?php esc_html_e( 'Frequently asked questions', 'ajforms' ); ?></h2>
+							<?php foreach ( $c['faqs'] as $faq ) : ?>
+								<details>
+									<summary><?php echo esc_html( $faq['q'] ); ?></summary>
+									<p><?php echo esc_html( $faq['a'] ); ?></p>
+								</details>
+							<?php endforeach; ?>
+							<script type="application/ld+json"><?php echo wp_json_encode( array( '@context' => 'https://schema.org', '@type' => 'FAQPage', 'mainEntity' => array_map( static function ( $faq ) { return array( '@type' => 'Question', 'name' => $faq['q'], 'acceptedAnswer' => array( '@type' => 'Answer', 'text' => $faq['a'] ) ); }, $c['faqs'] ) ), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ); ?></script>
+						</section>
+					<?php endif; ?>
+
+					<?php if ( $reviews ) : ?>
+						<section class="ajp-section">
+							<h2><?php esc_html_e( 'What clients say', 'ajforms' ); ?></h2>
+							<div class="ajp-reviews">
+								<?php foreach ( $reviews as $review ) : ?>
+									<figure class="ajp-review">
+										<?php if ( ! empty( $review['rating'] ) ) : ?>
+											<div class="ajp-stars" aria-label="<?php echo esc_attr( sprintf( __( '%d out of 5', 'ajforms' ), (int) $review['rating'] ) ); ?>"><?php echo esc_html( str_repeat( '★', (int) $review['rating'] ) . str_repeat( '☆', 5 - (int) $review['rating'] ) ); ?></div>
+										<?php endif; ?>
+										<blockquote><?php echo esc_html( wp_trim_words( (string) $review['text'], 45 ) ); ?></blockquote>
+										<figcaption><?php echo esc_html( (string) $review['name'] ); ?><?php echo ! empty( $review['organization'] ) ? ' · ' . esc_html( (string) $review['organization'] ) : ''; ?></figcaption>
+									</figure>
+								<?php endforeach; ?>
+							</div>
+						</section>
+					<?php endif; ?>
+				</div>
+
+				<aside class="ajp-side">
+					<div class="ajp-buy" id="ajp-buy">
+						<?php echo $buy_box; // phpcs:ignore WordPress.Security.EscapeOutput -- rendered by render_products_shortcode() ?>
+					</div>
+					<?php if ( $has_details ) : ?>
+						<div class="ajp-box">
+							<h3><?php esc_html_e( 'At a glance', 'ajforms' ); ?></h3>
+							<dl class="ajp-facts">
+								<?php if ( $cat_names ) : ?>
+									<dt><?php esc_html_e( 'Category', 'ajforms' ); ?></dt><dd><?php echo esc_html( implode( ', ', $cat_names ) ); ?></dd>
+								<?php endif; ?>
+								<?php if ( '' !== $c['turnaround'] ) : ?>
+									<dt><?php esc_html_e( 'Turnaround', 'ajforms' ); ?></dt><dd><?php echo esc_html( $c['turnaround'] ); ?></dd>
+								<?php endif; ?>
+								<?php if ( '' !== $c['audience'] ) : ?>
+									<dt><?php esc_html_e( 'Ideal for', 'ajforms' ); ?></dt><dd><?php echo esc_html( $c['audience'] ); ?></dd>
+								<?php endif; ?>
+							</dl>
+							<?php if ( $c['requirements'] ) : ?>
+								<h4><?php esc_html_e( 'What you need', 'ajforms' ); ?></h4>
+								<ul class="ajp-needs">
+									<?php foreach ( $c['requirements'] as $requirement ) : ?>
+										<li><?php echo esc_html( $requirement ); ?></li>
+									<?php endforeach; ?>
+								</ul>
+							<?php endif; ?>
+						</div>
+					<?php endif; ?>
+					<?php if ( $related ) : ?>
+						<div class="ajp-box">
+							<h3><?php esc_html_e( 'Related services', 'ajforms' ); ?></h3>
+							<div class="ajp-related">
+								<?php foreach ( $related as $item ) : ?>
+									<a href="<?php echo esc_url( $item['url'] ); ?>">
+										<strong><?php echo esc_html( $item['row']['product_name'] ); ?></strong>
+										<span><?php echo wp_kses_post( $this->format_shop_price_html( $item['row']['amount'], $item['row']['currency'], ! empty( $item['row']['recurring_interval'] ) ? $item['row']['recurring_interval'] : '' ) ); ?></span>
+									</a>
+								<?php endforeach; ?>
+							</div>
+						</div>
+					<?php endif; ?>
+				</aside>
+			</div>
+
+			<div class="ajp-cta">
+				<h2><?php echo esc_html( '' !== $c['cta'] ? $c['cta'] : sprintf( __( 'Ready to get started with %s?', 'ajforms' ), $c['name'] ) ); ?></h2>
+				<a href="#ajp-buy"><?php esc_html_e( 'Get started', 'ajforms' ); ?></a>
+			</div>
+		</div>
+		return (string) ob_get_clean();
 	}
 
 	/** Compact shop price: "$98" + muted "/year" (".00" dropped, symbol for common currencies). */

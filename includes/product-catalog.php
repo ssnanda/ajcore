@@ -341,3 +341,235 @@ function ajcore_product_catalog_listing_url( $catalog = null ) {
 	$page_id = ajcore_product_catalog_listing_page_id( $catalog );
 	return $page_id ? (string) get_permalink( $page_id ) : '';
 }
+
+/* ---- Product page content (Stripe is the source of truth) ---------------------------------
+ *
+ * A product page is rendered live from the synced Stripe product, so editing the product in
+ * Stripe (or in Settings > Product Catalog, which writes to Stripe) and syncing updates every
+ * page. Stripe fields used:
+ *   name, description                 heading text and the "About" section
+ *   marketing_features (max 15)       "What's included" checklist
+ *   images (max 8)                    hero image (first)
+ *   metadata (each value max 500 chars; lists are one item per line, or "a | b | c"):
+ *     summary          one-line pitch under the title
+ *     audience         who it is for
+ *     turnaround       e.g. "Same business day"
+ *     requirements     what the customer needs to provide (list)
+ *     steps            how it works (list)
+ *     faq_1_q / faq_1_a … faq_10_q / faq_10_a
+ *     cta              final call-to-action heading
+ *     seo_title, seo_description   used when the page has no SEO title/description of its own
+ */
+
+/** Product content metadata keys, in editor order: key => [label, type (text|list|faq)]. */
+function ajcore_product_page_meta_fields() {
+	return array(
+		'summary'         => array( __( 'Short pitch', 'ajforms' ), 'text' ),
+		'audience'        => array( __( 'Who it is for', 'ajforms' ), 'text' ),
+		'turnaround'      => array( __( 'Turnaround', 'ajforms' ), 'text' ),
+		'requirements'    => array( __( 'What you need (one per line)', 'ajforms' ), 'list' ),
+		'steps'           => array( __( 'How it works (one step per line)', 'ajforms' ), 'list' ),
+		'cta'             => array( __( 'Call-to-action heading', 'ajforms' ), 'text' ),
+		'seo_title'       => array( __( 'SEO title', 'ajforms' ), 'text' ),
+		'seo_description' => array( __( 'SEO description', 'ajforms' ), 'text' ),
+	);
+}
+
+/** Number of FAQ pairs (faq_N_q / faq_N_a) supported in Stripe metadata. */
+function ajcore_product_page_faq_slots() {
+	return 10;
+}
+
+/** Splits a metadata list value: one item per line, or items separated by " | ". */
+function ajcore_product_page_list( $value ) {
+	$items = preg_split( '/\r\n|\r|\n|\s\|\s/', (string) $value );
+	return array_values( array_filter( array_map( 'trim', (array) $items ), 'strlen' ) );
+}
+
+/** Structured page content for one synced price row. */
+function ajcore_product_page_content( $price ) {
+	$price = is_array( $price ) ? $price : array();
+	$meta  = ! empty( $price['product_metadata'] ) && is_array( $price['product_metadata'] ) ? $price['product_metadata'] : array();
+	$text  = static function ( $key ) use ( $meta ) {
+		return isset( $meta[ $key ] ) ? trim( sanitize_textarea_field( (string) $meta[ $key ] ) ) : '';
+	};
+	$faqs = array();
+	for ( $i = 1; $i <= ajcore_product_page_faq_slots(); $i++ ) {
+		$q = $text( 'faq_' . $i . '_q' );
+		$a = $text( 'faq_' . $i . '_a' );
+		if ( '' !== $q && '' !== $a ) {
+			$faqs[] = array( 'q' => $q, 'a' => $a );
+		}
+	}
+	return array(
+		'name'            => isset( $price['product_name'] ) ? (string) $price['product_name'] : '',
+		'summary'         => '' !== $text( 'summary' ) ? $text( 'summary' ) : ( isset( $price['product_summary'] ) ? (string) $price['product_summary'] : '' ),
+		'description'     => isset( $price['product_description'] ) ? trim( (string) $price['product_description'] ) : '',
+		'rich'            => isset( $price['product_rich_description'] ) ? (string) $price['product_rich_description'] : '',
+		'features'        => isset( $price['product_features'] ) ? array_values( (array) $price['product_features'] ) : array(),
+		'images'          => isset( $price['product_images'] ) ? array_values( (array) $price['product_images'] ) : array(),
+		'audience'        => $text( 'audience' ),
+		'turnaround'      => $text( 'turnaround' ),
+		'requirements'    => ajcore_product_page_list( $text( 'requirements' ) ),
+		'steps'           => ajcore_product_page_list( $text( 'steps' ) ),
+		'faqs'            => $faqs,
+		'cta'             => $text( 'cta' ),
+		'seo_title'       => $text( 'seo_title' ),
+		'seo_description' => $text( 'seo_description' ),
+	);
+}
+
+/** Synced price row by ID (any status), or null. */
+function ajcore_product_catalog_price_row( $price_id ) {
+	$cache = get_option( 'ajforms_stripe_products_cache', array() );
+	foreach ( is_array( $cache ) && isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array() as $row ) {
+		if ( is_array( $row ) && isset( $row['id'] ) && (string) $row['id'] === (string) $price_id ) {
+			return $row;
+		}
+	}
+	return null;
+}
+
+/**
+ * SEO title/description for product pages from Stripe (seo_title / seo_description, else the
+ * pitch or description), used only when the page has none of its own. Supplies the values the
+ * theme reads (AJNanda's _ajnanda_seo_title / _ajnanda_seo_description) on the front end; never
+ * written to the page, so the editor's own fields still win and stay empty until filled.
+ */
+function ajcore_product_page_seo_meta( $value, $object_id, $meta_key, $single ) {
+	static $busy = false;
+	if ( $busy || is_admin() || ! in_array( $meta_key, array( '_ajnanda_seo_title', '_ajnanda_seo_description' ), true ) || 'page' !== get_post_type( $object_id ) ) {
+		return $value;
+	}
+	$busy   = true;
+	$stored = get_post_meta( $object_id, $meta_key, true );
+	$busy   = false;
+	if ( '' !== trim( (string) $stored ) ) {
+		return $value;
+	}
+	$price_id = ajcore_product_catalog_price_for_page( $object_id );
+	$row      = '' !== $price_id ? ajcore_product_catalog_price_row( $price_id ) : null;
+	if ( ! $row ) {
+		return $value;
+	}
+	$content = ajcore_product_page_content( $row );
+	if ( '_ajnanda_seo_title' === $meta_key ) {
+		$out = $content['seo_title'];
+	} else {
+		$out = '' !== $content['seo_description'] ? $content['seo_description'] : ( '' !== $content['summary'] ? $content['summary'] : $content['description'] );
+		$out = wp_html_excerpt( $out, 160, '…' );
+	}
+	if ( '' === $out ) {
+		return $value;
+	}
+	return array( $out ); // get_metadata() returns [0] of this for $single, the list otherwise
+}
+add_filter( 'get_post_metadata', 'ajcore_product_page_seo_meta', 10, 4 );
+
+/* ---- Product images: local copies of Stripe images -----------------------------------------
+ *
+ * Stripe stores product images as public URLs (an image uploaded in the Stripe dashboard is a
+ * files.stripe.com link, without a file extension). After each product sync the images of
+ * in-shop products are copied once into the Media Library, and the page template, social image
+ * and the page's featured image use the local copy. The map is keyed by the Stripe URL, so a
+ * changed image in Stripe (new URL) is fetched again; an unchanged one never is.
+ */
+
+const AJCORE_PRODUCT_IMAGE_MAP_OPTION = 'ajcore_product_image_map'; // Stripe image URL => attachment ID
+
+/** Local Media Library URL for a Stripe product image, or the Stripe URL until it is copied. */
+function ajcore_product_image_url( $url, $size = 'large' ) {
+	$map = get_option( AJCORE_PRODUCT_IMAGE_MAP_OPTION, array() );
+	$id  = is_array( $map ) && isset( $map[ (string) $url ] ) ? (int) $map[ (string) $url ] : 0;
+	$src = $id ? wp_get_attachment_image_url( $id, $size ) : '';
+	return $src ? $src : (string) $url;
+}
+
+/** Copies one Stripe image into the Media Library. @return int attachment ID, 0 on failure. */
+function ajcore_product_image_import( $url, $title, $parent_id = 0 ) {
+	require_once ABSPATH . 'wp-admin/includes/file.php';
+	require_once ABSPATH . 'wp-admin/includes/media.php';
+	require_once ABSPATH . 'wp-admin/includes/image.php';
+	$tmp = download_url( $url, 20 );
+	if ( is_wp_error( $tmp ) ) {
+		return 0;
+	}
+	$mime = function_exists( 'wp_get_image_mime' ) ? wp_get_image_mime( $tmp ) : '';
+	$exts = array( 'image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp', 'image/gif' => 'gif' );
+	if ( ! isset( $exts[ $mime ] ) ) {
+		wp_delete_file( $tmp ); // a temp download that is not an image; not user content
+		return 0;
+	}
+	$file = array( 'name' => sanitize_title( $title ) . '.' . $exts[ $mime ], 'tmp_name' => $tmp );
+	$id   = media_handle_sideload( $file, (int) $parent_id, $title );
+	if ( is_wp_error( $id ) ) {
+		wp_delete_file( $tmp );
+		return 0;
+	}
+	update_post_meta( $id, '_wp_attachment_image_alt', $title );
+	update_post_meta( $id, '_ajcore_stripe_image_url', esc_url_raw( $url ) );
+	return (int) $id;
+}
+
+/**
+ * After a product sync: copy new images of in-shop products (first 3 per product) and give
+ * each product page without a featured image its product's first image.
+ */
+function ajcore_product_images_sync() {
+	$cache    = get_option( 'ajforms_stripe_products_cache', array() );
+	$display  = get_option( 'ajcore_public_product_display_settings', array() );
+	$selected = is_array( $display ) && ! empty( $display['selected_prices'] ) ? array_flip( array_map( 'strval', (array) $display['selected_prices'] ) ) : array();
+	$map      = get_option( AJCORE_PRODUCT_IMAGE_MAP_OPTION, array() );
+	$map      = is_array( $map ) ? $map : array();
+	$catalog  = ajcore_product_catalog_get( true );
+	$changed  = false;
+	$budget   = 12; // keep one request short; the rest follow on the next sync
+	foreach ( is_array( $cache ) && isset( $cache['prices'] ) ? (array) $cache['prices'] : array() as $row ) {
+		if ( ! is_array( $row ) || empty( $row['id'] ) || empty( $row['product_active'] ) || ( $selected && ! isset( $selected[ (string) $row['id'] ] ) ) ) {
+			continue;
+		}
+		$page_id = ajcore_product_catalog_page_for_price( (string) $row['id'], $catalog, false );
+		$first   = 0;
+		foreach ( array_slice( (array) ( $row['product_images'] ?? array() ), 0, 3 ) as $index => $url ) {
+			$url = (string) $url;
+			if ( '' === $url ) {
+				continue;
+			}
+			if ( empty( $map[ $url ] ) && ( $own = attachment_url_to_postid( $url ) ) ) {
+				$map[ $url ] = (int) $own; // picked from this site's Media Library: nothing to copy
+				$changed     = true;
+			}
+			if ( empty( $map[ $url ] ) || ! wp_attachment_is_image( (int) $map[ $url ] ) ) {
+				if ( $budget-- <= 0 ) {
+					break 2;
+				}
+				$id = ajcore_product_image_import( $url, (string) ( $row['product_name'] ?? 'Product' ), $page_id );
+				if ( ! $id ) {
+					continue;
+				}
+				$map[ $url ] = $id;
+				$changed     = true;
+			}
+			if ( 0 === $index ) {
+				$first = (int) $map[ $url ];
+			}
+		}
+		if ( $page_id && $first && ! has_post_thumbnail( $page_id ) ) {
+			set_post_thumbnail( $page_id, $first );
+		}
+	}
+	if ( $changed ) {
+		update_option( AJCORE_PRODUCT_IMAGE_MAP_OPTION, $map, false );
+	}
+}
+
+/** Runs ajcore_product_images_sync() once at the end of a request that changed the product list. */
+function ajcore_product_images_queue() {
+	static $queued = false;
+	if ( ! $queued ) {
+		$queued = true;
+		add_action( 'shutdown', 'ajcore_product_images_sync', 20 );
+	}
+}
+add_action( 'update_option_ajforms_stripe_products_cache', 'ajcore_product_images_queue' );
+add_action( 'add_option_ajforms_stripe_products_cache', 'ajcore_product_images_queue' );
