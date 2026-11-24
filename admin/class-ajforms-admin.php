@@ -30333,6 +30333,9 @@ class AJForms_Admin {
 						<td>
 							<input type="hidden" name="catalog_shown[]" value="<?php echo esc_attr( $price_id ); ?>">
 							<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : $price_id ); ?></strong>
+							<?php if ( ajcore_price_is_test( $price ) ) : ?>
+								<span class="ajcore-catalog-pill is-draft" title="<?php esc_attr_e( 'Stripe metadata ajcore_test: listed, sold and given a page only on DDEV / local sites.', 'ajforms' ); ?>"><?php esc_html_e( 'TEST · DDEV only', 'ajforms' ); ?></span>
+							<?php endif; ?>
 							<div class="ajcore-catalog-muted">
 								<?php echo esc_html( strtoupper( (string) $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $interval ); ?>
 								<?php echo $is_active ? '' : ' · ' . esc_html__( 'archived', 'ajforms' ); ?>
@@ -30716,8 +30719,8 @@ class AJForms_Admin {
 			if ( '' === $price_id || ! isset( $selected[ $price_id ] ) || empty( $price['product_active'] ) || empty( $price['price_active'] ) ) {
 				continue;
 			}
-			if ( '' !== ajcore_product_catalog_pair_parent( $price_id ) || ajcore_product_catalog_page_for_price( $price_id, $catalog, false ) ) {
-				continue;
+			if ( '' !== ajcore_product_catalog_pair_parent( $price_id ) || ajcore_product_catalog_page_for_price( $price_id, $catalog, false ) || ajcore_test_price_blocked( $price ) ) {
+				continue; // paired, already has a page, or a test product on a live site
 			}
 			$eligible[ $price_id ] = isset( $price['product_name'] ) ? (string) $price['product_name'] : $price_id;
 		}
@@ -30746,6 +30749,9 @@ class AJForms_Admin {
 		$catalog = ajcore_product_catalog_get( true );
 		if ( ajcore_product_catalog_page_for_price( $price_id, $catalog, false ) ) {
 			return new WP_Error( 'ajcore_product_page_exists', __( 'This product already has a page.', 'ajforms' ) );
+		}
+		if ( ajcore_test_price_blocked( $price ) ) {
+			return new WP_Error( 'ajcore_product_page_test', __( 'This is a test product (metadata ajcore_test): it gets a page only on DDEV / local sites.', 'ajforms' ) );
 		}
 		if ( '' !== ajcore_product_catalog_pair_parent( $price_id ) ) {
 			return new WP_Error( 'ajcore_product_page_paired', __( 'This product is sold as a pair; it uses the page of the product that requires it.', 'ajforms' ) );

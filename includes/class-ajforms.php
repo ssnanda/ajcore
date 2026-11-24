@@ -545,7 +545,7 @@ class AJForms {
 
 		$allowed_price_map = array();
 		foreach ( $portal_products as $available_product ) {
-			if ( empty( $available_product->portal_can_add ) ) {
+			if ( empty( $available_product->portal_can_add ) || ( function_exists( 'ajcore_test_price_blocked' ) && ajcore_test_price_blocked( (string) ( $available_product->stripe_price_id ?? '' ) ) ) ) {
 				continue;
 			}
 			$apid = isset( $available_product->stripe_price_id ) ? sanitize_text_field( (string) $available_product->stripe_price_id ) : '';
@@ -779,7 +779,7 @@ class AJForms {
 			: array();
 		$found = false;
 		foreach ( $all_products as $p ) {
-			if ( isset( $p->stripe_price_id ) && (string) $p->stripe_price_id === $price_id && ! empty( $p->portal_can_add ) ) {
+			if ( isset( $p->stripe_price_id ) && (string) $p->stripe_price_id === $price_id && ! empty( $p->portal_can_add ) && ! ( function_exists( 'ajcore_test_price_blocked' ) && ajcore_test_price_blocked( $price_id ) ) ) {
 				$found = true;
 				break;
 			}
@@ -860,7 +860,7 @@ class AJForms {
 		$portal_upgrade_items = array();
 
 		foreach ( $portal_products as $available_product ) {
-			if ( empty( $available_product->portal_can_add ) ) {
+			if ( empty( $available_product->portal_can_add ) || ( function_exists( 'ajcore_test_price_blocked' ) && ajcore_test_price_blocked( (string) ( $available_product->stripe_price_id ?? '' ) ) ) ) {
 				continue;
 			}
 			$available_price_id = isset( $available_product->stripe_price_id ) ? sanitize_text_field( (string) $available_product->stripe_price_id ) : '';
@@ -8513,6 +8513,11 @@ class AJForms {
 				continue;
 			}
 
+			// Test products (metadata ajcore_test) never reach a live shop, product page or checkout.
+			if ( function_exists( 'ajcore_test_price_blocked' ) && ajcore_test_price_blocked( $price ) ) {
+				continue;
+			}
+
 			if ( 'selected' === $mode && ! in_array( $price['id'], $selected, true ) ) {
 				continue;
 			}
@@ -9115,7 +9120,7 @@ class AJForms {
 				: array();
 
 			foreach ( $portal_products as $available_product ) {
-				if ( empty( $available_product->portal_can_add ) ) {
+				if ( empty( $available_product->portal_can_add ) || ( function_exists( 'ajcore_test_price_blocked' ) && ajcore_test_price_blocked( (string) ( $available_product->stripe_price_id ?? '' ) ) ) ) {
 					continue;
 				}
 

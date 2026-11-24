@@ -609,3 +609,37 @@ function ajcore_product_page_display_title( $title, $post_id = 0 ) {
 	return $content['title'] !== $content['name'] ? esc_html( $content['title'] ) : $title;
 }
 add_filter( 'the_title', 'ajcore_product_page_display_title', 10, 2 );
+
+/* ---- Test products (Stripe metadata ajcore_test = 1) --------------------------------------
+ *
+ * DDEV and live share one Stripe account, so a test product (e.g. "AJCore Test Product – Do
+ * Not Purchase", used to try product packages on its own page) exists on both. On a live site
+ * it is never listed, never sold (public or portal checkout) and never gets a product page,
+ * whatever its "In shop" / "In portal" settings say. It works normally on DDEV / local.
+ */
+
+/** True on DDEV (*.ddev.site) or a local/development environment; live sites fail closed. */
+function ajcore_test_products_allowed() {
+	static $allowed = null;
+	if ( null === $allowed ) {
+		$host    = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$allowed = '.ddev.site' === substr( $host, -10 ) || in_array( function_exists( 'wp_get_environment_type' ) ? wp_get_environment_type() : 'production', array( 'local', 'development' ), true );
+		$allowed = (bool) apply_filters( 'ajcore_allow_test_products', $allowed );
+	}
+	return $allowed;
+}
+
+/** Whether a synced price row belongs to a test product (metadata ajcore_test = 1 / true / yes). */
+function ajcore_price_is_test( $price ) {
+	$meta = is_array( $price ) && ! empty( $price['product_metadata'] ) && is_array( $price['product_metadata'] ) ? $price['product_metadata'] : array();
+	return isset( $meta['ajcore_test'] ) && in_array( strtolower( trim( (string) $meta['ajcore_test'] ) ), array( '1', 'true', 'yes' ), true );
+}
+
+/** True when this price (row or price ID) is a test product on a site that must not use it. */
+function ajcore_test_price_blocked( $price ) {
+	if ( ajcore_test_products_allowed() ) {
+		return false;
+	}
+	$row = is_array( $price ) ? $price : ajcore_product_catalog_price_row( (string) $price );
+	return is_array( $row ) && ajcore_price_is_test( $row );
+}

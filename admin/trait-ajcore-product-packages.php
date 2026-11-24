@@ -101,6 +101,149 @@ trait AJCore_Product_Packages {
 		return md5( (string) wp_json_encode( array( (string) ( $product['description'] ?? '' ), $this->pkg_feature_names( $product ), $meta, array_values( (array) ( $product['images'] ?? array() ) ) ) ) );
 	}
 
+	/* ---- Backups and undo -------------------------------------------------------------------
+	 * Stripe keeps no history of product edits, so before an import writes, the product's exact
+	 * importable state (description, features, all metadata, images) is saved here, with the
+	 * fingerprint of the product right after the import. Undo restores that state, but only
+	 * while the product is still exactly as the import left it; any later edit blocks it.
+	 */
+	const PKG_BACKUPS_OPTION = 'ajcore_pkg_backups'; // newest first, last 50
+
+	private function pkg_state( $product ) {
+		$meta = isset( $product['metadata'] ) ? (array) $product['metadata'] : array();
+		ksort( $meta );
+		return array(
+			'description' => (string) ( $product['description'] ?? '' ),
+			'features'    => $this->pkg_feature_names( $product ),
+			'metadata'    => array_map( 'strval', $meta ),
+			'images'      => array_values( array_map( 'strval', (array) ( $product['images'] ?? array() ) ) ),
+		);
+	}
+
+	private function pkg_backups() {
+		$list = get_option( self::PKG_BACKUPS_OPTION, array() );
+		return is_array( $list ) ? $list : array();
+	}
+
+	private function pkg_save_backup( $entry ) {
+		$list = $this->pkg_backups();
+		array_unshift( $list, $entry );
+		update_option( self::PKG_BACKUPS_OPTION, array_slice( $list, 0, 50 ), false );
+	}
+
+	private function pkg_update_backup( $id, $changes ) {
+		$list = $this->pkg_backups();
+		foreach ( $list as $n => $entry ) {
+			if ( (string) $entry['id'] === (string) $id ) {
+				$list[ $n ] = array_merge( $entry, $changes );
+			}
+		}
+		update_option( self::PKG_BACKUPS_OPTION, $list, false );
+	}
+
+	/**
+	 * Stripe update body that turns $current into $before (only fields that differ). Empty
+	 * values unset in Stripe: description='' clears it, marketing_features/images='' empty the
+	 * list, metadata[key]='' deletes the key.
+	 */
+	private function pkg_restore_body( $before, $current ) {
+		$body = array();
+		if ( $before['description'] !== $current['description'] ) {
+			$body['description'] = $before['description'];
+		}
+		if ( $before['features'] !== $current['features'] ) {
+			if ( $before['features'] ) {
+				foreach ( $before['features'] as $f => $name ) {
+					$body[ 'marketing_features[' . $f . '][name]' ] = $name;
+				}
+			} else {
+				$body['marketing_features'] = '';
+			}
+		}
+		foreach ( $current['metadata'] as $key => $value ) {
+			if ( ! array_key_exists( $key, $before['metadata'] ) ) {
+				$body[ 'metadata[' . $key . ']' ] = ''; // added by the import: delete
+			}
+		}
+		foreach ( $before['metadata'] as $key => $value ) {
+			if ( ! array_key_exists( $key, $current['metadata'] ) || $current['metadata'][ $key ] !== $value ) {
+				$body[ 'metadata[' . $key . ']' ] = $value;
+			}
+		}
+		if ( $before['images'] !== $current['images'] ) {
+			if ( $before['images'] ) {
+				foreach ( $before['images'] as $n => $url ) {
+					$body[ 'images[' . $n . ']' ] = $url;
+				}
+			} else {
+				$body['images'] = '';
+			}
+		}
+		return $body;
+	}
+
+	/** Restores one backup in Stripe (see pkg_restore_body()); redirects with the result. */
+	private function pkg_undo( $backup_id ) {
+		$entry = null;
+		foreach ( $this->pkg_backups() as $candidate ) {
+			if ( (string) $candidate['id'] === (string) $backup_id ) {
+				$entry = $candidate;
+			}
+		}
+		$fail = function ( $text ) {
+			$done = wp_generate_password( 20, false );
+			set_transient( 'ajcore_pkg_done_' . $done, array( 'user' => get_current_user_id(), 'results' => array( array( 'ok' => false, 'text' => $text ) ) ), 30 * MINUTE_IN_SECONDS );
+			wp_safe_redirect( $this->pkg_catalog_url( array( 'pkg_done' => $done ) ) );
+			exit;
+		};
+		if ( ! $entry ) {
+			$fail( __( 'Backup not found.', 'ajforms' ) );
+		}
+		if ( ! empty( $entry['undone_at'] ) ) {
+			$fail( sprintf( __( '%s: this import was already undone.', 'ajforms' ), $entry['name'] ) );
+		}
+		$secret_key = $this->get_stripe_secret_key_for_portal();
+		$product    = $this->pkg_fetch_product( $entry['product_id'], $secret_key );
+		if ( is_wp_error( $product ) ) {
+			$fail( $entry['name'] . ': ' . $product->get_error_message() );
+		}
+		if ( $this->pkg_snapshot( $product ) !== (string) $entry['after_snapshot'] ) {
+			$fail( sprintf( __( '%s: changed in Stripe after this import, so Undo is blocked to protect the newer edits. Nothing written. Use the backup shown in Recent imports to restore by hand if needed.', 'ajforms' ), $entry['name'] ) );
+		}
+		$body = $this->pkg_restore_body( $entry['before'], $this->pkg_state( $product ) );
+		if ( $body ) {
+			$result = $this->stripe_api_request( 'products/' . rawurlencode( $entry['product_id'] ), $secret_key, $body, 'POST', array( 'Idempotency-Key' => 'ajcore-pkg-undo-' . $entry['id'] ) );
+			if ( is_wp_error( $result ) ) {
+				$fail( $entry['name'] . ': ' . $result->get_error_message() );
+			}
+			$after = $this->pkg_fetch_product( $entry['product_id'], $secret_key );
+			if ( is_wp_error( $after ) || $this->pkg_state( $after ) !== $entry['before'] ) {
+				$fail( sprintf( __( '%s: Undo was sent but the product does not match the backup yet; check it in the editor.', 'ajforms' ), $entry['name'] ) );
+			}
+		}
+		$this->pkg_update_backup( $entry['id'], array( 'undone_at' => current_time( 'mysql' ), 'undone_by' => get_current_user_id() ) );
+		$sync    = $this->sync_all_product_copies( $secret_key );
+		$results = array( array( 'ok' => true, 'text' => sprintf( __( '%s: restored to its state before the import (verified in Stripe).', 'ajforms' ), $entry['name'] ) ) );
+		if ( is_wp_error( $sync ) ) {
+			$results[] = array( 'ok' => false, 'text' => __( 'Re-sync failed: ', 'ajforms' ) . $sync->get_error_message() );
+		}
+		$done = wp_generate_password( 20, false );
+		set_transient( 'ajcore_pkg_done_' . $done, array( 'user' => get_current_user_id(), 'results' => $results ), 30 * MINUTE_IN_SECONDS );
+		wp_safe_redirect( $this->pkg_catalog_url( array( 'pkg_done' => $done ) ) );
+		exit;
+	}
+
+	/** Undo button (own small form, so it can sit anywhere outside other forms). */
+	private function pkg_undo_button( $entry ) {
+		if ( ! empty( $entry['undone_at'] ) ) {
+			return '<span class="ajcore-catalog-muted">' . esc_html( sprintf( __( 'undone %s', 'ajforms' ), $this->format_site_datetime( $entry['undone_at'] ) ) ) . '</span>';
+		}
+		return '<form method="post" class="ajcore-pkg-undo" onsubmit="return confirm(\'' . esc_js( sprintf( __( 'Restore "%s" in Stripe to exactly how it was before this import?', 'ajforms' ), $entry['name'] ) ) . '\');">'
+			. wp_nonce_field( 'ajcore_pkg_undo', 'ajcore_pkg_undo_nonce', true, false )
+			. '<input type="hidden" name="pkg_backup" value="' . esc_attr( $entry['id'] ) . '">'
+			. '<button type="submit" class="button button-small">' . esc_html__( 'Undo', 'ajforms' ) . '</button></form>';
+	}
+
 	/** Synced Stripe products: product_id => name (active only unless $all). */
 	private function pkg_product_choices( $all = false ) {
 		$cache   = $this->get_stripe_products_cache();
@@ -452,6 +595,11 @@ trait AJCore_Product_Packages {
 			exit;
 		}
 
+		if ( isset( $_POST['ajcore_pkg_undo_nonce'], $_POST['pkg_backup'] ) ) {
+			check_admin_referer( 'ajcore_pkg_undo', 'ajcore_pkg_undo_nonce' );
+			$this->pkg_undo( sanitize_key( wp_unslash( $_POST['pkg_backup'] ) ) );
+		}
+
 		if ( isset( $_POST['ajcore_pkg_apply_nonce'], $_POST['pkg_token'] ) ) {
 			check_admin_referer( 'ajcore_pkg_apply', 'ajcore_pkg_apply_nonce' );
 			$this->pkg_apply( sanitize_key( wp_unslash( $_POST['pkg_token'] ) ), wp_unslash( $_POST ) );
@@ -546,13 +694,28 @@ trait AJCore_Product_Packages {
 				$results[] = array( 'ok' => true, 'text' => $label . ': ' . __( 'nothing selected to change.', 'ajforms' ) );
 				continue;
 			}
+			$before = $this->pkg_state( $product ); // exact state just before the write, for Undo
 			$result = $this->stripe_api_request( 'products/' . rawurlencode( $item['product_id'] ), $secret_key, $body, 'POST', array( 'Idempotency-Key' => 'ajcore-pkg-' . md5( $token . '|' . $item['product_id'] . '|' . wp_json_encode( $body ) ) ) );
 			if ( is_wp_error( $result ) ) {
 				$results[] = array( 'ok' => false, 'text' => $label . ': ' . $result->get_error_message() );
 				continue;
 			}
 			$wrote     = true;
-			$results[] = array( 'ok' => true, 'text' => $label . ': ' . sprintf( __( 'updated in Stripe (%s).', 'ajforms' ), implode( ', ', $changed ) ) . ( $new_image ? ' ' . $new_image : '' ) );
+			$backup_id = wp_generate_password( 12, false );
+			$this->pkg_save_backup(
+				array(
+					'id'             => $backup_id,
+					'time'           => current_time( 'mysql' ),
+					'user'           => get_current_user_id(),
+					'product_id'     => $item['product_id'],
+					'name'           => $item['name'],
+					'file'           => $item['file'],
+					'changed'        => $changed,
+					'before'         => $before,
+					'after_snapshot' => $this->pkg_snapshot( $result ),
+				)
+			);
+			$results[] = array( 'ok' => true, 'backup' => $backup_id, 'text' => $label . ': ' . sprintf( __( 'updated in Stripe (%s).', 'ajforms' ), implode( ', ', $changed ) ) . ( $new_image ? ' ' . $new_image : '' ) );
 		}
 
 		update_option( AJCORE_PRODUCT_IMAGE_MAP_OPTION, $image_map, false );
@@ -647,8 +810,13 @@ trait AJCore_Product_Packages {
 		$done = isset( $_GET['pkg_done'] ) ? get_transient( 'ajcore_pkg_done_' . sanitize_key( wp_unslash( $_GET['pkg_done'] ) ) ) : false; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		if ( is_array( $done ) && (int) $done['user'] === get_current_user_id() ) {
 			echo '<div class="ajcore-pkg-box"><h3>' . esc_html__( 'Import results', 'ajforms' ) . '</h3><ul class="ajcore-pkg-results">';
+			$by_id = array();
+			foreach ( $this->pkg_backups() as $entry ) {
+				$by_id[ (string) $entry['id'] ] = $entry;
+			}
 			foreach ( $done['results'] as $line ) {
-				echo '<li class="' . ( $line['ok'] ? 'ok' : 'bad' ) . '">' . esc_html( $line['text'] ) . '</li>';
+				$undo = ! empty( $line['backup'] ) && isset( $by_id[ $line['backup'] ] ) ? ' ' . $this->pkg_undo_button( $by_id[ $line['backup'] ] ) : '';
+				echo '<li class="' . ( $line['ok'] ? 'ok' : 'bad' ) . '">' . esc_html( $line['text'] ) . $undo . '</li>'; // phpcs:ignore WordPress.Security.EscapeOutput -- button markup escaped in pkg_undo_button()
 			}
 			echo '</ul></div>';
 		}
@@ -677,7 +845,29 @@ trait AJCore_Product_Packages {
 				<button type="submit" class="button button-primary"><?php esc_html_e( 'Upload & preview', 'ajforms' ); ?></button>
 				<a href="<?php echo esc_url( $tpl ); ?>"><?php esc_html_e( 'Download blank template', 'ajforms' ); ?></a>
 			</form>
-			<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Several files: each goes to the product named inside it (the "Apply to" choice is for a single file). Export any product with the Export link in its row.', 'ajforms' ); ?></p>
+			<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Several files: each goes to the product named inside it (the "Apply to" choice is for a single file). Export any product with the Export button in its row. Every import saves the product\'s previous state first, so it can be undone below.', 'ajforms' ); ?></p>
+			<?php $recent = array_slice( $this->pkg_backups(), 0, 15 ); ?>
+			<?php if ( $recent ) : ?>
+				<h4 style="margin:14px 0 6px;"><?php esc_html_e( 'Recent imports', 'ajforms' ); ?></h4>
+				<table class="widefat striped ajcore-pkg-recent">
+					<thead><tr><th><?php esc_html_e( 'When', 'ajforms' ); ?></th><th><?php esc_html_e( 'Product', 'ajforms' ); ?></th><th><?php esc_html_e( 'Changed', 'ajforms' ); ?></th><th><?php esc_html_e( 'Before (backup)', 'ajforms' ); ?></th><th></th></tr></thead>
+					<tbody>
+					<?php foreach ( $recent as $entry ) : ?>
+						<tr>
+							<td><?php echo esc_html( $this->format_site_datetime( $entry['time'] ) ); ?></td>
+							<td><?php echo esc_html( $entry['name'] ); ?><div class="ajcore-catalog-muted"><?php echo esc_html( $entry['file'] ); ?></div></td>
+							<td><?php echo esc_html( implode( ', ', (array) $entry['changed'] ) ); ?></td>
+							<td>
+								<details><summary class="ajcore-catalog-muted" style="cursor:pointer;"><?php esc_html_e( 'View', 'ajforms' ); ?></summary>
+									<pre style="white-space:pre-wrap;max-height:260px;overflow:auto;font-size:11px;"><?php echo esc_html( wp_json_encode( $entry['before'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) ); ?></pre>
+								</details>
+							</td>
+							<td><?php echo $this->pkg_undo_button( $entry ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+			<?php endif; ?>
 		</details>
 		<?php
 	}
@@ -790,6 +980,8 @@ trait AJCore_Product_Packages {
 			.ajcore-pkg-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:12px}
 			.ajcore-pkg-live{padding:6px 10px;border-radius:8px;background:#fee2e2;color:#991b1b;font-weight:600}
 			.ajcore-pkg-results li.ok{color:#166534}
+			.ajcore-pkg-undo{display:inline;margin-left:6px}
+			.ajcore-pkg-recent td{vertical-align:top}
 			.ajcore-pkg-results li.bad{color:#b32d2e}
 		</style>
 		<?php
