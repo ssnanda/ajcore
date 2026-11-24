@@ -11470,7 +11470,7 @@ class AJForms {
 			.ajcore-products-wrap .ajcore-product-cart-controls{display:block!important}
 			.ajcore-products-wrap :is(.ajcore-product-add,.ajcore-product-buy,.ajcore-product-handoff){display:block!important;width:100%;box-sizing:border-box;text-align:center;padding:13px 18px!important;border-radius:10px!important;font-size:15px}
 			.ajcore-products-wrap :is(.ajcore-product-add,.ajcore-product-buy,.ajcore-product-handoff):hover{filter:brightness(1.07)}
-			.ajcore-product-requires{margin:0 0 4px;color:#475569;font-size:13px;font-weight:600;line-height:1.35}
+			.ajcore-product-requires{margin:0 0 6px;color:#dc2626;font-size:17px;font-weight:800;line-height:1.3}
 			.ajcore-product-image{display:block;width:100%;height:150px;object-fit:cover;border-radius:10px;margin:-4px 0 14px;background:#f1f5f9}
 			.ajcore-product-detail-open{align-self:flex-start;margin:0 0 10px;padding:0;border:0;background:none;color:var(--ajp-accent,#0f7ac6);font-weight:700;font-size:15px;cursor:pointer}
 			.ajcore-product-detail-open::after{content:" →"}

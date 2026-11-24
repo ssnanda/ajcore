@@ -14811,6 +14811,45 @@ class AJForms_Admin {
 			exit;
 		}
 
+		// Catalog > "Create pages for selected": only prices the server itself finds eligible
+		// (get_product_page_bulk_eligible()) are created; anything else posted is skipped.
+		if ( isset( $_POST['ajcore_product_catalog_nonce'], $_POST['ajcore_catalog_bulk_pages'] ) ) {
+			check_admin_referer( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' );
+			$args = array( 'page' => 'ajforms-products', 'tab' => 'catalog' );
+			if ( ! current_user_can( 'publish_pages' ) ) {
+				$args['catalog-error'] = rawurlencode( __( 'You cannot create pages.', 'ajforms' ) );
+			} else {
+				$requested = isset( $_POST['catalog_bulk'] ) && is_array( $_POST['catalog_bulk'] ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['catalog_bulk'] ) ) : array();
+				$status    = isset( $_POST['catalog_bulk_status'] ) && 'publish' === sanitize_key( wp_unslash( $_POST['catalog_bulk_status'] ) ) ? 'publish' : 'draft';
+				$eligible  = $this->get_product_page_bulk_eligible();
+				$created   = 0;
+				$skipped   = 0;
+				$errors    = array();
+				foreach ( array_unique( $requested ) as $price_id ) {
+					if ( ! isset( $eligible[ $price_id ] ) ) {
+						$skipped++;
+						continue;
+					}
+					$result = $this->create_product_page_for_price( $price_id, $status );
+					if ( is_wp_error( $result ) ) {
+						$errors[] = $eligible[ $price_id ] . ': ' . $result->get_error_message();
+					} else {
+						$created++;
+					}
+				}
+				$args['pages-bulk']   = $created;
+				$args['pages-status'] = $status;
+				if ( $skipped ) {
+					$args['pages-skipped'] = $skipped;
+				}
+				if ( $errors ) {
+					$args['catalog-error'] = rawurlencode( implode( ' | ', $errors ) );
+				}
+			}
+			wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+			exit;
+		}
+
 		if ( isset( $_POST['ajcore_product_catalog_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' );
 			$this->save_product_catalog_tab( wp_unslash( $_POST ) );
@@ -29971,6 +30010,21 @@ class AJForms_Admin {
 			</div>
 		<?php endif; ?>
 
+		<?php if ( isset( $_GET['pages-bulk'] ) ) : // phpcs:ignore WordPress.Security.NonceVerification.Recommended ?>
+			<div class="ajcore-products-notice ok">
+				<?php
+				$bulk_done = absint( $_GET['pages-bulk'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				echo esc_html(
+					'publish' === sanitize_key( wp_unslash( $_GET['pages-status'] ?? '' ) ) // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+						? sprintf( _n( '%d product page created and published.', '%d product pages created and published.', $bulk_done, 'ajforms' ), $bulk_done )
+						: sprintf( _n( '%d draft product page created. Review, then publish.', '%d draft product pages created. Review, then publish.', $bulk_done, 'ajforms' ), $bulk_done )
+				);
+				if ( ! empty( $_GET['pages-skipped'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+					echo ' ' . esc_html( sprintf( __( '%d skipped (not in shop, archived, paired, or already has a page).', 'ajforms' ), absint( $_GET['pages-skipped'] ) ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				}
+				?>
+			</div>
+		<?php endif; ?>
 		<?php if ( 0 === $all_count ) : ?>
 			<div class="ajcore-products-empty"><?php esc_html_e( 'No synced Stripe prices yet.', 'ajforms' ); ?></div>
 			<?php return; ?>
@@ -29979,6 +30033,8 @@ class AJForms_Admin {
 		<form method="post">
 			<?php wp_nonce_field( 'ajcore_save_product_catalog', 'ajcore_product_catalog_nonce' ); ?>
 			<?php if ( $show_all ) : ?><input type="hidden" name="catalog_all" value="1"><?php endif; ?>
+			<?php // Enter in a text field submits via the first submit button: keep that "Save", not bulk create. ?>
+			<button type="submit" name="submit" value="1" style="display:none" tabindex="-1" aria-hidden="true"></button>
 			<div class="ajcore-catalog-top">
 				<div class="ajcore-builder-field">
 					<strong><?php esc_html_e( 'Categories', 'ajforms' ); ?></strong>
@@ -30044,9 +30100,25 @@ class AJForms_Admin {
 				?>
 				<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'catalog_all' => $show_all ? false : 1 ), admin_url( 'admin.php' ) ) ); ?>"><?php echo $show_all ? esc_html__( 'In shop only', 'ajforms' ) : esc_html__( 'Show all', 'ajforms' ); ?></a>
 			</p>
+			<?php
+			// Bulk page creation: only rows the server deems eligible get a checkbox (in shop,
+			// active, not the required half of a pair, no page yet). The handler re-checks.
+			$bulk_eligible = $this->get_product_page_bulk_eligible();
+			?>
+			<?php if ( ! empty( $bulk_eligible ) && current_user_can( 'publish_pages' ) ) : ?>
+				<div class="ajcore-catalog-bulk" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;">
+					<button type="submit" name="ajcore_catalog_bulk_pages" value="1" class="button" id="ajcore-catalog-bulk-btn" disabled><?php esc_html_e( 'Create pages for selected', 'ajforms' ); ?></button>
+					<select name="catalog_bulk_status" id="ajcore-catalog-bulk-status">
+						<option value="draft"><?php esc_html_e( 'as drafts (not public)', 'ajforms' ); ?></option>
+						<option value="publish"><?php esc_html_e( 'published (public)', 'ajforms' ); ?></option>
+					</select>
+					<span class="ajcore-catalog-muted" id="ajcore-catalog-bulk-count"><?php echo esc_html( sprintf( _n( '%d in-shop product has no page.', '%d in-shop products have no page.', count( $bulk_eligible ), 'ajforms' ), count( $bulk_eligible ) ) ); ?></span>
+				</div>
+			<?php endif; ?>
 			<table class="widefat striped ajcore-catalog-table">
 				<thead>
 					<tr>
+						<th style="width:28px;"><?php if ( ! empty( $bulk_eligible ) ) : ?><input type="checkbox" id="ajcore-catalog-bulk-all" title="<?php esc_attr_e( 'Select every in-shop product without a page', 'ajforms' ); ?>"><?php endif; ?></th>
 						<th style="width:32%;"><?php esc_html_e( 'Product', 'ajforms' ); ?></th>
 						<th><?php esc_html_e( 'Categories', 'ajforms' ); ?></th>
 						<th style="width:34%;"><?php esc_html_e( 'Product page', 'ajforms' ); ?></th>
@@ -30081,6 +30153,11 @@ class AJForms_Admin {
 					);
 					?>
 					<tr class="<?php echo $is_active ? '' : 'is-archived'; ?>">
+						<td>
+							<?php if ( isset( $bulk_eligible[ $price_id ] ) ) : ?>
+								<input type="checkbox" class="ajcore-catalog-bulk" name="catalog_bulk[]" value="<?php echo esc_attr( $price_id ); ?>" data-name="<?php echo esc_attr( $bulk_eligible[ $price_id ] ); ?>">
+							<?php endif; ?>
+						</td>
 						<td>
 							<input type="hidden" name="catalog_shown[]" value="<?php echo esc_attr( $price_id ); ?>">
 							<strong><?php echo esc_html( isset( $price['product_name'] ) ? $price['product_name'] : $price_id ); ?></strong>
@@ -30140,6 +30217,33 @@ class AJForms_Admin {
 			</table>
 			<p><?php submit_button( __( 'Save Catalog', 'ajforms' ), 'primary', 'submit', false ); ?></p>
 		</form>
+		<?php if ( ! empty( $bulk_eligible ) ) : ?>
+		<script>
+		(function () {
+			var boxes = Array.prototype.slice.call(document.querySelectorAll('.ajcore-catalog-bulk'));
+			var all = document.getElementById('ajcore-catalog-bulk-all');
+			var btn = document.getElementById('ajcore-catalog-bulk-btn');
+			var status = document.getElementById('ajcore-catalog-bulk-status');
+			if (!btn) { return; }
+			function picked() { return boxes.filter(function (b) { return b.checked; }); }
+			function refresh() {
+				var n = picked().length;
+				btn.disabled = n === 0;
+				btn.textContent = n ? '<?php echo esc_js( __( 'Create pages for selected', 'ajforms' ) ); ?> (' + n + ')' : '<?php echo esc_js( __( 'Create pages for selected', 'ajforms' ) ); ?>';
+				if (all) { all.checked = n > 0 && n === boxes.length; all.indeterminate = n > 0 && n < boxes.length; }
+			}
+			boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+			if (all) { all.addEventListener('change', function () { boxes.forEach(function (b) { b.checked = all.checked; }); refresh(); }); }
+			btn.addEventListener('click', function (e) {
+				var names = picked().map(function (b) { return '• ' + b.dataset.name; }).join('\n');
+				var pub = status && status.value === 'publish';
+				var msg = (pub ? '<?php echo esc_js( __( 'Create and PUBLISH these pages? They become public and searchable:', 'ajforms' ) ); ?>' : '<?php echo esc_js( __( 'Create these pages as drafts (not public until you publish them)?', 'ajforms' ) ); ?>') + '\n\n' + names;
+				if (!confirm(msg)) { e.preventDefault(); }
+			});
+			refresh();
+		})();
+		</script>
+		<?php endif; ?>
 		<?php
 	}
 
@@ -30213,7 +30317,45 @@ class AJForms_Admin {
 	}
 
 	/** Creates a draft page for one price under the listing page, pre-filled from Stripe, and links it. */
-	private function create_product_page_for_price( $price_id ) {
+	/**
+	 * Prices that may get a product page from the bulk "Create pages" action, keyed by price ID
+	 * (value: product name). Computed fresh on the server for every request, never taken from
+	 * the form, so a private product cannot get a page by any posted value. A price qualifies
+	 * only when ALL hold:
+	 *   - it is explicitly ticked "In shop" (an empty shop selection means "everything", so bulk
+	 *     creation is refused then: nothing private can slip in through the fallback);
+	 *   - its Stripe product and price are both active;
+	 *   - it is not a required product of a pair (that one uses its pair's page);
+	 *   - it has no product page yet.
+	 *
+	 * @return array<string,string>
+	 */
+	private function get_product_page_bulk_eligible() {
+		$settings = $this->get_plugin_settings();
+		$display  = $this->get_public_product_display_settings();
+		$selected = ! empty( $display['selected_prices'] ) ? $display['selected_prices'] : ( isset( $settings['stripe_selected_prices'] ) && is_array( $settings['stripe_selected_prices'] ) ? array_map( 'sanitize_text_field', $settings['stripe_selected_prices'] ) : array() );
+		$selected = array_flip( array_filter( array_map( 'strval', (array) $selected ) ) );
+		if ( empty( $selected ) ) {
+			return array();
+		}
+		$catalog  = ajcore_product_catalog_get( true );
+		$cache    = $this->get_stripe_products_cache();
+		$eligible = array();
+		foreach ( isset( $cache['prices'] ) && is_array( $cache['prices'] ) ? $cache['prices'] : array() as $price ) {
+			$price_id = is_array( $price ) && isset( $price['id'] ) ? (string) $price['id'] : '';
+			if ( '' === $price_id || ! isset( $selected[ $price_id ] ) || empty( $price['product_active'] ) || empty( $price['price_active'] ) ) {
+				continue;
+			}
+			if ( '' !== ajcore_product_catalog_pair_parent( $price_id ) || ajcore_product_catalog_page_for_price( $price_id, $catalog, false ) ) {
+				continue;
+			}
+			$eligible[ $price_id ] = isset( $price['product_name'] ) ? (string) $price['product_name'] : $price_id;
+		}
+		return $eligible;
+	}
+
+	private function create_product_page_for_price( $price_id, $status = 'draft' ) {
+		$status = 'publish' === $status ? 'publish' : 'draft';
 		if ( ! current_user_can( 'publish_pages' ) ) {
 			return new WP_Error( 'ajcore_product_page_cap', __( 'You cannot create pages.', 'ajforms' ) );
 		}
@@ -30251,7 +30393,7 @@ class AJForms_Admin {
 		$page_id = wp_insert_post(
 			array(
 				'post_type'    => 'page',
-				'post_status'  => 'draft',
+				'post_status'  => $status,
 				'post_title'   => isset( $price['product_name'] ) ? sanitize_text_field( (string) $price['product_name'] ) : $price_id,
 				'post_content' => implode( "\n\n", $blocks ),
 				'post_parent'  => ajcore_product_catalog_listing_page_id( $catalog ),
