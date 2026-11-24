@@ -30023,7 +30023,9 @@ class AJForms_Admin {
 		}
 		?>
 		<style>
-			.ajcore-catalog-top{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px;margin-bottom:14px}
+			.ajcore-catalog-bar{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;margin:0 0 8px}
+			.ajcore-catalog-bar .ajcore-catalog-bulk-bar{display:inline-flex;gap:6px;align-items:center}
+			.ajcore-catalog-bar .button-primary{margin-left:auto}
 			.ajcore-catalog-cats td,.ajcore-catalog-cats th{padding:4px 6px}
 			.ajcore-catalog-cats input[type=text]{width:100%}
 			.ajcore-catalog-table td{vertical-align:top}
@@ -30034,7 +30036,6 @@ class AJForms_Admin {
 			.ajcore-catalog-page{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 			.ajcore-catalog-page select{max-width:260px}
 			.ajcore-catalog-muted{color:#64748b;font-size:12px}
-			@media (max-width:960px){.ajcore-catalog-top{grid-template-columns:1fr}}
 		</style>
 		<?php if ( isset( $_GET['catalog-saved'] ) ) : ?>
 			<div class="ajcore-products-notice ok"><?php esc_html_e( 'Catalog saved.', 'ajforms' ); ?></div>
@@ -30075,118 +30076,101 @@ class AJForms_Admin {
 			<?php if ( $show_all ) : ?><input type="hidden" name="catalog_all" value="1"><?php endif; ?>
 			<?php // Enter in a text field submits via the first submit button: keep that "Save", not bulk create. ?>
 			<button type="submit" name="submit" value="1" style="display:none" tabindex="-1" aria-hidden="true"></button>
-			<div class="ajcore-catalog-top">
-				<div class="ajcore-builder-field">
-					<strong><?php esc_html_e( 'Categories', 'ajforms' ); ?></strong>
-					<table class="ajcore-catalog-cats" style="width:100%;border-collapse:collapse;">
-						<thead><tr><th style="text-align:left;"><?php esc_html_e( 'Name', 'ajforms' ); ?></th><th style="text-align:left;"><?php esc_html_e( 'Slug', 'ajforms' ); ?></th><th style="width:40px;"><?php esc_html_e( 'Items', 'ajforms' ); ?></th></tr></thead>
-						<tbody>
-						<?php
-						$rows = $categories;
-						for ( $blank = 0; $blank < 3; $blank++ ) {
-							$rows[] = array( 'slug' => '', 'name' => '' );
-						}
-						foreach ( $rows as $index => $category ) :
-							?>
-							<tr>
-								<td>
-									<input type="text" name="catalog_categories[<?php echo (int) $index; ?>][name]" value="<?php echo esc_attr( $category['name'] ); ?>" placeholder="<?php echo '' === $category['slug'] ? esc_attr__( 'New category', 'ajforms' ) : ''; ?>">
-									<input type="hidden" name="catalog_categories[<?php echo (int) $index; ?>][orig]" value="<?php echo esc_attr( $category['slug'] ); ?>">
-								</td>
-								<td><input type="text" name="catalog_categories[<?php echo (int) $index; ?>][slug]" value="<?php echo esc_attr( $category['slug'] ); ?>" placeholder="<?php esc_attr_e( 'auto', 'ajforms' ); ?>"></td>
-								<td style="text-align:center;" class="ajcore-catalog-muted"><?php echo '' === $category['slug'] ? '' : (int) ( isset( $counts[ $category['slug'] ] ) ? $counts[ $category['slug'] ] : 0 ); ?></td>
-							</tr>
-						<?php endforeach; ?>
-						</tbody>
-					</table>
-					<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Filled from Stripe metadata "category". Here: display name and order only.', 'ajforms' ); ?></p>
-				</div>
-				<div class="ajcore-builder-field">
-					<strong><?php esc_html_e( 'Listing page', 'ajforms' ); ?></strong>
-					<select name="catalog_page" style="width:100%;">
-						<option value="0">
-							<?php
-							echo esc_html(
-								$listing_id && ! $catalog['catalog_page']
-									? sprintf( __( 'Auto: %s', 'ajforms' ), get_the_title( $listing_id ) )
-									: __( 'Auto-detect', 'ajforms' )
-							);
-							?>
-						</option>
-						<?php foreach ( $page_choices as $page_id => $label ) : ?>
-							<option value="<?php echo (int) $page_id; ?>" <?php selected( $catalog['catalog_page'], $page_id ); ?>><?php echo esc_html( $label ); ?></option>
-						<?php endforeach; ?>
-					</select>
-					<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Parent of new product pages; product-page "Add to Cart" returns here.', 'ajforms' ); ?></p>
-					<details style="margin-top:10px;">
-						<summary class="ajcore-catalog-muted" style="cursor:pointer;"><?php esc_html_e( 'Shortcodes', 'ajforms' ); ?></summary>
-						<p class="ajcore-catalog-muted">
-							<code>[ajcore_products category="slug"]</code> <?php esc_html_e( 'only that category (comma-separate several).', 'ajforms' ); ?><br>
-							<code>[ajcore_product]</code> <?php esc_html_e( 'buy box on a linked product page (price detected from the page).', 'ajforms' ); ?><br>
-							<code>[ajcore_product price_id="price_…"]</code> <?php esc_html_e( 'buy box for a specific price anywhere.', 'ajforms' ); ?><br>
-							<?php esc_html_e( 'Categories come from Stripe product metadata "category" (comma-separate several). Checkboxes appear only for products without it.', 'ajforms' ); ?>
-						</p>
-					</details>
-				</div>
-			</div>
-
-			<p class="ajcore-catalog-muted" style="margin:0 0 6px;">
-				<?php
-				echo esc_html(
-					$show_all
-						? sprintf( __( 'Showing all %d synced prices.', 'ajforms' ), $all_count )
-						: sprintf( __( 'Showing %1$d in-shop products (of %2$d synced).', 'ajforms' ), count( $shop_prices ), $all_count )
-				);
-				?>
-				<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'catalog_all' => $show_all ? false : 1 ), admin_url( 'admin.php' ) ) ); ?>"><?php echo $show_all ? esc_html__( 'In shop only', 'ajforms' ) : esc_html__( 'Show all', 'ajforms' ); ?></a>
-			</p>
 			<?php
 			// Bulk page creation: only rows the server deems eligible get a checkbox (in shop,
 			// active, not the required half of a pair, no page yet). The handler re-checks.
 			$bulk_eligible = $this->get_product_page_bulk_eligible();
+			$auto_mode     = self::product_pages_auto_mode();
+			$names_by_slug = wp_list_pluck( $categories, 'name', 'slug' );
+			$default_label = $listing_id ? get_the_title( $listing_id ) : __( 'none found', 'ajforms' );
 			?>
-			<?php $auto_mode = self::product_pages_auto_mode(); ?>
-			<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;">
-				<strong><?php esc_html_e( 'New in-shop products:', 'ajforms' ); ?></strong>
-				<select name="catalog_auto_pages">
-					<option value="off" <?php selected( 'off', $auto_mode ); ?>><?php esc_html_e( 'No page (create manually)', 'ajforms' ); ?></option>
-					<option value="draft" <?php selected( 'draft', $auto_mode ); ?>><?php esc_html_e( 'Auto-create page as draft', 'ajforms' ); ?></option>
-					<option value="publish" <?php selected( 'publish', $auto_mode ); ?>><?php esc_html_e( 'Auto-create and publish page', 'ajforms' ); ?></option>
-				</select>
-				<?php
-				$auto_log = get_option( self::PRODUCT_PAGES_LOG_OPTION, array() );
-				if ( 'off' !== $auto_mode && is_array( $auto_log ) && ! empty( $auto_log['at'] ) ) :
+			<div class="ajcore-catalog-bar">
+				<span class="ajcore-catalog-muted">
+					<?php
+					echo esc_html(
+						$show_all
+							? sprintf( __( 'All %d synced prices.', 'ajforms' ), $all_count )
+							: sprintf( __( '%1$d in-shop products (of %2$d synced).', 'ajforms' ), count( $shop_prices ), $all_count )
+					);
 					?>
-					<span class="ajcore-catalog-muted">
-						<?php
-						echo esc_html( sprintf( __( 'Last auto-create %1$s: %2$d created.', 'ajforms' ), $this->format_site_datetime( $auto_log['at'] ), count( (array) $auto_log['created'] ) ) );
-						if ( ! empty( $auto_log['errors'] ) ) {
-							echo ' <span style="color:#b32d2e;">' . esc_html( implode( ' | ', (array) $auto_log['errors'] ) ) . '</span>';
-						}
-						?>
+					<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'catalog_all' => $show_all ? false : 1 ), admin_url( 'admin.php' ) ) ); ?>"><?php echo $show_all ? esc_html__( 'In shop only', 'ajforms' ) : esc_html__( 'Show all', 'ajforms' ); ?></a>
+				</span>
+				<label class="ajcore-catalog-muted"><?php esc_html_e( 'New in-shop products:', 'ajforms' ); ?>
+					<select name="catalog_auto_pages">
+						<option value="off" <?php selected( 'off', $auto_mode ); ?>><?php esc_html_e( 'No page (create manually)', 'ajforms' ); ?></option>
+						<option value="draft" <?php selected( 'draft', $auto_mode ); ?>><?php esc_html_e( 'Auto-create page as draft', 'ajforms' ); ?></option>
+						<option value="publish" <?php selected( 'publish', $auto_mode ); ?>><?php esc_html_e( 'Auto-create and publish page', 'ajforms' ); ?></option>
+					</select>
+				</label>
+				<?php if ( ! empty( $bulk_eligible ) && current_user_can( 'publish_pages' ) ) : ?>
+					<span class="ajcore-catalog-bulk-bar">
+						<button type="submit" name="ajcore_catalog_bulk_pages" value="1" class="button" id="ajcore-catalog-bulk-btn" disabled><?php esc_html_e( 'Create pages for selected', 'ajforms' ); ?></button>
+						<select name="catalog_bulk_status" id="ajcore-catalog-bulk-status">
+							<option value="draft"><?php esc_html_e( 'as drafts (not public)', 'ajforms' ); ?></option>
+							<option value="publish"><?php esc_html_e( 'published (public)', 'ajforms' ); ?></option>
+						</select>
 					</span>
 				<?php endif; ?>
-				<details><summary class="ajcore-catalog-muted" style="cursor:pointer;"><?php esc_html_e( 'How it works', 'ajforms' ); ?></summary>
-					<p class="ajcore-catalog-muted" style="max-width:640px;"><?php esc_html_e( 'After every Stripe product sync and every "In shop" change, each product that is ticked In shop, active, not the required half of a pair and without a page gets one, at its standard address. Products not ticked In shop never get a page. A product is handled once: if you trash or unlink its page, it is not recreated.', 'ajforms' ); ?></p>
-				</details>
+				<?php submit_button( __( 'Save Catalog', 'ajforms' ), 'primary', 'submit', false ); ?>
 			</div>
-			<?php if ( ! empty( $bulk_eligible ) && current_user_can( 'publish_pages' ) ) : ?>
-				<div class="ajcore-catalog-bulk" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;">
-					<button type="submit" name="ajcore_catalog_bulk_pages" value="1" class="button" id="ajcore-catalog-bulk-btn" disabled><?php esc_html_e( 'Create pages for selected', 'ajforms' ); ?></button>
-					<select name="catalog_bulk_status" id="ajcore-catalog-bulk-status">
-						<option value="draft"><?php esc_html_e( 'as drafts (not public)', 'ajforms' ); ?></option>
-						<option value="publish"><?php esc_html_e( 'published (public)', 'ajforms' ); ?></option>
-					</select>
-					<span class="ajcore-catalog-muted" id="ajcore-catalog-bulk-count"><?php echo esc_html( sprintf( _n( '%d in-shop product has no page.', '%d in-shop products have no page.', count( $bulk_eligible ), 'ajforms' ), count( $bulk_eligible ) ) ); ?></span>
-				</div>
+			<?php
+			$auto_log = get_option( self::PRODUCT_PAGES_LOG_OPTION, array() );
+			if ( 'off' !== $auto_mode && is_array( $auto_log ) && ! empty( $auto_log['at'] ) ) :
+				?>
+				<p class="ajcore-catalog-muted" style="margin:0 0 6px;">
+					<?php
+					echo esc_html( sprintf( __( 'Last auto-create %1$s: %2$d created.', 'ajforms' ), $this->format_site_datetime( $auto_log['at'] ), count( (array) $auto_log['created'] ) ) );
+					if ( ! empty( $auto_log['errors'] ) ) {
+						echo ' <span style="color:#b32d2e;">' . esc_html( implode( ' | ', (array) $auto_log['errors'] ) ) . '</span>';
+					}
+					?>
+				</p>
 			<?php endif; ?>
 			<table class="widefat striped ajcore-catalog-table">
 				<thead>
 					<tr>
 						<th style="width:28px;"><?php if ( ! empty( $bulk_eligible ) ) : ?><input type="checkbox" id="ajcore-catalog-bulk-all" title="<?php esc_attr_e( 'Select every in-shop product without a page', 'ajforms' ); ?>"><?php endif; ?></th>
-						<th style="width:32%;"><?php esc_html_e( 'Product', 'ajforms' ); ?></th>
-						<th><?php esc_html_e( 'Categories', 'ajforms' ); ?></th>
-						<th style="width:34%;"><?php esc_html_e( 'Product page', 'ajforms' ); ?></th>
+						<th style="width:28%;"><?php esc_html_e( 'Product', 'ajforms' ); ?></th>
+						<th style="width:20%;"><?php esc_html_e( 'Category', 'ajforms' ); ?> <button type="button" class="button-link" id="ajcore-catalog-cats-toggle"><?php esc_html_e( 'Edit', 'ajforms' ); ?></button></th>
+						<th style="width:20%;">
+							<?php esc_html_e( 'Listing page', 'ajforms' ); ?>
+							<div class="ajcore-catalog-muted" style="font-weight:400;margin-top:2px;">
+								<?php esc_html_e( 'Default:', 'ajforms' ); ?>
+								<select name="catalog_page" style="max-width:150px;min-height:26px;font-size:12px;">
+									<option value="0"><?php echo esc_html( $catalog['catalog_page'] ? __( 'Auto-detect', 'ajforms' ) : sprintf( __( 'Auto: %s', 'ajforms' ), $default_label ) ); ?></option>
+									<?php foreach ( $page_choices as $choice_id => $label ) : ?>
+										<option value="<?php echo (int) $choice_id; ?>" <?php selected( $catalog['catalog_page'], $choice_id ); ?>><?php echo esc_html( $label ); ?></option>
+									<?php endforeach; ?>
+								</select>
+							</div>
+						</th>
+						<th><?php esc_html_e( 'Product page', 'ajforms' ); ?></th>
+					</tr>
+					<tr id="ajcore-catalog-cats-row" hidden>
+						<td colspan="5" style="background:#f8fafc;">
+							<table class="ajcore-catalog-cats" style="width:100%;max-width:760px;border-collapse:collapse;">
+								<thead><tr><th style="text-align:left;"><?php esc_html_e( 'Category name', 'ajforms' ); ?></th><th style="text-align:left;"><?php esc_html_e( 'Slug', 'ajforms' ); ?></th><th style="width:60px;"><?php esc_html_e( 'In shop', 'ajforms' ); ?></th></tr></thead>
+								<tbody>
+								<?php
+								$rows = $categories;
+								for ( $blank = 0; $blank < 2; $blank++ ) {
+									$rows[] = array( 'slug' => '', 'name' => '' );
+								}
+								foreach ( $rows as $index => $category ) :
+									?>
+									<tr>
+										<td>
+											<input type="text" name="catalog_categories[<?php echo (int) $index; ?>][name]" value="<?php echo esc_attr( $category['name'] ); ?>" placeholder="<?php echo '' === $category['slug'] ? esc_attr__( 'New category', 'ajforms' ) : ''; ?>">
+											<input type="hidden" name="catalog_categories[<?php echo (int) $index; ?>][orig]" value="<?php echo esc_attr( $category['slug'] ); ?>">
+										</td>
+										<td><input type="text" name="catalog_categories[<?php echo (int) $index; ?>][slug]" value="<?php echo esc_attr( $category['slug'] ); ?>" placeholder="<?php esc_attr_e( 'auto', 'ajforms' ); ?>"></td>
+										<td style="text-align:center;" class="ajcore-catalog-muted"><?php echo '' === $category['slug'] ? '' : (int) ( isset( $counts[ $category['slug'] ] ) ? $counts[ $category['slug'] ] : 0 ); ?></td>
+									</tr>
+								<?php endforeach; ?>
+								</tbody>
+							</table>
+							<p class="ajcore-catalog-muted" style="margin:6px 0 0;"><?php esc_html_e( 'Rename, re-slug or reorder (list order = filter order). Clear a name to delete that category. Filter a listing page with [ajcore_products category="slug"].', 'ajforms' ); ?></p>
+						</td>
 					</tr>
 				</thead>
 				<tbody>
@@ -30195,14 +30179,19 @@ class AJForms_Admin {
 					if ( ! is_array( $price ) || empty( $price['id'] ) ) {
 						continue;
 					}
-					$price_id    = sanitize_text_field( (string) $price['id'] );
+					$price_id = sanitize_text_field( (string) $price['id'] );
 					if ( isset( $pair_folded[ $price_id ] ) && ! isset( $pair_child_of[ $price_id ] ) ) {
 						continue; // Shown in the row of the product that requires it.
 					}
 					$is_active   = ! empty( $price['product_active'] ) && ! empty( $price['price_active'] );
 					$assigned    = ajcore_product_catalog_price_categories( $price, $catalog );
-					$from_stripe = ! empty( ajcore_product_catalog_metadata_names( $price ) );
+					$site_chosen = array_key_exists( $price_id, (array) $catalog['assign'] );
+					$from_stripe = ! $site_chosen && ! empty( ajcore_product_catalog_metadata_names( $price ) );
+					$first_cat   = $assigned ? (string) $assigned[0] : '';
 					$page_id     = ajcore_product_catalog_page_for_price( $price_id, $catalog, false );
+					$own_listing = isset( $catalog['listing'][ $price_id ] ) ? (int) $catalog['listing'][ $price_id ] : 0;
+					$row_listing = ajcore_product_catalog_listing_for_price( $price_id, $catalog );
+					$row_path    = '/' . ( $row_listing ? trailingslashit( get_page_uri( $row_listing ) ) : '' );
 					$interval    = ! empty( $price['recurring_interval'] ) ? '/' . sanitize_key( (string) $price['recurring_interval'] ) : '';
 					$create_url  = wp_nonce_url(
 						add_query_arg(
@@ -30242,23 +30231,30 @@ class AJForms_Admin {
 							<?php endif; ?>
 						</td>
 						<td>
-							<?php if ( $from_stripe ) : ?>
-								<?php
-								$names_by_slug = wp_list_pluck( $categories, 'name', 'slug' );
-								foreach ( $assigned as $slug ) {
-									echo '<span class="ajcore-catalog-tag" style="margin:0 4px 4px 0;">' . esc_html( isset( $names_by_slug[ $slug ] ) ? $names_by_slug[ $slug ] : $slug ) . '</span>';
-								}
-								?>
-								<span class="ajcore-catalog-muted"><?php esc_html_e( 'from Stripe', 'ajforms' ); ?></span>
-							<?php elseif ( empty( $categories ) ) : ?>
-								<span class="ajcore-catalog-muted"><?php esc_html_e( 'Set metadata "category" on the Stripe product, then sync.', 'ajforms' ); ?></span>
-							<?php else : ?>
-								<div class="ajcore-catalog-checks">
-									<?php foreach ( $categories as $category ) : ?>
-										<label><input type="checkbox" name="catalog_assign[<?php echo esc_attr( $price_id ); ?>][]" value="<?php echo esc_attr( $category['slug'] ); ?>" <?php checked( in_array( $category['slug'], $assigned, true ) ); ?>> <?php echo esc_html( $category['name'] ); ?></label>
-									<?php endforeach; ?>
-								</div>
+							<?php // Unchanged Stripe-derived value stays "from Stripe" (no site override is saved). ?>
+							<input type="hidden" name="catalog_cat_orig[<?php echo esc_attr( $price_id ); ?>]" value="<?php echo esc_attr( $site_chosen ? 'site:' . implode( ',', $assigned ) : 'stripe:' . implode( ',', $assigned ) ); ?>">
+							<select class="ajcore-catalog-cat" name="catalog_cat[<?php echo esc_attr( $price_id ); ?>]" style="max-width:100%;">
+								<option value=""><?php esc_html_e( '— None —', 'ajforms' ); ?></option>
+								<?php foreach ( $categories as $category ) : ?>
+									<option value="<?php echo esc_attr( $category['slug'] ); ?>" <?php selected( $first_cat, $category['slug'] ); ?>><?php echo esc_html( $category['name'] ); ?></option>
+								<?php endforeach; ?>
+								<option value="__new__"><?php esc_html_e( '+ New category…', 'ajforms' ); ?></option>
+							</select>
+							<input type="text" class="ajcore-catalog-cat-new" name="catalog_cat_new[<?php echo esc_attr( $price_id ); ?>]" placeholder="<?php esc_attr_e( 'New category name', 'ajforms' ); ?>" hidden style="margin-top:4px;width:100%;">
+							<?php if ( count( $assigned ) > 1 ) : ?>
+								<div class="ajcore-catalog-muted"><?php echo esc_html( sprintf( __( 'also: %s', 'ajforms' ), implode( ', ', array_map( static function ( $slug ) use ( $names_by_slug ) { return isset( $names_by_slug[ $slug ] ) ? $names_by_slug[ $slug ] : $slug; }, array_slice( $assigned, 1 ) ) ) ) ); ?></div>
 							<?php endif; ?>
+							<?php if ( $from_stripe ) : ?>
+								<div class="ajcore-catalog-muted"><?php esc_html_e( 'from Stripe', 'ajforms' ); ?></div>
+							<?php endif; ?>
+						</td>
+						<td>
+							<select name="catalog_listing[<?php echo esc_attr( $price_id ); ?>]" style="max-width:100%;">
+								<option value="0"><?php echo esc_html( sprintf( __( 'Default (%s)', 'ajforms' ), $default_label ) ); ?></option>
+								<?php foreach ( $page_choices as $choice_id => $label ) : ?>
+									<option value="<?php echo (int) $choice_id; ?>" <?php selected( $own_listing, $choice_id ); ?>><?php echo esc_html( $label ); ?></option>
+								<?php endforeach; ?>
+							</select>
 						</td>
 						<td>
 							<div class="ajcore-catalog-page">
@@ -30276,15 +30272,43 @@ class AJForms_Admin {
 								<?php endif; ?>
 							</div>
 							<?php if ( ! $page_id ) : ?>
-								<div class="ajcore-catalog-muted" style="margin-top:4px;"><code><?php echo esc_html( $listing_path . ajcore_product_catalog_page_slug( $price ) . '/' ); ?></code></div>
+								<div class="ajcore-catalog-muted" style="margin-top:4px;"><code><?php echo esc_html( $row_path . ajcore_product_catalog_page_slug( $price ) . '/' ); ?></code></div>
 							<?php endif; ?>
 						</td>
 					</tr>
 				<?php endforeach; ?>
 				</tbody>
 			</table>
-			<p><?php submit_button( __( 'Save Catalog', 'ajforms' ), 'primary', 'submit', false ); ?></p>
+			<p style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+				<?php submit_button( __( 'Save Catalog', 'ajforms' ), 'primary', 'submit', false ); ?>
+				<details>
+					<summary class="ajcore-catalog-muted" style="cursor:pointer;"><?php esc_html_e( 'Shortcodes & how pages work', 'ajforms' ); ?></summary>
+					<p class="ajcore-catalog-muted" style="max-width:760px;">
+						<code>[ajcore_products category="slug"]</code> <?php esc_html_e( 'only that category (comma-separate several).', 'ajforms' ); ?><br>
+						<code>[ajcore_product]</code> <?php esc_html_e( 'buy box on a linked product page (price detected from the page).', 'ajforms' ); ?><br>
+						<?php esc_html_e( 'Listing page: parent of the product page (its address), and where its Back link and "Add to Cart" return. Category chosen here overrides Stripe metadata "category"; untouched products follow Stripe.', 'ajforms' ); ?><br>
+						<?php esc_html_e( 'Auto-create: after every product sync and "In shop" change, each product ticked In shop, active, not the required half of a pair and without a page gets one. Products not in the shop never get a page; a trashed or unlinked page is not recreated.', 'ajforms' ); ?>
+					</p>
+				</details>
+			</p>
 		</form>
+		<script>
+		(function () {
+			var toggle = document.getElementById('ajcore-catalog-cats-toggle');
+			var row = document.getElementById('ajcore-catalog-cats-row');
+			if (toggle && row) {
+				toggle.addEventListener('click', function () { row.hidden = !row.hidden; toggle.textContent = row.hidden ? '<?php echo esc_js( __( 'Edit', 'ajforms' ) ); ?>' : '<?php echo esc_js( __( 'Done', 'ajforms' ) ); ?>'; });
+			}
+			document.querySelectorAll('.ajcore-catalog-cat').forEach(function (sel) {
+				var input = sel.parentNode.querySelector('.ajcore-catalog-cat-new');
+				sel.addEventListener('change', function () {
+					if (!input) { return; }
+					input.hidden = sel.value !== '__new__';
+					if (!input.hidden) { input.focus(); }
+				});
+			});
+		})();
+		</script>
 		<?php if ( ! empty( $bulk_eligible ) ) : ?>
 		<script>
 		(function () {
@@ -30339,14 +30363,53 @@ class AJForms_Admin {
 			$categories[] = array( 'slug' => $slug, 'name' => $name );
 		}
 
-		$assign = array();
-		foreach ( isset( $post['catalog_assign'] ) && is_array( $post['catalog_assign'] ) ? $post['catalog_assign'] : array() as $price_id => $slugs ) {
-			$mapped = array();
-			foreach ( (array) $slugs as $slug ) {
-				$slug     = sanitize_title( (string) $slug );
-				$mapped[] = isset( $renamed[ $slug ] ) ? $renamed[ $slug ] : $slug;
+		// Per-row category dropdown. A choice made here wins over Stripe metadata; "— None —" is
+		// saved as an empty list (no category on purpose). A row whose dropdown still shows the
+		// value it came with keeps its source: Stripe-derived stays "follow Stripe" (no entry).
+		// "+ New category…" adds the typed name to the category list (or reuses a matching one).
+		$rename  = static function ( $slug ) use ( &$renamed ) {
+			return isset( $renamed[ $slug ] ) ? $renamed[ $slug ] : $slug;
+		};
+		$assign  = array();
+		$origins = isset( $post['catalog_cat_orig'] ) && is_array( $post['catalog_cat_orig'] ) ? $post['catalog_cat_orig'] : array();
+		$typed   = isset( $post['catalog_cat_new'] ) && is_array( $post['catalog_cat_new'] ) ? $post['catalog_cat_new'] : array();
+		foreach ( isset( $post['catalog_cat'] ) && is_array( $post['catalog_cat'] ) ? $post['catalog_cat'] : array() as $price_id => $value ) {
+			$price_id  = sanitize_text_field( (string) $price_id );
+			$value     = (string) $value;
+			$origin    = isset( $origins[ $price_id ] ) ? (string) $origins[ $price_id ] : '';
+			$source    = 0 === strpos( $origin, 'site:' ) ? 'site' : 'stripe';
+			$orig_list = array_values( array_filter( array_map( $rename, array_map( 'sanitize_title', explode( ',', (string) substr( $origin, strpos( $origin, ':' ) + 1 ) ) ) ) ) );
+			if ( '' === $price_id ) {
+				continue;
 			}
-			$assign[ sanitize_text_field( (string) $price_id ) ] = $mapped;
+			if ( '__new__' === $value ) {
+				$name = isset( $typed[ $price_id ] ) ? trim( sanitize_text_field( (string) $typed[ $price_id ] ) ) : '';
+				if ( '' === $name ) {
+					$value = $orig_list ? $orig_list[0] : ''; // nothing typed: treat as unchanged
+				} else {
+					$value = ajcore_product_catalog_match_slug( $name, $categories );
+					if ( '' === $value ) {
+						$value        = sanitize_title( $name );
+						$categories[] = array( 'slug' => $value, 'name' => $name );
+					}
+				}
+			} else {
+				$value = $rename( sanitize_title( $value ) );
+			}
+			if ( $value === ( $orig_list ? $orig_list[0] : '' ) ) {
+				if ( 'site' === $source ) {
+					$assign[ $price_id ] = $orig_list; // unchanged site choice, all of its categories
+				}
+				continue; // unchanged Stripe value: keep following Stripe
+			}
+			$assign[ $price_id ] = '' === $value ? array() : array( $value );
+		}
+
+		$listing = array();
+		foreach ( isset( $post['catalog_listing'] ) && is_array( $post['catalog_listing'] ) ? $post['catalog_listing'] : array() as $price_id => $page_id ) {
+			if ( absint( $page_id ) > 0 ) {
+				$listing[ sanitize_text_field( (string) $price_id ) ] = absint( $page_id );
+			}
 		}
 
 		$pages = array();
@@ -30374,6 +30437,11 @@ class AJForms_Admin {
 					$pages[ (string) $price_id ] = absint( $page_id );
 				}
 			}
+			foreach ( (array) $catalog['listing'] as $price_id => $page_id ) {
+				if ( ! isset( $shown[ (string) $price_id ] ) && ! isset( $listing[ (string) $price_id ] ) ) {
+					$listing[ (string) $price_id ] = absint( $page_id );
+				}
+			}
 		}
 
 		if ( isset( $post['catalog_auto_pages'] ) ) {
@@ -30390,6 +30458,7 @@ class AJForms_Admin {
 		$catalog['categories']   = $categories;
 		$catalog['assign']       = $assign;
 		$catalog['pages']        = $pages;
+		$catalog['listing']      = $listing;
 		$catalog['catalog_page'] = isset( $post['catalog_page'] ) ? absint( $post['catalog_page'] ) : 0;
 
 		return ajcore_product_catalog_save( $catalog );
@@ -30545,7 +30614,7 @@ class AJForms_Admin {
 		// Standard address (see ajcore_product_catalog_page_slug()). If another page under the
 		// listing already uses it, stop instead of letting WordPress append "-2": a numbered
 		// duplicate is a poor URL and usually means the product already has a page.
-		$parent_id = ajcore_product_catalog_listing_page_id( $catalog );
+		$parent_id = ajcore_product_catalog_listing_for_price( $price_id, $catalog ); // per-product listing page, else the default
 		$slug      = ajcore_product_catalog_page_slug( $price );
 		$taken     = get_posts(
 			array(

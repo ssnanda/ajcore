@@ -7,9 +7,12 @@
  * site-side layer Stripe does not hold well:
  *   - categories      saved display names + order; names found in Stripe metadata
  *                     are added automatically (see ajcore_product_catalog_categories)
- *   - assign          price_id => [ category slugs ]; only used for products with no
- *                     Stripe metadata `category` (comma-separated names)
+ *   - assign          price_id => [ category slugs ] chosen in Products > Catalog. When a
+ *                     price has an entry it wins over Stripe metadata `category`; an empty
+ *                     array means "no category" on purpose. No entry = Stripe metadata.
  *   - pages           price_id => WP page ID (the product's own page)
+ *   - listing         price_id => listing page ID (parent of its product page, where its
+ *                     page's Back / Add to Cart return); none = catalog_page
  *   - catalog_page    page that holds the listing; 0 = first published page that
  *                     contains [ajcore_products
  *   - ui              listing UI: pagination, search, category filter, card links,
@@ -105,9 +108,18 @@ function ajcore_product_catalog_normalize( $raw ) {
 	$assign = array();
 	foreach ( isset( $raw['assign'] ) && is_array( $raw['assign'] ) ? $raw['assign'] : array() as $price_id => $slugs ) {
 		$price_id = sanitize_text_field( (string) $price_id );
-		$slugs    = array_values( array_intersect( array_keys( $seen ), array_map( 'sanitize_title', (array) $slugs ) ) );
-		if ( '' !== $price_id && ! empty( $slugs ) ) {
-			$assign[ $price_id ] = $slugs;
+		$slugs    = array_values( array_intersect( array_map( 'sanitize_title', (array) $slugs ), array_keys( $seen ) ) );
+		if ( '' !== $price_id ) {
+			$assign[ $price_id ] = $slugs; // empty = "no category" chosen on purpose
+		}
+	}
+
+	$listing = array();
+	foreach ( isset( $raw['listing'] ) && is_array( $raw['listing'] ) ? $raw['listing'] : array() as $price_id => $page_id ) {
+		$price_id = sanitize_text_field( (string) $price_id );
+		$page_id  = absint( $page_id );
+		if ( '' !== $price_id && $page_id > 0 ) {
+			$listing[ $price_id ] = $page_id;
 		}
 	}
 
@@ -124,6 +136,7 @@ function ajcore_product_catalog_normalize( $raw ) {
 		'categories'   => $categories,
 		'assign'       => $assign,
 		'pages'        => $pages,
+		'listing'      => $listing,
 		'catalog_page' => isset( $raw['catalog_page'] ) ? absint( $raw['catalog_page'] ) : 0,
 		'ui'           => ajcore_product_catalog_normalize_ui( isset( $raw['ui'] ) ? $raw['ui'] : array() ),
 	);
@@ -188,10 +201,14 @@ function ajcore_product_catalog_match_slug( $name, $categories ) {
 	return '';
 }
 
-/** Category slugs for one synced price: Stripe metadata first, else boxes ticked in Products > Catalog. */
+/** Category slugs for one synced price: the choice made in Products > Catalog, else Stripe metadata. */
 function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
-	$catalog = null === $catalog ? ajcore_product_catalog_get() : $catalog;
-	$names   = ajcore_product_catalog_metadata_names( $price );
+	$catalog  = null === $catalog ? ajcore_product_catalog_get() : $catalog;
+	$price_id = is_array( $price ) && ! empty( $price['id'] ) ? (string) $price['id'] : '';
+	if ( '' !== $price_id && isset( $catalog['assign'] ) && array_key_exists( $price_id, $catalog['assign'] ) ) {
+		return (array) $catalog['assign'][ $price_id ];
+	}
+	$names = ajcore_product_catalog_metadata_names( $price );
 	if ( ! empty( $names ) ) {
 		$slugs = array();
 		foreach ( $names as $name ) {
@@ -201,8 +218,7 @@ function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
 		return array_values( array_unique( array_filter( $slugs ) ) );
 	}
 
-	$price_id = is_array( $price ) && ! empty( $price['id'] ) ? (string) $price['id'] : '';
-	return '' !== $price_id && ! empty( $catalog['assign'][ $price_id ] ) ? $catalog['assign'][ $price_id ] : array();
+	return array();
 }
 
 /**
@@ -303,6 +319,22 @@ function ajcore_product_catalog_listing_page_id( $catalog = null ) {
 		);
 	}
 	return $detected;
+}
+
+/**
+ * Listing page for one price: its own choice in Products > Catalog (published pages only),
+ * else the pair parent's (a required product shares its parent's page), else the default.
+ */
+function ajcore_product_catalog_listing_for_price( $price_id, $catalog = null ) {
+	$catalog  = null === $catalog ? ajcore_product_catalog_get() : $catalog;
+	$price_id = (string) $price_id;
+	foreach ( array( $price_id, ajcore_product_catalog_pair_parent( $price_id ) ) as $candidate ) {
+		$page_id = '' !== $candidate && isset( $catalog['listing'][ $candidate ] ) ? absint( $catalog['listing'][ $candidate ] ) : 0;
+		if ( $page_id && 'publish' === get_post_status( $page_id ) ) {
+			return $page_id;
+		}
+	}
+	return ajcore_product_catalog_listing_page_id( $catalog );
 }
 
 function ajcore_product_catalog_listing_url( $catalog = null ) {

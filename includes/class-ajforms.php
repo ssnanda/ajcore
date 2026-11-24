@@ -10077,7 +10077,13 @@ class AJForms {
 		$link_cards    = $att_flag( $atts['link'], isset( $catalog_ui['link'] ) ? $catalog_ui['link'] : 'no' );
 		$cols_tablet   = min( $columns, isset( $catalog_ui['cols_tablet'] ) ? (int) $catalog_ui['cols_tablet'] : 2 );
 		$cols_phone    = isset( $catalog_ui['cols_phone'] ) ? (int) $catalog_ui['cols_phone'] : 1;
-		$listing_page_id = $catalog ? (int) ajcore_product_catalog_listing_page_id( $catalog ) : 0;
+		// A product page ([ajcore_product], one price) returns to that product's own listing page.
+		$single_price    = $is_single && 1 === count( $prices ) ? reset( $prices ) : null;
+		$listing_page_id = $catalog
+			? (int) ( is_array( $single_price ) && ! empty( $single_price['id'] ) && function_exists( 'ajcore_product_catalog_listing_for_price' )
+				? ajcore_product_catalog_listing_for_price( (string) $single_price['id'], $catalog )
+				: ajcore_product_catalog_listing_page_id( $catalog ) )
+			: 0;
 		$listing_url     = $listing_page_id ? (string) get_permalink( $listing_page_id ) : '';
 		// A product page has no cart UI of its own: in cart mode its button hands the price to the
 		// listing (?ajp_add=price_…), which adds it to the one shared cart. Without a listing
