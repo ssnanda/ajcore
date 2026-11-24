@@ -10084,6 +10084,8 @@ class AJForms {
 				.ajp-hero-img{display:block;width:100%;max-height:360px;object-fit:cover;border-radius:16px;margin:8px 0 0}
 				.ajp-buy{padding:22px;border:1px solid var(--ajp-line);border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(15,23,42,.08)}
 				.ajp-buy .ajcore-product{border:0!important;box-shadow:none!important;padding:0!important}
+				.ajp-buy .ajcore-product-image{display:none!important} /* the hero already shows it */
+				.ajp-title{font-size:clamp(28px,3.4vw,40px);line-height:1.15;margin:0 0 12px}
 				.ajp-section{margin:44px 0 0}
 				.ajp-section h2{font-size:clamp(22px,2.6vw,28px);margin:0 0 16px}
 				.ajp-features{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
@@ -10128,6 +10130,8 @@ class AJForms {
 			<?php endif; ?>
 			<div class="ajp-layout">
 				<div class="ajp-main">
+					<?php // The theme does not print a title on these pages: the template carries the page's one H1. ?>
+					<h1 class="ajp-title"><?php echo esc_html( $c['title'] ); ?></h1>
 					<?php if ( '' !== $c['summary'] ) : ?>
 						<p class="ajp-lede"><?php echo esc_html( $c['summary'] ); ?></p>
 					<?php endif; ?>
@@ -10153,7 +10157,7 @@ class AJForms {
 								<?php if ( '' !== $about ) : ?>
 									<?php echo wp_kses_post( wpautop( esc_html( $about ) ) ); ?>
 								<?php endif; ?>
-								<?php echo wp_kses_post( $c['rich'] ); ?>
+								<?php echo wp_kses_post( wp_strip_all_tags( $c['rich'] ) === $c['rich'] ? wpautop( esc_html( $c['rich'] ) ) : $c['rich'] ); // plain text -> paragraphs ?>
 							</div>
 						</section>
 					<?php endif; ?>
@@ -10253,7 +10257,7 @@ class AJForms {
 			</div>
 
 			<div class="ajp-cta">
-				<h2><?php echo esc_html( '' !== $c['cta'] ? $c['cta'] : sprintf( __( 'Ready to get started with %s?', 'ajforms' ), $c['name'] ) ); ?></h2>
+				<h2><?php echo esc_html( '' !== $c['cta'] ? $c['cta'] : sprintf( __( 'Ready to get started with %s?', 'ajforms' ), $c['title'] ) ); ?></h2>
 				<a href="#ajp-buy"><?php esc_html_e( 'Get started', 'ajforms' ); ?></a>
 			</div>
 		</div>
