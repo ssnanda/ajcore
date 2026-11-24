@@ -127,7 +127,7 @@ trait AJCore_Product_Packages {
 	 * fingerprint of the product right after the import. Undo restores that state, but only
 	 * while the product is still exactly as the import left it; any later edit blocks it.
 	 */
-	const PKG_BACKUPS_OPTION = 'ajcore_pkg_backups'; // newest first, last 50
+	private static $pkg_backups_option = 'ajcore_pkg_backups'; // newest first, last 50
 
 	private function pkg_state( $product ) {
 		$meta = isset( $product['metadata'] ) ? (array) $product['metadata'] : array();
@@ -141,14 +141,14 @@ trait AJCore_Product_Packages {
 	}
 
 	private function pkg_backups() {
-		$list = get_option( self::PKG_BACKUPS_OPTION, array() );
+		$list = get_option( self::$pkg_backups_option, array() );
 		return is_array( $list ) ? $list : array();
 	}
 
 	private function pkg_save_backup( $entry ) {
 		$list = $this->pkg_backups();
 		array_unshift( $list, $entry );
-		update_option( self::PKG_BACKUPS_OPTION, array_slice( $list, 0, 50 ), false );
+		update_option( self::$pkg_backups_option, array_slice( $list, 0, 50 ), false );
 	}
 
 	private function pkg_update_backup( $id, $changes ) {
@@ -158,7 +158,7 @@ trait AJCore_Product_Packages {
 				$list[ $n ] = array_merge( $entry, $changes );
 			}
 		}
-		update_option( self::PKG_BACKUPS_OPTION, $list, false );
+		update_option( self::$pkg_backups_option, $list, false );
 	}
 
 	/**
@@ -273,7 +273,7 @@ trait AJCore_Product_Packages {
 	 * ajcore-test. Created only from a DDEV / local site, found again by its metadata, so
 	 * repeated clicks never make a second one.
 	 */
-	const PKG_TEST_PRODUCT_NAME = 'AJCore Test Product – Do Not Purchase';
+	private static $pkg_test_product_name = 'AJCore Test Product – Do Not Purchase';
 
 	/** The test product in Stripe (searched by metadata), or null. */
 	private function pkg_find_test_product( $secret_key ) {
@@ -312,7 +312,7 @@ trait AJCore_Product_Packages {
 				'products',
 				$secret_key,
 				array(
-					'name'                              => self::PKG_TEST_PRODUCT_NAME,
+					'name'                              => self::$pkg_test_product_name,
 					'description'                       => 'Internal AJCore test product for trying product content on DDEV. Not for sale.',
 					'active'                            => 'true',
 					'metadata[ajcore_test]'             => '1',
@@ -390,7 +390,7 @@ trait AJCore_Product_Packages {
 			<strong><?php esc_html_e( 'Test product', 'ajforms' ); ?></strong>
 			<span class="ajcore-pkg-mode"><?php esc_html_e( 'DDEV only', 'ajforms' ); ?></span>
 			<?php if ( $test_row && $page_id ) : ?>
-				<span><?php echo esc_html( self::PKG_TEST_PRODUCT_NAME ); ?></span>
+				<span><?php echo esc_html( self::$pkg_test_product_name ); ?></span>
 				<a class="button button-small" href="<?php echo esc_url( (string) get_permalink( $page_id ) ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'Open test page', 'ajforms' ); ?></a>
 				<span class="ajcore-catalog-muted"><?php esc_html_e( 'Import a package with "Apply to" set to this product, check the page, then Undo.', 'ajforms' ); ?></span>
 			<?php else : ?>
