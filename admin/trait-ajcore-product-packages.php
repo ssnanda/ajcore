@@ -134,7 +134,7 @@ trait AJCore_Product_Packages {
 	private function pkg_update_backup( $id, $changes ) {
 		$list = $this->pkg_backups();
 		foreach ( $list as $n => $entry ) {
-			if ( (string) $entry['id'] === (string) $id ) {
+			if ( strtolower( (string) $entry['id'] ) === strtolower( (string) $id ) ) {
 				$list[ $n ] = array_merge( $entry, $changes );
 			}
 		}
@@ -186,12 +186,14 @@ trait AJCore_Product_Packages {
 	private function pkg_undo( $backup_id ) {
 		$entry = null;
 		foreach ( $this->pkg_backups() as $candidate ) {
-			if ( (string) $candidate['id'] === (string) $backup_id ) {
+			// IDs compared case-insensitively: request values pass through sanitize_key() (lowercase),
+			// and backups saved before IDs were generated lowercase are mixed-case.
+			if ( strtolower( (string) $candidate['id'] ) === strtolower( (string) $backup_id ) ) {
 				$entry = $candidate;
 			}
 		}
 		$fail = function ( $text ) {
-			$done = wp_generate_password( 20, false );
+			$done = strtolower( wp_generate_password( 20, false ) );
 			set_transient( 'ajcore_pkg_done_' . $done, array( 'user' => get_current_user_id(), 'results' => array( array( 'ok' => false, 'text' => $text ) ) ), 30 * MINUTE_IN_SECONDS );
 			wp_safe_redirect( $this->pkg_catalog_url( array( 'pkg_done' => $done ) ) );
 			exit;
@@ -227,7 +229,7 @@ trait AJCore_Product_Packages {
 		if ( is_wp_error( $sync ) ) {
 			$results[] = array( 'ok' => false, 'text' => __( 'Re-sync failed: ', 'ajforms' ) . $sync->get_error_message() );
 		}
-		$done = wp_generate_password( 20, false );
+		$done = strtolower( wp_generate_password( 20, false ) );
 		set_transient( 'ajcore_pkg_done_' . $done, array( 'user' => get_current_user_id(), 'results' => $results ), 30 * MINUTE_IN_SECONDS );
 		wp_safe_redirect( $this->pkg_catalog_url( array( 'pkg_done' => $done ) ) );
 		exit;
@@ -334,7 +336,7 @@ trait AJCore_Product_Packages {
 				$fail( __( 'Test product is in the shop, but its page was not created: ', 'ajforms' ) . $page_id->get_error_message() );
 			}
 		}
-		$done = wp_generate_password( 20, false );
+		$done = strtolower( wp_generate_password( 20, false ) );
 		set_transient(
 			'ajcore_pkg_done_' . $done,
 			array(
@@ -727,7 +729,7 @@ trait AJCore_Product_Packages {
 				wp_safe_redirect( $this->pkg_catalog_url( array( 'catalog-error' => rawurlencode( __( 'Choose at least one package file.', 'ajforms' ) ) ) ) );
 				exit;
 			}
-			$token = wp_generate_password( 20, false );
+			$token = strtolower( wp_generate_password( 20, false ) );
 			set_transient( 'ajcore_pkg_' . $token, array( 'user' => get_current_user_id(), 'items' => $items ), 30 * MINUTE_IN_SECONDS );
 			wp_safe_redirect( $this->pkg_catalog_url( array( 'pkg' => $token ) ) );
 			exit;
@@ -844,7 +846,7 @@ trait AJCore_Product_Packages {
 				continue;
 			}
 			$wrote     = true;
-			$backup_id = wp_generate_password( 12, false );
+			$backup_id = strtolower( wp_generate_password( 12, false ) );
 			$this->pkg_save_backup(
 				array(
 					'id'             => $backup_id,
@@ -872,7 +874,7 @@ trait AJCore_Product_Packages {
 			$results[] = array( 'ok' => false, 'text' => __( 'No product was selected to apply.', 'ajforms' ) );
 		}
 		delete_transient( 'ajcore_pkg_' . $token );
-		$done = wp_generate_password( 20, false );
+		$done = strtolower( wp_generate_password( 20, false ) );
 		set_transient( 'ajcore_pkg_done_' . $done, array( 'user' => get_current_user_id(), 'results' => $results ), 30 * MINUTE_IN_SECONDS );
 		wp_safe_redirect( $this->pkg_catalog_url( array( 'pkg_done' => $done ) ) );
 		exit;
@@ -957,10 +959,11 @@ trait AJCore_Product_Packages {
 			echo '<div class="ajcore-pkg-box"><h3>' . esc_html__( 'Import results', 'ajforms' ) . '</h3><ul class="ajcore-pkg-results">';
 			$by_id = array();
 			foreach ( $this->pkg_backups() as $entry ) {
-				$by_id[ (string) $entry['id'] ] = $entry;
+				$by_id[ strtolower( (string) $entry['id'] ) ] = $entry;
 			}
 			foreach ( $done['results'] as $line ) {
-				$undo = ! empty( $line['backup'] ) && isset( $by_id[ $line['backup'] ] ) ? ' ' . $this->pkg_undo_button( $by_id[ $line['backup'] ] ) : '';
+				$key  = ! empty( $line['backup'] ) ? strtolower( (string) $line['backup'] ) : '';
+				$undo = '' !== $key && isset( $by_id[ $key ] ) ? ' ' . $this->pkg_undo_button( $by_id[ $key ] ) : '';
 				echo '<li class="' . ( $line['ok'] ? 'ok' : 'bad' ) . '">' . esc_html( $line['text'] ) . $undo . '</li>'; // phpcs:ignore WordPress.Security.EscapeOutput -- button markup escaped in pkg_undo_button()
 			}
 			echo '</ul></div>';
