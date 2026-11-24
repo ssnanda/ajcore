@@ -1276,10 +1276,8 @@ class AJCore_Zoho_Mail {
 			return $data;
 		}
 		$data   = isset( $data['data'] ) ? $data['data'] : $data;
-		$folder = self::deep_string( $data, array( 'folderId' ) );
-		if ( '' === $folder ) {
-			return new WP_Error( 'zoho_mail_shared_no_folder', __( 'Zoho shared-mailbox attachment download failed: the message details carry no folderId to download from.', 'ajcore' ) );
-		}
+		$folder = self::deep_string( $data, array( 'folderId' ) ); // documented, but not always returned
+		$ids    = self::id_leaves( $data ); // every "...Id" field Zoho did return, for the error message
 		$candidates = array(); // label => account id
 		foreach ( array( 'groupId', 'zgid', 'mailSpaceId' ) as $key ) {
 			$id = self::deep_string( $data, array( $key ) );
@@ -1297,7 +1295,16 @@ class AJCore_Zoho_Mail {
 		}
 		$tried = array();
 		foreach ( $candidates as $label => $account ) {
-			$res = $this->api_request( '/accounts/' . rawurlencode( $account ) . '/folders/' . rawurlencode( $folder ) . '/messages/' . rawurlencode( $message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
+			$use_folder = $folder;
+			if ( '' === $use_folder ) {
+				// No folderId on the message: use that account's Inbox (GET /accounts/{id}/folders, documented).
+				$use_folder = $this->inbox_folder_id( $account );
+				if ( '' === $use_folder ) {
+					$tried[] = $label . ' ' . $account . ': no Inbox folder found';
+					continue;
+				}
+			}
+			$res = $this->api_request( '/accounts/' . rawurlencode( $account ) . '/folders/' . rawurlencode( $use_folder ) . '/messages/' . rawurlencode( $message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
 			if ( is_wp_error( $res ) ) {
 				$tried[] = $label . ': ' . $res->get_error_message();
 				continue;
@@ -1311,7 +1318,42 @@ class AJCore_Zoho_Mail {
 			}
 			$tried[] = $label . ' ' . $account . ': HTTP ' . $res['status'] . ' ' . substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 90 );
 		}
-		return new WP_Error( 'zoho_mail_shared_attachment_failed', sprintf( __( 'Zoho shared-mailbox attachment download failed (folder %1$s) — %2$s', 'ajcore' ), $folder, $tried ? implode( ' | ', $tried ) : __( 'no account id to try', 'ajcore' ) ) );
+		return new WP_Error( 'zoho_mail_shared_attachment_failed', sprintf( __( 'Zoho shared-mailbox attachment download failed — %1$s [ids in message details: %2$s]', 'ajcore' ), $tried ? implode( ' | ', $tried ) : __( 'no account id to try', 'ajcore' ), $ids ? implode( ', ', $ids ) : __( 'none', 'ajcore' ) ) );
+	}
+
+	/** Inbox folderId of a Zoho account id ('' if the account can't be read), cached a day. */
+	private function inbox_folder_id( $account ) {
+		$ckey = 'ajcore_zm_inbox_' . md5( (string) $account );
+		$hit  = get_transient( $ckey );
+		if ( is_string( $hit ) && '' !== $hit ) {
+			return $hit;
+		}
+		$res = $this->api_request( '/accounts/' . rawurlencode( (string) $account ) . '/folders' );
+		if ( is_wp_error( $res ) || 200 !== $res['status'] ) {
+			return '';
+		}
+		foreach ( (array) ( isset( $res['data']['data'] ) ? $res['data']['data'] : array() ) as $f ) {
+			$type = strtolower( (string) ( isset( $f['folderType'] ) ? $f['folderType'] : '' ) );
+			$name = strtolower( (string) ( isset( $f['folderName'] ) ? $f['folderName'] : '' ) );
+			if ( ! empty( $f['folderId'] ) && ( 'inbox' === $type || 'inbox' === $name ) ) {
+				set_transient( $ckey, (string) $f['folderId'], DAY_IN_SECONDS );
+				return (string) $f['folderId'];
+			}
+		}
+		return '';
+	}
+
+	/** "path=value" for every scalar field whose key ends in "Id"/"id" (diagnostics only; capped). */
+	private static function id_leaves( $node, $path = '', &$out = array() ) {
+		foreach ( is_array( $node ) ? $node : array() as $k => $v ) {
+			$p = '' === $path ? (string) $k : $path . '.' . $k;
+			if ( is_array( $v ) ) {
+				self::id_leaves( $v, $p, $out );
+			} elseif ( is_scalar( $v ) && '' !== (string) $v && preg_match( '/id$/i', (string) $k ) && count( $out ) < 15 ) {
+				$out[] = $p . '=' . $v;
+			}
+		}
+		return $out;
 	}
 
 	/** Zoho Mail timestamps: milliseconds since epoch (number or numeric string) or an ISO 8601 string. */
