@@ -3868,7 +3868,12 @@ class AJForms {
 		}
 
 		$display = array_values( $display );
-		$used_payments = array();
+		// One payment can settle several paid lines (e.g. a setup fee + first subscription
+		// period on the same invoice), so track how much of each payment is already applied
+		// instead of letting a payment match only one line.
+		$used_payments    = array();
+		$payment_applied  = array();
+		$payment_services = array();
 		foreach ( $display as $service_entry ) {
 			$service_type   = sanitize_key( isset( $service_entry->source_type ) ? (string) $service_entry->source_type : '' );
 			$service_status = sanitize_key( isset( $service_entry->status ) ? (string) $service_entry->status : '' );
@@ -3885,9 +3890,16 @@ class AJForms {
 			$matched_index = null;
 			$amount_date_index = null;
 			foreach ( $display as $payment_index => $payment_entry ) {
-				if ( isset( $used_payments[ $payment_index ] ) || ! in_array( sanitize_key( isset( $payment_entry->source_type ) ? (string) $payment_entry->source_type : '' ), array( 'charge', 'payment' ), true ) || $this->get_portal_ledger_balance_effect( $payment_entry ) >= -0.00001 ) {
+				if ( ! in_array( sanitize_key( isset( $payment_entry->source_type ) ? (string) $payment_entry->source_type : '' ), array( 'charge', 'payment' ), true ) ) {
 					continue;
 				}
+				$payment_effect = $this->get_portal_ledger_balance_effect( $payment_entry );
+				if ( $payment_effect >= -0.00001 ) {
+					continue;
+				}
+				$payment_used      = isset( $used_payments[ $payment_index ] );
+				$payment_remaining = abs( $payment_effect ) - ( isset( $payment_applied[ $payment_index ] ) ? $payment_applied[ $payment_index ] : 0.0 );
+				$service_amount    = abs( (float) $service_entry->amount );
 				$payment_refs = array_filter( array(
 					isset( $payment_entry->invoice_id ) ? (string) $payment_entry->invoice_id : '',
 					isset( $payment_entry->payment_intent_id ) ? (string) $payment_entry->payment_intent_id : '',
@@ -3904,11 +3916,11 @@ class AJForms {
 					// attaching a card later), so the amount fallback allows a full billing
 					// cycle of lag before giving up and treating the paid invoice as net-zero.
 					&& $service_time && $payment_time && abs( $service_time - $payment_time ) <= 45 * DAY_IN_SECONDS;
-				if ( $strong_match ) {
+				if ( $strong_match && ( ! $payment_used || $payment_remaining + 0.00001 >= $service_amount ) ) {
 					$matched_index = $payment_index;
 					break;
 				}
-				if ( null === $amount_date_index && $amount_date_match ) {
+				if ( ! $payment_used && null === $amount_date_index && $amount_date_match ) {
 					$amount_date_index = $payment_index;
 				}
 			}
@@ -3920,10 +3932,14 @@ class AJForms {
 				$service_entry->_ajcore_paid_invoice_net_zero = true;
 				continue;
 			}
-			$used_payments[ $matched_index ] = true;
-			$payment_entry = $display[ $matched_index ];
+			$used_payments[ $matched_index ]   = true;
+			$payment_applied[ $matched_index ] = ( isset( $payment_applied[ $matched_index ] ) ? $payment_applied[ $matched_index ] : 0.0 ) + abs( (float) $service_entry->amount );
+			$payment_services[ $matched_index ][] = $this->get_portal_ledger_display_description( $service_entry );
+		}
+		foreach ( $payment_services as $payment_index => $service_labels ) {
+			$payment_entry = $display[ $payment_index ];
 			if ( $this->is_generic_customer_portal_service_label( isset( $payment_entry->description ) ? $payment_entry->description : '' ) ) {
-				$payment_entry->description = sprintf( __( 'Payment — %s', 'ajforms' ), $this->get_portal_ledger_display_description( $service_entry ) );
+				$payment_entry->description = sprintf( __( 'Payment — %s', 'ajforms' ), implode( ', ', array_unique( $service_labels ) ) );
 			}
 		}
 		usort(
