@@ -1635,7 +1635,8 @@ class AJCore_Pipeline {
 
 			// Real attachment filenames from this mailbox are opaque hashes, not descriptive —
 			// the only reliable signal is the PDF's actual text content.
-			$binary = $this->src_attachment( $source, $native, $pdf['attachment_id'] );
+			$binary     = $this->src_attachment( $source, $native, $pdf['attachment_id'] );
+			$read_error = is_wp_error( $binary ) ? $binary->get_error_message() : ''; // shown on the row: an unread PDF is never classified
 			if ( ! is_wp_error( $binary ) ) {
 				{
 					$pdf_text   = $this->pipeline_extract_pdf_text( $binary );
@@ -1659,6 +1660,7 @@ class AJCore_Pipeline {
 				'suggested_category'  => $suggested_category,
 				'related_link'        => $related_link,
 				'managed_note'        => $managed_note,
+				'read_error'          => $read_error,
 			);
 		}
 
@@ -2927,7 +2929,7 @@ class AJCore_Pipeline {
 
 						var attachmentsHtml = ( data.attachments || [] ).map( function ( a, idx ) {
 							var suggested = stripPdfExt( a.suggested_filename || a.filename );
-							var note = a.managed_note ? ' &middot; <span style="color:#b45309;">' + escapeHtml( a.managed_note ) + '</span>' : a.looks_like_document ? '' : ' &middot; <span style="color:#b45309;">' + <?php echo wp_json_encode( __( "didn't look like a filing document by filename — check before filing", 'ajcore' ) ); ?> + '</span>';
+							var note = a.read_error ? ' &middot; <span style="color:#b32d2e;">' + <?php echo wp_json_encode( __( 'could not read PDF:', 'ajcore' ) ); ?> + ' ' + escapeHtml( a.read_error ) + '</span>' : a.managed_note ? ' &middot; <span style="color:#b45309;">' + escapeHtml( a.managed_note ) + '</span>' : a.looks_like_document ? '' : ' &middot; <span style="color:#b45309;">' + <?php echo wp_json_encode( __( "didn't look like a filing document by filename — check before filing", 'ajcore' ) ); ?> + '</span>';
 							var linkHtml = a.related_link ? '<a href="' + escapeHtml( a.related_link ) + '" target="_blank" rel="noopener noreferrer" style="font-size:11px;font-weight:700;display:inline-block;margin-top:4px;">' + <?php echo wp_json_encode( __( 'Open filing site →', 'ajcore' ) ); ?> + '</a>' : '';
 							return '' +
 								'<div class="ajcore-pl-attachment" data-attachment-id="' + escapeHtml( a.attachment_id ) + '" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;">' +
