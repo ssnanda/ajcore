@@ -10242,6 +10242,7 @@ class AJForms {
 				<a href="#ajp-buy"><?php esc_html_e( 'Get started', 'ajforms' ); ?></a>
 			</div>
 		</div>
+		<?php
 		return (string) ob_get_clean();
 	}
 
