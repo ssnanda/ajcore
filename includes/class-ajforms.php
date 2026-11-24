@@ -10061,11 +10061,16 @@ class AJForms {
 			$styled = true;
 			?>
 			<style>
-				.ajp-page{--ajp-accent:#2563eb;--ajp-ink:#0f172a;--ajp-muted:#475569;--ajp-line:#e2e8f0;color:var(--ajp-ink);max-width:1120px;margin:0 auto}
+				.ajp-page{--ajp-accent:#2563eb;--ajp-ink:#0f172a;--ajp-muted:#475569;--ajp-line:#e2e8f0;color:var(--ajp-ink);box-sizing:border-box}
+				/* Break out of the theme's narrow content column: as wide as the window allows, up to 1320px, centred. */
+				.ajp-page{position:relative;left:50%;transform:translateX(-50%);width:min(1320px,calc(100vw - 48px))!important;max-width:none!important;margin-left:0!important;margin-right:0!important}
+				.ajp-page *,.ajp-page *:before,.ajp-page *:after{box-sizing:border-box}
 				.ajp-back{display:inline-block;margin:0 0 14px;color:var(--ajp-muted);text-decoration:none;font-size:14px}
 				.ajp-back:hover{color:var(--ajp-accent)}
-				.ajp-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:40px;align-items:start}
-				.ajp-side{position:sticky;top:96px;display:grid;gap:16px}
+				.ajp-layout{display:grid;grid-template-columns:minmax(0,1fr) clamp(300px,28vw,380px);grid-template-areas:"head side" "main side";column-gap:clamp(28px,4vw,56px);row-gap:0;align-items:start}
+				.ajp-head{grid-area:head;margin:0 0 20px}
+				.ajp-main{grid-area:main;min-width:0}
+				.ajp-side{grid-area:side;position:sticky;top:96px;display:grid;gap:16px;align-self:start}
 				.ajp-box{padding:18px 20px;border:1px solid var(--ajp-line);border-radius:16px;background:#fff}
 				.ajp-box h3{margin:0 0 12px;font-size:16px}
 				.ajp-box h4{margin:14px 0 6px;font-size:14px}
@@ -10081,7 +10086,7 @@ class AJForms {
 				.ajp-notes p{margin:0 0 8px;font-size:13px;line-height:1.5;color:#334155}
 				.ajp-notes p:last-child{margin:0}
 				.ajp-lede{font-size:clamp(18px,2.2vw,22px);line-height:1.5;color:var(--ajp-ink);margin:0 0 14px}
-				.ajp-hero-img{display:block;width:100%;max-height:360px;object-fit:cover;border-radius:16px;margin:8px 0 0}
+				.ajp-hero-img{display:block;width:100%;max-width:720px;height:auto;max-height:clamp(220px,32vw,380px);object-fit:contain;object-position:left center;border-radius:16px;margin:0}
 				.ajp-buy{padding:22px;border:1px solid var(--ajp-line);border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(15,23,42,.08)}
 				.ajp-buy .ajcore-product{border:0!important;box-shadow:none!important;padding:0!important}
 				.ajp-buy .ajcore-product-image{display:none!important} /* the hero already shows it */
@@ -10110,7 +10115,24 @@ class AJForms {
 				.ajp-cta h2{margin:0;color:#fff;font-size:clamp(20px,2.4vw,26px)}
 				.ajp-cta a{display:inline-block;padding:12px 26px;border-radius:12px;background:#fff;color:#1e3a8a;font-weight:700;text-decoration:none}
 				.ajp-section:first-child{margin-top:0}
-				@media (max-width:900px){.ajp-layout{grid-template-columns:1fr}.ajp-side{position:static}}
+				/* Tablet / phone: one column. Order: heading, buy box, content, then the side extras. */
+				@media (max-width:900px){
+					.ajp-page{width:calc(100vw - 32px)!important}
+					.ajp-layout{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "buy" "main"}
+					.ajp-side{display:contents}
+					.ajp-side > .ajp-buy{grid-area:buy;margin:0 0 8px}
+					.ajp-side > .ajp-box{margin:16px 0 0}
+					.ajp-hero-img{max-height:260px;object-position:center}
+					.ajp-section{margin-top:32px}
+					.ajp-cta{padding:22px;flex-direction:column;align-items:flex-start}
+				}
+				@media (max-width:480px){
+					.ajp-page{width:calc(100vw - 24px)!important}
+					.ajp-buy{padding:16px}
+					.ajp-features{grid-template-columns:1fr}
+					.ajp-steps{grid-template-columns:1fr}
+					.ajp-faq summary{padding:12px 14px}
+				}
 			</style>
 			<?php
 		}
@@ -10129,12 +10151,14 @@ class AJForms {
 				<a class="ajp-back" href="<?php echo esc_url( (string) get_permalink( $listing_id ) ); ?>">&larr; <?php echo esc_html( get_the_title( $listing_id ) ); ?></a>
 			<?php endif; ?>
 			<div class="ajp-layout">
-				<div class="ajp-main">
+				<header class="ajp-head">
 					<?php // The theme does not print a title on these pages: the template carries the page's one H1. ?>
 					<h1 class="ajp-title"><?php echo esc_html( $c['title'] ); ?></h1>
 					<?php if ( '' !== $c['summary'] ) : ?>
 						<p class="ajp-lede"><?php echo esc_html( $c['summary'] ); ?></p>
 					<?php endif; ?>
+				</header>
+				<div class="ajp-main">
 					<?php if ( ! empty( $c['images'][0] ) ) : ?>
 						<img class="ajp-hero-img" src="<?php echo esc_url( function_exists( 'ajcore_product_image_url' ) ? ajcore_product_image_url( $c['images'][0] ) : $c['images'][0] ); ?>" alt="<?php echo esc_attr( $c['name'] ); ?>" loading="eager" decoding="async">
 					<?php endif; ?>
