@@ -1258,23 +1258,60 @@ class AJCore_Zoho_Mail {
 
 	/**
 	 * Bytes of an attachment listed by the Shared Mailbox API. Zoho documents the listing but (as of 2026-11) no shared
-	 * download route; this uses the path that mirrors the documented "Get a Message" one. If Zoho answers anything but
-	 * file bytes, the error says so plainly rather than filing a broken PDF.
+	 * download route: /v2/sharedmailbox/{addr}/messages/{id}/attachments/{aid} answers 404 URL_RULE_NOT_CONFIGURED. The
+	 * only documented download is the regular GET /accounts/{accountId}/folders/{folderId}/messages/{id}/attachments/{aid}
+	 * (https://www.zoho.com/mail/help/api/get-attachment-content.html). "Get a Message" on the shared mailbox reports the
+	 * message's folderId plus groupId / mailSpaceId, so that route is tried with each candidate account id (shared
+	 * mailbox ids first, then the login's own). Read-only GETs; the first that returns real PDF bytes ("%PDF") is
+	 * remembered and tried first next time. Every failure is reported, so a dead end names what Zoho answered.
 	 */
 	private function shared_attachment_bytes( $message_id, $attachment_id, $address = '' ) {
 		$address = '' !== (string) $address ? strtolower( trim( (string) $address ) ) : $this->shared_address();
 		if ( '' === $address ) {
 			return new WP_Error( 'zoho_mail_not_connected', __( 'Zoho Mail is not connected.', 'ajcore' ) );
 		}
-		$res = $this->api_request( '/v2/sharedmailbox/' . $this->path_address( $address ) . '/messages/' . rawurlencode( $message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
-		if ( is_wp_error( $res ) ) {
-			return $res;
+		// Same field list the full-body read already uses successfully against this API.
+		$data = $this->shared_get( '/messages/' . rawurlencode( $message_id ), array( 'fields' => 'content,htmlSummary,summary,title,folderDetails,groupId,mailSpaceId', 'includeAttachments' => 'true' ), $address );
+		if ( is_wp_error( $data ) ) {
+			return $data;
 		}
-		// A JSON reply (error envelope) is never the file; a real PDF starts with "%PDF".
-		if ( 200 !== $res['status'] || 0 !== strpos( ltrim( (string) $res['raw'] ), '%PDF' ) ) {
-			return new WP_Error( 'zoho_mail_shared_attachment_failed', sprintf( __( 'Zoho shared-mailbox attachment download failed (HTTP %1$d: %2$s). The message has no copy in your own mailbox to download from instead.', 'ajcore' ), $res['status'], substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 160 ) ) );
+		$data   = isset( $data['data'] ) ? $data['data'] : $data;
+		$folder = self::deep_string( $data, array( 'folderId' ) );
+		if ( '' === $folder ) {
+			return new WP_Error( 'zoho_mail_shared_no_folder', __( 'Zoho shared-mailbox attachment download failed: the message details carry no folderId to download from.', 'ajcore' ) );
 		}
-		return $res['raw'];
+		$candidates = array(); // label => account id
+		foreach ( array( 'groupId', 'zgid', 'mailSpaceId' ) as $key ) {
+			$id = self::deep_string( $data, array( $key ) );
+			if ( '' !== $id && ! in_array( $id, $candidates, true ) ) {
+				$candidates[ $key ] = $id;
+			}
+		}
+		$own = trim( (string) $this->get_settings()['zoho_mail_account_id'] );
+		if ( '' !== $own && ! in_array( $own, $candidates, true ) ) {
+			$candidates['own account'] = $own;
+		}
+		$known = get_option( 'ajcore_zoho_shared_attachment_route', '' );
+		if ( isset( $candidates[ $known ] ) ) {
+			$candidates = array( $known => $candidates[ $known ] ) + $candidates;
+		}
+		$tried = array();
+		foreach ( $candidates as $label => $account ) {
+			$res = $this->api_request( '/accounts/' . rawurlencode( $account ) . '/folders/' . rawurlencode( $folder ) . '/messages/' . rawurlencode( $message_id ) . '/attachments/' . rawurlencode( $attachment_id ) );
+			if ( is_wp_error( $res ) ) {
+				$tried[] = $label . ': ' . $res->get_error_message();
+				continue;
+			}
+			// A JSON reply (error envelope) is never the file; a real PDF starts with "%PDF".
+			if ( 200 === $res['status'] && 0 === strpos( ltrim( (string) $res['raw'] ), '%PDF' ) ) {
+				if ( $known !== $label ) {
+					update_option( 'ajcore_zoho_shared_attachment_route', $label, false );
+				}
+				return $res['raw'];
+			}
+			$tried[] = $label . ' ' . $account . ': HTTP ' . $res['status'] . ' ' . substr( preg_replace( '/\s+/', ' ', (string) $res['raw'] ), 0, 90 );
+		}
+		return new WP_Error( 'zoho_mail_shared_attachment_failed', sprintf( __( 'Zoho shared-mailbox attachment download failed (folder %1$s) — %2$s', 'ajcore' ), $folder, $tried ? implode( ' | ', $tried ) : __( 'no account id to try', 'ajcore' ) ) );
 	}
 
 	/** Zoho Mail timestamps: milliseconds since epoch (number or numeric string) or an ISO 8601 string. */
