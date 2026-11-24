@@ -449,7 +449,9 @@ class AJCore_Zoho_Mail {
 		}
 		$url = 'https://' . $this->api_host( $settings['zoho_mail_data_center'] ) . '/api' . $path;
 		if ( ! empty( $query ) ) {
-			$url = add_query_arg( $query, $url );
+			// add_query_arg() does not encode values: a subject search with "&", "+" or "#" (e.g. "Document & Other
+			// Valuable Information") was cut short, the mailbox copy was never found and its attachments came back empty.
+			$url .= '?' . http_build_query( $query, '', '&', PHP_QUERY_RFC3986 );
 		}
 		$response = wp_remote_request( $url, array( 'method' => $method, 'timeout' => 20, 'headers' => array( 'Authorization' => 'Zoho-oauthtoken ' . $token ) ) );
 		// Reads are safe to repeat: a slow or dropped connection to Zoho gets two more tries before it counts as an error.
@@ -958,9 +960,12 @@ class AJCore_Zoho_Mail {
 			return null;
 		}
 		$bare  = trim( (string) preg_replace( '/^(?:\s*(?:re|fwd?)\s*:\s*)+/i', '', $subject ) );
+		// Symbol-only tokens ("&", "-", "|") are not searchable words and only make the search fail.
 		$words = array_slice( array_values( array_filter( array_map( static function ( $w ) {
 			return str_replace( '"', '', $w );
-		}, preg_split( '/\s+/', $bare ) ) ) ), 0, 8 );
+		}, preg_split( '/\s+/', $bare ) ), static function ( $w ) {
+			return (bool) preg_match( '/[\p{L}\p{N}]/u', $w );
+		} ) ), 0, 8 );
 		if ( ! $words ) {
 			$debug[] = 'empty subject after cleanup';
 			return null;
@@ -1133,11 +1138,18 @@ class AJCore_Zoho_Mail {
 		if ( '' !== $full ) {
 			$body_text = $full;
 		}
-		$loc = $this->locate_message( (string) $message_id, $details, $unused_debug );
-		if ( $loc ) {
+		$att_debug = array(); // why the attachment list could not be read; '' when it was
+		$loc       = $this->locate_message( (string) $message_id, $details, $att_debug );
+		if ( ! $loc ) {
+			array_unshift( $att_debug, 'message copy not found in your own mailbox' );
+		} else {
 			$base = '/accounts/' . rawurlencode( $loc['account'] ) . '/folders/' . rawurlencode( $loc['folder'] ) . '/messages/' . rawurlencode( $loc['id'] );
 			$info = $this->api_request( $base . '/attachmentinfo' );
-			if ( ! is_wp_error( $info ) && 200 === $info['status'] ) {
+			if ( is_wp_error( $info ) ) {
+				$att_debug[] = 'attachment list: ' . $info->get_error_message();
+			} elseif ( 200 !== $info['status'] ) {
+				$att_debug[] = 'attachment list: HTTP ' . $info['status'] . ' ' . substr( preg_replace( '/\s+/', ' ', (string) $info['raw'] ), 0, 100 );
+			} else {
 				foreach ( (array) ( isset( $info['data']['data']['attachments'] ) ? $info['data']['data']['attachments'] : array() ) as $a ) {
 					$name = isset( $a['attachmentName'] ) ? (string) $a['attachmentName'] : '';
 					if ( '' === $name || empty( $a['attachmentId'] ) || 0 !== strcasecmp( substr( $name, -4 ), '.pdf' ) ) {
@@ -1157,6 +1169,7 @@ class AJCore_Zoho_Mail {
 			'body_debug' => implode( ' | ', $body_debug ),
 			'body_html'  => $body_html,
 			'pdfs'      => $pdfs,
+			'attachments_error' => implode( ' | ', $att_debug ),
 		);
 	}
 

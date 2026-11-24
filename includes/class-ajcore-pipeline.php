@@ -1670,6 +1670,8 @@ class AJCore_Pipeline {
 			'date'        => $message['date_str'],
 			'body_text'   => $body_text,
 			'attachments' => $attachments,
+			// Non-empty when the attachment list itself could not be read (so "no attachments" is not claimed falsely).
+			'attachments_error' => isset( $message['attachments_error'] ) ? (string) $message['attachments_error'] : '',
 		);
 	}
 
