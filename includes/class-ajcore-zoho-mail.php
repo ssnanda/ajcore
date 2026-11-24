@@ -970,15 +970,30 @@ class AJCore_Zoho_Mail {
 			$debug[] = 'empty subject after cleanup';
 			return null;
 		}
-		$key = implode( '::', array_map( static function ( $w ) {
-			return 'subject:' . $w;
-		}, $words ) );
+		$to_key = static function ( array $ws ) {
+			return implode( '::', array_map( static function ( $w ) {
+				return 'subject:' . $w;
+			}, $ws ) );
+		};
+		$keys = array( $to_key( $words ) );
+		// Zoho's search matches nothing when a term carries punctuation ("Congratulations!"), so a search that finds no
+		// mail at all is retried once with letters/digits-only words.
+		$plain = array_slice( array_values( array_filter( preg_split( '/[^\p{L}\p{N}]+/u', $bare ), static function ( $w ) {
+			return strlen( $w ) > 1;
+		} ) ), 0, 8 );
+		if ( $plain && $to_key( $plain ) !== $keys[0] ) {
+			$keys[] = $to_key( $plain );
+		}
 		$want = strtolower( trim( html_entity_decode( $bare, ENT_QUOTES, 'UTF-8' ) ) );
 		$when = strtotime( $this->timestamp_to_mysql( self::deep_find( $details, 'createdAt' ) ) . ' UTC' );
 		$best = null;
 		$gap  = null;
 		$seen = 0;
 		$same = 0;
+		foreach ( $keys as $key ) {
+			if ( $seen > 0 ) {
+				break; // the previous search found mail; its result stands
+			}
 		// Many mails share one subject (every Lowe's receipt), so page through the results (200 each, up to 1000) until a copy at the right time turns up.
 		for ( $start = 0; $start < 1000; $start += 200 ) {
 			$res = $this->api_request( '/accounts/' . rawurlencode( $acct ) . '/messages/search', array( 'searchKey' => $key, 'limit' => 200, 'start' => $start, 'includeto' => 'true' ) );
@@ -1015,8 +1030,9 @@ class AJCore_Zoho_Mail {
 				break;
 			}
 		}
+		}
 		if ( ! $best ) {
-			$debug[] = 'your own mailbox search returned ' . $seen . ' message(s), none with this subject (is this login a member of the mailbox so mail is also delivered to it?)';
+			$debug[] = 'your own mailbox search returned ' . $seen . ' message(s), none with this subject (is this login a member of the mailbox so mail is also delivered to it?) [searched: ' . implode( ' ; then ', $keys ) . ']';
 			return null;
 		}
 		if ( $gap > 6 * HOUR_IN_SECONDS ) {
