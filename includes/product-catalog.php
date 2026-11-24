@@ -206,6 +206,43 @@ function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
 }
 
 /**
+ * Standard URL slug for a product's page (the last part of /service/<slug>/).
+ *
+ * 1. Stripe product metadata `page_slug` (or `slug`) when set: the deliberate override,
+ *    kept in Stripe next to `category` so it survives re-syncs and applies on every site.
+ * 2. Otherwise derived from the product name for search: lowercase words only, dotted
+ *    abbreviations joined (U.S. -> us), "&" dropped, and filler / billing words removed
+ *    (a, the, for, subscription, service…), capped at 6 words. Examples:
+ *      Virtual Office Subscription               -> virtual-office
+ *      LLC Setup – U.S.-Based Owners             -> llc-setup-us-based-owners
+ *      NC Assumed Business Name (DBA) Registration -> nc-assumed-business-name-dba-registration
+ *
+ * Only used when a page is created; existing pages keep their address (changing a live
+ * URL would break links and lose ranking).
+ */
+function ajcore_product_catalog_page_slug( $price ) {
+	$meta = is_array( $price ) && ! empty( $price['product_metadata'] ) && is_array( $price['product_metadata'] ) ? $price['product_metadata'] : array();
+	foreach ( array( 'page_slug', 'slug' ) as $key ) {
+		if ( ! empty( $meta[ $key ] ) ) {
+			$override = sanitize_title( (string) $meta[ $key ] );
+			if ( '' !== $override ) {
+				return $override;
+			}
+		}
+	}
+
+	$name = is_array( $price ) && isset( $price['product_name'] ) ? (string) $price['product_name'] : '';
+	$name = remove_accents( html_entity_decode( $name, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
+	$name = preg_replace_callback( '/\b(?:[A-Za-z]\.){2,}/', static function ( $m ) { return str_replace( '.', '', $m[0] ); }, $name ); // U.S. -> US
+	$words = preg_split( '/[^a-z0-9]+/', strtolower( $name ), -1, PREG_SPLIT_NO_EMPTY );
+	$drop  = array( 'a', 'an', 'the', 'and', 'or', 'of', 'for', 'to', 'with', 'in', 'on', 'subscription', 'subscriptions', 'service', 'services', 'plan', 'package' );
+	$kept  = array_values( array_diff( $words, $drop ) );
+	$words = empty( $kept ) ? $words : $kept;
+	$slug  = sanitize_title( implode( '-', array_slice( $words, 0, 6 ) ) );
+	return '' !== $slug ? $slug : sanitize_title( is_array( $price ) && isset( $price['id'] ) ? (string) $price['id'] : 'product' );
+}
+
+/**
  * The price that requires this one ("Requires" in Settings > Product Catalog), or ''. E.g. for
  * Virtual Office Setup this returns Virtual Office Subscription's price ID.
  */

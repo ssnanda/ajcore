@@ -29929,6 +29929,7 @@ class AJForms_Admin {
 		$categories   = ajcore_product_catalog_categories( $prices, $catalog );
 		$page_choices = $this->get_product_catalog_page_choices();
 		$listing_id   = ajcore_product_catalog_listing_page_id( $catalog );
+		$listing_path = '/' . ( $listing_id ? trailingslashit( get_page_uri( $listing_id ) ) : '' ); // shown before each new page's slug
 
 		// Same "in shop" rule as AJ Core > Products: active product + price, and in the shop
 		// selection (an empty selection means the whole active catalog). ?catalog_all=1 lists all.
@@ -30210,6 +30211,9 @@ class AJForms_Admin {
 									<a href="<?php echo esc_url( $create_url ); ?>"><?php esc_html_e( 'Create page', 'ajforms' ); ?></a>
 								<?php endif; ?>
 							</div>
+							<?php if ( ! $page_id ) : ?>
+								<div class="ajcore-catalog-muted" style="margin-top:4px;"><code><?php echo esc_html( $listing_path . ajcore_product_catalog_page_slug( $price ) . '/' ); ?></code></div>
+							<?php endif; ?>
 						</td>
 					</tr>
 				<?php endforeach; ?>
@@ -30390,13 +30394,37 @@ class AJForms_Admin {
 			$blocks[] = "<!-- wp:html -->\n" . wp_kses_post( $rich ) . "\n<!-- /wp:html -->";
 		}
 
+		// Standard address (see ajcore_product_catalog_page_slug()). If another page under the
+		// listing already uses it, stop instead of letting WordPress append "-2": a numbered
+		// duplicate is a poor URL and usually means the product already has a page.
+		$parent_id = ajcore_product_catalog_listing_page_id( $catalog );
+		$slug      = ajcore_product_catalog_page_slug( $price );
+		$taken     = get_posts(
+			array(
+				'post_type'      => 'page',
+				'name'           => $slug,
+				'post_parent'    => $parent_id,
+				'post_status'    => array( 'publish', 'draft', 'pending', 'private', 'future' ),
+				'posts_per_page' => 1,
+				'fields'         => 'ids',
+			)
+		);
+		if ( ! empty( $taken ) ) {
+			return new WP_Error(
+				'ajcore_product_page_slug_taken',
+				/* translators: 1: slug, 2: existing page title */
+				sprintf( __( 'The address "%1$s" is already used by the page "%2$s". Link that page in the Product page column, or set Stripe product metadata page_slug to another address.', 'ajforms' ), $slug, get_the_title( (int) $taken[0] ) )
+			);
+		}
+
 		$page_id = wp_insert_post(
 			array(
 				'post_type'    => 'page',
 				'post_status'  => $status,
 				'post_title'   => isset( $price['product_name'] ) ? sanitize_text_field( (string) $price['product_name'] ) : $price_id,
+				'post_name'    => $slug,
 				'post_content' => implode( "\n\n", $blocks ),
-				'post_parent'  => ajcore_product_catalog_listing_page_id( $catalog ),
+				'post_parent'  => $parent_id,
 			),
 			true
 		);
