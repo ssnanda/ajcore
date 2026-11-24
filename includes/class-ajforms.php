@@ -10058,137 +10058,166 @@ class AJForms {
 		usort( $related, static function ( $a, $b ) { return $b['match'] <=> $a['match']; } ); // stable in PHP 8: shop order within each group
 		$related = array_slice( $related, 0, 6 );
 
-		static $styled = false;
-		ob_start();
-		if ( ! $styled ) {
-			$styled = true;
-			?>
-			<style>
-				.ajp-page{--ajp-accent:#2563eb;--ajp-ink:#0f172a;--ajp-muted:#475569;--ajp-line:#e2e8f0;color:var(--ajp-ink);box-sizing:border-box}
-				/* Break out of the theme's narrow content column: as wide as the window allows, up to 1320px, centred. */
-				.ajp-page{position:relative;left:50%;transform:translateX(-50%);width:min(1320px,calc(100vw - 48px))!important;max-width:none!important;margin-left:0!important;margin-right:0!important}
-				.ajp-page *,.ajp-page *:before,.ajp-page *:after{box-sizing:border-box}
-				.ajp-back{display:inline-block;margin:0 0 14px;color:var(--ajp-muted);text-decoration:none;font-size:14px}
-				.ajp-back:hover{color:var(--ajp-accent)}
-				.ajp-layout{display:grid;grid-template-columns:minmax(0,1fr) clamp(300px,28vw,380px);grid-template-areas:"head side" "main side";grid-template-rows:auto 1fr;column-gap:clamp(28px,4vw,56px);row-gap:0;align-items:start}
-				.ajp-head{grid-area:head;margin:0 0 20px}
-				.ajp-main{grid-area:main;min-width:0}
-				.ajp-side{grid-area:side;position:sticky;top:96px;display:grid;gap:16px;align-self:start}
-				.ajp-box{padding:18px 20px;border:1px solid var(--ajp-line);border-radius:16px;background:#fff}
-				.ajp-box h3{margin:0 0 12px;font-size:16px}
-				.ajp-box h4{margin:14px 0 6px;font-size:14px}
-				.ajp-facts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:0;font-size:14px}
-				.ajp-facts dt{color:var(--ajp-muted)}
-				.ajp-facts dd{margin:0;font-weight:600}
-				.ajp-needs{margin:0;padding-left:18px;font-size:14px;color:#334155;line-height:1.6}
-				.ajp-reviews{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
-				.ajp-review{margin:0;padding:18px;border:1px solid var(--ajp-line);border-radius:14px;background:#fff}
-				.ajp-review blockquote{margin:6px 0 10px;color:#334155;line-height:1.6}
-				.ajp-review figcaption{font-weight:600;font-size:14px}
-				.ajp-stars{color:#f59e0b;letter-spacing:2px}
-				.ajp-notes p{margin:0 0 8px;font-size:13px;line-height:1.5;color:#334155}
-				.ajp-notes p:last-child{margin:0}
-				.ajp-lede{font-size:clamp(18px,2.2vw,22px);line-height:1.5;color:var(--ajp-ink);margin:0 0 14px}
-				.ajp-hero-img{display:block;width:auto;max-width:min(100%,480px);height:auto;max-height:clamp(220px,28vw,360px);border-radius:16px;margin:0}
-				.ajp-buy{padding:22px;border:1px solid var(--ajp-line);border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(15,23,42,.08)}
-				.ajp-buy .ajcore-product{border:0!important;box-shadow:none!important;padding:0!important}
-				.ajp-buy .ajcore-product-image{display:none!important} /* the hero already shows it */
-				.ajp-buy .ajcore-product{height:auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;gap:12px!important;justify-content:flex-start!important}
-				.ajp-buy .ajcore-product > *:empty{display:none!important}
-				.ajp-buy .ajcore-product > *{margin-top:0!important;margin-bottom:0!important}
-				.ajp-buy .ajcore-product-price{min-height:0!important;margin:0!important;padding-top:0!important}
-				.ajp-buy .ajcore-product *{min-height:0!important}
-				.ajp-billing{margin:10px 0 0;font-size:13px;color:var(--ajp-muted);text-align:center}
-				.ajp-about p{margin:0 0 14px}
-				.ajp-about p:last-child{margin-bottom:0}
-				.ajp-title{font-size:clamp(28px,3.4vw,40px);line-height:1.15;margin:0 0 12px}
-				.ajp-section{margin:44px 0 0}
-				.ajp-section h2{font-size:clamp(22px,2.6vw,28px);margin:0 0 16px}
-				.ajp-features{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
-				.ajp-features li{display:flex;gap:10px;align-items:flex-start;padding:14px 16px;border:1px solid var(--ajp-line);border-radius:12px;background:#f8fafc;font-weight:500}
-				.ajp-features li:before{content:"✓";flex:0 0 22px;height:22px;border-radius:50%;background:#dcfce7;color:#15803d;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
-				.ajp-about{font-size:17px;line-height:1.7;color:#334155;max-width:760px}
-				.ajp-steps{list-style:none;margin:0;padding:0;counter-reset:ajp;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
-				.ajp-steps li{counter-increment:ajp;position:relative;padding:44px 16px 16px;border:1px solid var(--ajp-line);border-radius:14px;background:#fff}
-				.ajp-steps li:before{content:counter(ajp);position:absolute;top:12px;left:16px;width:26px;height:26px;border-radius:50%;background:var(--ajp-accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:14px}
-				.ajp-faq details{border:1px solid var(--ajp-line);border-radius:12px;background:#fff;margin:0 0 10px}
-				.ajp-faq summary{cursor:pointer;padding:14px 18px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:12px}
-				.ajp-faq summary::-webkit-details-marker{display:none}
-				.ajp-faq summary:after{content:"+";font-size:20px;line-height:1;color:var(--ajp-accent)}
-				.ajp-faq details[open] summary:after{content:"–"}
-				.ajp-faq details p{margin:0;padding:0 18px 16px;color:#334155;line-height:1.6}
-				.ajp-others{list-style:none;margin:0;padding:0;display:grid;gap:2px}
-				.ajp-others li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--ajp-line)}
-				.ajp-others li:first-child{border-top:0;padding-top:0}
-				.ajp-other-info{min-width:0;display:flex;flex-direction:column;gap:2px}
-				.ajp-other-name{font-size:14px;font-weight:600;color:var(--ajp-ink);text-decoration:none;line-height:1.3}
-				a.ajp-other-name:hover{color:var(--ajp-accent);text-decoration:underline}
-				.ajp-other-price{font-size:13px;color:var(--ajp-muted)}
-				.ajp-other-price .ajcore-price-amount{font-size:15px!important;line-height:1.3!important;letter-spacing:0!important;font-weight:700;color:var(--ajp-ink)}
-				.ajp-other-price .ajcore-price-interval{font-size:12px!important}
-				.ajp-other-add{flex:0 0 auto;padding:6px 14px;border-radius:8px;border:1.5px solid var(--ajp-accent);color:var(--ajp-accent);font-size:13px;font-weight:700;text-decoration:none;background:#fff}
-				.ajp-other-add:hover{background:var(--ajp-accent);color:#fff}
-				.ajp-related{display:grid;gap:8px}
-				.ajp-related a{display:block;padding:12px 14px;border:1px solid var(--ajp-line);border-radius:14px;text-decoration:none;color:var(--ajp-ink);background:#fff;transition:box-shadow .15s,border-color .15s}
-				.ajp-related a:hover{border-color:var(--ajp-accent);box-shadow:0 10px 24px rgba(37,99,235,.12)}
-				.ajp-related strong{display:block;margin:0 0 4px}
-				.ajp-related span{color:var(--ajp-muted);font-size:14px}
-				.ajp-cta{margin:48px 0 8px;padding:32px;border-radius:20px;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
-				.ajp-cta h2{margin:0;color:#fff;font-size:clamp(20px,2.4vw,26px)}
-				.ajp-cta a{display:inline-block;padding:12px 26px;border-radius:12px;background:#fff;color:#1e3a8a;font-weight:700;text-decoration:none}
-				.ajp-section:first-child{margin-top:0}
-				/* Tablet / phone: one column. Order: heading, buy box, content, then the side extras. */
-				@media (max-width:900px){
-					.ajp-page{width:calc(100vw - 32px)!important}
-					.ajp-layout{grid-template-columns:minmax(0,1fr);grid-template-areas:"head" "buy" "main"}
-					.ajp-side{display:contents}
-					.ajp-side > .ajp-buy{grid-area:buy;margin:0 0 8px}
-					.ajp-side > .ajp-box{margin:16px 0 0}
-					.ajp-hero-img{max-height:260px;object-position:center}
-					.ajp-section{margin-top:32px}
-					.ajp-cta{padding:22px;flex-direction:column;align-items:flex-start}
-				}
-				@media (max-width:480px){
-					.ajp-page{width:calc(100vw - 24px)!important}
-					.ajp-buy{padding:16px}
-					.ajp-features{grid-template-columns:1fr}
-					.ajp-steps{grid-template-columns:1fr}
-					.ajp-faq summary{padding:12px 14px}
-				}
-			</style>
-			<?php
-		}
-		?>
-		<?php
 		// Social proof: featured testimonials, then featured Google reviews (both curated in AJ Core > Reviews).
 		$reviews = array();
 		if ( function_exists( 'ajcore_get_featured_testimonials' ) ) {
 			$reviews = array_merge( (array) ajcore_get_featured_testimonials( 3 ), function_exists( 'ajcore_get_featured_google_reviews' ) ? (array) ajcore_get_featured_google_reviews( 3 ) : array() );
 			$reviews = array_slice( array_values( array_filter( $reviews, static function ( $r ) { return ! empty( $r['text'] ); } ) ), 0, 3 );
 		}
-		$has_details = '' !== $c['turnaround'] || '' !== $c['audience'] || $c['requirements'] || $cat_names;
+		$interval = ! empty( $price['recurring_interval'] ) ? sanitize_key( (string) $price['recurring_interval'] ) : '';
+		$billing  = '' === $interval ? __( 'One-time payment', 'ajforms' ) : sprintf( __( 'Billed every %s', 'ajforms' ), $interval ); // terms come from billing_note, never invented here
+		$image    = ! empty( $c['images'][0] ) ? ( function_exists( 'ajcore_product_image_url' ) ? ajcore_product_image_url( $c['images'][0] ) : $c['images'][0] ) : '';
+
+		/*
+		 * Layout (desktop): one screen holds the decision. Main column: compact header (title,
+		 * pitch, chips) with the image beside it, then "What's included" as a two-column
+		 * checklist; Details, How it works, FAQ and reviews follow. Sticky side column: buy box
+		 * (price, button, billing, key facts), Good to know, Other services with Add buttons.
+		 * Phone: header, image, buy box, included, the rest, side extras last.
+		 */
+		static $styled = false;
+		ob_start();
+		if ( ! $styled ) {
+			$styled = true;
+			?>
+			<style>
+				.ajp-page{--ajp-accent:#2563eb;--ajp-ink:#0f172a;--ajp-muted:#475569;--ajp-soft:#64748b;--ajp-line:#e2e8f0;--ajp-bg:#f8fafc;color:var(--ajp-ink);font-size:16px;line-height:1.55}
+				/* Break out of the theme's narrow content column: as wide as the window allows, up to 1320px, centred. */
+				.ajp-page{position:relative;left:50%;transform:translateX(-50%);width:min(1320px,calc(100vw - 48px))!important;max-width:none!important;margin:0!important}
+				.ajp-page *,.ajp-page *:before,.ajp-page *:after{box-sizing:border-box}
+				.ajp-back{display:inline-block;margin:0 0 10px;color:var(--ajp-soft);text-decoration:none;font-size:14px}
+				.ajp-back:hover{color:var(--ajp-accent)}
+
+				.ajp-layout{display:grid;grid-template-columns:minmax(0,1fr) clamp(300px,27vw,370px);column-gap:clamp(28px,3.5vw,52px);align-items:start}
+				.ajp-main{min-width:0}
+				.ajp-side{position:sticky;top:96px;display:grid;gap:14px;align-self:start}
+
+				/* Header: text + image side by side */
+				.ajp-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:clamp(18px,3vw,36px);align-items:center;padding:0 0 22px;border-bottom:1px solid var(--ajp-line)}
+				.ajp-title{font-size:clamp(28px,3.1vw,40px);line-height:1.12;margin:0 0 10px;letter-spacing:-.01em}
+				.ajp-lede{font-size:clamp(17px,1.5vw,19px);line-height:1.5;color:#334155;margin:0 0 14px}
+				.ajp-chips{display:flex;flex-wrap:wrap;gap:6px}
+				.ajp-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:600}
+				.ajp-chip.is-time{background:#ecfdf5;color:#047857}
+				.ajp-hero-img{display:block;width:clamp(160px,17vw,240px);height:auto;aspect-ratio:1/1;object-fit:cover;border-radius:18px;background:#fff;box-shadow:0 10px 28px rgba(15,23,42,.08)}
+
+				/* Sections */
+				.ajp-section{margin:26px 0 0}
+				.ajp-section h2{font-size:clamp(19px,1.7vw,22px);line-height:1.25;margin:0 0 12px}
+				.ajp-checks{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 24px}
+				.ajp-checks li{display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.45}
+				.ajp-checks li:before{content:"✓";flex:0 0 20px;height:20px;margin-top:1px;border-radius:50%;background:#dcfce7;color:#15803d;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center}
+				.ajp-about{color:#334155;max-width:760px}
+				.ajp-about p{margin:0 0 12px}
+				.ajp-about p:last-child{margin-bottom:0}
+				.ajp-steps{list-style:none;margin:0;padding:0;counter-reset:ajp;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+				.ajp-steps li{counter-increment:ajp;display:flex;gap:10px;align-items:flex-start;padding:14px;border:1px solid var(--ajp-line);border-radius:12px;background:#fff;font-size:15px}
+				.ajp-steps li:before{content:counter(ajp);flex:0 0 24px;height:24px;border-radius:50%;background:var(--ajp-accent);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+				.ajp-faq details{border:1px solid var(--ajp-line);border-radius:10px;background:#fff;margin:0 0 8px}
+				.ajp-faq summary{cursor:pointer;padding:12px 16px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:12px}
+				.ajp-faq summary::-webkit-details-marker{display:none}
+				.ajp-faq summary:after{content:"+";font-size:20px;line-height:1;color:var(--ajp-accent)}
+				.ajp-faq details[open] summary:after{content:"–"}
+				.ajp-faq details p{margin:0;padding:0 16px 14px;color:#334155}
+				.ajp-reviews{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+				.ajp-review{margin:0;padding:16px;border:1px solid var(--ajp-line);border-radius:12px;background:#fff}
+				.ajp-review blockquote{margin:6px 0 8px;color:#334155;font-size:15px}
+				.ajp-review figcaption{font-weight:600;font-size:14px}
+				.ajp-stars{color:#f59e0b;letter-spacing:2px}
+
+				/* Side column */
+				.ajp-box{padding:16px 18px;border:1px solid var(--ajp-line);border-radius:14px;background:#fff}
+				.ajp-box h3{margin:0 0 10px;font-size:15px}
+				.ajp-buy{padding:18px;border:1px solid var(--ajp-line);border-radius:16px;background:#fff;box-shadow:0 14px 34px rgba(15,23,42,.08)}
+				.ajp-buy .ajcore-products-wrap{margin:0!important;padding:0!important}
+				.ajp-buy .ajcore-product{border:0!important;box-shadow:none!important;padding:0!important;height:auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;gap:12px!important}
+				.ajp-buy .ajcore-product *{min-height:0!important}
+				.ajp-buy .ajcore-product > *{margin-top:0!important;margin-bottom:0!important}
+				.ajp-buy .ajcore-product > *:empty,.ajp-buy .ajcore-product-image{display:none!important}
+				.ajp-buy .ajcore-product-price{margin:0!important;padding-top:0!important}
+				.ajp-billing{margin:8px 0 0;font-size:13px;color:var(--ajp-soft);text-align:center}
+				.ajp-facts{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:14px 0 0;padding:14px 0 0;border-top:1px solid var(--ajp-line);font-size:13px}
+				.ajp-facts dt{color:var(--ajp-soft)}
+				.ajp-facts dd{margin:0;font-weight:600}
+				.ajp-needs{margin:4px 0 0;padding-left:16px;font-size:13px;color:#334155;font-weight:400}
+				.ajp-notes p{margin:0 0 8px;font-size:13px;line-height:1.5;color:#334155}
+				.ajp-notes p:last-child{margin:0}
+				.ajp-others{list-style:none;margin:0;padding:0}
+				.ajp-others li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--ajp-line)}
+				.ajp-others li:first-child{border-top:0;padding-top:0}
+				.ajp-other-info{min-width:0;display:flex;flex-direction:column}
+				.ajp-other-name{font-size:14px;font-weight:600;color:var(--ajp-ink);text-decoration:none;line-height:1.3}
+				a.ajp-other-name:hover{color:var(--ajp-accent);text-decoration:underline}
+				.ajp-other-price,.ajp-other-price *{font-size:13px!important;line-height:1.4!important;letter-spacing:0!important}
+				.ajp-other-price .ajcore-price-amount{font-weight:700!important;color:var(--ajp-ink)}
+				.ajp-other-price .ajcore-price-interval{color:var(--ajp-soft)}
+				.ajp-other-add{flex:0 0 auto;padding:5px 14px;border-radius:8px;border:1.5px solid var(--ajp-accent);color:var(--ajp-accent);font-size:13px;font-weight:700;text-decoration:none;background:#fff}
+				.ajp-other-add:hover{background:var(--ajp-accent);color:#fff}
+
+				/* Closing call to action */
+				.ajp-cta{margin:36px 0 8px;padding:22px 28px;border-radius:16px;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px}
+				.ajp-cta h2{margin:0;color:#fff;font-size:clamp(18px,1.8vw,22px)}
+				.ajp-cta a{display:inline-block;padding:10px 24px;border-radius:10px;background:#fff;color:#1e3a8a;font-weight:700;text-decoration:none}
+
+				/* Tablet / phone */
+				@media (max-width:900px){
+					.ajp-page{width:calc(100vw - 32px)!important}
+					.ajp-layout{grid-template-columns:minmax(0,1fr)}
+					.ajp-side{position:static;display:contents}
+					.ajp-main{display:contents}
+					.ajp-layout > *,.ajp-main > *,.ajp-side > *{order:10}
+					.ajp-head{order:1}
+					.ajp-buy{order:2;margin-top:18px}
+					.ajp-included{order:3}
+					.ajp-side > .ajp-box{margin-top:14px}
+					.ajp-head{grid-template-columns:minmax(0,1fr) auto}
+				}
+				@media (max-width:600px){
+					.ajp-page{width:calc(100vw - 24px)!important}
+					.ajp-head{grid-template-columns:1fr}
+					.ajp-hero-img{width:100%;max-width:300px;justify-self:start}
+					.ajp-checks{grid-template-columns:1fr}
+					.ajp-steps{grid-template-columns:1fr}
+					.ajp-cta{padding:20px;flex-direction:column;align-items:flex-start}
+				}
+			</style>
+			<?php
+		}
+		$has_facts = $cat_names || '' !== $c['turnaround'] || '' !== $c['audience'] || $c['requirements'];
 		?>
 		<div class="ajp-page">
 			<?php if ( $listing_id && (int) get_queried_object_id() !== (int) $listing_id ) : ?>
 				<a class="ajp-back" href="<?php echo esc_url( (string) get_permalink( $listing_id ) ); ?>">&larr; <?php echo esc_html( get_the_title( $listing_id ) ); ?></a>
 			<?php endif; ?>
 			<div class="ajp-layout">
-				<header class="ajp-head">
-					<?php // The theme does not print a title on these pages: the template carries the page's one H1. ?>
-					<h1 class="ajp-title"><?php echo esc_html( $c['title'] ); ?></h1>
-					<?php if ( '' !== $c['summary'] ) : ?>
-						<p class="ajp-lede"><?php echo esc_html( $c['summary'] ); ?></p>
-					<?php endif; ?>
-				</header>
 				<div class="ajp-main">
-					<?php if ( ! empty( $c['images'][0] ) ) : ?>
-						<img class="ajp-hero-img" src="<?php echo esc_url( function_exists( 'ajcore_product_image_url' ) ? ajcore_product_image_url( $c['images'][0] ) : $c['images'][0] ); ?>" alt="<?php echo esc_attr( $c['name'] ); ?>" loading="eager" decoding="async">
-					<?php endif; ?>
+					<header class="ajp-head">
+						<div>
+							<?php // The theme does not print a title on these pages: the template carries the page's one H1. ?>
+							<h1 class="ajp-title"><?php echo esc_html( $c['title'] ); ?></h1>
+							<?php if ( '' !== $c['summary'] ) : ?>
+								<p class="ajp-lede"><?php echo esc_html( $c['summary'] ); ?></p>
+							<?php endif; ?>
+							<?php if ( $cat_names || '' !== $c['turnaround'] ) : ?>
+								<div class="ajp-chips">
+									<?php foreach ( $cat_names as $cat_name ) : ?>
+										<span class="ajp-chip"><?php echo esc_html( $cat_name ); ?></span>
+									<?php endforeach; ?>
+									<?php if ( '' !== $c['turnaround'] ) : ?>
+										<span class="ajp-chip is-time">⏱ <?php echo esc_html( $c['turnaround'] ); ?></span>
+									<?php endif; ?>
+								</div>
+							<?php endif; ?>
+						</div>
+						<?php if ( '' !== $image ) : ?>
+							<img class="ajp-hero-img" src="<?php echo esc_url( $image ); ?>" alt="<?php echo esc_attr( $c['title'] ); ?>" width="240" height="240" loading="eager" decoding="async">
+						<?php endif; ?>
+					</header>
 
 					<?php if ( $c['features'] ) : ?>
-						<section class="ajp-section">
+						<section class="ajp-section ajp-included">
 							<h2><?php esc_html_e( "What's included", 'ajforms' ); ?></h2>
-							<ul class="ajp-features">
+							<ul class="ajp-checks">
 								<?php foreach ( $c['features'] as $feature ) : ?>
 									<li><?php echo esc_html( $feature ); ?></li>
 								<?php endforeach; ?>
@@ -10253,17 +10282,8 @@ class AJForms {
 				<aside class="ajp-side">
 					<div class="ajp-buy" id="ajp-buy">
 						<?php echo $buy_box; // phpcs:ignore WordPress.Security.EscapeOutput -- rendered by render_products_shortcode() ?>
-						<?php
-						$interval = ! empty( $price['recurring_interval'] ) ? sanitize_key( (string) $price['recurring_interval'] ) : '';
-						$billing  = '' === $interval
-							? __( 'One-time payment', 'ajforms' )
-							: sprintf( __( 'Billed every %s', 'ajforms' ), $interval ) // terms come from billing_note, never invented here;
-						?>
 						<p class="ajp-billing"><?php echo esc_html( $billing ); ?></p>
-					</div>
-					<?php if ( $has_details ) : ?>
-						<div class="ajp-box">
-							<h3><?php esc_html_e( 'At a glance', 'ajforms' ); ?></h3>
+						<?php if ( $has_facts ) : ?>
 							<dl class="ajp-facts">
 								<?php if ( $cat_names ) : ?>
 									<dt><?php esc_html_e( 'Category', 'ajforms' ); ?></dt><dd><?php echo esc_html( implode( ', ', $cat_names ) ); ?></dd>
@@ -10274,17 +10294,13 @@ class AJForms {
 								<?php if ( '' !== $c['audience'] ) : ?>
 									<dt><?php esc_html_e( 'Ideal for', 'ajforms' ); ?></dt><dd><?php echo esc_html( $c['audience'] ); ?></dd>
 								<?php endif; ?>
+								<?php if ( $c['requirements'] ) : ?>
+									<dt><?php esc_html_e( 'You need', 'ajforms' ); ?></dt>
+									<dd><ul class="ajp-needs"><?php foreach ( $c['requirements'] as $requirement ) : ?><li><?php echo esc_html( $requirement ); ?></li><?php endforeach; ?></ul></dd>
+								<?php endif; ?>
 							</dl>
-							<?php if ( $c['requirements'] ) : ?>
-								<h4><?php esc_html_e( 'What you need', 'ajforms' ); ?></h4>
-								<ul class="ajp-needs">
-									<?php foreach ( $c['requirements'] as $requirement ) : ?>
-										<li><?php echo esc_html( $requirement ); ?></li>
-									<?php endforeach; ?>
-								</ul>
-							<?php endif; ?>
-						</div>
-					<?php endif; ?>
+						<?php endif; ?>
+					</div>
 					<?php if ( $c['notes'] ) : ?>
 						<div class="ajp-box ajp-notes">
 							<h3><?php esc_html_e( 'Good to know', 'ajforms' ); ?></h3>
