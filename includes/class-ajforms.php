@@ -10036,24 +10036,27 @@ class AJForms {
 		}
 		$about = '' !== $c['description'] && $c['description'] !== $c['summary'] ? $c['description'] : '';
 
-		// Related: other in-shop products in the same category that have a published page.
+		// Side list: other in-shop products (same category first), each with an Add button that
+		// hands the price to its listing page's cart (?ajp_add=…, the same path as this page's
+		// own button; required add-ons follow automatically). Test products and the required half
+		// of a pair never appear (get_public_stripe_prices() / pair check).
 		$related = array();
-		if ( $cats ) {
-			foreach ( $this->get_public_stripe_prices() as $other ) {
-				$other_id = (string) $other['id'];
-				if ( $other_id === $price_id || '' !== ajcore_product_catalog_pair_parent( $other_id ) ) {
-					continue;
-				}
-				$other_page = ajcore_product_catalog_page_for_price( $other_id, $catalog );
-				if ( ! $other_page || ! array_intersect( $cats, ajcore_product_catalog_price_categories( $other, $catalog ) ) ) {
-					continue;
-				}
-				$related[] = array( 'row' => $other, 'url' => (string) get_permalink( $other_page ) );
-				if ( count( $related ) >= 3 ) {
-					break;
-				}
+		foreach ( $this->get_public_stripe_prices() as $other ) {
+			$other_id = (string) $other['id'];
+			if ( $other_id === $price_id || '' !== ajcore_product_catalog_pair_parent( $other_id ) ) {
+				continue;
 			}
+			$other_page    = ajcore_product_catalog_page_for_price( $other_id, $catalog );
+			$other_listing = ajcore_product_catalog_listing_for_price( $other_id, $catalog );
+			$related[]     = array(
+				'row'   => $other,
+				'url'   => $other_page ? (string) get_permalink( $other_page ) : '',
+				'add'   => $other_listing ? add_query_arg( 'ajp_add', rawurlencode( $other_id ), (string) get_permalink( $other_listing ) ) : '',
+				'match' => $cats && array_intersect( $cats, ajcore_product_catalog_price_categories( $other, $catalog ) ) ? 1 : 0,
+			);
 		}
+		usort( $related, static function ( $a, $b ) { return $b['match'] <=> $a['match']; } ); // stable in PHP 8: shop order within each group
+		$related = array_slice( $related, 0, 6 );
 
 		static $styled = false;
 		ob_start();
@@ -10086,10 +10089,16 @@ class AJForms {
 				.ajp-notes p{margin:0 0 8px;font-size:13px;line-height:1.5;color:#334155}
 				.ajp-notes p:last-child{margin:0}
 				.ajp-lede{font-size:clamp(18px,2.2vw,22px);line-height:1.5;color:var(--ajp-ink);margin:0 0 14px}
-				.ajp-hero-img{display:block;width:100%;max-width:720px;height:auto;max-height:clamp(220px,32vw,380px);object-fit:contain;object-position:left center;border-radius:16px;margin:0}
+				.ajp-hero-img{display:block;width:auto;max-width:min(100%,480px);height:auto;max-height:clamp(220px,28vw,360px);border-radius:16px;margin:0}
 				.ajp-buy{padding:22px;border:1px solid var(--ajp-line);border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(15,23,42,.08)}
 				.ajp-buy .ajcore-product{border:0!important;box-shadow:none!important;padding:0!important}
 				.ajp-buy .ajcore-product-image{display:none!important} /* the hero already shows it */
+				.ajp-buy .ajcore-product{height:auto!important;min-height:0!important;display:flex!important;flex-direction:column!important;gap:12px!important;justify-content:flex-start!important}
+				.ajp-buy .ajcore-product > *:empty{display:none!important}
+				.ajp-buy .ajcore-product > *{margin-top:0!important;margin-bottom:0!important}
+				.ajp-billing{margin:10px 0 0;font-size:13px;color:var(--ajp-muted);text-align:center}
+				.ajp-about p{margin:0 0 14px}
+				.ajp-about p:last-child{margin-bottom:0}
 				.ajp-title{font-size:clamp(28px,3.4vw,40px);line-height:1.15;margin:0 0 12px}
 				.ajp-section{margin:44px 0 0}
 				.ajp-section h2{font-size:clamp(22px,2.6vw,28px);margin:0 0 16px}
@@ -10106,6 +10115,16 @@ class AJForms {
 				.ajp-faq summary:after{content:"+";font-size:20px;line-height:1;color:var(--ajp-accent)}
 				.ajp-faq details[open] summary:after{content:"–"}
 				.ajp-faq details p{margin:0;padding:0 18px 16px;color:#334155;line-height:1.6}
+				.ajp-others{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+				.ajp-others li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--ajp-line)}
+				.ajp-others li:first-child{border-top:0;padding-top:0}
+				.ajp-other-info{min-width:0;display:flex;flex-direction:column;gap:2px}
+				.ajp-other-name{font-size:14px;font-weight:600;color:var(--ajp-ink);text-decoration:none;line-height:1.3}
+				a.ajp-other-name:hover{color:var(--ajp-accent);text-decoration:underline}
+				.ajp-other-price{font-size:13px;color:var(--ajp-muted)}
+				.ajp-other-price .ajcore-price-amount{font-weight:700;color:var(--ajp-ink)}
+				.ajp-other-add{flex:0 0 auto;padding:6px 14px;border-radius:8px;border:1.5px solid var(--ajp-accent);color:var(--ajp-accent);font-size:13px;font-weight:700;text-decoration:none;background:#fff}
+				.ajp-other-add:hover{background:var(--ajp-accent);color:#fff}
 				.ajp-related{display:grid;gap:8px}
 				.ajp-related a{display:block;padding:12px 14px;border:1px solid var(--ajp-line);border-radius:14px;text-decoration:none;color:var(--ajp-ink);background:#fff;transition:box-shadow .15s,border-color .15s}
 				.ajp-related a:hover{border-color:var(--ajp-accent);box-shadow:0 10px 24px rgba(37,99,235,.12)}
@@ -10231,6 +10250,13 @@ class AJForms {
 				<aside class="ajp-side">
 					<div class="ajp-buy" id="ajp-buy">
 						<?php echo $buy_box; // phpcs:ignore WordPress.Security.EscapeOutput -- rendered by render_products_shortcode() ?>
+						<?php
+						$interval = ! empty( $price['recurring_interval'] ) ? sanitize_key( (string) $price['recurring_interval'] ) : '';
+						$billing  = '' === $interval
+							? __( 'One-time payment', 'ajforms' )
+							: sprintf( __( 'Billed every %s', 'ajforms' ), $interval ) // terms come from billing_note, never invented here;
+						?>
+						<p class="ajp-billing"><?php echo esc_html( $billing ); ?></p>
 					</div>
 					<?php if ( $has_details ) : ?>
 						<div class="ajp-box">
@@ -10266,15 +10292,24 @@ class AJForms {
 					<?php endif; ?>
 					<?php if ( $related ) : ?>
 						<div class="ajp-box">
-							<h3><?php esc_html_e( 'Related services', 'ajforms' ); ?></h3>
-							<div class="ajp-related">
+							<h3><?php esc_html_e( 'Other services', 'ajforms' ); ?></h3>
+							<ul class="ajp-others">
 								<?php foreach ( $related as $item ) : ?>
-									<a href="<?php echo esc_url( $item['url'] ); ?>">
-										<strong><?php echo esc_html( $item['row']['product_name'] ); ?></strong>
-										<span><?php echo wp_kses_post( $this->format_shop_price_html( $item['row']['amount'], $item['row']['currency'], ! empty( $item['row']['recurring_interval'] ) ? $item['row']['recurring_interval'] : '' ) ); ?></span>
-									</a>
+									<li>
+										<div class="ajp-other-info">
+											<?php if ( '' !== $item['url'] ) : ?>
+												<a class="ajp-other-name" href="<?php echo esc_url( $item['url'] ); ?>"><?php echo esc_html( $item['row']['product_name'] ); ?></a>
+											<?php else : ?>
+												<span class="ajp-other-name"><?php echo esc_html( $item['row']['product_name'] ); ?></span>
+											<?php endif; ?>
+											<span class="ajp-other-price"><?php echo wp_kses_post( $this->format_shop_price_html( $item['row']['amount'], $item['row']['currency'], ! empty( $item['row']['recurring_interval'] ) ? $item['row']['recurring_interval'] : '' ) ); ?></span>
+										</div>
+										<?php if ( '' !== $item['add'] ) : ?>
+											<a class="ajp-other-add" href="<?php echo esc_url( $item['add'] ); ?>" aria-label="<?php echo esc_attr( sprintf( __( 'Add %s to cart', 'ajforms' ), $item['row']['product_name'] ) ); ?>"><?php esc_html_e( 'Add', 'ajforms' ); ?></a>
+										<?php endif; ?>
+									</li>
 								<?php endforeach; ?>
-							</div>
+							</ul>
 						</div>
 					<?php endif; ?>
 				</aside>
