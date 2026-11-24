@@ -1,7 +1,7 @@
 <?php
 /**
  * AJCore product packages: portable JSON product content (format "ajcore.product",
- * schema_version "1.0") for Products > Catalog.
+ * schema_version "1.0") for Settings > Product Catalog.
  *
  *   Import package  choose file(s) -> validate -> match an existing Stripe product (product_id,
  *                   unique exact name, or the product picked in the form) -> field-by-field
@@ -37,7 +37,8 @@ trait AJCore_Product_Packages {
 	}
 
 	private function pkg_catalog_url( $args = array() ) {
-		return add_query_arg( array_merge( array( 'page' => 'ajforms-products', 'tab' => 'catalog' ), $args ), admin_url( 'admin.php' ) );
+		// Packages live with the product editor: Settings > Product Catalog.
+		return add_query_arg( array_merge( array( 'page' => 'ajforms-settings', 'section' => 'product-catalog' ), $args ), admin_url( 'admin.php' ) );
 	}
 
 	private function pkg_blank_template() {
@@ -636,7 +637,7 @@ trait AJCore_Product_Packages {
 		$this->pkg_send_json_download( $package, 'product-' . sanitize_title( (string) ( $product['name'] ?? $product_id ) ) . '.json' );
 	}
 
-	/** Import panel on Products > Catalog: upload form, preview, or results. */
+	/** Import panel on Shop > Product pages: upload form, preview, or results. */
 	private function render_pkg_panel() {
 		$mode = $this->get_stripe_mode_badge_data();
 		$live = ! empty( $mode['is_live'] );
@@ -768,6 +769,7 @@ trait AJCore_Product_Packages {
 	private function render_pkg_styles() {
 		?>
 		<style>
+			.ajcore-pkg-box .ajcore-catalog-muted{color:#64748b;font-size:12px}
 			.ajcore-pkg-box{margin:0 0 12px;padding:12px 16px;border:1px solid #dbe3ec;border-radius:12px;background:#fff}
 			.ajcore-pkg-box > summary{cursor:pointer}
 			.ajcore-pkg-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin:10px 0 0}

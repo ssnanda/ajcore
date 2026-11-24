@@ -2688,7 +2688,7 @@ class AJForms_Admin {
 
 	/**
 	 * Product Catalog "Shop sequence": one number per product, written to every in-shop price of
-	 * that product in the shop order (the same order AJ Core > Products edits). Blank = unchanged.
+	 * that product in the shop order (the same order AJ Core > Shop edits). Blank = unchanged.
 	 */
 	private function apply_inline_shop_sequence( $sequences, $price_lists ) {
 		$display = $this->get_public_product_display_settings();
@@ -2811,7 +2811,7 @@ class AJForms_Admin {
 
 	/**
 	 * Refreshes both local copies of the Stripe catalog in one go:
-	 *   - the website listing cache (ajforms_stripe_products_cache), read by AJ Core > Products
+	 *   - the website listing cache (ajforms_stripe_products_cache), read by AJ Core > Shop
 	 *     and [ajcore_products]
 	 *   - the portal product table, read by Settings > Product Catalog and portal Add Services
 	 * Before this, the Products/Stripe Payments buttons and the product editor refreshed only the
@@ -12367,6 +12367,11 @@ class AJForms_Admin {
 			$this->handle_lead_actions();
 		} elseif ( 'ajforms-settings' === $page ) {
 			$section = isset( $_GET['section'] ) ? sanitize_key( wp_unslash( $_GET['section'] ) ) : '';
+			if ( 'product-catalog' === $section && current_user_can( 'manage_options' ) ) {
+				// Product packages (import / export / template). Reacts only to its own nonces and
+				// actions, and exits when it handles one.
+				$this->handle_pkg_actions();
+			}
 			if ( 'roles' === $section || 'role-manager' === $section || isset( $_GET['role_manager_action'] ) || isset( $_POST['role_manager_action'] ) ) {
 				// Role Manager's own links/redirects use 'roles' (matches $sections['roles'] below);
 				// 'role-manager' kept alongside it in case anything else still refers to that spelling.
@@ -14819,9 +14824,6 @@ class AJForms_Admin {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
-
-		// Product packages: template / export downloads, import preview and apply (exit on handle).
-		$this->handle_pkg_actions();
 
 		if ( isset( $_POST['ajcore_public_product_display_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_public_product_display', 'ajcore_public_product_display_nonce' );
@@ -19863,10 +19865,10 @@ class AJForms_Admin {
 
 			add_submenu_page(
 				'ajforms',
-				__( 'Products', 'ajforms' ),
-				__( 'Products', 'ajforms' ),
+				__( 'Shop', 'ajforms' ),
+				__( 'Shop', 'ajforms' ),
 				'manage_options',
-				'ajforms-products',
+				'ajforms-products', // slug kept so existing links/bookmarks still work
 				array( $this, 'display_products_page' )
 			);
 		}
@@ -25801,7 +25803,7 @@ class AJForms_Admin {
 		// carried through as hidden values so saving never resets them).
 		$this->ensure_portal_schema();
 		$portal_on = ! function_exists( 'ajcore_is_site_feature_enabled' ) || ajcore_is_site_feature_enabled( 'client_portal' );
-		// "In shop" = the public [ajcore_products] selection (AJ Core > Products shows only these).
+		// "In shop" = the public [ajcore_products] selection (AJ Core > Shop shows only these).
 		// An empty selection means the whole active catalog is in the shop.
 		$shop_display   = $this->get_public_product_display_settings();
 		$shop_selection = $shop_display['selected_prices'];
@@ -25856,7 +25858,7 @@ class AJForms_Admin {
 			}
 			$product_groups[ $group_key ]['rows'][] = $product;
 		}
-		// List in shop sequence (same order as the public shop and AJ Core > Products); products
+		// List in shop sequence (same order as the public shop and AJ Core > Shop); products
 		// not in the shop follow, in their portal order then by name.
 		$group_shop_seq = static function ( $group ) use ( $shop_all, $shop_selection, $shop_order ) {
 			$seq = null;
@@ -25888,7 +25890,7 @@ class AJForms_Admin {
 		);
 		// Pairs ("Requires", e.g. Virtual Office Subscription requires Virtual Office Setup): list
 		// the required product directly under the one that requires it, marked as one pair, the
-		// same way AJ Core > Products and Catalog show it.
+		// same way AJ Core > Shop and Catalog show it.
 		$price_group = array();
 		foreach ( $product_groups as $pg_key => $pg ) {
 			foreach ( $pg['rows'] as $pg_row ) {
@@ -26011,11 +26013,17 @@ class AJForms_Admin {
 						<button type="button" class="ajcp-tile<?php echo $default_tile === $tile_key ? ' is-active' : ''; ?>" data-filter="<?php echo esc_attr( $tile_key ); ?>" style="--c:<?php echo esc_attr( $tile[1] ); ?>" aria-pressed="<?php echo $default_tile === $tile_key ? 'true' : 'false'; ?>"><b><?php echo (int) $tile_counts[ $tile_key ]; ?></b><span><?php echo esc_html( $tile[0] ); ?></span></button>
 					<?php endforeach; ?>
 					<a class="button button-primary ajcp-new" href="<?php echo esc_url( $this->product_editor_url( 'new' ) ); ?>" title="<?php esc_attr_e( 'New product', 'ajforms' ); ?>"><?php esc_html_e( 'New', 'ajforms' ); ?></a>
+					<button type="button" class="button ajcp-new" onclick="var d=document.getElementById('ajcore-pkg-import'); if(d){d.open=true;d.scrollIntoView({behavior:'smooth',block:'start'});}" title="<?php esc_attr_e( 'Import a product package (JSON)', 'ajforms' ); ?>"><?php esc_html_e( 'Import', 'ajforms' ); ?></button>
 				</div>
 
 			</div>
 
 
+			<?php
+			// Product packages: import panel (preview / results) sits above the catalog form.
+			$this->render_pkg_styles();
+			$this->render_pkg_panel();
+			?>
 			<form method="post" id="ajcp-catalog-form">
 				<?php wp_nonce_field( 'ajcore_save_portal_products', 'ajcore_portal_products_nonce' ); ?>
 				<table class="widefat striped ajcp-catalog-table">
@@ -26090,6 +26098,7 @@ class AJForms_Admin {
 												<button type="button" class="button button-primary ajcp-row-save" hidden><?php esc_html_e( 'Save', 'ajforms' ); ?></button>
 												<?php if ( $has_stripe ) : ?>
 													<a class="button" href="<?php echo esc_url( $this->product_editor_url( (string) $product->stripe_product_id ) ); ?>"><?php esc_html_e( 'Edit', 'ajforms' ); ?></a>
+													<a class="button button-small" href="<?php echo esc_url( wp_nonce_url( $this->pkg_catalog_url( array( 'ajf_products_action' => 'pkg_export', 'product_id' => (string) $product->stripe_product_id ) ), 'ajcore_pkg_export_' . (string) $product->stripe_product_id ) ); ?>" title="<?php esc_attr_e( 'Download as a product package (JSON)', 'ajforms' ); ?>"><?php esc_html_e( 'Export', 'ajforms' ); ?></a>
 												<?php endif; ?>
 											</div>
 									</td>
@@ -26141,7 +26150,7 @@ class AJForms_Admin {
 													<?php if ( empty( $price_row->active ) ) : ?><span class="ajcp-chip is-off"><?php esc_html_e( 'archived', 'ajforms' ); ?></span><?php endif; ?>
 													<?php if ( ! empty( $price_row->active ) ) : ?>
 														<input type="hidden" name="portal_shop_present[<?php echo $pid; ?>]" value="1">
-														<label class="ajcp-shop" title="<?php esc_attr_e( 'Listed in the public shop (AJ Core > Products)', 'ajforms' ); ?>"><input type="checkbox" name="portal_shop[<?php echo $pid; ?>]" value="1" <?php checked( $shop_all || in_array( (string) $price_row->stripe_price_id, $shop_selection, true ) ); ?>> <?php esc_html_e( 'In shop', 'ajforms' ); ?></label>
+														<label class="ajcp-shop" title="<?php esc_attr_e( 'Listed in the public shop (AJ Core > Shop)', 'ajforms' ); ?>"><input type="checkbox" name="portal_shop[<?php echo $pid; ?>]" value="1" <?php checked( $shop_all || in_array( (string) $price_row->stripe_price_id, $shop_selection, true ) ); ?>> <?php esc_html_e( 'In shop', 'ajforms' ); ?></label>
 													<?php endif; ?>
 												</div>
 												<div class="ajcp-dep<?php echo '' !== $selected_required_price ? ' has-dep' : ''; ?>">
@@ -28997,6 +29006,7 @@ class AJForms_Admin {
 				.ajcore-products-hero .nav-tab:hover{background:color-mix(in srgb,var(--c) 22%,#fff);color:var(--c)}
 				.ajcore-products-hero .nav-tab.ajcore-tab-catalog{--c:#db2777}
 				.ajcore-products-hero .nav-tab.ajcore-tab-ui{--c:#0d9488}
+				.ajcore-products-hero .nav-tab.ajcore-tab-settings{--c:#64748b}
 				.ajcore-products-hero .nav-tab-active,.ajcore-products-hero .nav-tab-active:hover{background:var(--c);color:#fff;box-shadow:0 4px 12px color-mix(in srgb,var(--c) 35%,transparent)}
 				.ajcore-products-hero p{margin:0;color:#64748b;max-width:760px}
 				.ajcore-products-notice{margin:0 0 18px;padding:12px 14px;border-radius:10px}
@@ -29039,7 +29049,7 @@ class AJForms_Admin {
 				?>
 				<div class="ajcore-products-hero">
 					<div class="ajcore-products-hero-title">
-						<h1><?php esc_html_e( 'Products', 'ajforms' ); ?></h1>
+						<h1><?php esc_html_e( 'Shop', 'ajforms' ); ?></h1>
 						<?php $this->render_products_tabs_nav( $products_tab ); ?>
 					</div>
 					<a class="button button-primary" href="<?php echo esc_url( $sync_url ); ?>"><?php esc_html_e( 'Sync Stripe Products', 'ajforms' ); ?></a>
@@ -29368,13 +29378,13 @@ class AJForms_Admin {
 	}
 
 	/* ---------------------------------------------------------------------
-	 * Products > Catalog / UI tabs. Data lives in the ajcore_product_catalog
+	 * Shop > Product pages / UI tabs. Data lives in the ajcore_product_catalog
 	 * option (see includes/product-catalog.php); products stay Stripe prices.
 	 * ------------------------------------------------------------------ */
 
 	/* ---------------------------------------------------------------------
 	 * Settings > Product Catalog > Edit: edits a Stripe product and its prices in place
-	 * (the only place products are edited; AJ Core > Products is the website listing).
+	 * (the only place products are edited; AJ Core > Shop is the website listing).
 	 * Every field Stripe returns is shown; editable where Stripe allows it,
 	 * read-only where Stripe makes it immutable (price amount/interval/currency).
 	 * Each field row carries data-field="<stripe field>" so rows can be hidden
@@ -30011,14 +30021,18 @@ class AJForms_Admin {
 	}
 
 	private function render_products_tabs_nav( $current ) {
+		// Tab slugs (products / catalog / ui) are unchanged for existing links; labels say what each holds.
 		$tabs = array(
-			'products' => __( 'Products', 'ajforms' ),
-			'catalog'  => __( 'Catalog', 'ajforms' ),
-			'ui'       => __( 'UI', 'ajforms' ),
+			'products' => __( 'Shop listing', 'ajforms' ),
+			'catalog'  => __( 'Product pages', 'ajforms' ),
+			'ui'       => __( 'Display', 'ajforms' ),
+			'settings' => __( 'Settings', 'ajforms' ), // link: products are edited in Settings > Product Catalog
 		);
 		echo '<nav class="nav-tab-wrapper" style="margin:0 0 16px;">';
 		foreach ( $tabs as $slug => $label ) {
-			$url = add_query_arg( array( 'page' => 'ajforms-products', 'tab' => $slug ), admin_url( 'admin.php' ) );
+			$url = 'settings' === $slug
+				? add_query_arg( array( 'page' => 'ajforms-settings', 'section' => 'product-catalog' ), admin_url( 'admin.php' ) )
+				: add_query_arg( array( 'page' => 'ajforms-products', 'tab' => $slug ), admin_url( 'admin.php' ) );
 			printf(
 				'<a href="%1$s" class="nav-tab ajcore-tab-%4$s%2$s">%3$s</a>',
 				esc_url( $url ),
@@ -30057,7 +30071,7 @@ class AJForms_Admin {
 		$listing_id   = ajcore_product_catalog_listing_page_id( $catalog );
 		$listing_path = '/' . ( $listing_id ? trailingslashit( get_page_uri( $listing_id ) ) : '' ); // shown before each new page's slug
 
-		// Same "in shop" rule as AJ Core > Products: active product + price, and in the shop
+		// Same "in shop" rule as AJ Core > Shop: active product + price, and in the shop
 		// selection (an empty selection means the whole active catalog). ?catalog_all=1 lists all.
 		$shop_selection = array_map( 'strval', (array) $shop_selection );
 		$shop_prices    = array();
@@ -30166,10 +30180,6 @@ class AJForms_Admin {
 				?>
 			</div>
 		<?php endif; ?>
-		<?php
-		$this->render_pkg_styles();
-		$this->render_pkg_panel();
-		?>
 		<?php if ( 0 === $all_count ) : ?>
 			<div class="ajcore-products-empty"><?php esc_html_e( 'No synced Stripe prices yet.', 'ajforms' ); ?></div>
 			<?php return; ?>
@@ -30326,9 +30336,6 @@ class AJForms_Admin {
 							<div class="ajcore-catalog-muted">
 								<?php echo esc_html( strtoupper( (string) $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $interval ); ?>
 								<?php echo $is_active ? '' : ' · ' . esc_html__( 'archived', 'ajforms' ); ?>
-								<?php if ( ! empty( $price['product_id'] ) ) : ?>
-									· <a href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'ajf_products_action' => 'pkg_export', 'product_id' => (string) $price['product_id'] ), admin_url( 'admin.php' ) ), 'ajcore_pkg_export_' . (string) $price['product_id'] ) ); ?>" title="<?php esc_attr_e( 'Download this product as a package (JSON)', 'ajforms' ); ?>"><?php esc_html_e( 'Export', 'ajforms' ); ?></a>
-								<?php endif; ?>
 							</div>
 							<?php if ( isset( $pair_child_of[ $price_id ] ) ) : ?>
 								<?php

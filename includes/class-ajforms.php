@@ -85,7 +85,7 @@ class AJForms {
 		add_action( 'ajcore_chat_auto_close_stale', array( $plugin_admin, 'run_chat_auto_close_job' ) );
 		add_action( 'ajcore_manual_sync_run', array( $plugin_admin, 'run_manual_sync_job_from_transient' ) );
 		add_action( 'admin_init', array( $plugin_admin, 'maybe_upgrade_product_page_content' ) );
-		// Auto-create product pages (Products > Catalog setting): after the synced product list or
+		// Auto-create product pages (Shop > Product pages setting): after the synced product list or
 		// the "In shop" selection changes, from wp-admin or the cron sync alike.
 		foreach ( array( 'ajforms_stripe_products_cache', 'ajcore_public_product_display_settings' ) as $auto_pages_option ) {
 			add_action( 'update_option_' . $auto_pages_option, array( $plugin_admin, 'queue_auto_create_product_pages' ) );
@@ -9942,7 +9942,7 @@ class AJForms {
 
 	/**
 	 * [ajcore_product price_id="price_…"] — one buy box for a product's own page. With no
-	 * price_id it uses the price linked to the current page (Products > Catalog). Mode follows
+	 * price_id it uses the price linked to the current page (Shop > Product pages). Mode follows
 	 * the saved shortcode builder; in cart mode the button returns to the listing's cart.
 	 */
 	public function render_single_product_shortcode( $atts ) {
@@ -9968,7 +9968,7 @@ class AJForms {
 		$layout = sanitize_key( (string) $atts['layout'] );
 		$full   = 'page' === $layout || ( 'auto' === $layout && '' !== $price_id && $price_id === $page_link );
 		if ( '' === $price_id ) {
-			return current_user_can( 'edit_pages' ) ? '<p><em>' . esc_html__( '[ajcore_product]: link this page to a product in Products > Catalog, or add price_id="…".', 'ajforms' ) . '</em></p>' : '';
+			return current_user_can( 'edit_pages' ) ? '<p><em>' . esc_html__( '[ajcore_product]: link this page to a product in Shop > Product pages, or add price_id="…".', 'ajforms' ) . '</em></p>' : '';
 		}
 
 		$mode = sanitize_key( (string) $atts['mode'] );
@@ -10284,7 +10284,7 @@ class AJForms {
 				'template'  => 'default',
 				'details'   => 'none',
 				'include_archived' => 'no',
-				// Catalog UI; empty = Products > UI default. See includes/product-catalog.php.
+				// Catalog UI; empty = Shop > Display default. See includes/product-catalog.php.
 				'category'  => '',
 				'per_page'  => '',
 				'search'    => '',

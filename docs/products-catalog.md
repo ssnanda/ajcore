@@ -3,13 +3,16 @@
 Products are still synced Stripe prices. The site-side catalog layer lives in the
 `ajcore_product_catalog` option. Helpers are in `includes/product-catalog.php`.
 
-## Admin: AJ Core › Products
+## Admin: AJ Core › Shop
+
+AJ Core › **Shop** (`page=ajforms-products`; tab slugs unchanged):
 
 | Tab | What it holds |
 |---|---|
-| Products | Existing shortcode builder, selection/order, dependencies |
-| Catalog | Categories (name, slug, order), categories per product, linked product page, listing page |
-| UI | Per page, search box and placeholder, category filter (chips, dropdown or off), counts, "All" label, card links and label, tablet columns (≤980px), phone columns and filter (≤800px) |
+| Shop listing (`tab=products`) | Shortcode builder, which products show and their order |
+| Product pages (`tab=catalog`) | Category, listing page and product page per product; auto-create |
+| Display (`tab=ui`) | Per page, search box and placeholder, category filter (chips, dropdown or off), counts, "All" label, card links and label, tablet columns (≤980px), phone columns and filter (≤800px) |
+| Settings | Link to Settings › Product Catalog (edit products in Stripe, In shop, import/export packages) |
 
 - **Category.** Chosen per product in the Catalog table (dropdown, or "+ New category…").
   A choice made there wins over Stripe metadata `category`; "— None —" means no category on
@@ -49,7 +52,7 @@ Stripe metadata, max 500 characters each).
 
 ## Product packages (import / export)
 
-Products > Catalog > **Import product package**: JSON files in the `ajcore.product` 1.0
+Settings > Product Catalog > **Import** (next to New): JSON files in the `ajcore.product` 1.0
 format (`admin/trait-ajcore-product-packages.php`).
 
 1. Choose file(s); optionally pick the product to apply a single file to.
@@ -67,7 +70,7 @@ format (`admin/trait-ajcore-product-packages.php`).
    public HTTPS URL is prepended to the product's images (max 8). One Stripe update per
    product with an idempotency key, then products re-sync.
 
-**Export** (link in each row) downloads the product as a package, with its first image
+**Export** (button under Edit in each row) downloads the product as a package, with its first image
 embedded when a local copy exists (otherwise `image_urls`, not importable). **Download blank
 template** is in the import panel. "create" packages are refused: create the product in the
 editor first.
@@ -105,7 +108,7 @@ editor first.
 ## Editing products in Stripe (Settings › Product Catalog)
 
 - **Opening the editor:** go to **Settings › Product Catalog** and use **Edit** in a product's
-  Stripe IDs column, or **New product**. Products are edited only here; **AJ Core › Products**
+  Stripe IDs column, or **New product**. Products are edited only here; **AJ Core › Shop**
   controls the website listing.
 - **Loading:** the editor reads the product and its prices live from Stripe. It never uses the
   cache.
@@ -141,7 +144,7 @@ Each product row has four parts:
 
 - **Saving:** only changed rows are sent. Stripe fields are compared with a fresh read
   first, and both product copies re-sync afterwards.
-- **What's included on the website:** tick **What's included** in AJ Core › Products › Fields
+- **What's included on the website:** tick **What's included** in AJ Core › Shop › Fields
   to show, so the generated shortcode has `show="…,features,…"`. `[ajcore_product]` shows it
   by default.
 
@@ -156,7 +159,7 @@ Each product row has four parts:
   - An empty selection means the whole active catalog.
   - The first In shop change turns "whole catalog" into an explicit list of every active price.
   - Unrelated edits never write the selection.
-- **AJ Core › Products** shows only In shop prices, for order and layout. **Save Order** keeps
+- **AJ Core › Shop** shows only In shop prices, for order and layout. **Save Order** keeps
   the selection.
 - The dependency cards on the Products page have been removed. Settings › Product Catalog is
   the only editor.

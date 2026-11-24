@@ -7,7 +7,7 @@
  * site-side layer Stripe does not hold well:
  *   - categories      saved display names + order; names found in Stripe metadata
  *                     are added automatically (see ajcore_product_catalog_categories)
- *   - assign          price_id => [ category slugs ] chosen in Products > Catalog. When a
+ *   - assign          price_id => [ category slugs ] chosen in Shop > Product pages. When a
  *                     price has an entry it wins over Stripe metadata `category`; an empty
  *                     array means "no category" on purpose. No entry = Stripe metadata.
  *   - pages           price_id => WP page ID (the product's own page)
@@ -169,7 +169,7 @@ function ajcore_product_catalog_metadata_names( $price ) {
 }
 
 /**
- * Categories in use: the ones saved in Products > Catalog (display name + order), then any
+ * Categories in use: the ones saved in Shop > Product pages (display name + order), then any
  * new names found in Stripe metadata, in first-seen order. Stripe is the source of truth for
  * which product is in which category; nothing has to be created on the site first.
  */
@@ -201,7 +201,7 @@ function ajcore_product_catalog_match_slug( $name, $categories ) {
 	return '';
 }
 
-/** Category slugs for one synced price: the choice made in Products > Catalog, else Stripe metadata. */
+/** Category slugs for one synced price: the choice made in Shop > Product pages, else Stripe metadata. */
 function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
 	$catalog  = null === $catalog ? ajcore_product_catalog_get() : $catalog;
 	$price_id = is_array( $price ) && ! empty( $price['id'] ) ? (string) $price['id'] : '';
@@ -322,7 +322,7 @@ function ajcore_product_catalog_listing_page_id( $catalog = null ) {
 }
 
 /**
- * Listing page for one price: its own choice in Products > Catalog (published pages only),
+ * Listing page for one price: its own choice in Shop > Product pages (published pages only),
  * else the pair parent's (a required product shares its parent's page), else the default.
  */
 function ajcore_product_catalog_listing_for_price( $price_id, $catalog = null ) {
