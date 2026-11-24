@@ -11,19 +11,66 @@ Products are still synced Stripe prices. The site-side catalog layer lives in th
 | Catalog | Categories (name, slug, order), categories per product, linked product page, listing page |
 | UI | Per page, search box and placeholder, category filter (chips, dropdown or off), counts, "All" label, card links and label, tablet columns (≤980px), phone columns and filter (≤800px) |
 
-- **Category source: Stripe.** Set product metadata `category` in Stripe (comma-separate
-  several, e.g. `Formation, Compliance`), then sync. New names become categories
-  automatically. The Catalog tab only sets display name and order. Checkboxes appear only
-  for products with no metadata. Stripe's own "Product category" column is its tax
-  classification (`tax_code`), which the API exposes only as a tax code, so it isn't used.
-- **Create page.** Makes a **draft** page under the listing page, filled with:
-  - the Stripe summary
-  - `[ajcore_product price_id="…"]`
-  - the rich description
+- **Category.** Chosen per product in the Catalog table (dropdown, or "+ New category…").
+  A choice made there wins over Stripe metadata `category`; "— None —" means no category on
+  purpose. Products never set there follow Stripe `category` (comma-separate several). The
+  header **Edit** opens the category editor (name, slug, order, delete by clearing the name).
+- **Listing page.** Per product (column), default in the column header (auto-detected as the
+  first published page containing `[ajcore_products` unless chosen). It is the parent of the
+  product page (its address) and where the page's Back link and "Add to Cart" return. A
+  required product (pair) follows its parent's listing page.
+- **Product page.** **Create page**, the bulk "Create pages for selected" (in-shop products
+  only, re-checked on the server) and auto-create (setting "New in-shop products") make a page
+  containing only `[ajcore_product price_id="…"]`, at the standard address
+  (`ajcore_product_catalog_page_slug()`: Stripe `page_slug` / `service_slug`, else derived from
+  the name). A product is handled once: a trashed or unlinked page is not recreated.
 
-  It also links the page and sets AJNanda's page meaning to "A service".
-- **Listing page.** Auto-detected as the first published page containing
-  `[ajcore_products`, unless one is chosen.
+## Product page template
+
+On the product's own page, `[ajcore_product]` renders the full page live from the synced
+Stripe product (`render_product_page_template()`); elsewhere it is the plain buy box
+(`layout="page|box"` forces either). Sections without data are omitted.
+
+| Section | Stripe source |
+|---|---|
+| Heading | metadata `display_title`, else the product name (via `the_title`) |
+| Intro | metadata `summary` |
+| Hero image | first of `images` (copied to the Media Library after each sync) |
+| What's included | `marketing_features` |
+| Details | `description`, metadata `rich_description` |
+| How it works | metadata `steps` (one per line) |
+| FAQ (+ FAQPage schema) | metadata `faq_1_q` / `faq_1_a` … `faq_10_*` |
+| What clients say | featured testimonials / Google reviews (AJ Core > Reviews) |
+| Side: buy box, At a glance, Good to know, Related | price; `turnaround`, `audience`, `requirements`; `billing_note`, `state_fees_note`, `important_note`; same-category products with pages |
+| SEO title / description | `seo_title`, `seo_description` (only when the page has none of its own) |
+
+All of these are editable in Settings > Product Catalog > Edit > "Product page" (written to
+Stripe metadata, max 500 characters each).
+
+## Product packages (import / export)
+
+Products > Catalog > **Import product package**: JSON files in the `ajcore.product` 1.0
+format (`admin/trait-ajcore-product-packages.php`).
+
+1. Choose file(s); optionally pick the product to apply a single file to.
+2. Validate: format/version, `operation: enrich` only, no prices, Stripe limits after merge
+   (15 features ≤ 80 chars, 50 metadata keys ≤ 40 chars, values ≤ 500), image Base64 +
+   SHA-256 + real type (WebP/PNG/JPEG) + ≤ 2 MB + ≤ 4000 px.
+3. Match: chosen product, else `target.product_id`, else a unique exact active name. The
+   `expected_default_price` must equal the live default price (warning only when the product
+   was picked by hand).
+4. Preview: field-by-field (image, description, features add/replace, each metadata key);
+   untick anything. Dependency keys (`*requires*`, `*required*`, `*dependency*`) are never
+   changed. Empty fields mean no change.
+5. Save: LIVE mode needs an explicit tick. Each product is re-fetched and skipped if it
+   changed since the preview. The image goes to the Media Library (reused by SHA-256) and its
+   public HTTPS URL is prepended to the product's images (max 8). One Stripe update per
+   product with an idempotency key, then products re-sync.
+
+**Export** (link in each row) downloads the product as a package, with its first image
+embedded when a local copy exists (otherwise `image_urls`, not importable). **Download blank
+template** is in the import panel. "create" packages are refused: create the product in the
+editor first.
 
 ## Shortcodes
 

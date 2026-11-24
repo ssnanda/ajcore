@@ -10073,6 +10073,8 @@ class AJForms {
 				.ajp-review blockquote{margin:6px 0 10px;color:#334155;line-height:1.6}
 				.ajp-review figcaption{font-weight:600;font-size:14px}
 				.ajp-stars{color:#f59e0b;letter-spacing:2px}
+				.ajp-notes p{margin:0 0 8px;font-size:13px;line-height:1.5;color:#334155}
+				.ajp-notes p:last-child{margin:0}
 				.ajp-lede{font-size:clamp(18px,2.2vw,22px);line-height:1.5;color:var(--ajp-ink);margin:0 0 14px}
 				.ajp-hero-img{display:block;width:100%;max-height:360px;object-fit:cover;border-radius:16px;margin:8px 0 0}
 				.ajp-buy{padding:22px;border:1px solid var(--ajp-line);border-radius:18px;background:#fff;box-shadow:0 18px 40px rgba(15,23,42,.08)}
@@ -10219,6 +10221,14 @@ class AJForms {
 									<?php endforeach; ?>
 								</ul>
 							<?php endif; ?>
+						</div>
+					<?php endif; ?>
+					<?php if ( $c['notes'] ) : ?>
+						<div class="ajp-box ajp-notes">
+							<h3><?php esc_html_e( 'Good to know', 'ajforms' ); ?></h3>
+							<?php foreach ( $c['notes'] as $note_label => $note_text ) : ?>
+								<p><strong><?php echo esc_html( $note_label ); ?>:</strong> <?php echo esc_html( $note_text ); ?></p>
+							<?php endforeach; ?>
 						</div>
 					<?php endif; ?>
 					<?php if ( $related ) : ?>

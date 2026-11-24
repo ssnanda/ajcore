@@ -224,7 +224,7 @@ function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
 /**
  * Standard URL slug for a product's page (the last part of /service/<slug>/).
  *
- * 1. Stripe product metadata `page_slug` (or `slug`) when set: the deliberate override,
+ * 1. Stripe product metadata `page_slug` (or `service_slug`, `slug`) when set: the deliberate override,
  *    kept in Stripe next to `category` so it survives re-syncs and applies on every site.
  * 2. Otherwise derived from the product name for search: lowercase words only, dotted
  *    abbreviations joined (U.S. -> us), "&" dropped, and filler / billing words removed
@@ -238,7 +238,7 @@ function ajcore_product_catalog_price_categories( $price, $catalog = null ) {
  */
 function ajcore_product_catalog_page_slug( $price ) {
 	$meta = is_array( $price ) && ! empty( $price['product_metadata'] ) && is_array( $price['product_metadata'] ) ? $price['product_metadata'] : array();
-	foreach ( array( 'page_slug', 'slug' ) as $key ) {
+	foreach ( array( 'page_slug', 'service_slug', 'slug' ) as $key ) {
 		if ( ! empty( $meta[ $key ] ) ) {
 			$override = sanitize_title( (string) $meta[ $key ] );
 			if ( '' !== $override ) {
@@ -351,7 +351,10 @@ function ajcore_product_catalog_listing_url( $catalog = null ) {
  *   marketing_features (max 15)       "What's included" checklist
  *   images (max 8)                    hero image (first)
  *   metadata (each value max 500 chars; lists are one item per line, or "a | b | c"):
+ *     display_title    page heading (the product name stays the Stripe/checkout name)
  *     summary          one-line pitch under the title
+ *     billing_note, state_fees_note, important_note   "Good to know" notes beside the buy box
+ *     service_slug     page address used when the page is created (alias of page_slug)
  *     audience         who it is for
  *     turnaround       e.g. "Same business day"
  *     requirements     what the customer needs to provide (list)
@@ -364,11 +367,16 @@ function ajcore_product_catalog_listing_url( $catalog = null ) {
 /** Product content metadata keys, in editor order: key => [label, type (text|list|faq)]. */
 function ajcore_product_page_meta_fields() {
 	return array(
+		'display_title'   => array( __( 'Page heading (instead of the product name)', 'ajforms' ), 'text' ),
 		'summary'         => array( __( 'Short pitch', 'ajforms' ), 'text' ),
 		'audience'        => array( __( 'Who it is for', 'ajforms' ), 'text' ),
 		'turnaround'      => array( __( 'Turnaround', 'ajforms' ), 'text' ),
 		'requirements'    => array( __( 'What you need (one per line)', 'ajforms' ), 'list' ),
 		'steps'           => array( __( 'How it works (one step per line)', 'ajforms' ), 'list' ),
+		'billing_note'    => array( __( 'Billing note', 'ajforms' ), 'note' ),
+		'state_fees_note' => array( __( 'Government / state fees note', 'ajforms' ), 'note' ),
+		'important_note'  => array( __( 'Important note', 'ajforms' ), 'note' ),
+		'service_slug'    => array( __( 'Page address (slug) for a new page', 'ajforms' ), 'text' ),
 		'cta'             => array( __( 'Call-to-action heading', 'ajforms' ), 'text' ),
 		'seo_title'       => array( __( 'SEO title', 'ajforms' ), 'text' ),
 		'seo_description' => array( __( 'SEO description', 'ajforms' ), 'text' ),
@@ -403,6 +411,15 @@ function ajcore_product_page_content( $price ) {
 	}
 	return array(
 		'name'            => isset( $price['product_name'] ) ? (string) $price['product_name'] : '',
+		'title'           => '' !== $text( 'display_title' ) ? $text( 'display_title' ) : ( isset( $price['product_name'] ) ? (string) $price['product_name'] : '' ),
+		'notes'           => array_filter(
+			array(
+				__( 'Billing', 'ajforms' )        => $text( 'billing_note' ),
+				__( 'Government fees', 'ajforms' ) => $text( 'state_fees_note' ),
+				__( 'Important', 'ajforms' )      => $text( 'important_note' ),
+			),
+			'strlen'
+		),
 		'summary'         => '' !== $text( 'summary' ) ? $text( 'summary' ) : ( isset( $price['product_summary'] ) ? (string) $price['product_summary'] : '' ),
 		'description'     => isset( $price['product_description'] ) ? trim( (string) $price['product_description'] ) : '',
 		'rich'            => isset( $price['product_rich_description'] ) ? (string) $price['product_rich_description'] : '',
@@ -454,7 +471,7 @@ function ajcore_product_page_seo_meta( $value, $object_id, $meta_key, $single ) 
 	}
 	$content = ajcore_product_page_content( $row );
 	if ( '_ajnanda_seo_title' === $meta_key ) {
-		$out = $content['seo_title'];
+		$out = '' !== $content['seo_title'] ? $content['seo_title'] : ( $content['title'] !== $content['name'] ? $content['title'] : '' );
 	} else {
 		$out = '' !== $content['seo_description'] ? $content['seo_description'] : ( '' !== $content['summary'] ? $content['summary'] : $content['description'] );
 		$out = wp_html_excerpt( $out, 160, '…' );
@@ -573,3 +590,22 @@ function ajcore_product_images_queue() {
 }
 add_action( 'update_option_ajforms_stripe_products_cache', 'ajcore_product_images_queue' );
 add_action( 'add_option_ajforms_stripe_products_cache', 'ajcore_product_images_queue' );
+
+/**
+ * The page heading of a product page shows the product's display_title (Stripe metadata) when
+ * set, e.g. "North Carolina Virtual Office Address", while Stripe and checkout keep the product
+ * name. Main page heading only: menus, admin lists and other titles are untouched.
+ */
+function ajcore_product_page_display_title( $title, $post_id = 0 ) {
+	if ( is_admin() || ! $post_id || ! in_the_loop() || ! is_main_query() || ! is_page( $post_id ) || (int) get_queried_object_id() !== (int) $post_id ) {
+		return $title;
+	}
+	$price_id = ajcore_product_catalog_price_for_page( $post_id );
+	$row      = '' !== $price_id ? ajcore_product_catalog_price_row( $price_id ) : null;
+	if ( ! $row ) {
+		return $title;
+	}
+	$content = ajcore_product_page_content( $row );
+	return $content['title'] !== $content['name'] ? esc_html( $content['title'] ) : $title;
+}
+add_filter( 'the_title', 'ajcore_product_page_display_title', 10, 2 );

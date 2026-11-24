@@ -1,6 +1,9 @@
 <?php
 
+require_once __DIR__ . '/trait-ajcore-product-packages.php';
+
 class AJForms_Admin {
+	use AJCore_Product_Packages;
 
 	public static $instance = null;
 
@@ -586,7 +589,7 @@ class AJForms_Admin {
 		return is_array( $body ) ? $body : array();
 	}
 
-	private function stripe_api_request( $path, $secret_key, $body = array(), $method = 'POST' ) {
+	private function stripe_api_request( $path, $secret_key, $body = array(), $method = 'POST', $extra_headers = array() ) {
 		$mode_error = $this->get_stripe_mode_blocking_error();
 		if ( '' !== $mode_error ) {
 			return new WP_Error( 'stripe_mode_key_mismatch', $mode_error );
@@ -597,9 +600,8 @@ class AJForms_Admin {
 			array(
 				'method'  => strtoupper( $method ),
 				'timeout' => 20,
-				'headers' => array(
-					'Authorization' => 'Bearer ' . $secret_key,
-				),
+				// $extra_headers: e.g. Idempotency-Key, so a retried write is applied once.
+				'headers' => array_merge( (array) $extra_headers, array( 'Authorization' => 'Bearer ' . $secret_key ) ),
 				'body'    => $body,
 			)
 		);
@@ -14817,6 +14819,9 @@ class AJForms_Admin {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
+
+		// Product packages: template / export downloads, import preview and apply (exit on handle).
+		$this->handle_pkg_actions();
 
 		if ( isset( $_POST['ajcore_public_product_display_nonce'] ) ) {
 			check_admin_referer( 'ajcore_save_public_product_display', 'ajcore_public_product_display_nonce' );
@@ -29881,9 +29886,10 @@ class AJForms_Admin {
 						<input type="hidden" name="page_present" value="1">
 						<div class="ajpe-grid">
 							<?php foreach ( ajcore_product_page_meta_fields() as $meta_key => $meta_field ) : ?>
-								<div class="ajpe-f<?php echo 'list' === $meta_field[1] || 'summary' === $meta_key || 'seo_description' === $meta_key ? ' span3' : ''; ?>">
+								<?php $wide = in_array( $meta_field[1], array( 'list', 'note' ), true ) || in_array( $meta_key, array( 'summary', 'seo_description' ), true ); ?>
+								<div class="ajpe-f<?php echo $wide ? ' span3' : ''; ?>">
 									<label><?php echo esc_html( $meta_field[0] ); ?></label>
-									<?php if ( 'list' === $meta_field[1] || 'summary' === $meta_key || 'seo_description' === $meta_key ) : ?>
+									<?php if ( $wide ) : ?>
 										<textarea name="page[<?php echo esc_attr( $meta_key ); ?>]" rows="<?php echo 'list' === $meta_field[1] ? 3 : 2; ?>" maxlength="500"><?php echo esc_textarea( (string) ( $page_meta[ $meta_key ] ?? '' ) ); ?></textarea>
 									<?php else : ?>
 										<input type="text" name="page[<?php echo esc_attr( $meta_key ); ?>]" maxlength="500" value="<?php echo esc_attr( (string) ( $page_meta[ $meta_key ] ?? '' ) ); ?>">
@@ -30160,6 +30166,10 @@ class AJForms_Admin {
 				?>
 			</div>
 		<?php endif; ?>
+		<?php
+		$this->render_pkg_styles();
+		$this->render_pkg_panel();
+		?>
 		<?php if ( 0 === $all_count ) : ?>
 			<div class="ajcore-products-empty"><?php esc_html_e( 'No synced Stripe prices yet.', 'ajforms' ); ?></div>
 			<?php return; ?>
@@ -30316,6 +30326,9 @@ class AJForms_Admin {
 							<div class="ajcore-catalog-muted">
 								<?php echo esc_html( strtoupper( (string) $price['currency'] ) . ' ' . number_format_i18n( (float) $price['amount'], 2 ) . $interval ); ?>
 								<?php echo $is_active ? '' : ' · ' . esc_html__( 'archived', 'ajforms' ); ?>
+								<?php if ( ! empty( $price['product_id'] ) ) : ?>
+									· <a href="<?php echo esc_url( wp_nonce_url( add_query_arg( array( 'page' => 'ajforms-products', 'tab' => 'catalog', 'ajf_products_action' => 'pkg_export', 'product_id' => (string) $price['product_id'] ), admin_url( 'admin.php' ) ), 'ajcore_pkg_export_' . (string) $price['product_id'] ) ); ?>" title="<?php esc_attr_e( 'Download this product as a package (JSON)', 'ajforms' ); ?>"><?php esc_html_e( 'Export', 'ajforms' ); ?></a>
+								<?php endif; ?>
 							</div>
 							<?php if ( isset( $pair_child_of[ $price_id ] ) ) : ?>
 								<?php
