@@ -10067,6 +10067,11 @@ class AJForms {
 		$interval = ! empty( $price['recurring_interval'] ) ? sanitize_key( (string) $price['recurring_interval'] ) : '';
 		$billing  = '' === $interval ? __( 'One-time payment', 'ajforms' ) : sprintf( __( 'Billed every %s', 'ajforms' ), $interval ); // terms come from billing_note, never invented here
 		$image    = ! empty( $c['images'][0] ) ? ( function_exists( 'ajcore_product_image_url' ) ? ajcore_product_image_url( $c['images'][0] ) : $c['images'][0] ) : '';
+		// A Stripe image on a host the public cannot reach (e.g. *.ddev.site) with no local copy
+		// here would be a broken image: leave it out.
+		if ( '' !== $image && $image === $c['images'][0] && preg_match( '/^(localhost|.+\.(ddev\.site|local|test|localhost|lan|internal))$/', strtolower( (string) wp_parse_url( $image, PHP_URL_HOST ) ) ) && ! ( function_exists( 'ajcore_test_products_allowed' ) && ajcore_test_products_allowed() ) ) {
+			$image = '';
+		}
 
 		/*
 		 * Layout (desktop): one screen holds the decision. Main column: compact header (title,
@@ -10700,7 +10705,13 @@ class AJForms {
 						$required_price      = $public_price_map[ $required_price_id ];
 						$required_price_text = wp_strip_all_tags( $this->format_shop_price_html( $required_price['amount'], $required_price['currency'], ! empty( $required_price['recurring_interval'] ) ? $required_price['recurring_interval'] : '', ! empty( $required_price['recurring_interval_count'] ) ? $required_price['recurring_interval_count'] : 1 ) );
 					}
-					$card_image = ! empty( $price['product_images'][0] ) ? esc_url( (string) $price['product_images'][0] ) : '';
+					// Local Media Library copy when there is one (ajcore_product_images_sync()); a Stripe image on
+					// a host the public cannot reach (e.g. *.ddev.site) without a local copy is left out.
+					$card_image = ! empty( $price['product_images'][0] ) ? (string) $price['product_images'][0] : '';
+					if ( '' !== $card_image && function_exists( 'ajcore_product_image_url' ) ) {
+						$local      = ajcore_product_image_url( $card_image, 'medium_large' );
+						$card_image = ( $local === $card_image && preg_match( '/^(localhost|.+\.(ddev\.site|local|test|localhost|lan|internal))$/', strtolower( (string) wp_parse_url( $card_image, PHP_URL_HOST ) ) ) && ! ( function_exists( 'ajcore_test_products_allowed' ) && ajcore_test_products_allowed() ) ) ? '' : $local;
+					}
 					$card_badge = '';
 					foreach ( array( 'badge', 'ajcore_badge' ) as $badge_key ) {
 						if ( '' === $card_badge && ! empty( $price['product_metadata'][ $badge_key ] ) && is_scalar( $price['product_metadata'][ $badge_key ] ) ) {

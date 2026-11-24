@@ -31,6 +31,26 @@ trait AJCore_Product_Packages {
 	private static $pkg_max_image_bytes = 2097152; // 2 MB, Stripe's product image limit
 	private static $pkg_max_pixels      = 4000;    // per side
 
+	/**
+	 * Whether an image URL is reachable by the public and Stripe: HTTPS on a public host. DDEV
+	 * (*.ddev.site), localhost and .local / .test / .localhost hosts are not, so their URLs must
+	 * never be stored on a Stripe product (DDEV and live share one Stripe account: a DDEV URL
+	 * there is a broken image on live and at checkout).
+	 */
+	private function pkg_is_public_image_url( $url ) {
+		$parts = wp_parse_url( (string) $url );
+		$host  = strtolower( (string) ( $parts['host'] ?? '' ) );
+		if ( 'https' !== strtolower( (string) ( $parts['scheme'] ?? '' ) ) || '' === $host || 'localhost' === $host || filter_var( $host, FILTER_VALIDATE_IP ) ) {
+			return false;
+		}
+		foreach ( array( '.ddev.site', '.local', '.test', '.localhost', '.lan', '.internal' ) as $private_suffix ) {
+			if ( substr( $host, -strlen( $private_suffix ) ) === $private_suffix ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	/** Metadata keys a package may never change (dependency wiring is edited in its own UI). */
 	private function pkg_is_protected_meta_key( $key ) {
 		return (bool) preg_match( '/(requires|required|dependency)/i', (string) $key );
@@ -624,6 +644,10 @@ trait AJCore_Product_Packages {
 					'alt'      => '' !== $checked['alt'] ? $checked['alt'] : $item['name'],
 					'size'     => $checked['width'] . '×' . $checked['height'] . ', ' . size_format( strlen( $checked['bytes'] ) ),
 				);
+				if ( ! $this->pkg_is_public_image_url( (string) wp_upload_dir()['baseurl'] . '/x.webp' ) ) {
+					$item['warnings'][] = __( 'This site is not public (DDEV / local): the image cannot be sent to Stripe from here and will be skipped. Import the image on the live site.', 'ajforms' );
+					$proposed['image_blocked'] = true;
+				}
 				if ( count( $current['images'] ) >= 8 ) {
 					$item['warnings'][] = __( 'The product already has 8 images: adding this one drops the last.', 'ajforms' );
 				}
@@ -633,6 +657,10 @@ trait AJCore_Product_Packages {
 			}
 		}
 
+		$broken = array_values( array_filter( $current['images'], function ( $url ) { return ! $this->pkg_is_public_image_url( $url ); } ) );
+		if ( $broken && ! empty( $proposed['image'] ) && empty( $proposed['image_blocked'] ) ) {
+			$item['warnings'][] = sprintf( __( 'Saving the image also removes %d image URL(s) the public cannot reach: %s', 'ajforms' ), count( $broken ), implode( ', ', $broken ) );
+		}
 		$item['current']  = $current;
 		$item['proposed'] = $proposed;
 		if ( empty( $item['errors'] ) && '' === $proposed['description'] && ! array_diff( $proposed['features'], $current['features'] ) && ! $proposed['metadata'] && ! $proposed['image'] ) {
@@ -817,26 +845,31 @@ trait AJCore_Product_Packages {
 				}
 			}
 			$new_image = '';
-			if ( ! empty( $choice['image'] ) && ! empty( $proposed['image'] ) ) {
+			$notes     = array();
+			if ( ! empty( $choice['image'] ) && ! empty( $proposed['image'] ) && ! $this->pkg_is_public_image_url( (string) wp_upload_dir()['baseurl'] . '/x.webp' ) ) {
+				$notes[] = __( 'image skipped: this site is not public (DDEV / local); import it on the live site', 'ajforms' );
+			} elseif ( ! empty( $choice['image'] ) && ! empty( $proposed['image'] ) ) {
 				$attachment_id = $this->pkg_store_image( $proposed['image'], $item['name'] );
 				if ( is_wp_error( $attachment_id ) ) {
 					$results[] = array( 'ok' => false, 'text' => $label . ': ' . $attachment_id->get_error_message() );
 					continue;
 				}
 				$new_image = (string) wp_get_attachment_url( $attachment_id );
-				if ( 0 !== strpos( $new_image, 'https://' ) ) {
-					$results[] = array( 'ok' => false, 'text' => $label . ': ' . __( 'image saved, but its URL is not public HTTPS, so Stripe cannot use it. Nothing written.', 'ajforms' ) );
-					continue;
+				if ( ! $this->pkg_is_public_image_url( $new_image ) ) {
+					$notes[] = __( 'image skipped: its URL is not public, so it would be broken on live and at checkout', 'ajforms' );
+				} else {
+					// New image first; existing images the public cannot reach (e.g. a DDEV URL) are dropped.
+					$kept   = array_values( array_filter( (array) ( $product['images'] ?? array() ), array( $this, 'pkg_is_public_image_url' ) ) );
+					$images = array_values( array_unique( array_merge( array( $new_image ), $kept ) ) );
+					foreach ( array_slice( $images, 0, 8 ) as $n => $url ) {
+						$body[ 'images[' . $n . ']' ] = $url;
+					}
+					$image_map[ $new_image ] = $attachment_id; // the page uses this copy, no re-download
+					$changed[]               = __( 'image', 'ajforms' );
 				}
-				$images = array_values( array_unique( array_merge( array( $new_image ), array_values( (array) ( $product['images'] ?? array() ) ) ) ) );
-				foreach ( array_slice( $images, 0, 8 ) as $n => $url ) {
-					$body[ 'images[' . $n . ']' ] = $url;
-				}
-				$image_map[ $new_image ] = $attachment_id; // the page uses this copy, no re-download
-				$changed[]               = __( 'image', 'ajforms' );
 			}
 			if ( ! $body ) {
-				$results[] = array( 'ok' => true, 'text' => $label . ': ' . __( 'nothing selected to change.', 'ajforms' ) );
+				$results[] = array( 'ok' => ! $notes, 'text' => $label . ': ' . ( $notes ? implode( '; ', $notes ) . '.' : __( 'nothing selected to change.', 'ajforms' ) ) );
 				continue;
 			}
 			$before = $this->pkg_state( $product ); // exact state just before the write, for Undo
@@ -860,7 +893,7 @@ trait AJCore_Product_Packages {
 					'after_snapshot' => $this->pkg_snapshot( $result ),
 				)
 			);
-			$results[] = array( 'ok' => true, 'backup' => $backup_id, 'text' => $label . ': ' . sprintf( __( 'updated in Stripe (%s).', 'ajforms' ), implode( ', ', $changed ) ) . ( $new_image ? ' ' . $new_image : '' ) );
+			$results[] = array( 'ok' => true, 'backup' => $backup_id, 'text' => $label . ': ' . sprintf( __( 'updated in Stripe (%s).', 'ajforms' ), implode( ', ', $changed ) ) . ( $new_image && in_array( __( 'image', 'ajforms' ), $changed, true ) ? ' ' . $new_image : '' ) . ( $notes ? ' ' . implode( '; ', $notes ) . '.' : '' ) );
 		}
 
 		update_option( AJCORE_PRODUCT_IMAGE_MAP_OPTION, $image_map, false );
@@ -1052,7 +1085,7 @@ trait AJCore_Product_Packages {
 							<tbody>
 							<?php if ( ! empty( $new['image'] ) ) : ?>
 								<tr>
-									<td><input type="checkbox" name="pkg[<?php echo (int) $i; ?>][image]" value="1" checked></td>
+									<td><input type="checkbox" name="pkg[<?php echo (int) $i; ?>][image]" value="1" <?php checked( empty( $new['image_blocked'] ) ); ?> <?php disabled( ! empty( $new['image_blocked'] ) ); ?>></td>
 									<td><?php esc_html_e( 'Image', 'ajforms' ); ?></td>
 									<td><?php echo esc_html( sprintf( _n( '%d image', '%d images', count( $cur['images'] ), 'ajforms' ), count( $cur['images'] ) ) ); ?></td>
 									<td><img src="<?php echo esc_attr( 'data:' . $new['image']['mime'] . ';base64,' . $new['image']['data'] ); ?>" alt="" style="width:96px;height:96px;object-fit:cover;border-radius:8px;vertical-align:middle;"> <span class="ajcore-catalog-muted"><?php echo esc_html( $new['image']['size'] . ' · ' . __( 'added first, existing kept', 'ajforms' ) ); ?></span></td>

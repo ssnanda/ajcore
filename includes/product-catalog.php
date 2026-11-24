@@ -552,6 +552,14 @@ function ajcore_product_images_sync() {
 			if ( '' === $url ) {
 				continue;
 			}
+			// Never try to download from hosts the public cannot reach (e.g. a *.ddev.site URL that
+			// reached the shared Stripe account): each attempt would wait for a timeout on every sync.
+			$host = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+			if ( '' === $host || 'localhost' === $host || preg_match( '/\.(ddev\.site|local|test|localhost|lan|internal)$/', $host ) ) {
+				if ( empty( $map[ $url ] ) && ! attachment_url_to_postid( $url ) ) {
+					continue;
+				}
+			}
 			if ( empty( $map[ $url ] ) && ( $own = attachment_url_to_postid( $url ) ) ) {
 				$map[ $url ] = (int) $own; // picked from this site's Media Library: nothing to copy
 				$changed     = true;
