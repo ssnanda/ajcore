@@ -643,3 +643,86 @@ function ajcore_test_price_blocked( $price ) {
 	$row = is_array( $price ) ? $price : ajcore_product_catalog_price_row( (string) $price );
 	return is_array( $row ) && ajcore_price_is_test( $row );
 }
+
+/**
+ * Pages of test products, on a site that must not show them (live). Found by the Catalog link
+ * and by the price in an [ajcore_product price_id="…"] shortcode, so a page synced from DDEV
+ * (e.g. by Synchy) is caught even when the Catalog link did not come with it. Empty on DDEV.
+ *
+ * @return int[]
+ */
+function ajcore_test_product_page_ids() {
+	static $ids = null;
+	if ( null !== $ids ) {
+		return $ids;
+	}
+	$ids = array();
+	if ( ajcore_test_products_allowed() ) {
+		return $ids;
+	}
+	$cache     = get_option( 'ajforms_stripe_products_cache', array() );
+	$price_ids = array();
+	foreach ( is_array( $cache ) && isset( $cache['prices'] ) ? (array) $cache['prices'] : array() as $row ) {
+		if ( is_array( $row ) && ! empty( $row['id'] ) && ajcore_price_is_test( $row ) ) {
+			$price_ids[] = (string) $row['id'];
+		}
+	}
+	if ( ! $price_ids ) {
+		return $ids;
+	}
+	$catalog = ajcore_product_catalog_get();
+	foreach ( $price_ids as $price_id ) {
+		if ( ! empty( $catalog['pages'][ $price_id ] ) ) {
+			$ids[] = (int) $catalog['pages'][ $price_id ];
+		}
+	}
+	global $wpdb;
+	foreach ( $price_ids as $price_id ) {
+		$like = '%' . $wpdb->esc_like( 'price_id="' . $price_id . '"' ) . '%';
+		$ids  = array_merge( $ids, array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare( "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'page' AND post_status <> 'trash' AND post_content LIKE %s", $like ) ) ) );
+	}
+	$ids = array_values( array_unique( array_filter( $ids ) ) );
+	return $ids;
+}
+
+/** Live site: a test product's page is a 404 for everyone (also logged-in admins). */
+function ajcore_test_product_page_404() {
+	if ( is_admin() || ! is_singular( 'page' ) ) {
+		return;
+	}
+	if ( in_array( (int) get_queried_object_id(), ajcore_test_product_page_ids(), true ) ) {
+		global $wp_query;
+		$wp_query->set_404();
+		status_header( 404 );
+		nocache_headers();
+	}
+}
+add_action( 'template_redirect', 'ajcore_test_product_page_404', 0 );
+
+/** Live site: keep test product pages out of front-end searches and listings. */
+function ajcore_test_product_pages_exclude( $query ) {
+	if ( is_admin() || ! $query->is_main_query() || $query->is_singular() ) {
+		return;
+	}
+	$ids = ajcore_test_product_page_ids();
+	if ( $ids ) {
+		$query->set( 'post__not_in', array_merge( (array) $query->get( 'post__not_in' ), $ids ) );
+	}
+}
+add_action( 'pre_get_posts', 'ajcore_test_product_pages_exclude' );
+
+/** Live site: and out of the WordPress sitemap. */
+add_filter(
+	'wp_sitemaps_posts_query_args',
+	static function ( $args, $post_type ) {
+		if ( 'page' === $post_type ) {
+			$ids = ajcore_test_product_page_ids();
+			if ( $ids ) {
+				$args['post__not_in'] = array_merge( isset( $args['post__not_in'] ) ? (array) $args['post__not_in'] : array(), $ids );
+			}
+		}
+		return $args;
+	},
+	10,
+	2
+);
