@@ -10085,8 +10085,9 @@ class AJForms {
 				/* Break out of the theme's narrow content column: as wide as the window allows, up to 1320px, centred. */
 				.ajp-page{position:relative;left:50%;transform:translateX(-50%);width:min(1320px,calc(100vw - 48px))!important;max-width:none!important;margin:0!important}
 				.ajp-page *,.ajp-page *:before,.ajp-page *:after{box-sizing:border-box}
-				.ajp-back{display:inline-block;margin:0 0 10px;color:var(--ajp-soft);text-decoration:none;font-size:14px}
-				.ajp-back:hover{color:var(--ajp-accent)}
+				.ajp-back{display:inline-flex;align-items:center;gap:8px;margin:0 0 16px;padding:9px 18px;border:1.5px solid var(--ajp-line);border-radius:999px;background:#fff;color:var(--ajp-ink);text-decoration:none;font-size:16px;font-weight:600;line-height:1.2;box-shadow:0 2px 6px rgba(15,23,42,.05);transition:border-color .15s,color .15s}
+				.ajp-back:hover{border-color:var(--ajp-accent);color:var(--ajp-accent)}
+				.ajp-back span{font-size:18px;line-height:1}
 
 				.ajp-layout{display:grid;grid-template-columns:minmax(0,1fr) clamp(300px,27vw,370px);column-gap:clamp(28px,3.5vw,52px);align-items:start}
 				.ajp-main{min-width:0}
@@ -10108,6 +10109,11 @@ class AJForms {
 				.ajp-checks li{display:flex;gap:10px;align-items:flex-start;font-size:15px;line-height:1.45}
 				.ajp-checks li:before{content:"✓";flex:0 0 20px;height:20px;margin-top:1px;border-radius:50%;background:#dcfce7;color:#15803d;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center}
 				.ajp-about{color:#334155;max-width:760px}
+				.ajp-about.is-clamped{max-height:9.5em;overflow:hidden;position:relative;cursor:pointer}
+				.ajp-about.is-clamped:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3.2em;background:linear-gradient(rgba(248,250,252,0),var(--ajp-fade,#f8fafc))}
+				.ajp-more{display:none;margin:8px 0 0;padding:0;border:0;background:none;color:var(--ajp-accent);font-weight:700;font-size:15px;cursor:pointer}
+				.ajp-more.is-shown{display:inline-block}
+				.ajp-more:hover{text-decoration:underline}
 				.ajp-about p{margin:0 0 12px}
 				.ajp-about p:last-child{margin-bottom:0}
 				.ajp-steps{list-style:none;margin:0;padding:0;counter-reset:ajp;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
@@ -10142,7 +10148,9 @@ class AJForms {
 				.ajp-needs{margin:4px 0 0;padding-left:16px;font-size:13px;color:#334155;font-weight:400}
 				.ajp-notes p{margin:0 0 8px;font-size:13px;line-height:1.5;color:#334155}
 				.ajp-notes p:last-child{margin:0}
-				.ajp-others{list-style:none;margin:0;padding:0}
+				.ajp-others{list-style:none;margin:0 -6px 0 0;padding:0 6px 0 0;max-height:300px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#cbd5e1 transparent}
+				.ajp-others::-webkit-scrollbar{width:6px}
+				.ajp-others::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px}
 				.ajp-others li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--ajp-line)}
 				.ajp-others li:first-child{border-top:0;padding-top:0}
 				.ajp-other-info{min-width:0;display:flex;flex-direction:column}
@@ -10187,7 +10195,7 @@ class AJForms {
 		?>
 		<div class="ajp-page">
 			<?php if ( $listing_id && (int) get_queried_object_id() !== (int) $listing_id ) : ?>
-				<a class="ajp-back" href="<?php echo esc_url( (string) get_permalink( $listing_id ) ); ?>">&larr; <?php echo esc_html( get_the_title( $listing_id ) ); ?></a>
+				<a class="ajp-back" href="<?php echo esc_url( (string) get_permalink( $listing_id ) ); ?>"><span aria-hidden="true">&larr;</span> <?php echo esc_html( sprintf( __( 'All %s', 'ajforms' ), get_the_title( $listing_id ) ) ); ?></a>
 			<?php endif; ?>
 			<div class="ajp-layout">
 				<div class="ajp-main">
@@ -10228,12 +10236,13 @@ class AJForms {
 					<?php if ( '' !== $about || '' !== trim( wp_strip_all_tags( $c['rich'] ) ) ) : ?>
 						<section class="ajp-section">
 							<h2><?php esc_html_e( 'Details', 'ajforms' ); ?></h2>
-							<div class="ajp-about">
+							<div class="ajp-about" id="ajp-about" data-clamp="1">
 								<?php if ( '' !== $about ) : ?>
 									<?php echo wp_kses_post( wpautop( esc_html( $about ) ) ); ?>
 								<?php endif; ?>
 								<?php echo wp_kses_post( wp_strip_all_tags( $c['rich'] ) === $c['rich'] ? wpautop( esc_html( $c['rich'] ) ) : $c['rich'] ); // plain text -> paragraphs ?>
 							</div>
+							<button type="button" class="ajp-more" aria-controls="ajp-about" aria-expanded="false" data-more="<?php esc_attr_e( 'Read more', 'ajforms' ); ?>" data-less="<?php esc_attr_e( 'Show less', 'ajforms' ); ?>"><?php esc_html_e( 'Read more', 'ajforms' ); ?></button>
 						</section>
 					<?php endif; ?>
 
@@ -10339,6 +10348,26 @@ class AJForms {
 				<a href="#ajp-buy"><?php esc_html_e( 'Get started', 'ajforms' ); ?></a>
 			</div>
 		</div>
+		<script>
+		(function () {
+			// Details: clamp long text to a few lines; the button (or a click on the text) expands
+			// and collapses it. The button only appears when the text really overflows.
+			var box = document.getElementById('ajp-about');
+			var btn = box ? box.parentNode.querySelector('.ajp-more') : null;
+			if (!box || !btn) { return; }
+			box.classList.add('is-clamped');
+			if (box.scrollHeight <= box.clientHeight + 4) { box.classList.remove('is-clamped'); return; }
+			btn.classList.add('is-shown');
+			function toggle() {
+				var open = box.classList.toggle('is-clamped') === false;
+				btn.textContent = open ? btn.dataset.less : btn.dataset.more;
+				btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+				if (!open) { box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+			}
+			btn.addEventListener('click', toggle);
+			box.addEventListener('click', function (e) { if (!e.target.closest('a')) { toggle(); } });
+		})();
+		</script>
 		<?php
 		return (string) ob_get_clean();
 	}
