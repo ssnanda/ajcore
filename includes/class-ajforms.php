@@ -10139,6 +10139,23 @@ class AJForms {
 			}
 		}
 
+		// Pairs: a product that another listed product requires (e.g. Virtual Office Setup for
+		// Virtual Office Subscription) is sold with it, and that card already shows it ("+ $60
+		// Virtual Office Setup, added automatically"). Keep it in the markup for the cart but
+		// not as a card of its own. A product page ([ajcore_product]) is left as it is.
+		if ( ! $is_single ) {
+			$listed_ids = array();
+			foreach ( $prices as $listed_price ) {
+				$listed_ids[ (string) $listed_price['id'] ] = true;
+			}
+			foreach ( $prices as $listed_price ) {
+				$required = $this->get_public_price_required_price_id( $listed_price, $public_price_map );
+				if ( '' !== $required && $required !== (string) $listed_price['id'] && isset( $listed_ids[ $required ] ) && ! isset( $support_prices[ (string) $listed_price['id'] ] ) ) {
+					$support_prices[ $required ] = true;
+				}
+			}
+		}
+
 		// Categories present in this listing, in configured order, with counts.
 		$listing_categories = array();
 		if ( $catalog && 'none' !== $filter_style ) {
